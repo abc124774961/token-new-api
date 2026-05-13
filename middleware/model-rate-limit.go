@@ -180,7 +180,7 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 		// 获取分组
 		group := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
 		if group == "" {
-			group = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+			group = "auto"
 		}
 
 		//获取分组的限流配置

@@ -114,11 +114,15 @@
 git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 
-# Modifier la configuration docker-compose.yml
-nano docker-compose.yml
+# Développement local en conteneur
+cp .env.dev.example .env.dev
+mkdir -p data logs
+docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 
-# Démarrer le service
-docker-compose up -d
+# Déploiement serveur / production
+cp .env.pro.example .env.pro
+mkdir -p data logs
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 ```
 
 <details>
@@ -339,15 +343,15 @@ docker run --name new-api -d --restart always \
 <summary><strong>Méthode 1: Docker Compose (recommandé)</strong></summary>
 
 ```bash
-# Cloner le projet
-git clone https://github.com/QuantumNous/new-api.git
-cd new-api
+# Environnement local complet
+cp .env.dev.example .env.dev
+mkdir -p data logs
+docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 
-# Modifier la configuration
-nano docker-compose.yml
-
-# Démarrer le service
-docker-compose up -d
+# Environnement serveur / production
+cp .env.pro.example .env.pro
+mkdir -p data logs
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 ```
 
 </details>

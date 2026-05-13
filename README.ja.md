@@ -114,11 +114,15 @@
 git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 
-# docker-compose.yml 設定を編集
-nano docker-compose.yml
+# ローカルのフルコンテナ開発
+cp .env.dev.example .env.dev
+mkdir -p data logs
+docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 
-# サービスを起動
-docker-compose up -d
+# サーバー / 本番デプロイ
+cp .env.pro.example .env.pro
+mkdir -p data logs
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 ```
 
 <details>
@@ -341,15 +345,15 @@ docker run --name new-api -d --restart always \
 <summary><strong>方法 1: Docker Compose（推奨）</strong></summary>
 
 ```bash
-# プロジェクトをクローン
-git clone https://github.com/QuantumNous/new-api.git
-cd new-api
+# ローカルのフルコンテナ環境
+cp .env.dev.example .env.dev
+mkdir -p data logs
+docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 
-# 設定を編集
-nano docker-compose.yml
-
-# サービスを起動
-docker-compose up -d
+# サーバー / 本番環境
+cp .env.pro.example .env.pro
+mkdir -p data logs
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 ```
 
 </details>

@@ -2,7 +2,7 @@ FRONTEND_DIR = ./web/default
 FRONTEND_CLASSIC_DIR = ./web/classic
 BACKEND_DIR = .
 
-.PHONY: all build-frontend build-frontend-classic build-all-frontends start-backend dev dev-api dev-web dev-web-classic
+.PHONY: all build-frontend build-frontend-classic build-all-frontends start-backend dev dev-api dev-up dev-down pro-up pro-down dev-web dev-web-classic
 
 all: build-all-frontends start-backend
 
@@ -21,8 +21,24 @@ start-backend:
 	@cd $(BACKEND_DIR) && go run main.go &
 
 dev-api:
-	@echo "Starting backend services (docker)..."
-	@docker compose -f docker-compose.dev.yml up -d
+	@echo "Starting local full-stack container (dev)..."
+	@mkdir -p data logs
+	@docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
+
+dev-up: dev-api
+
+dev-down:
+	@echo "Stopping local full-stack container (dev)..."
+	@docker compose --env-file .env.dev -f docker-compose.dev.yml down
+
+pro-up:
+	@echo "Starting production container set (pro)..."
+	@mkdir -p data logs
+	@docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
+
+pro-down:
+	@echo "Stopping production container set (pro)..."
+	@docker compose --env-file .env.pro -f docker-compose.pro.yml down
 
 dev-web:
 	@echo "Starting frontend dev server..."
@@ -32,4 +48,4 @@ dev-web-classic:
 	@echo "Starting classic frontend dev server..."
 	@cd $(FRONTEND_CLASSIC_DIR) && bun install && bun run dev
 
-dev: dev-api dev-web
+dev: dev-api

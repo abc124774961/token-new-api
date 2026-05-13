@@ -1100,6 +1100,7 @@
     "Default system prompt for this channel": "Default system prompt for this channel",
     "Default time granularity": "Default time granularity",
     "Default to auto groups": "Default to auto groups",
+    "Select a group (defaults to auto)": "Select a group (defaults to auto)",
     "Default TTL (seconds)": "Default TTL (seconds)",
     "Defaults to the wallet page when empty": "Defaults to the wallet page when empty",
     "Define API endpoints for this model (JSON format)": "Define API endpoints for this model (JSON format)",

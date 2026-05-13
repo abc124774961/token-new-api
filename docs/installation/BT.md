@@ -48,33 +48,37 @@
 5. 点击 **确认** 开始安装
 6. 等待安装完成后，访问 `http://您的服务器IP:3000` 即可使用
 
-### 方法二：使用 Docker Compose
+### 方法二：使用仓库内置生产版 Compose
 
 1. 在宝塔面板中创建网站目录，如 `/www/wwwroot/new-api`
-2. 创建 `docker-compose.yml` 文件：
-
-```yaml
-version: '3'
-services:
-  new-api:
-    image: calciumion/new-api:latest
-    container_name: new-api
-    restart: always
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./data:/data
-    environment:
-      - SESSION_SECRET=your_session_secret_here  # 请修改为随机字符串
-      - TZ=Asia/Shanghai
-```
-
-1. 在终端中进入目录并启动：
+2. 克隆仓库并进入目录：
 
 ```bash
-cd /www/wwwroot/new-api
-docker-compose up -d
+cd /www/wwwroot
+git clone https://github.com/QuantumNous/new-api.git
+cd new-api
 ```
+
+3. 复制生产环境变量模板并修改：
+
+```bash
+cp .env.pro.example .env.pro
+```
+
+4. 编辑 `.env.pro`，至少填写以下项目：
+   - `SESSION_SECRET`
+   - `CRYPTO_SECRET`
+   - `SQL_DSN`
+   - 如需 Redis，再填写 `REDIS_CONN_STRING`
+
+5. 创建持久化目录并启动：
+
+```bash
+mkdir -p data logs
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
+```
+
+6. 在宝塔网站或 Docker 面板中为 `3000` 端口配置反向代理和域名
 
 ***
 
@@ -125,11 +129,9 @@ volumes:
 ### Q4：如何更新版本？
 
 ```bash
-# 拉取最新镜像
-docker pull calciumion/new-api:latest
-
-# 重启容器
-docker-compose down && docker-compose up -d
+cd /www/wwwroot/new-api
+git pull
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 ```
 
 ***
@@ -148,4 +150,3 @@ docker-compose down && docker-compose up -d
 ![宝塔面板 Docker 安装](https://github.com/user-attachments/assets/7a6fc03e-c457-45e4-b8f9-184508fc26b0)
 
 > ⚠️ 注意：密钥为环境变量 `SESSION_SECRET`，请务必设置！
-

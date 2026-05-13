@@ -1,73 +1,46 @@
-# Frontend Development - Backend built from local source
+# Local full-container environment.
 #
 # Usage:
-#   1. docker compose -f docker-compose.dev.yml up -d
-#   2. cd web && bun install && bun run dev
-#   3. Open http://localhost:3001 (Rsbuild dev server, API auto-proxied to :3000)
-#
-# Rebuild backend after Go code changes:
-#   docker compose -f docker-compose.dev.yml up -d --build new-api
+#   1. cp .env.dev.example .env.dev
+#   2. mkdir -p data logs
+#   3. docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
+#   4. Open http://localhost:3000
 #
 # Stop:
-#   docker compose -f docker-compose.dev.yml down
+#   docker compose --env-file .env.dev -f docker-compose.dev.yml down
 #
 # Reset data:
-#   docker compose -f docker-compose.dev.yml down -v
+#   docker compose --env-file .env.dev -f docker-compose.dev.yml down -v
 
 services:
   new-api:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    image: new-api-dev:local
-    container_name: new-api-dev
+    image: token-new-api-dev:latest
+    container_name: token-new-api-dev
     restart: unless-stopped
+    command: --log-dir /app/logs
     ports:
-      - "3000:3000"
+      - "${APP_PORT:-3000}:3000"
     volumes:
-      - dev_data:/data
+      - ./data:/data
+      - ./logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      - SQL_DSN=postgresql://root:123456@postgres:5432/new-api
-      - REDIS_CONN_STRING=redis://redis
-      - TZ=Asia/Shanghai
-      - BATCH_UPDATE_ENABLED=true
-    depends_on:
-      redis:
-        condition: service_started
-      postgres:
-        condition: service_healthy
-    networks:
-      - dev-network
-
-  redis:
-    image: redis:7-alpine
-    container_name: new-api-dev-redis
-    restart: unless-stopped
-    networks:
-      - dev-network
-
-  postgres:
-    image: postgres:15-alpine
-    container_name: new-api-dev-pg
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: root
-      POSTGRES_PASSWORD: 123456
-      POSTGRES_DB: new-api
-    volumes:
-      - dev_pg_data:/var/lib/postgresql/data
-    networks:
-      - dev-network
+      TZ: ${TZ:-Asia/Shanghai}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      CRYPTO_SECRET: ${CRYPTO_SECRET:-}
+      SQL_DSN: ${SQL_DSN:-}
+      LOG_SQL_DSN: ${LOG_SQL_DSN:-}
+      SQLITE_PATH: ${SQLITE_PATH:-}
+      REDIS_CONN_STRING: ${REDIS_CONN_STRING:-}
+      ERROR_LOG_ENABLED: ${ERROR_LOG_ENABLED:-true}
+      BATCH_UPDATE_ENABLED: ${BATCH_UPDATE_ENABLED:-true}
+      NODE_NAME: ${NODE_NAME:-dev-node-1}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U root -d new-api"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-volumes:
-  dev_data:
-  dev_pg_data:
-
-networks:
-  dev-network:
-    driver: bridge
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

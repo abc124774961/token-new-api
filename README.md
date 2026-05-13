@@ -114,43 +114,33 @@
 git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 
-# Edit docker-compose.yml configuration
-nano docker-compose.yml
+# Local container development
+cp .env.dev.example .env.dev
+mkdir -p data logs
+docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 
-# Start the service
-docker-compose up -d
+# Server / production deployment
+cp .env.pro.example .env.pro
+mkdir -p data logs
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 ```
 
 > [!IMPORTANT]
-> **Production / Custom Deployment Notes**
+> **Supported Docker Environments**
 >
-> The repository `docker-compose.yml`, `Dockerfile`, `docker-compose.dev.yml`, and `docker-compose.local-dev.yml` are mainly for generic examples or local development.  
-> If your server uses a **custom production setup**, for example:
+> The repository now keeps only two Docker entrypoints:
 >
-> - a custom Dockerfile such as `Dockerfile.pro.cn`
-> - host-installed MySQL / Redis instead of database containers
-> - a custom `.env`, `SESSION_SECRET`, or `CRYPTO_SECRET`
-> - existing reverse proxy, domain, TLS, or container orchestration
+> - `docker-compose.dev.yml` + `Dockerfile.dev` for local full-container development
+> - `docker-compose.pro.yml` + `Dockerfile.pro.cn` for server / production deployment
 >
-> then **do not overwrite the server's compose files with the repo's default development files**. Keep using the server's existing production `compose` and `.env`.
-> The repository also includes a reference production template: `docker-compose.pro.yml`, paired with the China-friendly production Dockerfile `Dockerfile.pro.cn`.
+> Typical usage:
 >
-> Typical production setup notes:
->
-> - `build.dockerfile` should point to your production Dockerfile, such as `Dockerfile.pro.cn`
-> - `ports` usually stay as `3000:3000`
-> - `volumes` should at least mount `./data:/data` and `./logs:/app/logs`
-> - use `env_file` or `environment` to inject `TZ`, `SESSION_SECRET`, `CRYPTO_SECRET`, and `SQL_DSN`
-> - when the container must access host MySQL on Linux, you usually need:
->   - `extra_hosts: ["host.docker.internal:host-gateway"]`
->   - `SQL_DSN=...@tcp(host.docker.internal:3306)/...`
->
-> Additional `.env` notes:
->
-> - `SQL_DSN` must stay on **one single line**
-> - the MySQL user must allow connections from the Docker network
-> - if host MySQL only listens on `127.0.0.1`, the container will not be able to connect until `bind-address` and firewall rules are adjusted
-> - if Redis is not used, `REDIS_CONN_STRING` may be omitted; if host Redis is used, set it explicitly
+> - local machine: copy `.env.dev.example` to `.env.dev`
+> - server: copy `.env.pro.example` to `.env.pro`
+> - both environments mount `./data:/data` and `./logs:/app/logs`
+> - both environments expect `SQL_DSN` on a single line
+> - if a container needs host MySQL on Linux, use `host.docker.internal` together with `extra_hosts: ["host.docker.internal:host-gateway"]`
+> - if Redis is not used, `REDIS_CONN_STRING` can be left empty
 
 <details>
 <summary><strong>Using Docker Commands</strong></summary>
@@ -370,15 +360,15 @@ docker run --name new-api -d --restart always \
 <summary><strong>Method 1: Docker Compose (Recommended)</strong></summary>
 
 ```bash
-# Clone the project
-git clone https://github.com/QuantumNous/new-api.git
-cd new-api
+# Local full-container environment
+cp .env.dev.example .env.dev
+mkdir -p data logs
+docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 
-# Edit configuration
-nano docker-compose.yml
-
-# Start service
-docker-compose up -d
+# Server / production environment
+cp .env.pro.example .env.pro
+mkdir -p data logs
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 ```
 
 </details>

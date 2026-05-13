@@ -324,7 +324,7 @@ export function ApiKeysMutateDrawer({
                         options={groups}
                         value={field.value}
                         onValueChange={field.onChange}
-                        placeholder={t('Select a group')}
+                        placeholder={t('Select a group (defaults to auto)')}
                       />
                     </FormControl>
                     <FormMessage />

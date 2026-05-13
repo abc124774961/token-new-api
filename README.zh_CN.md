@@ -114,43 +114,31 @@
 git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 
-# 编辑 docker-compose.yml 配置
-nano docker-compose.yml
+# 本地容器开发
+cp .env.dev.example .env.dev
+mkdir -p data logs
+docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 
-# 启动服务
-docker-compose up -d
+# 服务器 / 生产部署
+cp .env.pro.example .env.pro
+mkdir -p data logs
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 ```
 
 > [!IMPORTANT]
-> **生产环境 / 定制部署说明**
+> **当前仅保留两套 Docker 环境**
 >
-> 仓库中的 `docker-compose.yml`、`Dockerfile`、`docker-compose.dev.yml`、`docker-compose.local-dev.yml` 主要用于通用示例或本地开发。  
-> 如果你的服务器使用的是**自定义生产配置**，例如：
+> - `docker-compose.dev.yml` + `Dockerfile.dev`：本地完整容器开发
+> - `docker-compose.pro.yml` + `Dockerfile.pro.cn`：服务器 / 生产部署
 >
-> - 使用自定义 Dockerfile（如 `Dockerfile.pro.cn`）
-> - 使用宿主机 MySQL / Redis，而不是容器内数据库
-> - 使用自定义 `.env`、`SESSION_SECRET`、`CRYPTO_SECRET`
-> - 已有宝塔反向代理、域名、证书或现成容器编排
+> 约定如下：
 >
-> 则**不要直接用仓库默认的开发版 compose 文件覆盖服务器配置**，应继续沿用服务器现有的生产版 `compose` 和 `.env`。
-> 仓库内也提供了一个可参考的生产模板：`docker-compose.pro.yml`，对应中国区构建 Dockerfile：`Dockerfile.pro.cn`。
->
-> 典型生产版配置要点：
->
-> - `build.dockerfile` 使用你的生产 Dockerfile（例如 `Dockerfile.pro.cn`）
-> - `ports` 通常保持 `3000:3000`
-> - `volumes` 至少挂载 `./data:/data` 和 `./logs:/app/logs`
-> - 使用 `env_file` 或 `environment` 注入 `TZ`、`SESSION_SECRET`、`CRYPTO_SECRET`、`SQL_DSN`
-> - 如果容器内需要访问宿主机 MySQL，Linux 下通常需要：
->   - `extra_hosts: ["host.docker.internal:host-gateway"]`
->   - `SQL_DSN=...@tcp(host.docker.internal:3306)/...`
->
-> `.env` 额外注意：
->
-> - `SQL_DSN` 必须写成**单行**，不要换行
-> - MySQL 用户需要允许来自 Docker 网段的连接（如 `'user'@'%'` 或指定 Docker 网段）
-> - 如果宿主机 MySQL 只监听 `127.0.0.1`，容器将无法连接，需要确认 `bind-address` 与防火墙规则
-> - 若未使用 Redis，可不配置 `REDIS_CONN_STRING`；若使用宿主机 Redis，则应显式填写宿主机地址
+> - 本地机器复制 `.env.dev.example` 为 `.env.dev`
+> - 服务器复制 `.env.pro.example` 为 `.env.pro`
+> - 两套环境都挂载 `./data:/data` 和 `./logs:/app/logs`
+> - `SQL_DSN` 必须保持为**单行**
+> - Linux 容器访问宿主机 MySQL 时，使用 `host.docker.internal`，并保留 `extra_hosts: ["host.docker.internal:host-gateway"]`
+> - 如果未使用 Redis，可留空 `REDIS_CONN_STRING`
 
 <details>
 <summary><strong>使用 Docker 命令</strong></summary>
@@ -370,15 +358,15 @@ docker run --name new-api -d --restart always \
 <summary><strong>方式 1：Docker Compose（推荐）</strong></summary>
 
 ```bash
-# 克隆项目
-git clone https://github.com/QuantumNous/new-api.git
-cd new-api
+# 本地完整容器环境
+cp .env.dev.example .env.dev
+mkdir -p data logs
+docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 
-# 编辑配置
-nano docker-compose.yml
-
-# 启动服务
-docker-compose up -d
+# 服务器 / 生产环境
+cp .env.pro.example .env.pro
+mkdir -p data logs
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 ```
 
 </details>

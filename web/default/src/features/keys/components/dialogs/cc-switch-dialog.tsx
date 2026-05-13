@@ -20,7 +20,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { getUserModels } from '@/lib/api'
+import { getTokenModels } from '../../api'
 import { Button } from '@/components/ui/button'
 import { ComboboxInput } from '@/components/ui/combobox-input'
 import {
@@ -97,6 +97,7 @@ interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
   tokenKey: string
+  tokenId?: number | null
 }
 
 export function CCSwitchDialog(props: Props) {
@@ -106,9 +107,9 @@ export function CCSwitchDialog(props: Props) {
   const [models, setModels] = useState<Record<string, string>>({})
 
   const { data: modelsData } = useQuery({
-    queryKey: ['user-models-ccswitch'],
-    queryFn: getUserModels,
-    enabled: props.open,
+    queryKey: ['token-models-ccswitch', props.tokenId],
+    queryFn: () => getTokenModels(props.tokenId!),
+    enabled: props.open && !!props.tokenId,
     staleTime: 5 * 60 * 1000,
   })
 

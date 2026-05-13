@@ -7,8 +7,10 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -92,6 +94,47 @@ func GetTokenKey(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
 		"key": token.GetFullKey(),
 	})
+}
+
+func GetTokenModels(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	userId := c.GetInt("id")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	token, err := model.GetTokenByIds(id, userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	if token.ModelLimitsEnabled {
+		models := token.GetModelLimits()
+		common.ApiSuccess(c, models)
+		return
+	}
+
+	userGroup, err := model.GetUserGroup(userId, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	tokenGroup := strings.TrimSpace(token.Group)
+	if tokenGroup == "" {
+		tokenGroup = "auto"
+	}
+	switch tokenGroup {
+	case "auto":
+		models := model.GetAvailableModelsForGroups(service.GetUserAutoGroup(userGroup))
+		common.ApiSuccess(c, models)
+	default:
+		common.SetContextKey(c, constant.ContextKeyTokenGroup, tokenGroup)
+		models := model.GetGroupAvailableModels(tokenGroup)
+		common.ApiSuccess(c, models)
+	}
 }
 
 func GetTokenStatus(c *gin.Context) {

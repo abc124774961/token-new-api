@@ -1975,6 +1975,7 @@
     "If authorization succeeds, the generated JSON will be inserted into the key field. You still need to save the channel to persist it.": "授权成功后，生成的 JSON 将插入密钥字段。您仍需保存频道以持久化。",
     "If connecting to upstream One API or New API relay projects, use OpenAI type instead unless you know what you are doing": "如果连接上游 One API 或 New API 中继项目，除非您知道自己在做什么，否则请使用 OpenAI 类型",
     "If default auto group is enabled, newly created tokens start with auto instead of an empty group.": "如果启用默认 auto 分组，新建令牌会默认使用 auto，而不是空分组。",
+    "Select a group (defaults to auto)": "选择分组（留空默认按 auto 处理）",
     "If the affinity channel fails and retry succeeds on another channel, update affinity to the successful channel.": "如果亲和到的渠道失败，重试到其他渠道成功后，将亲和更新到成功的渠道。",
     "If this keeps happening, please report it on GitHub Issues.": "如果问题持续出现，请到 GitHub Issues 反馈。",
     "Ignored upstream models": "已忽略上游模型",

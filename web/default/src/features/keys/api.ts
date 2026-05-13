@@ -106,6 +106,15 @@ export async function fetchTokenKey(
   return res.data
 }
 
+export async function getTokenModels(id: number): Promise<{
+  success: boolean
+  message?: string
+  data?: string[]
+}> {
+  const res = await api.get(`/api/token/${id}/models`)
+  return res.data
+}
+
 // Batch fetch real (unmasked) keys for multiple tokens
 export async function fetchTokenKeysBatch(ids: number[]): Promise<{
   success: boolean

@@ -114,11 +114,15 @@
 git clone https://github.com/QuantumNous/new-api.git
 cd new-api
 
-# 編輯 docker-compose.yml 配置
-nano docker-compose.yml
+# 本地容器開發
+cp .env.dev.example .env.dev
+mkdir -p data logs
+docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 
-# 啟動服務
-docker-compose up -d
+# 伺服器 / 生產部署
+cp .env.pro.example .env.pro
+mkdir -p data logs
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 ```
 
 <details>
@@ -339,15 +343,15 @@ docker run --name new-api -d --restart always \
 <summary><strong>方式 1：Docker Compose（推薦）</strong></summary>
 
 ```bash
-# 複製項目
-git clone https://github.com/QuantumNous/new-api.git
-cd new-api
+# 本地完整容器環境
+cp .env.dev.example .env.dev
+mkdir -p data logs
+docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 
-# 編輯配置
-nano docker-compose.yml
-
-# 啟動服務
-docker-compose up -d
+# 伺服器 / 生產環境
+cp .env.pro.example .env.pro
+mkdir -p data logs
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 ```
 
 </details>

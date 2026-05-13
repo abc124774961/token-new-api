@@ -28,6 +28,7 @@ import {
 } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
 import { selectFilter } from '../../../../helpers';
+import { fetchTokenModels } from '../../../../helpers/token';
 
 const APP_CONFIGS = {
   claude: {
@@ -84,12 +85,14 @@ export default function CCSwitchModal({
   visible,
   onClose,
   tokenKey,
-  modelOptions,
+  tokenId,
 }) {
   const { t } = useTranslation();
   const [app, setApp] = useState('claude');
   const [name, setName] = useState(APP_CONFIGS.claude.defaultName);
   const [models, setModels] = useState({});
+  const [modelOptions, setModelOptions] = useState([]);
+  const [loadingModels, setLoadingModels] = useState(false);
 
   const currentConfig = APP_CONFIGS[app];
 
@@ -100,6 +103,45 @@ export default function CCSwitchModal({
       setName(APP_CONFIGS.claude.defaultName);
     }
   }, [visible]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadTokenModels = async () => {
+      if (!visible || !tokenId) {
+        if (!visible) {
+          setModelOptions([]);
+        }
+        return;
+      }
+
+      setLoadingModels(true);
+      try {
+        const availableModels = await fetchTokenModels(tokenId);
+        if (cancelled) return;
+        setModelOptions(
+          availableModels.map((model) => ({
+            label: model,
+            value: model,
+          })),
+        );
+      } catch (error) {
+        if (!cancelled) {
+          setModelOptions([]);
+          Toast.error(error.message || t('加载模型失败'));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingModels(false);
+        }
+      }
+    };
+
+    loadTokenModels();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, tokenId, t]);
 
   const handleAppChange = (val) => {
     setApp(val);
@@ -116,7 +158,8 @@ export default function CCSwitchModal({
       Toast.warning(t('请选择主模型'));
       return;
     }
-    const url = buildCCSwitchURL(app, name, models, 'sk-' + tokenKey);
+    const apiKey = tokenKey.startsWith('sk-') ? tokenKey : `sk-${tokenKey}`;
+    const url = buildCCSwitchURL(app, name, models, apiKey);
     window.open(url, '_blank');
     onClose();
   };
@@ -182,6 +225,7 @@ export default function CCSwitchModal({
               onChange={(val) => handleModelChange(field.key, val)}
               filter={selectFilter}
               style={{ width: '100%' }}
+              loading={loadingModels}
               showClear
               searchable
               emptyContent={t('暂无数据')}

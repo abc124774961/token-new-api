@@ -26,6 +26,11 @@ type listModelsResponse struct {
 	Object  string             `json:"object"`
 }
 
+type stringListResponse struct {
+	Success bool     `json:"success"`
+	Data    []string `json:"data"`
+}
+
 func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
@@ -43,7 +48,7 @@ func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	model.DB = db
 	model.LOG_DB = db
 
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Token{}))
 
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
@@ -154,6 +159,26 @@ func pricingByModelName(pricings []model.Pricing) map[string]model.Pricing {
 	return byName
 }
 
+func withMemoryCacheEnabled(t *testing.T, enabled bool) {
+	t.Helper()
+
+	original := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = enabled
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = original
+	})
+}
+
+func withSelfUseModeEnabled(t *testing.T) {
+	t.Helper()
+
+	original := operation_setting.SelfUseModeEnabled
+	operation_setting.SelfUseModeEnabled = true
+	t.Cleanup(func() {
+		operation_setting.SelfUseModeEnabled = original
+	})
+}
+
 func TestListModelsIncludesTieredBillingModel(t *testing.T) {
 	withSelfUseModeDisabled(t)
 	withTieredBillingConfig(t, map[string]string{
@@ -239,4 +264,155 @@ func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 	require.NotContains(t, ids, "zz-token-tiered-empty-expr-model")
 	require.NotContains(t, ids, "zz-token-tiered-missing-expr-model")
 	require.NotContains(t, ids, "zz-token-unpriced-model")
+}
+
+func TestListModelsFiltersStaleAbilitiesWithoutMemoryCache(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	withMemoryCacheEnabled(t, false)
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       2001,
+		Username: "model-list-channel-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     1,
+		Name:   "primary-channel",
+		Key:    "test-key",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "zz-real-routable-model",
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "zz-real-routable-model", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "zz-stale-ability-model", ChannelId: 999, Enabled: true},
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	ctx.Set("id", 2001)
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	ids := decodeListModelsResponse(t, recorder)
+	require.Contains(t, ids, "zz-real-routable-model")
+	require.NotContains(t, ids, "zz-stale-ability-model")
+}
+
+func TestGetTokenModelsUsesTokenEffectiveGroupAvailability(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	withMemoryCacheEnabled(t, true)
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       2002,
+		Username: "token-model-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:      3001,
+		UserId:  2002,
+		Key:     "token-key",
+		Name:    "token-models",
+		Status:  common.TokenStatusEnabled,
+		Group:   "",
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     2,
+		Name:   "default-channel",
+		Key:    "test-key",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "zz-token-routable-model",
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "zz-token-routable-model", ChannelId: 2, Enabled: true},
+		{Group: "default", Model: "zz-token-stale-model", ChannelId: 998, Enabled: true},
+	}).Error)
+	model.InitChannelCache()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/token/3001/models", nil)
+	ctx.Params = gin.Params{{Key: "id", Value: "3001"}}
+	ctx.Set("id", 2002)
+
+	GetTokenModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload stringListResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Contains(t, payload.Data, "zz-token-routable-model")
+	require.NotContains(t, payload.Data, "zz-token-stale-model")
+}
+
+func TestGetTokenModelsTreatsEmptyGroupAsAuto(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	withMemoryCacheEnabled(t, true)
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       2003,
+		Username: "token-auto-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:      3002,
+		UserId:  2003,
+		Key:     "token-auto-key",
+		Name:    "token-auto-models",
+		Status:  common.TokenStatusEnabled,
+		Group:   "",
+	}).Error)
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["codex-plus","codex-pro"]`))
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["default"]`))
+	})
+	require.NoError(t, db.Create(&[]model.Channel{
+		{
+			Id:     3,
+			Name:   "codex-plus-channel",
+			Key:    "test-key",
+			Status: common.ChannelStatusEnabled,
+			Group:  "codex-plus",
+			Models: "zz-auto-codex-plus-model",
+		},
+		{
+			Id:     4,
+			Name:   "codex-pro-channel",
+			Key:    "test-key",
+			Status: common.ChannelStatusEnabled,
+			Group:  "codex-pro",
+			Models: "zz-auto-codex-pro-model",
+		},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "codex-plus", Model: "zz-auto-codex-plus-model", ChannelId: 3, Enabled: true},
+		{Group: "codex-pro", Model: "zz-auto-codex-pro-model", ChannelId: 4, Enabled: true},
+	}).Error)
+	model.InitChannelCache()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/token/3002/models", nil)
+	ctx.Params = gin.Params{{Key: "id", Value: "3002"}}
+	ctx.Set("id", 2003)
+
+	GetTokenModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload stringListResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Contains(t, payload.Data, "zz-auto-codex-plus-model")
+	require.Contains(t, payload.Data, "zz-auto-codex-pro-model")
 }
