@@ -121,6 +121,37 @@ nano docker-compose.yml
 docker-compose up -d
 ```
 
+> [!IMPORTANT]
+> **Production / Custom Deployment Notes**
+>
+> The repository `docker-compose.yml`, `Dockerfile`, `docker-compose.dev.yml`, and `docker-compose.local-dev.yml` are mainly for generic examples or local development.  
+> If your server uses a **custom production setup**, for example:
+>
+> - a custom Dockerfile such as `Dockerfile.pro.cn`
+> - host-installed MySQL / Redis instead of database containers
+> - a custom `.env`, `SESSION_SECRET`, or `CRYPTO_SECRET`
+> - existing reverse proxy, domain, TLS, or container orchestration
+>
+> then **do not overwrite the server's compose files with the repo's default development files**. Keep using the server's existing production `compose` and `.env`.
+> The repository also includes a reference production template: `docker-compose.pro.yml`, paired with the China-friendly production Dockerfile `Dockerfile.pro.cn`.
+>
+> Typical production setup notes:
+>
+> - `build.dockerfile` should point to your production Dockerfile, such as `Dockerfile.pro.cn`
+> - `ports` usually stay as `3000:3000`
+> - `volumes` should at least mount `./data:/data` and `./logs:/app/logs`
+> - use `env_file` or `environment` to inject `TZ`, `SESSION_SECRET`, `CRYPTO_SECRET`, and `SQL_DSN`
+> - when the container must access host MySQL on Linux, you usually need:
+>   - `extra_hosts: ["host.docker.internal:host-gateway"]`
+>   - `SQL_DSN=...@tcp(host.docker.internal:3306)/...`
+>
+> Additional `.env` notes:
+>
+> - `SQL_DSN` must stay on **one single line**
+> - the MySQL user must allow connections from the Docker network
+> - if host MySQL only listens on `127.0.0.1`, the container will not be able to connect until `bind-address` and firewall rules are adjusted
+> - if Redis is not used, `REDIS_CONN_STRING` may be omitted; if host Redis is used, set it explicitly
+
 <details>
 <summary><strong>Using Docker Commands</strong></summary>
 

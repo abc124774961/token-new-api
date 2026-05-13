@@ -1,0 +1,30 @@
+services:
+  new-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.pro.cn
+    image: token-new-api-pro:latest
+    container_name: token-new-api-pro
+    restart: unless-stopped
+    command: --log-dir /app/logs
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      CRYPTO_SECRET: ${CRYPTO_SECRET:-}
+      SQL_DSN: ${SQL_DSN:-}
+      ERROR_LOG_ENABLED: "true"
+      BATCH_UPDATE_ENABLED: "true"
+      NODE_NAME: ${NODE_NAME:-ecs-node-1}
+#      REDIS_CONN_STRING: ${REDIS_CONN_STRING:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
