@@ -70,6 +70,8 @@ cp .env.pro.example .env.pro
    - `CRYPTO_SECRET`
    - `SQL_DSN`
    - 如需 Redis，再填写 `REDIS_CONN_STRING`
+   - `SQL_DSN` 必须保持为单行，不要换行
+   - 如果数据库在宿主机上，容器内主机名使用 `host.docker.internal`
 
 5. 创建持久化目录并启动：
 
@@ -79,6 +81,11 @@ docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 ```
 
 6. 在宝塔网站或 Docker 面板中为 `3000` 端口配置反向代理和域名
+
+> 说明：
+>
+> - 服务器端只使用 `docker-compose.pro.yml` + `Dockerfile.pro.cn`
+> - 不要在服务器仓库里额外长期保留 `docker-compose.local.yml` 一类本地临时部署文件，否则后续 `git pull` 容易报冲突
 
 ***
 
@@ -130,6 +137,17 @@ volumes:
 
 ```bash
 cd /www/wwwroot/new-api
+git pull
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
+```
+
+如果 `git pull` 提示本地旧文件会被覆盖，先移走这些旧的本地部署文件再拉取：
+
+```bash
+cd /www/wwwroot/new-api
+mkdir -p /root/new-api-backup
+mv docker-compose.local.yml /root/new-api-backup/ 2>/dev/null || true
+mv Dockerfile.cn /root/new-api-backup/ 2>/dev/null || true
 git pull
 docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 ```

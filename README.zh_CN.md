@@ -135,6 +135,8 @@ docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 >
 > - 本地机器复制 `.env.dev.example` 为 `.env.dev`
 > - 服务器复制 `.env.pro.example` 为 `.env.pro`
+> - 本地只使用 `dev` 这一套；服务器只使用 `pro` 这一套
+> - 不要再在服务器仓库内额外维护 `docker-compose.local.yml` 等本地自定义部署文件，否则后续 `git pull` 容易冲突
 > - 两套环境都挂载 `./data:/data` 和 `./logs:/app/logs`
 > - `SQL_DSN` 必须保持为**单行**
 > - Linux 容器访问宿主机 MySQL 时，使用 `host.docker.internal`，并保留 `extra_hosts: ["host.docker.internal:host-gateway"]`
@@ -367,6 +369,30 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 cp .env.pro.example .env.pro
 mkdir -p data logs
 docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
+```
+
+</details>
+
+<details>
+<summary><strong>方式 1.1：服务器更新发布命令</strong></summary>
+
+```bash
+cd /www/wwwroot/token-new-api
+git pull
+mkdir -p data logs
+docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
+docker ps | grep token-new-api-pro
+docker logs --tail=100 token-new-api-pro
+```
+
+如果 `git pull` 提示有旧的本地部署文件会被覆盖，先把它们移走：
+
+```bash
+cd /www/wwwroot/token-new-api
+mkdir -p /root/token-new-api-backup
+mv docker-compose.local.yml /root/token-new-api-backup/ 2>/dev/null || true
+mv Dockerfile.cn /root/token-new-api-backup/ 2>/dev/null || true
+git pull
 ```
 
 </details>

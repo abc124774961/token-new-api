@@ -78,19 +78,47 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
+	var sawCompleted bool
+	var deliveredEventCount int
+	var bufferedEvents []bufferedResponsesStreamEvent
+
+	flushBufferedEvents := func() {
+		for _, event := range bufferedEvents {
+			sendResponsesStreamData(c, event.response, event.data)
+			deliveredEventCount++
+		}
+		bufferedEvents = nil
+	}
+
+	sendOrBufferEvent := func(streamResponse dto.ResponsesStreamResponse, data string, force bool) {
+		if deliveredEventCount > 0 || force {
+			if len(bufferedEvents) > 0 {
+				flushBufferedEvents()
+			}
+			sendResponsesStreamData(c, streamResponse, data)
+			deliveredEventCount++
+			return
+		}
+		bufferedEvents = append(bufferedEvents, bufferedResponsesStreamEvent{
+			response: streamResponse,
+			data:     data,
+		})
+	}
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
-
-		// 检查当前数据是否包含 completed 状态和 usage 信息
 		var streamResponse dto.ResponsesStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
 			sr.Error(err)
 			return
 		}
-		sendResponsesStreamData(c, streamResponse, data)
+
 		switch streamResponse.Type {
+		case "response.created", "response.in_progress":
+			sendOrBufferEvent(streamResponse, data, false)
 		case "response.completed":
+			sawCompleted = true
+			sendOrBufferEvent(streamResponse, data, true)
 			if streamResponse.Response != nil {
 				if streamResponse.Response.Usage != nil {
 					if streamResponse.Response.Usage.InputTokens != 0 {
@@ -113,10 +141,10 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				}
 			}
 		case "response.output_text.delta":
-			// 处理输出文本
+			sendOrBufferEvent(streamResponse, data, true)
 			responseTextBuilder.WriteString(streamResponse.Delta)
 		case dto.ResponsesOutputTypeItemDone:
-			// 函数调用处理
+			sendOrBufferEvent(streamResponse, data, true)
 			if streamResponse.Item != nil {
 				switch streamResponse.Item.Type {
 				case dto.BuildInCallWebSearchCall:
@@ -127,14 +155,21 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 					}
 				}
 			}
+		default:
+			sendOrBufferEvent(streamResponse, data, true)
 		}
 	})
 
+	if !sawCompleted && info != nil && info.StreamStatus != nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonEOF {
+		if deliveredEventCount == 0 {
+			return nil, types.NewOpenAIError(fmt.Errorf("responses stream ended before any usable event was delivered"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		}
+		return nil, types.NewOpenAIError(fmt.Errorf("responses stream ended before response.completed"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+	}
+
 	if usage.CompletionTokens == 0 {
-		// 计算输出文本的 token 数量
 		tempStr := responseTextBuilder.String()
 		if len(tempStr) > 0 {
-			// 非正常结束，使用输出文本的 token 数量
 			completionTokens := service.CountTextToken(tempStr, info.UpstreamModelName)
 			usage.CompletionTokens = completionTokens
 		}
@@ -147,4 +182,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 
 	return usage, nil
+}
+
+type bufferedResponsesStreamEvent struct {
+	response dto.ResponsesStreamResponse
+	data     string
 }
