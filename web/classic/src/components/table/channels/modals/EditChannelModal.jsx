@@ -154,7 +154,7 @@ function type2secretPrompt(type) {
     case 51:
       return '按照如下格式输入: AccessKey|SecretAccessKey';
     case 57:
-      return '请输入 JSON 格式的 OAuth 凭据（必须包含 access_token 和 account_id）';
+      return '请输入 Codex OAuth JSON 凭据（必须包含 access_token 和 account_id）。标准 OpenAI API Key 请使用 OpenAI 渠道';
     default:
       return '请输入渠道对应的鉴权密钥';
   }
@@ -200,6 +200,7 @@ const EditChannelModal = (props) => {
     vertex_key_type: 'json',
     // 仅 AWS: 密钥格式和区域（存入 settings.aws_key_type 和 settings.aws_region）
     aws_key_type: 'ak_sk',
+    wire_api: '',
     // 企业账户设置
     is_enterprise_account: false,
     // 字段透传控制默认值
@@ -897,6 +898,10 @@ const EditChannelModal = (props) => {
           data.vertex_key_type = parsedSettings.vertex_key_type || 'json';
           // 读取 AWS 密钥格式和区域
           data.aws_key_type = parsedSettings.aws_key_type || 'ak_sk';
+          data.wire_api =
+            typeof parsedSettings.wire_api === 'string'
+              ? parsedSettings.wire_api.trim()
+              : '';
           // 读取企业账户设置
           data.is_enterprise_account =
             parsedSettings.openrouter_enterprise === true;
@@ -933,6 +938,7 @@ const EditChannelModal = (props) => {
           data.region = '';
           data.vertex_key_type = 'json';
           data.aws_key_type = 'ak_sk';
+          data.wire_api = '';
           data.is_enterprise_account = false;
           data.allow_service_tier = false;
           data.disable_store = false;
@@ -951,6 +957,7 @@ const EditChannelModal = (props) => {
         // 兼容历史数据：老渠道没有 settings 时，默认按 json 展示
         data.vertex_key_type = 'json';
         data.aws_key_type = 'ak_sk';
+        data.wire_api = '';
         data.is_enterprise_account = false;
         data.allow_service_tier = false;
         data.disable_store = false;
@@ -1778,6 +1785,12 @@ const EditChannelModal = (props) => {
       settings.aws_key_type = localInputs.aws_key_type || 'ak_sk';
     }
 
+    if (localInputs.type === 1 && String(localInputs.wire_api || '').trim()) {
+      settings.wire_api = String(localInputs.wire_api || '').trim();
+    } else if ('wire_api' in settings) {
+      delete settings.wire_api;
+    }
+
     // type === 41 (Vertex): 始终保存 vertex_key_type 到 settings，避免编辑时被重置
     if (localInputs.type === 41) {
       settings.vertex_key_type = localInputs.vertex_key_type || 'json';
@@ -1840,6 +1853,7 @@ const EditChannelModal = (props) => {
     delete localInputs.vertex_key_type;
     // 顶层的 aws_key_type 不应发送给后端
     delete localInputs.aws_key_type;
+    delete localInputs.wire_api;
     // 清理字段透传控制的临时字段
     delete localInputs.allow_service_tier;
     delete localInputs.disable_store;
@@ -2842,7 +2856,7 @@ const EditChannelModal = (props) => {
                                 <div className='flex flex-col gap-2'>
                                   <Text type='tertiary' size='small'>
                                     {t(
-                                      '仅支持 JSON 对象，必须包含 access_token 与 account_id',
+                                      '仅支持 Codex OAuth JSON 对象，必须包含 access_token 与 account_id。标准 OpenAI API Key 与 Codex 模型请使用 OpenAI 渠道',
                                     )}
                                   </Text>
 
@@ -3360,23 +3374,46 @@ const EditChannelModal = (props) => {
                         inputs.type !== 22 &&
                         inputs.type !== 36 &&
                         (inputs.type !== 45 || doubaoApiEditUnlocked) && (
-                          <div>
-                            <Form.Input
-                              field='base_url'
-                              label={t('API地址')}
-                              placeholder={t(
-                                '此项可选，用于通过自定义API地址来进行 API 调用，末尾不要带/v1和/',
-                              )}
-                              onChange={(value) =>
-                                handleInputChange('base_url', value)
-                              }
-                              showClear
-                              disabled={isIonetLocked}
-                              extraText={t(
-                                '对于官方渠道，new-api已经内置地址，除非是第三方代理站点或者Azure的特殊接入地址，否则不需要填写',
-                              )}
-                            />
-                          </div>
+                          <>
+                            <div>
+                              <Form.Input
+                                field='base_url'
+                                label={t('API地址')}
+                                placeholder={t(
+                                  '此项可选，用于通过自定义API地址来进行 API 调用，末尾不要带/v1和/',
+                                )}
+                                onChange={(value) =>
+                                  handleInputChange('base_url', value)
+                                }
+                                showClear
+                                disabled={isIonetLocked}
+                                extraText={t(
+                                  '对于官方渠道，new-api已经内置地址，除非是第三方代理站点或者Azure的特殊接入地址，否则不需要填写',
+                                )}
+                              />
+                            </div>
+                            {inputs.type === 1 && (
+                              <div>
+                                <Form.Input
+                                  field='wire_api'
+                                  label={t('Wire API')}
+                                  placeholder={t(
+                                    '留空走默认 /v1/*，例如填写 responses 或 /responses',
+                                  )}
+                                  onChange={(value) => {
+                                    handleChannelOtherSettingsChange(
+                                      'wire_api',
+                                      value,
+                                    );
+                                  }}
+                                  showClear
+                                  extraText={t(
+                                    '留空表示默认 /v1/*。可填写 responses、/responses，或任意自定义上游路径',
+                                  )}
+                                />
+                              </div>
+                            )}
+                          </>
                         )}
 
                       {inputs.type === 22 && (

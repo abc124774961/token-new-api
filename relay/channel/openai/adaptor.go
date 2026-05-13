@@ -40,6 +40,45 @@ type Adaptor struct {
 	ResponseFormat string
 }
 
+func rewriteResponsesRequestPath(info *relaycommon.RelayInfo, requestPath string) string {
+	if info == nil {
+		return requestPath
+	}
+	if info.RelayMode != relayconstant.RelayModeResponses &&
+		info.RelayMode != relayconstant.RelayModeResponsesCompact {
+		return requestPath
+	}
+
+	customPath := info.ChannelOtherSettings.GetOpenAIWireAPIPath(
+		info.RelayMode == relayconstant.RelayModeResponsesCompact,
+	)
+	if customPath == "" {
+		return requestPath
+	}
+
+	if requestPath == "" {
+		return customPath
+	}
+
+	path := requestPath
+	query := ""
+	if idx := strings.Index(path, "?"); idx >= 0 {
+		query = path[idx:]
+		path = path[:idx]
+	}
+
+	switch path {
+	case "/v1/responses", "/responses":
+		path = customPath
+	case "/v1/responses/compact", "/responses/compact":
+		path = customPath
+	default:
+		path = customPath
+	}
+
+	return path + query
+}
+
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
 	// 使用 service.GeminiToOpenAIRequest 转换请求格式
 	openaiRequest, err := service.GeminiToOpenAIRequest(request, info)
@@ -168,7 +207,8 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			info.RelayMode != relayconstant.RelayModeResponsesCompact {
 			return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
 		}
-		return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, info.RequestURLPath, info.ChannelType), nil
+		requestURLPath := rewriteResponsesRequestPath(info, info.RequestURLPath)
+		return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, requestURLPath, info.ChannelType), nil
 	}
 }
 

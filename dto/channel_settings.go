@@ -1,5 +1,7 @@
 package dto
 
+import "strings"
+
 type ChannelSettings struct {
 	ForceFormat            bool   `json:"force_format,omitempty"`
 	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
@@ -25,6 +27,7 @@ const (
 
 type ChannelOtherSettings struct {
 	AzureResponsesVersion                 string        `json:"azure_responses_version,omitempty"`
+	WireAPI                               string        `json:"wire_api,omitempty"`
 	VertexKeyType                         VertexKeyType `json:"vertex_key_type,omitempty"` // "json" or "api_key"
 	OpenRouterEnterprise                  *bool         `json:"openrouter_enterprise,omitempty"`
 	ClaudeBetaQuery                       bool          `json:"claude_beta_query,omitempty"`         // Claude 渠道是否强制追加 ?beta=true
@@ -48,4 +51,41 @@ func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
 		return false
 	}
 	return *s.OpenRouterEnterprise
+}
+
+func (s *ChannelOtherSettings) UsesResponsesWireAPI() bool {
+	if s == nil {
+		return false
+	}
+	return strings.TrimSpace(s.WireAPI) != ""
+}
+
+func (s *ChannelOtherSettings) GetOpenAIWireAPIPath(isCompact bool) string {
+	if s == nil {
+		return ""
+	}
+
+	wireAPI := strings.TrimSpace(s.WireAPI)
+	if wireAPI == "" {
+		return ""
+	}
+
+	if strings.EqualFold(wireAPI, "responses") {
+		if isCompact {
+			return "/responses/compact"
+		}
+		return "/responses"
+	}
+
+	if !strings.HasPrefix(wireAPI, "/") {
+		wireAPI = "/" + wireAPI
+	}
+	wireAPI = strings.TrimRight(wireAPI, "/")
+	if wireAPI == "" {
+		return ""
+	}
+	if isCompact && !strings.HasSuffix(wireAPI, "/compact") {
+		return wireAPI + "/compact"
+	}
+	return wireAPI
 }

@@ -66,6 +66,7 @@ export const channelFormSchema = z.object({
   vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
   aws_key_type: z.enum(['ak_sk', 'api_key']).optional(), // AWS specific
   azure_responses_version: z.string().optional(), // Azure specific
+  wire_api: z.string().optional(), // OpenAI-compatible wire API override
   // Field passthrough controls (stored in settings JSON)
   allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic
   disable_store: z.boolean().optional(), // OpenAI only
@@ -124,6 +125,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   vertex_key_type: 'json',
   aws_key_type: 'ak_sk',
   azure_responses_version: '',
+  wire_api: '',
   // Field passthrough controls
   allow_service_tier: false,
   disable_store: false,
@@ -179,6 +181,7 @@ export function transformChannelToFormDefaults(
   let azureResponsesVersion = ''
   let isEnterpriseAccount = false
   let awsKeyType: 'ak_sk' | 'api_key' = 'ak_sk'
+  let wireAPI = ''
   let allowServiceTier = false
   let disableStore = false
   let allowSafetyIdentifier = false
@@ -197,6 +200,8 @@ export function transformChannelToFormDefaults(
       azureResponsesVersion = parsed.azure_responses_version || ''
       isEnterpriseAccount = parsed.openrouter_enterprise === true
       awsKeyType = parsed.aws_key_type || 'ak_sk'
+      wireAPI =
+        typeof parsed.wire_api === 'string' ? parsed.wire_api.trim() : ''
       allowServiceTier = parsed.allow_service_tier === true
       disableStore = parsed.disable_store === true
       allowSafetyIdentifier = parsed.allow_safety_identifier === true
@@ -252,6 +257,7 @@ export function transformChannelToFormDefaults(
     vertex_key_type: vertexKeyType,
     azure_responses_version: azureResponsesVersion,
     aws_key_type: awsKeyType,
+    wire_api: wireAPI,
     allow_service_tier: allowServiceTier,
     disable_store: disableStore,
     allow_include_obfuscation: allowIncludeObfuscation,
@@ -308,6 +314,13 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.azure_responses_version = formData.azure_responses_version
   } else if ('azure_responses_version' in settingsObj) {
     delete settingsObj.azure_responses_version
+  }
+
+  const wireAPI = String(formData.wire_api || '').trim()
+  if (formData.type === 1 && wireAPI) {
+    settingsObj.wire_api = wireAPI
+  } else if ('wire_api' in settingsObj) {
+    delete settingsObj.wire_api
   }
 
   // Add enterprise account setting for OpenRouter (type 20)

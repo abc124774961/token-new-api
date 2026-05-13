@@ -1807,27 +1807,78 @@ export function ChannelMutateDrawer({
 
                 {/* General base_url for other types */}
                 {![3, 8, 22, 36, 45].includes(currentType) && (
-                  <FormField
-                    control={form.control}
-                    name='base_url'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('Base URL')}</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder={t(FIELD_PLACEHOLDERS.BASE_URL)}
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          {t(
-                            'Custom API base URL. For official channels, New API has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
-                          )}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
+                  <>
+                    <FormField
+                      control={form.control}
+                      name='base_url'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Base URL')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder={t(FIELD_PLACEHOLDERS.BASE_URL)}
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t(
+                              'Custom API base URL. For official channels, New API has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    {currentType === 1 && (
+                      <FormField
+                        control={form.control}
+                        name='wire_api'
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t('Wire API')}</FormLabel>
+                            <FormControl>
+                              <Combobox
+                                options={[
+                                  {
+                                    value: 'responses',
+                                    label: t('responses (/responses)'),
+                                  },
+                                  {
+                                    value: '/responses',
+                                    label: t('Custom example: /responses'),
+                                  },
+                                  {
+                                    value: '/backend-api/codex/responses',
+                                    label: t(
+                                      'Custom example: /backend-api/codex/responses'
+                                    ),
+                                  },
+                                ]}
+                                value={field.value || ''}
+                                onValueChange={(value) =>
+                                  field.onChange(value || '')
+                                }
+                                placeholder={t('Default (/v1/*)')}
+                                searchPlaceholder={t(
+                                  'Type custom upstream path, e.g. /responses'
+                                )}
+                                emptyText={t(
+                                  'No preset found. Press Enter to use custom value.'
+                                )}
+                                allowCustomValue
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              {t(
+                                'Leave empty to keep the default /v1/* path. You can enter responses, /responses, or any custom upstream path.'
+                              )}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
                     )}
-                  />
+                  </>
                 )}
 
                 <div className='border-border/60 border-t pt-4'>
@@ -2029,7 +2080,7 @@ export function ChannelMutateDrawer({
                         </div>
                         <div className='text-muted-foreground text-xs'>
                           {t(
-                            'Codex channels use an OAuth JSON credential as the key.'
+                            'Codex channels use an OAuth JSON credential as the key. For standard OpenAI API keys and Codex models, use the OpenAI channel.'
                           )}
                         </div>
                       </div>

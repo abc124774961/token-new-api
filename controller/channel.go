@@ -471,11 +471,11 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		trimmedKey := strings.TrimSpace(channel.Key)
 		if isAdd || trimmedKey != "" {
 			if !strings.HasPrefix(trimmedKey, "{") {
-				return fmt.Errorf("Codex key must be a valid JSON object")
+				return fmt.Errorf("Codex channel only supports OAuth JSON credentials. Use OpenAI channel for standard API keys")
 			}
 			var keyMap map[string]any
 			if err := common.Unmarshal([]byte(trimmedKey), &keyMap); err != nil {
-				return fmt.Errorf("Codex key must be a valid JSON object")
+				return fmt.Errorf("Codex key must be a valid OAuth JSON object")
 			}
 			if v, ok := keyMap["access_token"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
 				return fmt.Errorf("Codex key JSON must include access_token")

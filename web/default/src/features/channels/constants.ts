@@ -391,7 +391,7 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   33: 'Format: Ak|Sk|Region',
   50: 'Format: AccessKey|SecretKey (or just ApiKey if upstream is New API)',
   51: 'Format: Access Key ID|Secret Access Key',
-  57: 'Paste Codex OAuth JSON credential (access_token / refresh_token / account_id)',
+  57: 'Paste Codex OAuth JSON credential (access_token / refresh_token / account_id). Use OpenAI channel for standard API keys',
 }
 
 export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {
