@@ -1,0 +1,38 @@
+services:
+  new-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    image: token-new-api-local-dev:latest
+    container_name: token-new-api-local-dev
+    restart: unless-stopped
+    command: --log-dir /app/logs
+    env_file:
+      - .env
+    environment:
+      REDIS_CONN_STRING: redis://redis:6379/0
+      TZ: Asia/Shanghai
+      ERROR_LOG_ENABLED: "true"
+      BATCH_UPDATE_ENABLED: "true"
+      NODE_NAME: local-dev
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_started
+    networks:
+      - local-dev-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: token-new-api-local-redis
+    restart: unless-stopped
+    networks:
+      - local-dev-network
+
+networks:
+  local-dev-network:
+    driver: bridge
