@@ -199,7 +199,8 @@ export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
       ),
       cell: ({ row }) => {
         const apiKey = row.original
-        const group = row.getValue('group') as string
+        const rawGroup = row.getValue('group') as string
+        const group = rawGroup?.trim() || 'auto'
         const ratio = group && group !== 'auto' ? groupRatios[group] : undefined
 
         if (group === 'auto') {

@@ -89,7 +89,8 @@ const renderStatus = (text, record, t) => {
 
 // Render group column
 const renderGroupColumn = (text, record, t, groupRatios = {}) => {
-  if (text === 'auto') {
+  const normalizedGroup = text || 'auto';
+  if (normalizedGroup === 'auto') {
     return (
       <Tooltip
         content={t(
@@ -98,16 +99,16 @@ const renderGroupColumn = (text, record, t, groupRatios = {}) => {
         position='top'
       >
         <Tag color='white' shape='circle'>
-          {t('智能熔断')}
+          {t('auto')}
           {record && record.cross_group_retry ? `(${t('跨分组')})` : ''}
         </Tag>
       </Tooltip>
     );
   }
-  const ratio = groupRatios[text];
+  const ratio = groupRatios[normalizedGroup];
   return (
     <span className='flex items-center gap-1'>
-      {renderGroup(text)}
+      {renderGroup(normalizedGroup)}
       {ratio !== undefined && (
         <Tag size='small' color='green' shape='circle'>
           {ratio}x

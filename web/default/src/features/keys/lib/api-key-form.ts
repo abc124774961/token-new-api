@@ -98,6 +98,7 @@ export function transformFormDataToPayload(
 export function transformApiKeyToFormDefaults(
   apiKey: ApiKey
 ): ApiKeyFormValues {
+  const normalizedGroup = apiKey.group || 'auto'
   return {
     name: apiKey.name,
     remain_quota_dollars: quotaUnitsToDollars(apiKey.remain_quota),
@@ -110,8 +111,9 @@ export function transformApiKeyToFormDefaults(
       ? apiKey.model_limits.split(',').filter(Boolean)
       : [],
     allow_ips: apiKey.allow_ips || '',
-    group: apiKey.group || DEFAULT_GROUP,
-    cross_group_retry: !!apiKey.cross_group_retry,
+    group: normalizedGroup,
+    cross_group_retry:
+      normalizedGroup === 'auto' ? !!apiKey.cross_group_retry : false,
     tokenCount: 1,
   }
 }

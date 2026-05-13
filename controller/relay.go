@@ -187,7 +187,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	for ; retryParam.HasBudget(common.RetryTimes); retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
@@ -228,9 +228,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
-		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+		willRetry := shouldRetry(c, newAPIError, retryParam, common.RetryTimes-retryParam.GetRetry())
+		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, !willRetry)
 
-		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+		if !willRetry {
 			break
 		}
 	}
@@ -321,7 +322,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	return channel, nil
 }
 
-func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
+func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *service.RetryParam, retryTimes int) bool {
 	if openaiErr == nil {
 		return false
 	}
@@ -333,6 +334,17 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	}
 	if types.IsSkipRetryError(openaiErr) {
 		return false
+	}
+	if retryParam != nil && shouldFailoverToAlternativeChannel(c, openaiErr) {
+		canFailover, forceNextAutoGroup := service.GetChannelFailoverPlan(retryParam)
+		if !canFailover {
+			return false
+		}
+		retryParam.AllowExtraRetry(1)
+		if forceNextAutoGroup {
+			common.SetContextKey(c, constant.ContextKeyForceNextAutoGroup, true)
+		}
+		return true
 	}
 	if retryTimes <= 0 {
 		return false
@@ -353,7 +365,49 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	return operation_setting.ShouldRetryByStatusCode(code)
 }
 
-func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
+func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIError) bool {
+	if openaiErr == nil {
+		return false
+	}
+	if _, ok := c.Get("specific_channel_id"); ok {
+		return false
+	}
+	if shouldFailoverOnConcurrencyLimit(c, openaiErr) {
+		return true
+	}
+	code := openaiErr.StatusCode
+	if code < 100 || code > 599 {
+		return true
+	}
+	if code >= http.StatusInternalServerError {
+		return true
+	}
+	switch openaiErr.GetErrorCode() {
+	case types.ErrorCodeDoRequestFailed,
+		types.ErrorCodeReadResponseBodyFailed,
+		types.ErrorCodeBadResponse,
+		types.ErrorCodeBadResponseBody:
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldFailoverOnConcurrencyLimit(c *gin.Context, openaiErr *types.NewAPIError) bool {
+	if openaiErr == nil || openaiErr.StatusCode != http.StatusTooManyRequests {
+		return false
+	}
+	if _, ok := c.Get("specific_channel_id"); ok {
+		return false
+	}
+	message := strings.ToLower(openaiErr.Error())
+	if !strings.Contains(message, "concurrency limit exceeded for user") {
+		return false
+	}
+	return true
+}
+
+func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, persistLog bool) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
@@ -363,7 +417,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 
-	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
+	if persistLog && constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
 		// 保存错误日志到mysql中
 		userId := c.GetInt("id")
 		tokenName := c.GetString("token_name")
@@ -552,10 +606,16 @@ func RelayTask(c *gin.Context) {
 		}
 
 		if !taskErr.LocalError {
+			willRetry := shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry())
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
+				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode),
+				!willRetry)
+			if !willRetry {
+				break
+			}
+			continue
 		}
 
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
