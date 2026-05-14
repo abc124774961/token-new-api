@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
@@ -152,6 +153,36 @@ func TestCacheGetRandomSatisfiedChannelPrefersUnusedPeerChannel(t *testing.T) {
 	require.Equal(t, "default", group)
 	require.NotNil(t, channel)
 	require.Equal(t, 102, channel.Id)
+}
+
+func TestCacheGetRandomSatisfiedChannelSkipsFullConcurrencyChannel(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	seedChannelSelectChannel(t, db, 111, "default", "gpt-5.5", 10, 100)
+	seedChannelSelectChannel(t, db, 112, "default", "gpt-5.5", 10, 100)
+	limitSetting := `{"max_concurrency":1}`
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 111).Update("setting", limitSetting).Error)
+	model.InitChannelCache()
+
+	lease, ok := TryAcquireChannelConcurrency(111, dto.ChannelSettings{MaxConcurrency: 1})
+	require.True(t, ok)
+	defer lease.Release()
+
+	param := &RetryParam{
+		Ctx:        newRetryContext(),
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.Equal(t, "default", group)
+	require.NotNil(t, channel)
+	require.Equal(t, 112, channel.Id)
 }
 
 func TestCacheGetRandomSatisfiedChannelAutoMovesToNextGroupAfterCurrentGroupExhausted(t *testing.T) {

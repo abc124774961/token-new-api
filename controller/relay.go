@@ -195,10 +195,29 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = channelErr
 			break
 		}
+		channelSetting := channel.GetSetting()
+		if contextSetting, ok := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting); ok {
+			channelSetting = contextSetting
+		}
+		concurrencyLease, acquired := service.TryAcquireChannelConcurrency(channel.Id, channelSetting)
+		if !acquired {
+			newAPIError = types.NewErrorWithStatusCode(
+				fmt.Errorf("channel #%d reached configured max concurrency %d", channel.Id, concurrencyLease.Limit),
+				types.ErrorCodeChannelConcurrencyLimit,
+				http.StatusTooManyRequests,
+			)
+			if relayInfo.ChannelMeta == nil {
+				relayInfo.InitChannelMeta(c)
+			}
+			retryParam.AllowExtraRetry(1)
+			addUsedChannel(c, channel.Id)
+			continue
+		}
 
 		addUsedChannel(c, channel.Id)
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
+			concurrencyLease.Release()
 			// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
 			if common.IsRequestBodyTooLargeError(bodyErr) || errors.Is(bodyErr, common.ErrRequestBodyTooLarge) {
 				newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusRequestEntityTooLarge, types.ErrOptionWithSkipRetry())
@@ -221,6 +240,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		if newAPIError == nil {
+			concurrencyLease.Release()
 			relayInfo.LastError = nil
 			service.ClearChannelFailureAvoidance(channel.Id)
 			return
@@ -228,6 +248,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
+		if service.IsUpstreamConcurrencyLimitError(newAPIError) {
+			service.LearnChannelConcurrencyLimit(c, channel.Id, concurrencyLease.CurrentActive(), newAPIError)
+		}
+		concurrencyLease.Release()
 
 		willRetry := shouldRetry(c, newAPIError, retryParam, common.RetryTimes-retryParam.GetRetry())
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, !willRetry)

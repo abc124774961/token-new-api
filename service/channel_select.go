@@ -220,7 +220,7 @@ func selectChannelForGroup(ctx *gin.Context, group string, modelName string, ret
 	excludedChannelIDs := getUsedChannelSet(ctx)
 	avoidedChannelIDs := getAvoidedChannelSet()
 	excludedWithAvoided := mergeChannelSets(excludedChannelIDs, avoidedChannelIDs)
-	channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, excludedWithAvoided)
+	channel, err := selectNonFullChannel(group, modelName, retry, excludedWithAvoided)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +229,7 @@ func selectChannelForGroup(ctx *gin.Context, group string, modelName string, ret
 	}
 	if len(avoidedChannelIDs) > 0 && allowUsedChannelFallback {
 		// Prefer a temporarily avoided channel over failing the request when no healthy peer exists.
-		channel, err = model.GetRandomSatisfiedChannel(group, modelName, retry, excludedChannelIDs)
+		channel, err = selectNonFullChannel(group, modelName, retry, excludedChannelIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -244,7 +244,7 @@ func selectChannelForGroup(ctx *gin.Context, group string, modelName string, ret
 	// All peer channels in the current priority/group have been tried. Allow reusing an
 	// already-used channel so multi-key channels can continue rotating to another key.
 	if len(avoidedChannelIDs) > 0 {
-		channel, err = model.GetRandomSatisfiedChannel(group, modelName, retry, avoidedChannelIDs)
+		channel, err = selectNonFullChannel(group, modelName, retry, avoidedChannelIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -252,12 +252,26 @@ func selectChannelForGroup(ctx *gin.Context, group string, modelName string, ret
 			return channel, nil
 		}
 	}
-	return model.GetRandomSatisfiedChannel(group, modelName, retry, nil)
+	return selectNonFullChannel(group, modelName, retry, nil)
 }
 
 func hasAlternativeChannelInGroup(ctx *gin.Context, group string, modelName string, retry int) bool {
-	channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, mergeChannelSets(getUsedChannelSet(ctx), getAvoidedChannelSet()))
+	channel, err := selectNonFullChannel(group, modelName, retry, mergeChannelSets(getUsedChannelSet(ctx), getAvoidedChannelSet()))
 	return err == nil && channel != nil
+}
+
+func selectNonFullChannel(group string, modelName string, retry int, excludedChannelIDs map[int]struct{}) (*model.Channel, error) {
+	excluded := mergeChannelSets(excludedChannelIDs)
+	for {
+		channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, excluded)
+		if err != nil || channel == nil {
+			return channel, err
+		}
+		if !IsChannelConcurrencyFull(channel.Id, channel.GetSetting()) {
+			return channel, nil
+		}
+		excluded[channel.Id] = struct{}{}
+	}
 }
 
 func resolveAutoGroupCursor(ctx *gin.Context, autoGroups []string) (string, int) {
@@ -378,7 +392,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			usedChannelIDs := getUsedChannelSet(param.Ctx)
 			for i := startGroupIndex; i < len(autoGroups); i++ {
 				autoGroup := autoGroups[i]
-				channel, err = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, param.GetRetry(), usedChannelIDs)
+				channel, err = selectNonFullChannel(autoGroup, param.ModelName, param.GetRetry(), usedChannelIDs)
 				if err != nil {
 					return nil, autoGroup, err
 				}

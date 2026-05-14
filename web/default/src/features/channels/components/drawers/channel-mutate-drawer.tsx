@@ -239,6 +239,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.thinking_to_content ||
     values.pass_through_body_enabled ||
     values.system_prompt_override ||
+    Boolean(values.max_concurrency) ||
     values.claude_beta_query ||
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
@@ -3214,6 +3215,39 @@ export function ChannelMutateDrawer({
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name='max_concurrency'
+                        render={({ field }) => (
+                          <FormItem className='px-4 py-3'>
+                            <FormLabel>{t('Max Concurrency')}</FormLabel>
+                            <FormControl>
+                              <Input
+                                type='number'
+                                min='0'
+                                step='1'
+                                value={field.value ?? 0}
+                                onChange={(event) => {
+                                  const value = event.target.valueAsNumber
+                                  field.onChange(
+                                    Number.isFinite(value) ? value : 0
+                                  )
+                                }}
+                                name={field.name}
+                                onBlur={field.onBlur}
+                                ref={field.ref}
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              {t(
+                                'Maximum in-flight requests for this channel. 0 means unlimited; upstream pending-limit errors can lower this automatically.'
+                              )}
+                            </FormDescription>
+                            <FormMessage />
                           </FormItem>
                         )}
                       />
