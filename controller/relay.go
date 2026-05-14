@@ -409,7 +409,8 @@ func shouldFailoverOnConcurrencyLimit(c *gin.Context, openaiErr *types.NewAPIErr
 		return false
 	}
 	message := strings.ToLower(openaiErr.Error())
-	if !strings.Contains(message, "concurrency limit exceeded for user") {
+	if !strings.Contains(message, "concurrency limit exceeded for user") &&
+		!strings.Contains(message, "too many pending requests") {
 		return false
 	}
 	return true

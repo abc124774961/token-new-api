@@ -179,6 +179,34 @@ func TestShouldRetryAllowsConcurrencyLimitFailoverWhenAlternativeGroupExists(t *
 	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyForceNextAutoGroup))
 }
 
+func TestShouldRetryAllowsCodexPendingRequestsFailoverWhenAlternativeGroupExists(t *testing.T) {
+	ctx := newRelayRetryContext()
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "auto")
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyAutoGroup, "default")
+	withAutoGroupsForRelayTest(t, []string{"default", "vip"})
+
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 502, "vip", "gpt-5.5", 10)
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "auto",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	err := types.NewOpenAIError(
+		errors.New("status_code=429, Too many pending requests, please retry later"),
+		types.ErrorCodeBadResponseStatusCode,
+		429,
+	)
+
+	require.True(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, 1, param.GetExtraRetries())
+	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyForceNextAutoGroup))
+}
+
 func TestShouldRetryRejectsGeneric429WhenNoRetryBudget(t *testing.T) {
 	ctx := newRelayRetryContext()
 	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "auto")
