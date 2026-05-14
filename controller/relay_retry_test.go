@@ -258,6 +258,51 @@ func TestShouldRetryAllowsUpstreamRateLimitWrappedAsBadRequest(t *testing.T) {
 	require.Equal(t, 1, param.GetExtraRetries())
 }
 
+func TestShouldRetryAllowsGenericUpstreamBadRequestFailover(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 471, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 472, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Set("use_channel", []string{"471"})
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	err := types.NewOpenAIError(
+		errors.New("upstream rejected request for this channel"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+
+	require.True(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, 1, param.GetExtraRetries())
+}
+
+func TestShouldRetryRejectsLocalBadRequestWhenNoRetryBudget(t *testing.T) {
+	ctx := newRelayRetryContext()
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	err := types.NewErrorWithStatusCode(
+		errors.New("invalid request body"),
+		types.ErrorCodeInvalidRequest,
+		http.StatusBadRequest,
+	)
+
+	require.False(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, 0, param.GetExtraRetries())
+}
+
 func TestShouldRetryAllowsServerErrorFailoverWithAlternativePeerChannel(t *testing.T) {
 	db := serviceSetupRelayRetryDB(t)
 	serviceSeedRelayRetryChannel(t, db, 601, "default", "gpt-5.5", 10)

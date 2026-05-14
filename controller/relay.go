@@ -413,6 +413,9 @@ func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIE
 	if isUpstreamRateLimitLikeError(openaiErr) {
 		return true
 	}
+	if isUpstreamFailoverCandidate(openaiErr) {
+		return true
+	}
 	code := openaiErr.StatusCode
 	if code < 100 || code > 599 {
 		return true
@@ -444,6 +447,31 @@ func shouldFailoverOnConcurrencyLimit(c *gin.Context, openaiErr *types.NewAPIErr
 		return false
 	}
 	return true
+}
+
+func isUpstreamFailoverCandidate(openaiErr *types.NewAPIError) bool {
+	if openaiErr == nil {
+		return false
+	}
+	code := openaiErr.StatusCode
+	if code >= http.StatusOK && code < http.StatusMultipleChoices {
+		return false
+	}
+	if openaiErr.GetErrorType() == types.ErrorTypeOpenAIError {
+		return true
+	}
+	switch openaiErr.GetErrorCode() {
+	case types.ErrorCodeDoRequestFailed,
+		types.ErrorCodeReadResponseBodyFailed,
+		types.ErrorCodeBadResponseStatusCode,
+		types.ErrorCodeBadResponse,
+		types.ErrorCodeBadResponseBody,
+		types.ErrorCodeEmptyResponse,
+		types.ErrorCodeModelNotFound:
+		return true
+	default:
+		return false
+	}
 }
 
 func isUpstreamRateLimitLikeError(openaiErr *types.NewAPIError) bool {
