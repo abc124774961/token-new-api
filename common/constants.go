@@ -151,6 +151,10 @@ var QuotaRemindThreshold = 1000
 var PreConsumedQuota = 500
 
 var RetryTimes = 0
+var ChannelFailureAvoidanceEnabled = true
+var ChannelFailureAvoidanceTTLSeconds = 45
+var ChannelBalanceAutoResumeEnabled = true
+var ChannelBalanceRecoveryThreshold = 0.0
 
 //var RootUserEmail = ""
 

@@ -46,12 +46,23 @@ const numericString = z.string().refine((value) => {
   return !Number.isNaN(Number(trimmed)) && Number(trimmed) >= 0
 }, 'Enter a non-negative number or leave empty')
 
+const integerString = z.string().refine((value) => {
+  const trimmed = value.trim()
+  if (!trimmed) return true
+  const parsed = Number(trimmed)
+  return Number.isInteger(parsed) && parsed >= 0
+}, 'Enter a non-negative integer or leave empty')
+
 const monitoringSchema = z
   .object({
     ChannelDisableThreshold: numericString,
     QuotaRemindThreshold: numericString,
     AutomaticDisableChannelEnabled: z.boolean(),
     AutomaticEnableChannelEnabled: z.boolean(),
+    ChannelFailureAvoidanceEnabled: z.boolean(),
+    ChannelFailureAvoidanceTTLSeconds: integerString,
+    ChannelBalanceAutoResumeEnabled: z.boolean(),
+    ChannelBalanceRecoveryThreshold: numericString,
     AutomaticDisableKeywords: z.string(),
     AutomaticDisableStatusCodes: z.string(),
     AutomaticRetryStatusCodes: z.string(),
@@ -100,6 +111,10 @@ type MonitoringSettingsSectionProps = {
     QuotaRemindThreshold: string
     AutomaticDisableChannelEnabled: boolean
     AutomaticEnableChannelEnabled: boolean
+    ChannelFailureAvoidanceEnabled: boolean
+    ChannelFailureAvoidanceTTLSeconds: string
+    ChannelBalanceAutoResumeEnabled: boolean
+    ChannelBalanceRecoveryThreshold: string
     AutomaticDisableKeywords: string
     AutomaticDisableStatusCodes: string
     AutomaticRetryStatusCodes: string
@@ -117,6 +132,10 @@ type NormalizedMonitoringValues = {
   QuotaRemindThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
+  ChannelFailureAvoidanceEnabled: boolean
+  ChannelFailureAvoidanceTTLSeconds: string
+  ChannelBalanceAutoResumeEnabled: boolean
+  ChannelBalanceRecoveryThreshold: string
   AutomaticDisableKeywords: string
   AutomaticDisableStatusCodes: string
   AutomaticRetryStatusCodes: string
@@ -131,6 +150,12 @@ const buildFormDefaults = (
   QuotaRemindThreshold: defaults.QuotaRemindThreshold ?? '',
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
+  ChannelFailureAvoidanceEnabled: defaults.ChannelFailureAvoidanceEnabled,
+  ChannelFailureAvoidanceTTLSeconds:
+    defaults.ChannelFailureAvoidanceTTLSeconds ?? '',
+  ChannelBalanceAutoResumeEnabled: defaults.ChannelBalanceAutoResumeEnabled,
+  ChannelBalanceRecoveryThreshold:
+    defaults.ChannelBalanceRecoveryThreshold ?? '',
   AutomaticDisableKeywords: normalizeLineEndings(
     defaults.AutomaticDisableKeywords ?? ''
   ),
@@ -151,6 +176,14 @@ const normalizeDefaults = (
   QuotaRemindThreshold: (defaults.QuotaRemindThreshold ?? '').trim(),
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
+  ChannelFailureAvoidanceEnabled: defaults.ChannelFailureAvoidanceEnabled,
+  ChannelFailureAvoidanceTTLSeconds: (
+    defaults.ChannelFailureAvoidanceTTLSeconds ?? ''
+  ).trim(),
+  ChannelBalanceAutoResumeEnabled: defaults.ChannelBalanceAutoResumeEnabled,
+  ChannelBalanceRecoveryThreshold: (
+    defaults.ChannelBalanceRecoveryThreshold ?? ''
+  ).trim(),
   AutomaticDisableKeywords: normalizeLineEndings(
     defaults.AutomaticDisableKeywords ?? ''
   ),
@@ -173,6 +206,12 @@ const normalizeFormValues = (
   QuotaRemindThreshold: values.QuotaRemindThreshold.trim(),
   AutomaticDisableChannelEnabled: values.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: values.AutomaticEnableChannelEnabled,
+  ChannelFailureAvoidanceEnabled: values.ChannelFailureAvoidanceEnabled,
+  ChannelFailureAvoidanceTTLSeconds:
+    values.ChannelFailureAvoidanceTTLSeconds.trim(),
+  ChannelBalanceAutoResumeEnabled: values.ChannelBalanceAutoResumeEnabled,
+  ChannelBalanceRecoveryThreshold:
+    values.ChannelBalanceRecoveryThreshold.trim(),
   AutomaticDisableKeywords: normalizeLineEndings(
     values.AutomaticDisableKeywords
   ),
@@ -402,6 +441,110 @@ export function MonitoringSettingsSection({
                       onCheckedChange={field.onChange}
                     />
                   </FormControl>
+                </FormItem>
+              )}
+            />
+          </div>
+
+          <div className='grid gap-6 md:grid-cols-2'>
+            <FormField
+              control={form.control}
+              name='ChannelFailureAvoidanceEnabled'
+              render={({ field }) => (
+                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
+                  <div className='space-y-0.5'>
+                    <FormLabel className='text-base'>
+                      {t('Temporary circuit breaker')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Temporarily avoid channels after transient upstream failures'
+                      )}
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='ChannelFailureAvoidanceTTLSeconds'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Circuit breaker duration (seconds)')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={0}
+                      step={1}
+                      value={field.value}
+                      onChange={(event) => field.onChange(event.target.value)}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'How long a transiently failed channel is skipped before it can be selected again'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+
+          <div className='grid gap-6 md:grid-cols-2'>
+            <FormField
+              control={form.control}
+              name='ChannelBalanceAutoResumeEnabled'
+              render={({ field }) => (
+                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
+                  <div className='space-y-0.5'>
+                    <FormLabel className='text-base'>
+                      {t('Resume balance-paused channels')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Automatically re-enable channels paused only because their balance was insufficient'
+                      )}
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='ChannelBalanceRecoveryThreshold'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Balance recovery threshold (USD)')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={0}
+                      step='0.01'
+                      value={field.value}
+                      onChange={(event) => field.onChange(event.target.value)}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Balance must be above this value before a balance-paused channel is restored'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
                 </FormItem>
               )}
             />

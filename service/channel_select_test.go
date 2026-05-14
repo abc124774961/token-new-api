@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -200,6 +201,127 @@ func TestCacheGetRandomSatisfiedChannelFallsBackToUsedChannelForSingleGroup(t *t
 	require.Equal(t, 301, channel.Id)
 }
 
+func TestCacheGetRandomSatisfiedChannelAvoidsRecentlyFailedChannel(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, false)
+
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 45
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	seedChannelSelectChannel(t, db, 351, "default", "gpt-5.5", 10, 100)
+	seedChannelSelectChannel(t, db, 352, "default", "gpt-5.5", 10, 100)
+	RecordChannelFailureAvoidance(351, "do_request_failed")
+
+	param := &RetryParam{
+		Ctx:        newRetryContext(),
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.Equal(t, "default", group)
+	require.NotNil(t, channel)
+	require.Equal(t, 352, channel.Id)
+}
+
+func TestCacheGetRandomSatisfiedChannelFallsBackWhenAllChannelsAvoided(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, false)
+
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 45
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	seedChannelSelectChannel(t, db, 361, "default", "gpt-5.5", 10, 100)
+	RecordChannelFailureAvoidance(361, "do_request_failed")
+
+	param := &RetryParam{
+		Ctx:        newRetryContext(),
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.Equal(t, "default", group)
+	require.NotNil(t, channel)
+	require.Equal(t, 361, channel.Id)
+}
+
+func TestCacheGetRandomSatisfiedChannelTriesNextAutoGroupWhenCurrentAvoided(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, false)
+	withAutoGroupsForTest(t, []string{"default", "vip"})
+
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 45
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	seedChannelSelectChannel(t, db, 371, "default", "gpt-5.5", 10, 100)
+	seedChannelSelectChannel(t, db, 372, "vip", "gpt-5.5", 10, 100)
+	RecordChannelFailureAvoidance(371, "do_request_failed")
+
+	ctx := newRetryContext()
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	param := &RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "auto",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.Equal(t, "vip", group)
+	require.NotNil(t, channel)
+	require.Equal(t, 372, channel.Id)
+}
+
+func TestRecordChannelFailureAvoidanceExtendsDurationForRepeatedFailures(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 10
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	RecordChannelFailureAvoidance(381, "do_request_failed")
+	first, ok := getChannelFailureAvoidanceForTest(381)
+	require.True(t, ok)
+	require.Equal(t, 1, first.failureCount)
+
+	RecordChannelFailureAvoidance(381, "do_request_failed")
+	second, ok := getChannelFailureAvoidanceForTest(381)
+	require.True(t, ok)
+	require.Equal(t, 2, second.failureCount)
+	require.Greater(t, second.until.Sub(time.Now()), 15*time.Second)
+}
+
 func TestRetryParamIncreaseRetryConsumesExtraRetriesFirst(t *testing.T) {
 	param := &RetryParam{
 		Retry:        common.GetPointer(0),
@@ -244,4 +366,36 @@ func TestCacheGetRandomSatisfiedChannelForceSkipsCurrentAutoGroup(t *testing.T) 
 	require.NotNil(t, channel)
 	require.Equal(t, "vip", group)
 	require.Equal(t, 402, channel.Id)
+}
+
+func TestCacheGetRandomSatisfiedChannelSeesReEnabledChannelImmediately(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+
+	seedChannelSelectChannel(t, db, 451, "default", "gpt-5.5", 10, 100)
+	model.InitChannelCache()
+	require.True(t, model.UpdateChannelStatus(451, "", common.ChannelStatusAutoDisabled, "temporary failure"))
+
+	disabledParam := &RetryParam{
+		Ctx:        newRetryContext(),
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	disabledChannel, _, err := CacheGetRandomSatisfiedChannel(disabledParam)
+	require.NoError(t, err)
+	require.Nil(t, disabledChannel)
+
+	require.True(t, model.UpdateChannelStatus(451, "", common.ChannelStatusEnabled, ""))
+	enabledParam := &RetryParam{
+		Ctx:        newRetryContext(),
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	enabledChannel, group, err := CacheGetRandomSatisfiedChannel(enabledParam)
+	require.NoError(t, err)
+	require.Equal(t, "default", group)
+	require.NotNil(t, enabledChannel)
+	require.Equal(t, 451, enabledChannel.Id)
 }

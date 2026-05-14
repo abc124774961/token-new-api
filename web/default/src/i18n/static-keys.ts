@@ -477,6 +477,12 @@ export const STATIC_I18N_KEYS = [
   'Detection complete: {{add}} to add, {{remove}} to remove',
   'Batch detection failed',
   'Batch detection complete: {{channels}} channels, {{add}} to add, {{remove}} to remove, {{fails}} failed',
+  'Circuit paused',
+  'Balance paused',
+  'Resumes in {{duration}}',
+  'Paused until',
+  'Failure count',
+  '{{count}}/{{total}} keys',
 
   // Misc
   'Cancel',

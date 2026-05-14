@@ -18,14 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Card, Tag, Timeline, Empty } from '@douyinfe/semi-ui';
+import { Tag, Timeline } from '@douyinfe/semi-ui';
 import { Bell } from 'lucide-react';
 import { marked } from 'marked';
-import {
-  IllustrationConstruction,
-  IllustrationConstructionDark,
-} from '@douyinfe/semi-illustrations';
 import ScrollableContainer from '../common/ui/ScrollableContainer';
+import DashboardCard from './DashboardCard';
+import DashboardEmptyState from './DashboardEmptyState';
 
 const AnnouncementsPanel = ({
   announcementData,
@@ -35,15 +33,16 @@ const AnnouncementsPanel = ({
   t,
 }) => {
   return (
-    <Card
+    <DashboardCard
       {...CARD_PROPS}
-      className='shadow-sm !rounded-2xl lg:col-span-2'
+      className='lg:col-span-2'
+      tone='notice'
       title={
-        <div className='flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 w-full'>
-          <div className='flex items-center gap-2'>
+        <div className='ct-dashboard-panel-title-row'>
+          <div className='ct-dashboard-panel-title'>
             <Bell size={16} />
             {t('系统公告')}
-            <Tag color='white' shape='circle'>
+            <Tag color='green' shape='circle' className='ct-dashboard-soft-tag'>
               {t('显示最新20条')}
             </Tag>
           </div>
@@ -108,18 +107,14 @@ const AnnouncementsPanel = ({
           </Timeline>
         ) : (
           <div className='flex justify-center items-center py-8'>
-            <Empty
-              image={<IllustrationConstruction style={ILLUSTRATION_SIZE} />}
-              darkModeImage={
-                <IllustrationConstructionDark style={ILLUSTRATION_SIZE} />
-              }
+            <DashboardEmptyState
               title={t('暂无系统公告')}
               description={t('请联系管理员在系统设置中配置公告信息')}
             />
           </div>
         )}
       </ScrollableContainer>
-    </Card>
+    </DashboardCard>
   );
 };
 

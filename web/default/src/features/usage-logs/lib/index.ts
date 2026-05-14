@@ -47,6 +47,12 @@ export {
   fetchLogsByCategory,
 } from './utils'
 
+// Stream status utilities
+export {
+  getStreamStatusDisplay,
+  isClientDisconnectedStreamStatus,
+} from './stream-status'
+
 // Status mapper utilities
 export { createStatusMapper } from './status'
 

@@ -18,15 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Card, Collapse, Empty } from '@douyinfe/semi-ui';
+import { Collapse } from '@douyinfe/semi-ui';
 import { HelpCircle } from 'lucide-react';
 import { IconPlus, IconMinus } from '@douyinfe/semi-icons';
 import { marked } from 'marked';
-import {
-  IllustrationConstruction,
-  IllustrationConstructionDark,
-} from '@douyinfe/semi-illustrations';
 import ScrollableContainer from '../common/ui/ScrollableContainer';
+import DashboardCard from './DashboardCard';
+import DashboardEmptyState from './DashboardEmptyState';
 
 const FaqPanel = ({
   faqData,
@@ -36,11 +34,12 @@ const FaqPanel = ({
   t,
 }) => {
   return (
-    <Card
+    <DashboardCard
       {...CARD_PROPS}
-      className='shadow-sm !rounded-2xl lg:col-span-1'
+      className='lg:col-span-1'
+      tone='faq'
       title={
-        <div className={FLEX_CENTER_GAP2}>
+        <div className={`${FLEX_CENTER_GAP2} ct-dashboard-panel-title`}>
           <HelpCircle size={16} />
           {t('常见问答')}
         </div>
@@ -70,18 +69,14 @@ const FaqPanel = ({
           </Collapse>
         ) : (
           <div className='flex justify-center items-center py-8'>
-            <Empty
-              image={<IllustrationConstruction style={ILLUSTRATION_SIZE} />}
-              darkModeImage={
-                <IllustrationConstructionDark style={ILLUSTRATION_SIZE} />
-              }
+            <DashboardEmptyState
               title={t('暂无常见问答')}
               description={t('请联系管理员在系统设置中配置常见问答')}
             />
           </div>
         )}
       </ScrollableContainer>
-    </Card>
+    </DashboardCard>
   );
 };
 

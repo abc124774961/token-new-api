@@ -17,6 +17,25 @@
     />
     <meta name="generator" content="new-api" />
     <title>New API</title>
+    <script>
+      (() => {
+        try {
+          const systemName = localStorage.getItem('system_name');
+          if (systemName) {
+            document.title = systemName;
+          }
+          const logo = localStorage.getItem('logo');
+          if (logo) {
+            const linkElement = document.querySelector("link[rel~='icon']");
+            if (linkElement) {
+              linkElement.href = logo;
+            }
+          }
+        } catch (error) {
+          console.error('failed to load cached branding', error);
+        }
+      })();
+    </script>
     <!--umami-->
     <!--Google Analytics-->
   </head>

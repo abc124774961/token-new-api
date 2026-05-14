@@ -17,15 +17,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 /* eslint-disable react-refresh/only-export-components */
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { type ColumnDef } from '@tanstack/react-table'
 import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  CirclePause,
   ListOrdered,
+  type LucideIcon,
+  ShieldAlert,
   Shuffle,
+  TimerReset,
+  WalletCards,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -49,6 +54,7 @@ import { DataTableColumnHeader } from '@/components/data-table/column-header'
 import { GroupBadge } from '@/components/group-badge'
 import {
   StatusBadge,
+  type StatusVariant,
   dotColorMap,
   textColorMap,
 } from '@/components/status-badge'
@@ -82,6 +88,272 @@ import {
   type CodexUsageDialogData,
 } from './dialogs/codex-usage-dialog'
 import { NumericSpinnerInput } from './numeric-spinner-input'
+
+type ChannelOtherInfo = {
+  status_reason?: string
+  status_time?: number
+}
+
+function parseChannelOtherInfo(
+  otherInfo: string | null | undefined
+): ChannelOtherInfo {
+  if (!otherInfo) return {}
+  try {
+    const parsed = JSON.parse(otherInfo)
+    if (parsed && typeof parsed === 'object') {
+      return parsed
+    }
+  } catch {
+    return {}
+  }
+  return {}
+}
+
+function isBalanceInsufficientReason(reason?: string): boolean {
+  const normalized = reason?.trim().toLowerCase()
+  return (
+    normalized === 'balance_insufficient' ||
+    normalized?.includes('余额不足') === true
+  )
+}
+
+function getStatusReasonLabel(
+  reason: string | undefined,
+  t: (key: string) => string
+): string {
+  if (!reason) return ''
+  if (isBalanceInsufficientReason(reason)) return t('Insufficient balance')
+  return reason
+}
+
+function formatPauseDuration(seconds: number | undefined): string {
+  if (!seconds || seconds <= 0) return ''
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  const remainder = seconds % 60
+  if (minutes < 60)
+    return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const minuteRemainder = minutes % 60
+  return minuteRemainder > 0 ? `${hours}h ${minuteRemainder}m` : `${hours}h`
+}
+
+const statusSurfaceClassMap: Partial<Record<StatusVariant, string>> = {
+  success: 'border-success/20 bg-success/5',
+  warning: 'border-warning/30 bg-warning/10',
+  danger: 'border-destructive/25 bg-destructive/10',
+  info: 'border-info/25 bg-info/10',
+  neutral: 'border-border bg-muted/45',
+}
+
+function StatusSurface({
+  children,
+  variant,
+  pulse,
+}: {
+  children: ReactNode
+  variant: StatusVariant
+  pulse?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'inline-flex max-w-[240px] flex-col gap-1 rounded-md border px-2 py-1.5',
+        'shadow-xs transition-colors',
+        statusSurfaceClassMap[variant] ?? statusSurfaceClassMap.neutral,
+        pulse && 'ring-warning/20 ring-1'
+      )}
+    >
+      {children}
+    </div>
+  )
+}
+
+function StatusDetailLine({
+  icon: Icon,
+  children,
+  className,
+}: {
+  icon: LucideIcon
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <div
+      className={cn(
+        'text-muted-foreground flex min-w-0 items-center gap-1 text-[11px] leading-none',
+        className
+      )}
+    >
+      <Icon className='size-3 shrink-0' />
+      <span className='truncate'>{children}</span>
+    </div>
+  )
+}
+
+function ChannelStatusCell({ channel }: { channel: Channel }) {
+  const { t } = useTranslation()
+  const status = channel.status
+  const config =
+    CHANNEL_STATUS_CONFIG[status as keyof typeof CHANNEL_STATUS_CONFIG] ||
+    CHANNEL_STATUS_CONFIG[0]
+  const otherInfo = parseChannelOtherInfo(channel.other_info)
+  const reasonLabel = getStatusReasonLabel(otherInfo.status_reason, t)
+  const statusTime = otherInfo.status_time
+    ? formatTimestampToDate(otherInfo.status_time)
+    : ''
+  const failureAvoidance = channel.failure_avoidance
+  const circuitPaused = failureAvoidance?.active === true
+  const balancePaused =
+    status === 3 && isBalanceInsufficientReason(otherInfo.status_reason)
+
+  const isMultiKey = isMultiKeyChannel(channel)
+  const keySize = channel.channel_info?.multi_key_size ?? 0
+  const disabledCount = channel.channel_info?.multi_key_status_list
+    ? Object.keys(channel.channel_info.multi_key_status_list).length
+    : 0
+  const enabledCount = Math.max(0, keySize - disabledCount)
+
+  let variant: StatusVariant = config.variant
+  let label = t(config.label)
+  let Icon: LucideIcon | undefined
+  let pulse = false
+
+  if (circuitPaused) {
+    variant = 'warning'
+    label = t('Circuit paused')
+    Icon = TimerReset
+    pulse = true
+  } else if (balancePaused) {
+    variant = 'warning'
+    label = t('Balance paused')
+    Icon = WalletCards
+  } else if (status === 3) {
+    variant = 'danger'
+    Icon = ShieldAlert
+  } else if (status !== 1) {
+    Icon = CirclePause
+  }
+
+  const remainingLabel = circuitPaused
+    ? formatPauseDuration(failureAvoidance?.remaining_seconds)
+    : ''
+  const pausedUntil = failureAvoidance?.until
+    ? formatTimestampToDate(failureAvoidance.until)
+    : ''
+  const hasDetails =
+    Boolean(reasonLabel) ||
+    Boolean(statusTime) ||
+    Boolean(remainingLabel) ||
+    Boolean(pausedUntil) ||
+    Boolean(failureAvoidance?.failure_count)
+
+  const content = (
+    <StatusSurface variant={variant} pulse={pulse}>
+      <div className='flex min-w-0 items-center gap-1.5'>
+        <StatusBadge
+          label={label}
+          icon={Icon}
+          variant={variant}
+          showDot={config.showDot}
+          size='sm'
+          copyable={false}
+          pulse={pulse}
+          className='min-w-0'
+        />
+        {isMultiKey && keySize > 0 && (
+          <span className='border-border/70 bg-background/70 text-muted-foreground inline-flex h-5 shrink-0 items-center rounded border px-1.5 font-mono text-[10px] leading-none'>
+            {t('{{count}}/{{total}} keys', {
+              count: enabledCount,
+              total: keySize,
+            })}
+          </span>
+        )}
+        {circuitPaused && (failureAvoidance?.failure_count ?? 0) > 1 && (
+          <span className='text-warning shrink-0 font-mono text-[10px] leading-none'>
+            x{failureAvoidance?.failure_count}
+          </span>
+        )}
+      </div>
+
+      {circuitPaused && remainingLabel && (
+        <StatusDetailLine icon={TimerReset} className='text-warning'>
+          {t('Resumes in {{duration}}', { duration: remainingLabel })}
+        </StatusDetailLine>
+      )}
+
+      {balancePaused && (
+        <StatusDetailLine icon={WalletCards} className='text-warning'>
+          {reasonLabel || t('Insufficient balance')}
+        </StatusDetailLine>
+      )}
+    </StatusSurface>
+  )
+
+  if (!hasDetails) return content
+
+  return (
+    <TooltipProvider delay={100}>
+      <Tooltip>
+        <TooltipTrigger render={<div className='w-fit' />}>
+          {content}
+        </TooltipTrigger>
+        <TooltipContent side='top' className='max-w-xs'>
+          <div className='space-y-1 text-xs'>
+            {reasonLabel && (
+              <div>
+                {t('Reason:')} {reasonLabel}
+              </div>
+            )}
+            {remainingLabel && (
+              <div>
+                {t('Resumes in {{duration}}', { duration: remainingLabel })}
+              </div>
+            )}
+            {pausedUntil && (
+              <div>
+                {t('Paused until')}: {pausedUntil}
+              </div>
+            )}
+            {statusTime && (
+              <div>
+                {t('Time:')} {statusTime}
+              </div>
+            )}
+            {failureAvoidance?.failure_count && (
+              <div>
+                {t('Failure count')}: {failureAvoidance.failure_count}
+              </div>
+            )}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+function TagStatusCell({ row }: { row: TagRow }) {
+  const { t } = useTranslation()
+  const childrenCount = row.children?.length || 0
+  const hasEnabled = row.status === 1
+  const variant: StatusVariant = hasEnabled ? 'success' : 'neutral'
+  return (
+    <StatusSurface variant={variant}>
+      <div className='flex items-center gap-1.5'>
+        <StatusBadge
+          label={hasEnabled ? t('Active') : t('Inactive')}
+          variant={variant}
+          showDot
+          size='sm'
+          copyable={false}
+        />
+        <span className='border-border/70 bg-background/70 text-muted-foreground inline-flex h-5 shrink-0 items-center rounded border px-1.5 font-mono text-[10px] leading-none'>
+          {childrenCount}
+        </span>
+      </div>
+    </StatusSurface>
+  )
+}
 
 function parseIonetMeta(otherInfo: string | null | undefined): null | {
   source?: string
@@ -728,113 +1000,12 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       meta: { label: t('Status'), mobileBadge: true },
       header: t('Status'),
       cell: ({ row }) => {
-        const isTagRow = isTagAggregateRow(row.original)
-        const status = row.getValue('status') as number
-        const channel = row.original as Channel
-
-        // Tag row: show aggregated status
-        if (isTagRow) {
-          const childrenCount = (row.original as TagRow).children?.length || 0
-          const hasEnabled = status === 1
-
-          if (hasEnabled) {
-            return (
-              <StatusBadge
-                label={`Active (${childrenCount})`}
-                variant='success'
-                showDot
-                size='sm'
-                copyable={false}
-              />
-            )
-          } else {
-            return (
-              <StatusBadge
-                label={`Inactive (${childrenCount})`}
-                variant='neutral'
-                size='sm'
-                copyable={false}
-              />
-            )
-          }
+        const channel = row.original
+        if (isTagAggregateRow(channel)) {
+          return <TagStatusCell row={channel} />
         }
 
-        // Regular channel row
-        const config =
-          CHANNEL_STATUS_CONFIG[status as keyof typeof CHANNEL_STATUS_CONFIG] ||
-          CHANNEL_STATUS_CONFIG[0]
-
-        const isMultiKey = isMultiKeyChannel(channel)
-        const keySize = channel.channel_info?.multi_key_size ?? 0
-        const disabledCount = channel.channel_info?.multi_key_status_list
-          ? Object.keys(channel.channel_info.multi_key_status_list).length
-          : 0
-        const enabledCount = Math.max(0, keySize - disabledCount)
-        const label =
-          isMultiKey && keySize > 0
-            ? `${t(config.label)} (${enabledCount}/${keySize})`
-            : t(config.label)
-
-        // Auto-disabled: show reason and time tooltip
-        if (status === 3) {
-          let statusReason = ''
-          let statusTime = ''
-          try {
-            const otherInfo = channel.other_info
-              ? JSON.parse(channel.other_info)
-              : null
-            if (otherInfo) {
-              statusReason = otherInfo.status_reason || ''
-              statusTime = otherInfo.status_time
-                ? formatTimestampToDate(otherInfo.status_time)
-                : ''
-            }
-          } catch {
-            /* empty */
-          }
-
-          if (statusReason || statusTime) {
-            return (
-              <TooltipProvider delay={100}>
-                <Tooltip>
-                  <TooltipTrigger render={<span />}>
-                    <StatusBadge
-                      label={label}
-                      variant={config.variant}
-                      showDot={config.showDot}
-                      size='sm'
-                      copyable={false}
-                    />
-                  </TooltipTrigger>
-                  <TooltipContent side='top' className='max-w-xs'>
-                    <div className='space-y-1 text-xs'>
-                      {statusReason && (
-                        <div>
-                          {t('Reason:')} {statusReason}
-                        </div>
-                      )}
-                      {statusTime && (
-                        <div>
-                          {t('Time:')} {statusTime}
-                        </div>
-                      )}
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )
-          }
-        }
-
-        return (
-          <StatusBadge
-            label={label}
-            variant={config.variant}
-            showDot={config.showDot}
-            size='sm'
-            copyable={false}
-          />
-        )
+        return <ChannelStatusCell channel={channel} />
       },
       filterFn: (row, id, value) => {
         if (!value || value.length === 0 || value.includes('all')) return true
@@ -843,7 +1014,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
         if (value.includes('disabled')) return status !== 1
         return false
       },
-      size: 120,
+      size: 220,
       enableSorting: false,
     },
 

@@ -2,7 +2,10 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -19,6 +22,22 @@ type RetryParam struct {
 	Retry        *int
 	ExtraRetries *int
 	resetNextTry bool
+}
+
+type channelAvoidanceEntry struct {
+	until        time.Time
+	reason       string
+	failureCount int
+}
+
+var channelFailureAvoidance sync.Map
+
+type ChannelFailureAvoidanceStatus struct {
+	Active       bool   `json:"active"`
+	Reason       string `json:"reason,omitempty"`
+	Until        int64  `json:"until,omitempty"`
+	RemainingSec int64  `json:"remaining_seconds,omitempty"`
+	FailureCount int    `json:"failure_count,omitempty"`
 }
 
 func (p *RetryParam) GetRetry() int {
@@ -89,22 +108,155 @@ func getUsedChannelSet(ctx *gin.Context) map[int]struct{} {
 	return usedChannelSet
 }
 
+func getAvoidedChannelSet() map[int]struct{} {
+	avoided := make(map[int]struct{})
+	if !common.ChannelFailureAvoidanceEnabled || common.ChannelFailureAvoidanceTTLSeconds <= 0 {
+		return avoided
+	}
+	now := time.Now()
+	channelFailureAvoidance.Range(func(key, value any) bool {
+		channelID, ok := key.(int)
+		if !ok {
+			channelFailureAvoidance.Delete(key)
+			return true
+		}
+		entry, ok := value.(channelAvoidanceEntry)
+		if !ok || !entry.until.After(now) {
+			channelFailureAvoidance.Delete(key)
+			return true
+		}
+		avoided[channelID] = struct{}{}
+		return true
+	})
+	return avoided
+}
+
+func GetChannelFailureAvoidanceStatus(channelID int) *ChannelFailureAvoidanceStatus {
+	if channelID <= 0 || !common.ChannelFailureAvoidanceEnabled || common.ChannelFailureAvoidanceTTLSeconds <= 0 {
+		return nil
+	}
+	value, ok := channelFailureAvoidance.Load(channelID)
+	if !ok {
+		return nil
+	}
+	entry, ok := value.(channelAvoidanceEntry)
+	if !ok {
+		channelFailureAvoidance.Delete(channelID)
+		return nil
+	}
+	now := time.Now()
+	if !entry.until.After(now) {
+		channelFailureAvoidance.Delete(channelID)
+		return nil
+	}
+	return &ChannelFailureAvoidanceStatus{
+		Active:       true,
+		Reason:       entry.reason,
+		Until:        entry.until.Unix(),
+		RemainingSec: int64(entry.until.Sub(now).Seconds()),
+		FailureCount: entry.failureCount,
+	}
+}
+
+func mergeChannelSets(sets ...map[int]struct{}) map[int]struct{} {
+	merged := make(map[int]struct{})
+	for _, set := range sets {
+		for channelID := range set {
+			merged[channelID] = struct{}{}
+		}
+	}
+	return merged
+}
+
+func RecordChannelFailureAvoidance(channelID int, reason string) {
+	if channelID <= 0 || !common.ChannelFailureAvoidanceEnabled || common.ChannelFailureAvoidanceTTLSeconds <= 0 {
+		return
+	}
+	now := time.Now()
+	ttl := time.Duration(common.ChannelFailureAvoidanceTTLSeconds) * time.Second
+	failureCount := 1
+	if value, ok := channelFailureAvoidance.Load(channelID); ok {
+		if entry, ok := value.(channelAvoidanceEntry); ok && entry.until.After(now) {
+			failureCount = entry.failureCount + 1
+			ttl *= time.Duration(failureCount)
+			if maxTTL := 5 * time.Duration(common.ChannelFailureAvoidanceTTLSeconds) * time.Second; ttl > maxTTL {
+				ttl = maxTTL
+			}
+		}
+	}
+	until := now.Add(ttl)
+	channelFailureAvoidance.Store(channelID, channelAvoidanceEntry{
+		until:        until,
+		reason:       reason,
+		failureCount: failureCount,
+	})
+	common.SysLog(fmt.Sprintf("channel #%d temporarily circuit-broken for %s after %s", channelID, ttl, reason))
+}
+
+func ClearChannelFailureAvoidance(channelID int) {
+	if channelID <= 0 {
+		return
+	}
+	channelFailureAvoidance.Delete(channelID)
+}
+
+func getChannelFailureAvoidanceForTest(channelID int) (channelAvoidanceEntry, bool) {
+	value, ok := channelFailureAvoidance.Load(channelID)
+	if !ok {
+		return channelAvoidanceEntry{}, false
+	}
+	entry, ok := value.(channelAvoidanceEntry)
+	return entry, ok
+}
+
+func clearAllChannelFailureAvoidanceForTest() {
+	channelFailureAvoidance.Range(func(key, value any) bool {
+		channelFailureAvoidance.Delete(key)
+		return true
+	})
+}
+
 func selectChannelForGroup(ctx *gin.Context, group string, modelName string, retry int, allowUsedChannelFallback bool) (*model.Channel, error) {
 	excludedChannelIDs := getUsedChannelSet(ctx)
-	channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, excludedChannelIDs)
+	avoidedChannelIDs := getAvoidedChannelSet()
+	excludedWithAvoided := mergeChannelSets(excludedChannelIDs, avoidedChannelIDs)
+	channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, excludedWithAvoided)
 	if err != nil {
 		return nil, err
 	}
-	if channel != nil || !allowUsedChannelFallback || len(excludedChannelIDs) == 0 {
+	if channel != nil {
+		return channel, nil
+	}
+	if len(avoidedChannelIDs) > 0 && allowUsedChannelFallback {
+		// Prefer a temporarily avoided channel over failing the request when no healthy peer exists.
+		channel, err = model.GetRandomSatisfiedChannel(group, modelName, retry, excludedChannelIDs)
+		if err != nil {
+			return nil, err
+		}
+		if channel != nil {
+			logger.LogWarn(ctx, "All available channels are temporarily avoided; falling back to an avoided channel")
+			return channel, nil
+		}
+	}
+	if !allowUsedChannelFallback || len(excludedChannelIDs) == 0 {
 		return channel, nil
 	}
 	// All peer channels in the current priority/group have been tried. Allow reusing an
 	// already-used channel so multi-key channels can continue rotating to another key.
+	if len(avoidedChannelIDs) > 0 {
+		channel, err = model.GetRandomSatisfiedChannel(group, modelName, retry, avoidedChannelIDs)
+		if err != nil {
+			return nil, err
+		}
+		if channel != nil {
+			return channel, nil
+		}
+	}
 	return model.GetRandomSatisfiedChannel(group, modelName, retry, nil)
 }
 
 func hasAlternativeChannelInGroup(ctx *gin.Context, group string, modelName string, retry int) bool {
-	channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, getUsedChannelSet(ctx))
+	channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, mergeChannelSets(getUsedChannelSet(ctx), getAvoidedChannelSet()))
 	return err == nil && channel != nil
 }
 
@@ -221,6 +373,22 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 				common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex, i)
 			}
 			break
+		}
+		if channel == nil && len(getAvoidedChannelSet()) > 0 {
+			usedChannelIDs := getUsedChannelSet(param.Ctx)
+			for i := startGroupIndex; i < len(autoGroups); i++ {
+				autoGroup := autoGroups[i]
+				channel, err = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, param.GetRetry(), usedChannelIDs)
+				if err != nil {
+					return nil, autoGroup, err
+				}
+				if channel != nil {
+					common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroup, autoGroup)
+					selectGroup = autoGroup
+					logger.LogWarn(param.Ctx, "All auto-group candidates are temporarily avoided; falling back to an avoided channel")
+					break
+				}
+			}
 		}
 	} else {
 		channel, err = selectChannelForGroup(param.Ctx, param.TokenGroup, param.ModelName, param.GetRetry(), true)

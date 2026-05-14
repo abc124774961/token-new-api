@@ -47,6 +47,7 @@ import {
   parseLogOther,
   isViolationFeeLog,
 } from '../../lib/format'
+import { getStreamStatusDisplay } from '../../lib/stream-status'
 import {
   isDisplayableLogType,
   isTimingLogType,
@@ -531,6 +532,11 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             : null
         const timeVariant = getResponseTimeColor(useTime, log.completion_tokens)
         const frtVariant = frt ? getFirstResponseTimeColor(frt / 1000) : null
+        const streamStatusDisplay = getStreamStatusDisplay(other?.stream_status)
+        const streamStatusLabel =
+          streamStatusDisplay.labelKey === 'Client Disconnected'
+            ? t('Client Disconnected')
+            : t('Error')
 
         const pillBg: Record<string, string> = {
           success:
@@ -606,12 +612,19 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger
-                        render={<CircleAlert className='size-3 text-red-500' />}
+                        render={
+                          <CircleAlert
+                            className={cn(
+                              'size-3',
+                              streamStatusDisplay.iconClassName
+                            )}
+                          />
+                        }
                       ></TooltipTrigger>
                       <TooltipContent>
                         <div className='space-y-0.5 text-xs'>
                           <p>
-                            {t('Stream Status')}: {t('Error')}
+                            {t('Stream Status')}: {streamStatusLabel}
                           </p>
                           <p>{other.stream_status.end_reason || 'unknown'}</p>
                           {(other.stream_status.error_count ?? 0) > 0 && (

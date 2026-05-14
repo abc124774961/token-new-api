@@ -11,6 +11,8 @@ import (
 	"github.com/QuantumNous/new-api/types"
 )
 
+const ChannelStatusReasonBalanceInsufficient = "balance_insufficient"
+
 func formatNotifyType(channelId int, status int) string {
 	return fmt.Sprintf("%s_%d_%d", dto.NotifyTypeChannelUpdate, channelId, status)
 }
@@ -31,6 +33,10 @@ func DisableChannel(channelError types.ChannelError, reason string) {
 		content := fmt.Sprintf("通道「%s」（#%d）已被禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, reason)
 		NotifyRootUser(formatNotifyType(channelError.ChannelId, common.ChannelStatusAutoDisabled), subject, content)
 	}
+}
+
+func DisableChannelForBalance(channelError types.ChannelError) {
+	DisableChannel(channelError, ChannelStatusReasonBalanceInsufficient)
 }
 
 func EnableChannel(channelId int, usingKey string, channelName string) {
@@ -75,4 +81,25 @@ func ShouldEnableChannel(newAPIError *types.NewAPIError, status int) bool {
 		return false
 	}
 	return true
+}
+
+func IsBalanceInsufficientStatusReason(reason string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(reason))
+	return normalized == ChannelStatusReasonBalanceInsufficient || strings.Contains(normalized, "余额不足")
+}
+
+func IsBalanceInsufficientPausedChannel(channel *model.Channel) bool {
+	if channel == nil || channel.Status != common.ChannelStatusAutoDisabled {
+		return false
+	}
+	info := channel.GetOtherInfo()
+	reason, _ := info["status_reason"].(string)
+	return IsBalanceInsufficientStatusReason(reason)
+}
+
+func ShouldResumeBalancePausedChannel(balance float64) bool {
+	if !common.ChannelBalanceAutoResumeEnabled {
+		return false
+	}
+	return balance > common.ChannelBalanceRecoveryThreshold
 }

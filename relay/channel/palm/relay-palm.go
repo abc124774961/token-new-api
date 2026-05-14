@@ -90,9 +90,11 @@ func palmStreamHandler(c *gin.Context, resp *http.Response) (*types.NewAPIError,
 	c.Stream(func(w io.Writer) bool {
 		select {
 		case data := <-dataChan:
+			helper.MarkRelayResponseStarted(c)
 			c.Render(-1, common.CustomEvent{Data: "data: " + data})
 			return true
 		case <-stopChan:
+			helper.MarkRelayResponseStarted(c)
 			c.Render(-1, common.CustomEvent{Data: "data: [DONE]"})
 			return false
 		}

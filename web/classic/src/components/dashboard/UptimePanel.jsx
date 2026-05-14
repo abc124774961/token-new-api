@@ -18,21 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import {
-  Card,
-  Button,
-  Spin,
-  Tabs,
-  TabPane,
-  Tag,
-  Empty,
-} from '@douyinfe/semi-ui';
+import { Button, Spin, Tabs, TabPane, Tag } from '@douyinfe/semi-ui';
 import { Gauge, RefreshCw } from 'lucide-react';
-import {
-  IllustrationConstruction,
-  IllustrationConstructionDark,
-} from '@douyinfe/semi-illustrations';
 import ScrollableContainer from '../common/ui/ScrollableContainer';
+import DashboardCard from './DashboardCard';
+import DashboardEmptyState from './DashboardEmptyState';
 
 const UptimePanel = ({
   uptimeData,
@@ -47,12 +37,13 @@ const UptimePanel = ({
   t,
 }) => {
   return (
-    <Card
+    <DashboardCard
       {...CARD_PROPS}
-      className='shadow-sm !rounded-2xl lg:col-span-1'
+      className='lg:col-span-1'
+      tone='uptime'
       title={
         <div className='flex items-center justify-between w-full gap-2'>
-          <div className='flex items-center gap-2'>
+          <div className='ct-dashboard-panel-title'>
             <Gauge size={16} />
             {t('服务可用性')}
           </div>
@@ -116,11 +107,7 @@ const UptimePanel = ({
             )
           ) : (
             <div className='flex justify-center items-center py-8'>
-              <Empty
-                image={<IllustrationConstruction style={ILLUSTRATION_SIZE} />}
-                darkModeImage={
-                  <IllustrationConstructionDark style={ILLUSTRATION_SIZE} />
-                }
+              <DashboardEmptyState
                 title={t('暂无监控数据')}
                 description={t('请联系管理员在系统设置中配置Uptime')}
               />
@@ -131,7 +118,7 @@ const UptimePanel = ({
 
       {/* 图例 */}
       {uptimeData.length > 0 && (
-        <div className='p-3 bg-gray-50 rounded-b-2xl'>
+        <div className='ct-dashboard-legend-bar'>
           <div className='flex flex-wrap gap-3 text-xs justify-center'>
             {uptimeLegendData.map((legend, index) => (
               <div key={index} className='flex items-center gap-1'>
@@ -145,7 +132,7 @@ const UptimePanel = ({
           </div>
         </div>
       )}
-    </Card>
+    </DashboardCard>
   );
 };
 

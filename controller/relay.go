@@ -222,6 +222,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
+			service.ClearChannelFailureAvoidance(channel.Id)
 			return
 		}
 
@@ -326,6 +327,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *servi
 	if openaiErr == nil {
 		return false
 	}
+	if relayResponseAlreadyStarted(c) {
+		return false
+	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
@@ -363,6 +367,10 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *servi
 		return false
 	}
 	return operation_setting.ShouldRetryByStatusCode(code)
+}
+
+func relayResponseAlreadyStarted(c *gin.Context) bool {
+	return common.GetContextKeyBool(c, constant.ContextKeyRelayResponseStarted)
 }
 
 func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIError) bool {
@@ -409,6 +417,9 @@ func shouldFailoverOnConcurrencyLimit(c *gin.Context, openaiErr *types.NewAPIErr
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, persistLog bool) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
+	if shouldTemporarilyAvoidChannel(err) {
+		service.RecordChannelFailureAvoidance(channelError.ChannelId, string(err.GetErrorCode()))
+	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
 	if service.ShouldDisableChannel(err) && channelError.AutoBan {
@@ -435,6 +446,9 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		other["channel_id"] = channelId
 		other["channel_name"] = c.GetString("channel_name")
 		other["channel_type"] = c.GetInt("channel_type")
+		if upstreamRequest, ok := common.GetContextKey(c, constant.ContextKeyUpstreamRequestInfo); ok {
+			other["upstream_request"] = upstreamRequest
+		}
 		adminInfo := make(map[string]interface{})
 		adminInfo["use_channel"] = c.GetStringSlice("use_channel")
 		isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
@@ -452,6 +466,27 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 	}
 
+}
+
+func shouldTemporarilyAvoidChannel(err *types.NewAPIError) bool {
+	if err == nil || types.IsSkipRetryError(err) {
+		return false
+	}
+	switch err.GetErrorCode() {
+	case types.ErrorCodeDoRequestFailed,
+		types.ErrorCodeReadResponseBodyFailed,
+		types.ErrorCodeBadResponse,
+		types.ErrorCodeBadResponseBody:
+		return true
+	case types.ErrorCodeBadResponseStatusCode:
+		return err.StatusCode == http.StatusBadGateway ||
+			err.StatusCode == http.StatusServiceUnavailable ||
+			err.StatusCode == http.StatusGatewayTimeout ||
+			err.StatusCode == 524 ||
+			err.StatusCode == 529
+	default:
+		return false
+	}
 }
 
 func RelayMidjourney(c *gin.Context) {

@@ -46,6 +46,10 @@ func InitOptionMap() {
 	common.OptionMap["RegisterEnabled"] = strconv.FormatBool(common.RegisterEnabled)
 	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
+	common.OptionMap["ChannelFailureAvoidanceEnabled"] = strconv.FormatBool(common.ChannelFailureAvoidanceEnabled)
+	common.OptionMap["ChannelFailureAvoidanceTTLSeconds"] = strconv.Itoa(common.ChannelFailureAvoidanceTTLSeconds)
+	common.OptionMap["ChannelBalanceAutoResumeEnabled"] = strconv.FormatBool(common.ChannelBalanceAutoResumeEnabled)
+	common.OptionMap["ChannelBalanceRecoveryThreshold"] = strconv.FormatFloat(common.ChannelBalanceRecoveryThreshold, 'f', -1, 64)
 	common.OptionMap["LogConsumeEnabled"] = strconv.FormatBool(common.LogConsumeEnabled)
 	common.OptionMap["DisplayInCurrencyEnabled"] = strconv.FormatBool(common.DisplayInCurrencyEnabled)
 	common.OptionMap["DisplayTokenStatEnabled"] = strconv.FormatBool(common.DisplayTokenStatEnabled)
@@ -275,6 +279,10 @@ func updateOptionMap(key string, value string) (err error) {
 			common.AutomaticDisableChannelEnabled = boolValue
 		case "AutomaticEnableChannelEnabled":
 			common.AutomaticEnableChannelEnabled = boolValue
+		case "ChannelFailureAvoidanceEnabled":
+			common.ChannelFailureAvoidanceEnabled = boolValue
+		case "ChannelBalanceAutoResumeEnabled":
+			common.ChannelBalanceAutoResumeEnabled = boolValue
 		case "LogConsumeEnabled":
 			common.LogConsumeEnabled = boolValue
 		case "DisplayInCurrencyEnabled":
@@ -529,6 +537,10 @@ func updateOptionMap(key string, value string) (err error) {
 	//	common.ChatLink2 = value
 	case "ChannelDisableThreshold":
 		common.ChannelDisableThreshold, _ = strconv.ParseFloat(value, 64)
+	case "ChannelFailureAvoidanceTTLSeconds":
+		common.ChannelFailureAvoidanceTTLSeconds, _ = strconv.Atoi(value)
+	case "ChannelBalanceRecoveryThreshold":
+		common.ChannelBalanceRecoveryThreshold, _ = strconv.ParseFloat(value, 64)
 	case "QuotaPerUnit":
 		common.QuotaPerUnit, _ = strconv.ParseFloat(value, 64)
 	case "SensitiveWords":

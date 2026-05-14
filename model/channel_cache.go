@@ -267,21 +267,69 @@ func CacheUpdateChannelStatus(id int, status int) {
 	}
 	channelSyncLock.Lock()
 	defer channelSyncLock.Unlock()
-	if channel, ok := channelsIDM[id]; ok {
-		channel.Status = status
+	channel, ok := channelsIDM[id]
+	if !ok {
+		return
 	}
+	channel.Status = status
 	if status != common.ChannelStatusEnabled {
-		// delete the channel from group2model2channels
-		for group, model2channels := range group2model2channels {
-			for model, channels := range model2channels {
-				for i, channelId := range channels {
-					if channelId == id {
-						// remove the channel from the slice
-						group2model2channels[group][model] = append(channels[:i], channels[i+1:]...)
-						break
-					}
+		removeChannelFromCacheIndex(id)
+		return
+	}
+	addChannelToCacheIndex(channel)
+}
+
+func removeChannelFromCacheIndex(id int) {
+	for group, model2channels := range group2model2channels {
+		for model, channels := range model2channels {
+			filtered := channels[:0]
+			for _, channelId := range channels {
+				if channelId != id {
+					filtered = append(filtered, channelId)
 				}
 			}
+			group2model2channels[group][model] = filtered
+		}
+	}
+}
+
+func addChannelToCacheIndex(channel *Channel) {
+	if channel == nil {
+		return
+	}
+	for _, group := range channel.GetGroups() {
+		if group == "" {
+			continue
+		}
+		if group2model2channels[group] == nil {
+			group2model2channels[group] = make(map[string][]int)
+		}
+		for _, modelName := range channel.GetModels() {
+			modelName = strings.TrimSpace(modelName)
+			if modelName == "" {
+				continue
+			}
+			channels := group2model2channels[group][modelName]
+			exists := false
+			for _, channelId := range channels {
+				if channelId == channel.Id {
+					exists = true
+					break
+				}
+			}
+			if exists {
+				continue
+			}
+			channels = append(channels, channel.Id)
+			sort.Slice(channels, func(i, j int) bool {
+				left, leftOk := channelsIDM[channels[i]]
+				right, rightOk := channelsIDM[channels[j]]
+				if !leftOk || !rightOk {
+					return leftOk
+				}
+				return left.GetPriority() > right.GetPriority()
+			})
+			group2model2channels[group][modelName] = channels
 		}
 	}
 }

@@ -95,7 +95,9 @@ func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other map[string]inter
 	}
 	ss := relayInfo.StreamStatus
 	status := "ok"
-	if !ss.IsNormalEnd() || ss.HasErrors() {
+	if ss.EndReason == relaycommon.StreamEndReasonClientGone {
+		status = "client_gone"
+	} else if !ss.IsNormalEnd() || ss.HasErrors() {
 		status = "error"
 	}
 	streamInfo := map[string]interface{}{

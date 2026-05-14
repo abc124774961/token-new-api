@@ -18,28 +18,29 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Button, Badge } from '@douyinfe/semi-ui';
-import { Bell } from 'lucide-react';
+import { Card } from '@douyinfe/semi-ui';
 
-const NotificationButton = ({ unreadCount, onNoticeOpen, t }) => {
-  const buttonProps = {
-    icon: <Bell size={18} />,
-    'aria-label': t('系统公告'),
-    onClick: onNoticeOpen,
-    theme: 'borderless',
-    type: 'tertiary',
-    className: 'ct-tool-button',
-  };
-
-  if (unreadCount > 0) {
-    return (
-      <Badge count={unreadCount} type='danger' overflowCount={99}>
-        <Button {...buttonProps} />
-      </Badge>
-    );
-  }
-
-  return <Button {...buttonProps} />;
+const DashboardCard = ({
+  className = '',
+  bodyClassName = '',
+  bodyStyle,
+  children,
+  title,
+  tone = 'default',
+  ...props
+}) => {
+  return (
+    <Card
+      {...props}
+      className={`ct-dashboard-card ct-dashboard-card-${tone} ${className}`}
+      title={title}
+      bodyStyle={bodyStyle}
+    >
+      <div className={`ct-dashboard-card-body ${bodyClassName}`}>
+        {children}
+      </div>
+    </Card>
+  );
 };
 
-export default NotificationButton;
+export default DashboardCard;

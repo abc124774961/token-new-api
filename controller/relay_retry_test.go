@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -225,6 +226,32 @@ func TestShouldRetryAllowsServerErrorFailoverWithAlternativePeerChannel(t *testi
 	require.Equal(t, 1, param.GetExtraRetries())
 }
 
+func TestShouldRetryRejectsFailoverAfterResponseStarted(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 611, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 612, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Set("use_channel", []string{"611"})
+	common.SetContextKey(ctx, constant.ContextKeyRelayResponseStarted, true)
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	err := types.NewOpenAIError(
+		errors.New("upstream stream ended before response.completed"),
+		types.ErrorCodeBadResponse,
+		http.StatusInternalServerError,
+	)
+
+	require.False(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, 0, param.GetExtraRetries())
+}
+
 func TestShouldRetryAllowsServerErrorFailoverToNextAutoGroup(t *testing.T) {
 	ctx := newRelayRetryContext()
 	ctx.Set("use_channel", []string{"701"})
@@ -282,4 +309,38 @@ func TestProcessChannelErrorSkipsPersistingRetriableIntermediateFailure(t *testi
 	var count int64
 	require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeError).Count(&count).Error)
 	require.Equal(t, int64(0), count)
+}
+
+func TestProcessChannelErrorRecordsTemporaryAvoidanceForBadGateway(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 45
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(902)
+	})
+
+	err := types.NewOpenAIError(
+		errors.New("bad response status code 502"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadGateway,
+	)
+	processChannelError(newRelayRetryContext(), *types.NewChannelError(902, 1, "channel-902", false, "", false), err, false)
+
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 902, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 903, "default", "gpt-5.5", 10)
+
+	param := &service.RetryParam{
+		Ctx:        newRelayRetryContext(),
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	channel, _, selectErr := service.CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, selectErr)
+	require.NotNil(t, channel)
+	require.Equal(t, 903, channel.Id)
 }

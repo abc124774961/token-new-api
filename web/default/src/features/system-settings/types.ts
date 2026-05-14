@@ -266,6 +266,10 @@ export type OperationsSettings = {
   QuotaRemindThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
+  ChannelFailureAvoidanceEnabled: boolean
+  ChannelFailureAvoidanceTTLSeconds: string
+  ChannelBalanceAutoResumeEnabled: boolean
+  ChannelBalanceRecoveryThreshold: string
   AutomaticDisableKeywords: string
   AutomaticDisableStatusCodes: string
   AutomaticRetryStatusCodes: string

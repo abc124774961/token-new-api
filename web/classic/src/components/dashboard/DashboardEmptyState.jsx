@@ -18,28 +18,22 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Button, Badge } from '@douyinfe/semi-ui';
-import { Bell } from 'lucide-react';
+import { Empty } from '@douyinfe/semi-ui';
+import {
+  IllustrationConstruction,
+  IllustrationConstructionDark,
+} from '@douyinfe/semi-illustrations';
+import { ILLUSTRATION_SIZE } from '../../constants/dashboard.constants';
 
-const NotificationButton = ({ unreadCount, onNoticeOpen, t }) => {
-  const buttonProps = {
-    icon: <Bell size={18} />,
-    'aria-label': t('系统公告'),
-    onClick: onNoticeOpen,
-    theme: 'borderless',
-    type: 'tertiary',
-    className: 'ct-tool-button',
-  };
+const DashboardEmptyState = ({ title, description, className = '' }) => (
+  <div className={`ct-dashboard-empty ${className}`}>
+    <Empty
+      image={<IllustrationConstruction style={ILLUSTRATION_SIZE} />}
+      darkModeImage={<IllustrationConstructionDark style={ILLUSTRATION_SIZE} />}
+      title={title}
+      description={description}
+    />
+  </div>
+);
 
-  if (unreadCount > 0) {
-    return (
-      <Badge count={unreadCount} type='danger' overflowCount={99}>
-        <Button {...buttonProps} />
-      </Badge>
-    );
-  }
-
-  return <Button {...buttonProps} />;
-};
-
-export default NotificationButton;
+export default DashboardEmptyState;

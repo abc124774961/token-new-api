@@ -34,6 +34,18 @@ export const channelInfoSchema = z.object({
 
 export type ChannelInfo = z.infer<typeof channelInfoSchema>
 
+export const channelFailureAvoidanceSchema = z.object({
+  active: z.boolean().default(false),
+  reason: z.string().optional(),
+  until: z.number().optional(),
+  remaining_seconds: z.number().optional(),
+  failure_count: z.number().optional(),
+})
+
+export type ChannelFailureAvoidance = z.infer<
+  typeof channelFailureAvoidanceSchema
+>
+
 export const channelSchema = z.object({
   id: z.number(),
   type: z.number(),
@@ -71,6 +83,7 @@ export const channelSchema = z.object({
     multi_key_mode: 'random',
   }),
   settings: z.string().default('{}'), // other_settings JSON
+  failure_avoidance: channelFailureAvoidanceSchema.nullish(),
 })
 
 export type Channel = z.infer<typeof channelSchema>

@@ -59,6 +59,7 @@ import {
   getFirstResponseTimeColor,
   getResponseTimeColor,
 } from '../../lib/format'
+import { getStreamStatusDisplay } from '../../lib/stream-status'
 import {
   getLogTypeConfig,
   isPerCallBilling,
@@ -411,6 +412,11 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const isTopup = props.log.type === 1
   const isManage = props.log.type === 3
   const isSubscription = other?.billing_source === 'subscription'
+  const streamStatusDisplay = getStreamStatusDisplay(other?.stream_status)
+  const streamStatusLabel =
+    streamStatusDisplay.labelKey === 'Client Disconnected'
+      ? t('Client Disconnected')
+      : t('Error')
   const isTieredBilling =
     isConsume &&
     !isViolation &&
@@ -896,8 +902,8 @@ export function DetailsDialog(props: DetailsDialogProps) {
                     label={t('Status')}
                     value={
                       <StatusBadge
-                        label={other.stream_status.status || t('Error')}
-                        variant='red'
+                        label={streamStatusLabel}
+                        variant={streamStatusDisplay.variant}
                         size='sm'
                         copyable={false}
                       />

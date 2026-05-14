@@ -18,9 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Card, Tabs, TabPane } from '@douyinfe/semi-ui';
+import { Tabs, TabPane } from '@douyinfe/semi-ui';
 import { PieChart } from 'lucide-react';
 import { VChart } from '@visactor/react-vchart';
+import DashboardCard from './DashboardCard';
 
 const ChartsPanel = ({
   activeChartTab,
@@ -39,12 +40,13 @@ const ChartsPanel = ({
   t,
 }) => {
   return (
-    <Card
+    <DashboardCard
       {...CARD_PROPS}
-      className={`!rounded-2xl ${hasApiInfoPanel ? 'lg:col-span-3' : ''}`}
+      className={hasApiInfoPanel ? 'lg:col-span-3' : ''}
+      tone='analysis'
       title={
-        <div className='flex flex-col lg:flex-row lg:items-center lg:justify-between w-full gap-3'>
-          <div className={FLEX_CENTER_GAP2}>
+        <div className='ct-dashboard-panel-title-row'>
+          <div className={`${FLEX_CENTER_GAP2} ct-dashboard-panel-title`}>
             <PieChart size={16} />
             {t('模型数据分析')}
           </div>
@@ -68,7 +70,7 @@ const ChartsPanel = ({
       }
       bodyStyle={{ padding: 0 }}
     >
-      <div className='h-96 p-2'>
+      <div className='ct-dashboard-chart-stage'>
         {activeChartTab === '1' && (
           <VChart spec={spec_line} option={CHART_CONFIG} />
         )}
@@ -88,7 +90,7 @@ const ChartsPanel = ({
           <VChart spec={spec_user_trend} option={CHART_CONFIG} />
         )}
       </div>
-    </Card>
+    </DashboardCard>
   );
 };
 

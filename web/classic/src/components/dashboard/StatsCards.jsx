@@ -18,10 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Card, Avatar, Skeleton, Tag } from '@douyinfe/semi-ui';
+import { Avatar, Skeleton, Tag } from '@douyinfe/semi-ui';
 import { VChart } from '@visactor/react-vchart';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import DashboardCard from './DashboardCard';
 
 const StatsCards = ({
   groupedStatsData,
@@ -36,30 +37,33 @@ const StatsCards = ({
     <div className='mb-4'>
       <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4'>
         {groupedStatsData.map((group, idx) => (
-          <Card
+          <DashboardCard
             key={idx}
             {...CARD_PROPS}
-            className={`${group.color} border-0 !rounded-2xl w-full`}
+            className={`w-full ${group.color || ''}`}
             title={group.title}
+            tone={group.tone || 'default'}
           >
-            <div className='space-y-4'>
+            <div className='ct-dashboard-stat-list'>
               {group.items.map((item, itemIdx) => (
                 <div
                   key={itemIdx}
-                  className='flex items-center justify-between cursor-pointer'
+                  className='ct-dashboard-stat-row'
                   onClick={item.onClick}
                 >
-                  <div className='flex items-center'>
+                  <div className='ct-dashboard-stat-main'>
                     <Avatar
-                      className='mr-3'
+                      className='ct-dashboard-stat-avatar'
                       size='small'
                       color={item.avatarColor}
                     >
                       {item.icon}
                     </Avatar>
                     <div>
-                      <div className='text-xs text-gray-500'>{item.title}</div>
-                      <div className='text-lg font-semibold'>
+                      <div className='ct-dashboard-stat-label'>
+                        {item.title}
+                      </div>
+                      <div className='ct-dashboard-stat-value'>
                         <Skeleton
                           loading={loading}
                           active
@@ -82,9 +86,10 @@ const StatsCards = ({
                   </div>
                   {item.title === t('当前余额') ? (
                     <Tag
-                      color='white'
+                      color='green'
                       shape='circle'
                       size='large'
+                      className='ct-dashboard-action-tag'
                       onClick={(e) => {
                         e.stopPropagation();
                         navigate('/console/topup');
@@ -106,7 +111,7 @@ const StatsCards = ({
                 </div>
               ))}
             </div>
-          </Card>
+          </DashboardCard>
         ))}
       </div>
     </div>

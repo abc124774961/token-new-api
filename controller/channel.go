@@ -68,6 +68,30 @@ func clearChannelInfo(channel *model.Channel) {
 	}
 }
 
+type channelResponse struct {
+	*model.Channel
+	FailureAvoidance *service.ChannelFailureAvoidanceStatus `json:"failure_avoidance,omitempty"`
+}
+
+func buildChannelResponse(channel *model.Channel) *channelResponse {
+	if channel == nil {
+		return nil
+	}
+	clearChannelInfo(channel)
+	return &channelResponse{
+		Channel:          channel,
+		FailureAvoidance: service.GetChannelFailureAvoidanceStatus(channel.Id),
+	}
+}
+
+func buildChannelResponses(channels []*model.Channel) []*channelResponse {
+	responses := make([]*channelResponse, 0, len(channels))
+	for _, channel := range channels {
+		responses = append(responses, buildChannelResponse(channel))
+	}
+	return responses
+}
+
 func GetAllChannels(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)
@@ -140,10 +164,6 @@ func GetAllChannels(c *gin.Context) {
 		}
 	}
 
-	for _, datum := range channelData {
-		clearChannelInfo(datum)
-	}
-
 	countQuery := model.DB.Model(&model.Channel{})
 	if statusFilter == common.ChannelStatusEnabled {
 		countQuery = countQuery.Where("status = ?", common.ChannelStatusEnabled)
@@ -160,7 +180,7 @@ func GetAllChannels(c *gin.Context) {
 		typeCounts[r.Type] = r.Count
 	}
 	common.ApiSuccess(c, gin.H{
-		"items":       channelData,
+		"items":       buildChannelResponses(channelData),
 		"total":       total,
 		"page":        pageInfo.GetPage(),
 		"page_size":   pageInfo.GetPageSize(),
@@ -339,15 +359,11 @@ func SearchChannels(c *gin.Context) {
 
 	pagedData := channelData[startIdx:endIdx]
 
-	for _, datum := range pagedData {
-		clearChannelInfo(datum)
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"items":       pagedData,
+			"items":       buildChannelResponses(pagedData),
 			"total":       total,
 			"type_counts": typeCounts,
 		},
@@ -366,13 +382,10 @@ func GetChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if channel != nil {
-		clearChannelInfo(channel)
-	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    channel,
+		"data":    buildChannelResponse(channel),
 	})
 	return
 }

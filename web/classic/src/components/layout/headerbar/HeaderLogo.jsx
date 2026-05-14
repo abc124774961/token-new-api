@@ -38,17 +38,17 @@ const HeaderLogo = ({
   }
 
   return (
-    <Link to='/' className='group flex items-center gap-2'>
-      <div className='relative w-8 h-8 md:w-8 md:h-8'>
+    <Link to='/' className='ct-header-brand group'>
+      <div className='ct-header-logo'>
         <SkeletonWrapper loading={isLoading || !logoLoaded} type='image' />
         <img
           src={logo}
           alt='logo'
-          className={`absolute inset-0 w-full h-full transition-all duration-200 group-hover:scale-110 rounded-full ${!isLoading && logoLoaded ? 'opacity-100' : 'opacity-0'}`}
+          className={`absolute inset-0 w-full h-full transition-all duration-200 group-hover:scale-105 rounded-full ${!isLoading && logoLoaded ? 'opacity-100' : 'opacity-0'}`}
         />
       </div>
-      <div className='hidden md:flex items-center gap-2'>
-        <div className='flex items-center gap-2'>
+      <div className='ct-header-brand-copy'>
+        <div className='ct-header-title-row'>
           <SkeletonWrapper
             loading={isLoading}
             type='title'
@@ -57,7 +57,7 @@ const HeaderLogo = ({
           >
             <Typography.Title
               heading={4}
-              className='!text-lg !font-semibold !mb-0'
+              className='ct-header-title !mb-0'
             >
               {systemName}
             </Typography.Title>
@@ -73,6 +73,9 @@ const HeaderLogo = ({
             </Tag>
           )}
         </div>
+        <span className='ct-header-subtitle'>
+          {isConsoleRoute ? t('控制台工作区') : t('统一 API 网关')}
+        </span>
       </div>
     </Link>
   );

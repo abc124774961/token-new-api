@@ -18,13 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Card, Avatar, Tag, Divider, Empty } from '@douyinfe/semi-ui';
+import { Avatar, Tag, Divider } from '@douyinfe/semi-ui';
 import { Server, Gauge, ExternalLink, Copy } from 'lucide-react';
-import {
-  IllustrationConstruction,
-  IllustrationConstructionDark,
-} from '@douyinfe/semi-illustrations';
 import ScrollableContainer from '../common/ui/ScrollableContainer';
+import DashboardCard from './DashboardCard';
+import DashboardEmptyState from './DashboardEmptyState';
 
 const ApiInfoPanel = ({
   apiInfoData,
@@ -36,11 +34,11 @@ const ApiInfoPanel = ({
   t,
 }) => {
   return (
-    <Card
+    <DashboardCard
       {...CARD_PROPS}
-      className='bg-gray-50 border-0 !rounded-2xl'
+      tone='info'
       title={
-        <div className={FLEX_CENTER_GAP2}>
+        <div className={`${FLEX_CENTER_GAP2} ct-dashboard-panel-title`}>
           <Server size={16} />
           {t('API信息')}
         </div>
@@ -51,7 +49,7 @@ const ApiInfoPanel = ({
         {apiInfoData.length > 0 ? (
           apiInfoData.map((api) => (
             <React.Fragment key={api.id}>
-              <div className='flex p-2 hover:bg-white rounded-lg transition-colors cursor-pointer'>
+              <div className='ct-dashboard-list-item'>
                 <div className='flex-shrink-0 mr-3'>
                   <Avatar size='extra-small' color={api.color}>
                     {api.route.substring(0, 2)}
@@ -107,19 +105,15 @@ const ApiInfoPanel = ({
             </React.Fragment>
           ))
         ) : (
-          <div className='flex justify-center items-center min-h-[20rem] w-full'>
-            <Empty
-              image={<IllustrationConstruction style={ILLUSTRATION_SIZE} />}
-              darkModeImage={
-                <IllustrationConstructionDark style={ILLUSTRATION_SIZE} />
-              }
+          <div className='min-h-[20rem] w-full'>
+            <DashboardEmptyState
               title={t('暂无API信息')}
               description={t('请联系管理员在系统设置中配置API信息')}
             />
           </div>
         )}
       </ScrollableContainer>
-    </Card>
+    </DashboardCard>
   );
 };
 

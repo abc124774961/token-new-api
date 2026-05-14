@@ -54,6 +54,14 @@ const OPERATIONS_SECTIONS = [
           AutomaticDisableChannelEnabled:
             settings.AutomaticDisableChannelEnabled,
           AutomaticEnableChannelEnabled: settings.AutomaticEnableChannelEnabled,
+          ChannelFailureAvoidanceEnabled:
+            settings.ChannelFailureAvoidanceEnabled,
+          ChannelFailureAvoidanceTTLSeconds:
+            settings.ChannelFailureAvoidanceTTLSeconds,
+          ChannelBalanceAutoResumeEnabled:
+            settings.ChannelBalanceAutoResumeEnabled,
+          ChannelBalanceRecoveryThreshold:
+            settings.ChannelBalanceRecoveryThreshold,
           AutomaticDisableKeywords: settings.AutomaticDisableKeywords,
           AutomaticDisableStatusCodes: settings.AutomaticDisableStatusCodes,
           AutomaticRetryStatusCodes: settings.AutomaticRetryStatusCodes,

@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	common2 "github.com/QuantumNous/new-api/common"
+	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
@@ -483,6 +485,80 @@ func sendPingData(c *gin.Context, mutex *sync.Mutex) error {
 func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	return doRequest(c, req, info)
 }
+
+func upstreamRequestInfo(req *http.Request, info *common.RelayInfo, duration time.Duration, err error) map[string]interface{} {
+	result := make(map[string]interface{})
+	if req != nil && req.URL != nil {
+		result["method"] = req.Method
+		result["scheme"] = req.URL.Scheme
+		result["host"] = req.URL.Host
+		result["path"] = req.URL.EscapedPath()
+		if req.URL.RawQuery != "" {
+			result["query_keys"] = requestQueryKeys(req.URL)
+		}
+	}
+	if info != nil {
+		result["origin_model"] = info.OriginModelName
+		result["relay_mode"] = info.RelayMode
+		result["is_stream"] = info.IsStream
+		if info.RetryIndex > 0 {
+			result["retry_index"] = info.RetryIndex
+		}
+		if info.ChannelMeta != nil {
+			result["channel_id"] = info.ChannelId
+			result["channel_type"] = info.ChannelType
+			result["upstream_model"] = info.UpstreamModelName
+		}
+	}
+	result["duration_ms"] = duration.Milliseconds()
+	if err != nil {
+		result["error"] = common2.MaskSensitiveInfo(err.Error())
+		result["error_kind"] = upstreamRequestErrorKind(err)
+	}
+	return result
+}
+
+func requestQueryKeys(u *url.URL) []string {
+	if u == nil || u.RawQuery == "" {
+		return nil
+	}
+	values, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return []string{"<parse_error>"}
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func upstreamRequestErrorKind(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.Canceled) {
+		return "context_canceled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "context_deadline_exceeded"
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		if urlErr.Timeout() {
+			return "url_timeout"
+		}
+		if urlErr.Temporary() {
+			return "url_temporary"
+		}
+		if urlErr.Op != "" {
+			return "url_" + urlErr.Op
+		}
+		return "url_error"
+	}
+	return fmt.Sprintf("%T", err)
+}
+
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	var client *http.Client
 	var err error
@@ -515,13 +591,30 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		}
 	}
 
+	startTime := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.LogError(c, "do request failed: "+err.Error())
-		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
+		requestInfo := upstreamRequestInfo(req, info, time.Since(startTime), err)
+		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestInfo, requestInfo)
+		logger.LogError(c, fmt.Sprintf("do request failed: %s, upstream=%v", common2.MaskSensitiveInfo(err.Error()), requestInfo))
+		return nil, types.NewError(
+			err,
+			types.ErrorCodeDoRequestFailed,
+			types.ErrOptionWithHideErrMsg("upstream error: do request failed"),
+			types.ErrOptionWithStatusCode(http.StatusBadGateway),
+		)
 	}
 	if resp == nil {
-		return nil, errors.New("resp is nil")
+		err := errors.New("upstream response is nil")
+		requestInfo := upstreamRequestInfo(req, info, time.Since(startTime), err)
+		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestInfo, requestInfo)
+		logger.LogError(c, fmt.Sprintf("do request failed: %s, upstream=%v", err.Error(), requestInfo))
+		return nil, types.NewError(
+			err,
+			types.ErrorCodeDoRequestFailed,
+			types.ErrOptionWithHideErrMsg("upstream error: do request failed"),
+			types.ErrOptionWithStatusCode(http.StatusBadGateway),
+		)
 	}
 
 	_ = req.Body.Close()
