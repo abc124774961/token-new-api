@@ -410,6 +410,9 @@ func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIE
 	if shouldFailoverOnConcurrencyLimit(c, openaiErr) {
 		return true
 	}
+	if isUpstreamRateLimitLikeError(openaiErr) {
+		return true
+	}
 	code := openaiErr.StatusCode
 	if code < 100 || code > 599 {
 		return true
@@ -441,6 +444,32 @@ func shouldFailoverOnConcurrencyLimit(c *gin.Context, openaiErr *types.NewAPIErr
 		return false
 	}
 	return true
+}
+
+func isUpstreamRateLimitLikeError(openaiErr *types.NewAPIError) bool {
+	if openaiErr == nil {
+		return false
+	}
+	if openaiErr.GetErrorCode() != types.ErrorCodeBadResponseStatusCode &&
+		openaiErr.GetErrorType() != types.ErrorTypeOpenAIError {
+		return false
+	}
+	code := openaiErr.StatusCode
+	if code != http.StatusBadRequest && code != http.StatusTooManyRequests {
+		return false
+	}
+	message := strings.ToLower(openaiErr.Error())
+	return strings.Contains(message, "rate limit") ||
+		strings.Contains(message, "rate_limit") ||
+		strings.Contains(message, "quota rate") ||
+		strings.Contains(message, "quota limit") ||
+		strings.Contains(message, "too many requests") ||
+		strings.Contains(message, "retry after") ||
+		strings.Contains(message, "后重试") ||
+		strings.Contains(message, "限速") ||
+		strings.Contains(message, "速率") ||
+		strings.Contains(message, "配额限制") ||
+		strings.Contains(message, "限速规则")
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, persistLog bool) {
@@ -502,6 +531,9 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 func shouldTemporarilyAvoidChannel(err *types.NewAPIError) bool {
 	if err == nil || types.IsSkipRetryError(err) {
 		return false
+	}
+	if isUpstreamRateLimitLikeError(err) {
+		return true
 	}
 	switch err.GetErrorCode() {
 	case types.ErrorCodeDoRequestFailed,

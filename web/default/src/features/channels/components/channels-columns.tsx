@@ -27,6 +27,7 @@ import {
   CirclePause,
   ListOrdered,
   type LucideIcon,
+  TimerOff,
   ShieldAlert,
   Shuffle,
   TimerReset,
@@ -94,6 +95,15 @@ type ChannelOtherInfo = {
   status_time?: number
 }
 
+type ChannelConcurrencyCooldown = {
+  active?: boolean
+  reason?: string
+  until?: number
+  remaining_seconds?: number
+  failure_count?: number
+  success_streak?: number
+}
+
 function parseChannelOtherInfo(
   otherInfo: string | null | undefined
 ): ChannelOtherInfo {
@@ -107,6 +117,13 @@ function parseChannelOtherInfo(
     return {}
   }
   return {}
+}
+
+function parseChannelConcurrencyCooldown(
+  cooldown: Channel['concurrency_cooldown'] | undefined
+): ChannelConcurrencyCooldown {
+  if (!cooldown) return {}
+  return cooldown
 }
 
 function isBalanceInsufficientReason(reason?: string): boolean {
@@ -197,15 +214,30 @@ function ChannelStatusCell({ channel }: { channel: Channel }) {
   const config =
     CHANNEL_STATUS_CONFIG[status as keyof typeof CHANNEL_STATUS_CONFIG] ||
     CHANNEL_STATUS_CONFIG[0]
+  const settings = parseChannelSettings(channel.setting)
   const otherInfo = parseChannelOtherInfo(channel.other_info)
   const reasonLabel = getStatusReasonLabel(otherInfo.status_reason, t)
   const statusTime = otherInfo.status_time
     ? formatTimestampToDate(otherInfo.status_time)
     : ''
   const failureAvoidance = channel.failure_avoidance
+  const concurrencyCooldown = parseChannelConcurrencyCooldown(
+    channel.concurrency_cooldown
+  )
   const circuitPaused = failureAvoidance?.active === true
   const balancePaused =
     status === 3 && isBalanceInsufficientReason(otherInfo.status_reason)
+  const concurrencyPaused = concurrencyCooldown.active === true
+  const currentConcurrencyLimit = settings.max_concurrency ?? 0
+  const concurrencyCeiling = settings.max_concurrency_ceiling ?? 0
+  const hasConcurrencyLimit = currentConcurrencyLimit > 0
+  const concurrencyLimitLabel =
+    concurrencyCeiling > currentConcurrencyLimit
+      ? t('Limit {{current}} / {{ceiling}}', {
+          current: currentConcurrencyLimit,
+          ceiling: concurrencyCeiling,
+        })
+      : t('Limit {{current}}', { current: currentConcurrencyLimit })
 
   const isMultiKey = isMultiKeyChannel(channel)
   const keySize = channel.channel_info?.multi_key_size ?? 0
@@ -228,6 +260,10 @@ function ChannelStatusCell({ channel }: { channel: Channel }) {
     variant = 'warning'
     label = t('Balance paused')
     Icon = WalletCards
+  } else if (concurrencyPaused) {
+    variant = 'warning'
+    label = t('Concurrency cooldown')
+    Icon = TimerOff
   } else if (status === 3) {
     variant = 'danger'
     Icon = ShieldAlert
@@ -238,15 +274,25 @@ function ChannelStatusCell({ channel }: { channel: Channel }) {
   const remainingLabel = circuitPaused
     ? formatPauseDuration(failureAvoidance?.remaining_seconds)
     : ''
+  const concurrencyRemainingLabel = concurrencyPaused
+    ? formatPauseDuration(concurrencyCooldown.remaining_seconds)
+    : ''
   const pausedUntil = failureAvoidance?.until
     ? formatTimestampToDate(failureAvoidance.until)
+    : ''
+  const concurrencyPausedUntil = concurrencyCooldown.until
+    ? formatTimestampToDate(concurrencyCooldown.until)
     : ''
   const hasDetails =
     Boolean(reasonLabel) ||
     Boolean(statusTime) ||
     Boolean(remainingLabel) ||
+    Boolean(concurrencyRemainingLabel) ||
     Boolean(pausedUntil) ||
-    Boolean(failureAvoidance?.failure_count)
+    Boolean(concurrencyPausedUntil) ||
+    Boolean(failureAvoidance?.failure_count) ||
+    Boolean(concurrencyCooldown.failure_count) ||
+    Boolean(concurrencyCooldown.success_streak)
 
   const content = (
     <StatusSurface variant={variant} pulse={pulse}>
@@ -261,6 +307,16 @@ function ChannelStatusCell({ channel }: { channel: Channel }) {
           pulse={pulse}
           className='min-w-0'
         />
+        {hasConcurrencyLimit && (
+          <StatusBadge
+            label={concurrencyLimitLabel}
+            variant={
+              concurrencyCeiling > currentConcurrencyLimit ? 'info' : 'neutral'
+            }
+            size='sm'
+            copyable={false}
+          />
+        )}
         {isMultiKey && keySize > 0 && (
           <span className='border-border/70 bg-background/70 text-muted-foreground inline-flex h-5 shrink-0 items-center rounded border px-1.5 font-mono text-[10px] leading-none'>
             {t('{{count}}/{{total}} keys', {
@@ -279,6 +335,14 @@ function ChannelStatusCell({ channel }: { channel: Channel }) {
       {circuitPaused && remainingLabel && (
         <StatusDetailLine icon={TimerReset} className='text-warning'>
           {t('Resumes in {{duration}}', { duration: remainingLabel })}
+        </StatusDetailLine>
+      )}
+
+      {concurrencyPaused && concurrencyRemainingLabel && (
+        <StatusDetailLine icon={TimerOff} className='text-warning'>
+          {t('Cooldown remaining {{duration}}', {
+            duration: concurrencyRemainingLabel,
+          })}
         </StatusDetailLine>
       )}
 
@@ -310,9 +374,21 @@ function ChannelStatusCell({ channel }: { channel: Channel }) {
                 {t('Resumes in {{duration}}', { duration: remainingLabel })}
               </div>
             )}
+            {concurrencyRemainingLabel && (
+              <div>
+                {t('Concurrency cooldown: {{duration}}', {
+                  duration: concurrencyRemainingLabel,
+                })}
+              </div>
+            )}
             {pausedUntil && (
               <div>
                 {t('Paused until')}: {pausedUntil}
+              </div>
+            )}
+            {concurrencyPausedUntil && (
+              <div>
+                {t('Cooldown until')}: {concurrencyPausedUntil}
               </div>
             )}
             {statusTime && (
@@ -323,6 +399,16 @@ function ChannelStatusCell({ channel }: { channel: Channel }) {
             {failureAvoidance?.failure_count && (
               <div>
                 {t('Failure count')}: {failureAvoidance.failure_count}
+              </div>
+            )}
+            {concurrencyCooldown.failure_count && (
+              <div>
+                {t('Cooldown failures')}: {concurrencyCooldown.failure_count}
+              </div>
+            )}
+            {concurrencyCooldown.success_streak && (
+              <div>
+                {t('Recovery streak')}: {concurrencyCooldown.success_streak}
               </div>
             )}
           </div>

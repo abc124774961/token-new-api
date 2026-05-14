@@ -46,6 +46,19 @@ export type ChannelFailureAvoidance = z.infer<
   typeof channelFailureAvoidanceSchema
 >
 
+export const channelConcurrencyCooldownSchema = z.object({
+  active: z.boolean().default(false),
+  reason: z.string().optional(),
+  until: z.number().optional(),
+  remaining_seconds: z.number().optional(),
+  failure_count: z.number().optional(),
+  success_streak: z.number().optional(),
+})
+
+export type ChannelConcurrencyCooldown = z.infer<
+  typeof channelConcurrencyCooldownSchema
+>
+
 export const channelSchema = z.object({
   id: z.number(),
   type: z.number(),
@@ -76,6 +89,7 @@ export const channelSchema = z.object({
   header_override: z.string().nullish(),
   remark: z.string().default(''),
   max_input_tokens: z.number().default(0),
+  concurrency_cooldown: channelConcurrencyCooldownSchema.nullish(),
   channel_info: channelInfoSchema.default({
     is_multi_key: false,
     multi_key_size: 0,
@@ -100,6 +114,7 @@ export interface ChannelSettings {
   system_prompt?: string
   system_prompt_override?: boolean
   max_concurrency?: number
+  max_concurrency_ceiling?: number
 }
 
 export interface ChannelOtherSettings {

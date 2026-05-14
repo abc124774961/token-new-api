@@ -208,6 +208,8 @@ func TestShouldRetryAllowsCodexPendingRequestsFailoverWhenAlternativeGroupExists
 }
 
 func TestShouldRetryRejectsGeneric429WhenNoRetryBudget(t *testing.T) {
+	serviceSetupRelayRetryDB(t)
+
 	ctx := newRelayRetryContext()
 	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "auto")
 	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
@@ -227,6 +229,33 @@ func TestShouldRetryRejectsGeneric429WhenNoRetryBudget(t *testing.T) {
 
 	require.False(t, shouldRetry(ctx, err, param, 0))
 	require.Equal(t, 0, param.GetExtraRetries())
+}
+
+func TestShouldRetryAllowsUpstreamRateLimitWrappedAsBadRequest(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 451, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 452, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Set("use_channel", []string{"451"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	err := types.NewOpenAIError(
+		errors.New("您已达到当前订阅的速率配额限制，请在 42 分 54 秒 后重试，参考限速规则：https://***.io/***/***"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+
+	require.True(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, 1, param.GetExtraRetries())
 }
 
 func TestShouldRetryAllowsServerErrorFailoverWithAlternativePeerChannel(t *testing.T) {
@@ -371,6 +400,40 @@ func TestProcessChannelErrorRecordsTemporaryAvoidanceForBadGateway(t *testing.T)
 	require.NoError(t, selectErr)
 	require.NotNil(t, channel)
 	require.Equal(t, 903, channel.Id)
+}
+
+func TestProcessChannelErrorRecordsTemporaryAvoidanceForWrappedRateLimit(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 45
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(904)
+	})
+
+	err := types.NewOpenAIError(
+		errors.New("status_code=400, 您已达到当前订阅的速率配额限制，请在 42 分 13 秒 后重试"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+	processChannelError(newRelayRetryContext(), *types.NewChannelError(904, 1, "channel-904", false, "", false), err, false)
+
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 904, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 905, "default", "gpt-5.5", 10)
+
+	param := &service.RetryParam{
+		Ctx:        newRelayRetryContext(),
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	channel, _, selectErr := service.CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, selectErr)
+	require.NotNil(t, channel)
+	require.Equal(t, 905, channel.Id)
 }
 
 func TestProcessChannelErrorRecordsTemporaryAvoidanceForLocalConcurrencyLimit(t *testing.T) {
