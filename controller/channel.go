@@ -263,6 +263,24 @@ func FixChannelsAbilities(c *gin.Context) {
 	})
 }
 
+func ClearChannelFailureAvoidance(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	if _, err := model.GetChannelById(id, false); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	service.ClearChannelFailureAvoidance(id)
+	common.ApiSuccess(c, gin.H{
+		"id": id,
+	})
+}
+
 func SearchChannels(c *gin.Context) {
 	keyword := c.Query("keyword")
 	group := c.Query("group")

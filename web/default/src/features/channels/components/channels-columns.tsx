@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 /* eslint-disable react-refresh/only-export-components */
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { type ColumnDef } from '@tanstack/react-table'
 import {
@@ -26,6 +26,7 @@ import {
   ChevronRight,
   CirclePause,
   ListOrdered,
+  RotateCcw,
   type LucideIcon,
   TimerOff,
   ShieldAlert,
@@ -76,6 +77,7 @@ import {
   handleUpdateChannelField,
   handleUpdateTagField,
   handleUpdateChannelBalance,
+  handleClearChannelFailureAvoidance,
   isTagAggregateRow,
   type TagRow,
 } from '../lib'
@@ -210,6 +212,7 @@ function StatusDetailLine({
 
 function ChannelStatusCell({ channel }: { channel: Channel }) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const status = channel.status
   const config =
     CHANNEL_STATUS_CONFIG[status as keyof typeof CHANNEL_STATUS_CONFIG] ||
@@ -224,7 +227,26 @@ function ChannelStatusCell({ channel }: { channel: Channel }) {
   const concurrencyCooldown = parseChannelConcurrencyCooldown(
     channel.concurrency_cooldown
   )
-  const circuitPaused = failureAvoidance?.active === true
+  const [nowSeconds, setNowSeconds] = useState(() =>
+    Math.floor(Date.now() / 1000)
+  )
+  const [isClearingCircuit, setIsClearingCircuit] = useState(false)
+  const circuitRemainingSeconds =
+    failureAvoidance?.until !== undefined
+      ? Math.max(0, failureAvoidance.until - nowSeconds)
+      : (failureAvoidance?.remaining_seconds ?? 0)
+  const circuitPaused =
+    failureAvoidance?.active === true &&
+    (failureAvoidance.until === undefined || circuitRemainingSeconds > 0)
+
+  useEffect(() => {
+    if (failureAvoidance?.active !== true || !failureAvoidance?.until) return
+    const timer = window.setInterval(() => {
+      setNowSeconds(Math.floor(Date.now() / 1000))
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [failureAvoidance?.active, failureAvoidance?.until])
+
   const balancePaused =
     status === 3 && isBalanceInsufficientReason(otherInfo.status_reason)
   const concurrencyPaused = concurrencyCooldown.active === true
@@ -251,12 +273,7 @@ function ChannelStatusCell({ channel }: { channel: Channel }) {
   let Icon: LucideIcon | undefined
   let pulse = false
 
-  if (circuitPaused) {
-    variant = 'warning'
-    label = t('Circuit paused')
-    Icon = TimerReset
-    pulse = true
-  } else if (balancePaused) {
+  if (balancePaused) {
     variant = 'warning'
     label = t('Balance paused')
     Icon = WalletCards
@@ -272,7 +289,7 @@ function ChannelStatusCell({ channel }: { channel: Channel }) {
   }
 
   const remainingLabel = circuitPaused
-    ? formatPauseDuration(failureAvoidance?.remaining_seconds)
+    ? formatPauseDuration(circuitRemainingSeconds)
     : ''
   const concurrencyRemainingLabel = concurrencyPaused
     ? formatPauseDuration(concurrencyCooldown.remaining_seconds)
@@ -294,6 +311,15 @@ function ChannelStatusCell({ channel }: { channel: Channel }) {
     Boolean(concurrencyCooldown.failure_count) ||
     Boolean(concurrencyCooldown.success_streak)
 
+  const clearCircuit = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (isClearingCircuit) return
+    setIsClearingCircuit(true)
+    await handleClearChannelFailureAvoidance(channel.id, queryClient)
+    setIsClearingCircuit(false)
+  }
+
   const content = (
     <StatusSurface variant={variant} pulse={pulse}>
       <div className='flex min-w-0 items-center gap-1.5'>
@@ -307,6 +333,26 @@ function ChannelStatusCell({ channel }: { channel: Channel }) {
           pulse={pulse}
           className='min-w-0'
         />
+        {circuitPaused && (
+          <>
+            <span className='border-warning/40 bg-warning/10 text-warning inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[10px] leading-none font-medium'>
+              <TimerReset className='size-3 shrink-0' />
+              <span>{remainingLabel || t('Circuit paused')}</span>
+            </span>
+            <Button
+              type='button'
+              variant='ghost'
+              size='xs'
+              className='text-warning hover:text-warning h-5 shrink-0 px-1.5 text-[10px]'
+              disabled={isClearingCircuit}
+              onClick={clearCircuit}
+              title={t('Clear circuit breaker')}
+            >
+              <RotateCcw className='size-3' />
+              {t('Clear circuit')}
+            </Button>
+          </>
+        )}
         {hasConcurrencyLimit && (
           <StatusBadge
             label={concurrencyLimitLabel}

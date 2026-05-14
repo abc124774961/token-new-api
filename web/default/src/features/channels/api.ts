@@ -196,6 +196,16 @@ export async function updateChannelBalance(
 }
 
 /**
+ * Clear temporary failure avoidance for a channel
+ */
+export async function clearChannelFailureAvoidance(
+  id: number
+): Promise<{ success: boolean; message?: string; data?: { id: number } }> {
+  const res = await api.post(`/api/channel/${id}/clear_failure_avoidance`)
+  return res.data
+}
+
+/**
  * Fetch available models from upstream provider
  */
 export async function fetchUpstreamModels(

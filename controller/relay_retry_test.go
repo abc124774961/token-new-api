@@ -387,6 +387,9 @@ func TestShouldRetryAllowsServerErrorFailoverToNextAutoGroup(t *testing.T) {
 func TestProcessChannelErrorSkipsPersistingRetriableIntermediateFailure(t *testing.T) {
 	db := serviceSetupRelayRetryDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	t.Cleanup(func() {
+		service.ClearChannelFailureAvoidance(2)
+	})
 
 	ctx := newRelayRetryContext()
 	ctx.Set("id", 1)
@@ -479,6 +482,79 @@ func TestProcessChannelErrorRecordsTemporaryAvoidanceForWrappedRateLimit(t *test
 	require.NoError(t, selectErr)
 	require.NotNil(t, channel)
 	require.Equal(t, 905, channel.Id)
+}
+
+func TestProcessChannelErrorRecordsTemporaryAvoidanceForGenericUpstreamBadRequest(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 45
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(906)
+	})
+
+	err := types.NewOpenAIError(
+		errors.New("upstream rejected request for this channel"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+	processChannelError(newRelayRetryContext(), *types.NewChannelError(906, 1, "channel-906", false, "", false), err, false)
+
+	status := service.GetChannelFailureAvoidanceStatus(906)
+	require.NotNil(t, status)
+	require.True(t, status.Active)
+	require.Equal(t, "upstream_error:400:bad_response_status_code", status.Reason)
+	require.Equal(t, 1, status.FailureCount)
+}
+
+func TestProcessChannelErrorExtendsTemporaryAvoidanceForRepeatedUpstreamErrors(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 10
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(908)
+	})
+
+	err := types.NewOpenAIError(
+		errors.New("upstream rejected request for this channel"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+	processChannelError(newRelayRetryContext(), *types.NewChannelError(908, 1, "channel-908", false, "", false), err, false)
+	processChannelError(newRelayRetryContext(), *types.NewChannelError(908, 1, "channel-908", false, "", false), err, false)
+
+	status := service.GetChannelFailureAvoidanceStatus(908)
+	require.NotNil(t, status)
+	require.True(t, status.Active)
+	require.Equal(t, "upstream_error:400:bad_response_status_code", status.Reason)
+	require.Equal(t, 2, status.FailureCount)
+	require.Greater(t, time.Unix(status.Until, 0).Sub(time.Now()), 15*time.Second)
+}
+
+func TestProcessChannelErrorSkipsTemporaryAvoidanceForLocalBadRequest(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 45
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(910)
+	})
+
+	err := types.NewErrorWithStatusCode(
+		errors.New("invalid request body"),
+		types.ErrorCodeInvalidRequest,
+		http.StatusBadRequest,
+	)
+	processChannelError(newRelayRetryContext(), *types.NewChannelError(910, 1, "channel-910", false, "", false), err, false)
+
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(910))
 }
 
 func TestProcessChannelErrorRecordsTemporaryAvoidanceForLocalConcurrencyLimit(t *testing.T) {

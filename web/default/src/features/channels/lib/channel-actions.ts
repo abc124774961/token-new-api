@@ -35,6 +35,7 @@ import {
   testAllChannels,
   updateAllChannelsBalance,
   updateChannelBalance,
+  clearChannelFailureAvoidance,
 } from '../api'
 import { CHANNEL_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import type { CopyChannelParams } from '../types'
@@ -111,6 +112,31 @@ export async function handleToggleChannelStatus(
     await handleDisableChannel(id, queryClient, onSuccess)
   } else {
     await handleEnableChannel(id, queryClient, onSuccess)
+  }
+}
+
+/**
+ * Clear temporary failure avoidance for a channel
+ */
+export async function handleClearChannelFailureAvoidance(
+  id: number,
+  queryClient?: QueryClient,
+  onSuccess?: () => void
+): Promise<void> {
+  try {
+    const response = await clearChannelFailureAvoidance(id)
+    if (response.success) {
+      toast.success(i18next.t('Circuit breaker cleared'))
+      queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.detail(id) })
+      onSuccess?.()
+    } else {
+      toast.error(
+        response.message || i18next.t('Failed to clear circuit breaker')
+      )
+    }
+  } catch (_error) {
+    toast.error(i18next.t('Failed to clear circuit breaker'))
   }
 }
 

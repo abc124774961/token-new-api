@@ -502,8 +502,8 @@ func isUpstreamRateLimitLikeError(openaiErr *types.NewAPIError) bool {
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, persistLog bool) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
-	if shouldTemporarilyAvoidChannel(err) {
-		service.RecordChannelFailureAvoidance(channelError.ChannelId, string(err.GetErrorCode()))
+	if reason, ok := channelFailureAvoidanceReason(err); ok {
+		service.RecordChannelFailureAvoidance(channelError.ChannelId, reason)
 	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
@@ -557,29 +557,75 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 }
 
 func shouldTemporarilyAvoidChannel(err *types.NewAPIError) bool {
+	_, ok := channelFailureAvoidanceReason(err)
+	return ok
+}
+
+func channelFailureAvoidanceReason(err *types.NewAPIError) (string, bool) {
 	if err == nil || types.IsSkipRetryError(err) {
-		return false
+		return "", false
 	}
 	if isUpstreamRateLimitLikeError(err) {
-		return true
+		return "upstream_rate_limit", true
+	}
+	if err.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
+		return "channel_concurrency_limit", true
+	}
+	if isUpstreamFailoverCandidate(err) {
+		return formatUpstreamFailureAvoidanceReason(err), true
 	}
 	switch err.GetErrorCode() {
 	case types.ErrorCodeDoRequestFailed,
 		types.ErrorCodeReadResponseBodyFailed,
 		types.ErrorCodeBadResponse,
 		types.ErrorCodeBadResponseBody:
-		return true
+		return formatUpstreamFailureAvoidanceReason(err), true
 	case types.ErrorCodeChannelConcurrencyLimit:
-		return true
+		return "channel_concurrency_limit", true
 	case types.ErrorCodeBadResponseStatusCode:
-		return err.StatusCode == http.StatusBadGateway ||
+		if err.StatusCode == http.StatusBadGateway ||
 			err.StatusCode == http.StatusServiceUnavailable ||
 			err.StatusCode == http.StatusGatewayTimeout ||
 			err.StatusCode == 524 ||
-			err.StatusCode == 529
+			err.StatusCode == 529 {
+			return formatUpstreamFailureAvoidanceReason(err), true
+		}
 	default:
-		return false
 	}
+	return "", false
+}
+
+func formatUpstreamFailureAvoidanceReason(err *types.NewAPIError) string {
+	code := normalizeFailureAvoidancePart(string(err.GetErrorCode()))
+	if err.StatusCode >= 100 && err.StatusCode <= 599 {
+		return fmt.Sprintf("upstream_error:%d:%s", err.StatusCode, code)
+	}
+	return fmt.Sprintf("upstream_error:%s", code)
+}
+
+func normalizeFailureAvoidancePart(value string) string {
+	value = strings.ToLower(value)
+	var builder strings.Builder
+	for _, r := range value {
+		if builder.Len() >= 80 {
+			break
+		}
+		if (r >= 'a' && r <= 'z') ||
+			(r >= '0' && r <= '9') ||
+			r == '_' ||
+			r == '-' ||
+			r == ':' ||
+			r == '.' {
+			builder.WriteRune(r)
+			continue
+		}
+		builder.WriteByte('_')
+	}
+	result := strings.Trim(builder.String(), "._:-")
+	if result == "" {
+		return "unknown"
+	}
+	return result
 }
 
 func RelayMidjourney(c *gin.Context) {
