@@ -474,6 +474,9 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		if upstreamRequest, ok := common.GetContextKey(c, constant.ContextKeyUpstreamRequestInfo); ok {
 			other["upstream_request"] = upstreamRequest
 		}
+		if len(err.Metadata) > 0 {
+			other["error_metadata"] = common.JsonRawMessageToString(err.Metadata)
+		}
 		adminInfo := make(map[string]interface{})
 		adminInfo["use_channel"] = c.GetStringSlice("use_channel")
 		isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
@@ -502,6 +505,8 @@ func shouldTemporarilyAvoidChannel(err *types.NewAPIError) bool {
 		types.ErrorCodeReadResponseBodyFailed,
 		types.ErrorCodeBadResponse,
 		types.ErrorCodeBadResponseBody:
+		return true
+	case types.ErrorCodeChannelConcurrencyLimit:
 		return true
 	case types.ErrorCodeBadResponseStatusCode:
 		return err.StatusCode == http.StatusBadGateway ||

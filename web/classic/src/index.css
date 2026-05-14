@@ -1141,6 +1141,38 @@ body {
   margin-right: 8px;
 }
 
+.ct-auth-inline-action.semi-button {
+  min-height: 38px !important;
+  height: 38px !important;
+  padding: 0 14px !important;
+  border-radius: 999px !important;
+  border-color: rgba(15, 118, 110, 0.18) !important;
+  background: rgba(240, 253, 250, 0.96) !important;
+  color: #0f766e !important;
+  font-size: 12px !important;
+  font-weight: 760 !important;
+  white-space: nowrap;
+  box-shadow: none !important;
+}
+
+.ct-auth-inline-action.semi-button:not(.semi-button-disabled):hover {
+  border-color: rgba(20, 184, 166, 0.28) !important;
+  background: rgba(236, 253, 245, 1) !important;
+  color: #0f766e !important;
+}
+
+.dark .ct-auth-inline-action.semi-button {
+  border-color: rgba(45, 212, 191, 0.2) !important;
+  background: rgba(15, 23, 42, 0.68) !important;
+  color: #ccfbf1 !important;
+}
+
+.dark .ct-auth-inline-action.semi-button:not(.semi-button-disabled):hover {
+  border-color: rgba(45, 212, 191, 0.32) !important;
+  background: rgba(20, 184, 166, 0.12) !important;
+  color: #ecfeff !important;
+}
+
 .ct-auth-card input:-webkit-autofill,
 .ct-auth-card input:-webkit-autofill:hover,
 .ct-auth-card input:-webkit-autofill:focus,

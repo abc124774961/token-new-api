@@ -146,6 +146,13 @@ func LearnChannelConcurrencyLimit(ctx *gin.Context, channelID int, activeAtLimit
 	if setting.MaxConcurrency > 0 && setting.MaxConcurrency <= learnedLimit {
 		return
 	}
+	currentLimit := setting.MaxConcurrency
+	if learnedLimit < 1 {
+		learnedLimit = 1
+	}
+	if setting.MaxConcurrency > 0 && setting.MaxConcurrency <= learnedLimit {
+		return
+	}
 	settingStr, marshalErr := buildLearnedChannelSetting(channel, learnedLimit)
 	if marshalErr != nil {
 		logChannelConcurrencyError(ctx, fmt.Sprintf("failed to marshal learned channel concurrency limit: channel_id=%d, error=%v", channelID, marshalErr))
@@ -157,7 +164,11 @@ func LearnChannelConcurrencyLimit(ctx *gin.Context, channelID int, activeAtLimit
 	}
 	channel.Setting = &settingStr
 	model.CacheUpdateChannel(channel)
-	logChannelConcurrencyInfo(ctx, fmt.Sprintf("learned channel #%d max concurrency: %d", channelID, learnedLimit))
+	if currentLimit > 0 {
+		logChannelConcurrencyInfo(ctx, fmt.Sprintf("learned channel #%d max concurrency: %d (was %d)", channelID, learnedLimit, currentLimit))
+	} else {
+		logChannelConcurrencyInfo(ctx, fmt.Sprintf("learned channel #%d max concurrency: %d", channelID, learnedLimit))
+	}
 }
 
 func buildLearnedChannelSetting(channel *model.Channel, learnedLimit int) (string, error) {

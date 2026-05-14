@@ -372,3 +372,37 @@ func TestProcessChannelErrorRecordsTemporaryAvoidanceForBadGateway(t *testing.T)
 	require.NotNil(t, channel)
 	require.Equal(t, 903, channel.Id)
 }
+
+func TestProcessChannelErrorRecordsTemporaryAvoidanceForLocalConcurrencyLimit(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 45
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(912)
+	})
+
+	err := types.NewErrorWithStatusCode(
+		errors.New("channel #912 reached configured max concurrency 1"),
+		types.ErrorCodeChannelConcurrencyLimit,
+		http.StatusTooManyRequests,
+	)
+	processChannelError(newRelayRetryContext(), *types.NewChannelError(912, 1, "channel-912", false, "", false), err, false)
+
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 912, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 913, "default", "gpt-5.5", 10)
+
+	param := &service.RetryParam{
+		Ctx:        newRelayRetryContext(),
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	channel, _, selectErr := service.CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, selectErr)
+	require.NotNil(t, channel)
+	require.Equal(t, 913, channel.Id)
+}

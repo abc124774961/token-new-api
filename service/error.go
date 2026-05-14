@@ -17,6 +17,8 @@ import (
 	"github.com/QuantumNous/new-api/types"
 )
 
+const upstreamResponseSnippetLimit = 512
+
 func MidjourneyErrorWrapper(code int, desc string) *dto.MidjourneyResponse {
 	return &dto.MidjourneyResponse{
 		Code:        code,
@@ -91,6 +93,13 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		return
 	}
 	CloseResponseBodyGracefully(resp)
+	upstreamMetadata := buildUpstreamResponseMetadata(resp, responseBody)
+	attachUpstreamMetadata := func(e *types.NewAPIError) *types.NewAPIError {
+		if e != nil && len(upstreamMetadata) > 0 {
+			e.Metadata = upstreamMetadata
+		}
+		return e
+	}
 	var errResponse dto.GeneralErrorResponse
 	buildErrWithBody := func(message string) error {
 		if message == "" {
@@ -107,7 +116,7 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 			logger.LogError(ctx, fmt.Sprintf("bad response status code %d, body: %s", resp.StatusCode, string(responseBody)))
 			newApiErr.Err = fmt.Errorf("bad response status code %d", resp.StatusCode)
 		}
-		return
+		return attachUpstreamMetadata(newApiErr)
 	}
 
 	if common.GetJsonType(errResponse.Error) == "object" {
@@ -118,14 +127,48 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 			if showBodyWhenFail {
 				newApiErr.Err = buildErrWithBody(newApiErr.Error())
 			}
-			return
+			return attachUpstreamMetadata(newApiErr)
 		}
 	}
 	newApiErr = types.NewOpenAIError(errors.New(errResponse.ToMessage()), types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
 	if showBodyWhenFail {
 		newApiErr.Err = buildErrWithBody(newApiErr.Error())
 	}
-	return
+	return attachUpstreamMetadata(newApiErr)
+}
+
+func buildUpstreamResponseMetadata(resp *http.Response, responseBody []byte) json.RawMessage {
+	metadata := map[string]any{}
+	if resp != nil {
+		metadata["status_code"] = resp.StatusCode
+		if statusText := strings.TrimSpace(resp.Status); statusText != "" {
+			metadata["status_text"] = statusText
+		}
+		if contentType := strings.TrimSpace(resp.Header.Get("Content-Type")); contentType != "" {
+			metadata["content_type"] = contentType
+		}
+	}
+	if len(responseBody) > 0 {
+		bodySnippet := responseBody
+		truncated := false
+		if len(bodySnippet) > upstreamResponseSnippetLimit {
+			bodySnippet = bodySnippet[:upstreamResponseSnippetLimit]
+			truncated = true
+		}
+		metadata["body_snippet"] = strings.TrimSpace(string(bodySnippet))
+		metadata["body_length"] = len(responseBody)
+		if truncated {
+			metadata["body_truncated"] = true
+		}
+	}
+	if len(metadata) == 0 {
+		return nil
+	}
+	raw, err := common.Marshal(metadata)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 func ResetStatusCode(newApiErr *types.NewAPIError, statusCodeMappingStr string) {
