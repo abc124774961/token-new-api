@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"sync"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -63,6 +65,33 @@ var (
 	modelSupportEndpointsLock = sync.RWMutex{}
 )
 
+func channelSupportsResponsesWireAPI(channelType int, settings dto.ChannelOtherSettings) bool {
+	if !settings.UsesResponsesWireAPI() {
+		return false
+	}
+	switch channelType {
+	case constant.ChannelTypeOpenAI, constant.ChannelTypeCodex, constant.ChannelTypeXai:
+		return true
+	default:
+		return false
+	}
+}
+
+func appendUniqueEndpoint(endpoints []string, endpoint constant.EndpointType) []string {
+	if slices.Contains(endpoints, string(endpoint)) {
+		return endpoints
+	}
+	return append(endpoints, string(endpoint))
+}
+
+func buildModelSupportEndpointTypes(channelType int, model string, settings dto.ChannelOtherSettings) []constant.EndpointType {
+	endpointTypes := common.GetEndpointTypesByChannelType(channelType, model)
+	if channelSupportsResponsesWireAPI(channelType, settings) {
+		endpointTypes = append([]constant.EndpointType{constant.EndpointTypeOpenAIResponse}, endpointTypes...)
+	}
+	return endpointTypes
+}
+
 func GetPricing() []Pricing {
 	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
 		updatePricingLock.Lock()
@@ -114,7 +143,7 @@ func updatePricing() {
 		common.SysLog(fmt.Sprintf("GetAllEnableAbilityWithChannels error: %v", err))
 		return
 	}
-	// 预加载模型元数据与供应商一次，避免循环查询
+	// 预加载模型元数据、渠道设置与供应商一次，避免循环查询
 	var allMeta []Model
 	_ = DB.Find(&allMeta).Error
 	metaMap := make(map[string]*Model)
@@ -135,6 +164,20 @@ func updatePricing() {
 				containsList = append(containsList, m)
 			}
 		}
+	}
+
+	var allChannels []Channel
+	_ = DB.Find(&allChannels).Error
+	channelSettingsMap := make(map[int]dto.ChannelOtherSettings, len(allChannels))
+	for i := range allChannels {
+		ch := &allChannels[i]
+		settings := dto.ChannelOtherSettings{}
+		if strings.TrimSpace(ch.OtherSettings) != "" {
+			if err := common.UnmarshalJsonStr(ch.OtherSettings, &settings); err != nil {
+				common.SysLog(fmt.Sprintf("failed to unmarshal channel settings for channel %d: %v", ch.Id, err))
+			}
+		}
+		channelSettingsMap[ch.Id] = settings
 	}
 
 	// 将非精确规则模型匹配到 metaMap
@@ -205,11 +248,10 @@ func updatePricing() {
 	// 先根据已有能力填充原生端点
 	for _, ability := range enableAbilities {
 		endpoints := modelSupportEndpointsStr[ability.Model]
-		channelTypes := common.GetEndpointTypesByChannelType(ability.ChannelType, ability.Model)
+		channelSettings := channelSettingsMap[ability.ChannelId]
+		channelTypes := buildModelSupportEndpointTypes(ability.ChannelType, ability.Model, channelSettings)
 		for _, channelType := range channelTypes {
-			if !common.StringsContains(endpoints, string(channelType)) {
-				endpoints = append(endpoints, string(channelType))
-			}
+			endpoints = appendUniqueEndpoint(endpoints, channelType)
 		}
 		modelSupportEndpointsStr[ability.Model] = endpoints
 	}

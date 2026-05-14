@@ -57,7 +57,14 @@ func (s *ChannelOtherSettings) UsesResponsesWireAPI() bool {
 	if s == nil {
 		return false
 	}
-	return strings.TrimSpace(s.WireAPI) != ""
+	wireAPI := strings.ToLower(strings.Trim(strings.TrimSpace(s.WireAPI), "/"))
+	if wireAPI == "" {
+		return false
+	}
+	if wireAPI == "responses" || strings.HasPrefix(wireAPI, "responses/") {
+		return true
+	}
+	return strings.HasSuffix(wireAPI, "/responses") || strings.Contains(wireAPI, "/responses/")
 }
 
 func (s *ChannelOtherSettings) GetOpenAIWireAPIPath(isCompact bool) string {

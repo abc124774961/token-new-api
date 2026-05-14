@@ -317,12 +317,12 @@ func TestGetTokenModelsUsesTokenEffectiveGroupAvailability(t *testing.T) {
 		Status:   common.UserStatusEnabled,
 	}).Error)
 	require.NoError(t, db.Create(&model.Token{
-		Id:      3001,
-		UserId:  2002,
-		Key:     "token-key",
-		Name:    "token-models",
-		Status:  common.TokenStatusEnabled,
-		Group:   "",
+		Id:     3001,
+		UserId: 2002,
+		Key:    "token-key",
+		Name:   "token-models",
+		Status: common.TokenStatusEnabled,
+		Group:  "",
 	}).Error)
 	require.NoError(t, db.Create(&model.Channel{
 		Id:     2,
@@ -367,12 +367,12 @@ func TestGetTokenModelsTreatsEmptyGroupAsAuto(t *testing.T) {
 		Status:   common.UserStatusEnabled,
 	}).Error)
 	require.NoError(t, db.Create(&model.Token{
-		Id:      3002,
-		UserId:  2003,
-		Key:     "token-auto-key",
-		Name:    "token-auto-models",
-		Status:  common.TokenStatusEnabled,
-		Group:   "",
+		Id:     3002,
+		UserId: 2003,
+		Key:    "token-auto-key",
+		Name:   "token-auto-models",
+		Status: common.TokenStatusEnabled,
+		Group:  "",
 	}).Error)
 	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["codex-plus","codex-pro"]`))
 	t.Cleanup(func() {
@@ -416,4 +416,59 @@ func TestGetTokenModelsTreatsEmptyGroupAsAuto(t *testing.T) {
 	require.True(t, payload.Success)
 	require.Contains(t, payload.Data, "zz-auto-codex-plus-model")
 	require.Contains(t, payload.Data, "zz-auto-codex-pro-model")
+}
+
+func TestListModelsAdvertisesResponsesForOpenAIWireAPI(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	withMemoryCacheEnabled(t, false)
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       4001,
+		Username: "wire-api-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:            10,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "wire-api-channel",
+		Key:           "test-key",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "default",
+		Models:        "zz-wire-api-model",
+		OtherSettings: `{"wire_api":"responses"}`,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "zz-wire-api-model",
+		ChannelId: 10,
+		Enabled:   true,
+	}).Error)
+	model.RefreshPricing()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	ctx.Set("id", 4001)
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload listModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+
+	var found bool
+	for _, item := range payload.Data {
+		if item.Id != "zz-wire-api-model" {
+			continue
+		}
+		found = true
+		require.Contains(t, item.SupportedEndpointTypes, constant.EndpointTypeOpenAIResponse)
+		require.Contains(t, item.SupportedEndpointTypes, constant.EndpointTypeOpenAI)
+		require.Equal(t, constant.EndpointTypeOpenAIResponse, item.SupportedEndpointTypes[0])
+	}
+	require.True(t, found, "expected wire-api model to appear in /v1/models")
 }
