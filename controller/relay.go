@@ -209,6 +209,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			if relayInfo.ChannelMeta == nil {
 				relayInfo.InitChannelMeta(c)
 			}
+			service.RecordChannelConcurrencyCooldown(channel.Id, newAPIError)
 			retryParam.AllowExtraRetry(1)
 			addUsedChannel(c, channel.Id)
 			continue
@@ -243,12 +244,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			concurrencyLease.Release()
 			relayInfo.LastError = nil
 			service.ClearChannelFailureAvoidance(channel.Id)
+			service.RecordChannelConcurrencySuccess(channel.Id)
 			return
 		}
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 		if service.IsUpstreamConcurrencyLimitError(newAPIError) {
+			service.RecordChannelConcurrencyCooldown(channel.Id, newAPIError)
 			service.LearnChannelConcurrencyLimit(c, channel.Id, concurrencyLease.CurrentActive(), newAPIError)
 		}
 		concurrencyLease.Release()

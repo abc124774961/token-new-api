@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -505,6 +506,15 @@ func (channel *Channel) Insert() error {
 }
 
 func (channel *Channel) Update() error {
+	existingChannel, _ := GetChannelById(channel.Id, true)
+	if channel.Setting != nil && existingChannel != nil {
+		mergedSetting, err := mergeChannelConcurrencyCeiling(channel.Setting, existingChannel.Setting)
+		if err != nil {
+			return err
+		}
+		channel.Setting = mergedSetting
+	}
+
 	// If this is a multi-key channel, recalculate MultiKeySize based on the current key list to avoid inconsistency after editing keys
 	if channel.ChannelInfo.IsMultiKey {
 		var keyStr string
@@ -512,7 +522,9 @@ func (channel *Channel) Update() error {
 			keyStr = channel.Key
 		} else {
 			// If key is not provided, read the existing key from the database
-			if existing, err := GetChannelById(channel.Id, true); err == nil {
+			if existingChannel != nil {
+				keyStr = existingChannel.Key
+			} else if existing, err := GetChannelById(channel.Id, true); err == nil {
 				keyStr = existing.Key
 			}
 		}
@@ -551,6 +563,60 @@ func (channel *Channel) Update() error {
 	DB.Model(channel).First(channel, "id = ?", channel.Id)
 	err = channel.UpdateAbilities(nil)
 	return err
+}
+
+func mergeChannelConcurrencyCeiling(settingJSON *string, existingSettingJSON *string) (*string, error) {
+	if settingJSON == nil || strings.TrimSpace(*settingJSON) == "" {
+		return settingJSON, nil
+	}
+	existingCeiling := channelConcurrencyCeilingFromSetting(existingSettingJSON)
+	if existingCeiling <= 0 {
+		return settingJSON, nil
+	}
+	settingMap := map[string]any{}
+	if err := common.Unmarshal([]byte(*settingJSON), &settingMap); err != nil {
+		return nil, err
+	}
+	if ceiling, ok := channelSettingInt(settingMap["max_concurrency_ceiling"]); ok && ceiling > 0 {
+		return settingJSON, nil
+	}
+	settingMap["max_concurrency_ceiling"] = existingCeiling
+	settingBytes, err := common.Marshal(settingMap)
+	if err != nil {
+		return nil, err
+	}
+	return common.GetPointer[string](string(settingBytes)), nil
+}
+
+func channelConcurrencyCeilingFromSetting(settingJSON *string) int {
+	if settingJSON == nil || strings.TrimSpace(*settingJSON) == "" {
+		return 0
+	}
+	settingMap := map[string]any{}
+	if err := common.Unmarshal([]byte(*settingJSON), &settingMap); err != nil {
+		return 0
+	}
+	ceiling, _ := channelSettingInt(settingMap["max_concurrency_ceiling"])
+	return ceiling
+}
+
+func channelSettingInt(value any) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
 }
 
 func (channel *Channel) UpdateResponseTime(responseTime int64) {
@@ -900,6 +966,9 @@ func (channel *Channel) ValidateSettings() error {
 		if err != nil {
 			return err
 		}
+		if channelParams.MaxConcurrencyCeiling < 0 {
+			return fmt.Errorf("max_concurrency_ceiling must be greater than or equal to 0")
+		}
 	}
 	return nil
 }
@@ -918,6 +987,10 @@ func (channel *Channel) GetSetting() dto.ChannelSettings {
 }
 
 func (channel *Channel) SetSetting(setting dto.ChannelSettings) {
+	current := channel.GetSetting()
+	if setting.MaxConcurrencyCeiling <= 0 {
+		setting.MaxConcurrencyCeiling = current.MaxConcurrencyCeiling
+	}
 	settingBytes, err := common.Marshal(setting)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("failed to marshal setting: channel_id=%d, error=%v", channel.Id, err))

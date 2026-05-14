@@ -219,7 +219,7 @@ func clearAllChannelFailureAvoidanceForTest() {
 func selectChannelForGroup(ctx *gin.Context, group string, modelName string, retry int, allowUsedChannelFallback bool) (*model.Channel, error) {
 	excludedChannelIDs := getUsedChannelSet(ctx)
 	avoidedChannelIDs := getAvoidedChannelSet()
-	excludedWithAvoided := mergeChannelSets(excludedChannelIDs, avoidedChannelIDs)
+	excludedWithAvoided := mergeChannelSets(excludedChannelIDs, avoidedChannelIDs, getChannelConcurrencyCooldownSet())
 	channel, err := selectNonFullChannel(group, modelName, retry, excludedWithAvoided)
 	if err != nil {
 		return nil, err
@@ -256,12 +256,12 @@ func selectChannelForGroup(ctx *gin.Context, group string, modelName string, ret
 }
 
 func hasAlternativeChannelInGroup(ctx *gin.Context, group string, modelName string, retry int) bool {
-	channel, err := selectNonFullChannel(group, modelName, retry, mergeChannelSets(getUsedChannelSet(ctx), getAvoidedChannelSet()))
+	channel, err := selectNonFullChannel(group, modelName, retry, mergeChannelSets(getUsedChannelSet(ctx), getAvoidedChannelSet(), getChannelConcurrencyCooldownSet()))
 	return err == nil && channel != nil
 }
 
 func selectNonFullChannel(group string, modelName string, retry int, excludedChannelIDs map[int]struct{}) (*model.Channel, error) {
-	excluded := mergeChannelSets(excludedChannelIDs)
+	excluded := mergeChannelSets(excludedChannelIDs, getChannelConcurrencyCooldownSet())
 	for {
 		channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, excluded)
 		if err != nil || channel == nil {
@@ -392,7 +392,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			usedChannelIDs := getUsedChannelSet(param.Ctx)
 			for i := startGroupIndex; i < len(autoGroups); i++ {
 				autoGroup := autoGroups[i]
-				channel, err = selectNonFullChannel(autoGroup, param.ModelName, param.GetRetry(), usedChannelIDs)
+				channel, err = selectNonFullChannel(autoGroup, param.ModelName, param.GetRetry(), mergeChannelSets(usedChannelIDs, getChannelConcurrencyCooldownSet()))
 				if err != nil {
 					return nil, autoGroup, err
 				}

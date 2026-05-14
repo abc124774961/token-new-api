@@ -70,7 +70,8 @@ func clearChannelInfo(channel *model.Channel) {
 
 type channelResponse struct {
 	*model.Channel
-	FailureAvoidance *service.ChannelFailureAvoidanceStatus `json:"failure_avoidance,omitempty"`
+	FailureAvoidance    *service.ChannelFailureAvoidanceStatus   `json:"failure_avoidance,omitempty"`
+	ConcurrencyCooldown *service.ChannelConcurrencyControlStatus `json:"concurrency_cooldown,omitempty"`
 }
 
 func buildChannelResponse(channel *model.Channel) *channelResponse {
@@ -79,8 +80,9 @@ func buildChannelResponse(channel *model.Channel) *channelResponse {
 	}
 	clearChannelInfo(channel)
 	return &channelResponse{
-		Channel:          channel,
-		FailureAvoidance: service.GetChannelFailureAvoidanceStatus(channel.Id),
+		Channel:             channel,
+		FailureAvoidance:    service.GetChannelFailureAvoidanceStatus(channel.Id),
+		ConcurrencyCooldown: service.GetChannelConcurrencyCooldownStatus(channel.Id),
 	}
 }
 

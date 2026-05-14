@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -147,6 +148,21 @@ func buildUpstreamResponseMetadata(resp *http.Response, responseBody []byte) jso
 		if contentType := strings.TrimSpace(resp.Header.Get("Content-Type")); contentType != "" {
 			metadata["content_type"] = contentType
 		}
+		if retryAfter := strings.TrimSpace(resp.Header.Get("Retry-After")); retryAfter != "" {
+			metadata["retry_after"] = retryAfter
+			if retryAfterSeconds, ok := parseRetryAfterSeconds(retryAfter); ok {
+				metadata["retry_after_seconds"] = retryAfterSeconds
+			}
+		}
+		attachRateLimitHeader(metadata, resp.Header, "X-RateLimit-Limit", "rate_limit_limit")
+		attachRateLimitHeader(metadata, resp.Header, "X-RateLimit-Remaining", "rate_limit_remaining")
+		attachRateLimitHeader(metadata, resp.Header, "X-RateLimit-Reset", "rate_limit_reset")
+		attachRateLimitHeader(metadata, resp.Header, "x-ratelimit-limit-requests", "rate_limit_requests")
+		attachRateLimitHeader(metadata, resp.Header, "x-ratelimit-remaining-requests", "rate_limit_remaining_requests")
+		attachRateLimitHeader(metadata, resp.Header, "x-ratelimit-reset-requests", "rate_limit_reset_requests")
+		attachRateLimitHeader(metadata, resp.Header, "x-ratelimit-limit-tokens", "rate_limit_tokens")
+		attachRateLimitHeader(metadata, resp.Header, "x-ratelimit-remaining-tokens", "rate_limit_remaining_tokens")
+		attachRateLimitHeader(metadata, resp.Header, "x-ratelimit-reset-tokens", "rate_limit_reset_tokens")
 	}
 	if len(responseBody) > 0 {
 		bodySnippet := responseBody
@@ -169,6 +185,36 @@ func buildUpstreamResponseMetadata(resp *http.Response, responseBody []byte) jso
 		return nil
 	}
 	return raw
+}
+
+func attachRateLimitHeader(metadata map[string]any, headers http.Header, headerName string, metadataKey string) {
+	if metadata == nil || headers == nil {
+		return
+	}
+	if value := strings.TrimSpace(headers.Get(headerName)); value != "" {
+		metadata[metadataKey] = value
+	}
+}
+
+func parseRetryAfterSeconds(value string) (int64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if seconds < 0 {
+			return 0, false
+		}
+		return seconds, true
+	}
+	if t, err := http.ParseTime(value); err == nil {
+		seconds := int64(time.Until(t).Seconds())
+		if seconds < 0 {
+			return 0, true
+		}
+		return seconds, true
+	}
+	return 0, false
 }
 
 func ResetStatusCode(newApiErr *types.NewAPIError, statusCodeMappingStr string) {

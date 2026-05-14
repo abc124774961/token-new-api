@@ -10,6 +10,7 @@ type ChannelSettings struct {
 	SystemPrompt           string `json:"system_prompt,omitempty"`
 	SystemPromptOverride   bool   `json:"system_prompt_override,omitempty"`
 	MaxConcurrency         int    `json:"max_concurrency,omitempty"`
+	MaxConcurrencyCeiling  int    `json:"max_concurrency_ceiling,omitempty"`
 }
 
 type VertexKeyType string

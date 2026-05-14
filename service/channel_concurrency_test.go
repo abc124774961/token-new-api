@@ -2,7 +2,9 @@ package service
 
 import (
 	"errors"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -89,4 +91,82 @@ func TestShouldDisableChannelIgnoresLocalConcurrencyLimit(t *testing.T) {
 	)
 
 	require.False(t, ShouldDisableChannel(err))
+}
+
+func TestRecordChannelConcurrencyCooldownAndSelectionSkip(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	seedChannelSelectChannel(t, db, 1004, "default", "gpt-5.5", 10, 100)
+	seedChannelSelectChannel(t, db, 1005, "default", "gpt-5.5", 9, 100)
+	model.InitChannelCache()
+
+	err := types.NewErrorWithStatusCode(
+		errors.New("Too many pending requests"),
+		types.ErrorCodeChannelConcurrencyLimit,
+		http.StatusTooManyRequests,
+	)
+	metadata, marshalErr := common.Marshal(map[string]any{"retry_after_seconds": 1})
+	require.NoError(t, marshalErr)
+	err.Metadata = metadata
+
+	RecordChannelConcurrencyCooldown(1004, err)
+	status := GetChannelConcurrencyCooldownStatus(1004)
+	require.NotNil(t, status)
+	require.True(t, status.Active)
+
+	channel, errSelect := selectChannelForGroup(newRetryContext(), "default", "gpt-5.5", 0, true)
+	require.NoError(t, errSelect)
+	require.NotNil(t, channel)
+	require.Equal(t, 1005, channel.Id)
+
+	time.Sleep(1100 * time.Millisecond)
+	require.Nil(t, GetChannelConcurrencyCooldownStatus(1004))
+}
+
+func TestChannelUpdatePreservesMaxConcurrencyCeiling(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+
+	seedChannelSelectChannel(t, db, 1006, "default", "gpt-5.5", 10, 100)
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 1006).Update("setting", `{"proxy":"http://127.0.0.1:8080","max_concurrency":7,"max_concurrency_ceiling":8}`).Error)
+
+	channel, err := model.GetChannelById(1006, true)
+	require.NoError(t, err)
+	channel.Setting = common.GetPointer(`{"proxy":"http://127.0.0.1:8081","max_concurrency":6}`)
+	require.NoError(t, channel.Update())
+
+	updated, err := model.GetChannelById(1006, true)
+	require.NoError(t, err)
+	require.Contains(t, *updated.Setting, `"max_concurrency_ceiling":8`)
+	require.Contains(t, *updated.Setting, `"proxy":"http://127.0.0.1:8081"`)
+}
+
+func TestRecordChannelConcurrencySuccessRecoversLimit(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	seedChannelSelectChannel(t, db, 1007, "default", "gpt-5.5", 10, 100)
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 1007).Update("setting", `{"max_concurrency":7,"max_concurrency_ceiling":8}`).Error)
+	model.InitChannelCache()
+
+	state := getChannelConcurrencyControlState(1007)
+	state.mu.Lock()
+	state.cooldownUntil = time.Now().Add(-time.Second)
+	state.reason = "test"
+	state.failureCount = 1
+	state.successStreak = 0
+	state.mu.Unlock()
+
+	RecordChannelConcurrencySuccess(1007)
+	RecordChannelConcurrencySuccess(1007)
+	RecordChannelConcurrencySuccess(1007)
+
+	channel, err := model.GetChannelById(1007, true)
+	require.NoError(t, err)
+	require.Equal(t, 8, channel.GetSetting().MaxConcurrency)
+	require.Contains(t, *channel.Setting, `"max_concurrency_ceiling":8`)
 }
