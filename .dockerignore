@@ -16,8 +16,6 @@ tmp
 new-api
 bin
 /web/node_modules
-/web
-/web/default
 /web/default/node_modules
 /web/default/dist
 /web/classic/node_modules
