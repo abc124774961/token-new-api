@@ -34,6 +34,7 @@ export const DEFAULT_ADMIN_CONFIG = {
   console: {
     enabled: true,
     detail: true,
+    channel_status: true,
     token: true,
     log: true,
     midjourney: true,

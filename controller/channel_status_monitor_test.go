@@ -1,0 +1,157 @@
+package controller
+
+import (
+	"testing"
+
+	"github.com/QuantumNous/new-api/model"
+	"github.com/stretchr/testify/require"
+)
+
+func TestChannelMonitorGroupStatsUseRequestOutcome(t *testing.T) {
+	rows := []model.ChannelStatusMonitorLogRow{
+		{
+			Id:        1,
+			CreatedAt: 100,
+			Type:      model.LogTypeError,
+			Group:     "codex-pro",
+			ChannelId: 10,
+			RequestId: "req-success-after-failover",
+			Other:     `{"status_code":429}`,
+			Content:   "status_code=429, too many requests",
+		},
+		{
+			Id:               2,
+			CreatedAt:        101,
+			Type:             model.LogTypeConsume,
+			Group:            "codex-pro",
+			ChannelId:        11,
+			RequestId:        "req-success-after-failover",
+			UseTime:          3,
+			PromptTokens:     12,
+			CompletionTokens: 34,
+			Other:            `{"frt":250}`,
+		},
+		{
+			Id:        3,
+			CreatedAt: 102,
+			Type:      model.LogTypeError,
+			Group:     "codex-pro",
+			ChannelId: 10,
+			RequestId: "req-total-failure",
+			Other:     `{"status_code":500}`,
+			Content:   "status_code=500, upstream failed",
+		},
+		{
+			Id:        4,
+			CreatedAt: 103,
+			Type:      model.LogTypeError,
+			Group:     "codex-pro",
+			ChannelId: 11,
+			RequestId: "req-total-failure",
+			Other:     `{"status_code":429}`,
+			Content:   "status_code=429, still limited",
+		},
+	}
+
+	statsIndex := buildChannelMonitorLogStats(rows)
+	groupStats := statsIndex.byGroup["codex-pro"]
+
+	require.NotNil(t, groupStats)
+	require.EqualValues(t, 2, groupStats.requests)
+	require.EqualValues(t, 1, groupStats.successes)
+	require.EqualValues(t, 1, groupStats.failures)
+	require.EqualValues(t, 1, groupStats.error429)
+	require.EqualValues(t, 0, groupStats.error5xx)
+	require.EqualValues(t, 250, avgInt64(groupStats.latencySum, groupStats.latencyCount))
+
+	channelStats := statsIndex.byChannelGroup[10]["codex-pro"]
+	require.EqualValues(t, 2, channelStats.requests)
+	require.EqualValues(t, 2, channelStats.failures)
+	require.EqualValues(t, 1, channelStats.error429)
+	require.EqualValues(t, 1, channelStats.error5xx)
+}
+
+func TestChannelMonitorRecentStatusUsesRequestOutcome(t *testing.T) {
+	rows := []model.ChannelStatusMonitorRecentLogRow{
+		{
+			Id:        4,
+			CreatedAt: 103,
+			Type:      model.LogTypeError,
+			Group:     "codex-pro",
+			RequestId: "req-total-failure",
+			Other:     `{"status_code":429}`,
+			Content:   "status_code=429, still limited",
+		},
+		{
+			Id:        3,
+			CreatedAt: 102,
+			Type:      model.LogTypeError,
+			Group:     "codex-pro",
+			RequestId: "req-total-failure",
+			Other:     `{"status_code":500}`,
+			Content:   "status_code=500, upstream failed",
+		},
+		{
+			Id:        2,
+			CreatedAt: 101,
+			Type:      model.LogTypeConsume,
+			Group:     "codex-pro",
+			RequestId: "req-success-after-failover",
+		},
+		{
+			Id:        1,
+			CreatedAt: 100,
+			Type:      model.LogTypeError,
+			Group:     "codex-pro",
+			RequestId: "req-success-after-failover",
+			Other:     `{"status_code":429}`,
+			Content:   "status_code=429, too many requests",
+		},
+	}
+
+	statuses := buildChannelMonitorRecentStatus(rows, 60)
+
+	require.Equal(t, []string{"success", "rate_limit"}, statuses["codex-pro"])
+}
+
+func TestChannelMonitorStreamConsumeErrorIsNotSuccessful(t *testing.T) {
+	rows := []model.ChannelStatusMonitorLogRow{
+		{
+			Id:               1,
+			CreatedAt:        100,
+			Type:             model.LogTypeConsume,
+			Group:            "codex-pro",
+			ChannelId:        10,
+			RequestId:        "req-stream-error",
+			UseTime:          2,
+			CompletionTokens: 10,
+			Other:            `{"stream_status":{"status":"error","end_reason":"scanner_error","error_count":1}}`,
+		},
+		{
+			Id:               2,
+			CreatedAt:        101,
+			Type:             model.LogTypeConsume,
+			Group:            "codex-pro",
+			ChannelId:        10,
+			RequestId:        "req-client-gone",
+			UseTime:          1,
+			CompletionTokens: 5,
+			Other:            `{"stream_status":{"status":"client_gone","end_reason":"client_gone"}}`,
+		},
+	}
+
+	statsIndex := buildChannelMonitorLogStats(rows)
+	groupStats := statsIndex.byGroup["codex-pro"]
+	channelStats := statsIndex.byChannelGroup[10]["codex-pro"]
+
+	require.NotNil(t, groupStats)
+	require.EqualValues(t, 2, groupStats.requests)
+	require.EqualValues(t, 1, groupStats.successes)
+	require.EqualValues(t, 1, groupStats.failures)
+
+	require.NotNil(t, channelStats)
+	require.EqualValues(t, 2, channelStats.requests)
+	require.EqualValues(t, 1, channelStats.successes)
+	require.EqualValues(t, 1, channelStats.failures)
+	require.EqualValues(t, 1, channelStats.streamErrors)
+}

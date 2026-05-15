@@ -1,10 +1,12 @@
-# Local full-container environment.
+# Local dev environment.
+# Backend runs in Docker; classic frontend runs on the host Vite dev server.
 #
 # Usage:
 #   1. cp .env.dev.example .env.dev
 #   2. mkdir -p data logs
 #   3. docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
-#   4. Open http://localhost:3000
+#   4. cd web/classic && DEV_PROXY_TARGET=http://localhost:${APP_PORT:-3001} bun run dev -- --host 0.0.0.0 --port ${FRONTEND_PORT:-3000}
+#   5. Open http://localhost:${FRONTEND_PORT:-3000}
 #
 # Stop:
 #   docker compose --env-file .env.dev -f docker-compose.dev.yml down
@@ -46,6 +48,7 @@ services:
       CHANNEL_BALANCE_AUTO_RESUME_ENABLED: ${CHANNEL_BALANCE_AUTO_RESUME_ENABLED:-true}
       CHANNEL_BALANCE_RECOVERY_THRESHOLD: ${CHANNEL_BALANCE_RECOVERY_THRESHOLD:-0}
       NODE_NAME: ${NODE_NAME:-dev-node-1}
+      DEV_FRONTEND_BASE_URL: ${DEV_FRONTEND_BASE_URL:-http://localhost:3000}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s

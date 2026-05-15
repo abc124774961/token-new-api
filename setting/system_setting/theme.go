@@ -1,7 +1,6 @@
 package system_setting
 
 import (
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/config"
 )
 
@@ -15,18 +14,18 @@ var themeSettings = ThemeSettings{
 
 func init() {
 	config.GlobalConfig.Register("theme", &themeSettings)
-	syncThemeToCommon()
 }
 
-func syncThemeToCommon() {
-	common.SetTheme(themeSettings.Frontend)
+func normalizeThemeSettings() {
+	themeSettings.Frontend = "classic"
 }
 
 func GetThemeSettings() *ThemeSettings {
+	normalizeThemeSettings()
 	return &themeSettings
 }
 
-// UpdateAndSyncTheme syncs the theme config to common after DB load.
+// UpdateAndSyncTheme normalizes legacy theme config after DB load.
 func UpdateAndSyncTheme() {
-	syncThemeToCommon()
+	normalizeThemeSettings()
 }

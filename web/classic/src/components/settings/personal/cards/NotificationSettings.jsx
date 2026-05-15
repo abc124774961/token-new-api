@@ -72,6 +72,7 @@ const NotificationSettings = ({
     console: {
       enabled: true,
       detail: true,
+      channel_status: true,
       token: true,
       log: true,
       midjourney: true,
@@ -160,6 +161,7 @@ const NotificationSettings = ({
       console: {
         enabled: true,
         detail: true,
+        channel_status: true,
         token: true,
         log: true,
         midjourney: true,
@@ -263,6 +265,11 @@ const NotificationSettings = ({
       description: t('数据管理和日志查看'),
       modules: [
         { key: 'detail', title: t('数据看板'), description: t('系统数据统计') },
+        {
+          key: 'channel_status',
+          title: t('渠道状态监控'),
+          description: t('按分组监控渠道访问状态'),
+        },
         { key: 'token', title: t('令牌管理'), description: t('API令牌管理') },
         { key: 'log', title: t('使用日志'), description: t('API使用记录') },
         {

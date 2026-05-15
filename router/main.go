@@ -17,10 +17,15 @@ func SetRouter(router *gin.Engine, assets ThemeAssets) {
 	SetDashboardRouter(router)
 	SetRelayRouter(router)
 	SetVideoRouter(router)
-	frontendBaseUrl := os.Getenv("FRONTEND_BASE_URL")
+	frontendBaseUrl := os.Getenv("DEV_FRONTEND_BASE_URL")
+	if frontendBaseUrl == "" {
+		frontendBaseUrl = os.Getenv("FRONTEND_BASE_URL")
+	}
 	if common.IsMasterNode && frontendBaseUrl != "" {
-		frontendBaseUrl = ""
-		common.SysLog("FRONTEND_BASE_URL is ignored on master node")
+		if os.Getenv("DEV_FRONTEND_BASE_URL") == "" {
+			frontendBaseUrl = ""
+			common.SysLog("FRONTEND_BASE_URL is ignored on master node")
+		}
 	}
 	if frontendBaseUrl == "" {
 		SetWebRouter(router, assets)
