@@ -75,6 +75,15 @@ function formatNumber(value) {
   return new Intl.NumberFormat().format(Number(value) || 0);
 }
 
+function formatRatio(value) {
+  const ratio = Number(value);
+  if (!Number.isFinite(ratio)) return '1x';
+  const text = Number.isInteger(ratio)
+    ? ratio.toFixed(0)
+    : ratio.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  return `${text}x`;
+}
+
 function formatPercent(value) {
   if (!Number.isFinite(Number(value))) return '0.00%';
   return `${Number(value).toFixed(2)}%`;
@@ -135,8 +144,8 @@ function getGroupHealth(group) {
     return 'warning';
   }
   if (
-    Number(group.cooldown_channels) >= Number(group.enabled_channels) &&
-    Number(group.enabled_channels) > 0
+    Number(group.cooldown_channels) >= Number(group.total_channels) &&
+    Number(group.total_channels) > 0
   ) {
     return 'warning';
   }
@@ -161,8 +170,8 @@ function getOverallStatus(data, error) {
     return { state: 'degraded', label: 'DEGRADED' };
   }
   if (
-    summary.cooldown_channels >= summary.enabled_channels &&
-    summary.enabled_channels > 0
+    summary.cooldown_channels >= summary.total_channels &&
+    summary.total_channels > 0
   ) {
     return { state: 'degraded', label: 'DEGRADED' };
   }
@@ -174,8 +183,8 @@ function isGroupAvailable(group) {
     return false;
   }
   if (
-    Number(group.cooldown_channels) >= Number(group.enabled_channels) &&
-    Number(group.enabled_channels) > 0
+    Number(group.cooldown_channels) >= Number(group.total_channels) &&
+    Number(group.total_channels) > 0
   ) {
     return false;
   }
@@ -202,7 +211,7 @@ function getChannelModelCount(models) {
 
 function getGroupModelPreview(group) {
   const models = new Set();
-  getEnabledChannels(group).forEach((channel) => {
+  getVisibleChannels(group).forEach((channel) => {
     String(channel.models || '')
       .split(',')
       .map((item) => item.trim())
@@ -236,16 +245,31 @@ function getDominantChannelType(channels) {
 }
 
 function getChannelCooldown(channel) {
-  return Math.max(
-    Number(channel?.concurrency_cooldown_remaining_seconds) || 0,
-    Number(channel?.failure_avoidance_remaining_seconds) || 0,
-  );
+  return Number(channel?.failure_avoidance_remaining_seconds) || 0;
 }
 
-function getEnabledChannels(group) {
-  return (group?.channels || []).filter(
-    (channel) => channel?.enabled !== false,
-  );
+function getChannelPauseMeta(channel, t) {
+  if (channel?.pause_type === 'balance_insufficient') {
+    return {
+      color: 'yellow',
+      label: t('余额暂停'),
+      reason: t('余额不足'),
+      remaining: 0,
+    };
+  }
+  if (channel?.pause_type === 'error_paused') {
+    return {
+      color: 'orange',
+      label: t('暂停中'),
+      reason: channel.pause_reason || t('错误暂停'),
+      remaining: Number(channel.pause_remaining_seconds) || 0,
+    };
+  }
+  return null;
+}
+
+function getVisibleChannels(group) {
+  return group?.channels || [];
 }
 
 function getStatusLabel(status, t) {
@@ -363,6 +387,7 @@ function HealthTag({ state }) {
 function ChannelNameCell({ channel }) {
   const { t } = useTranslation();
   const cooldown = getChannelCooldown(channel);
+  const pause = getChannelPauseMeta(channel, t);
 
   return (
     <div className='min-w-[220px]'>
@@ -374,16 +399,49 @@ function ChannelNameCell({ channel }) {
           #{channel.id}
         </Typography.Text>
         <HealthTag state={channel.health_state} />
-        {!channel.enabled && (
+        {!channel.enabled && !pause && (
           <Tag color='grey' shape='circle' size='small'>
             {t('禁用')}
           </Tag>
         )}
+        {pause && (
+          <Tooltip
+            content={
+              <div className='flex flex-col gap-1'>
+                <span>
+                  {t('原因：')}
+                  {pause.reason}
+                </span>
+                {pause.remaining > 0 && (
+                  <span>
+                    {t('暂停剩余')}: {formatDuration(pause.remaining, t)}
+                  </span>
+                )}
+              </div>
+            }
+          >
+            <Tag color={pause.color} shape='circle' size='small'>
+              {pause.label}
+              {pause.remaining > 0
+                ? ` ${formatDuration(pause.remaining, t)}`
+                : ''}
+            </Tag>
+          </Tooltip>
+        )}
         {cooldown > 0 && (
           <Tooltip
             content={
-              channel.failure_reason ||
-              `${t('冷却中')} ${formatDuration(cooldown, t)}`
+              <div className='flex flex-col gap-1'>
+                <span>
+                  {t('冷却剩余')}: {formatDuration(cooldown, t)}
+                </span>
+                {channel.failure_reason && (
+                  <span>
+                    {t('原因：')}
+                    {channel.failure_reason}
+                  </span>
+                )}
+              </div>
             }
           >
             <Tag color='orange' shape='circle' size='small'>
@@ -460,9 +518,9 @@ function GroupPanel({ group, windowDays }) {
   const { t } = useTranslation();
   const [detailsVisible, setDetailsVisible] = useState(false);
   const health = getGroupHealth(group);
-  const enabledChannels = useMemo(() => getEnabledChannels(group), [group]);
+  const visibleChannels = useMemo(() => getVisibleChannels(group), [group]);
   const modelPreview = useMemo(() => getGroupModelPreview(group), [group]);
-  const dominantType = getDominantChannelType(enabledChannels);
+  const dominantType = getDominantChannelType(visibleChannels);
   const dominantTypeMeta = getChannelTypeMeta(dominantType);
   const healthMeta = getHealthMeta(health, t);
   const canViewChannelDetails = isAdmin();
@@ -612,7 +670,7 @@ function GroupPanel({ group, windowDays }) {
         {canViewChannelDetails && (
           <div className='ct-channel-monitor-card-toolbar'>
             <div className='ct-channel-monitor-toolbar-count'>
-              <strong>{formatNumber(group.enabled_channels)}</strong>
+              <strong>{formatNumber(group.total_channels)}</strong>
               <span>{t('渠道')}</span>
             </div>
             <Tooltip content={t('点击查看渠道明细')}>
@@ -642,6 +700,9 @@ function GroupPanel({ group, windowDays }) {
                 <div className='ct-channel-monitor-tags'>
                   <span className='ct-channel-monitor-pill-primary'>
                     {dominantTypeMeta?.label || t('渠道分组')}
+                  </span>
+                  <span className='ct-channel-monitor-ratio'>
+                    {t('分组倍率')} {formatRatio(group.group_ratio)}
                   </span>
                   <span
                     className='ct-channel-monitor-model'
@@ -681,11 +742,11 @@ function GroupPanel({ group, windowDays }) {
               <div className='ct-channel-monitor-metric-value'>
                 {formatLatency(
                   Math.round(
-                    enabledChannels.reduce(
+                    visibleChannels.reduce(
                       (sum, channel) =>
                         sum + (Number(channel.response_time) || 0),
                       0,
-                    ) / Math.max(enabledChannels.length, 1),
+                    ) / Math.max(visibleChannels.length, 1),
                   ),
                 )}
               </div>
@@ -722,7 +783,7 @@ function GroupPanel({ group, windowDays }) {
             </div>
             <div>
               <span>
-                {t('冷却')} / {t('忙碌')}
+                {t('错误冷却')} / {t('忙碌')}
               </span>
               <strong>
                 {formatNumber(group.cooldown_channels)} /{' '}
@@ -766,7 +827,7 @@ function GroupPanel({ group, windowDays }) {
             {healthMeta.label}
           </Tag>
           <Tag shape='circle'>
-            {t('渠道数')} {group.enabled_channels}
+            {t('渠道数')} {group.total_channels}
           </Tag>
           <Tag shape='circle'>
             {t('成功率')}{' '}
@@ -781,7 +842,7 @@ function GroupPanel({ group, windowDays }) {
         </div>
         <Table
           columns={columns}
-          dataSource={enabledChannels}
+          dataSource={visibleChannels}
           rowKey='id'
           pagination={false}
           size='small'
@@ -857,7 +918,7 @@ function ChannelStatusContent({ data, windowDays }) {
           icon={Gauge}
           label={t('活跃负载')}
           value={formatNumber(summary.busy_channels)}
-          detail={`${formatLatency(summary.avg_latency_ms)} ${t('平均延迟')} / ${formatNumber(summary.cooldown_channels)} ${t('冷却')}`}
+          detail={`${formatLatency(summary.avg_latency_ms)} ${t('平均延迟')} / ${formatNumber(summary.cooldown_channels)} ${t('错误冷却')}`}
           tone={summary.cooldown_channels > 0 ? 'warning' : 'default'}
         />
       </div>
@@ -972,7 +1033,7 @@ const ChannelStatusMonitor = () => {
   }, []);
 
   const statusTip = useMemo(
-    () => t('根据真实请求最终结果、限流错误、冷却状态与并发配置计算健康状态'),
+    () => t('根据真实请求最终结果、限流错误与错误冷却计算健康状态'),
     [t],
   );
   const overallStatus = useMemo(

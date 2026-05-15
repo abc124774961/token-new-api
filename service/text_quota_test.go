@@ -68,6 +68,42 @@ func TestCalculateTextQuotaSummaryUnifiedForClaudeSemantic(t *testing.T) {
 	require.Equal(t, 1488, chatSummary.Quota)
 }
 
+func TestCalculateTextQuotaSummaryUsesRequestedModelForLog(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		RequestModelName:       "gpt-5.5",
+		OriginModelName:        "gpt-5.4",
+		RequestReasoningEffort: "xhigh",
+		ReasoningEffort:        "medium",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gpt-5.4",
+			IsModelMapped:     true,
+		},
+		PriceData: types.PriceData{
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 1,
+			},
+		},
+		StartTime: time.Now(),
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, &dto.Usage{
+		PromptTokens:     10,
+		CompletionTokens: 1,
+	})
+	other := GenerateTextOtherInfo(ctx, relayInfo, 1, 1, 1, 0, 1, -1, -1)
+
+	require.Equal(t, "gpt-5.4", summary.ModelName)
+	require.Equal(t, "gpt-5.5", relayInfo.LogModelName())
+	require.Equal(t, "xhigh", other["reasoning_effort"])
+	require.Equal(t, "medium", other["upstream_reasoning_effort"])
+	require.Equal(t, "gpt-5.5", other["request_model_name"])
+	require.Equal(t, "gpt-5.4", other["upstream_model_name"])
+}
+
 func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

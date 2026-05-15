@@ -46,7 +46,7 @@ func captureResponsesReasoningEffort(info *relaycommon.RelayInfo, request *dto.O
 	if effort == "" {
 		return
 	}
-	info.ReasoningEffort = effort
+	info.SetRequestReasoningEffort(effort)
 }
 
 func applyResponsesCompactBillingModel(info *relaycommon.RelayInfo) (string, func()) {

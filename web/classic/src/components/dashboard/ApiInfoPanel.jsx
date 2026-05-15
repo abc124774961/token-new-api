@@ -36,6 +36,7 @@ const ApiInfoPanel = ({
   return (
     <DashboardCard
       {...CARD_PROPS}
+      className='ct-dashboard-side-card ct-dashboard-api-card'
       tone='info'
       title={
         <div className={`${FLEX_CENTER_GAP2} ct-dashboard-panel-title`}>
@@ -49,25 +50,23 @@ const ApiInfoPanel = ({
         {apiInfoData.length > 0 ? (
           apiInfoData.map((api) => (
             <React.Fragment key={api.id}>
-              <div className='ct-dashboard-list-item'>
-                <div className='flex-shrink-0 mr-3'>
+              <div className='ct-dashboard-list-item ct-dashboard-api-item'>
+                <div className='ct-dashboard-api-avatar'>
                   <Avatar size='extra-small' color={api.color}>
                     {api.route.substring(0, 2)}
                   </Avatar>
                 </div>
-                <div className='flex-1'>
-                  <div className='flex flex-wrap items-center justify-between mb-1 w-full gap-2'>
-                    <span className='text-sm font-medium text-gray-900 !font-bold break-all'>
-                      {api.route}
-                    </span>
-                    <div className='flex items-center gap-1 mt-1 lg:mt-0'>
+                <div className='ct-dashboard-api-content'>
+                  <div className='ct-dashboard-api-head'>
+                    <span className='ct-dashboard-api-route'>{api.route}</span>
+                    <div className='ct-dashboard-api-actions'>
                       <Tag
                         prefixIcon={<Gauge size={12} />}
                         size='small'
                         color='white'
                         shape='circle'
                         onClick={() => handleSpeedTest(api.url)}
-                        className='cursor-pointer hover:opacity-80 text-xs'
+                        className='ct-dashboard-mini-action'
                       >
                         {t('测速')}
                       </Tag>
@@ -79,15 +78,15 @@ const ApiInfoPanel = ({
                         onClick={() =>
                           window.open(api.url, '_blank', 'noopener,noreferrer')
                         }
-                        className='cursor-pointer hover:opacity-80 text-xs'
+                        className='ct-dashboard-mini-action'
                       >
                         {t('跳转')}
                       </Tag>
                     </div>
                   </div>
-                  <div className='flex items-center gap-1 mb-1'>
+                  <div className='ct-dashboard-api-url-row'>
                     <span
-                      className='!text-semi-color-primary break-all cursor-pointer hover:underline'
+                      className='ct-dashboard-api-url'
                       onClick={() => handleCopyUrl(api.url)}
                     >
                       {api.url}
@@ -98,14 +97,14 @@ const ApiInfoPanel = ({
                       onClick={() => handleCopyUrl(api.url)}
                     />
                   </div>
-                  <div className='text-gray-500'>{api.description}</div>
+                  <div className='ct-dashboard-api-desc'>{api.description}</div>
                 </div>
               </div>
               <Divider />
             </React.Fragment>
           ))
         ) : (
-          <div className='min-h-[20rem] w-full'>
+          <div className='ct-dashboard-empty-wrap'>
             <DashboardEmptyState
               title={t('暂无API信息')}
               description={t('请联系管理员在系统设置中配置API信息')}

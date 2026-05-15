@@ -414,6 +414,7 @@ func TestProcessChannelErrorSkipsPersistingRetriableIntermediateFailure(t *testi
 	var count int64
 	require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeError).Count(&count).Error)
 	require.Equal(t, int64(0), count)
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(2))
 }
 
 func TestProcessChannelErrorRecordsTemporaryAvoidanceForBadGateway(t *testing.T) {
@@ -557,7 +558,7 @@ func TestProcessChannelErrorSkipsTemporaryAvoidanceForLocalBadRequest(t *testing
 	require.Nil(t, service.GetChannelFailureAvoidanceStatus(910))
 }
 
-func TestProcessChannelErrorRecordsTemporaryAvoidanceForLocalConcurrencyLimit(t *testing.T) {
+func TestProcessChannelErrorSkipsTemporaryAvoidanceForLocalConcurrencyLimit(t *testing.T) {
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
 	common.ChannelFailureAvoidanceEnabled = true
@@ -575,18 +576,47 @@ func TestProcessChannelErrorRecordsTemporaryAvoidanceForLocalConcurrencyLimit(t 
 	)
 	processChannelError(newRelayRetryContext(), *types.NewChannelError(912, 1, "channel-912", false, "", false), err, false)
 
-	db := serviceSetupRelayRetryDB(t)
-	serviceSeedRelayRetryChannel(t, db, 912, "default", "gpt-5.5", 10)
-	serviceSeedRelayRetryChannel(t, db, 913, "default", "gpt-5.5", 10)
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(912))
+}
 
-	param := &service.RetryParam{
-		Ctx:        newRelayRetryContext(),
-		TokenGroup: "default",
-		ModelName:  "gpt-5.5",
-		Retry:      common.GetPointer(0),
-	}
-	channel, _, selectErr := service.CacheGetRandomSatisfiedChannel(param)
-	require.NoError(t, selectErr)
-	require.NotNil(t, channel)
-	require.Equal(t, 913, channel.Id)
+func TestProcessChannelErrorSkipsTemporaryAvoidanceForUpstreamConcurrencyBusy(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 45
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(913)
+	})
+
+	err := types.NewOpenAIError(
+		errors.New("Concurrency limit exceeded for user, please retry later"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)
+	processChannelError(newRelayRetryContext(), *types.NewChannelError(913, 1, "channel-913", false, "", false), err, false)
+
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(913))
+}
+
+func TestProcessChannelErrorSkipsTemporaryAvoidanceForBalanceInsufficient(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 45
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(914)
+	})
+
+	err := types.NewOpenAIError(
+		errors.New("insufficient balance"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+	processChannelError(newRelayRetryContext(), *types.NewChannelError(914, 1, "channel-914", false, "", false), err, false)
+
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(914))
 }

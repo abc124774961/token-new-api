@@ -906,6 +906,9 @@ func testAllChannels(notify bool) error {
 			if channel.Status == common.ChannelStatusManuallyDisabled {
 				continue
 			}
+			if service.IsErrorPausedChannel(channel) && !service.ShouldResumeErrorPausedChannel(channel, nil) {
+				continue
+			}
 			isChannelEnabled := channel.Status == common.ChannelStatusEnabled
 			tik := time.Now()
 			result := testChannel(channel, "", "", shouldUseStreamForAutomaticChannelTest(channel))
@@ -916,7 +919,7 @@ func testAllChannels(notify bool) error {
 			newAPIError := result.newAPIError
 			// request error disables the channel
 			if newAPIError != nil {
-				shouldBanChannel = service.ShouldDisableChannel(result.newAPIError)
+				shouldBanChannel = service.ShouldDisableChannelForBalance(newAPIError) || service.ShouldDisableChannel(result.newAPIError)
 			}
 
 			// 当错误检查通过，才检查响应时间
@@ -934,7 +937,10 @@ func testAllChannels(notify bool) error {
 			}
 
 			// enable channel
-			if !isChannelEnabled && service.ShouldEnableChannel(newAPIError, channel.Status) && !service.IsBalanceInsufficientPausedChannel(channel) {
+			if !isChannelEnabled &&
+				service.ShouldEnableChannel(newAPIError, channel.Status) &&
+				!service.IsBalanceInsufficientPausedChannel(channel) &&
+				(!service.IsErrorPausedChannel(channel) || service.ShouldResumeErrorPausedChannel(channel, newAPIError)) {
 				service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
 			}
 

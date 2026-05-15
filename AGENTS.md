@@ -100,6 +100,10 @@ Use `bun` as the preferred package manager and script runner for the frontend (`
 - `bun run build` for production build
 - `bun run i18n:*` for i18n tooling
 
+### Rule 3.1: Classic Theme Visual Direction
+
+When creating or redesigning pages and base UI components under `web/classic`, use `docs/classic-visual-style.md` as the baseline visual language. The channel status monitor page is the reference for the overall site style: clean AI operations console, soft teal/cyan accents, light glass cards, compact metric tiles, functional icons, and dense but breathable dashboard layouts.
+
 ### Rule 4: New Channel StreamOptions Support
 
 When implementing a new channel:

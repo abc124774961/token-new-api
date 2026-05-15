@@ -724,6 +724,18 @@ func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason
 }
 
 func UpdateChannelStatus(channelId int, usingKey string, status int, reason string) bool {
+	return updateChannelStatusWithInfo(channelId, usingKey, status, reason, nil, false)
+}
+
+func UpdateChannelStatusWithInfo(channelId int, usingKey string, status int, reason string, extraInfo map[string]interface{}) bool {
+	return updateChannelStatusWithInfo(channelId, usingKey, status, reason, extraInfo, false)
+}
+
+func UpdateChannelStatusWholeChannelWithInfo(channelId int, status int, reason string, extraInfo map[string]interface{}) bool {
+	return updateChannelStatusWithInfo(channelId, "", status, reason, extraInfo, true)
+}
+
+func updateChannelStatusWithInfo(channelId int, usingKey string, status int, reason string, extraInfo map[string]interface{}, wholeChannel bool) bool {
 	if common.MemoryCacheEnabled {
 		channelStatusLock.Lock()
 		defer channelStatusLock.Unlock()
@@ -732,7 +744,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 		if channelCache == nil {
 			return false
 		}
-		if channelCache.ChannelInfo.IsMultiKey {
+		if channelCache.ChannelInfo.IsMultiKey && !wholeChannel {
 			// Use per-channel lock to prevent concurrent map read/write with GetNextEnabledKey
 			pollingLock := GetChannelPollingLock(channelId)
 			pollingLock.Lock()
@@ -743,7 +755,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 			//return true
 		} else {
 			// 如果缓存渠道存在，且状态已是目标状态，直接返回
-			if channelCache.Status == status {
+			if channelCache.Status == status && len(extraInfo) == 0 {
 				return false
 			}
 			if status != common.ChannelStatusEnabled {
@@ -757,11 +769,11 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 	if err != nil {
 		return false
 	} else {
-		if channel.Status == status {
+		if channel.Status == status && len(extraInfo) == 0 {
 			return false
 		}
 
-		if channel.ChannelInfo.IsMultiKey {
+		if channel.ChannelInfo.IsMultiKey && !wholeChannel {
 			beforeStatus := channel.Status
 			// Protect map writes with the same per-channel lock used by readers
 			pollingLock := GetChannelPollingLock(channelId)
@@ -772,12 +784,16 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 				shouldUpdateAbilities = true
 			}
 		} else {
+			beforeStatus := channel.Status
 			info := channel.GetOtherInfo()
 			info["status_reason"] = reason
 			info["status_time"] = common.GetTimestamp()
+			for key, value := range extraInfo {
+				info[key] = value
+			}
 			channel.SetOtherInfo(info)
 			channel.Status = status
-			shouldUpdateAbilities = true
+			shouldUpdateAbilities = beforeStatus != status
 		}
 		err = channel.SaveWithoutKey()
 		if err != nil {

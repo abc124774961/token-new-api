@@ -2,7 +2,9 @@ package service
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -12,6 +14,7 @@ import (
 )
 
 const ChannelStatusReasonBalanceInsufficient = "balance_insufficient"
+const ChannelStatusReasonErrorPaused = "error_paused"
 
 func formatNotifyType(channelId int, status int) string {
 	return fmt.Sprintf("%s_%d_%d", dto.NotifyTypeChannelUpdate, channelId, status)
@@ -39,6 +42,26 @@ func DisableChannelForBalance(channelError types.ChannelError) {
 	DisableChannel(channelError, ChannelStatusReasonBalanceInsufficient)
 }
 
+func PauseChannelForError(channelError types.ChannelError, until time.Time, reason string) bool {
+	if !channelError.AutoBan {
+		common.SysLog(fmt.Sprintf("通道「%s」（#%d）未启用自动禁用功能，跳过错误暂停操作", channelError.ChannelName, channelError.ChannelId))
+		return false
+	}
+	if reason == "" {
+		reason = ChannelStatusReasonErrorPaused
+	}
+	return model.UpdateChannelStatusWholeChannelWithInfo(
+		channelError.ChannelId,
+		common.ChannelStatusAutoDisabled,
+		ChannelStatusReasonErrorPaused,
+		map[string]interface{}{
+			"pause_type":   ChannelStatusReasonErrorPaused,
+			"pause_reason": reason,
+			"pause_until":  until.Unix(),
+		},
+	)
+}
+
 func EnableChannel(channelId int, usingKey string, channelName string) {
 	success := model.UpdateChannelStatus(channelId, usingKey, common.ChannelStatusEnabled, "")
 	if success {
@@ -64,6 +87,9 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	if types.IsSkipRetryError(err) {
 		return false
 	}
+	if IsBalanceInsufficientError(err) {
+		return false
+	}
 	if operation_setting.ShouldDisableByStatusCode(err.StatusCode) {
 		return true
 	}
@@ -71,6 +97,48 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	lowerMessage := strings.ToLower(err.Error())
 	search, _ := AcSearch(lowerMessage, operation_setting.AutomaticDisableKeywords, true)
 	return search
+}
+
+func ShouldDisableChannelForBalance(err *types.NewAPIError) bool {
+	if !common.AutomaticDisableChannelEnabled {
+		return false
+	}
+	if err == nil || types.IsSkipRetryError(err) {
+		return false
+	}
+	if types.IsChannelError(err) {
+		return false
+	}
+	return IsBalanceInsufficientError(err)
+}
+
+func IsBalanceInsufficientError(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	return IsBalanceInsufficientMessage(err.Error())
+}
+
+func IsBalanceInsufficientMessage(message string) bool {
+	message = strings.ToLower(strings.TrimSpace(message))
+	for _, keyword := range []string{
+		"balance_insufficient",
+		"insufficient balance",
+		"insufficient credit",
+		"insufficient credits",
+		"credit balance is too low",
+		"balance is too low",
+		"not enough balance",
+		"quota_not_enough",
+		"余额不足",
+		"余额不够",
+		"账户余额",
+	} {
+		if strings.Contains(message, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func ShouldEnableChannel(newAPIError *types.NewAPIError, status int) bool {
@@ -91,6 +159,15 @@ func IsBalanceInsufficientStatusReason(reason string) bool {
 	return normalized == ChannelStatusReasonBalanceInsufficient || strings.Contains(normalized, "余额不足")
 }
 
+func IsErrorPausedStatusReason(reason string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(reason))
+	return normalized == ChannelStatusReasonErrorPaused || strings.Contains(normalized, "错误暂停") || strings.Contains(normalized, "故障暂停")
+}
+
+func IsPauseStatusReason(reason string) bool {
+	return IsBalanceInsufficientStatusReason(reason) || IsErrorPausedStatusReason(reason)
+}
+
 func IsBalanceInsufficientPausedChannel(channel *model.Channel) bool {
 	if channel == nil || channel.Status != common.ChannelStatusAutoDisabled {
 		return false
@@ -100,9 +177,52 @@ func IsBalanceInsufficientPausedChannel(channel *model.Channel) bool {
 	return IsBalanceInsufficientStatusReason(reason)
 }
 
+func IsErrorPausedChannel(channel *model.Channel) bool {
+	if channel == nil || channel.Status != common.ChannelStatusAutoDisabled {
+		return false
+	}
+	info := channel.GetOtherInfo()
+	reason, _ := info["status_reason"].(string)
+	return IsErrorPausedStatusReason(reason)
+}
+
+func IsManagedPausedChannel(channel *model.Channel) bool {
+	return IsBalanceInsufficientPausedChannel(channel) || IsErrorPausedChannel(channel)
+}
+
+func ShouldResumeErrorPausedChannel(channel *model.Channel, err *types.NewAPIError) bool {
+	if channel == nil || !IsErrorPausedChannel(channel) || err != nil {
+		return false
+	}
+	info := channel.GetOtherInfo()
+	if until, ok := parsePauseUntil(info["pause_until"]); ok && time.Now().Unix() < until {
+		return false
+	}
+	return true
+}
+
 func ShouldResumeBalancePausedChannel(balance float64) bool {
 	if !common.ChannelBalanceAutoResumeEnabled {
 		return false
 	}
 	return balance > common.ChannelBalanceRecoveryThreshold
+}
+
+func parsePauseUntil(value any) (int64, bool) {
+	switch v := value.(type) {
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case float64:
+		return int64(v), true
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
 }

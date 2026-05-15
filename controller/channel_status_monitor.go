@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -55,8 +56,13 @@ type ChannelStatusMonitorItem struct {
 	MaxConcurrency        int     `json:"max_concurrency"`
 	ConcurrencyCeiling    int     `json:"concurrency_ceiling"`
 	ConcurrencyCooldown   int64   `json:"concurrency_cooldown_remaining_seconds,omitempty"`
+	ConcurrencyReason     string  `json:"concurrency_reason,omitempty"`
 	FailureAvoidance      int64   `json:"failure_avoidance_remaining_seconds,omitempty"`
 	FailureReason         string  `json:"failure_reason,omitempty"`
+	PauseType             string  `json:"pause_type,omitempty"`
+	PauseReason           string  `json:"pause_reason,omitempty"`
+	PauseUntil            int64   `json:"pause_until,omitempty"`
+	PauseRemaining        int64   `json:"pause_remaining_seconds,omitempty"`
 	LastRequestAt         int64   `json:"last_request_at,omitempty"`
 	LastSuccessAt         int64   `json:"last_success_at,omitempty"`
 	LastFailureAt         int64   `json:"last_failure_at,omitempty"`
@@ -66,6 +72,7 @@ type ChannelStatusMonitorItem struct {
 	RecentError429        int64   `json:"recent_error_429"`
 	RecentError5xx        int64   `json:"recent_error_5xx"`
 	RecentErrorTimeout    int64   `json:"recent_error_timeout"`
+	RecentBalanceErrors   int64   `json:"recent_balance_errors"`
 	RecentErrorRateLimit  int64   `json:"recent_error_rate_limit"`
 	RecentStreamErrors    int64   `json:"recent_stream_errors"`
 	RecentAvgLatencyMs    int64   `json:"recent_avg_latency_ms"`
@@ -79,6 +86,7 @@ type ChannelStatusMonitorItem struct {
 
 type ChannelStatusMonitorGroup struct {
 	Group              string                      `json:"group"`
+	GroupRatio         float64                     `json:"group_ratio"`
 	TotalChannels      int                         `json:"total_channels"`
 	EnabledChannels    int                         `json:"enabled_channels"`
 	DisabledChannels   int                         `json:"disabled_channels"`
@@ -276,7 +284,7 @@ func buildChannelStatusMonitorWithLogLimit(windowHours int, logLimit int) (Chann
 	}
 	enabledChannelIds := make([]int, 0, len(channels))
 	for _, channel := range channels {
-		if channel != nil && channel.Status == common.ChannelStatusEnabled {
+		if shouldIncludeChannelInStatusMonitor(channel) {
 			enabledChannelIds = append(enabledChannelIds, channel.Id)
 		}
 	}
@@ -308,7 +316,7 @@ func buildChannelStatusMonitorFromRowsWithChannels(windowHours int, channels []*
 	groupMap := map[string]*ChannelStatusMonitorGroup{}
 	summary := ChannelStatusMonitorSummary{WindowHours: windowHours}
 	for _, channel := range channels {
-		if channel == nil || channel.Status != common.ChannelStatusEnabled {
+		if !shouldIncludeChannelInStatusMonitor(channel) {
 			continue
 		}
 		summary.TotalChannels++
@@ -322,7 +330,7 @@ func buildChannelStatusMonitorFromRowsWithChannels(windowHours int, channels []*
 		if item.ActiveConcurrency > 0 {
 			summary.BusyChannels++
 		}
-		if item.ConcurrencyCooldown > 0 || item.FailureAvoidance > 0 {
+		if item.FailureAvoidance > 0 {
 			summary.CooldownChannels++
 		}
 		if item.HealthState == "healthy" {
@@ -334,7 +342,10 @@ func buildChannelStatusMonitorFromRowsWithChannels(windowHours int, channels []*
 		for _, groupName := range channelMonitorGroups(channel) {
 			group := groupMap[groupName]
 			if group == nil {
-				group = &ChannelStatusMonitorGroup{Group: groupName}
+				group = &ChannelStatusMonitorGroup{
+					Group:      groupName,
+					GroupRatio: ratio_setting.GetGroupRatio(groupName),
+				}
 				groupMap[groupName] = group
 			}
 			groupItem := buildChannelStatusMonitorItem(channel, logStats.byChannelGroup[channel.Id][groupName])
@@ -349,7 +360,7 @@ func buildChannelStatusMonitorFromRowsWithChannels(windowHours int, channels []*
 			if groupItem.ActiveConcurrency > 0 {
 				group.BusyChannels++
 			}
-			if groupItem.ConcurrencyCooldown > 0 || groupItem.FailureAvoidance > 0 {
+			if groupItem.FailureAvoidance > 0 {
 				group.CooldownChannels++
 			}
 			if groupItem.HealthState == "healthy" {
@@ -412,6 +423,13 @@ func buildChannelStatusMonitorFromRowsWithChannels(windowHours int, channels []*
 	}
 }
 
+func shouldIncludeChannelInStatusMonitor(channel *model.Channel) bool {
+	if channel == nil {
+		return false
+	}
+	return channel.Status == common.ChannelStatusEnabled || service.IsManagedPausedChannel(channel)
+}
+
 type channelMonitorLogStats struct {
 	requests       int64
 	successes      int64
@@ -419,6 +437,7 @@ type channelMonitorLogStats struct {
 	error429       int64
 	error5xx       int64
 	errorTimeout   int64
+	balanceErrors  int64
 	errorRateLimit int64
 	streamErrors   int64
 	latencySum     int64
@@ -448,6 +467,7 @@ type channelMonitorRequestLog struct {
 	requestId    string
 	status       string
 	statusWeight int
+	reason       string
 	successful   bool
 	latencyMs    int64
 }
@@ -460,6 +480,7 @@ type channelMonitorRequestAgg struct {
 	lastStatus        string
 	worstStatus       string
 	worstStatusWeight int
+	worstReason       string
 	success           bool
 	latencyMs         int64
 }
@@ -507,6 +528,7 @@ func buildChannelMonitorRecentStatus(rows []model.ChannelStatusMonitorRecentLogR
 			requestId:    strings.TrimSpace(row.RequestId),
 			status:       status,
 			statusWeight: monitorLogStatusWeight(status),
+			reason:       row.Content,
 			successful:   monitorLogIsSuccessful(row.Type, status),
 		})
 	}
@@ -534,6 +556,7 @@ func buildChannelMonitorRecentStatus(rows []model.ChannelStatusMonitorRecentLogR
 
 func buildChannelMonitorRequestLog(row model.ChannelStatusMonitorLogRow, groupName string) channelMonitorRequestLog {
 	other, _ := common.StrToMap(row.Other)
+	_, reason := parseMonitorStatusCodeAndReason(other, row.Content)
 	status := monitorLogStatus(row.Type, row.Other, row.Content)
 	latencyMs := int64(row.UseTime) * 1000
 	if latency, ok := parseMonitorInt64(other, "frt"); ok && latency > 0 && (latencyMs <= 0 || latency < latencyMs) {
@@ -548,6 +571,7 @@ func buildChannelMonitorRequestLog(row model.ChannelStatusMonitorLogRow, groupNa
 		requestId:    strings.TrimSpace(row.RequestId),
 		status:       status,
 		statusWeight: monitorLogStatusWeight(status),
+		reason:       reason,
 		successful:   monitorLogIsSuccessful(row.Type, status),
 		latencyMs:    latencyMs,
 	}
@@ -570,6 +594,7 @@ func buildChannelMonitorGroupRequestStats(logs []channelMonitorRequestLog) map[s
 			stats.failures++
 			stats.lastFailureAt = maxInt64(stats.lastFailureAt, agg.lastRequestAt)
 			applyMonitorStatusToStats(stats, channelMonitorRequestStatus(agg))
+			applyMonitorReasonToStats(stats, agg.worstReason)
 		}
 		if agg.latencyMs > 0 {
 			stats.latencySum += agg.latencyMs
@@ -596,6 +621,7 @@ func buildChannelMonitorOverallRequestStats(logs []channelMonitorRequestLog) *ch
 			stats.failures++
 			stats.lastFailureAt = maxInt64(stats.lastFailureAt, agg.lastRequestAt)
 			applyMonitorStatusToStats(stats, channelMonitorRequestStatus(agg))
+			applyMonitorReasonToStats(stats, agg.worstReason)
 		}
 		if agg.latencyMs > 0 {
 			stats.latencySum += agg.latencyMs
@@ -637,6 +663,9 @@ func buildChannelMonitorRequestAggregatesWithKey(logs []channelMonitorRequestLog
 		if log.statusWeight > agg.worstStatusWeight {
 			agg.worstStatusWeight = log.statusWeight
 			agg.worstStatus = log.status
+			agg.worstReason = log.reason
+		} else if log.statusWeight == agg.worstStatusWeight && agg.worstReason == "" {
+			agg.worstReason = log.reason
 		}
 		if log.successful {
 			agg.success = true
@@ -704,6 +733,15 @@ func applyMonitorStatusToStats(stats *channelMonitorLogStats, status string) {
 		stats.error5xx++
 	case "timeout":
 		stats.errorTimeout++
+	}
+}
+
+func applyMonitorReasonToStats(stats *channelMonitorLogStats, reason string) {
+	if stats == nil {
+		return
+	}
+	if service.IsBalanceInsufficientMessage(reason) {
+		stats.balanceErrors++
 	}
 }
 
@@ -789,6 +827,8 @@ func applyChannelMonitorLogRow[K comparable](stats map[K]*channelMonitorLogStats
 			agg.failures++
 			agg.lastFailureAt = maxInt64(agg.lastFailureAt, row.CreatedAt)
 			applyMonitorStatusToStats(agg, status)
+			_, reason := parseMonitorStatusCodeAndReason(other, row.Content)
+			applyMonitorReasonToStats(agg, reason)
 		}
 		latencyMs := int64(row.UseTime) * 1000
 		if latency, ok := parseMonitorInt64(other, "frt"); ok && latency > 0 {
@@ -812,6 +852,7 @@ func applyChannelMonitorLogRow[K comparable](stats map[K]*channelMonitorLogStats
 		agg.failures++
 		agg.lastFailureAt = maxInt64(agg.lastFailureAt, row.CreatedAt)
 		statusCode, reason := parseMonitorStatusCodeAndReason(other, row.Content)
+		applyMonitorReasonToStats(agg, reason)
 		switch {
 		case statusCode == http.StatusTooManyRequests:
 			agg.error429++
@@ -851,11 +892,13 @@ func buildChannelStatusMonitorItem(channel *model.Channel, logStat *channelMonit
 
 	if cooldown := service.GetChannelConcurrencyCooldownStatus(channel.Id); cooldown != nil {
 		item.ConcurrencyCooldown = cooldown.RemainingSec
+		item.ConcurrencyReason = cooldown.Reason
 	}
-	if avoidance := service.GetChannelFailureAvoidanceStatus(channel.Id); avoidance != nil {
+	if avoidance := service.GetChannelFailureAvoidanceStatus(channel.Id); avoidance != nil && !service.IsManagedPausedChannel(channel) {
 		item.FailureAvoidance = avoidance.RemainingSec
 		item.FailureReason = avoidance.Reason
 	}
+	applyChannelPauseStatus(item, channel)
 	if logStat != nil {
 		item.RecentRequests = logStat.requests
 		item.RecentSuccesses = logStat.successes
@@ -863,6 +906,7 @@ func buildChannelStatusMonitorItem(channel *model.Channel, logStat *channelMonit
 		item.RecentError429 = logStat.error429
 		item.RecentError5xx = logStat.error5xx
 		item.RecentErrorTimeout = logStat.errorTimeout
+		item.RecentBalanceErrors = logStat.balanceErrors
 		item.RecentErrorRateLimit = logStat.errorRateLimit
 		item.RecentStreamErrors = logStat.streamErrors
 		item.RecentAvgLatencyMs = avgInt64(logStat.latencySum, logStat.latencyCount)
@@ -881,6 +925,33 @@ func buildChannelStatusMonitorItem(channel *model.Channel, logStat *channelMonit
 	item.HealthScore = channelHealthScore(channel, nil)
 	item.HealthState = channelHealthState(channel, nil)
 	return item
+}
+
+func applyChannelPauseStatus(item *ChannelStatusMonitorItem, channel *model.Channel) {
+	if item == nil || channel == nil || channel.Status != common.ChannelStatusAutoDisabled {
+		return
+	}
+	info := channel.GetOtherInfo()
+	reason, _ := info["status_reason"].(string)
+	if service.IsBalanceInsufficientStatusReason(reason) {
+		item.PauseType = service.ChannelStatusReasonBalanceInsufficient
+		item.PauseReason = reason
+		return
+	}
+	if service.IsErrorPausedStatusReason(reason) {
+		item.PauseType = service.ChannelStatusReasonErrorPaused
+		if pauseReason, _ := info["pause_reason"].(string); strings.TrimSpace(pauseReason) != "" {
+			item.PauseReason = pauseReason
+		} else {
+			item.PauseReason = reason
+		}
+		if until, ok := parseMonitorInt64(info, "pause_until"); ok && until > 0 {
+			item.PauseUntil = until
+			if remaining := until - time.Now().Unix(); remaining > 0 {
+				item.PauseRemaining = remaining
+			}
+		}
+	}
 }
 
 func channelMonitorGroups(channel *model.Channel) []string {
@@ -1036,17 +1107,42 @@ func channelHealthScore(channel *model.Channel, stats *channelMonitorLogStats) i
 	if channel == nil {
 		return 0
 	}
+	if service.IsBalanceInsufficientPausedChannel(channel) {
+		return 100
+	}
 	score := 100
 	if channel.Status != common.ChannelStatusEnabled {
 		score -= 35
 	}
 	if stats == nil || stats.requests == 0 {
-		if channel.Status == common.ChannelStatusEnabled {
+		if channel.Status == common.ChannelStatusEnabled && channel.ResponseTime <= 0 {
 			score -= 10
+		}
+		if channel.ResponseTime > 4000 {
+			score -= 8
+		} else if channel.ResponseTime > 2000 {
+			score -= 4
 		}
 		return clampScore(score)
 	}
-	rate := successRate(stats.successes, stats.requests)
+	healthRequests := stats.requests - stats.balanceErrors
+	healthFailures := stats.failures - stats.balanceErrors
+	if healthRequests <= 0 || healthFailures < 0 {
+		healthFailures = 0
+	}
+	if healthRequests <= 0 {
+		if channel.ResponseTime > 4000 {
+			score -= 8
+		} else if channel.ResponseTime > 2000 {
+			score -= 4
+		}
+		return clampScore(score)
+	}
+	healthSuccesses := healthRequests - healthFailures
+	if healthSuccesses < 0 {
+		healthSuccesses = 0
+	}
+	rate := successRate(healthSuccesses, healthRequests)
 	switch {
 	case rate < 60:
 		score -= 40
@@ -1055,7 +1151,11 @@ func channelHealthScore(channel *model.Channel, stats *channelMonitorLogStats) i
 	case rate < 95:
 		score -= 8
 	}
-	score -= minInt(stats.error429*4, 16)
+	nonBalance429 := stats.error429 - stats.balanceErrors
+	if nonBalance429 < 0 {
+		nonBalance429 = 0
+	}
+	score -= minInt(nonBalance429*4, 16)
 	score -= minInt(stats.error5xx*5, 20)
 	score -= minInt(stats.errorTimeout*5, 20)
 	score -= minInt(stats.streamErrors*3, 12)

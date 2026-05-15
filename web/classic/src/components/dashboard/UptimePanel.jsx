@@ -39,7 +39,7 @@ const UptimePanel = ({
   return (
     <DashboardCard
       {...CARD_PROPS}
-      className='lg:col-span-1'
+      className='ct-dashboard-side-card ct-dashboard-uptime-card lg:col-span-1'
       tone='uptime'
       title={
         <div className='flex items-center justify-between w-full gap-2'>
@@ -54,7 +54,7 @@ const UptimePanel = ({
             size='small'
             theme='borderless'
             type='tertiary'
-            className='text-gray-500 hover:text-blue-500 hover:bg-blue-50 !rounded-full'
+            className='ct-dashboard-card-action'
           />
         </div>
       }
@@ -106,7 +106,7 @@ const UptimePanel = ({
               </Tabs>
             )
           ) : (
-            <div className='flex justify-center items-center py-8'>
+            <div className='ct-dashboard-empty-wrap'>
               <DashboardEmptyState
                 title={t('暂无监控数据')}
                 description={t('请联系管理员在系统设置中配置Uptime')}
@@ -119,14 +119,14 @@ const UptimePanel = ({
       {/* 图例 */}
       {uptimeData.length > 0 && (
         <div className='ct-dashboard-legend-bar'>
-          <div className='flex flex-wrap gap-3 text-xs justify-center'>
+          <div className='ct-dashboard-legend-inline justify-center'>
             {uptimeLegendData.map((legend, index) => (
-              <div key={index} className='flex items-center gap-1'>
+              <div key={index} className='ct-dashboard-legend-item'>
                 <div
                   className='w-2 h-2 rounded-full'
                   style={{ backgroundColor: legend.color }}
                 />
-                <span className='text-gray-600'>{legend.label}</span>
+                <span>{legend.label}</span>
               </div>
             ))}
           </div>

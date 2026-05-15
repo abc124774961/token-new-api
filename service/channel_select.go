@@ -25,12 +25,19 @@ type RetryParam struct {
 }
 
 type channelAvoidanceEntry struct {
-	until        time.Time
-	reason       string
-	failureCount int
+	until         time.Time
+	reason        string
+	failureCount  int
+	lastFailureAt time.Time
 }
 
 var channelFailureAvoidance sync.Map
+
+const (
+	channelFailureAvoidanceBackoffWindow = 5 * time.Minute
+	channelFailureAvoidancePauseDuration = 30 * time.Minute
+	channelFailureAvoidancePauseFailures = 6
+)
 
 type ChannelFailureAvoidanceStatus struct {
 	Active       bool   `json:"active"`
@@ -38,6 +45,15 @@ type ChannelFailureAvoidanceStatus struct {
 	Until        int64  `json:"until,omitempty"`
 	RemainingSec int64  `json:"remaining_seconds,omitempty"`
 	FailureCount int    `json:"failure_count,omitempty"`
+}
+
+type ChannelFailureAvoidanceRecord struct {
+	Active       bool
+	Reason       string
+	Until        time.Time
+	Remaining    time.Duration
+	FailureCount int
+	ShouldPause  bool
 }
 
 func (p *RetryParam) GetRetry() int {
@@ -168,29 +184,50 @@ func mergeChannelSets(sets ...map[int]struct{}) map[int]struct{} {
 	return merged
 }
 
-func RecordChannelFailureAvoidance(channelID int, reason string) {
+func RecordChannelFailureAvoidance(channelID int, reason string) *ChannelFailureAvoidanceRecord {
 	if channelID <= 0 || !common.ChannelFailureAvoidanceEnabled || common.ChannelFailureAvoidanceTTLSeconds <= 0 {
-		return
+		return nil
 	}
 	now := time.Now()
-	ttl := time.Duration(common.ChannelFailureAvoidanceTTLSeconds) * time.Second
+	baseTTL := time.Duration(common.ChannelFailureAvoidanceTTLSeconds) * time.Second
+	ttl := baseTTL
 	failureCount := 1
+	baseUntil := now
 	if value, ok := channelFailureAvoidance.Load(channelID); ok {
-		if entry, ok := value.(channelAvoidanceEntry); ok && entry.until.After(now) {
-			failureCount = entry.failureCount + 1
-			ttl *= time.Duration(failureCount)
-			if maxTTL := 5 * time.Duration(common.ChannelFailureAvoidanceTTLSeconds) * time.Second; ttl > maxTTL {
-				ttl = maxTTL
+		if entry, ok := value.(channelAvoidanceEntry); ok {
+			if entry.until.After(now) {
+				baseUntil = entry.until
+			}
+			if entry.until.After(now) || (!entry.lastFailureAt.IsZero() && now.Sub(entry.lastFailureAt) <= channelFailureAvoidanceBackoffWindow) {
+				failureCount = entry.failureCount + 1
 			}
 		}
 	}
-	until := now.Add(ttl)
+	if failureCount > 1 {
+		ttl *= time.Duration(failureCount)
+	}
+	until := baseUntil.Add(ttl)
+	remaining := until.Sub(now)
+	shouldPause := remaining >= channelFailureAvoidancePauseDuration || failureCount >= channelFailureAvoidancePauseFailures
+	if shouldPause {
+		until = now.Add(channelFailureAvoidancePauseDuration)
+		remaining = channelFailureAvoidancePauseDuration
+	}
 	channelFailureAvoidance.Store(channelID, channelAvoidanceEntry{
-		until:        until,
-		reason:       reason,
-		failureCount: failureCount,
+		until:         until,
+		reason:        reason,
+		failureCount:  failureCount,
+		lastFailureAt: now,
 	})
-	common.SysLog(fmt.Sprintf("channel #%d temporarily circuit-broken for %s after %s", channelID, ttl, reason))
+	common.SysLog(fmt.Sprintf("channel #%d temporarily cooled for %s until %s after %d errors: %s", channelID, remaining, until.Format(time.RFC3339), failureCount, reason))
+	return &ChannelFailureAvoidanceRecord{
+		Active:       true,
+		Reason:       reason,
+		Until:        until,
+		Remaining:    remaining,
+		FailureCount: failureCount,
+		ShouldPause:  shouldPause,
+	}
 }
 
 func ClearChannelFailureAvoidance(channelID int) {

@@ -2,8 +2,11 @@ package controller
 
 import (
 	"testing"
+	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,6 +72,78 @@ func TestChannelMonitorGroupStatsUseRequestOutcome(t *testing.T) {
 	require.EqualValues(t, 2, channelStats.failures)
 	require.EqualValues(t, 1, channelStats.error429)
 	require.EqualValues(t, 1, channelStats.error5xx)
+}
+
+func TestChannelMonitorBalanceErrorsDoNotDeductHealthScore(t *testing.T) {
+	channel := &model.Channel{
+		Id:       20,
+		Name:     "balance-paused",
+		Status:   common.ChannelStatusAutoDisabled,
+		Group:    "default",
+		Models:   "gpt-5.5",
+		TestTime: 100,
+	}
+	channel.SetOtherInfo(map[string]interface{}{
+		"status_reason": service.ChannelStatusReasonBalanceInsufficient,
+	})
+
+	rows := []model.ChannelStatusMonitorLogRow{
+		{
+			Id:        1,
+			CreatedAt: 100,
+			Type:      model.LogTypeError,
+			Group:     "default",
+			ChannelId: 20,
+			RequestId: "req-balance",
+			Other:     `{"status_code":429}`,
+			Content:   "status_code=429, insufficient balance",
+		},
+	}
+
+	response := buildChannelStatusMonitorFromRowsWithChannels(24, []*model.Channel{channel}, rows, nil)
+
+	require.EqualValues(t, 1, response.Summary.TotalChannels)
+	require.EqualValues(t, 0, response.Summary.CooldownChannels)
+	require.EqualValues(t, 1, response.Summary.HealthyChannels)
+	require.EqualValues(t, 0, response.Summary.BadChannels)
+	require.Len(t, response.Groups, 1)
+	require.Len(t, response.Groups[0].Channels, 1)
+
+	item := response.Groups[0].Channels[0]
+	require.False(t, item.Enabled)
+	require.Equal(t, service.ChannelStatusReasonBalanceInsufficient, item.PauseType)
+	require.EqualValues(t, 1, item.RecentBalanceErrors)
+	require.EqualValues(t, 100, item.HealthScore)
+	require.Equal(t, "healthy", item.HealthState)
+}
+
+func TestChannelMonitorErrorPauseShowsReasonAndRemaining(t *testing.T) {
+	until := time.Now().Add(30 * time.Minute).Unix()
+	channel := &model.Channel{
+		Id:     21,
+		Name:   "error-paused",
+		Status: common.ChannelStatusAutoDisabled,
+		Group:  "default",
+		Models: "gpt-5.5",
+	}
+	channel.SetOtherInfo(map[string]interface{}{
+		"status_reason": service.ChannelStatusReasonErrorPaused,
+		"pause_type":    service.ChannelStatusReasonErrorPaused,
+		"pause_reason":  "upstream_error:502:bad_response_status_code",
+		"pause_until":   until,
+	})
+
+	response := buildChannelStatusMonitorFromRowsWithChannels(24, []*model.Channel{channel}, nil, nil)
+
+	require.Len(t, response.Groups, 1)
+	item := response.Groups[0].Channels[0]
+	require.False(t, item.Enabled)
+	require.Equal(t, service.ChannelStatusReasonErrorPaused, item.PauseType)
+	require.Equal(t, "upstream_error:502:bad_response_status_code", item.PauseReason)
+	require.Equal(t, until, item.PauseUntil)
+	require.Positive(t, item.PauseRemaining)
+	require.Less(t, item.HealthScore, 100)
+	require.NotEqual(t, "healthy", item.HealthState)
 }
 
 func TestChannelMonitorRecentStatusUsesRequestOutcome(t *testing.T) {

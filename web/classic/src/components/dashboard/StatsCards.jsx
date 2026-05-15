@@ -34,15 +34,16 @@ const StatsCards = ({
   const navigate = useNavigate();
   const { t } = useTranslation();
   return (
-    <div className='mb-4'>
-      <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4'>
+    <div className='ct-dashboard-kpi-section'>
+      <div className='ct-dashboard-kpi-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4'>
         {groupedStatsData.map((group, idx) => (
           <DashboardCard
             key={idx}
             {...CARD_PROPS}
-            className={`w-full ${group.color || ''}`}
-            title={group.title}
+            className={`ct-dashboard-kpi-card w-full ${group.color || ''}`}
+            title={<div className='ct-dashboard-kpi-title'>{group.title}</div>}
             tone={group.tone || 'default'}
+            bodyStyle={{ padding: 0 }}
           >
             <div className='ct-dashboard-stat-list'>
               {group.items.map((item, itemIdx) => (
@@ -53,13 +54,13 @@ const StatsCards = ({
                 >
                   <div className='ct-dashboard-stat-main'>
                     <Avatar
-                      className='ct-dashboard-stat-avatar'
+                      className={`ct-dashboard-stat-avatar ct-dashboard-stat-avatar-${item.iconTone || 'teal'}`}
                       size='small'
                       color={item.avatarColor}
                     >
                       {item.icon}
                     </Avatar>
-                    <div>
+                    <div className='ct-dashboard-stat-copy'>
                       <div className='ct-dashboard-stat-label'>
                         {item.title}
                       </div>
@@ -100,7 +101,7 @@ const StatsCards = ({
                   ) : (
                     (loading ||
                       (item.trendData && item.trendData.length > 0)) && (
-                      <div className='w-24 h-10'>
+                      <div className='ct-dashboard-stat-trend'>
                         <VChart
                           spec={getTrendSpec(item.trendData, item.trendColor)}
                           option={CHART_CONFIG}

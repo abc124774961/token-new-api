@@ -341,16 +341,43 @@ func TestRecordChannelFailureAvoidanceExtendsDurationForRepeatedFailures(t *test
 		clearAllChannelFailureAvoidanceForTest()
 	})
 
-	RecordChannelFailureAvoidance(381, "do_request_failed")
+	firstRecord := RecordChannelFailureAvoidance(381, "do_request_failed")
 	first, ok := getChannelFailureAvoidanceForTest(381)
 	require.True(t, ok)
+	require.NotNil(t, firstRecord)
 	require.Equal(t, 1, first.failureCount)
+	require.False(t, firstRecord.ShouldPause)
 
-	RecordChannelFailureAvoidance(381, "do_request_failed")
+	secondRecord := RecordChannelFailureAvoidance(381, "do_request_failed")
 	second, ok := getChannelFailureAvoidanceForTest(381)
 	require.True(t, ok)
+	require.NotNil(t, secondRecord)
 	require.Equal(t, 2, second.failureCount)
 	require.Greater(t, second.until.Sub(time.Now()), 15*time.Second)
+	require.Greater(t, second.until, first.until)
+	require.False(t, secondRecord.ShouldPause)
+}
+
+func TestRecordChannelFailureAvoidanceEscalatesToPauseAfterRepeatedFailures(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 10
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	var record *ChannelFailureAvoidanceRecord
+	for i := 0; i < channelFailureAvoidancePauseFailures; i++ {
+		record = RecordChannelFailureAvoidance(382, "do_request_failed")
+	}
+
+	require.NotNil(t, record)
+	require.True(t, record.ShouldPause)
+	require.Equal(t, channelFailureAvoidancePauseFailures, record.FailureCount)
+	require.InDelta(t, channelFailureAvoidancePauseDuration.Seconds(), record.Remaining.Seconds(), 1)
 }
 
 func TestRetryParamIncreaseRetryConsumesExtraRetriesFirst(t *testing.T) {

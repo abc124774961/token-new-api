@@ -38,6 +38,7 @@ import {
   showSuccess,
   showError,
   showInfo,
+  API,
 } from '../../../helpers';
 import {
   CHANNEL_OPTIONS,
@@ -215,6 +216,201 @@ const renderMultiKeyStatus = (status, keySize, enabledKeySize, t) => {
         </Tag>
       );
   }
+};
+
+const parseChannelOtherInfo = (otherInfo) => {
+  if (!otherInfo) return {};
+  if (typeof otherInfo === 'object') return otherInfo;
+  try {
+    const parsed = JSON.parse(otherInfo);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    return {};
+  }
+};
+
+const formatPauseDuration = (seconds, t) => {
+  const total = Math.max(0, Math.ceil(Number(seconds) || 0));
+  if (total <= 0) return '';
+  if (total < 60) return `${total}${t('秒')}`;
+  const minutes = Math.floor(total / 60);
+  const remainingSeconds = total % 60;
+  if (minutes < 60) {
+    return remainingSeconds > 0
+      ? `${minutes}${t('分钟')} ${remainingSeconds}${t('秒')}`
+      : `${minutes}${t('分钟')}`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0
+    ? `${hours}${t('小时')} ${remainingMinutes}${t('分钟')}`
+    : `${hours}${t('小时')}`;
+};
+
+const getPauseRemainingSeconds = (pauseStatus, nowSeconds) => {
+  if (!pauseStatus?.active) return 0;
+  if (pauseStatus.until) {
+    return Math.max(0, Number(pauseStatus.until) - nowSeconds);
+  }
+  return Math.max(0, Number(pauseStatus.remaining_seconds) || 0);
+};
+
+const renderStatusReason = (reason, t) => {
+  if (!reason) return '';
+  const normalized = String(reason).trim().toLowerCase();
+  if (
+    normalized === 'balance_insufficient' ||
+    normalized.includes('余额不足')
+  ) {
+    return t('余额不足');
+  }
+  return reason;
+};
+
+const ChannelStatusCell = ({ record, t, refresh }) => {
+  const [nowSeconds, setNowSeconds] = React.useState(() =>
+    Math.floor(Date.now() / 1000),
+  );
+  const [clearingCircuit, setClearingCircuit] = React.useState(false);
+  const failureAvoidance = record?.failure_avoidance;
+  const concurrencyCooldown = record?.concurrency_cooldown;
+  const circuitRemaining = getPauseRemainingSeconds(
+    failureAvoidance,
+    nowSeconds,
+  );
+  const cooldownRemaining = getPauseRemainingSeconds(
+    concurrencyCooldown,
+    nowSeconds,
+  );
+  const circuitActive =
+    failureAvoidance?.active === true && circuitRemaining > 0;
+  const cooldownActive =
+    concurrencyCooldown?.active === true && cooldownRemaining > 0;
+
+  React.useEffect(() => {
+    if (!circuitActive && !cooldownActive) return undefined;
+    const timer = window.setInterval(() => {
+      setNowSeconds(Math.floor(Date.now() / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [circuitActive, cooldownActive]);
+
+  const otherInfo = parseChannelOtherInfo(record?.other_info);
+  const reason = renderStatusReason(
+    concurrencyCooldown?.reason ||
+      failureAvoidance?.reason ||
+      otherInfo.status_reason,
+    t,
+  );
+  const statusTime = otherInfo.status_time
+    ? timestamp2string(otherInfo.status_time)
+    : '';
+  const cooldownLabel = formatPauseDuration(cooldownRemaining, t);
+  const circuitLabel = formatPauseDuration(circuitRemaining, t);
+  const cooldownUntil = concurrencyCooldown?.until
+    ? timestamp2string(concurrencyCooldown.until)
+    : '';
+  const circuitUntil = failureAvoidance?.until
+    ? timestamp2string(failureAvoidance.until)
+    : '';
+
+  const clearCircuit = async (event) => {
+    event.stopPropagation();
+    if (clearingCircuit || !record?.id) return;
+    setClearingCircuit(true);
+    try {
+      const res = await API.post(
+        `/api/channel/${record.id}/clear_failure_avoidance`,
+      );
+      if (res?.data?.success) {
+        showSuccess(t('熔断已解除'));
+        refresh?.();
+      } else {
+        showError(res?.data?.message || t('解除熔断失败'));
+      }
+    } catch (error) {
+      showError(error);
+    } finally {
+      setClearingCircuit(false);
+    }
+  };
+
+  const statusNode =
+    cooldownActive || circuitActive ? (
+      <Space spacing={4} wrap>
+        {cooldownActive && (
+          <Tag color='yellow' shape='circle'>
+            {t('冷却中')} {cooldownLabel}
+          </Tag>
+        )}
+        {circuitActive && (
+          <Tag color='orange' shape='circle'>
+            {t('熔断中')} {circuitLabel}
+          </Tag>
+        )}
+        {circuitActive && (
+          <Button
+            size='small'
+            type='tertiary'
+            loading={clearingCircuit}
+            onClick={clearCircuit}
+          >
+            {t('解除')}
+          </Button>
+        )}
+      </Space>
+    ) : (
+      renderStatus(record?.status, record?.channel_info, t)
+    );
+
+  const tooltipLines = [];
+  if (cooldownActive) {
+    tooltipLines.push(`${t('冷却剩余')}: ${cooldownLabel}`);
+  }
+  if (cooldownUntil) {
+    tooltipLines.push(`${t('冷却到')}: ${cooldownUntil}`);
+  }
+  if (circuitActive) {
+    tooltipLines.push(`${t('熔断剩余')}: ${circuitLabel}`);
+  }
+  if (circuitUntil) {
+    tooltipLines.push(`${t('熔断到')}: ${circuitUntil}`);
+  }
+  if (reason) {
+    tooltipLines.push(`${t('原因：')}${reason}`);
+  }
+  if (statusTime) {
+    tooltipLines.push(`${t('时间：')}${statusTime}`);
+  }
+  if (concurrencyCooldown?.failure_count) {
+    tooltipLines.push(
+      `${t('冷却失败次数')}: ${concurrencyCooldown.failure_count}`,
+    );
+  }
+  if (failureAvoidance?.failure_count) {
+    tooltipLines.push(`${t('熔断次数')}: ${failureAvoidance.failure_count}`);
+  }
+  if (concurrencyCooldown?.success_streak) {
+    tooltipLines.push(
+      `${t('恢复连续成功')}: ${concurrencyCooldown.success_streak}`,
+    );
+  }
+
+  if (!tooltipLines.length) return statusNode;
+
+  return (
+    <Tooltip
+      content={
+        <div className='flex flex-col gap-1 max-w-xs'>
+          {tooltipLines.map((line) => (
+            <div key={line}>{line}</div>
+          ))}
+        </div>
+      }
+    >
+      <div className='inline-flex'>{statusNode}</div>
+    </Tooltip>
+  );
 };
 
 const renderResponseTime = (responseTime, t) => {
@@ -492,29 +688,9 @@ export const getChannelsColumns = ({
       key: COLUMN_KEYS.STATUS,
       title: t('状态'),
       dataIndex: 'status',
-      render: (text, record, index) => {
-        if (text === 3) {
-          if (record.other_info === '') {
-            record.other_info = '{}';
-          }
-          let otherInfo = JSON.parse(record.other_info);
-          let reason = otherInfo['status_reason'];
-          let time = otherInfo['status_time'];
-          return (
-            <div>
-              <Tooltip
-                content={
-                  t('原因：') + reason + t('，时间：') + timestamp2string(time)
-                }
-              >
-                {renderStatus(text, record.channel_info, t)}
-              </Tooltip>
-            </div>
-          );
-        } else {
-          return renderStatus(text, record.channel_info, t);
-        }
-      },
+      render: (text, record, index) => (
+        <ChannelStatusCell record={record} t={t} refresh={refresh} />
+      ),
     },
     {
       key: COLUMN_KEYS.RESPONSE_TIME,

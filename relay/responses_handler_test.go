@@ -37,6 +37,7 @@ func TestCaptureResponsesReasoningEffort(t *testing.T) {
 	captureResponsesReasoningEffort(info, req)
 
 	require.Equal(t, "xhigh", info.ReasoningEffort)
+	require.Equal(t, "xhigh", info.RequestReasoningEffort)
 }
 
 func TestApplyResponsesCompactBillingModelUsesUpstreamCompactModel(t *testing.T) {

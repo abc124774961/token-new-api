@@ -42,7 +42,7 @@ const ChartsPanel = ({
   return (
     <DashboardCard
       {...CARD_PROPS}
-      className={hasApiInfoPanel ? 'lg:col-span-3' : ''}
+      className={`ct-dashboard-chart-card ${hasApiInfoPanel ? 'lg:col-span-3' : ''}`}
       tone='analysis'
       title={
         <div className='ct-dashboard-panel-title-row'>
@@ -51,9 +51,11 @@ const ChartsPanel = ({
             {t('模型数据分析')}
           </div>
           <Tabs
-            type='slash'
+            type='button'
+            size='small'
             activeKey={activeChartTab}
             onChange={setActiveChartTab}
+            className='ct-dashboard-chart-tabs'
           >
             <TabPane tab={<span>{t('消耗分布')}</span>} itemKey='1' />
             <TabPane tab={<span>{t('调用趋势')}</span>} itemKey='2' />

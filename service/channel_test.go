@@ -1,10 +1,14 @@
 package service
 
 import (
+	"errors"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,4 +49,44 @@ func TestShouldResumeBalancePausedChannelRequiresEnabledAndThreshold(t *testing.
 
 	common.ChannelBalanceAutoResumeEnabled = false
 	require.False(t, ShouldResumeBalancePausedChannel(2))
+}
+
+func TestBalanceInsufficientErrorUsesBalancePauseInsteadOfHealthDisable(t *testing.T) {
+	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
+	common.AutomaticDisableChannelEnabled = true
+	t.Cleanup(func() {
+		common.AutomaticDisableChannelEnabled = originalAutomaticDisable
+	})
+
+	err := types.NewOpenAIError(
+		errors.New("insufficient balance"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)
+
+	require.True(t, IsBalanceInsufficientError(err))
+	require.True(t, ShouldDisableChannelForBalance(err))
+	require.False(t, ShouldDisableChannel(err))
+}
+
+func TestShouldResumeErrorPausedChannelWaitsForPauseUntilAndSuccess(t *testing.T) {
+	now := time.Now().Unix()
+	channel := &model.Channel{
+		Status: common.ChannelStatusAutoDisabled,
+	}
+	channel.SetOtherInfo(map[string]interface{}{
+		"status_reason": ChannelStatusReasonErrorPaused,
+		"pause_until":   now + 60,
+	})
+
+	require.False(t, ShouldResumeErrorPausedChannel(channel, nil))
+
+	channel.SetOtherInfo(map[string]interface{}{
+		"status_reason": ChannelStatusReasonErrorPaused,
+		"pause_until":   now - 1,
+	})
+	require.True(t, ShouldResumeErrorPausedChannel(channel, nil))
+
+	err := types.NewOpenAIError(errors.New("still failing"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
+	require.False(t, ShouldResumeErrorPausedChannel(channel, err))
 }

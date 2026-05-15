@@ -441,12 +441,19 @@ func shouldFailoverOnConcurrencyLimit(c *gin.Context, openaiErr *types.NewAPIErr
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
-	message := strings.ToLower(openaiErr.Error())
-	if !strings.Contains(message, "concurrency limit exceeded for user") &&
-		!strings.Contains(message, "too many pending requests") {
+	if !isConcurrencyBusyError(openaiErr) {
 		return false
 	}
 	return true
+}
+
+func isConcurrencyBusyError(openaiErr *types.NewAPIError) bool {
+	if openaiErr == nil || openaiErr.StatusCode != http.StatusTooManyRequests {
+		return false
+	}
+	message := strings.ToLower(openaiErr.Error())
+	return strings.Contains(message, "concurrency limit exceeded for user") ||
+		strings.Contains(message, "too many pending requests")
 }
 
 func isUpstreamFailoverCandidate(openaiErr *types.NewAPIError) bool {
@@ -502,8 +509,17 @@ func isUpstreamRateLimitLikeError(openaiErr *types.NewAPIError) bool {
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, persistLog bool) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
+	if service.ShouldDisableChannelForBalance(err) && channelError.AutoBan {
+		gopool.Go(func() {
+			service.DisableChannelForBalance(channelError)
+		})
+	}
 	if reason, ok := channelFailureAvoidanceReason(err); ok {
-		service.RecordChannelFailureAvoidance(channelError.ChannelId, reason)
+		if avoidance := service.RecordChannelFailureAvoidance(channelError.ChannelId, reason); avoidance != nil && avoidance.ShouldPause {
+			gopool.Go(func() {
+				service.PauseChannelForError(channelError, avoidance.Until, avoidance.Reason)
+			})
+		}
 	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
@@ -573,11 +589,14 @@ func channelFailureAvoidanceReason(err *types.NewAPIError) (string, bool) {
 	if err == nil || types.IsSkipRetryError(err) {
 		return "", false
 	}
+	if service.IsBalanceInsufficientError(err) {
+		return "", false
+	}
+	if isConcurrencyBusyError(err) {
+		return "", false
+	}
 	if isUpstreamRateLimitLikeError(err) {
 		return "upstream_rate_limit", true
-	}
-	if err.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
-		return "channel_concurrency_limit", true
 	}
 	if isUpstreamFailoverCandidate(err) {
 		return formatUpstreamFailureAvoidanceReason(err), true
@@ -588,8 +607,6 @@ func channelFailureAvoidanceReason(err *types.NewAPIError) (string, bool) {
 		types.ErrorCodeBadResponse,
 		types.ErrorCodeBadResponseBody:
 		return formatUpstreamFailureAvoidanceReason(err), true
-	case types.ErrorCodeChannelConcurrencyLimit:
-		return "channel_concurrency_limit", true
 	case types.ErrorCodeBadResponseStatusCode:
 		if err.StatusCode == http.StatusBadGateway ||
 			err.StatusCode == http.StatusServiceUnavailable ||

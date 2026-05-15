@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -101,18 +102,25 @@ type RelayInfo struct {
 	IsPlayground           bool
 	UsePrice               bool
 	RelayMode              int
-	OriginModelName        string
-	RequestURLPath         string
-	RequestHeaders         map[string]string
-	ShouldIncludeUsage     bool
-	DisablePing            bool // 是否禁止向下游发送自定义 Ping
-	ClientWs               *websocket.Conn
-	TargetWs               *websocket.Conn
-	InputAudioFormat       string
-	OutputAudioFormat      string
-	RealtimeTools          []dto.RealTimeTool
-	IsFirstRequest         bool
-	AudioUsage             bool
+	// RequestModelName is the immutable model name requested by the client.
+	// OriginModelName may be adjusted for billing variants, while adapters
+	// can map ChannelMeta.UpstreamModelName to provider-specific names.
+	RequestModelName   string
+	OriginModelName    string
+	RequestURLPath     string
+	RequestHeaders     map[string]string
+	ShouldIncludeUsage bool
+	DisablePing        bool // 是否禁止向下游发送自定义 Ping
+	ClientWs           *websocket.Conn
+	TargetWs           *websocket.Conn
+	InputAudioFormat   string
+	OutputAudioFormat  string
+	RealtimeTools      []dto.RealTimeTool
+	IsFirstRequest     bool
+	AudioUsage         bool
+	// RequestReasoningEffort is the immutable client-requested effort.
+	// ReasoningEffort tracks the current/upstream effort after adapters.
+	RequestReasoningEffort string
 	ReasoningEffort        string
 	UserSetting            dto.UserSetting
 	UserEmail              string
@@ -231,6 +239,7 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	if info.Request != nil {
 		info.Request.SetModelName(info.OriginModelName)
 	}
+	info.CaptureRequestMetadata()
 }
 
 func (info *RelayInfo) ToString() string {
@@ -246,6 +255,7 @@ func (info *RelayInfo) ToString() string {
 	fmt.Fprintf(b, "IsStream: %t, ", info.IsStream)
 	fmt.Fprintf(b, "IsPlayground: %t, ", info.IsPlayground)
 	fmt.Fprintf(b, "RequestURLPath: %q, ", info.RequestURLPath)
+	fmt.Fprintf(b, "RequestModelName: %q, ", info.RequestModelName)
 	fmt.Fprintf(b, "OriginModelName: %q, ", info.OriginModelName)
 	fmt.Fprintf(b, "EstimatePromptTokens: %d, ", info.estimatePromptTokens)
 	fmt.Fprintf(b, "ShouldIncludeUsage: %t, ", info.ShouldIncludeUsage)
@@ -270,6 +280,9 @@ func (info *RelayInfo) ToString() string {
 	}
 
 	// Reasoning
+	if info.RequestReasoningEffort != "" {
+		fmt.Fprintf(b, "RequestReasoningEffort: %q, ", info.RequestReasoningEffort)
+	}
 	if info.ReasoningEffort != "" {
 		fmt.Fprintf(b, "ReasoningEffort: %q, ", info.ReasoningEffort)
 	}
@@ -452,6 +465,7 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	if reqId == "" {
 		reqId = common.GetTimeString() + common.GetRandomString(8)
 	}
+	originModelName := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 	info := &RelayInfo{
 		Request: request,
 
@@ -462,7 +476,8 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		UserQuota:  common.GetContextKeyInt(c, constant.ContextKeyUserQuota),
 		UserEmail:  common.GetContextKeyString(c, constant.ContextKeyUserEmail),
 
-		OriginModelName: common.GetContextKeyString(c, constant.ContextKeyOriginalModel),
+		RequestModelName: originModelName,
+		OriginModelName:  originModelName,
 
 		TokenId:        common.GetContextKeyInt(c, constant.ContextKeyTokenId),
 		TokenKey:       common.GetContextKeyString(c, constant.ContextKeyTokenKey),
@@ -502,7 +517,94 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		info.UserSetting = userSetting
 	}
 
+	info.CaptureRequestMetadata()
 	return info
+}
+
+func (info *RelayInfo) LogModelName() string {
+	if info == nil {
+		return ""
+	}
+	if info.RequestModelName != "" {
+		return info.RequestModelName
+	}
+	return info.OriginModelName
+}
+
+func (info *RelayInfo) LogReasoningEffort() string {
+	if info == nil {
+		return ""
+	}
+	if info.RequestReasoningEffort != "" {
+		return info.RequestReasoningEffort
+	}
+	return info.ReasoningEffort
+}
+
+func (info *RelayInfo) SetRequestReasoningEffort(effort string) {
+	if info == nil {
+		return
+	}
+	effort = strings.TrimSpace(effort)
+	if effort == "" {
+		return
+	}
+	if info.RequestReasoningEffort == "" {
+		info.RequestReasoningEffort = effort
+	}
+	info.ReasoningEffort = effort
+}
+
+func (info *RelayInfo) CaptureRequestMetadata() {
+	if info == nil {
+		return
+	}
+	if info.RequestModelName == "" {
+		info.RequestModelName = info.OriginModelName
+	}
+	effort := requestReasoningEffort(info.Request)
+	if effort == "" && info.RequestModelName != "" {
+		effort, _ = reasoning.ParseOpenAIReasoningEffortFromModelSuffix(info.RequestModelName)
+	}
+	info.SetRequestReasoningEffort(effort)
+}
+
+func requestReasoningEffort(request dto.Request) string {
+	switch req := request.(type) {
+	case *dto.GeneralOpenAIRequest:
+		if req == nil {
+			return ""
+		}
+		if effort := strings.TrimSpace(req.ReasoningEffort); effort != "" {
+			return effort
+		}
+		effort, _ := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(req.Model)
+		return effort
+	case *dto.OpenAIResponsesRequest:
+		if req == nil {
+			return ""
+		}
+		if req.Reasoning != nil {
+			if effort := strings.TrimSpace(req.Reasoning.Effort); effort != "" {
+				return effort
+			}
+		}
+		effort, _ := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(req.Model)
+		return effort
+	case *dto.OpenAIResponsesCompactionRequest:
+		if req == nil {
+			return ""
+		}
+		if req.Reasoning != nil {
+			if effort := strings.TrimSpace(req.Reasoning.Effort); effort != "" {
+				return effort
+			}
+		}
+		effort, _ := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(req.Model)
+		return effort
+	default:
+		return ""
+	}
 }
 
 func cloneRequestHeaders(c *gin.Context) map[string]string {

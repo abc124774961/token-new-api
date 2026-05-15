@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetRequestURLUsesResponsesWireAPI(t *testing.T) {
@@ -88,4 +89,33 @@ func TestGetRequestURLUsesCustomWireAPIPath(t *testing.T) {
 	if got != want {
 		t.Fatalf("GetRequestURL() = %q, want %q", got, want)
 	}
+}
+
+func TestConvertOpenAIResponsesRequestTracksUpstreamSuffixEffort(t *testing.T) {
+	t.Parallel()
+
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		RequestModelName:       "gpt-5.5",
+		OriginModelName:        "gpt-5.5",
+		RequestReasoningEffort: "xhigh",
+		ReasoningEffort:        "xhigh",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gpt-5.4-medium",
+		},
+	}
+	req := dto.OpenAIResponsesRequest{
+		Model: "gpt-5.4-medium",
+	}
+
+	converted, err := adaptor.ConvertOpenAIResponsesRequest(nil, info, req)
+
+	require.NoError(t, err)
+	convertedReq := converted.(dto.OpenAIResponsesRequest)
+	require.Equal(t, "gpt-5.4", convertedReq.Model)
+	require.NotNil(t, convertedReq.Reasoning)
+	require.Equal(t, "medium", convertedReq.Reasoning.Effort)
+	require.Equal(t, "gpt-5.4", info.UpstreamModelName)
+	require.Equal(t, "medium", info.ReasoningEffort)
+	require.Equal(t, "xhigh", info.RequestReasoningEffort)
 }

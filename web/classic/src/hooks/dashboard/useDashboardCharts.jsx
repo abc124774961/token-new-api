@@ -19,13 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useState, useCallback, useEffect } from 'react';
 import { initVChartSemiTheme } from '@visactor/vchart-semi-theme';
-import {
-  modelColorMap,
-  renderNumber,
-  renderQuota,
-  modelToColor,
-  getQuotaWithUnit,
-} from '../../helpers';
+import { renderNumber, renderQuota, getQuotaWithUnit } from '../../helpers';
 import {
   processRawData,
   calculateTrendData,
@@ -37,10 +31,229 @@ import {
   processUserData,
 } from '../../helpers/dashboard';
 
-const USER_COLORS = [
-  '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6',
-  '#ec4899', '#06b6d4', '#f97316', '#6366f1', '#14b8a6',
+const DASHBOARD_MODEL_PALETTE = [
+  '#14b8a6',
+  '#38bdf8',
+  '#6366f1',
+  '#f59e0b',
+  '#8b5cf6',
+  '#10b981',
+  '#ec4899',
+  '#f97316',
+  '#22c55e',
+  '#0ea5e9',
 ];
+
+const DASHBOARD_MODEL_COLOR_RULES = [
+  { pattern: /gpt[-_.\s]?5[-_.\s]?5|5\.5/i, color: '#14b8a6' },
+  { pattern: /gpt[-_.\s]?5[-_.\s]?4|5\.4/i, color: '#38bdf8' },
+  { pattern: /gpt[-_.\s]?4|o[34]/i, color: '#6366f1' },
+  { pattern: /claude/i, color: '#f59e0b' },
+  { pattern: /gemini/i, color: '#8b5cf6' },
+  { pattern: /deepseek/i, color: '#10b981' },
+  { pattern: /qwen|通义/i, color: '#0ea5e9' },
+  { pattern: /llama|meta/i, color: '#ec4899' },
+  { pattern: /mistral/i, color: '#f97316' },
+];
+
+const USER_COLORS = [
+  '#14b8a6',
+  '#38bdf8',
+  '#6366f1',
+  '#f59e0b',
+  '#8b5cf6',
+  '#10b981',
+  '#ec4899',
+  '#f97316',
+  '#22c55e',
+  '#0ea5e9',
+];
+
+const getStablePaletteColor = (value, palette = DASHBOARD_MODEL_PALETTE) => {
+  const source = String(value || '');
+  let hash = 0;
+  for (let i = 0; i < source.length; i++) {
+    hash = (hash << 5) - hash + source.charCodeAt(i);
+    hash |= 0;
+  }
+  return palette[Math.abs(hash) % palette.length];
+};
+
+const getDashboardModelColor = (modelName, fallbackColor) => {
+  if (fallbackColor) {
+    return fallbackColor;
+  }
+  const matchedRule = DASHBOARD_MODEL_COLOR_RULES.find(({ pattern }) =>
+    pattern.test(String(modelName || '')),
+  );
+  return matchedRule?.color || getStablePaletteColor(modelName);
+};
+
+const DASHBOARD_GRID_STYLE = {
+  stroke: 'rgba(148, 163, 184, 0.18)',
+  lineDash: [4, 4],
+  lineWidth: 1,
+};
+
+const DASHBOARD_AXIS_LABEL = {
+  visible: true,
+  autoHide: true,
+  autoRotate: true,
+  style: {
+    fontSize: 11,
+    fontWeight: 500,
+  },
+};
+
+const DASHBOARD_TITLE_STYLE = {
+  padding: {
+    bottom: 12,
+  },
+  textStyle: {
+    fontSize: 14,
+    fontWeight: 800,
+    lineHeight: 20,
+  },
+  subtextStyle: {
+    fontSize: 12,
+    fontWeight: 560,
+    lineHeight: 18,
+  },
+};
+
+const DASHBOARD_LEGEND_STYLE = {
+  visible: true,
+  orient: 'bottom',
+  position: 'middle',
+  padding: {
+    top: 12,
+  },
+  item: {
+    spaceRow: 8,
+    spaceCol: 14,
+    shape: {
+      style: {
+        size: 8,
+        symbolType: 'circle',
+      },
+    },
+    label: {
+      style: {
+        fontSize: 11,
+        fontWeight: 620,
+      },
+    },
+  },
+};
+
+const DASHBOARD_TOOLTIP_STYLE = {
+  panel: {
+    backgroundColor: 'rgba(15, 23, 42, 0.94)',
+    border: {
+      color: 'rgba(94, 234, 212, 0.22)',
+      width: 1,
+    },
+    borderRadius: 12,
+    shadow: '0 18px 46px rgba(2, 6, 23, 0.28)',
+  },
+  titleLabel: {
+    fill: '#f8fafc',
+    fontSize: 12,
+    fontWeight: 700,
+  },
+  keyLabel: {
+    fill: '#cbd5e1',
+    fontSize: 12,
+  },
+  valueLabel: {
+    fill: '#f8fafc',
+    fontSize: 12,
+    fontWeight: 700,
+  },
+};
+
+const DASHBOARD_CHART_SURFACE = {
+  background: 'transparent',
+  region: [
+    {
+      style: {
+        fill: 'transparent',
+        fillOpacity: 0,
+      },
+    },
+  ],
+};
+
+const withTooltipStyle = (config) => ({
+  ...config,
+  style: DASHBOARD_TOOLTIP_STYLE,
+});
+
+const createDashboardTitle = (text, subtext = '') => ({
+  visible: true,
+  text,
+  subtext,
+  ...DASHBOARD_TITLE_STYLE,
+});
+
+const createDashboardLegend = (overrides = {}) => ({
+  ...DASHBOARD_LEGEND_STYLE,
+  ...overrides,
+  item: {
+    ...DASHBOARD_LEGEND_STYLE.item,
+    ...(overrides.item || {}),
+    shape: {
+      ...DASHBOARD_LEGEND_STYLE.item.shape,
+      ...(overrides.item?.shape || {}),
+      style: {
+        ...DASHBOARD_LEGEND_STYLE.item.shape.style,
+        ...(overrides.item?.shape?.style || {}),
+      },
+    },
+    label: {
+      ...DASHBOARD_LEGEND_STYLE.item.label,
+      ...(overrides.item?.label || {}),
+      style: {
+        ...DASHBOARD_LEGEND_STYLE.item.label.style,
+        ...(overrides.item?.label?.style || {}),
+      },
+    },
+  },
+});
+
+const createCartesianAxes = (bottomOverrides = {}, leftOverrides = {}) => [
+  {
+    orient: 'bottom',
+    label: DASHBOARD_AXIS_LABEL,
+    tick: { visible: false },
+    domainLine: { visible: false },
+    ...bottomOverrides,
+  },
+  {
+    orient: 'left',
+    label: DASHBOARD_AXIS_LABEL,
+    grid: {
+      visible: true,
+      style: DASHBOARD_GRID_STYLE,
+    },
+    tick: { visible: false },
+    domainLine: { visible: false },
+    ...leftOverrides,
+  },
+];
+
+const DASHBOARD_BAR_STYLE = {
+  style: {
+    cornerRadius: 5,
+  },
+  state: {
+    hover: {
+      stroke: '#5eead4',
+      lineWidth: 1.4,
+      fillOpacity: 0.92,
+    },
+  },
+};
 
 export const useDashboardCharts = (
   dataExportDefaultTime,
@@ -56,6 +269,7 @@ export const useDashboardCharts = (
   // ========== 图表规格状态 ==========
   const [spec_pie, setSpecPie] = useState({
     type: 'pie',
+    ...DASHBOARD_CHART_SURFACE,
     data: [
       {
         id: 'id0',
@@ -74,29 +288,35 @@ export const useDashboardCharts = (
       state: {
         hover: {
           outerRadius: 0.85,
-          stroke: '#000',
+          stroke: '#5eead4',
           lineWidth: 1,
         },
         selected: {
           outerRadius: 0.85,
-          stroke: '#000',
+          stroke: '#5eead4',
           lineWidth: 1,
         },
       },
     },
-    title: {
-      visible: true,
-      text: t('模型调用次数占比'),
-      subtext: `${t('总计')}：${renderNumber(0)}`,
-    },
-    legends: {
-      visible: true,
-      orient: 'left',
-    },
+    title: createDashboardTitle(
+      t('模型调用次数占比'),
+      `${t('总计')}：${renderNumber(0)}`,
+    ),
+    legends: createDashboardLegend({
+      orient: 'right',
+      position: 'middle',
+      padding: {
+        left: 14,
+      },
+    }),
     label: {
       visible: true,
+      style: {
+        fontSize: 11,
+        fontWeight: 620,
+      },
     },
-    tooltip: {
+    tooltip: withTooltipStyle({
       mark: {
         content: [
           {
@@ -105,14 +325,16 @@ export const useDashboardCharts = (
           },
         ],
       },
-    },
+    }),
     color: {
-      specified: modelColorMap,
+      type: 'ordinal',
+      range: DASHBOARD_MODEL_PALETTE,
     },
   });
 
   const [spec_line, setSpecLine] = useState({
     type: 'bar',
+    ...DASHBOARD_CHART_SURFACE,
     data: [
       {
         id: 'barData',
@@ -123,24 +345,22 @@ export const useDashboardCharts = (
     yField: 'Usage',
     seriesField: 'Model',
     stack: true,
-    legends: {
-      visible: true,
+    padding: {
+      top: 8,
+      right: 18,
+      bottom: 4,
+      left: 4,
+    },
+    axes: createCartesianAxes(),
+    legends: createDashboardLegend({
       selectMode: 'single',
-    },
-    title: {
-      visible: true,
-      text: t('模型消耗分布'),
-      subtext: `${t('总计')}：${renderQuota(0, 2)}`,
-    },
-    bar: {
-      state: {
-        hover: {
-          stroke: '#000',
-          lineWidth: 1,
-        },
-      },
-    },
-    tooltip: {
+    }),
+    title: createDashboardTitle(
+      t('模型消耗分布'),
+      `${t('总计')}：${renderQuota(0, 2)}`,
+    ),
+    bar: DASHBOARD_BAR_STYLE,
+    tooltip: withTooltipStyle({
       mark: {
         content: [
           {
@@ -179,14 +399,16 @@ export const useDashboardCharts = (
           return array;
         },
       },
-    },
+    }),
     color: {
-      specified: modelColorMap,
+      type: 'ordinal',
+      range: DASHBOARD_MODEL_PALETTE,
     },
   });
 
   const [spec_model_line, setSpecModelLine] = useState({
     type: 'line',
+    ...DASHBOARD_CHART_SURFACE,
     data: [
       {
         id: 'lineData',
@@ -196,16 +418,38 @@ export const useDashboardCharts = (
     xField: 'Time',
     yField: 'Count',
     seriesField: 'Model',
-    legends: {
-      visible: true,
+    padding: {
+      top: 8,
+      right: 18,
+      bottom: 4,
+      left: 4,
+    },
+    axes: createCartesianAxes(),
+    legends: createDashboardLegend({
       selectMode: 'single',
+    }),
+    title: createDashboardTitle(t('调用趋势')),
+    line: {
+      style: {
+        lineWidth: 2.4,
+      },
+      state: {
+        hover: {
+          lineWidth: 3,
+        },
+      },
     },
-    title: {
-      visible: true,
-      text: t('调用趋势'),
-      subtext: '',
+    point: {
+      visible: false,
+      state: {
+        hover: {
+          size: 7,
+          lineWidth: 2,
+          stroke: '#0f172a',
+        },
+      },
     },
-    tooltip: {
+    tooltip: withTooltipStyle({
       mark: {
         content: [
           {
@@ -237,14 +481,16 @@ export const useDashboardCharts = (
           return array;
         },
       },
-    },
+    }),
     color: {
-      specified: modelColorMap,
+      type: 'ordinal',
+      range: DASHBOARD_MODEL_PALETTE,
     },
   });
 
   const [spec_rank_bar, setSpecRankBar] = useState({
     type: 'bar',
+    ...DASHBOARD_CHART_SURFACE,
     data: [
       {
         id: 'rankData',
@@ -254,24 +500,28 @@ export const useDashboardCharts = (
     xField: 'Model',
     yField: 'Count',
     seriesField: 'Model',
-    legends: {
-      visible: true,
-      selectMode: 'single',
+    padding: {
+      top: 8,
+      right: 18,
+      bottom: 4,
+      left: 4,
     },
-    title: {
-      visible: true,
-      text: t('模型调用次数排行'),
-      subtext: '',
-    },
-    bar: {
-      state: {
-        hover: {
-          stroke: '#000',
-          lineWidth: 1,
+    axes: createCartesianAxes(
+      {
+        label: {
+          ...DASHBOARD_AXIS_LABEL,
+          style: {
+            ...DASHBOARD_AXIS_LABEL.style,
+            fontSize: 10,
+          },
         },
       },
-    },
-    tooltip: {
+      {},
+    ),
+    legends: { visible: false },
+    title: createDashboardTitle(t('模型调用次数排行')),
+    bar: DASHBOARD_BAR_STYLE,
+    tooltip: withTooltipStyle({
       mark: {
         content: [
           {
@@ -280,89 +530,108 @@ export const useDashboardCharts = (
           },
         ],
       },
-    },
+    }),
     color: {
-      specified: modelColorMap,
+      type: 'ordinal',
+      range: DASHBOARD_MODEL_PALETTE,
     },
   });
 
   // ========== Admin: 用户消耗排行 ==========
   const [spec_user_rank, setSpecUserRank] = useState({
     type: 'bar',
+    ...DASHBOARD_CHART_SURFACE,
     data: [{ id: 'userRankData', values: [] }],
     xField: 'rawQuota',
     yField: 'User',
     seriesField: 'User',
     direction: 'horizontal',
+    padding: {
+      top: 8,
+      right: 18,
+      bottom: 4,
+      left: 4,
+    },
     legends: { visible: false },
-    title: {
-      visible: true,
-      text: t('用户消耗排行'),
-      subtext: '',
-    },
-    bar: {
-      state: { hover: { stroke: '#000', lineWidth: 1 } },
-    },
+    title: createDashboardTitle(t('用户消耗排行')),
+    bar: DASHBOARD_BAR_STYLE,
     label: {
       visible: true,
       position: 'outside',
       formatMethod: (value, datum) => renderQuota(datum['rawQuota'] || 0, 2),
     },
-    axes: [{
-      orient: 'left',
-      type: 'band',
-      label: { visible: true },
-    }, {
-      orient: 'bottom',
-      type: 'linear',
-      visible: false,
-    }],
-    tooltip: {
-      mark: {
-        content: [{
-          key: (datum) => datum['User'],
-          value: (datum) => renderQuota(datum['rawQuota'] || 0, 4),
-        }],
+    axes: [
+      {
+        orient: 'left',
+        type: 'band',
+        label: DASHBOARD_AXIS_LABEL,
+        tick: { visible: false },
+        domainLine: { visible: false },
       },
-    },
+      {
+        orient: 'bottom',
+        type: 'linear',
+        visible: false,
+      },
+    ],
+    tooltip: withTooltipStyle({
+      mark: {
+        content: [
+          {
+            key: (datum) => datum['User'],
+            value: (datum) => renderQuota(datum['rawQuota'] || 0, 4),
+          },
+        ],
+      },
+    }),
     color: { type: 'ordinal', range: USER_COLORS },
   });
 
   // ========== Admin: 用户消耗趋势 ==========
   const [spec_user_trend, setSpecUserTrend] = useState({
     type: 'area',
+    ...DASHBOARD_CHART_SURFACE,
     data: [{ id: 'userTrendData', values: [] }],
     xField: 'Time',
     yField: 'rawQuota',
     seriesField: 'User',
     stack: false,
-    legends: { visible: true, selectMode: 'single' },
-    title: {
-      visible: true,
-      text: t('用户消耗趋势'),
-      subtext: '',
+    padding: {
+      top: 8,
+      right: 18,
+      bottom: 4,
+      left: 4,
     },
-    axes: [{
-      orient: 'left',
-      label: {
-        formatMethod: (value) => renderQuota(value, 2),
+    legends: createDashboardLegend({ selectMode: 'single' }),
+    title: createDashboardTitle(t('用户消耗趋势')),
+    axes: createCartesianAxes(
+      {},
+      {
+        label: {
+          ...DASHBOARD_AXIS_LABEL,
+          formatMethod: (value) => renderQuota(value, 2),
+        },
       },
-    }],
-    area: { style: { fillOpacity: 0.15 } },
-    line: { style: { lineWidth: 2 } },
+    ),
+    area: { style: { fillOpacity: 0.12 } },
+    line: { style: { lineWidth: 2.4 } },
     point: { visible: false },
-    tooltip: {
+    tooltip: withTooltipStyle({
       mark: {
-        content: [{
-          key: (datum) => datum['User'],
-          value: (datum) => renderQuota(datum['rawQuota'] || 0, 4),
-        }],
+        content: [
+          {
+            key: (datum) => datum['User'],
+            value: (datum) => renderQuota(datum['rawQuota'] || 0, 4),
+          },
+        ],
       },
       dimension: {
-        content: [{
-          key: (datum) => datum['User'],
-          value: (datum) => datum['rawQuota'] || 0,
-        }],
+        content: [
+          {
+            key: (datum) => datum['User'],
+            value: (datum) => datum['rawQuota'] || 0,
+          },
+        ],
         updateContent: (array) => {
           array.sort((a, b) => b.value - a.value);
           let sum = 0;
@@ -379,7 +648,7 @@ export const useDashboardCharts = (
           return array;
         },
       },
-    },
+    }),
     color: { type: 'ordinal', range: USER_COLORS },
   });
 
@@ -388,9 +657,7 @@ export const useDashboardCharts = (
     const newModelColors = {};
     Array.from(uniqueModels).forEach((modelName) => {
       newModelColors[modelName] =
-        modelColorMap[modelName] ||
-        modelColors[modelName] ||
-        modelToColor(modelName);
+        modelColors[modelName] || getDashboardModelColor(modelName);
     });
     return newModelColors;
   }, []);
@@ -425,6 +692,7 @@ export const useDashboardCharts = (
       setTrendData(trendDataResult);
 
       const newModelColors = generateModelColors(uniqueModels, {});
+      newModelColors[t('其他')] = '#94a3b8';
       setModelColors(newModelColors);
 
       const aggregatedData = aggregateDataByTimeAndModel(
@@ -571,11 +839,13 @@ export const useDashboardCharts = (
         10,
       );
 
-      const userRankValues = rankingData.map((item) => ({
-        User: item.User,
-        rawQuota: item.Quota,
-        Quota: getQuotaWithUnit(item.Quota, 4),
-      })).sort((a, b) => b.rawQuota - a.rawQuota);
+      const userRankValues = rankingData
+        .map((item) => ({
+          User: item.User,
+          rawQuota: item.Quota,
+          Quota: getQuotaWithUnit(item.Quota, 4),
+        }))
+        .sort((a, b) => b.rawQuota - a.rawQuota);
 
       const totalUserQuota = rankingData.reduce((s, i) => s + i.Quota, 0);
 

@@ -36,7 +36,7 @@ const FaqPanel = ({
   return (
     <DashboardCard
       {...CARD_PROPS}
-      className='lg:col-span-1'
+      className='ct-dashboard-side-card ct-dashboard-faq-card lg:col-span-1'
       tone='faq'
       title={
         <div className={`${FLEX_CENTER_GAP2} ct-dashboard-panel-title`}>
@@ -68,7 +68,7 @@ const FaqPanel = ({
             ))}
           </Collapse>
         ) : (
-          <div className='flex justify-center items-center py-8'>
+          <div className='ct-dashboard-empty-wrap'>
             <DashboardEmptyState
               title={t('暂无常见问答')}
               description={t('请联系管理员在系统设置中配置常见问答')}

@@ -35,7 +35,7 @@ const AnnouncementsPanel = ({
   return (
     <DashboardCard
       {...CARD_PROPS}
-      className='lg:col-span-2'
+      className='ct-dashboard-feed-card lg:col-span-2'
       tone='notice'
       title={
         <div className='ct-dashboard-panel-title-row'>
@@ -47,9 +47,9 @@ const AnnouncementsPanel = ({
             </Tag>
           </div>
           {/* 图例 */}
-          <div className='flex flex-wrap gap-3 text-xs'>
+          <div className='ct-dashboard-legend-inline'>
             {announcementLegendData.map((legend, index) => (
-              <div key={index} className='flex items-center gap-1'>
+              <div key={index} className='ct-dashboard-legend-item'>
                 <div
                   className='w-2 h-2 rounded-full'
                   style={{
@@ -67,7 +67,7 @@ const AnnouncementsPanel = ({
                                 : '#8b9aa7',
                   }}
                 />
-                <span className='text-gray-600'>{legend.label}</span>
+                <span>{legend.label}</span>
               </div>
             ))}
           </div>
@@ -106,7 +106,7 @@ const AnnouncementsPanel = ({
             })}
           </Timeline>
         ) : (
-          <div className='flex justify-center items-center py-8'>
+          <div className='ct-dashboard-empty-wrap'>
             <DashboardEmptyState
               title={t('暂无系统公告')}
               description={t('请联系管理员在系统设置中配置公告信息')}

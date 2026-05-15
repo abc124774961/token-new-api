@@ -374,14 +374,17 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		logger.LogError(ctx, "error settling billing: "+err.Error())
 	}
 
-	logModel := summary.ModelName
+	logModel := relayInfo.LogModelName()
+	if logModel == "" {
+		logModel = summary.ModelName
+	}
 	if strings.HasPrefix(logModel, "gpt-4-gizmo") {
 		logModel = "gpt-4-gizmo-*"
-		extraContent = append(extraContent, fmt.Sprintf("模型 %s", summary.ModelName))
+		extraContent = append(extraContent, fmt.Sprintf("模型 %s", relayInfo.LogModelName()))
 	}
 	if strings.HasPrefix(logModel, "gpt-4o-gizmo") {
 		logModel = "gpt-4o-gizmo-*"
-		extraContent = append(extraContent, fmt.Sprintf("模型 %s", summary.ModelName))
+		extraContent = append(extraContent, fmt.Sprintf("模型 %s", relayInfo.LogModelName()))
 	}
 
 	logContent := strings.Join(extraContent, ", ")
