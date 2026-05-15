@@ -14,6 +14,7 @@ type OpenAIResponsesCompactionRequest struct {
 	Input              json.RawMessage `json:"input,omitempty"`
 	Instructions       json.RawMessage `json:"instructions,omitempty"`
 	PreviousResponseID string          `json:"previous_response_id,omitempty"`
+	Reasoning          *Reasoning      `json:"reasoning,omitempty"`
 }
 
 func (r *OpenAIResponsesCompactionRequest) GetTokenCountMeta() *types.TokenCountMeta {

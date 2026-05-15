@@ -15,10 +15,56 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
+
+func responsesRequestFromRelayRequest(request dto.Request) *dto.OpenAIResponsesRequest {
+	switch req := request.(type) {
+	case *dto.OpenAIResponsesRequest:
+		return req
+	case *dto.OpenAIResponsesCompactionRequest:
+		return &dto.OpenAIResponsesRequest{
+			Model:              req.Model,
+			Input:              req.Input,
+			Instructions:       req.Instructions,
+			PreviousResponseID: req.PreviousResponseID,
+			Reasoning:          req.Reasoning,
+		}
+	default:
+		return nil
+	}
+}
+
+func captureResponsesReasoningEffort(info *relaycommon.RelayInfo, request *dto.OpenAIResponsesRequest) {
+	if info == nil || request == nil || request.Reasoning == nil {
+		return
+	}
+	effort := strings.TrimSpace(request.Reasoning.Effort)
+	if effort == "" {
+		return
+	}
+	info.ReasoningEffort = effort
+}
+
+func applyResponsesCompactBillingModel(info *relaycommon.RelayInfo) (string, func()) {
+	if info == nil {
+		return "", func() {}
+	}
+	originModelName := info.OriginModelName
+	originPriceData := info.PriceData
+	billingModelName := originModelName
+	if info.UpstreamModelName != "" {
+		billingModelName = ratio_setting.WithCompactModelSuffix(info.UpstreamModelName)
+	}
+	info.OriginModelName = billingModelName
+	return originModelName, func() {
+		info.OriginModelName = originModelName
+		info.PriceData = originPriceData
+	}
+}
 
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
@@ -35,18 +81,8 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		}
 	}
 
-	var responsesReq *dto.OpenAIResponsesRequest
-	switch req := info.Request.(type) {
-	case *dto.OpenAIResponsesRequest:
-		responsesReq = req
-	case *dto.OpenAIResponsesCompactionRequest:
-		responsesReq = &dto.OpenAIResponsesRequest{
-			Model:              req.Model,
-			Input:              req.Input,
-			Instructions:       req.Instructions,
-			PreviousResponseID: req.PreviousResponseID,
-		}
-	default:
+	responsesReq := responsesRequestFromRelayRequest(info.Request)
+	if responsesReq == nil {
 		return types.NewErrorWithStatusCode(
 			fmt.Errorf("invalid request type, expected dto.OpenAIResponsesRequest or dto.OpenAIResponsesCompactionRequest, got %T", info.Request),
 			types.ErrorCodeInvalidRequest,
@@ -54,6 +90,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
+	captureResponsesReasoningEffort(info, responsesReq)
 
 	request, err := common.DeepCopy(responsesReq)
 	if err != nil {
@@ -136,19 +173,16 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 
 	usageDto := usage.(*dto.Usage)
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
-		originModelName := info.OriginModelName
-		originPriceData := info.PriceData
-
+		originModelName, restoreCompactBillingState := applyResponsesCompactBillingModel(info)
 		_, err := helper.ModelPriceHelper(c, info, info.GetEstimatePromptTokens(), &types.TokenCountMeta{})
 		if err != nil {
-			info.OriginModelName = originModelName
-			info.PriceData = originPriceData
+			restoreCompactBillingState()
 			return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry(), types.ErrOptionWithStatusCode(http.StatusBadRequest))
 		}
+		info.OriginModelName = originModelName
 		service.PostTextConsumeQuota(c, info, usageDto, nil)
 
-		info.OriginModelName = originModelName
-		info.PriceData = originPriceData
+		restoreCompactBillingState()
 		return nil
 	}
 

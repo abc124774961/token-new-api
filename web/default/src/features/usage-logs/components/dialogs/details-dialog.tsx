@@ -833,7 +833,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
               <DetailSection label={t('Model Mapping')}>
                 <DetailRow
                   label={t('Request Model')}
-                  value={props.log.model_name}
+                  value={other.request_model_name || props.log.model_name}
                   mono
                 />
                 <DetailRow

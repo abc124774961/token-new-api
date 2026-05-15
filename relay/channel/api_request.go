@@ -289,6 +289,59 @@ func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]s
 	}
 }
 
+const defaultCodexUserAgent = "codex_cli_rs/0.0.0"
+
+func isCodexLikeUpstreamRequest(c *gin.Context, info *common.RelayInfo) bool {
+	if info == nil {
+		return false
+	}
+	if info.ChannelMeta != nil && info.ChannelType == appconstant.ChannelTypeCodex {
+		return true
+	}
+	if info.RelayMode != constant.RelayModeResponses && info.RelayMode != constant.RelayModeResponsesCompact {
+		return false
+	}
+	values := []string{
+		info.OriginModelName,
+		info.UsingGroup,
+		info.TokenGroup,
+		info.RequestURLPath,
+	}
+	if c != nil && c.Request != nil {
+		values = append(values, c.Request.Header.Get("Originator"), c.Request.UserAgent())
+	}
+	return strings.Contains(strings.ToLower(strings.Join(values, " ")), "codex")
+}
+
+func applyDefaultUpstreamHeaders(c *gin.Context, req *http.Request, info *common.RelayInfo) {
+	if req == nil || info == nil || info.ChannelMeta == nil {
+		return
+	}
+	if !isCodexLikeUpstreamRequest(c, info) {
+		return
+	}
+	if req.Header.Get("User-Agent") == "" {
+		userAgent := ""
+		if c != nil && c.Request != nil {
+			userAgent = strings.TrimSpace(c.Request.UserAgent())
+		}
+		if !strings.Contains(strings.ToLower(userAgent), "codex") {
+			userAgent = defaultCodexUserAgent
+		}
+		req.Header.Set("User-Agent", userAgent)
+	}
+	if req.Header.Get("originator") == "" {
+		originator := ""
+		if c != nil && c.Request != nil {
+			originator = strings.TrimSpace(c.Request.Header.Get("Originator"))
+		}
+		if originator == "" {
+			originator = "codex_cli_rs"
+		}
+		req.Header.Set("originator", originator)
+	}
+}
+
 func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
@@ -313,6 +366,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, err
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
+	applyDefaultUpstreamHeaders(c, req, info)
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
@@ -373,6 +427,28 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		targetHeader.Set(key, value)
 	}
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
+	if isCodexLikeUpstreamRequest(c, info) {
+		if targetHeader.Get("User-Agent") == "" {
+			userAgent := ""
+			if c != nil && c.Request != nil {
+				userAgent = strings.TrimSpace(c.Request.UserAgent())
+			}
+			if !strings.Contains(strings.ToLower(userAgent), "codex") {
+				userAgent = defaultCodexUserAgent
+			}
+			targetHeader.Set("User-Agent", userAgent)
+		}
+		if targetHeader.Get("originator") == "" {
+			originator := ""
+			if c != nil && c.Request != nil {
+				originator = strings.TrimSpace(c.Request.Header.Get("Originator"))
+			}
+			if originator == "" {
+				originator = "codex_cli_rs"
+			}
+			targetHeader.Set("originator", originator)
+		}
+	}
 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
 	if err != nil {
 		return nil, fmt.Errorf("dial failed to %s: %w", fullRequestURL, err)

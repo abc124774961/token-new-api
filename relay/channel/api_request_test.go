@@ -5,7 +5,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -190,4 +192,74 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	require.Equal(t, "Codex CLI", upstreamReq.Header.Get("Originator"))
 	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
+}
+
+func TestApplyDefaultUpstreamHeadersCodexSetsUserAgent(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	req := httptest.NewRequest(http.MethodPost, "https://example.com/backend-api/codex/responses", nil)
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeCodex,
+		},
+	}
+
+	applyDefaultUpstreamHeaders(ctx, req, info)
+
+	require.Equal(t, "codex_cli_rs/0.0.0", req.Header.Get("User-Agent"))
+	require.Equal(t, "codex_cli_rs", req.Header.Get("originator"))
+}
+
+func TestApplyDefaultUpstreamHeadersCodexKeepsRuntimeUserAgent(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	req := httptest.NewRequest(http.MethodPost, "https://example.com/backend-api/codex/responses", nil)
+	req.Header.Set("User-Agent", "codex-cli-test")
+	req.Header.Set("originator", "Codex CLI")
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeCodex,
+		},
+	}
+
+	applyDefaultUpstreamHeaders(ctx, req, info)
+
+	require.Equal(t, "codex-cli-test", req.Header.Get("User-Agent"))
+	require.Equal(t, "Codex CLI", req.Header.Get("originator"))
+}
+
+func TestApplyDefaultUpstreamHeadersCodexLikeResponsesUsesClientUserAgent(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Request.Header.Set("User-Agent", "codex-cli/0.45.0")
+	ctx.Request.Header.Set("Originator", "Codex CLI")
+
+	req := httptest.NewRequest(http.MethodPost, "https://example.com/v1/responses", nil)
+	info := &relaycommon.RelayInfo{
+		UsingGroup: "codex-plus",
+		RelayMode:  relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeOpenAI,
+		},
+	}
+
+	applyDefaultUpstreamHeaders(ctx, req, info)
+
+	require.Equal(t, "codex-cli/0.45.0", req.Header.Get("User-Agent"))
+	require.Equal(t, "Codex CLI", req.Header.Get("originator"))
 }
