@@ -119,3 +119,43 @@ func TestConvertOpenAIResponsesRequestTracksUpstreamSuffixEffort(t *testing.T) {
 	require.Equal(t, "medium", info.ReasoningEffort)
 	require.Equal(t, "xhigh", info.RequestReasoningEffort)
 }
+
+func TestNormalizeOpenAIResponseModelUsesRequestedModel(t *testing.T) {
+	t.Parallel()
+
+	info := &relaycommon.RelayInfo{
+		RequestModelName: "gpt-5.5",
+		OriginModelName:  "gpt-5.5",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gpt-5.4",
+			IsModelMapped:     true,
+		},
+	}
+	resp := &dto.OpenAITextResponse{Model: "gpt-5.4"}
+
+	normalizeOpenAITextResponseModel(info, resp)
+
+	require.Equal(t, "gpt-5.5", resp.Model)
+	require.Equal(t, "gpt-5.4", info.ResponseModelName)
+	require.Equal(t, "gpt-5.5", info.DownstreamModelName)
+}
+
+func TestNormalizeOpenAIStreamResponseModelUsesRequestedModel(t *testing.T) {
+	t.Parallel()
+
+	info := &relaycommon.RelayInfo{
+		RequestModelName: "gpt-5.5",
+		OriginModelName:  "gpt-5.5",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gpt-5.4",
+			IsModelMapped:     true,
+		},
+	}
+	resp := &dto.ChatCompletionsStreamResponse{Model: "gpt-5.4"}
+
+	normalizeOpenAIStreamResponseModel(info, resp)
+
+	require.Equal(t, "gpt-5.5", resp.Model)
+	require.Equal(t, "gpt-5.4", info.ResponseModelName)
+	require.Equal(t, "gpt-5.5", info.DownstreamModelName)
+}

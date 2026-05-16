@@ -134,6 +134,8 @@ export interface LogOtherData {
   is_model_mapped?: boolean
   request_model_name?: string
   upstream_model_name?: string
+  upstream_response_model_name?: string
+  downstream_model_name?: string
   audio_ratio?: number
   audio_completion_ratio?: number
   frt?: number

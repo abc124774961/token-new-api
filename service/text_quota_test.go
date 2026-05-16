@@ -104,6 +104,36 @@ func TestCalculateTextQuotaSummaryUsesRequestedModelForLog(t *testing.T) {
 	require.Equal(t, "gpt-5.4", other["upstream_model_name"])
 }
 
+func TestGenerateTextOtherInfoIncludesModelTrace(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		RequestModelName:       "gpt-5.5",
+		OriginModelName:        "gpt-5.5",
+		ResponseModelName:      "gpt-5.4",
+		DownstreamModelName:    "gpt-5.5",
+		RequestReasoningEffort: "xhigh",
+		ReasoningEffort:        "medium",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gpt-5.4",
+			IsModelMapped:     true,
+		},
+		StartTime: time.Now(),
+	}
+
+	other := GenerateTextOtherInfo(ctx, relayInfo, 1, 1, 1, 0, 1, -1, -1)
+
+	require.Equal(t, true, other["is_model_mapped"])
+	require.Equal(t, "gpt-5.5", other["request_model_name"])
+	require.Equal(t, "gpt-5.4", other["upstream_model_name"])
+	require.Equal(t, "gpt-5.4", other["upstream_response_model_name"])
+	require.Equal(t, "gpt-5.5", other["downstream_model_name"])
+	require.Equal(t, "xhigh", other["reasoning_effort"])
+	require.Equal(t, "medium", other["upstream_reasoning_effort"])
+}
+
 func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

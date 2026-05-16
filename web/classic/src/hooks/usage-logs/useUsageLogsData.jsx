@@ -454,13 +454,25 @@ export const useLogsData = () => {
           other?.upstream_model_name !== '';
         if (modelMapped) {
           expandDataLocal.push({
-            key: t('请求并计费模型'),
-            value: logs[i].model_name,
+            key: t('请求模型'),
+            value: other.request_model_name || logs[i].model_name,
           });
           expandDataLocal.push({
-            key: t('实际模型'),
+            key: t('上游请求模型'),
             value: other.upstream_model_name,
           });
+          if (other.upstream_response_model_name) {
+            expandDataLocal.push({
+              key: t('上游响应模型'),
+              value: other.upstream_response_model_name,
+            });
+          }
+          if (other.downstream_model_name) {
+            expandDataLocal.push({
+              key: t('返回客户端模型'),
+              value: other.downstream_model_name,
+            });
+          }
         }
 
         const isViolationFeeLog =

@@ -36,6 +36,7 @@ import { StatusContext } from '../../context/Status';
 
 import RechargeCard from './RechargeCard';
 import InvitationCard from './InvitationCard';
+import SubscriptionPlansCard from './SubscriptionPlansCard';
 import TransferModal from './modals/TransferModal';
 import PaymentConfirmModal from './modals/PaymentConfirmModal';
 import TopupHistoryModal from './modals/TopupHistoryModal';
@@ -645,7 +646,7 @@ const TopUp = () => {
                 ? data.waffo_min_topup
                 : enableWaffoPancakeTopUp
                   ? data.waffo_pancake_min_topup
-                : 1;
+                  : 1;
           setEnableOnlineTopUp(enableOnlineTopUp);
           setEnableStripeTopUp(enableStripeTopUp);
           setEnableCreemTopUp(enableCreemTopUp);
@@ -872,7 +873,7 @@ const TopUp = () => {
   };
 
   return (
-    <div className='w-full max-w-7xl mx-auto relative min-h-screen lg:min-h-0 mt-[60px] px-2'>
+    <div className='ct-dashboard-shell ct-topup-page w-full max-w-7xl mx-auto relative min-h-screen lg:min-h-0 mt-[60px] px-2'>
       {/* 划转模态框 */}
       <TransferModal
         t={t}
@@ -939,52 +940,7 @@ const TopUp = () => {
       </Modal>
 
       {/* 主布局区域 */}
-      <div className='grid grid-cols-1 lg:grid-cols-2 gap-6'>
-        <RechargeCard
-          t={t}
-          enableOnlineTopUp={enableOnlineTopUp}
-          enableStripeTopUp={enableStripeTopUp}
-          enableCreemTopUp={enableCreemTopUp}
-          creemProducts={creemProducts}
-          creemPreTopUp={creemPreTopUp}
-          enableWaffoTopUp={enableWaffoTopUp}
-          enableWaffoPancakeTopUp={enableWaffoPancakeTopUp}
-          presetAmounts={presetAmounts}
-          selectedPreset={selectedPreset}
-          selectPresetAmount={selectPresetAmount}
-          formatLargeNumber={formatLargeNumber}
-          priceRatio={priceRatio}
-          topUpCount={topUpCount}
-          minTopUp={minTopUp}
-          renderQuotaWithAmount={renderQuotaWithAmount}
-          getAmount={getAmount}
-          setTopUpCount={setTopUpCount}
-          setSelectedPreset={setSelectedPreset}
-          renderAmount={renderAmount}
-          amountLoading={amountLoading}
-          payMethods={confirmPayMethods}
-          preTopUp={preTopUp}
-          paymentLoading={paymentLoading}
-          payWay={payWay}
-          redemptionCode={redemptionCode}
-          setRedemptionCode={setRedemptionCode}
-          topUp={topUp}
-          isSubmitting={isSubmitting}
-          topUpLink={topUpLink}
-          openTopUpLink={openTopUpLink}
-          userState={userState}
-          renderQuota={renderQuota}
-          statusLoading={statusLoading}
-          topupInfo={topupInfo}
-          onOpenHistory={handleOpenHistory}
-          subscriptionLoading={subscriptionLoading}
-          subscriptionPlans={subscriptionPlans}
-          billingPreference={billingPreference}
-          onChangeBillingPreference={updateBillingPreference}
-          activeSubscriptions={activeSubscriptions}
-          allSubscriptions={allSubscriptions}
-          reloadSubscriptionSelf={getSubscriptionSelf}
-        />
+      <div className='ct-topup-flow'>
         <InvitationCard
           t={t}
           userState={userState}
@@ -993,6 +949,63 @@ const TopUp = () => {
           affLink={affLink}
           handleAffLinkClick={handleAffLinkClick}
         />
+
+        <div className='ct-topup-product-grid'>
+          <RechargeCard
+            t={t}
+            enableOnlineTopUp={enableOnlineTopUp}
+            enableStripeTopUp={enableStripeTopUp}
+            enableCreemTopUp={enableCreemTopUp}
+            creemProducts={creemProducts}
+            creemPreTopUp={creemPreTopUp}
+            enableWaffoTopUp={enableWaffoTopUp}
+            enableWaffoPancakeTopUp={enableWaffoPancakeTopUp}
+            presetAmounts={presetAmounts}
+            selectedPreset={selectedPreset}
+            selectPresetAmount={selectPresetAmount}
+            formatLargeNumber={formatLargeNumber}
+            priceRatio={priceRatio}
+            topUpCount={topUpCount}
+            minTopUp={minTopUp}
+            renderQuotaWithAmount={renderQuotaWithAmount}
+            getAmount={getAmount}
+            setTopUpCount={setTopUpCount}
+            setSelectedPreset={setSelectedPreset}
+            renderAmount={renderAmount}
+            amountLoading={amountLoading}
+            payMethods={confirmPayMethods}
+            preTopUp={preTopUp}
+            paymentLoading={paymentLoading}
+            payWay={payWay}
+            redemptionCode={redemptionCode}
+            setRedemptionCode={setRedemptionCode}
+            topUp={topUp}
+            isSubmitting={isSubmitting}
+            topUpLink={topUpLink}
+            openTopUpLink={openTopUpLink}
+            userState={userState}
+            renderQuota={renderQuota}
+            statusLoading={statusLoading}
+            topupInfo={topupInfo}
+            onOpenHistory={handleOpenHistory}
+          />
+          <SubscriptionPlansCard
+            t={t}
+            loading={subscriptionLoading}
+            plans={subscriptionPlans}
+            payMethods={payMethods}
+            enableOnlineTopUp={enableOnlineTopUp}
+            enableStripeTopUp={enableStripeTopUp}
+            enableCreemTopUp={enableCreemTopUp}
+            billingPreference={billingPreference}
+            onChangeBillingPreference={updateBillingPreference}
+            activeSubscriptions={activeSubscriptions}
+            allSubscriptions={allSubscriptions}
+            reloadSubscriptionSelf={getSubscriptionSelf}
+            withCard={true}
+            className='ct-topup-panel ct-topup-subscription-panel'
+          />
+        </div>
       </div>
     </div>
   );

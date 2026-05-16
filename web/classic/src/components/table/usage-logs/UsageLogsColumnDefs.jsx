@@ -264,10 +264,14 @@ function renderBillingTag(record, t) {
 
 function renderModelName(record, copyText, t) {
   let other = getLogOther(record.other);
+  const requestModelName = other?.request_model_name || record.model_name;
+  const upstreamModelName = other?.upstream_model_name;
+  const upstreamResponseModelName = other?.upstream_response_model_name;
+  const downstreamModelName = other?.downstream_model_name;
   let modelMapped =
     other?.is_model_mapped &&
-    other?.upstream_model_name &&
-    other?.upstream_model_name !== '';
+    upstreamModelName &&
+    upstreamModelName !== '';
   if (!modelMapped) {
     return renderModelTag(record.model_name, {
       onClick: (event) => {
@@ -284,26 +288,50 @@ function renderModelName(record, copyText, t) {
                 <Space vertical align={'start'}>
                   <div className='flex items-center'>
                     <Typography.Text strong style={{ marginRight: 8 }}>
-                      {t('请求并计费模型')}:
+                      {t('请求模型')}:
                     </Typography.Text>
-                    {renderModelTag(record.model_name, {
+                    {renderModelTag(requestModelName, {
                       onClick: (event) => {
-                        copyText(event, record.model_name).then((r) => {});
+                        copyText(event, requestModelName).then((r) => {});
                       },
                     })}
                   </div>
                   <div className='flex items-center'>
                     <Typography.Text strong style={{ marginRight: 8 }}>
-                      {t('实际模型')}:
+                      {t('上游请求模型')}:
                     </Typography.Text>
-                    {renderModelTag(other.upstream_model_name, {
+                    {renderModelTag(upstreamModelName, {
                       onClick: (event) => {
-                        copyText(event, other.upstream_model_name).then(
-                          (r) => {},
-                        );
+                        copyText(event, upstreamModelName).then((r) => {});
                       },
                     })}
                   </div>
+                  {upstreamResponseModelName && (
+                    <div className='flex items-center'>
+                      <Typography.Text strong style={{ marginRight: 8 }}>
+                        {t('上游响应模型')}:
+                      </Typography.Text>
+                      {renderModelTag(upstreamResponseModelName, {
+                        onClick: (event) => {
+                          copyText(event, upstreamResponseModelName).then(
+                            (r) => {},
+                          );
+                        },
+                      })}
+                    </div>
+                  )}
+                  {downstreamModelName && (
+                    <div className='flex items-center'>
+                      <Typography.Text strong style={{ marginRight: 8 }}>
+                        {t('返回客户端模型')}:
+                      </Typography.Text>
+                      {renderModelTag(downstreamModelName, {
+                        onClick: (event) => {
+                          copyText(event, downstreamModelName).then((r) => {});
+                        },
+                      })}
+                    </div>
+                  )}
                 </Space>
               </div>
             }

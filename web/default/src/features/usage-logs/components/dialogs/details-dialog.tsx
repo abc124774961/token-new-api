@@ -837,10 +837,24 @@ export function DetailsDialog(props: DetailsDialogProps) {
                   mono
                 />
                 <DetailRow
-                  label={t('Actual Model')}
+                  label={t('Upstream Request Model')}
                   value={other.upstream_model_name}
                   mono
                 />
+                {other.upstream_response_model_name && (
+                  <DetailRow
+                    label={t('Upstream Response Model')}
+                    value={other.upstream_response_model_name}
+                    mono
+                  />
+                )}
+                {other.downstream_model_name && (
+                  <DetailRow
+                    label={t('Downstream Model')}
+                    value={other.downstream_model_name}
+                    mono
+                  />
+                )}
               </DetailSection>
             )}
 

@@ -39,6 +39,8 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		c.Set("image_generation_call_quality", responsesResponse.GetQuality())
 		c.Set("image_generation_call_size", responsesResponse.GetSize())
 	}
+	normalizeResponsesResponseModel(info, &responsesResponse)
+	responseBody = normalizeOpenAIJSONBodyModel(info, responseBody)
 
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
@@ -115,9 +117,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 		switch streamResponse.Type {
 		case "response.created", "response.in_progress":
+			normalizeResponsesStreamResponseModel(info, &streamResponse)
+			data = string(normalizeResponsesStreamJSONBodyModel(info, common.StringToByteSlice(data)))
 			sendOrBufferEvent(streamResponse, data, false)
 		case "response.completed":
 			sawCompleted = true
+			normalizeResponsesStreamResponseModel(info, &streamResponse)
+			data = string(normalizeResponsesStreamJSONBodyModel(info, common.StringToByteSlice(data)))
 			sendOrBufferEvent(streamResponse, data, true)
 			if streamResponse.Response != nil {
 				if streamResponse.Response.Usage != nil {

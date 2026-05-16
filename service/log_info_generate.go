@@ -50,6 +50,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 			other["upstream_reasoning_effort"] = relayInfo.ReasoningEffort
 		}
 	}
+	appendModelTraceInfo(relayInfo, other)
 	if relayInfo.ChannelMeta != nil && relayInfo.IsModelMapped {
 		other["is_model_mapped"] = true
 		other["request_model_name"] = relayInfo.LogModelName()
@@ -87,6 +88,31 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	appendParamOverrideInfo(relayInfo, other)
 	appendStreamStatus(relayInfo, other)
 	return other
+}
+
+func appendModelTraceInfo(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
+	if relayInfo == nil || other == nil {
+		return
+	}
+	requestModelName := relayInfo.LogModelName()
+	if requestModelName != "" {
+		other["request_model_name"] = requestModelName
+	}
+	if relayInfo.OriginModelName != "" && relayInfo.OriginModelName != requestModelName {
+		other["billing_model_name"] = relayInfo.OriginModelName
+	}
+	if relayInfo.ChannelMeta != nil && relayInfo.UpstreamModelName != "" {
+		other["upstream_model_name"] = relayInfo.UpstreamModelName
+	}
+	if relayInfo.ResponseModelName != "" {
+		other["upstream_response_model_name"] = relayInfo.ResponseModelName
+	}
+	if relayInfo.DownstreamModelName != "" {
+		other["downstream_model_name"] = relayInfo.DownstreamModelName
+	}
+	if relayInfo.ChannelMeta != nil && relayInfo.IsModelMapped {
+		other["is_model_mapped"] = true
+	}
 }
 
 func appendParamOverrideInfo(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {

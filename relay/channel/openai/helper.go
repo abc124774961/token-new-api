@@ -14,9 +14,98 @@ import (
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/samber/lo"
+	"github.com/tidwall/sjson"
 
 	"github.com/gin-gonic/gin"
 )
+
+func clientVisibleModelName(info *relaycommon.RelayInfo) string {
+	if info == nil {
+		return ""
+	}
+	return info.ClientModelName()
+}
+
+func normalizeOpenAITextResponseModel(info *relaycommon.RelayInfo, response *dto.OpenAITextResponse) {
+	if response == nil {
+		return
+	}
+	if info != nil {
+		info.SetResponseModelName(response.Model)
+	}
+	modelName := clientVisibleModelName(info)
+	if modelName == "" {
+		return
+	}
+	response.Model = modelName
+	if info != nil {
+		info.SetDownstreamModelName(modelName)
+	}
+}
+
+func normalizeOpenAIStreamResponseModel(info *relaycommon.RelayInfo, response *dto.ChatCompletionsStreamResponse) {
+	if response == nil {
+		return
+	}
+	if info != nil {
+		info.SetResponseModelName(response.Model)
+	}
+	modelName := clientVisibleModelName(info)
+	if modelName == "" {
+		return
+	}
+	response.Model = modelName
+	if info != nil {
+		info.SetDownstreamModelName(modelName)
+	}
+}
+
+func normalizeResponsesResponseModel(info *relaycommon.RelayInfo, response *dto.OpenAIResponsesResponse) {
+	if response == nil {
+		return
+	}
+	if info != nil {
+		info.SetResponseModelName(response.Model)
+	}
+	modelName := clientVisibleModelName(info)
+	if modelName == "" {
+		return
+	}
+	response.Model = modelName
+	if info != nil {
+		info.SetDownstreamModelName(modelName)
+	}
+}
+
+func normalizeResponsesStreamResponseModel(info *relaycommon.RelayInfo, response *dto.ResponsesStreamResponse) {
+	if response == nil || response.Response == nil {
+		return
+	}
+	normalizeResponsesResponseModel(info, response.Response)
+}
+
+func normalizeJSONBodyModelPath(info *relaycommon.RelayInfo, responseBody []byte, path string) []byte {
+	modelName := clientVisibleModelName(info)
+	if modelName == "" || len(responseBody) == 0 || path == "" {
+		return responseBody
+	}
+	if info != nil {
+		info.SetDownstreamModelName(modelName)
+	}
+	normalized, err := sjson.Set(string(responseBody), path, modelName)
+	if err != nil {
+		return responseBody
+	}
+	return []byte(normalized)
+}
+
+func normalizeOpenAIJSONBodyModel(info *relaycommon.RelayInfo, responseBody []byte) []byte {
+	return normalizeJSONBodyModelPath(info, responseBody, "model")
+}
+
+func normalizeResponsesStreamJSONBodyModel(info *relaycommon.RelayInfo, responseBody []byte) []byte {
+	return normalizeJSONBodyModelPath(info, responseBody, "response.model")
+}
 
 // 辅助函数
 func HandleStreamFormat(c *gin.Context, info *relaycommon.RelayInfo, data string, forceFormat bool, thinkToContent bool) error {

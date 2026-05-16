@@ -105,19 +105,24 @@ type RelayInfo struct {
 	// RequestModelName is the immutable model name requested by the client.
 	// OriginModelName may be adjusted for billing variants, while adapters
 	// can map ChannelMeta.UpstreamModelName to provider-specific names.
-	RequestModelName   string
-	OriginModelName    string
-	RequestURLPath     string
-	RequestHeaders     map[string]string
-	ShouldIncludeUsage bool
-	DisablePing        bool // 是否禁止向下游发送自定义 Ping
-	ClientWs           *websocket.Conn
-	TargetWs           *websocket.Conn
-	InputAudioFormat   string
-	OutputAudioFormat  string
-	RealtimeTools      []dto.RealTimeTool
-	IsFirstRequest     bool
-	AudioUsage         bool
+	RequestModelName string
+	OriginModelName  string
+	// ResponseModelName is the model name reported by the upstream response.
+	// DownstreamModelName is the model name returned to the client after
+	// compatibility normalization.
+	ResponseModelName   string
+	DownstreamModelName string
+	RequestURLPath      string
+	RequestHeaders      map[string]string
+	ShouldIncludeUsage  bool
+	DisablePing         bool // 是否禁止向下游发送自定义 Ping
+	ClientWs            *websocket.Conn
+	TargetWs            *websocket.Conn
+	InputAudioFormat    string
+	OutputAudioFormat   string
+	RealtimeTools       []dto.RealTimeTool
+	IsFirstRequest      bool
+	AudioUsage          bool
 	// RequestReasoningEffort is the immutable client-requested effort.
 	// ReasoningEffort tracks the current/upstream effort after adapters.
 	RequestReasoningEffort string
@@ -529,6 +534,44 @@ func (info *RelayInfo) LogModelName() string {
 		return info.RequestModelName
 	}
 	return info.OriginModelName
+}
+
+func (info *RelayInfo) ClientModelName() string {
+	if info == nil {
+		return ""
+	}
+	if modelName := info.LogModelName(); modelName != "" {
+		return modelName
+	}
+	if info.OriginModelName != "" {
+		return info.OriginModelName
+	}
+	if info.ChannelMeta != nil {
+		return info.UpstreamModelName
+	}
+	return ""
+}
+
+func (info *RelayInfo) SetResponseModelName(modelName string) {
+	if info == nil {
+		return
+	}
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return
+	}
+	info.ResponseModelName = modelName
+}
+
+func (info *RelayInfo) SetDownstreamModelName(modelName string) {
+	if info == nil {
+		return
+	}
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return
+	}
+	info.DownstreamModelName = modelName
 }
 
 func (info *RelayInfo) LogReasoningEffort() string {

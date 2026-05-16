@@ -128,7 +128,11 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		if lastStreamData != "" {
-			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+			sendData := lastStreamData
+			if info.RelayFormat == types.RelayFormatOpenAI {
+				sendData = string(normalizeOpenAIJSONBodyModel(info, common.StringToByteSlice(sendData)))
+			}
+			if err := HandleStreamFormat(c, info, sendData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
 				common.SysLog("error handling stream format: " + err.Error())
 				sr.Error(err)
 			}
@@ -168,9 +172,17 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		&containStreamUsage, info, &shouldSendLastResp); err != nil {
 		logger.LogError(c, fmt.Sprintf("error handling last response: %s, lastStreamData: [%s]", err.Error(), lastStreamData))
 	}
+	info.SetResponseModelName(model)
+	if downstreamModel := clientVisibleModelName(info); downstreamModel != "" {
+		model = downstreamModel
+		info.SetDownstreamModelName(downstreamModel)
+	}
 
 	if info.RelayFormat == types.RelayFormatOpenAI {
 		if shouldSendLastResp {
+			if downstreamModel := clientVisibleModelName(info); downstreamModel != "" {
+				lastStreamData = string(normalizeOpenAIJSONBodyModel(info, common.StringToByteSlice(lastStreamData)))
+			}
 			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
 		}
 	}
@@ -227,6 +239,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
+	normalizeOpenAITextResponseModel(info, &simpleResponse)
 
 	for _, choice := range simpleResponse.Choices {
 		if choice.FinishReason == constant.FinishReasonContentFilter {
@@ -276,6 +289,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 				return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 			}
 		} else {
+			responseBody = normalizeOpenAIJSONBodyModel(info, responseBody)
 			break
 		}
 	case types.RelayFormatClaude:

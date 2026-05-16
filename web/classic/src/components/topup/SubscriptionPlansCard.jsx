@@ -32,7 +32,16 @@ import {
 } from '@douyinfe/semi-ui';
 import { API, showError, showSuccess, renderQuota } from '../../helpers';
 import { getCurrencyConfig } from '../../helpers/render';
-import { RefreshCw, Sparkles } from 'lucide-react';
+import {
+  ArrowUpRight,
+  BadgeCheck,
+  Calendar,
+  Gauge,
+  RefreshCw,
+  RotateCcw,
+  ShoppingCart,
+  Sparkles,
+} from 'lucide-react';
 import SubscriptionPurchaseModal from './modals/SubscriptionPurchaseModal';
 import {
   formatSubscriptionDuration,
@@ -83,6 +92,7 @@ const SubscriptionPlansCard = ({
   allSubscriptions = [],
   reloadSubscriptionSelf,
   withCard = true,
+  className = '',
 }) => {
   const [open, setOpen] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState(null);
@@ -253,21 +263,37 @@ const SubscriptionPlansCard = ({
 
   const cardContent = (
     <>
-      {/* 卡片头部 */}
+      <div className='ct-topup-panel-head ct-topup-subscription-head'>
+        <div className='ct-topup-title-wrap'>
+          <div className='ct-topup-icon ct-topup-icon-purple'>
+            <Sparkles size={16} />
+          </div>
+          <div>
+            <div className='ct-topup-panel-kicker'>{t('订阅套餐')}</div>
+            <Typography.Text className='ct-topup-panel-title'>
+              {t('我的订阅')}
+            </Typography.Text>
+            <div className='ct-topup-panel-subtitle'>
+              {t('购买套餐后即可享受模型权益')}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {loading ? (
         <div className='space-y-4'>
           {/* 我的订阅骨架屏 */}
           <Card className='!rounded-xl w-full' bodyStyle={{ padding: '12px' }}>
             <div className='flex items-center justify-between mb-3'>
-              <Skeleton.Title active style={{ width: 100, height: 20 }} />
-              <Skeleton.Button active style={{ width: 24, height: 24 }} />
+              <Skeleton.Title style={{ width: 100, height: 20 }} />
+              <Skeleton.Button style={{ width: 24, height: 24 }} />
             </div>
             <div className='space-y-2'>
-              <Skeleton.Paragraph active rows={2} />
+              <Skeleton.Paragraph rows={2} />
             </div>
           </Card>
           {/* 套餐列表骨架屏 */}
-          <div className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-5 w-full px-1'>
+          <div className='ct-topup-plan-grid'>
             {[1, 2, 3].map((i) => (
               <Card
                 key={i}
@@ -275,25 +301,17 @@ const SubscriptionPlansCard = ({
                 bodyStyle={{ padding: 16 }}
               >
                 <Skeleton.Title
-                  active
                   style={{ width: '60%', height: 24, marginBottom: 8 }}
                 />
-                <Skeleton.Paragraph
-                  active
-                  rows={1}
-                  style={{ marginBottom: 12 }}
-                />
+                <Skeleton.Paragraph rows={1} style={{ marginBottom: 12 }} />
                 <div className='text-center py-4'>
                   <Skeleton.Title
-                    active
                     style={{ width: '40%', height: 32, margin: '0 auto' }}
                   />
                 </div>
-                <Skeleton.Paragraph active rows={3} style={{ marginTop: 12 }} />
+                <Skeleton.Paragraph rows={3} style={{ marginTop: 12 }} />
                 <Skeleton.Button
-                  active
-                  block
-                  style={{ marginTop: 16, height: 32 }}
+                  style={{ marginTop: 16, height: 32, width: '100%' }}
                 />
               </Card>
             ))}
@@ -302,8 +320,11 @@ const SubscriptionPlansCard = ({
       ) : (
         <Space vertical style={{ width: '100%' }} spacing={8}>
           {/* 当前订阅状态 */}
-          <Card className='!rounded-xl w-full' bodyStyle={{ padding: '12px' }}>
-            <div className='flex items-center justify-between mb-2 gap-3'>
+          <Card
+            className='ct-topup-subscription-status !rounded-xl w-full'
+            bodyStyle={{ padding: '12px' }}
+          >
+            <div className='ct-topup-subscription-status-head flex items-center justify-between mb-2 gap-3'>
               <div className='flex items-center gap-2 flex-1 min-w-0'>
                 <Text strong>{t('我的订阅')}</Text>
                 {hasActiveSubscription ? (
@@ -327,7 +348,7 @@ const SubscriptionPlansCard = ({
                   </Tag>
                 )}
               </div>
-              <div className='flex items-center gap-2'>
+              <div className='ct-topup-subscription-toolbar flex items-center gap-2'>
                 <Select
                   value={displayBillingPreference}
                   onChange={onChangeBillingPreference}
@@ -398,9 +419,12 @@ const SubscriptionPlansCard = ({
                       subscription?.status === 'active' && !isExpired;
 
                     return (
-                      <div key={subscription?.id || subIndex}>
+                      <div
+                        key={subscription?.id || subIndex}
+                        className='ct-topup-subscription-record'
+                      >
                         {/* 订阅概要 */}
-                        <div className='flex items-center justify-between text-xs mb-2'>
+                        <div className='ct-topup-subscription-record-head flex items-center justify-between text-xs mb-2'>
                           <div className='flex items-center gap-2'>
                             <span className='font-medium'>
                               {planTitle
@@ -427,12 +451,12 @@ const SubscriptionPlansCard = ({
                             )}
                           </div>
                           {isActive && (
-                            <span className='text-gray-500'>
+                            <span className='ct-topup-subscription-badge text-gray-500'>
                               {t('剩余')} {remainDays} {t('天')}
                             </span>
                           )}
                         </div>
-                        <div className='text-xs text-gray-500 mb-2'>
+                        <div className='ct-topup-subscription-meta text-xs text-gray-500 mb-2'>
                           {isActive
                             ? t('至')
                             : isCancelled
@@ -443,14 +467,14 @@ const SubscriptionPlansCard = ({
                           ).toLocaleString()}
                         </div>
                         {isActive && subscription?.next_reset_time > 0 && (
-                          <div className='text-xs text-gray-500 mb-2'>
+                          <div className='ct-topup-subscription-meta text-xs text-gray-500 mb-2'>
                             {t('下一次重置')}:{' '}
                             {new Date(
                               subscription.next_reset_time * 1000,
                             ).toLocaleString()}
                           </div>
                         )}
-                        <div className='text-xs text-gray-500 mb-2'>
+                        <div className='ct-topup-subscription-meta ct-topup-subscription-quota text-xs text-gray-500 mb-2'>
                           {t('总额度')}:{' '}
                           {totalAmount > 0 ? (
                             <Tooltip
@@ -486,7 +510,7 @@ const SubscriptionPlansCard = ({
 
           {/* 可购买套餐 - 标准定价卡片 */}
           {plans.length > 0 ? (
-            <div className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-5 w-full px-1'>
+            <div className='ct-topup-plan-grid'>
               {plans.map((p, index) => {
                 const plan = p?.plan;
                 const totalAmount = Number(plan?.total_amount || 0);
@@ -513,22 +537,40 @@ const SubscriptionPlansCard = ({
                 const planBenefits = [
                   {
                     label: `${t('有效期')}: ${formatSubscriptionDuration(plan, t)}`,
+                    icon: Calendar,
+                    tone: 'blue',
                   },
-                  resetLabel ? { label: resetLabel } : null,
+                  resetLabel
+                    ? { label: resetLabel, icon: RotateCcw, tone: 'teal' }
+                    : null,
                   totalAmount > 0
                     ? {
                         label: totalLabel,
                         tooltip: `${t('原生额度')}：${totalAmount}`,
+                        icon: Gauge,
+                        tone: 'green',
                       }
-                    : { label: totalLabel },
-                  limitLabel ? { label: limitLabel } : null,
-                  upgradeLabel ? { label: upgradeLabel } : null,
+                    : { label: totalLabel, icon: BadgeCheck, tone: 'green' },
+                  limitLabel
+                    ? {
+                        label: limitLabel,
+                        icon: ShoppingCart,
+                        tone: 'amber',
+                      }
+                    : null,
+                  upgradeLabel
+                    ? {
+                        label: upgradeLabel,
+                        icon: ArrowUpRight,
+                        tone: 'purple',
+                      }
+                    : null,
                 ].filter(Boolean);
 
                 return (
                   <Card
                     key={plan?.id}
-                    className={`!rounded-xl transition-all hover:shadow-lg w-full h-full ${
+                    className={`ct-topup-plan-card ${
                       isPopular ? 'ring-2 ring-purple-500' : ''
                     }`}
                     bodyStyle={{ padding: 0 }}
@@ -579,10 +621,17 @@ const SubscriptionPlansCard = ({
                       {/* 套餐权益描述 */}
                       <div className='flex flex-col items-start gap-1 pb-2'>
                         {planBenefits.map((item) => {
+                          const Icon = item.icon || BadgeCheck;
                           const content = (
-                            <div className='flex items-center gap-2 text-xs text-gray-500'>
-                              <Badge dot type='tertiary' />
-                              <span>{item.label}</span>
+                            <div
+                              className={`ct-topup-plan-benefit ct-topup-plan-benefit-${item.tone || 'default'}`}
+                            >
+                              <span className='ct-topup-plan-benefit-icon'>
+                                <Icon size={13} />
+                              </span>
+                              <span className='ct-topup-plan-benefit-label'>
+                                {item.label}
+                              </span>
                             </div>
                           );
                           if (!item.tooltip) {
@@ -655,7 +704,7 @@ const SubscriptionPlansCard = ({
   return (
     <>
       {withCard ? (
-        <Card className='!rounded-2xl shadow-sm border-0'>{cardContent}</Card>
+        <Card className={className}>{cardContent}</Card>
       ) : (
         <div className='space-y-3'>{cardContent}</div>
       )}
