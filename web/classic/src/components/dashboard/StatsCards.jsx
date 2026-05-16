@@ -93,7 +93,7 @@ const StatsCards = ({
                       className='ct-dashboard-action-tag'
                       onClick={(e) => {
                         e.stopPropagation();
-                        navigate('/console/topup');
+                        navigate('/console/recharge');
                       }}
                     >
                       {t('充值')}

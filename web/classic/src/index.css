@@ -1842,6 +1842,22 @@ body {
   align-items: start;
 }
 
+.ct-topup-flow-affiliate,
+.ct-topup-flow-recharge,
+.ct-topup-flow-subscription {
+  max-width: 1120px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.ct-topup-flow-subscription {
+  max-width: 1320px;
+}
+
+.ct-topup-product-grid-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .ct-topup-panel.semi-card,
 .ct-topup-invite-hero.semi-card {
   position: relative;

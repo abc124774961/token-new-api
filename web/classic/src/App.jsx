@@ -18,7 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { lazy, Suspense, useContext, useMemo } from 'react';
-import { Route, Routes, useLocation, useParams } from 'react-router-dom';
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from 'react-router-dom';
 import Loading from './components/common/ui/Loading';
 import User from './pages/User';
 import { AuthRedirect, PrivateRoute, AdminRoute } from './helpers';
@@ -283,7 +289,40 @@ function App() {
           element={
             <PrivateRoute>
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-                <TopUp />
+                <Navigate
+                  to={{ pathname: '/console/recharge', search: location.search }}
+                  replace
+                />
+              </Suspense>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path='/console/affiliate'
+          element={
+            <PrivateRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <TopUp view='affiliate' />
+              </Suspense>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path='/console/recharge'
+          element={
+            <PrivateRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <TopUp view='recharge' />
+              </Suspense>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path='/console/subscription-plans'
+          element={
+            <PrivateRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <TopUp view='subscription' />
               </Suspense>
             </PrivateRoute>
           }

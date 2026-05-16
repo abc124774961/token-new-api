@@ -80,7 +80,9 @@ const NotificationSettings = ({
     },
     personal: {
       enabled: true,
-      topup: true,
+      affiliate: true,
+      recharge: true,
+      subscription_plans: true,
       personal: true,
     },
     admin: {
@@ -167,7 +169,13 @@ const NotificationSettings = ({
         midjourney: true,
         task: true,
       },
-      personal: { enabled: true, topup: true, personal: true },
+      personal: {
+        enabled: true,
+        affiliate: true,
+        recharge: true,
+        subscription_plans: true,
+        personal: true,
+      },
       admin: {
         enabled: true,
         channel: true,
@@ -285,7 +293,21 @@ const NotificationSettings = ({
       title: t('个人中心区域'),
       description: t('用户个人功能'),
       modules: [
-        { key: 'topup', title: t('钱包管理'), description: t('余额充值管理') },
+        {
+          key: 'affiliate',
+          title: t('邀请有奖'),
+          description: t('邀请链接与奖励划转'),
+        },
+        {
+          key: 'recharge',
+          title: t('账户充值'),
+          description: t('余额充值与账单管理'),
+        },
+        {
+          key: 'subscription_plans',
+          title: t('套餐订阅'),
+          description: t('当前套餐与订阅购买'),
+        },
         {
           key: 'personal',
           title: t('个人设置'),

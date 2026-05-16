@@ -41,11 +41,23 @@ import TransferModal from './modals/TransferModal';
 import PaymentConfirmModal from './modals/PaymentConfirmModal';
 import TopupHistoryModal from './modals/TopupHistoryModal';
 
-const TopUp = () => {
+const TopUp = ({ view = 'all' }) => {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [userState, userDispatch] = useContext(UserContext);
   const [statusState] = useContext(StatusContext);
+  const normalizedView = ['affiliate', 'recharge', 'subscription'].includes(
+    view,
+  )
+    ? view
+    : 'all';
+  const showAffiliate =
+    normalizedView === 'all' || normalizedView === 'affiliate';
+  const showRecharge =
+    normalizedView === 'all' || normalizedView === 'recharge';
+  const showSubscription =
+    normalizedView === 'all' || normalizedView === 'subscription';
+  const isSplitView = normalizedView !== 'all';
 
   const [redemptionCode, setRedemptionCode] = useState('');
   const [amount, setAmount] = useState(0.0);
@@ -758,17 +770,21 @@ const TopUp = () => {
   }, []);
 
   useEffect(() => {
-    if (affFetchedRef.current) return;
+    if (!showAffiliate || affFetchedRef.current) return;
     affFetchedRef.current = true;
     getAffLink().then();
-  }, []);
+  }, [showAffiliate]);
 
   // 在 statusState 可用时获取充值信息
   useEffect(() => {
-    getTopupInfo().then();
-    getSubscriptionPlans().then();
-    getSubscriptionSelf().then();
-  }, []);
+    if (showRecharge || showSubscription) {
+      getTopupInfo().then();
+    }
+    if (showSubscription) {
+      getSubscriptionPlans().then();
+      getSubscriptionSelf().then();
+    }
+  }, [showRecharge, showSubscription]);
 
   useEffect(() => {
     if (statusState?.status) {
@@ -884,7 +900,9 @@ const TopUp = () => {
   };
 
   return (
-    <div className='ct-dashboard-shell ct-topup-page w-full max-w-7xl mx-auto relative min-h-screen lg:min-h-0 mt-[60px] px-2'>
+    <div
+      className={`ct-dashboard-shell ct-topup-page ct-topup-page-${normalizedView} w-full max-w-7xl mx-auto relative min-h-screen lg:min-h-0 mt-[60px] px-2`}
+    >
       {/* 划转模态框 */}
       <TransferModal
         t={t}
@@ -951,72 +969,94 @@ const TopUp = () => {
       </Modal>
 
       {/* 主布局区域 */}
-      <div className='ct-topup-flow'>
-        <InvitationCard
-          t={t}
-          userState={userState}
-          renderQuota={renderQuota}
-          setOpenTransfer={setOpenTransfer}
-          affLink={affLink}
-          handleAffLinkClick={handleAffLinkClick}
-        />
-
-        <div className='ct-topup-product-grid'>
-          <RechargeCard
+      <div
+        className={`ct-topup-flow ${
+          isSplitView ? `ct-topup-flow-${normalizedView}` : ''
+        }`}
+      >
+        {showAffiliate && (
+          <InvitationCard
             t={t}
-            enableOnlineTopUp={enableOnlineTopUp}
-            enableStripeTopUp={enableStripeTopUp}
-            enableCreemTopUp={enableCreemTopUp}
-            creemProducts={creemProducts}
-            creemPreTopUp={creemPreTopUp}
-            enableWaffoTopUp={enableWaffoTopUp}
-            enableWaffoPancakeTopUp={enableWaffoPancakeTopUp}
-            presetAmounts={presetAmounts}
-            selectedPreset={selectedPreset}
-            selectPresetAmount={selectPresetAmount}
-            formatLargeNumber={formatLargeNumber}
-            priceRatio={priceRatio}
-            topUpCount={topUpCount}
-            minTopUp={minTopUp}
-            renderQuotaWithAmount={renderQuotaWithAmount}
-            getAmount={getAmount}
-            setTopUpCount={setTopUpCount}
-            setSelectedPreset={setSelectedPreset}
-            renderAmount={renderAmount}
-            amountLoading={amountLoading}
-            payMethods={confirmPayMethods}
-            preTopUp={preTopUp}
-            paymentLoading={paymentLoading}
-            payWay={payWay}
-            redemptionCode={redemptionCode}
-            setRedemptionCode={setRedemptionCode}
-            topUp={topUp}
-            isSubmitting={isSubmitting}
-            topUpLink={topUpLink}
-            openTopUpLink={openTopUpLink}
             userState={userState}
             renderQuota={renderQuota}
-            statusLoading={statusLoading}
-            topupInfo={topupInfo}
-            onOpenHistory={handleOpenHistory}
+            setOpenTransfer={setOpenTransfer}
+            affLink={affLink}
+            handleAffLinkClick={handleAffLinkClick}
           />
-          <SubscriptionPlansCard
-            t={t}
-            loading={subscriptionLoading}
-            plans={subscriptionPlans}
-            payMethods={payMethods}
-            enableOnlineTopUp={enableOnlineTopUp}
-            enableStripeTopUp={enableStripeTopUp}
-            enableCreemTopUp={enableCreemTopUp}
-            billingPreference={billingPreference}
-            onChangeBillingPreference={updateBillingPreference}
-            activeSubscriptions={activeSubscriptions}
-            allSubscriptions={allSubscriptions}
-            reloadSubscriptionSelf={getSubscriptionSelf}
-            withCard={true}
-            className='ct-topup-panel ct-topup-subscription-panel'
-          />
-        </div>
+        )}
+
+        {(showRecharge || showSubscription) && (
+          <div
+            className={`ct-topup-product-grid ${
+              showRecharge !== showSubscription
+                ? 'ct-topup-product-grid-single'
+                : ''
+            } ${
+              normalizedView === 'subscription'
+                ? 'ct-topup-product-grid-subscription'
+                : ''
+            }`}
+          >
+            {showRecharge && (
+              <RechargeCard
+                t={t}
+                enableOnlineTopUp={enableOnlineTopUp}
+                enableStripeTopUp={enableStripeTopUp}
+                enableCreemTopUp={enableCreemTopUp}
+                creemProducts={creemProducts}
+                creemPreTopUp={creemPreTopUp}
+                enableWaffoTopUp={enableWaffoTopUp}
+                enableWaffoPancakeTopUp={enableWaffoPancakeTopUp}
+                presetAmounts={presetAmounts}
+                selectedPreset={selectedPreset}
+                selectPresetAmount={selectPresetAmount}
+                formatLargeNumber={formatLargeNumber}
+                priceRatio={priceRatio}
+                topUpCount={topUpCount}
+                minTopUp={minTopUp}
+                renderQuotaWithAmount={renderQuotaWithAmount}
+                getAmount={getAmount}
+                setTopUpCount={setTopUpCount}
+                setSelectedPreset={setSelectedPreset}
+                renderAmount={renderAmount}
+                amountLoading={amountLoading}
+                payMethods={confirmPayMethods}
+                preTopUp={preTopUp}
+                paymentLoading={paymentLoading}
+                payWay={payWay}
+                redemptionCode={redemptionCode}
+                setRedemptionCode={setRedemptionCode}
+                topUp={topUp}
+                isSubmitting={isSubmitting}
+                topUpLink={topUpLink}
+                openTopUpLink={openTopUpLink}
+                userState={userState}
+                renderQuota={renderQuota}
+                statusLoading={statusLoading}
+                topupInfo={topupInfo}
+                onOpenHistory={handleOpenHistory}
+              />
+            )}
+            {showSubscription && (
+              <SubscriptionPlansCard
+                t={t}
+                loading={subscriptionLoading}
+                plans={subscriptionPlans}
+                payMethods={payMethods}
+                enableOnlineTopUp={enableOnlineTopUp}
+                enableStripeTopUp={enableStripeTopUp}
+                enableCreemTopUp={enableCreemTopUp}
+                billingPreference={billingPreference}
+                onChangeBillingPreference={updateBillingPreference}
+                activeSubscriptions={activeSubscriptions}
+                allSubscriptions={allSubscriptions}
+                reloadSubscriptionSelf={getSubscriptionSelf}
+                withCard={true}
+                className='ct-topup-panel ct-topup-subscription-panel'
+              />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

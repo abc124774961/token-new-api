@@ -37,6 +37,9 @@ const routerMap = {
   token: '/console/token',
   redemption: '/console/redemption',
   topup: '/console/topup',
+  affiliate: '/console/affiliate',
+  recharge: '/console/recharge',
+  subscription_plans: '/console/subscription-plans',
   user: '/console/user',
   subscription: '/console/subscription',
   log: '/console/log',
@@ -133,9 +136,19 @@ const SiderBar = ({ onNavigate = () => {} }) => {
   const financeItems = useMemo(() => {
     const items = [
       {
-        text: t('钱包管理'),
-        itemKey: 'topup',
-        to: '/topup',
+        text: t('邀请有奖'),
+        itemKey: 'affiliate',
+        to: '/affiliate',
+      },
+      {
+        text: t('账户充值'),
+        itemKey: 'recharge',
+        to: '/recharge',
+      },
+      {
+        text: t('套餐订阅'),
+        itemKey: 'subscription_plans',
+        to: '/subscription-plans',
       },
       {
         text: t('个人设置'),
