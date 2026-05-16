@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -76,5 +77,15 @@ func ModelMappedHelper(c *gin.Context, info *relaycommon.RelayInfo, request dto.
 	if request != nil {
 		request.SetModelName(info.UpstreamModelName)
 	}
+	logger.LogInfo(c, fmt.Sprintf(
+		"relay model mapping trace: request_model=%s, context_model=%s, origin_model=%s, mapping_source=%s, upstream_model=%s, mapped=%t, channel_id=%d",
+		info.RequestModelName,
+		info.ContextModelName,
+		info.OriginModelName,
+		mappingModelName,
+		info.UpstreamModelName,
+		info.IsModelMapped,
+		info.ChannelId,
+	))
 	return nil
 }

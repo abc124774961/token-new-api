@@ -55,6 +55,13 @@ func (r *EmbeddingRequest) SetModelName(modelName string) {
 	}
 }
 
+func (r *EmbeddingRequest) GetModelName() string {
+	if r == nil {
+		return ""
+	}
+	return r.Model
+}
+
 func (r *EmbeddingRequest) ParseInput() []string {
 	if r.Input == nil {
 		return make([]string, 0)

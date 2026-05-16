@@ -39,3 +39,10 @@ func (r *OpenAIResponsesCompactionRequest) SetModelName(modelName string) {
 		r.Model = modelName
 	}
 }
+
+func (r *OpenAIResponsesCompactionRequest) GetModelName() string {
+	if r == nil {
+		return ""
+	}
+	return r.Model
+}

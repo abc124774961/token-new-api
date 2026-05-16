@@ -79,6 +79,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	}
 
 	AppendChannelAffinityAdminInfo(ctx, adminInfo)
+	appendClientRequestTraceInfo(relayInfo, adminInfo)
 
 	other["admin_info"] = adminInfo
 	appendRequestPath(ctx, relayInfo, other)
@@ -98,6 +99,9 @@ func appendModelTraceInfo(relayInfo *relaycommon.RelayInfo, other map[string]int
 	if requestModelName != "" {
 		other["request_model_name"] = requestModelName
 	}
+	if relayInfo.ContextModelName != "" && relayInfo.ContextModelName != requestModelName {
+		other["context_model_name"] = relayInfo.ContextModelName
+	}
 	if relayInfo.OriginModelName != "" && relayInfo.OriginModelName != requestModelName {
 		other["billing_model_name"] = relayInfo.OriginModelName
 	}
@@ -113,6 +117,71 @@ func appendModelTraceInfo(relayInfo *relaycommon.RelayInfo, other map[string]int
 	if relayInfo.ChannelMeta != nil && relayInfo.IsModelMapped {
 		other["is_model_mapped"] = true
 	}
+}
+
+func appendClientRequestTraceInfo(relayInfo *relaycommon.RelayInfo, adminInfo map[string]interface{}) {
+	if relayInfo == nil || adminInfo == nil || len(relayInfo.RequestHeaders) == 0 {
+		return
+	}
+	traceHeaders := make(map[string]string)
+	codexLikeClient := false
+	metadataHeaderPresent := false
+	for key, value := range relayInfo.RequestHeaders {
+		normalizedKey := strings.ToLower(strings.TrimSpace(key))
+		normalizedValue := strings.TrimSpace(value)
+		if normalizedKey == "" || normalizedValue == "" || isSensitiveHeaderName(normalizedKey) {
+			continue
+		}
+		if strings.Contains(normalizedKey, "codex") || strings.Contains(strings.ToLower(normalizedValue), "codex") {
+			codexLikeClient = true
+		}
+		if strings.Contains(normalizedKey, "metadata") || strings.Contains(normalizedKey, "meta") {
+			metadataHeaderPresent = true
+		}
+		if isSafeClientTraceHeader(normalizedKey) {
+			traceHeaders[normalizedKey] = truncateClientTraceValue(normalizedValue)
+		}
+	}
+	if len(traceHeaders) == 0 && !codexLikeClient && !metadataHeaderPresent {
+		return
+	}
+	clientTrace := map[string]interface{}{}
+	if len(traceHeaders) > 0 {
+		clientTrace["headers"] = traceHeaders
+	}
+	if codexLikeClient {
+		clientTrace["codex_like_client"] = true
+	}
+	if metadataHeaderPresent {
+		clientTrace["metadata_header_present"] = true
+	}
+	adminInfo["client_request"] = clientTrace
+}
+
+func isSafeClientTraceHeader(key string) bool {
+	if key == "user-agent" || key == "content-type" || key == "openai-beta" {
+		return true
+	}
+	return strings.HasPrefix(key, "x-stainless-") ||
+		strings.HasPrefix(key, "x-codex-") ||
+		strings.HasPrefix(key, "codex-")
+}
+
+func isSensitiveHeaderName(key string) bool {
+	for _, marker := range []string{"authorization", "api-key", "apikey", "token", "cookie", "secret", "key"} {
+		if strings.Contains(key, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func truncateClientTraceValue(value string) string {
+	const maxClientTraceValueLen = 240
+	if len(value) <= maxClientTraceValueLen {
+		return value
+	}
+	return value[:maxClientTraceValueLen] + "...(truncated)"
 }
 
 func appendParamOverrideInfo(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {

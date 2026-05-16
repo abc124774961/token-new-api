@@ -206,6 +206,13 @@ func (r *GeneralOpenAIRequest) SetModelName(modelName string) {
 	}
 }
 
+func (r *GeneralOpenAIRequest) GetModelName() string {
+	if r == nil {
+		return ""
+	}
+	return r.Model
+}
+
 func (r *GeneralOpenAIRequest) ToMap() map[string]any {
 	result := make(map[string]any)
 	data, _ := common.Marshal(r)
@@ -937,6 +944,13 @@ func (r *OpenAIResponsesRequest) SetModelName(modelName string) {
 	if modelName != "" {
 		r.Model = modelName
 	}
+}
+
+func (r *OpenAIResponsesRequest) GetModelName() string {
+	if r == nil {
+		return ""
+	}
+	return r.Model
 }
 
 func (r *OpenAIResponsesRequest) GetToolsMap() []map[string]any {

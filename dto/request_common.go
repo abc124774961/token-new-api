@@ -9,6 +9,7 @@ type Request interface {
 	GetTokenCountMeta() *types.TokenCountMeta
 	IsStream(c *gin.Context) bool
 	SetModelName(modelName string)
+	GetModelName() string
 }
 
 type BaseRequest struct {
@@ -23,3 +24,4 @@ func (b *BaseRequest) IsStream(c *gin.Context) bool {
 	return false
 }
 func (b *BaseRequest) SetModelName(modelName string) {}
+func (b *BaseRequest) GetModelName() string          { return "" }

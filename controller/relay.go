@@ -122,6 +122,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
 	}
+	logger.LogInfo(c, fmt.Sprintf(
+		"relay model trace initialized: format=%s, request_model=%s, context_model=%s, origin_model=%s, path=%s",
+		relayFormat,
+		relayInfo.RequestModelName,
+		relayInfo.ContextModelName,
+		relayInfo.OriginModelName,
+		c.Request.URL.Path,
+	))
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken

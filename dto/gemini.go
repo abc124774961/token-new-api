@@ -44,9 +44,9 @@ func (r *GeminiChatRequest) UnmarshalJSON(data []byte) error {
 }
 
 type ToolConfig struct {
-	FunctionCallingConfig *FunctionCallingConfig `json:"functionCallingConfig,omitempty"`
-	RetrievalConfig       *RetrievalConfig       `json:"retrievalConfig,omitempty"`
-	IncludeServerSideToolInvocations *bool       `json:"includeServerSideToolInvocations,omitempty"`
+	FunctionCallingConfig            *FunctionCallingConfig `json:"functionCallingConfig,omitempty"`
+	RetrievalConfig                  *RetrievalConfig       `json:"retrievalConfig,omitempty"`
+	IncludeServerSideToolInvocations *bool                  `json:"includeServerSideToolInvocations,omitempty"`
 }
 
 type FunctionCallingConfig struct {
@@ -122,6 +122,10 @@ func (r *GeminiChatRequest) IsStream(c *gin.Context) bool {
 
 func (r *GeminiChatRequest) SetModelName(modelName string) {
 	// GeminiChatRequest does not have a model field, so this method does nothing.
+}
+
+func (r *GeminiChatRequest) GetModelName() string {
+	return ""
 }
 
 func (r *GeminiChatRequest) GetTools() []GeminiChatTool {
@@ -538,6 +542,13 @@ func (r *GeminiEmbeddingRequest) SetModelName(modelName string) {
 	}
 }
 
+func (r *GeminiEmbeddingRequest) GetModelName() string {
+	if r == nil {
+		return ""
+	}
+	return r.Model
+}
+
 type GeminiBatchEmbeddingRequest struct {
 	Requests []*GeminiEmbeddingRequest `json:"requests"`
 }
@@ -567,6 +578,13 @@ func (r *GeminiBatchEmbeddingRequest) SetModelName(modelName string) {
 			req.SetModelName(modelName)
 		}
 	}
+}
+
+func (r *GeminiBatchEmbeddingRequest) GetModelName() string {
+	if r == nil || len(r.Requests) == 0 || r.Requests[0] == nil {
+		return ""
+	}
+	return r.Requests[0].GetModelName()
 }
 
 type GeminiEmbeddingResponse struct {

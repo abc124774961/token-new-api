@@ -44,6 +44,13 @@ func (r *RerankRequest) SetModelName(modelName string) {
 	}
 }
 
+func (r *RerankRequest) GetModelName() string {
+	if r == nil {
+		return ""
+	}
+	return r.Model
+}
+
 func (r *RerankRequest) GetReturnDocuments() bool {
 	if r.ReturnDocuments == nil {
 		return false

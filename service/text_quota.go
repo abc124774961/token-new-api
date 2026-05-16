@@ -378,6 +378,20 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if logModel == "" {
 		logModel = summary.ModelName
 	}
+	if logModel != summary.ModelName || relayInfo.ContextModelName != "" && relayInfo.ContextModelName != logModel || relayInfo.UpstreamModelName != "" && relayInfo.UpstreamModelName != logModel {
+		logger.LogInfo(ctx, fmt.Sprintf(
+			"relay consume log model trace: log_model=%s, request_model=%s, context_model=%s, billing_model=%s, upstream_model=%s, response_model=%s, downstream_model=%s, mapped=%t, channel_id=%d",
+			logModel,
+			relayInfo.RequestModelName,
+			relayInfo.ContextModelName,
+			summary.ModelName,
+			relayInfo.UpstreamModelName,
+			relayInfo.ResponseModelName,
+			relayInfo.DownstreamModelName,
+			relayInfo.IsModelMapped,
+			relayInfo.ChannelId,
+		))
+	}
 	if strings.HasPrefix(logModel, "gpt-4-gizmo") {
 		logModel = "gpt-4-gizmo-*"
 		extraContent = append(extraContent, fmt.Sprintf("模型 %s", relayInfo.LogModelName()))

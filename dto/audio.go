@@ -51,6 +51,13 @@ func (r *AudioRequest) SetModelName(modelName string) {
 	}
 }
 
+func (r *AudioRequest) GetModelName() string {
+	if r == nil {
+		return ""
+	}
+	return r.Model
+}
+
 type AudioResponse struct {
 	Text string `json:"text"`
 }

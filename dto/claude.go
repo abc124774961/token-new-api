@@ -371,6 +371,13 @@ func (c *ClaudeRequest) SetModelName(modelName string) {
 	}
 }
 
+func (c *ClaudeRequest) GetModelName() string {
+	if c == nil {
+		return ""
+	}
+	return c.Model
+}
+
 func (c *ClaudeRequest) SearchToolNameByToolCallId(toolCallId string) string {
 	for _, message := range c.Messages {
 		content, _ := message.ParseContent()

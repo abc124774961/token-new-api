@@ -172,6 +172,13 @@ func (i *ImageRequest) SetModelName(modelName string) {
 	}
 }
 
+func (i *ImageRequest) GetModelName() string {
+	if i == nil {
+		return ""
+	}
+	return i.Model
+}
+
 type ImageResponse struct {
 	Data     []ImageData     `json:"data"`
 	Created  int64           `json:"created"`

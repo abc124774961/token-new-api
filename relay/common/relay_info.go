@@ -107,6 +107,10 @@ type RelayInfo struct {
 	// can map ChannelMeta.UpstreamModelName to provider-specific names.
 	RequestModelName string
 	OriginModelName  string
+	// ContextModelName is the model selected by distributor/channel selection.
+	// It normally matches RequestModelName, but stays visible in logs when an
+	// upstream wrapper or path-derived request produces a different value.
+	ContextModelName string
 	// ResponseModelName is the model name reported by the upstream response.
 	// DownstreamModelName is the model name returned to the client after
 	// compatibility normalization.
@@ -262,6 +266,7 @@ func (info *RelayInfo) ToString() string {
 	fmt.Fprintf(b, "RequestURLPath: %q, ", info.RequestURLPath)
 	fmt.Fprintf(b, "RequestModelName: %q, ", info.RequestModelName)
 	fmt.Fprintf(b, "OriginModelName: %q, ", info.OriginModelName)
+	fmt.Fprintf(b, "ContextModelName: %q, ", info.ContextModelName)
 	fmt.Fprintf(b, "EstimatePromptTokens: %d, ", info.estimatePromptTokens)
 	fmt.Fprintf(b, "ShouldIncludeUsage: %t, ", info.ShouldIncludeUsage)
 	fmt.Fprintf(b, "DisablePing: %t, ", info.DisablePing)
@@ -470,7 +475,13 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	if reqId == "" {
 		reqId = common.GetTimeString() + common.GetRandomString(8)
 	}
-	originModelName := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+	contextModelName := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+	requestModelName := contextModelName
+	if request != nil {
+		if modelName := strings.TrimSpace(request.GetModelName()); modelName != "" {
+			requestModelName = modelName
+		}
+	}
 	info := &RelayInfo{
 		Request: request,
 
@@ -481,8 +492,9 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		UserQuota:  common.GetContextKeyInt(c, constant.ContextKeyUserQuota),
 		UserEmail:  common.GetContextKeyString(c, constant.ContextKeyUserEmail),
 
-		RequestModelName: originModelName,
-		OriginModelName:  originModelName,
+		RequestModelName: requestModelName,
+		OriginModelName:  contextModelName,
+		ContextModelName: contextModelName,
 
 		TokenId:        common.GetContextKeyInt(c, constant.ContextKeyTokenId),
 		TokenKey:       common.GetContextKeyString(c, constant.ContextKeyTokenKey),

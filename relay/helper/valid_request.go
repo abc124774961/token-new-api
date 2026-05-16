@@ -50,6 +50,15 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
 	default:
 		return nil, fmt.Errorf("unsupported relay format: %s", format)
 	}
+	if err == nil && request != nil {
+		logger.LogInfo(c, fmt.Sprintf(
+			"relay request model parsed: format=%s, relayMode=%d, path=%s, request_model=%s",
+			format,
+			relayMode,
+			c.Request.URL.Path,
+			request.GetModelName(),
+		))
+	}
 	return request, err
 }
 
