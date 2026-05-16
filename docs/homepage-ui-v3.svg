@@ -1,0 +1,287 @@
+<svg width="1600" height="2600" viewBox="0 0 1600 2600" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="2600" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F2FFFC"/>
+      <stop offset="0.34" stop-color="#F7FAFC"/>
+      <stop offset="1" stop-color="#EEF4F8"/>
+    </linearGradient>
+    <linearGradient id="hero" x1="220" y1="120" x2="1360" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.52" stop-color="#F5FFFC"/>
+      <stop offset="1" stop-color="#E6F3FF"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="960" y1="168" x2="1410" y2="650" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0D2230"/>
+      <stop offset="1" stop-color="#101827"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#14B8A6"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="24" stdDeviation="30" flood-color="#0F172A" flood-opacity="0.12"/>
+    </filter>
+    <filter id="hardShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="34" stdDeviation="38" flood-color="#0F172A" flood-opacity="0.22"/>
+    </filter>
+    <style>
+      .ui { font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans GB", "PingFang SC", "Microsoft YaHei", Arial, sans-serif; }
+      .mono { font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace; }
+      .h1 { font-size: 82px; font-weight: 900; letter-spacing: 0; fill: #0F172A; }
+      .h2 { font-size: 44px; font-weight: 900; letter-spacing: 0; fill: #0F172A; }
+      .h3 { font-size: 24px; font-weight: 850; fill: #0F172A; }
+      .body { font-size: 19px; font-weight: 500; fill: #526174; }
+      .small { font-size: 14px; font-weight: 750; fill: #64748B; }
+      .tiny { font-size: 12px; font-weight: 750; fill: #8090A5; }
+      .label { font-size: 13px; font-weight: 900; fill: #0F766E; }
+      .card { fill: rgba(255,255,255,.92); stroke: rgba(15,23,42,.10); stroke-width: 1; }
+      .darkLabel { font-size: 13px; font-weight: 850; fill: #9FB5C9; }
+      .darkText { font-size: 16px; font-weight: 850; fill: #E5F3FF; }
+      .darkTiny { font-size: 12px; font-weight: 750; fill: #8EA6BA; }
+    </style>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" stroke="#0EA5E9" stroke-opacity="0.07"/>
+    </pattern>
+  </defs>
+
+  <rect width="1600" height="2600" fill="url(#bg)"/>
+  <rect width="1600" height="820" fill="url(#grid)" opacity="0.85"/>
+  <path d="M0 650C220 720 380 720 620 650C860 580 1030 570 1255 640C1400 685 1500 694 1600 670V0H0V650Z" fill="#E6FFFA" opacity="0.55"/>
+
+  <g class="ui">
+    <!-- Header -->
+    <rect x="140" y="32" width="1320" height="74" rx="22" fill="rgba(255,255,255,.78)" stroke="rgba(15,23,42,.08)" filter="url(#shadow)"/>
+    <circle cx="184" cy="69" r="23" fill="#0F172A"/>
+    <path d="M174 61h20l-5 6h10l-18 18 5-13h-12z" fill="#5EEAD4"/>
+    <text x="220" y="64" font-size="20" font-weight="900" fill="#0F172A">CodeToken AI</text>
+    <text x="220" y="84" font-size="12" font-weight="750" fill="#64748B">Codex / Claude Code API Gateway</text>
+    <g transform="translate(610 46)">
+      <rect width="380" height="44" rx="22" fill="#F8FAFC" stroke="rgba(15,23,42,.08)"/>
+      <rect x="12" y="6" width="66" height="32" rx="16" fill="#DDFBF4" stroke="#7DD3C7"/>
+      <text x="34" y="27" text-anchor="middle" font-size="14" font-weight="850" fill="#0F766E">首页</text>
+      <text x="116" y="27" text-anchor="middle" font-size="14" font-weight="750" fill="#334155">控制台</text>
+      <text x="194" y="27" text-anchor="middle" font-size="14" font-weight="750" fill="#334155">模型广场</text>
+      <text x="272" y="27" text-anchor="middle" font-size="14" font-weight="750" fill="#334155">文档</text>
+      <text x="338" y="27" text-anchor="middle" font-size="14" font-weight="750" fill="#334155">关于</text>
+    </g>
+    <rect x="1190" y="46" width="118" height="44" rx="22" fill="#FFFFFF" stroke="rgba(15,23,42,.08)"/>
+    <text x="1249" y="74" text-anchor="middle" font-size="14" font-weight="850" fill="#0F172A">运行状态</text>
+    <rect x="1320" y="46" width="118" height="44" rx="22" fill="#2563EB"/>
+    <text x="1379" y="74" text-anchor="middle" font-size="14" font-weight="900" fill="white">进入控制台</text>
+
+    <!-- Hero -->
+    <rect x="140" y="144" width="1320" height="690" rx="34" fill="url(#hero)" stroke="rgba(15,23,42,.08)" filter="url(#shadow)"/>
+    <path d="M1030 144H1426C1445 144 1460 159 1460 178V800C1460 819 1445 834 1426 834H890C1010 718 1048 522 1030 144Z" fill="#EAF7FF"/>
+    <g transform="translate(202 208)">
+      <rect width="330" height="40" rx="20" fill="#FFFFFF" stroke="rgba(15,23,42,.1)"/>
+      <circle cx="22" cy="20" r="12" fill="#0F766E"/>
+      <text x="44" y="25" font-size="14" font-weight="850" fill="#0F172A">为 AI 编程场景打造的稳定入口</text>
+      <text x="0" y="118" class="h1">Codex / Claude Code</text>
+      <text x="0" y="208" class="h1">企业级中转站</text>
+      <text x="0" y="274" font-size="44" font-weight="900" fill="#0F766E">多渠道无感切换，低价高速接入主流模型</text>
+      <text x="0" y="334" class="body">把上游限流、断流、慢响应和成本波动挡在开发工具之外。</text>
+      <text x="0" y="366" class="body">一个 Base URL，一把 Key，稳定服务 Codex、Claude Code、OpenAI SDK 与团队脚本。</text>
+      <g transform="translate(0 420)">
+        <rect width="146" height="52" rx="18" fill="#2563EB"/>
+        <text x="73" y="33" text-anchor="middle" font-size="16" font-weight="900" fill="#FFFFFF">获取密钥</text>
+        <rect x="160" width="146" height="52" rx="18" fill="#FFFFFF" stroke="rgba(15,23,42,.12)"/>
+        <text x="233" y="33" text-anchor="middle" font-size="16" font-weight="900" fill="#0F172A">查看文档</text>
+      </g>
+      <g transform="translate(0 514)">
+        <rect width="650" height="106" rx="20" fill="rgba(255,255,255,.84)" stroke="rgba(15,23,42,.08)"/>
+        <g transform="translate(28 24)">
+          <text class="mono" font-size="30" font-weight="950" fill="#0F172A">99.98%</text>
+          <text y="42" class="small">近 30 天成功率</text>
+        </g>
+        <g transform="translate(236 24)">
+          <text class="mono" font-size="30" font-weight="950" fill="#0F172A">184ms</text>
+          <text y="42" class="small">平均响应延迟</text>
+        </g>
+        <g transform="translate(444 24)">
+          <text class="mono" font-size="30" font-weight="950" fill="#0F172A">40+</text>
+          <text y="42" class="small">多模型渠道池</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- Hero Cockpit -->
+    <g transform="translate(940 190)" filter="url(#hardShadow)">
+      <rect width="430" height="560" rx="28" fill="url(#ink)"/>
+      <rect x="18" y="18" width="394" height="524" rx="20" fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.12)"/>
+      <text x="42" y="60" class="darkText">实时调度中控</text>
+      <rect x="316" y="38" width="70" height="28" rx="14" fill="rgba(20,184,166,.18)"/>
+      <text x="351" y="56" text-anchor="middle" font-size="12" font-weight="900" fill="#99F6E4">健康</text>
+      <rect x="42" y="88" width="344" height="46" rx="12" fill="#0B1624"/>
+      <text x="58" y="116" class="mono" font-size="13" fill="#D1FAE5">codex --base-url https://api.codetoken.top/v1</text>
+      <g transform="translate(42 158)">
+        <rect width="92" height="76" rx="14" fill="#172536" stroke="rgba(94,234,212,.25)"/>
+        <text x="46" y="32" text-anchor="middle" font-size="18" fill="#5EEAD4">⌘</text>
+        <text x="46" y="56" text-anchor="middle" class="darkText" font-size="13">Codex</text>
+        <rect x="126" width="92" height="76" rx="14" fill="#172536" stroke="rgba(94,234,212,.25)"/>
+        <text x="172" y="32" text-anchor="middle" font-size="18" fill="#5EEAD4">◆</text>
+        <text x="172" y="56" text-anchor="middle" class="darkText" font-size="13">智能路由</text>
+        <rect x="252" width="92" height="76" rx="14" fill="#172536" stroke="rgba(94,234,212,.25)"/>
+        <text x="298" y="32" text-anchor="middle" font-size="18" fill="#5EEAD4">↯</text>
+        <text x="298" y="56" text-anchor="middle" class="darkText" font-size="13">健康渠道</text>
+        <path d="M94 38H126" stroke="#5EEAD4" stroke-width="2" stroke-dasharray="5 5"/>
+        <path d="M220 38H252" stroke="#5EEAD4" stroke-width="2" stroke-dasharray="5 5"/>
+      </g>
+      <g transform="translate(42 258)">
+        <rect width="106" height="78" rx="14" fill="#172536"/>
+        <text x="16" y="28" class="darkLabel">成功率</text>
+        <text x="16" y="56" class="mono" font-size="24" font-weight="950" fill="#E5F3FF">99.98%</text>
+        <rect x="119" width="106" height="78" rx="14" fill="#172536"/>
+        <text x="135" y="28" class="darkLabel">保护事件</text>
+        <text x="135" y="56" class="mono" font-size="24" font-weight="950" fill="#E5F3FF">128</text>
+        <rect x="238" width="106" height="78" rx="14" fill="#172536"/>
+        <text x="254" y="28" class="darkLabel">平均延迟</text>
+        <text x="254" y="56" class="mono" font-size="24" font-weight="950" fill="#E5F3FF">184ms</text>
+      </g>
+      <g transform="translate(42 364)">
+        <text class="darkText">30 天稳定运行曲线</text>
+        <rect y="26" width="344" height="120" rx="14" fill="#0B1624"/>
+        <path d="M18 110 C60 76,90 86,126 68 C170 44,196 70,238 50 C280 30,308 46,326 38" stroke="#5EEAD4" stroke-width="4" fill="none"/>
+        <path d="M18 110 C60 76,90 86,126 68 C170 44,196 70,238 50 C280 30,308 46,326 38 L326 130 L18 130Z" fill="#14B8A6" opacity=".13"/>
+        <g transform="translate(20 88)">
+          <rect width="10" height="20" rx="3" fill="#2563EB" opacity=".45"/>
+          <rect x="20" width="10" height="30" rx="3" fill="#2563EB" opacity=".55"/>
+          <rect x="40" width="10" height="18" rx="3" fill="#2563EB" opacity=".35"/>
+          <rect x="60" width="10" height="38" rx="3" fill="#2563EB" opacity=".70"/>
+          <rect x="80" width="10" height="28" rx="3" fill="#2563EB" opacity=".55"/>
+          <rect x="100" width="10" height="44" rx="3" fill="#2563EB" opacity=".80"/>
+          <rect x="120" width="10" height="34" rx="3" fill="#2563EB" opacity=".62"/>
+          <rect x="140" width="10" height="52" rx="3" fill="#2563EB" opacity=".86"/>
+          <rect x="160" width="10" height="24" rx="3" fill="#2563EB" opacity=".45"/>
+          <rect x="180" width="10" height="48" rx="3" fill="#2563EB" opacity=".78"/>
+          <rect x="200" width="10" height="42" rx="3" fill="#2563EB" opacity=".72"/>
+          <rect x="220" width="10" height="58" rx="3" fill="#2563EB" opacity=".92"/>
+          <rect x="240" width="10" height="40" rx="3" fill="#2563EB" opacity=".70"/>
+          <rect x="260" width="10" height="50" rx="3" fill="#2563EB" opacity=".82"/>
+          <rect x="280" width="10" height="46" rx="3" fill="#2563EB" opacity=".76"/>
+          <rect x="300" width="10" height="56" rx="3" fill="#2563EB" opacity=".90"/>
+        </g>
+      </g>
+    </g>
+
+    <!-- Proof strip -->
+    <g transform="translate(140 900)">
+      <rect width="1320" height="172" rx="28" class="card" filter="url(#shadow)"/>
+      <text x="42" y="58" class="label">为什么不是普通 API 转发</text>
+      <text x="42" y="102" class="h2">把限流、断流、慢响应和账单失控，变成可运营的稳定入口</text>
+      <g transform="translate(880 42)">
+        <rect width="116" height="88" rx="18" fill="#F0FDFA" stroke="#B6EFE6"/>
+        <text x="58" y="40" text-anchor="middle" class="mono" font-size="24" font-weight="950" fill="#0F766E">1s</text>
+        <text x="58" y="64" text-anchor="middle" class="tiny">故障切换</text>
+        <rect x="136" width="116" height="88" rx="18" fill="#EFF6FF" stroke="#BFDBFE"/>
+        <text x="194" y="40" text-anchor="middle" class="mono" font-size="24" font-weight="950" fill="#2563EB">0.1x</text>
+        <text x="194" y="64" text-anchor="middle" class="tiny">分组倍率</text>
+        <rect x="272" width="116" height="88" rx="18" fill="#F8FAFC" stroke="#E2E8F0"/>
+        <text x="330" y="40" text-anchor="middle" class="mono" font-size="24" font-weight="950" fill="#0F172A">30d</text>
+        <text x="330" y="64" text-anchor="middle" class="tiny">运行证据</text>
+      </g>
+    </g>
+
+    <!-- Reliability Section -->
+    <g transform="translate(140 1160)">
+      <text class="label">稳定运行</text>
+      <text y="58" class="h2">给客户看的不是口号，是近 30 天真实运行视图</text>
+      <text y="94" class="body">公开展示脱敏后的成功率、延迟、请求量和保护事件，让“稳定”变成可验证的信任资产。</text>
+      <rect y="134" width="1320" height="430" rx="30" class="card" filter="url(#shadow)"/>
+      <g transform="translate(34 168)">
+        <rect width="300" height="158" rx="22" fill="#FFFFFF" stroke="rgba(15,23,42,.08)"/>
+        <text x="24" y="42" class="small">近 30 天成功率</text>
+        <text x="24" y="92" class="mono" font-size="44" font-weight="950" fill="#0F172A">99.98%</text>
+        <text x="24" y="126" class="tiny">按最终请求结果聚合</text>
+        <rect y="182" width="300" height="158" rx="22" fill="#FFFFFF" stroke="rgba(15,23,42,.08)"/>
+        <text x="24" y="224" class="small">自动保护事件</text>
+        <text x="24" y="274" class="mono" font-size="44" font-weight="950" fill="#0F172A">128</text>
+        <text x="24" y="308" class="tiny">限流 / 超时 / 上游异常</text>
+      </g>
+      <g transform="translate(372 168)">
+        <rect width="550" height="340" rx="22" fill="#FFFFFF" stroke="rgba(15,23,42,.08)"/>
+        <text x="28" y="44" class="h3">成功率与请求量</text>
+        <line x1="28" y1="270" x2="522" y2="270" stroke="#E2E8F0"/>
+        <line x1="28" y1="210" x2="522" y2="210" stroke="#E2E8F0"/>
+        <line x1="28" y1="150" x2="522" y2="150" stroke="#E2E8F0"/>
+        <path d="M38 238 C82 208,120 220,164 190 C210 158,252 176,296 138 C340 100,386 128,430 92 C470 62,500 86,512 76" stroke="#0F766E" stroke-width="5" fill="none"/>
+        <path d="M38 238 C82 208,120 220,164 190 C210 158,252 176,296 138 C340 100,386 128,430 92 C470 62,500 86,512 76 L512 270 L38 270Z" fill="#14B8A6" opacity=".12"/>
+        <g transform="translate(42 282)">
+          <rect width="12" height="30" rx="4" fill="#2563EB" opacity=".35"/>
+          <rect x="28" width="12" height="42" rx="4" fill="#2563EB" opacity=".55"/>
+          <rect x="56" width="12" height="26" rx="4" fill="#2563EB" opacity=".35"/>
+          <rect x="84" width="12" height="52" rx="4" fill="#2563EB" opacity=".75"/>
+          <rect x="112" width="12" height="36" rx="4" fill="#2563EB" opacity=".50"/>
+          <rect x="140" width="12" height="64" rx="4" fill="#2563EB" opacity=".86"/>
+          <rect x="168" width="12" height="44" rx="4" fill="#2563EB" opacity=".58"/>
+          <rect x="196" width="12" height="72" rx="4" fill="#2563EB" opacity=".92"/>
+          <rect x="224" width="12" height="40" rx="4" fill="#2563EB" opacity=".54"/>
+          <rect x="252" width="12" height="80" rx="4" fill="#2563EB" opacity=".98"/>
+          <rect x="280" width="12" height="54" rx="4" fill="#2563EB" opacity=".74"/>
+          <rect x="308" width="12" height="70" rx="4" fill="#2563EB" opacity=".88"/>
+          <rect x="336" width="12" height="48" rx="4" fill="#2563EB" opacity=".66"/>
+          <rect x="364" width="12" height="76" rx="4" fill="#2563EB" opacity=".94"/>
+          <rect x="392" width="12" height="56" rx="4" fill="#2563EB" opacity=".76"/>
+          <rect x="420" width="12" height="82" rx="4" fill="#2563EB"/>
+        </g>
+      </g>
+      <g transform="translate(958 168)">
+        <rect width="328" height="340" rx="22" fill="#0F172A"/>
+        <text x="28" y="44" class="darkText">今日路由事件</text>
+        <g transform="translate(28 78)">
+          <rect width="272" height="54" rx="14" fill="#172536"/>
+          <circle cx="28" cy="27" r="8" fill="#22C55E"/>
+          <text x="48" y="24" class="darkText" font-size="14">gpt-5.5 → 渠道 4</text>
+          <text x="48" y="42" class="darkTiny">流式正常 eof</text>
+          <rect y="70" width="272" height="54" rx="14" fill="#172536"/>
+          <circle cx="28" cy="97" r="8" fill="#F59E0B"/>
+          <text x="48" y="94" class="darkText" font-size="14">429 限流保护</text>
+          <text x="48" y="112" class="darkTiny">自动切换备用线路</text>
+          <rect y="140" width="272" height="54" rx="14" fill="#172536"/>
+          <circle cx="28" cy="167" r="8" fill="#38BDF8"/>
+          <text x="48" y="164" class="darkText" font-size="14">缓存读命中</text>
+          <text x="48" y="182" class="darkTiny">成本按倍率结算</text>
+          <rect y="210" width="272" height="54" rx="14" fill="#172536"/>
+          <circle cx="28" cy="237" r="8" fill="#22C55E"/>
+          <text x="48" y="234" class="darkText" font-size="14">Claude Code 长任务</text>
+          <text x="48" y="252" class="darkTiny">持续输出稳定</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- Scenario Cards -->
+    <g transform="translate(140 1840)">
+      <text class="label">真实场景</text>
+      <text y="58" class="h2">不是“转发一下”，而是替 AI 编程工作流兜底</text>
+      <g transform="translate(0 106)">
+        <rect width="420" height="220" rx="26" class="card" filter="url(#shadow)"/>
+        <rect x="28" y="28" width="52" height="52" rx="16" fill="#DDFBF4"/>
+        <text x="54" y="63" text-anchor="middle" font-size="24" fill="#0F766E">⌘</text>
+        <text x="28" y="112" class="h3">长时间编码会话</text>
+        <text x="28" y="150" class="body">连续生成、改错、跑测试时，网关持续选择健康线路，减少中途断流。</text>
+        <rect x="450" width="420" height="220" rx="26" class="card" filter="url(#shadow)"/>
+        <rect x="478" y="28" width="52" height="52" rx="16" fill="#EFF6FF"/>
+        <text x="504" y="63" text-anchor="middle" font-size="24" fill="#2563EB">↯</text>
+        <text x="478" y="112" class="h3">限流自动转移</text>
+        <text x="478" y="150" class="body">429、5xx、超时和流式异常会进入保护事件，并自动切到备用渠道。</text>
+        <rect x="900" width="420" height="220" rx="26" class="card" filter="url(#shadow)"/>
+        <rect x="928" y="28" width="52" height="52" rx="16" fill="#F0FDFA"/>
+        <text x="954" y="63" text-anchor="middle" font-size="24" fill="#0F766E">¥</text>
+        <text x="928" y="112" class="h3">团队共享与成本控制</text>
+        <text x="928" y="150" class="body">用令牌、配额、分组倍率和日志，把个人、团队、脚本流量拆清楚。</text>
+      </g>
+    </g>
+
+    <!-- Bottom -->
+    <g transform="translate(140 2220)">
+      <rect width="1320" height="230" rx="34" fill="#0F172A" filter="url(#hardShadow)"/>
+      <rect x="28" y="28" width="1264" height="174" rx="24" fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.10)"/>
+      <text x="68" y="86" font-size="18" font-weight="900" fill="#5EEAD4">开始使用</text>
+      <text x="68" y="140" font-size="42" font-weight="950" fill="#FFFFFF">把 Codex 和 Claude Code 切到更稳的 API 入口</text>
+      <text x="68" y="178" font-size="18" font-weight="600" fill="#9FB5C9">创建令牌后，将 Base URL 设置为本站地址，路由、价格、保护和日志交给网关处理。</text>
+      <rect x="1036" y="78" width="150" height="58" rx="20" fill="#2563EB"/>
+      <text x="1111" y="114" text-anchor="middle" font-size="17" font-weight="900" fill="#FFFFFF">进入控制台</text>
+      <rect x="1202" y="78" width="128" height="58" rx="20" fill="#FFFFFF"/>
+      <text x="1266" y="114" text-anchor="middle" font-size="17" font-weight="900" fill="#0F172A">接入文档</text>
+    </g>
+  </g>
+</svg>

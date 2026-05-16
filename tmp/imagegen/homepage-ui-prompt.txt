@@ -1,0 +1,59 @@
+Use case: ui-mockup
+Asset type: high-fidelity desktop website homepage design mockup
+
+Primary request:
+Design a premium enterprise SaaS landing page for CodeToken AI, a Codex / Claude Code API gateway and token relay service. This is a visual UI design concept for review, not a live app screenshot.
+
+Audience:
+Developers, AI coding tool users, small AI teams, automation-heavy users, and API resellers who care about uptime, cost, token routing, failover, and billing clarity.
+
+Scene/backdrop:
+A light professional business website, wide desktop viewport, polished technical product marketing page. The first viewport should feel active, trustworthy, and widely used, with subtle operational context: request-flow lines, terminal strips, API routing traces, telemetry bands, and status indicators.
+
+Subject:
+Homepage for "Codex / Claude Code 稳定高速中转站".
+
+Style/medium:
+High-fidelity web UI mockup, modern enterprise SaaS, clean operations-console influence, mature and credible, premium but practical. Strong typography, real product proof surfaces, precise spacing, thin borders, confident data visualization, professional commercial tone. It should look suitable for a serious API platform, not like a generic template or admin dashboard.
+
+Composition/framing:
+1600px wide desktop homepage mockup, show the full first viewport and part of the next reliability section. Header at top with brand and navigation. Hero left side contains marketing message and CTA. Hero right side contains a polished product proof panel showing Codex / Claude Code request entering one gateway, then routing across healthy, degraded, and standby upstream channels by health, cost, group, and cooldown. Below hero, include a strong reliability proof section with a large success-rate curve, latency trend, request volume bars, and protected-event markers.
+
+Required visible text, keep Chinese text legible and well-spaced:
+"CodeToken AI"
+"首页"
+"控制台"
+"模型广场"
+"文档"
+"关于"
+"Codex 与 Claude Code 高稳定中转站"
+"Codex / Claude Code 稳定高速中转站"
+"多渠道无感切换，低价接入主流编程模型"
+"统一 Base URL，自动健康路由，兼容 Codex、Claude Code 与 OpenAI SDK。"
+"获取密钥"
+"查看文档"
+"近 30 天成功率"
+"平均响应延迟"
+"可用渠道池"
+"保护事件"
+"运行状态"
+"多渠道无感切换"
+"低价分组"
+"真实运行曲线"
+"Base URL"
+"https://api.codetoken.top/v1"
+
+Content details:
+- Hero proof metrics should suggest high reliability without looking fake or exaggerated: examples include success rate around 99.8%, average latency around 820 ms, available channels around 40+.
+- The reliability section should show clear recent operational data: success rate curve, p95 latency line, request volume bars, semantic markers for rate limit, timeout, 5xx, stream error.
+- Add scenario richness through small background visuals or panel details related to coding agents, terminal sessions, IDE automation, API keys, model routing, and cost groups.
+- The page should communicate: super stable, multi-channel seamless switching, low price, fast response, transparent status, professional operation, actively used service.
+
+Color palette:
+White and cool gray base, teal/cyan identity accents, blue data accents, green healthy status, amber/red only for warning/failure semantics. Avoid purple gradients, dark-only hero, beige/brown themes, decorative blobs, bokeh, or random abstract art.
+
+Interaction feel:
+Premium technical buyer experience, strong first impression, not cluttered. The hero should occupy enough width and height to feel substantial, with part of the next section visible below the fold.
+
+Avoid:
+No cartoon illustration, no stock photo, no decorative blobs/orbs, no generic card soup, no tiny unreadable admin table, no weak narrow centered layout, no excessive empty whitespace, no dark hero block, no purple/blue gradient hero, no fake unreadable microtext, no rounded pill overload, no messy overlapping UI.

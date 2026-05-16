@@ -3,6 +3,7 @@ package controller
 import (
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,8 +54,24 @@ type PublicHomeStatusDaily struct {
 type PublicHomeStatusResponse struct {
 	Summary   PublicHomeStatusSummary `json:"summary"`
 	Daily     []PublicHomeStatusDaily `json:"daily"`
+	Groups    []PublicHomeStatusGroup `json:"groups"`
 	UpdatedAt int64                   `json:"updated_at"`
 	Partial   bool                    `json:"partial,omitempty"`
+}
+
+type PublicHomeStatusGroup struct {
+	Key     string                    `json:"key"`
+	Name    string                    `json:"name"`
+	Summary PublicHomeStatusSummary   `json:"summary"`
+	Daily   []PublicHomeStatusDaily   `json:"daily"`
+	States  PublicHomeStatusGroupMeta `json:"states"`
+}
+
+type PublicHomeStatusGroupMeta struct {
+	Healthy  int `json:"healthy"`
+	Cooling  int `json:"cooling"`
+	Standby  int `json:"standby"`
+	Channels int `json:"channels"`
 }
 
 func GetPublicHomeStatus(c *gin.Context) {
@@ -147,6 +164,8 @@ func buildPublicHomeStatus(days int) (PublicHomeStatusResponse, error) {
 	channelIds := make([]int, 0, len(channels))
 	enabledChannels := 0
 	healthyChannels := 0
+	channelGroups := make(map[string]map[int]bool)
+	groupStates := make(map[string]*PublicHomeStatusGroupMeta)
 	for _, channel := range channels {
 		if !shouldIncludeChannelInStatusMonitor(channel) {
 			continue
@@ -155,8 +174,19 @@ func buildPublicHomeStatus(days int) (PublicHomeStatusResponse, error) {
 		if channel.Status == common.ChannelStatusEnabled {
 			enabledChannels++
 		}
-		if channelHealthState(channel, nil) == "healthy" {
+		healthState := channelHealthState(channel, nil)
+		if healthState == "healthy" {
 			healthyChannels++
+		}
+		for _, groupKey := range publicHomeStatusGroupKeysForChannel(channel) {
+			if channelGroups[groupKey] == nil {
+				channelGroups[groupKey] = make(map[int]bool)
+			}
+			channelGroups[groupKey][channel.Id] = true
+			if groupStates[groupKey] == nil {
+				groupStates[groupKey] = &PublicHomeStatusGroupMeta{}
+			}
+			applyPublicHomeStatusChannelState(groupStates[groupKey], healthState)
 		}
 	}
 
@@ -169,6 +199,7 @@ func buildPublicHomeStatus(days int) (PublicHomeStatusResponse, error) {
 	result := buildPublicHomeStatusFromRows(days, rows)
 	result.Summary.EnabledChannels = enabledChannels
 	result.Summary.HealthyChannels = healthyChannels
+	applyPublicHomeStatusGroupChannelSummaries(&result, channelGroups, groupStates)
 	result.UpdatedAt = time.Now().Unix()
 	return result, nil
 }
@@ -189,14 +220,7 @@ func buildPublicHomeStatusEmpty(days int, partial bool) PublicHomeStatusResponse
 func buildPublicHomeStatusFromRows(days int, rows []model.ChannelStatusMonitorLogRow) PublicHomeStatusResponse {
 	days = normalizePublicHomeStatusDays(days)
 	start := startOfPublicHomeStatusWindow(days)
-	buckets := make([]*publicHomeStatusBucket, 0, days)
-	bucketByDate := make(map[string]*publicHomeStatusBucket, days)
-	for i := 0; i < days; i++ {
-		date := start.AddDate(0, 0, i).Format("2006-01-02")
-		bucket := &publicHomeStatusBucket{date: date}
-		buckets = append(buckets, bucket)
-		bucketByDate[date] = bucket
-	}
+	buckets, bucketByDate := newPublicHomeStatusBuckets(days, start)
 
 	requests := buildChannelMonitorRequestAggregates(publicHomeStatusRequestLogs(rows))
 	sort.Slice(requests, func(i, j int) bool {
@@ -220,6 +244,7 @@ func buildPublicHomeStatusFromRows(days int, rows []model.ChannelStatusMonitorLo
 		applyPublicHomeStatusRequest(overall, request)
 	}
 
+	groups := buildPublicHomeStatusGroups(days, start, requests)
 	daily := make([]PublicHomeStatusDaily, 0, len(buckets))
 	for _, bucket := range buckets {
 		daily = append(daily, PublicHomeStatusDaily{
@@ -240,6 +265,7 @@ func buildPublicHomeStatusFromRows(days int, rows []model.ChannelStatusMonitorLo
 			ProtectedEvents: overall.protectedEvents,
 		},
 		Daily:     daily,
+		Groups:    groups,
 		UpdatedAt: time.Now().Unix(),
 	}
 }
@@ -256,7 +282,11 @@ type publicHomeStatusBucket struct {
 func publicHomeStatusRequestLogs(rows []model.ChannelStatusMonitorLogRow) []channelMonitorRequestLog {
 	requestLogs := make([]channelMonitorRequestLog, 0, len(rows))
 	for _, row := range rows {
-		requestLogs = append(requestLogs, buildChannelMonitorRequestLog(row, "public"))
+		groupName := normalizeChannelGroup(row.Group)
+		if groupName == "" {
+			groupName = "default"
+		}
+		requestLogs = append(requestLogs, buildChannelMonitorRequestLog(row, groupName))
 	}
 	return requestLogs
 }
@@ -275,5 +305,156 @@ func applyPublicHomeStatusRequest(bucket *publicHomeStatusBucket, request *chann
 	}
 	if request.worstStatus != "" && request.worstStatus != "success" {
 		bucket.protectedEvents++
+	}
+}
+
+func newPublicHomeStatusBuckets(days int, start time.Time) ([]*publicHomeStatusBucket, map[string]*publicHomeStatusBucket) {
+	buckets := make([]*publicHomeStatusBucket, 0, days)
+	bucketByDate := make(map[string]*publicHomeStatusBucket, days)
+	for i := 0; i < days; i++ {
+		date := start.AddDate(0, 0, i).Format("2006-01-02")
+		bucket := &publicHomeStatusBucket{date: date}
+		buckets = append(buckets, bucket)
+		bucketByDate[date] = bucket
+	}
+	return buckets, bucketByDate
+}
+
+func buildPublicHomeStatusGroups(days int, start time.Time, requests []*channelMonitorRequestAgg) []PublicHomeStatusGroup {
+	groupBuckets := make(map[string]map[string]*publicHomeStatusBucket)
+	groupOverall := make(map[string]*publicHomeStatusBucket)
+	for _, item := range publicHomeStatusGroups() {
+		_, bucketByDate := newPublicHomeStatusBuckets(days, start)
+		groupBuckets[item.key] = bucketByDate
+		groupOverall[item.key] = &publicHomeStatusBucket{}
+	}
+
+	for _, request := range requests {
+		groupKey := publicHomeStatusGroupKeyForRequest(request)
+		date := time.Unix(request.lastRequestAt, 0).Format("2006-01-02")
+		if bucket := groupBuckets[groupKey][date]; bucket != nil {
+			applyPublicHomeStatusRequest(bucket, request)
+		}
+		applyPublicHomeStatusRequest(groupOverall[groupKey], request)
+	}
+
+	result := make([]PublicHomeStatusGroup, 0, len(publicHomeStatusGroups()))
+	for _, item := range publicHomeStatusGroups() {
+		daily := make([]PublicHomeStatusDaily, 0, days)
+		buckets, _ := newPublicHomeStatusBuckets(days, start)
+		for _, bucket := range buckets {
+			if existing := groupBuckets[item.key][bucket.date]; existing != nil {
+				bucket = existing
+			}
+			daily = append(daily, PublicHomeStatusDaily{
+				Date:            bucket.date,
+				Requests:        bucket.requests,
+				SuccessRate:     successRate(bucket.successes, bucket.requests),
+				AvgLatencyMs:    avgInt64(bucket.latencySum, bucket.latencyCount),
+				ProtectedEvents: bucket.protectedEvents,
+			})
+		}
+		overall := groupOverall[item.key]
+		result = append(result, PublicHomeStatusGroup{
+			Key:  item.key,
+			Name: item.name,
+			Summary: PublicHomeStatusSummary{
+				Days:            days,
+				SuccessRate:     successRate(overall.successes, overall.requests),
+				AvgLatencyMs:    avgInt64(overall.latencySum, overall.latencyCount),
+				Requests:        overall.requests,
+				ProtectedEvents: overall.protectedEvents,
+			},
+			Daily: daily,
+		})
+	}
+	return result
+}
+
+type publicHomeStatusGroupItem struct {
+	key  string
+	name string
+}
+
+func publicHomeStatusGroups() []publicHomeStatusGroupItem {
+	return []publicHomeStatusGroupItem{
+		{key: "codex", name: "Codex 专用"},
+		{key: "claude", name: "Claude Code"},
+		{key: "speed", name: "高速组"},
+		{key: "value", name: "低价组"},
+	}
+}
+
+func publicHomeStatusGroupKeyForRequest(request *channelMonitorRequestAgg) string {
+	if request == nil {
+		return "speed"
+	}
+	return publicHomeStatusGroupKeyFromName(request.group)
+}
+
+func publicHomeStatusGroupKeysForChannel(channel *model.Channel) []string {
+	groups := channel.GetGroups()
+	if len(groups) == 0 {
+		return []string{"speed"}
+	}
+	seen := make(map[string]bool)
+	keys := make([]string, 0, len(groups))
+	for _, group := range groups {
+		key := publicHomeStatusGroupKeyFromName(group)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func publicHomeStatusGroupKeyFromName(group string) string {
+	normalized := strings.ToLower(strings.TrimSpace(group))
+	switch {
+	case strings.Contains(normalized, "codex"):
+		return "codex"
+	case strings.Contains(normalized, "claude"), normalized == "cc",
+		strings.HasPrefix(normalized, "cc-"), strings.HasPrefix(normalized, "cc_"):
+		return "claude"
+	case strings.Contains(normalized, "low"), strings.Contains(normalized, "cheap"),
+		strings.Contains(normalized, "value"), strings.Contains(normalized, "discount"),
+		strings.Contains(normalized, "低价"), strings.Contains(normalized, "经济"):
+		return "value"
+	default:
+		return "speed"
+	}
+}
+
+func applyPublicHomeStatusGroupChannelSummaries(result *PublicHomeStatusResponse, channelGroups map[string]map[int]bool, groupStates map[string]*PublicHomeStatusGroupMeta) {
+	if result == nil {
+		return
+	}
+	for index := range result.Groups {
+		group := &result.Groups[index]
+		channels := channelGroups[group.Key]
+		states := groupStates[group.Key]
+		if states == nil {
+			states = &PublicHomeStatusGroupMeta{}
+		}
+		states.Channels = len(channels)
+		group.States = *states
+		group.Summary.EnabledChannels = len(channels)
+		group.Summary.HealthyChannels = states.Healthy
+	}
+}
+
+func applyPublicHomeStatusChannelState(states *PublicHomeStatusGroupMeta, healthState string) {
+	if states == nil {
+		return
+	}
+	switch healthState {
+	case "healthy":
+		states.Healthy++
+	case "warning":
+		states.Cooling++
+	default:
+		states.Standby++
 	}
 }

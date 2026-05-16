@@ -97,9 +97,15 @@ func GetPublicHomeStatusLogs(startTs int64, channelIds []int) ([]ChannelStatusMo
 	rows := make([]ChannelStatusMonitorLogRow, 0)
 	ctx, cancel := context.WithTimeout(context.Background(), channelStatusMonitorQueryTimeout)
 	defer cancel()
+	groupSelectCol := logGroupCol
+	if strings.Contains(groupSelectCol, "`") {
+		groupSelectCol = groupSelectCol + " as `group`"
+	} else {
+		groupSelectCol = groupSelectCol + " as \"group\""
+	}
 	err := LOG_DB.Model(&Log{}).
 		WithContext(ctx).
-		Select("id, created_at, type, channel_id, request_id, use_time, other, content").
+		Select("id, created_at, type, "+groupSelectCol+", channel_id, request_id, use_time, other, content").
 		Where("created_at >= ? AND channel_id IN ? AND type IN ?", startTs, channelIds, []int{LogTypeConsume, LogTypeError}).
 		Order("id asc").
 		Find(&rows).Error

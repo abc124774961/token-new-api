@@ -1,0 +1,68 @@
+Use case: ui-mockup
+Asset type: complete high-fidelity desktop website homepage long-page design mockup
+
+Primary request:
+Create a complete full-page visual UI design for CodeToken AI, a Codex / Claude Code API gateway and token relay service. This must be a full landing page concept from header to bottom CTA, not a cropped first-screen mockup.
+
+Audience:
+Developers, AI coding tool users, AI teams, automation-heavy users, and API resellers who need stable long-running coding sessions, multi-channel failover, fast response, and lower model access cost.
+
+Overall design direction:
+Premium enterprise SaaS with stronger visual design than a plain dashboard. Light, calm, business-professional, technical, credible, actively operated. Use fewer words and more visual proof. The page should feel like separate vertical scroll zones with subtle scroll-driven effects: sticky glass header, scroll progress rail, layered telemetry background, parallax routing lines, pinned product panel, staggered metric cards, and soft section transitions. Since this is a static mockup, show these effects visually through layout, depth, layering, and section choreography.
+
+Canvas and framing:
+Tall desktop long-page screenshot, wide 1600px-style layout, show the whole homepage top-to-bottom including header, hero, reliability section, scenario section, routing/cost section, integration section, and final CTA. No cropped bottom. No off-canvas content. Keep the whole page visible in one long image.
+
+Required page structure:
+1. Header: glassy white header with "CodeToken AI", nav items "首页", "控制台", "模型广场", "文档", "关于", and a compact status/action on the right.
+2. Hero: bold left headline, compact proof metrics, clean CTA; right side polished gateway visual with Codex / Claude Code request entering the gateway and routing to healthy/degraded/standby channels.
+3. Real Operations Curve: the strongest data section. Include segmented group switching tabs because each group has different channel access status:
+   - "全部"
+   - "Codex 专用"
+   - "Claude Code"
+   - "高速组"
+   - "低价组"
+   The chart area must show that switching groups changes success rate, latency, request volume, and protection events. Include a large success-rate line, latency trend, volume bars, and event markers.
+4. Scenario zones: visual blocks for long coding sessions, upstream rate-limit transfer, team cost control, and IDE/script automation. Use icons, mini diagrams, terminal strips, route traces, and telemetry, not paragraphs.
+5. Routing and cost: show one Base URL and one key on the client side, then smart routing by model/group/health/cooldown/cost on the gateway side.
+6. Integration and conversion: concise SDK/Codex/Claude Code compatibility strip and bottom CTA.
+
+Core visible text, use only where it helps, keep typography large and legible:
+"CodeToken AI"
+"Codex / Claude Code 稳定高速中转站"
+"多渠道无感切换，低价接入主流编程模型"
+"统一 Base URL，自动健康路由"
+"获取密钥"
+"查看文档"
+"近 30 天成功率"
+"平均响应延迟"
+"请求量"
+"保护事件"
+"真实运行曲线"
+"全部"
+"Codex 专用"
+"Claude Code"
+"高速组"
+"低价组"
+"运行状态"
+"健康"
+"冷却中"
+"备用"
+"Base URL"
+"https://api.codetoken.top/v1"
+"Codex"
+"Claude Code"
+"OpenAI SDK"
+
+Visual requirements:
+- Reduce text density. Do not create long paragraphs. Let charts, routing diagrams, metric bands, and scenario visuals carry the message.
+- Make section boundaries feel intentional: sticky panels, overlapping chart cards, scroll-progress side rail, subtle background traces, clean horizontal bands, and large visual anchors.
+- Make the Real Operations Curve section very clear and commercial: tabs for groups, chart changes by group, headline metrics, last-updated feel, semantic colors for healthy/cooldown/warning.
+- Add relevant scenario background richness: abstract terminal panes, code-agent activity strips, API request trails, model routing matrix, channel pool map, cost-ratio chips, but keep it clean.
+- Use confident spacing and strong hierarchy. This should look like a serious public website that many professional users trust.
+
+Color palette:
+White and cool gray base, teal/cyan identity accents, blue data accents, green healthy status, amber for cooldown/protection, red only for failure markers. Do not use purple gradients, dark-only hero, beige/brown themes, decorative blobs, bokeh, or random abstract art.
+
+Avoid:
+No cartoon illustration. No stock photo. No decorative blobs or orbs. No generic card soup. No tiny admin tables. No weak narrow centered layout. No huge empty whitespace. No dark hero block. No purple/blue gradient hero. No fake unreadable microtext. No messy overlapping UI. No heavy text explanations. No bottom cropping.
