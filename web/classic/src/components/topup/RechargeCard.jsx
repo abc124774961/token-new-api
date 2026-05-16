@@ -26,9 +26,6 @@ import {
   Banner,
   Skeleton,
   Form,
-  Space,
-  Row,
-  Col,
   Spin,
   Tooltip,
   Tag,
@@ -41,6 +38,9 @@ import {
   BarChart2,
   TrendingUp,
   Receipt,
+  Pencil,
+  CheckCircle2,
+  Sparkles,
 } from 'lucide-react';
 import { IconGift } from '@douyinfe/semi-icons';
 import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
@@ -145,6 +145,17 @@ const RechargeCard = ({
       enableWaffoTopUp ||
       enableWaffoPancakeTopUp) &&
     presetAmounts.length > 0;
+  const selectedPresetValue = presetAmounts.some(
+    (preset) => preset.value === selectedPreset,
+  )
+    ? selectedPreset
+    : null;
+  const isCustomAmount = !selectedPresetValue;
+  const amountOptionsAvailable =
+    enableOnlineTopUp ||
+    enableStripeTopUp ||
+    enableWaffoTopUp ||
+    enableWaffoPancakeTopUp;
 
   return (
     <Card className='ct-topup-panel ct-topup-recharge-panel'>
@@ -206,146 +217,18 @@ const RechargeCard = ({
             initValues={{ topUpCount: topUpCount }}
           >
             <div className='ct-topup-form-stack'>
-              {(enableOnlineTopUp ||
-                enableStripeTopUp ||
-                enableWaffoTopUp ||
-                enableWaffoPancakeTopUp) && (
-                <Row gutter={[12, 12]}>
-                  <Col xs={24} sm={24} md={24} lg={10} xl={10}>
-                    <Form.InputNumber
-                      field='topUpCount'
-                      label={t('充值数量')}
-                      disabled={
-                        !enableOnlineTopUp &&
-                        !enableStripeTopUp &&
-                        !enableWaffoTopUp &&
-                        !enableWaffoPancakeTopUp
-                      }
-                      placeholder={
-                        t('充值数量，最低 ') + renderQuotaWithAmount(minTopUp)
-                      }
-                      value={topUpCount}
-                      min={minTopUp}
-                      max={999999999}
-                      step={1}
-                      precision={0}
-                      onChange={async (value) => {
-                        if (value && value >= 1) {
-                          setTopUpCount(value);
-                          setSelectedPreset(null);
-                          await getAmount(value);
-                        }
-                      }}
-                      onBlur={(e) => {
-                        const value = parseInt(e.target.value);
-                        if (!value || value < minTopUp) {
-                          setTopUpCount(minTopUp);
-                          getAmount(minTopUp);
-                        }
-                      }}
-                      formatter={(value) => (value ? `${value}` : '')}
-                      parser={(value) =>
-                        value ? parseInt(value.replace(/[^\d]/g, '')) : 0
-                      }
-                      extraText={
-                        <Skeleton
-                          loading={showAmountSkeleton}
-                          active
-                          placeholder={
-                            <Skeleton.Title
-                              style={{
-                                width: 120,
-                                height: 20,
-                                borderRadius: 6,
-                              }}
-                            />
-                          }
-                        >
-                          <Text type='secondary' className='ct-topup-pay-note'>
-                            {t('实付金额：')}
-                            <span>{renderAmount()}</span>
-                          </Text>
-                        </Skeleton>
-                      }
-                      style={{ width: '100%' }}
-                    />
-                  </Col>
-                  {regularPayMethods.length > 0 && (
-                    <Col xs={24} sm={24} md={24} lg={14} xl={14}>
-                      <Form.Slot label={t('选择支付方式')}>
-                        <Space wrap className='ct-topup-payment-methods'>
-                          {regularPayMethods.map((payMethod) => {
-                            const minTopupVal =
-                              Number(payMethod.min_topup) || 0;
-                            const isStripe = payMethod.type === 'stripe';
-                            const isWaffo =
-                              typeof payMethod.type === 'string' &&
-                              payMethod.type.startsWith('waffo:');
-                            const isWaffoPancake =
-                              payMethod.type === 'waffo_pancake';
-                            const disabled =
-                              (!enableOnlineTopUp &&
-                                !isStripe &&
-                                !isWaffo &&
-                                !isWaffoPancake) ||
-                              (!enableStripeTopUp && isStripe) ||
-                              (!enableWaffoTopUp && isWaffo) ||
-                              (!enableWaffoPancakeTopUp && isWaffoPancake) ||
-                              minTopupVal > Number(topUpCount || 0);
-
-                            const buttonEl = (
-                              <Button
-                                key={payMethod.type}
-                                theme='outline'
-                                type='tertiary'
-                                onClick={() => preTopUp(payMethod.type)}
-                                disabled={disabled}
-                                loading={
-                                  paymentLoading && payWay === payMethod.type
-                                }
-                                icon={renderPayMethodIcon(payMethod)}
-                                className='ct-topup-payment-button'
-                              >
-                                {payMethod.name}
-                              </Button>
-                            );
-
-                            return disabled &&
-                              minTopupVal > Number(topUpCount || 0) ? (
-                              <Tooltip
-                                content={
-                                  t('此支付方式最低充值金额为') +
-                                  ' ' +
-                                  minTopupVal
-                                }
-                                key={payMethod.type}
-                              >
-                                {buttonEl}
-                              </Tooltip>
-                            ) : (
-                              <React.Fragment key={payMethod.type}>
-                                {buttonEl}
-                              </React.Fragment>
-                            );
-                          })}
-                        </Space>
-                      </Form.Slot>
-                    </Col>
-                  )}
-                </Row>
-              )}
-
-              {showPresetAmounts && (
+              {amountOptionsAvailable && (
                 <Form.Slot
                   label={
                     <div className='ct-topup-section-label'>
+                      <span className='ct-topup-step-badge'>1</span>
                       <span>{t('选择充值额度')}</span>
                       {(() => {
                         const { symbol, rate, type } = getCurrencyConfig();
                         if (type === 'USD') return null;
 
                         return (
-                          <span>
+                          <span className='ct-topup-section-hint'>
                             (1 $ = {rate.toFixed(2)} {symbol})
                           </span>
                         );
@@ -354,87 +237,256 @@ const RechargeCard = ({
                   }
                 >
                   <div className='ct-topup-preset-grid'>
-                    {presetAmounts.map((preset, index) => {
-                      const discount =
-                        preset.discount ||
-                        topupInfo?.discount?.[preset.value] ||
-                        1.0;
-                      const originalPrice = preset.value * priceRatio;
-                      const discountedPrice = originalPrice * discount;
-                      const hasDiscount = discount < 1.0;
-                      const actualPay = discountedPrice;
-                      const save = originalPrice - discountedPrice;
+                    {showPresetAmounts &&
+                      presetAmounts.map((preset, index) => {
+                        const discount =
+                          preset.discount ||
+                          topupInfo?.discount?.[preset.value] ||
+                          1.0;
+                        const originalPrice = preset.value * priceRatio;
+                        const discountedPrice = originalPrice * discount;
+                        const hasDiscount = discount < 1.0;
+                        const actualPay = discountedPrice;
+                        const save = originalPrice - discountedPrice;
 
-                      const { symbol, rate, type } = getCurrencyConfig();
-                      const statusStr = localStorage.getItem('status');
-                      let usdRate = 7;
-                      try {
-                        if (statusStr) {
-                          const s = JSON.parse(statusStr);
-                          usdRate = s?.usd_exchange_rate || 7;
+                        const { symbol, rate, type } = getCurrencyConfig();
+                        const statusStr = localStorage.getItem('status');
+                        let usdRate = 7;
+                        try {
+                          if (statusStr) {
+                            const s = JSON.parse(statusStr);
+                            usdRate = s?.usd_exchange_rate || 7;
+                          }
+                        } catch (e) {}
+
+                        let displayValue = preset.value;
+                        let displayActualPay = actualPay;
+                        let displaySave = save;
+
+                        if (type === 'USD') {
+                          displayActualPay = actualPay / usdRate;
+                          displaySave = save / usdRate;
+                        } else if (type === 'CNY') {
+                          displayValue = preset.value * usdRate;
+                        } else if (type === 'CUSTOM') {
+                          displayValue = preset.value * rate;
+                          displayActualPay = (actualPay / usdRate) * rate;
+                          displaySave = (save / usdRate) * rate;
                         }
-                      } catch (e) {}
 
-                      let displayValue = preset.value;
-                      let displayActualPay = actualPay;
-                      let displaySave = save;
-
-                      if (type === 'USD') {
-                        displayActualPay = actualPay / usdRate;
-                        displaySave = save / usdRate;
-                      } else if (type === 'CNY') {
-                        displayValue = preset.value * usdRate;
-                      } else if (type === 'CUSTOM') {
-                        displayValue = preset.value * rate;
-                        displayActualPay = (actualPay / usdRate) * rate;
-                        displaySave = (save / usdRate) * rate;
-                      }
-
-                      return (
-                        <button
-                          key={index}
-                          type='button'
-                          className={`ct-topup-preset ${
-                            selectedPreset === preset.value
-                              ? 'ct-topup-preset-active'
-                              : ''
-                          }`}
-                          onClick={() => {
-                            selectPresetAmount(preset);
-                            onlineFormApiRef.current?.setValue(
-                              'topUpCount',
-                              preset.value,
-                            );
-                          }}
-                        >
-                          <span className='ct-topup-preset-main'>
-                            <Coins size={16} />
-                            <strong>
-                              {formatLargeNumber(displayValue)} {symbol}
-                            </strong>
-                            {hasDiscount && (
-                              <Tag color='green' size='small' shape='circle'>
-                                {t('折').includes('off')
-                                  ? ((1 - parseFloat(discount)) * 100).toFixed(
-                                      1,
-                                    )
-                                  : (discount * 10).toFixed(1)}
-                                {t('折')}
-                              </Tag>
+                        return (
+                          <button
+                            key={index}
+                            type='button'
+                            className={`ct-topup-preset ${
+                              selectedPresetValue === preset.value
+                                ? 'ct-topup-preset-active'
+                                : ''
+                            }`}
+                            onClick={() => {
+                              selectPresetAmount(preset);
+                              onlineFormApiRef.current?.setValue(
+                                'topUpCount',
+                                preset.value,
+                              );
+                            }}
+                          >
+                            <span className='ct-topup-preset-main'>
+                              <Coins size={16} />
+                              <strong>
+                                {formatLargeNumber(displayValue)} {symbol}
+                              </strong>
+                              {hasDiscount && (
+                                <Tag color='green' size='small' shape='circle'>
+                                  {t('折').includes('off')
+                                    ? (
+                                        (1 - parseFloat(discount)) *
+                                        100
+                                      ).toFixed(1)
+                                    : (discount * 10).toFixed(1)}
+                                  {t('折')}
+                                </Tag>
+                              )}
+                            </span>
+                            <span className='ct-topup-preset-sub'>
+                              {t('实付')} {symbol}
+                              {displayActualPay.toFixed(2)}
+                              {hasDiscount
+                                ? ` · ${t('节省')} ${symbol}${displaySave.toFixed(2)}`
+                                : ` · ${t('节省')} ${symbol}0.00`}
+                            </span>
+                            {selectedPresetValue === preset.value && (
+                              <CheckCircle2
+                                size={17}
+                                className='ct-topup-preset-check'
+                              />
                             )}
-                          </span>
-                          <span className='ct-topup-preset-sub'>
-                            {t('实付')} {symbol}
-                            {displayActualPay.toFixed(2)}
-                            {hasDiscount
-                              ? ` · ${t('节省')} ${symbol}${displaySave.toFixed(2)}`
-                              : ` · ${t('节省')} ${symbol}0.00`}
-                          </span>
-                        </button>
-                      );
-                    })}
+                          </button>
+                        );
+                      })}
+
+                    <div
+                      className={`ct-topup-preset ct-topup-custom-preset ${
+                        isCustomAmount ? 'ct-topup-preset-active' : ''
+                      }`}
+                      onClick={() => setSelectedPreset(null)}
+                      role='button'
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedPreset(null);
+                        }
+                      }}
+                    >
+                      <span className='ct-topup-preset-main'>
+                        <Pencil size={16} />
+                        <strong>{t('自定义数量')}</strong>
+                        <Tag color='cyan' size='small' shape='circle'>
+                          {t('手动输入')}
+                        </Tag>
+                      </span>
+                      <span className='ct-topup-preset-sub'>
+                        {t('最低')} {renderQuotaWithAmount(minTopUp)}
+                      </span>
+                      <div
+                        className='ct-topup-custom-input'
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <Form.InputNumber
+                          field='topUpCount'
+                          noLabel
+                          disabled={!amountOptionsAvailable}
+                          placeholder={
+                            t('充值数量，最低 ') +
+                            renderQuotaWithAmount(minTopUp)
+                          }
+                          value={topUpCount}
+                          min={minTopUp}
+                          max={999999999}
+                          step={1}
+                          precision={0}
+                          onFocus={() => setSelectedPreset(null)}
+                          onChange={async (value) => {
+                            if (value && value >= 1) {
+                              setTopUpCount(value);
+                              setSelectedPreset(null);
+                              await getAmount(value);
+                            }
+                          }}
+                          onBlur={(e) => {
+                            const value = parseInt(e.target.value);
+                            if (!value || value < minTopUp) {
+                              setTopUpCount(minTopUp);
+                              getAmount(minTopUp);
+                            }
+                          }}
+                          formatter={(value) => (value ? `${value}` : '')}
+                          parser={(value) =>
+                            value ? parseInt(value.replace(/[^\d]/g, '')) : 0
+                          }
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      {isCustomAmount && (
+                        <CheckCircle2
+                          size={17}
+                          className='ct-topup-preset-check'
+                        />
+                      )}
+                    </div>
                   </div>
                 </Form.Slot>
+              )}
+
+              {(enableOnlineTopUp ||
+                enableStripeTopUp ||
+                enableWaffoTopUp ||
+                enableWaffoPancakeTopUp) && (
+                <div className='ct-topup-payment-stage'>
+                  <div className='ct-topup-payment-stage-head'>
+                    <div className='ct-topup-section-label'>
+                      <span className='ct-topup-step-badge'>2</span>
+                      <span>{t('选择支付方式')}</span>
+                    </div>
+                    <Skeleton
+                      loading={showAmountSkeleton}
+                      active
+                      placeholder={
+                        <Skeleton.Title
+                          style={{
+                            width: 120,
+                            height: 22,
+                            borderRadius: 999,
+                          }}
+                        />
+                      }
+                    >
+                      <div className='ct-topup-pay-summary'>
+                        <Sparkles size={14} />
+                        <span>{t('实付金额：')}</span>
+                        <strong>{renderAmount()}</strong>
+                      </div>
+                    </Skeleton>
+                  </div>
+
+                  {regularPayMethods.length > 0 && (
+                    <div className='ct-topup-payment-methods'>
+                      {regularPayMethods.map((payMethod) => {
+                        const minTopupVal = Number(payMethod.min_topup) || 0;
+                        const isStripe = payMethod.type === 'stripe';
+                        const isWaffo =
+                          typeof payMethod.type === 'string' &&
+                          payMethod.type.startsWith('waffo:');
+                        const isWaffoPancake =
+                          payMethod.type === 'waffo_pancake';
+                        const disabled =
+                          (!enableOnlineTopUp &&
+                            !isStripe &&
+                            !isWaffo &&
+                            !isWaffoPancake) ||
+                          (!enableStripeTopUp && isStripe) ||
+                          (!enableWaffoTopUp && isWaffo) ||
+                          (!enableWaffoPancakeTopUp && isWaffoPancake) ||
+                          minTopupVal > Number(topUpCount || 0);
+
+                        const buttonEl = (
+                          <Button
+                            key={payMethod.type}
+                            theme='outline'
+                            type='tertiary'
+                            onClick={() => preTopUp(payMethod.type)}
+                            disabled={disabled}
+                            loading={
+                              paymentLoading && payWay === payMethod.type
+                            }
+                            icon={renderPayMethodIcon(payMethod)}
+                            className='ct-topup-payment-button'
+                          >
+                            <span>{payMethod.name}</span>
+                            <em>{t('立即支付')}</em>
+                          </Button>
+                        );
+
+                        return disabled &&
+                          minTopupVal > Number(topUpCount || 0) ? (
+                          <Tooltip
+                            content={
+                              t('此支付方式最低充值金额为') + ' ' + minTopupVal
+                            }
+                            key={payMethod.type}
+                          >
+                            {buttonEl}
+                          </Tooltip>
+                        ) : (
+                          <React.Fragment key={payMethod.type}>
+                            {buttonEl}
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               )}
 
               {enableCreemTopUp && creemProducts.length > 0 && (

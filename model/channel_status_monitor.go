@@ -86,3 +86,22 @@ func GetChannelStatusMonitorRecentLogs(channelIds []int, limit int) ([]ChannelSt
 		Find(&rows).Error
 	return rows, err
 }
+
+func GetPublicHomeStatusLogs(startTs int64, channelIds []int) ([]ChannelStatusMonitorLogRow, error) {
+	if startTs <= 0 {
+		startTs = time.Now().Add(-30 * 24 * time.Hour).Unix()
+	}
+	if len(channelIds) == 0 {
+		return []ChannelStatusMonitorLogRow{}, nil
+	}
+	rows := make([]ChannelStatusMonitorLogRow, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), channelStatusMonitorQueryTimeout)
+	defer cancel()
+	err := LOG_DB.Model(&Log{}).
+		WithContext(ctx).
+		Select("id, created_at, type, channel_id, request_id, use_time, other, content").
+		Where("created_at >= ? AND channel_id IN ? AND type IN ?", startTs, channelIds, []int{LogTypeConsume, LogTypeError}).
+		Order("id asc").
+		Find(&rows).Error
+	return rows, err
+}

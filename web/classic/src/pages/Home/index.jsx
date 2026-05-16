@@ -17,70 +17,64 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
+import { Button, Input, ScrollItem, ScrollList, Typography } from '@douyinfe/semi-ui';
 import {
-  Button,
-  Typography,
-  Input,
-  ScrollList,
-  ScrollItem,
-} from '@douyinfe/semi-ui';
+  IconActivity,
+  IconArrowRight,
+  IconBolt,
+  IconCheckCircleStroked,
+  IconCloud,
+  IconCodeStroked,
+  IconCopy,
+  IconFile,
+  IconGithubLogo,
+  IconGlobeStroke,
+  IconKeyStroked,
+  IconLightningStroked,
+  IconLockStroked,
+  IconPlay,
+  IconRoute,
+  IconServerStroked,
+  IconShieldStroked,
+} from '@douyinfe/semi-icons';
 import {
   API,
-  showError,
   copy,
-  showSuccess,
-  getSystemName,
   getLogo,
+  getSystemName,
+  showError,
+  showSuccess,
 } from '../../helpers';
-import { useIsMobile } from '../../hooks/common/useIsMobile';
 import { API_ENDPOINTS } from '../../constants/common.constant';
 import { StatusContext } from '../../context/Status';
 import { useActualTheme } from '../../context/Theme';
+import { useIsMobile } from '../../hooks/common/useIsMobile';
+import NoticeModal from '../../components/layout/NoticeModal';
+import { Link } from 'react-router-dom';
 import { marked } from 'marked';
 import { useTranslation } from 'react-i18next';
 import {
-  IconGithubLogo,
-  IconPlay,
-  IconFile,
-  IconCopy,
-  IconShieldStroked,
-  IconRoute,
-  IconBolt,
-  IconActivity,
-  IconCloud,
-  IconLockStroked,
-  IconServerStroked,
-  IconCodeStroked,
-  IconGlobeStroke,
-  IconKeyStroked,
-  IconCheckCircleStroked,
-  IconLightningStroked,
-  IconArrowRight,
-} from '@douyinfe/semi-icons';
-import { Link } from 'react-router-dom';
-import NoticeModal from '../../components/layout/NoticeModal';
-import {
+  AzureAI,
+  Claude,
+  Cohere,
+  DeepSeek,
+  Gemini,
+  Grok,
+  Hunyuan,
+  Midjourney,
+  Minimax,
   Moonshot,
   OpenAI,
-  XAI,
-  Zhipu,
-  Volcengine,
-  Cohere,
-  Claude,
-  Gemini,
-  Suno,
-  Minimax,
-  Wenxin,
-  Spark,
   Qingyan,
-  DeepSeek,
   Qwen,
-  Midjourney,
-  Grok,
-  AzureAI,
-  Hunyuan,
+  Spark,
+  Suno,
+  Volcengine,
+  Wenxin,
+  XAI,
   Xinference,
+  Zhipu,
 } from '@lobehub/icons';
 
 const { Text } = Typography;
@@ -108,6 +102,45 @@ const providerIcons = [
   { name: 'xAI', icon: <XAI size={40} /> },
 ];
 
+const fallbackStatus = {
+  summary: {
+    days: 30,
+    success_rate: 0,
+    avg_latency_ms: 0,
+    requests: 0,
+    enabled_channels: 0,
+    healthy_channels: 0,
+    protected_events: 0,
+  },
+  daily: [],
+  updated_at: 0,
+  partial: true,
+};
+
+const formatNumber = (value) => {
+  const number = Number(value) || 0;
+  return new Intl.NumberFormat().format(number);
+};
+
+const formatRate = (value) => {
+  const number = Number(value) || 0;
+  if (number <= 0) return '--';
+  return `${number >= 99 ? number.toFixed(2) : number.toFixed(1)}%`;
+};
+
+const formatLatency = (value) => {
+  const number = Number(value) || 0;
+  if (number <= 0) return '--';
+  if (number >= 1000) return `${(number / 1000).toFixed(2)}s`;
+  return `${Math.round(number)}ms`;
+};
+
+const normalizeChartValue = (value, max, minSize = 12) => {
+  const number = Number(value) || 0;
+  if (max <= 0 || number <= 0) return minSize;
+  return Math.max(minSize, Math.round((number / max) * 100));
+};
+
 const Home = () => {
   const { t, i18n } = useTranslation();
   const [statusState] = useContext(StatusContext);
@@ -115,6 +148,7 @@ const Home = () => {
   const [homePageContentLoaded, setHomePageContentLoaded] = useState(false);
   const [homePageContent, setHomePageContent] = useState('');
   const [noticeVisible, setNoticeVisible] = useState(false);
+  const [homeStatus, setHomeStatus] = useState(fallbackStatus);
   const isMobile = useIsMobile();
   const isDemoSiteMode = statusState?.status?.demo_site_enabled || false;
   const docsLink = statusState?.status?.docs_link || '';
@@ -127,32 +161,51 @@ const Home = () => {
   const logo = statusState?.status?.logo || getLogo();
   const apiBaseUrl = `${serverAddress.replace(/\/$/, '')}/v1`;
 
-  const clientItems = [
-    'Codex CLI',
-    'Claude Code',
-    'OpenAI SDK',
-    'Cursor',
-    'Cherry Studio',
-    'Lobe Chat',
-    'OpenCode',
-    'ChatBox',
-  ];
+  const daily = homeStatus.daily || [];
+  const summary = homeStatus.summary || fallbackStatus.summary;
+  const maxRequests = Math.max(...daily.map((item) => Number(item.requests) || 0), 0);
+  const maxLatency = Math.max(...daily.map((item) => Number(item.avg_latency_ms) || 0), 0);
+  const hasRealData = Number(summary.requests) > 0;
+  const updatedAt = homeStatus.updated_at
+    ? new Date(homeStatus.updated_at * 1000).toLocaleString()
+    : t('等待真实请求数据');
 
   const heroStats = [
     {
-      value: '99.9%',
-      label: t('稳定性目标'),
-      note: t('多渠道池与健康调度共同保障'),
+      value: hasRealData ? formatRate(summary.success_rate) : t('初始化中'),
+      label: t('近 30 天成功率'),
+      note: t('按请求最终结果聚合'),
     },
     {
-      value: '40+',
-      label: t('模型与渠道生态'),
-      note: t('覆盖主流编程、对话与多模态模型'),
+      value: hasRealData ? formatLatency(summary.avg_latency_ms) : '--',
+      label: t('平均响应延迟'),
+      note: t('来自真实调用日志'),
     },
     {
-      value: '1 min',
-      label: t('分钟级接入'),
-      note: t('替换 Base URL 与 Key 即可迁移'),
+      value: formatNumber(summary.enabled_channels),
+      label: t('可用渠道池'),
+      note: t('自动避开冷却与异常线路'),
+    },
+  ];
+
+  const scenarioItems = [
+    {
+      icon: <IconCodeStroked />,
+      title: t('长时间编码会话'),
+      description: t('Codex 或 Claude Code 连续生成、改错和跑测试时，网关持续选择健康线路，减少中途断流。'),
+      meta: t('适合 CLI / IDE 自动化'),
+    },
+    {
+      icon: <IconRoute />,
+      title: t('上游限流自动转移'),
+      description: t('遇到 429、5xx、超时或流式异常时，自动记录保护事件并切换备用渠道，用户侧仍是同一个入口。'),
+      meta: t('多渠道无感切换'),
+    },
+    {
+      icon: <IconKeyStroked />,
+      title: t('团队共享与成本控制'),
+      description: t('通过令牌、分组倍率、配额和调用日志把个人、团队、脚本流量拆清楚，避免成本失控。'),
+      meta: t('低价分组优先'),
     },
   ];
 
@@ -163,84 +216,26 @@ const Home = () => {
       description: t('渠道限流、异常和冷却由网关侧感知，自动避开不健康线路。'),
     },
     {
-      icon: <IconRoute />,
-      title: t('无感切换'),
-      description: t(
-        '按模型、分组、优先级和可用状态路由，请求失败时快速切到备用渠道。',
-      ),
-    },
-    {
       icon: <IconBolt />,
       title: t('速度优先'),
-      description: t(
-        '就近选择低延迟渠道，流式输出保持顺滑，减少等待和重试时间。',
-      ),
+      description: t('就近选择低延迟渠道，流式输出保持顺滑，减少等待和重试时间。'),
     },
     {
       icon: <IconActivity />,
       title: t('低价透明'),
       description: t('多组倍率、缓存计费和明细日志可见，团队成本更容易控制。'),
     },
-  ];
-
-  const reliabilityStats = [
-    {
-      label: t('近 30 天成功率'),
-      value: '99.92%',
-      trend: t('稳定高位'),
-    },
-    {
-      label: t('P95 流式首包'),
-      value: '186ms',
-      trend: t('快速响应'),
-    },
-    {
-      label: t('自动切换事件'),
-      value: '128',
-      trend: t('用户无感处理'),
-    },
-  ];
-
-  const successBars = [94, 98, 96, 99, 97, 100, 98, 95, 99, 97, 100, 98];
-  const latencyPoints = [58, 46, 52, 35, 42, 30, 38, 32, 44, 34, 28, 36];
-
-  const featureItems = [
-    {
-      icon: <IconCodeStroked />,
-      title: t('Codex / Claude Code 专属工作流'),
-      description: t(
-        '兼容 Responses、Chat Completions 与 Claude Messages，适配 CLI、IDE 和自动化脚本。',
-      ),
-    },
-    {
-      icon: <IconCloud />,
-      title: t('多供应商聚合'),
-      description: t(
-        '统一接入 OpenAI、Claude、Gemini、DeepSeek、Qwen 等模型，按业务选择最合适的线路。',
-      ),
-    },
     {
       icon: <IconLockStroked />,
       title: t('企业级令牌治理'),
-      description: t(
-        '按用户、分组、配额、过期时间和调用权限管理密钥，降低泄露与滥用风险。',
-      ),
-    },
-    {
-      icon: <IconServerStroked />,
-      title: t('可观测运营面板'),
-      description: t(
-        '渠道状态、冷却倒计时、调用日志、倍率和订阅信息集中展示，问题定位更快。',
-      ),
+      description: t('按用户、分组、配额、过期时间和调用权限管理密钥，降低泄露与滥用风险。'),
     },
   ];
 
   const routeSteps = [
     {
       title: t('开发工具发起请求'),
-      description: t(
-        'Codex、Claude Code 或 OpenAI SDK 继续使用熟悉的接口格式。',
-      ),
+      description: t('Codex、Claude Code 或 OpenAI SDK 继续使用熟悉的接口格式。'),
     },
     {
       title: t('智能路由判断'),
@@ -265,41 +260,52 @@ const Home = () => {
     t('模型价格'),
   ];
 
+  const clientItems = [
+    'Codex CLI',
+    'Claude Code',
+    'OpenAI SDK',
+    'Cursor',
+    'Cherry Studio',
+    'Lobe Chat',
+    'OpenCode',
+    'ChatBox',
+  ];
+
   const integrationItems = [
+    { label: 'Base URL', value: apiBaseUrl },
+    { label: 'Auth', value: 'Bearer sk-...' },
+    { label: 'Wire API', value: 'responses / chat completions' },
+  ];
+
+  const reliabilityStats = [
     {
-      label: 'Base URL',
-      value: apiBaseUrl,
+      label: t('总请求量'),
+      value: formatNumber(summary.requests),
+      trend: t('近 30 天真实聚合'),
     },
     {
-      label: 'Auth',
-      value: 'Bearer sk-...',
+      label: t('保护事件'),
+      value: formatNumber(summary.protected_events),
+      trend: t('限流、超时与异常保护'),
     },
     {
-      label: 'Wire API',
-      value: 'responses / chat completions',
+      label: t('健康渠道'),
+      value: `${formatNumber(summary.healthy_channels)} / ${formatNumber(summary.enabled_channels)}`,
+      trend: t('公开脱敏汇总'),
     },
   ];
 
-  const healthRows = [
-    {
-      provider: 'codex-main',
-      status: t('运行中'),
-      latency: '186 ms',
-      load: '72%',
-    },
-    {
-      provider: 'claude-sonnet',
-      status: t('备用就绪'),
-      latency: '214 ms',
-      load: '48%',
-    },
-    {
-      provider: 'deepseek-fast',
-      status: t('低价线路'),
-      latency: '132 ms',
-      load: '64%',
-    },
-  ];
+  const latencyPoints = useMemo(() => {
+    const points = daily.map((item, index) => {
+      const count = Math.max(daily.length - 1, 1);
+      const x = (index / count) * 220;
+      const latency = Number(item.avg_latency_ms) || 0;
+      const y = 84 - (normalizeChartValue(latency, maxLatency, 8) / 100) * 66;
+      return `${x.toFixed(1)},${Math.max(14, Math.min(84, y)).toFixed(1)}`;
+    });
+    if (points.length > 1) return points.join(' ');
+    return '0,72 55,58 110,66 165,44 220,52';
+  }, [daily, maxLatency]);
 
   const displayHomePageContent = async () => {
     setHomePageContent(localStorage.getItem('home_page_content') || '');
@@ -314,7 +320,6 @@ const Home = () => {
         setHomePageContent(content);
         localStorage.setItem('home_page_content', content);
 
-        // 如果内容是 URL，则发送主题模式
         if (data.startsWith('https://')) {
           const iframe = document.querySelector('iframe');
           if (iframe) {
@@ -333,6 +338,21 @@ const Home = () => {
       setHomePageContent('');
     }
     setHomePageContentLoaded(true);
+  };
+
+  const loadHomeStatus = async () => {
+    try {
+      const res = await API.get('/api/public/home/status', {
+        params: { days: 30 },
+        skipErrorHandler: true,
+      });
+      const { success, data } = res.data;
+      if (success && data) {
+        setHomeStatus(data);
+      }
+    } catch (error) {
+      console.error('加载首页运行状态失败:', error);
+    }
   };
 
   const handleCopyBaseURL = async () => {
@@ -364,6 +384,7 @@ const Home = () => {
 
   useEffect(() => {
     displayHomePageContent().then();
+    loadHomeStatus().then();
   }, []);
 
   useEffect(() => {
@@ -390,12 +411,10 @@ const Home = () => {
                   <span>{systemName}</span>
                   <b>{t('Codex 与 Claude Code 高稳定中转站')}</b>
                 </div>
-                <h1
-                  className={isChinese ? 'ct-hero-title zh' : 'ct-hero-title'}
-                >
+                <h1 className={isChinese ? 'ct-hero-title zh' : 'ct-hero-title'}>
                   {isChinese ? (
                     <>
-                      <em>Codex / Claude Code</em>
+                      <em>{t('Codex / Claude Code')}</em>
                       <em>{t('稳定高速中转站')}</em>
                     </>
                   ) : (
@@ -404,9 +423,7 @@ const Home = () => {
                   <span>{t('多渠道无感切换，低价接入主流编程模型')}</span>
                 </h1>
                 <p className='ct-hero-desc'>
-                  {t(
-                    '为高频 AI 编程场景打造的统一 API 入口。自动调度多家上游渠道，降低单渠道限流、波动和成本压力，让 Codex、Claude Code、OpenAI SDK 与常见客户端稳定跑起来。',
-                  )}
+                  {t('为高频 AI 编程场景打造的统一 API 入口。自动调度多家上游渠道，降低单渠道限流、波动和成本压力，让 Codex、Claude Code、OpenAI SDK 与常见客户端稳定跑起来。')}
                 </p>
                 <div className='ct-hero-actions'>
                   <Link to='/console'>
@@ -426,10 +443,7 @@ const Home = () => {
                       className='ct-secondary-btn'
                       icon={<IconGithubLogo />}
                       onClick={() =>
-                        window.open(
-                          'https://github.com/QuantumNous/new-api',
-                          '_blank',
-                        )
+                        window.open('https://github.com/QuantumNous/new-api', '_blank')
                       }
                     >
                       {statusState.status.version}
@@ -461,69 +475,67 @@ const Home = () => {
               <div className='ct-ops-panel'>
                 <div className='ct-ops-topbar'>
                   <div>
-                    <span>{t('实时调度中控')}</span>
-                    <strong>{t('Operational Gateway')}</strong>
+                    <span>{t('真实运行状态')}</span>
+                    <strong>{t('公开脱敏聚合')}</strong>
                   </div>
-                  <b>{t('运行稳定')}</b>
+                  <b>{homeStatus.partial ? t('部分数据') : t('实时更新')}</b>
                 </div>
-                <div className='ct-route-map' aria-hidden='true'>
-                  <div className='ct-route-node active'>
-                    <IconCodeStroked />
-                    <span>Codex</span>
+                <div className='ct-scenario-board' aria-hidden='true'>
+                  <div className='ct-workspace-window'>
+                    <div className='ct-window-dots'>
+                      <i />
+                      <i />
+                      <i />
+                    </div>
+                    <code>codex --model gpt-5.5 --base-url {apiBaseUrl}</code>
+                    <span>{t('长任务编码会话保持在线')}</span>
                   </div>
-                  <div className='ct-route-line'>
-                    <i />
-                  </div>
-                  <div className='ct-route-node router'>
-                    <IconRoute />
-                    <span>{t('智能路由')}</span>
-                  </div>
-                  <div className='ct-route-line'>
-                    <i />
-                  </div>
-                  <div className='ct-route-node active'>
-                    <IconLightningStroked />
-                    <span>{t('低延迟渠道')}</span>
+                  <div className='ct-route-map'>
+                    <div className='ct-route-node active'>
+                      <IconCodeStroked />
+                      <span>Codex</span>
+                    </div>
+                    <div className='ct-route-line'>
+                      <i />
+                    </div>
+                    <div className='ct-route-node router'>
+                      <IconRoute />
+                      <span>{t('智能路由')}</span>
+                    </div>
+                    <div className='ct-route-line'>
+                      <i />
+                    </div>
+                    <div className='ct-route-node active'>
+                      <IconLightningStroked />
+                      <span>{t('健康渠道')}</span>
+                    </div>
                   </div>
                 </div>
                 <div className='ct-ops-metrics'>
                   <div>
-                    <span>P95</span>
-                    <strong>186ms</strong>
-                    <small>{t('当前示例延迟')}</small>
+                    <span>{t('成功率')}</span>
+                    <strong>{formatRate(summary.success_rate)}</strong>
+                    <small>{t('按请求最终结果聚合')}</small>
                   </div>
                   <div>
-                    <span>{t('切换')}</span>
-                    <strong>&lt; 1s</strong>
-                    <small>{t('故障快速转移')}</small>
+                    <span>{t('平均延迟')}</span>
+                    <strong>{formatLatency(summary.avg_latency_ms)}</strong>
+                    <small>{t('真实调用日志')}</small>
                   </div>
                   <div>
-                    <span>{t('成本')}</span>
-                    <strong>-35%</strong>
-                    <small>{t('按低价分组优化')}</small>
+                    <span>{t('保护事件')}</span>
+                    <strong>{formatNumber(summary.protected_events)}</strong>
+                    <small>{t('限流与异常已处理')}</small>
                   </div>
-                </div>
-                <div className='ct-health-list'>
-                  {healthRows.map((row) => (
-                    <div className='ct-health-row' key={row.provider}>
-                      <div>
-                        <i />
-                        <strong>{row.provider}</strong>
-                      </div>
-                      <span>{row.status}</span>
-                      <code>{row.latency}</code>
-                      <small>{row.load}</small>
-                    </div>
-                  ))}
                 </div>
                 <div className='ct-connect-panel'>
                   <div className='ct-panel-header'>
-                    <span>{t('接入配置')}</span>
+                    <span>{t('快速接入')}</span>
                     <b>{t('OpenAI / Claude Compatible')}</b>
                   </div>
                   <div className='ct-base-input'>
                     <Input
-                      readonly
+                      readOnly
                       value={apiBaseUrl}
                       size={isMobile ? 'default' : 'large'}
                       suffix={
@@ -534,7 +546,7 @@ const Home = () => {
                           >
                             <ScrollItem
                               mode='wheel'
-                              cycled={true}
+                              cycled
                               list={endpointItems}
                               selectedIndex={endpointIndex}
                               onSelect={({ index }) => setEndpointIndex(index)}
@@ -558,21 +570,24 @@ const Home = () => {
                       </div>
                     ))}
                   </div>
-                  <div className='ct-code-preview'>
-                    <div>model_provider = "custom"</div>
-                    <div>wire_api = "responses"</div>
-                    <div>{`base_url = "${apiBaseUrl}"`}</div>
-                  </div>
                 </div>
               </div>
             </div>
           </section>
 
-          <section className='ct-section ct-trust-section'>
-            <div className='ct-trust-grid'>
-              {trustItems.map((item) => (
-                <div className='ct-trust-card' key={item.title}>
+          <section className='ct-section ct-scenarios-section'>
+            <div className='ct-section-head centered'>
+              <Text className='ct-section-kicker'>{t('真实使用场景')}</Text>
+              <h2>{t('为 AI 编程高频、长链路、多人共享而设计')}</h2>
+              <p>
+                {t('首页不只展示功能，而是把客户会遇到的限流、断流、成本和团队治理问题放到同一条接入链路里解决。')}
+              </p>
+            </div>
+            <div className='ct-scenario-grid'>
+              {scenarioItems.map((item) => (
+                <div className='ct-scenario-card' key={item.title}>
                   <div className='ct-icon-chip'>{item.icon}</div>
+                  <span>{item.meta}</span>
                   <h3>{item.title}</h3>
                   <p>{item.description}</p>
                 </div>
@@ -583,11 +598,9 @@ const Home = () => {
           <section className='ct-section'>
             <div className='ct-section-head'>
               <Text className='ct-section-kicker'>{t('稳定运行')}</Text>
-              <h2>{t('用近期运行曲线把稳定性讲清楚')}</h2>
+              <h2>{t('用真实运行曲线把稳定性讲清楚')}</h2>
               <p>
-                {t(
-                  '客户最关心的是能不能持续可用。首页直接展示成功率、延迟和自动切换趋势，让服务质量一眼可见。',
-                )}
+                {t('公开首页只展示脱敏后的全站汇总：成功率、延迟、请求量和保护事件，不暴露渠道、模型和错误原因。')}
               </p>
             </div>
             <div className='ct-reliability-panel'>
@@ -606,14 +619,18 @@ const Home = () => {
                     <span>{t('成功率趋势')}</span>
                     <strong>{t('近 30 天')}</strong>
                   </div>
-                  <b>{t('健康')}</b>
+                  <b>{hasRealData ? t('健康') : t('初始化中')}</b>
                 </div>
                 <div className='ct-success-bars' aria-hidden='true'>
-                  {successBars.map((height, index) => (
+                  {daily.map((item) => (
                     <i
-                      key={`${height}-${index}`}
-                      style={{ '--bar-height': `${height}%` }}
-                    />
+                      key={item.date}
+                      style={{
+                        '--bar-height': `${normalizeChartValue(item.success_rate, 100, 16)}%`,
+                      }}
+                    >
+                      <span>{formatRate(item.success_rate)}</span>
+                    </i>
                   ))}
                 </div>
               </div>
@@ -621,25 +638,43 @@ const Home = () => {
                 <div className='ct-chart-head'>
                   <div>
                     <span>{t('延迟走势')}</span>
-                    <strong>P95 Latency</strong>
+                    <strong>{t('平均延迟')}</strong>
                   </div>
                   <b>{t('低延迟')}</b>
                 </div>
                 <div className='ct-latency-line' aria-hidden='true'>
-                  {latencyPoints.map((top, index) => (
-                    <i
-                      key={`${top}-${index}`}
-                      style={{
-                        left: `${(index / (latencyPoints.length - 1)) * 100}%`,
-                        top: `${top}%`,
-                      }}
-                    />
-                  ))}
                   <svg viewBox='0 0 220 92' preserveAspectRatio='none'>
-                    <polyline points='0,54 20,42 40,48 60,32 80,38 100,28 120,35 140,30 160,41 180,31 200,26 220,33' />
+                    <polyline points={latencyPoints} />
                   </svg>
+                  <div className='ct-request-heat'>
+                    {daily.map((item) => (
+                      <i
+                        key={item.date}
+                        style={{
+                          '--heat-opacity':
+                            normalizeChartValue(item.requests, maxRequests, 8) / 100,
+                        }}
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
+              <div className='ct-chart-foot'>
+                <span>{t('最后更新')}</span>
+                <strong>{updatedAt}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className='ct-section ct-trust-section'>
+            <div className='ct-trust-grid'>
+              {trustItems.map((item) => (
+                <div className='ct-trust-card' key={item.title}>
+                  <div className='ct-icon-chip'>{item.icon}</div>
+                  <h3>{item.title}</h3>
+                  <p>{item.description}</p>
+                </div>
+              ))}
             </div>
           </section>
 
@@ -648,9 +683,7 @@ const Home = () => {
               <Text className='ct-section-kicker'>{t('无感切换')}</Text>
               <h2>{t('把上游波动挡在你的开发工具之外')}</h2>
               <p>
-                {t(
-                  '一次请求进入网关后，会根据模型、分组倍率、渠道健康和限流状态做动态决策。用户侧仍然是同一个 Base URL，同一把 Key，同一套客户端配置。',
-                )}
+                {t('一次请求进入网关后，会根据模型、分组倍率、渠道健康和限流状态做动态决策。用户侧仍然是同一个 Base URL，同一把 Key，同一套客户端配置。')}
               </p>
             </div>
             <div className='ct-switch-grid'>
@@ -667,15 +700,9 @@ const Home = () => {
 
           <section className='ct-section'>
             <div className='ct-section-head'>
-              <Text className='ct-section-kicker'>
-                {t('兼容常用开发者工具')}
-              </Text>
+              <Text className='ct-section-kicker'>{t('兼容常用开发者工具')}</Text>
               <h2>{t('Codex、Claude Code 和 OpenAI 生态即插即用')}</h2>
-              <p>
-                {t(
-                  '适合个人高频开发、团队共享额度、脚本自动化、IDE 助手和多模型调度场景。',
-                )}
-              </p>
+              <p>{t('适合个人高频开发、团队共享额度、脚本自动化、IDE 助手和多模型调度场景。')}</p>
             </div>
             <div className='ct-client-grid'>
               {clientItems.map((item) => (
@@ -691,11 +718,7 @@ const Home = () => {
             <div className='ct-section-head'>
               <Text className='ct-section-kicker'>{t('模型渠道')}</Text>
               <h2>{t('一个入口聚合主流 AI 供应商')}</h2>
-              <p>
-                {t(
-                  '按需求选择速度、价格和模型能力，不再被单个供应商的额度、地区或稳定性限制。',
-                )}
-              </p>
+              <p>{t('按需求选择速度、价格和模型能力，不再被单个供应商的额度、地区或稳定性限制。')}</p>
             </div>
             <div className='ct-provider-grid'>
               {providerIcons.map((provider) => (
@@ -705,9 +728,7 @@ const Home = () => {
                 </div>
               ))}
               <div className='ct-provider-item ct-provider-more'>
-                <Typography.Text className='!text-2xl font-bold'>
-                  40+
-                </Typography.Text>
+                <Typography.Text className='!text-2xl font-bold'>40+</Typography.Text>
                 <span>{t('更多渠道')}</span>
               </div>
             </div>
@@ -717,20 +738,7 @@ const Home = () => {
             <div className='ct-section-head'>
               <Text className='ct-section-kicker'>{t('专业控制台')}</Text>
               <h2>{t('不是简单转发，而是一套可运营的 API 网关')}</h2>
-              <p>
-                {t(
-                  '从接入、计费、监控到故障处理都在一个控制台完成，适合长期稳定运营和团队协作。',
-                )}
-              </p>
-            </div>
-            <div className='ct-feature-grid'>
-              {featureItems.map((item) => (
-                <div className='ct-feature-card' key={item.title}>
-                  <div className='ct-icon-chip'>{item.icon}</div>
-                  <h3>{item.title}</h3>
-                  <p>{item.description}</p>
-                </div>
-              ))}
+              <p>{t('从接入、计费、监控到故障处理都在一个控制台完成，适合长期稳定运营和团队协作。')}</p>
             </div>
             <div className='ct-console-band'>
               <div>
@@ -752,11 +760,7 @@ const Home = () => {
             <div>
               <Text className='ct-section-kicker'>{t('开始使用')}</Text>
               <h2>{t('把 Codex 和 Claude Code 切到更稳的 API 入口')}</h2>
-              <p>
-                {t(
-                  '创建令牌后，将 Base URL 设置为本站地址，剩下的模型、渠道、价格和故障切换交给网关处理。',
-                )}
-              </p>
+              <p>{t('创建令牌后，将 Base URL 设置为本站地址，剩下的模型、渠道、价格和故障切换交给网关处理。')}</p>
             </div>
             <Link to='/console'>
               <Button
@@ -784,10 +788,7 @@ const Home = () => {
       ) : (
         <div className='overflow-x-hidden w-full'>
           {homePageContent.startsWith('https://') ? (
-            <iframe
-              src={homePageContent}
-              className='w-full h-screen border-none'
-            />
+            <iframe src={homePageContent} className='w-full h-screen border-none' />
           ) : (
             <div
               className='mt-[60px]'

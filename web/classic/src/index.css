@@ -2543,7 +2543,7 @@ body {
 }
 
 .ct-topup-subscription-status .semi-select {
-  min-width: 122px;
+  min-width: 134px;
 }
 
 .ct-topup-subscription-status .semi-select-selection,
@@ -2551,15 +2551,417 @@ body {
   font-weight: 780;
 }
 
+.ct-topup-subscription-status-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ct-topup-subscription-title-group {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ct-topup-subscription-title-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(20, 184, 166, 0.22);
+  border-radius: 12px;
+  background: linear-gradient(
+      135deg,
+      rgba(204, 251, 241, 0.92),
+      rgba(224, 242, 254, 0.78)
+    ),
+    rgba(255, 255, 255, 0.82);
+  color: var(--ct-topup-teal);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+}
+
+.ct-topup-subscription-eyebrow {
+  overflow: hidden;
+  color: var(--ct-topup-muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-topup-subscription-status-title {
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--ct-topup-ink);
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-topup-subscription-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
 .ct-topup-subscription-toolbar .semi-button {
   border-radius: 11px !important;
 }
 
+.ct-topup-subscription-preference-note {
+  display: block;
+  margin: -4px 0 10px;
+}
+
+.ct-topup-current-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(15, 118, 110, 0.2);
+  border-radius: 18px;
+  background: linear-gradient(
+      145deg,
+      rgba(240, 253, 250, 0.88),
+      rgba(255, 255, 255, 0.76) 54%,
+      rgba(239, 246, 255, 0.72)
+    ),
+    rgba(255, 255, 255, 0.78);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    0 14px 30px rgba(15, 23, 42, 0.055);
+  overflow: hidden;
+}
+
+.ct-topup-current-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(180deg, #14b8a6, #38bdf8);
+}
+
+.ct-topup-current-card-empty::before {
+  background: linear-gradient(180deg, #94a3b8, #cbd5e1);
+}
+
+.dark .ct-topup-current-card {
+  border-color: rgba(94, 234, 212, 0.14);
+  background: linear-gradient(
+      145deg,
+      rgba(15, 23, 42, 0.44),
+      rgba(2, 6, 23, 0.28)
+    ),
+    rgba(15, 23, 42, 0.32);
+  box-shadow: none;
+}
+
+.ct-topup-current-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ct-topup-current-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 3px;
+}
+
+.ct-topup-current-copy span,
+.ct-topup-current-progress-head span,
+.ct-topup-current-metric span,
+.ct-topup-current-foot-grid span,
+.ct-topup-subscription-record-quota span,
+.ct-topup-subscription-history-head em {
+  color: var(--ct-topup-muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.ct-topup-current-copy strong {
+  overflow: hidden;
+  color: var(--ct-topup-ink);
+  font-size: 21px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-topup-current-copy em {
+  overflow: hidden;
+  color: var(--ct-topup-muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 680;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-topup-current-days {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 72px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--ct-topup-blue);
+}
+
+.ct-topup-current-days span {
+  color: var(--ct-topup-muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.ct-topup-current-days strong {
+  color: var(--ct-topup-blue);
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
+  font-size: 28px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.ct-topup-current-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ct-topup-current-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ct-topup-current-progress-head strong {
+  color: var(--ct-topup-teal);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ct-topup-current-progress-track,
+.ct-topup-subscription-record-progress {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+
+.ct-topup-current-progress-track span,
+.ct-topup-subscription-record-progress span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  max-width: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #14b8a6, #38bdf8);
+}
+
+.ct-topup-current-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ct-topup-current-metric {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(15, 118, 110, 0.11);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.ct-topup-current-metric strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--ct-topup-ink);
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-topup-current-metric-green {
+  border-color: rgba(22, 163, 74, 0.16);
+  background: rgba(240, 253, 244, 0.72);
+}
+
+.ct-topup-current-metric-blue {
+  border-color: rgba(37, 99, 235, 0.14);
+  background: rgba(239, 246, 255, 0.72);
+}
+
+.ct-topup-current-metric-teal {
+  border-color: rgba(20, 184, 166, 0.17);
+  background: rgba(240, 253, 250, 0.72);
+}
+
+.dark .ct-topup-current-days,
+.dark .ct-topup-current-metric {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.36);
+}
+
+.ct-topup-current-foot-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ct-topup-current-foot-grid > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto 1fr;
+  gap: 3px 6px;
+  align-items: center;
+  padding: 8px 9px;
+  border: 1px solid rgba(15, 118, 110, 0.1);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.ct-topup-current-foot-grid svg {
+  color: var(--ct-topup-teal);
+}
+
+.ct-topup-current-foot-grid strong {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--ct-topup-ink);
+  font-size: 12px;
+  font-weight: 840;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dark .ct-topup-current-foot-grid > div {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.3);
+}
+
+.ct-topup-current-native-quota {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--ct-topup-teal);
+  font-size: 11px;
+  font-weight: 820;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-topup-current-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 0 2px 4px;
+}
+
+.ct-topup-current-empty > span {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 15px;
+  background: rgba(226, 232, 240, 0.72);
+  color: var(--ct-topup-muted);
+}
+
+.ct-topup-current-empty strong {
+  color: var(--ct-topup-ink);
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.ct-topup-current-empty p {
+  margin: 3px 0 0;
+  color: var(--ct-topup-muted);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.ct-topup-subscription-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 14px 2px 8px;
+}
+
+.ct-topup-subscription-history-head > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ct-topup-ink);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.ct-topup-subscription-history-head svg {
+  color: var(--ct-topup-teal);
+}
+
+.ct-topup-subscription-record-list {
+  max-height: 310px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
 .ct-topup-subscription-record {
-  padding: 10px 10px 8px;
+  padding: 11px;
   border: 1px solid rgba(15, 118, 110, 0.1);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.52);
+}
+
+.ct-topup-subscription-record-active {
+  border-color: rgba(20, 184, 166, 0.22);
+  background: linear-gradient(
+      145deg,
+      rgba(240, 253, 250, 0.74),
+      rgba(255, 255, 255, 0.62)
+    ),
+    rgba(255, 255, 255, 0.64);
 }
 
 .ct-topup-subscription-record + .ct-topup-subscription-record {
@@ -2571,12 +2973,51 @@ body {
   background: rgba(15, 23, 42, 0.24);
 }
 
+.dark .ct-topup-subscription-record-active {
+  border-color: rgba(94, 234, 212, 0.14);
+  background: linear-gradient(
+      145deg,
+      rgba(20, 184, 166, 0.12),
+      rgba(15, 23, 42, 0.28)
+    ),
+    rgba(15, 23, 42, 0.3);
+}
+
 .ct-topup-subscription-record .semi-divider {
   display: none;
 }
 
 .ct-topup-subscription-record-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 10px;
+}
+
+.ct-topup-subscription-record-title {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--ct-topup-ink);
+  font-size: 13px;
+  font-weight: 860;
+  line-height: 1.3;
+}
+
+.ct-topup-subscription-record-title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-topup-subscription-record-title small {
+  color: var(--ct-topup-muted);
+  font-size: 11px;
+  font-weight: 780;
 }
 
 .ct-topup-subscription-badge {
@@ -2591,19 +3032,82 @@ body {
   font-weight: 800;
 }
 
+.ct-topup-subscription-record-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin-top: 8px;
+}
+
+.ct-topup-subscription-record-meta span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  color: var(--ct-topup-muted);
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-topup-subscription-record-meta svg {
+  flex: 0 0 auto;
+}
+
 .ct-topup-subscription-meta {
   color: var(--ct-topup-muted) !important;
   font-weight: 650;
 }
 
-.ct-topup-subscription-quota {
-  padding: 7px 9px;
-  border-radius: 12px;
-  background: rgba(248, 250, 252, 0.82);
+.ct-topup-subscription-record-quota {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.72fr);
+  gap: 8px;
+  align-items: end;
+  margin-top: 10px;
 }
 
-.dark .ct-topup-subscription-quota {
-  background: rgba(2, 6, 23, 0.18);
+.ct-topup-subscription-record-quota
+  > div:not(.ct-topup-subscription-record-progress):not(
+    .ct-topup-subscription-record-unlimited
+  ) {
+  min-width: 0;
+}
+
+.ct-topup-subscription-record-quota strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--ct-topup-ink);
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-topup-subscription-record-progress,
+.ct-topup-subscription-record-unlimited {
+  grid-column: 1 / -1;
+}
+
+.ct-topup-subscription-record-unlimited {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--ct-topup-teal);
+  font-size: 11px;
+  font-weight: 820;
+}
+
+.dark .ct-topup-subscription-record-unlimited {
+  background: rgba(20, 184, 166, 0.12);
 }
 
 .ct-topup-plan-grid {
@@ -2785,6 +3289,26 @@ body {
 
   .ct-topup-subscription-toolbar .semi-select {
     flex: 1 1 auto;
+  }
+
+  .ct-topup-subscription-status-title {
+    max-width: 100%;
+  }
+
+  .ct-topup-current-main,
+  .ct-topup-current-empty {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ct-topup-current-days {
+    width: 100%;
+  }
+
+  .ct-topup-current-metrics,
+  .ct-topup-current-foot-grid,
+  .ct-topup-subscription-record-quota {
+    grid-template-columns: 1fr;
   }
 
   .ct-topup-hero-title.semi-typography {

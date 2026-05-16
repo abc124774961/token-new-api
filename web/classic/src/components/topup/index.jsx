@@ -669,7 +669,13 @@ const TopUp = () => {
 
           // 如果没有自定义充值数量选项，根据最小充值金额生成预设充值额度选项
           if (topupInfo.amount_options.length === 0) {
-            setPresetAmounts(generatePresetAmounts(minTopUpValue));
+            const generatedPresets = generatePresetAmounts(minTopUpValue);
+            setPresetAmounts(generatedPresets);
+            setSelectedPreset(
+              generatedPresets.some((preset) => preset.value === minTopUpValue)
+                ? minTopUpValue
+                : null,
+            );
           }
 
           // 初始化显示实付金额
@@ -685,6 +691,11 @@ const TopUp = () => {
             discount: data.discount[amount] || 1.0,
           }));
           setPresetAmounts(customPresets);
+          setSelectedPreset(
+            customPresets.some((preset) => preset.value === minTopUpValue)
+              ? minTopUpValue
+              : null,
+          );
         }
       } else {
         showError(data || t('获取充值配置失败'));

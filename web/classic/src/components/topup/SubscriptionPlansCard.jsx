@@ -36,11 +36,15 @@ import {
   ArrowUpRight,
   BadgeCheck,
   Calendar,
+  Clock3,
   Gauge,
+  History,
+  PackageCheck,
   RefreshCw,
   RotateCcw,
   ShoppingCart,
   Sparkles,
+  WalletCards,
 } from 'lucide-react';
 import SubscriptionPurchaseModal from './modals/SubscriptionPurchaseModal';
 import {
@@ -211,6 +215,9 @@ const SubscriptionPlansCard = ({
   // 当前订阅信息 - 支持多个订阅
   const hasActiveSubscription = activeSubscriptions.length > 0;
   const hasAnySubscription = allSubscriptions.length > 0;
+  const primaryActiveSubscription = hasActiveSubscription
+    ? activeSubscriptions[0]
+    : null;
   const disableSubscriptionPreference = !hasActiveSubscription;
   const isSubscriptionPreference =
     billingPreference === 'subscription_first' ||
@@ -221,6 +228,15 @@ const SubscriptionPlansCard = ({
       : billingPreference;
   const subscriptionPreferenceLabel =
     billingPreference === 'subscription_only' ? t('仅用订阅') : t('优先订阅');
+  const billingPreferenceLabelMap = {
+    subscription_first: t('优先订阅'),
+    wallet_first: t('优先钱包'),
+    subscription_only: t('仅用订阅'),
+    wallet_only: t('仅用钱包'),
+  };
+  const displayBillingPreferenceLabel =
+    billingPreferenceLabelMap[displayBillingPreference] ||
+    displayBillingPreference;
 
   const planPurchaseCountMap = useMemo(() => {
     const map = new Map();
@@ -245,6 +261,20 @@ const SubscriptionPlansCard = ({
   const getPlanPurchaseCount = (planId) =>
     planPurchaseCountMap.get(planId) || 0;
 
+  const getSubscriptionTitle = (sub) => {
+    const subscription = sub?.subscription;
+    const planTitle = planTitleMap.get(subscription?.plan_id) || '';
+    if (planTitle) return planTitle;
+    return subscription?.id
+      ? `${t('订阅')} #${subscription.id}`
+      : t('订阅套餐');
+  };
+
+  const formatTime = (timestamp) => {
+    if (!timestamp) return t('暂无');
+    return new Date(timestamp * 1000).toLocaleString();
+  };
+
   // 计算单个订阅的剩余天数
   const getRemainingDays = (sub) => {
     if (!sub?.subscription?.end_time) return 0;
@@ -260,6 +290,33 @@ const SubscriptionPlansCard = ({
     if (total <= 0) return 0;
     return Math.round((used / total) * 100);
   };
+
+  const activeQuotaStats = useMemo(() => {
+    let total = 0;
+    let used = 0;
+    let hasUnlimited = false;
+
+    (activeSubscriptions || []).forEach((sub) => {
+      const subscription = sub?.subscription;
+      const amountTotal = Number(subscription?.amount_total || 0);
+      const amountUsed = Number(subscription?.amount_used || 0);
+      if (amountTotal <= 0) {
+        hasUnlimited = true;
+        used += amountUsed;
+        return;
+      }
+      total += amountTotal;
+      used += Math.min(amountUsed, amountTotal);
+    });
+
+    const remain = Math.max(0, total - used);
+    const percent =
+      total > 0 && !hasUnlimited
+        ? Math.min(100, Math.round((used / total) * 100))
+        : 0;
+
+    return { total, used, remain, percent, hasUnlimited };
+  }, [activeSubscriptions]);
 
   const cardContent = (
     <>
@@ -322,11 +379,23 @@ const SubscriptionPlansCard = ({
           {/* 当前订阅状态 */}
           <Card
             className='ct-topup-subscription-status !rounded-xl w-full'
-            bodyStyle={{ padding: '12px' }}
+            bodyStyle={{ padding: '14px' }}
           >
-            <div className='ct-topup-subscription-status-head flex items-center justify-between mb-2 gap-3'>
-              <div className='flex items-center gap-2 flex-1 min-w-0'>
-                <Text strong>{t('我的订阅')}</Text>
+            <div className='ct-topup-subscription-status-head'>
+              <div className='ct-topup-subscription-title-group'>
+                <span className='ct-topup-subscription-title-icon'>
+                  <PackageCheck size={16} />
+                </span>
+                <div className='min-w-0'>
+                  <div className='ct-topup-subscription-eyebrow'>
+                    {t('当前套餐')}
+                  </div>
+                  <div className='ct-topup-subscription-status-title'>
+                    {hasActiveSubscription
+                      ? getSubscriptionTitle(primaryActiveSubscription)
+                      : t('未开通套餐')}
+                  </div>
+                </div>
                 {hasActiveSubscription ? (
                   <Tag
                     color='white'
@@ -348,7 +417,7 @@ const SubscriptionPlansCard = ({
                   </Tag>
                 )}
               </div>
-              <div className='ct-topup-subscription-toolbar flex items-center gap-2'>
+              <div className='ct-topup-subscription-toolbar'>
                 <Select
                   value={displayBillingPreference}
                   onChange={onChangeBillingPreference}
@@ -372,35 +441,192 @@ const SubscriptionPlansCard = ({
                     { value: 'wallet_only', label: t('仅用钱包') },
                   ]}
                 />
-                <Button
-                  size='small'
-                  theme='light'
-                  type='tertiary'
-                  icon={
-                    <RefreshCw
-                      size={12}
-                      className={refreshing ? 'animate-spin' : ''}
-                    />
-                  }
-                  onClick={handleRefresh}
-                  loading={refreshing}
-                />
+                <Tooltip content={t('刷新')}>
+                  <Button
+                    size='small'
+                    theme='light'
+                    type='tertiary'
+                    aria-label={t('刷新')}
+                    icon={
+                      <RefreshCw
+                        size={12}
+                        className={refreshing ? 'animate-spin' : ''}
+                      />
+                    }
+                    onClick={handleRefresh}
+                    loading={refreshing}
+                  />
+                </Tooltip>
               </div>
             </div>
             {disableSubscriptionPreference && isSubscriptionPreference && (
-              <Text type='tertiary' size='small'>
+              <Text
+                type='tertiary'
+                size='small'
+                className='ct-topup-subscription-preference-note'
+              >
                 {t('已保存偏好为')}
                 {subscriptionPreferenceLabel}
                 {t('，当前无生效订阅，将自动使用钱包')}
               </Text>
             )}
 
+            <div
+              className={`ct-topup-current-card ${
+                hasActiveSubscription ? '' : 'ct-topup-current-card-empty'
+              }`}
+            >
+              {hasActiveSubscription ? (
+                (() => {
+                  const subscription = primaryActiveSubscription?.subscription;
+                  const totalAmount = Number(subscription?.amount_total || 0);
+                  const usedAmount = Number(subscription?.amount_used || 0);
+                  const remainAmount =
+                    totalAmount > 0 ? Math.max(0, totalAmount - usedAmount) : 0;
+                  const remainDays = getRemainingDays(
+                    primaryActiveSubscription,
+                  );
+                  const usagePercent = getUsagePercent(
+                    primaryActiveSubscription,
+                  );
+                  const progressWidth = activeQuotaStats.hasUnlimited
+                    ? '100%'
+                    : `${activeQuotaStats.percent}%`;
+
+                  return (
+                    <>
+                      <div className='ct-topup-current-main'>
+                        <div className='ct-topup-current-copy'>
+                          <span>{t('当前套餐')}</span>
+                          <strong>
+                            {getSubscriptionTitle(primaryActiveSubscription)}
+                            {activeSubscriptions.length > 1
+                              ? ` +${activeSubscriptions.length - 1}`
+                              : ''}
+                          </strong>
+                          <em>
+                            {t('到期时间')}:{' '}
+                            {formatTime(subscription?.end_time)}
+                          </em>
+                        </div>
+                        <div className='ct-topup-current-days'>
+                          <span>{t('剩余')}</span>
+                          <strong>{remainDays}</strong>
+                          <span>{t('天')}</span>
+                        </div>
+                      </div>
+
+                      <div className='ct-topup-current-progress'>
+                        <div className='ct-topup-current-progress-head'>
+                          <span>{t('使用进度')}</span>
+                          <strong>
+                            {activeQuotaStats.hasUnlimited
+                              ? t('不限')
+                              : `${activeQuotaStats.percent}%`}
+                          </strong>
+                        </div>
+                        <div className='ct-topup-current-progress-track'>
+                          <span style={{ width: progressWidth }} />
+                        </div>
+                      </div>
+
+                      <div className='ct-topup-current-metrics'>
+                        <div className='ct-topup-current-metric ct-topup-current-metric-green'>
+                          <span>{t('剩余额度')}</span>
+                          <strong>
+                            {activeQuotaStats.hasUnlimited
+                              ? t('不限')
+                              : renderQuota(activeQuotaStats.remain)}
+                          </strong>
+                        </div>
+                        <div className='ct-topup-current-metric ct-topup-current-metric-blue'>
+                          <span>{t('已用')}</span>
+                          <strong>{renderQuota(activeQuotaStats.used)}</strong>
+                        </div>
+                        <div className='ct-topup-current-metric ct-topup-current-metric-teal'>
+                          <span>{t('总额度')}</span>
+                          <strong>
+                            {activeQuotaStats.hasUnlimited
+                              ? t('不限')
+                              : renderQuota(activeQuotaStats.total)}
+                          </strong>
+                        </div>
+                      </div>
+
+                      <div className='ct-topup-current-foot-grid'>
+                        <div>
+                          <WalletCards size={14} />
+                          <span>{t('扣费偏好')}</span>
+                          <strong>{displayBillingPreferenceLabel}</strong>
+                        </div>
+                        <div>
+                          <Clock3 size={14} />
+                          <span>{t('下一次重置')}</span>
+                          <strong>
+                            {subscription?.next_reset_time > 0
+                              ? formatTime(subscription.next_reset_time)
+                              : t('暂无')}
+                          </strong>
+                        </div>
+                        <div>
+                          <Gauge size={14} />
+                          <span>{t('当前订阅')}</span>
+                          <strong>
+                            {totalAmount > 0
+                              ? `${renderQuota(remainAmount)} / ${renderQuota(
+                                  totalAmount,
+                                )}`
+                              : t('不限')}
+                          </strong>
+                        </div>
+                        <div>
+                          <History size={14} />
+                          <span>{t('近期记录')}</span>
+                          <strong>
+                            {allSubscriptions.length} {t('条')}
+                          </strong>
+                        </div>
+                      </div>
+
+                      {totalAmount > 0 && (
+                        <Tooltip
+                          content={`${t('原生额度')}：${usedAmount}/${totalAmount} · ${t('已用')} ${usagePercent}%`}
+                        >
+                          <div className='ct-topup-current-native-quota'>
+                            {t('当前订阅')} · {renderQuota(usedAmount)}/
+                            {renderQuota(totalAmount)}
+                          </div>
+                        </Tooltip>
+                      )}
+                    </>
+                  );
+                })()
+              ) : (
+                <div className='ct-topup-current-empty'>
+                  <span>
+                    <PackageCheck size={18} />
+                  </span>
+                  <div>
+                    <strong>{t('暂无生效订阅')}</strong>
+                    <p>{t('购买套餐后即可享受模型权益')}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {hasAnySubscription ? (
               <>
-                <Divider margin={8} />
-                <div className='max-h-64 overflow-y-auto pr-1 semi-table-body'>
+                <div className='ct-topup-subscription-history-head'>
+                  <div>
+                    <History size={14} />
+                    <span>{t('订阅详情')}</span>
+                  </div>
+                  <em>
+                    {allSubscriptions.length} {t('条')}
+                  </em>
+                </div>
+                <div className='ct-topup-subscription-record-list semi-table-body'>
                   {allSubscriptions.map((sub, subIndex) => {
-                    const isLast = subIndex === allSubscriptions.length - 1;
                     const subscription = sub.subscription;
                     const totalAmount = Number(subscription?.amount_total || 0);
                     const usedAmount = Number(subscription?.amount_used || 0);
@@ -410,6 +636,7 @@ const SubscriptionPlansCard = ({
                         : 0;
                     const planTitle =
                       planTitleMap.get(subscription?.plan_id) || '';
+                    const recordTitle = planTitle || t('订阅');
                     const remainDays = getRemainingDays(sub);
                     const usagePercent = getUsagePercent(sub);
                     const now = Date.now() / 1000;
@@ -421,16 +648,16 @@ const SubscriptionPlansCard = ({
                     return (
                       <div
                         key={subscription?.id || subIndex}
-                        className='ct-topup-subscription-record'
+                        className={`ct-topup-subscription-record ${
+                          isActive ? 'ct-topup-subscription-record-active' : ''
+                        }`}
                       >
-                        {/* 订阅概要 */}
-                        <div className='ct-topup-subscription-record-head flex items-center justify-between text-xs mb-2'>
-                          <div className='flex items-center gap-2'>
-                            <span className='font-medium'>
-                              {planTitle
-                                ? `${planTitle} · ${t('订阅')} #${subscription?.id}`
-                                : `${t('订阅')} #${subscription?.id}`}
-                            </span>
+                        <div className='ct-topup-subscription-record-head'>
+                          <div className='ct-topup-subscription-record-title'>
+                            <span>{recordTitle}</span>
+                            {subscription?.id && (
+                              <small>#{subscription.id}</small>
+                            )}
                             {isActive ? (
                               <Tag
                                 color='white'
@@ -451,61 +678,68 @@ const SubscriptionPlansCard = ({
                             )}
                           </div>
                           {isActive && (
-                            <span className='ct-topup-subscription-badge text-gray-500'>
+                            <span className='ct-topup-subscription-badge'>
                               {t('剩余')} {remainDays} {t('天')}
                             </span>
                           )}
                         </div>
-                        <div className='ct-topup-subscription-meta text-xs text-gray-500 mb-2'>
-                          {isActive
-                            ? t('至')
-                            : isCancelled
-                              ? t('作废于')
-                              : t('过期于')}{' '}
-                          {new Date(
-                            (subscription?.end_time || 0) * 1000,
-                          ).toLocaleString()}
+
+                        <div className='ct-topup-subscription-record-meta'>
+                          <span>
+                            <Calendar size={12} />
+                            {isActive
+                              ? t('到期时间')
+                              : isCancelled
+                                ? t('作废于')
+                                : t('过期于')}
+                            : {formatTime(subscription?.end_time)}
+                          </span>
+                          {isActive && subscription?.next_reset_time > 0 && (
+                            <span>
+                              <RotateCcw size={12} />
+                              {t('下一次重置')}:{' '}
+                              {formatTime(subscription.next_reset_time)}
+                            </span>
+                          )}
                         </div>
-                        {isActive && subscription?.next_reset_time > 0 && (
-                          <div className='ct-topup-subscription-meta text-xs text-gray-500 mb-2'>
-                            {t('下一次重置')}:{' '}
-                            {new Date(
-                              subscription.next_reset_time * 1000,
-                            ).toLocaleString()}
+
+                        <div className='ct-topup-subscription-record-quota'>
+                          <div>
+                            <span>{t('剩余额度')}</span>
+                            <strong>
+                              {totalAmount > 0
+                                ? renderQuota(remainAmount)
+                                : t('不限')}
+                            </strong>
                           </div>
-                        )}
-                        <div className='ct-topup-subscription-meta ct-topup-subscription-quota text-xs text-gray-500 mb-2'>
-                          {t('总额度')}:{' '}
+                          <div>
+                            <span>{t('已用')}</span>
+                            <strong>
+                              {totalAmount > 0
+                                ? `${usagePercent}%`
+                                : renderQuota(usedAmount)}
+                            </strong>
+                          </div>
                           {totalAmount > 0 ? (
                             <Tooltip
                               content={`${t('原生额度')}：${usedAmount}/${totalAmount} · ${t('剩余')} ${remainAmount}`}
                             >
-                              <span>
-                                {renderQuota(usedAmount)}/
-                                {renderQuota(totalAmount)} · {t('剩余')}{' '}
-                                {renderQuota(remainAmount)}
-                              </span>
+                              <div className='ct-topup-subscription-record-progress'>
+                                <span style={{ width: `${usagePercent}%` }} />
+                              </div>
                             </Tooltip>
                           ) : (
-                            t('不限')
-                          )}
-                          {totalAmount > 0 && (
-                            <span className='ml-2'>
-                              {t('已用')} {usagePercent}%
-                            </span>
+                            <div className='ct-topup-subscription-record-unlimited'>
+                              {t('不限')}
+                            </div>
                           )}
                         </div>
-                        {!isLast && <Divider margin={12} />}
                       </div>
                     );
                   })}
                 </div>
               </>
-            ) : (
-              <div className='text-xs text-gray-500'>
-                {t('购买套餐后即可享受模型权益')}
-              </div>
-            )}
+            ) : null}
           </Card>
 
           {/* 可购买套餐 - 标准定价卡片 */}
