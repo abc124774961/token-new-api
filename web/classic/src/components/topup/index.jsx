@@ -588,9 +588,15 @@ const TopUp = ({ view = 'all' }) => {
       const res = await API.get('/api/user/topup/info');
       const { message, data, success } = res.data;
       if (success) {
+        const amountOptions = Array.isArray(data.amount_options)
+          ? data.amount_options
+          : [];
+        const discountConfig = data.discount || {};
+        let minTopUpValue = 1;
+
         setTopupInfo({
-          amount_options: data.amount_options || [],
-          discount: data.discount || {},
+          amount_options: amountOptions,
+          discount: discountConfig,
         });
 
         // 处理支付方式
@@ -650,7 +656,7 @@ const TopUp = ({ view = 'all' }) => {
           const enableWaffoTopUp = data.enable_waffo_topup || false;
           const enableWaffoPancakeTopUp =
             data.enable_waffo_pancake_topup || false;
-          const minTopUpValue = enableOnlineTopUp
+          minTopUpValue = enableOnlineTopUp
             ? data.min_topup
             : enableStripeTopUp
               ? data.stripe_min_topup
@@ -680,7 +686,7 @@ const TopUp = ({ view = 'all' }) => {
           }
 
           // 如果没有自定义充值数量选项，根据最小充值金额生成预设充值额度选项
-          if (topupInfo.amount_options.length === 0) {
+          if (amountOptions.length === 0) {
             const generatedPresets = generatePresetAmounts(minTopUpValue);
             setPresetAmounts(generatedPresets);
             setSelectedPreset(
@@ -697,10 +703,10 @@ const TopUp = ({ view = 'all' }) => {
         }
 
         // 如果有自定义充值数量选项，使用它们替换默认的预设选项
-        if (data.amount_options && data.amount_options.length > 0) {
-          const customPresets = data.amount_options.map((amount) => ({
+        if (amountOptions.length > 0) {
+          const customPresets = amountOptions.map((amount) => ({
             value: amount,
-            discount: data.discount[amount] || 1.0,
+            discount: discountConfig[amount] || 1.0,
           }));
           setPresetAmounts(customPresets);
           setSelectedPreset(
