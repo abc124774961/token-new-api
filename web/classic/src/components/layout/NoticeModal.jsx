@@ -27,7 +27,7 @@ import {
   Timeline,
 } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
-import { API, showError, getRelativeTime } from '../../helpers';
+import { API, getRelativeTime } from '../../helpers';
 import { marked } from 'marked';
 import {
   IllustrationNoContent,
@@ -85,7 +85,7 @@ const NoticeModal = ({
   const displayNotice = async () => {
     setLoading(true);
     try {
-      const res = await API.get('/api/notice');
+      const res = await API.get('/api/notice', { skipErrorHandler: true });
       const { success, message, data } = res.data;
       if (success) {
         if (data !== '') {
@@ -95,10 +95,10 @@ const NoticeModal = ({
           setNoticeContent('');
         }
       } else {
-        showError(message);
+        setNoticeContent('');
       }
     } catch (error) {
-      showError(error.message);
+      setNoticeContent('');
     } finally {
       setLoading(false);
     }

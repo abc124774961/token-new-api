@@ -259,6 +259,13 @@ function renderBillingTag(record, t) {
       </Tag>
     );
   }
+  if (other?.billing_source === 'subscription_wallet') {
+    return (
+      <Tag color='teal' shape='circle'>
+        {t('订阅+钱包')}
+      </Tag>
+    );
+  }
   return null;
 }
 
@@ -855,10 +862,28 @@ export const getLogsColumns = ({
         }
         const other = getLogOther(record.other);
         const isSubscription = other?.billing_source === 'subscription';
+        const isSubscriptionWallet =
+          other?.billing_source === 'subscription_wallet';
         if (isSubscription) {
           // Subscription billed: show only tag (no $0), but keep tooltip for equivalent cost.
           return (
             <Tooltip content={`${t('由订阅抵扣')}：${renderQuota(text, 6)}`}>
+              <span>{renderBillingTag(record, t)}</span>
+            </Tooltip>
+          );
+        }
+        if (isSubscriptionWallet) {
+          const subscriptionConsumed = Number(
+            other?.subscription_consumed || 0,
+          );
+          const walletDeducted = Number(other?.wallet_quota_deducted || 0);
+          return (
+            <Tooltip
+              content={`${t('订阅抵扣')}：${renderQuota(
+                subscriptionConsumed,
+                6,
+              )}，${t('钱包补扣')}：${renderQuota(walletDeducted, 6)}`}
+            >
               <span>{renderBillingTag(record, t)}</span>
             </Tooltip>
           );

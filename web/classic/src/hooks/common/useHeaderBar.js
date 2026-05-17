@@ -41,7 +41,8 @@ export const useHeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
   const location = useLocation();
 
   const loading = statusState?.status === undefined;
-  const isLoading = useMinimumLoadingTime(loading, 200);
+  const routeIsHome = location.pathname === '/';
+  const isLoading = useMinimumLoadingTime(routeIsHome ? false : loading, 200);
 
   const systemName = getSystemName();
   const logo = getLogo();
@@ -49,7 +50,9 @@ export const useHeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
   const isNewYear = currentDate.getMonth() === 0 && currentDate.getDate() === 1;
 
   const isSelfUseMode = statusState?.status?.self_use_mode_enabled || false;
-  const docsLink = statusState?.status?.docs_link || '';
+  const docsLink =
+    statusState?.status?.docs_link ||
+    (routeIsHome ? 'https://docs.newapi.pro' : '');
   const isDemoSiteMode = statusState?.status?.demo_site_enabled || false;
 
   // 获取顶栏模块配置

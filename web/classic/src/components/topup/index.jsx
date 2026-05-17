@@ -428,9 +428,13 @@ const TopUp = ({ view = 'all' }) => {
     }
     setAmountLoading(true);
     try {
-      const res = await API.post('/api/user/waffo/amount', {
-        amount: parseInt(value),
-      });
+      const res = await API.post(
+        '/api/user/waffo/amount',
+        {
+          amount: parseInt(value),
+        },
+        { skipErrorHandler: true },
+      );
       if (res !== undefined) {
         const { message, data } = res.data;
         if (message === 'success') {
@@ -491,9 +495,13 @@ const TopUp = ({ view = 'all' }) => {
     }
     setAmountLoading(true);
     try {
-      const res = await API.post('/api/user/waffo-pancake/amount', {
-        amount: parseInt(value),
-      });
+      const res = await API.post(
+        '/api/user/waffo-pancake/amount',
+        {
+          amount: parseInt(value),
+        },
+        { skipErrorHandler: true },
+      );
       if (res !== undefined) {
         const { message, data } = res.data;
         if (message === 'success') {
@@ -518,19 +526,23 @@ const TopUp = ({ view = 'all' }) => {
   };
 
   const getUserQuota = async () => {
-    let res = await API.get(`/api/user/self`);
-    const { success, message, data } = res.data;
-    if (success) {
-      userDispatch({ type: 'login', payload: data });
-    } else {
-      showError(message);
+    try {
+      let res = await API.get(`/api/user/self`, { skipErrorHandler: true });
+      const { success, data } = res.data;
+      if (success) {
+        userDispatch({ type: 'login', payload: data });
+      }
+    } catch (e) {
+      // Keep the page usable with cached user state when the local API is unavailable.
     }
   };
 
   const getSubscriptionPlans = async () => {
     setSubscriptionLoading(true);
     try {
-      const res = await API.get('/api/subscription/plans');
+      const res = await API.get('/api/subscription/plans', {
+        skipErrorHandler: true,
+      });
       if (res.data?.success) {
         setSubscriptionPlans(res.data.data || []);
       }
@@ -543,7 +555,9 @@ const TopUp = ({ view = 'all' }) => {
 
   const getSubscriptionSelf = async () => {
     try {
-      const res = await API.get('/api/subscription/self');
+      const res = await API.get('/api/subscription/self', {
+        skipErrorHandler: true,
+      });
       if (res.data?.success) {
         setBillingPreference(
           res.data.data?.billing_preference || 'subscription_first',
@@ -585,7 +599,9 @@ const TopUp = ({ view = 'all' }) => {
   // 获取充值配置信息
   const getTopupInfo = async () => {
     try {
-      const res = await API.get('/api/user/topup/info');
+      const res = await API.get('/api/user/topup/info', {
+        skipErrorHandler: true,
+      });
       const { message, data, success } = res.data;
       if (success) {
         const amountOptions = Array.isArray(data.amount_options)
@@ -716,22 +732,26 @@ const TopUp = ({ view = 'all' }) => {
           );
         }
       } else {
-        showError(data || t('获取充值配置失败'));
+        // Render the configured empty state instead of interrupting the page with a toast.
       }
     } catch (error) {
-      showError(t('获取充值配置异常'));
+      // Render the configured empty state instead of interrupting the page with a toast.
+    } finally {
+      setStatusLoading(false);
     }
   };
 
   // 获取邀请链接
   const getAffLink = async () => {
-    const res = await API.get('/api/user/aff');
-    const { success, message, data } = res.data;
-    if (success) {
-      let link = `${window.location.origin}/register?aff=${data}`;
-      setAffLink(link);
-    } else {
-      showError(message);
+    try {
+      const res = await API.get('/api/user/aff', { skipErrorHandler: true });
+      const { success, data } = res.data;
+      if (success) {
+        let link = `${window.location.origin}/register?aff=${data}`;
+        setAffLink(link);
+      }
+    } catch (e) {
+      setAffLink('');
     }
   };
 
@@ -813,9 +833,13 @@ const TopUp = ({ view = 'all' }) => {
     }
     setAmountLoading(true);
     try {
-      const res = await API.post('/api/user/amount', {
-        amount: parseFloat(value),
-      });
+      const res = await API.post(
+        '/api/user/amount',
+        {
+          amount: parseFloat(value),
+        },
+        { skipErrorHandler: true },
+      );
       if (res !== undefined) {
         const { message, data } = res.data;
         if (message === 'success') {
@@ -839,9 +863,13 @@ const TopUp = ({ view = 'all' }) => {
     }
     setAmountLoading(true);
     try {
-      const res = await API.post('/api/user/stripe/amount', {
-        amount: parseFloat(value),
-      });
+      const res = await API.post(
+        '/api/user/stripe/amount',
+        {
+          amount: parseFloat(value),
+        },
+        { skipErrorHandler: true },
+      );
       if (res !== undefined) {
         const { message, data } = res.data;
         if (message === 'success') {
@@ -1025,6 +1053,7 @@ const TopUp = ({ view = 'all' }) => {
                 setTopUpCount={setTopUpCount}
                 setSelectedPreset={setSelectedPreset}
                 renderAmount={renderAmount}
+                amount={amount}
                 amountLoading={amountLoading}
                 payMethods={confirmPayMethods}
                 preTopUp={preTopUp}

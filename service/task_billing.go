@@ -50,6 +50,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
+	appendBillingInfo(info, other)
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
 		ModelName: info.OriginModelName,
@@ -84,15 +85,123 @@ func taskIsSubscription(task *model.Task) bool {
 	return task.PrivateData.BillingSource == BillingSourceSubscription && task.PrivateData.SubscriptionId > 0
 }
 
+func taskIsSubscriptionWallet(task *model.Task) bool {
+	return task.PrivateData.BillingSource == BillingSourceSubscriptionWallet && task.PrivateData.SubscriptionId > 0
+}
+
+func taskUsesSubscriptionFirst(task *model.Task) bool {
+	return task.PrivateData.BillingContext != nil &&
+		strings.TrimSpace(task.PrivateData.BillingContext.BillingPreference) == "subscription_first"
+}
+
 // taskAdjustFunding 调整任务的资金来源（钱包或订阅），delta > 0 表示扣费，delta < 0 表示退还。
 func taskAdjustFunding(task *model.Task, delta int) error {
+	if delta == 0 {
+		return nil
+	}
+	if taskIsSubscriptionWallet(task) || (taskIsSubscription(task) && taskUsesSubscriptionFirst(task)) {
+		return taskAdjustSplitFunding(task, delta)
+	}
 	if taskIsSubscription(task) {
-		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
+		if err := model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta)); err != nil {
+			return err
+		}
+		task.PrivateData.SubscriptionQuota += delta
+		if task.PrivateData.SubscriptionQuota < 0 {
+			task.PrivateData.SubscriptionQuota = 0
+		}
+		return nil
 	}
 	if delta > 0 {
-		return model.DecreaseUserQuota(task.UserId, delta, false)
+		if err := model.DecreaseUserQuota(task.UserId, delta, false); err != nil {
+			return err
+		}
+		task.PrivateData.WalletQuota += delta
+		return nil
 	}
-	return model.IncreaseUserQuota(task.UserId, -delta, false)
+	refund := -delta
+	if err := model.IncreaseUserQuota(task.UserId, refund, false); err != nil {
+		return err
+	}
+	task.PrivateData.WalletQuota -= refund
+	if task.PrivateData.WalletQuota < 0 {
+		task.PrivateData.WalletQuota = 0
+	}
+	return nil
+}
+
+func taskAdjustSplitFunding(task *model.Task, delta int) error {
+	if delta < 0 {
+		return taskRefundSplitFunding(task, -delta)
+	}
+
+	remaining := delta
+	var subConsumed int64
+	if task.PrivateData.SubscriptionId > 0 {
+		consumed, err := model.PostConsumeUserSubscriptionDeltaAvailable(task.PrivateData.SubscriptionId, int64(remaining))
+		if err != nil {
+			return err
+		}
+		subConsumed = consumed
+		remaining -= int(consumed)
+	}
+	if remaining > 0 {
+		if err := model.DecreaseUserQuota(task.UserId, remaining, false); err != nil {
+			if subConsumed > 0 {
+				_ = model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, -subConsumed)
+			}
+			return err
+		}
+		task.PrivateData.WalletQuota += remaining
+	}
+	task.PrivateData.SubscriptionQuota += int(subConsumed)
+	taskUpdateSplitBillingSource(task)
+	return nil
+}
+
+func taskRefundSplitFunding(task *model.Task, amount int) error {
+	if amount <= 0 {
+		return nil
+	}
+	refund := amount
+	if task.PrivateData.WalletQuota > 0 {
+		walletRefund := refund
+		if walletRefund > task.PrivateData.WalletQuota {
+			walletRefund = task.PrivateData.WalletQuota
+		}
+		if walletRefund > 0 {
+			if err := model.IncreaseUserQuota(task.UserId, walletRefund, false); err != nil {
+				return err
+			}
+			task.PrivateData.WalletQuota -= walletRefund
+			refund -= walletRefund
+		}
+	}
+	if refund > 0 {
+		if task.PrivateData.SubscriptionId <= 0 {
+			return fmt.Errorf("subscription id is missing")
+		}
+		if err := model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, -int64(refund)); err != nil {
+			return err
+		}
+		task.PrivateData.SubscriptionQuota -= refund
+		if task.PrivateData.SubscriptionQuota < 0 {
+			task.PrivateData.SubscriptionQuota = 0
+		}
+	}
+	taskUpdateSplitBillingSource(task)
+	return nil
+}
+
+func taskUpdateSplitBillingSource(task *model.Task) {
+	if task.PrivateData.SubscriptionId <= 0 {
+		return
+	}
+	if task.PrivateData.WalletQuota > 0 {
+		task.PrivateData.BillingSource = BillingSourceSubscriptionWallet
+		return
+	}
+	task.PrivateData.BillingSource = BillingSourceSubscription
 }
 
 // taskAdjustTokenQuota 调整任务的令牌额度，delta > 0 表示扣费，delta < 0 表示退还。
@@ -119,12 +228,30 @@ func taskAdjustTokenQuota(ctx context.Context, task *model.Task, delta int) {
 // taskBillingOther 从 task 的 BillingContext 构建日志 Other 字段。
 func taskBillingOther(task *model.Task) map[string]interface{} {
 	other := make(map[string]interface{})
+	if task.PrivateData.BillingSource != "" {
+		other["billing_source"] = task.PrivateData.BillingSource
+	}
+	if task.PrivateData.SubscriptionId > 0 {
+		other["subscription_id"] = task.PrivateData.SubscriptionId
+	}
+	if task.PrivateData.SubscriptionQuota > 0 {
+		other["subscription_consumed"] = task.PrivateData.SubscriptionQuota
+	}
+	if task.PrivateData.BillingSource == BillingSourceSubscription {
+		other["wallet_quota_deducted"] = 0
+	}
+	if task.PrivateData.BillingSource == BillingSourceSubscriptionWallet {
+		other["wallet_quota_deducted"] = task.PrivateData.WalletQuota
+	}
 	if bc := task.PrivateData.BillingContext; bc != nil {
 		other["model_price"] = bc.ModelPrice
 		if bc.ModelRatio > 0 {
 			other["model_ratio"] = bc.ModelRatio
 		}
 		other["group_ratio"] = bc.GroupRatio
+		if bc.BillingPreference != "" {
+			other["billing_preference"] = bc.BillingPreference
+		}
 		if len(bc.OtherRatios) > 0 {
 			for k, v := range bc.OtherRatios {
 				other[k] = v

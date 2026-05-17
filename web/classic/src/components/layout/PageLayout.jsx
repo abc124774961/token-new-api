@@ -83,6 +83,12 @@ const PageLayout = () => {
     location.pathname !== '/console/playground';
 
   const isConsoleRoute = location.pathname.startsWith('/console');
+  const isHomeRoute = location.pathname === '/';
+  const isTopupRoute = [
+    '/console/affiliate',
+    '/console/recharge',
+    '/console/subscription-plans',
+  ].includes(location.pathname);
   const showSider = isConsoleRoute && (!isMobile || drawerOpen);
 
   useEffect(() => {
@@ -101,17 +107,21 @@ const PageLayout = () => {
 
   const loadStatus = async () => {
     try {
-      const res = await API.get('/api/status');
+      const res = await API.get('/api/status', {
+        skipErrorHandler: isHomeRoute || isTopupRoute,
+      });
       const { success, data } = res.data;
       if (success) {
         statusDispatch({ type: 'set', payload: data });
         setStatusData(data);
         applyDocumentBranding(data.system_name, data.logo);
-      } else {
+      } else if (!isHomeRoute && !isTopupRoute) {
         showError('Unable to connect to server');
       }
     } catch (error) {
-      showError('Failed to load status');
+      if (!isHomeRoute && !isTopupRoute) {
+        showError('Failed to load status');
+      }
     }
   };
 

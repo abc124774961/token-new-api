@@ -116,7 +116,9 @@ export const useSidebar = () => {
         setLoading(true);
       }
 
-      const res = await API.get('/api/user/self');
+      const res = await API.get('/api/user/self', {
+        skipErrorHandler: true,
+      });
       if (res.data.success && res.data.data.sidebar_modules) {
         let config;
         // 检查sidebar_modules是字符串还是对象
