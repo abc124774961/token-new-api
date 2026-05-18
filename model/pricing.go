@@ -1,9 +1,7 @@
 package model
 
 import (
-	"encoding/json"
 	"fmt"
-	"slices"
 	"strings"
 
 	"sync"
@@ -12,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -65,31 +64,17 @@ var (
 	modelSupportEndpointsLock = sync.RWMutex{}
 )
 
-func channelSupportsResponsesWireAPI(channelType int, settings dto.ChannelOtherSettings) bool {
-	if !settings.UsesResponsesWireAPI() {
-		return false
-	}
-	switch channelType {
-	case constant.ChannelTypeOpenAI, constant.ChannelTypeCodex, constant.ChannelTypeXai:
-		return true
-	default:
-		return false
-	}
-}
-
 func appendUniqueEndpoint(endpoints []string, endpoint constant.EndpointType) []string {
-	if slices.Contains(endpoints, string(endpoint)) {
-		return endpoints
+	for _, item := range endpoints {
+		if item == string(endpoint) {
+			return endpoints
+		}
 	}
 	return append(endpoints, string(endpoint))
 }
 
 func buildModelSupportEndpointTypes(channelType int, model string, settings dto.ChannelOtherSettings) []constant.EndpointType {
-	endpointTypes := common.GetEndpointTypesByChannelType(channelType, model)
-	if channelSupportsResponsesWireAPI(channelType, settings) {
-		endpointTypes = append([]constant.EndpointType{constant.EndpointTypeOpenAIResponse}, endpointTypes...)
-	}
-	return endpointTypes
+	return channelcapability.SupportedEndpointTypes(channelType, model, settings)
 }
 
 func GetPricing() []Pricing {
@@ -262,7 +247,7 @@ func updatePricing() {
 			continue
 		}
 		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
+		if err := common.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
 			endpoints := make([]string, 0, len(raw))
 			for k, v := range raw {
 				switch v.(type) {
@@ -306,7 +291,7 @@ func updatePricing() {
 			continue
 		}
 		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
+		if err := common.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
 			for k, v := range raw {
 				switch val := v.(type) {
 				case string:

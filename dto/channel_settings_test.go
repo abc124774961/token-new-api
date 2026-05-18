@@ -29,3 +29,14 @@ func TestChannelOtherSettingsUsesResponsesWireAPI(t *testing.T) {
 		})
 	}
 }
+
+func TestChannelOtherSettingsUsesCodexCompatibilityMode(t *testing.T) {
+	t.Parallel()
+
+	if (&ChannelOtherSettings{}).UsesCodexCompatibilityMode() {
+		t.Fatal("empty settings should not enable Codex compatibility mode")
+	}
+	if !(&ChannelOtherSettings{CodexCompatibilityMode: true}).UsesCodexCompatibilityMode() {
+		t.Fatal("expected Codex compatibility mode to be enabled")
+	}
+}

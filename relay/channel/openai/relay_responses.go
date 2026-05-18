@@ -82,6 +82,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	var responseTextBuilder strings.Builder
 	var sawCompleted bool
 	var deliveredEventCount int
+	var streamErr *types.NewAPIError
 	var bufferedEvents []bufferedResponsesStreamEvent
 
 	flushBufferedEvents := func() {
@@ -161,16 +162,31 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 					}
 				}
 			}
+		case "response.error", "response.failed":
+			if streamResponse.Response != nil {
+				if oaiErr := streamResponse.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
+					streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+					sr.Stop(streamErr)
+					return
+				}
+			}
+			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResponse.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			sr.Stop(streamErr)
+			return
 		default:
 			sendOrBufferEvent(streamResponse, data, true)
 		}
 	})
 
+	if streamErr != nil {
+		return nil, streamErr
+	}
+
 	if !sawCompleted && info != nil && info.StreamStatus != nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonEOF {
 		if deliveredEventCount == 0 {
 			return nil, types.NewOpenAIError(fmt.Errorf("responses stream ended before any usable event was delivered"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 		}
-		return nil, types.NewOpenAIError(fmt.Errorf("responses stream ended before response.completed"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		logger.LogWarn(c, "responses stream ended before response.completed; using delivered stream events for usage fallback")
 	}
 
 	if usage.CompletionTokens == 0 {

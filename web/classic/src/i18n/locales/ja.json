@@ -120,6 +120,8 @@
     "Codex / Claude Code 稳定高速中转站": "Codex / Claude Code 向けの安定高速リレー",
     "Codex 与 Claude Code": "Codex and Claude Code",
     "Codex 与 Claude Code 高稳定中转站": "Codex と Claude Code 向け高安定リレー",
+    "Codex 兼容模式": "Codex互換モード",
+    "开启后该 OpenAI 渠道按 Codex Responses 能力参与路由，并允许 gpt-image-* 生图/编辑能力；普通兼容站不要开启": "有効にすると、このOpenAIチャネルはCodex Responses対応としてルーティングに参加し、gpt-image-*の画像生成/編集機能を許可します。通常の互換プロキシでは有効にしないでください。",
     "Codex 或 Claude Code 连续生成、改错和跑测试时，网关持续选择健康线路，减少中途断流。": "CodexやClaude Codeが生成、修正、テストを続ける間、ゲートウェイは健全な経路を選び続け、途中切断を減らします。",
     "Codex 授权": "Codex 認可",
     "Codex 模式兼容": "Codex モード互換",

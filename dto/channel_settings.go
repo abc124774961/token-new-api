@@ -30,7 +30,8 @@ const (
 type ChannelOtherSettings struct {
 	AzureResponsesVersion                 string        `json:"azure_responses_version,omitempty"`
 	WireAPI                               string        `json:"wire_api,omitempty"`
-	VertexKeyType                         VertexKeyType `json:"vertex_key_type,omitempty"` // "json" or "api_key"
+	CodexCompatibilityMode                bool          `json:"codex_compatibility_mode,omitempty"` // Codex 兼容模式：用于声明该 OpenAI 兼容上游支持 Codex Responses 能力
+	VertexKeyType                         VertexKeyType `json:"vertex_key_type,omitempty"`          // "json" or "api_key"
 	OpenRouterEnterprise                  *bool         `json:"openrouter_enterprise,omitempty"`
 	ClaudeBetaQuery                       bool          `json:"claude_beta_query,omitempty"`         // Claude 渠道是否强制追加 ?beta=true
 	AllowServiceTier                      bool          `json:"allow_service_tier,omitempty"`        // 是否允许 service_tier 透传（默认过滤以避免额外计费）
@@ -67,6 +68,10 @@ func (s *ChannelOtherSettings) UsesResponsesWireAPI() bool {
 		return true
 	}
 	return strings.HasSuffix(wireAPI, "/responses") || strings.Contains(wireAPI, "/responses/")
+}
+
+func (s ChannelOtherSettings) UsesCodexCompatibilityMode() bool {
+	return s.CodexCompatibilityMode
 }
 
 func (s *ChannelOtherSettings) GetOpenAIWireAPIPath(isCompact bool) string {

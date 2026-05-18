@@ -201,6 +201,7 @@ const EditChannelModal = (props) => {
     // 仅 AWS: 密钥格式和区域（存入 settings.aws_key_type 和 settings.aws_region）
     aws_key_type: 'ak_sk',
     wire_api: '',
+    codex_compatibility_mode: true,
     // 企业账户设置
     is_enterprise_account: false,
     // 字段透传控制默认值
@@ -902,6 +903,10 @@ const EditChannelModal = (props) => {
             typeof parsedSettings.wire_api === 'string'
               ? parsedSettings.wire_api.trim()
               : '';
+          data.codex_compatibility_mode =
+            data.type === 1
+              ? parsedSettings.codex_compatibility_mode !== false
+              : false;
           // 读取企业账户设置
           data.is_enterprise_account =
             parsedSettings.openrouter_enterprise === true;
@@ -939,6 +944,7 @@ const EditChannelModal = (props) => {
           data.vertex_key_type = 'json';
           data.aws_key_type = 'ak_sk';
           data.wire_api = '';
+          data.codex_compatibility_mode = data.type === 1;
           data.is_enterprise_account = false;
           data.allow_service_tier = false;
           data.disable_store = false;
@@ -958,6 +964,7 @@ const EditChannelModal = (props) => {
         data.vertex_key_type = 'json';
         data.aws_key_type = 'ak_sk';
         data.wire_api = '';
+        data.codex_compatibility_mode = data.type === 1;
         data.is_enterprise_account = false;
         data.allow_service_tier = false;
         data.disable_store = false;
@@ -1791,6 +1798,13 @@ const EditChannelModal = (props) => {
       delete settings.wire_api;
     }
 
+    if (localInputs.type === 1) {
+      settings.codex_compatibility_mode =
+        localInputs.codex_compatibility_mode === true;
+    } else if ('codex_compatibility_mode' in settings) {
+      delete settings.codex_compatibility_mode;
+    }
+
     // type === 41 (Vertex): 始终保存 vertex_key_type 到 settings，避免编辑时被重置
     if (localInputs.type === 41) {
       settings.vertex_key_type = localInputs.vertex_key_type || 'json';
@@ -1854,6 +1868,7 @@ const EditChannelModal = (props) => {
     // 顶层的 aws_key_type 不应发送给后端
     delete localInputs.aws_key_type;
     delete localInputs.wire_api;
+    delete localInputs.codex_compatibility_mode;
     // 清理字段透传控制的临时字段
     delete localInputs.allow_service_tier;
     delete localInputs.disable_store;
@@ -3393,25 +3408,42 @@ const EditChannelModal = (props) => {
                               />
                             </div>
                             {inputs.type === 1 && (
-                              <div>
-                                <Form.Input
-                                  field='wire_api'
-                                  label={t('Wire API')}
-                                  placeholder={t(
-                                    '留空走默认 /v1/*，例如填写 responses 或 /responses',
-                                  )}
-                                  onChange={(value) => {
+                              <>
+                                <Form.Switch
+                                  field='codex_compatibility_mode'
+                                  label={t('Codex 兼容模式')}
+                                  checkedText={t('开')}
+                                  uncheckedText={t('关')}
+                                  onChange={(value) =>
                                     handleChannelOtherSettingsChange(
-                                      'wire_api',
+                                      'codex_compatibility_mode',
                                       value,
-                                    );
-                                  }}
-                                  showClear
+                                    )
+                                  }
                                   extraText={t(
-                                    '留空表示默认 /v1/*。可填写 responses、/responses，或任意自定义上游路径',
+                                    '开启后该 OpenAI 渠道按 Codex Responses 能力参与路由，并允许 gpt-image-* 生图/编辑能力；普通兼容站不要开启',
                                   )}
                                 />
-                              </div>
+                                <div>
+                                  <Form.Input
+                                    field='wire_api'
+                                    label={t('Wire API')}
+                                    placeholder={t(
+                                      '留空走默认 /v1/*，例如填写 responses 或 /responses',
+                                    )}
+                                    onChange={(value) => {
+                                      handleChannelOtherSettingsChange(
+                                        'wire_api',
+                                        value,
+                                      );
+                                    }}
+                                    showClear
+                                    extraText={t(
+                                      '留空表示默认 /v1/*。可填写 responses、/responses，或任意自定义上游路径',
+                                    )}
+                                  />
+                                </div>
+                              </>
                             )}
                           </>
                         )}

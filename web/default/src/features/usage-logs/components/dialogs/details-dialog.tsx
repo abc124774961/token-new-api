@@ -489,6 +489,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const useChannel = other?.admin_info?.use_channel
   const channelChain =
     useChannel && useChannel.length > 0 ? useChannel.join(' → ') : undefined
+  const channelFailures = props.isAdmin
+    ? other?.admin_info?.channel_failures?.filter(Boolean) || []
+    : []
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
@@ -546,6 +549,79 @@ export function DetailsDialog(props: DetailsDialogProps) {
 
               {channelChain && props.isAdmin && (
                 <DetailRow label={t('Retry Chain')} value={channelChain} mono />
+              )}
+
+              {channelFailures.length > 0 && (
+                <DetailSection
+                  icon={<AlertTriangle className='size-3' />}
+                  label={t('Channel Failure Attempts')}
+                  variant={
+                    channelFailures.some((failure) => failure.final_failure)
+                      ? 'danger'
+                      : 'default'
+                  }
+                >
+                  <div className='min-w-0 space-y-2'>
+                    {channelFailures.map((failure, index) => {
+                      const channelLabel = [
+                        failure.channel_id
+                          ? `#${failure.channel_id}`
+                          : t('Unknown channel'),
+                        failure.channel_name
+                          ? `(${failure.channel_name})`
+                          : undefined,
+                      ]
+                        .filter(Boolean)
+                        .join(' ')
+                      const reason =
+                        failure.temporary_avoidance_reason ||
+                        (failure.concurrency_cooldown
+                          ? t('Concurrency cooldown')
+                          : '')
+
+                      return (
+                        <div
+                          key={`${failure.channel_id || 'unknown'}-${index}`}
+                          className='min-w-0 space-y-1 rounded border bg-background/70 p-2'
+                        >
+                          <DetailRow
+                            label={t('Channel')}
+                            value={channelLabel}
+                            mono
+                          />
+                          {(failure.status_code || failure.error_code) && (
+                            <DetailRow
+                              label={t('Error')}
+                              value={[
+                                failure.status_code
+                                  ? `HTTP ${failure.status_code}`
+                                  : undefined,
+                                failure.error_code,
+                              ]
+                                .filter(Boolean)
+                                .join(' / ')}
+                              mono
+                            />
+                          )}
+                          {reason && (
+                            <DetailRow
+                              label={t('Runtime State')}
+                              value={reason}
+                              mono
+                            />
+                          )}
+                          {failure.message && (
+                            <DetailRow
+                              label={t('Message')}
+                              value={failure.message}
+                              muted
+                            />
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </DetailSection>
               )}
 
               {props.log.token_name && (

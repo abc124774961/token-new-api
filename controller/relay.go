@@ -55,6 +55,40 @@ func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
 	return err
 }
 
+func requiredEndpointTypeForRelay(info *relaycommon.RelayInfo) constant.EndpointType {
+	if info == nil {
+		return ""
+	}
+	switch info.RelayMode {
+	case relayconstant.RelayModeImagesGenerations:
+		return constant.EndpointTypeImageGeneration
+	case relayconstant.RelayModeImagesEdits:
+		return constant.EndpointTypeImageEdit
+	case relayconstant.RelayModeResponsesCompact:
+		return constant.EndpointTypeOpenAIResponseCompact
+	case relayconstant.RelayModeResponses:
+		return constant.EndpointTypeOpenAIResponse
+	}
+	return ""
+}
+
+func requiresCodexImageToolForRelay(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.RelayMode != relayconstant.RelayModeResponses {
+		return false
+	}
+	req := responsesRequestForEndpointDetection(info.Request)
+	return req != nil && req.HasTool(dto.BuildInToolImageGeneration)
+}
+
+func responsesRequestForEndpointDetection(request dto.Request) *dto.OpenAIResponsesRequest {
+	switch req := request.(type) {
+	case *dto.OpenAIResponsesRequest:
+		return req
+	default:
+		return nil
+	}
+}
+
 func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	var err *types.NewAPIError
 	if strings.Contains(c.Request.URL.Path, "embed") {
@@ -187,10 +221,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}()
 
 	retryParam := &service.RetryParam{
-		Ctx:        c,
-		TokenGroup: relayInfo.TokenGroup,
-		ModelName:  relayInfo.OriginModelName,
-		Retry:      common.GetPointer(0),
+		Ctx:                    c,
+		TokenGroup:             relayInfo.TokenGroup,
+		ModelName:              relayInfo.OriginModelName,
+		EndpointType:           requiredEndpointTypeForRelay(relayInfo),
+		RequiresCodexImageTool: requiresCodexImageToolForRelay(relayInfo),
+		Retry:                  common.GetPointer(0),
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
@@ -220,6 +256,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			service.RecordChannelConcurrencyCooldown(channel.Id, newAPIError)
 			retryParam.AllowExtraRetry(1)
 			addUsedChannel(c, channel.Id)
+			traceChannelFailure(c, *types.NewChannelError(
+				channel.Id,
+				channel.Type,
+				channel.Name,
+				channel.ChannelInfo.IsMultiKey,
+				common.GetContextKeyString(c, constant.ContextKeyChannelKey),
+				channel.GetAutoBan(),
+			), newAPIError, false)
 			continue
 		}
 
@@ -418,6 +462,9 @@ func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIE
 	if shouldFailoverOnConcurrencyLimit(c, openaiErr) {
 		return true
 	}
+	if shouldFailoverOnUnsupportedCapability(c, openaiErr) {
+		return true
+	}
 	if isUpstreamRateLimitLikeError(openaiErr) {
 		return true
 	}
@@ -440,6 +487,31 @@ func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIE
 	default:
 		return false
 	}
+}
+
+func shouldFailoverOnUnsupportedCapability(c *gin.Context, openaiErr *types.NewAPIError) bool {
+	if openaiErr == nil {
+		return false
+	}
+	if _, ok := c.Get("specific_channel_id"); ok {
+		return false
+	}
+	switch openaiErr.StatusCode {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusForbidden, http.StatusUnprocessableEntity:
+	default:
+		return false
+	}
+	message := strings.ToLower(openaiErr.Error())
+	return strings.Contains(message, "unknown parameter") ||
+		strings.Contains(message, "unsupported parameter") ||
+		strings.Contains(message, "unsupported tool") ||
+		strings.Contains(message, "invalid tool") ||
+		strings.Contains(message, "tool") && strings.Contains(message, "not supported") ||
+		strings.Contains(message, "image_generation") && strings.Contains(message, "not supported") ||
+		strings.Contains(message, "model") && strings.Contains(message, "disabled") ||
+		strings.Contains(message, "model_not_found") ||
+		strings.Contains(message, "does not exist") ||
+		strings.Contains(message, "unsupported endpoint")
 }
 
 func shouldFailoverOnConcurrencyLimit(c *gin.Context, openaiErr *types.NewAPIError) bool {
@@ -517,6 +589,7 @@ func isUpstreamRateLimitLikeError(openaiErr *types.NewAPIError) bool {
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, persistLog bool) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
+	traceChannelFailure(c, channelError, err, persistLog)
 	if service.ShouldDisableChannelForBalance(err) && channelError.AutoBan {
 		gopool.Go(func() {
 			service.DisableChannelForBalance(channelError)
@@ -569,6 +642,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
 		}
 		service.AppendChannelAffinityAdminInfo(c, adminInfo)
+		appendChannelFailureTraceAdminInfo(c, adminInfo)
 		other["admin_info"] = adminInfo
 		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 		if startTime.IsZero() {
@@ -578,6 +652,45 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 	}
 
+}
+
+func appendChannelFailureTraceAdminInfo(c *gin.Context, adminInfo map[string]interface{}) {
+	if c == nil || adminInfo == nil {
+		return
+	}
+	trace, ok := common.GetContextKeyType[[]map[string]interface{}](c, constant.ContextKeyChannelFailureTrace)
+	if !ok || len(trace) == 0 {
+		return
+	}
+	adminInfo["channel_failures"] = trace
+}
+
+func traceChannelFailure(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, finalFailure bool) {
+	if c == nil || err == nil {
+		return
+	}
+	item := map[string]interface{}{
+		"channel_id":    channelError.ChannelId,
+		"channel_name":  channelError.ChannelName,
+		"channel_type":  channelError.ChannelType,
+		"status_code":   err.StatusCode,
+		"error_type":    err.GetErrorType(),
+		"error_code":    err.GetErrorCode(),
+		"message":       err.MaskSensitiveError(),
+		"final_failure": finalFailure,
+	}
+	if reason, ok := channelFailureAvoidanceReason(err); ok {
+		item["temporary_avoidance_reason"] = reason
+	}
+	if service.IsUpstreamConcurrencyLimitError(err) || err.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
+		item["concurrency_cooldown"] = true
+	}
+	if len(err.Metadata) > 0 {
+		item["error_metadata"] = common.JsonRawMessageToString(err.Metadata)
+	}
+	trace, _ := common.GetContextKeyType[[]map[string]interface{}](c, constant.ContextKeyChannelFailureTrace)
+	trace = append(trace, item)
+	common.SetContextKey(c, constant.ContextKeyChannelFailureTrace, trace)
 }
 
 func currentRelayLogGroup(c *gin.Context) string {
@@ -768,10 +881,12 @@ func RelayTask(c *gin.Context) {
 	}()
 
 	retryParam := &service.RetryParam{
-		Ctx:        c,
-		TokenGroup: relayInfo.TokenGroup,
-		ModelName:  relayInfo.OriginModelName,
-		Retry:      common.GetPointer(0),
+		Ctx:                    c,
+		TokenGroup:             relayInfo.TokenGroup,
+		ModelName:              relayInfo.OriginModelName,
+		EndpointType:           requiredEndpointTypeForRelay(relayInfo),
+		RequiresCodexImageTool: requiresCodexImageToolForRelay(relayInfo),
+		Retry:                  common.GetPointer(0),
 	}
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {

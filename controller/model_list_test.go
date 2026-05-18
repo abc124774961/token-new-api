@@ -550,13 +550,14 @@ func TestListModelsAdvertisesImageSessionModes(t *testing.T) {
 		Status:   common.UserStatusEnabled,
 	}).Error)
 	require.NoError(t, db.Create(&model.Channel{
-		Id:     21,
-		Type:   constant.ChannelTypeOpenAI,
-		Name:   "image-channel",
-		Key:    "test-key",
-		Status: common.ChannelStatusEnabled,
-		Group:  "default",
-		Models: "gpt-image-2",
+		Id:            21,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "image-channel",
+		Key:           "test-key",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "default",
+		Models:        "gpt-image-2",
+		OtherSettings: `{"codex_compatibility_mode":true}`,
 	}).Error)
 	require.NoError(t, db.Create(&model.Ability{
 		Group:     "default",
@@ -588,12 +589,76 @@ func TestListModelsAdvertisesImageSessionModes(t *testing.T) {
 		require.Contains(t, item.SupportedEndpointTypes, constant.EndpointTypeImageGeneration)
 		require.Contains(t, item.SupportedEndpointTypes, constant.EndpointTypeImageEdit)
 		require.Equal(t, []string{"image_generation", "image_edit"}, item.SupportedSessionModes)
+		require.Equal(t, map[string]bool{dto.BuildInToolImageGeneration: true}, item.Capabilities)
+		require.Contains(t, item.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
+		require.Equal(t, []string{"text", "image"}, item.InputModalities)
+		require.Equal(t, []string{"image"}, item.OutputModalities)
+		require.Equal(t, []string{"text", "image"}, item.SupportedModalities)
 		require.Nil(t, item.ActualModelReturned)
 	}
 	require.True(t, found, "expected gpt-image-2 to appear in /v1/models")
 }
 
-func TestListModelsCodexFormatDoesNotAdvertiseImageGenerationToolOnTextModels(t *testing.T) {
+func TestListModelsDoesNotAdvertiseImageSessionModesWithoutCodexCompatibility(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	withMemoryCacheEnabled(t, false)
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       5004,
+		Username: "plain-image-capability-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     23,
+		Type:   constant.ChannelTypeOpenAI,
+		Name:   "plain-image-channel",
+		Key:    "test-key",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "gpt-image-2",
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-image-2",
+		ChannelId: 23,
+		Enabled:   true,
+	}).Error)
+	model.RefreshPricing()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	ctx.Set("id", 5004)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload listModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+
+	var found bool
+	for _, item := range payload.Data {
+		if item.Id != "gpt-image-2" {
+			continue
+		}
+		found = true
+		require.NotContains(t, item.SupportedEndpointTypes, constant.EndpointTypeImageGeneration)
+		require.NotContains(t, item.SupportedEndpointTypes, constant.EndpointTypeImageEdit)
+		require.Empty(t, item.SupportedSessionModes)
+		require.Nil(t, item.Capabilities)
+		require.Empty(t, item.ExperimentalSupportedTools)
+		require.Equal(t, []string{"text", "image"}, item.InputModalities)
+		require.Equal(t, []string{"text"}, item.OutputModalities)
+	}
+	require.True(t, found, "expected gpt-image-2 to appear in /v1/models")
+}
+
+func TestListModelsCodexFormatAdvertisesImageGenerationToolOnlyOnImageModels(t *testing.T) {
 	withSelfUseModeEnabled(t)
 	withMemoryCacheEnabled(t, false)
 
@@ -613,7 +678,7 @@ func TestListModelsCodexFormatDoesNotAdvertiseImageGenerationToolOnTextModels(t 
 		Status:        common.ChannelStatusEnabled,
 		Group:         "default",
 		Models:        "gpt-5.5,gpt-image-2",
-		OtherSettings: `{"wire_api":"responses"}`,
+		OtherSettings: `{"codex_compatibility_mode":true}`,
 	}).Error)
 	require.NoError(t, db.Create(&model.Ability{
 		Group:     "default",
@@ -642,15 +707,25 @@ func TestListModelsCodexFormatDoesNotAdvertiseImageGenerationToolOnTextModels(t 
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
 
 	var foundText bool
+	var foundImage bool
 	for _, item := range payload.Models {
-		require.NotEqual(t, "gpt-image-2", item.Slug)
-		if item.Slug != "gpt-5.5" {
-			continue
+		switch item.Slug {
+		case "gpt-5.5":
+			foundText = true
+			require.Contains(t, item.InputModalities, "image")
+			require.NotContains(t, item.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
+			require.Contains(t, item.SupportedSessionModes, "responses")
+		case "gpt-image-2":
+			foundImage = true
+			require.Contains(t, item.SupportedEndpointTypes, constant.EndpointTypeImageGeneration)
+			require.Contains(t, item.SupportedSessionModes, "image_generation")
+			require.Contains(t, item.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
+			require.Equal(t, map[string]bool{dto.BuildInToolImageGeneration: true}, item.Capabilities)
+			require.Equal(t, []string{"text", "image"}, item.InputModalities)
+			require.Equal(t, []string{"image"}, item.OutputModalities)
+			require.Equal(t, []string{"text", "image"}, item.SupportedModalities)
 		}
-		foundText = true
-		require.Contains(t, item.InputModalities, "image")
-		require.NotContains(t, item.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
-		require.Contains(t, item.SupportedSessionModes, "responses")
 	}
 	require.True(t, foundText, "expected gpt-5.5 to appear in codex /models response")
+	require.True(t, foundImage, "expected gpt-image-2 to appear in codex /models response")
 }

@@ -80,6 +80,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 
 	AppendChannelAffinityAdminInfo(ctx, adminInfo)
 	appendClientRequestTraceInfo(relayInfo, adminInfo)
+	appendChannelFailureTrace(ctx, adminInfo)
 
 	other["admin_info"] = adminInfo
 	appendRequestPath(ctx, relayInfo, other)
@@ -89,6 +90,17 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	appendParamOverrideInfo(relayInfo, other)
 	appendStreamStatus(relayInfo, other)
 	return other
+}
+
+func appendChannelFailureTrace(ctx *gin.Context, adminInfo map[string]interface{}) {
+	if ctx == nil || adminInfo == nil {
+		return
+	}
+	trace, ok := common.GetContextKeyType[[]map[string]interface{}](ctx, constant.ContextKeyChannelFailureTrace)
+	if !ok || len(trace) == 0 {
+		return
+	}
+	adminInfo["channel_failures"] = trace
 }
 
 func appendModelTraceInfo(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {

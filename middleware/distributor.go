@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
@@ -23,8 +24,14 @@ import (
 )
 
 type ModelRequest struct {
-	Model string `json:"model"`
-	Group string `json:"group,omitempty"`
+	Model                  string                `json:"model"`
+	Group                  string                `json:"group,omitempty"`
+	EndpointType           constant.EndpointType `json:"-"`
+	RequiresCodexImageTool bool                  `json:"-"`
+}
+
+type responsesCapabilityRequest struct {
+	Tools []map[string]any `json:"tools,omitempty"`
 }
 
 func Distribute() func(c *gin.Context) {
@@ -107,6 +114,8 @@ func Distribute() func(c *gin.Context) {
 								abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
 								return
 							}
+						} else if !channelSupportsModelRequest(preferred, *modelRequest) {
+							logger.LogDebug(c, "Skipping affinity channel #%d because it does not support endpoint %s for model %s", preferred.Id, modelRequest.EndpointType, modelRequest.Model)
 						} else if usingGroup == "auto" {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 							autoGroups := service.GetUserAutoGroup(userGroup)
@@ -129,10 +138,12 @@ func Distribute() func(c *gin.Context) {
 
 				if channel == nil {
 					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
-						Ctx:        c,
-						ModelName:  modelRequest.Model,
-						TokenGroup: usingGroup,
-						Retry:      common.GetPointer(0),
+						Ctx:                    c,
+						ModelName:              modelRequest.Model,
+						EndpointType:           modelRequest.EndpointType,
+						RequiresCodexImageTool: modelRequest.RequiresCodexImageTool,
+						TokenGroup:             usingGroup,
+						Retry:                  common.GetPointer(0),
 					})
 					if err != nil {
 						showGroup := usingGroup
@@ -176,6 +187,49 @@ func getModelFromRequest(c *gin.Context) (*ModelRequest, error) {
 		return nil, errors.New(i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 	}
 	return &modelRequest, nil
+}
+
+func detectRequiredEndpointType(c *gin.Context) constant.EndpointType {
+	path := c.Request.URL.Path
+	if strings.HasPrefix(path, "/v1/images/generations") {
+		return constant.EndpointTypeImageGeneration
+	}
+	if strings.HasPrefix(path, "/v1/images/edits") {
+		return constant.EndpointTypeImageEdit
+	}
+	if strings.HasPrefix(path, "/v1/responses/compact") {
+		return constant.EndpointTypeOpenAIResponseCompact
+	}
+	if strings.HasPrefix(path, "/v1/responses") {
+		return constant.EndpointTypeOpenAIResponse
+	}
+	return ""
+}
+
+func responsesRequestHasImageGenerationTool(c *gin.Context) bool {
+	if c == nil || c.Request == nil || !strings.HasPrefix(c.Request.URL.Path, "/v1/responses") {
+		return false
+	}
+	req := responsesCapabilityRequest{}
+	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
+		return false
+	}
+	for _, tool := range req.Tools {
+		if common.Interface2String(tool["type"]) == dto.BuildInToolImageGeneration {
+			return true
+		}
+	}
+	return false
+}
+
+func channelSupportsModelRequest(channel *model.Channel, request ModelRequest) bool {
+	if !service.ChannelSupportsRequiredEndpoint(channel, request.Model, request.EndpointType) {
+		return false
+	}
+	if request.RequiresCodexImageTool && !service.ChannelSupportsCodexImageGenerationTool(channel) {
+		return false
+	}
+	return true
 }
 
 func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
@@ -339,6 +393,8 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/responses/compact") && modelRequest.Model != "" {
 		modelRequest.Model = ratio_setting.WithCompactModelSuffix(modelRequest.Model)
 	}
+	modelRequest.EndpointType = detectRequiredEndpointType(c)
+	modelRequest.RequiresCodexImageTool = responsesRequestHasImageGenerationTool(c)
 	return &modelRequest, shouldSelectChannel, nil
 }
 

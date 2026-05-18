@@ -38,6 +38,7 @@ const (
 	ContextKeyChannelMultiKeyIndex     ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey               ContextKey = "channel_key"
 	ContextKeyUpstreamRequestInfo      ContextKey = "upstream_request_info"
+	ContextKeyChannelFailureTrace      ContextKey = "channel_failure_trace"
 	ContextKeyRelayResponseStarted     ContextKey = "relay_response_started"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"

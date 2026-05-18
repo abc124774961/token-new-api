@@ -11,17 +11,20 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 )
 
 type RetryParam struct {
-	Ctx          *gin.Context
-	TokenGroup   string
-	ModelName    string
-	Retry        *int
-	ExtraRetries *int
-	resetNextTry bool
+	Ctx                    *gin.Context
+	TokenGroup             string
+	ModelName              string
+	EndpointType           constant.EndpointType
+	RequiresCodexImageTool bool
+	Retry                  *int
+	ExtraRetries           *int
+	resetNextTry           bool
 }
 
 type channelAvoidanceEntry struct {
@@ -253,11 +256,35 @@ func clearAllChannelFailureAvoidanceForTest() {
 	})
 }
 
-func selectChannelForGroup(ctx *gin.Context, group string, modelName string, retry int, allowUsedChannelFallback bool) (*model.Channel, error) {
+func ChannelSupportsRequiredEndpoint(channel *model.Channel, modelName string, endpointType constant.EndpointType) bool {
+	if endpointType == "" {
+		return true
+	}
+	if channel == nil {
+		return false
+	}
+	return channelcapability.SupportsEndpoint(channel.Type, modelName, channel.GetOtherSettings(), endpointType)
+}
+
+func ChannelSupportsRequiredCapabilities(channel *model.Channel, modelName string, endpointType constant.EndpointType, requiresCodexImageTool bool) bool {
+	if requiresCodexImageTool && !ChannelSupportsCodexImageGenerationTool(channel) {
+		return false
+	}
+	return ChannelSupportsRequiredEndpoint(channel, modelName, endpointType)
+}
+
+func ChannelSupportsCodexImageGenerationTool(channel *model.Channel) bool {
+	if channel == nil {
+		return false
+	}
+	return channelcapability.SupportsCodexImageGenerationTool(channel.Type, channel.GetOtherSettings())
+}
+
+func selectChannelForGroup(ctx *gin.Context, group string, modelName string, endpointType constant.EndpointType, requiresCodexImageTool bool, retry int, allowUsedChannelFallback bool) (*model.Channel, error) {
 	excludedChannelIDs := getUsedChannelSet(ctx)
 	avoidedChannelIDs := getAvoidedChannelSet()
 	excludedWithAvoided := mergeChannelSets(excludedChannelIDs, avoidedChannelIDs, getChannelConcurrencyCooldownSet())
-	channel, err := selectNonFullChannel(group, modelName, retry, excludedWithAvoided)
+	channel, err := selectNonFullChannel(group, modelName, endpointType, requiresCodexImageTool, retry, excludedWithAvoided)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +293,7 @@ func selectChannelForGroup(ctx *gin.Context, group string, modelName string, ret
 	}
 	if len(avoidedChannelIDs) > 0 && allowUsedChannelFallback {
 		// Prefer a temporarily avoided channel over failing the request when no healthy peer exists.
-		channel, err = selectNonFullChannel(group, modelName, retry, excludedChannelIDs)
+		channel, err = selectNonFullChannel(group, modelName, endpointType, requiresCodexImageTool, retry, excludedChannelIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -281,7 +308,7 @@ func selectChannelForGroup(ctx *gin.Context, group string, modelName string, ret
 	// All peer channels in the current priority/group have been tried. Allow reusing an
 	// already-used channel so multi-key channels can continue rotating to another key.
 	if len(avoidedChannelIDs) > 0 {
-		channel, err = selectNonFullChannel(group, modelName, retry, avoidedChannelIDs)
+		channel, err = selectNonFullChannel(group, modelName, endpointType, requiresCodexImageTool, retry, avoidedChannelIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -289,20 +316,24 @@ func selectChannelForGroup(ctx *gin.Context, group string, modelName string, ret
 			return channel, nil
 		}
 	}
-	return selectNonFullChannel(group, modelName, retry, nil)
+	return selectNonFullChannel(group, modelName, endpointType, requiresCodexImageTool, retry, nil)
 }
 
-func hasAlternativeChannelInGroup(ctx *gin.Context, group string, modelName string, retry int) bool {
-	channel, err := selectNonFullChannel(group, modelName, retry, mergeChannelSets(getUsedChannelSet(ctx), getAvoidedChannelSet(), getChannelConcurrencyCooldownSet()))
+func hasAlternativeChannelInGroup(ctx *gin.Context, group string, modelName string, endpointType constant.EndpointType, requiresCodexImageTool bool, retry int) bool {
+	channel, err := selectNonFullChannel(group, modelName, endpointType, requiresCodexImageTool, retry, mergeChannelSets(getUsedChannelSet(ctx), getAvoidedChannelSet(), getChannelConcurrencyCooldownSet()))
 	return err == nil && channel != nil
 }
 
-func selectNonFullChannel(group string, modelName string, retry int, excludedChannelIDs map[int]struct{}) (*model.Channel, error) {
+func selectNonFullChannel(group string, modelName string, endpointType constant.EndpointType, requiresCodexImageTool bool, retry int, excludedChannelIDs map[int]struct{}) (*model.Channel, error) {
 	excluded := mergeChannelSets(excludedChannelIDs, getChannelConcurrencyCooldownSet())
 	for {
 		channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, excluded)
 		if err != nil || channel == nil {
 			return channel, err
+		}
+		if !ChannelSupportsRequiredCapabilities(channel, modelName, endpointType, requiresCodexImageTool) {
+			excluded[channel.Id] = struct{}{}
+			continue
 		}
 		if !IsChannelConcurrencyFull(channel.Id, channel.GetSetting()) {
 			return channel, nil
@@ -336,18 +367,18 @@ func GetChannelFailoverPlan(param *RetryParam) (bool, bool) {
 		return false, false
 	}
 	if param.TokenGroup != "auto" {
-		return hasAlternativeChannelInGroup(param.Ctx, param.TokenGroup, param.ModelName, param.GetRetry()), false
+		return hasAlternativeChannelInGroup(param.Ctx, param.TokenGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, param.GetRetry()), false
 	}
 	autoGroups := GetUserAutoGroup(common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup))
 	if len(autoGroups) == 0 {
 		return false, false
 	}
 	currentGroup, currentIndex := resolveAutoGroupCursor(param.Ctx, autoGroups)
-	if currentGroup != "" && hasAlternativeChannelInGroup(param.Ctx, currentGroup, param.ModelName, param.GetRetry()) {
+	if currentGroup != "" && hasAlternativeChannelInGroup(param.Ctx, currentGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, param.GetRetry()) {
 		return true, false
 	}
 	for i := currentIndex + 1; i < len(autoGroups); i++ {
-		if hasAlternativeChannelInGroup(param.Ctx, autoGroups[i], param.ModelName, 0) {
+		if hasAlternativeChannelInGroup(param.Ctx, autoGroups[i], param.ModelName, param.EndpointType, param.RequiresCodexImageTool, 0) {
 			return true, true
 		}
 	}
@@ -390,7 +421,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 			forceNextAutoGroup := common.GetContextKeyBool(param.Ctx, constant.ContextKeyForceNextAutoGroup)
 			if forceNextAutoGroup {
-				if channel, selectErr := selectChannelForGroup(param.Ctx, autoGroup, param.ModelName, priorityRetry, false); selectErr != nil {
+				if channel, selectErr := selectChannelForGroup(param.Ctx, autoGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, priorityRetry, false); selectErr != nil {
 					return nil, autoGroup, selectErr
 				} else if channel != nil {
 					common.SetContextKey(param.Ctx, constant.ContextKeyForceNextAutoGroup, false)
@@ -406,7 +437,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 				continue
 			}
 
-			channel, err = selectChannelForGroup(param.Ctx, autoGroup, param.ModelName, priorityRetry, false)
+			channel, err = selectChannelForGroup(param.Ctx, autoGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, priorityRetry, false)
 			if err != nil {
 				return nil, autoGroup, err
 			}
@@ -429,7 +460,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			usedChannelIDs := getUsedChannelSet(param.Ctx)
 			for i := startGroupIndex; i < len(autoGroups); i++ {
 				autoGroup := autoGroups[i]
-				channel, err = selectNonFullChannel(autoGroup, param.ModelName, param.GetRetry(), mergeChannelSets(usedChannelIDs, getChannelConcurrencyCooldownSet()))
+				channel, err = selectNonFullChannel(autoGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, param.GetRetry(), mergeChannelSets(usedChannelIDs, getChannelConcurrencyCooldownSet()))
 				if err != nil {
 					return nil, autoGroup, err
 				}
@@ -442,7 +473,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 		}
 	} else {
-		channel, err = selectChannelForGroup(param.Ctx, param.TokenGroup, param.ModelName, param.GetRetry(), true)
+		channel, err = selectChannelForGroup(param.Ctx, param.TokenGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, param.GetRetry(), true)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}

@@ -560,9 +560,25 @@ func (channel *Channel) Update() error {
 	if err != nil {
 		return err
 	}
+	if existingChannel != nil && channelCapabilityAffectsPricing(existingChannel, channel) {
+		InvalidatePricingCache()
+	}
 	DB.Model(channel).First(channel, "id = ?", channel.Id)
 	err = channel.UpdateAbilities(nil)
 	return err
+}
+
+func channelCapabilityAffectsPricing(before *Channel, after *Channel) bool {
+	if before == nil || after == nil {
+		return false
+	}
+	if before.Type != after.Type || before.Models != after.Models || before.OtherSettings != after.OtherSettings {
+		return true
+	}
+	if before.Status != after.Status || before.Group != after.Group {
+		return true
+	}
+	return false
 }
 
 func mergeChannelConcurrencyCeiling(settingJSON *string, existingSettingJSON *string) (*string, error) {
@@ -1033,6 +1049,9 @@ func (channel *Channel) SetOtherSettings(setting dto.ChannelOtherSettings) {
 	if err != nil {
 		common.SysLog(fmt.Sprintf("failed to marshal setting: channel_id=%d, error=%v", channel.Id, err))
 		return
+	}
+	if channel.OtherSettings != string(settingBytes) {
+		InvalidatePricingCache()
 	}
 	channel.OtherSettings = string(settingBytes)
 }

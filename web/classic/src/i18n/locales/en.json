@@ -127,6 +127,8 @@
     "Codex / Claude Code 稳定高速中转站": "Stable, fast relay for Codex / Claude Code",
     "Codex 与 Claude Code": "Codex and Claude Code",
     "Codex 与 Claude Code 高稳定中转站": "High-stability relay for Codex and Claude Code",
+    "Codex 兼容模式": "Codex compatibility mode",
+    "开启后该 OpenAI 渠道按 Codex Responses 能力参与路由，并允许 gpt-image-* 生图/编辑能力；普通兼容站不要开启": "When enabled, this OpenAI channel participates in routing as Codex Responses-capable and allows gpt-image-* generation/edit capabilities. Do not enable this for ordinary compatible proxies.",
     "Codex 或 Claude Code 连续生成、改错和跑测试时，网关持续选择健康线路，减少中途断流。": "When Codex or Claude Code keeps generating, fixing, and running tests, the gateway keeps selecting healthy routes to reduce mid-session dropouts.",
     "Codex 授权": "Codex Authorization",
     "Codex 模式兼容": "Codex mode compatibility",

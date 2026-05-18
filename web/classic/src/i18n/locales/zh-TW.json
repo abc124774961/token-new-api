@@ -119,6 +119,8 @@
     "Codex / Claude Code 稳定高速中转站": "Codex / Claude Code 穩定高速中轉站",
     "Codex 与 Claude Code": "Codex 與 Claude Code",
     "Codex 与 Claude Code 高稳定中转站": "Codex 與 Claude Code 高穩定中轉站",
+    "Codex 兼容模式": "Codex 相容模式",
+    "开启后该 OpenAI 渠道按 Codex Responses 能力参与路由，并允许 gpt-image-* 生图/编辑能力；普通兼容站不要开启": "開啟後，該 OpenAI 渠道會以支援 Codex Responses 能力參與路由，並允許 gpt-image-* 生圖/編輯能力；一般相容代理站請勿開啟",
     "Codex 或 Claude Code 连续生成、改错和跑测试时，网关持续选择健康线路，减少中途断流。": "Codex 或 Claude Code 連續生成、改錯和跑測試時，網關持續選擇健康線路，減少中途斷流。",
     "Codex 授权": "",
     "Codex 模式兼容": "Codex 模式兼容",

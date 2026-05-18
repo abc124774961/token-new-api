@@ -295,7 +295,11 @@ func finalizeVisibleOpenAIModels(c *gin.Context, models []dto.OpenAIModels) []dt
 	for i := range models {
 		models[i].SupportedSessionModes = buildSupportedSessionModes(models[i].Id, models[i].SupportedEndpointTypes)
 		models[i].ActualModelReturned = buildActualModelReturned(models[i], actualModelByName[models[i].Id])
+		models[i].Capabilities = buildModelCapabilities(models[i].Id, models[i].SupportedEndpointTypes)
 		models[i].InputModalities = buildInputModalities(models[i].Id)
+		models[i].OutputModalities = buildOutputModalities(models[i].Id, models[i].SupportedEndpointTypes)
+		models[i].SupportedModalities = buildSupportedModalities(models[i].InputModalities, models[i].OutputModalities)
+		models[i].ExperimentalSupportedTools = buildExperimentalSupportedTools(models[i].Id, models[i].SupportedEndpointTypes, models[i].ExperimentalSupportedTools)
 	}
 	return models
 }
@@ -315,9 +319,6 @@ func buildCodexModels(models []dto.OpenAIModels) []dto.CodexModelInfo {
 	codexModels := make([]dto.CodexModelInfo, 0, len(models))
 	applyPatchToolType := "freeform"
 	for idx, modelItem := range models {
-		if common.IsImageGenerationModel(modelItem.Id) {
-			continue
-		}
 		codexModels = append(codexModels, dto.CodexModelInfo{
 			Slug:                          modelItem.Id,
 			DisplayName:                   modelItem.Id,
@@ -344,6 +345,9 @@ func buildCodexModels(models []dto.OpenAIModels) []dto.CodexModelInfo {
 			EffectiveContextWindowPercent: 95,
 			ExperimentalSupportedTools:    nonNilStringSlice(modelItem.ExperimentalSupportedTools),
 			InputModalities:               modelItem.InputModalities,
+			OutputModalities:              modelItem.OutputModalities,
+			SupportedModalities:           modelItem.SupportedModalities,
+			Capabilities:                  modelItem.Capabilities,
 			ActualModelReturned:           modelItem.ActualModelReturned,
 			SupportedEndpointTypes:        modelItem.SupportedEndpointTypes,
 			SupportedSessionModes:         modelItem.SupportedSessionModes,
@@ -368,6 +372,25 @@ func nonNilStringSlice(items []string) []string {
 	return items
 }
 
+func buildModelCapabilities(modelName string, endpointTypes []constant.EndpointType) map[string]bool {
+	if !common.IsImageGenerationModel(modelName) ||
+		!endpointTypesContain(endpointTypes, constant.EndpointTypeImageGeneration) {
+		return nil
+	}
+	return map[string]bool{
+		dto.BuildInToolImageGeneration: true,
+	}
+}
+
+func buildExperimentalSupportedTools(modelName string, endpointTypes []constant.EndpointType, tools []string) []string {
+	result := nonNilStringSlice(tools)
+	if common.IsImageGenerationModel(modelName) &&
+		endpointTypesContain(endpointTypes, constant.EndpointTypeImageGeneration) {
+		result = appendUniqueString(result, dto.BuildInToolImageGeneration)
+	}
+	return result
+}
+
 func buildInputModalities(modelName string) []string {
 	if common.IsImageGenerationModel(modelName) {
 		return []string{"text", "image"}
@@ -376,6 +399,25 @@ func buildInputModalities(modelName string) []string {
 		return []string{"text", "image"}
 	}
 	return []string{"text"}
+}
+
+func buildOutputModalities(modelName string, endpointTypes []constant.EndpointType) []string {
+	if common.IsImageGenerationModel(modelName) &&
+		endpointTypesContain(endpointTypes, constant.EndpointTypeImageGeneration) {
+		return []string{"image"}
+	}
+	return []string{"text"}
+}
+
+func buildSupportedModalities(inputModalities []string, outputModalities []string) []string {
+	modalities := make([]string, 0, len(inputModalities)+len(outputModalities))
+	for _, modality := range inputModalities {
+		modalities = appendUniqueString(modalities, modality)
+	}
+	for _, modality := range outputModalities {
+		modalities = appendUniqueString(modalities, modality)
+	}
+	return modalities
 }
 
 func buildSupportedSessionModes(modelName string, endpointTypes []constant.EndpointType) []string {
@@ -390,7 +432,7 @@ func buildSupportedSessionModes(modelName string, endpointTypes []constant.Endpo
 			}
 		}
 		if len(modes) == 0 {
-			modes = append(modes, "image_generation", "image_edit")
+			return []string{}
 		}
 		return modes
 	}

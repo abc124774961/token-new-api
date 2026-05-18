@@ -11,8 +11,11 @@ type OpenAIModels struct {
 	SupportedEndpointTypes     []constant.EndpointType `json:"supported_endpoint_types"`
 	SupportedSessionModes      []string                `json:"supported_session_modes"`
 	ActualModelReturned        map[string]string       `json:"actual_model_returned"`
+	Capabilities               map[string]bool         `json:"capabilities,omitempty"`
 	ExperimentalSupportedTools []string                `json:"experimental_supported_tools,omitempty"`
 	InputModalities            []string                `json:"input_modalities,omitempty"`
+	OutputModalities           []string                `json:"output_modalities,omitempty"`
+	SupportedModalities        []string                `json:"supported_modalities,omitempty"`
 }
 
 type CodexModelsResponse struct {
@@ -45,6 +48,9 @@ type CodexModelInfo struct {
 	EffectiveContextWindowPercent int                     `json:"effective_context_window_percent"`
 	ExperimentalSupportedTools    []string                `json:"experimental_supported_tools"`
 	InputModalities               []string                `json:"input_modalities"`
+	OutputModalities              []string                `json:"output_modalities,omitempty"`
+	SupportedModalities           []string                `json:"supported_modalities,omitempty"`
+	Capabilities                  map[string]bool         `json:"capabilities,omitempty"`
 	ActualModelReturned           map[string]string       `json:"actual_model_returned,omitempty"`
 	SupportedEndpointTypes        []constant.EndpointType `json:"supported_endpoint_types,omitempty"`
 	SupportedSessionModes         []string                `json:"supported_session_modes,omitempty"`

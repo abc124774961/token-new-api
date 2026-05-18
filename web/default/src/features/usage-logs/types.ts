@@ -91,11 +91,26 @@ export interface ChannelAffinityInfo {
   using_group?: string
 }
 
+export interface ChannelFailureTraceItem {
+  channel_id?: number
+  channel_name?: string
+  channel_type?: number
+  status_code?: number
+  error_type?: string
+  error_code?: string
+  message?: string
+  final_failure?: boolean
+  temporary_avoidance_reason?: string
+  concurrency_cooldown?: boolean
+  error_metadata?: string
+}
+
 export interface LogOtherData {
   admin_info?: {
     is_multi_key?: boolean
     multi_key_index?: number
     use_channel?: number[]
+    channel_failures?: ChannelFailureTraceItem[]
     local_count_tokens?: boolean
     channel_affinity?: ChannelAffinityInfo
     // Top-up audit fields (type=1, admin only)

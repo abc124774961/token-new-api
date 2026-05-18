@@ -117,7 +117,7 @@ func TestRecordChannelConcurrencyCooldownAndSelectionSkip(t *testing.T) {
 	require.NotNil(t, status)
 	require.True(t, status.Active)
 
-	channel, errSelect := selectChannelForGroup(newRetryContext(), "default", "gpt-5.5", 0, true)
+	channel, errSelect := selectChannelForGroup(newRetryContext(), "default", "gpt-5.5", "", false, 0, true)
 	require.NoError(t, errSelect)
 	require.NotNil(t, channel)
 	require.Equal(t, 1005, channel.Id)

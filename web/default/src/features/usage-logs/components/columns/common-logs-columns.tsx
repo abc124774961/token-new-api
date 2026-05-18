@@ -54,7 +54,7 @@ import {
   getLogTypeConfig,
   isPerCallBilling,
 } from '../../lib/utils'
-import type { LogOtherData } from '../../types'
+import type { ChannelFailureTraceItem, LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
 import { ModelBadge } from '../model-badge'
 import { useUsageLogsContext } from '../usage-logs-provider'
@@ -63,6 +63,175 @@ interface DetailSegment {
   text: string
   muted?: boolean
   danger?: boolean
+}
+
+interface ChannelSwitchFlowItem {
+  channelId: string
+  nextChannelId?: string
+  reason?: string
+  details: string[]
+  finalFailure?: boolean
+}
+
+function normalizeChannelId(channelId: number | string | undefined): string {
+  if (channelId == null) return ''
+  return String(channelId).trim()
+}
+
+function formatChannelId(channelId: number | string | undefined): string {
+  const normalized = normalizeChannelId(channelId)
+  return normalized ? `#${normalized}` : '#?'
+}
+
+function formatChannelFailureReason(
+  failure: ChannelFailureTraceItem | undefined,
+  t: (key: string, opts?: Record<string, unknown>) => string
+): { reason: string; details: string[] } {
+  if (!failure) {
+    return { reason: t('No failure details recorded'), details: [] }
+  }
+
+  const primary: string[] = []
+  const details: string[] = []
+
+  if (failure.temporary_avoidance_reason) {
+    primary.push(
+      `${t('Temporary avoidance')}: ${failure.temporary_avoidance_reason}`
+    )
+  }
+  if (failure.concurrency_cooldown) {
+    primary.push(t('Concurrency cooldown'))
+  }
+  if (failure.status_code) {
+    details.push(`HTTP ${failure.status_code}`)
+  }
+  if (failure.error_code) {
+    details.push(failure.error_code)
+  }
+  if (failure.error_type) {
+    details.push(failure.error_type)
+  }
+
+  if (primary.length === 0 && details.length > 0) {
+    primary.push(details.join(' / '))
+  }
+  if (failure.message) {
+    if (primary.length === 0) {
+      primary.push(failure.message)
+    } else {
+      details.push(failure.message)
+    }
+  }
+
+  return {
+    reason: primary.join(' · ') || t('No failure details recorded'),
+    details: primary.length === 0 ? [] : details,
+  }
+}
+
+function takeFailureForChannel(
+  failures: ChannelFailureTraceItem[],
+  channelId: string,
+  usedFailureIndexes: Set<number>
+): ChannelFailureTraceItem | undefined {
+  const index = failures.findIndex((failure, failureIndex) => {
+    if (usedFailureIndexes.has(failureIndex)) return false
+    return normalizeChannelId(failure.channel_id) === channelId
+  })
+
+  if (index < 0) return undefined
+  usedFailureIndexes.add(index)
+  return failures[index]
+}
+
+function buildChannelSwitchFlow(
+  useChannel: Array<number | string> | undefined,
+  failures: ChannelFailureTraceItem[],
+  t: (key: string, opts?: Record<string, unknown>) => string
+): ChannelSwitchFlowItem[] {
+  const chain = (useChannel || []).map(normalizeChannelId).filter(Boolean)
+  const usedFailureIndexes = new Set<number>()
+
+  return chain.map((channelId, index) => {
+    const failure = takeFailureForChannel(
+      failures,
+      channelId,
+      usedFailureIndexes
+    )
+    const reasonInfo = formatChannelFailureReason(failure, t)
+
+    return {
+      channelId,
+      nextChannelId: chain[index + 1],
+      reason: failure || chain[index + 1] ? reasonInfo.reason : undefined,
+      details: reasonInfo.details,
+      finalFailure: failure?.final_failure,
+    }
+  })
+}
+
+function ChannelSwitchFlowTooltip({
+  useChannel,
+  failures,
+  t,
+}: {
+  useChannel: Array<number | string> | undefined
+  failures: ChannelFailureTraceItem[]
+  t: (key: string, opts?: Record<string, unknown>) => string
+}) {
+  const chain = (useChannel || []).map(normalizeChannelId).filter(Boolean)
+  const flow = buildChannelSwitchFlow(useChannel, failures, t)
+
+  if (chain.length === 0) return null
+
+  return (
+    <div className='border-border/70 mt-1 space-y-2 border-t pt-2 text-xs'>
+      <div>
+        <p className='font-medium'>{t('Channel Switch Flow')}</p>
+        <p className='text-muted-foreground mt-0.5 font-mono'>
+          {chain.map(formatChannelId).join(' → ')}
+        </p>
+      </div>
+      <div className='space-y-1.5'>
+        {flow.map((item, index) => {
+          const isSwitch = Boolean(item.nextChannelId)
+          const isFinalFailure = !isSwitch && item.finalFailure
+
+          return (
+            <div
+              key={`${item.channelId}-${item.nextChannelId || 'final'}-${index}`}
+              className='space-y-0.5'
+            >
+              <p className='font-mono'>
+                {isSwitch
+                  ? `${formatChannelId(item.channelId)} → ${formatChannelId(item.nextChannelId)}`
+                  : `${t('Final Channel')}: ${formatChannelId(item.channelId)}`}
+              </p>
+              {(isSwitch || isFinalFailure) && (
+                <p className='text-muted-foreground'>
+                  <span className='text-foreground'>{t('Switch Reason')}:</span>{' '}
+                  {item.reason || t('No failure details recorded')}
+                </p>
+              )}
+              {item.details.map((detail) => (
+                <p
+                  key={detail}
+                  className='text-muted-foreground/80 font-mono break-words'
+                >
+                  {detail}
+                </p>
+              ))}
+            </div>
+          )
+        })}
+      </div>
+      {failures.length === 0 && chain.length > 1 && (
+        <p className='text-muted-foreground/80'>
+          {t('No failure details recorded')}
+        </p>
+      )}
+    </div>
+  )
 }
 
 function formatRatioCompact(ratio: number | undefined): string {
@@ -311,6 +480,8 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             useChannel && useChannel.length > 0
               ? useChannel.join(' → ')
               : undefined
+          const channelFailures =
+            other?.admin_info?.channel_failures?.filter(Boolean) || []
           const channelDisplay = log.channel_name
             ? `${log.channel_name} #${log.channel}`
             : `#${log.channel}`
@@ -367,9 +538,11 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                       {sensitiveVisible ? channelDisplay : channelIdDisplay}
                     </p>
                     {channelChain && (
-                      <p className='text-muted-foreground text-xs'>
-                        {t('Chain')}: {channelChain}
-                      </p>
+                      <ChannelSwitchFlowTooltip
+                        useChannel={useChannel}
+                        failures={channelFailures}
+                        t={t}
+                      />
                     )}
                     {affinity && (
                       <div className='border-t pt-1 text-xs'>

@@ -109,16 +109,24 @@ func withAutoGroupsForTest(t *testing.T, groups []string) {
 func seedChannelSelectChannel(t *testing.T, db *gorm.DB, id int, group string, modelName string, priority int64, weight uint) {
 	t.Helper()
 
+	seedChannelSelectChannelWithOptions(t, db, id, group, modelName, priority, weight, constant.ChannelTypeOpenAI, "")
+}
+
+func seedChannelSelectChannelWithOptions(t *testing.T, db *gorm.DB, id int, group string, modelName string, priority int64, weight uint, channelType int, otherSettings string) {
+	t.Helper()
+
 	channel := &model.Channel{
-		Id:          id,
-		Name:        fmt.Sprintf("channel-%d", id),
-		Key:         fmt.Sprintf("sk-%d", id),
-		Status:      common.ChannelStatusEnabled,
-		Group:       group,
-		Models:      modelName,
-		Weight:      &weight,
-		Priority:    &priority,
-		CreatedTime: int64(id),
+		Id:            id,
+		Type:          channelType,
+		Name:          fmt.Sprintf("channel-%d", id),
+		Key:           fmt.Sprintf("sk-%d", id),
+		Status:        common.ChannelStatusEnabled,
+		Group:         group,
+		Models:        modelName,
+		Weight:        &weight,
+		Priority:      &priority,
+		CreatedTime:   int64(id),
+		OtherSettings: otherSettings,
 	}
 	require.NoError(t, db.Create(channel).Error)
 	require.NoError(t, channel.AddAbilities(nil))
@@ -183,6 +191,29 @@ func TestCacheGetRandomSatisfiedChannelSkipsFullConcurrencyChannel(t *testing.T)
 	require.Equal(t, "default", group)
 	require.NotNil(t, channel)
 	require.Equal(t, 112, channel.Id)
+}
+
+func TestCacheGetRandomSatisfiedChannelSkipsImageChannelWithoutCodexCompatibility(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+
+	seedChannelSelectChannelWithOptions(t, db, 121, "default", "gpt-image-2", 10, 100, constant.ChannelTypeOpenAI, "")
+	seedChannelSelectChannelWithOptions(t, db, 122, "default", "gpt-image-2", 10, 100, constant.ChannelTypeOpenAI, `{"codex_compatibility_mode":true}`)
+	model.InitChannelCache()
+
+	param := &RetryParam{
+		Ctx:          newRetryContext(),
+		TokenGroup:   "default",
+		ModelName:    "gpt-image-2",
+		EndpointType: constant.EndpointTypeImageGeneration,
+		Retry:        common.GetPointer(0),
+	}
+
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.Equal(t, "default", group)
+	require.NotNil(t, channel)
+	require.Equal(t, 122, channel.Id)
 }
 
 func TestCacheGetRandomSatisfiedChannelAutoMovesToNextGroupAfterCurrentGroupExhausted(t *testing.T) {

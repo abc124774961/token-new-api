@@ -94,6 +94,171 @@ function buildChannelAffinityTooltip(affinity, t) {
   );
 }
 
+function normalizeChannelId(channelId) {
+  if (channelId === undefined || channelId === null) {
+    return '';
+  }
+  return String(channelId).trim();
+}
+
+function formatChannelId(channelId) {
+  const normalized = normalizeChannelId(channelId);
+  return normalized ? `#${normalized}` : '#?';
+}
+
+function formatChannelFailureReason(failure, t) {
+  if (!failure) {
+    return { reason: t('暂无失败明细'), details: [] };
+  }
+
+  const primary = [];
+  const details = [];
+
+  if (failure.temporary_avoidance_reason) {
+    primary.push(`${t('临时规避')}：${failure.temporary_avoidance_reason}`);
+  }
+  if (failure.concurrency_cooldown) {
+    primary.push(t('并发冷却'));
+  }
+  if (failure.status_code) {
+    details.push(`HTTP ${failure.status_code}`);
+  }
+  if (failure.error_code) {
+    details.push(failure.error_code);
+  }
+  if (failure.error_type) {
+    details.push(failure.error_type);
+  }
+
+  if (primary.length === 0 && details.length > 0) {
+    primary.push(details.join(' / '));
+  }
+  if (failure.message) {
+    if (primary.length === 0) {
+      primary.push(failure.message);
+    } else {
+      details.push(failure.message);
+    }
+  }
+
+  return {
+    reason: primary.join(' · ') || t('暂无失败明细'),
+    details: primary.length === 0 ? [] : details,
+  };
+}
+
+function takeFailureForChannel(failures, channelId, usedFailureIndexes) {
+  const index = failures.findIndex((failure, failureIndex) => {
+    if (usedFailureIndexes.has(failureIndex)) {
+      return false;
+    }
+    return normalizeChannelId(failure?.channel_id) === channelId;
+  });
+
+  if (index < 0) {
+    return undefined;
+  }
+  usedFailureIndexes.add(index);
+  return failures[index];
+}
+
+function buildChannelSwitchFlow(useChannel, failures, t) {
+  const chain = Array.isArray(useChannel)
+    ? useChannel.map(normalizeChannelId).filter(Boolean)
+    : [];
+  const usedFailureIndexes = new Set();
+
+  return chain.map((channelId, index) => {
+    const failure = takeFailureForChannel(
+      failures,
+      channelId,
+      usedFailureIndexes,
+    );
+    const reasonInfo = formatChannelFailureReason(failure, t);
+
+    return {
+      channelId,
+      nextChannelId: chain[index + 1],
+      reason: failure || chain[index + 1] ? reasonInfo.reason : undefined,
+      details: reasonInfo.details,
+      finalFailure: failure?.final_failure,
+    };
+  });
+}
+
+function buildChannelSwitchFlowTooltip(useChannel, failures, t) {
+  const chain = Array.isArray(useChannel)
+    ? useChannel.map(normalizeChannelId).filter(Boolean)
+    : [];
+
+  if (chain.length === 0) {
+    return null;
+  }
+
+  const flow = buildChannelSwitchFlow(useChannel, failures, t);
+
+  return (
+    <div
+      style={{
+        minWidth: 260,
+        maxWidth: 360,
+        lineHeight: 1.6,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+      }}
+    >
+      <div>
+        <div style={{ fontWeight: 600 }}>{t('渠道切换流程')}</div>
+        <div style={{ fontFamily: 'monospace' }}>
+          {chain.map(formatChannelId).join(' → ')}
+        </div>
+      </div>
+      {flow.map((item, index) => {
+        const isSwitch = Boolean(item.nextChannelId);
+        const isFinalFailure = !isSwitch && item.finalFailure;
+
+        return (
+          <div
+            key={`${item.channelId}-${item.nextChannelId || 'final'}-${index}`}
+          >
+            <div style={{ fontFamily: 'monospace', fontWeight: 500 }}>
+              {isSwitch
+                ? `${formatChannelId(item.channelId)} → ${formatChannelId(
+                    item.nextChannelId,
+                  )}`
+                : `${t('最终渠道')}：${formatChannelId(item.channelId)}`}
+            </div>
+            {(isSwitch || isFinalFailure) && (
+              <div>
+                <span style={{ fontWeight: 500 }}>{t('切换原因')}：</span>
+                {item.reason || t('暂无失败明细')}
+              </div>
+            )}
+            {item.details.map((detail) => (
+              <div
+                key={detail}
+                style={{
+                  color: 'var(--semi-color-text-2)',
+                  fontFamily: 'monospace',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {detail}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+      {failures.length === 0 && chain.length > 1 ? (
+        <div style={{ color: 'var(--semi-color-text-2)' }}>
+          {t('暂无失败明细')}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // Render functions
 function renderType(type, t) {
   switch (type) {
@@ -224,8 +389,11 @@ function renderUseTime(type, t) {
 }
 
 function renderFirstUseTime(type, t) {
-  let time = parseFloat(type) / 1000.0;
-  time = time.toFixed(1);
+  const rawTime = Number(type);
+  if (!Number.isFinite(rawTime) || rawTime <= 0) {
+    return null;
+  }
+  const time = (rawTime / 1000.0).toFixed(1);
   if (time < 3) {
     return (
       <Tag color='green' shape='circle'>
@@ -276,9 +444,7 @@ function renderModelName(record, copyText, t) {
   const upstreamResponseModelName = other?.upstream_response_model_name;
   const downstreamModelName = other?.downstream_model_name;
   let modelMapped =
-    other?.is_model_mapped &&
-    upstreamModelName &&
-    upstreamModelName !== '';
+    other?.is_model_mapped && upstreamModelName && upstreamModelName !== '';
   if (!modelMapped) {
     return renderModelTag(record.model_name, {
       onClick: (event) => {
@@ -541,6 +707,8 @@ export const getLogsColumns = ({
         let multiKeyIndex = -1;
         let content = t('渠道') + `：${record.channel}`;
         let affinity = null;
+        let useChannel = [record.channel];
+        let channelFailures = [];
         let showMarker = false;
         let other = getLogOther(record.other);
         if (other?.admin_info) {
@@ -553,7 +721,11 @@ export const getLogsColumns = ({
             Array.isArray(adminInfo.use_channel) &&
             adminInfo.use_channel.length > 0
           ) {
-            content = t('渠道') + `：${adminInfo.use_channel.join('->')}`;
+            useChannel = adminInfo.use_channel;
+            content = t('渠道') + `：${useChannel.join('->')}`;
+          }
+          if (Array.isArray(adminInfo.channel_failures)) {
+            channelFailures = adminInfo.channel_failures.filter(Boolean);
           }
           if (adminInfo.channel_affinity) {
             affinity = adminInfo.channel_affinity;
@@ -583,6 +755,15 @@ export const getLogsColumns = ({
                   content={
                     <div style={{ lineHeight: 1.6 }}>
                       <div>{content}</div>
+                      {useChannel.length > 1 ? (
+                        <div style={{ marginTop: 6 }}>
+                          {buildChannelSwitchFlowTooltip(
+                            useChannel,
+                            channelFailures,
+                            t,
+                          )}
+                        </div>
+                      ) : null}
                       {affinity ? (
                         <div style={{ marginTop: 6 }}>
                           {buildChannelAffinityTooltip(affinity, t)}
@@ -940,24 +1121,42 @@ export const getLogsColumns = ({
           return <></>;
         }
         let content = t('渠道') + `：${record.channel}`;
-        if (record.other !== '') {
-          let other = JSON.parse(record.other);
-          if (other === null) {
-            return <></>;
+        let useChannel = [record.channel];
+        let channelFailures = [];
+        const other = getLogOther(record.other);
+        if (other?.admin_info) {
+          const adminInfo = other.admin_info;
+          if (
+            Array.isArray(adminInfo.use_channel) &&
+            adminInfo.use_channel.length > 0
+          ) {
+            useChannel = adminInfo.use_channel;
+            content = t('渠道') + `：${useChannel.join('->')}`;
           }
-          if (other.admin_info !== undefined) {
-            if (
-              other.admin_info.use_channel !== null &&
-              other.admin_info.use_channel !== undefined &&
-              other.admin_info.use_channel !== ''
-            ) {
-              let useChannel = other.admin_info.use_channel;
-              let useChannelStr = useChannel.join('->');
-              content = t('渠道') + `：${useChannelStr}`;
-            }
+          if (Array.isArray(adminInfo.channel_failures)) {
+            channelFailures = adminInfo.channel_failures.filter(Boolean);
           }
         }
-        return isAdminUser ? <div>{content}</div> : <></>;
+        return isAdminUser ? (
+          <Tooltip
+            content={buildChannelSwitchFlowTooltip(
+              useChannel,
+              channelFailures,
+              t,
+            )}
+          >
+            <div
+              style={{
+                width: 'fit-content',
+                cursor: useChannel.length > 1 ? 'help' : 'default',
+              }}
+            >
+              {content}
+            </div>
+          </Tooltip>
+        ) : (
+          <></>
+        );
       },
     },
     {

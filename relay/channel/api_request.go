@@ -301,6 +301,9 @@ func isCodexLikeUpstreamRequest(c *gin.Context, info *common.RelayInfo) bool {
 	if info.RelayMode != constant.RelayModeResponses && info.RelayMode != constant.RelayModeResponsesCompact {
 		return false
 	}
+	if info.ChannelOtherSettings.UsesCodexCompatibilityMode() {
+		return true
+	}
 	values := []string{
 		info.OriginModelName,
 		info.UsingGroup,
