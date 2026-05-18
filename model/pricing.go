@@ -51,6 +51,10 @@ type GroupModelCapability struct {
 	CodexImageGenerationToolSupported bool
 }
 
+type GroupCapability struct {
+	CodexImageGenerationToolSupported bool
+}
+
 var (
 	pricingMap           []Pricing
 	vendorsList          []PricingVendor
@@ -68,6 +72,7 @@ var (
 	modelSupportEndpointTypes  = make(map[string][]constant.EndpointType)
 	modelCodexImageToolSupport = make(map[string]bool)
 	groupModelCapabilities     = make(map[string]map[string]GroupModelCapability)
+	groupCapabilities          = make(map[string]GroupCapability)
 	modelSupportEndpointsLock  = sync.RWMutex{}
 )
 
@@ -175,15 +180,17 @@ func GetModelCapabilitiesForGroups(groups []string, models []string) map[string]
 		if group == "" {
 			continue
 		}
-		groupCapabilities := groupModelCapabilities[group]
-		if len(groupCapabilities) == 0 {
+		groupModelCapabilityMap := groupModelCapabilities[group]
+		if len(groupModelCapabilityMap) == 0 {
 			continue
 		}
+		groupCapabilityForAllModels := groupCapabilities[group]
 		for modelName := range modelSet {
-			groupCapability, ok := groupCapabilities[modelName]
+			groupCapability, ok := groupModelCapabilityMap[modelName]
 			if !ok {
 				continue
 			}
+
 			merged := result[modelName]
 			for _, endpointType := range groupCapability.SupportedEndpointTypes {
 				if !slices.Contains(merged.SupportedEndpointTypes, endpointType) {
@@ -191,7 +198,8 @@ func GetModelCapabilitiesForGroups(groups []string, models []string) map[string]
 				}
 			}
 			merged.CodexImageGenerationToolSupported = merged.CodexImageGenerationToolSupported ||
-				groupCapability.CodexImageGenerationToolSupported
+				groupCapability.CodexImageGenerationToolSupported ||
+				groupCapabilityForAllModels.CodexImageGenerationToolSupported
 			result[modelName] = merged
 		}
 	}
@@ -294,6 +302,7 @@ func updatePricing() {
 	modelSupportEndpointsStr := make(map[string][]string)
 	modelCodexImageToolSupport = make(map[string]bool)
 	groupModelCapabilities = make(map[string]map[string]GroupModelCapability)
+	groupCapabilities = make(map[string]GroupCapability)
 
 	// 先根据已有能力填充原生端点
 	for _, ability := range enableAbilities {
@@ -305,12 +314,12 @@ func updatePricing() {
 		}
 		modelSupportEndpointsStr[ability.Model] = endpoints
 
-		groupCapabilities := groupModelCapabilities[ability.Group]
-		if groupCapabilities == nil {
-			groupCapabilities = make(map[string]GroupModelCapability)
-			groupModelCapabilities[ability.Group] = groupCapabilities
+		groupModelCapabilityMap := groupModelCapabilities[ability.Group]
+		if groupModelCapabilityMap == nil {
+			groupModelCapabilityMap = make(map[string]GroupModelCapability)
+			groupModelCapabilities[ability.Group] = groupModelCapabilityMap
 		}
-		groupCapability := groupCapabilities[ability.Model]
+		groupCapability := groupModelCapabilityMap[ability.Model]
 		for _, endpointType := range channelTypes {
 			if !slices.Contains(groupCapability.SupportedEndpointTypes, endpointType) {
 				groupCapability.SupportedEndpointTypes = append(groupCapability.SupportedEndpointTypes, endpointType)
@@ -319,8 +328,11 @@ func updatePricing() {
 		if ability.SupportsCodexImageGenerationTool(ability.ChannelType, channelSettings) {
 			modelCodexImageToolSupport[ability.Model] = true
 			groupCapability.CodexImageGenerationToolSupported = true
+			groupCapabilityForAllModels := groupCapabilities[ability.Group]
+			groupCapabilityForAllModels.CodexImageGenerationToolSupported = true
+			groupCapabilities[ability.Group] = groupCapabilityForAllModels
 		}
-		groupCapabilities[ability.Model] = groupCapability
+		groupModelCapabilityMap[ability.Model] = groupCapability
 	}
 
 	// 再补充模型自定义端点：若配置有效则替换默认端点，不做合并

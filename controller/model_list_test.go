@@ -784,14 +784,14 @@ func TestListModelsUsesPersistedGroupCapabilityUnionForCodexImageTool(t *testing
 		Key:           "test-key",
 		Status:        common.ChannelStatusEnabled,
 		Group:         "codex-pro",
-		Models:        "gpt-5.5",
+		Models:        "gpt-5.4",
 		Priority:      &lowPriority,
 		OtherSettings: `{"codex_compatibility_mode":true,"codex_image_generation_tool_supported":true}`,
 	}
 	require.NoError(t, imageToolChannel.Insert())
 
 	var storedAbility model.Ability
-	require.NoError(t, db.Where("channel_id = ? AND model = ?", 25, "gpt-5.5").First(&storedAbility).Error)
+	require.NoError(t, db.Where("channel_id = ? AND model = ?", 25, "gpt-5.4").First(&storedAbility).Error)
 	require.True(t, storedAbility.CodexImageGenerationToolSupported)
 	var storedEndpoints []constant.EndpointType
 	require.NoError(t, common.UnmarshalJsonStr(storedAbility.SupportedEndpointTypes, &storedEndpoints))
