@@ -69,6 +69,9 @@ export const useChannelsData = () => {
   // Column visibility states
   const [visibleColumns, setVisibleColumns] = useState({});
   const [showColumnSelector, setShowColumnSelector] = useState(false);
+  const [showGroupSummary, setShowGroupSummary] = useState(false);
+  const [groupSummaryData, setGroupSummaryData] = useState(null);
+  const [groupSummaryLoading, setGroupSummaryLoading] = useState(false);
 
   // Status filter
   const [statusFilter, setStatusFilter] = useState(
@@ -573,6 +576,27 @@ export const useChannelsData = () => {
     } catch (error) {
       showError(error.message);
     }
+  };
+
+  const fetchChannelGroupSummary = async () => {
+    setGroupSummaryLoading(true);
+    try {
+      const res = await API.get('/api/channel/group_summary');
+      if (res?.data?.success) {
+        setGroupSummaryData(res.data.data);
+      } else {
+        showError(res?.data?.message || t('获取渠道分组统计失败'));
+      }
+    } catch (error) {
+      showError(error?.message || t('获取渠道分组统计失败'));
+    } finally {
+      setGroupSummaryLoading(false);
+    }
+  };
+
+  const openGroupSummaryModal = () => {
+    setShowGroupSummary(true);
+    fetchChannelGroupSummary().then();
   };
 
   // Copy channel
@@ -1171,6 +1195,10 @@ export const useChannelsData = () => {
     visibleColumns,
     showColumnSelector,
     setShowColumnSelector,
+    showGroupSummary,
+    setShowGroupSummary,
+    groupSummaryData,
+    groupSummaryLoading,
     COLUMN_KEYS,
 
     // Type tab states
@@ -1237,6 +1265,8 @@ export const useChannelsData = () => {
     updateChannelBalance,
     fixChannelsAbilities,
     checkOllamaVersion,
+    fetchChannelGroupSummary,
+    openGroupSummaryModal,
     testChannel,
     batchTestModels,
     handleCloseModal,

@@ -305,7 +305,7 @@ func finalizeVisibleOpenAIModels(c *gin.Context, models []dto.OpenAIModels) []dt
 		} else {
 			codexImageToolSupported = model.GetModelCodexImageGenerationToolSupported(models[i].Id)
 		}
-		models[i].SupportedSessionModes = buildSupportedSessionModes(models[i].Id, models[i].SupportedEndpointTypes)
+		models[i].SupportedSessionModes = buildSupportedSessionModes(models[i].Id, models[i].SupportedEndpointTypes, codexImageToolSupported)
 		models[i].ActualModelReturned = buildActualModelReturned(models[i], actualModelByName[models[i].Id])
 		models[i].Capabilities = buildModelCapabilities(models[i].Id, codexImageToolSupported)
 		models[i].InputModalities = buildInputModalities(models[i].Id)
@@ -433,7 +433,7 @@ func buildSupportedModalities(inputModalities []string, outputModalities []strin
 	return modalities
 }
 
-func buildSupportedSessionModes(modelName string, endpointTypes []constant.EndpointType) []string {
+func buildSupportedSessionModes(modelName string, endpointTypes []constant.EndpointType, codexImageToolSupported bool) []string {
 	if common.IsImageGenerationModel(modelName) {
 		modes := make([]string, 0, 2)
 		for _, endpointType := range endpointTypes {
@@ -457,6 +457,9 @@ func buildSupportedSessionModes(modelName string, endpointTypes []constant.Endpo
 	if endpointTypesContain(endpointTypes, constant.EndpointTypeOpenAIResponse) ||
 		endpointTypesContain(endpointTypes, constant.EndpointTypeOpenAIResponseCompact) {
 		modes = append(modes, "responses")
+	}
+	if codexImageToolSupported {
+		modes = appendUniqueString(modes, "image_generation")
 	}
 	if len(modes) == 0 && common.IsOpenAITextModel(modelName) {
 		if common.IsOpenAIResponseOnlyModel(modelName) {

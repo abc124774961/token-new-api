@@ -38,6 +38,7 @@ const ChannelsActions = ({
   deleteAllDisabledChannels,
   applyAllUpstreamUpdates,
   detectAllUpstreamUpdates,
+  openGroupSummaryModal,
   detectAllUpstreamUpdatesLoading,
   applyAllUpstreamUpdatesLoading,
   compactMode,
@@ -228,6 +229,16 @@ const ChannelsActions = ({
             setCompactMode={setCompactMode}
             t={t}
           />
+
+          <Button
+            size='small'
+            theme='light'
+            type='tertiary'
+            className='w-full md:w-auto'
+            onClick={openGroupSummaryModal}
+          >
+            {t('分组列表')}
+          </Button>
         </div>
 
         {/* 右侧：设置开关区域 */}
