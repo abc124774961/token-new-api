@@ -18,35 +18,36 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Typography, Card, Button, Input, Tag } from '@douyinfe/semi-ui';
+import { Card, Button, Input, Tag } from '@douyinfe/semi-ui';
 import { QRCodeSVG } from 'qrcode.react';
+import { SiWechat } from 'react-icons/si';
 import {
   ArrowRight,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Copy,
+  DollarSign,
   Gift,
   Link2,
+  MoreHorizontal,
   QrCode,
   ReceiptText,
-  ShieldCheck,
-  Share2,
   Sparkles,
   Users,
   BarChart2,
-  TrendingUp,
   Zap,
 } from 'lucide-react';
-
-const { Text } = Typography;
+import { timestamp2string } from '../../helpers';
 
 const InvitationMetric = ({ icon: Icon, label, value, tone }) => (
   <div className={`ct-topup-invite-metric ct-topup-invite-metric-${tone}`}>
+    <span className='ct-topup-invite-metric-icon'>
+      <Icon size={16} />
+    </span>
     <span className='ct-topup-invite-metric-copy'>
       <em>{label}</em>
       <strong>{value}</strong>
-    </span>
-    <span className='ct-topup-invite-metric-icon'>
-      <Icon size={16} />
     </span>
   </div>
 );
@@ -57,73 +58,71 @@ const InvitationCard = ({
   renderQuota,
   setOpenTransfer,
   affLink,
+  affiliateDashboard,
+  affiliateLoading,
+  affiliatePage,
+  onAffiliatePageChange,
   handleAffLinkClick,
 }) => {
+  const summary = affiliateDashboard?.summary || {};
+  const pagination = affiliateDashboard?.pagination || {};
+  const rewardRecords = affiliateDashboard?.records || [];
   const canTransfer =
-    userState?.user?.aff_quota && userState?.user?.aff_quota > 0;
-  const affQuota = userState?.user?.aff_quota || 0;
-  const affHistoryQuota = userState?.user?.aff_history_quota || 0;
-  const affCount = userState?.user?.aff_count || 0;
-  const inviteCode = affLink ? affLink.split('aff=').pop() : '--';
+    (summary.aff_quota ?? userState?.user?.aff_quota) &&
+    (summary.aff_quota ?? userState?.user?.aff_quota) > 0;
+  const affQuota = summary.aff_quota ?? userState?.user?.aff_quota ?? 0;
+  const affHistoryQuota =
+    summary.aff_history_quota ?? userState?.user?.aff_history_quota ?? 0;
+  const affCount = summary.aff_count ?? userState?.user?.aff_count ?? 0;
+  const conversionRate = `${Number(summary.conversion_rate || 0).toFixed(1)}%`;
+  const recordTotal = pagination.total ?? affCount;
+  const pageSize = pagination.page_size || 10;
+  const currentPage = pagination.page || affiliatePage || 1;
+  const totalPages = Math.max(1, Math.ceil(recordTotal / pageSize));
+  const visiblePages = Array.from(
+    { length: Math.min(totalPages, 3) },
+    (_, index) => {
+      if (totalPages <= 3) return index + 1;
+      if (currentPage <= 2) return index + 1;
+      if (currentPage >= totalPages - 1) return totalPages - 2 + index;
+      return currentPage - 1 + index;
+    },
+  );
+  const displayAffLink =
+    affLink ||
+    (userState?.user?.aff_code
+      ? `${window.location.origin}/register?aff=${userState.user.aff_code}`
+      : `${window.location.origin}/register`);
   const inviteRules = [
-    t('好友通过你的邀请链接注册并完成邮箱验证'),
-    t('好友首次充值并产生有效消费后可获得奖励'),
-    t('奖励会在好友消费完成后自动计入邀请余额'),
+    t('好友通过你的邀请链接注册后会自动绑定邀请关系'),
+    t('邀请奖励按站点配置在注册后自动计入邀请余额'),
+    t('消费和充值状态按受邀用户的真实账户数据统计'),
     t('可划转奖励可随时划转到账户余额'),
   ];
   const steps = [
     { icon: Users, title: t('邀请好友'), desc: t('分享链接或二维码') },
     { icon: CheckCircle2, title: t('好友注册'), desc: t('完成账号注册') },
-    { icon: ReceiptText, title: t('充值消费'), desc: t('产生有效消费') },
+    { icon: ReceiptText, title: t('真实统计'), desc: t('跟踪消费和充值') },
     { icon: Gift, title: t('奖励到账'), desc: t('奖励计入余额') },
   ];
+  const renderRecordStatus = (record) =>
+    record.status === 'converted'
+      ? { label: t('已转化'), color: 'green' }
+      : { label: t('已注册'), color: 'cyan' };
+  const renderRecordName = (record) =>
+    record.display_name || record.username || record.email || `#${record.user_id}`;
+  const renderRecordSubline = (record) => {
+    if (record.email && record.email !== renderRecordName(record)) {
+      return record.email;
+    }
+    return `${t('请求次数')}: ${record.request_count || 0}`;
+  };
 
   return (
     <div className='ct-topup-invite-page'>
-      <div className='ct-topup-page-head'>
-        <div>
-          <div className='ct-topup-page-title-row'>
-            <Typography.Title heading={2} className='ct-topup-page-title'>
-              {t('邀请有奖')}
-            </Typography.Title>
-            <Tag
-              color={canTransfer ? 'green' : 'cyan'}
-              shape='circle'
-              prefixIcon={<ShieldCheck size={12} />}
-            >
-              {canTransfer ? t('收益可划转') : t('等待收益')}
-            </Tag>
-          </div>
-          <Text type='tertiary' className='ct-topup-page-subtitle'>
-            {t('分享专属邀请链接，好友注册并消费后奖励自动计入邀请余额')}
-          </Text>
-        </div>
-        <div className='ct-topup-page-actions'>
-          <Button
-            type='primary'
-            theme='solid'
-            onClick={handleAffLinkClick}
-            icon={<Copy size={14} />}
-            className='ct-topup-primary-button'
-          >
-            {t('复制邀请链接')}
-          </Button>
-          <Button
-            theme='light'
-            type='tertiary'
-            disabled={!canTransfer}
-            onClick={() => setOpenTransfer(true)}
-            icon={<Zap size={14} />}
-            className='ct-topup-panel-action'
-          >
-            {t('划转到余额')}
-          </Button>
-        </div>
-      </div>
-
       <div className='ct-topup-invite-metrics ct-topup-invite-metrics-wide'>
         <InvitationMetric
-          icon={TrendingUp}
+          icon={DollarSign}
           label={t('可划转奖励')}
           value={renderQuota(affQuota)}
           tone='teal'
@@ -142,9 +141,9 @@ const InvitationCard = ({
         />
         <InvitationMetric
           icon={Sparkles}
-          label={t('奖励状态')}
-          value={canTransfer ? t('可划转') : t('待积累')}
-          tone='blue'
+          label={t('注册转化率')}
+          value={conversionRate}
+          tone='violet'
         />
       </div>
 
@@ -155,39 +154,51 @@ const InvitationCard = ({
               <strong>{t('邀请链接')}</strong>
               <span>{t('分享链接或二维码，好友注册后会自动绑定邀请关系')}</span>
             </div>
-            <Tag shape='circle'>AFF {inviteCode}</Tag>
+            <Tag shape='circle' className='ct-topup-aff-tag'>
+              AFF
+              {userState?.user?.aff_code
+                ? `-${userState.user.aff_code.slice(0, 2).toUpperCase()}`
+                : '--'}
+            </Tag>
           </div>
           <div className='ct-topup-invite-link'>
             <Input
-              value={affLink}
+              value={displayAffLink}
+              placeholder={t('邀请链接')}
               readonly
-              prefix={
-                <span className='ct-topup-invite-link-prefix'>
-                  <Share2 size={14} />
-                  {t('邀请链接')}
-                </span>
-              }
               suffix={
                 <Button
-                  type='primary'
-                  theme='solid'
+                  theme='borderless'
+                  type='tertiary'
                   onClick={handleAffLinkClick}
                   icon={<Copy size={14} />}
-                  className='ct-topup-primary-button'
-                >
-                  {t('复制')}
-                </Button>
+                  aria-label={t('复制邀请链接')}
+                  className='ct-topup-input-copy-button'
+                />
               }
             />
           </div>
           <div className='ct-topup-share-actions'>
-            <Button icon={<Share2 size={14} />} onClick={handleAffLinkClick}>
+            <Button
+              type='primary'
+              theme='solid'
+              icon={<Copy size={14} />}
+              onClick={handleAffLinkClick}
+              className='ct-topup-primary-button ct-topup-share-primary'
+            >
+              {t('复制邀请链接')}
+            </Button>
+            <Button icon={<SiWechat size={14} />} onClick={handleAffLinkClick}>
               {t('微信')}
             </Button>
             <Button icon={<Link2 size={14} />} onClick={handleAffLinkClick}>
               {t('复制链接')}
             </Button>
-            <Button icon={<Sparkles size={14} />} onClick={handleAffLinkClick}>
+            <Button
+              icon={<Sparkles size={14} />}
+              onClick={handleAffLinkClick}
+              className='ct-topup-share-shortlink'
+            >
               {t('生成短链')}
             </Button>
           </div>
@@ -201,22 +212,19 @@ const InvitationCard = ({
             </div>
             <QrCode size={18} />
           </div>
-          <div className='ct-topup-qr-box'>
-            <QRCodeSVG
-              value={affLink || window.location.origin}
-              size={144}
-              marginSize={1}
-            />
+          <div className='ct-topup-qr-content'>
+            <div className='ct-topup-qr-box'>
+              <QRCodeSVG
+                value={displayAffLink || window.location.origin}
+                size={144}
+                marginSize={1}
+              />
+            </div>
+            <div className='ct-topup-qr-copy'>
+              <strong>{t('使用二维码分享')}</strong>
+              <span>{t('适合社群、文档和客服场景')}</span>
+            </div>
           </div>
-          <Button
-            theme='light'
-            type='tertiary'
-            icon={<Copy size={14} />}
-            onClick={handleAffLinkClick}
-            className='ct-topup-panel-action'
-          >
-            {t('复制二维码链接')}
-          </Button>
         </Card>
       </div>
 
@@ -247,21 +255,96 @@ const InvitationCard = ({
         <Card className='ct-topup-panel ct-topup-record-panel'>
           <div className='ct-topup-section-heading'>
             <div>
-              <strong>{t('奖励记录')}</strong>
-              <span>{t('后续接入明细接口后展示邀请用户、消费和奖励状态')}</span>
+              <strong>{t('邀请记录')}</strong>
+              <span>{t('展示真实受邀用户、消费和充值状态')}</span>
             </div>
-            <Tag shape='circle'>{affCount} {t('人')}</Tag>
+            <Tag shape='circle'>{recordTotal} {t('条')}</Tag>
           </div>
           <div className='ct-topup-simple-table'>
-            <div className='ct-topup-simple-table-head'>
+            <div className='ct-topup-simple-table-head ct-topup-affiliate-table-head'>
               <span>{t('受邀用户')}</span>
-              <span>{t('消费金额')}</span>
-              <span>{t('奖励金额')}</span>
+              <span>{t('注册时间')}</span>
+              <span>{t('已消费额度')}</span>
+              <span>{t('成功充值')}</span>
               <span>{t('状态')}</span>
             </div>
-            <div className='ct-topup-empty-row'>
-              <ReceiptText size={18} />
-              <span>{t('暂无奖励明细记录')}</span>
+            {rewardRecords.length > 0 ? (
+              rewardRecords.map((record) => {
+                const status = renderRecordStatus(record);
+                return (
+                  <div
+                    className='ct-topup-simple-table-row ct-topup-affiliate-table-row'
+                    key={record.user_id}
+                  >
+                    <span className='ct-topup-affiliate-user'>
+                      <i>{record.initial || 'U'}</i>
+                      <b>
+                        <strong>{renderRecordName(record)}</strong>
+                        <em>{renderRecordSubline(record)}</em>
+                      </b>
+                    </span>
+                    <span>
+                      {record.registered_at
+                        ? timestamp2string(record.registered_at)
+                        : '--'}
+                    </span>
+                    <span>{renderQuota(record.used_quota || 0)}</span>
+                    <span>
+                      {Number(record.topup_money || 0).toFixed(2)}
+                      {record.topup_count > 0 ? ` / ${record.topup_count}` : ''}
+                    </span>
+                    <span>
+                      <Tag shape='circle' color={status.color}>
+                        {status.label}
+                      </Tag>
+                    </span>
+                  </div>
+                );
+              })
+            ) : (
+              <div className='ct-topup-empty-row ct-topup-affiliate-empty-state'>
+                <Users size={18} />
+                <span>
+                  {affiliateLoading ? t('加载中') : t('暂无真实邀请记录')}
+                </span>
+              </div>
+            )}
+            <div className='ct-topup-record-footer'>
+              <span>
+                {t('共')} {recordTotal} {t('条记录')}
+              </span>
+              <div className='ct-topup-record-pager'>
+                <button type='button' disabled>{`${pageSize} ${t('条/页')}`}</button>
+                <button
+                  type='button'
+                  disabled={currentPage <= 1 || affiliateLoading}
+                  aria-label={t('上一页')}
+                  onClick={() => onAffiliatePageChange(currentPage - 1)}
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                {visiblePages.map((page) => (
+                  <button
+                    type='button'
+                    key={page}
+                    disabled={affiliateLoading}
+                    className={
+                      page === currentPage ? 'ct-topup-record-page-active' : ''
+                    }
+                    onClick={() => onAffiliatePageChange(page)}
+                  >
+                    {page}
+                  </button>
+                ))}
+                <button
+                  type='button'
+                  disabled={currentPage >= totalPages || affiliateLoading}
+                  aria-label={t('下一页')}
+                  onClick={() => onAffiliatePageChange(currentPage + 1)}
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
             </div>
           </div>
         </Card>
@@ -300,6 +383,7 @@ const InvitationCard = ({
             >
               {t('立即划转')}
             </Button>
+            <MoreHorizontal className='ct-topup-transfer-dots' size={18} />
           </Card>
         </div>
       </div>

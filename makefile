@@ -1,7 +1,7 @@
 FRONTEND_CLASSIC_DIR = ./web/classic
 BACKEND_DIR = .
 
-.PHONY: all build-frontend build-frontend-classic build-all-frontends start-backend dev dev-api dev-up dev-down pro-up pro-down dev-web dev-web-classic
+.PHONY: all build-frontend build-frontend-classic build-all-frontends start-backend dev dev-api dev-up dev-down deploy-pro publish-pro pro-up pro-down dev-web dev-web-classic
 
 all: build-all-frontends start-backend
 
@@ -27,6 +27,10 @@ dev-up: dev-api
 dev-down:
 	@echo "Stopping local full-stack container (dev)..."
 	@docker compose --env-file .env.dev -f docker-compose.dev.yml down
+
+deploy-pro: pro-up
+
+publish-pro: pro-up
 
 pro-up:
 	@echo "Starting production container set (pro)..."

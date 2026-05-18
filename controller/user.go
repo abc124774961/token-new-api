@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -369,6 +370,252 @@ func GetAffCode(c *gin.Context) {
 		"data":    user.AffCode,
 	})
 	return
+}
+
+type AffiliateDashboardSummary struct {
+	AffCode               string  `json:"aff_code"`
+	AffCount              int64   `json:"aff_count"`
+	AffQuota              int     `json:"aff_quota"`
+	AffHistoryQuota       int     `json:"aff_history_quota"`
+	ConvertedCount        int64   `json:"converted_count"`
+	ConversionRate        float64 `json:"conversion_rate"`
+	MonthlyInvitedCount   int64   `json:"monthly_invited_count"`
+	MonthlyConvertedCount int64   `json:"monthly_converted_count"`
+	MonthlyConversionRate float64 `json:"monthly_conversion_rate"`
+	RewardPerInvite       int     `json:"reward_per_invite"`
+}
+
+type AffiliateInviteRecord struct {
+	UserId        int     `json:"user_id"`
+	Username      string  `json:"username"`
+	DisplayName   string  `json:"display_name"`
+	Email         string  `json:"email"`
+	Initial       string  `json:"initial"`
+	RegisteredAt  int64   `json:"registered_at"`
+	UsedQuota     int     `json:"used_quota"`
+	RequestCount  int     `json:"request_count"`
+	TopUpMoney    float64 `json:"topup_money"`
+	TopUpAmount   int64   `json:"topup_amount"`
+	TopUpCount    int64   `json:"topup_count"`
+	LastTopUpTime int64   `json:"last_topup_time"`
+	Status        string  `json:"status"`
+}
+
+type AffiliateDashboardPagination struct {
+	Page     int   `json:"page"`
+	PageSize int   `json:"page_size"`
+	Total    int64 `json:"total"`
+}
+
+type AffiliateDashboardResponse struct {
+	Summary    AffiliateDashboardSummary    `json:"summary"`
+	Records    []AffiliateInviteRecord      `json:"records"`
+	Pagination AffiliateDashboardPagination `json:"pagination"`
+}
+
+type affiliateTopUpAggregate struct {
+	UserId        int     `gorm:"column:user_id"`
+	TopUpMoney    float64 `gorm:"column:topup_money"`
+	TopUpAmount   int64   `gorm:"column:topup_amount"`
+	TopUpCount    int64   `gorm:"column:topup_count"`
+	LastTopUpTime int64   `gorm:"column:last_topup_time"`
+}
+
+func GetAffDashboard(c *gin.Context) {
+	id := c.GetInt("id")
+	user, err := model.GetUserById(id, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	pageInfo := common.GetPageQuery(c)
+	totalInvited, convertedCount, err := getAffiliateConvertedStats(id, 0)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	now := time.Now()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Unix()
+	monthlyInvited, monthlyConverted, err := getAffiliateConvertedStats(id, monthStart)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	var invitedUsers []model.User
+	err = model.DB.
+		Model(&model.User{}).
+		Select([]string{"id", "username", "display_name", "email", "created_at", "used_quota", "request_count"}).
+		Where("inviter_id = ?", id).
+		Order("created_at desc").
+		Limit(pageInfo.GetPageSize()).
+		Offset(pageInfo.GetStartIdx()).
+		Find(&invitedUsers).Error
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	invitedIds := make([]int, 0, len(invitedUsers))
+	for _, invitedUser := range invitedUsers {
+		invitedIds = append(invitedIds, invitedUser.Id)
+	}
+
+	topUpMap := make(map[int]affiliateTopUpAggregate, len(invitedIds))
+	if len(invitedIds) > 0 {
+		var topUpRows []affiliateTopUpAggregate
+		err = model.DB.
+			Model(&model.TopUp{}).
+			Select("user_id, COALESCE(SUM(money), 0) AS topup_money, COALESCE(SUM(amount), 0) AS topup_amount, COUNT(*) AS topup_count, COALESCE(MAX(complete_time), 0) AS last_topup_time").
+			Where("user_id IN ? AND status = ?", invitedIds, common.TopUpStatusSuccess).
+			Group("user_id").
+			Scan(&topUpRows).Error
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		for _, row := range topUpRows {
+			topUpMap[row.UserId] = row
+		}
+	}
+
+	records := make([]AffiliateInviteRecord, 0, len(invitedUsers))
+	for _, invitedUser := range invitedUsers {
+		records = append(records, buildAffiliateInviteRecord(invitedUser, topUpMap[invitedUser.Id]))
+	}
+
+	common.ApiSuccess(c, AffiliateDashboardResponse{
+		Summary: AffiliateDashboardSummary{
+			AffCode:               user.AffCode,
+			AffCount:              totalInvited,
+			AffQuota:              user.AffQuota,
+			AffHistoryQuota:       user.AffHistoryQuota,
+			ConvertedCount:        convertedCount,
+			ConversionRate:        calculateAffiliateRate(convertedCount, totalInvited),
+			MonthlyInvitedCount:   monthlyInvited,
+			MonthlyConvertedCount: monthlyConverted,
+			MonthlyConversionRate: calculateAffiliateRate(monthlyConverted, monthlyInvited),
+			RewardPerInvite:       common.QuotaForInviter,
+		},
+		Records: records,
+		Pagination: AffiliateDashboardPagination{
+			Page:     pageInfo.GetPage(),
+			PageSize: pageInfo.GetPageSize(),
+			Total:    totalInvited,
+		},
+	})
+}
+
+func getAffiliateConvertedStats(inviterId int, since int64) (int64, int64, error) {
+	baseQuery := model.DB.Model(&model.User{}).Where("inviter_id = ?", inviterId)
+	if since > 0 {
+		baseQuery = baseQuery.Where("created_at >= ?", since)
+	}
+
+	var invitedCount int64
+	if err := baseQuery.Count(&invitedCount).Error; err != nil {
+		return 0, 0, err
+	}
+	if invitedCount == 0 {
+		return 0, 0, nil
+	}
+
+	usageQuery := model.DB.Model(&model.User{}).Where("inviter_id = ? AND (used_quota > ? OR request_count > ?)", inviterId, 0, 0)
+	if since > 0 {
+		usageQuery = usageQuery.Where("created_at >= ?", since)
+	}
+
+	var usageConverted int64
+	if err := usageQuery.Count(&usageConverted).Error; err != nil {
+		return 0, 0, err
+	}
+
+	topupQuery := model.DB.
+		Model(&model.TopUp{}).
+		Joins("JOIN users ON users.id = top_ups.user_id").
+		Where("users.inviter_id = ? AND users.deleted_at IS NULL AND top_ups.status = ? AND users.used_quota = ? AND users.request_count = ?", inviterId, common.TopUpStatusSuccess, 0, 0)
+	if since > 0 {
+		topupQuery = topupQuery.Where("users.created_at >= ?", since)
+	}
+
+	var topupOnlyConverted int64
+	if err := topupQuery.Distinct("top_ups.user_id").Count(&topupOnlyConverted).Error; err != nil {
+		return 0, 0, err
+	}
+
+	return invitedCount, usageConverted + topupOnlyConverted, nil
+}
+
+func buildAffiliateInviteRecord(user model.User, topUp affiliateTopUpAggregate) AffiliateInviteRecord {
+	displayName := strings.TrimSpace(user.DisplayName)
+	if displayName == "" {
+		displayName = strings.TrimSpace(user.Username)
+	}
+	maskedEmail := maskAffiliateEmail(user.Email)
+	if displayName == "" {
+		displayName = maskedEmail
+	}
+	if displayName == "" {
+		displayName = fmt.Sprintf("User #%d", user.Id)
+	}
+
+	status := "registered"
+	if user.UsedQuota > 0 || user.RequestCount > 0 || topUp.TopUpCount > 0 {
+		status = "converted"
+	}
+
+	return AffiliateInviteRecord{
+		UserId:        user.Id,
+		Username:      user.Username,
+		DisplayName:   displayName,
+		Email:         maskedEmail,
+		Initial:       affiliateInitial(displayName),
+		RegisteredAt:  user.CreatedAt,
+		UsedQuota:     user.UsedQuota,
+		RequestCount:  user.RequestCount,
+		TopUpMoney:    topUp.TopUpMoney,
+		TopUpAmount:   topUp.TopUpAmount,
+		TopUpCount:    topUp.TopUpCount,
+		LastTopUpTime: topUp.LastTopUpTime,
+		Status:        status,
+	}
+}
+
+func calculateAffiliateRate(converted int64, total int64) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return float64(converted) * 100 / float64(total)
+}
+
+func maskAffiliateEmail(email string) string {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return ""
+	}
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 {
+		return email
+	}
+	nameRunes := []rune(parts[0])
+	if len(nameRunes) == 0 {
+		return "***@" + parts[1]
+	}
+	if len(nameRunes) == 1 {
+		return string(nameRunes[0]) + "***@" + parts[1]
+	}
+	return string(nameRunes[0]) + "***" + string(nameRunes[len(nameRunes)-1]) + "@" + parts[1]
+}
+
+func affiliateInitial(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "U"
+	}
+	runes := []rune(value)
+	return strings.ToUpper(string(runes[0]))
 }
 
 func GetSelf(c *gin.Context) {

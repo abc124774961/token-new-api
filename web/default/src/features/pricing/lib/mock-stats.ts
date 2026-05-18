@@ -138,7 +138,7 @@ const APP_TEMPLATES: Array<
   },
   {
     name: 'Flowise',
-    description: 'Low-code LLM workflow builder',
+    description: 'LLM workflow orchestration platform',
     category: 'Platform',
     url: 'https://flowiseai.com',
   },

@@ -29,17 +29,34 @@ import {
   copy,
   getQuotaPerUnit,
 } from '../../helpers';
-import { Modal, Toast } from '@douyinfe/semi-ui';
+import { Modal, Toast, Button, Tag } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
 import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
+import {
+  Copy,
+  Receipt,
+  ReceiptText,
+  RefreshCw,
+  ShieldCheck,
+} from 'lucide-react';
 
+import ConsolePageShell from '../layout/ConsolePageShell';
 import RechargeCard from './RechargeCard';
 import InvitationCard from './InvitationCard';
 import SubscriptionPlansCard from './SubscriptionPlansCard';
 import TransferModal from './modals/TransferModal';
 import PaymentConfirmModal from './modals/PaymentConfirmModal';
 import TopupHistoryModal from './modals/TopupHistoryModal';
+
+const AFFILIATE_PAGE_SIZE = 10;
+
+const isVisibleRechargePayMethod = (method) => {
+  if (!method?.name || !method?.type) return false;
+  const normalizedType = String(method.type).toLowerCase();
+  const normalizedName = String(method.name).trim();
+  return !normalizedType.startsWith('custom') && !normalizedName.startsWith('自定义');
+};
 
 const TopUp = ({ view = 'all' }) => {
   const { t } = useTranslation();
@@ -98,14 +115,21 @@ const TopUp = ({ view = 'all' }) => {
   const [payMethods, setPayMethods] = useState([]);
 
   const affFetchedRef = useRef(false);
+  const recentTopupsReloadRef = useRef(null);
 
   // 邀请相关状态
   const [affLink, setAffLink] = useState('');
   const [openTransfer, setOpenTransfer] = useState(false);
   const [transferAmount, setTransferAmount] = useState(0);
+  const [affiliateDashboard, setAffiliateDashboard] = useState(null);
+  const [affiliateLoading, setAffiliateLoading] = useState(false);
+  const [affiliatePage, setAffiliatePage] = useState(1);
 
   // 账单Modal状态
   const [openHistory, setOpenHistory] = useState(false);
+  const [rechargeHeaderRefreshing, setRechargeHeaderRefreshing] = useState(false);
+  const [subscriptionHeaderRefreshing, setSubscriptionHeaderRefreshing] =
+    useState(false);
 
   // 订阅相关
   const [subscriptionPlans, setSubscriptionPlans] = useState([]);
@@ -137,6 +161,13 @@ const TopUp = ({ view = 'all' }) => {
 
   const getPayMethodConfig = (payment) =>
     confirmPayMethods.find((method) => method.type === payment);
+
+  const hasOnlineTopUp =
+    enableOnlineTopUp ||
+    enableStripeTopUp ||
+    enableCreemTopUp ||
+    enableWaffoTopUp ||
+    enableWaffoPancakeTopUp;
 
   const getPaymentMinTopUp = (payment) => {
     const configuredMinTopUp = Number(getPayMethodConfig(payment)?.min_topup);
@@ -623,9 +654,7 @@ const TopUp = ({ view = 'all' }) => {
           }
           if (payMethods && payMethods.length > 0) {
             // 检查name和type是否为空
-            payMethods = payMethods.filter((method) => {
-              return method.name && method.type;
-            });
+            payMethods = payMethods.filter(isVisibleRechargePayMethod);
             // 如果没有color，则设置默认颜色
             payMethods = payMethods.map((method) => {
               // 规范化最小充值数
@@ -755,6 +784,39 @@ const TopUp = ({ view = 'all' }) => {
     }
   };
 
+  const getAffiliateDashboard = async (page = affiliatePage) => {
+    if (!showAffiliate) return;
+    setAffiliateLoading(true);
+    try {
+      const res = await API.get('/api/user/aff/dashboard', {
+        params: {
+          p: page,
+          page_size: AFFILIATE_PAGE_SIZE,
+        },
+        skipErrorHandler: true,
+        disableDuplicate: true,
+      });
+      const { success, data } = res.data;
+      if (success) {
+        setAffiliateDashboard(data);
+      }
+    } catch (e) {
+      setAffiliateDashboard((prev) => prev || null);
+    } finally {
+      setAffiliateLoading(false);
+    }
+  };
+
+  const handleAffiliatePageChange = (page) => {
+    const nextPage = Math.max(1, page);
+    if (nextPage === affiliatePage) return;
+    setAffiliatePage(nextPage);
+  };
+
+  const refreshAffiliateDashboard = () => {
+    getAffiliateDashboard(affiliatePage).then();
+  };
+
   // 划转邀请额度
   const transfer = async () => {
     if (transferAmount < getQuotaPerUnit()) {
@@ -769,6 +831,7 @@ const TopUp = ({ view = 'all' }) => {
       showSuccess(message);
       setOpenTransfer(false);
       getUserQuota().then();
+      getAffiliateDashboard(affiliatePage).then();
     } else {
       showError(message);
     }
@@ -776,7 +839,13 @@ const TopUp = ({ view = 'all' }) => {
 
   // 复制邀请链接
   const handleAffLinkClick = async () => {
-    await copy(affLink);
+    const fallbackCode = userState?.user?.aff_code;
+    const link =
+      affLink ||
+      (fallbackCode
+        ? `${window.location.origin}/register?aff=${fallbackCode}`
+        : `${window.location.origin}/register`);
+    await copy(link);
     showSuccess(t('邀请链接已复制到剪切板'));
   };
 
@@ -796,10 +865,25 @@ const TopUp = ({ view = 'all' }) => {
   }, []);
 
   useEffect(() => {
+    const routeClass = 'ct-topup-affiliate-route';
+    if (normalizedView === 'affiliate') {
+      document.body.classList.add(routeClass);
+    } else {
+      document.body.classList.remove(routeClass);
+    }
+    return () => document.body.classList.remove(routeClass);
+  }, [normalizedView]);
+
+  useEffect(() => {
     if (!showAffiliate || affFetchedRef.current) return;
     affFetchedRef.current = true;
     getAffLink().then();
   }, [showAffiliate]);
+
+  useEffect(() => {
+    if (!showAffiliate) return;
+    getAffiliateDashboard(affiliatePage).then();
+  }, [showAffiliate, affiliatePage]);
 
   // 在 statusState 可用时获取充值信息
   useEffect(() => {
@@ -823,8 +907,9 @@ const TopUp = ({ view = 'all' }) => {
     }
   }, [statusState?.status]);
 
-  const renderAmount = () => {
-    return amount + ' ' + t('元');
+  const renderAmount = (value = amount) => {
+    const numericValue = Number(value || 0);
+    return `${Number.isFinite(numericValue) ? numericValue.toFixed(2) : value} ${t('元')}`;
   };
 
   const getAmount = async (value) => {
@@ -904,6 +989,28 @@ const TopUp = ({ view = 'all' }) => {
     setOpenHistory(false);
   };
 
+  const handleRechargeHeaderRefresh = async () => {
+    setRechargeHeaderRefreshing(true);
+    try {
+      if (typeof recentTopupsReloadRef.current === 'function') {
+        await recentTopupsReloadRef.current();
+      } else {
+        await getTopupInfo();
+      }
+    } finally {
+      setRechargeHeaderRefreshing(false);
+    }
+  };
+
+  const handleSubscriptionHeaderRefresh = async () => {
+    setSubscriptionHeaderRefreshing(true);
+    try {
+      await getSubscriptionSelf();
+    } finally {
+      setSubscriptionHeaderRefreshing(false);
+    }
+  };
+
   const handleCreemCancel = () => {
     setCreemOpen(false);
     setSelectedCreemProduct(null);
@@ -933,9 +1040,209 @@ const TopUp = ({ view = 'all' }) => {
     }));
   };
 
+  const affiliateSummary = affiliateDashboard?.summary || {};
+  const affiliateCanTransfer =
+    (affiliateSummary.aff_quota ?? userState?.user?.aff_quota) &&
+    (affiliateSummary.aff_quota ?? userState?.user?.aff_quota) > 0;
+  const hasActiveSubscription = activeSubscriptions.length > 0;
+  const subscriptionPreferenceDisabled = !hasActiveSubscription;
+  const isSubscriptionPreference =
+    billingPreference === 'subscription_first' ||
+    billingPreference === 'subscription_only';
+  const effectiveBillingPreference =
+    subscriptionPreferenceDisabled && isSubscriptionPreference
+      ? 'wallet_first'
+      : billingPreference ||
+        (hasActiveSubscription ? 'subscription_first' : 'wallet_first');
+
+  const scrollToAffiliateRecords = () => {
+    document
+      .querySelector('.ct-topup-record-panel')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const renderSubscriptionHeaderActions = () => (
+    <div className='ct-topup-subscription-toolbar'>
+      <div className='ct-topup-pref-switch'>
+        <Button
+          className={`ct-topup-pref-option ${
+            effectiveBillingPreference === 'subscription_first'
+              ? 'ct-topup-pref-option-active'
+              : ''
+          }`}
+          type={
+            effectiveBillingPreference === 'subscription_first'
+              ? 'primary'
+              : 'tertiary'
+          }
+          theme={
+            effectiveBillingPreference === 'subscription_first'
+              ? 'solid'
+              : 'light'
+          }
+          disabled={subscriptionPreferenceDisabled}
+          onClick={() => updateBillingPreference('subscription_first')}
+        >
+          {t('订阅优先')}
+        </Button>
+        <Button
+          className={`ct-topup-pref-option ${
+            effectiveBillingPreference === 'wallet_first'
+              ? 'ct-topup-pref-option-active'
+              : ''
+          }`}
+          type={
+            effectiveBillingPreference === 'wallet_first'
+              ? 'primary'
+              : 'tertiary'
+          }
+          theme={
+            effectiveBillingPreference === 'wallet_first' ? 'solid' : 'light'
+          }
+          onClick={() => updateBillingPreference('wallet_first')}
+        >
+          {t('钱包优先')}
+        </Button>
+      </div>
+      <Button
+        icon={
+          <RefreshCw
+            size={15}
+            className={subscriptionHeaderRefreshing ? 'animate-spin' : ''}
+          />
+        }
+        theme='light'
+        type='tertiary'
+        onClick={handleSubscriptionHeaderRefresh}
+        loading={subscriptionHeaderRefreshing}
+        className='ct-topup-panel-action'
+      >
+        {t('刷新')}
+      </Button>
+    </div>
+  );
+
+  const pageHeader = {
+    affiliate: {
+      eyebrow: t('增长中心'),
+      title: t('邀请有奖'),
+      subtitle: t('分享专属邀请链接，好友注册并消费后奖励自动计入邀请余额'),
+      badge: (
+        <Tag
+          color={affiliateCanTransfer ? 'green' : 'cyan'}
+          shape='circle'
+          prefixIcon={<ShieldCheck size={12} />}
+        >
+          {t('收益可划转')}
+        </Tag>
+      ),
+      actions: (
+        <>
+          <Button
+            type='primary'
+            theme='solid'
+            onClick={handleAffLinkClick}
+            icon={<Copy size={14} />}
+            className='ct-topup-primary-button'
+          >
+            {t('复制链接')}
+          </Button>
+          <Button
+            theme='light'
+            type='tertiary'
+            onClick={scrollToAffiliateRecords}
+            icon={<ReceiptText size={14} />}
+            className='ct-topup-panel-action'
+          >
+            {t('邀请记录')}
+          </Button>
+          <Button
+            theme='borderless'
+            type='tertiary'
+            onClick={refreshAffiliateDashboard}
+            loading={affiliateLoading}
+            icon={<RefreshCw size={14} />}
+            className='ct-topup-panel-action'
+            aria-label={t('刷新数据')}
+          >
+            {t('刷新数据')}
+          </Button>
+        </>
+      ),
+    },
+    recharge: {
+      eyebrow: t('账户中心'),
+      title: t('账户充值'),
+      subtitle: t('选择充值金额与支付方式，确认后进入安全支付流程'),
+      badge: (
+        <Tag
+          color={hasOnlineTopUp ? 'green' : 'amber'}
+          shape='circle'
+          prefixIcon={<ShieldCheck size={12} />}
+        >
+          {hasOnlineTopUp ? t('在线支付可用') : t('在线支付未开启')}
+        </Tag>
+      ),
+      actions: (
+        <>
+          <Button
+            icon={<Receipt size={15} />}
+            theme='light'
+            type='tertiary'
+            onClick={handleOpenHistory}
+            className='ct-topup-panel-action'
+          >
+            {t('账单')}
+          </Button>
+          <Button
+            icon={
+              <RefreshCw
+                size={15}
+                className={rechargeHeaderRefreshing ? 'animate-spin' : ''}
+              />
+            }
+            theme='light'
+            type='tertiary'
+            onClick={handleRechargeHeaderRefresh}
+            loading={rechargeHeaderRefreshing}
+            className='ct-topup-panel-action'
+          >
+            {t('刷新')}
+          </Button>
+        </>
+      ),
+    },
+    subscription: {
+      eyebrow: t('订阅中心'),
+      title: t('套餐订阅'),
+      subtitle: t('按套餐优先级管理长期额度，适合稳定高频使用场景'),
+      badge: (
+        <Tag
+          color={hasActiveSubscription ? 'green' : 'cyan'}
+          shape='circle'
+          prefixIcon={<ShieldCheck size={12} />}
+        >
+          {hasActiveSubscription ? t('订阅生效中') : t('可购买套餐')}
+        </Tag>
+      ),
+      actions: renderSubscriptionHeaderActions(),
+    },
+    all: {
+      eyebrow: t('账户中心'),
+      title: t('充值与订阅'),
+      subtitle: t('管理邀请奖励、账户充值与订阅套餐'),
+    },
+  }[normalizedView];
+
   return (
-    <div
-      className={`ct-dashboard-shell ct-topup-page ct-topup-page-${normalizedView} w-full max-w-7xl mx-auto relative min-h-screen lg:min-h-0 mt-[60px] px-2`}
+    <ConsolePageShell
+      className={`ct-topup-page ct-topup-page-${normalizedView}`}
+      bodyClassName={`ct-topup-page-body ct-topup-page-body-${normalizedView}`}
+      eyebrow={pageHeader.eyebrow}
+      title={pageHeader.title}
+      subtitle={pageHeader.subtitle}
+      badge={pageHeader.badge}
+      actions={pageHeader.actions}
     >
       {/* 划转模态框 */}
       <TransferModal
@@ -1015,6 +1322,10 @@ const TopUp = ({ view = 'all' }) => {
             renderQuota={renderQuota}
             setOpenTransfer={setOpenTransfer}
             affLink={affLink}
+            affiliateDashboard={affiliateDashboard}
+            affiliateLoading={affiliateLoading}
+            affiliatePage={affiliatePage}
+            onAffiliatePageChange={handleAffiliatePageChange}
             handleAffLinkClick={handleAffLinkClick}
           />
         )}
@@ -1050,6 +1361,7 @@ const TopUp = ({ view = 'all' }) => {
                 minTopUp={minTopUp}
                 renderQuotaWithAmount={renderQuotaWithAmount}
                 getAmount={getAmount}
+                requestAmountByPayment={requestAmountByPayment}
                 setTopUpCount={setTopUpCount}
                 setSelectedPreset={setSelectedPreset}
                 renderAmount={renderAmount}
@@ -1070,6 +1382,9 @@ const TopUp = ({ view = 'all' }) => {
                 statusLoading={statusLoading}
                 topupInfo={topupInfo}
                 onOpenHistory={handleOpenHistory}
+                onRecentTopupsReloadReady={(reload) => {
+                  recentTopupsReloadRef.current = reload;
+                }}
               />
             )}
             {showSubscription && (
@@ -1093,7 +1408,7 @@ const TopUp = ({ view = 'all' }) => {
           </div>
         )}
       </div>
-    </div>
+    </ConsolePageShell>
   );
 };
 

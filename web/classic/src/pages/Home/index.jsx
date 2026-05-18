@@ -72,23 +72,43 @@ const publicStatusGroupKeys = [
   { key: 'value', label: '低价组' },
 ];
 
-const demoDaily = [
-  { date: '04-20', success_rate: 92, avg_latency_ms: 520, requests: 12800000, protected_events: 1200 },
-  { date: '04-22', success_rate: 86, avg_latency_ms: 410, requests: 15100000, protected_events: 2100 },
-  { date: '04-24', success_rate: 85, avg_latency_ms: 430, requests: 16700000, protected_events: 1900 },
-  { date: '04-26', success_rate: 85, avg_latency_ms: 458, requests: 17100000, protected_events: 2200 },
-  { date: '04-28', success_rate: 80, avg_latency_ms: 680, requests: 18800000, protected_events: 6200 },
-  { date: '04-30', success_rate: 88, avg_latency_ms: 440, requests: 20300000, protected_events: 900 },
-  { date: '05-02', success_rate: 90, avg_latency_ms: 735, requests: 21100000, protected_events: 3400 },
-  { date: '05-04', success_rate: 94, avg_latency_ms: 640, requests: 21900000, protected_events: 4300 },
-  { date: '05-06', success_rate: 99, avg_latency_ms: 560, requests: 23200000, protected_events: 5200 },
-  { date: '05-08', success_rate: 98, avg_latency_ms: 610, requests: 24100000, protected_events: 1800 },
-  { date: '05-10', success_rate: 98, avg_latency_ms: 690, requests: 28700000, protected_events: 1200 },
-  { date: '05-12', success_rate: 95, avg_latency_ms: 780, requests: 30100000, protected_events: 900 },
-  { date: '05-14', success_rate: 99.6, avg_latency_ms: 428, requests: 28700000, protected_events: 13842 },
-  { date: '05-16', success_rate: 97, avg_latency_ms: 730, requests: 33400000, protected_events: 2100 },
-  { date: '05-18', success_rate: 95, avg_latency_ms: 690, requests: 32700000, protected_events: 2800 },
+const demoDailyProfile = [
+  { success_rate: 92, avg_latency_ms: 520, requests: 12800000, protected_events: 1200 },
+  { success_rate: 86, avg_latency_ms: 410, requests: 15100000, protected_events: 2100 },
+  { success_rate: 85, avg_latency_ms: 430, requests: 16700000, protected_events: 1900 },
+  { success_rate: 85, avg_latency_ms: 458, requests: 17100000, protected_events: 2200 },
+  { success_rate: 80, avg_latency_ms: 680, requests: 18800000, protected_events: 6200 },
+  { success_rate: 88, avg_latency_ms: 440, requests: 20300000, protected_events: 900 },
+  { success_rate: 90, avg_latency_ms: 735, requests: 21100000, protected_events: 3400 },
+  { success_rate: 94, avg_latency_ms: 640, requests: 21900000, protected_events: 4300 },
+  { success_rate: 99, avg_latency_ms: 560, requests: 23200000, protected_events: 5200 },
+  { success_rate: 98, avg_latency_ms: 610, requests: 24100000, protected_events: 1800 },
+  { success_rate: 98, avg_latency_ms: 690, requests: 28700000, protected_events: 1200 },
+  { success_rate: 95, avg_latency_ms: 780, requests: 30100000, protected_events: 900 },
+  { success_rate: 99.6, avg_latency_ms: 428, requests: 28700000, protected_events: 13842 },
+  { success_rate: 97, avg_latency_ms: 730, requests: 33400000, protected_events: 2100 },
+  { success_rate: 95, avg_latency_ms: 690, requests: 32700000, protected_events: 2800 },
 ];
+
+const formatDemoDate = (date) => {
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${month}-${day}`;
+};
+
+const buildDemoDaily = () => {
+  const today = new Date();
+  const endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const lastIndex = demoDailyProfile.length - 1;
+  return demoDailyProfile.map((item, index) => {
+    const date = new Date(endDate);
+    date.setDate(endDate.getDate() - (lastIndex - index) * 2);
+    return {
+      date: formatDemoDate(date),
+      ...item,
+    };
+  });
+};
 
 const formatNumber = (value) => {
   const number = Number(value) || 0;
@@ -121,6 +141,15 @@ const normalizeChartValue = (value, max, minSize = 10) => {
   const number = Number(value) || 0;
   if (max <= 0 || number <= 0) return minSize;
   return Math.max(minSize, Math.round((number / max) * 100));
+};
+
+const isEmptyHomeContent = (content) => {
+  const normalized = String(content || '')
+    .replace(/&nbsp;/gi, '')
+    .replace(/<p>\s*<\/p>/gi, '')
+    .replace(/<br\s*\/?>/gi, '')
+    .trim();
+  return normalized === '';
 };
 
 const buildChartPolyline = (items, valueGetter, maxValue = 100) => {
@@ -312,6 +341,7 @@ const Home = () => {
   const statusGroups = homeStatus.groups || [];
   const summary = homeStatus.summary || fallbackStatus.summary;
   const hasRealData = Number(summary.requests) > 0;
+  const demoDaily = useMemo(() => buildDemoDaily(), []);
   const updatedAt = homeStatus.updated_at
     ? new Date(homeStatus.updated_at * 1000).toLocaleString()
     : t('等待真实请求数据');
@@ -353,7 +383,7 @@ const Home = () => {
         protected_events: 12842,
       };
   const activeDaily = activeGroup.daily || [];
-  const chartDaily = activeDaily.length > 1 ? activeDaily : demoDaily;
+  const chartDaily = hasRealData && activeDaily.length > 1 ? activeDaily : demoDaily;
   const maxRequests = Math.max(
     ...chartDaily.map((item) => Number(item.requests) || 0),
     0,
@@ -379,6 +409,11 @@ const Home = () => {
   const chartDateLabels = chartDaily
     .filter((_, index) => index % chartLabelStep === 0)
     .slice(0, 8);
+  const latestChartDate = chartDaily[chartDaily.length - 1]?.date || t('等待真实请求数据');
+  const tooltipDate = hasRealData ? updatedAt : `${t('示例')} ${latestChartDate}`;
+  const statusSyncLabel = hasRealData
+    ? `${t('同步')} ${updatedAt}`
+    : t('等待真实请求数据');
   const displayDays = numberValue(activeSummary.days, numberValue(summary.days, 30)) || 30;
   const rawEnabledChannels = numberValue(
     activeSummary.enabled_channels,
@@ -401,49 +436,138 @@ const Home = () => {
   const displayProtectedEvents = hasRealData
     ? numberValue(activeSummary.protected_events, 0)
     : 12842;
-  const displayDataMode = hasRealData ? t('公开脱敏聚合') : t('等待真实请求数据');
+  const displayDataMode = hasRealData ? t('公开脱敏聚合') : t('示例');
+  const healthyPercent = displayEnabledChannels > 0
+    ? Math.round((displayHealthyChannels / displayEnabledChannels) * 100)
+    : 0;
+  const coolingPercent = displayEnabledChannels > 0
+    ? Math.round((displayCoolingChannels / displayEnabledChannels) * 100)
+    : 0;
+  const standbyChannels = Math.max(
+    displayEnabledChannels - displayHealthyChannels - displayCoolingChannels,
+    0,
+  );
+  const standbyPercent = Math.max(0, 100 - healthyPercent - coolingPercent);
   const statusMetaItems = [
     {
-      label: t('公开脱敏聚合'),
-      value: t('不同分组的渠道池、价格和访问状态并不相同。公开首页只展示匿名聚合视图，不暴露真实渠道、模型和错误原因。'),
+      label: t('当前分组'),
+      value: activeGroup.label,
     },
     {
-      label: t('可用分组'),
-      value: `${activeGroup.label} · ${displayDays} ${t('天')}`,
+      label: t('数据来源'),
+      value: displayDataMode,
     },
     {
-      label: t('运行状态'),
-      value: `${formatRate(visualSummary.success_rate)} · ${formatLatency(visualSummary.avg_latency_ms)}`,
+      label: t('采样窗口'),
+      value: `${displayDays} ${t('天')}`,
+    },
+    {
+      label: t('同步状态'),
+      value: hasRealData ? t('实时同步') : t('等待真实数据'),
     },
   ];
   const routeAuditItems = [
     {
       step: '01',
-      label: t('你的请求'),
+      label: t('请求进入'),
       value: 'Base URL /v1',
     },
     {
       step: '02',
-      label: t('按分组策略'),
-      value: activeGroup.label,
+      label: t('识别限流'),
+      value: t('秒级熔断保护'),
     },
     {
       step: '03',
-      label: t('按冷却状态'),
-      value: `${formatExactNumber(displayCoolingChannels)} ${t('冷却中')}`,
+      label: t('切换健康渠道'),
+      value: `${formatExactNumber(displayHealthyChannels)} ${t('健康')}`,
     },
     {
       step: '04',
-      label: t('上游通道池'),
-      value: `${formatExactNumber(displayHealthyChannels)} / ${formatExactNumber(displayEnabledChannels)} ${t('健康')}`,
+      label: t('冷却恢复'),
+      value: `${formatExactNumber(displayCoolingChannels)} ${t('冷却中')}`,
     },
   ];
 
   const heroProofItems = [
-    t('高可用架构'),
-    t('多渠道智能路由'),
-    t('企业级安全'),
-    t('按量计费更省钱'),
+    t('多渠道无感切换'),
+    t('冷却自动恢复'),
+    t('流式响应优化'),
+    t('统一账单'),
+  ];
+
+  const heroMetricItems = [
+    {
+      label: t('近 30 天成功率'),
+      value: hasRealData ? formatRate(activeSummary.success_rate) : '99.62%',
+      note: t('公开脱敏看板'),
+    },
+    {
+      label: t('平均响应延迟'),
+      value: hasRealData ? formatLatency(activeSummary.avg_latency_ms) : '428ms',
+      note: t('流式请求优先'),
+    },
+    {
+      label: t('健康渠道'),
+      value: `${formatExactNumber(displayHealthyChannels)} / ${formatExactNumber(displayEnabledChannels)}`,
+      note: t('自动避开限流通道'),
+    },
+  ];
+
+  const statusInsightItems = [
+    {
+      value: hasRealData ? formatNumber(activeSummary.requests) : '28.7M',
+      label: t('近 30 天请求'),
+    },
+    {
+      value: formatExactNumber(displayProtectedEvents),
+      label: t('自动保护事件'),
+    },
+    {
+      value: `${formatExactNumber(displayCoolingChannels)} ${t('条')}`,
+      label: t('当前冷却通道'),
+    },
+  ];
+  const statusHealthItems = [
+    {
+      label: t('健康通道'),
+      value: formatExactNumber(displayHealthyChannels),
+      helper: `${healthyPercent}% ${t('可用通道')}`,
+      tone: 'healthy',
+      percent: Math.max(healthyPercent, 8),
+    },
+    {
+      label: t('冷却通道'),
+      value: formatExactNumber(displayCoolingChannels),
+      helper: t('限流已绕过'),
+      tone: 'cooling',
+      percent: Math.max(coolingPercent, displayCoolingChannels > 0 ? 7 : 0),
+    },
+    {
+      label: t('备用通道'),
+      value: formatExactNumber(standbyChannels),
+      helper: t('随时接管'),
+      tone: 'standby',
+      percent: Math.max(standbyPercent, standbyChannels > 0 ? 7 : 0),
+    },
+  ];
+
+  const heroRoutingRows = [
+    {
+      label: t('实时调度'),
+      value: 'Codex stream',
+      state: t('流式保持'),
+    },
+    {
+      label: t('分组策略'),
+      value: t('低价优先'),
+      state: t('成本可控'),
+    },
+    {
+      label: t('异常处理'),
+      value: t('限流旁路'),
+      state: t('秒级恢复'),
+    },
   ];
 
   const heroClients = [
@@ -487,11 +611,11 @@ const Home = () => {
   ];
 
   const routeRules = [
-    t('按模型匹配'),
-    t('按分组策略'),
-    t('按健康状态'),
-    t('按冷却状态'),
-    t('按成本最优'),
+    t('模型能力匹配'),
+    t('分组倍率优先级'),
+    t('失败率实时降权'),
+    t('限流冷却隔离'),
+    t('成本与速度平衡'),
   ];
 
   const upstreamRows = [
@@ -524,27 +648,79 @@ const Home = () => {
   const scenarioItems = [
     {
       icon: <IconCodeStroked />,
-      title: t('长时间编码会话'),
-      meta: t('持续稳定不断线'),
+      title: t('Codex 长任务'),
+      meta: t('长上下文、多轮工具调用不怕单渠道抖动'),
+      proof: t('失败自动旁路，减少中断重跑'),
+      signal: t('中断重跑减少'),
+      metric: '72%',
       tone: 'coding',
     },
     {
       icon: <IconRoute />,
-      title: t('上游限流转移'),
-      meta: t('智能分流，突破限速'),
+      title: t('Claude Code 项目开发'),
+      meta: t('高频编辑、流式响应和模型切换更顺滑'),
+      proof: t('限速自动切走，保持输出连续'),
+      signal: t('输出连续性'),
+      metric: '99%+',
       tone: 'routing',
     },
     {
       icon: <IconActivity />,
-      title: t('团队成本控制'),
-      meta: t('更低成本，更好可控'),
+      title: t('团队共享额度'),
+      meta: t('统一密钥、分组倍率、用量日志和预算控制'),
+      proof: t('低价组优先，成本更可预期'),
+      signal: t('成本可控'),
+      metric: t('低价优先'),
       tone: 'cost',
     },
     {
       icon: <IconShieldStroked />,
-      title: t('IDE / 脚本自动化'),
-      meta: t('无缝集成，开箱即用'),
+      title: t('自动化脚本 / CI'),
+      meta: t('批量任务需要稳定吞吐和失败兜底'),
+      proof: t('统一 /v1 接入，兼容现有 SDK'),
+      signal: t('批量吞吐'),
+      metric: t('自动调度'),
       tone: 'automation',
+    },
+  ];
+
+  const comparisonItems = [
+    {
+      label: t('官方直连'),
+      value: t('单渠道限速明显'),
+      detail: t('账号额度、地区网络和速率限制都可能让长任务中断'),
+    },
+    {
+      label: t('普通代理'),
+      value: t('缺少健康调度'),
+      detail: t('失败后仍可能打到同一条异常线路，成本和体验不可控'),
+    },
+    {
+      label: 'CodeToken AI',
+      value: t('多渠道自动恢复'),
+      detail: t('按分组、健康、冷却和成本策略选择更合适的上游'),
+      featured: true,
+    },
+  ];
+
+  const trustItems = [
+    t('Codex / Claude Code 兼容'),
+    t('OpenAI SDK 原生接入'),
+    t('分组倍率透明'),
+    t('失败与限流可追踪'),
+  ];
+  const compareScoreItems = [
+    {
+      label: t('可用性'),
+      value: hasRealData ? formatRate(activeSummary.success_rate) : '99.62%',
+    },
+    {
+      label: t('恢复链路'),
+      value: `4 ${t('步')}`,
+    },
+    {
+      label: t('接入成本'),
+      value: t('低价优先'),
     },
   ];
 
@@ -563,6 +739,12 @@ const Home = () => {
       });
       const { success, message, data } = res.data;
       if (success) {
+        if (isEmptyHomeContent(data)) {
+          setHomePageContent('');
+          localStorage.removeItem('home_page_content');
+          setHomePageContentLoaded(true);
+          return;
+        }
         let content = data;
         if (!data.startsWith('https://')) {
           content = marked.parse(data);
@@ -660,33 +842,6 @@ const Home = () => {
                   <i key={index} />
                 ))}
               </div>
-              <div className='ct-ambient-card one'>
-                <strong>API /v1</strong>
-                <span>
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                </span>
-              </div>
-              <div className='ct-ambient-card two'>
-                <strong>Codex</strong>
-                <span>
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                </span>
-              </div>
-              <div className='ct-ambient-card three'>
-                <strong>Claude</strong>
-                <span>
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                </span>
-              </div>
             </div>
             <div className='ct-home-shell ct-hero-shell'>
               <div className='ct-hero-copy'>
@@ -694,17 +849,22 @@ const Home = () => {
                   {isChinese ? (
                     <>
                       <em>{t('Codex 与 Claude Code')}</em>
-                      <em>{t('高稳定中转站')}</em>
+                      <em>{t('稳定高速中转站')}</em>
                     </>
                   ) : (
                     t('Codex / Claude Code 稳定高速中转站')
                   )}
                 </h1>
-                <h2>{t('Codex / Claude Code 稳定高速中转站')}</h2>
-                <p>{t('多渠道无感切换，低价接入主流编程模型')}</p>
-                <div className='ct-hero-check'>
-                  <IconCheckCircleStroked />
-                  <span>{t('统一 Base URL，自动健康路由')}</span>
+                <h2>{t('多渠道自动切换，低价接入主流编程模型')}</h2>
+                <p>{t('为长时间编码、团队共享和自动化脚本准备的高可用 AI API 网关。')}</p>
+                <div className='ct-hero-metrics' aria-label={t('首页核心指标')}>
+                  {heroMetricItems.map((item) => (
+                    <div className='ct-hero-metric' key={item.label}>
+                      <strong>{item.value}</strong>
+                      <span>{item.label}</span>
+                      <small>{item.note}</small>
+                    </div>
+                  ))}
                 </div>
                 <div className='ct-hero-actions'>
                   <Link to='/console'>
@@ -780,6 +940,27 @@ const Home = () => {
                     <IconGlobeStroke />
                     <span>API /v1</span>
                   </div>
+                  <div className='ct-hero-floating-card card-success'>
+                    <span>{t('自动切换')}</span>
+                    <strong>{t('限流旁路')}</strong>
+                  </div>
+                  <div className='ct-hero-floating-card card-cost'>
+                    <span>{t('成本优化')}</span>
+                    <strong>{t('低价组优先')}</strong>
+                  </div>
+                  <div className='ct-hero-route-board'>
+                    <div className='ct-hero-route-board-head'>
+                      <span>{t('调度链路')}</span>
+                      <strong>{formatExactNumber(displayHealthyChannels)} / {formatExactNumber(displayEnabledChannels)}</strong>
+                    </div>
+                    {heroRoutingRows.map((item) => (
+                      <div className='ct-hero-route-row' key={item.label}>
+                        <span>{item.label}</span>
+                        <strong>{item.value}</strong>
+                        <em>{item.state}</em>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -789,6 +970,7 @@ const Home = () => {
             <div className='ct-home-shell'>
               <div className='ct-status-head'>
                 <div className='ct-status-title'>
+                  <small>{t('稳定性证明')}</small>
                   <h2>{t('真实运行曲线')}</h2>
                   <span>
                     <i />
@@ -817,6 +999,26 @@ const Home = () => {
                   </div>
                 ))}
               </div>
+              <div className='ct-status-insights'>
+                {statusInsightItems.map((item) => (
+                  <div key={item.label}>
+                    <strong>{item.value}</strong>
+                    <span>{item.label}</span>
+                  </div>
+                ))}
+              </div>
+              <div className='ct-status-health-strip' aria-label={t('通道健康分布')}>
+                {statusHealthItems.map((item) => (
+                  <div className={`ct-status-health-item ${item.tone}`} key={item.label}>
+                    <div>
+                      <span>{item.label}</span>
+                      <strong>{item.value}</strong>
+                      <small>{item.helper}</small>
+                    </div>
+                    <i style={{ '--health-width': `${item.percent}%` }} />
+                  </div>
+                ))}
+              </div>
               <div className='ct-status-grid'>
                 <div className='ct-status-metrics'>
                   {metricCards.map((item) => (
@@ -842,7 +1044,7 @@ const Home = () => {
                   <div className='ct-chart-data-note'>
                     <span>{displayDataMode}</span>
                     <span>{t('按分组查看成功率、延迟与保护事件')}</span>
-                    <span>{t('同步')} {updatedAt}</span>
+                    <span>{statusSyncLabel}</span>
                   </div>
                   <div className='ct-status-chart' aria-hidden='true'>
                     <div className='ct-chart-axis-left'>
@@ -890,7 +1092,7 @@ const Home = () => {
                       ))}
                     </div>
                     <div className='ct-chart-tooltip'>
-                      <strong>{hasRealData ? updatedAt : '2025-05-10'}</strong>
+                      <strong>{tooltipDate}</strong>
                       <span>{t('成功率趋势')} {formatRate(visualSummary.success_rate)}</span>
                       <span>{t('平均延迟')} {formatLatency(visualSummary.avg_latency_ms)}</span>
                       <span>{t('请求量')} {formatNumber(visualSummary.requests)}</span>
@@ -903,101 +1105,108 @@ const Home = () => {
           </section>
 
           <section className='ct-route-section'>
-            <div className='ct-home-shell ct-route-canvas'>
-              <div className='ct-route-lines' aria-hidden='true'>
-                <span className='ct-route-line-a' />
-                <span className='ct-route-line-b' />
-                <span className='ct-route-line-c' />
+            <div className='ct-home-shell'>
+              <div className='ct-section-headline'>
+                <small>{t('无感切换机制')}</small>
+                <h2>{t('一次接入，自动避开限流与异常')}</h2>
+                <p>{t('客户只需要维护一个 Base URL，后面由网关根据分组、健康、冷却和成本策略做实时选择。')}</p>
               </div>
-              <div className='ct-client-access'>
-                <h3>{t('客户端接入')}</h3>
-                <div className='ct-connect-panel'>
-                  <div className='ct-config-row highlight'>
-                    <span>Base URL</span>
-                    <code>{apiBaseUrl}</code>
-                  </div>
-                  <div className='ct-config-row'>
-                    <span>API Key</span>
-                    <code>ct-••••••••••••••••••••</code>
-                    <Button
-                      type='tertiary'
-                      onClick={handleCopyBaseURL}
-                      icon={<IconCopy />}
-                      className='ct-copy-btn'
-                    />
-                  </div>
-                  <div className='ct-client-chips'>
-                    {heroClients.map((item) => (
-                      <span key={item.label}>{item.icon}{item.label}</span>
-                    ))}
-                  </div>
+              <div className='ct-route-canvas'>
+                <div className='ct-route-lines' aria-hidden='true'>
+                  <span className='ct-route-line-a' />
+                  <span className='ct-route-line-b' />
+                  <span className='ct-route-line-c' />
                 </div>
-              </div>
-
-              <div className='ct-decision-core'>
-                <div className='ct-decision-orb'>
-                  <IconBolt />
-                  <strong>{t('智能决策')}</strong>
-                  <span>{t('毫秒级选择')}</span>
-                </div>
-              </div>
-
-              <div className='ct-rule-list'>
-                <h3>{t('智能路由引擎')}</h3>
-                {routeRules.map((item) => (
-                  <div className='ct-rule-row' key={item}>
-                    <IconCheckCircleStroked />
-                    <span>{item}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className='ct-upstream-list'>
-                <h3>{t('上游通道池')}</h3>
-                {upstreamRows.map((item) => (
-                  <div className={`ct-upstream-line ${item.tone}`} key={item.title}>
-                    <div>
-                      <b>{item.status}</b>
-                      <strong>{item.title}</strong>
+                <div className='ct-client-access'>
+                  <h3>{t('客户端接入')}</h3>
+                  <div className='ct-connect-panel'>
+                    <div className='ct-config-row highlight'>
+                      <span>Base URL</span>
+                      <code>{apiBaseUrl}</code>
                     </div>
-                    <span>{item.vendor}</span>
-                    <small>{item.price}</small>
-                    <small>{item.rpm}</small>
-                    <div className='ct-mini-bars'>
-                      {Array.from({ length: 7 }).map((_, index) => (
-                        <i key={index} />
+                    <div className='ct-config-row'>
+                      <span>API Key</span>
+                      <code>ct-••••••••••••••••••••</code>
+                      <Button
+                        type='tertiary'
+                        onClick={handleCopyBaseURL}
+                        icon={<IconCopy />}
+                        className='ct-copy-btn'
+                      />
+                    </div>
+                    <div className='ct-client-chips'>
+                      {heroClients.map((item) => (
+                        <span key={item.label}>{item.icon}{item.label}</span>
                       ))}
                     </div>
                   </div>
-                ))}
-                <em>{t('更多通道')} ...</em>
-              </div>
-              <div className='ct-route-badges'>
-                {[
-                  t('多渠道无感切换'),
-                  t('自动重试与降级'),
-                  t('智能限流保护'),
-                  t('更低成本更稳定'),
-                ].map((item) => (
-                  <span key={item}>
-                    <IconCheckCircleStroked />
-                    {item}
-                  </span>
-                ))}
-              </div>
-              <div className='ct-route-audit'>
-                <div className='ct-route-audit-head'>
-                  <span>{t('当前路由状态')}</span>
-                  <strong>{t('统一 Base URL，自动健康路由')}</strong>
                 </div>
-                <div className='ct-route-audit-steps'>
-                  {routeAuditItems.map((item) => (
-                    <div className='ct-route-audit-step' key={item.step}>
-                      <span>{item.step}</span>
-                      <strong>{item.label}</strong>
-                      <small>{item.value}</small>
+
+                <div className='ct-decision-core'>
+                  <div className='ct-decision-orb'>
+                    <IconBolt />
+                    <strong>{t('智能决策')}</strong>
+                    <span>{t('毫秒级选择')}</span>
+                  </div>
+                </div>
+
+                <div className='ct-rule-list'>
+                  <h3>{t('智能路由引擎')}</h3>
+                  {routeRules.map((item) => (
+                    <div className='ct-rule-row' key={item}>
+                      <IconCheckCircleStroked />
+                      <span>{item}</span>
                     </div>
                   ))}
+                </div>
+
+                <div className='ct-upstream-list'>
+                  <h3>{t('上游通道池')}</h3>
+                  {upstreamRows.map((item) => (
+                    <div className={`ct-upstream-line ${item.tone}`} key={item.title}>
+                      <div>
+                        <b>{item.status}</b>
+                        <strong>{item.title}</strong>
+                      </div>
+                      <span>{item.vendor}</span>
+                      <small>{item.price}</small>
+                      <small>{item.rpm}</small>
+                      <div className='ct-mini-bars'>
+                        {Array.from({ length: 7 }).map((_, index) => (
+                          <i key={index} />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  <em>{t('更多通道')} ...</em>
+                </div>
+                <div className='ct-route-badges'>
+                  {[
+                    t('多渠道无感切换'),
+                    t('自动重试与降级'),
+                    t('智能限流保护'),
+                    t('更低成本更稳定'),
+                  ].map((item) => (
+                    <span key={item}>
+                      <IconCheckCircleStroked />
+                      {item}
+                    </span>
+                  ))}
+                </div>
+                <div className='ct-route-audit'>
+                  <div className='ct-route-audit-head'>
+                    <span>{t('失败恢复路径')}</span>
+                    <strong>{t('限流、报错、超时都进入自动保护链路')}</strong>
+                  </div>
+                  <div className='ct-route-audit-steps'>
+                    {routeAuditItems.map((item) => (
+                      <div className='ct-route-audit-step' key={item.step}>
+                        <span>{item.step}</span>
+                        <strong>{item.label}</strong>
+                        <small>{item.value}</small>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1005,13 +1214,22 @@ const Home = () => {
 
           <section className='ct-scenario-section'>
             <div className='ct-home-shell'>
-              <h2>{t('为不同场景提供稳定动力')}</h2>
+              <div className='ct-section-headline'>
+                <small>{t('真实使用场景')}</small>
+                <h2>{t('为不同场景提供稳定动力')}</h2>
+                <p>{t('把客户真正关心的不中断、低成本、速度和治理能力拆到可感知的场景里。')}</p>
+              </div>
               <div className='ct-scenario-grid'>
                 {scenarioItems.map((item) => (
                   <div className='ct-scenario-card' key={item.title}>
                     <div>
                       <h3>{item.title}</h3>
                       <p>{item.meta}</p>
+                      <strong>{item.proof}</strong>
+                      <div className='ct-scenario-meter'>
+                        <span>{item.signal}</span>
+                        <b>{item.metric}</b>
+                      </div>
                     </div>
                     <div className='ct-scenario-art'>
                       <span>{item.icon}</span>
@@ -1019,6 +1237,43 @@ const Home = () => {
                       <b />
                     </div>
                   </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className='ct-compare-section'>
+            <div className='ct-home-shell'>
+              <div className='ct-section-headline compact'>
+                <small>{t('低价与专业性')}</small>
+                <h2>{t('不是再加一个代理，而是把不稳定变成可运营的系统')}</h2>
+              </div>
+              <div className='ct-compare-grid'>
+                {comparisonItems.map((item) => (
+                  <div
+                    className={`ct-compare-card${item.featured ? ' featured' : ''}`}
+                    key={item.label}
+                  >
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                    <p>{item.detail}</p>
+                  </div>
+                ))}
+              </div>
+              <div className='ct-compare-scoreboard'>
+                {compareScoreItems.map((item) => (
+                  <div key={item.label}>
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </div>
+                ))}
+              </div>
+              <div className='ct-trust-row'>
+                {trustItems.map((item) => (
+                  <span key={item}>
+                    <IconCheckCircleStroked />
+                    {item}
+                  </span>
                 ))}
               </div>
             </div>
@@ -1037,7 +1292,7 @@ const Home = () => {
               </div>
               <div>
                 <h2>{t('更稳定，更智能，更省钱的 AI 编程中转站')}</h2>
-                <p>{t('统一接入，高可用保障，让每一次请求都更有价值')}</p>
+                <p>{t('统一接入，高可用保障，让每一次 Codex 与 Claude Code 请求都更有价值')}</p>
               </div>
               <div className='ct-final-actions'>
                 <Link to='/console'>

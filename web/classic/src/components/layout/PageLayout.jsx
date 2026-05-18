@@ -89,7 +89,37 @@ const PageLayout = () => {
     '/console/recharge',
     '/console/subscription-plans',
   ].includes(location.pathname);
+  const isPaymentGrowthRoute = [
+    '/console/recharge',
+    '/console/subscription-plans',
+  ].includes(location.pathname);
+  const paymentGrowthRouteClassMap = {
+    '/console/affiliate': 'ct-topup-affiliate-route',
+    '/console/recharge': 'ct-topup-recharge-route',
+    '/console/subscription-plans': 'ct-topup-subscription-route',
+  };
   const showSider = isConsoleRoute && (!isMobile || drawerOpen);
+
+  useEffect(() => {
+    const routeClasses = Object.values(paymentGrowthRouteClassMap);
+    document.body.classList.toggle(
+      'ct-payment-growth-route',
+      isPaymentGrowthRoute,
+    );
+    routeClasses.forEach((className) => {
+      document.body.classList.toggle(
+        className,
+        className === paymentGrowthRouteClassMap[location.pathname],
+      );
+    });
+
+    return () => {
+      document.body.classList.remove('ct-payment-growth-route');
+      routeClasses.forEach((className) => {
+        document.body.classList.remove(className);
+      });
+    };
+  }, [isPaymentGrowthRoute, location.pathname]);
 
   useEffect(() => {
     if (isMobile && drawerOpen && collapsed) {
@@ -224,6 +254,7 @@ const PageLayout = () => {
               : showSider
                 ? 'var(--sidebar-current-width)'
                 : '0',
+            paddingTop: isConsoleRoute ? '64px' : '0',
             flex: '1 1 auto',
             display: 'flex',
             flexDirection: 'column',

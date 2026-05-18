@@ -61,7 +61,7 @@
           "to": "bin/new-api"
         },
         {
-          "from": "../web/dist",
+          "from": "../web/classic/dist",
           "to": "web/dist"
         },
         {

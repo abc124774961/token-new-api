@@ -3,7 +3,8 @@
 
 FROM docker.m.daocloud.io/library/golang:1.26.1-alpine AS builder2
 ENV GO111MODULE=on CGO_ENABLED=0
-ENV GOPROXY=https://goproxy.io,https://proxy.golang.org,direct
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GOSUMDB=sum.golang.google.cn
 
 ARG TARGETOS
 ARG TARGETARCH

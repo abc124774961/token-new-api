@@ -21,7 +21,7 @@ import React from 'react';
 import ChannelStatusMonitor from '../../components/dashboard/channel-status/ChannelStatusMonitor';
 
 const ChannelStatus = () => (
-  <div className='mt-[60px] px-2'>
+  <div className='ct-console-content-wrap'>
     <ChannelStatusMonitor />
   </div>
 );

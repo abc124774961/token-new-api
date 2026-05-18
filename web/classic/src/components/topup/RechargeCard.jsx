@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Typography,
   Card,
@@ -26,7 +26,6 @@ import {
   Form,
   Spin,
   Tooltip,
-  Tag,
   Badge,
 } from '@douyinfe/semi-ui';
 import { SiAlipay, SiWechat, SiStripe } from 'react-icons/si';
@@ -36,12 +35,11 @@ import {
   CheckCircle2,
   CreditCard,
   FileText,
+  Gift,
   LockKeyhole,
   Pencil,
   Receipt,
-  RefreshCw,
   ShieldCheck,
-  Sparkles,
   TrendingUp,
   Wallet,
   Zap,
@@ -66,13 +64,13 @@ const PAYMENT_METHOD_MAP = {
 
 const renderPayMethodIcon = (payMethod) => {
   if (payMethod.type === 'alipay') {
-    return <SiAlipay size={24} color='#1677FF' />;
+    return <SiAlipay size={30} />;
   }
   if (payMethod.type === 'wxpay') {
-    return <SiWechat size={24} color='#07C160' />;
+    return <SiWechat size={30} />;
   }
   if (payMethod.type === 'stripe') {
-    return <SiStripe size={24} color='#635BFF' />;
+    return <SiStripe size={46} />;
   }
   if (payMethod.icon) {
     return (
@@ -95,6 +93,16 @@ const renderPayMethodIcon = (payMethod) => {
   );
 };
 
+const getPaymentDisplayName = (payMethod) =>
+  PAYMENT_METHOD_MAP[payMethod.type] || payMethod.name || payMethod.type;
+
+const getPaymentSubtitle = (type, t) => {
+  if (type === 'alipay') return 'ALIPAY';
+  if (type === 'wxpay') return 'WeChat Pay';
+  if (type === 'stripe') return 'Stripe';
+  return t('可用');
+};
+
 const RechargeStat = ({ icon: Icon, label, value, tone }) => (
   <div className={`ct-topup-stat-tile ct-topup-stat-tile-${tone}`}>
     <div className='ct-topup-stat-copy'>
@@ -111,7 +119,6 @@ const getPaymentTone = (type = '') => {
   if (type === 'alipay') return 'alipay';
   if (type === 'wxpay') return 'wechat';
   if (type === 'stripe') return 'stripe';
-  if (type === 'redeem') return 'redeem';
   return 'generic';
 };
 
@@ -131,6 +138,7 @@ const RechargeCard = ({
   minTopUp,
   renderQuotaWithAmount,
   getAmount,
+  requestAmountByPayment,
   setTopUpCount,
   setSelectedPreset,
   renderAmount,
@@ -151,6 +159,7 @@ const RechargeCard = ({
   statusLoading,
   topupInfo,
   onOpenHistory,
+  onRecentTopupsReloadReady,
   enableWaffoTopUp,
   enableWaffoPancakeTopUp,
 }) => {
@@ -188,6 +197,28 @@ const RechargeCard = ({
     () => regularPayMethods.find((method) => method.type === selectedPayment),
     [regularPayMethods, selectedPayment],
   );
+  const displayCurrency = getCurrencyConfig();
+  const getUsdExchangeRate = () => {
+    const statusStr = localStorage.getItem('status');
+    try {
+      if (statusStr) {
+        const status = JSON.parse(statusStr);
+        return Number(status?.usd_exchange_rate) || 7;
+      }
+    } catch (e) {}
+    return 7;
+  };
+  const formatDisplayMoney = (value) => {
+    const numericValue = Number(value || 0);
+    const usdRate = getUsdExchangeRate();
+    let convertedValue = numericValue;
+    if (displayCurrency.type === 'USD') {
+      convertedValue = numericValue / usdRate;
+    } else if (displayCurrency.type === 'CUSTOM') {
+      convertedValue = (numericValue / usdRate) * Number(displayCurrency.rate || 1);
+    }
+    return `${displayCurrency.symbol}${Number.isFinite(convertedValue) ? convertedValue.toFixed(2) : '0.00'}`;
+  };
 
   const selectedDiscount =
     topupInfo?.discount?.[topUpCount] ||
@@ -207,24 +238,19 @@ const RechargeCard = ({
       : 0;
 
   useEffect(() => {
-    if (!statusLoading && !hasOnlineTopUp && selectedPayment !== 'redeem') {
-      setSelectedPayment('redeem');
-      return;
-    }
     if (!selectedPayment && regularPayMethods.length > 0) {
       setSelectedPayment(regularPayMethods[0].type);
       return;
     }
     if (
       selectedPayment &&
-      selectedPayment !== 'redeem' &&
       !regularPayMethods.some((method) => method.type === selectedPayment)
     ) {
       setSelectedPayment(regularPayMethods[0]?.type || '');
     }
-  }, [hasOnlineTopUp, regularPayMethods, selectedPayment, statusLoading]);
+  }, [regularPayMethods, selectedPayment]);
 
-  const loadRecentTopups = async () => {
+  const loadRecentTopups = useCallback(async () => {
     setRecentLoading(true);
     try {
       const res = await API.get('/api/user/topup/self?p=1&page_size=4', {
@@ -238,22 +264,41 @@ const RechargeCard = ({
     } finally {
       setRecentLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadRecentTopups();
-  }, []);
+  }, [loadRecentTopups]);
+
+  useEffect(() => {
+    if (typeof onRecentTopupsReloadReady !== 'function') return undefined;
+    onRecentTopupsReloadReady(loadRecentTopups);
+    return () => onRecentTopupsReloadReady(null);
+  }, [loadRecentTopups, onRecentTopupsReloadReady]);
 
   const selectCustomAmount = () => {
     setSelectedPreset(null);
     onlineFormApiRef.current?.setValue('topUpCount', topUpCount);
   };
 
-  const handlePay = () => {
-    if (selectedPayment === 'redeem') {
-      topUp();
+  const updateAmountForPayment = async (payment, value = topUpCount) => {
+    if (!payment) {
+      await getAmount(value);
       return;
     }
+    if (typeof requestAmountByPayment === 'function') {
+      await requestAmountByPayment(payment, value);
+      return;
+    }
+    await getAmount(value);
+  };
+
+  useEffect(() => {
+    if (!selectedPayment || statusLoading) return;
+    updateAmountForPayment(selectedPayment);
+  }, [selectedPayment, statusLoading]);
+
+  const handlePay = () => {
     if (selectedPayment) {
       preTopUp(selectedPayment);
     }
@@ -277,29 +322,39 @@ const RechargeCard = ({
   const renderPaymentButton = (payMethod) => {
     const minTopupVal = Number(payMethod.min_topup) || 0;
     const disabled = getMethodDisabled(payMethod);
+    const disabledByAmount = disabled && minTopupVal > Number(topUpCount || 0);
     const buttonEl = (
       <button
         key={payMethod.type}
         type='button'
         disabled={disabled}
-        onClick={() => !disabled && setSelectedPayment(payMethod.type)}
+        onClick={() => {
+          if (disabled) return;
+          setSelectedPayment(payMethod.type);
+        }}
         className={`ct-topup-payment-choice ct-topup-payment-choice-${getPaymentTone(
           payMethod.type,
         )} ${selectedPayment === payMethod.type ? 'ct-topup-payment-choice-active' : ''}`}
+        aria-pressed={selectedPayment === payMethod.type}
       >
         <span>{renderPayMethodIcon(payMethod)}</span>
-        <strong>{payMethod.name}</strong>
-        <em>
-          {disabled && minTopupVal > Number(topUpCount || 0)
-            ? `${t('最低')} ${minTopupVal}`
-            : t('可用')}
-        </em>
+        <span className='ct-topup-payment-choice-copy'>
+          <strong>{getPaymentDisplayName(payMethod)}</strong>
+          <em>
+            {disabledByAmount
+              ? `${t('最低')} ${renderQuotaWithAmount(minTopupVal)}`
+              : getPaymentSubtitle(payMethod.type, t)}
+          </em>
+        </span>
+        <span className='ct-topup-payment-selected' aria-hidden='true'>
+          <CheckCircle2 size={16} />
+        </span>
       </button>
     );
 
-    return disabled && minTopupVal > Number(topUpCount || 0) ? (
+    return disabledByAmount ? (
       <Tooltip
-        content={t('此支付方式最低充值金额为') + ' ' + minTopupVal}
+        content={t('此支付方式最低充值金额为') + ' ' + renderQuotaWithAmount(minTopupVal)}
         key={payMethod.type}
       >
         {buttonEl}
@@ -368,47 +423,6 @@ const RechargeCard = ({
 
   return (
     <div className='ct-topup-recharge-page'>
-      <div className='ct-topup-page-head'>
-        <div>
-          <div className='ct-topup-page-title-row'>
-            <Typography.Title heading={2} className='ct-topup-page-title'>
-              {t('账户充值')}
-            </Typography.Title>
-            <Tag
-              color={hasOnlineTopUp ? 'green' : 'amber'}
-              shape='circle'
-              prefixIcon={<ShieldCheck size={12} />}
-            >
-              {hasOnlineTopUp ? t('在线支付可用') : t('在线支付未开启')}
-            </Tag>
-          </div>
-          <Text type='tertiary' className='ct-topup-page-subtitle'>
-            {t('选择充值金额与支付方式，确认后进入安全支付流程')}
-          </Text>
-        </div>
-        <div className='ct-topup-page-actions'>
-          <Button
-            icon={<Receipt size={15} />}
-            theme='light'
-            type='tertiary'
-            onClick={onOpenHistory}
-            className='ct-topup-panel-action'
-          >
-            {t('账单')}
-          </Button>
-          <Button
-            icon={<RefreshCw size={15} />}
-            theme='light'
-            type='tertiary'
-            onClick={loadRecentTopups}
-            loading={recentLoading}
-            className='ct-topup-panel-action'
-          >
-            {t('刷新')}
-          </Button>
-        </div>
-      </div>
-
       <div className='ct-topup-balance-strip ct-topup-balance-strip-wide'>
         <RechargeStat
           icon={Wallet}
@@ -456,7 +470,7 @@ const RechargeCard = ({
                           <span className='ct-topup-step-badge'>1</span>
                           <span>{t('选择充值金额')}</span>
                           {(() => {
-                            const { symbol, rate, type } = getCurrencyConfig();
+                            const { symbol, rate, type } = displayCurrency;
                             if (type === 'USD') return null;
                             return (
                               <span className='ct-topup-section-hint'>
@@ -474,36 +488,21 @@ const RechargeCard = ({
                               preset.discount ||
                               topupInfo?.discount?.[preset.value] ||
                               1.0;
-                            const originalPrice = preset.value * priceRatio;
-                            const discountedPrice = originalPrice * discount;
                             const hasDiscount = discount < 1.0;
-                            const actualPay = discountedPrice;
-                            const save = originalPrice - discountedPrice;
 
-                            const { symbol, rate, type } = getCurrencyConfig();
-                            const statusStr = localStorage.getItem('status');
-                            let usdRate = 7;
-                            try {
-                              if (statusStr) {
-                                const s = JSON.parse(statusStr);
-                                usdRate = s?.usd_exchange_rate || 7;
-                              }
-                            } catch (e) {}
+                            const { symbol, rate, type } = displayCurrency;
+                            const usdRate = getUsdExchangeRate();
 
                             let displayValue = preset.value;
-                            let displayActualPay = actualPay;
-                            let displaySave = save;
 
-                            if (type === 'USD') {
-                              displayActualPay = actualPay / usdRate;
-                              displaySave = save / usdRate;
-                            } else if (type === 'CNY') {
+                            if (type === 'CNY') {
                               displayValue = preset.value * usdRate;
                             } else if (type === 'CUSTOM') {
                               displayValue = preset.value * rate;
-                              displayActualPay = (actualPay / usdRate) * rate;
-                              displaySave = (save / usdRate) * rate;
                             }
+
+                            const isRecommended =
+                              hasDiscount || index === Math.min(3, presetAmounts.length - 1);
 
                             return (
                               <button
@@ -520,29 +519,19 @@ const RechargeCard = ({
                                     'topUpCount',
                                     preset.value,
                                   );
+                                  updateAmountForPayment(selectedPayment, preset.value);
                                 }}
                               >
-                                {hasDiscount && (
-                                  <Tag
-                                    color='amber'
-                                    size='small'
-                                    shape='circle'
-                                    className='ct-topup-preset-ribbon'
-                                  >
+                                {isRecommended && (
+                                  <span className='ct-topup-preset-ribbon'>
                                     {t('推荐')}
-                                  </Tag>
+                                  </span>
                                 )}
                                 <span className='ct-topup-preset-main'>
                                   <strong>
-                                    {formatLargeNumber(displayValue)} {symbol}
+                                    {symbol}
+                                    {formatLargeNumber(Number(displayValue.toFixed(2)))}
                                   </strong>
-                                </span>
-                                <span className='ct-topup-preset-sub'>
-                                  {t('实付')} {symbol}
-                                  {displayActualPay.toFixed(2)}
-                                  {hasDiscount
-                                    ? ` · ${t('节省')} ${symbol}${displaySave.toFixed(2)}`
-                                    : ''}
                                 </span>
                                 {selectedPresetValue === preset.value && (
                                   <CheckCircle2
@@ -591,14 +580,14 @@ const RechargeCard = ({
                                 if (value && value >= 1) {
                                   setTopUpCount(value);
                                   setSelectedPreset(null);
-                                  await getAmount(value);
+                                  await updateAmountForPayment(selectedPayment, value);
                                 }
                               }}
                               onBlur={(e) => {
                                 const value = parseInt(e.target.value);
                                 if (!value || value < minTopUp) {
                                   setTopUpCount(minTopUp);
-                                  getAmount(minTopUp);
+                                  updateAmountForPayment(selectedPayment, minTopUp);
                                 }
                               }}
                               formatter={(value) => (value ? `${value}` : '')}
@@ -631,27 +620,6 @@ const RechargeCard = ({
                     </div>
                     <div className='ct-topup-payment-choice-grid'>
                       {regularPayMethods.map(renderPaymentButton)}
-                      <button
-                        type='button'
-                        onClick={() => {
-                          setSelectedPayment('redeem');
-                          redeemShellRef.current?.scrollIntoView({
-                            behavior: 'smooth',
-                            block: 'nearest',
-                          });
-                        }}
-                        className={`ct-topup-payment-choice ct-topup-payment-choice-redeem ${
-                          selectedPayment === 'redeem'
-                            ? 'ct-topup-payment-choice-active'
-                            : ''
-                        }`}
-                      >
-                        <span>
-                          <IconGift />
-                        </span>
-                        <strong>{t('兑换码')}</strong>
-                        <em>{t('输入兑换')}</em>
-                      </button>
                     </div>
                   </div>
 
@@ -682,14 +650,6 @@ const RechargeCard = ({
               </Form>
             ) : (
               <div className='ct-topup-offline-checkout'>
-                <Banner
-                  type='info'
-                  description={t(
-                    '管理员未开启在线充值功能，请联系管理员开启或使用兑换码充值。',
-                  )}
-                  className='ct-topup-inline-banner'
-                  closeIcon={null}
-                />
                 <div className='ct-topup-section-label'>
                   <span className='ct-topup-step-badge'>1</span>
                   <span>{t('兑换码充值')}</span>
@@ -709,6 +669,14 @@ const RechargeCard = ({
                     </div>
                   </div>
                   {renderRedeemForm()}
+                  <Banner
+                    type='info'
+                    description={t(
+                      '管理员未开启在线充值功能，请联系管理员开启或使用兑换码充值。',
+                    )}
+                    className='ct-topup-inline-banner'
+                    closeIcon={null}
+                  />
                 </div>
               </div>
             )}
@@ -725,58 +693,60 @@ const RechargeCard = ({
           </div>
           <div className='ct-topup-order-lines'>
             <div>
-              <span>{t('选择金额')}</span>
+              <span>{t('充值额度')}</span>
               <strong>{renderQuotaWithAmount(topUpCount || 0)}</strong>
             </div>
             <div>
               <span>{t('优惠金额')}</span>
               <strong className='ct-topup-order-save'>
-                {renderQuotaWithAmount(discountSavings)}
+                {renderAmount(discountSavings)}
               </strong>
             </div>
             <div>
               <span>{t('实付金额')}</span>
-              <strong>{renderAmount()}</strong>
+              <strong>{amountLoading ? t('计算中') : renderAmount()}</strong>
             </div>
           </div>
-          <div className='ct-topup-order-arrival'>
-            <span>{t('到账金额')}</span>
+          <div className='ct-topup-order-quota'>
+            <span>{t('约到账额度')}</span>
             <strong>{renderQuotaWithAmount(topUpCount || 0)}</strong>
             <em>
-              {selectedDiscount < 1
-                ? `${t('已应用折扣')} ${(selectedDiscount * 10).toFixed(1)}${t('折')}`
-                : t('当前无折扣')}
+              {t('支付折算')}：{renderAmount()} ≈ {formatDisplayMoney(amount)}
             </em>
+          </div>
+          <div className='ct-topup-order-benefits'>
+            <div>
+              <CheckCircle2 size={14} />
+              <span>{t('支付成功后额度将自动入账')}</span>
+            </div>
+            <div>
+              <ShieldCheck size={14} />
+              <span>
+                {selectedDiscount < 1
+                  ? `${t('已应用折扣')} ${(selectedDiscount * 10).toFixed(1)}${t('折')}`
+                  : t('当前无折扣')}
+              </span>
+            </div>
           </div>
           <div className='ct-topup-order-method'>
             <span>{t('支付方式')}</span>
             <strong>
-              {selectedPayment === 'redeem'
-                ? t('兑换码')
-                : selectedMethod?.name || t('请选择支付方式')}
+              {selectedMethod
+                ? getPaymentDisplayName(selectedMethod)
+                : t('请选择支付方式')}
             </strong>
           </div>
           <Button
             type='primary'
             theme='solid'
             block
-            loading={
-              selectedPayment === 'redeem'
-                ? isSubmitting
-                : paymentLoading && payWay === selectedPayment
-            }
-            disabled={
-              !selectedPayment ||
-              (selectedPayment !== 'redeem' &&
-                (!selectedMethod || getMethodDisabled(selectedMethod)))
-            }
+            loading={paymentLoading && payWay === selectedPayment}
+            disabled={!selectedPayment || !selectedMethod || getMethodDisabled(selectedMethod)}
             onClick={handlePay}
-            icon={selectedPayment === 'redeem' ? <IconGift /> : <Zap size={15} />}
+            icon={<Zap size={15} />}
             className='ct-topup-primary-button ct-topup-pay-submit'
           >
-            {selectedPayment === 'redeem'
-              ? t('兑换额度')
-              : `${t('立即支付')} ${renderAmount()}`}
+            {`${t('立即支付')} ${amountLoading ? t('计算中') : renderAmount()}`}
           </Button>
           <Text type='tertiary' size='small' className='ct-topup-order-note'>
             {t('支付即表示您已阅读并同意服务条款')}
@@ -833,14 +803,14 @@ const RechargeCard = ({
           </div>
         </Card>
 
-        <div className='ct-topup-recharge-side-stack'>
-          <Card
-            className='ct-topup-panel ct-topup-redeem-shell'
-            ref={redeemShellRef}
-          >
+        <div className='ct-topup-recharge-side-stack' ref={redeemShellRef}>
+          <Card className='ct-topup-panel ct-topup-redeem-shell'>
             <div className='ct-topup-redeem-title'>
               <IconGift />
-              <Text strong>{t('兑换码充值')}</Text>
+              <div>
+                <Text strong>{t('兑换码充值')}</Text>
+                <span>{t('输入兑换码后直接兑换额度')}</span>
+              </div>
             </div>
             {renderRedeemForm()}
           </Card>
@@ -856,7 +826,7 @@ const RechargeCard = ({
               {[
                 { icon: ShieldCheck, title: t('安全可靠'), desc: t('多重支付防护') },
                 { icon: Zap, title: t('即时到账'), desc: t('支付成功后自动入账') },
-                { icon: Sparkles, title: t('赠送优惠'), desc: t('充值可享受额外优惠') },
+                { icon: Gift, title: t('赠送优惠'), desc: t('充值可享受额外优惠') },
                 { icon: FileText, title: t('可开发票'), desc: t('支持开具普通发票') },
               ].map((item) => {
                 const Icon = item.icon;

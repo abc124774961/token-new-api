@@ -19,7 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useMemo, useState } from 'react';
 import {
-  Badge,
   Button,
   Card,
   Skeleton,
@@ -33,14 +32,16 @@ import {
   ArrowRight,
   CheckCircle2,
   Clock3,
+  CreditCard,
+  Database,
   Gauge,
   History,
+  Layers3,
   PackageCheck,
-  RefreshCw,
+  PieChart,
   ShieldCheck,
   ShoppingCart,
   Wallet,
-  WalletCards,
 } from 'lucide-react';
 import SubscriptionPurchaseModal from './modals/SubscriptionPurchaseModal';
 import {
@@ -49,6 +50,21 @@ import {
 } from '../../helpers/subscriptionFormat';
 
 const { Text } = Typography;
+
+const SubscriptionStat = ({ icon: Icon, label, value, hint, tone }) => (
+  <div className={`ct-topup-stat-tile ct-topup-stat-tile-${tone}`}>
+    <div className='ct-topup-stat-icon'>
+      <Icon size={17} />
+    </div>
+    <div className='ct-topup-stat-copy'>
+      <span>{label}</span>
+      <strong>
+        {value}
+        {hint && <em>{hint}</em>}
+      </strong>
+    </div>
+  </div>
+);
 
 function getEpayMethods(payMethods = []) {
   return (payMethods || []).filter(
@@ -76,18 +92,6 @@ function submitEpayForm({ url, params }) {
   document.body.removeChild(form);
 }
 
-const SubscriptionMetric = ({ icon: Icon, label, value, tone }) => (
-  <div className={`ct-topup-stat-tile ct-topup-stat-tile-${tone}`}>
-    <div className='ct-topup-stat-copy'>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-    <div className='ct-topup-stat-icon'>
-      <Icon size={16} />
-    </div>
-  </div>
-);
-
 const SubscriptionPlansCard = ({
   t,
   loading = false,
@@ -97,18 +101,16 @@ const SubscriptionPlansCard = ({
   enableStripeTopUp = false,
   enableCreemTopUp = false,
   billingPreference,
-  onChangeBillingPreference,
   activeSubscriptions = [],
   allSubscriptions = [],
-  reloadSubscriptionSelf,
 }) => {
   const [open, setOpen] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [paying, setPaying] = useState(false);
   const [selectedEpayMethod, setSelectedEpayMethod] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
 
   const epayMethods = useMemo(() => getEpayMethods(payMethods), [payMethods]);
+  const currency = getCurrencyConfig();
 
   const openBuy = (p) => {
     setSelectedPlan(p);
@@ -120,15 +122,6 @@ const SubscriptionPlansCard = ({
     setOpen(false);
     setSelectedPlan(null);
     setPaying(false);
-  };
-
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await reloadSubscriptionSelf?.();
-    } finally {
-      setRefreshing(false);
-    }
   };
 
   const payStripe = async () => {
@@ -229,15 +222,18 @@ const SubscriptionPlansCard = ({
     disableSubscriptionPreference && isSubscriptionPreference
       ? 'wallet_first'
       : billingPreference;
+  const effectiveBillingPreference =
+    displayBillingPreference ||
+    (hasActiveSubscription ? 'subscription_first' : 'wallet_first');
   const billingPreferenceLabelMap = {
-    subscription_first: t('优先订阅'),
-    wallet_first: t('优先钱包'),
-    subscription_only: t('仅用订阅'),
-    wallet_only: t('仅用钱包'),
+    subscription_first: t('订阅优先'),
+    wallet_first: t('钱包优先'),
+    subscription_only: t('仅订阅'),
+    wallet_only: t('仅钱包'),
   };
   const displayBillingPreferenceLabel =
-    billingPreferenceLabelMap[displayBillingPreference] ||
-    displayBillingPreference;
+    billingPreferenceLabelMap[effectiveBillingPreference] ||
+    effectiveBillingPreference;
 
   const planPurchaseCountMap = useMemo(() => {
     const map = new Map();
@@ -259,8 +255,21 @@ const SubscriptionPlansCard = ({
     return map;
   }, [plans]);
 
+  const planMetaMap = useMemo(() => {
+    const map = new Map();
+    (plans || []).forEach((p) => {
+      const plan = p?.plan;
+      if (!plan?.id) return;
+      map.set(plan.id, plan);
+    });
+    return map;
+  }, [plans]);
+
   const getPlanPurchaseCount = (planId) =>
     planPurchaseCountMap.get(planId) || 0;
+
+  const renderQuotaLabel = (value, unlimited = false) =>
+    unlimited ? t('不限') : renderQuota(value);
 
   const getSubscriptionTitle = (sub) => {
     const subscription = sub?.subscription;
@@ -274,6 +283,30 @@ const SubscriptionPlansCard = ({
   const formatTime = (timestamp) => {
     if (!timestamp) return t('暂无');
     return new Date(timestamp * 1000).toLocaleString();
+  };
+
+  const formatDate = (timestamp) => {
+    if (!timestamp) return t('暂无');
+    return new Date(timestamp * 1000).toLocaleDateString();
+  };
+
+  const formatCurrencyAmount = (amount) => {
+    const converted = Number(amount || 0) * currency.rate;
+    return `${currency.symbol}${converted.toFixed(
+      Number.isInteger(converted) ? 0 : 2,
+    )}`;
+  };
+
+  const getPlanCycleLabel = (plan) => {
+    const resetPeriod = formatSubscriptionResetPeriod(plan, t);
+    if (resetPeriod && resetPeriod !== t('不重置')) return resetPeriod;
+    return formatSubscriptionDuration(plan, t);
+  };
+
+  const getSubscriptionPriceLabel = (sub) => {
+    const plan = planMetaMap.get(sub?.subscription?.plan_id);
+    if (!plan) return '';
+    return formatCurrencyAmount(plan.price_amount || 0);
   };
 
   const getRemainingDays = (sub) => {
@@ -315,12 +348,33 @@ const SubscriptionPlansCard = ({
   const currentTitle = hasActiveSubscription
     ? getSubscriptionTitle(primaryActiveSubscription)
     : t('未开通套餐');
+  const currentTag =
+    hasActiveSubscription && currentTitle !== t('未开通套餐')
+      ? t('生效')
+      : null;
   const remainDays = primaryActiveSubscription
     ? getRemainingDays(primaryActiveSubscription)
     : 0;
   const progressWidth = activeQuotaStats.hasUnlimited
     ? '100%'
     : `${activeQuotaStats.percent}%`;
+  const totalPlanQuotaLabel = renderQuotaLabel(
+    activeQuotaStats.total,
+    activeQuotaStats.hasUnlimited,
+  );
+  const remainQuotaLabel = renderQuotaLabel(
+    activeQuotaStats.remain,
+    activeQuotaStats.hasUnlimited,
+  );
+  const usedQuotaLabel = renderQuota(activeQuotaStats.used);
+  const activePlanHint = hasActiveSubscription
+    ? `${activeSubscriptions.length} ${t('个生效中')}`
+    : t('暂无生效套餐');
+  const currentRuleTone =
+    effectiveBillingPreference === 'subscription_first' ||
+    effectiveBillingPreference === 'subscription_only'
+      ? 'subscription'
+      : 'wallet';
 
   const renderLoading = () => (
     <div className='ct-topup-subscription-page'>
@@ -343,9 +397,8 @@ const SubscriptionPlansCard = ({
   const renderPlanCard = (p, index) => {
     const plan = p?.plan;
     const totalAmount = Number(plan?.total_amount || 0);
-    const { symbol, rate } = getCurrencyConfig();
     const price = Number(plan?.price_amount || 0);
-    const convertedPrice = price * rate;
+    const convertedPrice = price * currency.rate;
     const displayPrice = convertedPrice.toFixed(
       Number.isInteger(convertedPrice) ? 0 : 2,
     );
@@ -355,26 +408,31 @@ const SubscriptionPlansCard = ({
     const limitLabel = limit > 0 ? `${t('限购')} ${limit}` : null;
     const totalLabel =
       totalAmount > 0
-        ? `${renderQuota(totalAmount)} / ${t('周期')}`
+        ? `${renderQuota(totalAmount)} / ${getPlanCycleLabel(plan)}`
         : t('不限额度');
     const resetLabel =
       formatSubscriptionResetPeriod(plan, t) === t('不重置')
         ? null
         : formatSubscriptionResetPeriod(plan, t);
     const planBenefits = [
-      `${t('套餐额度')} ${totalLabel}`,
+      t('API 全模型调用'),
       `${t('有效期')} ${formatSubscriptionDuration(plan, t)}`,
       resetLabel ? `${t('额度重置')} ${resetLabel}` : null,
-      plan?.upgrade_group ? `${t('升级分组')} ${plan.upgrade_group}` : null,
       limitLabel,
+      resetLabel
+        ? t('支持周期性重置套餐权益额度')
+        : t('购买套餐后即可享受模型权益'),
     ].filter(Boolean);
     const count = getPlanPurchaseCount(plan?.id);
     const reached = limit > 0 && count >= limit;
+    const targetUsers = plan?.upgrade_group || t('API 全模型调用');
 
     return (
       <Card
         key={plan?.id || index}
-        className={`ct-topup-plan-card ${isCurrent ? 'ct-topup-plan-card-current' : ''}`}
+        className={`ct-topup-plan-card ${
+          isCurrent ? 'ct-topup-plan-card-current' : ''
+        } ${isRecommended ? 'ct-topup-plan-card-recommended' : ''}`}
         bodyStyle={{ padding: 0 }}
       >
         <div className='ct-topup-plan-card-inner'>
@@ -390,25 +448,39 @@ const SubscriptionPlansCard = ({
               )}
             </div>
             {isRecommended && (
-              <Tag color={isCurrent ? 'green' : 'amber'} shape='circle'>
+              <Tag
+                color={isCurrent ? 'green' : 'amber'}
+                shape='circle'
+                className='ct-topup-plan-ribbon'
+              >
                 {isCurrent ? t('当前套餐') : t('推荐')}
               </Tag>
             )}
           </div>
 
           <div className='ct-topup-plan-price'>
-            <span>{symbol}</span>
+            <span>{currency.symbol}</span>
             <strong>{displayPrice}</strong>
             <em>/{t('月')}</em>
           </div>
 
-          <div className='ct-topup-plan-quota'>
-            <Gauge size={15} />
-            <span>{t('额度')}</span>
-            <strong>{totalLabel}</strong>
+          <div className='ct-topup-plan-summary'>
+            <div className='ct-topup-plan-quota'>
+              <Gauge size={15} />
+              <span>{t('额度')}</span>
+              <strong>{totalLabel}</strong>
+            </div>
+            <div className='ct-topup-plan-quota'>
+              <Layers3 size={15} />
+              <span>{t('适用')}</span>
+              <strong>{targetUsers}</strong>
+            </div>
           </div>
 
           <div className='ct-topup-plan-benefits'>
+            <strong className='ct-topup-plan-benefits-title'>
+              {t('套餐权益')}
+            </strong>
             {planBenefits.map((benefit) => (
               <div key={benefit} className='ct-topup-plan-benefit-line'>
                 <CheckCircle2 size={14} />
@@ -424,14 +496,14 @@ const SubscriptionPlansCard = ({
             position='top'
           >
             <Button
-              theme={isCurrent ? 'solid' : 'outline'}
+              theme={isRecommended ? 'solid' : 'outline'}
               type='primary'
               block
               disabled={reached}
               onClick={() => {
                 if (!reached) openBuy(p);
               }}
-              className={isCurrent ? 'ct-topup-primary-button' : ''}
+              className={isRecommended ? 'ct-topup-primary-button' : ''}
             >
               {isCurrent ? t('当前套餐') : reached ? t('已达上限') : t('立即订阅')}
             </Button>
@@ -470,78 +542,8 @@ const SubscriptionPlansCard = ({
         renderLoading()
       ) : (
         <div className='ct-topup-subscription-page'>
-          <div className='ct-topup-page-head'>
-            <div>
-              <div className='ct-topup-page-title-row'>
-                <Typography.Title heading={2} className='ct-topup-page-title'>
-                  {t('套餐订阅')}
-                </Typography.Title>
-                <Tag
-                  color='green'
-                  shape='circle'
-                  prefixIcon={<ShieldCheck size={12} />}
-                >
-                  {t('订阅额度优先')}
-                </Tag>
-              </div>
-              <Text type='tertiary' className='ct-topup-page-subtitle'>
-                {t('订阅用户优先扣订阅额度，不足时再由钱包补扣')}
-              </Text>
-            </div>
-            <div className='ct-topup-page-actions'>
-              <div className='ct-topup-pref-switch'>
-                <Button
-                  type={
-                    displayBillingPreference === 'subscription_first'
-                      ? 'primary'
-                      : 'tertiary'
-                  }
-                  theme={
-                    displayBillingPreference === 'subscription_first'
-                      ? 'solid'
-                      : 'light'
-                  }
-                  disabled={disableSubscriptionPreference}
-                  onClick={() => onChangeBillingPreference?.('subscription_first')}
-                >
-                  {t('订阅优先')}
-                </Button>
-                <Button
-                  type={
-                    displayBillingPreference === 'wallet_first'
-                      ? 'primary'
-                      : 'tertiary'
-                  }
-                  theme={
-                    displayBillingPreference === 'wallet_first'
-                      ? 'solid'
-                      : 'light'
-                  }
-                  onClick={() => onChangeBillingPreference?.('wallet_first')}
-                >
-                  {t('钱包优先')}
-                </Button>
-              </div>
-              <Button
-                icon={
-                  <RefreshCw
-                    size={15}
-                    className={refreshing ? 'animate-spin' : ''}
-                  />
-                }
-                theme='light'
-                type='tertiary'
-                onClick={handleRefresh}
-                loading={refreshing}
-                className='ct-topup-panel-action'
-              >
-                {t('刷新')}
-              </Button>
-            </div>
-          </div>
-
           {disableSubscriptionPreference && isSubscriptionPreference && (
-            <Text type='tertiary' size='small'>
+            <Text type='tertiary' size='small' className='ct-topup-page-note'>
               {t('已保存偏好为')}
               {billingPreference === 'subscription_only'
                 ? t('仅用订阅')
@@ -554,18 +556,27 @@ const SubscriptionPlansCard = ({
             <div className='ct-topup-current-band-main'>
               <div>
                 <span>{t('当前套餐')}</span>
-                <strong>{currentTitle}</strong>
-                <em>
-                  {hasActiveSubscription
-                    ? `${t('有效期')} ${formatTime(subscription?.start_time)} - ${formatTime(subscription?.end_time)}`
-                    : t('购买套餐后即可享受模型权益')}
-                </em>
+                <div className='ct-topup-current-title-line'>
+                  <strong>{currentTitle}</strong>
+                  {currentTag && (
+                    <Tag color='green' shape='circle'>
+                      {currentTag}
+                    </Tag>
+                  )}
+                </div>
               </div>
-              <div className='ct-topup-current-days'>
-                <span>{t('剩余')}</span>
+            </div>
+            <div className='ct-topup-current-days'>
+              <span>{t('剩余')}</span>
+              <div>
                 <strong>{remainDays}</strong>
                 <span>{t('天')}</span>
               </div>
+              <em>
+                {hasActiveSubscription
+                  ? `${t('有效期')} ${formatDate(subscription?.start_time)} - ${formatDate(subscription?.end_time)}`
+                  : t('购买套餐后即可享受模型权益')}
+              </em>
             </div>
             <div className='ct-topup-current-band-progress'>
               <div className='ct-topup-current-progress-head'>
@@ -586,72 +597,71 @@ const SubscriptionPlansCard = ({
               <em>
                 {activeQuotaStats.hasUnlimited
                   ? t('当前套餐额度不限')
-                  : `${t('剩余')} ${renderQuota(activeQuotaStats.remain)}`}
+                  : `${t('剩余额度')} ${renderQuota(activeQuotaStats.remain)}`}
               </em>
             </div>
-            <div className='ct-topup-current-band-rule'>
+            <div
+              className={`ct-topup-current-band-rule ct-topup-current-band-rule-${currentRuleTone}`}
+            >
               <ShieldCheck size={17} />
               <div>
-                <strong>{t('订阅额度优先扣费')}</strong>
-                <span>{t('产生费用时优先使用订阅额度，不足自动从钱包补扣')}</span>
+                <strong>{displayBillingPreferenceLabel}</strong>
+                <span>{t('扣费偏好')}</span>
               </div>
             </div>
           </Card>
 
           <div className='ct-topup-balance-strip ct-topup-balance-strip-wide'>
-            <SubscriptionMetric
+            <SubscriptionStat
               icon={Wallet}
               label={t('剩余额度')}
-              value={
-                activeQuotaStats.hasUnlimited
-                  ? t('不限')
-                  : renderQuota(activeQuotaStats.remain)
-              }
+              value={remainQuotaLabel}
               tone='teal'
             />
-            <SubscriptionMetric
-              icon={Gauge}
+            <SubscriptionStat
+              icon={PieChart}
               label={t('已用额度')}
-              value={renderQuota(activeQuotaStats.used)}
+              value={usedQuotaLabel}
               tone='blue'
             />
-            <SubscriptionMetric
-              icon={PackageCheck}
+            <SubscriptionStat
+              icon={Database}
               label={t('总额度')}
-              value={
-                activeQuotaStats.hasUnlimited
-                  ? t('不限')
-                  : renderQuota(activeQuotaStats.total)
-              }
-              tone='green'
+              value={totalPlanQuotaLabel}
+              tone='purple'
             />
-            <SubscriptionMetric
-              icon={WalletCards}
+            <SubscriptionStat
+              icon={CreditCard}
               label={t('扣费偏好')}
               value={displayBillingPreferenceLabel}
-              tone='blue'
+              hint={activePlanHint}
+              tone='green'
             />
           </div>
 
           <div className='ct-topup-subscription-main-grid'>
-            <div className='ct-topup-plan-grid ct-topup-plan-grid-three'>
-              {plans.length > 0 ? (
-                plans.map(renderPlanCard)
-              ) : (
-                renderEmptyPlanPanel()
-              )}
-            </div>
+            <Card className='ct-topup-panel ct-topup-plan-board'>
+              <div className='ct-topup-plan-grid ct-topup-plan-grid-three'>
+                {plans.length > 0 ? (
+                  plans.map(renderPlanCard)
+                ) : (
+                  renderEmptyPlanPanel()
+                )}
+              </div>
+            </Card>
 
             <div className='ct-topup-subscription-side'>
               <Card className='ct-topup-panel ct-topup-subscription-timeline'>
-                <div className='ct-topup-section-heading'>
+                <div className='ct-topup-section-heading ct-topup-timeline-head'>
                   <div>
                     <strong>{t('订阅记录')}</strong>
-                    <span>{t('展示最近的套餐续订与变更')}</span>
+                    <span>{t('查看最近购买和生效状态')}</span>
                   </div>
-                  <Tag shape='circle'>
-                    {allSubscriptions.length} {t('条')}
-                  </Tag>
+                  {hasAnySubscription && (
+                    <Button theme='borderless' type='tertiary' size='small'>
+                      {t('查看全部')}
+                    </Button>
+                  )}
                 </div>
                 <div className='ct-topup-timeline-list'>
                   {hasAnySubscription ? (
@@ -661,7 +671,12 @@ const SubscriptionPlansCard = ({
                         item?.status === 'active' &&
                         (!item?.end_time || item.end_time > Date.now() / 1000);
                       return (
-                        <div className='ct-topup-timeline-item' key={item?.id || index}>
+                        <div
+                          className={`ct-topup-timeline-item ${
+                            isActive ? 'ct-topup-timeline-item-active' : ''
+                          }`}
+                          key={item?.id || index}
+                        >
                           <span>
                             {isActive ? (
                               <CheckCircle2 size={14} />
@@ -670,16 +685,19 @@ const SubscriptionPlansCard = ({
                             )}
                           </span>
                           <div>
-                            <strong>{getSubscriptionTitle(sub)}</strong>
+                            <div className='ct-topup-timeline-title'>
+                              <strong>{getSubscriptionTitle(sub)}</strong>
+                              {isActive && (
+                                <Tag color='green' shape='circle' size='small'>
+                                  {t('生效')}
+                                </Tag>
+                              )}
+                            </div>
                             <em>{formatTime(item?.start_time)}</em>
                           </div>
-                          <Tag
-                            color={isActive ? 'green' : 'grey'}
-                            shape='circle'
-                            size='small'
-                          >
-                            {isActive ? t('生效') : t('历史')}
-                          </Tag>
+                          <strong className='ct-topup-timeline-price'>
+                            {getSubscriptionPriceLabel(sub)}
+                          </strong>
                         </div>
                       );
                     })
@@ -696,40 +714,61 @@ const SubscriptionPlansCard = ({
                 <div className='ct-topup-section-heading'>
                   <div>
                     <strong>{t('扣费规则')}</strong>
-                    <span>{t('订阅优先时自动选择最合适的资金来源')}</span>
+                    <span>{t('订阅与钱包的消费顺序')}</span>
                   </div>
                 </div>
+                <div className='ct-topup-rule-copy'>
+                  <strong>{t('订阅额度优先扣费')}</strong>
+                  <p>
+                    {t(
+                      '模型调用产生费用后，会优先使用订阅额度。订阅额度不足时，再按账户钱包余额补扣。',
+                    )}
+                  </p>
+                </div>
                 <div className='ct-topup-billing-flow'>
-                  <div>
-                    <ShoppingCart size={18} />
-                    <span>{t('产生费用')}</span>
+                  <div className='ct-topup-billing-flow-cost'>
+                    <span>
+                      <ShoppingCart size={15} />
+                    </span>
+                    <strong>{t('产生费用')}</strong>
                   </div>
-                  <ArrowRight size={16} />
-                  <div>
-                    <ShieldCheck size={18} />
-                    <span>{t('订阅额度优先')}</span>
+                  <ArrowRight size={14} />
+                  <div className='ct-topup-billing-flow-subscription'>
+                    <span>
+                      <ShieldCheck size={15} />
+                    </span>
+                    <strong>{t('订阅额度优先')}</strong>
                   </div>
-                  <ArrowRight size={16} />
-                  <div>
-                    <Wallet size={18} />
-                    <span>{t('不足钱包补扣')}</span>
+                  <ArrowRight size={14} />
+                  <div className='ct-topup-billing-flow-wallet'>
+                    <span>
+                      <Wallet size={15} />
+                    </span>
+                    <strong>{t('钱包补扣')}</strong>
                   </div>
                 </div>
                 <div className='ct-topup-rule-list'>
                   <div>
-                    <CheckCircle2 size={15} />
-                    <span>{t('订阅额度足够时不会扣减钱包余额')}</span>
+                    <CheckCircle2 size={14} />
+                    <span>
+                      {t('优先消耗订阅套餐额度，避免钱包余额被提前扣减。')}
+                    </span>
                   </div>
                   <div>
-                    <CheckCircle2 size={15} />
-                    <span>{t('订阅额度不足时仅补扣差额')}</span>
+                    <CheckCircle2 size={14} />
+                    <span>
+                      {t('订阅额度不足时，剩余费用会继续从钱包余额扣除。')}
+                    </span>
                   </div>
                   <div>
-                    <CheckCircle2 size={15} />
-                    <span>{t('可在页面右上角切换扣费偏好')}</span>
+                    <CheckCircle2 size={14} />
+                    <span>
+                      {t('切换扣费偏好后，新请求会按新的顺序进行扣费。')}
+                    </span>
                   </div>
                 </div>
               </Card>
+
             </div>
           </div>
         </div>
