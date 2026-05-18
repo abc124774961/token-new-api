@@ -354,7 +354,13 @@ func updateChannelUpstreamModelSettings(channel *model.Channel, settings dto.Cha
 	if updateModels {
 		updates["models"] = channel.Models
 	}
-	return model.DB.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error
+	if err := model.DB.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
+		return err
+	}
+	if updateModels {
+		return channel.UpdateAbilities(nil)
+	}
+	return channel.UpdateAbilityCapabilities(nil)
 }
 
 func checkAndPersistChannelUpstreamModelUpdates(
@@ -397,11 +403,6 @@ func checkAndPersistChannelUpstreamModelUpdates(
 
 	if err = updateChannelUpstreamModelSettings(channel, *settings, modelsChanged); err != nil {
 		return false, autoAdded, err
-	}
-	if modelsChanged {
-		if err = channel.UpdateAbilities(nil); err != nil {
-			return true, autoAdded, err
-		}
 	}
 	return modelsChanged, autoAdded, nil
 }

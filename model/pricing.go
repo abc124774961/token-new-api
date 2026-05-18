@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"sync"
@@ -10,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -46,6 +46,11 @@ type PricingVendor struct {
 	Icon        string `json:"icon,omitempty"`
 }
 
+type GroupModelCapability struct {
+	SupportedEndpointTypes            []constant.EndpointType
+	CodexImageGenerationToolSupported bool
+}
+
 var (
 	pricingMap           []Pricing
 	vendorsList          []PricingVendor
@@ -62,6 +67,7 @@ var (
 var (
 	modelSupportEndpointTypes  = make(map[string][]constant.EndpointType)
 	modelCodexImageToolSupport = make(map[string]bool)
+	groupModelCapabilities     = make(map[string]map[string]GroupModelCapability)
 	modelSupportEndpointsLock  = sync.RWMutex{}
 )
 
@@ -74,8 +80,20 @@ func appendUniqueEndpoint(endpoints []string, endpoint constant.EndpointType) []
 	return append(endpoints, string(endpoint))
 }
 
-func buildModelSupportEndpointTypes(channelType int, model string, settings dto.ChannelOtherSettings) []constant.EndpointType {
-	return channelcapability.SupportedEndpointTypes(channelType, model, settings)
+func parseAbilityChannelSettingsIfNeeded(ability AbilityWithChannel) dto.ChannelOtherSettings {
+	if strings.TrimSpace(ability.SupportedEndpointTypes) != "" &&
+		(ability.CodexImageGenerationToolSupported || strings.TrimSpace(ability.CodexSupportedTools) != "") {
+		return dto.ChannelOtherSettings{}
+	}
+
+	settings := dto.ChannelOtherSettings{}
+	if strings.TrimSpace(ability.ChannelOtherSettings) == "" {
+		return settings
+	}
+	if err := common.UnmarshalJsonStr(ability.ChannelOtherSettings, &settings); err != nil {
+		common.SysLog(fmt.Sprintf("failed to unmarshal channel settings for channel %d: %v", ability.ChannelId, err))
+	}
+	return settings
 }
 
 func GetPricing() []Pricing {
@@ -131,6 +149,55 @@ func GetModelCodexImageGenerationToolSupported(model string) bool {
 	return modelCodexImageToolSupport[model]
 }
 
+func GetModelCapabilitiesForGroups(groups []string, models []string) map[string]GroupModelCapability {
+	result := make(map[string]GroupModelCapability)
+	if len(groups) == 0 || len(models) == 0 {
+		return result
+	}
+	GetPricing()
+
+	modelSet := make(map[string]struct{}, len(models))
+	for _, modelName := range models {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			continue
+		}
+		modelSet[modelName] = struct{}{}
+	}
+	if len(modelSet) == 0 {
+		return result
+	}
+
+	modelSupportEndpointsLock.RLock()
+	defer modelSupportEndpointsLock.RUnlock()
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		groupCapabilities := groupModelCapabilities[group]
+		if len(groupCapabilities) == 0 {
+			continue
+		}
+		for modelName := range modelSet {
+			groupCapability, ok := groupCapabilities[modelName]
+			if !ok {
+				continue
+			}
+			merged := result[modelName]
+			for _, endpointType := range groupCapability.SupportedEndpointTypes {
+				if !slices.Contains(merged.SupportedEndpointTypes, endpointType) {
+					merged.SupportedEndpointTypes = append(merged.SupportedEndpointTypes, endpointType)
+				}
+			}
+			merged.CodexImageGenerationToolSupported = merged.CodexImageGenerationToolSupported ||
+				groupCapability.CodexImageGenerationToolSupported
+			result[modelName] = merged
+		}
+	}
+	return result
+}
+
 func updatePricing() {
 	//modelRatios := common.GetModelRatios()
 	enableAbilities, err := GetAllEnableAbilityWithChannels()
@@ -159,20 +226,6 @@ func updatePricing() {
 				containsList = append(containsList, m)
 			}
 		}
-	}
-
-	var allChannels []Channel
-	_ = DB.Find(&allChannels).Error
-	channelSettingsMap := make(map[int]dto.ChannelOtherSettings, len(allChannels))
-	for i := range allChannels {
-		ch := &allChannels[i]
-		settings := dto.ChannelOtherSettings{}
-		if strings.TrimSpace(ch.OtherSettings) != "" {
-			if err := common.UnmarshalJsonStr(ch.OtherSettings, &settings); err != nil {
-				common.SysLog(fmt.Sprintf("failed to unmarshal channel settings for channel %d: %v", ch.Id, err))
-			}
-		}
-		channelSettingsMap[ch.Id] = settings
 	}
 
 	// 将非精确规则模型匹配到 metaMap
@@ -240,19 +293,34 @@ func updatePricing() {
 	//这里使用切片而不是Set，因为一个模型可能支持多个端点类型，并且第一个端点是优先使用端点
 	modelSupportEndpointsStr := make(map[string][]string)
 	modelCodexImageToolSupport = make(map[string]bool)
+	groupModelCapabilities = make(map[string]map[string]GroupModelCapability)
 
 	// 先根据已有能力填充原生端点
 	for _, ability := range enableAbilities {
 		endpoints := modelSupportEndpointsStr[ability.Model]
-		channelSettings := channelSettingsMap[ability.ChannelId]
-		channelTypes := buildModelSupportEndpointTypes(ability.ChannelType, ability.Model, channelSettings)
+		channelSettings := parseAbilityChannelSettingsIfNeeded(ability)
+		channelTypes := ability.GetSupportedEndpointTypes(ability.ChannelType, channelSettings)
 		for _, channelType := range channelTypes {
 			endpoints = appendUniqueEndpoint(endpoints, channelType)
 		}
 		modelSupportEndpointsStr[ability.Model] = endpoints
-		if channelcapability.SupportsCodexImageGenerationTool(ability.ChannelType, channelSettings) {
-			modelCodexImageToolSupport[ability.Model] = true
+
+		groupCapabilities := groupModelCapabilities[ability.Group]
+		if groupCapabilities == nil {
+			groupCapabilities = make(map[string]GroupModelCapability)
+			groupModelCapabilities[ability.Group] = groupCapabilities
 		}
+		groupCapability := groupCapabilities[ability.Model]
+		for _, endpointType := range channelTypes {
+			if !slices.Contains(groupCapability.SupportedEndpointTypes, endpointType) {
+				groupCapability.SupportedEndpointTypes = append(groupCapability.SupportedEndpointTypes, endpointType)
+			}
+		}
+		if ability.SupportsCodexImageGenerationTool(ability.ChannelType, channelSettings) {
+			modelCodexImageToolSupport[ability.Model] = true
+			groupCapability.CodexImageGenerationToolSupported = true
+		}
+		groupCapabilities[ability.Model] = groupCapability
 	}
 
 	// 再补充模型自定义端点：若配置有效则替换默认端点，不做合并
@@ -273,6 +341,20 @@ func updatePricing() {
 			}
 			if len(endpoints) > 0 {
 				modelSupportEndpointsStr[modelName] = endpoints
+				if groups, ok := modelGroupsMap[modelName]; ok {
+					endpointTypes := make([]constant.EndpointType, 0, len(endpoints))
+					for _, endpoint := range endpoints {
+						endpointTypes = append(endpointTypes, constant.EndpointType(endpoint))
+					}
+					for _, group := range groups.Items() {
+						if groupModelCapabilities[group] == nil {
+							groupModelCapabilities[group] = make(map[string]GroupModelCapability)
+						}
+						groupCapability := groupModelCapabilities[group][modelName]
+						groupCapability.SupportedEndpointTypes = endpointTypes
+						groupModelCapabilities[group][modelName] = groupCapability
+					}
+				}
 			}
 		}
 	}

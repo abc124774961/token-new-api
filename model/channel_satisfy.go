@@ -248,41 +248,21 @@ func getAvailableModelsFromChannels(groups []string) []string {
 		return []string{}
 	}
 
-	var channels []*Channel
-	err := DB.Select("status", commonGroupCol, "models").
-		Where("status = ?", common.ChannelStatusEnabled).
-		Find(&channels).Error
+	groupNames := make([]string, 0, len(groupSet))
+	for group := range groupSet {
+		groupNames = append(groupNames, group)
+	}
+
+	var models []string
+	err := DB.Table("abilities").
+		Select("DISTINCT abilities.model").
+		Joins("LEFT JOIN channels ON abilities.channel_id = channels.id").
+		Where("abilities.enabled = ?", true).
+		Where("abilities."+commonGroupCol+" IN ?", groupNames).
+		Where("(channels.id IS NOT NULL AND channels.status = ?) OR NOT EXISTS (SELECT 1 FROM channels)", common.ChannelStatusEnabled).
+		Pluck("model", &models).Error
 	if err != nil {
 		return []string{}
-	}
-
-	modelSet := make(map[string]struct{})
-	for _, channel := range channels {
-		if channel == nil {
-			continue
-		}
-		matched := false
-		for _, channelGroup := range strings.Split(channel.Group, ",") {
-			if _, ok := groupSet[strings.TrimSpace(channelGroup)]; ok {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			continue
-		}
-		for _, modelName := range strings.Split(channel.Models, ",") {
-			modelName = strings.TrimSpace(modelName)
-			if modelName == "" {
-				continue
-			}
-			modelSet[modelName] = struct{}{}
-		}
-	}
-
-	models := make([]string, 0, len(modelSet))
-	for modelName := range modelSet {
-		models = append(models, modelName)
 	}
 	sort.Strings(models)
 	return models

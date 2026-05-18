@@ -288,17 +288,25 @@ func finalizeVisibleOpenAIModels(c *gin.Context, models []dto.OpenAIModels) []dt
 	}
 
 	actualModelByName := make(map[string]string)
+	capabilitiesByModel := make(map[string]model.GroupModelCapability)
 	if groups, ok := resolveVisibleModelGroups(c); ok {
 		actualModelByName = model.GetPreferredActualModelsForGroups(groups, modelNames)
+		capabilitiesByModel = model.GetModelCapabilitiesForGroups(groups, modelNames)
 	}
 
 	for i := range models {
+		codexImageToolSupported := false
+		if capability, ok := capabilitiesByModel[models[i].Id]; ok {
+			models[i].SupportedEndpointTypes = capability.SupportedEndpointTypes
+			codexImageToolSupported = capability.CodexImageGenerationToolSupported
+		} else {
+			codexImageToolSupported = model.GetModelCodexImageGenerationToolSupported(models[i].Id)
+		}
 		models[i].SupportedSessionModes = buildSupportedSessionModes(models[i].Id, models[i].SupportedEndpointTypes)
 		models[i].ActualModelReturned = buildActualModelReturned(models[i], actualModelByName[models[i].Id])
-		codexImageToolSupported := model.GetModelCodexImageGenerationToolSupported(models[i].Id)
 		models[i].Capabilities = buildModelCapabilities(models[i].Id, codexImageToolSupported)
 		models[i].InputModalities = buildInputModalities(models[i].Id)
-		models[i].OutputModalities = buildOutputModalities(models[i].Id, models[i].SupportedEndpointTypes)
+		models[i].OutputModalities = buildOutputModalities(models[i].Id, models[i].SupportedEndpointTypes, codexImageToolSupported)
 		models[i].SupportedModalities = buildSupportedModalities(models[i].InputModalities, models[i].OutputModalities)
 		models[i].ExperimentalSupportedTools = buildExperimentalSupportedTools(models[i].Id, codexImageToolSupported, models[i].ExperimentalSupportedTools)
 	}
@@ -374,7 +382,7 @@ func nonNilStringSlice(items []string) []string {
 }
 
 func buildModelCapabilities(modelName string, codexImageToolSupported bool) map[string]bool {
-	if !common.IsImageGenerationModel(modelName) || !codexImageToolSupported {
+	if !codexImageToolSupported {
 		return nil
 	}
 	return map[string]bool{
@@ -384,7 +392,7 @@ func buildModelCapabilities(modelName string, codexImageToolSupported bool) map[
 
 func buildExperimentalSupportedTools(modelName string, codexImageToolSupported bool, tools []string) []string {
 	result := nonNilStringSlice(tools)
-	if common.IsImageGenerationModel(modelName) && codexImageToolSupported {
+	if codexImageToolSupported {
 		result = appendUniqueString(result, dto.BuildInToolImageGeneration)
 	}
 	return result
@@ -400,10 +408,13 @@ func buildInputModalities(modelName string) []string {
 	return []string{"text"}
 }
 
-func buildOutputModalities(modelName string, endpointTypes []constant.EndpointType) []string {
+func buildOutputModalities(modelName string, endpointTypes []constant.EndpointType, codexImageToolSupported bool) []string {
 	if common.IsImageGenerationModel(modelName) &&
 		endpointTypesContain(endpointTypes, constant.EndpointTypeImageGeneration) {
 		return []string{"image"}
+	}
+	if codexImageToolSupported {
+		return []string{"text", "image"}
 	}
 	return []string{"text"}
 }

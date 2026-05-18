@@ -4,10 +4,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/samber/lo"
@@ -23,6 +27,10 @@ type Ability struct {
 	Priority  *int64  `json:"priority" gorm:"bigint;default:0;index"`
 	Weight    uint    `json:"weight" gorm:"default:0;index"`
 	Tag       *string `json:"tag" gorm:"index"`
+
+	SupportedEndpointTypes            string `json:"supported_endpoint_types,omitempty" gorm:"type:text"`
+	CodexImageGenerationToolSupported bool   `json:"codex_image_generation_tool_supported,omitempty" gorm:"default:false"`
+	CodexSupportedTools               string `json:"codex_supported_tools,omitempty" gorm:"type:text"`
 }
 
 type AbilityWithChannel struct {
@@ -59,6 +67,63 @@ func GetAllEnableAbilities() []Ability {
 	var abilities []Ability
 	DB.Find(&abilities, "enabled = ?", true)
 	return abilities
+}
+
+func buildAbilityForChannel(channel *Channel, group string, modelName string) Ability {
+	group = strings.TrimSpace(group)
+	modelName = strings.TrimSpace(modelName)
+	settings := channel.GetOtherSettings()
+	endpointTypes := channelcapability.SupportedEndpointTypes(channel.Type, modelName, settings)
+	endpointBytes, err := common.Marshal(endpointTypes)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("failed to marshal ability endpoint types: channel_id=%d, model=%s, error=%v", channel.Id, modelName, err))
+	}
+
+	codexTools := make([]string, 0)
+	codexImageToolSupported := channelcapability.SupportsCodexImageGenerationTool(channel.Type, settings)
+	if codexImageToolSupported {
+		codexTools = append(codexTools, dto.BuildInToolImageGeneration)
+	}
+	codexToolBytes, err := common.Marshal(codexTools)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("failed to marshal ability codex tools: channel_id=%d, model=%s, error=%v", channel.Id, modelName, err))
+	}
+
+	return Ability{
+		Group:                             group,
+		Model:                             modelName,
+		ChannelId:                         channel.Id,
+		Enabled:                           channel.Status == common.ChannelStatusEnabled,
+		Priority:                          channel.Priority,
+		Weight:                            uint(channel.GetWeight()),
+		Tag:                               channel.Tag,
+		SupportedEndpointTypes:            string(endpointBytes),
+		CodexImageGenerationToolSupported: codexImageToolSupported,
+		CodexSupportedTools:               string(codexToolBytes),
+	}
+}
+
+func (ability Ability) GetSupportedEndpointTypes(channelType int, settings dto.ChannelOtherSettings) []constant.EndpointType {
+	if strings.TrimSpace(ability.SupportedEndpointTypes) != "" {
+		var endpoints []constant.EndpointType
+		if err := common.UnmarshalJsonStr(ability.SupportedEndpointTypes, &endpoints); err == nil {
+			return endpoints
+		}
+	}
+	return channelcapability.SupportedEndpointTypes(channelType, ability.Model, settings)
+}
+
+func (ability Ability) SupportsCodexImageGenerationTool(channelType int, settings dto.ChannelOtherSettings) bool {
+	if ability.CodexImageGenerationToolSupported {
+		return true
+	}
+	if strings.TrimSpace(ability.CodexSupportedTools) != "" {
+		var tools []string
+		if err := common.UnmarshalJsonStr(ability.CodexSupportedTools, &tools); err == nil {
+			return slices.Contains(tools, dto.BuildInToolImageGeneration)
+		}
+	}
+	return channelcapability.SupportsCodexImageGenerationTool(channelType, settings)
 }
 
 func getMatchingAbilityModels(group string, model string, excludedChannelIDs map[int]struct{}) ([]string, error) {
@@ -214,22 +279,21 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 	abilitySet := make(map[string]struct{})
 	abilities := make([]Ability, 0, len(models_))
 	for _, model := range models_ {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
 		for _, group := range groups_ {
+			group = strings.TrimSpace(group)
+			if group == "" {
+				continue
+			}
 			key := group + "|" + model
 			if _, exists := abilitySet[key]; exists {
 				continue
 			}
 			abilitySet[key] = struct{}{}
-			ability := Ability{
-				Group:     group,
-				Model:     model,
-				ChannelId: channel.Id,
-				Enabled:   channel.Status == common.ChannelStatusEnabled,
-				Priority:  channel.Priority,
-				Weight:    uint(channel.GetWeight()),
-				Tag:       channel.Tag,
-			}
-			abilities = append(abilities, ability)
+			abilities = append(abilities, buildAbilityForChannel(channel, group, model))
 		}
 	}
 	if len(abilities) == 0 {
@@ -246,11 +310,18 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 			return err
 		}
 	}
+	if tx == nil {
+		InvalidatePricingCache()
+	}
 	return nil
 }
 
 func (channel *Channel) DeleteAbilities() error {
-	return DB.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error
+	err := DB.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error
+	if err == nil {
+		InvalidatePricingCache()
+	}
+	return err
 }
 
 // UpdateAbilities updates abilities of this channel.
@@ -286,22 +357,21 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 	abilitySet := make(map[string]struct{})
 	abilities := make([]Ability, 0, len(models_))
 	for _, model := range models_ {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
 		for _, group := range groups_ {
+			group = strings.TrimSpace(group)
+			if group == "" {
+				continue
+			}
 			key := group + "|" + model
 			if _, exists := abilitySet[key]; exists {
 				continue
 			}
 			abilitySet[key] = struct{}{}
-			ability := Ability{
-				Group:     group,
-				Model:     model,
-				ChannelId: channel.Id,
-				Enabled:   channel.Status == common.ChannelStatusEnabled,
-				Priority:  channel.Priority,
-				Weight:    uint(channel.GetWeight()),
-				Tag:       channel.Tag,
-			}
-			abilities = append(abilities, ability)
+			abilities = append(abilities, buildAbilityForChannel(channel, group, model))
 		}
 	}
 
@@ -319,18 +389,88 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 
 	// 如果是新创建的事务，需要提交
 	if isNewTx {
-		return tx.Commit().Error
+		err = tx.Commit().Error
+		if err == nil {
+			InvalidatePricingCache()
+		}
+		return err
 	}
 
 	return nil
 }
 
+func (channel *Channel) UpdateAbilityCapabilities(tx *gorm.DB) error {
+	return channel.updateAbilityCapabilities(tx, tx == nil)
+}
+
+func (channel *Channel) updateAbilityCapabilities(tx *gorm.DB, invalidate bool) error {
+	useDB := DB
+	if tx != nil {
+		useDB = tx
+	}
+	models_ := strings.Split(channel.Models, ",")
+	groups_ := strings.Split(channel.Group, ",")
+	for _, modelName := range models_ {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			continue
+		}
+		for _, group := range groups_ {
+			group = strings.TrimSpace(group)
+			if group == "" {
+				continue
+			}
+			ability := buildAbilityForChannel(channel, group, modelName)
+			err := useDB.Model(&Ability{}).
+				Where("channel_id = ? AND "+commonGroupCol+" = ? AND model = ?", channel.Id, group, modelName).
+				Select("supported_endpoint_types", "codex_image_generation_tool_supported", "codex_supported_tools").
+				Updates(ability).Error
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if invalidate {
+		InvalidatePricingCache()
+	}
+	return nil
+}
+
+func BackfillAbilityCapabilities() error {
+	var channels []*Channel
+	if err := DB.Find(&channels).Error; err != nil {
+		return err
+	}
+	updated := false
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		if err := channel.updateAbilityCapabilities(nil, false); err != nil {
+			return err
+		}
+		updated = true
+	}
+	if updated {
+		InvalidatePricingCache()
+	}
+	return nil
+}
+
 func UpdateAbilityStatus(channelId int, status bool) error {
-	return DB.Model(&Ability{}).Where("channel_id = ?", channelId).Select("enabled").Update("enabled", status).Error
+	err := DB.Model(&Ability{}).Where("channel_id = ?", channelId).Select("enabled").Update("enabled", status).Error
+	if err == nil {
+		InvalidatePricingCache()
+	}
+	return err
 }
 
 func UpdateAbilityStatusByTag(tag string, status bool) error {
-	return DB.Model(&Ability{}).Where("tag = ?", tag).Select("enabled").Update("enabled", status).Error
+	err := DB.Model(&Ability{}).Where("tag = ?", tag).Select("enabled").Update("enabled", status).Error
+	if err == nil {
+		InvalidatePricingCache()
+	}
+	return err
 }
 
 func UpdateAbilityByTag(tag string, newTag *string, priority *int64, weight *uint) error {
@@ -344,7 +484,11 @@ func UpdateAbilityByTag(tag string, newTag *string, priority *int64, weight *uin
 	if weight != nil {
 		ability.Weight = *weight
 	}
-	return DB.Model(&Ability{}).Where("tag = ?", tag).Updates(ability).Error
+	err := DB.Model(&Ability{}).Where("tag = ?", tag).Updates(ability).Error
+	if err == nil {
+		InvalidatePricingCache()
+	}
+	return err
 }
 
 var fixLock = sync.Mutex{}

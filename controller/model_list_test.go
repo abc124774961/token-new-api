@@ -184,6 +184,18 @@ func withSelfUseModeEnabled(t *testing.T) {
 	})
 }
 
+func withUserUsableGroups(t *testing.T, groups map[string]string) {
+	t.Helper()
+
+	original := setting.UserUsableGroups2JSONString()
+	payload, err := common.Marshal(groups)
+	require.NoError(t, err)
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(string(payload)))
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(original))
+	})
+}
+
 func TestListModelsIncludesTieredBillingModel(t *testing.T) {
 	withSelfUseModeDisabled(t)
 	withTieredBillingConfig(t, map[string]string{
@@ -361,6 +373,11 @@ func TestGetTokenModelsUsesTokenEffectiveGroupAvailability(t *testing.T) {
 func TestGetTokenModelsTreatsEmptyGroupAsAuto(t *testing.T) {
 	withSelfUseModeEnabled(t)
 	withMemoryCacheEnabled(t, true)
+	withUserUsableGroups(t, map[string]string{
+		"default":    "默认分组",
+		"codex-plus": "Codex Plus",
+		"codex-pro":  "Codex Pro",
+	})
 
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.Create(&model.User{
@@ -658,7 +675,7 @@ func TestListModelsAdvertisesImageApiWithoutCodexImageToolCapability(t *testing.
 	require.True(t, found, "expected gpt-image-2 to appear in /v1/models")
 }
 
-func TestListModelsCodexFormatAdvertisesImageGenerationToolOnlyOnImageModels(t *testing.T) {
+func TestListModelsCodexFormatAdvertisesImageGenerationToolForGroupTextModels(t *testing.T) {
 	withSelfUseModeEnabled(t)
 	withMemoryCacheEnabled(t, false)
 
@@ -713,7 +730,10 @@ func TestListModelsCodexFormatAdvertisesImageGenerationToolOnlyOnImageModels(t *
 		case "gpt-5.5":
 			foundText = true
 			require.Contains(t, item.InputModalities, "image")
-			require.NotContains(t, item.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
+			require.Contains(t, item.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
+			require.Equal(t, map[string]bool{dto.BuildInToolImageGeneration: true}, item.Capabilities)
+			require.Equal(t, []string{"text", "image"}, item.OutputModalities)
+			require.Equal(t, []string{"text", "image"}, item.SupportedModalities)
 			require.Contains(t, item.SupportedSessionModes, "responses")
 		case "gpt-image-2":
 			foundImage = true
@@ -728,4 +748,81 @@ func TestListModelsCodexFormatAdvertisesImageGenerationToolOnlyOnImageModels(t *
 	}
 	require.True(t, foundText, "expected gpt-5.5 to appear in codex /models response")
 	require.True(t, foundImage, "expected gpt-image-2 to appear in codex /models response")
+}
+
+func TestListModelsUsesPersistedGroupCapabilityUnionForCodexImageTool(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	withMemoryCacheEnabled(t, false)
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       5005,
+		Username: "group-capability-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	highPriority := int64(10)
+	lowPriority := int64(1)
+	plainChannel := model.Channel{
+		Id:            24,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "plain-codex-channel",
+		Key:           "test-key",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "codex-pro",
+		Models:        "gpt-5.5",
+		Priority:      &highPriority,
+		OtherSettings: `{"codex_compatibility_mode":true}`,
+	}
+	require.NoError(t, plainChannel.Insert())
+	imageToolChannel := model.Channel{
+		Id:            25,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "image-tool-channel",
+		Key:           "test-key",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "codex-pro",
+		Models:        "gpt-5.5",
+		Priority:      &lowPriority,
+		OtherSettings: `{"codex_compatibility_mode":true,"codex_image_generation_tool_supported":true}`,
+	}
+	require.NoError(t, imageToolChannel.Insert())
+
+	var storedAbility model.Ability
+	require.NoError(t, db.Where("channel_id = ? AND model = ?", 25, "gpt-5.5").First(&storedAbility).Error)
+	require.True(t, storedAbility.CodexImageGenerationToolSupported)
+	var storedEndpoints []constant.EndpointType
+	require.NoError(t, common.UnmarshalJsonStr(storedAbility.SupportedEndpointTypes, &storedEndpoints))
+	require.Contains(t, storedEndpoints, constant.EndpointTypeOpenAIResponse)
+
+	model.RefreshPricing()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models?format=codex", nil)
+	ctx.Set("id", 5005)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "codex-pro")
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload codexModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+
+	var found bool
+	for _, item := range payload.Models {
+		if item.Slug != "gpt-5.5" {
+			continue
+		}
+		found = true
+		require.Contains(t, item.SupportedEndpointTypes, constant.EndpointTypeOpenAIResponse)
+		require.Contains(t, item.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
+		require.Equal(t, map[string]bool{dto.BuildInToolImageGeneration: true}, item.Capabilities)
+		require.Equal(t, []string{"text", "image"}, item.OutputModalities)
+		require.Equal(t, "gpt-5.5", item.ActualModelReturned["responses"])
+	}
+	require.True(t, found, "expected gpt-5.5 to appear in codex /models response")
 }

@@ -431,7 +431,11 @@ func BatchInsertChannels(channels []Channel) error {
 			}
 		}
 	}
-	return tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+	InvalidatePricingCache()
+	return nil
 }
 
 func BatchDeleteChannels(ids []int) error {
@@ -453,7 +457,11 @@ func BatchDeleteChannels(ids []int) error {
 			return err
 		}
 	}
-	return tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+	InvalidatePricingCache()
+	return nil
 }
 
 func (channel *Channel) GetPriority() int64 {
@@ -919,13 +927,42 @@ func updateChannelUsedQuota(id int, quota int) {
 }
 
 func DeleteChannelByStatus(status int64) (int64, error) {
-	result := DB.Where("status = ?", status).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+	return deleteChannelsByStatuses([]int64{status})
 }
 
 func DeleteDisabledChannel() (int64, error) {
-	result := DB.Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+	return deleteChannelsByStatuses([]int64{common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled})
+}
+
+func deleteChannelsByStatuses(statuses []int64) (int64, error) {
+	if len(statuses) == 0 {
+		return 0, nil
+	}
+	var ids []int
+	if err := DB.Model(&Channel{}).Where("status IN ?", statuses).Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+	if err := tx.Where("channel_id IN ?", ids).Delete(&Ability{}).Error; err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	result := tx.Where("id IN ?", ids).Delete(&Channel{})
+	if result.Error != nil {
+		tx.Rollback()
+		return 0, result.Error
+	}
+	if err := tx.Commit().Error; err != nil {
+		return 0, err
+	}
+	InvalidatePricingCache()
+	return result.RowsAffected, nil
 }
 
 func GetPaginatedTags(offset int, limit int) ([]*string, error) {
@@ -1114,7 +1151,11 @@ func BatchSetChannelTag(ids []int, tag *string) error {
 	}
 
 	// 提交事务
-	return tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+	InvalidatePricingCache()
+	return nil
 }
 
 // CountAllChannels returns total channels in DB
