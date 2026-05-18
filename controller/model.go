@@ -112,16 +112,7 @@ func init() {
 }
 
 func ListModels(c *gin.Context, modelType int) {
-	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
-	if !acceptUnsetRatioModel {
-		userId := c.GetInt("id")
-		if userId > 0 {
-			userSettings, _ := model.GetUserSetting(userId, false)
-			if userSettings.AcceptUnsetRatioModel {
-				acceptUnsetRatioModel = true
-			}
-		}
-	}
+	acceptUnsetRatioModel := resolveAcceptUnsetRatioModel(c)
 
 	userOpenAiModels := getVisibleOpenAIModels(c, acceptUnsetRatioModel)
 	if shouldReturnCodexModels(c, modelType) {
@@ -167,6 +158,18 @@ func ListModels(c *gin.Context, modelType int) {
 			"object":  "list",
 		})
 	}
+}
+
+func resolveAcceptUnsetRatioModel(c *gin.Context) bool {
+	if operation_setting.SelfUseModeEnabled {
+		return true
+	}
+	userId := c.GetInt("id")
+	if userId <= 0 {
+		return false
+	}
+	userSettings, _ := model.GetUserSetting(userId, false)
+	return userSettings.AcceptUnsetRatioModel
 }
 
 func getVisibleOpenAIModels(c *gin.Context, acceptUnsetRatioModel bool) []dto.OpenAIModels {
@@ -530,7 +533,11 @@ func EnabledListModels(c *gin.Context) {
 
 func RetrieveModel(c *gin.Context, modelType int) {
 	modelId := c.Param("model")
-	if aiModel, ok := openAIModelsMap[modelId]; ok {
+	if aiModel, ok := getVisibleOpenAIModel(c, modelId, resolveAcceptUnsetRatioModel(c)); ok {
+		if shouldReturnCodexModels(c, modelType) {
+			c.JSON(200, buildCodexModels([]dto.OpenAIModels{aiModel})[0])
+			return
+		}
 		switch modelType {
 		case constant.ChannelTypeAnthropic:
 			c.JSON(200, dto.AnthropicModel{
@@ -543,14 +550,24 @@ func RetrieveModel(c *gin.Context, modelType int) {
 			c.JSON(200, aiModel)
 		}
 	} else {
-		openAIError := types.OpenAIError{
-			Message: fmt.Sprintf("The model '%s' does not exist", modelId),
-			Type:    "invalid_request_error",
-			Param:   "model",
-			Code:    "model_not_found",
+		c.JSON(200, gin.H{"error": modelNotFoundError(modelId)})
+	}
+}
+
+func getVisibleOpenAIModel(c *gin.Context, modelId string, acceptUnsetRatioModel bool) (dto.OpenAIModels, bool) {
+	for _, item := range getVisibleOpenAIModels(c, acceptUnsetRatioModel) {
+		if item.Id == modelId {
+			return item, true
 		}
-		c.JSON(200, gin.H{
-			"error": openAIError,
-		})
+	}
+	return dto.OpenAIModels{}, false
+}
+
+func modelNotFoundError(modelId string) types.OpenAIError {
+	return types.OpenAIError{
+		Message: fmt.Sprintf("The model '%s' does not exist", modelId),
+		Type:    "invalid_request_error",
+		Param:   "model",
+		Code:    "model_not_found",
 	}
 }

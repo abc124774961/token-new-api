@@ -826,3 +826,61 @@ func TestListModelsUsesPersistedGroupCapabilityUnionForCodexImageTool(t *testing
 	}
 	require.True(t, found, "expected gpt-5.5 to appear in codex /models response")
 }
+
+func TestRetrieveModelCodexFormatUsesVisibleModelCapabilities(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	withMemoryCacheEnabled(t, false)
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       5006,
+		Username: "codex-retrieve-model-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	plainChannel := model.Channel{
+		Id:            26,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "retrieve-plain-codex-channel",
+		Key:           "test-key",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "codex-pro",
+		Models:        "gpt-5.5",
+		OtherSettings: `{"codex_compatibility_mode":true}`,
+	}
+	require.NoError(t, plainChannel.Insert())
+	imageToolChannel := model.Channel{
+		Id:            27,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "retrieve-image-tool-channel",
+		Key:           "test-key",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "codex-pro",
+		Models:        "gpt-5.4",
+		OtherSettings: `{"codex_compatibility_mode":true,"codex_image_generation_tool_supported":true}`,
+	}
+	require.NoError(t, imageToolChannel.Insert())
+	model.RefreshPricing()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models/gpt-5.5?format=codex", nil)
+	ctx.Params = gin.Params{{Key: "model", Value: "gpt-5.5"}}
+	ctx.Set("id", 5006)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "codex-pro")
+
+	RetrieveModel(ctx, constant.ChannelTypeOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload dto.CodexModelInfo
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.Equal(t, "gpt-5.5", payload.Slug)
+	require.Contains(t, payload.SupportedEndpointTypes, constant.EndpointTypeOpenAIResponse)
+	require.Contains(t, payload.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
+	require.Equal(t, map[string]bool{dto.BuildInToolImageGeneration: true}, payload.Capabilities)
+	require.Equal(t, []string{"text", "image"}, payload.OutputModalities)
+	require.Equal(t, "gpt-5.5", payload.ActualModelReturned["responses"])
+}
