@@ -13,7 +13,10 @@ func TestSupportedEndpointTypesRequiresCodexCompatibilityForOpenAIImageModels(t 
 	require.NotContains(t, endpoints, constant.EndpointTypeImageGeneration)
 	require.NotContains(t, endpoints, constant.EndpointTypeImageEdit)
 
-	endpoints = SupportedEndpointTypes(constant.ChannelTypeOpenAI, "gpt-image-2", dto.ChannelOtherSettings{CodexCompatibilityMode: true})
+	endpoints = SupportedEndpointTypes(constant.ChannelTypeOpenAI, "gpt-image-2", dto.ChannelOtherSettings{
+		CodexCompatibilityMode:            true,
+		CodexImageGenerationToolSupported: true,
+	})
 	require.Equal(t, constant.EndpointTypeImageGeneration, endpoints[0])
 	require.Equal(t, constant.EndpointTypeImageEdit, endpoints[1])
 	require.Contains(t, endpoints, constant.EndpointTypeImageGeneration)

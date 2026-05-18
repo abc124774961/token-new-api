@@ -3,7 +3,7 @@ name: i18n-translate
 description: >-
   Complete and maintain frontend i18n translations for this project. Covers
   finding missing translation keys, detecting untranslated entries, and adding
-  translations for all supported locales (en, zh, fr, ja, ru, vi). Use when the
+  translations for all supported locales (zh-CN, zh-TW, en, fr, ru, ja, vi). Use when the
   user asks to add translations, fix i18n, complete missing translations, or
   when new UI text needs to be internationalized.
 ---
@@ -12,10 +12,10 @@ description: >-
 
 ## Overview
 
-- Locale files: `web/default/src/i18n/locales/{en,zh,fr,ja,ru,vi}.json`
-- Format: flat JSON under `"translation"` key, keys are English source strings
-- Base locale: `en.json` (most keys), fallback: `zh` (Chinese)
-- Sync script: `bun run i18n:sync` (from `web/default/`)
+- Locale files: `web/classic/src/i18n/locales/{zh-CN,zh-TW,en,fr,ru,ja,vi}.json`
+- Format: flat JSON under `"translation"` key
+- Fallback locale: `zh-CN`
+- Sync script: `bun run i18n:sync` (from `web/classic/`)
 - All `t()` calls must have corresponding keys in every locale file
 
 ## Workflow
@@ -23,14 +23,14 @@ description: >-
 ### Step 1: Run sync and read report
 
 ```bash
-cd web/default && bun run i18n:sync
+cd web/classic && bun run i18n:sync
 ```
 
-Read `web/default/src/i18n/locales/_reports/_sync-report.json` to see per-locale status (missingCount, extrasCount, untranslatedCount).
+Review the command output and locale file diffs for missing or unused keys.
 
 ### Step 2: Find missing keys (used in code but not in locale files)
 
-Create and run `web/default/scripts/find-missing-keys.mjs`:
+Create and run `web/classic/scripts/find-missing-keys.mjs`:
 
 ```javascript
 import fs from 'node:fs/promises'
@@ -39,8 +39,8 @@ import path from 'node:path'
 const LOCALES_DIR = path.resolve('src/i18n/locales')
 const SRC_DIR = path.resolve('src')
 
-const en = JSON.parse(await fs.readFile(path.join(LOCALES_DIR, 'en.json'), 'utf8'))
-const enKeys = new Set(Object.keys(en.translation))
+const source = JSON.parse(await fs.readFile(path.join(LOCALES_DIR, 'zh-CN.json'), 'utf8'))
+const sourceKeys = new Set(Object.keys(source.translation))
 
 const tCallRegex = /\bt\(\s*['"`]([^'"`\n]+?)['"`]\s*[,)]/g
 const tCallMultilineRegex = /\bt\(\s*['"`]([^'"`]+?)['"`]\s*\)/g
@@ -72,7 +72,7 @@ for (const file of files) {
     while ((match = regex.exec(content)) !== null) {
       const key = match[1]
       if (key.startsWith('{{') || key.includes('${')) continue
-      if (!enKeys.has(key)) {
+      if (!sourceKeys.has(key)) {
         if (!missingKeys.has(key)) missingKeys.set(key, [])
         missingKeys.get(key).push(relPath)
       }
@@ -81,7 +81,7 @@ for (const file of files) {
 }
 
 if (missingKeys.size === 0) {
-  console.log('All t() keys found in en.json!')
+  console.log('All t() keys found in zh-CN.json!')
 } else {
   console.log(`Found ${missingKeys.size} missing keys:\n`)
   for (const [key, files] of [...missingKeys.entries()].sort(([a], [b]) => a.localeCompare(b))) {
@@ -93,17 +93,17 @@ if (missingKeys.size === 0) {
 
 ### Step 3: Find untranslated entries (value equals English)
 
-Create and run `web/default/scripts/find-untranslated.mjs`:
+Create and run `web/classic/scripts/find-untranslated.mjs`:
 
 ```javascript
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
 const LOCALES_DIR = path.resolve('src/i18n/locales')
-const en = JSON.parse(await fs.readFile(path.join(LOCALES_DIR, 'en.json'), 'utf8'))
-const enTrans = en.translation
+const source = JSON.parse(await fs.readFile(path.join(LOCALES_DIR, 'zh-CN.json'), 'utf8'))
+const sourceTrans = source.translation
 
-// Brand names, URLs, technical terms — skip these
+// Brand names, URLs, technical terms - skip these
 const skipPatterns = [
   /^https?:\/\//, /^smtp\./, /^socks5:/, /^name@/, /^noreply@/,
   /^org-/, /^price_/, /^whsec_/, /^edit_this$/, /^my-status$/,
@@ -124,20 +124,24 @@ const brandNames = new Set([
   'WeChat','Xinference','Xunfei','AI Proxy','One API',
 ])
 
-const locales = ['fr', 'ja', 'ru', 'zh', 'vi']
+const locales = ['zh-TW', 'en', 'fr', 'ja', 'ru', 'vi']
 
 for (const locale of locales) {
   const locFile = JSON.parse(await fs.readFile(path.join(LOCALES_DIR, `${locale}.json`), 'utf8'))
   const locTrans = locFile.translation
   const untranslated = {}
 
-  for (const [key, enVal] of Object.entries(enTrans)) {
+  for (const [key, sourceVal] of Object.entries(sourceTrans)) {
     const locVal = locTrans[key]
-    if (locVal === undefined || locVal !== enVal) continue
+    if (locVal === undefined || locVal !== sourceVal) continue
     if (brandNames.has(key)) continue
     if (skipPatterns.some(p => p.test(key))) continue
-    if (typeof enVal === 'string' && enVal.length < 4) continue
-    if (/[a-zA-Z]{3,}/.test(String(enVal))) untranslated[key] = enVal
+    if (typeof sourceVal === 'string' && sourceVal.length < 4) continue
+    if (locale === 'zh-TW') {
+      untranslated[key] = sourceVal
+    } else if (/[\u4e00-\u9fff]/.test(String(sourceVal))) {
+      untranslated[key] = sourceVal
+    }
   }
 
   const count = Object.keys(untranslated).length
@@ -153,7 +157,7 @@ for (const locale of locales) {
 
 ### Step 4: Add translations
 
-Create `web/default/scripts/add-missing-keys.mjs` with this structure:
+Create `web/classic/scripts/add-missing-keys.mjs` with this structure:
 
 ```javascript
 import fs from 'node:fs/promises'
@@ -166,8 +170,9 @@ function stableStringify(obj) {
 }
 
 const newKeys = {
+  'zh-CN': { /* "key": "简体中文翻译" */ },
+  'zh-TW': { /* "key": "繁體中文翻譯" */ },
   en: { /* "key": "English value" */ },
-  zh: { /* "key": "中文翻译" */ },
   fr: { /* "key": "Traduction française" */ },
   ja: { /* "key": "日本語翻訳" */ },
   ru: { /* "key": "Русский перевод" */ },
@@ -214,7 +219,7 @@ Populate the `newKeys` object with actual translations for each locale.
 ### Step 5: Verify and clean up
 
 ```bash
-cd web/default
+cd web/classic
 node scripts/add-missing-keys.mjs   # apply translations
 node scripts/find-missing-keys.mjs  # verify: should say "All t() keys found"
 bun run i18n:sync                   # normalize file order
@@ -226,8 +231,9 @@ Delete temporary scripts after completion.
 
 | Language | Code | Notes |
 |----------|------|-------|
-| English | en | Base locale, key = value |
-| Chinese | zh | Fallback locale, must be complete |
+| Simplified Chinese | zh-CN | Source/fallback locale, must be complete |
+| Traditional Chinese | zh-TW | Convert Simplified Chinese UI copy to Traditional Chinese |
+| English | en | Translate Chinese source keys into English |
 | French | fr | Many English cognates are valid (e.g., "Configuration") |
 | Japanese | ja | Use katakana for technical loanwords |
 | Russian | ru | Use formal register |
@@ -246,7 +252,7 @@ Delete temporary scripts after completion.
 
 ## Key Rules
 
-1. All scripts run from `web/default/` directory
+1. All scripts run from `web/classic/` directory
 2. Use `node scripts/xxx.mjs` (ESM format with top-level await)
 3. Sort keys alphabetically when writing locale files
 4. Always run `bun run i18n:sync` as the final step

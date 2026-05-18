@@ -557,7 +557,7 @@ func TestListModelsAdvertisesImageSessionModes(t *testing.T) {
 		Status:        common.ChannelStatusEnabled,
 		Group:         "default",
 		Models:        "gpt-image-2",
-		OtherSettings: `{"codex_compatibility_mode":true}`,
+		OtherSettings: `{"codex_compatibility_mode":true,"codex_image_generation_tool_supported":true}`,
 	}).Error)
 	require.NoError(t, db.Create(&model.Ability{
 		Group:     "default",
@@ -678,7 +678,7 @@ func TestListModelsCodexFormatAdvertisesImageGenerationToolOnlyOnImageModels(t *
 		Status:        common.ChannelStatusEnabled,
 		Group:         "default",
 		Models:        "gpt-5.5,gpt-image-2",
-		OtherSettings: `{"codex_compatibility_mode":true}`,
+		OtherSettings: `{"codex_compatibility_mode":true,"codex_image_generation_tool_supported":true}`,
 	}).Error)
 	require.NoError(t, db.Create(&model.Ability{
 		Group:     "default",

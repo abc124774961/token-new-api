@@ -500,6 +500,153 @@ const getUpstreamUpdateMeta = (record) => {
   };
 };
 
+const parseJsonObject = (value) => {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    return {};
+  }
+};
+
+const getChannelModelsForCapability = (record) => {
+  const models = String(record?.models || '')
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean);
+  const modelMapping = parseJsonObject(record?.model_mapping);
+  Object.values(modelMapping).forEach((mappedModel) => {
+    if (typeof mappedModel === 'string' && mappedModel.trim()) {
+      models.push(mappedModel.trim());
+    }
+  });
+  return models;
+};
+
+const isImageGenerationModel = (modelName) => {
+  const model = String(modelName || '').trim().toLowerCase();
+  if (!model) return false;
+  return (
+    model.includes('dall-e-3') ||
+    model.includes('dall-e-2') ||
+    model.startsWith('gpt-image-') ||
+    model.startsWith('imagen-') ||
+    model.includes('flux-') ||
+    model.includes('flux.1-')
+  );
+};
+
+const isCodexImageModel = (modelName) =>
+  String(modelName || '').trim().toLowerCase().startsWith('gpt-image-');
+
+const usesResponsesWireAPI = (settings) => {
+  const wireAPI = String(settings?.wire_api || '')
+    .trim()
+    .replace(/^\/+|\/+$/g, '')
+    .toLowerCase();
+  return (
+    wireAPI === 'responses' ||
+    wireAPI.startsWith('responses/') ||
+    wireAPI.endsWith('/responses') ||
+    wireAPI.includes('/responses/')
+  );
+};
+
+const buildChannelCapabilityKeys = (record) => {
+  const rows =
+    Array.isArray(record?.children) && record.children.length > 0
+      ? record.children
+      : [record];
+  const keys = new Set();
+
+  rows.forEach((row) => {
+    if (!row) return;
+    const type = Number(row.type);
+    const settings = parseJsonObject(row.settings);
+    const endpointTypes = Array.isArray(row.supported_endpoint_types)
+      ? row.supported_endpoint_types
+      : [];
+    const codexCompatible =
+      type === 57 ||
+      (type === 1 && settings.codex_compatibility_mode === true);
+    const codexImageToolSupported =
+      type === 57 ||
+      (type === 1 &&
+        settings.codex_compatibility_mode === true &&
+        settings.codex_image_generation_tool_supported === true);
+    const models = getChannelModelsForCapability(row);
+    const hasImageApi = models.some((model) => {
+      if (!isImageGenerationModel(model)) return false;
+      return type !== 1 || !isCodexImageModel(model) || codexImageToolSupported;
+    });
+    const hasCodexImageTool =
+      codexImageToolSupported &&
+      (models.some(isImageGenerationModel) ||
+        endpointTypes.includes('image-generation'));
+
+    if (
+      codexCompatible ||
+      usesResponsesWireAPI(settings) ||
+      type === 48 ||
+      endpointTypes.includes('openai-response')
+    ) {
+      keys.add('responses');
+    }
+    if (codexCompatible || endpointTypes.includes('openai-response-compact')) {
+      keys.add('compact');
+    }
+    if (hasCodexImageTool) {
+      keys.add('codex_image_tool');
+    }
+    if (
+      hasImageApi ||
+      endpointTypes.includes('image-generation') ||
+      endpointTypes.includes('image-edit')
+    ) {
+      keys.add('image_api');
+    }
+  });
+
+  return keys.size > 0 ? Array.from(keys) : ['chat'];
+};
+
+const renderChannelCapabilities = (record, t) => {
+  const tagMap = {
+    chat: { label: 'Chat', color: 'grey' },
+    responses: { label: 'Responses', color: 'light-blue' },
+    compact: { label: 'Compact', color: 'teal' },
+    codex_image_tool: { label: t('Codex生图工具'), color: 'violet' },
+    image_api: { label: t('图片API'), color: 'purple' },
+  };
+  const capabilities = buildChannelCapabilityKeys(record)
+    .map((key) => tagMap[key])
+    .filter(Boolean);
+
+  return (
+    <Tooltip
+      content={capabilities.map((item) => item.label).join(' / ')}
+      trigger='hover'
+    >
+      <div className='inline-flex max-w-[260px] flex-wrap gap-1'>
+        {capabilities.map((item) => (
+          <Tag
+            key={item.label}
+            color={item.color}
+            type='light'
+            shape='circle'
+            size='small'
+          >
+            {item.label}
+          </Tag>
+        ))}
+      </div>
+    </Tooltip>
+  );
+};
+
 export const getChannelsColumns = ({
   t,
   COLUMN_KEYS,
@@ -683,6 +830,13 @@ export const getChannelsColumns = ({
           return <>{renderTagType(t)}</>;
         }
       },
+    },
+    {
+      key: COLUMN_KEYS.CAPABILITIES,
+      title: t('能力'),
+      dataIndex: 'capabilities',
+      width: 190,
+      render: (text, record, index) => renderChannelCapabilities(record, t),
     },
     {
       key: COLUMN_KEYS.STATUS,

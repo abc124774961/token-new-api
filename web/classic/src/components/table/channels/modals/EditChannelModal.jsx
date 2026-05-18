@@ -104,6 +104,30 @@ const REGION_EXAMPLE = {
 };
 const UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT = 8;
 const ADVANCED_SETTINGS_EXPANDED_KEY = 'channel-advanced-settings-expanded';
+const CODEX_IMAGE_MODEL_PREFIX = 'gpt-image-';
+
+const getCodexImageModels = (models = []) =>
+  Array.from(
+    new Set(
+      (Array.isArray(models) ? models : [])
+        .map((model) => String(model || '').trim())
+        .filter((model) => model.toLowerCase().startsWith(CODEX_IMAGE_MODEL_PREFIX)),
+    ),
+  );
+
+const buildCodexProbeState = ({
+  status = 'idle',
+  supported = false,
+  message = '',
+  models = [],
+  checkedAt = 0,
+} = {}) => ({
+  status,
+  supported,
+  message,
+  models,
+  checkedAt,
+});
 
 const PARAM_OVERRIDE_LEGACY_TEMPLATE = {
   temperature: 0,
@@ -201,7 +225,11 @@ const EditChannelModal = (props) => {
     // 仅 AWS: 密钥格式和区域（存入 settings.aws_key_type 和 settings.aws_region）
     aws_key_type: 'ak_sk',
     wire_api: '',
-    codex_compatibility_mode: true,
+    codex_compatibility_mode: false,
+    codex_image_generation_tool_supported: false,
+    codex_image_generation_tool_probe_time: 0,
+    codex_image_generation_tool_probe_message: '',
+    codex_image_generation_tool_probe_models: [],
     // 企业账户设置
     is_enterprise_account: false,
     // 字段透传控制默认值
@@ -386,6 +414,11 @@ const EditChannelModal = (props) => {
   const [codexOAuthModalVisible, setCodexOAuthModalVisible] = useState(false);
   const [codexCredentialRefreshing, setCodexCredentialRefreshing] =
     useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [codexProbeState, setCodexProbeState] = useState(() =>
+    buildCodexProbeState(),
+  );
+  const codexProbeRequestIdRef = useRef(0);
   const [paramOverrideEditorVisible, setParamOverrideEditorVisible] =
     useState(false);
 
@@ -566,6 +599,14 @@ const EditChannelModal = (props) => {
     settings[key] = value;
     const settingsJson = JSON.stringify(settings);
     handleInputChange('settings', settingsJson);
+
+    if (key === 'codex_compatibility_mode') {
+      if (value === true) {
+        probeCodexImageToolSupport({ silent: false });
+      } else {
+        applyCodexProbeResult(buildCodexProbeState());
+      }
+    }
   };
 
   const applyClipboardConfig = (config) => {
@@ -602,6 +643,8 @@ const EditChannelModal = (props) => {
   };
 
   const isIonetLocked = isIonetChannel && isEdit;
+  const isSubmittingDisabled =
+    loading || submitting || codexProbeState.status === 'checking';
 
   const handleInputChange = (name, value) => {
     if (
@@ -631,6 +674,9 @@ const EditChannelModal = (props) => {
     }
     setInputs((inputs) => ({ ...inputs, [name]: value }));
     if (name === 'type') {
+      if (value !== 1) {
+        applyCodexProbeResult(buildCodexProbeState());
+      }
       let localModels = [];
       switch (value) {
         case 2:
@@ -905,8 +951,22 @@ const EditChannelModal = (props) => {
               : '';
           data.codex_compatibility_mode =
             data.type === 1
-              ? parsedSettings.codex_compatibility_mode !== false
+              ? parsedSettings.codex_compatibility_mode === true
               : false;
+          data.codex_image_generation_tool_supported =
+            parsedSettings.codex_image_generation_tool_supported === true;
+          data.codex_image_generation_tool_probe_time =
+            Number(parsedSettings.codex_image_generation_tool_probe_time) || 0;
+          data.codex_image_generation_tool_probe_message =
+            typeof parsedSettings.codex_image_generation_tool_probe_message ===
+            'string'
+              ? parsedSettings.codex_image_generation_tool_probe_message
+              : '';
+          data.codex_image_generation_tool_probe_models = Array.isArray(
+            parsedSettings.codex_image_generation_tool_probe_models,
+          )
+            ? parsedSettings.codex_image_generation_tool_probe_models
+            : [];
           // 读取企业账户设置
           data.is_enterprise_account =
             parsedSettings.openrouter_enterprise === true;
@@ -944,7 +1004,11 @@ const EditChannelModal = (props) => {
           data.vertex_key_type = 'json';
           data.aws_key_type = 'ak_sk';
           data.wire_api = '';
-          data.codex_compatibility_mode = data.type === 1;
+          data.codex_compatibility_mode = false;
+          data.codex_image_generation_tool_supported = false;
+          data.codex_image_generation_tool_probe_time = 0;
+          data.codex_image_generation_tool_probe_message = '';
+          data.codex_image_generation_tool_probe_models = [];
           data.is_enterprise_account = false;
           data.allow_service_tier = false;
           data.disable_store = false;
@@ -964,7 +1028,11 @@ const EditChannelModal = (props) => {
         data.vertex_key_type = 'json';
         data.aws_key_type = 'ak_sk';
         data.wire_api = '';
-        data.codex_compatibility_mode = data.type === 1;
+        data.codex_compatibility_mode = false;
+        data.codex_image_generation_tool_supported = false;
+        data.codex_image_generation_tool_probe_time = 0;
+        data.codex_image_generation_tool_probe_message = '';
+        data.codex_image_generation_tool_probe_models = [];
         data.is_enterprise_account = false;
         data.allow_service_tier = false;
         data.disable_store = false;
@@ -990,6 +1058,21 @@ const EditChannelModal = (props) => {
 
       initialBaseUrlRef.current = data.base_url || '';
       setInputs(data);
+      const initialCodexProbeState =
+        data.type === 1 && data.codex_compatibility_mode === true
+          ? buildCodexProbeState({
+              status: data.codex_image_generation_tool_supported
+                ? 'supported'
+                : data.codex_image_generation_tool_probe_time > 0
+                  ? 'unsupported'
+                  : 'idle',
+              supported: data.codex_image_generation_tool_supported === true,
+              message: data.codex_image_generation_tool_probe_message || '',
+              models: data.codex_image_generation_tool_probe_models || [],
+              checkedAt: data.codex_image_generation_tool_probe_time || 0,
+            })
+          : buildCodexProbeState();
+      setCodexProbeState(initialCodexProbeState);
       if (formApiRef.current) {
         formApiRef.current.setValues(data);
       }
@@ -1055,6 +1138,11 @@ const EditChannelModal = (props) => {
       if (hasAdvancedValues) {
         setAdvancedSettingsOpen(true);
       }
+      if (data.type === 1 && data.codex_compatibility_mode === true) {
+        setTimeout(() => {
+          probeCodexImageToolSupport({ silent: true });
+        }, 0);
+      }
     } else {
       showError(message);
     }
@@ -1063,11 +1151,15 @@ const EditChannelModal = (props) => {
 
   const fetchUpstreamModelList = async (name, options = {}) => {
     const silent = !!options.silent;
+    const preserveLoading = !!options.preserveLoading;
+    const currentValues = formApiRef.current?.getValues?.() || inputs;
     // if (inputs['type'] !== 1) {
     //   showError(t('仅支持 OpenAI 接口格式'));
     //   return;
     // }
-    setLoading(true);
+    if (!preserveLoading) {
+      setLoading(true);
+    }
     const models = [];
     let err = false;
 
@@ -1083,17 +1175,19 @@ const EditChannelModal = (props) => {
       }
     } else {
       // 如果是新建模式，通过后端代理获取模型列表
-      if (!inputs?.['key']) {
-        showError(t('请填写密钥'));
+      if (!currentValues?.['key']) {
+        if (!silent) {
+          showError(t('请填写密钥'));
+        }
         err = true;
       } else {
         try {
           const res = await API.post(
             '/api/channel/fetch_models',
             {
-              base_url: inputs['base_url'],
-              type: inputs['type'],
-              key: inputs['key'],
+              base_url: currentValues['base_url'],
+              type: currentValues['type'],
+              key: currentValues['key'],
             },
             { skipErrorHandler: true },
           );
@@ -1116,13 +1210,249 @@ const EditChannelModal = (props) => {
       if (!silent) {
         setModelModalVisible(true);
       }
-      setLoading(false);
+      if (!preserveLoading) {
+        setLoading(false);
+      }
       return uniqueModels;
     } else {
-      showError(t('获取模型列表失败'));
+      if (!silent) {
+        showError(t('获取模型列表失败'));
+      }
     }
-    setLoading(false);
+    if (!preserveLoading) {
+      setLoading(false);
+    }
     return null;
+  };
+
+  const applyCodexProbeResult = (nextState, options = {}) => {
+    const persistToForm = options.persistToForm !== false;
+    setCodexProbeState(nextState);
+    const supported = nextState.supported === true;
+    const checkedAt = nextState.checkedAt || 0;
+    const models = Array.isArray(nextState.models) ? nextState.models : [];
+    const message = nextState.message || '';
+    const nextSettings = (() => {
+      try {
+        const formSettings =
+          formApiRef.current?.getValue?.('settings') ||
+          formApiRef.current?.getValues?.()?.settings ||
+          inputs.settings;
+        return formSettings ? JSON.parse(formSettings) : {};
+      } catch (error) {
+        return {};
+      }
+    })();
+    if (checkedAt > 0 || nextState.status !== 'idle') {
+      nextSettings.codex_image_generation_tool_supported = supported;
+      nextSettings.codex_image_generation_tool_probe_time = checkedAt;
+      nextSettings.codex_image_generation_tool_probe_message = message;
+      nextSettings.codex_image_generation_tool_probe_models = models;
+    } else {
+      delete nextSettings.codex_image_generation_tool_supported;
+      delete nextSettings.codex_image_generation_tool_probe_time;
+      delete nextSettings.codex_image_generation_tool_probe_message;
+      delete nextSettings.codex_image_generation_tool_probe_models;
+    }
+    const nextSettingsJson = JSON.stringify(nextSettings);
+
+    if (persistToForm && formApiRef.current) {
+      formApiRef.current.setValue('settings', nextSettingsJson);
+      formApiRef.current.setValue(
+        'codex_image_generation_tool_supported',
+        supported,
+      );
+      formApiRef.current.setValue(
+        'codex_image_generation_tool_probe_time',
+        checkedAt,
+      );
+      formApiRef.current.setValue(
+        'codex_image_generation_tool_probe_message',
+        message,
+      );
+      formApiRef.current.setValue(
+        'codex_image_generation_tool_probe_models',
+        models,
+      );
+    }
+
+    if (persistToForm) {
+      setInputs((prev) => ({
+        ...prev,
+        settings: nextSettingsJson,
+        codex_image_generation_tool_supported: supported,
+        codex_image_generation_tool_probe_time: checkedAt,
+        codex_image_generation_tool_probe_message: message,
+        codex_image_generation_tool_probe_models: models,
+      }));
+    }
+  };
+
+  const probeCodexImageToolSupport = async (options = {}) => {
+    const silent = !!options.silent;
+    const currentValues = formApiRef.current?.getValues?.() || inputs;
+    const currentType = Number(currentValues.type ?? inputs.type);
+
+    if (currentType !== 1) {
+      const idleState = buildCodexProbeState();
+      applyCodexProbeResult(idleState);
+      return idleState;
+    }
+
+    const requestId = codexProbeRequestIdRef.current + 1;
+    codexProbeRequestIdRef.current = requestId;
+    const checkingState = buildCodexProbeState({
+      status: 'checking',
+      message: t('正在请求上游检测 Codex 生图能力'),
+    });
+    applyCodexProbeResult(checkingState, { persistToForm: false });
+
+    try {
+      if (isEdit) {
+        const res = await API.post(
+          `/api/channel/${channelId}/codex/image_generation_tool/probe`,
+          {},
+          { skipErrorHandler: true },
+        );
+        if (codexProbeRequestIdRef.current !== requestId) {
+          return codexProbeState;
+        }
+        if (!res?.data?.success) {
+          throw new Error(res?.data?.message || t('检测失败'));
+        }
+        const data = res.data.data || {};
+        const nextState = buildCodexProbeState({
+          status: data.supported ? 'supported' : 'unsupported',
+          supported: data.supported === true,
+          message:
+            data.message ||
+            (data.supported
+              ? t('Codex 生图能力检测通过')
+              : t('未检测到 gpt-image-* 模型')),
+          models: Array.isArray(data.models) ? data.models : [],
+          checkedAt: Number(data.checked_at) || Math.floor(Date.now() / 1000),
+        });
+        applyCodexProbeResult(nextState);
+        if (!silent) {
+          if (nextState.supported) {
+            showSuccess(t('Codex 生图能力检测通过'));
+          } else {
+            showInfo(t('未检测到 Codex 生图工具能力'));
+          }
+        }
+        return nextState;
+      }
+
+      const models = await fetchUpstreamModelList('codex_probe', {
+        silent: true,
+        preserveLoading: true,
+      });
+      if (codexProbeRequestIdRef.current !== requestId) {
+        return codexProbeState;
+      }
+      if (!Array.isArray(models)) {
+        throw new Error(t('获取模型列表失败'));
+      }
+      const imageModels = getCodexImageModels(models || []);
+      const checkedAt = Math.floor(Date.now() / 1000);
+      const nextState =
+        imageModels.length > 0
+          ? buildCodexProbeState({
+              status: 'supported',
+              supported: true,
+              message: t('已检测到 {{models}}', {
+                models: imageModels
+                  .slice(0, UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT)
+                  .join(', '),
+              }),
+              models: imageModels,
+              checkedAt,
+            })
+          : buildCodexProbeState({
+              status: 'unsupported',
+              supported: false,
+              message: t('未检测到 gpt-image-* 模型'),
+              models: [],
+              checkedAt,
+            });
+      applyCodexProbeResult(nextState);
+      if (!silent) {
+        if (nextState.supported) {
+          showSuccess(t('Codex 生图能力检测通过'));
+        } else {
+          showInfo(t('未检测到 Codex 生图工具能力'));
+        }
+      }
+      return nextState;
+    } catch (error) {
+      if (codexProbeRequestIdRef.current !== requestId) {
+        return codexProbeState;
+      }
+      const checkedAt = Math.floor(Date.now() / 1000);
+      const nextState = buildCodexProbeState({
+        status: 'error',
+        supported: false,
+        message: error?.message || t('检测失败'),
+        models: [],
+        checkedAt,
+      });
+      applyCodexProbeResult(nextState);
+      if (!silent) {
+        showError(nextState.message);
+      }
+      return nextState;
+    }
+  };
+
+  const renderCodexProbeStatus = () => {
+    const status = codexProbeState.status;
+    const tagConfig = {
+      idle: { color: 'grey', text: t('待检测') },
+      checking: { color: 'blue', text: t('检测中') },
+      supported: { color: 'green', text: t('已检测支持') },
+      unsupported: { color: 'orange', text: t('未检测到') },
+      error: { color: 'red', text: t('检测失败') },
+    }[status] || { color: 'grey', text: t('待检测') };
+    const modelText = (codexProbeState.models || [])
+      .slice(0, UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT)
+      .join(', ');
+    const checkedAtText = codexProbeState.checkedAt
+      ? new Date(codexProbeState.checkedAt * 1000).toLocaleString()
+      : '';
+    const tooltipLines = [
+      codexProbeState.message,
+      modelText ? t('上游模型: {{models}}', { models: modelText }) : '',
+      checkedAtText ? t('最近检测: {{time}}', { time: checkedAtText }) : '',
+    ].filter(Boolean);
+
+    return (
+      <Space spacing={4} align='center' className='ml-2 inline-flex'>
+        <Tooltip content={tooltipLines.join('\n') || tagConfig.text}>
+          <Tag
+            color={tagConfig.color}
+            type='light'
+            shape='circle'
+            size='small'
+          >
+            {tagConfig.text}
+          </Tag>
+        </Tooltip>
+        {inputs.codex_compatibility_mode === true && status !== 'checking' && (
+          <Button
+            size='small'
+            type='tertiary'
+            theme='borderless'
+            icon={<IconSearch />}
+            onClick={(event) => {
+              event?.stopPropagation?.();
+              probeCodexImageToolSupport({ silent: false });
+            }}
+          >
+            {t('重新检测')}
+          </Button>
+        )}
+      </Space>
+    );
   };
 
   const openModelMappingValueModal = async ({ pairKey, value }) => {
@@ -1407,6 +1737,9 @@ const EditChannelModal = (props) => {
     setDoubaoApiEditUnlocked(false);
     doubaoApiClickCountRef.current = 0;
     setModelSearchValue('');
+    setSubmitting(false);
+    codexProbeRequestIdRef.current += 1;
+    setCodexProbeState(buildCodexProbeState());
     // 重置高级设置折叠状态
     setAdvancedSettingsOpen(false);
     // 清空表单中的key_mode字段
@@ -1556,6 +1889,9 @@ const EditChannelModal = (props) => {
   };
 
   const submit = async () => {
+    if (loading || submitting || codexProbeState.status === 'checking') {
+      return;
+    }
     const formValues = formApiRef.current ? formApiRef.current.getValues() : {};
     let localInputs = { ...formValues };
     localInputs.param_override = inputs.param_override;
@@ -1801,8 +2137,33 @@ const EditChannelModal = (props) => {
     if (localInputs.type === 1) {
       settings.codex_compatibility_mode =
         localInputs.codex_compatibility_mode === true;
+      if (settings.codex_compatibility_mode) {
+        settings.codex_image_generation_tool_supported =
+          localInputs.codex_image_generation_tool_supported === true;
+        settings.codex_image_generation_tool_probe_time =
+          Number(localInputs.codex_image_generation_tool_probe_time) || 0;
+        settings.codex_image_generation_tool_probe_message =
+          typeof localInputs.codex_image_generation_tool_probe_message ===
+          'string'
+            ? localInputs.codex_image_generation_tool_probe_message
+            : '';
+        settings.codex_image_generation_tool_probe_models = Array.isArray(
+          localInputs.codex_image_generation_tool_probe_models,
+        )
+          ? localInputs.codex_image_generation_tool_probe_models
+          : [];
+      } else {
+        delete settings.codex_image_generation_tool_supported;
+        delete settings.codex_image_generation_tool_probe_time;
+        delete settings.codex_image_generation_tool_probe_message;
+        delete settings.codex_image_generation_tool_probe_models;
+      }
     } else if ('codex_compatibility_mode' in settings) {
       delete settings.codex_compatibility_mode;
+      delete settings.codex_image_generation_tool_supported;
+      delete settings.codex_image_generation_tool_probe_time;
+      delete settings.codex_image_generation_tool_probe_message;
+      delete settings.codex_image_generation_tool_probe_models;
     }
 
     // type === 41 (Vertex): 始终保存 vertex_key_type 到 settings，避免编辑时被重置
@@ -1869,6 +2230,10 @@ const EditChannelModal = (props) => {
     delete localInputs.aws_key_type;
     delete localInputs.wire_api;
     delete localInputs.codex_compatibility_mode;
+    delete localInputs.codex_image_generation_tool_supported;
+    delete localInputs.codex_image_generation_tool_probe_time;
+    delete localInputs.codex_image_generation_tool_probe_message;
+    delete localInputs.codex_image_generation_tool_probe_models;
     // 清理字段透传控制的临时字段
     delete localInputs.allow_service_tier;
     delete localInputs.disable_store;
@@ -1893,31 +2258,36 @@ const EditChannelModal = (props) => {
       mode = multiToSingle ? 'multi_to_single' : 'batch';
     }
 
-    if (isEdit) {
-      res = await API.put(`/api/channel/`, {
-        ...localInputs,
-        id: parseInt(channelId),
-        key_mode: isMultiKeyChannel ? keyMode : undefined, // 只在多key模式下传递
-      });
-    } else {
-      res = await API.post(`/api/channel/`, {
-        mode: mode,
-        multi_key_mode: mode === 'multi_to_single' ? multiKeyMode : undefined,
-        channel: localInputs,
-      });
-    }
-    const { success, message } = res.data;
-    if (success) {
+    setSubmitting(true);
+    try {
       if (isEdit) {
-        showSuccess(t('渠道更新成功！'));
+        res = await API.put(`/api/channel/`, {
+          ...localInputs,
+          id: parseInt(channelId),
+          key_mode: isMultiKeyChannel ? keyMode : undefined, // 只在多key模式下传递
+        });
       } else {
-        showSuccess(t('渠道创建成功！'));
-        setInputs(originInputs);
+        res = await API.post(`/api/channel/`, {
+          mode: mode,
+          multi_key_mode: mode === 'multi_to_single' ? multiKeyMode : undefined,
+          channel: localInputs,
+        });
       }
-      props.refresh();
-      props.handleClose();
-    } else {
-      showError(message);
+      const { success, message } = res.data;
+      if (success) {
+        if (isEdit) {
+          showSuccess(t('渠道更新成功！'));
+        } else {
+          showSuccess(t('渠道创建成功！'));
+          setInputs(originInputs);
+        }
+        props.refresh();
+        props.handleClose();
+      } else {
+        showError(message);
+      }
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -2215,6 +2585,8 @@ const EditChannelModal = (props) => {
               theme='solid'
               onClick={() => formApiRef.current?.submitForm()}
               icon={<IconSave />}
+              loading={isSubmittingDisabled}
+              disabled={isSubmittingDisabled}
             >
               {t('提交')}
             </Button>
@@ -3411,7 +3783,12 @@ const EditChannelModal = (props) => {
                               <>
                                 <Form.Switch
                                   field='codex_compatibility_mode'
-                                  label={t('Codex 兼容模式')}
+                                  label={
+                                    <span className='inline-flex flex-wrap items-center gap-1'>
+                                      <span>{t('Codex 兼容模式')}</span>
+                                      {renderCodexProbeStatus()}
+                                    </span>
+                                  }
                                   checkedText={t('开')}
                                   uncheckedText={t('关')}
                                   onChange={(value) =>

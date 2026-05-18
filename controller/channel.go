@@ -247,6 +247,86 @@ func FetchUpstreamModels(c *gin.Context) {
 	})
 }
 
+func collectCodexImageGenerationToolModels(models []string) []string {
+	result := make([]string, 0)
+	seen := make(map[string]struct{}, len(models))
+	for _, modelName := range models {
+		normalized := strings.TrimSpace(modelName)
+		if normalized == "" {
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(normalized), "gpt-image-") {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		result = append(result, normalized)
+	}
+	return result
+}
+
+func ProbeChannelCodexImageGenerationTool(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	channel, err := model.GetChannelById(id, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if channel.Type != constant.ChannelTypeOpenAI {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "仅 OpenAI 渠道支持 Codex 生图能力检测",
+		})
+		return
+	}
+
+	upstreamModels, err := fetchChannelUpstreamModelIDs(channel)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": fmt.Sprintf("检测失败: %s", err.Error()),
+		})
+		return
+	}
+
+	imageModels := collectCodexImageGenerationToolModels(upstreamModels)
+	now := common.GetTimestamp()
+	message := "未检测到 gpt-image-* 模型"
+	if len(imageModels) > 0 {
+		message = fmt.Sprintf("已检测到 %s", strings.Join(imageModels, ", "))
+	}
+
+	settings := channel.GetOtherSettings()
+	settings.CodexImageGenerationToolSupported = len(imageModels) > 0
+	settings.CodexImageGenerationToolProbeTime = now
+	settings.CodexImageGenerationToolProbeMessage = message
+	settings.CodexImageGenerationToolProbeModels = imageModels
+	if err := updateChannelUpstreamModelSettings(channel, settings, false); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.InitChannelCache()
+	service.ResetProxyClientCache()
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"supported":  len(imageModels) > 0,
+			"models":     imageModels,
+			"checked_at": now,
+			"message":    message,
+		},
+	})
+}
+
 func FixChannelsAbilities(c *gin.Context) {
 	success, fails, err := model.FixAbility()
 	if err != nil {

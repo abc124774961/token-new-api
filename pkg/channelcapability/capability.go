@@ -16,7 +16,7 @@ func SupportedEndpointTypes(channelType int, modelName string, settings dto.Chan
 	endpointTypes := common.GetEndpointTypesByChannelType(channelType, modelName)
 	isImageModel := common.IsImageGenerationModel(modelName)
 	if requiresCodexCompatibilityForOpenAIImage(modelName, channelType) &&
-		!settings.UsesCodexCompatibilityMode() {
+		!settings.SupportsCodexImageGenerationTool() {
 		endpointTypes = withoutImageEndpoints(endpointTypes)
 	}
 	if SupportsResponsesWireAPI(channelType, settings) {
@@ -42,7 +42,7 @@ func SupportsEndpoint(channelType int, modelName string, settings dto.ChannelOth
 func SupportsCodexImageGenerationTool(channelType int, settings dto.ChannelOtherSettings) bool {
 	switch channelType {
 	case constant.ChannelTypeOpenAI:
-		return settings.UsesCodexCompatibilityMode()
+		return settings.SupportsCodexImageGenerationTool()
 	case constant.ChannelTypeCodex:
 		return true
 	default:
@@ -77,7 +77,7 @@ func SupportsOpenAIImage(modelName string, channelType int, settings dto.Channel
 		return false
 	}
 	if requiresCodexCompatibilityForOpenAIImage(modelName, channelType) {
-		return settings.UsesCodexCompatibilityMode()
+		return settings.SupportsCodexImageGenerationTool()
 	}
 	return slices.Contains(common.GetEndpointTypesByChannelType(channelType, modelName), constant.EndpointTypeImageGeneration)
 }

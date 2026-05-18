@@ -198,7 +198,7 @@ func TestCacheGetRandomSatisfiedChannelSkipsImageChannelWithoutCodexCompatibilit
 	withChannelSelectMemoryCache(t, true)
 
 	seedChannelSelectChannelWithOptions(t, db, 121, "default", "gpt-image-2", 10, 100, constant.ChannelTypeOpenAI, "")
-	seedChannelSelectChannelWithOptions(t, db, 122, "default", "gpt-image-2", 10, 100, constant.ChannelTypeOpenAI, `{"codex_compatibility_mode":true}`)
+	seedChannelSelectChannelWithOptions(t, db, 122, "default", "gpt-image-2", 10, 100, constant.ChannelTypeOpenAI, `{"codex_compatibility_mode":true,"codex_image_generation_tool_supported":true}`)
 	model.InitChannelCache()
 
 	param := &RetryParam{

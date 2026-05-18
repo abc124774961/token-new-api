@@ -7,7 +7,7 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 ## Tech Stack
 
 - **Backend**: Go 1.22+, Gin web framework, GORM v2 ORM
-- **Frontend**: React 19, TypeScript, Rsbuild, Base UI, Tailwind CSS
+- **Frontend**: React 18, Vite, Semi Design, Tailwind CSS
 - **Databases**: SQLite, MySQL, PostgreSQL (all three must be supported)
 - **Cache**: Redis (go-redis) + in-memory cache
 - **Auth**: JWT, WebAuthn/Passkeys, OAuth (GitHub, Discord, OIDC, etc.)
@@ -33,10 +33,9 @@ types/         — Type definitions (relay formats, file sources, errors)
 i18n/          — Backend internationalization (go-i18n, en/zh)
 oauth/         — OAuth provider implementations
 pkg/           — Internal packages (cachex, ionet)
-web/             — Frontend themes container
- web/default/   — Default frontend (React 19, Rsbuild, Base UI, Tailwind)
-  web/classic/   — Classic frontend (React 18, Vite, Semi Design)
-  web/default/src/i18n/ — Frontend internationalization (i18next, zh/en/fr/ru/ja/vi)
+web/             — Frontend container
+  web/classic/   — Frontend (React 18, Vite, Semi Design)
+  web/classic/src/i18n/ — Frontend internationalization (i18next, zh-CN/zh-TW/en/fr/ru/ja/vi)
 ```
 
 ## Internationalization (i18n)
@@ -45,12 +44,12 @@ web/             — Frontend themes container
 - Library: `nicksnyder/go-i18n/v2`
 - Languages: en, zh
 
-### Frontend (`web/default/src/i18n/`)
+### Frontend (`web/classic/src/i18n/`)
 - Library: `i18next` + `react-i18next` + `i18next-browser-languagedetector`
-- Languages: en (base), zh (fallback), fr, ru, ja, vi
-- Translation files: `web/default/src/i18n/locales/{lang}.json` — flat JSON, keys are English source strings
+- Languages: zh-CN (fallback), zh-TW, en, fr, ru, ja, vi
+- Translation files: `web/classic/src/i18n/locales/{lang}.json` — flat JSON under the `translation` namespace
 - Usage: `useTranslation()` hook, call `t('English key')` in components
-- CLI tools: `bun run i18n:sync` (from `web/default/`)
+- CLI tools: `bun run i18n:sync` (from `web/classic/`)
 
 ## Rules
 
@@ -94,7 +93,7 @@ All database code MUST be fully compatible with all three databases simultaneous
 
 ### Rule 3: Frontend — Prefer Bun
 
-Use `bun` as the preferred package manager and script runner for the frontend (`web/default/` directory):
+Use `bun` as the preferred package manager and script runner for the frontend (`web/classic/` directory):
 - `bun install` for dependency installation
 - `bun run dev` for development server
 - `bun run build` for production build
