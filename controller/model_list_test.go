@@ -824,6 +824,7 @@ func TestListModelsUsesPersistedGroupCapabilityUnionForCodexImageTool(t *testing
 		require.Equal(t, []string{"text", "image"}, item.OutputModalities)
 		require.Contains(t, item.SupportedSessionModes, "image_generation")
 		require.Equal(t, "gpt-5.5", item.ActualModelReturned["responses"])
+		require.Equal(t, "gpt-5.5", item.ActualModelReturned["image_generation"])
 	}
 	require.True(t, found, "expected gpt-5.5 to appear in codex /models response")
 }
@@ -885,4 +886,5 @@ func TestRetrieveModelCodexFormatUsesVisibleModelCapabilities(t *testing.T) {
 	require.Equal(t, []string{"text", "image"}, payload.OutputModalities)
 	require.Contains(t, payload.SupportedSessionModes, "image_generation")
 	require.Equal(t, "gpt-5.5", payload.ActualModelReturned["responses"])
+	require.Equal(t, "gpt-5.5", payload.ActualModelReturned["image_generation"])
 }

@@ -478,7 +478,7 @@ func buildActualModelReturned(model dto.OpenAIModels, actualModel string) map[st
 	actualModelReturned := make(map[string]string)
 	for _, mode := range model.SupportedSessionModes {
 		switch mode {
-		case "chat_completions", "responses":
+		case "chat_completions", "responses", "image_generation":
 			actualModelReturned[mode] = actualModel
 		}
 	}

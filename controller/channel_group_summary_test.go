@@ -107,7 +107,7 @@ func TestBuildChannelGroupSummaryAggregatesCachedAbilities(t *testing.T) {
 	require.Contains(t, codexGroup.Capabilities, "image_api")
 	require.Contains(t, codexGroup.Capabilities, "codex_tool:image_generation")
 	require.Contains(t, codexGroup.CodexSupportedTools, dto.BuildInToolImageGeneration)
-	require.Equal(t, 1, codexGroup.TypeCounts[constant.ChannelTypeOpenAI])
+	require.Equal(t, 2, codexGroup.TypeCounts[constant.ChannelTypeOpenAI])
 
 	testGroup := findChannelGroupSummaryItem(t, resp.Groups, "test")
 	require.Equal(t, 1, testGroup.TotalChannels)
