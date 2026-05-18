@@ -472,3 +472,119 @@ func TestListModelsAdvertisesResponsesForOpenAIWireAPI(t *testing.T) {
 	}
 	require.True(t, found, "expected wire-api model to appear in /v1/models")
 }
+
+func TestListModelsAdvertisesSessionModesAndActualReturnedModel(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	withMemoryCacheEnabled(t, false)
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       5001,
+		Username: "model-capability-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	modelMapping := `{"gpt-5.5":"gpt-5.4"}`
+	require.NoError(t, db.Create(&model.Channel{
+		Id:            20,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "mapped-response-channel",
+		Key:           "test-key",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "default",
+		Models:        "gpt-5.5",
+		ModelMapping:  &modelMapping,
+		OtherSettings: `{"wire_api":"responses"}`,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5.5",
+		ChannelId: 20,
+		Enabled:   true,
+	}).Error)
+	model.RefreshPricing()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	ctx.Set("id", 5001)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload listModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+
+	var found bool
+	for _, item := range payload.Data {
+		if item.Id != "gpt-5.5" {
+			continue
+		}
+		found = true
+		require.Equal(t, []string{"chat_completions", "responses"}, item.SupportedSessionModes)
+		require.Equal(t, map[string]string{
+			"chat_completions": "gpt-5.4",
+			"responses":        "gpt-5.4",
+		}, item.ActualModelReturned)
+	}
+	require.True(t, found, "expected gpt-5.5 to appear in /v1/models")
+}
+
+func TestListModelsAdvertisesImageSessionModes(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	withMemoryCacheEnabled(t, false)
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       5002,
+		Username: "image-capability-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     21,
+		Type:   constant.ChannelTypeOpenAI,
+		Name:   "image-channel",
+		Key:    "test-key",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "gpt-image-2",
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-image-2",
+		ChannelId: 21,
+		Enabled:   true,
+	}).Error)
+	model.RefreshPricing()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	ctx.Set("id", 5002)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload listModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+
+	var found bool
+	for _, item := range payload.Data {
+		if item.Id != "gpt-image-2" {
+			continue
+		}
+		found = true
+		require.Contains(t, item.SupportedEndpointTypes, constant.EndpointTypeImageGeneration)
+		require.Contains(t, item.SupportedEndpointTypes, constant.EndpointTypeImageEdit)
+		require.Equal(t, []string{"image_generation", "image_edit"}, item.SupportedSessionModes)
+		require.Nil(t, item.ActualModelReturned)
+	}
+	require.True(t, found, "expected gpt-image-2 to appear in /v1/models")
+}

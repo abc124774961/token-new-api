@@ -192,7 +192,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 			relayFormat = types.RelayFormatGemini
 		case constant.EndpointTypeJinaRerank:
 			relayFormat = types.RelayFormatRerank
-		case constant.EndpointTypeImageGeneration:
+		case constant.EndpointTypeImageGeneration, constant.EndpointTypeImageEdit:
 			relayFormat = types.RelayFormatOpenAIImage
 		case constant.EndpointTypeEmbeddings:
 			relayFormat = types.RelayFormatEmbedding
@@ -704,6 +704,15 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 				Prompt: "a cute cat",
 				N:      lo.ToPtr(uint(1)),
 				Size:   "1024x1024",
+			}
+		case constant.EndpointTypeImageEdit:
+			// 返回 ImageRequest
+			return &dto.ImageRequest{
+				Model:  model,
+				Prompt: "make the image brighter",
+				N:      lo.ToPtr(uint(1)),
+				Size:   "1024x1024",
+				Image:  json.RawMessage(`"data:image/png;base64,iVBORw0KGgo="`),
 			}
 		case constant.EndpointTypeJinaRerank:
 			// 返回 RerankRequest

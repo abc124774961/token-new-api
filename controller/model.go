@@ -193,7 +193,7 @@ func getVisibleOpenAIModels(c *gin.Context, acceptUnsetRatioModel bool) []dto.Op
 				})
 			}
 		}
-		return sortVisibleModels(userOpenAiModels)
+		return finalizeVisibleOpenAIModels(c, userOpenAiModels)
 	}
 
 	models, ok := resolveVisibleModelNames(c)
@@ -220,18 +220,41 @@ func getVisibleOpenAIModels(c *gin.Context, acceptUnsetRatioModel bool) []dto.Op
 		}
 	}
 
-	return sortVisibleModels(userOpenAiModels)
+	return finalizeVisibleOpenAIModels(c, userOpenAiModels)
 }
 
 func resolveVisibleModelNames(c *gin.Context) ([]string, bool) {
-	userId := c.GetInt("id")
-	userGroup, err := model.GetUserGroup(userId, false)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "get user group failed",
-		})
+	groups, ok := resolveVisibleModelGroups(c)
+	if !ok {
 		return nil, false
+	}
+
+	tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
+	if tokenGroup == "" {
+		tokenGroup = "auto"
+	}
+	if len(groups) == 1 && tokenGroup != "auto" {
+		return model.GetGroupAvailableModels(groups[0]), true
+	}
+	return model.GetAvailableModelsForGroups(groups), true
+}
+
+func resolveVisibleModelGroups(c *gin.Context) ([]string, bool) {
+	userId := c.GetInt("id")
+	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	if userGroup == "" {
+		userGroup = c.GetString("group")
+	}
+	if userGroup == "" && userId > 0 && model.DB != nil {
+		var err error
+		userGroup, err = model.GetUserGroup(userId, false)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "get user group failed",
+			})
+			return nil, false
+		}
 	}
 
 	tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
@@ -240,10 +263,103 @@ func resolveVisibleModelNames(c *gin.Context) ([]string, bool) {
 	}
 	switch tokenGroup {
 	case "auto":
-		return model.GetAvailableModelsForGroups(service.GetUserAutoGroup(userGroup)), true
+		return service.GetUserAutoGroup(userGroup), true
 	default:
-		return model.GetGroupAvailableModels(tokenGroup), true
+		return []string{tokenGroup}, true
 	}
+}
+
+func finalizeVisibleOpenAIModels(c *gin.Context, models []dto.OpenAIModels) []dto.OpenAIModels {
+	models = sortVisibleModels(models)
+	if len(models) == 0 {
+		return models
+	}
+
+	modelNames := make([]string, 0, len(models))
+	for _, item := range models {
+		modelNames = append(modelNames, item.Id)
+	}
+
+	actualModelByName := make(map[string]string)
+	if groups, ok := resolveVisibleModelGroups(c); ok {
+		actualModelByName = model.GetPreferredActualModelsForGroups(groups, modelNames)
+	}
+
+	for i := range models {
+		models[i].SupportedSessionModes = buildSupportedSessionModes(models[i].Id, models[i].SupportedEndpointTypes)
+		models[i].ActualModelReturned = buildActualModelReturned(models[i], actualModelByName[models[i].Id])
+	}
+	return models
+}
+
+func buildSupportedSessionModes(modelName string, endpointTypes []constant.EndpointType) []string {
+	if common.IsImageGenerationModel(modelName) {
+		modes := make([]string, 0, 2)
+		for _, endpointType := range endpointTypes {
+			switch endpointType {
+			case constant.EndpointTypeImageGeneration:
+				modes = appendUniqueString(modes, "image_generation")
+			case constant.EndpointTypeImageEdit:
+				modes = appendUniqueString(modes, "image_edit")
+			}
+		}
+		if len(modes) == 0 {
+			modes = append(modes, "image_generation", "image_edit")
+		}
+		return modes
+	}
+
+	modes := make([]string, 0, 2)
+	if endpointTypesContain(endpointTypes, constant.EndpointTypeOpenAI) {
+		modes = append(modes, "chat_completions")
+	}
+	if endpointTypesContain(endpointTypes, constant.EndpointTypeOpenAIResponse) ||
+		endpointTypesContain(endpointTypes, constant.EndpointTypeOpenAIResponseCompact) {
+		modes = append(modes, "responses")
+	}
+	if len(modes) == 0 && common.IsOpenAITextModel(modelName) {
+		if common.IsOpenAIResponseOnlyModel(modelName) {
+			return []string{"responses"}
+		}
+		return []string{"chat_completions"}
+	}
+	return modes
+}
+
+func buildActualModelReturned(model dto.OpenAIModels, actualModel string) map[string]string {
+	if common.IsImageGenerationModel(model.Id) {
+		return nil
+	}
+	actualModel = common.GetStringIfEmpty(actualModel, model.Id)
+	actualModelReturned := make(map[string]string)
+	for _, mode := range model.SupportedSessionModes {
+		switch mode {
+		case "chat_completions", "responses":
+			actualModelReturned[mode] = actualModel
+		}
+	}
+	if len(actualModelReturned) == 0 {
+		return nil
+	}
+	return actualModelReturned
+}
+
+func endpointTypesContain(endpointTypes []constant.EndpointType, target constant.EndpointType) bool {
+	for _, endpointType := range endpointTypes {
+		if endpointType == target {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueString(items []string, value string) []string {
+	for _, item := range items {
+		if item == value {
+			return items
+		}
+	}
+	return append(items, value)
 }
 
 func sortVisibleModels(models []dto.OpenAIModels) []dto.OpenAIModels {
