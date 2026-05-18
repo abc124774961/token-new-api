@@ -10,6 +10,7 @@ import (
 
 const (
 	ResponsesOutputTypeImageGenerationCall = "image_generation_call"
+	BuildInToolImageGeneration             = "image_generation"
 )
 
 type SimpleResponse struct {

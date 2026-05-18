@@ -961,6 +961,52 @@ func (r *OpenAIResponsesRequest) GetToolsMap() []map[string]any {
 	return toolsMap
 }
 
+func (r *OpenAIResponsesRequest) HasTool(toolType string) bool {
+	if r == nil || toolType == "" {
+		return false
+	}
+	for _, tool := range r.GetToolsMap() {
+		if common.Interface2String(tool["type"]) == toolType {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *OpenAIResponsesRequest) AddTool(tool map[string]any) error {
+	if r == nil || tool == nil {
+		return nil
+	}
+	tools := r.GetToolsMap()
+	toolType := common.Interface2String(tool["type"])
+	if toolType != "" {
+		for _, existing := range tools {
+			if common.Interface2String(existing["type"]) == toolType {
+				return nil
+			}
+		}
+	}
+	tools = append(tools, tool)
+	toolsBytes, err := common.Marshal(tools)
+	if err != nil {
+		return err
+	}
+	r.Tools = toolsBytes
+	return nil
+}
+
+func (r *OpenAIResponsesRequest) SetToolChoice(toolChoice map[string]any) error {
+	if r == nil || toolChoice == nil {
+		return nil
+	}
+	toolChoiceBytes, err := common.Marshal(toolChoice)
+	if err != nil {
+		return err
+	}
+	r.ToolChoice = toolChoiceBytes
+	return nil
+}
+
 type Reasoning struct {
 	Effort  string `json:"effort,omitempty"`
 	Summary string `json:"summary,omitempty"`

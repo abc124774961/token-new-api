@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,6 +21,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+var imageGenerationIntentPattern = regexp.MustCompile(`(?i)((生成|画|绘制|出图|作图|创建|制作|设计|generate|create|draw|make|render|illustrate).{0,160}(图片|图像|照片|海报|插画|图标|image|picture|photo|poster|illustration|logo|icon)|(图片|图像|照片|海报|插画|图标|image|picture|photo|poster|illustration|logo|icon).{0,160}(生成|画|绘制|出图|作图|创建|制作|设计|generate|create|draw|make|render|illustrate)|(画|绘制|生成|创建|制作|设计).{0,20}(一张|一个|一幅|一份))`)
 
 func responsesRequestFromRelayRequest(request dto.Request) *dto.OpenAIResponsesRequest {
 	switch req := request.(type) {
@@ -47,6 +50,90 @@ func captureResponsesReasoningEffort(info *relaycommon.RelayInfo, request *dto.O
 		return
 	}
 	info.SetRequestReasoningEffort(effort)
+}
+
+func maybeInjectImageGenerationTool(request *dto.OpenAIResponsesRequest) (bool, error) {
+	if request == nil || request.HasTool(dto.BuildInToolImageGeneration) {
+		return false, nil
+	}
+	if !shouldInjectImageGenerationTool(request) {
+		return false, nil
+	}
+	if err := request.AddTool(map[string]any{
+		"type":          dto.BuildInToolImageGeneration,
+		"output_format": "png",
+	}); err != nil {
+		return false, err
+	}
+	if err := request.SetToolChoice(map[string]any{
+		"type": dto.BuildInToolImageGeneration,
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func shouldInjectImageGenerationTool(request *dto.OpenAIResponsesRequest) bool {
+	if request == nil || common.IsImageGenerationModel(request.Model) {
+		return false
+	}
+	text := responsesImageIntentText(request)
+	return imageGenerationIntentPattern.MatchString(text)
+}
+
+func responsesImageIntentText(request *dto.OpenAIResponsesRequest) string {
+	if request == nil {
+		return ""
+	}
+	parts := make([]string, 0)
+	parts = appendRawJSONStrings(parts, request.Instructions)
+	parts = appendRawJSONStrings(parts, request.Text)
+	parts = appendRawJSONStrings(parts, request.Prompt)
+	parts = appendRawJSONStrings(parts, request.Input)
+	for _, input := range request.ParseInput() {
+		if input.Text != "" {
+			parts = append(parts, input.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func appendRawJSONStrings(parts []string, raw []byte) []string {
+	if len(raw) == 0 {
+		return parts
+	}
+
+	var value any
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return appendNonBlankString(parts, string(raw))
+	}
+	return appendJSONStrings(parts, value)
+}
+
+func appendJSONStrings(parts []string, value any) []string {
+	switch typed := value.(type) {
+	case string:
+		return appendNonBlankString(parts, typed)
+	case []any:
+		for _, item := range typed {
+			parts = appendJSONStrings(parts, item)
+		}
+	case map[string]any:
+		for _, key := range []string{"input", "instructions", "prompt", "content", "text"} {
+			if nested, ok := typed[key]; ok {
+				parts = appendJSONStrings(parts, nested)
+			}
+		}
+	}
+	return parts
+}
+
+func appendNonBlankString(parts []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return parts
+	}
+	return append(parts, value)
 }
 
 func applyResponsesCompactBillingModel(info *relaycommon.RelayInfo) (string, func()) {
@@ -96,6 +183,14 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	if err != nil {
 		return types.NewError(fmt.Errorf("failed to copy request to GeneralOpenAIRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
+	imageGenerationToolInjected, err := maybeInjectImageGenerationTool(request)
+	if err != nil {
+		return types.NewError(fmt.Errorf("failed to inject image generation tool: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	}
+	if imageGenerationToolInjected ||
+		(!model_setting.GetGlobalSettings().PassThroughRequestEnabled && !info.ChannelSetting.PassThroughBodyEnabled) {
+		info.ResponsesUsageInfo = relaycommon.BuildResponsesUsageInfo(request)
+	}
 
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
@@ -108,7 +203,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 	adaptor.Init(info)
 	var requestBody io.Reader
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+	if (model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled) && !imageGenerationToolInjected {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())

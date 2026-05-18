@@ -27,6 +27,10 @@ type listModelsResponse struct {
 	Object  string             `json:"object"`
 }
 
+type codexModelsResponse struct {
+	Models []dto.CodexModelInfo `json:"models"`
+}
+
 type stringListResponse struct {
 	Success bool     `json:"success"`
 	Data    []string `json:"data"`
@@ -587,4 +591,66 @@ func TestListModelsAdvertisesImageSessionModes(t *testing.T) {
 		require.Nil(t, item.ActualModelReturned)
 	}
 	require.True(t, found, "expected gpt-image-2 to appear in /v1/models")
+}
+
+func TestListModelsCodexFormatAdvertisesImageGenerationToolOnTextModels(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	withMemoryCacheEnabled(t, false)
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       5003,
+		Username: "codex-models-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:            22,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "codex-text-channel",
+		Key:           "test-key",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "default",
+		Models:        "gpt-5.5,gpt-image-2",
+		OtherSettings: `{"wire_api":"responses"}`,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5.5",
+		ChannelId: 22,
+		Enabled:   true,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-image-2",
+		ChannelId: 22,
+		Enabled:   true,
+	}).Error)
+	model.RefreshPricing()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models?format=codex", nil)
+	ctx.Set("id", 5003)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload codexModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+
+	var foundText bool
+	for _, item := range payload.Models {
+		require.NotEqual(t, "gpt-image-2", item.Slug)
+		if item.Slug != "gpt-5.5" {
+			continue
+		}
+		foundText = true
+		require.Contains(t, item.InputModalities, "image")
+		require.Contains(t, item.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
+		require.Contains(t, item.SupportedSessionModes, "responses")
+	}
+	require.True(t, foundText, "expected gpt-5.5 to appear in codex /models response")
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -123,6 +124,12 @@ func ListModels(c *gin.Context, modelType int) {
 	}
 
 	userOpenAiModels := getVisibleOpenAIModels(c, acceptUnsetRatioModel)
+	if shouldReturnCodexModels(c, modelType) {
+		c.JSON(200, dto.CodexModelsResponse{
+			Models: buildCodexModels(userOpenAiModels),
+		})
+		return
+	}
 
 	switch modelType {
 	case constant.ChannelTypeAnthropic:
@@ -288,8 +295,103 @@ func finalizeVisibleOpenAIModels(c *gin.Context, models []dto.OpenAIModels) []dt
 	for i := range models {
 		models[i].SupportedSessionModes = buildSupportedSessionModes(models[i].Id, models[i].SupportedEndpointTypes)
 		models[i].ActualModelReturned = buildActualModelReturned(models[i], actualModelByName[models[i].Id])
+		models[i].InputModalities = buildInputModalities(models[i].Id)
+		models[i].ExperimentalSupportedTools = buildExperimentalSupportedTools(models[i].Id, models[i].SupportedSessionModes, models)
 	}
 	return models
+}
+
+func shouldReturnCodexModels(c *gin.Context, modelType int) bool {
+	if modelType != constant.ChannelTypeOpenAI {
+		return false
+	}
+	if strings.EqualFold(c.Query("format"), "codex") {
+		return true
+	}
+	userAgent := strings.ToLower(c.GetHeader("User-Agent"))
+	return strings.Contains(userAgent, "codex")
+}
+
+func buildCodexModels(models []dto.OpenAIModels) []dto.CodexModelInfo {
+	codexModels := make([]dto.CodexModelInfo, 0, len(models))
+	applyPatchToolType := "freeform"
+	for idx, modelItem := range models {
+		if common.IsImageGenerationModel(modelItem.Id) {
+			continue
+		}
+		codexModels = append(codexModels, dto.CodexModelInfo{
+			Slug:                          modelItem.Id,
+			DisplayName:                   modelItem.Id,
+			Description:                   nil,
+			DefaultReasoningLevel:         "medium",
+			SupportedReasoningLevels:      defaultCodexReasoningLevels(),
+			ShellType:                     "shell_command",
+			Visibility:                    "list",
+			SupportedInAPI:                true,
+			Priority:                      idx + 1,
+			AvailabilityNux:               nil,
+			Upgrade:                       nil,
+			BaseInstructions:              "",
+			SupportsReasoningSummaries:    true,
+			DefaultReasoningSummary:       "auto",
+			SupportVerbosity:              true,
+			DefaultVerbosity:              "low",
+			ApplyPatchToolType:            &applyPatchToolType,
+			WebSearchToolType:             "text",
+			TruncationPolicy:              dto.CodexTruncationPolicy{Mode: "bytes", Limit: 10000},
+			SupportsParallelToolCalls:     true,
+			SupportsImageDetailOriginal:   false,
+			ContextWindow:                 272000,
+			EffectiveContextWindowPercent: 95,
+			ExperimentalSupportedTools:    modelItem.ExperimentalSupportedTools,
+			InputModalities:               modelItem.InputModalities,
+			ActualModelReturned:           modelItem.ActualModelReturned,
+			SupportedEndpointTypes:        modelItem.SupportedEndpointTypes,
+			SupportedSessionModes:         modelItem.SupportedSessionModes,
+		})
+	}
+	return codexModels
+}
+
+func defaultCodexReasoningLevels() []dto.CodexReasoningLevel {
+	return []dto.CodexReasoningLevel{
+		{Effort: "low", Description: "Fast responses with lighter reasoning"},
+		{Effort: "medium", Description: "Balances speed and reasoning depth for everyday tasks"},
+		{Effort: "high", Description: "Greater reasoning depth for complex problems"},
+		{Effort: "xhigh", Description: "Extra high reasoning depth for complex problems"},
+	}
+}
+
+func buildInputModalities(modelName string) []string {
+	if common.IsImageGenerationModel(modelName) {
+		return []string{"text", "image"}
+	}
+	if common.IsOpenAITextModel(modelName) {
+		return []string{"text", "image"}
+	}
+	return []string{"text"}
+}
+
+func buildExperimentalSupportedTools(modelName string, sessionModes []string, models []dto.OpenAIModels) []string {
+	if common.IsImageGenerationModel(modelName) || !containsString(sessionModes, "responses") {
+		return nil
+	}
+	if visibleModelsSupportImageGeneration(models) {
+		return []string{dto.BuildInToolImageGeneration}
+	}
+	return nil
+}
+
+func visibleModelsSupportImageGeneration(models []dto.OpenAIModels) bool {
+	for _, modelItem := range models {
+		if common.IsImageGenerationModel(modelItem.Id) {
+			return true
+		}
+		if endpointTypesContain(modelItem.SupportedEndpointTypes, constant.EndpointTypeImageGeneration) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildSupportedSessionModes(modelName string, endpointTypes []constant.EndpointType) []string {
@@ -360,6 +462,15 @@ func appendUniqueString(items []string, value string) []string {
 		}
 	}
 	return append(items, value)
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
 
 func sortVisibleModels(models []dto.OpenAIModels) []dto.OpenAIModels {
