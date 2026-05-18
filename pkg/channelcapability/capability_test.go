@@ -8,10 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSupportedEndpointTypesRequiresCodexCompatibilityForOpenAIImageModels(t *testing.T) {
+func TestSupportedEndpointTypesKeepsOpenAIImageApiSeparateFromCodexImageTool(t *testing.T) {
 	endpoints := SupportedEndpointTypes(constant.ChannelTypeOpenAI, "gpt-image-2", dto.ChannelOtherSettings{})
-	require.NotContains(t, endpoints, constant.EndpointTypeImageGeneration)
-	require.NotContains(t, endpoints, constant.EndpointTypeImageEdit)
+	require.Equal(t, constant.EndpointTypeImageGeneration, endpoints[0])
+	require.Equal(t, constant.EndpointTypeImageEdit, endpoints[1])
+	require.Contains(t, endpoints, constant.EndpointTypeImageGeneration)
+	require.Contains(t, endpoints, constant.EndpointTypeImageEdit)
+	require.NotContains(t, endpoints, constant.EndpointTypeOpenAIResponseCompact)
 
 	endpoints = SupportedEndpointTypes(constant.ChannelTypeOpenAI, "gpt-image-2", dto.ChannelOtherSettings{
 		CodexCompatibilityMode:            true,
@@ -23,6 +26,13 @@ func TestSupportedEndpointTypesRequiresCodexCompatibilityForOpenAIImageModels(t 
 	require.Contains(t, endpoints, constant.EndpointTypeImageEdit)
 	require.Contains(t, endpoints, constant.EndpointTypeOpenAIResponse)
 	require.Contains(t, endpoints, constant.EndpointTypeOpenAIResponseCompact)
+}
+
+func TestSupportsCodexImageGenerationToolAcceptsGenericToolList(t *testing.T) {
+	require.True(t, SupportsCodexImageGenerationTool(constant.ChannelTypeOpenAI, dto.ChannelOtherSettings{
+		CodexCompatibilityMode: true,
+		CodexSupportedTools:    []string{dto.BuildInToolImageGeneration},
+	}))
 }
 
 func TestSupportedEndpointTypesKeepsOrdinaryImageModelsForOpenAI(t *testing.T) {
@@ -40,7 +50,7 @@ func TestSupportedEndpointTypesKeepsNativeImageChannels(t *testing.T) {
 func TestSupportedEndpointTypesKeepsResponsesWireAPIWithoutCodexImageCapability(t *testing.T) {
 	endpoints := SupportedEndpointTypes(constant.ChannelTypeOpenAI, "gpt-image-2", dto.ChannelOtherSettings{WireAPI: "responses"})
 	require.Contains(t, endpoints, constant.EndpointTypeOpenAIResponse)
-	require.NotContains(t, endpoints, constant.EndpointTypeImageGeneration)
-	require.NotContains(t, endpoints, constant.EndpointTypeImageEdit)
+	require.Contains(t, endpoints, constant.EndpointTypeImageGeneration)
+	require.Contains(t, endpoints, constant.EndpointTypeImageEdit)
 	require.NotContains(t, endpoints, constant.EndpointTypeOpenAIResponseCompact)
 }

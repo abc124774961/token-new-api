@@ -599,7 +599,7 @@ func TestListModelsAdvertisesImageSessionModes(t *testing.T) {
 	require.True(t, found, "expected gpt-image-2 to appear in /v1/models")
 }
 
-func TestListModelsDoesNotAdvertiseImageSessionModesWithoutCodexCompatibility(t *testing.T) {
+func TestListModelsAdvertisesImageApiWithoutCodexImageToolCapability(t *testing.T) {
 	withSelfUseModeEnabled(t)
 	withMemoryCacheEnabled(t, false)
 
@@ -647,13 +647,13 @@ func TestListModelsDoesNotAdvertiseImageSessionModesWithoutCodexCompatibility(t 
 			continue
 		}
 		found = true
-		require.NotContains(t, item.SupportedEndpointTypes, constant.EndpointTypeImageGeneration)
-		require.NotContains(t, item.SupportedEndpointTypes, constant.EndpointTypeImageEdit)
-		require.Empty(t, item.SupportedSessionModes)
+		require.Contains(t, item.SupportedEndpointTypes, constant.EndpointTypeImageGeneration)
+		require.Contains(t, item.SupportedEndpointTypes, constant.EndpointTypeImageEdit)
+		require.Equal(t, []string{"image_generation", "image_edit"}, item.SupportedSessionModes)
 		require.Nil(t, item.Capabilities)
 		require.Empty(t, item.ExperimentalSupportedTools)
 		require.Equal(t, []string{"text", "image"}, item.InputModalities)
-		require.Equal(t, []string{"text"}, item.OutputModalities)
+		require.Equal(t, []string{"image"}, item.OutputModalities)
 	}
 	require.True(t, found, "expected gpt-image-2 to appear in /v1/models")
 }

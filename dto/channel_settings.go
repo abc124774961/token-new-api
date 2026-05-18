@@ -1,6 +1,9 @@
 package dto
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 type ChannelSettings struct {
 	ForceFormat            bool   `json:"force_format,omitempty"`
@@ -35,6 +38,7 @@ type ChannelOtherSettings struct {
 	CodexImageGenerationToolProbeTime     int64         `json:"codex_image_generation_tool_probe_time,omitempty"`
 	CodexImageGenerationToolProbeMessage  string        `json:"codex_image_generation_tool_probe_message,omitempty"`
 	CodexImageGenerationToolProbeModels   []string      `json:"codex_image_generation_tool_probe_models,omitempty"`
+	CodexSupportedTools                   []string      `json:"codex_supported_tools,omitempty"`
 	VertexKeyType                         VertexKeyType `json:"vertex_key_type,omitempty"` // "json" or "api_key"
 	OpenRouterEnterprise                  *bool         `json:"openrouter_enterprise,omitempty"`
 	ClaudeBetaQuery                       bool          `json:"claude_beta_query,omitempty"`         // Claude 渠道是否强制追加 ?beta=true
@@ -79,7 +83,7 @@ func (s ChannelOtherSettings) UsesCodexCompatibilityMode() bool {
 }
 
 func (s ChannelOtherSettings) SupportsCodexImageGenerationTool() bool {
-	return s.CodexCompatibilityMode && s.CodexImageGenerationToolSupported
+	return s.CodexCompatibilityMode && (s.CodexImageGenerationToolSupported || slices.Contains(s.CodexSupportedTools, BuildInToolImageGeneration))
 }
 
 func (s *ChannelOtherSettings) GetOpenAIWireAPIPath(isCompact bool) string {

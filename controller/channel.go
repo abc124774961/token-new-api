@@ -1,9 +1,11 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -267,6 +270,362 @@ func collectCodexImageGenerationToolModels(models []string) []string {
 	return result
 }
 
+func collectCodexResponsesImageToolProbeModels(models []string) []string {
+	priority := []string{
+		"gpt-5.5",
+		"gpt-5.4",
+		"gpt-5.3-codex",
+		"gpt-5.3",
+		"gpt-5.2",
+		"gpt-5",
+		"gpt-4.1",
+		"gpt-4o",
+		"o4",
+		"o3",
+	}
+	seen := make(map[string]struct{}, len(models))
+	normalized := make([]string, 0, len(models))
+	for _, modelName := range models {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			continue
+		}
+		lower := strings.ToLower(modelName)
+		if strings.HasPrefix(lower, "gpt-image-") || common.IsImageGenerationModel(modelName) {
+			continue
+		}
+		if !common.IsOpenAITextModel(modelName) {
+			continue
+		}
+		if _, ok := seen[modelName]; ok {
+			continue
+		}
+		seen[modelName] = struct{}{}
+		normalized = append(normalized, modelName)
+	}
+
+	result := make([]string, 0, len(normalized))
+	resultSeen := make(map[string]struct{}, len(normalized))
+	appendResult := func(modelName string) {
+		if _, ok := resultSeen[modelName]; ok {
+			return
+		}
+		resultSeen[modelName] = struct{}{}
+		result = append(result, modelName)
+	}
+	for _, prefix := range priority {
+		for _, modelName := range normalized {
+			if strings.HasPrefix(strings.ToLower(modelName), prefix) {
+				appendResult(modelName)
+			}
+		}
+	}
+	for _, modelName := range normalized {
+		appendResult(modelName)
+	}
+	return result
+}
+
+type codexImageToolProbeResponse struct {
+	Error  any `json:"error,omitempty"`
+	Output []struct {
+		Type    string `json:"type"`
+		Status  string `json:"status,omitempty"`
+		Result  string `json:"result,omitempty"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text,omitempty"`
+		} `json:"content,omitempty"`
+	} `json:"output,omitempty"`
+}
+
+type codexImageToolProbeConfigRequest struct {
+	BaseURL        string          `json:"base_url"`
+	Type           int             `json:"type"`
+	Key            string          `json:"key"`
+	Settings       json.RawMessage `json:"settings"`
+	WireAPI        string          `json:"wire_api"`
+	Proxy          string          `json:"proxy"`
+	HeaderOverride string          `json:"header_override"`
+}
+
+func buildCodexResponsesImageToolProbeURL(channel *model.Channel) string {
+	baseURL := constant.ChannelBaseURLs[channel.Type]
+	if channel.GetBaseURL() != "" {
+		baseURL = channel.GetBaseURL()
+	}
+	requestPath := "/v1/responses"
+	settings := channel.GetOtherSettings()
+	if customPath := settings.GetOpenAIWireAPIPath(false); customPath != "" {
+		requestPath = customPath
+	}
+	return relaycommon.GetFullRequestURL(strings.TrimRight(baseURL, "/"), requestPath, channel.Type)
+}
+
+func parseCodexProbeOtherSettings(raw json.RawMessage) (dto.ChannelOtherSettings, error) {
+	settings := dto.ChannelOtherSettings{}
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return settings, nil
+	}
+	if raw[0] == '"' {
+		var settingsText string
+		if err := common.Unmarshal(raw, &settingsText); err != nil {
+			return settings, err
+		}
+		if strings.TrimSpace(settingsText) == "" {
+			return settings, nil
+		}
+		if err := common.UnmarshalJsonStr(settingsText, &settings); err != nil {
+			return settings, err
+		}
+		return settings, nil
+	}
+	if err := common.Unmarshal(raw, &settings); err != nil {
+		return settings, err
+	}
+	return settings, nil
+}
+
+func buildTransientCodexProbeChannel(req codexImageToolProbeConfigRequest) (*model.Channel, error) {
+	if req.Type != constant.ChannelTypeOpenAI {
+		return nil, fmt.Errorf("仅 OpenAI 渠道支持 Codex 工具能力检测")
+	}
+
+	key := strings.TrimSpace(req.Key)
+	if key == "" {
+		return nil, fmt.Errorf("请填写密钥")
+	}
+	key = strings.TrimSpace(strings.Split(key, "\n")[0])
+
+	settings, err := parseCodexProbeOtherSettings(req.Settings)
+	if err != nil {
+		return nil, fmt.Errorf("解析 settings 失败: %w", err)
+	}
+	settings.CodexCompatibilityMode = true
+	if wireAPI := strings.TrimSpace(req.WireAPI); wireAPI != "" {
+		settings.WireAPI = wireAPI
+	}
+	settingsBytes, err := common.Marshal(settings)
+	if err != nil {
+		return nil, err
+	}
+
+	channelSettings := dto.ChannelSettings{Proxy: strings.TrimSpace(req.Proxy)}
+	channelSettingsBytes, err := common.Marshal(channelSettings)
+	if err != nil {
+		return nil, err
+	}
+
+	channel := &model.Channel{
+		Type:          req.Type,
+		Key:           key,
+		OtherSettings: string(settingsBytes),
+		Setting:       common.GetPointer(string(channelSettingsBytes)),
+	}
+	if baseURL := strings.TrimSpace(req.BaseURL); baseURL != "" {
+		channel.BaseURL = common.GetPointer(baseURL)
+	}
+	if headerOverride := strings.TrimSpace(req.HeaderOverride); headerOverride != "" {
+		channel.HeaderOverride = common.GetPointer(headerOverride)
+	}
+	return channel, nil
+}
+
+func truncateProbeMessage(message string) string {
+	message = strings.TrimSpace(message)
+	if len([]rune(message)) <= 180 {
+		return message
+	}
+	return string([]rune(message)[:180]) + "..."
+}
+
+func codexImageToolProbeFailureMessage(resp codexImageToolProbeResponse) string {
+	if resp.Error != nil {
+		if errorBytes, err := common.Marshal(resp.Error); err == nil {
+			return truncateProbeMessage(string(errorBytes))
+		}
+		return truncateProbeMessage(common.Interface2String(resp.Error))
+	}
+	for _, output := range resp.Output {
+		for _, content := range output.Content {
+			if content.Text != "" {
+				return truncateProbeMessage(content.Text)
+			}
+		}
+	}
+	return "未返回 image_generation_call"
+}
+
+func codexImageToolProbeSucceeded(resp codexImageToolProbeResponse) bool {
+	for _, output := range resp.Output {
+		if output.Type != dto.ResponsesOutputTypeImageGenerationCall {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(output.Status))
+		switch status {
+		case "failed", "error", "cancelled", "canceled":
+			return false
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+func probeCodexResponsesImageToolModel(ctx context.Context, channel *model.Channel, url string, headers http.Header, modelName string) (bool, string) {
+	body, err := common.Marshal(map[string]any{
+		"model": modelName,
+		"input": "Generate a tiny cyan square for capability probing.",
+		"tools": []map[string]any{
+			{"type": dto.BuildInToolImageGeneration},
+		},
+		"tool_choice": map[string]any{
+			"type": dto.BuildInToolImageGeneration,
+		},
+		"store": false,
+	})
+	if err != nil {
+		return false, err.Error()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return false, err.Error()
+	}
+	for k := range headers {
+		req.Header.Set(k, headers.Get(k))
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	client, err := service.NewProxyHttpClient(channel.GetSetting().Proxy)
+	if err != nil {
+		return false, err.Error()
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return false, err.Error()
+	}
+	defer res.Body.Close()
+
+	responseBody, err := io.ReadAll(io.LimitReader(res.Body, 32<<20))
+	if err != nil {
+		return false, err.Error()
+	}
+	if res.StatusCode != http.StatusOK {
+		return false, fmt.Sprintf("Responses image_generation smoke test status code: %d, body: %s", res.StatusCode, truncateProbeMessage(string(responseBody)))
+	}
+
+	var probeResp codexImageToolProbeResponse
+	if err := common.Unmarshal(responseBody, &probeResp); err != nil {
+		return false, err.Error()
+	}
+	if codexImageToolProbeSucceeded(probeResp) {
+		return true, ""
+	}
+	return false, codexImageToolProbeFailureMessage(probeResp)
+}
+
+func probeCodexResponsesImageTool(channel *model.Channel, upstreamModels []string, imageModels []string) (bool, string) {
+	if len(imageModels) == 0 {
+		return false, "未检测到 gpt-image-* 模型"
+	}
+	probeModels := collectCodexResponsesImageToolProbeModels(upstreamModels)
+	if len(probeModels) == 0 {
+		return false, fmt.Sprintf("检测到 %s，但未检测到可用于 Responses 工具调用的文本模型", strings.Join(imageModels, ", "))
+	}
+	if len(probeModels) > 3 {
+		probeModels = probeModels[:3]
+	}
+
+	key, _, apiErr := channel.GetNextEnabledKey()
+	if apiErr != nil {
+		return false, fmt.Sprintf("获取渠道密钥失败: %s", apiErr.Error())
+	}
+	headers, err := buildFetchModelsHeaders(channel, strings.TrimSpace(key))
+	if err != nil {
+		return false, err.Error()
+	}
+
+	url := buildCodexResponsesImageToolProbeURL(channel)
+	var lastMessage string
+	for _, modelName := range probeModels {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		ok, message := probeCodexResponsesImageToolModel(ctx, channel, url, headers, modelName)
+		cancel()
+		if ok {
+			return true, fmt.Sprintf("Codex Responses 生图工具验证通过: %s", modelName)
+		}
+		lastMessage = fmt.Sprintf("%s: %s", modelName, message)
+	}
+	if lastMessage == "" {
+		lastMessage = "未返回 image_generation_call"
+	}
+	return false, fmt.Sprintf("检测到 %s，但 Responses image_generation 工具调用未通过（%s）", strings.Join(imageModels, ", "), truncateProbeMessage(lastMessage))
+}
+
+func probeCodexResponsesImageToolForChannel(channel *model.Channel) (bool, []string, int64, string, error) {
+	upstreamModels, err := fetchChannelUpstreamModelIDs(channel)
+	if err != nil {
+		return false, nil, 0, "", err
+	}
+
+	imageModels := collectCodexImageGenerationToolModels(upstreamModels)
+	now := common.GetTimestamp()
+	supported, message := probeCodexResponsesImageTool(channel, upstreamModels, imageModels)
+	return supported, imageModels, now, message, nil
+}
+
+func respondCodexImageToolProbe(c *gin.Context, supported bool, imageModels []string, checkedAt int64, message string) {
+	tools := []string{}
+	if supported {
+		tools = []string{dto.BuildInToolImageGeneration}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"supported":  supported,
+			"models":     imageModels,
+			"checked_at": checkedAt,
+			"message":    message,
+			"tools":      tools,
+		},
+	})
+}
+
+func ProbeUnsavedChannelCodexImageGenerationTool(c *gin.Context) {
+	var req codexImageToolProbeConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Invalid request",
+		})
+		return
+	}
+
+	channel, err := buildTransientCodexProbeChannel(req)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	supported, imageModels, checkedAt, message, err := probeCodexResponsesImageToolForChannel(channel)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": fmt.Sprintf("检测失败: %s", err.Error()),
+		})
+		return
+	}
+
+	respondCodexImageToolProbe(c, supported, imageModels, checkedAt, message)
+}
+
 func ProbeChannelCodexImageGenerationTool(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -282,12 +641,12 @@ func ProbeChannelCodexImageGenerationTool(c *gin.Context) {
 	if channel.Type != constant.ChannelTypeOpenAI {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "仅 OpenAI 渠道支持 Codex 生图能力检测",
+			"message": "仅 OpenAI 渠道支持 Codex 工具能力检测",
 		})
 		return
 	}
 
-	upstreamModels, err := fetchChannelUpstreamModelIDs(channel)
+	supported, imageModels, checkedAt, message, err := probeCodexResponsesImageToolForChannel(channel)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -296,18 +655,16 @@ func ProbeChannelCodexImageGenerationTool(c *gin.Context) {
 		return
 	}
 
-	imageModels := collectCodexImageGenerationToolModels(upstreamModels)
-	now := common.GetTimestamp()
-	message := "未检测到 gpt-image-* 模型"
-	if len(imageModels) > 0 {
-		message = fmt.Sprintf("已检测到 %s", strings.Join(imageModels, ", "))
-	}
-
 	settings := channel.GetOtherSettings()
-	settings.CodexImageGenerationToolSupported = len(imageModels) > 0
-	settings.CodexImageGenerationToolProbeTime = now
+	settings.CodexImageGenerationToolSupported = supported
+	settings.CodexImageGenerationToolProbeTime = checkedAt
 	settings.CodexImageGenerationToolProbeMessage = message
 	settings.CodexImageGenerationToolProbeModels = imageModels
+	if supported {
+		settings.CodexSupportedTools = []string{dto.BuildInToolImageGeneration}
+	} else {
+		settings.CodexSupportedTools = []string{}
+	}
 	if err := updateChannelUpstreamModelSettings(channel, settings, false); err != nil {
 		common.ApiError(c, err)
 		return
@@ -315,16 +672,7 @@ func ProbeChannelCodexImageGenerationTool(c *gin.Context) {
 	model.InitChannelCache()
 	service.ResetProxyClientCache()
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data": gin.H{
-			"supported":  len(imageModels) > 0,
-			"models":     imageModels,
-			"checked_at": now,
-			"message":    message,
-		},
-	})
+	respondCodexImageToolProbe(c, supported, imageModels, checkedAt, message)
 }
 
 func FixChannelsAbilities(c *gin.Context) {

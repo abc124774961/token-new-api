@@ -295,11 +295,12 @@ func finalizeVisibleOpenAIModels(c *gin.Context, models []dto.OpenAIModels) []dt
 	for i := range models {
 		models[i].SupportedSessionModes = buildSupportedSessionModes(models[i].Id, models[i].SupportedEndpointTypes)
 		models[i].ActualModelReturned = buildActualModelReturned(models[i], actualModelByName[models[i].Id])
-		models[i].Capabilities = buildModelCapabilities(models[i].Id, models[i].SupportedEndpointTypes)
+		codexImageToolSupported := model.GetModelCodexImageGenerationToolSupported(models[i].Id)
+		models[i].Capabilities = buildModelCapabilities(models[i].Id, codexImageToolSupported)
 		models[i].InputModalities = buildInputModalities(models[i].Id)
 		models[i].OutputModalities = buildOutputModalities(models[i].Id, models[i].SupportedEndpointTypes)
 		models[i].SupportedModalities = buildSupportedModalities(models[i].InputModalities, models[i].OutputModalities)
-		models[i].ExperimentalSupportedTools = buildExperimentalSupportedTools(models[i].Id, models[i].SupportedEndpointTypes, models[i].ExperimentalSupportedTools)
+		models[i].ExperimentalSupportedTools = buildExperimentalSupportedTools(models[i].Id, codexImageToolSupported, models[i].ExperimentalSupportedTools)
 	}
 	return models
 }
@@ -372,9 +373,8 @@ func nonNilStringSlice(items []string) []string {
 	return items
 }
 
-func buildModelCapabilities(modelName string, endpointTypes []constant.EndpointType) map[string]bool {
-	if !common.IsImageGenerationModel(modelName) ||
-		!endpointTypesContain(endpointTypes, constant.EndpointTypeImageGeneration) {
+func buildModelCapabilities(modelName string, codexImageToolSupported bool) map[string]bool {
+	if !common.IsImageGenerationModel(modelName) || !codexImageToolSupported {
 		return nil
 	}
 	return map[string]bool{
@@ -382,10 +382,9 @@ func buildModelCapabilities(modelName string, endpointTypes []constant.EndpointT
 	}
 }
 
-func buildExperimentalSupportedTools(modelName string, endpointTypes []constant.EndpointType, tools []string) []string {
+func buildExperimentalSupportedTools(modelName string, codexImageToolSupported bool, tools []string) []string {
 	result := nonNilStringSlice(tools)
-	if common.IsImageGenerationModel(modelName) &&
-		endpointTypesContain(endpointTypes, constant.EndpointTypeImageGeneration) {
+	if common.IsImageGenerationModel(modelName) && codexImageToolSupported {
 		result = appendUniqueString(result, dto.BuildInToolImageGeneration)
 	}
 	return result

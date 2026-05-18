@@ -193,7 +193,7 @@ func TestCacheGetRandomSatisfiedChannelSkipsFullConcurrencyChannel(t *testing.T)
 	require.Equal(t, 112, channel.Id)
 }
 
-func TestCacheGetRandomSatisfiedChannelSkipsImageChannelWithoutCodexCompatibility(t *testing.T) {
+func TestCacheGetRandomSatisfiedChannelKeepsImageApiSeparateFromCodexTool(t *testing.T) {
 	db := setupChannelSelectTestDB(t)
 	withChannelSelectMemoryCache(t, true)
 
@@ -210,6 +210,14 @@ func TestCacheGetRandomSatisfiedChannelSkipsImageChannelWithoutCodexCompatibilit
 	}
 
 	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.Equal(t, "default", group)
+	require.NotNil(t, channel)
+	require.Contains(t, []int{121, 122}, channel.Id)
+
+	param.RequiresCodexImageTool = true
+	param.Ctx = newRetryContext()
+	channel, group, err = CacheGetRandomSatisfiedChannel(param)
 	require.NoError(t, err)
 	require.Equal(t, "default", group)
 	require.NotNil(t, channel)

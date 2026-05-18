@@ -60,8 +60,9 @@ var (
 )
 
 var (
-	modelSupportEndpointTypes = make(map[string][]constant.EndpointType)
-	modelSupportEndpointsLock = sync.RWMutex{}
+	modelSupportEndpointTypes  = make(map[string][]constant.EndpointType)
+	modelCodexImageToolSupport = make(map[string]bool)
+	modelSupportEndpointsLock  = sync.RWMutex{}
 )
 
 func appendUniqueEndpoint(endpoints []string, endpoint constant.EndpointType) []string {
@@ -119,6 +120,15 @@ func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
 		return endpoints
 	}
 	return make([]constant.EndpointType, 0)
+}
+
+func GetModelCodexImageGenerationToolSupported(model string) bool {
+	if model == "" {
+		return false
+	}
+	modelSupportEndpointsLock.RLock()
+	defer modelSupportEndpointsLock.RUnlock()
+	return modelCodexImageToolSupport[model]
 }
 
 func updatePricing() {
@@ -229,6 +239,7 @@ func updatePricing() {
 
 	//这里使用切片而不是Set，因为一个模型可能支持多个端点类型，并且第一个端点是优先使用端点
 	modelSupportEndpointsStr := make(map[string][]string)
+	modelCodexImageToolSupport = make(map[string]bool)
 
 	// 先根据已有能力填充原生端点
 	for _, ability := range enableAbilities {
@@ -239,6 +250,9 @@ func updatePricing() {
 			endpoints = appendUniqueEndpoint(endpoints, channelType)
 		}
 		modelSupportEndpointsStr[ability.Model] = endpoints
+		if channelcapability.SupportsCodexImageGenerationTool(ability.ChannelType, channelSettings) {
+			modelCodexImageToolSupport[ability.Model] = true
+		}
 	}
 
 	// 再补充模型自定义端点：若配置有效则替换默认端点，不做合并

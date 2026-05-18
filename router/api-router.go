@@ -241,6 +241,7 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.POST("/fix", controller.FixChannelsAbilities)
 			channelRoute.GET("/fetch_models/:id", controller.FetchUpstreamModels)
 			channelRoute.POST("/fetch_models", middleware.RootAuth(), controller.FetchModels)
+			channelRoute.POST("/codex/image_generation_tool/probe", middleware.RootAuth(), controller.ProbeUnsavedChannelCodexImageGenerationTool)
 			channelRoute.POST("/:id/codex/image_generation_tool/probe", controller.ProbeChannelCodexImageGenerationTool)
 			channelRoute.POST("/codex/oauth/start", controller.StartCodexOAuth)
 			channelRoute.POST("/codex/oauth/complete", controller.CompleteCodexOAuth)

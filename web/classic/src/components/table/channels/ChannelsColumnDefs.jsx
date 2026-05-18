@@ -539,8 +539,25 @@ const isImageGenerationModel = (modelName) => {
   );
 };
 
-const isCodexImageModel = (modelName) =>
-  String(modelName || '').trim().toLowerCase().startsWith('gpt-image-');
+const getCodexSupportedTools = (type, settings) => {
+  if (type === 57) {
+    return ['image_generation'];
+  }
+  if (type !== 1 || settings.codex_compatibility_mode !== true) {
+    return [];
+  }
+  if (Array.isArray(settings.codex_supported_tools)) {
+    const tools = settings.codex_supported_tools
+      .map((tool) => String(tool || '').trim())
+      .filter(Boolean);
+    if (tools.length > 0) {
+      return Array.from(new Set(tools));
+    }
+  }
+  return settings.codex_image_generation_tool_supported === true
+    ? ['image_generation']
+    : [];
+};
 
 const usesResponsesWireAPI = (settings) => {
   const wireAPI = String(settings?.wire_api || '')
@@ -572,20 +589,12 @@ const buildChannelCapabilityKeys = (record) => {
     const codexCompatible =
       type === 57 ||
       (type === 1 && settings.codex_compatibility_mode === true);
-    const codexImageToolSupported =
-      type === 57 ||
-      (type === 1 &&
-        settings.codex_compatibility_mode === true &&
-        settings.codex_image_generation_tool_supported === true);
+    const codexTools = getCodexSupportedTools(type, settings);
     const models = getChannelModelsForCapability(row);
     const hasImageApi = models.some((model) => {
       if (!isImageGenerationModel(model)) return false;
-      return type !== 1 || !isCodexImageModel(model) || codexImageToolSupported;
+      return true;
     });
-    const hasCodexImageTool =
-      codexImageToolSupported &&
-      (models.some(isImageGenerationModel) ||
-        endpointTypes.includes('image-generation'));
 
     if (
       codexCompatible ||
@@ -598,9 +607,9 @@ const buildChannelCapabilityKeys = (record) => {
     if (codexCompatible || endpointTypes.includes('openai-response-compact')) {
       keys.add('compact');
     }
-    if (hasCodexImageTool) {
-      keys.add('codex_image_tool');
-    }
+    codexTools.forEach((tool) => {
+      keys.add(`codex_tool:${tool}`);
+    });
     if (
       hasImageApi ||
       endpointTypes.includes('image-generation') ||
@@ -618,11 +627,15 @@ const renderChannelCapabilities = (record, t) => {
     chat: { label: 'Chat', color: 'grey' },
     responses: { label: 'Responses', color: 'light-blue' },
     compact: { label: 'Compact', color: 'teal' },
-    codex_image_tool: { label: t('Codex生图工具'), color: 'violet' },
     image_api: { label: t('图片API'), color: 'purple' },
   };
   const capabilities = buildChannelCapabilityKeys(record)
-    .map((key) => tagMap[key])
+    .map((key) => {
+      if (key.startsWith('codex_tool:')) {
+        return { label: key.slice('codex_tool:'.length), color: 'violet' };
+      }
+      return tagMap[key];
+    })
     .filter(Boolean);
 
   return (

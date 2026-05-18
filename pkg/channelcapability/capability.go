@@ -2,7 +2,6 @@ package channelcapability
 
 import (
 	"slices"
-	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -15,10 +14,6 @@ import (
 func SupportedEndpointTypes(channelType int, modelName string, settings dto.ChannelOtherSettings) []constant.EndpointType {
 	endpointTypes := common.GetEndpointTypesByChannelType(channelType, modelName)
 	isImageModel := common.IsImageGenerationModel(modelName)
-	if requiresCodexCompatibilityForOpenAIImage(modelName, channelType) &&
-		!settings.SupportsCodexImageGenerationTool() {
-		endpointTypes = withoutImageEndpoints(endpointTypes)
-	}
 	if SupportsResponsesWireAPI(channelType, settings) {
 		if isImageModel {
 			endpointTypes = appendUniqueEndpointType(endpointTypes, constant.EndpointTypeOpenAIResponse)
@@ -76,18 +71,7 @@ func SupportsOpenAIImage(modelName string, channelType int, settings dto.Channel
 	if !common.IsImageGenerationModel(modelName) {
 		return false
 	}
-	if requiresCodexCompatibilityForOpenAIImage(modelName, channelType) {
-		return settings.SupportsCodexImageGenerationTool()
-	}
 	return slices.Contains(common.GetEndpointTypesByChannelType(channelType, modelName), constant.EndpointTypeImageGeneration)
-}
-
-func requiresCodexCompatibilityForOpenAIImage(modelName string, channelType int) bool {
-	return channelType == constant.ChannelTypeOpenAI && isCodexImageModel(modelName)
-}
-
-func isCodexImageModel(modelName string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(modelName)), "gpt-image-")
 }
 
 func appendUniqueEndpointType(items []constant.EndpointType, values ...constant.EndpointType) []constant.EndpointType {
@@ -97,17 +81,4 @@ func appendUniqueEndpointType(items []constant.EndpointType, values ...constant.
 		}
 	}
 	return items
-}
-
-func withoutImageEndpoints(items []constant.EndpointType) []constant.EndpointType {
-	result := make([]constant.EndpointType, 0, len(items))
-	for _, item := range items {
-		switch item {
-		case constant.EndpointTypeImageGeneration, constant.EndpointTypeImageEdit:
-			continue
-		default:
-			result = append(result, item)
-		}
-	}
-	return result
 }

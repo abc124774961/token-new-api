@@ -104,28 +104,21 @@ const REGION_EXAMPLE = {
 };
 const UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT = 8;
 const ADVANCED_SETTINGS_EXPANDED_KEY = 'channel-advanced-settings-expanded';
-const CODEX_IMAGE_MODEL_PREFIX = 'gpt-image-';
-
-const getCodexImageModels = (models = []) =>
-  Array.from(
-    new Set(
-      (Array.isArray(models) ? models : [])
-        .map((model) => String(model || '').trim())
-        .filter((model) => model.toLowerCase().startsWith(CODEX_IMAGE_MODEL_PREFIX)),
-    ),
-  );
+const CODEX_IMAGE_GENERATION_TOOL = 'image_generation';
 
 const buildCodexProbeState = ({
   status = 'idle',
   supported = false,
   message = '',
   models = [],
+  tools = [],
   checkedAt = 0,
 } = {}) => ({
   status,
   supported,
   message,
   models,
+  tools,
   checkedAt,
 });
 
@@ -230,6 +223,7 @@ const EditChannelModal = (props) => {
     codex_image_generation_tool_probe_time: 0,
     codex_image_generation_tool_probe_message: '',
     codex_image_generation_tool_probe_models: [],
+    codex_supported_tools: [],
     // 企业账户设置
     is_enterprise_account: false,
     // 字段透传控制默认值
@@ -967,6 +961,13 @@ const EditChannelModal = (props) => {
           )
             ? parsedSettings.codex_image_generation_tool_probe_models
             : [];
+          data.codex_supported_tools = Array.isArray(
+            parsedSettings.codex_supported_tools,
+          )
+            ? parsedSettings.codex_supported_tools
+            : data.codex_image_generation_tool_supported
+              ? [CODEX_IMAGE_GENERATION_TOOL]
+              : [];
           // 读取企业账户设置
           data.is_enterprise_account =
             parsedSettings.openrouter_enterprise === true;
@@ -1009,6 +1010,7 @@ const EditChannelModal = (props) => {
           data.codex_image_generation_tool_probe_time = 0;
           data.codex_image_generation_tool_probe_message = '';
           data.codex_image_generation_tool_probe_models = [];
+          data.codex_supported_tools = [];
           data.is_enterprise_account = false;
           data.allow_service_tier = false;
           data.disable_store = false;
@@ -1033,6 +1035,7 @@ const EditChannelModal = (props) => {
         data.codex_image_generation_tool_probe_time = 0;
         data.codex_image_generation_tool_probe_message = '';
         data.codex_image_generation_tool_probe_models = [];
+        data.codex_supported_tools = [];
         data.is_enterprise_account = false;
         data.allow_service_tier = false;
         data.disable_store = false;
@@ -1069,6 +1072,7 @@ const EditChannelModal = (props) => {
               supported: data.codex_image_generation_tool_supported === true,
               message: data.codex_image_generation_tool_probe_message || '',
               models: data.codex_image_generation_tool_probe_models || [],
+              tools: data.codex_supported_tools || [],
               checkedAt: data.codex_image_generation_tool_probe_time || 0,
             })
           : buildCodexProbeState();
@@ -1231,6 +1235,11 @@ const EditChannelModal = (props) => {
     const supported = nextState.supported === true;
     const checkedAt = nextState.checkedAt || 0;
     const models = Array.isArray(nextState.models) ? nextState.models : [];
+    const tools = Array.isArray(nextState.tools)
+      ? nextState.tools
+      : supported
+        ? [CODEX_IMAGE_GENERATION_TOOL]
+        : [];
     const message = nextState.message || '';
     const nextSettings = (() => {
       try {
@@ -1248,11 +1257,13 @@ const EditChannelModal = (props) => {
       nextSettings.codex_image_generation_tool_probe_time = checkedAt;
       nextSettings.codex_image_generation_tool_probe_message = message;
       nextSettings.codex_image_generation_tool_probe_models = models;
+      nextSettings.codex_supported_tools = tools;
     } else {
       delete nextSettings.codex_image_generation_tool_supported;
       delete nextSettings.codex_image_generation_tool_probe_time;
       delete nextSettings.codex_image_generation_tool_probe_message;
       delete nextSettings.codex_image_generation_tool_probe_models;
+      delete nextSettings.codex_supported_tools;
     }
     const nextSettingsJson = JSON.stringify(nextSettings);
 
@@ -1274,6 +1285,7 @@ const EditChannelModal = (props) => {
         'codex_image_generation_tool_probe_models',
         models,
       );
+      formApiRef.current.setValue('codex_supported_tools', tools);
     }
 
     if (persistToForm) {
@@ -1284,8 +1296,37 @@ const EditChannelModal = (props) => {
         codex_image_generation_tool_probe_time: checkedAt,
         codex_image_generation_tool_probe_message: message,
         codex_image_generation_tool_probe_models: models,
+        codex_supported_tools: tools,
       }));
     }
+  };
+
+  const buildCodexProbeConfigPayload = (currentValues = {}) => {
+    const settings = (() => {
+      try {
+        return currentValues.settings ? JSON.parse(currentValues.settings) : {};
+      } catch (error) {
+        return {};
+      }
+    })();
+    settings.codex_compatibility_mode = true;
+    const wireAPI = String(currentValues.wire_api || settings.wire_api || '')
+      .trim();
+    if (wireAPI) {
+      settings.wire_api = wireAPI;
+    } else {
+      delete settings.wire_api;
+    }
+
+    return {
+      base_url: currentValues.base_url || '',
+      type: Number(currentValues.type ?? inputs.type),
+      key: currentValues.key || '',
+      settings: JSON.stringify(settings),
+      wire_api: wireAPI,
+      proxy: currentValues.proxy || '',
+      header_override: currentValues.header_override || '',
+    };
   };
 
   const probeCodexImageToolSupport = async (options = {}) => {
@@ -1303,7 +1344,7 @@ const EditChannelModal = (props) => {
     codexProbeRequestIdRef.current = requestId;
     const checkingState = buildCodexProbeState({
       status: 'checking',
-      message: t('正在请求上游检测 Codex 生图能力'),
+      message: t('正在请求上游检测 Codex 工具能力'),
     });
     applyCodexProbeResult(checkingState, { persistToForm: false });
 
@@ -1327,60 +1368,61 @@ const EditChannelModal = (props) => {
           message:
             data.message ||
             (data.supported
-              ? t('Codex 生图能力检测通过')
+              ? t('Codex 工具能力检测通过')
               : t('未检测到 gpt-image-* 模型')),
           models: Array.isArray(data.models) ? data.models : [],
+          tools: Array.isArray(data.tools)
+            ? data.tools
+            : data.supported
+              ? [CODEX_IMAGE_GENERATION_TOOL]
+              : [],
           checkedAt: Number(data.checked_at) || Math.floor(Date.now() / 1000),
         });
         applyCodexProbeResult(nextState);
         if (!silent) {
           if (nextState.supported) {
-            showSuccess(t('Codex 生图能力检测通过'));
+            showSuccess(t('Codex 工具能力检测通过'));
           } else {
-            showInfo(t('未检测到 Codex 生图工具能力'));
+            showInfo(t('未检测到 Codex 工具能力'));
           }
         }
         return nextState;
       }
 
-      const models = await fetchUpstreamModelList('codex_probe', {
-        silent: true,
-        preserveLoading: true,
-      });
+      const res = await API.post(
+        '/api/channel/codex/image_generation_tool/probe',
+        buildCodexProbeConfigPayload(currentValues),
+        { skipErrorHandler: true },
+      );
       if (codexProbeRequestIdRef.current !== requestId) {
         return codexProbeState;
       }
-      if (!Array.isArray(models)) {
-        throw new Error(t('获取模型列表失败'));
+      if (!res?.data?.success) {
+        throw new Error(res?.data?.message || t('检测失败'));
       }
-      const imageModels = getCodexImageModels(models || []);
-      const checkedAt = Math.floor(Date.now() / 1000);
-      const nextState =
-        imageModels.length > 0
-          ? buildCodexProbeState({
-              status: 'supported',
-              supported: true,
-              message: t('已检测到 {{models}}', {
-                models: imageModels
-                  .slice(0, UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT)
-                  .join(', '),
-              }),
-              models: imageModels,
-              checkedAt,
-            })
-          : buildCodexProbeState({
-              status: 'unsupported',
-              supported: false,
-              message: t('未检测到 gpt-image-* 模型'),
-              models: [],
-              checkedAt,
-            });
+      const data = res.data.data || {};
+      const nextState = buildCodexProbeState({
+        status: data.supported ? 'supported' : 'unsupported',
+        supported: data.supported === true,
+        message:
+          data.message ||
+          (data.supported
+            ? t('Codex 工具能力检测通过')
+            : t('未检测到 gpt-image-* 模型')),
+        models: Array.isArray(data.models) ? data.models : [],
+        tools: Array.isArray(data.tools)
+          ? data.tools
+          : data.supported
+            ? [CODEX_IMAGE_GENERATION_TOOL]
+            : [],
+        checkedAt: Number(data.checked_at) || Math.floor(Date.now() / 1000),
+      });
       applyCodexProbeResult(nextState);
       if (!silent) {
         if (nextState.supported) {
-          showSuccess(t('Codex 生图能力检测通过'));
+          showSuccess(t('Codex 工具能力检测通过'));
         } else {
-          showInfo(t('未检测到 Codex 生图工具能力'));
+          showInfo(t('未检测到 Codex 工具能力'));
         }
       }
       return nextState;
@@ -1406,10 +1448,11 @@ const EditChannelModal = (props) => {
 
   const renderCodexProbeStatus = () => {
     const status = codexProbeState.status;
+    const toolText = (codexProbeState.tools || []).join(', ');
     const tagConfig = {
       idle: { color: 'grey', text: t('待检测') },
       checking: { color: 'blue', text: t('检测中') },
-      supported: { color: 'green', text: t('已检测支持') },
+      supported: { color: 'green', text: toolText || t('已检测支持') },
       unsupported: { color: 'orange', text: t('未检测到') },
       error: { color: 'red', text: t('检测失败') },
     }[status] || { color: 'grey', text: t('待检测') };
@@ -1421,6 +1464,7 @@ const EditChannelModal = (props) => {
       : '';
     const tooltipLines = [
       codexProbeState.message,
+      toolText ? t('Codex工具: {{tools}}', { tools: toolText }) : '',
       modelText ? t('上游模型: {{models}}', { models: modelText }) : '',
       checkedAtText ? t('最近检测: {{time}}', { time: checkedAtText }) : '',
     ].filter(Boolean);
@@ -2152,11 +2196,19 @@ const EditChannelModal = (props) => {
         )
           ? localInputs.codex_image_generation_tool_probe_models
           : [];
+        settings.codex_supported_tools = Array.isArray(
+          localInputs.codex_supported_tools,
+        )
+          ? localInputs.codex_supported_tools
+          : localInputs.codex_image_generation_tool_supported === true
+            ? [CODEX_IMAGE_GENERATION_TOOL]
+            : [];
       } else {
         delete settings.codex_image_generation_tool_supported;
         delete settings.codex_image_generation_tool_probe_time;
         delete settings.codex_image_generation_tool_probe_message;
         delete settings.codex_image_generation_tool_probe_models;
+        delete settings.codex_supported_tools;
       }
     } else if ('codex_compatibility_mode' in settings) {
       delete settings.codex_compatibility_mode;
@@ -2164,6 +2216,7 @@ const EditChannelModal = (props) => {
       delete settings.codex_image_generation_tool_probe_time;
       delete settings.codex_image_generation_tool_probe_message;
       delete settings.codex_image_generation_tool_probe_models;
+      delete settings.codex_supported_tools;
     }
 
     // type === 41 (Vertex): 始终保存 vertex_key_type 到 settings，避免编辑时被重置
@@ -2234,6 +2287,7 @@ const EditChannelModal = (props) => {
     delete localInputs.codex_image_generation_tool_probe_time;
     delete localInputs.codex_image_generation_tool_probe_message;
     delete localInputs.codex_image_generation_tool_probe_models;
+    delete localInputs.codex_supported_tools;
     // 清理字段透传控制的临时字段
     delete localInputs.allow_service_tier;
     delete localInputs.disable_store;
@@ -3798,7 +3852,7 @@ const EditChannelModal = (props) => {
                                     )
                                   }
                                   extraText={t(
-                                    '开启后该 OpenAI 渠道按 Codex Responses 能力参与路由，并允许 gpt-image-* 生图/编辑能力；普通兼容站不要开启',
+                                    '开启后该 OpenAI 渠道会参与 Codex Responses 路由，并单独检测 Codex image_generation 工具；普通图片 API 不依赖此开关',
                                   )}
                                 />
                                 <div>
