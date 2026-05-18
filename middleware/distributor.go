@@ -30,10 +30,6 @@ type ModelRequest struct {
 	RequiresCodexImageTool bool                  `json:"-"`
 }
 
-type responsesCapabilityRequest struct {
-	Tools []map[string]any `json:"tools,omitempty"`
-}
-
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		var channel *model.Channel
@@ -210,16 +206,11 @@ func responsesRequestHasImageGenerationTool(c *gin.Context) bool {
 	if c == nil || c.Request == nil || !strings.HasPrefix(c.Request.URL.Path, "/v1/responses") {
 		return false
 	}
-	req := responsesCapabilityRequest{}
+	req := dto.OpenAIResponsesRequest{}
 	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
 		return false
 	}
-	for _, tool := range req.Tools {
-		if common.Interface2String(tool["type"]) == dto.BuildInToolImageGeneration {
-			return true
-		}
-	}
-	return false
+	return req.HasTool(dto.BuildInToolImageGeneration)
 }
 
 func channelSupportsModelRequest(channel *model.Channel, request ModelRequest) bool {

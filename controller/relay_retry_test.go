@@ -12,7 +12,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/types"
@@ -112,6 +115,18 @@ func serviceSeedRelayRetryChannel(t *testing.T, db *gorm.DB, id int, group strin
 	}
 	require.NoError(t, db.Create(channel).Error)
 	require.NoError(t, channel.AddAbilities(nil))
+}
+
+func TestRequiresCodexImageToolForRelayDetectsToolChoice(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeResponses,
+		Request: &dto.OpenAIResponsesRequest{
+			Model:      "gpt-5.5",
+			ToolChoice: []byte(`{"type":"image_generation"}`),
+		},
+	}
+
+	require.True(t, requiresCodexImageToolForRelay(info))
 }
 
 func withAutoGroupsForRelayTest(t *testing.T, groups []string) {

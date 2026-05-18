@@ -53,6 +53,28 @@ func TestExplicitImageGenerationToolUpdatesResponsesUsageInfo(t *testing.T) {
 	require.Contains(t, usageInfo.BuiltInTools, dto.BuildInToolImageGeneration)
 }
 
+func TestResponsesRequestHasToolDetectsToolChoice(t *testing.T) {
+	t.Parallel()
+
+	req := &dto.OpenAIResponsesRequest{
+		Model:      "gpt-5.5",
+		ToolChoice: []byte(`{"type":"image_generation"}`),
+	}
+
+	require.True(t, req.HasTool(dto.BuildInToolImageGeneration))
+}
+
+func TestResponsesRequestHasToolDetectsNestedToolChoice(t *testing.T) {
+	t.Parallel()
+
+	req := &dto.OpenAIResponsesRequest{
+		Model:      "gpt-5.5",
+		ToolChoice: []byte(`{"type":"allowed_tools","tools":[{"type":"image_generation"}]}`),
+	}
+
+	require.True(t, req.HasTool(dto.BuildInToolImageGeneration))
+}
+
 func TestApplyResponsesCompactBillingModelUsesUpstreamCompactModel(t *testing.T) {
 	t.Parallel()
 

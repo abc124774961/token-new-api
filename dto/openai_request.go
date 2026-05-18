@@ -965,10 +965,46 @@ func (r *OpenAIResponsesRequest) HasTool(toolType string) bool {
 	if r == nil || toolType == "" {
 		return false
 	}
-	for _, tool := range r.GetToolsMap() {
-		if common.Interface2String(tool["type"]) == toolType {
+	return rawJSONContainsToolType(r.Tools, toolType) || rawJSONContainsToolType(r.ToolChoice, toolType)
+}
+
+func rawJSONContainsToolType(raw json.RawMessage, toolType string) bool {
+	if len(raw) == 0 || toolType == "" {
+		return false
+	}
+	var payload any
+	if err := common.Unmarshal(raw, &payload); err != nil {
+		return false
+	}
+	return valueContainsToolType(payload, toolType)
+}
+
+func valueContainsToolType(value any, toolType string) bool {
+	switch typedValue := value.(type) {
+	case []any:
+		for _, item := range typedValue {
+			if valueContainsToolType(item, toolType) {
+				return true
+			}
+		}
+	case []map[string]any:
+		for _, item := range typedValue {
+			if valueContainsToolType(item, toolType) {
+				return true
+			}
+		}
+	case map[string]any:
+		if common.Interface2String(typedValue["type"]) == toolType {
 			return true
 		}
+		if valueContainsToolType(typedValue["tool"], toolType) {
+			return true
+		}
+		if valueContainsToolType(typedValue["tools"], toolType) {
+			return true
+		}
+	case string:
+		return typedValue == toolType
 	}
 	return false
 }
