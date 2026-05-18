@@ -32,7 +32,6 @@ import {
   ArrowRight,
   CheckCircle2,
   Clock3,
-  CreditCard,
   Database,
   Gauge,
   History,
@@ -367,15 +366,6 @@ const SubscriptionPlansCard = ({
     activeQuotaStats.hasUnlimited,
   );
   const usedQuotaLabel = renderQuota(activeQuotaStats.used);
-  const activePlanHint = hasActiveSubscription
-    ? `${activeSubscriptions.length} ${t('个生效中')}`
-    : t('暂无生效套餐');
-  const currentRuleTone =
-    effectiveBillingPreference === 'subscription_first' ||
-    effectiveBillingPreference === 'subscription_only'
-      ? 'subscription'
-      : 'wallet';
-
   const renderLoading = () => (
     <div className='ct-topup-subscription-page'>
       <Card className='ct-topup-panel'>
@@ -496,16 +486,16 @@ const SubscriptionPlansCard = ({
             position='top'
           >
             <Button
-              theme={isRecommended ? 'solid' : 'outline'}
+              theme='outline'
               type='primary'
               block
               disabled={reached}
               onClick={() => {
                 if (!reached) openBuy(p);
               }}
-              className={isRecommended ? 'ct-topup-primary-button' : ''}
+              className='ct-topup-plan-action-button'
             >
-              {isCurrent ? t('当前套餐') : reached ? t('已达上限') : t('立即订阅')}
+              {reached ? t('已达上限') : t('立即订阅')}
             </Button>
           </Tooltip>
         </div>
@@ -552,92 +542,78 @@ const SubscriptionPlansCard = ({
             </Text>
           )}
 
-          <Card className='ct-topup-panel ct-topup-current-band'>
-            <div className='ct-topup-current-band-main'>
-              <div>
-                <span>{t('当前套餐')}</span>
-                <div className='ct-topup-current-title-line'>
-                  <strong>{currentTitle}</strong>
-                  {currentTag && (
-                    <Tag color='green' shape='circle'>
-                      {currentTag}
-                    </Tag>
-                  )}
+          <Card className='ct-topup-panel ct-topup-subscription-overview'>
+            <div className='ct-topup-current-band'>
+              <div className='ct-topup-current-band-main'>
+                <div>
+                  <span>{t('当前套餐')}</span>
+                  <div className='ct-topup-current-title-line'>
+                    <strong>{currentTitle}</strong>
+                    {currentTag && (
+                      <Tag color='green' shape='circle'>
+                        {currentTag}
+                      </Tag>
+                    )}
+                  </div>
                 </div>
               </div>
+              <div className='ct-topup-current-days'>
+                <span>{t('剩余')}</span>
+                <div>
+                  <strong>{remainDays}</strong>
+                  <span>{t('天')}</span>
+                </div>
+                <em>
+                  {hasActiveSubscription
+                    ? `${t('有效期')} ${formatDate(subscription?.start_time)} - ${formatDate(subscription?.end_time)}`
+                    : t('购买套餐后即可享受模型权益')}
+                </em>
+              </div>
+              <div className='ct-topup-current-band-progress'>
+                <div className='ct-topup-current-progress-head'>
+                  <span>{t('订阅额度使用')}</span>
+                  <strong>
+                    {activeQuotaStats.hasUnlimited
+                      ? t('不限')
+                      : `${activeQuotaStats.percent}%`}
+                  </strong>
+                </div>
+                <div className='ct-topup-current-progress-track'>
+                  <span style={{ width: progressWidth }} />
+                </div>
+                {activeQuotaStats.hasUnlimited && (
+                  <em>{t('当前套餐额度不限')}</em>
+                )}
+              </div>
             </div>
-            <div className='ct-topup-current-days'>
-              <span>{t('剩余')}</span>
-              <div>
-                <strong>{remainDays}</strong>
-                <span>{t('天')}</span>
-              </div>
-              <em>
-                {hasActiveSubscription
-                  ? `${t('有效期')} ${formatDate(subscription?.start_time)} - ${formatDate(subscription?.end_time)}`
-                  : t('购买套餐后即可享受模型权益')}
-              </em>
-            </div>
-            <div className='ct-topup-current-band-progress'>
-              <div className='ct-topup-current-progress-head'>
-                <span>
-                  {activeQuotaStats.hasUnlimited
-                    ? t('不限额度')
-                    : `${renderQuota(activeQuotaStats.used)} / ${renderQuota(activeQuotaStats.total)}`}
-                </span>
-                <strong>
-                  {activeQuotaStats.hasUnlimited
-                    ? t('不限')
-                    : `${activeQuotaStats.percent}%`}
-                </strong>
-              </div>
-              <div className='ct-topup-current-progress-track'>
-                <span style={{ width: progressWidth }} />
-              </div>
-              <em>
-                {activeQuotaStats.hasUnlimited
-                  ? t('当前套餐额度不限')
-                  : `${t('剩余额度')} ${renderQuota(activeQuotaStats.remain)}`}
-              </em>
-            </div>
-            <div
-              className={`ct-topup-current-band-rule ct-topup-current-band-rule-${currentRuleTone}`}
-            >
-              <ShieldCheck size={17} />
-              <div>
-                <strong>{displayBillingPreferenceLabel}</strong>
-                <span>{t('扣费偏好')}</span>
-              </div>
+
+            <div className='ct-topup-balance-strip ct-topup-balance-strip-wide'>
+              <SubscriptionStat
+                icon={Gauge}
+                label={t('订阅剩余额度')}
+                value={remainQuotaLabel}
+                tone='teal'
+              />
+              <SubscriptionStat
+                icon={PieChart}
+                label={t('订阅已用额度')}
+                value={usedQuotaLabel}
+                tone='blue'
+              />
+              <SubscriptionStat
+                icon={Database}
+                label={t('订阅总额度')}
+                value={totalPlanQuotaLabel}
+                tone='purple'
+              />
+              <SubscriptionStat
+                icon={ShieldCheck}
+                label={t('扣费策略')}
+                value={displayBillingPreferenceLabel}
+                tone='green'
+              />
             </div>
           </Card>
-
-          <div className='ct-topup-balance-strip ct-topup-balance-strip-wide'>
-            <SubscriptionStat
-              icon={Wallet}
-              label={t('剩余额度')}
-              value={remainQuotaLabel}
-              tone='teal'
-            />
-            <SubscriptionStat
-              icon={PieChart}
-              label={t('已用额度')}
-              value={usedQuotaLabel}
-              tone='blue'
-            />
-            <SubscriptionStat
-              icon={Database}
-              label={t('总额度')}
-              value={totalPlanQuotaLabel}
-              tone='purple'
-            />
-            <SubscriptionStat
-              icon={CreditCard}
-              label={t('扣费偏好')}
-              value={displayBillingPreferenceLabel}
-              hint={activePlanHint}
-              tone='green'
-            />
-          </div>
 
           <div className='ct-topup-subscription-main-grid'>
             <Card className='ct-topup-panel ct-topup-plan-board'>

@@ -414,7 +414,6 @@ const Home = () => {
   const statusSyncLabel = hasRealData
     ? `${t('同步')} ${updatedAt}`
     : t('等待真实请求数据');
-  const displayDays = numberValue(activeSummary.days, numberValue(summary.days, 30)) || 30;
   const rawEnabledChannels = numberValue(
     activeSummary.enabled_channels,
     numberValue(activeGroup.states?.channels, numberValue(summary.enabled_channels, 0)),
@@ -448,24 +447,6 @@ const Home = () => {
     0,
   );
   const standbyPercent = Math.max(0, 100 - healthyPercent - coolingPercent);
-  const statusMetaItems = [
-    {
-      label: t('当前分组'),
-      value: activeGroup.label,
-    },
-    {
-      label: t('数据来源'),
-      value: displayDataMode,
-    },
-    {
-      label: t('采样窗口'),
-      value: `${displayDays} ${t('天')}`,
-    },
-    {
-      label: t('同步状态'),
-      value: hasRealData ? t('实时同步') : t('等待真实数据'),
-    },
-  ];
   const routeAuditItems = [
     {
       step: '01',
@@ -514,20 +495,6 @@ const Home = () => {
     },
   ];
 
-  const statusInsightItems = [
-    {
-      value: hasRealData ? formatNumber(activeSummary.requests) : '28.7M',
-      label: t('近 30 天请求'),
-    },
-    {
-      value: formatExactNumber(displayProtectedEvents),
-      label: t('自动保护事件'),
-    },
-    {
-      value: `${formatExactNumber(displayCoolingChannels)} ${t('条')}`,
-      label: t('当前冷却通道'),
-    },
-  ];
   const statusHealthItems = [
     {
       label: t('健康通道'),
@@ -684,6 +651,51 @@ const Home = () => {
     },
   ];
 
+  const homePlanItems = [
+    {
+      icon: <IconBolt />,
+      title: t('轻量开发'),
+      price: t('低价起步'),
+      description: t('适合个人 Codex、脚本和日常模型调用'),
+      metric: t('成本优先'),
+      points: [t('共享低价通道'), t('统一 /v1 接入'), t('按量平滑升级')],
+      tone: 'value',
+    },
+    {
+      icon: <IconRoute />,
+      title: t('团队协作'),
+      price: t('稳定优先'),
+      description: t('适合多人共用密钥、预算和日志治理'),
+      metric: t('分组治理'),
+      points: [t('分组倍率策略'), t('额度与预算可控'), t('异常自动旁路')],
+      tone: 'team',
+    },
+    {
+      icon: <IconShieldStroked />,
+      title: t('长任务保障'),
+      price: t('高可用优先'),
+      description: t('适合 Claude Code、Codex 长上下文和 CI 批量任务'),
+      metric: t('稳定吞吐'),
+      points: [t('健康通道优先'), t('限流冷却隔离'), t('流式输出更稳')],
+      tone: 'stable',
+    },
+  ];
+
+  const homePlanFlowItems = [
+    {
+      label: t('价格'),
+      value: t('低价组优先'),
+    },
+    {
+      label: t('稳定'),
+      value: t('健康通道优先'),
+    },
+    {
+      label: t('治理'),
+      value: t('分组倍率透明'),
+    },
+  ];
+
   const comparisonItems = [
     {
       label: t('官方直连'),
@@ -732,7 +744,7 @@ const Home = () => {
   };
 
   const displayHomePageContent = async () => {
-    setHomePageContent(localStorage.getItem('home_page_content') || '');
+    const cachedContent = localStorage.getItem('home_page_content') || '';
     try {
       const res = await API.get('/api/home_page_content', {
         skipErrorHandler: true,
@@ -765,11 +777,11 @@ const Home = () => {
         if (message) {
           console.warn('首页内容接口返回失败:', message);
         }
-        setHomePageContent('');
+        setHomePageContent(cachedContent);
       }
     } catch (error) {
       console.error('加载首页内容失败:', error);
-      setHomePageContent('');
+      setHomePageContent(cachedContent);
     }
     setHomePageContentLoaded(true);
   };
@@ -831,7 +843,9 @@ const Home = () => {
         onClose={() => setNoticeVisible(false)}
         isMobile={isMobile}
       />
-      {homePageContentLoaded && homePageContent === '' ? (
+      {!homePageContentLoaded ? (
+        <div className='ct-home-loading'>{t('加载中...')}</div>
+      ) : homePageContent === '' ? (
         <div className='ct-home'>
           <HomeCanvasBackground />
           <section className='ct-hero'>
@@ -991,36 +1005,12 @@ const Home = () => {
                 </div>
                 <div className='ct-range-pill'>{t('近 30 天')}</div>
               </div>
-              <div className='ct-status-meta-row'>
-                {statusMetaItems.map((item) => (
-                  <div className='ct-status-meta-card' key={item.label}>
-                    <span>{item.label}</span>
-                    <strong>{item.value}</strong>
-                  </div>
-                ))}
-              </div>
-              <div className='ct-status-insights'>
-                {statusInsightItems.map((item) => (
-                  <div key={item.label}>
-                    <strong>{item.value}</strong>
-                    <span>{item.label}</span>
-                  </div>
-                ))}
-              </div>
-              <div className='ct-status-health-strip' aria-label={t('通道健康分布')}>
-                {statusHealthItems.map((item) => (
-                  <div className={`ct-status-health-item ${item.tone}`} key={item.label}>
-                    <div>
-                      <span>{item.label}</span>
-                      <strong>{item.value}</strong>
-                      <small>{item.helper}</small>
-                    </div>
-                    <i style={{ '--health-width': `${item.percent}%` }} />
-                  </div>
-                ))}
-              </div>
               <div className='ct-status-grid'>
-                <div className='ct-status-metrics'>
+                <div className='ct-status-metrics' aria-label={t('运行状态')}>
+                  <div className='ct-status-metrics-head'>
+                    <span>{t('运行状态')}</span>
+                    <strong>{activeGroup.label}</strong>
+                  </div>
                   {metricCards.map((item) => (
                     <div className={`ct-metric-card ${item.tone}`} key={item.label}>
                       <div className='ct-metric-icon'>
@@ -1033,6 +1023,15 @@ const Home = () => {
                       </div>
                     </div>
                   ))}
+                  <div className='ct-status-channel-line'>
+                    {statusHealthItems.map((item) => (
+                      <span className={item.tone} key={item.label}>
+                        <i />
+                        {item.label}
+                        <b>{item.value}</b>
+                      </span>
+                    ))}
+                  </div>
                 </div>
                 <div className='ct-chart-panel'>
                   <div className='ct-chart-legend'>
@@ -1207,6 +1206,66 @@ const Home = () => {
                       </div>
                     ))}
                   </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className='ct-home-plan-section'>
+            <div className='ct-home-shell'>
+              <div className='ct-section-headline compact'>
+                <small>{t('灵活方案')}</small>
+                <h2>{t('按使用场景选择更稳、更快、更省的接入方式')}</h2>
+                <p>{t('从个人开发到团队协作，把成本、稳定性和分组治理拆成更容易理解的选择。')}</p>
+              </div>
+              <div className='ct-home-plan-layout'>
+                <div className='ct-home-plan-grid'>
+                  {homePlanItems.map((item) => (
+                    <div className={`ct-home-plan-card ${item.tone}`} key={item.title}>
+                      <div className='ct-home-plan-card-head'>
+                        <span>{item.icon}</span>
+                        <em>{item.metric}</em>
+                      </div>
+                      <strong>{item.title}</strong>
+                      <b>{item.price}</b>
+                      <p>{item.description}</p>
+                      <div className='ct-home-plan-points'>
+                        {item.points.map((point) => (
+                          <span key={point}>
+                            <IconCheckCircleStroked />
+                            {point}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className='ct-home-plan-panel'>
+                  <div className='ct-home-plan-panel-orbit' aria-hidden='true'>
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                  <small>{t('接入建议')}</small>
+                  <strong>{t('先按场景选择成本、稳定或治理优先级，再进入控制台配置适合自己的套餐。')}</strong>
+                  <div className='ct-home-plan-flow'>
+                    {homePlanFlowItems.map((item) => (
+                      <div key={item.label}>
+                        <span>{item.label}</span>
+                        <b>{item.value}</b>
+                      </div>
+                    ))}
+                  </div>
+                  <Link to='/console/subscription-plans'>
+                    <Button
+                      theme='solid'
+                      type='primary'
+                      className='ct-primary-btn'
+                      icon={<IconArrowRight />}
+                    >
+                      {t('查看套餐')}
+                    </Button>
+                  </Link>
                 </div>
               </div>
             </div>
