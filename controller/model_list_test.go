@@ -593,7 +593,7 @@ func TestListModelsAdvertisesImageSessionModes(t *testing.T) {
 	require.True(t, found, "expected gpt-image-2 to appear in /v1/models")
 }
 
-func TestListModelsCodexFormatAdvertisesImageGenerationToolOnTextModels(t *testing.T) {
+func TestListModelsCodexFormatDoesNotAdvertiseImageGenerationToolOnTextModels(t *testing.T) {
 	withSelfUseModeEnabled(t)
 	withMemoryCacheEnabled(t, false)
 
@@ -649,7 +649,7 @@ func TestListModelsCodexFormatAdvertisesImageGenerationToolOnTextModels(t *testi
 		}
 		foundText = true
 		require.Contains(t, item.InputModalities, "image")
-		require.Contains(t, item.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
+		require.NotContains(t, item.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
 		require.Contains(t, item.SupportedSessionModes, "responses")
 	}
 	require.True(t, foundText, "expected gpt-5.5 to appear in codex /models response")

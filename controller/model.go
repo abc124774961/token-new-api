@@ -296,7 +296,6 @@ func finalizeVisibleOpenAIModels(c *gin.Context, models []dto.OpenAIModels) []dt
 		models[i].SupportedSessionModes = buildSupportedSessionModes(models[i].Id, models[i].SupportedEndpointTypes)
 		models[i].ActualModelReturned = buildActualModelReturned(models[i], actualModelByName[models[i].Id])
 		models[i].InputModalities = buildInputModalities(models[i].Id)
-		models[i].ExperimentalSupportedTools = buildExperimentalSupportedTools(models[i].Id, models[i].SupportedSessionModes, models)
 	}
 	return models
 }
@@ -343,7 +342,7 @@ func buildCodexModels(models []dto.OpenAIModels) []dto.CodexModelInfo {
 			SupportsImageDetailOriginal:   false,
 			ContextWindow:                 272000,
 			EffectiveContextWindowPercent: 95,
-			ExperimentalSupportedTools:    modelItem.ExperimentalSupportedTools,
+			ExperimentalSupportedTools:    nonNilStringSlice(modelItem.ExperimentalSupportedTools),
 			InputModalities:               modelItem.InputModalities,
 			ActualModelReturned:           modelItem.ActualModelReturned,
 			SupportedEndpointTypes:        modelItem.SupportedEndpointTypes,
@@ -362,6 +361,13 @@ func defaultCodexReasoningLevels() []dto.CodexReasoningLevel {
 	}
 }
 
+func nonNilStringSlice(items []string) []string {
+	if items == nil {
+		return []string{}
+	}
+	return items
+}
+
 func buildInputModalities(modelName string) []string {
 	if common.IsImageGenerationModel(modelName) {
 		return []string{"text", "image"}
@@ -370,28 +376,6 @@ func buildInputModalities(modelName string) []string {
 		return []string{"text", "image"}
 	}
 	return []string{"text"}
-}
-
-func buildExperimentalSupportedTools(modelName string, sessionModes []string, models []dto.OpenAIModels) []string {
-	if common.IsImageGenerationModel(modelName) || !containsString(sessionModes, "responses") {
-		return nil
-	}
-	if visibleModelsSupportImageGeneration(models) {
-		return []string{dto.BuildInToolImageGeneration}
-	}
-	return nil
-}
-
-func visibleModelsSupportImageGeneration(models []dto.OpenAIModels) bool {
-	for _, modelItem := range models {
-		if common.IsImageGenerationModel(modelItem.Id) {
-			return true
-		}
-		if endpointTypesContain(modelItem.SupportedEndpointTypes, constant.EndpointTypeImageGeneration) {
-			return true
-		}
-	}
-	return false
 }
 
 func buildSupportedSessionModes(modelName string, endpointTypes []constant.EndpointType) []string {
@@ -462,15 +446,6 @@ func appendUniqueString(items []string, value string) []string {
 		}
 	}
 	return append(items, value)
-}
-
-func containsString(items []string, target string) bool {
-	for _, item := range items {
-		if item == target {
-			return true
-		}
-	}
-	return false
 }
 
 func sortVisibleModels(models []dto.OpenAIModels) []dto.OpenAIModels {
