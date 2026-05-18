@@ -123,6 +123,118 @@ func GetAvailableModelsForGroups(groups []string) []string {
 	return models
 }
 
+type actualModelReturnRow struct {
+	Model        string  `gorm:"column:model"`
+	ModelMapping *string `gorm:"column:model_mapping"`
+}
+
+// GetPreferredActualModelsForGroups returns the upstream model advertised for each
+// visible model, using the first available group and highest-priority enabled channel.
+func GetPreferredActualModelsForGroups(groups []string, modelNames []string) map[string]string {
+	result := make(map[string]string)
+	if DB == nil || len(groups) == 0 || len(modelNames) == 0 {
+		return result
+	}
+
+	modelSet := make(map[string]struct{}, len(modelNames))
+	missingModels := make([]string, 0, len(modelNames))
+	for _, modelName := range modelNames {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			continue
+		}
+		if _, ok := modelSet[modelName]; ok {
+			continue
+		}
+		modelSet[modelName] = struct{}{}
+		missingModels = append(missingModels, modelName)
+	}
+	if len(missingModels) == 0 {
+		return result
+	}
+
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group == "" || len(missingModels) == 0 {
+			continue
+		}
+
+		groupResult := getPreferredActualModelsForGroup(group, missingModels)
+		nextMissing := missingModels[:0]
+		for _, modelName := range missingModels {
+			if actualModel, ok := groupResult[modelName]; ok {
+				result[modelName] = actualModel
+			} else {
+				nextMissing = append(nextMissing, modelName)
+			}
+		}
+		missingModels = nextMissing
+	}
+
+	return result
+}
+
+func getPreferredActualModelsForGroup(group string, modelNames []string) map[string]string {
+	result := make(map[string]string)
+	rows := make([]actualModelReturnRow, 0)
+	err := DB.Table("abilities").
+		Select("abilities.model, channels.model_mapping").
+		Joins("JOIN channels ON abilities.channel_id = channels.id").
+		Where("abilities.enabled = ?", true).
+		Where("channels.status = ?", common.ChannelStatusEnabled).
+		Where("abilities."+commonGroupCol+" = ?", group).
+		Where("abilities.model IN ?", modelNames).
+		Order("abilities.priority DESC, abilities.weight DESC, abilities.channel_id ASC").
+		Scan(&rows).Error
+	if err != nil {
+		common.SysLog("get preferred actual models failed: " + err.Error())
+		return result
+	}
+
+	for _, row := range rows {
+		if row.Model == "" {
+			continue
+		}
+		if _, ok := result[row.Model]; ok {
+			continue
+		}
+		modelMapping := ""
+		if row.ModelMapping != nil {
+			modelMapping = *row.ModelMapping
+		}
+		result[row.Model] = resolveMappedModelName(row.Model, modelMapping)
+	}
+	return result
+}
+
+func resolveMappedModelName(modelName string, modelMapping string) string {
+	modelMapping = strings.TrimSpace(modelMapping)
+	if modelMapping == "" || modelMapping == "{}" {
+		return modelName
+	}
+
+	modelMap := make(map[string]string)
+	if err := common.UnmarshalJsonStr(modelMapping, &modelMap); err != nil {
+		return modelName
+	}
+
+	currentModel := modelName
+	visitedModels := map[string]bool{
+		currentModel: true,
+	}
+	for {
+		mappedModel := strings.TrimSpace(modelMap[currentModel])
+		if mappedModel == "" {
+			return currentModel
+		}
+		if visitedModels[mappedModel] {
+			return currentModel
+		}
+		visitedModels[mappedModel] = true
+		currentModel = mappedModel
+	}
+}
+
 func getAvailableModelsFromChannels(groups []string) []string {
 	groupSet := make(map[string]struct{}, len(groups))
 	for _, group := range groups {
