@@ -68,6 +68,22 @@ func cacheWriteTokensTotal(summary textQuotaSummary) int {
 	return summary.CacheCreationTokens
 }
 
+func resolveImageGenerationCallSpec(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) (string, string) {
+	quality := ctx.GetString("image_generation_call_quality")
+	size := ctx.GetString("image_generation_call_size")
+	if relayInfo != nil && relayInfo.ResponsesUsageInfo != nil {
+		if imageGenerationTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolImageGeneration]; exists && imageGenerationTool != nil {
+			if quality == "" {
+				quality = imageGenerationTool.ImageGenerationQuality
+			}
+			if size == "" {
+				size = imageGenerationTool.ImageGenerationSize
+			}
+		}
+	}
+	return quality, size
+}
+
 func isLegacyClaudeDerivedOpenAIUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) bool {
 	if relayInfo == nil || usage == nil {
 		return false
@@ -129,7 +145,8 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 	}
 
 	if ctx.GetBool("image_generation_call") {
-		summary.ImageGenerationCallPrice = operation_setting.GetGPTImage1PriceOnceCall(ctx.GetString("image_generation_call_quality"), ctx.GetString("image_generation_call_size"))
+		quality, size := resolveImageGenerationCallSpec(ctx, relayInfo)
+		summary.ImageGenerationCallPrice = operation_setting.GetGPTImage1PriceOnceCall(quality, size)
 		surcharge = surcharge.Add(decimal.NewFromFloat(summary.ImageGenerationCallPrice).
 			Mul(dGroupRatio).
 			Mul(dQuotaPerUnit))
@@ -443,8 +460,13 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other["audio_input_price"] = summary.AudioInputPrice
 	}
 	if summary.ImageGenerationCallPrice > 0 {
+		quality, size := resolveImageGenerationCallSpec(ctx, relayInfo)
 		other["image_generation_call"] = true
+		other["image_generation_call_count"] = 1
 		other["image_generation_call_price"] = summary.ImageGenerationCallPrice
+		other["image_generation_call_quality"] = quality
+		other["image_generation_call_size"] = size
+		other["billing_subtype"] = "image_generation"
 	}
 	if summary.CacheCreationTokens > 0 {
 		other["cache_creation_tokens"] = summary.CacheCreationTokens

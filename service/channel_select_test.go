@@ -501,6 +501,42 @@ func TestCacheGetRandomSatisfiedChannelRequiresCodexImageToolSkipsHigherPriority
 	require.Equal(t, 432, imageToolChannel.Id)
 }
 
+func TestCacheGetRandomSatisfiedChannelFallsBackToBaseModelForCodexMiniVariant(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+
+	seedChannelSelectChannelWithOptions(t, db, 441, "default", "gpt-5.4", 10, 100, constant.ChannelTypeOpenAI, `{"codex_compatibility_mode":true}`)
+	seedChannelSelectChannelWithOptions(t, db, 442, "default", "gpt-5.4", 1, 100, constant.ChannelTypeOpenAI, `{"codex_compatibility_mode":true,"codex_image_generation_tool_supported":true}`)
+	model.InitChannelCache()
+
+	normalParam := &RetryParam{
+		Ctx:          newRetryContext(),
+		TokenGroup:   "default",
+		ModelName:    "gpt-5.4-mini",
+		EndpointType: constant.EndpointTypeOpenAIResponse,
+		Retry:        common.GetPointer(0),
+	}
+	normalChannel, normalGroup, err := CacheGetRandomSatisfiedChannel(normalParam)
+	require.NoError(t, err)
+	require.Equal(t, "default", normalGroup)
+	require.NotNil(t, normalChannel)
+	require.Equal(t, 441, normalChannel.Id)
+
+	imageToolParam := &RetryParam{
+		Ctx:                    newRetryContext(),
+		TokenGroup:             "default",
+		ModelName:              "gpt-5.4-mini",
+		EndpointType:           constant.EndpointTypeOpenAIResponse,
+		RequiresCodexImageTool: true,
+		Retry:                  common.GetPointer(0),
+	}
+	imageToolChannel, imageToolGroup, err := CacheGetRandomSatisfiedChannel(imageToolParam)
+	require.NoError(t, err)
+	require.Equal(t, "default", imageToolGroup)
+	require.NotNil(t, imageToolChannel)
+	require.Equal(t, 442, imageToolChannel.Id)
+}
+
 func TestCacheGetRandomSatisfiedChannelSeesReEnabledChannelImmediately(t *testing.T) {
 	db := setupChannelSelectTestDB(t)
 	withChannelSelectMemoryCache(t, true)

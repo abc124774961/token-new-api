@@ -57,10 +57,44 @@ func TestResponsesRequestHasImageGenerationToolDetectsNestedToolChoice(t *testin
 	require.True(t, responsesRequestHasImageGenerationTool(ctx))
 }
 
+func TestResponsesRequestHasImageGenerationToolDetectsCodexSkillIntent(t *testing.T) {
+	ctx := newResponsesCapabilityTestContext(`{
+		"model": "gpt-5.5",
+		"input": [
+			{
+				"role": "user",
+				"content": [
+					{"type": "input_text", "text": "[$imagegen](/Users/frode.luo/.codex/skills/.system/imagegen/SKILL.md) 风景"}
+				]
+			}
+		],
+		"tool_choice": "auto"
+	}`)
+
+	require.True(t, responsesRequestHasImageGenerationTool(ctx))
+}
+
 func TestResponsesRequestHasImageGenerationToolIgnoresOtherTools(t *testing.T) {
 	ctx := newResponsesCapabilityTestContext(`{
 		"model": "gpt-5.5",
 		"tools": [{"type": "web_search_preview"}],
+		"tool_choice": "auto"
+	}`)
+
+	require.False(t, responsesRequestHasImageGenerationTool(ctx))
+}
+
+func TestResponsesRequestHasImageGenerationToolIgnoresPlainImagePromptWithoutKeywordHit(t *testing.T) {
+	ctx := newResponsesCapabilityTestContext(`{
+		"model": "gpt-5.5",
+		"input": [
+			{
+				"role": "user",
+				"content": [
+					{"type": "input_text", "text": "生成一张风景图"}
+				]
+			}
+		],
 		"tool_choice": "auto"
 	}`)
 

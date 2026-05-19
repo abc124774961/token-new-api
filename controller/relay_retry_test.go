@@ -129,6 +129,23 @@ func TestRequiresCodexImageToolForRelayDetectsToolChoice(t *testing.T) {
 	require.True(t, requiresCodexImageToolForRelay(info))
 }
 
+func TestRequiresCodexImageToolForRelayDetectsCodexSkillIntent(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeResponses,
+		Request: &dto.OpenAIResponsesRequest{
+			Model: "gpt-5.5",
+			Input: []byte(`[
+				{"role":"user","content":[
+					{"type":"input_text","text":"[$imagegen](/Users/frode.luo/.codex/skills/.system/imagegen/SKILL.md) 风景"}
+				]}
+			]`),
+			ToolChoice: []byte(`"auto"`),
+		},
+	}
+
+	require.True(t, requiresCodexImageToolForRelay(info))
+}
+
 func withAutoGroupsForRelayTest(t *testing.T, groups []string) {
 	t.Helper()
 

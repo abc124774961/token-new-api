@@ -19,7 +19,19 @@ type OpenAIModels struct {
 }
 
 type CodexModelsResponse struct {
-	Models []CodexModelInfo `json:"models"`
+	Models                     []CodexModelInfo                `json:"models"`
+	Capabilities               map[string]bool                 `json:"capabilities,omitempty"`
+	ExperimentalSupportedTools []string                        `json:"experimental_supported_tools,omitempty"`
+	InputModalities            []string                        `json:"input_modalities,omitempty"`
+	OutputModalities           []string                        `json:"output_modalities,omitempty"`
+	SupportedModalities        []string                        `json:"supported_modalities,omitempty"`
+	ModelProviderCapabilities  *CodexModelProviderCapabilities `json:"model_provider_capabilities,omitempty"`
+}
+
+type CodexModelProviderCapabilities struct {
+	NamespaceTools  bool `json:"namespaceTools"`
+	WebSearch       bool `json:"webSearch"`
+	ImageGeneration bool `json:"imageGeneration"`
 }
 
 type CodexModelInfo struct {
@@ -41,6 +53,7 @@ type CodexModelInfo struct {
 	DefaultVerbosity              any                     `json:"default_verbosity"`
 	ApplyPatchToolType            *string                 `json:"apply_patch_tool_type"`
 	WebSearchToolType             string                  `json:"web_search_tool_type"`
+	SupportsSearchTool            bool                    `json:"supports_search_tool"`
 	TruncationPolicy              CodexTruncationPolicy   `json:"truncation_policy"`
 	SupportsParallelToolCalls     bool                    `json:"supports_parallel_tool_calls"`
 	SupportsImageDetailOriginal   bool                    `json:"supports_image_detail_original"`

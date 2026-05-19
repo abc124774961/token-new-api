@@ -55,6 +55,102 @@ func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
 	return err
 }
 
+func logRelayRequestTrace(c *gin.Context, info *relaycommon.RelayInfo) {
+	if !service.ShouldLogClientRequestTrace(c) {
+		return
+	}
+	trace := map[string]any{
+		"stage": "relay_initialized",
+	}
+	if info != nil {
+		trace["relay_format"] = string(info.RelayFormat)
+		trace["relay_mode"] = info.RelayMode
+		trace["request_model"] = info.RequestModelName
+		trace["context_model"] = info.ContextModelName
+		trace["origin_model"] = info.OriginModelName
+		trace["is_stream"] = info.IsStream
+		trace["required_endpoint_type"] = string(requiredEndpointTypeForRelay(info))
+		trace["requires_codex_image_tool"] = requiresCodexImageToolForRelay(info)
+		if req := responsesRequestForEndpointDetection(info.Request); req != nil {
+			trace["responses_tools"] = service.BuildResponsesRequestToolTraceForLog(req)
+		}
+	}
+	trace["client_request"] = service.BuildClientRequestTraceForLog(c)
+	logger.LogInfo(c, "relay request trace: "+service.MarshalTraceForLog(trace))
+}
+
+func logRelayRetryParamTrace(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) {
+	if !service.ShouldLogClientRequestTrace(c) {
+		return
+	}
+	trace := map[string]any{
+		"stage": "relay_retry_param",
+	}
+	if info != nil {
+		trace["request_model"] = info.RequestModelName
+		trace["context_model"] = info.ContextModelName
+		trace["origin_model"] = info.OriginModelName
+	}
+	if retryParam != nil {
+		trace["token_group"] = retryParam.TokenGroup
+		trace["model_name"] = retryParam.ModelName
+		trace["endpoint_type"] = string(retryParam.EndpointType)
+		trace["requires_codex_image_tool"] = retryParam.RequiresCodexImageTool
+		trace["retry"] = retryParam.GetRetry()
+	}
+	logger.LogInfo(c, "relay retry trace: "+service.MarshalTraceForLog(trace))
+}
+
+func logRelaySelectedChannelTrace(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, channel *model.Channel, selectGroup string, locked bool) {
+	if !service.ShouldLogClientRequestTrace(c) {
+		return
+	}
+	trace := map[string]any{
+		"stage":          "relay_selected_channel",
+		"selected_group": selectGroup,
+		"locked_channel": locked,
+	}
+	if info != nil {
+		trace["request_model"] = info.RequestModelName
+		trace["context_model"] = info.ContextModelName
+		trace["origin_model"] = info.OriginModelName
+	}
+	modelName := ""
+	endpointType := constant.EndpointType("")
+	requiresCodexImageTool := false
+	if retryParam != nil {
+		trace["token_group"] = retryParam.TokenGroup
+		trace["retry"] = retryParam.GetRetry()
+		modelName = retryParam.ModelName
+		endpointType = retryParam.EndpointType
+		requiresCodexImageTool = retryParam.RequiresCodexImageTool
+		trace["model_name"] = modelName
+		trace["endpoint_type"] = string(endpointType)
+		trace["requires_codex_image_tool"] = requiresCodexImageTool
+	}
+	if channel == nil {
+		trace["channel"] = nil
+	} else {
+		traceChannel := channel
+		if cachedChannel, err := model.CacheGetChannel(channel.Id); err == nil && cachedChannel != nil {
+			traceChannel = cachedChannel
+		}
+		otherSettings := traceChannel.GetOtherSettings()
+		trace["channel"] = map[string]any{
+			"id":                               traceChannel.Id,
+			"name":                             traceChannel.Name,
+			"type":                             traceChannel.Type,
+			"supports_endpoint":                service.ChannelSupportsRequiredEndpoint(traceChannel, modelName, endpointType),
+			"supports_codex_image_generation":  service.ChannelSupportsCodexImageGenerationTool(traceChannel),
+			"supports_required_capabilities":   service.ChannelSupportsRequiredCapabilities(traceChannel, modelName, endpointType, requiresCodexImageTool),
+			"codex_compatibility_mode":         otherSettings.CodexCompatibilityMode,
+			"codex_supported_tools":            otherSettings.CodexSupportedTools,
+			"codex_image_tool_probe_supported": otherSettings.CodexImageGenerationToolSupported,
+		}
+	}
+	logger.LogInfo(c, "relay channel trace: "+service.MarshalTraceForLog(trace))
+}
+
 func requiredEndpointTypeForRelay(info *relaycommon.RelayInfo) constant.EndpointType {
 	if info == nil {
 		return ""
@@ -77,7 +173,7 @@ func requiresCodexImageToolForRelay(info *relaycommon.RelayInfo) bool {
 		return false
 	}
 	req := responsesRequestForEndpointDetection(info.Request)
-	return req != nil && req.HasTool(dto.BuildInToolImageGeneration)
+	return service.ResponsesRequestRequiresCodexImageGenerationTool(req)
 }
 
 func responsesRequestForEndpointDetection(request dto.Request) *dto.OpenAIResponsesRequest {
@@ -164,6 +260,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.OriginModelName,
 		c.Request.URL.Path,
 	))
+	logRelayRequestTrace(c, relayInfo)
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
@@ -228,6 +325,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		RequiresCodexImageTool: requiresCodexImageToolForRelay(relayInfo),
 		Retry:                  common.GetPointer(0),
 	}
+	logRelayRetryParamTrace(c, relayInfo, retryParam)
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
@@ -377,12 +475,14 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		if !autoBan {
 			autoBanInt = 0
 		}
-		return &model.Channel{
+		channel := &model.Channel{
 			Id:      c.GetInt("channel_id"),
 			Type:    c.GetInt("channel_type"),
 			Name:    c.GetString("channel_name"),
 			AutoBan: &autoBanInt,
-		}, nil
+		}
+		logRelaySelectedChannelTrace(c, info, retryParam, channel, info.TokenGroup, true)
+		return channel, nil
 	}
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 
@@ -395,6 +495,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在（retry）", selectGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 
+	logRelaySelectedChannelTrace(c, info, retryParam, channel, selectGroup, false)
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
 	if newAPIError != nil {
 		return nil, newAPIError

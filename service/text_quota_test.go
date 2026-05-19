@@ -389,8 +389,6 @@ func TestComposeTieredTextQuotaKeepsToolCallSurcharges(t *testing.T) {
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Set("image_generation_call", true)
-	ctx.Set("image_generation_call_quality", "low")
-	ctx.Set("image_generation_call_size", "1024x1024")
 
 	relayInfo := &relaycommon.RelayInfo{
 		OriginModelName: "o1",
@@ -406,6 +404,10 @@ func TestComposeTieredTextQuotaKeepsToolCallSurcharges(t *testing.T) {
 				},
 				dto.BuildInToolFileSearch: &relaycommon.BuildInToolInfo{
 					CallCount: 2,
+				},
+				dto.BuildInToolImageGeneration: &relaycommon.BuildInToolInfo{
+					ImageGenerationQuality: "low",
+					ImageGenerationSize:    "1024x1024",
 				},
 			},
 		},
@@ -429,6 +431,7 @@ func TestComposeTieredTextQuotaKeepsToolCallSurcharges(t *testing.T) {
 		ActualQuotaAfterGroup:  1000,
 	})
 
+	require.Equal(t, 0.011, summary.ImageGenerationCallPrice)
 	require.Equal(t, int64(13000), summary.ToolCallSurchargeQuota.Round(0).IntPart())
 	require.Equal(t, 14000, quota)
 }

@@ -722,7 +722,23 @@ func GetAudioCompletionRatioCopy() map[string]float64 {
 }
 
 // 转换模型名，减少渠道必须配置各种带参数模型
+
+func formatCodexGeneratedModelVariant(name string) string {
+	// Codex image-generation flows may issue auxiliary requests to synthetic
+	// mini variants even when the gateway only exposes the base model. Treat
+	// these as routing aliases so operators do not need to duplicate channel
+	// model lists for every client-generated variant. Exact configured models
+	// still win in channel selection before this normalized fallback is used.
+	for _, base := range []string{"gpt-5.5", "gpt-5.4"} {
+		if strings.HasPrefix(name, base+"-mini") {
+			return base
+		}
+	}
+	return name
+}
+
 func FormatMatchingModelName(name string) string {
+	name = formatCodexGeneratedModelVariant(name)
 
 	if strings.HasPrefix(name, "gemini-2.5-flash-lite") {
 		name = handleThinkingBudgetModel(name, "gemini-2.5-flash-lite", "gemini-2.5-flash-lite-thinking-*")

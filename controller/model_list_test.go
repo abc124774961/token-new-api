@@ -27,9 +27,7 @@ type listModelsResponse struct {
 	Object  string             `json:"object"`
 }
 
-type codexModelsResponse struct {
-	Models []dto.CodexModelInfo `json:"models"`
-}
+type codexModelsResponse = dto.CodexModelsResponse
 
 type stringListResponse struct {
 	Success bool     `json:"success"`
@@ -825,6 +823,88 @@ func TestListModelsUsesPersistedGroupCapabilityUnionForCodexImageTool(t *testing
 		require.Contains(t, item.SupportedSessionModes, "image_generation")
 		require.Equal(t, "gpt-5.5", item.ActualModelReturned["responses"])
 		require.Equal(t, "gpt-5.5", item.ActualModelReturned["image_generation"])
+	}
+	require.Equal(t, map[string]bool{dto.BuildInToolImageGeneration: true}, payload.Capabilities)
+	require.Equal(t, []string{dto.BuildInToolImageGeneration}, payload.ExperimentalSupportedTools)
+	require.Equal(t, []string{"text", "image"}, payload.InputModalities)
+	require.Equal(t, []string{"text", "image"}, payload.OutputModalities)
+	require.Equal(t, []string{"text", "image"}, payload.SupportedModalities)
+	require.NotNil(t, payload.ModelProviderCapabilities)
+	require.True(t, payload.ModelProviderCapabilities.ImageGeneration)
+	require.True(t, payload.ModelProviderCapabilities.NamespaceTools)
+	require.True(t, payload.ModelProviderCapabilities.WebSearch)
+	require.True(t, found, "expected gpt-5.5 to appear in codex /models response")
+}
+
+func TestListModelsCodexTopLevelCapabilitiesIgnoreChannelPriority(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	withMemoryCacheEnabled(t, false)
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       5007,
+		Username: "codex-top-level-capability-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	highPriority := int64(100)
+	lowPriority := int64(1)
+	plainChannel := model.Channel{
+		Id:            28,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "priority-plain-channel",
+		Key:           "test-key",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "codex-pro",
+		Models:        "gpt-5.5",
+		Priority:      &highPriority,
+		OtherSettings: `{"codex_compatibility_mode":true}`,
+	}
+	require.NoError(t, plainChannel.Insert())
+	imageToolChannel := model.Channel{
+		Id:            29,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "priority-image-tool-channel",
+		Key:           "test-key",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "codex-pro",
+		Models:        "gpt-5.4",
+		Priority:      &lowPriority,
+		OtherSettings: `{"codex_compatibility_mode":true,"codex_image_generation_tool_supported":true}`,
+	}
+	require.NoError(t, imageToolChannel.Insert())
+	model.RefreshPricing()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.131.0", nil)
+	ctx.Request.Header.Set("User-Agent", "Codex Desktop/0.131.0-alpha.9")
+	ctx.Set("id", 5007)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "codex-pro")
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload codexModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.Equal(t, map[string]bool{dto.BuildInToolImageGeneration: true}, payload.Capabilities)
+	require.Equal(t, []string{dto.BuildInToolImageGeneration}, payload.ExperimentalSupportedTools)
+	require.Equal(t, []string{"text", "image"}, payload.InputModalities)
+	require.Equal(t, []string{"text", "image"}, payload.OutputModalities)
+	require.NotNil(t, payload.ModelProviderCapabilities)
+	require.True(t, payload.ModelProviderCapabilities.ImageGeneration)
+
+	var found bool
+	for _, item := range payload.Models {
+		if item.Slug != "gpt-5.5" {
+			continue
+		}
+		found = true
+		require.Contains(t, item.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
+		require.Contains(t, item.SupportedSessionModes, "image_generation")
 	}
 	require.True(t, found, "expected gpt-5.5 to appear in codex /models response")
 }

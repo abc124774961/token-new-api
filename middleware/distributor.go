@@ -39,6 +39,8 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
+		logDistributorRequestTrace(c, modelRequest, shouldSelectChannel)
+		logCodexEffectiveModelCapabilityForRequest(c, modelRequest)
 		if ok {
 			id, err := strconv.Atoi(channelId.(string))
 			if err != nil {
@@ -163,12 +165,165 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+		logDistributorSelectedChannel(c, channel, modelRequest)
 		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+func logCodexEffectiveModelCapabilityForRequest(c *gin.Context, modelRequest *ModelRequest) {
+	if c == nil || c.Request == nil || modelRequest == nil || modelRequest.Model == "" {
+		return
+	}
+	if !service.ShouldLogClientRequestTrace(c) {
+		return
+	}
+	if !strings.HasPrefix(c.Request.URL.Path, "/v1/responses") {
+		return
+	}
+
+	groups := resolveCapabilityLogGroups(c)
+	capabilitiesByModel := model.GetModelCapabilitiesForGroups(groups, []string{modelRequest.Model})
+	capability := capabilitiesByModel[modelRequest.Model]
+	groupCapability := model.GetGroupCapabilities(groups)
+	modelCodexImageToolSupported := capability.CodexImageGenerationToolSupported
+	groupCodexImageToolSupported := groupCapability.CodexImageGenerationToolSupported || capability.GroupCodexImageGenerationToolSupported
+	advertiseCodexImageTool := shouldAdvertiseCodexImageToolForCapabilityLog(modelRequest.Model, modelCodexImageToolSupported, groupCodexImageToolSupported)
+
+	inputModalities := []string{"text"}
+	if common.IsOpenAITextModel(modelRequest.Model) || common.IsImageGenerationModel(modelRequest.Model) {
+		inputModalities = []string{"text", "image"}
+	}
+	outputModalities := []string{"text"}
+	if common.IsImageGenerationModel(modelRequest.Model) {
+		outputModalities = []string{"image"}
+	} else if advertiseCodexImageTool {
+		outputModalities = []string{"text", "image"}
+	}
+	tools := []string{}
+	capabilities := map[string]bool(nil)
+	if advertiseCodexImageTool {
+		tools = []string{dto.BuildInToolImageGeneration}
+		capabilities = map[string]bool{dto.BuildInToolImageGeneration: true}
+	}
+
+	trace := map[string]any{
+		"stage":                     "codex_effective_model_capability_for_responses_request",
+		"request_model":             modelRequest.Model,
+		"groups":                    groups,
+		"requires_codex_image_tool": modelRequest.RequiresCodexImageTool,
+		"model_codex_image_generation_tool_supported": modelCodexImageToolSupported,
+		"group_codex_image_generation_tool_supported": groupCodexImageToolSupported,
+		"advertise_codex_image_generation":            advertiseCodexImageTool,
+		"response_headers_if_models_endpoint": map[string]string{
+			"content-type":  "application/json; charset=utf-8",
+			"cache-control": "no-store",
+			"pragma":        "no-cache",
+		},
+		"model_response_summary_if_models_endpoint": map[string]any{
+			"slug":                         modelRequest.Model,
+			"capabilities":                 capabilities,
+			"experimental_supported_tools": tools,
+			"input_modalities":             inputModalities,
+			"output_modalities":            outputModalities,
+			"supported_endpoint_types":     capability.SupportedEndpointTypes,
+		},
+		"top_level_response_summary_if_models_endpoint": map[string]any{
+			"capabilities":                 capabilities,
+			"experimental_supported_tools": tools,
+			"input_modalities":             inputModalities,
+			"output_modalities":            outputModalities,
+			"model_provider_capabilities": map[string]bool{
+				"namespaceTools":  advertiseCodexImageTool,
+				"webSearch":       true,
+				"imageGeneration": advertiseCodexImageTool,
+			},
+		},
+	}
+	logger.LogInfo(c, "codex effective model capability response data: "+service.MarshalTraceForLog(trace))
+}
+
+func resolveCapabilityLogGroups(c *gin.Context) []string {
+	tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
+	if tokenGroup != "" && tokenGroup != "auto" {
+		return []string{tokenGroup}
+	}
+	usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+	if usingGroup != "" && usingGroup != "auto" {
+		return []string{usingGroup}
+	}
+	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	if userGroup == "" {
+		userGroup = c.GetString("group")
+	}
+	if userGroup == "" {
+		return nil
+	}
+	return service.GetUserAutoGroup(userGroup)
+}
+
+func shouldAdvertiseCodexImageToolForCapabilityLog(modelName string, modelCodexImageToolSupported bool, groupCodexImageToolSupported bool) bool {
+	if common.IsImageGenerationModel(modelName) {
+		return modelCodexImageToolSupported
+	}
+	if !common.IsOpenAITextModel(modelName) {
+		return modelCodexImageToolSupported
+	}
+	return modelCodexImageToolSupported || groupCodexImageToolSupported
+}
+
+func logDistributorRequestTrace(c *gin.Context, modelRequest *ModelRequest, shouldSelectChannel bool) {
+	if !service.ShouldLogClientRequestTrace(c) {
+		return
+	}
+	trace := map[string]any{
+		"stage":                 "distributor",
+		"should_select_channel": shouldSelectChannel,
+	}
+	if modelRequest != nil {
+		trace["model"] = modelRequest.Model
+		trace["group"] = modelRequest.Group
+		trace["endpoint_type"] = string(modelRequest.EndpointType)
+		trace["requires_codex_image_tool"] = modelRequest.RequiresCodexImageTool
+	}
+	trace["client_request"] = service.BuildClientRequestTraceForLog(c)
+	if toolTrace := service.BuildResponsesRequestToolTraceFromContextForLog(c); len(toolTrace) > 0 {
+		trace["responses_tools"] = toolTrace
+	}
+	logger.LogInfo(c, "client request trace: "+service.MarshalTraceForLog(trace))
+}
+
+func logDistributorSelectedChannel(c *gin.Context, channel *model.Channel, modelRequest *ModelRequest) {
+	if !service.ShouldLogClientRequestTrace(c) {
+		return
+	}
+	trace := map[string]any{
+		"stage": "distributor_selected_channel",
+	}
+	if modelRequest != nil {
+		trace["model"] = modelRequest.Model
+		trace["endpoint_type"] = string(modelRequest.EndpointType)
+		trace["requires_codex_image_tool"] = modelRequest.RequiresCodexImageTool
+	}
+	if channel == nil {
+		trace["channel"] = nil
+	} else {
+		trace["channel"] = map[string]any{
+			"id":                               channel.Id,
+			"name":                             channel.Name,
+			"type":                             channel.Type,
+			"supports_endpoint":                modelRequest == nil || service.ChannelSupportsRequiredEndpoint(channel, modelRequest.Model, modelRequest.EndpointType),
+			"supports_codex_image_generation":  service.ChannelSupportsCodexImageGenerationTool(channel),
+			"supports_required_capabilities":   modelRequest == nil || service.ChannelSupportsRequiredCapabilities(channel, modelRequest.Model, modelRequest.EndpointType, modelRequest.RequiresCodexImageTool),
+			"codex_compatibility_mode":         channel.GetOtherSettings().CodexCompatibilityMode,
+			"codex_supported_tools":            channel.GetOtherSettings().CodexSupportedTools,
+			"codex_image_tool_probe_supported": channel.GetOtherSettings().CodexImageGenerationToolSupported,
+		}
+	}
+	logger.LogInfo(c, "channel selection trace: "+service.MarshalTraceForLog(trace))
 }
 
 // getModelFromRequest 从请求中读取模型信息
@@ -210,7 +365,7 @@ func responsesRequestHasImageGenerationTool(c *gin.Context) bool {
 	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
 		return false
 	}
-	return req.HasTool(dto.BuildInToolImageGeneration)
+	return service.ResponsesRequestRequiresCodexImageGenerationTool(&req)
 }
 
 func channelSupportsModelRequest(channel *model.Channel, request ModelRequest) bool {

@@ -51,9 +51,11 @@ type RerankerInfo struct {
 }
 
 type BuildInToolInfo struct {
-	ToolName          string
-	CallCount         int
-	SearchContextSize string
+	ToolName               string
+	CallCount              int
+	SearchContextSize      string
+	ImageGenerationQuality string
+	ImageGenerationSize    string
 }
 
 type ResponsesUsageInfo struct {
@@ -427,6 +429,9 @@ func BuildResponsesUsageInfo(request *dto.OpenAIResponsesRequest) *ResponsesUsag
 					searchContextSize = "medium"
 				}
 				info.BuiltInTools[toolType].SearchContextSize = searchContextSize
+			case dto.BuildInToolImageGeneration:
+				info.BuiltInTools[toolType].ImageGenerationQuality = common.Interface2String(tool["quality"])
+				info.BuiltInTools[toolType].ImageGenerationSize = common.Interface2String(tool["size"])
 			}
 		}
 	}

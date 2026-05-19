@@ -375,6 +375,16 @@ export const useLogsData = () => {
       }
       return `${chain.join(' -> ')}`;
     };
+    const hasImageGenerationCall = (other) =>
+      other?.image_generation_call === true ||
+      other?.billing_subtype === 'image_generation';
+    const formatImageGenerationSpec = (other) =>
+      [
+        other?.image_generation_call_quality,
+        other?.image_generation_call_size,
+      ]
+        .filter(Boolean)
+        .join(' / ') || '-';
 
     let expandDatesLocal = {};
     for (let i = 0; i < logs.length; i++) {
@@ -438,6 +448,16 @@ export const useLogsData = () => {
           expandDataLocal.push({
             key: t('其他详情'),
             value: logs[i].content,
+          });
+        }
+        if (hasImageGenerationCall(other)) {
+          expandDataLocal.push({
+            key: t('计费模式'),
+            value: t('图片生成'),
+          });
+          expandDataLocal.push({
+            key: t('图片生成规格'),
+            value: formatImageGenerationSpec(other),
           });
         }
         if (isAdminUser && other?.reject_reason) {
@@ -649,7 +669,7 @@ export const useLogsData = () => {
           localCountMode = t('上游返回');
         }
         expandDataLocal.push({
-          key: t('计费模式'),
+          key: t('计费来源'),
           value: localCountMode,
         });
       }

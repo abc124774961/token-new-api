@@ -133,13 +133,34 @@ func weightedRandomSelect(targetChannels []*Channel) (*Channel, error) {
 	return nil, errors.New("channel not found")
 }
 
-func getCachedCandidateChannels(group string, model string) []int {
+func getCachedCandidateChannels(group string, model string, excludedChannelIDs map[int]struct{}) []int {
 	channels := group2model2channels[group][model]
-	if len(channels) == 0 {
-		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels = group2model2channels[group][normalizedModel]
+	if hasUnexcludedChannel(channels, excludedChannelIDs) {
+		return channels
+	}
+
+	normalizedModel := ratio_setting.FormatMatchingModelName(model)
+	if normalizedModel != "" && normalizedModel != model {
+		if normalizedChannels := group2model2channels[group][normalizedModel]; len(normalizedChannels) > 0 {
+			return normalizedChannels
+		}
 	}
 	return channels
+}
+
+func hasUnexcludedChannel(channels []int, excludedChannelIDs map[int]struct{}) bool {
+	if len(channels) == 0 {
+		return false
+	}
+	if len(excludedChannelIDs) == 0 {
+		return true
+	}
+	for _, channelID := range channels {
+		if _, excluded := excludedChannelIDs[channelID]; !excluded {
+			return true
+		}
+	}
+	return false
 }
 
 func GetRandomSatisfiedChannel(group string, model string, retry int, excludedChannelIDs map[int]struct{}) (*Channel, error) {
@@ -151,7 +172,7 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, excludedCh
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
-	channels := getCachedCandidateChannels(group, model)
+	channels := getCachedCandidateChannels(group, model, excludedChannelIDs)
 	if len(channels) == 0 {
 		return nil, nil
 	}

@@ -47,8 +47,9 @@ type PricingVendor struct {
 }
 
 type GroupModelCapability struct {
-	SupportedEndpointTypes            []constant.EndpointType
-	CodexImageGenerationToolSupported bool
+	SupportedEndpointTypes                 []constant.EndpointType
+	CodexImageGenerationToolSupported      bool
+	GroupCodexImageGenerationToolSupported bool
 }
 
 type GroupCapability struct {
@@ -154,6 +155,26 @@ func GetModelCodexImageGenerationToolSupported(model string) bool {
 	return modelCodexImageToolSupport[model]
 }
 
+func GetGroupCapabilities(groups []string) GroupCapability {
+	result := GroupCapability{}
+	if len(groups) == 0 {
+		return result
+	}
+	GetPricing()
+
+	modelSupportEndpointsLock.RLock()
+	defer modelSupportEndpointsLock.RUnlock()
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		capability := groupCapabilities[group]
+		result.CodexImageGenerationToolSupported = result.CodexImageGenerationToolSupported || capability.CodexImageGenerationToolSupported
+	}
+	return result
+}
+
 func GetModelCapabilitiesForGroups(groups []string, models []string) map[string]GroupModelCapability {
 	result := make(map[string]GroupModelCapability)
 	if len(groups) == 0 || len(models) == 0 {
@@ -198,7 +219,8 @@ func GetModelCapabilitiesForGroups(groups []string, models []string) map[string]
 				}
 			}
 			merged.CodexImageGenerationToolSupported = merged.CodexImageGenerationToolSupported ||
-				groupCapability.CodexImageGenerationToolSupported ||
+				groupCapability.CodexImageGenerationToolSupported
+			merged.GroupCodexImageGenerationToolSupported = merged.GroupCodexImageGenerationToolSupported ||
 				groupCapabilityForAllModels.CodexImageGenerationToolSupported
 			result[modelName] = merged
 		}

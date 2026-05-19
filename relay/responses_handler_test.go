@@ -53,6 +53,22 @@ func TestExplicitImageGenerationToolUpdatesResponsesUsageInfo(t *testing.T) {
 	require.Contains(t, usageInfo.BuiltInTools, dto.BuildInToolImageGeneration)
 }
 
+func TestExplicitImageGenerationToolKeepsRequestBillingSpec(t *testing.T) {
+	t.Parallel()
+
+	req := &dto.OpenAIResponsesRequest{
+		Model: "gpt-5.5",
+		Tools: []byte(`[{"type":"image_generation","quality":"low","size":"1024x1024"}]`),
+	}
+
+	usageInfo := relaycommon.BuildResponsesUsageInfo(req)
+	imageTool := usageInfo.BuiltInTools[dto.BuildInToolImageGeneration]
+
+	require.NotNil(t, imageTool)
+	require.Equal(t, "low", imageTool.ImageGenerationQuality)
+	require.Equal(t, "1024x1024", imageTool.ImageGenerationSize)
+}
+
 func TestResponsesRequestHasToolDetectsToolChoice(t *testing.T) {
 	t.Parallel()
 

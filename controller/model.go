@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel/ai360"
@@ -116,9 +117,11 @@ func ListModels(c *gin.Context, modelType int) {
 
 	userOpenAiModels := getVisibleOpenAIModels(c, acceptUnsetRatioModel)
 	if shouldReturnCodexModels(c, modelType) {
-		c.JSON(200, dto.CodexModelsResponse{
-			Models: buildCodexModels(userOpenAiModels),
-		})
+		codexModels := buildCodexModels(userOpenAiModels)
+		codexResponse := buildCodexModelsResponse(c, codexModels)
+		logCodexModelsTrace(c, codexResponse, "list")
+		setCodexModelResponseHeaders(c)
+		c.JSON(200, codexResponse)
 		return
 	}
 
@@ -298,20 +301,23 @@ func finalizeVisibleOpenAIModels(c *gin.Context, models []dto.OpenAIModels) []dt
 	}
 
 	for i := range models {
-		codexImageToolSupported := false
+		modelCodexImageToolSupported := false
+		groupCodexImageToolSupported := false
 		if capability, ok := capabilitiesByModel[models[i].Id]; ok {
 			models[i].SupportedEndpointTypes = capability.SupportedEndpointTypes
-			codexImageToolSupported = capability.CodexImageGenerationToolSupported
+			modelCodexImageToolSupported = capability.CodexImageGenerationToolSupported
+			groupCodexImageToolSupported = capability.GroupCodexImageGenerationToolSupported
 		} else {
-			codexImageToolSupported = model.GetModelCodexImageGenerationToolSupported(models[i].Id)
+			modelCodexImageToolSupported = model.GetModelCodexImageGenerationToolSupported(models[i].Id)
 		}
-		models[i].SupportedSessionModes = buildSupportedSessionModes(models[i].Id, models[i].SupportedEndpointTypes, codexImageToolSupported)
+		advertiseCodexImageTool := shouldAdvertiseCodexImageToolForModel(models[i].Id, modelCodexImageToolSupported, groupCodexImageToolSupported)
+		models[i].SupportedSessionModes = buildSupportedSessionModes(models[i].Id, models[i].SupportedEndpointTypes, advertiseCodexImageTool)
 		models[i].ActualModelReturned = buildActualModelReturned(models[i], actualModelByName[models[i].Id])
-		models[i].Capabilities = buildModelCapabilities(models[i].Id, codexImageToolSupported)
+		models[i].Capabilities = buildModelCapabilities(models[i].Id, advertiseCodexImageTool)
 		models[i].InputModalities = buildInputModalities(models[i].Id)
-		models[i].OutputModalities = buildOutputModalities(models[i].Id, models[i].SupportedEndpointTypes, codexImageToolSupported)
+		models[i].OutputModalities = buildOutputModalities(models[i].Id, models[i].SupportedEndpointTypes, advertiseCodexImageTool)
 		models[i].SupportedModalities = buildSupportedModalities(models[i].InputModalities, models[i].OutputModalities)
-		models[i].ExperimentalSupportedTools = buildExperimentalSupportedTools(models[i].Id, codexImageToolSupported, models[i].ExperimentalSupportedTools)
+		models[i].ExperimentalSupportedTools = buildExperimentalSupportedTools(models[i].Id, advertiseCodexImageTool, models[i].ExperimentalSupportedTools)
 	}
 	return models
 }
@@ -325,6 +331,73 @@ func shouldReturnCodexModels(c *gin.Context, modelType int) bool {
 	}
 	userAgent := strings.ToLower(c.GetHeader("User-Agent"))
 	return strings.Contains(userAgent, "codex")
+}
+
+func setCodexModelResponseHeaders(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	c.Header("Pragma", "no-cache")
+}
+
+func logCodexModelsTrace(c *gin.Context, response dto.CodexModelsResponse, stage string) {
+	if !shouldReturnCodexModels(c, constant.ChannelTypeOpenAI) && !service.ShouldLogClientRequestTrace(c) {
+		return
+	}
+	trace := map[string]any{
+		"stage":                        "codex_models_" + stage,
+		"model_count":                  len(response.Models),
+		"client_request":               service.BuildClientRequestTraceForLog(c),
+		"models":                       summarizeCodexModelsForTrace(response.Models),
+		"capabilities":                 response.Capabilities,
+		"experimental_supported_tools": response.ExperimentalSupportedTools,
+		"input_modalities":             response.InputModalities,
+		"output_modalities":            response.OutputModalities,
+		"supported_modalities":         response.SupportedModalities,
+		"model_provider_capabilities":  response.ModelProviderCapabilities,
+	}
+	logger.LogInfo(c, "codex models trace: "+service.MarshalTraceForLog(trace))
+	logger.LogInfo(c, "codex models response headers: "+service.MarshalTraceForLog(buildCodexModelResponseHeaderLog(c)))
+	logger.LogInfo(c, "codex models response capability summary: "+service.MarshalTraceForLog(summarizeCodexModelsResponseForLog(response)))
+}
+
+func buildCodexModelResponseHeaderLog(c *gin.Context) map[string]any {
+	if c == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"content_type":  "application/json; charset=utf-8",
+		"cache_control": c.Writer.Header().Get("Cache-Control"),
+		"pragma":        c.Writer.Header().Get("Pragma"),
+	}
+}
+
+func summarizeCodexModelsResponseForLog(response dto.CodexModelsResponse) map[string]any {
+	return map[string]any{
+		"model_count":                  len(response.Models),
+		"capabilities":                 response.Capabilities,
+		"experimental_supported_tools": response.ExperimentalSupportedTools,
+		"input_modalities":             response.InputModalities,
+		"output_modalities":            response.OutputModalities,
+		"supported_modalities":         response.SupportedModalities,
+		"model_provider_capabilities":  response.ModelProviderCapabilities,
+		"models":                       summarizeCodexModelsForTrace(response.Models),
+	}
+}
+
+func summarizeCodexModelsForTrace(models []dto.CodexModelInfo) []map[string]any {
+	items := make([]map[string]any, 0, len(models))
+	for _, item := range models {
+		items = append(items, map[string]any{
+			"slug":                         item.Slug,
+			"experimental_supported_tools": item.ExperimentalSupportedTools,
+			"capabilities":                 item.Capabilities,
+			"supported_session_modes":      item.SupportedSessionModes,
+			"actual_model_returned":        item.ActualModelReturned,
+			"input_modalities":             item.InputModalities,
+			"output_modalities":            item.OutputModalities,
+			"supported_endpoint_types":     item.SupportedEndpointTypes,
+		})
+	}
+	return items
 }
 
 func buildCodexModels(models []dto.OpenAIModels) []dto.CodexModelInfo {
@@ -350,6 +423,7 @@ func buildCodexModels(models []dto.OpenAIModels) []dto.CodexModelInfo {
 			DefaultVerbosity:              "low",
 			ApplyPatchToolType:            &applyPatchToolType,
 			WebSearchToolType:             "text",
+			SupportsSearchTool:            common.IsOpenAITextModel(modelItem.Id),
 			TruncationPolicy:              dto.CodexTruncationPolicy{Mode: "bytes", Limit: 10000},
 			SupportsParallelToolCalls:     true,
 			SupportsImageDetailOriginal:   false,
@@ -368,6 +442,33 @@ func buildCodexModels(models []dto.OpenAIModels) []dto.CodexModelInfo {
 	return codexModels
 }
 
+func buildCodexModelsResponse(c *gin.Context, codexModels []dto.CodexModelInfo) dto.CodexModelsResponse {
+	response := dto.CodexModelsResponse{Models: codexModels}
+
+	imageGenerationSupported := false
+	if groups, ok := resolveVisibleModelGroups(c); ok {
+		imageGenerationSupported = model.GetGroupCapabilities(groups).CodexImageGenerationToolSupported
+	}
+	for _, item := range codexModels {
+		imageGenerationSupported = imageGenerationSupported || item.Capabilities[dto.BuildInToolImageGeneration]
+	}
+	if !imageGenerationSupported {
+		return response
+	}
+
+	response.Capabilities = map[string]bool{dto.BuildInToolImageGeneration: true}
+	response.ExperimentalSupportedTools = []string{dto.BuildInToolImageGeneration}
+	response.InputModalities = []string{"text", "image"}
+	response.OutputModalities = []string{"text", "image"}
+	response.SupportedModalities = []string{"text", "image"}
+	response.ModelProviderCapabilities = &dto.CodexModelProviderCapabilities{
+		NamespaceTools:  true,
+		WebSearch:       true,
+		ImageGeneration: true,
+	}
+	return response
+}
+
 func defaultCodexReasoningLevels() []dto.CodexReasoningLevel {
 	return []dto.CodexReasoningLevel{
 		{Effort: "low", Description: "Fast responses with lighter reasoning"},
@@ -382,6 +483,16 @@ func nonNilStringSlice(items []string) []string {
 		return []string{}
 	}
 	return items
+}
+
+func shouldAdvertiseCodexImageToolForModel(modelName string, modelCodexImageToolSupported bool, groupCodexImageToolSupported bool) bool {
+	if common.IsImageGenerationModel(modelName) {
+		return modelCodexImageToolSupported
+	}
+	if !common.IsOpenAITextModel(modelName) {
+		return modelCodexImageToolSupported
+	}
+	return modelCodexImageToolSupported || groupCodexImageToolSupported
 }
 
 func buildModelCapabilities(modelName string, codexImageToolSupported bool) map[string]bool {
@@ -538,7 +649,11 @@ func RetrieveModel(c *gin.Context, modelType int) {
 	modelId := c.Param("model")
 	if aiModel, ok := getVisibleOpenAIModel(c, modelId, resolveAcceptUnsetRatioModel(c)); ok {
 		if shouldReturnCodexModels(c, modelType) {
-			c.JSON(200, buildCodexModels([]dto.OpenAIModels{aiModel})[0])
+			codexModels := buildCodexModels([]dto.OpenAIModels{aiModel})
+			codexResponse := buildCodexModelsResponse(c, codexModels)
+			logCodexModelsTrace(c, codexResponse, "retrieve")
+			setCodexModelResponseHeaders(c)
+			c.JSON(200, codexModels[0])
 			return
 		}
 		switch modelType {

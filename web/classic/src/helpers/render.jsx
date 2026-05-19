@@ -1324,6 +1324,9 @@ function renderPriceSimpleCore({
                                  cacheCreationRatio1h = 1.0,
                                  image = false,
                                  imageRatio = 1.0,
+                                 imageGenerationCall = false,
+                                 imageGenerationCallPrice = 0,
+                                 imageGenerationCallCount = 1,
                                  isSystemPromptOverride = false,
                                  displayMode = 'price',
                                  outputMode = 'text',
@@ -1346,6 +1349,10 @@ function renderPriceSimpleCore({
       hasSplitCacheCreation && cacheCreationTokens5m > 0;
   const shouldShowCacheCreation1h =
       hasSplitCacheCreation && cacheCreationTokens1h > 0;
+  const shouldShowImageGenerationCall =
+      imageGenerationCall && imageGenerationCallPrice > 0;
+  const normalizedImageGenerationCallCount =
+      imageGenerationCallCount > 0 ? imageGenerationCallCount : 1;
 
   if (outputMode === 'segments') {
     const segments = [
@@ -1354,6 +1361,13 @@ function renderPriceSimpleCore({
         text: getGroupRatioText(groupRatio, user_group_ratio),
       },
     ];
+
+    if (shouldShowImageGenerationCall) {
+      segments.push({
+        tone: 'primary',
+        text: i18next.t('图片生成'),
+      });
+    }
 
     if (modelPrice !== -1) {
       segments.push({
@@ -1364,6 +1378,15 @@ function renderPriceSimpleCore({
             })
             : i18next.t('按次'),
       });
+      if (shouldShowImageGenerationCall) {
+        segments.push({
+          tone: 'secondary',
+          text: i18next.t('图片生成调用：{{symbol}}{{price}} / 1次', {
+            symbol: '',
+            price: formatCompactDisplayPrice(imageGenerationCallPrice),
+          }),
+        });
+      }
     } else if (isPriceDisplayMode(displayMode, modelPrice)) {
       segments.push({
         tone: 'secondary',
@@ -1417,6 +1440,15 @@ function renderPriceSimpleCore({
           tone: 'secondary',
           text: i18next.t('图片输入 {{price}} / 1M tokens', {
             price: formatCompactDisplayPrice(modelRatio * 2.0 * imageRatio),
+          }),
+        });
+      }
+      if (shouldShowImageGenerationCall) {
+        segments.push({
+          tone: 'secondary',
+          text: i18next.t('图片生成调用：{{symbol}}{{price}} / 1次', {
+            symbol: '',
+            price: formatCompactDisplayPrice(imageGenerationCallPrice),
           }),
         });
       }
@@ -1479,6 +1511,12 @@ function renderPriceSimpleCore({
           text: i18next.t('图片输入: {{imageRatio}}', {
             imageRatio: imageRatio,
           }),
+        });
+      }
+      if (shouldShowImageGenerationCall) {
+        segments.push({
+          tone: 'secondary',
+          text: `${i18next.t('图片生成')} ${normalizedImageGenerationCallCount} ${i18next.t('次')}`,
         });
       }
     }
@@ -1573,6 +1611,14 @@ function renderPriceSimpleCore({
           }),
       );
     }
+    if (shouldShowImageGenerationCall) {
+      parts.push(
+          i18next.t('图片生成调用：{{symbol}}{{price}} / 1次', {
+            symbol: '',
+            price: formatCompactDisplayPrice(imageGenerationCallPrice),
+          }),
+      );
+    }
 
     parts.push(getGroupRatioText(groupRatio, user_group_ratio));
 
@@ -1612,6 +1658,9 @@ function renderPriceSimpleCore({
   if (image) {
     parts.push(i18next.t('图片输入: {{imageRatio}}'));
   }
+  if (shouldShowImageGenerationCall) {
+    parts.push(`${i18next.t('图片生成')} {{count}} ${i18next.t('次')}`);
+  }
 
   parts.push(`{{ratioType}}: {{groupRatio}}`);
 
@@ -1624,6 +1673,7 @@ function renderPriceSimpleCore({
     cacheCreationRatio5m: cacheCreationRatio5m,
     cacheCreationRatio1h: cacheCreationRatio1h,
     imageRatio: imageRatio,
+    count: normalizedImageGenerationCallCount,
   });
 
   if (isSystemPromptOverride) {
@@ -1701,6 +1751,26 @@ export function renderModelPrice(opts) {
               total: formatBillingDisplayPrice(modelPrice * groupRatio, rate),
             },
         ),
+        imageGenerationCall && imageGenerationCallPrice > 0
+            ? buildBillingPriceText('图片生成调用：{{symbol}}{{price}} / 1次', {
+              symbol,
+              usdAmount: imageGenerationCallPrice,
+              rate,
+            })
+            : null,
+        imageGenerationCall && imageGenerationCallPrice > 0
+            ? buildBillingText(
+                '图片生成：1 次 * 单价 {{price}} * {{ratioType}} {{ratio}} = {{amount}}',
+                {
+                  price: renderDisplayAmountFromUsd(imageGenerationCallPrice),
+                  ratioType: ratioLabel,
+                  ratio: groupRatio,
+                  amount: renderDisplayAmountFromUsd(
+                      imageGenerationCallPrice * groupRatio,
+                  ),
+                },
+            )
+            : null,
       ]);
     }
 
@@ -2108,6 +2178,9 @@ export function renderLogContent(opts) {
     cache_ratio: cacheRatio = 1.0,
     image = false,
     image_ratio: imageRatio = 1.0,
+    image_generation_call: imageGenerationCall = false,
+    image_generation_call_price: imageGenerationCallPrice = 0,
+    image_generation_call_count: imageGenerationCallCount = 1,
     web_search: webSearch = false,
     web_search_call_count: webSearchCallCount = 0,
     file_search: fileSearch = false,
@@ -2122,16 +2195,30 @@ export function renderLogContent(opts) {
 
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
+  const shouldShowImageGenerationCall =
+      imageGenerationCall && imageGenerationCallPrice > 0;
+  const normalizedImageGenerationCallCount =
+      imageGenerationCallCount > 0 ? imageGenerationCallCount : 1;
 
   if (isPriceDisplayMode(displayMode, modelPrice)) {
     if (modelPrice !== -1) {
-      return joinBillingSummary([
+      const parts = [
         i18next.t('模型价格 {{symbol}}{{price}} / 次', {
           symbol,
           price: (modelPrice * rate).toFixed(6),
         }),
-        getGroupRatioText(groupRatio, user_group_ratio),
-      ]);
+      ];
+      appendPricePart(
+          parts,
+          shouldShowImageGenerationCall,
+          '图片生成调用：{{symbol}}{{price}} / 1次',
+          {
+            symbol,
+            price: (imageGenerationCallPrice * rate).toFixed(6),
+          },
+      );
+      parts.push(getGroupRatioText(groupRatio, user_group_ratio));
+      return joinBillingSummary(parts);
     }
 
     const parts = [
@@ -2164,6 +2251,15 @@ export function renderLogContent(opts) {
     );
     appendPricePart(
         parts,
+        shouldShowImageGenerationCall,
+        '图片生成调用：{{symbol}}{{price}} / 1次',
+        {
+          symbol,
+          price: (imageGenerationCallPrice * rate).toFixed(6),
+        },
+    );
+    appendPricePart(
+        parts,
         webSearch,
         'Web 搜索调用 {{webSearchCallCount}} 次',
         {
@@ -2190,18 +2286,37 @@ export function renderLogContent(opts) {
       ratio,
     });
   } else {
-    if (image) {
-      return i18next.t(
-          '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，图片输入倍率 {{imageRatio}}，{{ratioType}} {{ratio}}',
-          {
-            modelRatio: modelRatio,
-            cacheRatio: cacheRatio,
-            completionRatio: completionRatio,
-            imageRatio: imageRatio,
-            ratioType: ratioLabel,
-            ratio,
-          },
-      );
+    if (image || shouldShowImageGenerationCall) {
+      const ratioParts = [
+        image
+            ? i18next.t(
+                '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，图片输入倍率 {{imageRatio}}，{{ratioType}} {{ratio}}',
+                {
+                  modelRatio: modelRatio,
+                  cacheRatio: cacheRatio,
+                  completionRatio: completionRatio,
+                  imageRatio: imageRatio,
+                  ratioType: ratioLabel,
+                  ratio,
+                },
+            )
+            : i18next.t(
+                '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，{{ratioType}} {{ratio}}',
+                {
+                  modelRatio: modelRatio,
+                  cacheRatio: cacheRatio,
+                  completionRatio: completionRatio,
+                  ratioType: ratioLabel,
+                  ratio,
+                },
+            ),
+      ];
+      if (shouldShowImageGenerationCall) {
+        ratioParts.push(
+            `${i18next.t('图片生成')} ${normalizedImageGenerationCallCount} ${i18next.t('次')}`,
+        );
+      }
+      return joinBillingSummary(ratioParts);
     } else if (webSearch) {
       return i18next.t(
           '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，{{ratioType}} {{ratio}}，Web 搜索调用 {{webSearchCallCount}} 次',
@@ -2316,10 +2431,13 @@ export function renderTieredModelPrice(opts) {
     expr_b64: exprB64,
     matched_tier: matchedTier,
     group_ratio: groupRatio,
+    user_group_ratio,
     cache_tokens: cacheTokens = 0,
     cache_creation_tokens: cacheCreationTokens = 0,
     cache_creation_tokens_5m: cacheCreationTokens5m = 0,
     cache_creation_tokens_1h: cacheCreationTokens1h = 0,
+    image_generation_call: imageGenerationCall = false,
+    image_generation_call_price: imageGenerationCallPrice = 0,
   } = opts;
   let exprStr = '';
   try { exprStr = decodeFromBase64(exprB64); } catch { /* ignore */ }
@@ -2339,10 +2457,17 @@ export function renderTieredModelPrice(opts) {
     return i18next.t('阶梯计费（未匹配到对应阶梯）');
   }
   const { symbol, rate } = getCurrencyConfig();
-  const gr = groupRatio || 1;
+  const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
+      groupRatio,
+      user_group_ratio,
+  );
+  const imageGenerationAmount =
+      imageGenerationCallPrice * effectiveGroupRatio;
 
   const hasAnyCacheTokens = cacheTokens > 0 || cacheCreationTokens > 0
       || cacheCreationTokens5m > 0 || cacheCreationTokens1h > 0;
+  const shouldShowImageGenerationCall =
+      imageGenerationCall && imageGenerationCallPrice > 0;
 
   const priceLines = BILLING_PRICING_VARS
       .filter((v) => v.group !== 'cache' || hasAnyCacheTokens)
@@ -2355,6 +2480,24 @@ export function renderTieredModelPrice(opts) {
         .map(([field, label]) =>
             buildBillingPriceText(`${label}：{{symbol}}{{price}} / 1M tokens`, { symbol, usdAmount: tier[field], rate }),
         ),
+    shouldShowImageGenerationCall
+        ? buildBillingPriceText('图片生成调用：{{symbol}}{{price}} / 1次', {
+          symbol,
+          usdAmount: imageGenerationCallPrice,
+          rate,
+        })
+        : null,
+    shouldShowImageGenerationCall
+        ? buildBillingText(
+            '图片生成：1 次 * 单价 {{price}} * {{ratioType}} {{ratio}} = {{amount}}',
+            {
+              price: renderDisplayAmountFromUsd(imageGenerationCallPrice),
+              ratioType: ratioLabel,
+              ratio: effectiveGroupRatio,
+              amount: renderDisplayAmountFromUsd(imageGenerationAmount),
+            },
+        )
+        : null,
   ];
 
   return renderBillingArticle(lines);
@@ -2370,6 +2513,9 @@ export function renderTieredModelPriceSimple(opts) {
     cache_creation_tokens_5m: cacheCreationTokens5m = 0,
     cache_creation_tokens_1h: cacheCreationTokens1h = 0,
     cache_creation_tokens: cacheCreationTokens = 0,
+    image_generation_call: imageGenerationCall = false,
+    image_generation_call_price: imageGenerationCallPrice = 0,
+    image_generation_call_count: imageGenerationCallCount = 1,
     displayMode = 'price',
     outputMode = 'segments',
   } = opts;
@@ -2390,6 +2536,17 @@ export function renderTieredModelPriceSimple(opts) {
         text: getGroupRatioText(groupRatio, user_group_ratio),
       },
     ];
+    const shouldShowImageGenerationCall =
+        imageGenerationCall && imageGenerationCallPrice > 0;
+    const normalizedImageGenerationCallCount =
+        imageGenerationCallCount > 0 ? imageGenerationCallCount : 1;
+
+    if (shouldShowImageGenerationCall) {
+      segments.push({
+        tone: 'primary',
+        text: i18next.t('图片生成'),
+      });
+    }
 
     if (!tier) {
       segments.push({
@@ -2415,6 +2572,20 @@ export function renderTieredModelPriceSimple(opts) {
           });
         }
       }
+      if (shouldShowImageGenerationCall) {
+        segments.push({
+          tone: 'secondary',
+          text: i18next.t('图片生成调用：{{symbol}}{{price}} / 1次', {
+            symbol: '',
+            price: formatCompactDisplayPrice(imageGenerationCallPrice),
+          }),
+        });
+      }
+    } else if (shouldShowImageGenerationCall) {
+      segments.push({
+        tone: 'secondary',
+        text: `${i18next.t('图片生成')} ${normalizedImageGenerationCallCount} ${i18next.t('次')}`,
+      });
     }
 
     return segments;
@@ -2439,6 +2610,9 @@ export function renderModelPriceSimple(opts) {
     cache_creation_ratio_1h: cacheCreationRatio1h = 1.0,
     image = false,
     image_ratio: imageRatio = 1.0,
+    image_generation_call: imageGenerationCall = false,
+    image_generation_call_price: imageGenerationCallPrice = 0,
+    image_generation_call_count: imageGenerationCallCount = 1,
     is_system_prompt_overwritten: isSystemPromptOverride = false,
     provider = 'openai',
     displayMode = 'price',
@@ -2459,6 +2633,9 @@ export function renderModelPriceSimple(opts) {
     cacheCreationRatio1h,
     image,
     imageRatio,
+    imageGenerationCall,
+    imageGenerationCallPrice,
+    imageGenerationCallCount,
     isSystemPromptOverride,
     displayMode,
     outputMode,
