@@ -189,6 +189,53 @@ func TestChannelMonitorRecentStatusUsesRequestOutcome(t *testing.T) {
 	require.Equal(t, []string{"success", "rate_limit"}, statuses["codex-pro"])
 }
 
+func TestChannelMonitorRecentStatusIsGroupedByUserRequestOutcome(t *testing.T) {
+	rows := []model.ChannelStatusMonitorRecentLogRow{
+		{
+			Id:        1,
+			CreatedAt: 100,
+			Type:      model.LogTypeError,
+			Group:     "codex-subscription",
+			ChannelId: 4,
+			RequestId: "req-failover-success",
+			Other:     `{"status_code":502}`,
+			Content:   "status_code=502, bad response",
+		},
+		{
+			Id:        2,
+			CreatedAt: 101,
+			Type:      model.LogTypeConsume,
+			Group:     "codex-subscription",
+			ChannelId: 6,
+			RequestId: "req-failover-success",
+			Other:     `{"stream_status":{"status":"ok"}}`,
+		},
+		{
+			Id:        3,
+			CreatedAt: 102,
+			Type:      model.LogTypeError,
+			Group:     "codex-subscription",
+			ChannelId: 4,
+			RequestId: "req-final-failure",
+			Other:     `{"status_code":500}`,
+			Content:   "status_code=500, final upstream error",
+		},
+		{
+			Id:        4,
+			CreatedAt: 103,
+			Type:      model.LogTypeConsume,
+			Group:     "codex-plus",
+			ChannelId: 2,
+			RequestId: "req-other-group",
+		},
+	}
+
+	statuses := buildChannelMonitorRecentStatus(rows, 60)
+
+	require.Equal(t, []string{"success", "server_error"}, statuses["codex-subscription"])
+	require.Equal(t, []string{"success"}, statuses["codex-plus"])
+}
+
 func TestChannelMonitorStreamConsumeErrorIsNotSuccessful(t *testing.T) {
 	rows := []model.ChannelStatusMonitorLogRow{
 		{

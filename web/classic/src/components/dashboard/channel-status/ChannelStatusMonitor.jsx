@@ -287,33 +287,6 @@ function getStatusLabel(status, t) {
   }
 }
 
-function buildFallbackRecentStatus(group) {
-  const total = Math.min(60, Math.max(Number(group?.recent_requests) || 0, 0));
-  if (total <= 0) return [];
-  const failures = [
-    ...Array.from(
-      { length: Number(group?.recent_error_429) || 0 },
-      () => 'rate_limit',
-    ),
-    ...Array.from(
-      { length: Number(group?.recent_error_5xx) || 0 },
-      () => 'server_error',
-    ),
-    ...Array.from(
-      { length: Number(group?.recent_error_timeout) || 0 },
-      () => 'timeout',
-    ),
-  ];
-  while (failures.length < Number(group?.recent_failures || 0)) {
-    failures.push('error');
-  }
-  const status = Array.from({ length: total }, () => 'success');
-  failures.slice(0, total).forEach((failure, index) => {
-    status[Math.max(0, total - failures.length + index)] = failure;
-  });
-  return status;
-}
-
 function SummaryMetric({ icon: Icon, label, value, detail, tone = 'default' }) {
   const colorMap = {
     default: 'blue',
@@ -476,7 +449,7 @@ function StatusHistoryBar({ group }) {
   const statuses =
     Array.isArray(group.recent_status) && group.recent_status.length > 0
       ? group.recent_status
-      : buildFallbackRecentStatus(group);
+      : [];
 
   return (
     <div className='ct-channel-monitor-history'>

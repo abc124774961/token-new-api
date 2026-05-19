@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 const channelStatusMonitorQueryTimeout = 5 * time.Second
@@ -85,6 +87,80 @@ func GetChannelStatusMonitorRecentLogs(channelIds []int, limit int) ([]ChannelSt
 		Limit(limit).
 		Find(&rows).Error
 	return rows, err
+}
+
+func GetChannelStatusMonitorRecentLogsByGroups(groupNames []string, perGroupLimit int) ([]ChannelStatusMonitorRecentLogRow, error) {
+	if perGroupLimit <= 0 {
+		perGroupLimit = 60
+	}
+	groupNames = uniqueNormalizedMonitorGroups(groupNames)
+	if len(groupNames) == 0 {
+		return []ChannelStatusMonitorRecentLogRow{}, nil
+	}
+	rows := make([]ChannelStatusMonitorRecentLogRow, 0, len(groupNames)*perGroupLimit)
+	groupSelectCol := logGroupCol
+	if strings.Contains(groupSelectCol, "`") {
+		groupSelectCol = groupSelectCol + " as `group`"
+	} else {
+		groupSelectCol = groupSelectCol + " as \"group\""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), channelStatusMonitorQueryTimeout)
+	defer cancel()
+	for _, groupName := range groupNames {
+		requestIds := make([]string, 0, perGroupLimit)
+		requestQuery := LOG_DB.Model(&Log{}).
+			WithContext(ctx).
+			Where("type IN ? AND request_id <> ?", []int{LogTypeConsume, LogTypeError}, "").
+			Group("request_id").
+			Order("MAX(id) desc").
+			Limit(perGroupLimit)
+		requestQuery = applyChannelStatusMonitorGroupFilter(requestQuery, groupName)
+		if err := requestQuery.Pluck("request_id", &requestIds).Error; err != nil {
+			return nil, err
+		}
+
+		groupRows := make([]ChannelStatusMonitorRecentLogRow, 0, perGroupLimit)
+		tx := LOG_DB.Model(&Log{}).
+			WithContext(ctx).
+			Select("id, created_at, type, channel_id, "+groupSelectCol+", request_id, other, content").
+			Where("type IN ?", []int{LogTypeConsume, LogTypeError}).
+			Order("id desc")
+		tx = applyChannelStatusMonitorGroupFilter(tx, groupName)
+		if len(requestIds) > 0 {
+			tx = tx.Where("request_id IN ?", requestIds)
+		} else {
+			tx = tx.Limit(perGroupLimit)
+		}
+		if err := tx.Find(&groupRows).Error; err != nil {
+			return nil, err
+		}
+		rows = append(rows, groupRows...)
+	}
+	return rows, nil
+}
+
+func applyChannelStatusMonitorGroupFilter(tx *gorm.DB, groupName string) *gorm.DB {
+	if groupName == "default" {
+		return tx.Where("("+logGroupCol+" = ? OR "+logGroupCol+" = ?)", groupName, "")
+	}
+	return tx.Where(logGroupCol+" = ?", groupName)
+}
+
+func uniqueNormalizedMonitorGroups(groupNames []string) []string {
+	seen := make(map[string]struct{}, len(groupNames))
+	result := make([]string, 0, len(groupNames))
+	for _, groupName := range groupNames {
+		groupName = strings.TrimSpace(groupName)
+		if groupName == "" {
+			groupName = "default"
+		}
+		if _, ok := seen[groupName]; ok {
+			continue
+		}
+		seen[groupName] = struct{}{}
+		result = append(result, groupName)
+	}
+	return result
 }
 
 func GetPublicHomeStatusLogs(startTs int64, channelIds []int) ([]ChannelStatusMonitorLogRow, error) {

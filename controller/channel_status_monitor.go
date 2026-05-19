@@ -283,9 +283,11 @@ func buildChannelStatusMonitorWithLogLimit(windowHours int, logLimit int) (Chann
 		return ChannelStatusMonitorResponse{}, err
 	}
 	enabledChannelIds := make([]int, 0, len(channels))
+	groupNames := make([]string, 0, len(channels))
 	for _, channel := range channels {
 		if shouldIncludeChannelInStatusMonitor(channel) {
 			enabledChannelIds = append(enabledChannelIds, channel.Id)
+			groupNames = append(groupNames, channelMonitorGroups(channel)...)
 		}
 	}
 
@@ -294,7 +296,7 @@ func buildChannelStatusMonitorWithLogLimit(windowHours int, logLimit int) (Chann
 	if err != nil {
 		return ChannelStatusMonitorResponse{}, err
 	}
-	recentLogRows, err := model.GetChannelStatusMonitorRecentLogs(enabledChannelIds, channelStatusMonitorRecentLimit*4)
+	recentLogRows, err := model.GetChannelStatusMonitorRecentLogsByGroups(groupNames, channelStatusMonitorRecentLimit)
 	if err != nil {
 		return ChannelStatusMonitorResponse{}, err
 	}
