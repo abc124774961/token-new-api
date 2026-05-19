@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "kind": "modelgateway_replay",
+  "records": [
+    {
+      "requested_group": "auto",
+      "selected_group": "vip",
+      "requested_model": "mimo-v1",
+      "channel_id": 101,
+      "channel_name": "replay_mimo_channel",
+      "endpoint_type": "openai-response",
+      "policy_mode": "active",
+      "auto_mode": "auto_fusion",
+      "strategy": "balanced",
+      "smart_handled": true,
+      "success": true,
+      "duration_ms": 640,
+      "ttft_ms": 110,
+      "score_total": 0.91,
+      "score_breakdown": {
+        "success": 0.9,
+        "speed": 0.82,
+        "load": 1,
+        "cost": 0.75,
+        "group": 1
+      },
+      "candidate_groups": [
+        "default",
+        "vip"
+      ],
+      "selected_reason": "weighted_score",
+      "request_meta": {
+        "original_model_name": "mimo-v1",
+        "user_using_group": "default"
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "mimo_auto_fusion_replay",
+      "record_ref": 0,
+      "dispatch": {
+        "name": "mimo_auto_fusion_replay",
+        "request": {
+          "user_group": "default",
+          "requested_group": "auto",
+          "model_name": "mimo-v1"
+        },
+        "policy": {
+          "mode": "active",
+          "strategy": "balanced",
+          "auto_mode": "auto_fusion",
+          "cross_group_fusion": false,
+          "candidate_groups": [
+            "default",
+            "vip"
+          ],
+          "queue_enabled": false
+        },
+        "auto_groups": [
+          "default",
+          "vip"
+        ],
+        "usable_groups": [
+          "default",
+          "vip"
+        ],
+        "channels": [
+          {
+            "id": 101,
+            "group": "vip",
+            "name": "replay_mimo_channel"
+          },
+          {
+            "id": 202,
+            "group": "default",
+            "name": "replay_default_channel"
+          }
+        ],
+        "runtime_snapshots": [
+          {
+            "channel_id": 101,
+            "group": "vip",
+            "success_rate": 0.95,
+            "ttft_ms": 110,
+            "duration_ms": 640,
+            "cost_ratio": 1,
+            "group_priority_ratio": 1,
+            "sample_count": 1
+          },
+          {
+            "channel_id": 202,
+            "group": "default",
+            "success_rate": 0.7,
+            "ttft_ms": 220,
+            "duration_ms": 900,
+            "cost_ratio": 1.2,
+            "group_priority_ratio": 1,
+            "sample_count": 1
+          }
+        ],
+        "expected": {
+          "handled": true,
+          "selected_channel_id": 101,
+          "selected_group": "vip",
+          "fallback_used": false,
+          "score_breakdown": {
+            "success": 0.9,
+            "speed": 0.82,
+            "load": 1,
+            "cost": 0.75,
+            "group": 1
+          }
+        }
+      },
+      "expect_replay": {
+        "selected_channel_id": 101,
+        "selected_group": "vip",
+        "score_total": 0.91,
+        "selected_reason": "weighted_score"
+      }
+    }
+  ]
+}

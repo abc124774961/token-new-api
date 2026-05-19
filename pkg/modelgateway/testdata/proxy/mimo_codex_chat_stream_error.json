@@ -1,0 +1,41 @@
+{
+  "name": "mimo_codex_chat_stream_error",
+  "provider_profile": "mimo_codex_chat",
+  "proxy_mode": "responses_via_chat",
+  "request_model": "mimo-v1",
+  "upstream_model": "mimo-v1",
+  "endpoint_type": "responses",
+  "stream": true,
+  "request": {
+    "model": "mimo-v1",
+    "input": "hello",
+    "stream": true
+  },
+  "upstream_stream": [
+    {
+      "id": "chatcmpl_mimo_error_1",
+      "object": "chat.completion.chunk",
+      "created": 1710000400,
+      "model": "mimo-v1",
+      "error": {
+        "message": "upstream overloaded",
+        "type": "server_error",
+        "code": "overloaded"
+      }
+    }
+  ],
+  "expected": {
+    "provider_profile": "mimo_codex_chat",
+    "proxy_mode": "responses_via_chat",
+    "native_responses": false,
+    "responses_via_chat": true,
+    "reasoning": true,
+    "web_search": true,
+    "upstream_path": "/v1/chat/completions",
+    "upstream_model": "mimo-v1",
+    "stream_event_type": "response.failed",
+    "stream_error_code": "overloaded",
+    "stream_error_type": "server_error",
+    "stream_error_text": "upstream overloaded"
+  }
+}

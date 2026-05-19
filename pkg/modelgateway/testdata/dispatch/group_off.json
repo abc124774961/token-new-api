@@ -1,0 +1,34 @@
+{
+  "name": "group_off",
+  "request": {
+    "user_group": "default",
+    "requested_group": "default",
+    "model_name": "gpt-4.1"
+  },
+  "policy": {
+    "mode": "off",
+    "strategy": "balanced",
+    "auto_mode": "auto_sequential",
+    "cross_group_fusion": false,
+    "candidate_groups": []
+  },
+  "auto_groups": ["default"],
+  "usable_groups": ["default"],
+  "channels": [
+    {
+      "id": 1,
+      "group": "default",
+      "name": "legacy-default"
+    }
+  ],
+  "runtime_snapshots": [],
+  "expected": {
+    "handled": false,
+    "selected_channel_id": 0,
+    "selected_group": "",
+    "fallback_used": false,
+    "context_keys": {},
+    "score_breakdown": {}
+  }
+}
+

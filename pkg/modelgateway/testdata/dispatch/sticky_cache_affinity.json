@@ -1,0 +1,61 @@
+{
+  "name": "sticky_cache_affinity",
+  "request": {
+    "user_group": "default",
+    "requested_group": "default",
+    "model_name": "gpt-5"
+  },
+  "policy": {
+    "mode": "active",
+    "strategy": "balanced",
+    "auto_mode": "auto_sequential",
+    "queue_enabled": false
+  },
+  "usable_groups": ["default"],
+  "channels": [
+    {"id": 1, "group": "default", "name": "cache-affinity"},
+    {"id": 2, "group": "default", "name": "fast-best"}
+  ],
+  "runtime_snapshots": [
+    {
+      "channel_id": 1,
+      "group": "default",
+      "success_rate": 0.86,
+      "ttft_ms": 700,
+      "tokens_per_second": 40,
+      "active_concurrency": 1,
+      "max_concurrency": 10,
+      "cost_ratio": 1,
+      "group_priority_ratio": 1,
+      "sample_count": 20
+    },
+    {
+      "channel_id": 2,
+      "group": "default",
+      "success_rate": 0.98,
+      "ttft_ms": 350,
+      "tokens_per_second": 80,
+      "active_concurrency": 1,
+      "max_concurrency": 10,
+      "cost_ratio": 1,
+      "group_priority_ratio": 1,
+      "sample_count": 20
+    }
+  ],
+  "cache_affinity": {
+    "enabled": true,
+    "channel_id": 1,
+    "group": "default",
+    "key_fp": "fixture-cache-1",
+    "keep_score_ratio": 0.75,
+    "expect_retained": true
+  },
+  "expected": {
+    "handled": true,
+    "selected_channel_id": 1,
+    "selected_group": "default",
+    "fallback_used": false,
+    "sticky_retained": true,
+    "cache_affinity": true
+  }
+}

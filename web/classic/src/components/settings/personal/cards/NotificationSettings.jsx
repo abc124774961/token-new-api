@@ -73,6 +73,7 @@ const NotificationSettings = ({
       enabled: true,
       detail: true,
       channel_status: true,
+      model_gateway: true,
       token: true,
       log: true,
       midjourney: true,
@@ -164,6 +165,7 @@ const NotificationSettings = ({
         enabled: true,
         detail: true,
         channel_status: true,
+        model_gateway: true,
         token: true,
         log: true,
         midjourney: true,
@@ -277,6 +279,11 @@ const NotificationSettings = ({
           key: 'channel_status',
           title: t('渠道状态监控'),
           description: t('按分组监控渠道访问状态'),
+        },
+        {
+          key: 'model_gateway',
+          title: t('智能模型网关'),
+          description: t('智能调度与渠道观测'),
         },
         { key: 'token', title: t('令牌管理'), description: t('API令牌管理') },
         { key: 'log', title: t('使用日志'), description: t('API使用记录') },
@@ -507,7 +514,10 @@ const NotificationSettings = ({
                     checkedText={t('开')}
                     uncheckedText={t('关')}
                     onChange={(value) =>
-                      handleFormChange('upstreamModelUpdateNotifyEnabled', value)
+                      handleFormChange(
+                        'upstreamModelUpdateNotifyEnabled',
+                        value,
+                      )
                     }
                     extraText={t(
                       '仅管理员可用。开启后，当系统定时检测全部渠道发现上游模型变更或检测异常时，将按你选择的通知方式发送汇总通知；渠道或模型过多时会自动省略部分明细。',

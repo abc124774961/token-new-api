@@ -1,0 +1,159 @@
+{
+  "name": "mimo_codex_chat_stream_complex",
+  "provider_profile": "mimo_codex_chat",
+  "proxy_mode": "responses_via_chat",
+  "request_model": "mimo-v1",
+  "upstream_model": "mimo-v1",
+  "endpoint_type": "responses",
+  "stream": true,
+  "request": {
+    "model": "mimo-v1",
+    "instructions": "You are a coding agent.",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Read the file and inspect the image."
+          },
+          {
+            "type": "input_file",
+            "file_id": "file_abc123"
+          },
+          {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,aW1hZ2U="
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "name": "read_file",
+        "description": "Read a file",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    ],
+    "reasoning": {
+      "effort": "high"
+    },
+    "stream": true,
+    "prompt_cache_key": "mimo-complex-session"
+  },
+  "upstream_stream": [
+    {
+      "id": "chatcmpl_mimo_stream_1",
+      "object": "chat.completion.chunk",
+      "created": 1710000100,
+      "model": "mimo-v1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "role": "assistant"
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_mimo_stream_1",
+      "object": "chat.completion.chunk",
+      "created": 1710000100,
+      "model": "mimo-v1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "reasoning_content": "I should inspect the file."
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_mimo_stream_1",
+      "object": "chat.completion.chunk",
+      "created": 1710000100,
+      "model": "mimo-v1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "id": "call_read_file_1",
+                "type": "function",
+                "function": {
+                  "name": "read_file",
+                  "arguments": "{\"path\":\""
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_mimo_stream_1",
+      "object": "chat.completion.chunk",
+      "created": 1710000100,
+      "model": "mimo-v1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "function": {
+                  "arguments": "/tmp/a.txt\"}"
+                }
+              }
+            ]
+          },
+          "finish_reason": "tool_calls"
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_mimo_stream_1",
+      "object": "chat.completion.chunk",
+      "created": 1710000100,
+      "model": "mimo-v1",
+      "choices": [],
+      "usage": {
+        "prompt_tokens": 20,
+        "completion_tokens": 7,
+        "total_tokens": 27
+      }
+    }
+  ],
+  "expected": {
+    "provider_profile": "mimo_codex_chat",
+    "proxy_mode": "responses_via_chat",
+    "native_responses": false,
+    "responses_via_chat": true,
+    "reasoning": true,
+    "web_search": true,
+    "upstream_path": "/v1/chat/completions",
+    "upstream_model": "mimo-v1",
+    "prompt_cache_key": "mimo-complex-session",
+    "reasoning_effort": "high",
+    "content_type": "file",
+    "file_data": "file_abc123",
+    "image_url": "data:image/png;base64,aW1hZ2U=",
+    "reasoning_text": "I should inspect the file.",
+    "tool_name": "read_file",
+    "tool_arguments": "{\"path\":\"/tmp/a.txt\"}",
+    "stream_event_type": "response.function_call_arguments.delta"
+  }
+}

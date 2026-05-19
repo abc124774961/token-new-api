@@ -1,0 +1,105 @@
+{
+  "name": "mimo_codex_chat_builtin_tools",
+  "provider_profile": "mimo_codex_chat",
+  "proxy_mode": "responses_via_chat",
+  "request_model": "mimo-v1",
+  "upstream_model": "mimo-v1",
+  "endpoint_type": "responses",
+  "stream": false,
+  "request": {
+    "model": "mimo-v1",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Search the web and inspect indexed files before answering."
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "type": "web_search_preview",
+        "search_context_size": "medium",
+        "user_location": {
+          "type": "approximate",
+          "country": "US"
+        }
+      },
+      {
+        "type": "file_search",
+        "vector_store_ids": [
+          "vs_codex_1"
+        ],
+        "max_num_results": 5
+      },
+      {
+        "type": "function",
+        "name": "summarize_sources",
+        "description": "Summarize selected sources",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "source_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "source_ids"
+          ]
+        }
+      }
+    ],
+    "tool_choice": "auto",
+    "stream": false,
+    "prompt_cache_key": "mimo-builtins-session"
+  },
+  "upstream_response": {
+    "id": "chatcmpl_mimo_builtin_tools",
+    "object": "chat.completion",
+    "created": 1710000600,
+    "model": "mimo-v1",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "I found two relevant sources."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 18,
+      "completion_tokens": 7,
+      "total_tokens": 25
+    }
+  },
+  "expected": {
+    "provider_profile": "mimo_codex_chat",
+    "proxy_mode": "responses_via_chat",
+    "native_responses": false,
+    "responses_via_chat": true,
+    "reasoning": true,
+    "web_search": true,
+    "upstream_path": "/v1/chat/completions",
+    "upstream_model": "mimo-v1",
+    "downstream_model": "mimo-v1",
+    "output_text": "I found two relevant sources.",
+    "prompt_cache_key": "mimo-builtins-session",
+    "upstream_tool_types": [
+      "web_search_preview",
+      "file_search",
+      "function"
+    ],
+    "custom_tool_types": [
+      "web_search_preview",
+      "file_search"
+    ]
+  }
+}

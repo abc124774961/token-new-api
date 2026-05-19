@@ -34,6 +34,7 @@ const routerMap = {
   home: '/',
   channel: '/console/channel',
   channel_status: '/console/channel-status',
+  model_gateway: '/console/model-gateway',
   token: '/console/token',
   redemption: '/console/redemption',
   topup: '/console/topup',
@@ -87,6 +88,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('渠道状态监控'),
         itemKey: 'channel_status',
         to: '/channel-status',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('智能模型网关'),
+        itemKey: 'model_gateway',
+        to: '/model-gateway',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {

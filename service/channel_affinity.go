@@ -63,6 +63,21 @@ type ChannelAffinityStatsContext struct {
 	TTLSeconds     int64
 }
 
+type ChannelAffinitySignal struct {
+	CacheKey           string
+	CacheKeySuffix     string
+	RuleName           string
+	UsingGroup         string
+	ModelName          string
+	KeySourceType      string
+	KeySourceKey       string
+	KeySourcePath      string
+	KeyHint            string
+	KeyFingerprint     string
+	TTLSeconds         int
+	PreferredChannelID int
+}
+
 const (
 	cacheTokenRateModeCachedOverPrompt           = "cached_over_prompt"
 	cacheTokenRateModeCachedOverPromptPlusCached = "cached_over_prompt_plus_cached"
@@ -543,9 +558,17 @@ func ApplyChannelAffinityOverrideTemplate(c *gin.Context, paramOverride map[stri
 }
 
 func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup string) (int, bool) {
+	signal, ok := ResolveChannelAffinitySignal(c, modelName, usingGroup)
+	if !ok || signal.PreferredChannelID <= 0 {
+		return 0, false
+	}
+	return signal.PreferredChannelID, true
+}
+
+func ResolveChannelAffinitySignal(c *gin.Context, modelName string, usingGroup string) (ChannelAffinitySignal, bool) {
 	setting := operation_setting.GetChannelAffinitySetting()
 	if setting == nil || !setting.Enabled {
-		return 0, false
+		return ChannelAffinitySignal{}, false
 	}
 	path := ""
 	if c != nil && c.Request != nil && c.Request.URL != nil {
@@ -588,7 +611,7 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 		}
 		cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, modelName, usingGroup, affinityValue)
 		cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
-		setChannelAffinityContext(c, channelAffinityMeta{
+		meta := channelAffinityMeta{
 			CacheKey:       cacheKeyFull,
 			TTLSeconds:     ttlSeconds,
 			RuleName:       rule.Name,
@@ -602,20 +625,35 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 			UsingGroup:     usingGroup,
 			ModelName:      modelName,
 			RequestPath:    path,
-		})
+		}
+		setChannelAffinityContext(c, meta)
 
 		cache := getChannelAffinityCache()
 		channelID, found, err := cache.Get(cacheKeySuffix)
 		if err != nil {
 			common.SysError(fmt.Sprintf("channel affinity cache get failed: key=%s, err=%v", cacheKeyFull, err))
-			return 0, false
+			return ChannelAffinitySignal{}, false
+		}
+		signal := ChannelAffinitySignal{
+			CacheKey:           cacheKeyFull,
+			CacheKeySuffix:     cacheKeySuffix,
+			RuleName:           rule.Name,
+			UsingGroup:         usingGroup,
+			ModelName:          modelName,
+			KeySourceType:      strings.TrimSpace(usedSource.Type),
+			KeySourceKey:       strings.TrimSpace(usedSource.Key),
+			KeySourcePath:      strings.TrimSpace(usedSource.Path),
+			KeyHint:            meta.KeyHint,
+			KeyFingerprint:     meta.KeyFingerprint,
+			TTLSeconds:         ttlSeconds,
+			PreferredChannelID: 0,
 		}
 		if found {
-			return channelID, true
+			signal.PreferredChannelID = channelID
 		}
-		return 0, false
+		return signal, true
 	}
-	return 0, false
+	return ChannelAffinitySignal{}, false
 }
 
 func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {

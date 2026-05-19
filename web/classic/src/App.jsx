@@ -59,6 +59,7 @@ import SetupCheck from './components/layout/SetupCheck';
 const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const ChannelStatus = lazy(() => import('./pages/ChannelStatus'));
+const ModelGateway = lazy(() => import('./pages/ModelGateway'));
 const About = lazy(() => import('./pages/About'));
 const UserAgreement = lazy(() => import('./pages/UserAgreement'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
@@ -152,6 +153,16 @@ function App() {
             <AdminRoute>
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                 <ChannelStatus />
+              </Suspense>
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/model-gateway'
+          element={
+            <AdminRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <ModelGateway />
               </Suspense>
             </AdminRoute>
           }
@@ -290,7 +301,10 @@ function App() {
             <PrivateRoute>
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                 <Navigate
-                  to={{ pathname: '/console/recharge', search: location.search }}
+                  to={{
+                    pathname: '/console/recharge',
+                    search: location.search,
+                  }}
                   replace
                 />
               </Suspense>

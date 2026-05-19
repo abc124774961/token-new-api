@@ -1,0 +1,84 @@
+{
+  "name": "queue_circuit_cooldown",
+  "request": {
+    "user_group": "default",
+    "requested_group": "default",
+    "model_name": "gpt-5.5"
+  },
+  "policy": {
+    "mode": "active",
+    "strategy": "balanced",
+    "auto_mode": "auto_sequential",
+    "cross_group_fusion": false,
+    "candidate_groups": ["default"],
+    "queue_enabled": true
+  },
+  "auto_groups": ["default"],
+  "usable_groups": ["default"],
+  "channels": [
+    {
+      "id": 11,
+      "group": "default",
+      "name": "cooling-channel"
+    },
+    {
+      "id": 12,
+      "group": "default",
+      "name": "queued-channel"
+    },
+    {
+      "id": 13,
+      "group": "default",
+      "name": "fallback-channel"
+    }
+  ],
+  "runtime_snapshots": [
+    {
+      "channel_id": 11,
+      "group": "default",
+      "success_rate": 0.99,
+      "ttft_ms": 300,
+      "tokens_per_second": 80,
+      "active_concurrency": 1,
+      "max_concurrency": 10,
+      "cost_ratio": 1,
+      "group_priority_ratio": 1,
+      "cooldown": true,
+      "sample_count": 20
+    },
+    {
+      "channel_id": 12,
+      "group": "default",
+      "success_rate": 1,
+      "ttft_ms": 300,
+      "tokens_per_second": 90,
+      "active_concurrency": 4,
+      "max_concurrency": 4,
+      "queue_depth": 0,
+      "estimated_queue_wait_ms": 500,
+      "cost_ratio": 1,
+      "group_priority_ratio": 1,
+      "sample_count": 20
+    },
+    {
+      "channel_id": 13,
+      "group": "default",
+      "success_rate": 0.55,
+      "ttft_ms": 10000,
+      "tokens_per_second": 1,
+      "active_concurrency": 1,
+      "max_concurrency": 10,
+      "cost_ratio": 3,
+      "group_priority_ratio": 1,
+      "sample_count": 20
+    }
+  ],
+  "expected": {
+    "handled": true,
+    "selected_channel_id": 12,
+    "selected_group": "default",
+    "fallback_used": false,
+    "context_keys": {},
+    "score_breakdown": {}
+  }
+}

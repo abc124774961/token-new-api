@@ -1611,6 +1611,7 @@ go test ./pkg/modelgateway/... -run 'TestPortable|TestDispatchScenarios|TestProx
 
 - 落库失败不阻塞请求。
 - replay case 不包含 prompt、敏感 header 或完整请求正文。
+- `ReplayArtifact` 可以由脱敏 `ModelExecutionRecord` 生成，并可派生为 `DispatchScenario` 在本地回放。
 
 #### Task G：Cache affinity 与 sticky router
 
@@ -1744,6 +1745,7 @@ go test ./pkg/modelgateway/... -run 'TestPortable|TestDispatchScenarios|TestProx
 - selected reason 查看
 - queue/circuit/cooldown 状态查看
 - shadow 新旧选路差异查看
+- summary `trends` 时间桶与前端趋势面板
 
 依赖：Task F、Task K。
 
@@ -1751,6 +1753,7 @@ go test ./pkg/modelgateway/... -run 'TestPortable|TestDispatchScenarios|TestProx
 
 - 管理员可以按分组打开 `shadow/active`。
 - 能看到每次调度为什么选中或打破 sticky。
+- 能按时间桶观察请求量、成功率、延迟、sticky、queue 和流中断趋势。
 
 ### 10.3 并行开发建议
 
@@ -2102,3 +2105,180 @@ go test ./pkg/modelgateway/... -run 'TestProxyContracts'
 - MiMo 先通过 OpenAI-compatible channel + `proxy_profile` 接入，不新增独立 `ChannelType`。
 - V1 只做 cache-aware 调度，不自建 prompt/response/semantic cache。
 - 新记录表不保存原始 prompt，只保存调度、协议、模型版本和能力摘要。
+
+## 15. 当前实施进度
+
+截至当前实现，智能模型网关已经从纯方案进入可测试骨架阶段。
+
+已完成：
+
+- 新增相对独立模块 `pkg/modelgateway`，包含 `core`、`policy`、`scheduler`、`integration`、`recording`、`provider`、`testkit`。
+- 新增 `setting/scheduler_setting`，默认 `enabled=false`、`default_mode=off`，未配置分组不影响现有链路。
+- `middleware/distributor.go` 和 `controller/relay.go` 已通过 `ChannelSelectionWrapper` 接入智能调度包装器。
+- `off` 和未开启策略时继续走旧 `service.CacheGetRandomSatisfiedChannel`。
+- `shadow` 模式真实选路仍走旧逻辑，智能调度只计算建议并写入记录。
+- `active` 模式支持智能评分选路，且智能不可用时回退旧逻辑。
+- 新增 `ModelExecutionRecord` 与异步 `AsyncExecutionRecorder`，记录 actual/suggested、score、candidate groups、policy mode、auto mode 等调度信息。
+- 新增运行时快照与评分：成功率、速度、负载、成本、分组优先级。
+- 新增 `RuntimeSnapshotEnricher`，把现有渠道活跃并发、并发上限、并发冷却、失败避让转换为调度输入。
+- 新增 `QueueManager`，在智能选路计划允许时支持执行前短等待队列；默认旧分组没有智能 plan，不进入队列。
+- 新增 `CircuitBreaker`，按 `RuntimeKey` 维护 closed/open/half-open 状态，支持失败率阈值、open 窗口与 half-open 探测预算。
+- 新增 `RuntimeHealthMonitor`，每次 attempt 上报后实时更新本地 `RuntimeSnapshotStore`，让成功率、耗时、熔断状态在后续请求中立即参与调度。
+- 新增 `ExecutionRecorderChain`，把异步落库 recorder 与实时健康 monitor 解耦串联，保持主调度模块可插拔。
+- `QueueManager` 已补 `Depth` 与 `Snapshot` 观测接口，并覆盖 context cancellation、timeout、max depth 拒绝时的队列深度释放。
+- `controller/relay.go` 已在成功、失败、并发拒绝路径上报 `AttemptResult`，包含 request id、attempt index、模型、渠道、分组、状态码、错误类型、耗时、TTFT 和流式截断标记。
+- 新增 `ProviderRegistry` 与首批 profile：`openai_codex`、`mimo_codex_chat`、`deepseek_v4_pro_codex_chat`、`standard_openai_compatible`。
+- 新增 `dto.ChannelOtherSettings.provider_profile` 和 `proxy_profile`，支持显式指定标准大模型 profile；不配置时按渠道类型、模型名和渠道信息自动推断。
+- 新增 `StickyRouter`、`CacheAffinitySignalAdapter` 与本地 sticky store，将同用户轻锁定和现有 `channel_affinity` 以标准调度信号接入 scheduler。
+- `StickyRouter` 的存储层已抽象为 `StickyStore`，默认集成使用 `HybridStickyStore`：Redis 可用时跨网关节点共享 sticky 状态，Redis 不可用时退回本地内存缓存；调度器只依赖接口，不绑定具体存储实现。
+- `DefaultSmartChannelSelector` 已支持 sticky retain/break：健康、能力和并发可用时保留原渠道；冷却、失败避让、熔断、并发不可等待或分数明显落后时打破 sticky。
+- `middleware/distributor.go` 初始选路改为先尝试智能调度，智能调度未接管时才走旧 `channel_affinity` 直连和旧随机选择，保证只对启用分组生效。
+- 新增 `pkg/modelgateway/proxy`，包含独立 `ProxyEngine`、`ResponsesViaChatConverter` 与转换结果对象。
+- `ProxyEngine` 已支持 `native_responses` 透传和 `responses_via_chat` 的请求/响应转换 contract：OpenAI Codex 原生 Responses、MiMo Responses->Chat、DeepSeek Chat->Responses tool call。
+- `ProxyEngine` 新增面向对象的状态化 `StreamConverter`，支持将上游 Chat Completions SSE event 逐 chunk 转换为下游 Responses SSE event，覆盖 output text delta、reasoning summary delta、function call arguments delta、function call done、response completed 与 usage。
+- 新增复杂 proxy contract fixture `mimo_codex_chat_stream_complex.json`，覆盖 Responses 输入里的 `input_file`、`input_image`、`prompt_cache_key`、reasoning effort、函数工具和流式 tool call 参数拼接。
+- `ResponsesViaChatStreamConverter` 已支持上游 Chat SSE `event: error` 与 `data.error` 对象映射为下游 `response.failed`，并在 failed 后抑制 `response.completed`，避免错误流被标记为正常完成。
+- 新增 proxy error contract fixture `mimo_codex_chat_stream_error.json`，可断言 `response.failed`、error code/type/message，防止后续协议转换回退。
+- 新增并行工具调用 proxy contract fixture `mimo_codex_chat_stream_parallel_tools.json`，覆盖同一条 Chat SSE 中多个 tool call 交错输出、按 index 拼接 arguments、分别输出 `response.function_call_arguments.done` 与 `response.output_item.done`。
+- `ProxyContract` runner 已支持断言多工具名称、多工具参数列表和流式 event count，纯 stream fixture 也会进入转换校验，避免 provider SSE golden 空跑。
+- 新增 built-in tool proxy contract fixture `mimo_codex_chat_builtin_tools.json`，覆盖 Responses `web_search_preview`、`file_search` 和普通 function tool 混合输入；`responses_via_chat` 会将普通 function 转为 Chat function tool，并把内置工具作为 `custom` JSON 保留到上游 request，避免后续 provider 专项转换丢失 Codex 工具意图。
+- `ProxyContract` runner 已支持断言 upstream `tools.#.type` 与 `tools.#.custom.type`，用于固定 OpenAI Codex built-in tool 在 MiMo/DeepSeek/OpenAI-compatible profile 下的透传边界。
+- 新增 DeepSeek provider-specific SSE fixture `deepseek_v4_pro_codex_chat_stream_reasoning_alias.json`，覆盖上游 delta 使用 `reasoning` 而非 `reasoning_content` 时仍能转换为 Responses `response.reasoning_summary_text.delta`。
+- 新增 DeepSeek error envelope fixture `deepseek_v4_pro_codex_chat_stream_error_envelope.json`，覆盖上游返回顶层 `error_msg/error_type/code` 的非标准错误包时映射为 `response.failed`，并抑制正常 completed。
+- `ResponsesViaChatStreamConverter` 已增强错误归一化：除标准 `error` 对象和 SSE `event: error` 外，也识别无 `choices` 的 provider error envelope，并兼容 `error_msg`、`error_message`、`error_type`、`error_code` 字段。
+- 新增 OpenAI Codex native stream fixture `openai_codex_native_stream.json`，覆盖 `response.created`、reasoning summary delta、output text delta、built-in `web_search_call` output item 和 `response.completed` 原样透传。
+- 新增 OpenAI Codex native failed fixture `openai_codex_native_stream_failed.json`，覆盖 `response.failed` 事件原样透传和错误字段断言，确保 native responses 路径不会被 via-chat 逻辑误转换。
+- `ProxyContract` runner 已支持断言 native stream 的 `stream_item_types`，用于固定 built-in tool call 在 native responses pass-through 下的事件形态。
+- 新增 `ProxyBridge` 灰度接入入口，基于当前 gin context 中的智能调度 `DispatchPlan` 判断是否启用 `responses_via_chat`，并提供 request/response/stream 三类转换方法。
+- `ResponsesHelper` 已接入 `ProxyBridge` 非流式灰度路径：仅当本次请求存在智能调度 plan 且 `proxy_mode=responses_via_chat` 时，将下游 Responses 请求转换为上游 Chat Completions 请求，临时切换 upstream relay mode/path，收到 Chat 响应后再转回 Responses 返回客户端。
+- `ResponsesHelper` 已接入 `ProxyBridge` 流式灰度路径：上游 Chat Completions SSE 通过状态化 converter 逐 chunk 转为 Responses SSE；正常 `[DONE]` 后补 `response.completed`，EOF/超时/解析错误等截断不会伪造 completed。
+- 对已经向客户端输出 delta 后才发生 EOF 的截断流，relay 会基于已解析/已下发的 output text、reasoning summary、tool name/arguments 聚合文本估算 usage，并完成本次计费，同时设置 `relay_stream_interrupted` 上下文标记；`controller/relay.go` 在智能调度 attempt 上报时把该标记转为 `stream_interrupted=true` 和 `success=false`，用于渠道降权/熔断。
+- 对上游显式 `response.failed` 的流，relay 会透传 failed 事件给客户端，并额外设置 `relay_stream_interrupted`，让调度侧把该 attempt 计为失败。
+- `mergeResponsesStreamUsage` 已补 Responses 风格 `input_tokens/output_tokens` 到通用 `prompt_tokens/completion_tokens` 的归一化，避免 recording/计费侧拿到空通用 token 字段。
+- 流式 bridge 会缓冲开场 `response.created/in_progress`，直到出现真实 delta 或 completed 再 flush，避免“只收到开场就 EOF”导致下游被错误开流、阻断原有重试。
+- `ResponsesHelper` 的 proxy bridge 接入会在请求发出后恢复原始 relay mode、request path 和 final request format，默认未开启智能调度或 native responses 渠道不受影响。
+- 新增 proxy contract 四份真实 request/response/stream fixture，可断言 upstream path、upstream model、downstream model、output text、reasoning text、file/image 映射和 tool call。
+- 新增生产包 `pkg/modelgateway/replay` 与测试适配包 `pkg/modelgateway/testkit/replay.go`，支持将 `ModelExecutionRecord` 转成脱敏 replay artifact，并派生为现有 `DispatchScenario` 直接回放。
+- replay 导出会清空 `request_id`、`user_id`、`token_id`、prompt token、预扣费等敏感字段，对渠道名/URL/API-key-like 字段做 masking；artifact validate 会拒绝重新带入敏感字段或非法 scenario 引用。
+- 新增 replay fixture `model_execution_replay.json` 与便携测试，覆盖 artifact 加载、脱敏校验、record_ref 校验和 replay scenario 运行。
+- 新增 `ReplayArtifactExporter`、`ReplayRecordRepository` 与 `GormReplayRecordRepository`，支持按 `request_id` 聚合 dispatch/attempt 多记录并导出 replay artifact。
+- dispatch 记录已补充 `request_id`，后续可把一次请求里的“智能调度建议/真实渠道/attempt 结果”串成完整 replay golden。
+- 新增 `WriteGoldenByRequestID`、`MarshalArtifact` 与格式化 JSON 写出能力，便于把线上脱敏问题样本落成本地 fixture。
+- 新增管理员导出入口 `GET /api/model_gateway/replay/export?request_id=...`，默认返回 `ApiSuccess` 包裹的脱敏 artifact，`download=true` 时直接下载 `modelgateway-replay-*.json`。
+- controller 导出入口只依赖生产 replay 包，不依赖 `testkit`，保持运行时代码与便携测试工具解耦。
+- 新增管理员观测接口 `GET /api/model_gateway/observability/summary`，支持按 `hours`、`recent_limit`、`top_n`、`scan_limit`、`model`、`group`、`channel_id`、`request_id` 查询调度 summary。
+- 观测 summary 返回 `summary`、`by_model`、`by_group`、`by_channel`、`recent_records`、`score_breakdown`，区分 dispatch 与 attempt，避免纯调度建议被误算成失败。
+- 新增 `pkg/modelgateway/testkit` 观测样本与 sqlite seed helper，覆盖成功/失败、stream interrupted、shadow/active、多 model/group/channel、fallback、耗时、TTFT 和 score breakdown。
+- 新增后台页面 `/console/model-gateway`，作为管理员入口展示智能处理、成功率、平均耗时、首包延迟、回退、流中断、模型/分组/渠道聚合、最近调度记录和 Replay 导出。
+- 观测页已增强筛选能力，支持按模型、分组、渠道 ID、request id 直接调用 summary API 过滤排障。
+- 调度记录新增详情 SideSheet，展示分组链路、渠道链路、策略、耗时、选择原因、候选分组、评分拆解、错误信息和调度元数据。
+- `AsyncExecutionRecorder` 已把 `provider_profile`、`proxy_mode`、队列等待/深度/容量、sticky source/key、sticky retain/break、cache affinity 写入 `request_meta`；观测 API 会解析为结构化 `request_meta` 返回前端。
+- 观测 API 已将 `request_meta` 中的队列与粘滞路由信息提升为 summary/aggregate/record 一等字段：`queue_enabled_dispatches`、`queued_dispatches`、`avg_queue_wait_ms`、`sticky_routes`、`sticky_retained`、`sticky_broken`、`cache_affinity_routes`，便于按模型/分组/渠道直接观察队列等待和 sticky 打破原因。
+- `DefaultSmartChannelSelector` 已补调度决策解释：每次智能调度会记录候选渠道、分组、上游模型、provider profile、proxy mode、runtime key、可用状态、过滤原因、评分总分、评分拆解、sticky 命中和最终选择。
+- `AsyncExecutionRecorder` 已把候选解释写入 `request_meta.candidate_explanations`，不新增数据库字段，不影响旧记录兼容；观测 API 会提升为 `recent_records[].candidate_explanations` 供前端直接展示。
+- 调度详情 SideSheet 已新增“候选渠道解释”区块，优先读取顶层 `candidate_explanations`，兼容回退读取 `request_meta.candidate_explanations`，并避免在调度元数据中重复展示大数组。
+- 新增候选解释回归测试：覆盖调度器生成候选解释、被熔断/并发等硬过滤的 reject reason、最终选中标记、记录器落库 meta、观测 API 顶层返回和前端多语言文案。
+- replay artifact 已新增顶层 `candidate_explanations`，从 `request_meta.candidate_explanations` 脱敏提取并清空 request meta 内的大数组，避免敏感字段与重复字段进入 replay。
+- replay 导出在 `StableIDs` 模式下会保持 record channel、actual channel 与 candidate explanations 中相同原始渠道的脱敏 ID 一致，确保离线复现不会出现“选中渠道”和“候选解释渠道”错位。
+- `pkg/modelgateway/testkit` 已支持用 replay 中的候选解释生成真实候选池、runtime snapshots 和 `DispatchExpected.Candidates`，可离线断言候选是否存在、过滤原因是否一致、最终选择是否一致。
+- `pkg/modelgateway/testkit` 新增 `EvaluateReplayScoreDrift`、`ReplayScoreDriftReport` 和 `ReplayScoreDrifted`，把 replay 回放分成“选路结果回归”和“评分漂移专项报告”两层；普通 replay 仍聚焦 selected channel/group/candidate reason，专项报告可独立观察 score total 与 score breakdown 是否因权重或运行态模型调整发生漂移。
+- `ReplayExpectation` 已补 `score_breakdown`，导出 `IncludeScenarios` 时会保存历史评分拆解，便于后续把线上问题样本固定成 exact golden 或 drift-tolerant golden。
+- `pkg/modelgateway/testkit` 新增 `RunReplayArtifact`、`RunReplayArtifacts`、`ReplayArtifactRunReport` 和 `ReplayBatchRunReport`，批量 runner 会把 selected channel/group/handled mismatch 归为 blocking regression，把 score total/breakdown 变化归为 non-blocking drift，为后续 CI 报告和批量 golden 回放提供基础对象。
+- 观测 summary 已新增 `by_provider_profile` 与 `by_proxy_mode` 两个聚合维度，按 `provider_profile`、`proxy_mode` 汇总 dispatch/attempt、成功率、耗时、TTFT、队列等待、sticky、cache affinity 和评分拆解。
+- profile/proxy 聚合会把同一 `request_id` 下 dispatch 记录里的 profile/proxy meta 关联给 attempt 记录，使 MiMo/DeepSeek/OpenAI Codex 等 profile 维度能看到真实成功率和响应耗时，而不是只统计调度建议。
+- 观测页新增“按 Provider Profile 聚合”和“按 Proxy Mode 聚合”面板，复用现有聚合表格能力展示调度量、成功率、队列/粘滞和评分拆解。
+- 观测页新增“粘滞与排队概览”和“运行态风险概览”：基于现有 summary/runtime_status 数据展示 sticky 保留率、sticky 打破、缓存亲和、队列压力、平均等待、熔断打开、半开探测、冷却隔离、失败降权、并发饱和和 Top 风险运行键；不新增接口、不改变调度链路。
+- 观测 summary 已新增 `trends` 时间桶，按请求时间聚合 dispatch、attempt、成功率、流中断、耗时、TTFT、sticky 和 queue 趋势，便于在同一个 summary 响应里观察策略变化。
+- 观测页新增趋势面板，复用 summary `trends` 展示请求量、成功率、耗时/TTFT、粘滞与排队和流中断；筛选条件沿用现有模型、分组、渠道 ID、request id 等 summary 查询。
+- 新增趋势聚合回归测试，覆盖时间桶生成、空桶补齐、attempt/dispatch 归属、sticky/queue 计数、流中断计数和筛选后的趋势结果。
+- Task L+++++ 已落地趋势钻取第一阶段：`trends[]` 每个时间桶补充 Top `by_provider_profile`、Top `by_proxy_mode` 和 `reject_reasons`，用于观察 MiMo/DeepSeek/OpenAI Codex 等 profile、代理模式和候选过滤原因在时间维度上的变化。
+- 观测页趋势表新增展开行，按时间桶展示 Provider Profile 趋势、Proxy Mode 趋势和候选拒绝原因，避免主表横向过宽，同时保留移动端可读性。
+- 趋势钻取测试已覆盖 profile/proxy 维度关联、attempt 成功率归属和 `candidate_explanations.reject_reason` 聚合。
+- Task L++++++ 已落地趋势粒度配置：summary API 新增 `trend_bucket_seconds` 查询参数，支持 `auto` 或秒级粒度；后端会按窗口长度、最小/最大粒度和最大桶数量自动归一化，避免超长窗口产生过大的趋势响应。
+- 观测页新增“趋势粒度”选择器，支持自动、5 分钟、15 分钟、30 分钟、1 小时、6 小时、1 天；默认自动粒度保持旧行为。
+- 趋势粒度测试已覆盖自定义 30 分钟桶、summary 回传生效粒度、桶数量生成和非法 `trend_bucket_seconds` 参数拒绝。
+- Task L+++++++ 已落地趋势导出：新增 `GET /api/model_gateway/observability/trends/export`，复用 summary 筛选参数与趋势粒度，返回 `kind/filters/summary/trends/generated` 自描述 JSON。
+- 趋势导出支持 `download=true`，文件名包含窗口与生效粒度，例如 `modelgateway-trends-6h-1800s.json`；非下载模式走标准 `ApiSuccess`，方便前端预览或自动化调用。
+- 观测页趋势面板新增“导出趋势”按钮，会携带当前时间窗口、趋势粒度、模型、分组、渠道 ID 和 request id 筛选条件下载 JSON。
+- 趋势导出测试已覆盖标准 payload、下载响应头、导出文件名和非 ApiSuccess 下载体。
+- Task L++++++++ 已落地队列等待分位数：`trends[]` 增加 `queue_wait_p50_ms`、`queue_wait_p90_ms`、`queue_wait_p95_ms`，按时间桶从 dispatch `request_meta.queue_wait_ms` 样本计算；无样本时返回 0。
+- 观测页趋势表新增“队列等待分位数”列，平均排队等待列、趋势 tooltip 与展开行都会展示 P50/P90/P95，用于识别高并发下少数慢等待被平均值掩盖的问题。
+- Replay batch runner 已新增 CI 友好输出：`CIReport()`、`MarshalCIReport()`、`CLISummary()`、`ExitCode()`、`Status()`，并固定 `blocking_regressions => exit_code=1`、仅 drift 不阻塞、无问题 passed 的语义。
+- Replay 批量运行结果按 artifact name 稳定排序，避免 CI JSON 因 map 迭代顺序抖动。
+- 新增 DeepSeek SSE golden `deepseek_v4_pro_codex_chat_stream_reasoning_tool_truncated.json`，覆盖 reasoning 内容与 tool call 混合输出时 tool arguments 截断仍被保留为字符串，防止 provider-specific 截断流退化。
+- QueueManager 新增 `QueueAcquireOptions`、`QueueAdmissionPolicy`、`QueueAdmissionContext` 与 `AcquireWithOptions`，为后续高优先级分组和公平性 admission 预留入口；旧 `Acquire` 默认行为不变。
+- Task L+++++++++ 已落地风险事件线和趋势导出预览：summary、trend bucket、runtime status 与 export preview 统一派生 `risk_timeline`、`risk_events`、`risk` snapshot、`risk_event_count`、风险状态变化、当前风险 runtime key、Top risk status 与 Top reject reason。
+- Task H++ 已落地真实队列公平性 admission 策略对象：新增 `PriorityQueueAdmissionPolicy` 与 `QueueFairnessOptions`，支持高优先级分组/优先级阈值、额外队列容量、普通组保留容量和绝对队列上限；默认 `QueueManager` 行为保持兼容。
+- Task G+ 已落地 sticky 隔离和更多会话信号：`StickyRouter` 支持 session/conversation 请求体字段、Codex turn metadata header 优先、保存续期、失败清理和上下文禁用；fallback/shadow 期间禁用 sticky 写入，避免旧链路污染智能调度粘滞状态。
+- Task F++++++++ 已落地 Replay CLI/CI 可测入口：新增 `RunReplayBatchCLI`、`RunReplayBatchCI`、`ScanReplayGoldenPaths` 和 JSON report 写出，支持 `-golden` 文件/目录/glob、多路径扫描、`-report`、score/breakdown drift tolerance，并复用现有 exit code/status 语义。
+- Task J++++++++ 已新增 MiMo 复杂 SSE golden `mimo_codex_chat_stream_reasoning_builtin_parallel_tools.json`，覆盖 reasoning、`web_search/file_search` 内置工具、两个 function tools 和并行 tool call 分片；`ProxyContract` runner 支持断言 stream output item type。
+- 侧边栏新增 `model_gateway` 模块键，默认随控制台区域启用，并纳入管理员全局侧边栏配置、用户侧边栏配置和 lucide 图标渲染。
+- 前端新增 `zh-CN`、`zh-TW`、`en`、`fr`、`ru`、`ja`、`vi` 翻译，覆盖智能模型网关观测页和侧边栏配置文案。
+- 新增便携测试：`TestPortable`、`TestDispatchScenarios`、`TestProxyContracts`、provider/profile、proxy 转换、队列、运行时 enrich、recording、sticky/cache affinity、circuit breaker、runtime health monitor。
+
+阶段验证命令：
+
+```bash
+go test ./pkg/modelgateway/... -run 'TestSticky|TestSelectorRetains|TestSelectorBreaks|TestDispatchScenarios|TestPortable'
+go test ./pkg/modelgateway/testkit -run 'TestReplay'
+go test ./pkg/modelgateway/proxy ./pkg/modelgateway/testkit ./pkg/modelgateway/integration -run 'TestResponsesViaChat|TestProxyContracts|TestProxyBridge'
+go test ./relay -run 'TestApplyProxyBridge|TestHandleProxyBridge|TestResponsesRequest|TestCaptureResponses|TestExplicitImage|TestApplyResponsesCompact'
+go test ./pkg/modelgateway/scheduler ./pkg/modelgateway/testkit -run 'TestCircuit|TestQueue|TestRuntimeSnapshot|TestRuntimeHealth'
+go test ./pkg/modelgateway/testkit ./pkg/modelgateway/recording
+go test ./pkg/modelgateway/replay ./pkg/modelgateway/testkit ./controller ./router -run 'TestExportArtifact|TestArtifact|TestReplay|TestExportModelGatewayReplay|TestSafeReplayFilenamePart'
+go test ./pkg/modelgateway/proxy ./pkg/modelgateway/testkit ./relay -run 'TestResponsesViaChat|TestProxyContracts|Test(HandleProxyBridge|ProxyBridgeStreamSender|MergeResponsesStreamUsage|ApplyProxyBridge)' -count=1
+go test ./pkg/modelgateway/...
+go test ./setting/scheduler_setting ./pkg/modelgateway/... ./relay ./middleware ./controller ./model
+go test ./service -run 'Test.*Channel|Test.*Auto|Test.*Retry|Test.*Failover|TestTryAcquireChannelConcurrency|TestRecordChannelConcurrencyCooldownAndSelectionSkip|TestQueue|TestChannelAffinity'
+go test ./pkg/modelgateway/testkit ./controller ./router -run 'Test.*Observability|TestGetModelGatewayObservabilitySummary|TestExportModelGatewayReplay|TestSafeReplayFilenamePart' -count=1
+go test ./pkg/modelgateway/recording ./controller -run 'TestAsyncExecutionRecorderRecordsDispatch|TestGetModelGatewayObservabilitySummary' -count=1
+go test ./pkg/modelgateway/proxy ./pkg/modelgateway/testkit -run 'TestResponsesViaChat|TestProxyContracts' -count=1
+go test ./pkg/modelgateway/... -count=1
+go test ./controller ./router -run 'TestModelGatewayConfig|TestGetModelGatewayObservabilitySummary|TestGetModelGatewayRuntimeStatus|TestExportModelGatewayReplay|TestSafeReplayFilenamePart' -count=1
+go test ./pkg/modelgateway/replay ./pkg/modelgateway/testkit -run 'Test.*Replay|TestExportArtifact|TestArtifact' -count=1
+go test ./controller ./router -run 'TestExportModelGatewayReplay|TestSafeReplayFilenamePart|TestGetModelGatewayObservabilitySummary' -count=1
+go test ./controller ./router -run 'TestGetModelGatewayObservabilitySummary|TestGetModelGatewayRuntimeStatus|TestExportModelGatewayReplay|TestSafeReplayFilenamePart' -count=1
+go test ./pkg/modelgateway/testkit -run 'TestReplayScoreDrift|TestReplayArtifactLoadsFixtureAndRunsScenarios|TestReplayExportSanitizesModelExecutionRecord' -count=1
+go test ./pkg/modelgateway/replay ./pkg/modelgateway/testkit -run 'Test.*Replay|TestExportArtifact|TestArtifact' -count=1
+go test ./pkg/modelgateway/testkit -run TestProxyContracts/mimo_codex_chat_builtin_tools.json -count=1
+go test ./pkg/modelgateway/proxy ./pkg/modelgateway/testkit -run 'TestResponsesViaChat|TestProxyContracts' -count=1
+go test ./pkg/modelgateway/proxy ./pkg/modelgateway/testkit -run 'TestResponsesViaChatStreamConverterMapsProviderErrorEnvelope|TestProxyContracts/deepseek_v4_pro_codex_chat_stream_(reasoning_alias|error_envelope).json' -count=1
+go test ./pkg/modelgateway/testkit -run 'TestProxyContracts/openai_codex_native_stream(_failed)?.json' -count=1
+go test ./pkg/modelgateway/replay ./pkg/modelgateway/testkit -run 'Test.*Replay|TestExportArtifact|TestArtifact' -count=1
+go test ./pkg/modelgateway/testkit ./controller ./router -run 'Test.*Observability.*Trend|TestGetModelGatewayObservabilitySummary' -count=1
+go test ./controller -run 'TestGetModelGatewayObservabilitySummary|TestGetModelGatewayRuntimeStatus' -count=1
+go test ./controller ./router -run 'Test(Get|Export).*ModelGateway|TestSafeReplayFilenamePart' -count=1
+go test ./pkg/modelgateway/scheduler -run 'TestQueue' -count=1
+go test ./pkg/modelgateway/replay ./pkg/modelgateway/testkit -run 'Test.*Replay|TestExportArtifact|TestArtifact' -count=1
+go test ./pkg/modelgateway/proxy ./pkg/modelgateway/testkit -run 'TestResponsesViaChat|TestProxyContracts' -count=1
+go test ./pkg/modelgateway/... -run 'TestSticky|TestSelectorRetains|TestSelectorBreaks|TestDispatchScenarios|TestPortable' -count=1
+go test ./pkg/modelgateway/... -count=1
+cd web/classic && bun run i18n:sync
+cd web/classic && bun run build
+```
+
+结果：通过。
+
+已知边界：
+
+- 当前队列是渠道级短等待实现，已具备取消释放、超时释放、深度快照、summary 趋势观测和可插拔优先级公平 admission 策略；后续仍需把公平策略接入后台配置/分组策略，并补独立实时队列面板。
+- 当前熔断已支持 closed/open/half-open、实时降权和 summary 趋势观测；后续仍需补按错误类型精细阈值和跨节点 Redis/事件同步。
+- 当前 `ProxyBridge` 已接入 `ResponsesHelper` 的非流式与流式真实链路；仅在智能调度 plan 存在且 `proxy_mode=responses_via_chat` 时启用，默认旧渠道和 OpenAI Codex native responses 不受影响。
+- 当前 `ResponsesViaChatConverter` 覆盖文本、函数工具、reasoning effort、基础 usage、文件/图像输入、Chat SSE -> Responses SSE、上游 error event -> `response.failed`、截断 usage fallback 和 Responses token 字段归一化；后续仍需继续补更多内置 tool 与 provider-specific SSE 样本。
+- 当前 replay 核心 artifact、脱敏导入导出、按 `request_id` 聚合导出、golden 写出内核、admin 下载接口、前端入口和可测 CLI/CI runner 已完成；后续仍可补真实命令注册、批量导出和权限审计日志。
+- 当前 sticky store 已具备 Hybrid Redis/Memory 实现、共享 store 契约、session/conversation key、续期/清理和 fallback/shadow 隔离；后续仍需补 admin 可视化、跨节点清理操作和更细粒度的成功/失败续期策略配置。
+- 当前 cache-aware sticky 复用现有 `channel_affinity` 规则，默认 Codex Responses 亲和键已支持 `prompt_cache_key` 与 `previous_response_id`：优先复用显式 prompt cache key，其次用 Responses 会话延续 ID 做同渠道亲和；普通 session/conversation 字段已进入 sticky key 体系，更多业务字段仍可在 `channel_affinity_setting` 中继续扩展。
+- 当前调度决策解释已能说明“为什么选择 A、为什么过滤 B”，并已接入 replay artifact 与 testkit 离线复现；当前离线断言重点覆盖候选存在、过滤原因、最终选择，历史评分拆解会被保留在 artifact 中用于人工排障和后续专项 golden。
+
+## 16. 下一步实施计划
+
+优先顺序：
+
+1. Task H+++：把 `PriorityQueueAdmissionPolicy` 接入运行时配置和分组策略，支持按分组配置高优先级、保留队列容量、额外容量和绝对上限，并在 relay 队列入口传入分组优先级上下文。
+2. Task L++++++++++：前端观测页展示 `risk` snapshot、`risk_timeline`、Top risk status、Top reject reason 和 export preview，让风险事件线可视化。
+3. Task F+++++++++：补真实 CLI 命令注册或 CI 脚本入口，把 `RunReplayBatchCLI` 接入仓库工具链，并增加示例 golden 批量扫描命令。
+4. Task G++：补 sticky admin 观测和清理入口，展示当前 sticky key 来源、保留/打破原因、续期次数和跨节点清理结果。
+5. Task J+++++++++：继续补更多 provider SSE golden，例如 DeepSeek 多 tool 混合输出、OpenAI native built-in tool 失败流、MiMo 长 reasoning 截断流。
+6. Task H++++：补队列实时面板和 runtime queue 快照导出，展示每渠道当前队列深度、分组队列占用、高优先级占用和拒绝原因。
+
+下一次开发建议优先推进 Task H+++ 或 Task L++++++++++：当前后端能力已经具备，下一步最有价值的是把队列公平策略接入配置闭环，或者把风险事件线接到前端观测页面。

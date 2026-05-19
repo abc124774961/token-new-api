@@ -1,0 +1,79 @@
+{
+  "name": "deepseek_v4_pro_codex_chat_profile",
+  "provider_profile": "deepseek_v4_pro_codex_chat",
+  "proxy_mode": "responses_via_chat",
+  "request_model": "deepseek-v4-pro-max",
+  "upstream_model": "deepseek-v4-pro-max",
+  "endpoint_type": "responses",
+  "stream": true,
+  "request": {
+    "model": "deepseek-v4-pro-max",
+    "input": [
+      {
+        "role": "user",
+        "content": "Call the tool."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "name": "run_shell",
+        "description": "Run shell",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cmd": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    ],
+    "reasoning": {
+      "effort": "high"
+    },
+    "stream": true
+  },
+  "upstream_response": {
+    "id": "chatcmpl_deepseek_1",
+    "object": "chat.completion",
+    "created": 1710000002,
+    "model": "deepseek-v4-pro-max",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_run_shell_1",
+              "type": "function",
+              "function": {
+                "name": "run_shell",
+                "arguments": "{\"cmd\":\"pwd\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 11,
+      "completion_tokens": 6,
+      "total_tokens": 17
+    }
+  },
+  "expected": {
+    "provider_profile": "deepseek_v4_pro_codex_chat",
+    "proxy_mode": "responses_via_chat",
+    "native_responses": false,
+    "responses_via_chat": true,
+    "reasoning": true,
+    "upstream_path": "/v1/chat/completions",
+    "upstream_model": "deepseek-v4-pro-max",
+    "downstream_model": "deepseek-v4-pro-max",
+    "tool_name": "run_shell"
+  }
+}

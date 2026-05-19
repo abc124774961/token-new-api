@@ -258,6 +258,7 @@ func migrateDB() error {
 	err := DB.AutoMigrate(
 		&Channel{},
 		&ChannelFailureEvent{},
+		&ModelExecutionRecord{},
 		&Token{},
 		&User{},
 		&PasskeyCredential{},
@@ -311,6 +312,7 @@ func migrateDBFast() error {
 	}{
 		{&Channel{}, "Channel"},
 		{&ChannelFailureEvent{}, "ChannelFailureEvent"},
+		{&ModelExecutionRecord{}, "ModelExecutionRecord"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
 		{&PasskeyCredential{}, "PasskeyCredential"},

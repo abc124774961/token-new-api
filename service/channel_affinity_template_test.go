@@ -245,3 +245,47 @@ func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 	_, exists = info.RuntimeHeadersOverride["x-codex-turn-metadata"]
 	require.False(t, exists)
 }
+
+func TestChannelAffinityCodexFallsBackToPreviousResponseID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	setting := operation_setting.GetChannelAffinitySetting()
+	require.NotNil(t, setting)
+
+	var codexRule *operation_setting.ChannelAffinityRule
+	for i := range setting.Rules {
+		rule := &setting.Rules[i]
+		if strings.EqualFold(strings.TrimSpace(rule.Name), "codex cli trace") {
+			codexRule = rule
+			break
+		}
+	}
+	require.NotNil(t, codexRule)
+
+	affinityValue := fmt.Sprintf("resp_%d", time.Now().UnixNano())
+	cacheKeySuffix := buildChannelAffinityCacheKeySuffix(*codexRule, "gpt-5", "default", affinityValue)
+
+	cache := getChannelAffinityCache()
+	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, 7788, time.Minute))
+	t.Cleanup(func() {
+		_, _ = cache.DeleteMany([]string{cacheKeySuffix})
+	})
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(fmt.Sprintf(`{"previous_response_id":"%s"}`, affinityValue)))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	channelID, found := GetPreferredChannelByAffinity(ctx, "gpt-5", "default")
+	require.True(t, found)
+	require.Equal(t, 7788, channelID)
+
+	statsContext, ok := GetChannelAffinityStatsContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, "codex cli trace", statsContext.RuleName)
+
+	meta, ok := getChannelAffinityMeta(ctx)
+	require.True(t, ok)
+	require.Equal(t, "previous_response_id", meta.KeySourcePath)
+	require.Equal(t, affinityFingerprint(affinityValue), meta.KeyFingerprint)
+}

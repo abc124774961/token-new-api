@@ -1,0 +1,52 @@
+{
+  "name": "openai_codex_profile",
+  "provider_profile": "openai_codex",
+  "proxy_mode": "native_responses",
+  "request_model": "gpt-5.5",
+  "upstream_model": "gpt-5.5",
+  "endpoint_type": "responses",
+  "stream": false,
+  "request": {
+    "model": "gpt-5.5",
+    "input": [
+      {
+        "role": "user",
+        "content": "hello codex"
+      }
+    ],
+    "stream": false,
+    "max_output_tokens": 64
+  },
+  "upstream_response": {
+    "id": "resp_codex_1",
+    "object": "response",
+    "created_at": 1710000000,
+    "status": "completed",
+    "model": "gpt-5.5",
+    "output": [
+      {
+        "type": "message",
+        "id": "msg_codex_1",
+        "status": "completed",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "hello from codex"
+          }
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "provider_profile": "openai_codex",
+    "proxy_mode": "native_responses",
+    "native_responses": true,
+    "responses_via_chat": false,
+    "reasoning": false,
+    "upstream_path": "/v1/responses",
+    "upstream_model": "gpt-5.5",
+    "downstream_model": "gpt-5.5",
+    "output_text": "hello from codex"
+  }
+}

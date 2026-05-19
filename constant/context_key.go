@@ -40,6 +40,7 @@ const (
 	ContextKeyUpstreamRequestInfo      ContextKey = "upstream_request_info"
 	ContextKeyChannelFailureTrace      ContextKey = "channel_failure_trace"
 	ContextKeyRelayResponseStarted     ContextKey = "relay_response_started"
+	ContextKeyRelayStreamInterrupted   ContextKey = "relay_stream_interrupted"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"

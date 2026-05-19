@@ -325,6 +325,18 @@ func SetApiRouter(router *gin.Engine) {
 			groupRoute.GET("/", controller.GetGroups)
 		}
 
+		modelGatewayRoute := apiRouter.Group("/model_gateway")
+		modelGatewayRoute.Use(middleware.AdminAuth())
+		{
+			modelGatewayRoute.GET("/config", controller.GetModelGatewayConfig)
+			modelGatewayRoute.PUT("/config", controller.UpdateModelGatewayConfig)
+			modelGatewayRoute.POST("/config/reset", controller.ResetModelGatewayConfig)
+			modelGatewayRoute.GET("/observability/summary", controller.GetModelGatewayObservabilitySummary)
+			modelGatewayRoute.GET("/observability/trends/export", controller.ExportModelGatewayObservabilityTrends)
+			modelGatewayRoute.GET("/observability/runtime", controller.GetModelGatewayRuntimeStatus)
+			modelGatewayRoute.GET("/replay/export", controller.ExportModelGatewayReplay)
+		}
+
 		prefillGroupRoute := apiRouter.Group("/prefill_group")
 		prefillGroupRoute.Use(middleware.AdminAuth())
 		{

@@ -15,6 +15,9 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
+	modelgatewayscheduler "github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -31,6 +34,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
+
+var relayQueueManager = modelgatewayscheduler.NewQueueManager(2*time.Second, 64)
 
 func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	var err *types.NewAPIError
@@ -219,6 +224,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", newAPIError.Error()))
+			if relayResponseAlreadyStarted(c) {
+				return
+			}
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
@@ -341,10 +349,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if contextSetting, ok := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting); ok {
 			channelSetting = contextSetting
 		}
-		concurrencyLease, acquired := service.TryAcquireChannelConcurrency(channel.Id, channelSetting)
-		if !acquired {
+		concurrencyResult := relayQueueManager.Acquire(c.Request.Context(), selectedModelGatewayPlan(c), channel.Id, channelSetting)
+		concurrencyLease := concurrencyResult.Lease
+		if concurrencyResult.Status == modelgatewayscheduler.QueueAcquireRejected {
+			limit := 0
+			if concurrencyLease != nil {
+				limit = concurrencyLease.Limit
+			}
 			newAPIError = types.NewErrorWithStatusCode(
-				fmt.Errorf("channel #%d reached configured max concurrency %d", channel.Id, concurrencyLease.Limit),
+				fmt.Errorf("channel #%d reached configured max concurrency %d", channel.Id, limit),
 				types.ErrorCodeChannelConcurrencyLimit,
 				http.StatusTooManyRequests,
 			)
@@ -362,6 +375,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				common.GetContextKeyString(c, constant.ContextKeyChannelKey),
 				channel.GetAutoBan(),
 			), newAPIError, false)
+			reportModelGatewayAttempt(c, relayInfo, retryParam, channel, newAPIError, time.Since(relayInfo.StartTime))
 			continue
 		}
 
@@ -395,6 +409,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			relayInfo.LastError = nil
 			service.ClearChannelFailureAvoidance(channel.Id)
 			service.RecordChannelConcurrencySuccess(channel.Id)
+			reportModelGatewayAttempt(c, relayInfo, retryParam, channel, nil, time.Since(relayInfo.StartTime))
 			return
 		}
 
@@ -408,6 +423,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		willRetry := shouldRetry(c, newAPIError, retryParam, common.RetryTimes-retryParam.GetRetry())
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, !willRetry)
+		reportModelGatewayAttempt(c, relayInfo, retryParam, channel, newAPIError, time.Since(relayInfo.StartTime))
 
 		if !willRetry {
 			break
@@ -484,12 +500,18 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		logRelaySelectedChannelTrace(c, info, retryParam, channel, info.TokenGroup, true)
 		return channel, nil
 	}
-	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
+	selection, selectionErr := modelgatewayintegration.DefaultChannelSelectionWrapper().Select(c, retryParam)
 
 	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 
-	if err != nil {
-		return nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（retry）: %s", selectGroup, info.OriginModelName, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	if selectionErr != nil {
+		return nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（retry）: %s", retryParam.TokenGroup, info.OriginModelName, selectionErr.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+	var channel *model.Channel
+	selectGroup := retryParam.TokenGroup
+	if selection != nil {
+		channel = selection.Channel
+		selectGroup = selection.Group
 	}
 	if channel == nil {
 		return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在（retry）", selectGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
@@ -501,6 +523,71 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, newAPIError
 	}
 	return channel, nil
+}
+
+func selectedModelGatewayPlan(c *gin.Context) *modelgatewaycore.DispatchPlan {
+	plan, _ := modelgatewayintegration.GetSelectedPlan(c)
+	return plan
+}
+
+func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, channel *model.Channel, apiErr *types.NewAPIError, duration time.Duration) {
+	if c == nil || info == nil || channel == nil {
+		return
+	}
+	plan := selectedModelGatewayPlan(c)
+	if plan == nil {
+		return
+	}
+	wrapper := modelgatewayintegration.DefaultChannelSelectionWrapper()
+	if wrapper == nil || wrapper.Facade == nil {
+		return
+	}
+	selectedGroup := info.UsingGroup
+	if plan != nil && plan.SelectedGroup != "" {
+		selectedGroup = plan.SelectedGroup
+	}
+	if selectedGroup == "" && retryParam != nil {
+		selectedGroup = retryParam.TokenGroup
+	}
+	modelName := info.OriginModelName
+	if retryParam != nil && retryParam.ModelName != "" {
+		modelName = retryParam.ModelName
+	}
+	result := &modelgatewaycore.AttemptResult{
+		RequestID:         info.RequestId,
+		AttemptIndex:      info.RetryIndex,
+		ChannelID:         channel.Id,
+		RequestedGroup:    info.TokenGroup,
+		SelectedGroup:     selectedGroup,
+		ModelName:         modelName,
+		EndpointType:      requiredEndpointTypeForRelay(info),
+		Success:           apiErr == nil,
+		Duration:          duration,
+		TTFT:              relayTTFT(info),
+		StreamInterrupted: relayStreamInterrupted(c) || (apiErr != nil && relayResponseAlreadyStarted(c)),
+	}
+	if plan != nil {
+		result.Key = plan.RuntimeKey
+		if result.RequestedGroup == "" {
+			result.RequestedGroup = plan.RequestedGroup
+		}
+	}
+	if result.StreamInterrupted {
+		result.Success = false
+	}
+	if apiErr != nil {
+		result.StatusCode = apiErr.StatusCode
+		result.ErrorCode = string(apiErr.GetErrorCode())
+		result.ErrorType = string(apiErr.GetErrorType())
+	}
+	wrapper.Facade.Report(c, result)
+}
+
+func relayTTFT(info *relaycommon.RelayInfo) time.Duration {
+	if info == nil || !info.HasSendResponse() {
+		return 0
+	}
+	return info.FirstResponseTime.Sub(info.StartTime)
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *service.RetryParam, retryTimes int) bool {
@@ -551,6 +638,10 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *servi
 
 func relayResponseAlreadyStarted(c *gin.Context) bool {
 	return common.GetContextKeyBool(c, constant.ContextKeyRelayResponseStarted)
+}
+
+func relayStreamInterrupted(c *gin.Context) bool {
+	return common.GetContextKeyBool(c, constant.ContextKeyRelayStreamInterrupted)
 }
 
 func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIError) bool {

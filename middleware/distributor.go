@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -104,38 +105,62 @@ func Distribute() func(c *gin.Context) {
 					}
 				}
 
-				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
-					preferred, err := model.CacheGetChannel(preferredChannelID)
-					if err == nil && preferred != nil {
-						if preferred.Status != common.ChannelStatusEnabled {
-							if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
-								abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
-								return
-							}
-						} else if !channelSupportsModelRequest(preferred, *modelRequest) {
-							logger.LogDebug(c, "Skipping affinity channel #%d because it does not support endpoint %s for model %s", preferred.Id, modelRequest.EndpointType, modelRequest.Model)
-						} else if usingGroup == "auto" {
-							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-							autoGroups := service.GetUserAutoGroup(userGroup)
-							for _, g := range autoGroups {
-								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
-									selectGroup = g
-									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-									channel = preferred
-									service.MarkChannelAffinityUsed(c, g, preferred.Id)
-									break
+				selection, selectionErr := modelgatewayintegration.DefaultChannelSelectionWrapper().SelectSmartOnly(c, &service.RetryParam{
+					Ctx:                    c,
+					ModelName:              modelRequest.Model,
+					EndpointType:           modelRequest.EndpointType,
+					RequiresCodexImageTool: modelRequest.RequiresCodexImageTool,
+					TokenGroup:             usingGroup,
+					Retry:                  common.GetPointer(0),
+				})
+				if selectionErr != nil {
+					showGroup := usingGroup
+					if usingGroup == "auto" {
+						showGroup = fmt.Sprintf("auto(%s)", selectGroup)
+					}
+					message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": selectionErr.Error()})
+					abortWithOpenAiMessage(c, http.StatusServiceUnavailable, message, types.ErrorCodeModelNotFound)
+					return
+				}
+				if selection != nil {
+					channel = selection.Channel
+					selectGroup = selection.Group
+				}
+
+				if channel == nil {
+					if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
+						preferred, err := model.CacheGetChannel(preferredChannelID)
+						if err == nil && preferred != nil {
+							if preferred.Status != common.ChannelStatusEnabled {
+								if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+									abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
+									return
 								}
+							} else if !channelSupportsModelRequest(preferred, *modelRequest) {
+								logger.LogDebug(c, "Skipping affinity channel #%d because it does not support endpoint %s for model %s", preferred.Id, modelRequest.EndpointType, modelRequest.Model)
+							} else if usingGroup == "auto" {
+								userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+								autoGroups := service.GetUserAutoGroup(userGroup)
+								for _, g := range autoGroups {
+									if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
+										selectGroup = g
+										common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
+										channel = preferred
+										service.MarkChannelAffinityUsed(c, g, preferred.Id)
+										break
+									}
+								}
+							} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
+								channel = preferred
+								selectGroup = usingGroup
+								service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 							}
-						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
-							channel = preferred
-							selectGroup = usingGroup
-							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 						}
 					}
 				}
 
 				if channel == nil {
-					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
+					selection, selectionErr = modelgatewayintegration.DefaultChannelSelectionWrapper().Select(c, &service.RetryParam{
 						Ctx:                    c,
 						ModelName:              modelRequest.Model,
 						EndpointType:           modelRequest.EndpointType,
@@ -143,12 +168,12 @@ func Distribute() func(c *gin.Context) {
 						TokenGroup:             usingGroup,
 						Retry:                  common.GetPointer(0),
 					})
-					if err != nil {
+					if selectionErr != nil {
 						showGroup := usingGroup
 						if usingGroup == "auto" {
 							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
 						}
-						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error()})
+						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": selectionErr.Error()})
 						// 如果错误，但是渠道不为空，说明是数据库一致性问题
 						//if channel != nil {
 						//	common.SysError(fmt.Sprintf("渠道不存在：%d", channel.Id))
@@ -156,6 +181,10 @@ func Distribute() func(c *gin.Context) {
 						//}
 						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, message, types.ErrorCodeModelNotFound)
 						return
+					}
+					if selection != nil {
+						channel = selection.Channel
+						selectGroup = selection.Group
 					}
 					if channel == nil {
 						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)

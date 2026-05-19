@@ -1,0 +1,77 @@
+{
+  "name": "mimo_codex_chat_profile",
+  "provider_profile": "mimo_codex_chat",
+  "proxy_mode": "responses_via_chat",
+  "request_model": "mimo-v1",
+  "upstream_model": "mimo-v1",
+  "endpoint_type": "responses",
+  "stream": true,
+  "request": {
+    "model": "mimo-v1",
+    "instructions": "You are Codex-compatible.",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Use the web tool if needed."
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "name": "web_search",
+        "description": "Search the web",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    ],
+    "reasoning": {
+      "effort": "medium"
+    },
+    "stream": true,
+    "prompt_cache_key": "mimo-session-1"
+  },
+  "upstream_response": {
+    "id": "chatcmpl_mimo_1",
+    "object": "chat.completion",
+    "created": 1710000001,
+    "model": "mimo-v1",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "MiMo response"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 10,
+      "completion_tokens": 5,
+      "total_tokens": 15
+    }
+  },
+  "expected": {
+    "provider_profile": "mimo_codex_chat",
+    "proxy_mode": "responses_via_chat",
+    "native_responses": false,
+    "responses_via_chat": true,
+    "reasoning": true,
+    "web_search": true,
+    "upstream_path": "/v1/chat/completions",
+    "upstream_model": "mimo-v1",
+    "downstream_model": "mimo-v1",
+    "output_text": "MiMo response"
+  }
+}

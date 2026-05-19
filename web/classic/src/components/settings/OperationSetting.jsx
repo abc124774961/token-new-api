@@ -27,6 +27,7 @@ import SettingsLog from '../../pages/Setting/Operation/SettingsLog';
 import SettingsMonitoring from '../../pages/Setting/Operation/SettingsMonitoring';
 import SettingsCreditLimit from '../../pages/Setting/Operation/SettingsCreditLimit';
 import SettingsCheckin from '../../pages/Setting/Operation/SettingsCheckin';
+import SettingsModelGatewayScheduler from '../../pages/Setting/Operation/SettingsModelGatewayScheduler';
 import { API, showError, toBoolean } from '../../helpers';
 
 const OperationSetting = () => {
@@ -145,6 +146,10 @@ const OperationSetting = () => {
         {/* 监控设置 */}
         <Card style={{ marginTop: '10px' }}>
           <SettingsMonitoring options={inputs} refresh={onRefresh} />
+        </Card>
+        {/* 智能模型网关调度设置 */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsModelGatewayScheduler />
         </Card>
         {/* 额度设置 */}
         <Card style={{ marginTop: '10px' }}>

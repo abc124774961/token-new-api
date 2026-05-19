@@ -1,0 +1,58 @@
+{
+  "name": "openai_codex_native_stream_failed",
+  "provider_profile": "openai_codex",
+  "proxy_mode": "native_responses",
+  "request_model": "gpt-5.5",
+  "upstream_model": "gpt-5.5",
+  "endpoint_type": "responses",
+  "stream": true,
+  "request": {
+    "model": "gpt-5.5",
+    "input": "hello",
+    "stream": true
+  },
+  "upstream_stream": [
+    {
+      "type": "response.created",
+      "response": {
+        "id": "resp_codex_native_failed",
+        "object": "response",
+        "created_at": 1710000910,
+        "status": "in_progress",
+        "model": "gpt-5.5"
+      }
+    },
+    {
+      "type": "response.failed",
+      "response": {
+        "id": "resp_codex_native_failed",
+        "object": "response",
+        "created_at": 1710000910,
+        "status": "failed",
+        "model": "gpt-5.5",
+        "error": {
+          "message": "native upstream failed",
+          "type": "server_error",
+          "code": "native_failed"
+        }
+      }
+    }
+  ],
+  "expected": {
+    "provider_profile": "openai_codex",
+    "proxy_mode": "native_responses",
+    "native_responses": true,
+    "responses_via_chat": false,
+    "reasoning": false,
+    "upstream_path": "/v1/responses",
+    "upstream_model": "gpt-5.5",
+    "stream_event_type": "response.failed",
+    "stream_error_code": "native_failed",
+    "stream_error_type": "server_error",
+    "stream_error_text": "native upstream failed",
+    "stream_event_count": {
+      "response.created": 1,
+      "response.failed": 1
+    }
+  }
+}

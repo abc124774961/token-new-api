@@ -33,6 +33,8 @@ const (
 type ChannelOtherSettings struct {
 	AzureResponsesVersion                 string        `json:"azure_responses_version,omitempty"`
 	WireAPI                               string        `json:"wire_api,omitempty"`
+	ProviderProfile                       string        `json:"provider_profile,omitempty"`
+	ProxyProfile                          string        `json:"proxy_profile,omitempty"`
 	CodexCompatibilityMode                bool          `json:"codex_compatibility_mode,omitempty"` // Codex 兼容模式：用于声明该 OpenAI 兼容上游支持 Codex Responses 能力
 	CodexImageGenerationToolSupported     bool          `json:"codex_image_generation_tool_supported,omitempty"`
 	CodexImageGenerationToolProbeTime     int64         `json:"codex_image_generation_tool_probe_time,omitempty"`

@@ -1,0 +1,92 @@
+{
+  "name": "deepseek_v4_pro_codex_chat_stream_reasoning_alias",
+  "provider_profile": "deepseek_v4_pro_codex_chat",
+  "proxy_mode": "responses_via_chat",
+  "request_model": "deepseek-v4-pro-max",
+  "upstream_model": "deepseek-v4-pro-max",
+  "endpoint_type": "responses",
+  "stream": true,
+  "request": {
+    "model": "deepseek-v4-pro-max",
+    "input": [
+      {
+        "role": "user",
+        "content": "Think briefly, then answer."
+      }
+    ],
+    "reasoning": {
+      "effort": "high"
+    },
+    "stream": true,
+    "prompt_cache_key": "deepseek-reasoning-session"
+  },
+  "upstream_stream": [
+    {
+      "id": "chatcmpl_deepseek_reasoning_alias",
+      "object": "chat.completion.chunk",
+      "created": 1710000700,
+      "model": "deepseek-v4-pro-max",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "role": "assistant"
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_deepseek_reasoning_alias",
+      "object": "chat.completion.chunk",
+      "created": 1710000700,
+      "model": "deepseek-v4-pro-max",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "reasoning": "I should answer directly."
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_deepseek_reasoning_alias",
+      "object": "chat.completion.chunk",
+      "created": 1710000700,
+      "model": "deepseek-v4-pro-max",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "Done."
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 12,
+        "completion_tokens": 4,
+        "total_tokens": 16
+      }
+    }
+  ],
+  "expected": {
+    "provider_profile": "deepseek_v4_pro_codex_chat",
+    "proxy_mode": "responses_via_chat",
+    "native_responses": false,
+    "responses_via_chat": true,
+    "reasoning": true,
+    "upstream_path": "/v1/chat/completions",
+    "upstream_model": "deepseek-v4-pro-max",
+    "prompt_cache_key": "deepseek-reasoning-session",
+    "reasoning_effort": "high",
+    "output_text": "Done.",
+    "reasoning_text": "I should answer directly.",
+    "stream_event_count": {
+      "response.reasoning_summary_text.delta": 1,
+      "response.output_text.delta": 1,
+      "response.output_item.done": 1,
+      "response.completed": 1
+    }
+  }
+}

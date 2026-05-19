@@ -1,0 +1,48 @@
+{
+  "name": "deepseek_v4_pro_codex_chat_stream_error_envelope",
+  "provider_profile": "deepseek_v4_pro_codex_chat",
+  "proxy_mode": "responses_via_chat",
+  "request_model": "deepseek-v4-pro-max",
+  "upstream_model": "deepseek-v4-pro-max",
+  "endpoint_type": "responses",
+  "stream": true,
+  "request": {
+    "model": "deepseek-v4-pro-max",
+    "input": "hello",
+    "stream": true
+  },
+  "upstream_stream": [
+    {
+      "id": "chatcmpl_deepseek_error_envelope",
+      "object": "chat.completion.chunk",
+      "created": 1710000800,
+      "model": "deepseek-v4-pro-max",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "role": "assistant"
+          }
+        }
+      ]
+    },
+    {
+      "error_msg": "deepseek upstream rate limited",
+      "error_type": "rate_limit",
+      "code": "rate_limit_exceeded"
+    }
+  ],
+  "expected": {
+    "provider_profile": "deepseek_v4_pro_codex_chat",
+    "proxy_mode": "responses_via_chat",
+    "native_responses": false,
+    "responses_via_chat": true,
+    "reasoning": true,
+    "upstream_path": "/v1/chat/completions",
+    "upstream_model": "deepseek-v4-pro-max",
+    "stream_event_type": "response.failed",
+    "stream_error_code": "rate_limit_exceeded",
+    "stream_error_type": "rate_limit",
+    "stream_error_text": "deepseek upstream rate limited"
+  }
+}

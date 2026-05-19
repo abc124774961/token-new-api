@@ -1,0 +1,63 @@
+{
+  "name": "cross_group_fusion",
+  "request": {
+    "user_group": "vip",
+    "requested_group": "vip",
+    "model_name": "gpt-4.1"
+  },
+  "policy": {
+    "mode": "active",
+    "strategy": "balanced",
+    "auto_mode": "auto_sequential",
+    "cross_group_fusion": true,
+    "candidate_groups": ["vip", "fast", "forbidden"]
+  },
+  "auto_groups": [],
+  "usable_groups": ["vip", "fast"],
+  "channels": [
+    {
+      "id": 3,
+      "group": "vip",
+      "name": "vip-channel"
+    },
+    {
+      "id": 4,
+      "group": "fast",
+      "name": "fast-channel"
+    }
+  ],
+  "runtime_snapshots": [
+    {
+      "channel_id": 3,
+      "group": "vip",
+      "success_rate": 0.92,
+      "ttft_ms": 1200,
+      "tokens_per_second": 30,
+      "active_concurrency": 5,
+      "max_concurrency": 10,
+      "cost_ratio": 1,
+      "group_priority_ratio": 1,
+      "sample_count": 20
+    },
+    {
+      "channel_id": 4,
+      "group": "fast",
+      "success_rate": 0.98,
+      "ttft_ms": 500,
+      "tokens_per_second": 55,
+      "active_concurrency": 1,
+      "max_concurrency": 10,
+      "cost_ratio": 1,
+      "group_priority_ratio": 1,
+      "sample_count": 20
+    }
+  ],
+  "expected": {
+    "handled": true,
+    "selected_channel_id": 4,
+    "selected_group": "fast",
+    "fallback_used": false,
+    "context_keys": {},
+    "score_breakdown": {}
+  }
+}
