@@ -28,18 +28,16 @@ type RetryParam struct {
 }
 
 type channelAvoidanceEntry struct {
-	until         time.Time
-	reason        string
-	failureCount  int
-	lastFailureAt time.Time
+	until        time.Time
+	reason       string
+	failureCount int
 }
 
 var channelFailureAvoidance sync.Map
 
 const (
-	channelFailureAvoidanceBackoffWindow = 5 * time.Minute
 	channelFailureAvoidancePauseDuration = 30 * time.Minute
-	channelFailureAvoidancePauseFailures = 6
+	channelFailureAvoidanceStepSeconds   = 8
 )
 
 type ChannelFailureAvoidanceStatus struct {
@@ -57,6 +55,22 @@ type ChannelFailureAvoidanceRecord struct {
 	Remaining    time.Duration
 	FailureCount int
 	ShouldPause  bool
+}
+
+type ChannelFailureAvoidanceContext struct {
+	ChannelName  string
+	ChannelType  int
+	Group        string
+	ModelName    string
+	RequestId    string
+	ErrorType    string
+	ErrorCode    string
+	StatusCode   int
+	AttemptIndex int
+	FinalFailure bool
+	UsedChannels string
+	Message      string
+	Metadata     string
 }
 
 func (p *RetryParam) GetRetry() int {
@@ -140,8 +154,11 @@ func getAvoidedChannelSet() map[int]struct{} {
 			return true
 		}
 		entry, ok := value.(channelAvoidanceEntry)
-		if !ok || !entry.until.After(now) {
+		if !ok {
 			channelFailureAvoidance.Delete(key)
+			return true
+		}
+		if !entry.until.After(now) {
 			return true
 		}
 		avoided[channelID] = struct{}{}
@@ -165,7 +182,6 @@ func GetChannelFailureAvoidanceStatus(channelID int) *ChannelFailureAvoidanceSta
 	}
 	now := time.Now()
 	if !entry.until.After(now) {
-		channelFailureAvoidance.Delete(channelID)
 		return nil
 	}
 	return &ChannelFailureAvoidanceStatus{
@@ -188,41 +204,39 @@ func mergeChannelSets(sets ...map[int]struct{}) map[int]struct{} {
 }
 
 func RecordChannelFailureAvoidance(channelID int, reason string) *ChannelFailureAvoidanceRecord {
+	return RecordChannelFailureAvoidanceWithContext(channelID, reason, nil)
+}
+
+func RecordChannelFailureAvoidanceWithContext(channelID int, reason string, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
 	if channelID <= 0 || !common.ChannelFailureAvoidanceEnabled || common.ChannelFailureAvoidanceTTLSeconds <= 0 {
 		return nil
 	}
 	now := time.Now()
 	baseTTL := time.Duration(common.ChannelFailureAvoidanceTTLSeconds) * time.Second
-	ttl := baseTTL
 	failureCount := 1
-	baseUntil := now
 	if value, ok := channelFailureAvoidance.Load(channelID); ok {
 		if entry, ok := value.(channelAvoidanceEntry); ok {
-			if entry.until.After(now) {
-				baseUntil = entry.until
-			}
-			if entry.until.After(now) || (!entry.lastFailureAt.IsZero() && now.Sub(entry.lastFailureAt) <= channelFailureAvoidanceBackoffWindow) {
-				failureCount = entry.failureCount + 1
-			}
+			failureCount = entry.failureCount + 1
 		}
 	}
+	ttl := baseTTL
 	if failureCount > 1 {
-		ttl *= time.Duration(failureCount)
+		ttl += time.Duration((failureCount-1)*channelFailureAvoidanceStepSeconds) * time.Second
 	}
-	until := baseUntil.Add(ttl)
+	until := now.Add(ttl)
 	remaining := until.Sub(now)
-	shouldPause := remaining >= channelFailureAvoidancePauseDuration || failureCount >= channelFailureAvoidancePauseFailures
+	shouldPause := remaining >= channelFailureAvoidancePauseDuration
 	if shouldPause {
 		until = now.Add(channelFailureAvoidancePauseDuration)
 		remaining = channelFailureAvoidancePauseDuration
 	}
 	channelFailureAvoidance.Store(channelID, channelAvoidanceEntry{
-		until:         until,
-		reason:        reason,
-		failureCount:  failureCount,
-		lastFailureAt: now,
+		until:        until,
+		reason:       reason,
+		failureCount: failureCount,
 	})
 	common.SysLog(fmt.Sprintf("channel #%d temporarily cooled for %s until %s after %d errors: %s", channelID, remaining, until.Format(time.RFC3339), failureCount, reason))
+	recordChannelFailureAvoidanceEvent(channelID, reason, until, remaining, failureCount, shouldPause, failureContext)
 	return &ChannelFailureAvoidanceRecord{
 		Active:       true,
 		Reason:       reason,
@@ -231,6 +245,37 @@ func RecordChannelFailureAvoidance(channelID int, reason string) *ChannelFailure
 		FailureCount: failureCount,
 		ShouldPause:  shouldPause,
 	}
+}
+
+func recordChannelFailureAvoidanceEvent(channelID int, reason string, until time.Time, remaining time.Duration, failureCount int, shouldPause bool, failureContext *ChannelFailureAvoidanceContext) {
+	params := model.RecordChannelFailureEventParams{
+		ChannelId:        channelID,
+		EventType:        model.ChannelFailureEventTypeAvoidance,
+		Reason:           reason,
+		FailureCount:     failureCount,
+		RemainingSeconds: int64(remaining.Seconds()),
+		Until:            until.Unix(),
+		AutoPaused:       shouldPause,
+	}
+	if shouldPause {
+		params.EventType = model.ChannelFailureEventTypePaused
+	}
+	if failureContext != nil {
+		params.ChannelName = failureContext.ChannelName
+		params.ChannelType = failureContext.ChannelType
+		params.Group = failureContext.Group
+		params.ModelName = failureContext.ModelName
+		params.RequestId = failureContext.RequestId
+		params.ErrorType = failureContext.ErrorType
+		params.ErrorCode = failureContext.ErrorCode
+		params.StatusCode = failureContext.StatusCode
+		params.AttemptIndex = failureContext.AttemptIndex
+		params.FinalFailure = failureContext.FinalFailure
+		params.UsedChannels = failureContext.UsedChannels
+		params.Message = failureContext.Message
+		params.Metadata = failureContext.Metadata
+	}
+	model.RecordChannelFailureEvent(params)
 }
 
 func ClearChannelFailureAvoidance(channelID int) {

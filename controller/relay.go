@@ -697,7 +697,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 	if reason, ok := channelFailureAvoidanceReason(err); ok {
-		if avoidance := service.RecordChannelFailureAvoidance(channelError.ChannelId, reason); avoidance != nil && avoidance.ShouldPause {
+		if avoidance := service.RecordChannelFailureAvoidanceWithContext(channelError.ChannelId, reason, buildChannelFailureAvoidanceContext(c, channelError, err, persistLog)); avoidance != nil && avoidance.ShouldPause {
 			gopool.Go(func() {
 				service.PauseChannelForError(channelError, avoidance.Until, avoidance.Reason)
 			})
@@ -753,6 +753,33 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 	}
 
+}
+
+func buildChannelFailureAvoidanceContext(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, finalFailure bool) *service.ChannelFailureAvoidanceContext {
+	if err == nil {
+		return nil
+	}
+	failureContext := &service.ChannelFailureAvoidanceContext{
+		ChannelName:  channelError.ChannelName,
+		ChannelType:  channelError.ChannelType,
+		Group:        currentRelayLogGroup(c),
+		ErrorType:    string(err.GetErrorType()),
+		ErrorCode:    string(err.GetErrorCode()),
+		StatusCode:   err.StatusCode,
+		FinalFailure: finalFailure,
+		Message:      err.MaskSensitiveError(),
+	}
+	if c != nil {
+		failureContext.ModelName = c.GetString("original_model")
+		failureContext.RequestId = c.GetString(common.RequestIdKey)
+		usedChannels := c.GetStringSlice("use_channel")
+		failureContext.AttemptIndex = len(usedChannels)
+		failureContext.UsedChannels = strings.Join(usedChannels, "->")
+	}
+	if len(err.Metadata) > 0 {
+		failureContext.Metadata = common.JsonRawMessageToString(err.Metadata)
+	}
+	return failureContext
 }
 
 func appendChannelFailureTraceAdminInfo(c *gin.Context, adminInfo map[string]interface{}) {

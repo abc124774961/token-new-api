@@ -453,7 +453,7 @@ func TestProcessChannelErrorRecordsTemporaryAvoidanceForBadGateway(t *testing.T)
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
 	common.ChannelFailureAvoidanceEnabled = true
-	common.ChannelFailureAvoidanceTTLSeconds = 45
+	common.ChannelFailureAvoidanceTTLSeconds = 6
 	t.Cleanup(func() {
 		common.ChannelFailureAvoidanceEnabled = originalEnabled
 		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
@@ -487,7 +487,7 @@ func TestProcessChannelErrorRecordsTemporaryAvoidanceForWrappedRateLimit(t *test
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
 	common.ChannelFailureAvoidanceEnabled = true
-	common.ChannelFailureAvoidanceTTLSeconds = 45
+	common.ChannelFailureAvoidanceTTLSeconds = 6
 	t.Cleanup(func() {
 		common.ChannelFailureAvoidanceEnabled = originalEnabled
 		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
@@ -546,7 +546,7 @@ func TestProcessChannelErrorExtendsTemporaryAvoidanceForRepeatedUpstreamErrors(t
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
 	common.ChannelFailureAvoidanceEnabled = true
-	common.ChannelFailureAvoidanceTTLSeconds = 10
+	common.ChannelFailureAvoidanceTTLSeconds = 6
 	t.Cleanup(func() {
 		common.ChannelFailureAvoidanceEnabled = originalEnabled
 		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
@@ -566,7 +566,7 @@ func TestProcessChannelErrorExtendsTemporaryAvoidanceForRepeatedUpstreamErrors(t
 	require.True(t, status.Active)
 	require.Equal(t, "upstream_error:400:bad_response_status_code", status.Reason)
 	require.Equal(t, 2, status.FailureCount)
-	require.Greater(t, time.Unix(status.Until, 0).Sub(time.Now()), 15*time.Second)
+	require.Greater(t, time.Unix(status.Until, 0).Sub(time.Now()), 12*time.Second)
 }
 
 func TestProcessChannelErrorSkipsTemporaryAvoidanceForLocalBadRequest(t *testing.T) {

@@ -112,7 +112,7 @@ var PreConsumedQuota = 500
 
 var RetryTimes = 0
 var ChannelFailureAvoidanceEnabled = true
-var ChannelFailureAvoidanceTTLSeconds = 45
+var ChannelFailureAvoidanceTTLSeconds = 6
 var ChannelBalanceAutoResumeEnabled = true
 var ChannelBalanceRecoveryThreshold = 0.0
 

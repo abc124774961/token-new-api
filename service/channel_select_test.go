@@ -72,7 +72,7 @@ func setupChannelSelectTestDB(t *testing.T) *gorm.DB {
 
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelFailureEvent{}))
 
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
@@ -373,7 +373,7 @@ func TestRecordChannelFailureAvoidanceExtendsDurationForRepeatedFailures(t *test
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
 	common.ChannelFailureAvoidanceEnabled = true
-	common.ChannelFailureAvoidanceTTLSeconds = 10
+	common.ChannelFailureAvoidanceTTLSeconds = 6
 	t.Cleanup(func() {
 		common.ChannelFailureAvoidanceEnabled = originalEnabled
 		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
@@ -385,6 +385,7 @@ func TestRecordChannelFailureAvoidanceExtendsDurationForRepeatedFailures(t *test
 	require.True(t, ok)
 	require.NotNil(t, firstRecord)
 	require.Equal(t, 1, first.failureCount)
+	require.InDelta(t, 6, firstRecord.Remaining.Seconds(), 1)
 	require.False(t, firstRecord.ShouldPause)
 
 	secondRecord := RecordChannelFailureAvoidance(381, "do_request_failed")
@@ -392,12 +393,49 @@ func TestRecordChannelFailureAvoidanceExtendsDurationForRepeatedFailures(t *test
 	require.True(t, ok)
 	require.NotNil(t, secondRecord)
 	require.Equal(t, 2, second.failureCount)
-	require.Greater(t, second.until.Sub(time.Now()), 15*time.Second)
+	require.InDelta(t, 14, secondRecord.Remaining.Seconds(), 1)
 	require.Greater(t, second.until, first.until)
 	require.False(t, secondRecord.ShouldPause)
 }
 
-func TestRecordChannelFailureAvoidanceEscalatesToPauseAfterRepeatedFailures(t *testing.T) {
+func TestRecordChannelFailureAvoidanceKeepsFailureCountUntilCleared(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 6
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	firstRecord := RecordChannelFailureAvoidance(382, "do_request_failed")
+	require.NotNil(t, firstRecord)
+
+	entry, ok := getChannelFailureAvoidanceForTest(382)
+	require.True(t, ok)
+	entry.until = time.Now().Add(-time.Second)
+	channelFailureAvoidance.Store(382, entry)
+
+	require.Nil(t, GetChannelFailureAvoidanceStatus(382))
+
+	secondRecord := RecordChannelFailureAvoidance(382, "do_request_failed")
+	require.NotNil(t, secondRecord)
+	require.Equal(t, 2, secondRecord.FailureCount)
+	require.InDelta(t, 14, secondRecord.Remaining.Seconds(), 1)
+	require.False(t, secondRecord.ShouldPause)
+
+	ClearChannelFailureAvoidance(382)
+
+	thirdRecord := RecordChannelFailureAvoidance(382, "do_request_failed")
+	require.NotNil(t, thirdRecord)
+	require.Equal(t, 1, thirdRecord.FailureCount)
+	require.InDelta(t, 6, thirdRecord.Remaining.Seconds(), 1)
+}
+
+func TestRecordChannelFailureAvoidancePersistsEventContext(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
 	common.ChannelFailureAvoidanceEnabled = true
@@ -408,15 +446,41 @@ func TestRecordChannelFailureAvoidanceEscalatesToPauseAfterRepeatedFailures(t *t
 		clearAllChannelFailureAvoidanceForTest()
 	})
 
-	var record *ChannelFailureAvoidanceRecord
-	for i := 0; i < channelFailureAvoidancePauseFailures; i++ {
-		record = RecordChannelFailureAvoidance(382, "do_request_failed")
-	}
-
+	record := RecordChannelFailureAvoidanceWithContext(383, "upstream_rate_limit", &ChannelFailureAvoidanceContext{
+		ChannelName:  "codex-pro",
+		ChannelType:  1,
+		Group:        "vip",
+		ModelName:    "gpt-5.5",
+		RequestId:    "req-383",
+		ErrorType:    "openai_error",
+		ErrorCode:    "rate_limit_exceeded",
+		StatusCode:   429,
+		AttemptIndex: 2,
+		FinalFailure: true,
+		UsedChannels: "4->2",
+		Message:      "rate limit exceeded",
+		Metadata:     `{"retry_after":10}`,
+	})
 	require.NotNil(t, record)
-	require.True(t, record.ShouldPause)
-	require.Equal(t, channelFailureAvoidancePauseFailures, record.FailureCount)
-	require.InDelta(t, channelFailureAvoidancePauseDuration.Seconds(), record.Remaining.Seconds(), 1)
+
+	var event model.ChannelFailureEvent
+	require.NoError(t, db.Where("channel_id = ?", 383).First(&event).Error)
+	require.Equal(t, model.ChannelFailureEventTypeAvoidance, event.EventType)
+	require.Equal(t, "upstream_rate_limit", event.Reason)
+	require.Equal(t, "codex-pro", event.ChannelName)
+	require.Equal(t, "vip", event.Group)
+	require.Equal(t, "gpt-5.5", event.ModelName)
+	require.Equal(t, "req-383", event.RequestId)
+	require.Equal(t, "openai_error", event.ErrorType)
+	require.Equal(t, "rate_limit_exceeded", event.ErrorCode)
+	require.Equal(t, 429, event.StatusCode)
+	require.Equal(t, 2, event.AttemptIndex)
+	require.Equal(t, 1, event.FailureCount)
+	require.Equal(t, int64(10), event.RemainingSeconds)
+	require.True(t, event.FinalFailure)
+	require.Equal(t, "4->2", event.UsedChannels)
+	require.False(t, event.AutoPaused)
+	require.Equal(t, `{"retry_after":10}`, event.Metadata)
 }
 
 func TestRetryParamIncreaseRetryConsumesExtraRetriesFirst(t *testing.T) {
