@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,7 @@ const (
 	defaultStickyKeepScoreRatio  = 0.85
 	defaultCacheKeepScoreRatio   = 0.75
 	defaultStickyStoreMaxEntries = 100000
+	defaultStickyFailurePolicy   = StickyFailurePolicyClear
 
 	stickyStoreCacheNamespace = "new-api:modelgateway:sticky:v1"
 	stickyRoutingDisabledKey  = "modelgateway_sticky_routing_disabled"
@@ -41,10 +43,30 @@ type stickyStoreDeleter interface {
 	Delete(key string)
 }
 
+type stickyStoreBulkDeleter interface {
+	DeleteMany(keys []string) int
+}
+
+type StickyStoreEntry struct {
+	Key            string
+	KeyID          string
+	ChannelID      int
+	Group          string
+	KeyFingerprint string
+	ExpiresAt      time.Time
+}
+
+type stickyStoreLister interface {
+	List() []StickyStoreEntry
+}
+
 type StickyRouterOptions struct {
 	TTLSeconds           int
 	StickyKeepScoreRatio float64
 	CacheKeepScoreRatio  float64
+	SaveOnSelect         bool
+	RenewOnSuccess       bool
+	FailurePolicy        StickyFailurePolicy
 	MaxEntries           int
 	Store                StickyStore
 }
@@ -53,8 +75,29 @@ type MemoryStickyRouter struct {
 	ttl                  time.Duration
 	stickyKeepScoreRatio float64
 	cacheKeepScoreRatio  float64
+	saveOnSelect         bool
+	renewOnSuccess       bool
+	failurePolicy        StickyFailurePolicy
 	store                StickyStore
 	cacheAdapter         core.CacheAffinitySignalAdapter
+}
+
+type StickyFailurePolicy string
+
+const (
+	StickyFailurePolicyKeep  StickyFailurePolicy = "keep"
+	StickyFailurePolicyClear StickyFailurePolicy = "clear"
+)
+
+func normalizeStickyFailurePolicy(policy StickyFailurePolicy) StickyFailurePolicy {
+	switch StickyFailurePolicy(strings.ToLower(strings.TrimSpace(string(policy)))) {
+	case StickyFailurePolicyKeep:
+		return StickyFailurePolicyKeep
+	case StickyFailurePolicyClear, "":
+		return defaultStickyFailurePolicy
+	default:
+		return defaultStickyFailurePolicy
+	}
 }
 
 type StickyEntry struct {
@@ -77,6 +120,7 @@ func NewMemoryStickyRouter(options StickyRouterOptions, cacheAdapter core.CacheA
 	if cacheRatio <= 0 {
 		cacheRatio = defaultCacheKeepScoreRatio
 	}
+	failurePolicy := normalizeStickyFailurePolicy(options.FailurePolicy)
 	maxEntries := options.MaxEntries
 	if maxEntries <= 0 {
 		maxEntries = defaultStickyStoreMaxEntries
@@ -89,6 +133,9 @@ func NewMemoryStickyRouter(options StickyRouterOptions, cacheAdapter core.CacheA
 		ttl:                  time.Duration(ttlSeconds) * time.Second,
 		stickyKeepScoreRatio: stickyRatio,
 		cacheKeepScoreRatio:  cacheRatio,
+		saveOnSelect:         options.SaveOnSelect,
+		renewOnSuccess:       options.RenewOnSuccess,
+		failurePolicy:        failurePolicy,
 		store:                store,
 		cacheAdapter:         cacheAdapter,
 	}
@@ -169,6 +216,34 @@ func (r *MemoryStickyRouter) Clear(c *gin.Context, req *core.DispatchRequest, po
 		return
 	}
 	r.store.Set(key, StickyEntry{ExpiresAt: time.Now().Add(-time.Second)})
+}
+
+func (r *MemoryStickyRouter) Report(c *gin.Context, req *core.DispatchRequest, plan *core.DispatchPlan, result core.AttemptResult) {
+	if r == nil || req == nil || plan == nil || plan.Channel == nil || plan.StickySource == "" {
+		return
+	}
+	if StickyRoutingDisabled(c) {
+		return
+	}
+	if plan.CacheAffinity || plan.StickySource == stickySourceCacheAffinity {
+		return
+	}
+	if result.Success {
+		if r.renewOnSuccess {
+			r.Save(c, req, plan)
+		}
+		return
+	}
+	if r.failurePolicy == StickyFailurePolicyClear {
+		r.Clear(c, req, core.GroupSmartPolicy{RequestedGroup: req.RequestedGroup})
+	}
+}
+
+func (r *MemoryStickyRouter) SaveOnSelect() bool {
+	if r == nil {
+		return false
+	}
+	return r.saveOnSelect
 }
 
 func StickyRoutingDisabled(c *gin.Context) bool {
@@ -267,6 +342,41 @@ func (s *MemoryStickyStore) Delete(key string) {
 	delete(s.entries, key)
 }
 
+func (s *MemoryStickyStore) DeleteMany(keys []string) int {
+	if s == nil || len(keys) == 0 {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deleted := 0
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := s.entries[key]; ok {
+			delete(s.entries, key)
+			deleted++
+		}
+	}
+	return deleted
+}
+
+func (s *MemoryStickyStore) List() []StickyStoreEntry {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.evictExpiredLocked()
+	entries := make([]StickyStoreEntry, 0, len(s.entries))
+	for key, entry := range s.entries {
+		entries = append(entries, buildStickyStoreEntry(key, entry))
+	}
+	sortStickyStoreEntries(entries)
+	return entries
+}
+
 func (s *MemoryStickyStore) evictExpiredLocked() {
 	now := time.Now()
 	for key, entry := range s.entries {
@@ -354,6 +464,147 @@ func (s *HybridStickyStore) Delete(key string) {
 		return
 	}
 	_, _ = s.cache.DeleteMany([]string{key})
+}
+
+func (s *HybridStickyStore) DeleteMany(keys []string) int {
+	if s == nil || s.cache == nil || len(keys) == 0 {
+		return 0
+	}
+	result, err := s.cache.DeleteMany(keys)
+	if err != nil {
+		return 0
+	}
+	deleted := 0
+	for _, ok := range result {
+		if ok {
+			deleted++
+		}
+	}
+	return deleted
+}
+
+func (s *HybridStickyStore) List() []StickyStoreEntry {
+	if s == nil || s.cache == nil {
+		return nil
+	}
+	keys, err := s.cache.Keys()
+	if err != nil {
+		return nil
+	}
+	entries := make([]StickyStoreEntry, 0, len(keys))
+	for _, key := range keys {
+		entry, found := s.Get(key)
+		if !found {
+			continue
+		}
+		entries = append(entries, buildStickyStoreEntry(key, entry))
+	}
+	sortStickyStoreEntries(entries)
+	return entries
+}
+
+func (r *MemoryStickyRouter) StickyEntries() []StickyStoreEntry {
+	if r == nil || r.store == nil {
+		return nil
+	}
+	lister, ok := r.store.(stickyStoreLister)
+	if !ok {
+		return nil
+	}
+	return lister.List()
+}
+
+func (r *MemoryStickyRouter) ClearStickyEntryByID(keyID string) bool {
+	keyID = strings.TrimSpace(keyID)
+	if r == nil || r.store == nil || keyID == "" {
+		return false
+	}
+	deleter, ok := r.store.(stickyStoreDeleter)
+	if !ok {
+		return false
+	}
+	for _, entry := range r.StickyEntries() {
+		if entry.KeyID == keyID {
+			deleter.Delete(entry.Key)
+			return true
+		}
+	}
+	return false
+}
+
+type StickyClearFilter struct {
+	Group     string
+	ChannelID int
+	KeyID     string
+}
+
+func (r *MemoryStickyRouter) ClearStickyEntries(filter StickyClearFilter) int {
+	if r == nil || r.store == nil {
+		return 0
+	}
+	keys := make([]string, 0)
+	for _, entry := range r.StickyEntries() {
+		if stickyEntryMatchesClearFilter(entry, filter) {
+			keys = append(keys, entry.Key)
+		}
+	}
+	if len(keys) == 0 {
+		return 0
+	}
+	if bulk, ok := r.store.(stickyStoreBulkDeleter); ok {
+		return bulk.DeleteMany(keys)
+	}
+	deleted := 0
+	if deleter, ok := r.store.(stickyStoreDeleter); ok {
+		for _, key := range keys {
+			deleter.Delete(key)
+			deleted++
+		}
+	}
+	return deleted
+}
+
+func stickyEntryMatchesClearFilter(entry StickyStoreEntry, filter StickyClearFilter) bool {
+	group := strings.TrimSpace(filter.Group)
+	if group != "" && entry.Group != group {
+		return false
+	}
+	if filter.ChannelID > 0 && entry.ChannelID != filter.ChannelID {
+		return false
+	}
+	keyID := strings.TrimSpace(filter.KeyID)
+	if keyID != "" && entry.KeyID != keyID {
+		return false
+	}
+	return true
+}
+
+func buildStickyStoreEntry(key string, entry StickyEntry) StickyStoreEntry {
+	return StickyStoreEntry{
+		Key:            key,
+		KeyID:          affinityFingerprint(key),
+		ChannelID:      entry.ChannelID,
+		Group:          entry.Group,
+		KeyFingerprint: entry.KeyFingerprint,
+		ExpiresAt:      entry.ExpiresAt,
+	}
+}
+
+func sortStickyStoreEntries(entries []StickyStoreEntry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		left := entries[i]
+		right := entries[j]
+		if !left.ExpiresAt.Equal(right.ExpiresAt) {
+			return left.ExpiresAt.After(right.ExpiresAt)
+		}
+		if left.Group != right.Group {
+			return left.Group < right.Group
+		}
+		if left.ChannelID != right.ChannelID {
+			return left.ChannelID < right.ChannelID
+		}
+		return left.KeyID < right.KeyID
+	})
 }
 
 func (r *MemoryStickyRouter) userStickyKey(c *gin.Context, req *core.DispatchRequest, policy core.GroupSmartPolicy) string {

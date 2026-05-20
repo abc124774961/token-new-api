@@ -1,0 +1,135 @@
+{
+  "name": "mimo_codex_chat_stream_long_reasoning_truncated",
+  "provider_profile": "mimo_codex_chat",
+  "proxy_mode": "responses_via_chat",
+  "request_model": "mimo-v1",
+  "upstream_model": "mimo-v1",
+  "endpoint_type": "responses",
+  "stream": true,
+  "request": {
+    "model": "mimo-v1",
+    "instructions": "You are a coding agent. Keep final answers concise.",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Think through the migration risk, then report the next step."
+          }
+        ]
+      }
+    ],
+    "reasoning": {
+      "effort": "high"
+    },
+    "stream": true,
+    "prompt_cache_key": "mimo-long-reasoning-truncated-session"
+  },
+  "upstream_stream": [
+    {
+      "id": "chatcmpl_mimo_long_reasoning_truncated",
+      "object": "chat.completion.chunk",
+      "created": 1710001300,
+      "model": "mimo-v1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "role": "assistant"
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_mimo_long_reasoning_truncated",
+      "object": "chat.completion.chunk",
+      "created": 1710001300,
+      "model": "mimo-v1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "reasoning_content": "I need to compare the existing proxy contract expectations with the new stream shape, "
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_mimo_long_reasoning_truncated",
+      "object": "chat.completion.chunk",
+      "created": 1710001300,
+      "model": "mimo-v1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "reasoning_content": "check whether truncated reasoning still produces a completed downstream response, "
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_mimo_long_reasoning_truncated",
+      "object": "chat.completion.chunk",
+      "created": 1710001300,
+      "model": "mimo-v1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "reasoning_content": "and avoid asserting usage until the shared usage checks are ready."
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_mimo_long_reasoning_truncated",
+      "object": "chat.completion.chunk",
+      "created": 1710001300,
+      "model": "mimo-v1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "Next step: add the golden stream and let the usage assertions land separately."
+          },
+          "finish_reason": "length"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 34,
+        "completion_tokens": 64,
+        "total_tokens": 98
+      }
+    }
+  ],
+  "expected": {
+    "provider_profile": "mimo_codex_chat",
+    "proxy_mode": "responses_via_chat",
+    "native_responses": false,
+    "responses_via_chat": true,
+    "reasoning": true,
+    "web_search": true,
+    "upstream_path": "/v1/chat/completions",
+    "upstream_model": "mimo-v1",
+    "prompt_cache_key": "mimo-long-reasoning-truncated-session",
+    "reasoning_effort": "high",
+    "output_text": "Next step: add the golden stream and let the usage assertions land separately.",
+    "reasoning_text": "I need to compare the existing proxy contract expectations with the new stream shape, check whether truncated reasoning still produces a completed downstream response, and avoid asserting usage until the shared usage checks are ready.",
+    "stream_item_types": [
+      "message"
+    ],
+    "stream_event_count": {
+      "response.created": 1,
+      "response.reasoning_summary_text.delta": 3,
+      "response.output_item.added": 1,
+      "response.output_text.delta": 1,
+      "response.output_item.done": 1,
+      "response.completed": 1
+    },
+    "stream_usage_prompt_tokens": 34,
+    "stream_usage_completion_tokens": 64,
+    "stream_usage_total_tokens": 98
+  }
+}

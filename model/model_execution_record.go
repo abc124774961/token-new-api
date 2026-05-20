@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 )
@@ -42,6 +43,22 @@ type ModelExecutionRecord struct {
 	RequestMeta       string  `json:"request_meta" gorm:"type:text"`
 }
 
+type ModelExecutionObserver func(record ModelExecutionRecord)
+
+var (
+	modelExecutionObserverMu sync.RWMutex
+	modelExecutionObservers  []ModelExecutionObserver
+)
+
+func AddModelExecutionObserver(observer ModelExecutionObserver) {
+	if observer == nil {
+		return
+	}
+	modelExecutionObserverMu.Lock()
+	defer modelExecutionObserverMu.Unlock()
+	modelExecutionObservers = append(modelExecutionObservers, observer)
+}
+
 func RecordModelExecution(record *ModelExecutionRecord) {
 	if record == nil || DB == nil {
 		return
@@ -51,5 +68,16 @@ func RecordModelExecution(record *ModelExecutionRecord) {
 	}
 	if err := DB.Create(record).Error; err != nil {
 		common.SysLog(fmt.Sprintf("failed to record model execution: request_id=%s channel_id=%d error=%v", record.RequestId, record.ChannelId, err))
+		return
+	}
+	notifyModelExecutionObservers(*record)
+}
+
+func notifyModelExecutionObservers(record ModelExecutionRecord) {
+	modelExecutionObserverMu.RLock()
+	observers := append([]ModelExecutionObserver(nil), modelExecutionObservers...)
+	modelExecutionObserverMu.RUnlock()
+	for _, observer := range observers {
+		observer(record)
 	}
 }

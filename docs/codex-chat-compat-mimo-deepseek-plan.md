@@ -1320,12 +1320,39 @@ gateway.cache_affinity
   "circuit_min_samples": 10,
   "circuit_open_seconds": 30,
   "circuit_half_open_probe_count": 3,
+  "circuit_error_policies": {
+    "rate_limit": {
+      "failure_threshold": 0.5,
+      "min_samples": 3,
+      "open_seconds": 20,
+      "half_open_probe_count": 2
+    },
+    "server_error": {
+      "failure_threshold": 0.5,
+      "min_samples": 10,
+      "open_seconds": 30,
+      "half_open_probe_count": 3
+    },
+    "stream_interrupted": {
+      "failure_threshold": 0.4,
+      "min_samples": 3,
+      "open_seconds": 60,
+      "half_open_probe_count": 1
+    }
+  },
   "cooldown_max_seconds": 600,
   "success_weight": 0.32,
   "speed_weight": 0.28,
   "load_weight": 0.20,
   "cost_weight": 0.15,
   "group_weight": 0.05,
+  "runtime_sync_enabled": false,
+  "runtime_sync_redis_enabled": true,
+  "runtime_sync_node_id": "",
+  "runtime_sync_ttl_seconds": 30,
+  "runtime_sync_queue_min_interval_ms": 500,
+  "runtime_sync_event_push_enabled": false,
+  "runtime_sync_event_subscribe_enabled": false,
   "group_priority_ratio": {},
   "group_policies": {
     "codex-pro": {
@@ -1365,6 +1392,18 @@ gateway.cache_affinity
 - `auto_mode` 默认 `auto_sequential`，只有显式设置 `auto_fusion` 才允许融合 auto 分组。
 - `candidate_groups` 只表达策略希望参与融合的分组，最终候选必须与 `service.GetUserUsableGroups(userGroup)` 求交集。
 - `queue_enabled`、`circuit_breaker_enabled` 均按分组开启，不做全局默认打开。
+- `circuit_error_policies` 为空时保持旧统一熔断阈值；配置后只对对应错误类型覆盖失败率阈值、最小样本、打开时间和半开探针数。
+- 熔断错误类型第一阶段固定为 `stream_interrupted`、`rate_limit`、`auth`、`quota`、`server_error`、`upstream_error`，未知 key 会在配置归一化时丢弃。
+- `auth` 与 `quota` 默认不纳入旧统一熔断失败，只有显式配置 `circuit_error_policies.auth/quota` 时才参与对应类型熔断，避免用户额度或密钥问题把正常渠道全局误伤。
+- 错误类型熔断的上线、灰度、回滚、默认策略建议和观测口径见 `docs/modelgateway-circuit-policy-ops.md`；第一阶段推荐只启用 `rate_limit/server_error/stream_interrupted/upstream_error`，`auth/quota` 仅作为确认 provider-owned credential/quota 事故后的应急策略。
+- `runtime_sync_enabled=false` 时，智能调度只使用本进程本地运行态，不读写跨节点共享状态。
+- `runtime_sync_redis_enabled=false` 时，即使 Redis 全局可用，运行态同步也强制走内存 fallback，便于单节点部署、测试和 Redis 不稳定时隔离。
+- `runtime_sync_event_push_enabled=false` 时，运行态 snapshot、熔断 snapshot 和 queue snapshot 仍按同步写路径写入 store；开启后才通过进程内事件队列合并并后台刷入。
+- `runtime_sync_event_subscribe_enabled=false` 为默认值，Redis Pub/Sub subscriber companion 不会随普通请求、runtime status 查询或默认智能调度运行时懒启动；开启后仅作为观测后台服务显式启动。
+- Redis Pub/Sub 发布是轻量通知层，不是事实数据层；事实状态仍以 `HybridRuntimeSyncStore` / `HybridCache` 中的 runtime snapshot、circuit snapshot 和 queue snapshot 为准。
+- subscriber companion 的启动条件必须同时满足 `runtime_sync_enabled && runtime_sync_redis_enabled && runtime_sync_event_subscribe_enabled && RedisEnabled && RDB != nil`；任何条件不满足都保持关闭并回退共享态惰性读取。
+- 关闭 `runtime_sync_event_subscribe_enabled`、关闭 runtime sync、关闭 Redis runtime sync 或配置重建时，必须关闭旧 companion、退出 Redis 订阅循环、释放回调队列并停止暴露旧 subscriber 的运行中状态。
+- subscriber companion 只服务观测进程的主动刷新和事件统计，不挂在默认请求链路、调度 `Select`、runtime status API 或状态查询懒路径上。
 
 跨分组融合示例：
 
@@ -2066,6 +2105,15 @@ go test ./pkg/modelgateway/... -run 'TestProxyContracts'
 - recording 队列满时降级策略生效。
 - Redis 不可用时本地继续调度。
 
+### 12.11 资金生命周期测试
+
+- Token 非 unlimited 且非 playground 时，预扣会减少 `remain_quota` 并增加 `used_quota`。
+- 钱包计费成功结算时，最终消费、consume log、用户 used quota/request count、渠道 used quota 与 usage 保持一致。
+- 上游失败、协议转换失败或 controller 返回错误时，已预扣额度必须通过 `Billing.Refund` 归还。
+- 失败退款路径不得写 consume log，不得增加渠道 used quota，不得推进用户 used quota/request count。
+- `wallet_only`、OpenAI native Responses、`responses_via_chat` selected plan 与 controller defer 退款路径都应保持一致资金语义。
+- service 层测试负责锁住 Token remain/used quota 的真实扣减和退款；relay/controller smoke 负责锁住上游 HTTP、日志、用户/渠道计数和外层失败退款。
+
 ## 13. 验收标准
 
 - 存在独立 `pkg/modelgateway/testkit` 与 `pkg/modelgateway/testdata`，可脱离真实 DB、Redis、外部 API 跑核心调度回归。
@@ -2211,7 +2259,72 @@ go test ./pkg/modelgateway/... -run 'TestProxyContracts'
 - Task H++ 已落地真实队列公平性 admission 策略对象：新增 `PriorityQueueAdmissionPolicy` 与 `QueueFairnessOptions`，支持高优先级分组/优先级阈值、额外队列容量、普通组保留容量和绝对队列上限；默认 `QueueManager` 行为保持兼容。
 - Task G+ 已落地 sticky 隔离和更多会话信号：`StickyRouter` 支持 session/conversation 请求体字段、Codex turn metadata header 优先、保存续期、失败清理和上下文禁用；fallback/shadow 期间禁用 sticky 写入，避免旧链路污染智能调度粘滞状态。
 - Task F++++++++ 已落地 Replay CLI/CI 可测入口：新增 `RunReplayBatchCLI`、`RunReplayBatchCI`、`ScanReplayGoldenPaths` 和 JSON report 写出，支持 `-golden` 文件/目录/glob、多路径扫描、`-report`、score/breakdown drift tolerance，并复用现有 exit code/status 语义。
+- Task F++++++++++ 已落地 Replay CLI/CI 闭环第一阶段：新增独立 `.github/workflows/modelgateway-replay.yml`，使用 `pull_request`、只读权限、Go 1.25.1+、离线 golden 回放和 report artifact 上传，不依赖 SQL、Redis、上游密钥或运行中的 API 服务。
+- Task F++++++++++ 已补 replay 使用文档与脚本参数化：`docs/modelgateway-replay-ci.md` 固化本地/CI 用法、退出码、golden 更新流程、阻塞回归与非阻塞 drift 边界；`scripts/modelgateway-replay.sh` 支持通过 `MODEL_GATEWAY_REPLAY_GOLDEN`、`MODEL_GATEWAY_REPLAY_REPORT`、`MODEL_GATEWAY_REPLAY_SCORE_TOLERANCE`、`MODEL_GATEWAY_REPLAY_BREAKDOWN_TOLERANCE` 控制默认回放。
+- Task F++++++++++ 已落地批量导出 manifest 第一阶段：新增 `GET /api/model_gateway/replay/export/batch`，支持 `request_ids` 列表、时间窗口、模型、分组、失败类型、成功状态、limit 和 stable IDs，输出 `modelgateway_replay_batch`、稳定文件名、manifest、失败项和脱敏 artifacts。
+- Task F++++++++++ 已补轻量审计：批量导出复用 `RecordLogWithAdminInfo` 写管理日志，记录导出类型、筛选条件、artifact/record/failed 数量、下载标记、stable IDs、客户端 IP 和 request_id 哈希摘要，不在日志中写入完整 request_id 明文列表。
+- Task F++++++++++ 已补前端批量导出入口：观测页“最近调度记录”支持按当前时间窗口、模型、分组、成功状态、失败类型和 request_id 列表预览 replay batch manifest，并可直接下载 stable IDs JSON；新增 7 语种文案与 ESLint 校验。
+- Task F++++++++++ 已补线上样本人工复核与 golden 入库流程：`docs/modelgateway-replay-ci.md` 增加批量导出 API/UI 用法、敏感字段 checklist、golden 存储规则、本地 gate 和 CI report 判读，明确只允许通过复核的单个 `modelgateway_replay` artifact 入库。
 - Task J++++++++ 已新增 MiMo 复杂 SSE golden `mimo_codex_chat_stream_reasoning_builtin_parallel_tools.json`，覆盖 reasoning、`web_search/file_search` 内置工具、两个 function tools 和并行 tool call 分片；`ProxyContract` runner 支持断言 stream output item type。
+- Task J++++++++++ 已新增 Provider SSE 边界 golden：OpenAI native built-in tool failed、MiMo long reasoning truncated、DeepSeek nonstandard tool usage-only，并扩展 `ProxyContract` usage 断言，覆盖 `response.completed/failed.response.usage` 的 prompt/completion/total token 透传。
+- Task J+++++++++++ 已补 Provider SSE golden 第二批：OpenAI native partial text 后失败且保留 message item、MiMo interleaved parallel tools + late usage-only chunk、DeepSeek empty delta + reasoning 后 provider error envelope；三组样本均进入 `ProxyContract` runner 并通过定向与完整 proxy/testkit 合约测试。
+- Task E+ 已落地小流量 E2E smoke 第一批：新增 integration 级便携测试，串起分组开关、真实 selector、auto_fusion、跨分组融合、队列高优先级 admission、cache-aware sticky、selected plan context、ProxyBridge request 转换，以及关闭智能调度后的 legacy fallback 与 bridge 禁用。
+- Task E+ 已落地 relay handler helper-level narrow smoke：新增 `relay/responses_handler_test.go` 中的窄链路用例，覆盖 selected smart dispatch plan 存在时 Responses 请求临时切到 Chat Completions、Chat 响应恢复为 Responses 输出、relay mode/path/final request format 复原、流式 `response.completed.response.usage` 结构化断言，以及无 selected plan 时 `ProxyBridge` 不接管并保持原 Responses 分支。
+- Task E+ 已补 `ProxyBridge` 禁用旁路回归：表驱动覆盖 `no_smart_dispatch_plan`、`nil_relay_info`、`unsupported_relay_mode`、`native_or_empty_proxy_mode`、`missing_provider_profile`、`unsupported_proxy_mode` 等禁用原因，确认 request/response/stream/converter 四个入口都返回 `handled=false` 且无错误，锁住智能代理模块的独立回退边界。
+- Task E+ 已落地 HTTP/relay 外层 native Responses smoke：新增 `TestResponsesHelperNativeNonStreamSmoke`，使用 `httptest.Server` 模拟 OpenAI `/v1/responses` 上游、sqlite `:memory:` 隔离 `model.DB/LOG_DB`，覆盖真实 OpenAI adaptor 转发、Authorization/body/model 断言、Responses 下游响应、usage 归一化、钱包预扣/后结算、用户 used quota/request count、渠道 used quota 和 consume log。
+- Task E+ 已补 HTTP/relay 外层错误不消费 smoke：新增 `TestResponsesHelperNativeNonStreamErrorDoesNotConsume`，覆盖上游非 200 和 HTTP 200 但 body 为 OpenAI error object 两类失败，确认不会写 consume log、不会增加用户 used quota/request count、不会增加渠道 used quota，Token playground 场景也保持 remain/used 不变。
+- Task E+ 已补 HTTP/relay 外层 `responses_via_chat` selected plan smoke：新增 `TestResponsesHelperResponsesViaChatSelectedPlanHTTPRelaySmoke`，验证下游仍为 `/v1/responses`，selected smart dispatch plan 存在时真实上游请求切到 `/v1/chat/completions`，Chat 响应转回 Responses，下游模型/文本/usage、relay mode/path 恢复、转换链、钱包结算、用户/渠道计数和 consume log 均稳定。
+- Task E+ 已补资金生命周期专项：`TestPreConsumeBilling_WalletDeductsTokenAndUserQuota` 覆盖 service 层真实 Token `remain_quota/used_quota` 预扣扣减和钱包扣减，`TestBillingSession_RefundRestoresWalletAndTokenPreConsume` 覆盖失败退款后钱包与 Token 额度归还。
+- Task E+ 已补 controller/relay 外层失败退款 smoke：新增 `TestRelayResponsesFailureRefundsPreConsumeSmoke`，真实走 `controller.Relay(...OpenAIResponses)`、OpenAI Responses adaptor 和 upstream 429，确认 controller defer 调用 `Billing.Refund` 后用户额度、Token remain/used、渠道 used quota 和 consume log 均不漂移。
+- Task H+++ 已落地队列公平策略配置闭环：后台配置新增高优先级阈值、额外深度、保留深度、绝对队列上限和分组 `queue_high_priority`，运行时 selector 会把分组优先级写入 `DispatchPlan`，relay 队列入口按配置构建 `PriorityQueueAdmissionPolicy`。
+- Task H+++ 已补前端配置入口：运营设置页可配置全局队列公平参数、队列深度倍率和分组高优先级开关，配置保存/重置后会刷新 relay queue manager。
+- Task L++++++++++ 已落地风险事件线前端展示：观测页展示 `risk` snapshot、`risk_timeline`、Top risk status、Top reject reason 和风险事件计数，复用现有 summary/runtime_status 数据，不新增接口。
+- Task F+++++++++ 已落地真实 Replay CLI 命令入口与便捷脚本：新增 `cmd/modelgateway-replay`，并提供 `scripts/modelgateway-replay.sh` 供本地和 CI 直接扫描 replay golden、写出 JSON report。
+- Task G++ 已落地 sticky admin 后端观测和清理入口：新增 `GET /api/model_gateway/observability/sticky` 与 `DELETE /api/model_gateway/observability/sticky/:key_id`，仅暴露脱敏 `key_id`、fingerprint、渠道、分组、TTL 等安全字段。
+- Task G++ 已补 sticky admin 前端面板：观测页可刷新 sticky store、查看来源/渠道/分组/key 指纹/过期时间/TTL，并按脱敏 `key_id` 清理粘滞记录。
+- Task J+++++++++ 已新增 DeepSeek 多 tool 混合 SSE golden `deepseek_v4_pro_codex_chat_stream_mixed_multi_tools.json`，覆盖 reasoning delta、普通文本、两个并行 function tool call、tool 参数、prompt cache key 和 reasoning effort/text。
+- Task H++++ 已落地队列运行态前端面板：观测页兼容读取 runtime queue snapshot 或 runtime status 推导数据，展示排队/等待、容量/深度、并发压力、渠道/运行键占用、高优先级/普通队列、拒绝原因和冷却提示。
+- Task H+++++ 已落地后端详细 runtime queue snapshot：新增 `RuntimeQueueSnapshot` 标准结构，`QueueManager.DetailedSnapshot()` 输出每渠道队列深度、容量、高优先级/普通队列深度、分组占用、拒绝原因计数；runtime status API 新增 `runtime_status.queue_snapshot`，并把并发冷却/失败避让合并为 `cooldowns` 提示。
+- Task H+++++ 保持兼容：旧 `QueueManager.Snapshot()` 和 `RuntimeStatusDeps.QueueSnapshot func() map[int]int` 保留不变，详细快照通过新增 `QueueDetailSnapshot` 可选接入；旧 `items[].queue_depth`、summary 聚合和已有测试语义不变。
+- Task C+ 已落地跨节点运行态同步第一阶段：新增 `RuntimeSyncStore`、`HybridRuntimeSyncStore`、`SyncedRuntimeSnapshotStore` 和 `SyncedCircuitBreaker`，通过现有 `cachex.HybridCache` 在 Redis 可用时共享 runtime snapshot 与 circuit snapshot，Redis 不可用时自动退回本地内存。
+- Task C+ 已接入默认智能调度运行时：默认 selector/health monitor 使用 `SyncedRuntimeSnapshotStore` 和 `SyncedCircuitBreaker`，本地 attempt 上报会同步关键 snapshot，调度/观测读取时会合并本地与跨节点状态；旧本地 store/breaker 仍保留在 runtime deps 中便于测试和回退。
+- Task H++++++ 已落地多节点队列快照聚合：`RuntimeSyncStore` 新增 queue snapshot 同步能力，`SyncAndAggregateQueueSnapshot` 会把本节点详细队列快照写入共享 store，并聚合所有节点的 channel/group/runtime_key 队列占用、优先级深度、拒绝原因和冷却提示。
+- Task H++++++ 已补运行键维度队列视图：`QueueAcquireOptions` 携带 `RuntimeKey`，`QueueManager.DetailedSnapshot()` 输出 `runtime_keys[]`，runtime status API 会过滤并返回运行键级队列深度，前端现有队列面板可直接消费。
+- Task H+++++++ 已落地多节点 queue snapshot 节点维度：`runtime_status.queue_snapshot.nodes[]` 保留每个节点的 `node_id`、`updated_at`、summary、channels、runtime_keys、groups、reject_reasons 和 cooldowns；顶层 channel/group/runtime_key 聚合字段继续保持 H++++++ 兼容语义。
+- Task H+++++++ 已补 runtime status 节点过滤：`queue_snapshot.summary.queue_nodes` 表示参与当前筛选结果的有效节点数量，按 model/group/channel 过滤时 nodes 只保留匹配的 channel/runtime_key，旧 `items[].queue_depth` 与旧 map[int]int 队列快照行为不变。
+- Task H+++++++ 已补观测页节点视图：队列运行态面板优先读取 `queue_snapshot.nodes[]` 展示节点数量、节点最新更新时间、节点级队列深度/容量来源和运行键数；缺少 nodes 时继续回退现有聚合快照或 runtime status items 推导。
+- Task C++ 已落地运行态同步生产配置闭环：`scheduler_setting` 新增 `runtime_sync_enabled`、`runtime_sync_redis_enabled`、`runtime_sync_node_id`、`runtime_sync_ttl_seconds`、`runtime_sync_queue_min_interval_ms` 和 `runtime_sync_event_push_enabled`，配置保存后会重建默认智能调度运行时。
+- Task C++ 已补可识别节点与同步节流：默认节点 ID 优先使用配置值，否则回落 hostname；runtime snapshot、熔断和 queue snapshot 共享 TTL 可配置；队列快照通过 `RuntimeQueueSnapshotSyncer` 按最小间隔写共享 store，同时观测聚合始终合并本节点最新本地快照，避免降写频导致当前节点排队状态短暂不可见。
+- Task C++ 保持独立可回退：关闭 `runtime_sync_enabled` 时，智能调度仍使用本地 snapshot/breaker 工作，不读取或写入跨节点共享态；关闭 `runtime_sync_redis_enabled` 时，`HybridRuntimeSyncStore` 强制走内存 fallback，便于单节点、测试和 Redis 不稳定场景隔离。
+- Task C+++ 已落地运行态事件推送第一阶段：`RuntimeSyncEventStore` 作为 `RuntimeSyncStore` 的可插拔包装器，在 `runtime_sync_event_push_enabled=true` 时启用后台 worker，把 runtime snapshot、熔断 snapshot 和 queue snapshot 写入按稳定 key 合并后批量刷入底层共享 store。
+- Task C+++ 保持读写语义兼容：pending 事件在 `ListSnapshots`、`GetCircuit`、`ListCircuits`、`ListQueueSnapshots` 中立即可见，避免异步 flush 破坏写后读；队列满或 wrapper 关闭后同步 fallback 到底层 `RuntimeSyncStore`，配置重建时会关闭旧 worker 并 drain pending。
+- Task C+++ 保留扩展面：第一阶段先做进程内合并队列和后台刷入，接口边界不侵入现有调度/代理；C++++ 已在同一事件结构上补 Redis Pub/Sub 轻量通知边界。
+- Task H++++++++ 已落地 memory fallback 双节点 smoke：新增无外部 Redis 依赖的 runtime sync smoke，构造两个独立节点和共享 `RuntimeSyncEventStore`，覆盖 runtime snapshot、circuit snapshot、queue snapshot、`RuntimeQueueSnapshotSyncer` 聚合与 flush 后底层共享 store 可见性。
+- Task H++++++++ 已补运行态多节点观测断言：新增 runtime status channel 筛选测试，锁住 `queue_snapshot.nodes[]`、`summary.queue_nodes`、runtime_keys 和旧 `items[].queue_depth` 的兼容语义。
+- Task H++++++++ 已补轻量高频事件合并 smoke 和本地脚本：`RuntimeSyncEventStore` 在 50 次同 key snapshot/circuit/queue 更新后 flush 只写底层一次；新增 `scripts/modelgateway-runtime-smoke.sh` 串起 scheduler + observability smoke，默认不依赖 Redis。
+- Task H+++++++++ 已完成本地 dev Redis 容器准备：`docker-compose.dev.yml` 内置 `redis:7-alpine`、健康检查和 `redis-data` volume，后端默认 `REDIS_CONN_STRING=redis://redis:6379/0`，`.env.dev(.example)` 默认暴露宿主机 `6380` 避免撞本机已有 `6379`。
+- Task H+++++++++ 已落地真实 Redis 可选 smoke：`TestRuntimeSyncMultiNodeSmokeWithRedisOptIn` 仅在设置 `MODEL_GATEWAY_RUNTIME_SMOKE_REDIS_ADDR` 时运行，使用 Redis DB 15 验证 Redis-backed `HybridRuntimeSyncStore` 的 snapshot、circuit、queue snapshot 和多节点聚合语义，测试前后会清理 DB 15。
+- Task H+++++++++ 已补脚本入口：`scripts/modelgateway-runtime-smoke.sh` 默认跑 memory fallback smoke，传 `--redis` 时默认连接 `localhost:6380` 或读取 `MODEL_GATEWAY_RUNTIME_SMOKE_REDIS_ADDR`，Redis 不可用/未显式启用不会阻塞默认 CI。
+- Task C++++ 已落地 Redis Pub/Sub 基础通知边界：在 C+++ 进程内事件结构基础上新增 `RuntimeSyncEventPublisher` / `RuntimeSyncEventSubscriber`；默认运行时只在 Redis 真可用且开启 runtime sync/event push 时给 `RuntimeSyncEventStore` 注入 publisher，不自动启动 subscriber。
+- Task C++++ 已补真实 Redis Pub/Sub opt-in smoke：`TestRedisRuntimeSyncEventPubSubOptIn` 复用 `MODEL_GATEWAY_RUNTIME_SMOKE_REDIS_ADDR`，脚本 `scripts/modelgateway-runtime-smoke.sh --redis` 会同时覆盖 Redis-backed store 与 Pub/Sub 发布/订阅；默认未显式启用 Redis 时跳过，不阻塞 CI。
+- Task C++++ 已明确回退语义：Pub/Sub 消息只作为轻量刷新提示，事实数据仍以 `HybridRuntimeSyncStore` / `HybridCache` 中的 snapshot 为准；Redis 不可用、订阅失败、消息丢失、消息解析失败或 subscriber 关闭时，调度与观测继续依赖惰性读取共享态，不把 Pub/Sub 作为一致性前提。
+- Task C+++++ 已落地 subscriber 韧性增强第一阶段：subscriber 支持订阅确认 `OnReady`、重连退避、有界回调队列、回调队列满错误上报、`UpdatedAtNano` 高水位去重和乱序过滤，Redis 读循环不再被业务 `OnEvent` 慢回调直接阻塞。
+- Task C+++++ 已补 Pub/Sub 专项测试：覆盖动态关闭 publisher、坏消息继续消费、重复/乱序事件过滤、回调队列满不阻塞订阅循环、nil/disabled subscriber 幂等关闭；真实 Redis 测试仍复用 `MODEL_GATEWAY_RUNTIME_SMOKE_REDIS_ADDR` opt-in，不影响默认 CI。
+- Task C++++++ 已落地默认外 observability subscriber companion：新增 `RuntimeEventSubscriber` 记录 runtime event 总数、按 kind 聚合、最近事件和 last event；提供纯内存 recorder 与显式 Redis companion 构造器，默认 runtime、controller、middleware、relay 均不引用，避免普通 API 隐式启动 subscriber。
+- Task C++++++ 已补 companion 测试与 smoke：单元测试覆盖事件记录、recent 裁剪、防御性快照和 Close 幂等；Redis opt-in smoke 覆盖显式 companion 收到 Pub/Sub 事件后更新 snapshot，`scripts/modelgateway-runtime-smoke.sh --redis` 已纳入该用例。
+- Task C+++++++ 已完成 Redis runtime event subscriber 配置化启动入口方案：`scheduler_setting` 增加 `runtime_sync_event_subscribe_enabled`，默认 false，只有显式开启且 `runtime_sync_enabled && runtime_sync_redis_enabled && RedisEnabled && RDB != nil` 全部满足时才由后台服务启动 observability companion。
+- Task C+++++++ 已明确生命周期和隔离边界：Redis Pub/Sub 发布仅作为通知层，事实数据仍以共享 snapshot store 为准；关闭订阅开关、关闭 runtime sync、关闭 Redis runtime sync 或配置重建时必须清理旧 companion；订阅 companion 不挂默认请求链路、调度 `Select`、runtime status API 或状态查询懒路径。
+- Task H/C-1 已补 runtime sync CI 与运维手册：新增 `docs/modelgateway-runtime-sync-ci.md`，固化 memory fallback smoke、Redis opt-in smoke、本地 dev Redis、Pub/Sub 通知层、subscriber companion 生命周期、配置开关组合、排障命令和 CI 拆分原则。
+- Task H/C-1 明确默认 gate 不依赖 Redis：`scripts/modelgateway-runtime-smoke.sh` 作为默认离线 smoke，`scripts/modelgateway-runtime-smoke.sh --redis` 仅在显式启动 dev Redis 或 CI provision Redis 时运行，避免 Redis 可用性影响默认回归。
+- Task H-maint 已落地按错误类型熔断第一阶段：`CircuitBreaker` 新增 `CircuitErrorPolicy`，支持对 `stream_interrupted`、`rate_limit`、`auth`、`quota`、`server_error`、`upstream_error` 分别配置失败率阈值、最小样本、打开时间和半开探针数；未配置时保持旧统一熔断语义。
+- Task H-maint 已补错误分类与观测字段：熔断器从 `AttemptResult` 派生错误类型，`CircuitSnapshot` 和 runtime status 透出 `circuit_open_reason` 与 `circuit_error_counts`，便于排查当前打开熔断是限流、服务端错误、流中断还是显式启用的 auth/quota 策略触发。
+- Task H-maint 已补配置 API 闭环：`scheduler_setting.circuit_error_policies` 支持后端归一化、持久化、默认 runtime wiring 和配置测试；前端默认 payload 保持兼容，后续可补专门 UI 编辑器。
+- Task H-maint-UI 已落地错误类型熔断配置编辑器：运营设置页新增 `circuit_error_policies` 表格，按 `stream_interrupted/rate_limit/auth/quota/server_error/upstream_error` 配置启用、失败率阈值、最小样本、打开时间和半开探针数；未启用类型继续使用全局规则。
+- Task H-maint-UI 已补 7 语种 i18n：`zh-CN`、`zh-TW`、`en`、`fr`、`ru`、`ja`、`vi` 均包含错误类型名称、阈值、样本数、打开时间、半开探针和说明文案；同步避免动态 `t()` key，便于后续 i18n 检查。
+- Task H-maint-trend 已落地错误类型熔断趋势闭环：observability summary/trend/export preview/risk snapshot 统一输出 `circuit_open_reasons`、`circuit_error_types`，并兼容 `circuit_error_counts` 别名；历史趋势优先从 attempt record 推导 `rate_limit/server_error/stream_interrupted/upstream_error` 等错误类型，runtime snapshot 只合入当前 summary/risk，避免把当前累计计数伪装成历史桶。
+- Task H-maint-trend 已补前端观测展示：调度趋势展开行、风险事件线、运行态风险概览和运行态状态表均展示熔断打开原因与错误类型 Top 维度，7 语种新增趋势/Top 文案，错误类型名称继续复用固定映射，避免动态 i18n key。
+- Task Ops-maint 已补错误类型熔断默认策略与运维手册：新增 `docs/modelgateway-circuit-policy-ops.md`，明确 conservative、stream-protective、provider-saturated 三组策略 profile，覆盖 `auth/quota` 显式启用边界、shadow 到 small active 的上线流程、回滚方式、observability 查询字段、调参规则和变更评审 checklist。
+- Task Ops-calibration 已补 observability/trend export 阈值校准闭环：新增 `scripts/modelgateway-circuit-calibrate.mjs`，可离线读取 trend export JSON，按分组计算 `rate_limit`、`server_error`、`stream_interrupted` 的建议阈值、最小样本、打开窗口和半开探针数；脚本只输出运营建议，不写入配置或触碰主链路。
 - 侧边栏新增 `model_gateway` 模块键，默认随控制台区域启用，并纳入管理员全局侧边栏配置、用户侧边栏配置和 lucide 图标渲染。
 - 前端新增 `zh-CN`、`zh-TW`、`en`、`fr`、`ru`、`ja`、`vi` 翻译，覆盖智能模型网关观测页和侧边栏配置文案。
 - 新增便携测试：`TestPortable`、`TestDispatchScenarios`、`TestProxyContracts`、provider/profile、proxy 转换、队列、运行时 enrich、recording、sticky/cache affinity、circuit breaker、runtime health monitor。
@@ -2227,6 +2340,12 @@ go test ./pkg/modelgateway/scheduler ./pkg/modelgateway/testkit -run 'TestCircui
 go test ./pkg/modelgateway/testkit ./pkg/modelgateway/recording
 go test ./pkg/modelgateway/replay ./pkg/modelgateway/testkit ./controller ./router -run 'TestExportArtifact|TestArtifact|TestReplay|TestExportModelGatewayReplay|TestSafeReplayFilenamePart'
 go test ./pkg/modelgateway/proxy ./pkg/modelgateway/testkit ./relay -run 'TestResponsesViaChat|TestProxyContracts|Test(HandleProxyBridge|ProxyBridgeStreamSender|MergeResponsesStreamUsage|ApplyProxyBridge)' -count=1
+go test ./relay -run 'TestRelayProxyBridge(RequestAndResponseNarrowSmoke|WithoutSelectedPlanDoesNotHandleResponse)|TestApplyProxyBridge|TestHandleProxyBridge|TestProxyBridgeStreamSender|TestMergeResponsesStreamUsage' -count=1
+go test ./relay -run 'TestResponsesHelperNativeNonStreamSmoke|TestRelayProxyBridge|TestHandleProxyBridge|TestApplyProxyBridge|TestProxyBridgeStreamSender|TestMergeResponsesStreamUsage' -count=1
+go test ./relay -run 'TestResponsesHelper(NativeNonStream(Smoke|ErrorDoesNotConsume)|ResponsesViaChatSelectedPlanHTTPRelaySmoke)' -count=1
+go test ./service -run 'TestPreConsumeBilling_WalletDeductsTokenAndUserQuota|TestBillingSession_RefundRestoresWalletAndTokenPreConsume' -count=1
+go test ./controller -run 'TestRelayResponsesFailureRefundsPreConsumeSmoke' -count=1
+go test ./pkg/modelgateway/integration -run 'TestProxyBridge' -count=1
 go test ./pkg/modelgateway/...
 go test ./setting/scheduler_setting ./pkg/modelgateway/... ./relay ./middleware ./controller ./model
 go test ./service -run 'Test.*Channel|Test.*Auto|Test.*Retry|Test.*Failover|TestTryAcquireChannelConcurrency|TestRecordChannelConcurrencyCooldownAndSelectionSkip|TestQueue|TestChannelAffinity'
@@ -2253,20 +2372,48 @@ go test ./pkg/modelgateway/replay ./pkg/modelgateway/testkit -run 'Test.*Replay|
 go test ./pkg/modelgateway/proxy ./pkg/modelgateway/testkit -run 'TestResponsesViaChat|TestProxyContracts' -count=1
 go test ./pkg/modelgateway/... -run 'TestSticky|TestSelectorRetains|TestSelectorBreaks|TestDispatchScenarios|TestPortable' -count=1
 go test ./pkg/modelgateway/... -count=1
+go test ./pkg/modelgateway/scheduler ./controller -run 'TestQueue|TestRuntime|TestSynced|TestHybrid|TestModelGatewayConfig' -count=1
+go test ./pkg/modelgateway/scheduler ./pkg/modelgateway/observability ./controller -run 'TestQueue|TestRuntime|TestSynced|TestModelGatewayRuntimeStatus|TestGetModelGatewayRuntimeStatus' -count=1
+go test ./pkg/modelgateway/scheduler ./controller ./router -run 'TestSticky|Test(Get|Clear).*ModelGateway|TestSafeReplayFilenamePart|TestModelGatewaySticky' -count=1
+go test ./pkg/modelgateway/integration -run 'TestSmallTrafficE2ESmoke|TestChannelSelectionWrapper|TestProxyBridge' -count=1
+go test ./pkg/modelgateway/integration ./pkg/modelgateway/scheduler ./pkg/modelgateway/proxy ./pkg/modelgateway/testkit -run 'TestSmallTrafficE2ESmoke|TestQueue|TestResponsesViaChat|TestProxyContracts' -count=1
+go test ./cmd/modelgateway-replay -count=1
+go test ./cmd/modelgateway-replay ./pkg/modelgateway/testkit ./pkg/modelgateway/replay -run 'Test.*Replay|TestArtifact' -count=1
+scripts/modelgateway-replay.sh
 cd web/classic && bun run i18n:sync
+cd web/classic && bunx eslint src/pages/Setting/Operation/SettingsModelGatewayScheduler.jsx
+cd web/classic && bunx eslint src/components/dashboard/model-gateway/ModelGatewayMonitor.jsx
+cd web/classic && bunx eslint src/components/dashboard/model-gateway/ModelGatewayMonitor.jsx --max-warnings=0
 cd web/classic && bun run build
+scripts/modelgateway-runtime-smoke.sh
+scripts/modelgateway-runtime-smoke.sh --redis
+docker compose --env-file .env.dev -f docker-compose.dev.yml up -d redis
+docker exec token-new-api-dev-redis redis-cli ping
 ```
 
 结果：通过。
 
+阶段总结：
+
+- 智能调度主链路已经形成“分组开关开启智能调度、旧 auto 兼容、跨分组融合、模型能力匹配、渠道评分、轻锁定、队列等待、熔断冷却、跨节点运行态同步、运行态观测”的完整闭环。
+- OpenAI Codex 标准渠道、MiMo、DeepSeek V4 Pro 已按统一 provider/profile/proxy 思路进入方案与实现体系，后续新增标准大模型时优先复用 profile + proxy contract + replay golden 的接入路径。
+- 运行态记录已经覆盖模型版本、渠道请求数据、耗时、成功率、负载、成本、队列、熔断、风险事件和趋势指标，调度侧可以基于成功率、响应速度、渠道负载、渠道成本、分组倍率/优先级和失败率降权做多维选择。
+- C+++ 已把运行态同步从纯同步写入推进到可插拔事件后台刷入：开启 `runtime_sync_event_push_enabled` 才启用 worker，关闭时保持原同步路径；pending 写后读立即可见，队列满或重置关闭时同步 fallback。
+- C++++ 基础通知层已落地：`RuntimeSyncEventPublisher` / `RuntimeSyncEventSubscriber` 边界、Redis Pub/Sub publisher/subscriber、订阅 ready 钩子、幂等关闭与 opt-in smoke 已具备；Pub/Sub 只作为主动刷新增强，订阅失败或 Redis 不可用时回退 `HybridCache` 惰性读取，默认 CI 不因 Pub/Sub 环境缺失而阻塞。
+- C+++++ 已推进 subscriber 韧性：重连退避、回调派发隔离、队列满错误提示、重复/乱序过滤和 `UpdatedAtNano` 高水位已经进入基础组件；默认运行时仍只挂 publisher，subscriber 使用方保持显式 opt-in。
+- C++++++ 已补 observability companion：观测进程可以显式启动 Redis subscriber 并读取事件快照，普通 runtime status API 不会懒启动 subscriber；`rg` 边界检查确认默认链路没有引用 companion 构造器。
+- C+++++++ 已补配置化启动入口方案：`runtime_sync_event_subscribe_enabled` 默认关闭，开启时仍需 runtime sync、Redis runtime sync、全局 Redis 与 Redis 客户端全部可用；关闭或配置重建会清理旧 subscriber companion，Pub/Sub 继续只作为通知层，不成为请求链路或状态查询懒路径的一部分。
+- 当前架构仍保持相对独立：智能调度只在分组策略启用时接管，默认旧链路和旧 auto 行为保留；新增模块集中在 `pkg/modelgateway/*`、少量 controller/setting/frontend 接入点和测试工具链，便于灰度与回退。
+- 小流量 E2E smoke 已覆盖“不启动真实 HTTP/DB/Redis/上游”的集成路径：开启智能调度时能从分组策略进入真实 selector 并启用 proxy bridge；关闭智能调度时只走 legacy selector，且 `ProxyBridge.Resolve` 返回 `no_smart_dispatch_plan`。relay handler helper-level narrow smoke 也已覆盖 Responses helper 接入点，确认 selected plan 存在时会临时走 Chat Completions 上游格式并恢复 Responses 下游输出，无 selected plan 或不支持 bridge 时安静旁路，不影响原 Responses 分支。HTTP/relay 外层 smoke 已进一步穿过真实 OpenAI adaptor、上游 HTTP、usage、钱包结算、用户/渠道计数和 consume log；其中 native 成功、错误不消费、`responses_via_chat` selected plan 成功三类路径均已覆盖，补齐 handler 边界的核心回归验证。
+
 已知边界：
 
-- 当前队列是渠道级短等待实现，已具备取消释放、超时释放、深度快照、summary 趋势观测和可插拔优先级公平 admission 策略；后续仍需把公平策略接入后台配置/分组策略，并补独立实时队列面板。
-- 当前熔断已支持 closed/open/half-open、实时降权和 summary 趋势观测；后续仍需补按错误类型精细阈值和跨节点 Redis/事件同步。
-- 当前 `ProxyBridge` 已接入 `ResponsesHelper` 的非流式与流式真实链路；仅在智能调度 plan 存在且 `proxy_mode=responses_via_chat` 时启用，默认旧渠道和 OpenAI Codex native responses 不受影响。
-- 当前 `ResponsesViaChatConverter` 覆盖文本、函数工具、reasoning effort、基础 usage、文件/图像输入、Chat SSE -> Responses SSE、上游 error event -> `response.failed`、截断 usage fallback 和 Responses token 字段归一化；后续仍需继续补更多内置 tool 与 provider-specific SSE 样本。
-- 当前 replay 核心 artifact、脱敏导入导出、按 `request_id` 聚合导出、golden 写出内核、admin 下载接口、前端入口和可测 CLI/CI runner 已完成；后续仍可补真实命令注册、批量导出和权限审计日志。
-- 当前 sticky store 已具备 Hybrid Redis/Memory 实现、共享 store 契约、session/conversation key、续期/清理和 fallback/shadow 隔离；后续仍需补 admin 可视化、跨节点清理操作和更细粒度的成功/失败续期策略配置。
+- 当前队列是渠道级短等待实现，已具备取消释放、超时释放、旧深度快照、详细 runtime queue snapshot、多节点队列聚合、运行键队列视图、`queue_snapshot.nodes[]`、`summary.queue_nodes`、前端节点维度展示、summary 趋势观测、可插拔优先级公平 admission、后台配置闭环、前端运行态面板、真实节点 ID、同步 TTL/开关配置、队列快照写入节流、运行态事件后台合并刷入、memory fallback 双节点 smoke、本地 dev Redis 容器、真实 Redis 可选 smoke、Redis Pub/Sub 基础通知 smoke、subscriber 韧性专项覆盖、显式 observability companion、配置化 subscriber 启动入口方案和 runtime sync CI/运维文档；后续仍需结合真实样本调参。
+- 当前熔断已支持 closed/open/half-open、实时降权、summary 趋势观测、跨节点 snapshot 同步、同步 TTL/Redis 开关配置、运行态事件后台推送、按错误类型覆盖阈值、前端配置编辑器、错误类型趋势聚合、默认策略运维手册和离线校准脚本；校准输出仍是人工评审建议，不自动改写 `scheduler_setting`。
+- 当前 `ProxyBridge` 已接入 `ResponsesHelper` 的非流式与流式真实链路；仅在智能调度 plan 存在且 `proxy_mode=responses_via_chat` 时启用，默认旧渠道和 OpenAI Codex native responses 不受影响。HTTP/relay 外层 smoke 已覆盖钱包结算、用户/渠道/日志闭环、错误不消费与 `responses_via_chat` selected plan；service/controller 层资金生命周期测试已进一步覆盖 Token 真实预扣扣减和失败退款归还。
+- 当前 `ResponsesViaChatConverter` 覆盖文本、函数工具、reasoning effort、基础 usage、文件/图像输入、Chat SSE -> Responses SSE、上游 error event -> `response.failed`、截断 usage fallback、独立 usage-only chunk 和 Responses token 字段归一化；OpenAI/MiMo/DeepSeek 第一批 provider-specific SSE golden 已进入 proxy contract，后续新增 provider 或特殊工具形态时继续追加 golden。
+- 当前 replay 核心 artifact、脱敏导入导出、按 `request_id` 聚合导出、批量 manifest 导出、轻量审计日志、golden 写出内核、admin 下载接口、前端入口、CLI 命令、本地脚本、仓库级 CI workflow、线上样本复核 checklist、golden 入库流程和代表性调度 replay 样本已完成；后续仍可补审计专表和更多真实 provider 脱敏样本。
+- 当前 sticky store 已具备 Hybrid Redis/Memory 实现、共享 store 契约、session/conversation key、续期/清理、fallback/shadow 隔离、admin 后端 list/clear、按分组+渠道批量 clear 和前端管理面板；后续仍需补更细粒度的成功/失败续期策略配置。
 - 当前 cache-aware sticky 复用现有 `channel_affinity` 规则，默认 Codex Responses 亲和键已支持 `prompt_cache_key` 与 `previous_response_id`：优先复用显式 prompt cache key，其次用 Responses 会话延续 ID 做同渠道亲和；普通 session/conversation 字段已进入 sticky key 体系，更多业务字段仍可在 `channel_affinity_setting` 中继续扩展。
 - 当前调度决策解释已能说明“为什么选择 A、为什么过滤 B”，并已接入 replay artifact 与 testkit 离线复现；当前离线断言重点覆盖候选存在、过滤原因、最终选择，历史评分拆解会被保留在 artifact 中用于人工排障和后续专项 golden。
 
@@ -2274,11 +2421,487 @@ cd web/classic && bun run build
 
 优先顺序：
 
-1. Task H+++：把 `PriorityQueueAdmissionPolicy` 接入运行时配置和分组策略，支持按分组配置高优先级、保留队列容量、额外容量和绝对上限，并在 relay 队列入口传入分组优先级上下文。
-2. Task L++++++++++：前端观测页展示 `risk` snapshot、`risk_timeline`、Top risk status、Top reject reason 和 export preview，让风险事件线可视化。
-3. Task F+++++++++：补真实 CLI 命令注册或 CI 脚本入口，把 `RunReplayBatchCLI` 接入仓库工具链，并增加示例 golden 批量扫描命令。
-4. Task G++：补 sticky admin 观测和清理入口，展示当前 sticky key 来源、保留/打破原因、续期次数和跨节点清理结果。
-5. Task J+++++++++：继续补更多 provider SSE golden，例如 DeepSeek 多 tool 混合输出、OpenAI native built-in tool 失败流、MiMo 长 reasoning 截断流。
-6. Task H++++：补队列实时面板和 runtime queue 快照导出，展示每渠道当前队列深度、分组队列占用、高优先级占用和拒绝原因。
+1. Task E+：小流量 E2E smoke（integration + relay helper-level + HTTP/relay native/error/bridge + Token 预扣 + controller refund smoke 已完成）。
+   - 已补 integration 级便携 smoke，验证分组开关开启智能调度后 auto_fusion、cross-group fusion、queue fairness、cache-aware sticky 和 proxy bridge 的组合行为。
+   - 已补“关闭智能调度后完全回退旧链路”的回归测试，锁住相对独立模块边界，确保默认旧渠道和旧 auto 行为不受影响。
+   - 已补 relay handler helper-level narrow smoke：用 helper 级 fake request/response 验证 Responses 请求在 selected plan 存在时临时切到 Chat Completions，上游返回后恢复 Responses 输出，并确认 relay mode/path/final request format 复原；无 selected plan 时保持原 Responses 分支。
+   - 已补 `ProxyBridge` 禁用旁路表驱动测试，确认 native/empty/unsupported/missing profile 等不接管场景不会误转换或误报错。
+   - 已补 HTTP/relay 外层 native Responses smoke：用 `httptest.Server + sqlite :memory:` 验证 OpenAI native `/v1/responses` 成功路径的上游请求、下游响应、usage 归一化、钱包预扣/后结算、用户/渠道计数和 consume log。
+   - 已补 HTTP/relay 外层错误不消费 smoke：上游非 200 与 HTTP 200 error body 均不会写 consume log 或增加用户/渠道计数。
+   - 已补 HTTP/relay 外层 `responses_via_chat` selected plan smoke：真实上游路径切到 `/v1/chat/completions`，下游恢复 Responses，转换链、计费和日志稳定。
+   - 已补 Token 预扣专项：在 service 层锁住 Token `remain_quota/used_quota` 的真实预扣扣减与 `Billing.Refund` 退款归还，避免 relay/helper 测试绕过完整 DB 初始化时遗漏资金状态。
+   - 已补更外层 controller/relay refund smoke：覆盖失败路径触发 `Billing.Refund` 后归还预扣，确认 consume log、用户计数和渠道 used quota 不被错误推进。
+2. Task F++++++++++：Replay CLI/CI 闭环收尾（CI、批量导出、轻量审计、前端入口、复核 checklist 和 golden 入库流程已完成，后续增量维护真实样本）。
+   - 脚本 usage：已补 `scripts/modelgateway-replay.sh` 的环境变量参数化和 `docs/modelgateway-replay-ci.md` 本地/CI 用法说明，覆盖 `-golden` 文件、目录、glob、多路径、`-report`、drift tolerance、退出码语义和常见失败排查。
+   - fixture/golden：已在文档中整理 replay artifact 目录约定、golden 更新流程和最小断言范围，明确 selected channel/group/handled 为阻塞回归，score/breakdown drift 为非阻塞报告。
+   - CI 文档/workflow：已新增 `.github/workflows/modelgateway-replay.yml`，默认跑离线 replay golden 并上传 `tmp/modelgateway-replay-ci.json`，Redis opt-in smoke 仍独立保留在 `scripts/modelgateway-runtime-smoke.sh --redis`。
+   - 批量导出：已补按时间窗口、分组、模型、`request_id` 列表、成功状态和失败类型筛选的 replay 批量导出任务，输出稳定文件名与 manifest；观测页已提供预览和下载入口，后续可扩展用户/渠道更多筛选。
+   - 审计日志：已复用管理日志记录筛选条件、导出数量、下载标记、stable IDs、客户端 IP 和 request_id 哈希摘要；后续如需合规留存可升级为专门审计表。
+   - 脱敏流程：已固化线上样本 -> 批量导出脱敏 artifact -> 人工复核 checklist -> golden 入库 -> 本地 replay runner -> CI 回放的流程，明确请求/响应正文、header、token、用户标识、渠道密钥和 provider 原始错误的脱敏规则；后续按新增 provider/profile 持续补样本。
+3. Task J++++++++++：Provider SSE golden 扩展（本轮已完成第一批，后续增量维护）。
+   - 已新增 OpenAI native built-in tool failed、MiMo long reasoning truncated、DeepSeek nonstandard tool usage-only 三组 Provider SSE golden，分别覆盖原生内置工具失败事件、长 reasoning 被截断但仍保留可转换输出、非标准 tool 与独立 usage-only chunk 边界。
+   - 已补 usage contract assertion，断言 stream 聚合结果与 `response.completed/failed.response.usage` 中的 prompt/completion/total token 一致，避免协议转换与计费输入回归。
+   - 已补第二批 Provider SSE golden：OpenAI native partial text 后失败、MiMo 两个并行工具交错分片且 usage-only chunk 延迟到达、DeepSeek 空 delta 后保留 reasoning 并转换 provider error envelope。
 
-下一次开发建议优先推进 Task H+++ 或 Task L++++++++++：当前后端能力已经具备，下一步最有价值的是把队列公平策略接入配置闭环，或者把风险事件线接到前端观测页面。
+本轮 1-5 并行任务已推进完成：Task F-maint 已补代表性 replay 样本并跑过 replay gate，Task Ops-calibration 已补离线阈值校准脚本，Task J-maint 已加强 OpenAI Codex native stream golden 文本断言，Task G-maint 已补 sticky 按分组+渠道批量清理，Task UI-maint 已补错误类型筛选和表格宽度约束。下一次开发建议继续围绕真实线上脱敏样本、sticky 续期策略和更多 provider 真实异常形态做增量维护。
+
+### 16.1 当前计划快照（2026-05-20）
+
+当前已收口：
+
+- Task E+ 主链路 smoke 与资金生命周期测试已完成，后续只随新增 provider/profile 做增量回归。
+- Task F Replay CLI/CI、批量导出、前端入口、轻量审计、人工复核 checklist 与 golden 入库流程已完成，后续进入真实样本增量维护。
+- Task J Provider SSE golden 第二批已完成，覆盖 OpenAI native partial failed、MiMo interleaved tools late usage、DeepSeek empty delta error envelope。
+- Task H/C runtime sync、queue snapshot、Redis opt-in smoke、Pub/Sub 通知和 subscriber companion 已具备功能闭环，并已补 `docs/modelgateway-runtime-sync-ci.md` 作为 CI/运维手册。
+- Task H-maint 按错误类型熔断后端与前端配置第一阶段已完成，支持类型化策略配置、open reason/error counts 观测、运营设置页编辑器、7 语种 i18n 和定向测试。
+- Task H-maint-trend 错误类型趋势聚合已完成，summary/trend/export/risk 与观测页均可查看熔断打开原因和错误类型分布；`circuit_error_counts` 作为兼容别名保留。
+- Task Ops-maint 错误类型熔断默认策略建议已完成，新增 `docs/modelgateway-circuit-policy-ops.md`，后续真实样本只需要按该手册校准阈值。
+- Task Ops-calibration observability/trend export 阈值校准闭环已完成，新增 `scripts/modelgateway-circuit-calibrate.mjs` 和手册中的离线校准流程，支持按分组生成 review 用配置片段。
+- Task F-maint 本轮已新增 `codex_auto_queue_circuit_replay.json`，覆盖 auto fusion、队列等待、熔断硬过滤、并发满拒绝和候选解释稳定性；全目录 replay gate 通过，既有 fixture 仍有非阻塞 score drift。
+- Task J-maint 本轮已增强 OpenAI Codex native stream golden，补齐 `response.output_text.delta` 聚合文本断言，避免 native pass-through stream 文本回归。
+- Task G-maint 本轮已完成 sticky 跨节点/共享 store 批量清理，后端支持 `DELETE /api/model_gateway/observability/sticky?group=...&channel_id=...`，前端粘滞存储面板已接入批量清理入口。
+- Task UI-maint 本轮已完成错误类型筛选入口，趋势、风险事件、runtime 状态和 replay 批量导出默认条件均能消费该筛选；同时补充 runtime tag/筛选控件宽度约束。
+
+真实数据请求前功能完善 checklist：
+
+- 分组智能调度启用前，先确认全局 `scheduler_setting.enabled=true`、默认模式仍保持 `off` 或低风险 `shadow`，只对目标测试分组配置 `mode=shadow`；影子期至少覆盖 OpenAI Codex、MiMo、DeepSeek V4 Pro 三类真实渠道的候选枚举、score breakdown、过滤原因和实际旧链路选择差异。
+- 小流量 `active` 只允许按单个测试分组推进，目标分组需显式配置 `strategy`、`auto_mode`、`candidate_groups`、`cross_group_fusion` 和 `rollout_percent`；`auto_fusion` 与跨分组融合必须确认不突破用户可用分组和特殊可用分组规则。
+- OpenAI Codex 渠道启用前，确认 `provider_profile=openai_codex` 或自动识别结果正确，`proxy_mode=native_responses`，`/v1/responses`、stream、failed event、built-in tool 和 compact 能力均走原生 Responses 路径，不进入 `responses_via_chat` bridge。
+- MiMo 渠道启用前，确认以 OpenAI-compatible channel 接入，设置或自动匹配 `provider_profile=mimo_codex_chat`，`proxy_mode=responses_via_chat`，并用真实小请求覆盖 Responses -> Chat 请求转换、Chat SSE -> Responses SSE、reasoning、tool call、usage-only chunk 和 stream interrupted 标记。
+- DeepSeek V4 Pro 渠道启用前，确认 `provider_profile=deepseek_v4_pro_codex_chat`，`proxy_mode=responses_via_chat`，并额外验证 `reasoning/reasoning_content` alias、provider error envelope、非标准 tool type、usage 归一化和现有 DeepSeek Chat 路径兼容性。
+- 队列启用前，目标分组只打开短等待策略，确认 `queue_enabled`、超时、最大深度、高优先级 admission、取消释放和并发满拒绝原因能在 runtime status 与 summary trends 中看到；多节点环境需确认 `queue_snapshot.nodes[]`、`summary.queue_nodes` 和运行键维度聚合可读。
+- 熔断启用前，先保持全局统一熔断阈值，再按 `docs/modelgateway-circuit-policy-ops.md` 选择 conservative 或 stream-protective profile；`auth/quota` 类型必须默认关闭，只有确认渠道级密钥/额度错误应影响该渠道时才显式配置。
+- sticky 启用前，确认 `prompt_cache_key`、`previous_response_id`、session/conversation header/body 信号可稳定提取；shadow/fallback 期间不得写入 sticky，active 小流量期间需观察 sticky retained/broken、cache affinity 和按分组+渠道批量清理入口可用。
+- replay 启用前，先从测试分组导出 1-3 个脱敏 artifact，人工复核不包含 prompt、敏感 header、用户/token/channel 原始标识、渠道密钥、完整上游 URL 或 provider 原始敏感错误；入库后跑 `scripts/modelgateway-replay.sh`，阻塞项只看 selected channel/group/handled 和候选过滤语义，score drift 先作为人工报告。
+- observability 启用前，确认 summary、runtime status、trends、trend export、risk timeline、sticky store、replay batch export 都能按 model/group/channel/profile/proxy mode/error type 过滤；真实请求期间每次 rollout 都要记录窗口、目标分组、profile、proxy mode、错误类型趋势、队列等待、熔断打开原因和回滚条件。
+- 回滚口径必须提前写清：分组 `mode=off` 或全局 `enabled=false` 能立即回旧链路；Redis runtime sync、Pub/Sub subscriber companion、queue、circuit、sticky 任一增强能力必须可单独关闭，且关闭后不影响旧渠道选择、计费、日志和用户可用分组规则。
+
+下一步并行拆分：
+
+1. Task F-real：按 `docs/modelgateway-replay-ci.md` checklist 从线上脱敏导出 1-3 个真实 provider replay artifact，进入 `pkg/modelgateway/testdata/replay` 后跑本地 replay gate。
+2. Task G-renew：补 sticky 成功续期、失败保留/清理和 fallback 后续期策略配置，继续保持 Hybrid Redis/Memory fallback。
+3. Task J-real：只在新增真实 provider 异常形态时追加 SSE golden，重点盯 OpenAI Codex native、MiMo、DeepSeek V4 Pro 的 stream 中断/工具调用/usage 边界。
+4. Task Ops-review：用真实 trend export 周期性跑校准脚本，人工比较建议阈值与线上策略差异，必要时按小流量 rollout 流程调整。
+5. Task UI-polish：观测页继续做小步体验优化，优先补错误类型筛选的 URL 状态保持、风险视图空态和批量操作反馈细节。
+
+下一步验收口径：
+
+- Provider SSE golden 必须进入 `ProxyContract` runner，覆盖 response event、tool call、reasoning、usage 和错误/截断语义。
+- `circuit_error_policies` 为空时必须保持旧统一熔断行为；启用 auth/quota 类型熔断必须显式配置，避免用户侧错误误伤渠道。
+- 错误类型趋势必须从历史 attempt record 聚合，不把当前 runtime snapshot 累计值伪装为历史桶；runtime 的 `circuit_open_reason/circuit_error_counts` 只用于当前 summary/risk。
+- trend export/export preview 必须同步包含错误类型趋势字段，且不泄露 provider 原始敏感错误。
+- 阈值校准脚本只能读取 trend export JSON 并输出建议，不能写入配置、调用管理 API 或自动启用 `auth/quota` 策略；建议必须按目标分组独立生成。
+- 错误类型熔断策略变更必须引用 `docs/modelgateway-circuit-policy-ops.md` 的 rollout/rollback/checklist，并说明目标分组、profile、观测窗口和是否启用 `auth/quota`。
+- runtime sync 文档不改变默认运行时行为，Redis 相关 smoke 必须保持 opt-in，不阻塞默认 CI；默认 gate 使用 `scripts/modelgateway-runtime-smoke.sh`。
+- replay 样本不得包含 prompt、敏感 header、用户/token/channel 原始标识、渠道密钥、完整上游 URL 或 provider 原始敏感错误。
+
+本次改动文件：
+
+- `docs/codex-chat-compat-mimo-deepseek-plan.md`
+- `docs/modelgateway-circuit-policy-ops.md`
+- `docs/modelgateway-runtime-sync-ci.md`
+- `pkg/modelgateway/scheduler/circuit_breaker.go`
+- `pkg/modelgateway/scheduler/circuit_breaker_test.go`
+- `controller/model_gateway_observability.go`
+- `controller/model_gateway_observability_test.go`
+- `pkg/modelgateway/core/types.go`
+- `pkg/modelgateway/observability/runtime_status.go`
+- `setting/scheduler_setting/config.go`
+- `controller/model_gateway_config.go`
+- `controller/model_gateway_config_test.go`
+- `pkg/modelgateway/integration/settings.go`
+- `pkg/modelgateway/integration/defaults.go`
+- `web/classic/src/pages/Setting/Operation/SettingsModelGatewayScheduler.jsx`
+- `web/classic/src/i18n/locales/zh-CN.json`
+- `web/classic/src/i18n/locales/zh-TW.json`
+- `web/classic/src/i18n/locales/en.json`
+- `web/classic/src/i18n/locales/fr.json`
+- `web/classic/src/i18n/locales/ru.json`
+- `web/classic/src/i18n/locales/ja.json`
+- `web/classic/src/i18n/locales/vi.json`
+
+## 17. 当前交付总结与开启指南（2026-05-20）
+
+### 17.1 当前总结
+
+当前版本已经从“方案设计”推进到“可按分组开启并做真实请求验证”的阶段，核心闭环如下：
+
+- 智能调度保持相对独立：默认全局关闭，未配置分组继续走旧链路；只有显式配置为 `shadow` 或 `active` 的分组才进入智能模型网关。
+- 主链路已接入智能调度门面：`middleware/distributor.go` 和 `controller/relay.go` 先尝试智能选择器，未接管或策略关闭时回退 `service.CacheGetRandomSatisfiedChannel`。
+- 调度评分已覆盖多维度：渠道成功率、响应速度、渠道负载、渠道成本、分组优先级、缓存亲和、粘滞路由、失败率降权、并发/队列/熔断/冷却状态。
+- 分组逻辑已兼容旧 `auto`：默认 `auto_sequential` 保持现有顺序语义；显式开启 `auto_fusion` 后才融合多个 auto 候选分组统一评分。
+- 跨分组调度已受权限约束：候选分组必须与用户可用分组求交集，不突破 `GetUserUsableGroups`、`GetUserAutoGroup`、`group_special_usable_group`。
+- OpenAI Codex、MiMo、DeepSeek V4 Pro 已作为首批标准大模型 profile 纳入方案；OpenAI Codex 优先走 native Responses，MiMo/DeepSeek V4 Pro 走 `responses_via_chat` 桥接。
+- 观测与 replay 已具备排障闭环：summary、runtime、trends、risk timeline、sticky store、replay export、batch export、CLI replay gate 都已接入。
+- Redis runtime sync、队列快照、熔断快照和 Pub/Sub companion 都是可选增强，不是默认请求链路必需条件；单节点或 Redis 不稳定时可关闭。
+
+当前适合的上线方式不是全局开启，而是“一个测试分组 shadow -> 一个测试分组 active -> 扩到 auto/cross-group 融合 -> 再扩大更多分组”。
+
+### 17.2 后台开启方式
+
+后台路径建议：
+
+```text
+管理后台 -> 系统/运营设置 -> 智能模型网关/智能调度配置
+```
+
+观测入口：
+
+```text
+管理后台 -> 模型网关监控
+/console/model-gateway
+```
+
+第一阶段建议配置：
+
+- 全局 `enabled=true`。
+- 全局 `default_mode=off`，避免未配置分组被误接管。
+- 只给目标测试分组配置 `mode=shadow`。
+- shadow 期确认候选、评分、过滤原因和真实旧链路选择差异。
+- shadow 稳定后，把同一个测试分组改成 `mode=active`。
+- `sticky_save_on_select=false`，避免选中但失败的渠道污染粘滞。
+- `sticky_renew_on_success=true`，只在成功后续期。
+- `sticky_failure_policy=clear`，失败后默认清理粘滞，避免连续打到坏渠道。
+- `queue_enabled`、`circuit_breaker_enabled` 只在目标分组内开启。
+
+### 17.3 分组怎么配
+
+#### 普通测试分组
+
+假设新建或使用一个测试分组 `codex-pro`，并把 OpenAI Codex、MiMo、DeepSeek V4 Pro 相关渠道都加入这个分组。
+
+推荐起步：
+
+```json
+{
+  "group_policies": {
+    "codex-pro": {
+      "mode": "shadow",
+      "strategy": "balanced",
+      "auto_mode": "auto_sequential",
+      "cross_group_fusion": false,
+      "candidate_groups": [],
+      "cache_affinity_enabled": true,
+      "queue_enabled": true,
+      "queue_high_priority": false,
+      "circuit_breaker_enabled": true
+    }
+  },
+  "group_priority_ratio": {
+    "codex-pro": 1
+  }
+}
+```
+
+验证稳定后再改：
+
+```json
+{
+  "group_policies": {
+    "codex-pro": {
+      "mode": "active",
+      "strategy": "balanced",
+      "auto_mode": "auto_sequential",
+      "cross_group_fusion": false,
+      "candidate_groups": [],
+      "cache_affinity_enabled": true,
+      "queue_enabled": true,
+      "queue_high_priority": false,
+      "circuit_breaker_enabled": true
+    }
+  }
+}
+```
+
+含义：
+
+- `mode=shadow`：真实请求仍走旧调度，只记录智能调度建议。
+- `mode=active`：真实请求由智能调度选渠道，异常时回退旧逻辑。
+- `strategy=balanced`：综合成功率、速度、负载、成本和分组优先级。
+- `queue_enabled=true`：并发过高时允许短等待队列。
+- `circuit_breaker_enabled=true`：渠道异常率过高时进入熔断/冷却/半开探测。
+
+#### auto 分组融合
+
+如果用户 token 使用 `auto` 分组，并希望多个 auto 候选分组统一评分，配置 `auto` 策略：
+
+```json
+{
+  "group_policies": {
+    "auto": {
+      "mode": "active",
+      "strategy": "balanced",
+      "auto_mode": "auto_fusion",
+      "cross_group_fusion": false,
+      "candidate_groups": [],
+      "cache_affinity_enabled": true,
+      "queue_enabled": true,
+      "queue_high_priority": false,
+      "circuit_breaker_enabled": true
+    }
+  }
+}
+```
+
+注意：
+
+- `auto_mode=auto_sequential` 是兼容旧逻辑的默认值。
+- `auto_mode=auto_fusion` 才会把 `GetUserAutoGroup(userGroup)` 返回的多个分组融合评分。
+- `auto_fusion` 不会突破用户可用分组，不能用来绕过分组权限。
+
+#### 非 auto 跨分组融合
+
+如果 `vip` 用户请求 `vip` 分组，但希望在授权范围内也可调度到 `codex-pro` 或 `default` 的渠道：
+
+```json
+{
+  "group_policies": {
+    "vip": {
+      "mode": "active",
+      "strategy": "balanced",
+      "auto_mode": "auto_sequential",
+      "cross_group_fusion": true,
+      "candidate_groups": ["vip", "codex-pro", "default"],
+      "cache_affinity_enabled": true,
+      "queue_enabled": true,
+      "queue_high_priority": true,
+      "circuit_breaker_enabled": true
+    }
+  },
+  "group_priority_ratio": {
+    "vip": 1.2,
+    "codex-pro": 1,
+    "default": 0.8
+  }
+}
+```
+
+注意：
+
+- `candidate_groups` 只是策略期望集合，最终还会与用户可用分组求交集。
+- `group_priority_ratio` 只影响调度优先级，不等于计费倍率。
+- 跨分组命中后，记录里同时保留 `requested_group` 和 `selected_group`，方便审计。
+
+### 17.4 API 配置方式
+
+配置接口：
+
+```text
+GET /api/model_gateway/config
+PUT /api/model_gateway/config
+POST /api/model_gateway/config/reset
+```
+
+推荐流程：
+
+1. 先 `GET /api/model_gateway/config`。
+2. 复制返回的 `data.setting`。
+3. 修改 `enabled`、`default_mode`、`group_policies`、`group_priority_ratio` 等字段。
+4. 用完整 setting 作为 body 调用 `PUT /api/model_gateway/config`。
+
+不要只 PUT 局部字段，因为 Go 结构体解码后未传字段会变成零值，容易误关已有配置。
+
+小流量真实请求推荐配置模板：
+
+```json
+{
+  "enabled": true,
+  "default_mode": "off",
+  "rollout_percent": 100,
+  "default_strategy": "balanced",
+  "snapshot_refresh_ms": 500,
+  "sticky_ttl_seconds": 180,
+  "sticky_keep_score_ratio": 0.85,
+  "sticky_save_on_select": false,
+  "sticky_renew_on_success": true,
+  "sticky_failure_policy": "clear",
+  "cache_affinity_enabled": true,
+  "cache_affinity_keep_score_ratio": 0.75,
+  "queue_enabled": true,
+  "queue_default_timeout_ms": 2000,
+  "queue_max_depth_per_channel": 64,
+  "queue_depth_multiplier": 2,
+  "queue_high_priority_threshold": 0,
+  "queue_high_priority_extra_depth": 0,
+  "queue_high_priority_reserved_depth": 0,
+  "queue_absolute_max_depth": 0,
+  "circuit_breaker_enabled": true,
+  "circuit_failure_threshold": 0.5,
+  "circuit_min_samples": 10,
+  "circuit_open_seconds": 30,
+  "circuit_half_open_probe_count": 3,
+  "circuit_error_policies": {
+    "rate_limit": {
+      "failure_threshold": 0.5,
+      "min_samples": 3,
+      "open_seconds": 20,
+      "half_open_probe_count": 2
+    },
+    "server_error": {
+      "failure_threshold": 0.5,
+      "min_samples": 10,
+      "open_seconds": 30,
+      "half_open_probe_count": 3
+    },
+    "stream_interrupted": {
+      "failure_threshold": 0.4,
+      "min_samples": 3,
+      "open_seconds": 60,
+      "half_open_probe_count": 1
+    }
+  },
+  "cooldown_max_seconds": 600,
+  "runtime_sync_enabled": true,
+  "runtime_sync_redis_enabled": true,
+  "runtime_sync_node_id": "",
+  "runtime_sync_ttl_seconds": 90,
+  "runtime_sync_queue_min_interval_ms": 500,
+  "runtime_sync_event_push_enabled": false,
+  "runtime_sync_event_subscribe_enabled": false,
+  "success_weight": 0.32,
+  "speed_weight": 0.28,
+  "load_weight": 0.2,
+  "cost_weight": 0.15,
+  "group_weight": 0.05,
+  "group_priority_ratio": {
+    "codex-pro": 1
+  },
+  "group_policies": {
+    "codex-pro": {
+      "mode": "shadow",
+      "strategy": "balanced",
+      "auto_mode": "auto_sequential",
+      "cross_group_fusion": false,
+      "candidate_groups": [],
+      "cache_affinity_enabled": true,
+      "queue_enabled": true,
+      "queue_high_priority": false,
+      "circuit_breaker_enabled": true
+    }
+  },
+  "failure_fast_window_seconds": 60,
+  "failure_main_window_seconds": 300,
+  "failure_fallback_window_seconds": 1800
+}
+```
+
+### 17.5 渠道和模型准备
+
+真实请求前需要确认：
+
+- 用户 token 所属分组包含目标测试分组，例如 `codex-pro`。
+- OpenAI Codex、MiMo、DeepSeek V4 Pro 渠道都已经配置到目标分组。
+- 渠道模型映射包含实际请求模型名。
+- OpenAI Codex 渠道使用 native `/v1/responses` 能力，profile 为 `openai_codex` 或能自动识别到该 profile。
+- MiMo 渠道使用 OpenAI-compatible Chat 上游，profile 为 `mimo_codex_chat`，proxy mode 为 `responses_via_chat`。
+- DeepSeek V4 Pro 渠道使用 OpenAI-compatible Chat 上游，profile 为 `deepseek_v4_pro_codex_chat`，proxy mode 为 `responses_via_chat`。
+- 如果要观察缓存亲和，请求中带 `prompt_cache_key` 或 `previous_response_id`；智能调度只做 cache-aware sticky，不在网关层自建 prompt cache。
+
+### 17.6 dev Redis 启动
+
+本地开发环境可以直接启动 Redis：
+
+```bash
+docker compose --env-file .env.dev -f docker-compose.dev.yml up -d redis
+docker exec token-new-api-dev-redis redis-cli ping
+```
+
+验证 runtime sync Redis smoke：
+
+```bash
+scripts/modelgateway-runtime-smoke.sh --redis
+```
+
+Redis 不可用时，关闭 `runtime_sync_enabled` 或 `runtime_sync_redis_enabled`，智能调度仍可使用本进程本地运行态工作。
+
+### 17.7 真实请求验证顺序
+
+建议按以下顺序做：
+
+1. 建一个低风险测试分组，例如 `codex-pro`。
+2. 把一个测试 token 放到该分组。
+3. 把 OpenAI Codex、MiMo、DeepSeek V4 Pro 三类渠道加入该分组，并确认模型映射。
+4. 全局 `enabled=true`，`default_mode=off`。
+5. `codex-pro.mode=shadow`，发起 5-10 次真实请求。
+6. 在 `/console/model-gateway` 按 model/group/channel/request id 查看记录，确认候选、过滤、评分、sticky、queue、circuit 字段正常。
+7. shadow 无异常后，把 `codex-pro.mode=active`。
+8. 小流量验证成功后，再考虑打开 `auto.auto_mode=auto_fusion` 或普通分组的 `cross_group_fusion`。
+9. 每次扩大范围前导出 replay artifact，人工复核脱敏后跑 `scripts/modelgateway-replay.sh`。
+
+回滚方式：
+
+```text
+单分组回滚：group_policies.<group>.mode=off
+全局回滚：enabled=false
+只关增强能力：关闭 queue_enabled / circuit_breaker_enabled / runtime_sync_enabled / runtime_sync_event_push_enabled / runtime_sync_event_subscribe_enabled
+```
+
+### 17.8 当前本地真实测试配置（2026-05-20）
+
+本地 dev 已切到真实测试态，后端为 `http://localhost:3001`，前端为 `http://localhost:3002`，Redis 容器为 `token-new-api-dev-redis`，宿主端口 `6380`。
+
+当前通过 `/api/model_gateway/config` 写入并触发运行时重置的配置：
+
+- `enabled=true`
+- `default_mode=active`
+- `rollout_percent=100`
+- `default_strategy=balanced`
+- `runtime_sync_enabled=true`
+- `runtime_sync_redis_enabled=true`
+- `runtime_sync_node_id=dev-node-1`
+- `runtime_sync_event_push_enabled=true`
+- `runtime_sync_event_subscribe_enabled=true`
+- `queue_enabled=true`
+- `circuit_breaker_enabled=true`
+- `cache_affinity_enabled=true`
+
+分组策略：
+
+- `auto`：`mode=active`，`auto_mode=auto_fusion`，候选融合 `codex-plus/codex-pro/test`，队列、熔断、缓存亲和开启。
+- `codex-plus`：`mode=active`，`cross_group_fusion=true`，候选 `codex-plus/codex-pro`。
+- `codex-pro`：`mode=active`，`strategy=stability_first`，`queue_high_priority=true`，候选 `codex-pro/codex-plus`。
+- `test`：`mode=active`，候选 `test/codex-plus/codex-pro`。
+
+验证结果：
+
+- `GET /api/model_gateway/config` 返回 `enabled=true`、`default_mode=active`、4 个 active 分组策略。
+- 真实小请求 `POST /v1/responses`，模型 `gpt-5.4-mini`，token 分组 `auto`，返回 HTTP 200。
+- 同一 `request_id` 已落两条观测记录：一条 dispatch 记录 `policy=active`、`auto=auto_fusion`、`smart_handled=true`、`selected_group=codex-plus`、`channel=maxtopai-plus`、`reason=weighted_score`；一条 attempt 记录 `success=true`、`duration_ms≈2223`。
+
+如果后台设置页仍提示“加载智能调度配置失败”，优先检查当前浏览器是否是管理员登录态，以及 localStorage 中的 `user.id` 是否与 session 用户一致。配置接口本身已验证可用，401 会进入前端 catch 并显示该泛化错误。
+
+### 17.9 后续还需要开发和完善的功能
+
+短期重点不是继续重构主链路，而是围绕真实数据补齐样本、调参和边界：
+
+1. 真实 provider replay 样本：从 OpenAI Codex、MiMo、DeepSeek V4 Pro 各导出 1-3 个脱敏 artifact，入库后跑 replay gate。
+2. Sticky 策略细化：继续观察成功续期、失败清理、fallback 隔离是否符合真实调用习惯，必要时补更细的分组级策略。
+3. Provider SSE golden 增量：只在真实遇到新的 stream 中断、工具调用、usage-only chunk、reasoning alias 时追加。
+4. 熔断阈值校准：使用 trend export 跑 `scripts/modelgateway-circuit-calibrate.mjs`，按分组人工评审阈值，不自动写配置。
+5. 观测体验优化：补 URL 状态保持、空态提示、批量操作反馈和更多筛选联动。
+
+当前最优下一步：直接用现有 `auto` 或 `test` token 发真实请求，在 `/console/model-gateway` 观察 dispatch/attempt 成对记录、候选评分、队列/熔断状态和 sticky 命中；遇到异常请求再导出 replay artifact 入库。
+- `docs/modelgateway-replay-ci.md`
+- `web/classic/src/components/dashboard/model-gateway/ModelGatewayMonitor.jsx`
+- `web/classic/src/components/dashboard/model-gateway/model-gateway.css`
+- `web/classic/src/i18n/locales/zh-CN.json`
+- `web/classic/src/i18n/locales/zh-TW.json`
+- `web/classic/src/i18n/locales/en.json`
+- `web/classic/src/i18n/locales/fr.json`
+- `web/classic/src/i18n/locales/ru.json`
+- `web/classic/src/i18n/locales/ja.json`
+- `web/classic/src/i18n/locales/vi.json`
+- `pkg/modelgateway/testdata/proxy/openai_codex_native_stream_partial_text_failed_usage.json`
+- `pkg/modelgateway/testdata/proxy/mimo_codex_chat_stream_interleaved_tools_late_usage.json`
+- `pkg/modelgateway/testdata/proxy/deepseek_v4_pro_codex_chat_stream_empty_delta_error_after_reasoning.json`
+- `relay/responses_handler_test.go`
+- `pkg/modelgateway/integration/proxy_bridge_test.go`
+- `.github/workflows/modelgateway-replay.yml`
+- `scripts/modelgateway-replay.sh`
+- `docker-compose.dev.yml`
+- `.env.dev.example`
+- `pkg/modelgateway/testkit/proxy_contract.go`
+- `pkg/modelgateway/integration/e2e_smoke_test.go`
+- `pkg/modelgateway/testdata/proxy/openai_codex_native_stream_builtin_tool_failed.json`
+- `pkg/modelgateway/testdata/proxy/mimo_codex_chat_stream_long_reasoning_truncated.json`
+- `pkg/modelgateway/testdata/proxy/deepseek_v4_pro_codex_chat_stream_nonstandard_tool_usage.json`

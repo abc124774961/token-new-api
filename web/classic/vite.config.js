@@ -23,10 +23,22 @@ import pkg from '@douyinfe/vite-plugin-semi';
 import path from 'path';
 import { codeInspectorPlugin } from 'code-inspector-plugin';
 const { vitePluginSemi } = pkg;
+const cliPortIndex = process.argv.findIndex((arg) => arg === '--port');
+const cliPort =
+  cliPortIndex >= 0
+    ? process.argv[cliPortIndex + 1]
+    : process.argv
+        .find((arg) => arg.startsWith('--port='))
+        ?.slice('--port='.length);
+const frontendPort = process.env.FRONTEND_PORT || cliPort;
+const defaultServerUrl =
+  String(frontendPort) === '3002'
+    ? 'http://localhost:3001'
+    : 'http://localhost:3000';
 const serverUrl =
   process.env.DEV_PROXY_TARGET ||
   process.env.VITE_REACT_APP_SERVER_URL ||
-  'http://localhost:3000';
+  defaultServerUrl;
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -97,6 +109,7 @@ export default defineConfig({
       '/api': {
         target: serverUrl,
         changeOrigin: true,
+        ws: true,
       },
       '/mj': {
         target: serverUrl,

@@ -80,6 +80,7 @@
     "upstream_path": "/v1/responses",
     "upstream_model": "gpt-5.5",
     "prompt_cache_key": "codex-native-stream",
+    "output_text": "Found it.",
     "stream_item_types": [
       "web_search_call"
     ],

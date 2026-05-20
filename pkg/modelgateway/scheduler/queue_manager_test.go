@@ -378,3 +378,65 @@ func TestQueueManagerPriorityPolicyReservesCapacityFromNormalGroups(t *testing.T
 	require.Equal(t, scheduler.QueueAcquireRejected, (<-highDone).Status)
 	require.Equal(t, 0, manager.Depth(8010))
 }
+
+func TestQueueManagerDetailedSnapshotIncludesPriorityGroupsAndRejects(t *testing.T) {
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
+	first, acquired := service.TryAcquireChannelConcurrency(8011, dto.ChannelSettings{MaxConcurrency: 1})
+	require.True(t, acquired)
+	defer first.Release()
+
+	manager := scheduler.NewQueueManagerWithAdmissionPolicy(500*time.Millisecond, 2, scheduler.NewPriorityQueueAdmissionPolicy(scheduler.QueueFairnessOptions{
+		HighPriorityGroups:        []string{"vip"},
+		HighPriorityExtraDepth:    1,
+		HighPriorityReservedDepth: 1,
+		AbsoluteMaxDepth:          3,
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	normalDone := make(chan scheduler.QueueAcquireResult, 1)
+	go func() {
+		normalDone <- manager.AcquireWithOptions(ctx, &core.DispatchPlan{
+			QueueEnabled: true,
+			QueueWaitMs:  400,
+		}, 8011, dto.ChannelSettings{MaxConcurrency: 1}, scheduler.QueueAcquireOptions{Group: "default"})
+	}()
+	require.Eventually(t, func() bool { return manager.Depth(8011) == 1 }, 100*time.Millisecond, 10*time.Millisecond)
+
+	highDone := make(chan scheduler.QueueAcquireResult, 1)
+	go func() {
+		highDone <- manager.AcquireWithOptions(ctx, &core.DispatchPlan{
+			QueueEnabled: true,
+			QueueWaitMs:  400,
+		}, 8011, dto.ChannelSettings{MaxConcurrency: 1}, scheduler.QueueAcquireOptions{Group: "vip"})
+	}()
+	require.Eventually(t, func() bool { return manager.Depth(8011) == 2 }, 100*time.Millisecond, 10*time.Millisecond)
+
+	rejected := manager.AcquireWithOptions(context.Background(), &core.DispatchPlan{
+		QueueEnabled: true,
+		QueueWaitMs:  400,
+	}, 8011, dto.ChannelSettings{MaxConcurrency: 1}, scheduler.QueueAcquireOptions{Group: "default"})
+	require.Equal(t, scheduler.QueueAcquireRejected, rejected.Status)
+
+	snapshot := manager.DetailedSnapshot()
+	require.Equal(t, 2, snapshot.Summary.TotalQueued)
+	require.Equal(t, 1, snapshot.Summary.HighPriorityDepth)
+	require.Equal(t, 1, snapshot.Summary.NormalDepth)
+	require.Equal(t, 3, snapshot.Summary.HighPriorityCapacity)
+	require.Equal(t, 1, snapshot.Summary.NormalCapacity)
+	require.Len(t, snapshot.Channels, 1)
+	require.Equal(t, 8011, snapshot.Channels[0].ChannelID)
+	require.Equal(t, 1, snapshot.Channels[0].HighPriorityDepth)
+	require.Equal(t, 1, snapshot.Channels[0].NormalDepth)
+	require.Len(t, snapshot.Channels[0].Groups, 2)
+	require.Len(t, snapshot.Groups, 2)
+	require.NotEmpty(t, snapshot.RejectReasons)
+	require.Equal(t, "max_depth_reached", snapshot.RejectReasons[0].Reason)
+
+	cancel()
+	require.Equal(t, scheduler.QueueAcquireRejected, (<-normalDone).Status)
+	require.Equal(t, scheduler.QueueAcquireRejected, (<-highDone).Status)
+	require.Equal(t, 0, manager.Depth(8011))
+}

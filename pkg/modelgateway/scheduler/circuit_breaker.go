@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,11 +16,28 @@ const (
 	defaultCircuitProbeCount       = 3
 )
 
+const (
+	CircuitErrorStreamInterrupted = "stream_interrupted"
+	CircuitErrorRateLimit         = "rate_limit"
+	CircuitErrorAuth              = "auth"
+	CircuitErrorQuota             = "quota"
+	CircuitErrorServer            = "server_error"
+	CircuitErrorUpstream          = "upstream_error"
+)
+
+type CircuitErrorPolicy struct {
+	FailureThreshold   float64
+	MinSamples         int
+	OpenDuration       time.Duration
+	HalfOpenProbeCount int
+}
+
 type CircuitBreakerOptions struct {
 	FailureThreshold   float64
 	MinSamples         int
 	OpenDuration       time.Duration
 	HalfOpenProbeCount int
+	ErrorPolicies      map[string]CircuitErrorPolicy
 }
 
 type CircuitBreaker struct {
@@ -34,6 +52,8 @@ type circuitState struct {
 	failureCount     int
 	successCount     int
 	sampleCount      int
+	openReason       string
+	errorCounts      map[string]int
 	openUntil        time.Time
 	halfOpenProbeMax int
 	halfOpenProbeIn  int
@@ -60,6 +80,7 @@ func newCircuitBreaker(options CircuitBreakerOptions, now func() time.Time) *Cir
 	if options.HalfOpenProbeCount <= 0 {
 		options.HalfOpenProbeCount = defaultCircuitProbeCount
 	}
+	options.ErrorPolicies = normalizeCircuitErrorPolicies(options.ErrorPolicies, options)
 	if now == nil {
 		now = time.Now
 	}
@@ -132,10 +153,11 @@ func (b *CircuitBreaker) Report(result core.AttemptResult) {
 		b.reportSuccessLocked(state)
 		return
 	}
-	if !isCircuitFailure(result) {
+	kind, ok := b.classifyFailure(result)
+	if !ok {
 		return
 	}
-	b.reportFailureLocked(state)
+	b.reportFailureLocked(state, kind)
 }
 
 func (b *CircuitBreaker) stateForLocked(key core.RuntimeKey) *circuitState {
@@ -146,6 +168,7 @@ func (b *CircuitBreaker) stateForLocked(key core.RuntimeKey) *circuitState {
 	state = &circuitState{
 		state:            core.CircuitStateClosed,
 		halfOpenProbeMax: b.options.HalfOpenProbeCount,
+		errorCounts:      map[string]int{},
 	}
 	b.states[key] = state
 	return state
@@ -182,25 +205,49 @@ func (b *CircuitBreaker) reportSuccessLocked(state *circuitState) {
 	}
 }
 
-func (b *CircuitBreaker) reportFailureLocked(state *circuitState) {
+func (b *CircuitBreaker) reportFailureLocked(state *circuitState, kind string) {
+	if kind == "" {
+		kind = CircuitErrorUpstream
+	}
 	switch state.state {
 	case core.CircuitStateHalfOpen:
-		b.openLocked(state)
+		b.openLocked(state, kind)
 	case core.CircuitStateOpen:
 		state.failureCount++
 		state.sampleCount++
+		incrementCircuitErrorCount(state, kind)
 	default:
 		state.failureCount++
 		state.sampleCount++
+		incrementCircuitErrorCount(state, kind)
+		if policy, ok := b.options.ErrorPolicies[kind]; ok {
+			if circuitErrorPolicyOpen(state, kind, policy) {
+				b.openLockedWithPolicy(state, kind, policy)
+			}
+			return
+		}
 		if state.sampleCount >= b.options.MinSamples && failureRate(state) >= b.options.FailureThreshold {
-			b.openLocked(state)
+			b.openLocked(state, kind)
 		}
 	}
 }
 
-func (b *CircuitBreaker) openLocked(state *circuitState) {
+func (b *CircuitBreaker) openLocked(state *circuitState, reason string) {
+	policy := CircuitErrorPolicy{
+		OpenDuration:       b.options.OpenDuration,
+		HalfOpenProbeCount: b.options.HalfOpenProbeCount,
+	}
+	if override, ok := b.options.ErrorPolicies[reason]; ok {
+		policy = override
+	}
+	b.openLockedWithPolicy(state, reason, policy)
+}
+
+func (b *CircuitBreaker) openLockedWithPolicy(state *circuitState, reason string, policy CircuitErrorPolicy) {
 	state.state = core.CircuitStateOpen
-	state.openUntil = b.now().Add(b.options.OpenDuration)
+	state.openReason = reason
+	state.openUntil = b.now().Add(policy.OpenDuration)
+	state.halfOpenProbeMax = policy.HalfOpenProbeCount
 	state.halfOpenProbeIn = 0
 	state.successCount = 0
 }
@@ -216,6 +263,8 @@ func (b *CircuitBreaker) snapshotLocked(key core.RuntimeKey, state *circuitState
 		SuccessCount:      state.successCount,
 		SampleCount:       state.sampleCount,
 		FailureRate:       failureRate(state),
+		OpenReason:        state.openReason,
+		ErrorCounts:       copyCircuitErrorCounts(state.errorCounts),
 		OpenUntil:         state.openUntil,
 		HalfOpenProbeUsed: state.halfOpenProbeIn,
 		HalfOpenProbeMax:  state.halfOpenProbeMax,
@@ -227,8 +276,11 @@ func resetCircuitState(state *circuitState) {
 	state.failureCount = 0
 	state.successCount = 0
 	state.sampleCount = 0
+	state.openReason = ""
+	state.errorCounts = map[string]int{}
 	state.openUntil = time.Time{}
 	state.halfOpenProbeIn = 0
+	state.halfOpenProbeMax = 0
 }
 
 func failureRate(state *circuitState) float64 {
@@ -238,7 +290,52 @@ func failureRate(state *circuitState) float64 {
 	return float64(state.failureCount) / float64(state.sampleCount)
 }
 
-func isCircuitFailure(result core.AttemptResult) bool {
+func (b *CircuitBreaker) classifyFailure(result core.AttemptResult) (string, bool) {
+	kind := ClassifyCircuitError(result)
+	if kind == "" {
+		return "", false
+	}
+	if isDefaultCircuitFailure(result) {
+		return kind, true
+	}
+	_, ok := b.options.ErrorPolicies[kind]
+	return kind, ok
+}
+
+// ClassifyCircuitError normalizes an attempt failure into the circuit-breaker
+// error label used by policies and observability. A returned label does not
+// mean the failure is counted by the circuit breaker; policies still decide
+// that in classifyFailure.
+func ClassifyCircuitError(result core.AttemptResult) string {
+	if result.StreamInterrupted {
+		return CircuitErrorStreamInterrupted
+	}
+	if result.StatusCode == http.StatusTooManyRequests {
+		return CircuitErrorRateLimit
+	}
+	label := strings.ToLower(strings.TrimSpace(result.ErrorCode + " " + result.ErrorType))
+	if containsAnyCircuitLabel(label, "rate_limit", "rate-limited", "rate_limited", "too_many_requests", "throttle") {
+		return CircuitErrorRateLimit
+	}
+	if containsAnyCircuitLabel(label, "insufficient_user_quota", "pre_consume_token_quota_failed", "quota", "balance_not_enough", "quota_not_enough") {
+		return CircuitErrorQuota
+	}
+	if result.StatusCode == http.StatusUnauthorized || result.StatusCode == http.StatusForbidden {
+		return CircuitErrorAuth
+	}
+	if containsAnyCircuitLabel(label, "invalid_key", "invalid api key", "unauthorized", "forbidden", "access_denied", "permission_denied") {
+		return CircuitErrorAuth
+	}
+	if result.StatusCode >= http.StatusInternalServerError {
+		return CircuitErrorServer
+	}
+	if result.StatusCode <= 0 && (result.ErrorCode != "" || result.ErrorType != "") {
+		return CircuitErrorUpstream
+	}
+	return ""
+}
+
+func isDefaultCircuitFailure(result core.AttemptResult) bool {
 	if result.StreamInterrupted {
 		return true
 	}
@@ -252,6 +349,84 @@ func isCircuitFailure(result core.AttemptResult) bool {
 		return true
 	}
 	return false
+}
+
+func containsAnyCircuitLabel(label string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(label, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func incrementCircuitErrorCount(state *circuitState, kind string) {
+	if state == nil || kind == "" {
+		return
+	}
+	if state.errorCounts == nil {
+		state.errorCounts = map[string]int{}
+	}
+	state.errorCounts[kind]++
+}
+
+func circuitErrorPolicyOpen(state *circuitState, kind string, policy CircuitErrorPolicy) bool {
+	if state == nil || state.sampleCount <= 0 || kind == "" {
+		return false
+	}
+	failures := state.errorCounts[kind]
+	if failures < policy.MinSamples {
+		return false
+	}
+	return float64(failures)/float64(state.sampleCount) >= policy.FailureThreshold
+}
+
+func copyCircuitErrorCounts(src map[string]int) map[string]int {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]int, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func normalizeCircuitErrorPolicies(src map[string]CircuitErrorPolicy, defaults CircuitBreakerOptions) map[string]CircuitErrorPolicy {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]CircuitErrorPolicy, len(src))
+	for kind, policy := range src {
+		kind = normalizeCircuitErrorKind(kind)
+		if kind == "" {
+			continue
+		}
+		if policy.FailureThreshold <= 0 || policy.FailureThreshold > 1 {
+			policy.FailureThreshold = defaults.FailureThreshold
+		}
+		if policy.MinSamples <= 0 {
+			policy.MinSamples = defaults.MinSamples
+		}
+		if policy.OpenDuration <= 0 {
+			policy.OpenDuration = defaults.OpenDuration
+		}
+		if policy.HalfOpenProbeCount <= 0 {
+			policy.HalfOpenProbeCount = defaults.HalfOpenProbeCount
+		}
+		out[kind] = policy
+	}
+	return out
+}
+
+func normalizeCircuitErrorKind(kind string) string {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	switch kind {
+	case CircuitErrorStreamInterrupted, CircuitErrorRateLimit, CircuitErrorAuth, CircuitErrorQuota, CircuitErrorServer, CircuitErrorUpstream:
+		return kind
+	default:
+		return ""
+	}
 }
 
 var _ core.CircuitBreaker = (*CircuitBreaker)(nil)

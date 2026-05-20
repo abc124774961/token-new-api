@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -35,7 +36,45 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var relayQueueManager = modelgatewayscheduler.NewQueueManager(2*time.Second, 64)
+var (
+	relayQueueManagerMu sync.RWMutex
+	relayQueueManager   = newRelayQueueManager()
+)
+
+func newRelayQueueManager() *modelgatewayscheduler.QueueManager {
+	policy := modelgatewayintegration.RuntimePolicySetting()
+	var admissionPolicy modelgatewayscheduler.QueueAdmissionPolicy
+	if policy.QueueFairness.HighPriorityThreshold > 0 ||
+		policy.QueueFairness.HighPriorityExtraDepth > 0 ||
+		policy.QueueFairness.HighPriorityReservedDepth > 0 ||
+		policy.QueueFairness.AbsoluteMaxDepth > 0 ||
+		len(policy.QueueFairness.HighPriorityGroups) > 0 {
+		admissionPolicy = modelgatewayscheduler.NewPriorityQueueAdmissionPolicy(modelgatewayscheduler.QueueFairnessOptions{
+			HighPriorityGroups:        append([]string(nil), policy.QueueFairness.HighPriorityGroups...),
+			HighPriorityThreshold:     policy.QueueFairness.HighPriorityThreshold,
+			HighPriorityExtraDepth:    policy.QueueFairness.HighPriorityExtraDepth,
+			HighPriorityReservedDepth: policy.QueueFairness.HighPriorityReservedDepth,
+			AbsoluteMaxDepth:          policy.QueueFairness.AbsoluteMaxDepth,
+		})
+	}
+	return modelgatewayscheduler.NewQueueManagerWithAdmissionPolicy(
+		time.Duration(policy.QueueTimeoutMs)*time.Millisecond,
+		policy.QueueMaxDepth,
+		admissionPolicy,
+	)
+}
+
+func resetRelayQueueManager() {
+	relayQueueManagerMu.Lock()
+	defer relayQueueManagerMu.Unlock()
+	relayQueueManager = newRelayQueueManager()
+}
+
+func currentRelayQueueManager() *modelgatewayscheduler.QueueManager {
+	relayQueueManagerMu.RLock()
+	defer relayQueueManagerMu.RUnlock()
+	return relayQueueManager
+}
 
 func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	var err *types.NewAPIError
@@ -349,7 +388,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if contextSetting, ok := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting); ok {
 			channelSetting = contextSetting
 		}
-		concurrencyResult := relayQueueManager.Acquire(c.Request.Context(), selectedModelGatewayPlan(c), channel.Id, channelSetting)
+		plan := selectedModelGatewayPlan(c)
+		concurrencyResult := currentRelayQueueManager().AcquireWithOptions(c.Request.Context(), plan, channel.Id, channelSetting, relayQueueAcquireOptions(plan))
 		concurrencyLease := concurrencyResult.Lease
 		if concurrencyResult.Status == modelgatewayscheduler.QueueAcquireRejected {
 			limit := 0
@@ -528,6 +568,17 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 func selectedModelGatewayPlan(c *gin.Context) *modelgatewaycore.DispatchPlan {
 	plan, _ := modelgatewayintegration.GetSelectedPlan(c)
 	return plan
+}
+
+func relayQueueAcquireOptions(plan *modelgatewaycore.DispatchPlan) modelgatewayscheduler.QueueAcquireOptions {
+	if plan == nil {
+		return modelgatewayscheduler.QueueAcquireOptions{}
+	}
+	return modelgatewayscheduler.QueueAcquireOptions{
+		Group:      plan.SelectedGroup,
+		Priority:   plan.QueuePriority,
+		RuntimeKey: plan.RuntimeKey,
+	}
 }
 
 func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, channel *model.Channel, apiErr *types.NewAPIError, duration time.Duration) {

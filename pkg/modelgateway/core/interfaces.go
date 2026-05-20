@@ -59,8 +59,17 @@ type SchedulerSettings struct {
 	DefaultStrategy       string
 	CacheAffinityEnabled  bool
 	QueueEnabled          bool
+	QueueFairness         QueueFairnessPolicySetting
 	CircuitBreakerEnabled bool
 	GroupPolicies         map[string]GroupPolicySetting
+}
+
+type QueueFairnessPolicySetting struct {
+	HighPriorityGroups        []string
+	HighPriorityThreshold     int
+	HighPriorityExtraDepth    int
+	HighPriorityReservedDepth int
+	AbsoluteMaxDepth          int
 }
 
 type GroupPolicySetting struct {
@@ -71,6 +80,7 @@ type GroupPolicySetting struct {
 	CandidateGroups       []string
 	CacheAffinityEnabled  bool
 	QueueEnabled          bool
+	QueueHighPriority     bool
 	CircuitBreakerEnabled bool
 }
 
@@ -104,4 +114,6 @@ type CacheAffinitySignalAdapter interface {
 type StickyRouter interface {
 	Route(c *gin.Context, req *DispatchRequest, policy GroupSmartPolicy) (StickyRoute, bool)
 	Save(c *gin.Context, req *DispatchRequest, plan *DispatchPlan)
+	Clear(c *gin.Context, req *DispatchRequest, policy GroupSmartPolicy)
+	Report(c *gin.Context, req *DispatchRequest, plan *DispatchPlan, result AttemptResult)
 }

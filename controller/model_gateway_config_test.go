@@ -64,6 +64,40 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	setting.RolloutPercent = 35
 	setting.DefaultStrategy = scheduler_setting.StrategySpeedFirst
 	setting.QueueDefaultTimeoutMs = 1500
+	setting.QueueHighPriorityThreshold = 7
+	setting.QueueHighPriorityExtraDepth = 3
+	setting.QueueHighPriorityReservedDepth = 2
+	setting.QueueAbsoluteMaxDepth = 9
+	setting.RuntimeSyncEnabled = true
+	setting.RuntimeSyncRedisEnabled = false
+	setting.RuntimeSyncNodeID = " node-a "
+	setting.RuntimeSyncTTLSeconds = 120
+	setting.RuntimeSyncQueueMinIntervalMs = 250
+	setting.RuntimeSyncEventPushEnabled = true
+	setting.RuntimeSyncEventSubscribeEnabled = true
+	setting.StickySaveOnSelect = true
+	setting.StickyRenewOnSuccess = false
+	setting.StickyFailurePolicy = scheduler_setting.StickyFailurePolicyKeep
+	setting.CircuitErrorPolicies = map[string]scheduler_setting.CircuitErrorPolicySetting{
+		"unknown": {
+			FailureThreshold:   0.9,
+			MinSamples:         9,
+			OpenSeconds:        9,
+			HalfOpenProbeCount: 9,
+		},
+		"rate_limit": {
+			FailureThreshold:   0.25,
+			MinSamples:         2,
+			OpenSeconds:        45,
+			HalfOpenProbeCount: 1,
+		},
+		" server_error ": {
+			FailureThreshold:   0,
+			MinSamples:         0,
+			OpenSeconds:        0,
+			HalfOpenProbeCount: 0,
+		},
+	}
 	setting.GroupPriorityRatio = map[string]float64{"vip": 1.4}
 	setting.GroupPolicies = map[string]scheduler_setting.GroupPolicySetting{
 		"vip": {
@@ -74,6 +108,7 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 			CandidateGroups:       []string{"vip", "default", "vip"},
 			CacheAffinityEnabled:  true,
 			QueueEnabled:          true,
+			QueueHighPriority:     true,
 			CircuitBreakerEnabled: true,
 		},
 	}
@@ -88,7 +123,30 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.True(t, payload.Success, resp.Body.String())
 	require.True(t, payload.Data.Setting.Enabled)
 	require.Equal(t, 35, payload.Data.Setting.RolloutPercent)
+	require.Equal(t, 7, payload.Data.Setting.QueueHighPriorityThreshold)
+	require.Equal(t, 3, payload.Data.Setting.QueueHighPriorityExtraDepth)
+	require.Equal(t, 2, payload.Data.Setting.QueueHighPriorityReservedDepth)
+	require.Equal(t, 9, payload.Data.Setting.QueueAbsoluteMaxDepth)
+	require.False(t, payload.Data.Setting.RuntimeSyncRedisEnabled)
+	require.Equal(t, "node-a", payload.Data.Setting.RuntimeSyncNodeID)
+	require.Equal(t, 120, payload.Data.Setting.RuntimeSyncTTLSeconds)
+	require.Equal(t, 250, payload.Data.Setting.RuntimeSyncQueueMinIntervalMs)
+	require.True(t, payload.Data.Setting.RuntimeSyncEventPushEnabled)
+	require.True(t, payload.Data.Setting.RuntimeSyncEventSubscribeEnabled)
+	require.True(t, payload.Data.Setting.StickySaveOnSelect)
+	require.False(t, payload.Data.Setting.StickyRenewOnSuccess)
+	require.Equal(t, scheduler_setting.StickyFailurePolicyKeep, payload.Data.Setting.StickyFailurePolicy)
+	require.Len(t, payload.Data.Setting.CircuitErrorPolicies, 2)
+	require.Equal(t, 0.25, payload.Data.Setting.CircuitErrorPolicies["rate_limit"].FailureThreshold)
+	require.Equal(t, 2, payload.Data.Setting.CircuitErrorPolicies["rate_limit"].MinSamples)
+	require.Equal(t, 45, payload.Data.Setting.CircuitErrorPolicies["rate_limit"].OpenSeconds)
+	require.Equal(t, 1, payload.Data.Setting.CircuitErrorPolicies["rate_limit"].HalfOpenProbeCount)
+	require.Equal(t, payload.Data.Setting.CircuitFailureThreshold, payload.Data.Setting.CircuitErrorPolicies["server_error"].FailureThreshold)
+	require.Equal(t, payload.Data.Setting.CircuitMinSamples, payload.Data.Setting.CircuitErrorPolicies["server_error"].MinSamples)
+	require.Equal(t, payload.Data.Setting.CircuitOpenSeconds, payload.Data.Setting.CircuitErrorPolicies["server_error"].OpenSeconds)
+	require.Equal(t, payload.Data.Setting.CircuitHalfOpenProbeCount, payload.Data.Setting.CircuitErrorPolicies["server_error"].HalfOpenProbeCount)
 	require.Equal(t, []string{"vip", "default"}, payload.Data.Setting.GroupPolicies["vip"].CandidateGroups)
+	require.True(t, payload.Data.Setting.GroupPolicies["vip"].QueueHighPriority)
 	require.Equal(t, scheduler_setting.ModeActive, scheduler_setting.GetSetting().GroupPolicies["vip"].Mode)
 
 	var rolloutOption model.Option
@@ -97,6 +155,30 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	var policiesOption model.Option
 	require.NoError(t, db.First(&policiesOption, "key = ?", "scheduler_setting.group_policies").Error)
 	require.Contains(t, policiesOption.Value, `"vip"`)
+	require.Contains(t, policiesOption.Value, `"queue_high_priority":true`)
+	var queueExtraOption model.Option
+	require.NoError(t, db.First(&queueExtraOption, "key = ?", "scheduler_setting.queue_high_priority_extra_depth").Error)
+	require.Equal(t, "3", queueExtraOption.Value)
+	var runtimeSyncRedisOption model.Option
+	require.NoError(t, db.First(&runtimeSyncRedisOption, "key = ?", "scheduler_setting.runtime_sync_redis_enabled").Error)
+	require.Equal(t, "false", runtimeSyncRedisOption.Value)
+	var runtimeSyncNodeOption model.Option
+	require.NoError(t, db.First(&runtimeSyncNodeOption, "key = ?", "scheduler_setting.runtime_sync_node_id").Error)
+	require.Equal(t, "node-a", runtimeSyncNodeOption.Value)
+	var runtimeSyncThrottleOption model.Option
+	require.NoError(t, db.First(&runtimeSyncThrottleOption, "key = ?", "scheduler_setting.runtime_sync_queue_min_interval_ms").Error)
+	require.Equal(t, "250", runtimeSyncThrottleOption.Value)
+	var runtimeSyncEventSubscribeOption model.Option
+	require.NoError(t, db.First(&runtimeSyncEventSubscribeOption, "key = ?", "scheduler_setting.runtime_sync_event_subscribe_enabled").Error)
+	require.Equal(t, "true", runtimeSyncEventSubscribeOption.Value)
+	var circuitErrorPolicyOption model.Option
+	require.NoError(t, db.First(&circuitErrorPolicyOption, "key = ?", "scheduler_setting.circuit_error_policies").Error)
+	require.Contains(t, circuitErrorPolicyOption.Value, `"rate_limit"`)
+	require.Contains(t, circuitErrorPolicyOption.Value, `"server_error"`)
+	require.NotContains(t, circuitErrorPolicyOption.Value, `"unknown"`)
+	var stickyFailurePolicyOption model.Option
+	require.NoError(t, db.First(&stickyFailurePolicyOption, "key = ?", "scheduler_setting.sticky_failure_policy").Error)
+	require.Equal(t, scheduler_setting.StickyFailurePolicyKeep, stickyFailurePolicyOption.Value)
 	require.Equal(t, "35", common.OptionMap["scheduler_setting.rollout_percent"])
 }
 

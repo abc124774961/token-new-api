@@ -63,11 +63,19 @@ type FakeSmartChannelSelector struct {
 	Handled bool
 	Err     *types.NewAPIError
 	Calls   int
+	Sticky  core.StickyRouter
 }
 
 func (s *FakeSmartChannelSelector) Select(c *gin.Context, param *service.RetryParam, policy core.GroupSmartPolicy) (*core.DispatchPlan, bool, *types.NewAPIError) {
 	s.Calls++
 	return s.Plan, s.Handled, s.Err
+}
+
+func (s *FakeSmartChannelSelector) StickyRouter() core.StickyRouter {
+	if s == nil {
+		return nil
+	}
+	return s.Sticky
 }
 
 type FakeExecutionRecorder struct {

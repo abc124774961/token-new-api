@@ -53,8 +53,21 @@ func (r *DefaultGroupPolicyResolver) Resolve(c *gin.Context, req *core.DispatchR
 		CandidateGroups:       append([]string(nil), policySetting.CandidateGroups...),
 		CacheAffinityEnabled:  policySetting.CacheAffinityEnabled,
 		QueueEnabled:          policySetting.QueueEnabled,
+		QueueHighPriority:     policySetting.QueueHighPriority,
+		QueuePriority:         queuePriorityForPolicy(req.RequestedGroup, policySetting, settings),
 		CircuitBreakerEnabled: policySetting.CircuitBreakerEnabled,
 	}
+}
+
+func queuePriorityForPolicy(group string, policySetting core.GroupPolicySetting, settings core.SchedulerSettings) int {
+	if policySetting.QueueHighPriority {
+		threshold := settings.QueueFairness.HighPriorityThreshold
+		if threshold <= 0 {
+			return 1
+		}
+		return threshold
+	}
+	return 0
 }
 
 func normalizeMode(mode string) string {

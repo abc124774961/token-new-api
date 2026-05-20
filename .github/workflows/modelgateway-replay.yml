@@ -1,0 +1,62 @@
+name: Model Gateway Replay
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/modelgateway-replay.yml"
+      - "cmd/modelgateway-replay/**"
+      - "controller/model_gateway_replay.go"
+      - "controller/model_gateway_replay_test.go"
+      - "docs/modelgateway-replay-ci.md"
+      - "go.mod"
+      - "go.sum"
+      - "pkg/modelgateway/**"
+      - "scripts/modelgateway-replay.sh"
+  push:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - ".github/workflows/modelgateway-replay.yml"
+      - "cmd/modelgateway-replay/**"
+      - "controller/model_gateway_replay.go"
+      - "controller/model_gateway_replay_test.go"
+      - "docs/modelgateway-replay-ci.md"
+      - "go.mod"
+      - "go.sum"
+      - "pkg/modelgateway/**"
+      - "scripts/modelgateway-replay.sh"
+  workflow_dispatch:
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ">=1.25.1"
+          cache: true
+
+      - name: Replay package tests
+        run: go test ./cmd/modelgateway-replay ./pkg/modelgateway/testkit ./pkg/modelgateway/replay -run 'Test.*Replay|TestArtifact' -count=1
+
+      - name: Run replay goldens
+        run: scripts/modelgateway-replay.sh
+
+      - name: Upload replay report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: modelgateway-replay-ci
+          path: tmp/modelgateway-replay-ci.json
+          if-no-files-found: ignore

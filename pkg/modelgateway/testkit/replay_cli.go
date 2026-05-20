@@ -20,6 +20,17 @@ type ReplayBatchRunCLIOptions struct {
 	RunOptions  ReplayBatchRunOptions
 }
 
+// RunReplayBatchCLI runs model gateway replay goldens for command-line and CI use.
+//
+// Usage:
+//
+//	go run ./cmd/modelgateway-replay -golden pkg/modelgateway/testdata/replay -report tmp/replay-ci.json
+//	go run ./cmd/modelgateway-replay -golden 'pkg/modelgateway/testdata/replay/*.json' -score-tolerance 0.01
+//
+// Each -golden value may be a JSON artifact file, directory, or glob. Positional
+// args are also treated as golden paths. Directories are scanned recursively for
+// .json artifacts, duplicate matches are de-duplicated, and -report writes the
+// stable ReplayBatchRunCIReport JSON payload.
 func RunReplayBatchCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	var goldenPaths replayCLIPathList
 	var reportPath string

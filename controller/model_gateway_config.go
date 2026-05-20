@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -46,6 +47,7 @@ func UpdateModelGatewayConfig(c *gin.Context) {
 		return
 	}
 	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()
 	common.ApiSuccess(c, buildModelGatewayConfigResponse())
 }
 
@@ -56,6 +58,7 @@ func ResetModelGatewayConfig(c *gin.Context) {
 		return
 	}
 	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()
 	common.ApiSuccess(c, buildModelGatewayConfigResponse())
 }
 
@@ -87,15 +90,29 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	setting.SnapshotRefreshMs = normalizeModelGatewayConfigMin(setting.SnapshotRefreshMs, 100, defaults.SnapshotRefreshMs)
 	setting.StickyTTLSeconds = normalizeModelGatewayConfigMin(setting.StickyTTLSeconds, 1, defaults.StickyTTLSeconds)
 	setting.StickyKeepScoreRatio = clampModelGatewayConfigFloat(defaultFloat(setting.StickyKeepScoreRatio, defaults.StickyKeepScoreRatio), 0.01, 1)
+	if setting.StickyFailurePolicy == "" {
+		setting.StickyFailurePolicy = defaults.StickyFailurePolicy
+	}
+	if !validModelGatewayConfigValue(setting.StickyFailurePolicy, modelGatewayConfigStickyFailurePolicies()) {
+		return scheduler_setting.SchedulerSetting{}, errors.New("invalid sticky_failure_policy")
+	}
 	setting.CacheAffinityKeepScoreRatio = clampModelGatewayConfigFloat(defaultFloat(setting.CacheAffinityKeepScoreRatio, defaults.CacheAffinityKeepScoreRatio), 0.01, 1)
 	setting.QueueDefaultTimeoutMs = normalizeModelGatewayConfigMin(setting.QueueDefaultTimeoutMs, 1, defaults.QueueDefaultTimeoutMs)
 	setting.QueueMaxDepthPerChannel = normalizeModelGatewayConfigMin(setting.QueueMaxDepthPerChannel, 1, defaults.QueueMaxDepthPerChannel)
 	setting.QueueDepthMultiplier = normalizeModelGatewayConfigMin(setting.QueueDepthMultiplier, 1, defaults.QueueDepthMultiplier)
+	setting.QueueHighPriorityThreshold = normalizeModelGatewayConfigNonNegative(setting.QueueHighPriorityThreshold)
+	setting.QueueHighPriorityExtraDepth = normalizeModelGatewayConfigNonNegative(setting.QueueHighPriorityExtraDepth)
+	setting.QueueHighPriorityReservedDepth = normalizeModelGatewayConfigNonNegative(setting.QueueHighPriorityReservedDepth)
+	setting.QueueAbsoluteMaxDepth = normalizeModelGatewayConfigNonNegative(setting.QueueAbsoluteMaxDepth)
 	setting.CircuitFailureThreshold = clampModelGatewayConfigFloat(defaultFloat(setting.CircuitFailureThreshold, defaults.CircuitFailureThreshold), 0.01, 1)
 	setting.CircuitMinSamples = normalizeModelGatewayConfigMin(setting.CircuitMinSamples, 1, defaults.CircuitMinSamples)
 	setting.CircuitOpenSeconds = normalizeModelGatewayConfigMin(setting.CircuitOpenSeconds, 1, defaults.CircuitOpenSeconds)
 	setting.CircuitHalfOpenProbeCount = normalizeModelGatewayConfigMin(setting.CircuitHalfOpenProbeCount, 1, defaults.CircuitHalfOpenProbeCount)
+	setting.CircuitErrorPolicies = normalizeModelGatewayCircuitErrorPolicies(setting.CircuitErrorPolicies, setting)
 	setting.CooldownMaxSeconds = normalizeModelGatewayConfigMin(setting.CooldownMaxSeconds, 1, defaults.CooldownMaxSeconds)
+	setting.RuntimeSyncNodeID = strings.TrimSpace(setting.RuntimeSyncNodeID)
+	setting.RuntimeSyncTTLSeconds = normalizeModelGatewayConfigMin(setting.RuntimeSyncTTLSeconds, 1, defaults.RuntimeSyncTTLSeconds)
+	setting.RuntimeSyncQueueMinIntervalMs = normalizeModelGatewayConfigNonNegative(setting.RuntimeSyncQueueMinIntervalMs)
 	setting.FailureFastWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureFastWindowSeconds, 1, defaults.FailureFastWindowSeconds)
 	setting.FailureMainWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureMainWindowSeconds, 1, defaults.FailureMainWindowSeconds)
 	setting.FailureFallbackWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureFallbackWindowSeconds, 1, defaults.FailureFallbackWindowSeconds)
@@ -172,6 +189,40 @@ func normalizeModelGatewayGroupPolicies(src map[string]scheduler_setting.GroupPo
 	return result, nil
 }
 
+func normalizeModelGatewayCircuitErrorPolicies(src map[string]scheduler_setting.CircuitErrorPolicySetting, setting scheduler_setting.SchedulerSetting) map[string]scheduler_setting.CircuitErrorPolicySetting {
+	if len(src) == 0 {
+		return map[string]scheduler_setting.CircuitErrorPolicySetting{}
+	}
+	result := make(map[string]scheduler_setting.CircuitErrorPolicySetting, len(src))
+	for kind, policy := range src {
+		kind = normalizeModelGatewayCircuitErrorKind(kind)
+		if kind == "" {
+			continue
+		}
+		policy.FailureThreshold = clampModelGatewayConfigFloat(defaultFloat(policy.FailureThreshold, setting.CircuitFailureThreshold), 0.01, 1)
+		policy.MinSamples = normalizeModelGatewayConfigMin(policy.MinSamples, 1, setting.CircuitMinSamples)
+		policy.OpenSeconds = normalizeModelGatewayConfigMin(policy.OpenSeconds, 1, setting.CircuitOpenSeconds)
+		policy.HalfOpenProbeCount = normalizeModelGatewayConfigMin(policy.HalfOpenProbeCount, 1, setting.CircuitHalfOpenProbeCount)
+		result[kind] = policy
+	}
+	return result
+}
+
+func normalizeModelGatewayCircuitErrorKind(kind string) string {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	switch kind {
+	case scheduler.CircuitErrorStreamInterrupted,
+		scheduler.CircuitErrorRateLimit,
+		scheduler.CircuitErrorAuth,
+		scheduler.CircuitErrorQuota,
+		scheduler.CircuitErrorServer,
+		scheduler.CircuitErrorUpstream:
+		return kind
+	default:
+		return ""
+	}
+}
+
 func persistModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSetting) error {
 	values, err := modelGatewaySchedulerSettingOptionMap(setting)
 	if err != nil {
@@ -188,6 +239,7 @@ func persistModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSett
 		}
 	}
 	scheduler_setting.SetSetting(setting)
+	resetRelayQueueManager()
 	return nil
 }
 
@@ -200,36 +252,55 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 	if err != nil {
 		return nil, err
 	}
+	circuitErrorPolicies, err := common.Marshal(setting.CircuitErrorPolicies)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]string{
-		"enabled":                         strconv.FormatBool(setting.Enabled),
-		"default_mode":                    setting.DefaultMode,
-		"rollout_percent":                 strconv.Itoa(setting.RolloutPercent),
-		"default_strategy":                setting.DefaultStrategy,
-		"snapshot_refresh_ms":             strconv.Itoa(setting.SnapshotRefreshMs),
-		"sticky_ttl_seconds":              strconv.Itoa(setting.StickyTTLSeconds),
-		"sticky_keep_score_ratio":         strconv.FormatFloat(setting.StickyKeepScoreRatio, 'f', -1, 64),
-		"cache_affinity_enabled":          strconv.FormatBool(setting.CacheAffinityEnabled),
-		"cache_affinity_keep_score_ratio": strconv.FormatFloat(setting.CacheAffinityKeepScoreRatio, 'f', -1, 64),
-		"queue_enabled":                   strconv.FormatBool(setting.QueueEnabled),
-		"queue_default_timeout_ms":        strconv.Itoa(setting.QueueDefaultTimeoutMs),
-		"queue_max_depth_per_channel":     strconv.Itoa(setting.QueueMaxDepthPerChannel),
-		"queue_depth_multiplier":          strconv.Itoa(setting.QueueDepthMultiplier),
-		"circuit_breaker_enabled":         strconv.FormatBool(setting.CircuitBreakerEnabled),
-		"circuit_failure_threshold":       strconv.FormatFloat(setting.CircuitFailureThreshold, 'f', -1, 64),
-		"circuit_min_samples":             strconv.Itoa(setting.CircuitMinSamples),
-		"circuit_open_seconds":            strconv.Itoa(setting.CircuitOpenSeconds),
-		"circuit_half_open_probe_count":   strconv.Itoa(setting.CircuitHalfOpenProbeCount),
-		"cooldown_max_seconds":            strconv.Itoa(setting.CooldownMaxSeconds),
-		"success_weight":                  strconv.FormatFloat(setting.SuccessWeight, 'f', -1, 64),
-		"speed_weight":                    strconv.FormatFloat(setting.SpeedWeight, 'f', -1, 64),
-		"load_weight":                     strconv.FormatFloat(setting.LoadWeight, 'f', -1, 64),
-		"cost_weight":                     strconv.FormatFloat(setting.CostWeight, 'f', -1, 64),
-		"group_weight":                    strconv.FormatFloat(setting.GroupWeight, 'f', -1, 64),
-		"group_priority_ratio":            string(groupPriorityRatio),
-		"group_policies":                  string(groupPolicies),
-		"failure_fast_window_seconds":     strconv.Itoa(setting.FailureFastWindowSeconds),
-		"failure_main_window_seconds":     strconv.Itoa(setting.FailureMainWindowSeconds),
-		"failure_fallback_window_seconds": strconv.Itoa(setting.FailureFallbackWindowSeconds),
+		"enabled":                              strconv.FormatBool(setting.Enabled),
+		"default_mode":                         setting.DefaultMode,
+		"rollout_percent":                      strconv.Itoa(setting.RolloutPercent),
+		"default_strategy":                     setting.DefaultStrategy,
+		"snapshot_refresh_ms":                  strconv.Itoa(setting.SnapshotRefreshMs),
+		"sticky_ttl_seconds":                   strconv.Itoa(setting.StickyTTLSeconds),
+		"sticky_keep_score_ratio":              strconv.FormatFloat(setting.StickyKeepScoreRatio, 'f', -1, 64),
+		"sticky_save_on_select":                strconv.FormatBool(setting.StickySaveOnSelect),
+		"sticky_renew_on_success":              strconv.FormatBool(setting.StickyRenewOnSuccess),
+		"sticky_failure_policy":                setting.StickyFailurePolicy,
+		"cache_affinity_enabled":               strconv.FormatBool(setting.CacheAffinityEnabled),
+		"cache_affinity_keep_score_ratio":      strconv.FormatFloat(setting.CacheAffinityKeepScoreRatio, 'f', -1, 64),
+		"queue_enabled":                        strconv.FormatBool(setting.QueueEnabled),
+		"queue_default_timeout_ms":             strconv.Itoa(setting.QueueDefaultTimeoutMs),
+		"queue_max_depth_per_channel":          strconv.Itoa(setting.QueueMaxDepthPerChannel),
+		"queue_depth_multiplier":               strconv.Itoa(setting.QueueDepthMultiplier),
+		"queue_high_priority_threshold":        strconv.Itoa(setting.QueueHighPriorityThreshold),
+		"queue_high_priority_extra_depth":      strconv.Itoa(setting.QueueHighPriorityExtraDepth),
+		"queue_high_priority_reserved_depth":   strconv.Itoa(setting.QueueHighPriorityReservedDepth),
+		"queue_absolute_max_depth":             strconv.Itoa(setting.QueueAbsoluteMaxDepth),
+		"circuit_breaker_enabled":              strconv.FormatBool(setting.CircuitBreakerEnabled),
+		"circuit_failure_threshold":            strconv.FormatFloat(setting.CircuitFailureThreshold, 'f', -1, 64),
+		"circuit_min_samples":                  strconv.Itoa(setting.CircuitMinSamples),
+		"circuit_open_seconds":                 strconv.Itoa(setting.CircuitOpenSeconds),
+		"circuit_half_open_probe_count":        strconv.Itoa(setting.CircuitHalfOpenProbeCount),
+		"circuit_error_policies":               string(circuitErrorPolicies),
+		"cooldown_max_seconds":                 strconv.Itoa(setting.CooldownMaxSeconds),
+		"runtime_sync_enabled":                 strconv.FormatBool(setting.RuntimeSyncEnabled),
+		"runtime_sync_redis_enabled":           strconv.FormatBool(setting.RuntimeSyncRedisEnabled),
+		"runtime_sync_node_id":                 setting.RuntimeSyncNodeID,
+		"runtime_sync_ttl_seconds":             strconv.Itoa(setting.RuntimeSyncTTLSeconds),
+		"runtime_sync_queue_min_interval_ms":   strconv.Itoa(setting.RuntimeSyncQueueMinIntervalMs),
+		"runtime_sync_event_push_enabled":      strconv.FormatBool(setting.RuntimeSyncEventPushEnabled),
+		"runtime_sync_event_subscribe_enabled": strconv.FormatBool(setting.RuntimeSyncEventSubscribeEnabled),
+		"success_weight":                       strconv.FormatFloat(setting.SuccessWeight, 'f', -1, 64),
+		"speed_weight":                         strconv.FormatFloat(setting.SpeedWeight, 'f', -1, 64),
+		"load_weight":                          strconv.FormatFloat(setting.LoadWeight, 'f', -1, 64),
+		"cost_weight":                          strconv.FormatFloat(setting.CostWeight, 'f', -1, 64),
+		"group_weight":                         strconv.FormatFloat(setting.GroupWeight, 'f', -1, 64),
+		"group_priority_ratio":                 string(groupPriorityRatio),
+		"group_policies":                       string(groupPolicies),
+		"failure_fast_window_seconds":          strconv.Itoa(setting.FailureFastWindowSeconds),
+		"failure_main_window_seconds":          strconv.Itoa(setting.FailureMainWindowSeconds),
+		"failure_fallback_window_seconds":      strconv.Itoa(setting.FailureFallbackWindowSeconds),
 	}, nil
 }
 
@@ -257,6 +328,13 @@ func modelGatewayConfigAutoModes() map[string]struct{} {
 	}
 }
 
+func modelGatewayConfigStickyFailurePolicies() map[string]struct{} {
+	return map[string]struct{}{
+		scheduler_setting.StickyFailurePolicyKeep:  {},
+		scheduler_setting.StickyFailurePolicyClear: {},
+	}
+}
+
 func validModelGatewayConfigValue(value string, allowed map[string]struct{}) bool {
 	_, ok := allowed[value]
 	return ok
@@ -265,6 +343,13 @@ func validModelGatewayConfigValue(value string, allowed map[string]struct{}) boo
 func normalizeModelGatewayConfigMin(value int, minValue int, fallback int) int {
 	if value < minValue {
 		return fallback
+	}
+	return value
+}
+
+func normalizeModelGatewayConfigNonNegative(value int) int {
+	if value < 0 {
+		return 0
 	}
 	return value
 }

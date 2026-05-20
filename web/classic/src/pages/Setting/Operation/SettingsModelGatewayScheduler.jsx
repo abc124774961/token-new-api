@@ -46,25 +46,43 @@ const STRATEGY_OPTIONS = [
   'stability_first',
 ];
 const AUTO_MODE_OPTIONS = ['auto_sequential', 'auto_fusion'];
+const CIRCUIT_ERROR_TYPES = [
+  'stream_interrupted',
+  'rate_limit',
+  'auth',
+  'quota',
+  'server_error',
+  'upstream_error',
+];
+const STICKY_FAILURE_POLICY_OPTIONS = ['clear', 'keep'];
 
 const DEFAULT_SETTING = {
   enabled: false,
+  runtime_sync_event_subscribe_enabled: false,
   default_mode: 'off',
   rollout_percent: 0,
   default_strategy: 'balanced',
   sticky_ttl_seconds: 180,
   sticky_keep_score_ratio: 0.85,
+  sticky_save_on_select: false,
+  sticky_renew_on_success: true,
+  sticky_failure_policy: 'clear',
   cache_affinity_enabled: true,
   cache_affinity_keep_score_ratio: 0.75,
   queue_enabled: true,
   queue_default_timeout_ms: 2000,
   queue_max_depth_per_channel: 64,
   queue_depth_multiplier: 2,
+  queue_high_priority_threshold: 0,
+  queue_high_priority_extra_depth: 0,
+  queue_high_priority_reserved_depth: 0,
+  queue_absolute_max_depth: 0,
   circuit_breaker_enabled: true,
   circuit_failure_threshold: 0.5,
   circuit_min_samples: 10,
   circuit_open_seconds: 30,
   circuit_half_open_probe_count: 3,
+  circuit_error_policies: {},
   cooldown_max_seconds: 600,
   success_weight: 0.32,
   speed_weight: 0.28,
@@ -83,8 +101,112 @@ const numberOrDefault = (value, fallback = 0) => {
   return Number.isFinite(next) ? next : fallback;
 };
 
-const makeSelectOptions = (values) =>
-  (values || []).map((value) => ({ label: value, value }));
+const makeSelectOptions = (values, labeler = (value) => value) =>
+  (values || []).map((value) => ({ label: labeler(value), value }));
+
+const schedulerModeLabel = (mode, t) => {
+  switch (mode) {
+    case 'off':
+      return t('智能调度模式：off');
+    case 'shadow':
+      return t('智能调度模式：shadow');
+    case 'active':
+      return t('智能调度模式：active');
+    default:
+      return mode;
+  }
+};
+
+const schedulerStrategyLabel = (strategy, t) => {
+  switch (strategy) {
+    case 'balanced':
+      return t('智能调度策略：balanced');
+    case 'speed_first':
+      return t('智能调度策略：speed_first');
+    case 'cost_first':
+      return t('智能调度策略：cost_first');
+    case 'stability_first':
+      return t('智能调度策略：stability_first');
+    default:
+      return strategy;
+  }
+};
+
+const schedulerAutoModeLabel = (mode, t) => {
+  switch (mode) {
+    case 'auto_sequential':
+      return t('智能调度 auto 模式：auto_sequential');
+    case 'auto_fusion':
+      return t('智能调度 auto 模式：auto_fusion');
+    default:
+      return mode;
+  }
+};
+
+const circuitErrorTypeLabel = (type, t) => {
+  switch (type) {
+    case 'stream_interrupted':
+      return t('熔断错误类型：stream_interrupted');
+    case 'rate_limit':
+      return t('熔断错误类型：rate_limit');
+    case 'auth':
+      return t('熔断错误类型：auth');
+    case 'quota':
+      return t('熔断错误类型：quota');
+    case 'server_error':
+      return t('熔断错误类型：server_error');
+    case 'upstream_error':
+      return t('熔断错误类型：upstream_error');
+    default:
+      return type;
+  }
+};
+
+const stickyFailurePolicyLabel = (policy, t) => {
+  switch (policy) {
+    case 'clear':
+      return t('粘滞失败策略：clear');
+    case 'keep':
+      return t('粘滞失败策略：keep');
+    default:
+      return policy;
+  }
+};
+
+const makeCircuitErrorRows = (policies = {}) =>
+  CIRCUIT_ERROR_TYPES.map((type) => {
+    const policy = policies?.[type] || {};
+    return {
+      type,
+      enabled: !!policies?.[type],
+      failure_threshold:
+        policy.failure_threshold === undefined
+          ? ''
+          : String(policy.failure_threshold),
+      min_samples:
+        policy.min_samples === undefined ? '' : String(policy.min_samples),
+      open_seconds:
+        policy.open_seconds === undefined ? '' : String(policy.open_seconds),
+      half_open_probe_count:
+        policy.half_open_probe_count === undefined
+          ? ''
+          : String(policy.half_open_probe_count),
+    };
+  });
+
+const circuitErrorRowsToPolicyMap = (rows) => {
+  const policies = {};
+  for (const row of rows || []) {
+    if (!row.enabled) continue;
+    policies[row.type] = {
+      failure_threshold: numberOrDefault(row.failure_threshold, 0.5),
+      min_samples: numberOrDefault(row.min_samples, 1),
+      open_seconds: numberOrDefault(row.open_seconds, 30),
+      half_open_probe_count: numberOrDefault(row.half_open_probe_count, 1),
+    };
+  }
+  return policies;
+};
 
 const normalizeSetting = (setting) => ({
   ...DEFAULT_SETTING,
@@ -108,6 +230,7 @@ const policyMapToRows = (policies = {}, priorities = {}) =>
       candidate_groups_text: (policy?.candidate_groups || []).join('\n'),
       cache_affinity_enabled: !!policy?.cache_affinity_enabled,
       queue_enabled: !!policy?.queue_enabled,
+      queue_high_priority: !!policy?.queue_high_priority,
       circuit_breaker_enabled: !!policy?.circuit_breaker_enabled,
     }));
 
@@ -129,6 +252,7 @@ const rowsToPolicyMaps = (rows) => {
       candidate_groups: [...new Set(candidateGroups)],
       cache_affinity_enabled: !!row.cache_affinity_enabled,
       queue_enabled: !!row.queue_enabled,
+      queue_high_priority: !!row.queue_high_priority,
       circuit_breaker_enabled: !!row.circuit_breaker_enabled,
     };
     const ratio = Number(row.priority_ratio);
@@ -147,6 +271,9 @@ export default function SettingsModelGatewayScheduler() {
   const [setting, setSetting] = useState(DEFAULT_SETTING);
   const [defaults, setDefaults] = useState(DEFAULT_SETTING);
   const [policyRows, setPolicyRows] = useState([]);
+  const [circuitErrorRows, setCircuitErrorRows] = useState(
+    makeCircuitErrorRows(DEFAULT_SETTING.circuit_error_policies),
+  );
   const [meta, setMeta] = useState({
     modes: MODE_OPTIONS,
     strategies: STRATEGY_OPTIONS,
@@ -154,16 +281,33 @@ export default function SettingsModelGatewayScheduler() {
   });
 
   const modeOptions = useMemo(
-    () => makeSelectOptions(meta.modes || MODE_OPTIONS),
-    [meta.modes],
+    () =>
+      makeSelectOptions(meta.modes || MODE_OPTIONS, (value) =>
+        schedulerModeLabel(value, t),
+      ),
+    [meta.modes, t],
   );
   const strategyOptions = useMemo(
-    () => makeSelectOptions(meta.strategies || STRATEGY_OPTIONS),
-    [meta.strategies],
+    () =>
+      makeSelectOptions(meta.strategies || STRATEGY_OPTIONS, (value) =>
+        schedulerStrategyLabel(value, t),
+      ),
+    [meta.strategies, t],
   );
   const autoModeOptions = useMemo(
-    () => makeSelectOptions(meta.auto_modes || AUTO_MODE_OPTIONS),
-    [meta.auto_modes],
+    () =>
+      makeSelectOptions(meta.auto_modes || AUTO_MODE_OPTIONS, (value) =>
+        schedulerAutoModeLabel(value, t),
+      ),
+    [meta.auto_modes, t],
+  );
+  const stickyFailurePolicyOptions = useMemo(
+    () =>
+      STICKY_FAILURE_POLICY_OPTIONS.map((value) => ({
+        value,
+        label: stickyFailurePolicyLabel(value, t),
+      })),
+    [t],
   );
 
   const loadConfig = async () => {
@@ -188,6 +332,7 @@ export default function SettingsModelGatewayScheduler() {
       setPolicyRows(
         policyMapToRows(next.group_policies, next.group_priority_ratio),
       );
+      setCircuitErrorRows(makeCircuitErrorRows(next.circuit_error_policies));
       refForm.current?.setValues(next);
     } catch (error) {
       showError(t('加载智能调度配置失败'));
@@ -224,6 +369,7 @@ export default function SettingsModelGatewayScheduler() {
         candidate_groups_text: '',
         cache_affinity_enabled: setting.cache_affinity_enabled,
         queue_enabled: setting.queue_enabled,
+        queue_high_priority: false,
         circuit_breaker_enabled: setting.circuit_breaker_enabled,
       },
     ]);
@@ -231,6 +377,12 @@ export default function SettingsModelGatewayScheduler() {
 
   const removePolicyRow = (id) => {
     setPolicyRows((rows) => rows.filter((row) => row.id !== id));
+  };
+
+  const updateCircuitErrorRow = (type, patch) => {
+    setCircuitErrorRows((rows) =>
+      rows.map((row) => (row.type === type ? { ...row, ...patch } : row)),
+    );
   };
 
   const buildPayload = () => {
@@ -243,6 +395,7 @@ export default function SettingsModelGatewayScheduler() {
         setting.sticky_keep_score_ratio,
         0.85,
       ),
+      sticky_failure_policy: setting.sticky_failure_policy || 'clear',
       cache_affinity_keep_score_ratio: numberOrDefault(
         setting.cache_affinity_keep_score_ratio,
         0.75,
@@ -258,6 +411,18 @@ export default function SettingsModelGatewayScheduler() {
       queue_depth_multiplier: numberOrDefault(
         setting.queue_depth_multiplier,
         2,
+      ),
+      queue_high_priority_threshold: numberOrDefault(
+        setting.queue_high_priority_threshold,
+      ),
+      queue_high_priority_extra_depth: numberOrDefault(
+        setting.queue_high_priority_extra_depth,
+      ),
+      queue_high_priority_reserved_depth: numberOrDefault(
+        setting.queue_high_priority_reserved_depth,
+      ),
+      queue_absolute_max_depth: numberOrDefault(
+        setting.queue_absolute_max_depth,
       ),
       circuit_failure_threshold: numberOrDefault(
         setting.circuit_failure_threshold,
@@ -289,6 +454,7 @@ export default function SettingsModelGatewayScheduler() {
       ),
       group_priority_ratio: priorities,
       group_policies: policies,
+      circuit_error_policies: circuitErrorRowsToPolicyMap(circuitErrorRows),
     };
   };
 
@@ -314,6 +480,7 @@ export default function SettingsModelGatewayScheduler() {
       setPolicyRows(
         policyMapToRows(next.group_policies, next.group_priority_ratio),
       );
+      setCircuitErrorRows(makeCircuitErrorRows(next.circuit_error_policies));
       refForm.current?.setValues(next);
     } catch (error) {
       showError(t('保存失败，请重试'));
@@ -340,6 +507,9 @@ export default function SettingsModelGatewayScheduler() {
           setSetting(next);
           setPolicyRows(
             policyMapToRows(next.group_policies, next.group_priority_ratio),
+          );
+          setCircuitErrorRows(
+            makeCircuitErrorRows(next.circuit_error_policies),
           );
           refForm.current?.setValues(next);
         } catch (error) {
@@ -472,6 +642,16 @@ export default function SettingsModelGatewayScheduler() {
             {t('队列')}
           </Tag>
           <Tag
+            color={row.queue_high_priority ? 'red' : 'grey'}
+            onClick={() =>
+              updatePolicyRow(row.id, {
+                queue_high_priority: !row.queue_high_priority,
+              })
+            }
+          >
+            {t('高优先级队列')}
+          </Tag>
+          <Tag
             color={row.circuit_breaker_enabled ? 'orange' : 'grey'}
             onClick={() =>
               updatePolicyRow(row.id, {
@@ -495,6 +675,84 @@ export default function SettingsModelGatewayScheduler() {
           theme='borderless'
           icon={<IconDelete />}
           onClick={() => removePolicyRow(row.id)}
+        />
+      ),
+    },
+  ];
+
+  const circuitErrorColumns = [
+    {
+      title: t('错误类型'),
+      dataIndex: 'type',
+      width: 170,
+      render: (_, row) => circuitErrorTypeLabel(row.type, t),
+    },
+    {
+      title: t('启用'),
+      dataIndex: 'enabled',
+      width: 90,
+      render: (_, row) => (
+        <Switch
+          checked={row.enabled}
+          onChange={(value) =>
+            updateCircuitErrorRow(row.type, { enabled: value })
+          }
+        />
+      ),
+    },
+    {
+      title: t('失败率阈值'),
+      dataIndex: 'failure_threshold',
+      width: 140,
+      render: (_, row) => (
+        <Input
+          value={row.failure_threshold}
+          placeholder={String(setting.circuit_failure_threshold || 0.5)}
+          onChange={(value) =>
+            updateCircuitErrorRow(row.type, { failure_threshold: value })
+          }
+        />
+      ),
+    },
+    {
+      title: t('最小样本数'),
+      dataIndex: 'min_samples',
+      width: 130,
+      render: (_, row) => (
+        <Input
+          value={row.min_samples}
+          placeholder={String(setting.circuit_min_samples || 10)}
+          onChange={(value) =>
+            updateCircuitErrorRow(row.type, { min_samples: value })
+          }
+        />
+      ),
+    },
+    {
+      title: t('打开时间'),
+      dataIndex: 'open_seconds',
+      width: 130,
+      render: (_, row) => (
+        <Input
+          value={row.open_seconds}
+          placeholder={String(setting.circuit_open_seconds || 30)}
+          onChange={(value) =>
+            updateCircuitErrorRow(row.type, { open_seconds: value })
+          }
+        />
+      ),
+    },
+    {
+      title: t('半开探针数'),
+      dataIndex: 'half_open_probe_count',
+      width: 130,
+      render: (_, row) => (
+        <Input
+          value={row.half_open_probe_count}
+          placeholder={String(setting.circuit_half_open_probe_count || 3)}
+          onChange={(value) =>
+            updateCircuitErrorRow(row.type, { half_open_probe_count: value })
+          }
         />
       ),
     },
@@ -526,6 +784,17 @@ export default function SettingsModelGatewayScheduler() {
                 checkedText='｜'
                 uncheckedText='〇'
                 onChange={(value) => updateSetting('enabled', value)}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Switch
+                field='runtime_sync_event_subscribe_enabled'
+                label={t('运行时同步事件订阅')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting('runtime_sync_event_subscribe_enabled', value)
+                }
               />
             </Col>
             <Col xs={24} sm={12} md={8}>
@@ -618,6 +887,50 @@ export default function SettingsModelGatewayScheduler() {
               />
             </Col>
           </Row>
+          <Banner
+            type='info'
+            fullMode={false}
+            closeIcon={null}
+            title={t('粘滞续期策略')}
+            description={t(
+              '建议真实请求前保持成功续期开启、失败清理开启；如果上游偶发失败很多，可临时选择失败保留并结合熔断降权。',
+            )}
+            style={{ marginTop: 8, marginBottom: 16 }}
+          />
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Switch
+                field='sticky_save_on_select'
+                label={t('选中即写入粘滞')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting('sticky_save_on_select', value)
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Switch
+                field='sticky_renew_on_success'
+                label={t('成功后续期粘滞')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting('sticky_renew_on_success', value)
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Select
+                field='sticky_failure_policy'
+                label={t('失败后粘滞策略')}
+                optionList={stickyFailurePolicyOptions}
+                onChange={(value) =>
+                  updateSetting('sticky_failure_policy', value)
+                }
+              />
+            </Col>
+          </Row>
           <Row gutter={16}>
             <Col xs={24} sm={12} md={6}>
               <Form.InputNumber
@@ -648,6 +961,75 @@ export default function SettingsModelGatewayScheduler() {
             </Col>
             <Col xs={24} sm={12} md={6}>
               <Form.InputNumber
+                field='queue_depth_multiplier'
+                label={t('队列深度倍率')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting(
+                    'queue_depth_multiplier',
+                    numberOrDefault(value, 2),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Form.InputNumber
+                field='queue_absolute_max_depth'
+                label={t('绝对最大队列深度')}
+                min={0}
+                onChange={(value) =>
+                  updateSetting(
+                    'queue_absolute_max_depth',
+                    numberOrDefault(value),
+                  )
+                }
+              />
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={8}>
+              <Form.InputNumber
+                field='queue_high_priority_threshold'
+                label={t('高优先级阈值')}
+                min={0}
+                onChange={(value) =>
+                  updateSetting(
+                    'queue_high_priority_threshold',
+                    numberOrDefault(value),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.InputNumber
+                field='queue_high_priority_extra_depth'
+                label={t('高优先级额外深度')}
+                min={0}
+                onChange={(value) =>
+                  updateSetting(
+                    'queue_high_priority_extra_depth',
+                    numberOrDefault(value),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.InputNumber
+                field='queue_high_priority_reserved_depth'
+                label={t('高优先级保留深度')}
+                min={0}
+                onChange={(value) =>
+                  updateSetting(
+                    'queue_high_priority_reserved_depth',
+                    numberOrDefault(value),
+                  )
+                }
+              />
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={6}>
+              <Form.InputNumber
                 field='circuit_failure_threshold'
                 label={t('熔断失败率阈值')}
                 min={0.01}
@@ -676,6 +1058,26 @@ export default function SettingsModelGatewayScheduler() {
               />
             </Col>
           </Row>
+          <div style={{ marginTop: 8, marginBottom: 16 }}>
+            <Typography.Text strong>{t('按错误类型熔断策略')}</Typography.Text>
+            <Banner
+              type='warning'
+              fullMode={false}
+              closeIcon={null}
+              description={t(
+                '未启用的错误类型会继续使用全局熔断规则；auth 与 quota 只有启用后才参与类型熔断。',
+              )}
+              style={{ marginTop: 8, marginBottom: 12 }}
+            />
+            <Table
+              size='small'
+              rowKey='type'
+              pagination={false}
+              columns={circuitErrorColumns}
+              dataSource={circuitErrorRows}
+              scroll={{ x: 790 }}
+            />
+          </div>
           <Row gutter={16}>
             <Col xs={24} sm={12} md={4}>
               <Form.InputNumber

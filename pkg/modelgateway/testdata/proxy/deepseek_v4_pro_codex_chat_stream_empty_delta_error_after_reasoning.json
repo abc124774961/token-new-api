@@ -1,0 +1,94 @@
+{
+  "name": "deepseek_v4_pro_codex_chat_stream_empty_delta_error_after_reasoning",
+  "provider_profile": "deepseek_v4_pro_codex_chat",
+  "proxy_mode": "responses_via_chat",
+  "request_model": "deepseek-v4-pro-max",
+  "upstream_model": "deepseek-v4-pro-max",
+  "endpoint_type": "responses",
+  "stream": true,
+  "request": {
+    "model": "deepseek-v4-pro-max",
+    "input": "Think briefly, then handle a provider stream error.",
+    "reasoning": {
+      "effort": "medium"
+    },
+    "stream": true,
+    "prompt_cache_key": "deepseek-empty-delta-error-session"
+  },
+  "upstream_stream": [
+    {
+      "id": "chatcmpl_deepseek_empty_delta_error",
+      "object": "chat.completion.chunk",
+      "created": 1710001700,
+      "model": "deepseek-v4-pro-max",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "role": "assistant"
+          }
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_deepseek_empty_delta_error",
+      "object": "chat.completion.chunk",
+      "created": 1710001700,
+      "model": "deepseek-v4-pro-max",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {}
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_deepseek_empty_delta_error",
+      "object": "chat.completion.chunk",
+      "created": 1710001700,
+      "model": "deepseek-v4-pro-max",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "reasoning_content": "I can preserve reasoning before the upstream error."
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 28,
+        "completion_tokens": 6,
+        "total_tokens": 34
+      }
+    },
+    {
+      "error_message": "deepseek provider closed the stream after reasoning",
+      "error_type": "stream_error",
+      "error_code": "provider_stream_closed"
+    }
+  ],
+  "expected": {
+    "provider_profile": "deepseek_v4_pro_codex_chat",
+    "proxy_mode": "responses_via_chat",
+    "native_responses": false,
+    "responses_via_chat": true,
+    "reasoning": true,
+    "upstream_path": "/v1/chat/completions",
+    "upstream_model": "deepseek-v4-pro-max",
+    "prompt_cache_key": "deepseek-empty-delta-error-session",
+    "reasoning_effort": "medium",
+    "reasoning_text": "I can preserve reasoning before the upstream error.",
+    "stream_event_type": "response.failed",
+    "stream_error_code": "provider_stream_closed",
+    "stream_error_type": "stream_error",
+    "stream_error_text": "deepseek provider closed the stream after reasoning",
+    "stream_event_count": {
+      "response.created": 1,
+      "response.reasoning_summary_text.delta": 1,
+      "response.failed": 1
+    },
+    "stream_usage_prompt_tokens": 28,
+    "stream_usage_completion_tokens": 6,
+    "stream_usage_total_tokens": 34
+  }
+}

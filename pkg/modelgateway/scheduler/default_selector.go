@@ -19,6 +19,10 @@ type DefaultSmartChannelSelector struct {
 	stickyRouter     core.StickyRouter
 }
 
+type stickySaveOnSelectRouter interface {
+	SaveOnSelect() bool
+}
+
 func NewDefaultSmartChannelSelector(candidateBuilder core.CandidatePoolBuilder, snapshotStore core.RuntimeSnapshotStore, scorerFactory core.ScoreCalculatorFactory) *DefaultSmartChannelSelector {
 	if scorerFactory == nil {
 		scorerFactory = NewScoreCalculatorFactory(DefaultScoreWeights())
@@ -44,6 +48,13 @@ func (s *DefaultSmartChannelSelector) WithStickyRouter(router core.StickyRouter)
 	}
 	s.stickyRouter = router
 	return s
+}
+
+func (s *DefaultSmartChannelSelector) StickyRouter() core.StickyRouter {
+	if s == nil {
+		return nil
+	}
+	return s.stickyRouter
 }
 
 func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.RetryParam, policy core.GroupSmartPolicy) (*core.DispatchPlan, bool, *types.NewAPIError) {
@@ -149,6 +160,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		QueueEnabled:    policy.QueueEnabled,
 		QueueDepth:      bestSnapshot.QueueDepth,
 		QueueCapacity:   bestSnapshot.QueueCapacity,
+		QueuePriority:   policy.QueuePriority,
 		SelectedReason:  bestScore.Reason,
 		StickySource:    stickyRoute.Source,
 		StickyKeyFP:     stickyRoute.KeyFingerprint,
@@ -159,7 +171,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		AutoMode:        policy.AutoMode,
 		Candidates:      explanations,
 	}
-	if s.stickyRouter != nil {
+	if s.shouldSaveStickyOnSelect() {
 		s.stickyRouter.Save(c, &req, plan)
 	}
 	if plan.StickySource != "" && plan.SelectedReason == "weighted_score" && plan.StickyBreak != "" {
@@ -302,6 +314,16 @@ func (s *DefaultSmartChannelSelector) stickyRoute(c *gin.Context, req *core.Disp
 		return core.StickyRoute{}, false
 	}
 	return s.stickyRouter.Route(c, req, policy)
+}
+
+func (s *DefaultSmartChannelSelector) shouldSaveStickyOnSelect() bool {
+	if s == nil || s.stickyRouter == nil {
+		return false
+	}
+	if router, ok := s.stickyRouter.(stickySaveOnSelectRouter); ok {
+		return router.SaveOnSelect()
+	}
+	return true
 }
 
 func isStickyCandidate(candidate core.Candidate, route core.StickyRoute) bool {

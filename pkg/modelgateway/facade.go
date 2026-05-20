@@ -61,6 +61,12 @@ func (f *SmartDispatchFacade) Select(c *gin.Context, param *service.RetryParam) 
 	if handled && plan != nil {
 		plan.PolicyMode = policy.Mode
 		plan.AutoMode = policy.AutoMode
+		f.recorder.Record(context.Background(), core.DispatchRecord{
+			Request:    req,
+			Policy:     policy,
+			Plan:       plan,
+			RecordedAt: time.Now(),
+		})
 	}
 	return plan, handled, apiErr
 }
@@ -101,7 +107,66 @@ func (f *SmartDispatchFacade) Report(c *gin.Context, result *core.AttemptResult)
 	if f == nil || f.recorder == nil || result == nil {
 		return
 	}
+	f.updateStickyLifecycle(c, result)
 	f.recorder.Report(context.Background(), *result)
+}
+
+func (f *SmartDispatchFacade) updateStickyLifecycle(c *gin.Context, result *core.AttemptResult) {
+	if f == nil || f.selector == nil || c == nil || result == nil {
+		return
+	}
+	plan, ok := selectedStickyPlanForLifecycle(c)
+	if !ok {
+		return
+	}
+	req := core.DispatchRequest{
+		RequestedGroup: plan.RequestedGroup,
+		UserGroup:      result.RequestedGroup,
+		ModelName:      result.ModelName,
+		EndpointType:   result.EndpointType,
+	}
+	if req.RequestedGroup == "" {
+		req.RequestedGroup = plan.SelectedGroup
+	}
+	if req.ModelName == "" {
+		req.ModelName = plan.RuntimeKey.RequestedModel
+	}
+	if req.EndpointType == "" {
+		req.EndpointType = plan.RuntimeKey.EndpointType
+	}
+	if req.ModelName == "" {
+		return
+	}
+	stickyRouter, ok := stickyRouterFromSelector(f.selector)
+	if !ok {
+		return
+	}
+	stickyRouter.Report(c, &req, plan, *result)
+}
+
+func selectedStickyPlanForLifecycle(c *gin.Context) (*core.DispatchPlan, bool) {
+	if c == nil {
+		return nil, false
+	}
+	value, ok := c.Get("modelgateway_failed_sticky_plan")
+	if !ok {
+		return nil, false
+	}
+	plan, ok := value.(*core.DispatchPlan)
+	return plan, ok && plan != nil && plan.StickySource != ""
+}
+
+type stickyRouterProvider interface {
+	StickyRouter() core.StickyRouter
+}
+
+func stickyRouterFromSelector(selector core.SmartChannelSelector) (core.StickyRouter, bool) {
+	provider, ok := selector.(stickyRouterProvider)
+	if !ok {
+		return nil, false
+	}
+	router := provider.StickyRouter()
+	return router, router != nil
 }
 
 func (f *SmartDispatchFacade) resolveCandidateGroups(c *gin.Context, req *core.DispatchRequest, policy core.GroupSmartPolicy) core.GroupSmartPolicy {

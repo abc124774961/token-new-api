@@ -27,34 +27,37 @@ type ProxyContract struct {
 }
 
 type ProxyContractExpected struct {
-	ProviderProfile   string         `json:"provider_profile"`
-	ProxyMode         string         `json:"proxy_mode"`
-	NativeResponses   bool           `json:"native_responses"`
-	ResponsesViaChat  bool           `json:"responses_via_chat"`
-	Reasoning         bool           `json:"reasoning"`
-	WebSearch         bool           `json:"web_search"`
-	UpstreamPath      string         `json:"upstream_path,omitempty"`
-	UpstreamModel     string         `json:"upstream_model,omitempty"`
-	DownstreamModel   string         `json:"downstream_model,omitempty"`
-	OutputText        string         `json:"output_text,omitempty"`
-	ReasoningText     string         `json:"reasoning_text,omitempty"`
-	ToolName          string         `json:"tool_name,omitempty"`
-	ToolArguments     string         `json:"tool_arguments,omitempty"`
-	UpstreamToolTypes []string       `json:"upstream_tool_types,omitempty"`
-	CustomToolTypes   []string       `json:"custom_tool_types,omitempty"`
-	StreamItemTypes   []string       `json:"stream_item_types,omitempty"`
-	ToolNames         []string       `json:"tool_names,omitempty"`
-	ToolArgumentsList []string       `json:"tool_arguments_list,omitempty"`
-	PromptCacheKey    string         `json:"prompt_cache_key,omitempty"`
-	ReasoningEffort   string         `json:"reasoning_effort,omitempty"`
-	ContentType       string         `json:"content_type,omitempty"`
-	FileData          string         `json:"file_data,omitempty"`
-	ImageURL          string         `json:"image_url,omitempty"`
-	StreamEventType   string         `json:"stream_event_type,omitempty"`
-	StreamEventCount  map[string]int `json:"stream_event_count,omitempty"`
-	StreamErrorCode   string         `json:"stream_error_code,omitempty"`
-	StreamErrorType   string         `json:"stream_error_type,omitempty"`
-	StreamErrorText   string         `json:"stream_error_text,omitempty"`
+	ProviderProfile             string         `json:"provider_profile"`
+	ProxyMode                   string         `json:"proxy_mode"`
+	NativeResponses             bool           `json:"native_responses"`
+	ResponsesViaChat            bool           `json:"responses_via_chat"`
+	Reasoning                   bool           `json:"reasoning"`
+	WebSearch                   bool           `json:"web_search"`
+	UpstreamPath                string         `json:"upstream_path,omitempty"`
+	UpstreamModel               string         `json:"upstream_model,omitempty"`
+	DownstreamModel             string         `json:"downstream_model,omitempty"`
+	OutputText                  string         `json:"output_text,omitempty"`
+	ReasoningText               string         `json:"reasoning_text,omitempty"`
+	ToolName                    string         `json:"tool_name,omitempty"`
+	ToolArguments               string         `json:"tool_arguments,omitempty"`
+	UpstreamToolTypes           []string       `json:"upstream_tool_types,omitempty"`
+	CustomToolTypes             []string       `json:"custom_tool_types,omitempty"`
+	StreamItemTypes             []string       `json:"stream_item_types,omitempty"`
+	ToolNames                   []string       `json:"tool_names,omitempty"`
+	ToolArgumentsList           []string       `json:"tool_arguments_list,omitempty"`
+	PromptCacheKey              string         `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort             string         `json:"reasoning_effort,omitempty"`
+	ContentType                 string         `json:"content_type,omitempty"`
+	FileData                    string         `json:"file_data,omitempty"`
+	ImageURL                    string         `json:"image_url,omitempty"`
+	StreamEventType             string         `json:"stream_event_type,omitempty"`
+	StreamEventCount            map[string]int `json:"stream_event_count,omitempty"`
+	StreamErrorCode             string         `json:"stream_error_code,omitempty"`
+	StreamErrorType             string         `json:"stream_error_type,omitempty"`
+	StreamErrorText             string         `json:"stream_error_text,omitempty"`
+	StreamUsagePromptTokens     int            `json:"stream_usage_prompt_tokens,omitempty"`
+	StreamUsageCompletionTokens int            `json:"stream_usage_completion_tokens,omitempty"`
+	StreamUsageTotalTokens      int            `json:"stream_usage_total_tokens,omitempty"`
 }
 
 func LoadProxyContract(path string) (*ProxyContract, error) {
@@ -182,7 +185,11 @@ func runProxyConversionContract(t *testing.T, contract *ProxyContract) {
 		require.NoError(t, err)
 		require.NotEmpty(t, result.DownstreamEvents)
 		if contract.Expected.OutputText != "" {
-			require.Equal(t, contract.Expected.OutputText, result.OutputText)
+			outputText := result.OutputText
+			if outputText == "" {
+				outputText = streamOutputText(result.DownstreamEvents)
+			}
+			require.Equal(t, contract.Expected.OutputText, outputText)
 		}
 		if contract.Expected.ReasoningText != "" {
 			require.Equal(t, contract.Expected.ReasoningText, result.ReasoningText)
@@ -204,6 +211,17 @@ func runProxyConversionContract(t *testing.T, contract *ProxyContract) {
 		}
 		for eventType, expectedCount := range contract.Expected.StreamEventCount {
 			require.Equal(t, expectedCount, countStreamEventsByType(result.DownstreamEvents, eventType), "event type %s", eventType)
+		}
+		if contract.Expected.StreamUsagePromptTokens != 0 || contract.Expected.StreamUsageCompletionTokens != 0 || contract.Expected.StreamUsageTotalTokens != 0 {
+			require.NotNil(t, result.Usage)
+			require.Equal(t, contract.Expected.StreamUsagePromptTokens, result.Usage.PromptTokens)
+			require.Equal(t, contract.Expected.StreamUsageCompletionTokens, result.Usage.CompletionTokens)
+			require.Equal(t, contract.Expected.StreamUsageTotalTokens, result.Usage.TotalTokens)
+			event, ok := findStreamTerminalEventWithUsage(result.DownstreamEvents)
+			require.True(t, ok, "expected terminal stream event with usage")
+			require.Equal(t, contract.Expected.StreamUsagePromptTokens, int(gjson.Get(event, "response.usage.prompt_tokens").Int()))
+			require.Equal(t, contract.Expected.StreamUsageCompletionTokens, int(gjson.Get(event, "response.usage.completion_tokens").Int()))
+			require.Equal(t, contract.Expected.StreamUsageTotalTokens, int(gjson.Get(event, "response.usage.total_tokens").Int()))
 		}
 		if contract.Expected.StreamEventType != "" {
 			event, ok := findStreamEventByType(result.DownstreamEvents, contract.Expected.StreamEventType)
@@ -247,6 +265,20 @@ func findStreamEventByType(events []string, eventType string) (string, bool) {
 	for _, event := range events {
 		if gjson.Get(event, "type").String() == eventType {
 			return event, true
+		}
+	}
+	return "", false
+}
+
+func findStreamTerminalEventWithUsage(events []string) (string, bool) {
+	for _, eventType := range []string{"response.completed", "response.failed"} {
+		for _, event := range events {
+			if gjson.Get(event, "type").String() != eventType {
+				continue
+			}
+			if gjson.Get(event, "response.usage").Exists() {
+				return event, true
+			}
 		}
 	}
 	return "", false
@@ -305,4 +337,15 @@ func streamToolArguments(events []string) []string {
 		}
 	}
 	return args
+}
+
+func streamOutputText(events []string) string {
+	text := ""
+	for _, event := range events {
+		if gjson.Get(event, "type").String() != "response.output_text.delta" {
+			continue
+		}
+		text += gjson.Get(event, "delta").String()
+	}
+	return text
 }

@@ -357,6 +357,43 @@ func TestStickyRouterClearRemovesCurrentSessionEntry(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestStickyRouterClearStickyEntriesByGroupAndChannel(t *testing.T) {
+	store := scheduler.NewMemoryStickyStore(8)
+	store.Set("sticky-a", scheduler.StickyEntry{
+		ChannelID: 42,
+		Group:     "vip",
+		ExpiresAt: time.Now().Add(time.Minute),
+	})
+	store.Set("sticky-b", scheduler.StickyEntry{
+		ChannelID: 42,
+		Group:     "vip",
+		ExpiresAt: time.Now().Add(time.Minute),
+	})
+	store.Set("sticky-c", scheduler.StickyEntry{
+		ChannelID: 43,
+		Group:     "vip",
+		ExpiresAt: time.Now().Add(time.Minute),
+	})
+	store.Set("sticky-d", scheduler.StickyEntry{
+		ChannelID: 42,
+		Group:     "default",
+		ExpiresAt: time.Now().Add(time.Minute),
+	})
+	router := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{Store: store}, nil)
+
+	deleted := router.ClearStickyEntries(scheduler.StickyClearFilter{
+		Group:     "vip",
+		ChannelID: 42,
+	})
+
+	require.Equal(t, 2, deleted)
+	entries := router.StickyEntries()
+	require.Len(t, entries, 2)
+	for _, entry := range entries {
+		require.False(t, entry.Group == "vip" && entry.ChannelID == 42)
+	}
+}
+
 func TestStickyRouterDisabledContextSkipsRouteAndSave(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := newStickyRequestContext(t, `{"session_id":"sess-disabled-a"}`, nil)
@@ -423,6 +460,84 @@ func TestStickyRouterSaveRenewsTTL(t *testing.T) {
 	route, ok := router.Route(ctx, &req, core.GroupSmartPolicy{RequestedGroup: "default"})
 	require.True(t, ok)
 	require.Equal(t, 21, route.ChannelID)
+}
+
+func TestStickyRouterReportSuccessRenewsTTL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-report-renew-a"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 506)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	store := scheduler.NewMemoryStickyStore(8)
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{
+		TTLSeconds:     1,
+		RenewOnSuccess: true,
+		Store:          store,
+	}, nil)
+	sticky.Save(ctx, &req, &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 31},
+		SelectedGroup: "default",
+	})
+	time.Sleep(600 * time.Millisecond)
+	sticky.Report(ctx, &req, &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 31},
+		SelectedGroup: "default",
+		StickySource:  "user_sticky",
+	}, core.AttemptResult{
+		Success: true,
+	})
+
+	time.Sleep(600 * time.Millisecond)
+	route, ok := sticky.Route(ctx, &req, core.GroupSmartPolicy{RequestedGroup: "default"})
+	require.True(t, ok)
+	require.Equal(t, 31, route.ChannelID)
+}
+
+func TestStickyRouterReportFailureKeepOrClear(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	for _, tc := range []struct {
+		name       string
+		policy     scheduler.StickyFailurePolicy
+		wantExists bool
+	}{
+		{name: "keep", policy: scheduler.StickyFailurePolicyKeep, wantExists: true},
+		{name: "clear", policy: scheduler.StickyFailurePolicyClear, wantExists: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := newStickyRequestContext(t, `{"session_id":"sess-report-failure-`+tc.name+`"}`, nil)
+			common.SetContextKey(ctx, constant.ContextKeyTokenId, 507)
+			router := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{
+				FailurePolicy: tc.policy,
+				Store:         scheduler.NewMemoryStickyStore(8),
+			}, nil)
+			plan := &core.DispatchPlan{
+				Channel:       &model.Channel{Id: 32},
+				SelectedGroup: "default",
+				StickySource:  "user_sticky",
+			}
+			router.Save(ctx, &req, plan)
+			router.Report(ctx, &req, plan, core.AttemptResult{
+				Success:    false,
+				StatusCode: 500,
+			})
+
+			route, ok := router.Route(ctx, &req, core.GroupSmartPolicy{RequestedGroup: "default"})
+			require.Equal(t, tc.wantExists, ok)
+			if tc.wantExists {
+				require.Equal(t, 32, route.ChannelID)
+			}
+		})
+	}
 }
 
 func TestHybridStickyStoreStoresAndExpiresEntries(t *testing.T) {

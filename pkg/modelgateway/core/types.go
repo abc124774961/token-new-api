@@ -47,6 +47,8 @@ type GroupSmartPolicy struct {
 	CandidateGroups       []string
 	CacheAffinityEnabled  bool
 	QueueEnabled          bool
+	QueueHighPriority     bool
+	QueuePriority         int
 	CircuitBreakerEnabled bool
 }
 
@@ -82,6 +84,7 @@ type DispatchPlan struct {
 	QueueEnabled    bool
 	QueueDepth      int
 	QueueCapacity   int
+	QueuePriority   int
 	SelectedReason  string
 	StickySource    string
 	StickyKeyFP     string
@@ -124,6 +127,104 @@ type RuntimeSnapshot struct {
 	SampleCount          int
 }
 
+type RuntimeQueueSnapshot struct {
+	UpdatedAt     int64                         `json:"updated_at,omitempty"`
+	NodeID        string                        `json:"node_id,omitempty"`
+	Summary       RuntimeQueueSummary           `json:"summary"`
+	Channels      []RuntimeQueueChannelSnapshot `json:"channels,omitempty"`
+	RuntimeKeys   []RuntimeQueueKeySnapshot     `json:"runtime_keys,omitempty"`
+	Groups        []RuntimeQueueGroupSnapshot   `json:"groups,omitempty"`
+	RejectReasons []RuntimeQueueReasonCount     `json:"reject_reasons,omitempty"`
+	Cooldowns     []RuntimeQueueCooldownHint    `json:"cooldowns,omitempty"`
+	Nodes         []RuntimeQueueNodeSnapshot    `json:"nodes,omitempty"`
+}
+
+type RuntimeQueueNodeSnapshot struct {
+	NodeID        string                        `json:"node_id"`
+	UpdatedAt     int64                         `json:"updated_at,omitempty"`
+	Summary       RuntimeQueueSummary           `json:"summary"`
+	Channels      []RuntimeQueueChannelSnapshot `json:"channels,omitempty"`
+	RuntimeKeys   []RuntimeQueueKeySnapshot     `json:"runtime_keys,omitempty"`
+	Groups        []RuntimeQueueGroupSnapshot   `json:"groups,omitempty"`
+	RejectReasons []RuntimeQueueReasonCount     `json:"reject_reasons,omitempty"`
+	Cooldowns     []RuntimeQueueCooldownHint    `json:"cooldowns,omitempty"`
+}
+
+type RuntimeQueueSummary struct {
+	UpdatedAt            int64 `json:"updated_at,omitempty"`
+	TotalQueued          int   `json:"total_queued"`
+	TotalDepth           int   `json:"total_depth"`
+	TotalCapacity        int   `json:"total_capacity,omitempty"`
+	Waiting              int   `json:"waiting"`
+	QueuedRequests       int   `json:"queued_requests"`
+	WaitingRequests      int   `json:"waiting_requests"`
+	QueueChannels        int   `json:"queue_channels"`
+	QueueGroups          int   `json:"queue_groups,omitempty"`
+	QueueCapacity        int   `json:"queue_capacity,omitempty"`
+	MaxQueueDepth        int   `json:"max_queue_depth,omitempty"`
+	HighPriorityDepth    int   `json:"high_priority_depth,omitempty"`
+	NormalDepth          int   `json:"normal_depth,omitempty"`
+	HighPriorityCapacity int   `json:"high_priority_capacity,omitempty"`
+	NormalCapacity       int   `json:"normal_capacity,omitempty"`
+	QueueNodes           int   `json:"queue_nodes,omitempty"`
+}
+
+type RuntimeQueueChannelSnapshot struct {
+	ChannelID            int                         `json:"channel_id"`
+	QueueDepth           int                         `json:"queue_depth"`
+	QueuedRequests       int                         `json:"queued_requests"`
+	WaitingRequests      int                         `json:"waiting_requests"`
+	QueueCapacity        int                         `json:"queue_capacity,omitempty"`
+	MaxQueueDepth        int                         `json:"max_queue_depth,omitempty"`
+	HighPriorityDepth    int                         `json:"high_priority_depth,omitempty"`
+	NormalDepth          int                         `json:"normal_depth,omitempty"`
+	HighPriorityCapacity int                         `json:"high_priority_capacity,omitempty"`
+	NormalCapacity       int                         `json:"normal_capacity,omitempty"`
+	Groups               []RuntimeQueueGroupSnapshot `json:"groups,omitempty"`
+	RejectReason         string                      `json:"reject_reason,omitempty"`
+	RejectCount          int                         `json:"reject_count,omitempty"`
+}
+
+type RuntimeQueueKeySnapshot struct {
+	RuntimeKey            RuntimeKey `json:"runtime_key"`
+	RequestedModel        string     `json:"requested_model,omitempty"`
+	UpstreamModel         string     `json:"upstream_model,omitempty"`
+	ChannelID             int        `json:"channel_id,omitempty"`
+	Group                 string     `json:"group,omitempty"`
+	EndpointType          string     `json:"endpoint_type,omitempty"`
+	CapabilityFingerprint string     `json:"capability_fingerprint,omitempty"`
+	QueueDepth            int        `json:"queue_depth"`
+	QueuedRequests        int        `json:"queued_requests"`
+	WaitingRequests       int        `json:"waiting_requests"`
+	HighPriorityDepth     int        `json:"high_priority_depth,omitempty"`
+	NormalDepth           int        `json:"normal_depth,omitempty"`
+}
+
+type RuntimeQueueGroupSnapshot struct {
+	ChannelID         int    `json:"channel_id,omitempty"`
+	Group             string `json:"group,omitempty"`
+	QueueDepth        int    `json:"queue_depth"`
+	QueuedRequests    int    `json:"queued_requests"`
+	WaitingRequests   int    `json:"waiting_requests"`
+	HighPriorityDepth int    `json:"high_priority_depth,omitempty"`
+	NormalDepth       int    `json:"normal_depth,omitempty"`
+}
+
+type RuntimeQueueReasonCount struct {
+	Reason    string `json:"reason"`
+	Count     int    `json:"count"`
+	ChannelID int    `json:"channel_id,omitempty"`
+	Group     string `json:"group,omitempty"`
+}
+
+type RuntimeQueueCooldownHint struct {
+	ChannelID                        int    `json:"channel_id,omitempty"`
+	Group                            string `json:"group,omitempty"`
+	Reason                           string `json:"reason,omitempty"`
+	CooldownRemainingSeconds         int64  `json:"cooldown_remaining_seconds,omitempty"`
+	FailureAvoidanceRemainingSeconds int64  `json:"failure_avoidance_remaining_seconds,omitempty"`
+}
+
 type CircuitState string
 
 const (
@@ -139,6 +240,8 @@ type CircuitSnapshot struct {
 	SuccessCount      int
 	SampleCount       int
 	FailureRate       float64
+	OpenReason        string
+	ErrorCounts       map[string]int
 	OpenUntil         time.Time
 	HalfOpenProbeUsed int
 	HalfOpenProbeMax  int

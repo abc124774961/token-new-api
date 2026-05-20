@@ -12,6 +12,11 @@ import (
 )
 
 func SetApiRouter(router *gin.Engine) {
+	realtimeRouter := router.Group("/api")
+	realtimeRouter.Use(middleware.RouteTag("api"))
+	realtimeRouter.Use(middleware.GlobalAPIRateLimit())
+	realtimeRouter.GET("/realtime/ws", middleware.RealtimeAdminAuth(), controller.RealtimeWebSocket)
+
 	apiRouter := router.Group("/api")
 	apiRouter.Use(middleware.RouteTag("api"))
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
@@ -334,7 +339,11 @@ func SetApiRouter(router *gin.Engine) {
 			modelGatewayRoute.GET("/observability/summary", controller.GetModelGatewayObservabilitySummary)
 			modelGatewayRoute.GET("/observability/trends/export", controller.ExportModelGatewayObservabilityTrends)
 			modelGatewayRoute.GET("/observability/runtime", controller.GetModelGatewayRuntimeStatus)
+			modelGatewayRoute.GET("/observability/sticky", controller.GetModelGatewayStickyStore)
+			modelGatewayRoute.DELETE("/observability/sticky", controller.ClearModelGatewayStickyStore)
+			modelGatewayRoute.DELETE("/observability/sticky/:key_id", controller.ClearModelGatewayStickyStoreEntry)
 			modelGatewayRoute.GET("/replay/export", controller.ExportModelGatewayReplay)
+			modelGatewayRoute.GET("/replay/export/batch", controller.ExportModelGatewayReplayBatch)
 		}
 
 		prefillGroupRoute := apiRouter.Group("/prefill_group")

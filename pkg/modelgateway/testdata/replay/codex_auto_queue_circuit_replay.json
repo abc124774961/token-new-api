@@ -1,0 +1,276 @@
+{
+  "version": 1,
+  "kind": "modelgateway_replay",
+  "records": [
+    {
+      "requested_group": "auto",
+      "selected_group": "default",
+      "requested_model": "gpt-5.5-codex",
+      "channel_id": 3202,
+      "channel_name": "replay_default_queue_channel",
+      "endpoint_type": "openai-response",
+      "policy_mode": "active",
+      "auto_mode": "auto_fusion",
+      "strategy": "balanced",
+      "smart_handled": true,
+      "success": true,
+      "duration_ms": 780,
+      "ttft_ms": 180,
+      "score_total": 0.7654,
+      "score_breakdown": {
+        "success": 0.97,
+        "speed": 1,
+        "load": 0,
+        "cost": 0.8333,
+        "group": 1
+      },
+      "candidate_groups": [
+        "default",
+        "vip"
+      ],
+      "candidate_explanations": [
+        {
+          "channel_id": 3201,
+          "channel_name": "replay_vip_circuit_channel",
+          "group": "vip",
+          "upstream_model": "gpt-5.5-codex",
+          "provider_profile": "openai_codex",
+          "proxy_mode": "native",
+          "runtime_key": {
+            "requested_model": "gpt-5.5-codex",
+            "upstream_model": "gpt-5.5-codex",
+            "channel_id": 3201,
+            "group": "vip",
+            "endpoint_type": "openai-response",
+            "capability_fingerprint": "openai_codex"
+          },
+          "available": false,
+          "reject_reason": "circuit_open"
+        },
+        {
+          "channel_id": 3202,
+          "channel_name": "replay_default_queue_channel",
+          "group": "default",
+          "upstream_model": "gpt-5.5-codex",
+          "provider_profile": "openai_codex",
+          "proxy_mode": "native",
+          "runtime_key": {
+            "requested_model": "gpt-5.5-codex",
+            "upstream_model": "gpt-5.5-codex",
+            "channel_id": 3202,
+            "group": "default",
+            "endpoint_type": "openai-response",
+            "capability_fingerprint": "openai_codex"
+          },
+          "available": true,
+          "score_total": 0.7654,
+          "score_breakdown": {
+            "success": 0.97,
+            "speed": 1,
+            "load": 0,
+            "cost": 0.8333,
+            "group": 1
+          },
+          "selected": true
+        },
+        {
+          "channel_id": 3203,
+          "channel_name": "replay_default_full_channel",
+          "group": "default",
+          "upstream_model": "gpt-5.5-codex",
+          "provider_profile": "openai_codex",
+          "proxy_mode": "native",
+          "runtime_key": {
+            "requested_model": "gpt-5.5-codex",
+            "upstream_model": "gpt-5.5-codex",
+            "channel_id": 3203,
+            "group": "default",
+            "endpoint_type": "openai-response",
+            "capability_fingerprint": "openai_codex"
+          },
+          "available": false,
+          "reject_reason": "concurrency_full"
+        }
+      ],
+      "selected_reason": "weighted_score",
+      "request_meta": {
+        "original_model_name": "gpt-5.5-codex",
+        "user_using_group": "default"
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "codex_auto_queue_circuit_replay",
+      "record_ref": 0,
+      "dispatch": {
+        "name": "codex_auto_queue_circuit_replay",
+        "request": {
+          "user_group": "default",
+          "requested_group": "auto",
+          "model_name": "gpt-5.5-codex"
+        },
+        "policy": {
+          "mode": "active",
+          "strategy": "balanced",
+          "auto_mode": "auto_fusion",
+          "cross_group_fusion": false,
+          "candidate_groups": [
+            "default",
+            "vip"
+          ],
+          "queue_enabled": true
+        },
+        "auto_groups": [
+          "default",
+          "vip"
+        ],
+        "usable_groups": [
+          "default",
+          "vip"
+        ],
+        "channels": [
+          {
+            "id": 3201,
+            "group": "vip",
+            "name": "replay_vip_circuit_channel"
+          },
+          {
+            "id": 3202,
+            "group": "default",
+            "name": "replay_default_queue_channel"
+          },
+          {
+            "id": 3203,
+            "group": "default",
+            "name": "replay_default_full_channel"
+          }
+        ],
+        "runtime_snapshots": [
+          {
+            "channel_id": 3201,
+            "group": "vip",
+            "success_rate": 0.99,
+            "ttft_ms": 120,
+            "duration_ms": 620,
+            "tokens_per_second": 90,
+            "active_concurrency": 1,
+            "max_concurrency": 8,
+            "cost_ratio": 0.9,
+            "group_priority_ratio": 1,
+            "circuit_open": true,
+            "sample_count": 25
+          },
+          {
+            "channel_id": 3202,
+            "group": "default",
+            "success_rate": 0.97,
+            "ttft_ms": 180,
+            "duration_ms": 780,
+            "tokens_per_second": 86,
+            "active_concurrency": 4,
+            "max_concurrency": 4,
+            "queue_depth": 1,
+            "estimated_queue_wait_ms": 650,
+            "cost_ratio": 1.2,
+            "group_priority_ratio": 1,
+            "sample_count": 30
+          },
+          {
+            "channel_id": 3203,
+            "group": "default",
+            "success_rate": 0.96,
+            "ttft_ms": 160,
+            "duration_ms": 720,
+            "tokens_per_second": 88,
+            "active_concurrency": 4,
+            "max_concurrency": 4,
+            "queue_depth": 8,
+            "estimated_queue_wait_ms": 3500,
+            "cost_ratio": 1,
+            "group_priority_ratio": 1,
+            "sample_count": 20
+          }
+        ],
+        "expected": {
+          "handled": true,
+          "selected_channel_id": 3202,
+          "selected_group": "default",
+          "fallback_used": false,
+          "score_breakdown": {
+            "success": 0.97,
+            "speed": 1,
+            "load": 0,
+            "cost": 0.8333,
+            "group": 1
+          },
+          "candidates": [
+            {
+              "channel_id": 3201,
+              "available": false,
+              "reject_reason": "circuit_open",
+              "selected": false
+            },
+            {
+              "channel_id": 3202,
+              "available": true,
+              "selected": true,
+              "score_total": 0.7654
+            },
+            {
+              "channel_id": 3203,
+              "available": false,
+              "reject_reason": "concurrency_full",
+              "selected": false
+            }
+          ]
+        }
+      },
+      "expect_replay": {
+        "selected_channel_id": 3202,
+        "selected_group": "default",
+        "score_total": 0.7654,
+        "score_breakdown": {
+          "success": 0.97,
+          "speed": 1,
+          "load": 0,
+          "cost": 0.8333,
+          "group": 1
+        },
+        "selected_reason": "weighted_score",
+        "candidate_explanations": [
+          {
+            "channel_id": 3201,
+            "channel_name": "replay_vip_circuit_channel",
+            "group": "vip",
+            "upstream_model": "gpt-5.5-codex",
+            "provider_profile": "openai_codex",
+            "proxy_mode": "native",
+            "available": false,
+            "reject_reason": "circuit_open"
+          },
+          {
+            "channel_id": 3202,
+            "channel_name": "replay_default_queue_channel",
+            "group": "default",
+            "upstream_model": "gpt-5.5-codex",
+            "provider_profile": "openai_codex",
+            "proxy_mode": "native",
+            "available": true,
+            "selected": true
+          },
+          {
+            "channel_id": 3203,
+            "channel_name": "replay_default_full_channel",
+            "group": "default",
+            "upstream_model": "gpt-5.5-codex",
+            "provider_profile": "openai_codex",
+            "proxy_mode": "native",
+            "available": false,
+            "reject_reason": "concurrency_full"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -2,10 +2,14 @@ package modelgateway_test
 
 import (
 	"testing"
+	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/integration"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/testkit"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -76,6 +80,12 @@ func TestPortableFacadeActiveDelegatesSelector(t *testing.T) {
 	require.Equal(t, core.ModeActive, plan.PolicyMode)
 	require.Equal(t, core.AutoModeSequential, plan.AutoMode)
 	require.Equal(t, 1, h.Selector.Calls)
+	records := h.Recorder.SnapshotRecords()
+	require.Len(t, records, 1)
+	require.Equal(t, core.ModeActive, records[0].Policy.Mode)
+	require.Equal(t, core.AutoModeSequential, records[0].Policy.AutoMode)
+	require.Equal(t, 7, records[0].Plan.Channel.Id)
+	require.False(t, records[0].Shadow)
 }
 
 func TestPortableFacadeShadowRecordsOnly(t *testing.T) {
@@ -110,4 +120,79 @@ func TestPortableFacadeShadowRecordsOnly(t *testing.T) {
 	require.True(t, records[0].Shadow)
 	require.Equal(t, "default", records[0].ActualGroup)
 	require.Equal(t, 3, records[0].Actual.Id)
+}
+
+func TestFacadeReportAppliesStickyLifecycle(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 901)
+
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{
+		TTLSeconds:           1,
+		RenewOnSuccess:       true,
+		FailurePolicy:        scheduler.StickyFailurePolicyClear,
+		StickyKeepScoreRatio: 0.85,
+		Store:                scheduler.NewMemoryStickyStore(8),
+	}, nil)
+	h := testkit.NewDispatchTestHarness(core.SchedulerSettings{
+		Enabled:         true,
+		DefaultMode:     core.ModeOff,
+		DefaultStrategy: core.StrategyBalanced,
+		GroupPolicies: map[string]core.GroupPolicySetting{
+			"default": {
+				Mode:     core.ModeActive,
+				Strategy: core.StrategyBalanced,
+				AutoMode: core.AutoModeSequential,
+			},
+		},
+	})
+	h.Selector.Sticky = sticky
+
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+		EndpointType:   constant.EndpointTypeOpenAIResponse,
+	}
+	plan := &core.DispatchPlan{
+		Channel:        &model.Channel{Id: 51, Name: "sticky-success"},
+		SelectedGroup:  "default",
+		RequestedGroup: "default",
+		RuntimeKey: core.RuntimeKey{
+			RequestedModel: "gpt-5.5",
+			ChannelID:      51,
+			Group:          "default",
+			EndpointType:   constant.EndpointTypeOpenAIResponse,
+		},
+		StickySource: "user_sticky",
+	}
+	sticky.Save(ctx, &req, plan)
+	integration.SetFailedStickyPlan(ctx, plan)
+	time.Sleep(600 * time.Millisecond)
+
+	h.Facade.Report(ctx, &core.AttemptResult{
+		ChannelID:      51,
+		RequestedGroup: "default",
+		SelectedGroup:  "default",
+		ModelName:      "gpt-5.5",
+		EndpointType:   constant.EndpointTypeOpenAIResponse,
+		Success:        true,
+	})
+	time.Sleep(600 * time.Millisecond)
+
+	route, ok := sticky.Route(ctx, &req, core.GroupSmartPolicy{RequestedGroup: "default"})
+	require.True(t, ok)
+	require.Equal(t, 51, route.ChannelID)
+
+	h.Facade.Report(ctx, &core.AttemptResult{
+		ChannelID:      51,
+		RequestedGroup: "default",
+		SelectedGroup:  "default",
+		ModelName:      "gpt-5.5",
+		EndpointType:   constant.EndpointTypeOpenAIResponse,
+		Success:        false,
+		StatusCode:     500,
+	})
+	_, ok = sticky.Route(ctx, &req, core.GroupSmartPolicy{RequestedGroup: "default"})
+	require.False(t, ok)
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/gin-gonic/gin"
@@ -27,6 +28,18 @@ type modelGatewayTrendExportAPIResponse struct {
 	Success bool                    `json:"success"`
 	Message string                  `json:"message"`
 	Data    ModelGatewayTrendExport `json:"data"`
+}
+
+type modelGatewayStickyStoreAPIResponse struct {
+	Success bool                            `json:"success"`
+	Message string                          `json:"message"`
+	Data    ModelGatewayStickyStoreResponse `json:"data"`
+}
+
+type modelGatewayStickyClearAPIResponse struct {
+	Success bool                            `json:"success"`
+	Message string                          `json:"message"`
+	Data    ModelGatewayStickyClearResponse `json:"data"`
 }
 
 func TestGetModelGatewayObservabilitySummaryAggregatesRecentRecords(t *testing.T) {
@@ -203,6 +216,8 @@ func TestGetModelGatewayObservabilitySummaryAggregatesRecentRecords(t *testing.T
 	require.Equal(t, int64(1), payload.Data.Summary.StickyRetained)
 	require.Equal(t, int64(1), payload.Data.Summary.StickyBroken)
 	require.Equal(t, int64(1), payload.Data.Summary.CacheAffinityRoutes)
+	requireTrendRejectReason(t, payload.Data.Summary.CircuitErrorTypes, scheduler.CircuitErrorStreamInterrupted, 1)
+	requireTrendRejectReason(t, payload.Data.Summary.CircuitErrorCounts, scheduler.CircuitErrorStreamInterrupted, 1)
 	require.GreaterOrEqual(t, payload.Data.Summary.RiskEvents, int64(1))
 	require.GreaterOrEqual(t, payload.Data.Summary.RiskStatusChanges, int64(1))
 	require.Equal(t, payload.Data.Summary.RiskEvents, payload.Data.Risk.EventCount)
@@ -271,13 +286,18 @@ func TestGetModelGatewayObservabilitySummaryAggregatesRecentRecords(t *testing.T
 	requireAggregate(t, trend.ByProxyMode, "responses_via_chat", 1, 1, 0)
 	requireAggregate(t, trend.ByProxyMode, "unknown", 1, 0, 1)
 	requireTrendRejectReason(t, trend.RejectReasons, "concurrency_full", 1)
+	requireTrendRejectReason(t, trend.CircuitErrorTypes, scheduler.CircuitErrorStreamInterrupted, 1)
+	requireTrendRejectReason(t, trend.CircuitErrorCounts, scheduler.CircuitErrorStreamInterrupted, 1)
 	requireRiskEvent(t, trend.RiskEvents, "trend_bucket", "stream_interrupted", "stream_interrupted", "")
+	requireRiskEvent(t, trend.RiskEvents, "trend_bucket", "circuit_error_type", "stream_interrupted", scheduler.CircuitErrorStreamInterrupted)
 	requireRiskEvent(t, trend.RiskEvents, "trend_bucket", "fallback_used", "fallback", "")
 	requireRiskEvent(t, trend.RiskEvents, "trend_bucket", "reject_reason", "saturated", "concurrency_full")
 	require.NotNil(t, trend.Risk)
 	require.GreaterOrEqual(t, trend.Risk.EventCount, int64(1))
+	requireTrendRejectReason(t, trend.Risk.TopCircuitErrorTypes, scheduler.CircuitErrorStreamInterrupted, 1)
 	requireRiskEvent(t, trend.Risk.RiskEvents, "trend_bucket", "reject_reason", "saturated", "concurrency_full")
 	requireRiskEvent(t, payload.Data.RiskTimeline, "trend_bucket", "stream_interrupted", "stream_interrupted", "")
+	requireTrendRejectReason(t, payload.Data.Risk.TopCircuitErrorTypes, scheduler.CircuitErrorStreamInterrupted, 1)
 
 	requireAggregate(t, payload.Data.ByModel, "gpt-5.5", 1, 1, 0)
 	requireAggregate(t, payload.Data.ByModel, "claude-4", 1, 0, 1)
@@ -295,6 +315,293 @@ func TestGetModelGatewayObservabilitySummaryAggregatesRecentRecords(t *testing.T
 	requireObservabilityMetaAggregate(t, payload.Data.ByProxyMode, "responses_via_chat", 1, 1, 640, 1, 1, 0, 1)
 }
 
+func TestBuildModelGatewayObservabilitySummaryUsesDefaultScanLimit(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&[]model.ModelExecutionRecord{
+		{
+			CreatedAt:      now - 2,
+			RequestId:      "req-realtime",
+			RequestedGroup: "default",
+			SelectedGroup:  "default",
+			RequestedModel: "gpt-5.4",
+			ChannelId:      8,
+			PolicyMode:     "active",
+			SmartHandled:   true,
+		},
+		{
+			CreatedAt:      now - 1,
+			RequestId:      "req-realtime",
+			RequestedGroup: "default",
+			SelectedGroup:  "default",
+			RequestedModel: "gpt-5.4",
+			ChannelId:      8,
+			Success:        true,
+			DurationMs:     7290,
+			TTFTMs:         2650,
+		},
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       24,
+		RecentLimit: 50,
+		TopN:        10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), response.Summary.TotalRecords)
+	require.Equal(t, 2, response.Summary.ScannedRecords)
+	require.Equal(t, int64(1), response.Summary.Dispatches)
+	require.Equal(t, int64(1), response.Summary.Attempts)
+	require.Equal(t, int64(1), response.Summary.Successes)
+	require.Equal(t, 1.0, response.Summary.SuccessRate)
+	require.Len(t, response.ByModel, 1)
+	require.Equal(t, int64(1), response.ByModel[0].Attempts)
+}
+
+func TestBuildModelGatewayObservabilitySummarySkipsTotalCountByDefault(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	records := make([]model.ModelExecutionRecord, 0, 3)
+	for idx := 0; idx < 3; idx++ {
+		records = append(records, model.ModelExecutionRecord{
+			CreatedAt:      now - int64(idx+1),
+			RequestId:      fmt.Sprintf("req-fast-summary-%d", idx),
+			RequestedGroup: "default",
+			SelectedGroup:  "default",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      10,
+			Success:        true,
+			DurationMs:     100,
+		})
+	}
+	require.NoError(t, db.Create(&records).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 2,
+		TopN:        5,
+		ScanLimit:   2,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), response.Summary.TotalRecords)
+	require.Equal(t, 2, response.Summary.ScannedRecords)
+	require.True(t, response.Summary.Truncated)
+	require.Equal(t, int64(2), response.Summary.Attempts)
+}
+
+func TestBuildModelGatewayObservabilitySummaryIncludesTotalWhenRequested(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	records := make([]model.ModelExecutionRecord, 0, 3)
+	for idx := 0; idx < 3; idx++ {
+		records = append(records, model.ModelExecutionRecord{
+			CreatedAt:      now - int64(idx+1),
+			RequestId:      fmt.Sprintf("req-full-summary-%d", idx),
+			RequestedGroup: "default",
+			SelectedGroup:  "default",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      10,
+			Success:        true,
+			DurationMs:     100,
+		})
+	}
+	require.NoError(t, db.Create(&records).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:        1,
+		RecentLimit:  2,
+		TopN:         5,
+		ScanLimit:    2,
+		IncludeTotal: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), response.Summary.TotalRecords)
+	require.Equal(t, 2, response.Summary.ScannedRecords)
+	require.True(t, response.Summary.Truncated)
+	require.Equal(t, int64(2), response.Summary.Attempts)
+}
+
+func TestModelGatewayObservabilitySummaryCacheKeyNormalizesAndEscapes(t *testing.T) {
+	left := modelGatewayObservabilitySummaryCacheKey(ModelGatewayObservabilityOptions{
+		Hours:              0,
+		RecentLimit:        500,
+		TopN:               0,
+		ScanLimit:          0,
+		TrendBucketSeconds: 30,
+		Model:              " gpt=5&5 ",
+		Group:              " vip group ",
+		ChannelID:          -10,
+		RequestID:          " req=a&b ",
+	})
+	right := modelGatewayObservabilitySummaryCacheKey(ModelGatewayObservabilityOptions{
+		Hours:              1,
+		RecentLimit:        modelGatewayObservabilityMaxRecentLimit,
+		TopN:               1,
+		ScanLimit:          modelGatewayObservabilityDefaultScanLimit,
+		TrendBucketSeconds: modelGatewayObservabilityMinTrendBucket,
+		Model:              "gpt=5&5",
+		Group:              "vip group",
+		ChannelID:          0,
+		RequestID:          "req=a&b",
+	})
+	require.Equal(t, right, left)
+	require.Contains(t, left, "model=gpt%3D5%265")
+	require.Contains(t, left, "request_id=req%3Da%26b")
+}
+
+func TestInvalidateModelGatewayObservabilitySummaryCacheForRecord(t *testing.T) {
+	setupModelGatewayReplayControllerTestDB(t)
+	now := time.Now()
+	matching := ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 50,
+		TopN:        10,
+		ScanLimit:   100,
+		Model:       "gpt-5.5",
+		Group:       "vip",
+		ChannelID:   42,
+	}
+	other := matching
+	other.ChannelID = 99
+	matchingKey := modelGatewayObservabilitySummaryCacheKey(matching)
+	otherKey := modelGatewayObservabilitySummaryCacheKey(other)
+	modelGatewayObservabilitySummaryCache.store(matchingKey, normalizeModelGatewayObservabilityOptions(matching), ModelGatewayObservabilityResponse{}, now)
+	modelGatewayObservabilitySummaryCache.store(otherKey, normalizeModelGatewayObservabilityOptions(other), ModelGatewayObservabilityResponse{}, now)
+
+	InvalidateModelGatewayObservabilitySummaryCacheForRecord(model.ModelExecutionRecord{
+		CreatedAt:      common.GetTimestamp(),
+		RequestedModel: "gpt-5.5",
+		RequestedGroup: "default",
+		SelectedGroup:  "vip",
+		ChannelId:      42,
+	})
+
+	_, ok := modelGatewayObservabilitySummaryCache.lookupFresh(matchingKey, now)
+	require.False(t, ok)
+	_, ok = modelGatewayObservabilitySummaryCache.lookupFresh(otherKey, now)
+	require.True(t, ok)
+}
+
+func TestModelGatewayStickyStoreListsAndClearsByKeyID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	require.NotNil(t, runtimeDeps)
+	require.NotNil(t, runtimeDeps.StickyRouter)
+	key := fmt.Sprintf("sensitive-user-session-%d", time.Now().UnixNano())
+	store := scheduler.NewMemoryStickyStore(8)
+	store.Set(key, scheduler.StickyEntry{
+		ChannelID:      42,
+		Group:          "vip",
+		KeyFingerprint: "session-fp",
+		ExpiresAt:      time.Now().Add(time.Minute),
+	})
+	routerStore := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{Store: store}, nil)
+	runtimeDeps.StickyRouter = routerStore
+
+	router := gin.New()
+	router.GET("/api/model_gateway/observability/sticky", GetModelGatewayStickyStore)
+	router.DELETE("/api/model_gateway/observability/sticky/:key_id", ClearModelGatewayStickyStoreEntry)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/observability/sticky", nil)
+	router.ServeHTTP(resp, req)
+
+	var payload modelGatewayStickyStoreAPIResponse
+	require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &payload), resp.Body.String())
+	require.True(t, payload.Success, resp.Body.String())
+	require.Len(t, payload.Data.Items, 1)
+	item := payload.Data.Items[0]
+	require.NotEmpty(t, item.KeyID)
+	require.Equal(t, 42, item.ChannelID)
+	require.Equal(t, "vip", item.Group)
+	require.Equal(t, "session-fp", item.KeyFingerprint)
+	require.NotContains(t, resp.Body.String(), key)
+
+	clearResp := httptest.NewRecorder()
+	clearReq := httptest.NewRequest(http.MethodDelete, "/api/model_gateway/observability/sticky/"+item.KeyID, nil)
+	router.ServeHTTP(clearResp, clearReq)
+
+	var clearPayload modelGatewayStickyClearAPIResponse
+	require.NoError(t, common.Unmarshal(clearResp.Body.Bytes(), &clearPayload), clearResp.Body.String())
+	require.True(t, clearPayload.Success, clearResp.Body.String())
+	require.True(t, clearPayload.Data.Cleared)
+	require.Empty(t, routerStore.StickyEntries())
+}
+
+func TestModelGatewayStickyStoreBulkClearsByGroupAndChannel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	require.NotNil(t, runtimeDeps)
+	store := scheduler.NewMemoryStickyStore(8)
+	store.Set("sticky-vip-42-a", scheduler.StickyEntry{
+		ChannelID:      42,
+		Group:          "vip",
+		KeyFingerprint: "fp-a",
+		ExpiresAt:      time.Now().Add(time.Minute),
+	})
+	store.Set("sticky-vip-42-b", scheduler.StickyEntry{
+		ChannelID:      42,
+		Group:          "vip",
+		KeyFingerprint: "fp-b",
+		ExpiresAt:      time.Now().Add(time.Minute),
+	})
+	store.Set("sticky-vip-43", scheduler.StickyEntry{
+		ChannelID:      43,
+		Group:          "vip",
+		KeyFingerprint: "fp-c",
+		ExpiresAt:      time.Now().Add(time.Minute),
+	})
+	store.Set("sticky-default-42", scheduler.StickyEntry{
+		ChannelID:      42,
+		Group:          "default",
+		KeyFingerprint: "fp-d",
+		ExpiresAt:      time.Now().Add(time.Minute),
+	})
+	routerStore := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{Store: store}, nil)
+	runtimeDeps.StickyRouter = routerStore
+
+	router := gin.New()
+	router.DELETE("/api/model_gateway/observability/sticky", ClearModelGatewayStickyStore)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/model_gateway/observability/sticky?group=vip&channel_id=42", nil)
+	router.ServeHTTP(resp, req)
+
+	var payload modelGatewayStickyClearAPIResponse
+	require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &payload), resp.Body.String())
+	require.True(t, payload.Success, resp.Body.String())
+	require.True(t, payload.Data.Cleared)
+	require.Equal(t, 2, payload.Data.Deleted)
+	require.Equal(t, "vip", payload.Data.Group)
+	require.Equal(t, 42, payload.Data.ChannelID)
+
+	entries := routerStore.StickyEntries()
+	require.Len(t, entries, 2)
+	for _, entry := range entries {
+		require.False(t, entry.Group == "vip" && entry.ChannelID == 42)
+	}
+}
+
+func TestModelGatewayStickyStoreBulkClearRequiresFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.DELETE("/api/model_gateway/observability/sticky", ClearModelGatewayStickyStore)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/model_gateway/observability/sticky", nil)
+	router.ServeHTTP(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	require.Contains(t, resp.Body.String(), `"success":false`)
+	require.Contains(t, resp.Body.String(), "missing sticky clear filter")
+}
+
 func TestGetModelGatewayObservabilitySummaryAddsRuntimeRiskTimeline(t *testing.T) {
 	response := ModelGatewayObservabilityResponse{
 		RuntimeStatus: modelgatewayobservability.RuntimeStatusResponse{
@@ -303,13 +610,18 @@ func TestGetModelGatewayObservabilitySummaryAddsRuntimeRiskTimeline(t *testing.T
 			},
 			Items: []modelgatewayobservability.RuntimeStatusItem{
 				{
-					RequestedModel: "gpt-5.5",
-					UpstreamModel:  "mimo-v1",
-					ChannelID:      101,
-					Group:          "vip",
-					EndpointType:   string(constant.EndpointTypeOpenAI),
-					HealthStatus:   "circuit_open",
-					CircuitOpen:    true,
+					RequestedModel:    "gpt-5.5",
+					UpstreamModel:     "mimo-v1",
+					ChannelID:         101,
+					Group:             "vip",
+					EndpointType:      string(constant.EndpointTypeOpenAI),
+					HealthStatus:      "circuit_open",
+					CircuitOpen:       true,
+					CircuitOpenReason: scheduler.CircuitErrorRateLimit,
+					CircuitErrorCounts: map[string]int{
+						scheduler.CircuitErrorRateLimit: 3,
+						scheduler.CircuitErrorServer:    1,
+					},
 				},
 				{
 					RequestedModel:    "gpt-5.5",
@@ -337,11 +649,17 @@ func TestGetModelGatewayObservabilitySummaryAddsRuntimeRiskTimeline(t *testing.T
 
 	require.Equal(t, int64(2), response.Summary.RiskEvents)
 	require.Equal(t, 2, response.Summary.CurrentRiskRuntimeKeys)
+	requireTrendRejectReason(t, response.Summary.CircuitOpenReasons, scheduler.CircuitErrorRateLimit, 1)
+	requireTrendRejectReason(t, response.Summary.CircuitErrorTypes, scheduler.CircuitErrorRateLimit, 3)
+	requireTrendRejectReason(t, response.Summary.CircuitErrorCounts, scheduler.CircuitErrorRateLimit, 3)
+	requireTrendRejectReason(t, response.Summary.CircuitErrorTypes, scheduler.CircuitErrorServer, 1)
 	require.Len(t, response.RiskTimeline, 2)
 	require.Len(t, response.RiskEvents, 2)
 	require.Equal(t, int64(2), response.Risk.EventCount)
 	require.Equal(t, 2, response.Risk.CurrentRiskRuntimeKeys)
-	requireRiskEvent(t, response.RiskTimeline, "runtime_status", "current_runtime_status", "circuit_open", "circuit_open")
+	requireTrendRejectReason(t, response.Risk.TopCircuitOpenReasons, scheduler.CircuitErrorRateLimit, 1)
+	requireTrendRejectReason(t, response.Risk.TopCircuitErrorTypes, scheduler.CircuitErrorRateLimit, 3)
+	requireRiskEvent(t, response.RiskTimeline, "runtime_status", "current_runtime_status", "circuit_open", scheduler.CircuitErrorRateLimit)
 	requireRiskEvent(t, response.RiskTimeline, "runtime_status", "current_runtime_status", "failure_avoidance", "upstream_5xx")
 }
 
@@ -620,7 +938,9 @@ func TestExportModelGatewayObservabilityTrendsReturnsPayload(t *testing.T) {
 	require.NotEmpty(t, payload.Data.Preview.RiskTimeline)
 	require.NotEmpty(t, payload.Data.Preview.Risk.RiskTimeline)
 	requireTrendRejectReason(t, payload.Data.Preview.TopRejectReasons, "circuit_open", 1)
+	requireTrendRejectReason(t, payload.Data.Preview.TopCircuitOpenReasons, "circuit_open", 1)
 	requireTrendRejectReason(t, payload.Data.Preview.Risk.TopRejectReasons, "circuit_open", 1)
+	requireTrendRejectReason(t, payload.Data.Preview.Risk.TopCircuitOpenReasons, "circuit_open", 1)
 	requireRiskStatusCount(t, payload.Data.Preview.TopRiskStatuses, "circuit_open", 1)
 	requireRiskStatusCount(t, payload.Data.Preview.Risk.TopRiskStatuses, "circuit_open", 1)
 	require.Len(t, payload.Data.Trends, 12)
@@ -683,6 +1003,27 @@ func TestGetModelGatewayRuntimeStatusReturnsInjectedState(t *testing.T) {
 		QueueSnapshot: func() map[int]int {
 			return map[int]int{808: 2}
 		},
+		QueueDetailSnapshot: func() core.RuntimeQueueSnapshot {
+			return core.RuntimeQueueSnapshot{
+				UpdatedAt: now.Unix(),
+				Summary: core.RuntimeQueueSummary{
+					UpdatedAt: now.Unix(),
+				},
+				Channels: []core.RuntimeQueueChannelSnapshot{
+					{
+						ChannelID:       808,
+						QueueDepth:      2,
+						QueuedRequests:  2,
+						WaitingRequests: 2,
+						QueueCapacity:   8,
+						NormalDepth:     2,
+						Groups: []core.RuntimeQueueGroupSnapshot{
+							{ChannelID: 808, Group: "vip", QueueDepth: 2, QueuedRequests: 2, WaitingRequests: 2, NormalDepth: 2},
+						},
+					},
+				},
+			}
+		},
 		Now: func() time.Time { return now },
 	})
 
@@ -704,6 +1045,10 @@ func TestGetModelGatewayRuntimeStatusReturnsInjectedState(t *testing.T) {
 	require.Equal(t, 808, payload.Data.Items[0].ChannelID)
 	require.Equal(t, 2, payload.Data.Items[0].QueueDepth)
 	require.Equal(t, "healthy", payload.Data.Items[0].HealthStatus)
+	require.NotNil(t, payload.Data.QueueSnapshot)
+	require.Equal(t, 2, payload.Data.QueueSnapshot.Summary.TotalQueued)
+	require.Equal(t, 808, payload.Data.QueueSnapshot.Channels[0].ChannelID)
+	require.Equal(t, "vip", payload.Data.QueueSnapshot.Groups[0].Group)
 }
 
 func TestGetModelGatewayRuntimeStatusRejectsInvalidChannelID(t *testing.T) {

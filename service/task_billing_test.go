@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +25,8 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	initBillingTestColumnNames()
+
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		panic("failed to open test db: " + err.Error())
@@ -56,6 +60,48 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(m.Run())
+}
+
+func initBillingTestColumnNames() {
+	originalIsMasterNode := common.IsMasterNode
+	originalSQLitePath := common.SQLitePath
+	originalUsingSQLite := common.UsingSQLite
+	originalUsingMySQL := common.UsingMySQL
+	originalUsingPostgreSQL := common.UsingPostgreSQL
+	originalSQLDSN, hadSQLDSN := os.LookupEnv("SQL_DSN")
+	defer func() {
+		common.IsMasterNode = originalIsMasterNode
+		common.SQLitePath = originalSQLitePath
+		common.UsingSQLite = originalUsingSQLite
+		common.UsingMySQL = originalUsingMySQL
+		common.UsingPostgreSQL = originalUsingPostgreSQL
+		if hadSQLDSN {
+			if err := os.Setenv("SQL_DSN", originalSQLDSN); err != nil {
+				panic("failed to restore SQL_DSN: " + err.Error())
+			}
+		} else if err := os.Unsetenv("SQL_DSN"); err != nil {
+			panic("failed to unset SQL_DSN: " + err.Error())
+		}
+	}()
+
+	common.IsMasterNode = false
+	common.SQLitePath = fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll("service_task_billing_init", "/", "_"))
+	common.UsingSQLite = false
+	common.UsingMySQL = false
+	common.UsingPostgreSQL = false
+	if err := os.Setenv("SQL_DSN", "local"); err != nil {
+		panic("failed to set SQL_DSN: " + err.Error())
+	}
+
+	if err := model.InitDB(); err != nil {
+		panic("failed to initialize model column names: " + err.Error())
+	}
+	if model.DB != nil {
+		sqlDB, err := model.DB.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +307,75 @@ func makeBillingRelayInfo(ctx *gin.Context, userID int, tokenID int, tokenKey st
 		},
 		StartTime: time.Now(),
 	}
+}
+
+func TestPreConsumeBilling_WalletDeductsTokenAndUserQuota(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID = 201, 1
+	const initUserQuota = 10000
+	const initTokenRemain = 8000
+	const preConsumed = 3000
+	const tokenKey = "sk-token-preconsume"
+
+	seedUser(t, userID, initUserQuota)
+	seedToken(t, tokenID, userID, tokenKey, initTokenRemain)
+
+	ctx := makeBillingTestContext(t, tokenKey, initTokenRemain)
+	common.SetContextKey(ctx, constant.ContextKeyUserSetting, dto.UserSetting{
+		BillingPreference: "wallet_only",
+	})
+	relayInfo := makeBillingRelayInfo(ctx, userID, tokenID, tokenKey)
+	relayInfo.IsPlayground = false
+	relayInfo.ForcePreConsume = true
+	relayInfo.UserSetting = dto.UserSetting{BillingPreference: "wallet_only"}
+
+	apiErr := PreConsumeBilling(ctx, preConsumed, relayInfo)
+	require.Nil(t, apiErr)
+	require.NotNil(t, relayInfo.Billing)
+
+	assert.Equal(t, BillingSourceWallet, relayInfo.BillingSource)
+	assert.Equal(t, preConsumed, relayInfo.FinalPreConsumedQuota)
+	assert.Equal(t, initUserQuota-preConsumed, getUserQuota(t, userID))
+	assert.Equal(t, initTokenRemain-preConsumed, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, preConsumed, getTokenUsedQuota(t, tokenID))
+}
+
+func TestBillingSession_RefundRestoresWalletAndTokenPreConsume(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID = 202, 1
+	const initUserQuota = 12000
+	const initTokenRemain = 9000
+	const preConsumed = 2500
+	const tokenKey = "sk-token-refund"
+
+	seedUser(t, userID, initUserQuota)
+	seedToken(t, tokenID, userID, tokenKey, initTokenRemain)
+
+	ctx := makeBillingTestContext(t, tokenKey, initTokenRemain)
+	common.SetContextKey(ctx, constant.ContextKeyUserSetting, dto.UserSetting{
+		BillingPreference: "wallet_only",
+	})
+	relayInfo := makeBillingRelayInfo(ctx, userID, tokenID, tokenKey)
+	relayInfo.IsPlayground = false
+	relayInfo.ForcePreConsume = true
+	relayInfo.UserSetting = dto.UserSetting{BillingPreference: "wallet_only"}
+
+	apiErr := PreConsumeBilling(ctx, preConsumed, relayInfo)
+	require.Nil(t, apiErr)
+	require.NotNil(t, relayInfo.Billing)
+	require.Equal(t, initUserQuota-preConsumed, getUserQuota(t, userID))
+	require.Equal(t, initTokenRemain-preConsumed, getTokenRemainQuota(t, tokenID))
+	require.Equal(t, preConsumed, getTokenUsedQuota(t, tokenID))
+
+	relayInfo.Billing.Refund(ctx)
+
+	require.Eventually(t, func() bool {
+		return getUserQuota(t, userID) == initUserQuota &&
+			getTokenRemainQuota(t, tokenID) == initTokenRemain &&
+			getTokenUsedQuota(t, tokenID) == 0
+	}, time.Second, 10*time.Millisecond)
 }
 
 // ===========================================================================

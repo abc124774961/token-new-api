@@ -1,0 +1,223 @@
+/*
+Copyright (C) 2025 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { API } from '../../helpers/api';
+import { showError } from '../../helpers';
+import { REALTIME_STATES } from '../../services/realtime/RealtimeClient';
+import { useRealtimeSubscription } from '../common/useRealtimeSubscription';
+
+const FALLBACK_REFRESH_SECONDS = 30;
+const RECENT_RECORD_LIMIT = 50;
+const MANUAL_REFRESH_SOURCE = 'manual';
+const FALLBACK_REFRESH_SOURCE = 'fallback';
+
+function unwrapApiData(response) {
+  return response?.data?.data || response?.data || {};
+}
+
+function mergeDelta(current, delta) {
+  if (!current || !delta) return current;
+  const recentRecords = Array.isArray(delta.recent_records)
+    ? delta.recent_records
+    : [];
+  if (recentRecords.length === 0) return current;
+  const seen = new Set();
+  const mergedRecent = [...recentRecords, ...(current.recent_records || [])]
+    .filter((record) => {
+      const key = `${record.id || ''}:${record.request_id || ''}:${record.attempt_index || 0}:${record.created_at || ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, RECENT_RECORD_LIMIT);
+  return {
+    ...current,
+    recent_records: mergedRecent,
+  };
+}
+
+export function useModelGatewayObservabilityData({
+  hours,
+  trendBucket,
+  defaultTrendBucket,
+  recentLimit,
+  topN,
+  appliedFilters,
+  t,
+}) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const [fallbackCountdown, setFallbackCountdown] = useState(
+    FALLBACK_REFRESH_SECONDS,
+  );
+  const [fallbackMode, setFallbackMode] = useState(false);
+
+  const requestParams = useMemo(
+    () => ({
+      hours,
+      recent_limit: recentLimit,
+      top_n: topN,
+      trend_bucket_seconds:
+        trendBucket === defaultTrendBucket ? undefined : trendBucket,
+      model: appliedFilters.model || undefined,
+      group: appliedFilters.group || undefined,
+      channel_id: appliedFilters.channel_id || undefined,
+      request_id: appliedFilters.request_id || undefined,
+    }),
+    [appliedFilters, defaultTrendBucket, hours, recentLimit, topN, trendBucket],
+  );
+  const requestKey = useMemo(() => JSON.stringify(requestParams), [requestParams]);
+  const latestRequestKeyRef = useRef(requestKey);
+  const hasSnapshotRef = useRef(false);
+
+  const loadSummary = useCallback(
+    async (silent = false, source = MANUAL_REFRESH_SOURCE) => {
+      const activeRequestKey = requestKey;
+      const isActiveRequest = () =>
+        latestRequestKeyRef.current === activeRequestKey;
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      setError('');
+      try {
+        const response = await API.get(
+          '/api/model_gateway/observability/summary',
+          {
+            params: requestParams,
+            disableDuplicate: true,
+            skipErrorHandler: true,
+          },
+        );
+        if (!isActiveRequest()) return;
+        if (source === FALLBACK_REFRESH_SOURCE && hasSnapshotRef.current) return;
+        setData(unwrapApiData(response));
+        setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
+      } catch (err) {
+        if (!isActiveRequest()) return;
+        if (source === FALLBACK_REFRESH_SOURCE && hasSnapshotRef.current) return;
+        const message =
+          err?.response?.data?.message || err?.message || t('加载观测数据失败');
+        setError(message);
+        if (source !== FALLBACK_REFRESH_SOURCE) {
+          showError(message);
+        }
+      } finally {
+        if (!isActiveRequest()) return;
+        setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [requestKey, requestParams, t],
+  );
+
+  const handleSnapshot = useCallback((payload) => {
+    hasSnapshotRef.current = true;
+    setData(payload || null);
+    setError('');
+    setLoading(false);
+    setRefreshing(false);
+    setFallbackMode(false);
+    setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
+  }, []);
+
+  const handleDelta = useCallback((payload) => {
+    setData((current) => mergeDelta(current, payload));
+  }, []);
+
+  const handleRealtimeError = useCallback(
+    (message) => {
+      if (!message) return;
+      setError(message);
+    },
+    [],
+  );
+
+  const handleDisconnect = useCallback(() => {
+    setFallbackMode(true);
+  }, []);
+
+  useEffect(() => {
+    latestRequestKeyRef.current = requestKey;
+    hasSnapshotRef.current = false;
+    setData(null);
+    setLoading(true);
+    setRefreshing(false);
+    setError('');
+    setFallbackMode(false);
+    setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
+  }, [requestKey]);
+
+  const { connectionState } = useRealtimeSubscription({
+    topic: 'model_gateway.observability',
+    params: requestParams,
+    enabled: true,
+    onSnapshot: handleSnapshot,
+    onDelta: handleDelta,
+    onError: handleRealtimeError,
+    onDisconnect: handleDisconnect,
+  });
+
+  useEffect(() => {
+    loadSummary(false, FALLBACK_REFRESH_SOURCE);
+  }, [loadSummary]);
+
+  useEffect(() => {
+    if (connectionState === REALTIME_STATES.CONNECTED) {
+      setFallbackMode(false);
+      return undefined;
+    }
+    if (!fallbackMode || loading || refreshing) return undefined;
+    if (fallbackCountdown <= 0) {
+      loadSummary(true, FALLBACK_REFRESH_SOURCE);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setFallbackCountdown((value) => Math.max(0, value - 1));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [
+    connectionState,
+    fallbackCountdown,
+    fallbackMode,
+    loadSummary,
+    loading,
+    refreshing,
+  ]);
+
+  const refresh = useCallback(() => {
+    loadSummary(true, MANUAL_REFRESH_SOURCE);
+  }, [loadSummary]);
+
+  return {
+    data,
+    loading,
+    refreshing,
+    error,
+    refresh,
+    connectionState,
+    fallbackMode,
+    fallbackCountdown,
+  };
+}

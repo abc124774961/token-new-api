@@ -5,16 +5,22 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
+	modelgatewayscheduler "github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )
 
@@ -35,6 +41,9 @@ const (
 	modelGatewayTrendExportPreviewLimit         = 20
 	modelGatewayRuntimeStatusDefaultLimit       = 200
 	modelGatewayRuntimeStatusMaxLimit           = 1000
+	modelGatewayObservabilitySummaryFreshTTL    = 3 * time.Second
+	modelGatewayObservabilitySummaryStaleTTL    = 30 * time.Second
+	modelGatewayObservabilitySummaryMaxCache    = 128
 )
 
 type ModelGatewayObservabilityResponse struct {
@@ -51,6 +60,28 @@ type ModelGatewayObservabilityResponse struct {
 	RecentRecords     []ModelGatewayObservabilityRecord               `json:"recent_records"`
 	ScoreBreakdown    ModelGatewayObservabilityScoreBreakdown         `json:"score_breakdown"`
 	RuntimeStatus     modelgatewayobservability.RuntimeStatusResponse `json:"runtime_status"`
+}
+
+type ModelGatewayStickyStoreResponse struct {
+	Items []ModelGatewayStickyStoreItem `json:"items"`
+	Total int                           `json:"total"`
+}
+
+type ModelGatewayStickyStoreItem struct {
+	KeyID          string `json:"key_id"`
+	ChannelID      int    `json:"channel_id"`
+	Group          string `json:"group,omitempty"`
+	KeyFingerprint string `json:"key_fingerprint,omitempty"`
+	ExpiresAt      int64  `json:"expires_at,omitempty"`
+	TTLSeconds     int64  `json:"ttl_seconds,omitempty"`
+}
+
+type ModelGatewayStickyClearResponse struct {
+	KeyID     string `json:"key_id,omitempty"`
+	Group     string `json:"group,omitempty"`
+	ChannelID int    `json:"channel_id,omitempty"`
+	Cleared   bool   `json:"cleared"`
+	Deleted   int    `json:"deleted"`
 }
 
 type ModelGatewayTrendExport struct {
@@ -82,38 +113,43 @@ type ModelGatewayTrendExportPreview struct {
 	RiskTimeline           []ModelGatewayRiskEvent        `json:"risk_timeline,omitempty"`
 	TopRiskStatuses        []ModelGatewayRiskStatusCount  `json:"top_risk_statuses,omitempty"`
 	TopRejectReasons       []ModelGatewayTrendReasonCount `json:"top_reject_reasons,omitempty"`
+	TopCircuitOpenReasons  []ModelGatewayTrendReasonCount `json:"top_circuit_open_reasons,omitempty"`
+	TopCircuitErrorTypes   []ModelGatewayTrendReasonCount `json:"top_circuit_error_types,omitempty"`
 }
 
 type ModelGatewayObservabilitySummary struct {
-	WindowHours             int     `json:"window_hours"`
-	TrendBucketSeconds      int64   `json:"trend_bucket_seconds"`
-	StartTime               int64   `json:"start_time"`
-	EndTime                 int64   `json:"end_time"`
-	TotalRecords            int64   `json:"total_records"`
-	ScannedRecords          int     `json:"scanned_records"`
-	Truncated               bool    `json:"truncated"`
-	Dispatches              int64   `json:"dispatches"`
-	Attempts                int64   `json:"attempts"`
-	Successes               int64   `json:"successes"`
-	Failures                int64   `json:"failures"`
-	StreamInterrupted       int64   `json:"stream_interrupted"`
-	FallbackUsed            int64   `json:"fallback_used"`
-	SuccessRate             float64 `json:"success_rate"`
-	AvgDurationMs           int64   `json:"avg_duration_ms"`
-	AvgTTFTMs               int64   `json:"avg_ttft_ms"`
-	AvgScoreTotal           float64 `json:"avg_score_total"`
-	QueueEnabledDispatches  int64   `json:"queue_enabled_dispatches"`
-	QueuedDispatches        int64   `json:"queued_dispatches"`
-	AvgQueueWaitMs          int64   `json:"avg_queue_wait_ms"`
-	StickyRoutes            int64   `json:"sticky_routes"`
-	StickyRetained          int64   `json:"sticky_retained"`
-	StickyBroken            int64   `json:"sticky_broken"`
-	CacheAffinityRoutes     int64   `json:"cache_affinity_routes"`
-	ScoreBreakdownSamples   int64   `json:"score_breakdown_samples"`
-	ScoreBreakdownParseErrs int64   `json:"score_breakdown_parse_errors"`
-	RiskEvents              int64   `json:"risk_events"`
-	RiskStatusChanges       int64   `json:"risk_status_changes"`
-	CurrentRiskRuntimeKeys  int     `json:"current_risk_runtime_keys"`
+	WindowHours             int                            `json:"window_hours"`
+	TrendBucketSeconds      int64                          `json:"trend_bucket_seconds"`
+	StartTime               int64                          `json:"start_time"`
+	EndTime                 int64                          `json:"end_time"`
+	TotalRecords            int64                          `json:"total_records"`
+	ScannedRecords          int                            `json:"scanned_records"`
+	Truncated               bool                           `json:"truncated"`
+	Dispatches              int64                          `json:"dispatches"`
+	Attempts                int64                          `json:"attempts"`
+	Successes               int64                          `json:"successes"`
+	Failures                int64                          `json:"failures"`
+	StreamInterrupted       int64                          `json:"stream_interrupted"`
+	FallbackUsed            int64                          `json:"fallback_used"`
+	SuccessRate             float64                        `json:"success_rate"`
+	AvgDurationMs           int64                          `json:"avg_duration_ms"`
+	AvgTTFTMs               int64                          `json:"avg_ttft_ms"`
+	AvgScoreTotal           float64                        `json:"avg_score_total"`
+	QueueEnabledDispatches  int64                          `json:"queue_enabled_dispatches"`
+	QueuedDispatches        int64                          `json:"queued_dispatches"`
+	AvgQueueWaitMs          int64                          `json:"avg_queue_wait_ms"`
+	StickyRoutes            int64                          `json:"sticky_routes"`
+	StickyRetained          int64                          `json:"sticky_retained"`
+	StickyBroken            int64                          `json:"sticky_broken"`
+	CacheAffinityRoutes     int64                          `json:"cache_affinity_routes"`
+	ScoreBreakdownSamples   int64                          `json:"score_breakdown_samples"`
+	ScoreBreakdownParseErrs int64                          `json:"score_breakdown_parse_errors"`
+	RiskEvents              int64                          `json:"risk_events"`
+	RiskStatusChanges       int64                          `json:"risk_status_changes"`
+	CurrentRiskRuntimeKeys  int                            `json:"current_risk_runtime_keys"`
+	CircuitOpenReasons      []ModelGatewayTrendReasonCount `json:"circuit_open_reasons,omitempty"`
+	CircuitErrorCounts      []ModelGatewayTrendReasonCount `json:"circuit_error_counts,omitempty"`
+	CircuitErrorTypes       []ModelGatewayTrendReasonCount `json:"circuit_error_types,omitempty"`
 }
 
 type ModelGatewayObservabilityTrendPoint struct {
@@ -142,6 +178,9 @@ type ModelGatewayObservabilityTrendPoint struct {
 	ByProviderProfile      []ModelGatewayObservabilityAggregate `json:"by_provider_profile,omitempty"`
 	ByProxyMode            []ModelGatewayObservabilityAggregate `json:"by_proxy_mode,omitempty"`
 	RejectReasons          []ModelGatewayTrendReasonCount       `json:"reject_reasons,omitempty"`
+	CircuitOpenReasons     []ModelGatewayTrendReasonCount       `json:"circuit_open_reasons,omitempty"`
+	CircuitErrorCounts     []ModelGatewayTrendReasonCount       `json:"circuit_error_counts,omitempty"`
+	CircuitErrorTypes      []ModelGatewayTrendReasonCount       `json:"circuit_error_types,omitempty"`
 	Risk                   *ModelGatewayRiskSnapshot            `json:"risk,omitempty"`
 	RiskEvents             []ModelGatewayRiskEvent              `json:"risk_events,omitempty"`
 }
@@ -192,6 +231,8 @@ type ModelGatewayRiskSnapshot struct {
 	TopStatuses            []ModelGatewayRiskStatusCount  `json:"top_statuses,omitempty"`
 	TopRiskStatuses        []ModelGatewayRiskStatusCount  `json:"top_risk_statuses,omitempty"`
 	TopRejectReasons       []ModelGatewayTrendReasonCount `json:"top_reject_reasons,omitempty"`
+	TopCircuitOpenReasons  []ModelGatewayTrendReasonCount `json:"top_circuit_open_reasons,omitempty"`
+	TopCircuitErrorTypes   []ModelGatewayTrendReasonCount `json:"top_circuit_error_types,omitempty"`
 }
 
 type ModelGatewayObservabilityAggregate struct {
@@ -300,7 +341,7 @@ type ModelGatewayRuntimeKey struct {
 	CapabilityFingerprint string `json:"capability_fingerprint,omitempty"`
 }
 
-type modelGatewayObservabilityOptions struct {
+type ModelGatewayObservabilityOptions struct {
 	Hours              int
 	RecentLimit        int
 	TopN               int
@@ -310,6 +351,7 @@ type modelGatewayObservabilityOptions struct {
 	Group              string
 	ChannelID          int
 	RequestID          string
+	IncludeTotal       bool
 }
 
 type modelGatewayObservabilityAccumulator struct {
@@ -331,6 +373,32 @@ type modelGatewayObservabilityTrendAccumulator struct {
 	ProviderProfileAccumulators map[string]*modelGatewayObservabilityAccumulator
 	ProxyModeAccumulators       map[string]*modelGatewayObservabilityAccumulator
 	RejectReasons               map[string]int64
+	CircuitOpenReasons          map[string]int64
+	CircuitErrorTypes           map[string]int64
+}
+
+type modelGatewayObservabilitySummaryCacheEntry struct {
+	options    ModelGatewayObservabilityOptions
+	response   ModelGatewayObservabilityResponse
+	createdAt  time.Time
+	expiresAt  time.Time
+	staleUntil time.Time
+}
+
+type modelGatewayObservabilitySummaryCacheStore struct {
+	mu      sync.Mutex
+	group   singleflight.Group
+	entries map[string]modelGatewayObservabilitySummaryCacheEntry
+}
+
+var modelGatewayObservabilitySummaryCache = &modelGatewayObservabilitySummaryCacheStore{
+	entries: make(map[string]modelGatewayObservabilitySummaryCacheEntry),
+}
+
+func resetModelGatewayObservabilitySummaryCache() {
+	modelGatewayObservabilitySummaryCache = &modelGatewayObservabilitySummaryCacheStore{
+		entries: make(map[string]modelGatewayObservabilitySummaryCacheEntry),
+	}
 }
 
 func GetModelGatewayObservabilitySummary(c *gin.Context) {
@@ -339,7 +407,7 @@ func GetModelGatewayObservabilitySummary(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	response, err := buildModelGatewayObservabilitySummary(options)
+	response, err := BuildModelGatewayObservabilitySummary(options)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -353,7 +421,8 @@ func ExportModelGatewayObservabilityTrends(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	response, err := buildModelGatewayObservabilitySummary(options)
+	options.IncludeTotal = true
+	response, err := BuildModelGatewayObservabilitySummary(options)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -398,21 +467,79 @@ func GetModelGatewayRuntimeStatus(c *gin.Context) {
 	common.ApiSuccess(c, defaultModelGatewayRuntimeStatusService().Build(query))
 }
 
-func parseModelGatewayObservabilityOptions(c *gin.Context) (modelGatewayObservabilityOptions, error) {
+func GetModelGatewayStickyStore(c *gin.Context) {
+	limit := normalizeModelGatewayObservabilityInt(c.Query("limit"), 100, 1, 500)
+	items := modelGatewayStickyStoreItems(limit)
+	common.ApiSuccess(c, ModelGatewayStickyStoreResponse{
+		Items: items,
+		Total: len(items),
+	})
+}
+
+func ClearModelGatewayStickyStoreEntry(c *gin.Context) {
+	keyID := strings.TrimSpace(c.Param("key_id"))
+	if keyID == "" {
+		common.ApiErrorMsg(c, "missing sticky key id")
+		return
+	}
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	deleted := 0
+	if runtimeDeps != nil && runtimeDeps.StickyRouter != nil && runtimeDeps.StickyRouter.ClearStickyEntryByID(keyID) {
+		deleted = 1
+	}
+	common.ApiSuccess(c, ModelGatewayStickyClearResponse{
+		KeyID:   keyID,
+		Cleared: deleted > 0,
+		Deleted: deleted,
+	})
+}
+
+func ClearModelGatewayStickyStore(c *gin.Context) {
+	group := strings.TrimSpace(c.Query("group"))
 	channelID := 0
 	if raw := strings.TrimSpace(c.Query("channel_id")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed <= 0 {
-			return modelGatewayObservabilityOptions{}, errors.New("invalid channel_id")
+			common.ApiErrorMsg(c, "invalid channel_id")
+			return
+		}
+		channelID = parsed
+	}
+	if group == "" && channelID <= 0 {
+		common.ApiErrorMsg(c, "missing sticky clear filter")
+		return
+	}
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	deleted := 0
+	if runtimeDeps != nil && runtimeDeps.StickyRouter != nil {
+		deleted = runtimeDeps.StickyRouter.ClearStickyEntries(modelgatewayscheduler.StickyClearFilter{
+			Group:     group,
+			ChannelID: channelID,
+		})
+	}
+	common.ApiSuccess(c, ModelGatewayStickyClearResponse{
+		Group:     group,
+		ChannelID: channelID,
+		Cleared:   deleted > 0,
+		Deleted:   deleted,
+	})
+}
+
+func parseModelGatewayObservabilityOptions(c *gin.Context) (ModelGatewayObservabilityOptions, error) {
+	channelID := 0
+	if raw := strings.TrimSpace(c.Query("channel_id")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			return ModelGatewayObservabilityOptions{}, errors.New("invalid channel_id")
 		}
 		channelID = parsed
 	}
 	trendBucketSeconds, err := parseModelGatewayTrendBucketSeconds(c.Query("trend_bucket_seconds"))
 	if err != nil {
-		return modelGatewayObservabilityOptions{}, err
+		return ModelGatewayObservabilityOptions{}, err
 	}
 
-	return modelGatewayObservabilityOptions{
+	return ModelGatewayObservabilityOptions{
 		Hours:              normalizeModelGatewayObservabilityInt(c.Query("hours"), modelGatewayObservabilityDefaultHours, 1, modelGatewayObservabilityMaxHours),
 		RecentLimit:        normalizeModelGatewayObservabilityInt(c.Query("recent_limit"), modelGatewayObservabilityDefaultRecentLimit, 0, modelGatewayObservabilityMaxRecentLimit),
 		TopN:               normalizeModelGatewayObservabilityInt(c.Query("top_n"), modelGatewayObservabilityDefaultTopN, 1, modelGatewayObservabilityMaxTopN),
@@ -422,6 +549,7 @@ func parseModelGatewayObservabilityOptions(c *gin.Context) (modelGatewayObservab
 		Group:              strings.TrimSpace(c.Query("group")),
 		ChannelID:          channelID,
 		RequestID:          strings.TrimSpace(c.Query("request_id")),
+		IncludeTotal:       parseModelGatewayObservabilityBool(c.Query("include_total")),
 	}, nil
 }
 
@@ -440,6 +568,44 @@ func parseModelGatewayRuntimeStatusQuery(c *gin.Context) (modelgatewayobservabil
 		ChannelID: channelID,
 		Limit:     normalizeModelGatewayObservabilityInt(c.Query("limit"), modelGatewayRuntimeStatusDefaultLimit, 1, modelGatewayRuntimeStatusMaxLimit),
 	}, nil
+}
+
+func modelGatewayStickyStoreItems(limit int) []ModelGatewayStickyStoreItem {
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	if runtimeDeps == nil || runtimeDeps.StickyRouter == nil {
+		return []ModelGatewayStickyStoreItem{}
+	}
+	entries := runtimeDeps.StickyRouter.StickyEntries()
+	if limit > 0 && len(entries) > limit {
+		entries = entries[:limit]
+	}
+	items := make([]ModelGatewayStickyStoreItem, 0, len(entries))
+	now := time.Now()
+	for _, entry := range entries {
+		items = append(items, modelGatewayStickyStoreItem(entry, now))
+	}
+	return items
+}
+
+func modelGatewayStickyStoreItem(entry modelgatewayscheduler.StickyStoreEntry, now time.Time) ModelGatewayStickyStoreItem {
+	item := ModelGatewayStickyStoreItem{
+		KeyID:          entry.KeyID,
+		ChannelID:      entry.ChannelID,
+		Group:          entry.Group,
+		KeyFingerprint: entry.KeyFingerprint,
+	}
+	if !entry.ExpiresAt.IsZero() {
+		item.ExpiresAt = entry.ExpiresAt.Unix()
+		ttl := int64(time.Until(entry.ExpiresAt).Seconds())
+		if !now.IsZero() {
+			ttl = int64(entry.ExpiresAt.Sub(now).Seconds())
+		}
+		if ttl < 0 {
+			ttl = 0
+		}
+		item.TTLSeconds = ttl
+	}
+	return item
 }
 
 func normalizeModelGatewayObservabilityInt(raw string, fallback int, minValue int, maxValue int) int {
@@ -470,14 +636,202 @@ func parseModelGatewayTrendBucketSeconds(raw string) (int64, error) {
 	return parsed, nil
 }
 
-func buildModelGatewayObservabilitySummary(options modelGatewayObservabilityOptions) (ModelGatewayObservabilityResponse, error) {
-	if model.DB == nil {
-		return ModelGatewayObservabilityResponse{}, errors.New("database is not initialized")
-	}
+func parseModelGatewayObservabilityBool(raw string) bool {
+	parsed, err := strconv.ParseBool(strings.TrimSpace(raw))
+	return err == nil && parsed
+}
+
+func normalizeModelGatewayObservabilityOptions(options ModelGatewayObservabilityOptions) ModelGatewayObservabilityOptions {
 	options.Hours = clampModelGatewayObservabilityValue(options.Hours, 1, modelGatewayObservabilityMaxHours)
 	options.RecentLimit = clampModelGatewayObservabilityValue(options.RecentLimit, 0, modelGatewayObservabilityMaxRecentLimit)
 	options.TopN = clampModelGatewayObservabilityValue(options.TopN, 1, modelGatewayObservabilityMaxTopN)
-	options.ScanLimit = clampModelGatewayObservabilityValue(options.ScanLimit, 1, modelGatewayObservabilityMaxScanLimit)
+	options.ScanLimit = normalizeModelGatewayObservabilityScanLimit(options.ScanLimit)
+	options.TrendBucketSeconds = modelGatewayObservabilityTrendBucketSeconds(options.Hours, options.TrendBucketSeconds)
+	options.Model = strings.TrimSpace(options.Model)
+	options.Group = strings.TrimSpace(options.Group)
+	options.RequestID = strings.TrimSpace(options.RequestID)
+	if options.ChannelID < 0 {
+		options.ChannelID = 0
+	}
+	return options
+}
+
+func modelGatewayObservabilitySummaryCacheKey(options ModelGatewayObservabilityOptions) string {
+	options = normalizeModelGatewayObservabilityOptions(options)
+	values := url.Values{}
+	values.Set("hours", strconv.Itoa(options.Hours))
+	values.Set("recent_limit", strconv.Itoa(options.RecentLimit))
+	values.Set("top_n", strconv.Itoa(options.TopN))
+	values.Set("scan_limit", strconv.Itoa(options.ScanLimit))
+	values.Set("trend_bucket_seconds", strconv.FormatInt(options.TrendBucketSeconds, 10))
+	values.Set("model", options.Model)
+	values.Set("group", options.Group)
+	values.Set("channel_id", strconv.Itoa(options.ChannelID))
+	values.Set("request_id", options.RequestID)
+	values.Set("include_total", strconv.FormatBool(options.IncludeTotal))
+	return values.Encode()
+}
+
+func refreshModelGatewayObservabilitySummaryCache(key string, options ModelGatewayObservabilityOptions) {
+	_, _, _ = modelGatewayObservabilitySummaryCache.group.Do(key, func() (any, error) {
+		response, err := buildModelGatewayObservabilitySummaryUncached(options)
+		if err != nil {
+			return ModelGatewayObservabilityResponse{}, err
+		}
+		modelGatewayObservabilitySummaryCache.store(key, options, response, time.Now())
+		return response, nil
+	})
+}
+
+func (store *modelGatewayObservabilitySummaryCacheStore) lookupFresh(key string, now time.Time) (ModelGatewayObservabilityResponse, bool) {
+	if store == nil {
+		return ModelGatewayObservabilityResponse{}, false
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	entry, ok := store.entries[key]
+	if !ok || now.After(entry.expiresAt) {
+		return ModelGatewayObservabilityResponse{}, false
+	}
+	return entry.response, true
+}
+
+func (store *modelGatewayObservabilitySummaryCacheStore) lookupStale(key string, now time.Time) (ModelGatewayObservabilityResponse, bool) {
+	if store == nil {
+		return ModelGatewayObservabilityResponse{}, false
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	entry, ok := store.entries[key]
+	if !ok || now.After(entry.staleUntil) {
+		return ModelGatewayObservabilityResponse{}, false
+	}
+	return entry.response, true
+}
+
+func (store *modelGatewayObservabilitySummaryCacheStore) store(key string, options ModelGatewayObservabilityOptions, response ModelGatewayObservabilityResponse, now time.Time) {
+	if store == nil {
+		return
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.entries == nil {
+		store.entries = make(map[string]modelGatewayObservabilitySummaryCacheEntry)
+	}
+	store.entries[key] = modelGatewayObservabilitySummaryCacheEntry{
+		options:    options,
+		response:   response,
+		createdAt:  now,
+		expiresAt:  now.Add(modelGatewayObservabilitySummaryFreshTTL),
+		staleUntil: now.Add(modelGatewayObservabilitySummaryStaleTTL),
+	}
+	store.pruneLocked(now)
+}
+
+func (store *modelGatewayObservabilitySummaryCacheStore) pruneLocked(now time.Time) {
+	if len(store.entries) <= modelGatewayObservabilitySummaryMaxCache {
+		return
+	}
+	for key, entry := range store.entries {
+		if now.After(entry.staleUntil) {
+			delete(store.entries, key)
+		}
+	}
+	for len(store.entries) > modelGatewayObservabilitySummaryMaxCache {
+		var oldestKey string
+		var oldestTime time.Time
+		for key, entry := range store.entries {
+			if oldestKey == "" || entry.createdAt.Before(oldestTime) {
+				oldestKey = key
+				oldestTime = entry.createdAt
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		delete(store.entries, oldestKey)
+	}
+}
+
+func InvalidateModelGatewayObservabilitySummaryCacheForRecord(record model.ModelExecutionRecord) {
+	if modelGatewayObservabilitySummaryCache == nil {
+		return
+	}
+	modelGatewayObservabilitySummaryCache.invalidateForRecord(record)
+}
+
+func (store *modelGatewayObservabilitySummaryCacheStore) invalidateForRecord(record model.ModelExecutionRecord) {
+	if store == nil {
+		return
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for key, entry := range store.entries {
+		if entry.options.matchesRecord(record) {
+			delete(store.entries, key)
+		}
+	}
+}
+
+func (options ModelGatewayObservabilityOptions) matchesRecord(record model.ModelExecutionRecord) bool {
+	options = normalizeModelGatewayObservabilityOptions(options)
+	if options.Model != "" && options.Model != record.RequestedModel {
+		return false
+	}
+	if options.Group != "" && options.Group != record.RequestedGroup && options.Group != record.SelectedGroup && options.Group != record.ActualGroup {
+		return false
+	}
+	if options.ChannelID > 0 && options.ChannelID != record.ChannelId && options.ChannelID != record.ActualChannelId {
+		return false
+	}
+	if options.RequestID != "" && options.RequestID != record.RequestId {
+		return false
+	}
+	if options.Hours > 0 {
+		cutoff := time.Now().Add(-time.Duration(options.Hours) * time.Hour).Unix()
+		return record.CreatedAt >= cutoff
+	}
+	return true
+}
+
+func BuildModelGatewayObservabilitySummary(options ModelGatewayObservabilityOptions) (ModelGatewayObservabilityResponse, error) {
+	if model.DB == nil {
+		return ModelGatewayObservabilityResponse{}, errors.New("database is not initialized")
+	}
+	options = normalizeModelGatewayObservabilityOptions(options)
+	key := modelGatewayObservabilitySummaryCacheKey(options)
+	now := time.Now()
+	if response, ok := modelGatewayObservabilitySummaryCache.lookupFresh(key, now); ok {
+		return response, nil
+	}
+	if response, ok := modelGatewayObservabilitySummaryCache.lookupStale(key, now); ok {
+		go refreshModelGatewayObservabilitySummaryCache(key, options)
+		return response, nil
+	}
+
+	value, err, _ := modelGatewayObservabilitySummaryCache.group.Do(key, func() (any, error) {
+		response, err := buildModelGatewayObservabilitySummaryUncached(options)
+		if err != nil {
+			return ModelGatewayObservabilityResponse{}, err
+		}
+		modelGatewayObservabilitySummaryCache.store(key, options, response, time.Now())
+		return response, nil
+	})
+	if err != nil {
+		if response, ok := modelGatewayObservabilitySummaryCache.lookupStale(key, time.Now()); ok {
+			return response, nil
+		}
+		return ModelGatewayObservabilityResponse{}, err
+	}
+	response, _ := value.(ModelGatewayObservabilityResponse)
+	return response, nil
+}
+
+func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabilityOptions) (ModelGatewayObservabilityResponse, error) {
+	options.Hours = clampModelGatewayObservabilityValue(options.Hours, 1, modelGatewayObservabilityMaxHours)
+	options.RecentLimit = clampModelGatewayObservabilityValue(options.RecentLimit, 0, modelGatewayObservabilityMaxRecentLimit)
+	options.TopN = clampModelGatewayObservabilityValue(options.TopN, 1, modelGatewayObservabilityMaxTopN)
+	options.ScanLimit = normalizeModelGatewayObservabilityScanLimit(options.ScanLimit)
 	options.TrendBucketSeconds = modelGatewayObservabilityTrendBucketSeconds(options.Hours, options.TrendBucketSeconds)
 
 	endTime := common.GetTimestamp()
@@ -485,14 +839,24 @@ func buildModelGatewayObservabilitySummary(options modelGatewayObservabilityOpti
 	base := model.DB.Model(&model.ModelExecutionRecord{}).Where("created_at >= ?", startTime)
 	base = applyModelGatewayObservabilityFilters(base, options)
 
+	records := make([]model.ModelExecutionRecord, 0)
+	queryLimit := options.ScanLimit
 	var totalRecords int64
-	if err := base.Count(&totalRecords).Error; err != nil {
+	if options.IncludeTotal {
+		if err := base.Count(&totalRecords).Error; err != nil {
+			return ModelGatewayObservabilityResponse{}, err
+		}
+	} else {
+		queryLimit = options.ScanLimit + 1
+	}
+	if err := base.Order("created_at desc, id desc").Limit(queryLimit).Find(&records).Error; err != nil {
 		return ModelGatewayObservabilityResponse{}, err
 	}
-
-	records := make([]model.ModelExecutionRecord, 0)
-	if err := base.Order("created_at desc, id desc").Limit(options.ScanLimit).Find(&records).Error; err != nil {
-		return ModelGatewayObservabilityResponse{}, err
+	if !options.IncludeTotal {
+		totalRecords = int64(len(records))
+		if len(records) > options.ScanLimit {
+			records = records[:options.ScanLimit]
+		}
 	}
 
 	response := buildModelGatewayObservabilityFromRecords(records, totalRecords, startTime, endTime, options)
@@ -509,7 +873,16 @@ func buildModelGatewayObservabilitySummary(options modelGatewayObservabilityOpti
 func defaultModelGatewayRuntimeStatusService() *modelgatewayobservability.RuntimeStatusService {
 	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
 	deps := modelgatewayobservability.RuntimeStatusDeps{
-		QueueSnapshot: relayQueueManager.Snapshot,
+		QueueSnapshot: func() map[int]int {
+			return currentRelayQueueManager().Snapshot()
+		},
+		QueueDetailSnapshot: func() modelgatewaycore.RuntimeQueueSnapshot {
+			local := currentRelayQueueManager().DetailedSnapshot()
+			if runtimeDeps == nil || runtimeDeps.QueueSnapshotSyncer == nil {
+				return local
+			}
+			return runtimeDeps.QueueSnapshotSyncer.SyncAndAggregate(local)
+		},
 	}
 	if runtimeDeps != nil {
 		deps.SnapshotStore = runtimeDeps.SnapshotStore
@@ -518,7 +891,7 @@ func defaultModelGatewayRuntimeStatusService() *modelgatewayobservability.Runtim
 	return modelgatewayobservability.NewRuntimeStatusService(deps)
 }
 
-func applyModelGatewayObservabilityFilters(tx *gorm.DB, options modelGatewayObservabilityOptions) *gorm.DB {
+func applyModelGatewayObservabilityFilters(tx *gorm.DB, options ModelGatewayObservabilityOptions) *gorm.DB {
 	if options.Model != "" {
 		tx = tx.Where("requested_model = ?", options.Model)
 	}
@@ -534,7 +907,7 @@ func applyModelGatewayObservabilityFilters(tx *gorm.DB, options modelGatewayObse
 	return tx
 }
 
-func buildModelGatewayObservabilityFromRecords(records []model.ModelExecutionRecord, totalRecords int64, startTime int64, endTime int64, options modelGatewayObservabilityOptions) ModelGatewayObservabilityResponse {
+func buildModelGatewayObservabilityFromRecords(records []model.ModelExecutionRecord, totalRecords int64, startTime int64, endTime int64, options ModelGatewayObservabilityOptions) ModelGatewayObservabilityResponse {
 	response := ModelGatewayObservabilityResponse{
 		Summary: ModelGatewayObservabilitySummary{
 			WindowHours:        options.Hours,
@@ -617,6 +990,9 @@ func buildModelGatewayObservabilityFromRecords(records []model.ModelExecutionRec
 	response.ByProviderProfile = finalizeModelGatewayObservabilityAggregates(providerProfileAccumulators, options.TopN)
 	response.ByProxyMode = finalizeModelGatewayObservabilityAggregates(proxyModeAccumulators, options.TopN)
 	response.Trends = finalizeModelGatewayObservabilityTrends(trendAccumulators, startTime, endTime, trendBucketSeconds)
+	response.Summary.CircuitOpenReasons = finalizeModelGatewayTrendReasonCounts(modelGatewayCircuitOpenReasonCountsFromTrends(response.Trends), modelGatewayObservabilityTrendTopN)
+	response.Summary.CircuitErrorTypes = finalizeModelGatewayTrendReasonCounts(modelGatewayCircuitErrorTypeCountsFromTrends(response.Trends), modelGatewayObservabilityTrendTopN)
+	response.Summary.CircuitErrorCounts = response.Summary.CircuitErrorTypes
 	applyModelGatewayTrendRiskTimeline(&response)
 	return response
 }
@@ -690,6 +1066,17 @@ func modelGatewayObservabilityRecentRecord(record model.ModelExecutionRecord, sc
 		CacheAffinity:         meta.CacheAffinity,
 		RequestMeta:           requestMeta,
 	}
+}
+
+func ModelGatewayObservabilityRecordFromModelRecord(record model.ModelExecutionRecord) ModelGatewayObservabilityRecord {
+	scoreBreakdown, scoreErr := parseModelGatewayScoreBreakdown(record.ScoreBreakdown)
+	candidateGroups, candidateErr := parseModelGatewayCandidateGroups(record.CandidateGroups)
+	requestMeta, requestMetaErr := parseModelGatewayRequestMeta(record.RequestMeta)
+	recent := modelGatewayObservabilityRecentRecord(record, scoreBreakdown, candidateGroups, requestMeta)
+	recent.ScoreBreakdownError = scoreErr != nil
+	recent.CandidateGroupsError = candidateErr != nil
+	recent.RequestMetaError = requestMetaErr != nil
+	return recent
 }
 
 func applyModelGatewayObservabilityRecord(accumulator *modelGatewayObservabilityAccumulator, record model.ModelExecutionRecord, scoreBreakdown map[string]float64, requestMeta map[string]any, scoreErr bool) {
@@ -1082,6 +1469,9 @@ func modelGatewayObservabilityTrendPointFromAccumulator(bucketStart int64, bucke
 	point.ByProviderProfile = finalizeModelGatewayObservabilityAggregates(accumulator.ProviderProfileAccumulators, modelGatewayObservabilityTrendTopN)
 	point.ByProxyMode = finalizeModelGatewayObservabilityAggregates(accumulator.ProxyModeAccumulators, modelGatewayObservabilityTrendTopN)
 	point.RejectReasons = finalizeModelGatewayTrendReasonCounts(accumulator.RejectReasons, modelGatewayObservabilityTrendTopN)
+	point.CircuitOpenReasons = finalizeModelGatewayTrendReasonCounts(accumulator.CircuitOpenReasons, modelGatewayObservabilityTrendTopN)
+	point.CircuitErrorTypes = finalizeModelGatewayTrendReasonCounts(accumulator.CircuitErrorTypes, modelGatewayObservabilityTrendTopN)
+	point.CircuitErrorCounts = point.CircuitErrorTypes
 	return point
 }
 
@@ -1126,6 +1516,8 @@ func applyModelGatewayTrendRiskTimeline(response *ModelGatewayObservabilityRespo
 				modelGatewayRiskStatusChangesFromEvents(point.RiskEvents),
 				0,
 				modelGatewayTrendRejectReasonCounts(point.RejectReasons),
+				modelGatewayTrendReasonCountsToMap(point.CircuitOpenReasons),
+				modelGatewayTrendReasonCountsToMap(point.CircuitErrorTypes),
 			)
 			point.Risk = &risk
 		}
@@ -1143,8 +1535,23 @@ func applyModelGatewayRuntimeRiskEvents(response *ModelGatewayObservabilityRespo
 	if timestamp <= 0 {
 		timestamp = common.GetTimestamp()
 	}
+	circuitOpenReasons := modelGatewayTrendReasonCountsToMap(response.Summary.CircuitOpenReasons)
+	circuitErrorTypes := modelGatewayTrendReasonCountsToMap(response.Summary.CircuitErrorTypes)
+	circuitSummaryChanged := false
 	events := make([]ModelGatewayRiskEvent, 0)
 	for _, item := range response.RuntimeStatus.Items {
+		if reason := strings.TrimSpace(item.CircuitOpenReason); reason != "" {
+			circuitOpenReasons[reason]++
+			circuitSummaryChanged = true
+		}
+		for kind, count := range item.CircuitErrorCounts {
+			kind = strings.TrimSpace(kind)
+			if kind == "" || count <= 0 {
+				continue
+			}
+			circuitErrorTypes[kind] += int64(count)
+			circuitSummaryChanged = true
+		}
 		status := strings.TrimSpace(item.HealthStatus)
 		if status == "" || status == "healthy" {
 			continue
@@ -1166,7 +1573,15 @@ func applyModelGatewayRuntimeRiskEvents(response *ModelGatewayObservabilityRespo
 			EndpointType:   item.EndpointType,
 		})
 	}
+	if circuitSummaryChanged {
+		response.Summary.CircuitOpenReasons = finalizeModelGatewayTrendReasonCounts(circuitOpenReasons, modelGatewayObservabilityTrendTopN)
+		response.Summary.CircuitErrorTypes = finalizeModelGatewayTrendReasonCounts(circuitErrorTypes, modelGatewayObservabilityTrendTopN)
+		response.Summary.CircuitErrorCounts = response.Summary.CircuitErrorTypes
+	}
 	if len(events) == 0 {
+		if circuitSummaryChanged {
+			syncModelGatewayRiskCompatibility(response)
+		}
 		return
 	}
 	response.Summary.RiskEvents += int64(len(events))
@@ -1258,6 +1673,30 @@ func modelGatewayTrendDetailRiskEvents(point ModelGatewayObservabilityTrendPoint
 		event.Count = reason.Count
 		events = append(events, event)
 	}
+	for _, reason := range point.CircuitOpenReasons {
+		if reason.Count <= 0 || strings.TrimSpace(reason.Reason) == "" {
+			continue
+		}
+		event := base
+		event.EventType = "circuit_open_reason"
+		event.Status = "circuit_open"
+		event.Severity = modelGatewayRiskSeverityForStatus(event.Status)
+		event.Reason = reason.Reason
+		event.Count = reason.Count
+		events = append(events, event)
+	}
+	for _, kind := range point.CircuitErrorTypes {
+		if kind.Count <= 0 || strings.TrimSpace(kind.Reason) == "" {
+			continue
+		}
+		event := base
+		event.EventType = "circuit_error_type"
+		event.Status = modelGatewayRiskStatusForCircuitErrorType(kind.Reason)
+		event.Severity = modelGatewayRiskSeverityForStatus(event.Status)
+		event.Reason = kind.Reason
+		event.Count = kind.Count
+		events = append(events, event)
+	}
 	sortModelGatewayRiskEvents(events)
 	return events
 }
@@ -1271,6 +1710,8 @@ func buildModelGatewayTrendExportPreview(response ModelGatewayObservabilityRespo
 		CurrentRiskRuntimeKeys: response.Summary.CurrentRiskRuntimeKeys,
 	}
 	rejectReasons := make(map[string]int64)
+	circuitOpenReasons := make(map[string]int64)
+	circuitErrorTypes := make(map[string]int64)
 	for _, trend := range response.Trends {
 		if trend.Records > 0 {
 			preview.NonEmptyBuckets++
@@ -1278,16 +1719,36 @@ func buildModelGatewayTrendExportPreview(response ModelGatewayObservabilityRespo
 		for _, reason := range trend.RejectReasons {
 			rejectReasons[reason.Reason] += reason.Count
 		}
+		for _, reason := range trend.CircuitOpenReasons {
+			circuitOpenReasons[reason.Reason] += reason.Count
+		}
+		for _, kind := range trend.CircuitErrorTypes {
+			circuitErrorTypes[kind.Reason] += kind.Count
+		}
+	}
+	for _, reason := range response.Summary.CircuitOpenReasons {
+		if _, ok := circuitOpenReasons[reason.Reason]; !ok {
+			circuitOpenReasons[reason.Reason] = reason.Count
+		}
+	}
+	for _, kind := range response.Summary.CircuitErrorTypes {
+		if _, ok := circuitErrorTypes[kind.Reason]; !ok {
+			circuitErrorTypes[kind.Reason] = kind.Count
+		}
 	}
 	preview.RiskTimeline = limitModelGatewayRiskEvents(response.RiskTimeline, modelGatewayTrendExportPreviewLimit)
 	preview.TopRiskStatuses = finalizeModelGatewayRiskStatusCounts(response.RiskTimeline, modelGatewayObservabilityTrendTopN)
 	preview.TopRejectReasons = finalizeModelGatewayTrendReasonCounts(rejectReasons, modelGatewayObservabilityTrendTopN)
+	preview.TopCircuitOpenReasons = finalizeModelGatewayTrendReasonCounts(circuitOpenReasons, modelGatewayObservabilityTrendTopN)
+	preview.TopCircuitErrorTypes = finalizeModelGatewayTrendReasonCounts(circuitErrorTypes, modelGatewayObservabilityTrendTopN)
 	preview.Risk = buildModelGatewayRiskSnapshot(
 		preview.RiskTimeline,
 		preview.RiskEvents,
 		preview.RiskStatusChanges,
 		preview.CurrentRiskRuntimeKeys,
 		rejectReasons,
+		circuitOpenReasons,
+		circuitErrorTypes,
 	)
 	return preview
 }
@@ -1307,10 +1768,12 @@ func syncModelGatewayRiskCompatibility(response *ModelGatewayObservabilityRespon
 		response.Summary.RiskStatusChanges,
 		response.Summary.CurrentRiskRuntimeKeys,
 		modelGatewayRejectReasonCountsFromTrends(response.Trends),
+		modelGatewayCircuitOpenReasonCountsFromSummaryOrTrends(*response),
+		modelGatewayCircuitErrorTypeCountsFromSummaryOrTrends(*response),
 	)
 }
 
-func buildModelGatewayRiskSnapshot(events []ModelGatewayRiskEvent, eventCount int64, statusChanges int64, currentRuntimeKeys int, rejectReasons map[string]int64) ModelGatewayRiskSnapshot {
+func buildModelGatewayRiskSnapshot(events []ModelGatewayRiskEvent, eventCount int64, statusChanges int64, currentRuntimeKeys int, rejectReasons map[string]int64, circuitOpenReasons map[string]int64, circuitErrorTypes map[string]int64) ModelGatewayRiskSnapshot {
 	timeline := limitModelGatewayRiskEvents(events, 0)
 	if timeline == nil {
 		timeline = []ModelGatewayRiskEvent{}
@@ -1320,6 +1783,8 @@ func buildModelGatewayRiskSnapshot(events []ModelGatewayRiskEvent, eventCount in
 	}
 	topStatuses := finalizeModelGatewayRiskStatusCounts(timeline, modelGatewayObservabilityTrendTopN)
 	topRejectReasons := finalizeModelGatewayTrendReasonCounts(rejectReasons, modelGatewayObservabilityTrendTopN)
+	topCircuitOpenReasons := finalizeModelGatewayTrendReasonCounts(circuitOpenReasons, modelGatewayObservabilityTrendTopN)
+	topCircuitErrorTypes := finalizeModelGatewayTrendReasonCounts(circuitErrorTypes, modelGatewayObservabilityTrendTopN)
 	return ModelGatewayRiskSnapshot{
 		EventCount:             eventCount,
 		RiskEventCount:         eventCount,
@@ -1334,6 +1799,8 @@ func buildModelGatewayRiskSnapshot(events []ModelGatewayRiskEvent, eventCount in
 		TopStatuses:            topStatuses,
 		TopRiskStatuses:        topStatuses,
 		TopRejectReasons:       topRejectReasons,
+		TopCircuitOpenReasons:  topCircuitOpenReasons,
+		TopCircuitErrorTypes:   topCircuitErrorTypes,
 	}
 }
 
@@ -1360,7 +1827,53 @@ func modelGatewayRejectReasonCountsFromTrends(trends []ModelGatewayObservability
 	return counts
 }
 
+func modelGatewayCircuitOpenReasonCountsFromTrends(trends []ModelGatewayObservabilityTrendPoint) map[string]int64 {
+	counts := make(map[string]int64)
+	for _, trend := range trends {
+		for _, reason := range trend.CircuitOpenReasons {
+			if strings.TrimSpace(reason.Reason) == "" || reason.Count <= 0 {
+				continue
+			}
+			counts[reason.Reason] += reason.Count
+		}
+	}
+	return counts
+}
+
+func modelGatewayCircuitErrorTypeCountsFromTrends(trends []ModelGatewayObservabilityTrendPoint) map[string]int64 {
+	counts := make(map[string]int64)
+	for _, trend := range trends {
+		for _, kind := range trend.CircuitErrorTypes {
+			if strings.TrimSpace(kind.Reason) == "" || kind.Count <= 0 {
+				continue
+			}
+			counts[kind.Reason] += kind.Count
+		}
+	}
+	return counts
+}
+
+func modelGatewayCircuitOpenReasonCountsFromSummaryOrTrends(response ModelGatewayObservabilityResponse) map[string]int64 {
+	counts := modelGatewayTrendReasonCountsToMap(response.Summary.CircuitOpenReasons)
+	if len(counts) == 0 {
+		return modelGatewayCircuitOpenReasonCountsFromTrends(response.Trends)
+	}
+	return counts
+}
+
+func modelGatewayCircuitErrorTypeCountsFromSummaryOrTrends(response ModelGatewayObservabilityResponse) map[string]int64 {
+	counts := modelGatewayTrendReasonCountsToMap(response.Summary.CircuitErrorTypes)
+	if len(counts) == 0 {
+		return modelGatewayCircuitErrorTypeCountsFromTrends(response.Trends)
+	}
+	return counts
+}
+
 func modelGatewayTrendRejectReasonCounts(reasons []ModelGatewayTrendReasonCount) map[string]int64 {
+	return modelGatewayTrendReasonCountsToMap(reasons)
+}
+
+func modelGatewayTrendReasonCountsToMap(reasons []ModelGatewayTrendReasonCount) map[string]int64 {
 	counts := make(map[string]int64)
 	for _, reason := range reasons {
 		if strings.TrimSpace(reason.Reason) == "" || reason.Count <= 0 {
@@ -1374,6 +1887,9 @@ func modelGatewayTrendRejectReasonCounts(reasons []ModelGatewayTrendReasonCount)
 func modelGatewayRuntimeRiskReason(item modelgatewayobservability.RuntimeStatusItem) string {
 	switch item.HealthStatus {
 	case "circuit_open":
+		if reason := strings.TrimSpace(item.CircuitOpenReason); reason != "" {
+			return reason
+		}
 		return "circuit_open"
 	case "cooldown":
 		return strings.TrimSpace(item.CooldownReason)
@@ -1408,11 +1924,22 @@ func modelGatewayRiskStatusForRejectReason(reason string) string {
 	}
 }
 
+func modelGatewayRiskStatusForCircuitErrorType(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case modelgatewayscheduler.CircuitErrorStreamInterrupted:
+		return "stream_interrupted"
+	case modelgatewayscheduler.CircuitErrorRateLimit, modelgatewayscheduler.CircuitErrorServer, modelgatewayscheduler.CircuitErrorUpstream:
+		return "circuit_error"
+	default:
+		return "candidate_rejected"
+	}
+}
+
 func modelGatewayRiskSeverityForStatus(status string) string {
 	switch status {
 	case "stream_interrupted", "failure_spike", "circuit_open":
 		return "critical"
-	case "fallback", "candidate_rejected", "queued", "saturated", "cooldown", "failure_avoidance", "degraded":
+	case "fallback", "candidate_rejected", "queued", "saturated", "cooldown", "failure_avoidance", "degraded", "circuit_error":
 		return "warning"
 	default:
 		return "info"
@@ -1559,6 +2086,8 @@ func modelGatewayObservabilityTrendAccumulatorFor(accumulators map[int64]*modelG
 		ProviderProfileAccumulators:          make(map[string]*modelGatewayObservabilityAccumulator),
 		ProxyModeAccumulators:                make(map[string]*modelGatewayObservabilityAccumulator),
 		RejectReasons:                        make(map[string]int64),
+		CircuitOpenReasons:                   make(map[string]int64),
+		CircuitErrorTypes:                    make(map[string]int64),
 	}
 	accumulators[bucketStart] = accumulator
 	return accumulator
@@ -1573,7 +2102,36 @@ func applyModelGatewayObservabilityTrendRecord(accumulator *modelGatewayObservab
 	applyModelGatewayObservabilityRecord(modelGatewayObservabilityAccumulatorFor(accumulator.ProxyModeAccumulators, profileProxyMeta.ProxyMode, "", 0), record, scoreBreakdown, requestMeta, scoreErr)
 	for _, reason := range modelGatewayRejectReasonsFromRequestMeta(requestMeta) {
 		accumulator.RejectReasons[reason]++
+		if modelGatewayRiskStatusForRejectReason(reason) == "circuit_open" {
+			accumulator.CircuitOpenReasons[reason]++
+		}
 	}
+	if kind := modelGatewayCircuitErrorTypeFromRecord(record); kind != "" {
+		accumulator.CircuitErrorTypes[kind]++
+	}
+}
+
+func modelGatewayCircuitErrorTypeFromRecord(record model.ModelExecutionRecord) string {
+	if !isModelGatewayAttemptRecord(record) || record.Success {
+		return ""
+	}
+	result := modelgatewaycore.AttemptResult{
+		ChannelID:         record.ChannelId,
+		RequestedGroup:    record.RequestedGroup,
+		SelectedGroup:     record.SelectedGroup,
+		ModelName:         record.RequestedModel,
+		EndpointType:      constantEndpointTypeFromString(record.EndpointType),
+		Success:           record.Success,
+		StatusCode:        record.StatusCode,
+		ErrorCode:         record.ErrorCode,
+		ErrorType:         record.ErrorType,
+		StreamInterrupted: record.StreamInterrupted,
+	}
+	return modelgatewayscheduler.ClassifyCircuitError(result)
+}
+
+func constantEndpointTypeFromString(value string) constant.EndpointType {
+	return constant.EndpointType(strings.TrimSpace(value))
 }
 
 func finalizeModelGatewayTrendReasonCounts(counts map[string]int64, topN int) []ModelGatewayTrendReasonCount {
@@ -1864,6 +2422,13 @@ func clampModelGatewayObservabilityValue(value int, minValue int, maxValue int) 
 		return maxValue
 	}
 	return value
+}
+
+func normalizeModelGatewayObservabilityScanLimit(value int) int {
+	if value <= 0 {
+		return modelGatewayObservabilityDefaultScanLimit
+	}
+	return clampModelGatewayObservabilityValue(value, 1, modelGatewayObservabilityMaxScanLimit)
 }
 
 func minModelGatewayObservabilityInt(a int, b int) int {
