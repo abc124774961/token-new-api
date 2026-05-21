@@ -247,6 +247,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	requestId := c.GetString(common.RequestIdKey)
 	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 	//originalModel := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+	defer service.ReleaseChannelSelectionReservations(c)
 
 	var (
 		newAPIError *types.NewAPIError
@@ -390,6 +391,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
+			if channelErr.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
+				lastConcurrencyLimitError = channelErr
+				if canFailover, forceNextAutoGroup := service.GetConcurrencyLimitFailoverPlan(retryParam); canFailover {
+					if forceNextAutoGroup {
+						common.SetContextKey(c, constant.ContextKeyForceNextAutoGroup, true)
+					}
+					retryParam.AllowExtraRetry(1)
+					continue
+				}
+			}
 			logger.LogError(c, channelErr.Error())
 			newAPIError = channelErr
 			break
@@ -404,6 +415,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			lastModelGatewayChannel = channel
 		}
 		concurrencyResult := currentRelayQueueManager().AcquireWithOptions(c.Request.Context(), plan, channel.Id, channelSetting, relayQueueAcquireOptions(plan))
+		service.ReleaseChannelSelectionReservation(c, channel.Id)
 		concurrencyLease := concurrencyResult.Lease
 		if concurrencyResult.Status == modelgatewayscheduler.QueueAcquireRejected {
 			clientAbort := relayRequestContextCanceled(c) || relayClientAborted(c, relayInfo, nil)
@@ -675,9 +687,19 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在（retry）", selectGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 
+	channelSetting := channel.GetSetting()
+	if !service.ReserveChannelSelection(c, channel.Id, channelSetting) {
+		service.MarkChannelConcurrencySkipped(c, channel.Id)
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("channel #%d reached configured max concurrency %d", channel.Id, channelSetting.MaxConcurrency),
+			types.ErrorCodeChannelConcurrencyLimit,
+			http.StatusTooManyRequests,
+		)
+	}
 	logRelaySelectedChannelTrace(c, info, retryParam, channel, selectGroup, false)
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
 	if newAPIError != nil {
+		service.ReleaseChannelSelectionReservation(c, channel.Id)
 		return nil, newAPIError
 	}
 	return channel, nil
