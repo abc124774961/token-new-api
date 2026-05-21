@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -21,25 +22,26 @@ import (
 )
 
 type Channel struct {
-	Id                 int     `json:"id"`
-	Type               int     `json:"type" gorm:"default:0"`
-	Key                string  `json:"key" gorm:"not null"`
-	OpenAIOrganization *string `json:"openai_organization"`
-	TestModel          *string `json:"test_model"`
-	Status             int     `json:"status" gorm:"default:1"`
-	Name               string  `json:"name" gorm:"index"`
-	Weight             *uint   `json:"weight" gorm:"default:0"`
-	CreatedTime        int64   `json:"created_time" gorm:"bigint"`
-	TestTime           int64   `json:"test_time" gorm:"bigint"`
-	ResponseTime       int     `json:"response_time"` // in milliseconds
-	BaseURL            *string `json:"base_url" gorm:"column:base_url;default:''"`
-	Other              string  `json:"other"`
-	Balance            float64 `json:"balance"` // in USD
-	BalanceUpdatedTime int64   `json:"balance_updated_time" gorm:"bigint"`
-	Models             string  `json:"models"`
-	Group              string  `json:"group" gorm:"type:varchar(64);default:'default'"`
-	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`
-	ModelMapping       *string `json:"model_mapping" gorm:"type:text"`
+	Id                 int      `json:"id"`
+	Type               int      `json:"type" gorm:"default:0"`
+	Key                string   `json:"key" gorm:"not null"`
+	OpenAIOrganization *string  `json:"openai_organization"`
+	TestModel          *string  `json:"test_model"`
+	Status             int      `json:"status" gorm:"default:1"`
+	Name               string   `json:"name" gorm:"index"`
+	Weight             *uint    `json:"weight" gorm:"default:0"`
+	CreatedTime        int64    `json:"created_time" gorm:"bigint"`
+	TestTime           int64    `json:"test_time" gorm:"bigint"`
+	ResponseTime       int      `json:"response_time"` // in milliseconds
+	BaseURL            *string  `json:"base_url" gorm:"column:base_url;default:''"`
+	Other              string   `json:"other"`
+	Balance            float64  `json:"balance"` // in USD
+	BalanceUpdatedTime int64    `json:"balance_updated_time" gorm:"bigint"`
+	CostPerMillion     *float64 `json:"cost_per_million" gorm:"type:decimal(12,6);default:0"`
+	Models             string   `json:"models"`
+	Group              string   `json:"group" gorm:"type:varchar(64);default:'default'"`
+	UsedQuota          int64    `json:"used_quota" gorm:"bigint;default:0"`
+	ModelMapping       *string  `json:"model_mapping" gorm:"type:text"`
 	//MaxInputTokens     *int    `json:"max_input_tokens" gorm:"default:0"`
 	StatusCodeMapping *string `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`
 	Priority          *int64  `json:"priority" gorm:"bigint;default:0"`
@@ -503,6 +505,25 @@ func (channel *Channel) GetStatusCodeMapping() string {
 	return *channel.StatusCodeMapping
 }
 
+func (channel *Channel) GetCostPerMillion() float64 {
+	if channel == nil || channel.CostPerMillion == nil {
+		return 0
+	}
+	value := *channel.CostPerMillion
+	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	return value
+}
+
+func (channel *Channel) ResolveMappedModelName(modelName string) string {
+	modelName = strings.TrimSpace(modelName)
+	if channel == nil || modelName == "" {
+		return modelName
+	}
+	return resolveMappedModelName(modelName, channel.GetModelMapping())
+}
+
 func (channel *Channel) Insert() error {
 	var err error
 	err = DB.Create(channel).Error
@@ -793,7 +814,13 @@ func updateChannelStatusWithInfo(channelId int, usingKey string, status int, rea
 	if err != nil {
 		return false
 	} else {
-		if channel.Status == status && len(extraInfo) == 0 {
+		currentReason := strings.TrimSpace(func() string {
+			info := channel.GetOtherInfo()
+			reason, _ := info["status_reason"].(string)
+			return reason
+		}())
+		normalizedReason := strings.TrimSpace(reason)
+		if channel.Status == status && len(extraInfo) == 0 && currentReason == normalizedReason {
 			return false
 		}
 
@@ -818,6 +845,9 @@ func updateChannelStatusWithInfo(channelId int, usingKey string, status int, rea
 			channel.SetOtherInfo(info)
 			channel.Status = status
 			shouldUpdateAbilities = beforeStatus != status
+		}
+		if common.MemoryCacheEnabled && !channel.ChannelInfo.IsMultiKey {
+			CacheUpdateChannelStatusInfo(channelId, channel.Status, channel.OtherInfo)
 		}
 		err = channel.SaveWithoutKey()
 		if err != nil {

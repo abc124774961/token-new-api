@@ -64,3 +64,18 @@ func TestRuntimeSnapshotEnricherAppliesCircuitBreakerState(t *testing.T) {
 	require.Equal(t, core.CircuitStateOpen, snapshot.CircuitState)
 	require.True(t, snapshot.CircuitOpen)
 }
+
+func TestRuntimeSnapshotEnricherPrefersChannelCostPerMillion(t *testing.T) {
+	costPerMillion := 0.42
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{}, 1500, 8, 2)
+
+	snapshot := enricher.Enrich(core.Candidate{
+		Channel: &model.Channel{Id: 7, CostPerMillion: &costPerMillion},
+		Group:   "default",
+		RuntimeKey: core.RuntimeKey{
+			RequestedModel: "gpt-5-codex",
+		},
+	}, core.RuntimeSnapshot{CostRatio: 1}, core.GroupSmartPolicy{})
+
+	require.Equal(t, costPerMillion, snapshot.CostRatio)
+}

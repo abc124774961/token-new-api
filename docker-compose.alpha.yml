@@ -1,0 +1,41 @@
+name: token-new-api-alpha
+
+services:
+  new-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.pro.cn
+    image: token-new-api-alpha:latest
+    container_name: token-new-api-alpha
+    restart: unless-stopped
+    command: --log-dir /app/logs
+    ports:
+      - "${APP_PORT:-3001}:3000"
+    volumes:
+      - ./data-alpha:/data
+      - ./logs-alpha:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      CRYPTO_SECRET: ${CRYPTO_SECRET:-}
+      SQL_DSN: ${SQL_DSN:-}
+      LOG_SQL_DSN: ${LOG_SQL_DSN:-}
+      SQLITE_PATH: ${SQLITE_PATH:-}
+      REDIS_CONN_STRING: ${REDIS_CONN_STRING:-}
+      ERROR_LOG_ENABLED: ${ERROR_LOG_ENABLED:-true}
+      BATCH_UPDATE_ENABLED: ${BATCH_UPDATE_ENABLED:-true}
+      RELAY_TIMEOUT: ${RELAY_TIMEOUT:-900}
+      STREAMING_TIMEOUT: ${STREAMING_TIMEOUT:-900}
+      STREAM_SCANNER_MAX_BUFFER_MB: ${STREAM_SCANNER_MAX_BUFFER_MB:-256}
+      CHANNEL_FAILURE_AVOIDANCE_ENABLED: ${CHANNEL_FAILURE_AVOIDANCE_ENABLED:-true}
+      CHANNEL_FAILURE_AVOIDANCE_TTL_SECONDS: ${CHANNEL_FAILURE_AVOIDANCE_TTL_SECONDS:-6}
+      CHANNEL_BALANCE_AUTO_RESUME_ENABLED: ${CHANNEL_BALANCE_AUTO_RESUME_ENABLED:-true}
+      CHANNEL_BALANCE_RECOVERY_THRESHOLD: ${CHANNEL_BALANCE_RECOVERY_THRESHOLD:-0}
+      NODE_NAME: ${NODE_NAME:-alpha-node-1}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

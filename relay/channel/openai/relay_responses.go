@@ -202,6 +202,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	markRelayEmptyOutput(c, info, usage, responseTextBuilder.String())
 
 	return usage, nil
 }

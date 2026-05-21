@@ -673,6 +673,9 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	startTime := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
+		if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+			common2.SetContextKey(c, appconstant.ContextKeyRelayStreamInterrupted, true)
+		}
 		requestInfo := upstreamRequestInfo(req, info, time.Since(startTime), err)
 		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestInfo, requestInfo)
 		logger.LogError(c, fmt.Sprintf("do request failed: %s, upstream=%v", common2.MaskSensitiveInfo(err.Error()), requestInfo))

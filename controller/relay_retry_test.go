@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -386,6 +387,52 @@ func TestShouldRetryRejectsFailoverAfterResponseStarted(t *testing.T) {
 	require.Equal(t, 0, param.GetExtraRetries())
 }
 
+func TestRelayClientAbortClassificationDoesNotRetry(t *testing.T) {
+	ctx := newRelayRetryContext()
+	baseCtx, cancel := context.WithCancel(context.Background())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(baseCtx)
+	cancel()
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	err := types.NewErrorWithStatusCode(
+		context.Canceled,
+		types.ErrorCodeDoRequestFailed,
+		relayStatusClientClosedRequest,
+		types.ErrOptionWithSkipRetry(),
+	)
+
+	require.True(t, relayClientAborted(ctx, nil, err))
+	require.Equal(t, "client_aborted", classifyRelayAttemptError(ctx, err))
+	require.Equal(t, "client_aborted", retryActionForAttempt(ctx, err, false))
+	require.False(t, shouldRetry(ctx, err, param, 3))
+}
+
+func TestRelayClientAbortIgnoresCanceledContextAfterNormalStreamEnd(t *testing.T) {
+	ctx := newRelayRetryContext()
+	baseCtx, cancel := context.WithCancel(context.Background())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(baseCtx)
+	cancel()
+
+	info := &relaycommon.RelayInfo{StreamStatus: relaycommon.NewStreamStatus()}
+	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
+
+	require.False(t, relayClientAborted(ctx, info, nil))
+}
+
+func TestRelayRequestContextCanceledDetectsQueueWaitAbort(t *testing.T) {
+	ctx := newRelayRetryContext()
+	baseCtx, cancel := context.WithCancel(context.Background())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(baseCtx)
+	cancel()
+
+	require.True(t, relayRequestContextCanceled(ctx))
+}
+
 func TestShouldRetryAllowsServerErrorFailoverToNextAutoGroup(t *testing.T) {
 	ctx := newRelayRetryContext()
 	ctx.Set("use_channel", []string{"701"})
@@ -611,6 +658,24 @@ func TestProcessChannelErrorSkipsTemporaryAvoidanceForLocalConcurrencyLimit(t *t
 	require.Nil(t, service.GetChannelFailureAvoidanceStatus(912))
 }
 
+func TestTraceChannelFailureMarksConcurrencyLimitedWithoutCooldown(t *testing.T) {
+	ctx := newRelayRetryContext()
+	err := types.NewErrorWithStatusCode(
+		errors.New("channel #912 reached configured max concurrency 1"),
+		types.ErrorCodeChannelConcurrencyLimit,
+		http.StatusTooManyRequests,
+	)
+
+	traceChannelFailure(ctx, *types.NewChannelError(912, 1, "channel-912", false, "", false), err, false)
+
+	trace, ok := common.GetContextKeyType[[]map[string]interface{}](ctx, constant.ContextKeyChannelFailureTrace)
+	require.True(t, ok)
+	require.Len(t, trace, 1)
+	require.Equal(t, true, trace[0]["concurrency_limited"])
+	require.Equal(t, "switch_channel", trace[0]["retry_action"])
+	require.NotContains(t, trace[0], "concurrency_cooldown")
+}
+
 func TestProcessChannelErrorSkipsTemporaryAvoidanceForUpstreamConcurrencyBusy(t *testing.T) {
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
@@ -651,4 +716,41 @@ func TestProcessChannelErrorSkipsTemporaryAvoidanceForBalanceInsufficient(t *tes
 	processChannelError(newRelayRetryContext(), *types.NewChannelError(914, 1, "channel-914", false, "", false), err, false)
 
 	require.Nil(t, service.GetChannelFailureAvoidanceStatus(914))
+}
+
+func TestProcessChannelErrorUpdatesBalanceReasonWhenAlreadyAutoDisabled(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
+	common.AutomaticDisableChannelEnabled = true
+	t.Cleanup(func() {
+		common.AutomaticDisableChannelEnabled = originalAutomaticDisable
+	})
+	autoBan := 1
+	channel := model.Channel{
+		Id:      909,
+		Name:    "already-disabled",
+		Type:    constant.ChannelTypeOpenAI,
+		Status:  common.ChannelStatusAutoDisabled,
+		AutoBan: &autoBan,
+	}
+	channel.SetOtherInfo(map[string]interface{}{
+		"status_reason": "temporary failure",
+	})
+	require.NoError(t, db.Create(&channel).Error)
+
+	processChannelError(
+		newRelayRetryContext(),
+		*types.NewChannelError(channel.Id, channel.Type, channel.Name, false, "", true),
+		types.NewOpenAIError(errors.New("insufficient balance"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests),
+		true,
+	)
+	require.Eventually(t, func() bool {
+		updated, err := model.GetChannelById(channel.Id, true)
+		return err == nil && service.IsBalanceInsufficientPausedChannel(updated)
+	}, time.Second, 10*time.Millisecond)
+
+	updated, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	require.True(t, service.IsBalanceInsufficientPausedChannel(updated))
+	require.Equal(t, service.ChannelStatusReasonBalanceInsufficient, service.ChannelStatusReason(updated))
 }

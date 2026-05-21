@@ -193,6 +193,30 @@ func TestCacheGetRandomSatisfiedChannelSkipsFullConcurrencyChannel(t *testing.T)
 	require.Equal(t, 112, channel.Id)
 }
 
+func TestCacheGetRandomSatisfiedChannelSkipsRequestLocalConcurrencyMarkedChannel(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+
+	seedChannelSelectChannel(t, db, 113, "default", "gpt-5.5", 10, 100)
+	seedChannelSelectChannel(t, db, 114, "default", "gpt-5.5", 10, 100)
+	model.InitChannelCache()
+
+	ctx := newRetryContext()
+	MarkChannelConcurrencySkipped(ctx, 113)
+	param := &RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.Equal(t, "default", group)
+	require.NotNil(t, channel)
+	require.Equal(t, 114, channel.Id)
+}
+
 func TestCacheGetRandomSatisfiedChannelKeepsImageApiSeparateFromCodexTool(t *testing.T) {
 	db := setupChannelSelectTestDB(t)
 	withChannelSelectMemoryCache(t, true)

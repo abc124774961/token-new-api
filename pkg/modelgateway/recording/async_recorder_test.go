@@ -16,7 +16,7 @@ import (
 func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}))
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {
@@ -93,4 +93,199 @@ func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 	require.Contains(t, record.RequestMeta, "prompt_cache_key")
 	require.Contains(t, record.RequestMeta, "candidate_explanations")
 	require.Contains(t, record.RequestMeta, "mimo-v1")
+}
+
+func TestAsyncExecutionRecorderRecordsAttemptFlowMeta(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:                      "req-flow",
+		AttemptIndex:                   0,
+		ChannelID:                      8,
+		RequestedGroup:                 "auto",
+		SelectedGroup:                  "vip",
+		ModelName:                      "gpt-5.5",
+		StatusCode:                     429,
+		ErrorCode:                      "bad_response_status_code",
+		ErrorType:                      "openai_error",
+		ErrorMessage:                   "Too many pending requests, please retry later",
+		ErrorCategory:                  "upstream_concurrency_limit",
+		RetryAction:                    "switch_channel",
+		WillRetry:                      true,
+		ConcurrencyLimited:             true,
+		ActiveConcurrency:              47,
+		ConfiguredConcurrencyLimit:     64,
+		LearnedConcurrencyLimit:        46,
+		LearnedConcurrencyLimitChanged: true,
+		UsedChannels:                   []string{"8"},
+	})
+
+	require.Eventually(t, func() bool {
+		var count int64
+		require.NoError(t, db.Model(&model.ModelExecutionRecord{}).Where("request_id = ?", "req-flow").Count(&count).Error)
+		return count == 1
+	}, time.Second, 10*time.Millisecond)
+
+	var record model.ModelExecutionRecord
+	require.NoError(t, db.Where("request_id = ?", "req-flow").First(&record).Error)
+	require.Equal(t, "req-flow", record.RequestId)
+	require.Equal(t, 429, record.StatusCode)
+	require.Contains(t, record.RequestMeta, "upstream_concurrency_limit")
+	require.Contains(t, record.RequestMeta, "switch_channel")
+	require.Contains(t, record.RequestMeta, "learned_concurrency_limit")
+	require.Contains(t, record.RequestMeta, "Too many pending requests")
+
+	var summaries int64
+	require.NoError(t, db.Model(&model.ModelGatewayUserRequestSummary{}).Where("request_id = ?", "req-flow").Count(&summaries).Error)
+	require.Equal(t, int64(0), summaries)
+}
+
+func TestAsyncExecutionRecorderSummarizesRecoveredUserRequest(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:      "req-recovered",
+		AttemptIndex:   0,
+		ChannelID:      8,
+		ChannelName:    "rate-limited-channel",
+		RequestedGroup: "auto",
+		SelectedGroup:  "vip",
+		ModelName:      "gpt-5.5",
+		StatusCode:     429,
+		ErrorCategory:  "upstream_concurrency_limit",
+		WillRetry:      true,
+		RetryAction:    "switch_channel",
+		Duration:       180 * time.Millisecond,
+	})
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:      "req-recovered",
+		AttemptIndex:   1,
+		ChannelID:      9,
+		ChannelName:    "healthy-channel",
+		RequestedGroup: "auto",
+		SelectedGroup:  "vip",
+		ModelName:      "gpt-5.5",
+		Success:        true,
+		RetryAction:    "complete",
+		Duration:       620 * time.Millisecond,
+		TTFT:           120 * time.Millisecond,
+	})
+
+	require.Eventually(t, func() bool {
+		var summary model.ModelGatewayUserRequestSummary
+		err := db.Where("request_id = ?", "req-recovered").First(&summary).Error
+		return err == nil && summary.Attempts == 2 && summary.FinalSuccess && summary.Recovered
+	}, time.Second, 10*time.Millisecond)
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-recovered").First(&summary).Error)
+	require.Equal(t, 2, summary.Attempts)
+	require.True(t, summary.FinalSuccess)
+	require.True(t, summary.Recovered)
+	require.Equal(t, int64(620), summary.DurationMs)
+	require.Equal(t, int64(120), summary.TTFTMs)
+	require.Equal(t, 0, summary.FinalStatusCode)
+	require.Empty(t, summary.FinalErrorCategory)
+	require.Equal(t, 9, summary.FinalChannelID)
+	require.Equal(t, "healthy-channel", summary.FinalChannelName)
+	require.Greater(t, summary.CompletedAt, int64(0))
+}
+
+func TestAsyncExecutionRecorderSummarizesClientAbortAsUserCanceled(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:         "req-client-abort",
+		AttemptIndex:      0,
+		ChannelID:         8,
+		RequestedGroup:    "auto",
+		SelectedGroup:     "vip",
+		ModelName:         "gpt-5.5",
+		StatusCode:        499,
+		ErrorCategory:     "client_aborted",
+		RetryAction:       "client_aborted",
+		StreamInterrupted: true,
+		ClientAborted:     true,
+		Duration:          1400 * time.Millisecond,
+	})
+
+	require.Eventually(t, func() bool {
+		var summary model.ModelGatewayUserRequestSummary
+		err := db.Where("request_id = ?", "req-client-abort").First(&summary).Error
+		return err == nil && summary.StreamInterrupted && summary.ClientAborted && !summary.FinalSuccess
+	}, time.Second, 10*time.Millisecond)
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-client-abort").First(&summary).Error)
+	require.Equal(t, 1, summary.Attempts)
+	require.False(t, summary.FinalSuccess)
+	require.True(t, summary.ClientAborted)
+	require.Equal(t, 499, summary.FinalStatusCode)
+	require.Equal(t, model.ModelGatewayUserRequestErrorClientAborted, summary.FinalErrorCategory)
+	require.Equal(t, int64(1400), summary.DurationMs)
+
+	var record model.ModelExecutionRecord
+	require.NoError(t, db.Where("request_id = ?", "req-client-abort").First(&record).Error)
+	require.True(t, record.StreamInterrupted)
+	require.Contains(t, record.RequestMeta, "client_aborted")
+}
+
+func TestAsyncExecutionRecorderClientAbortOverridesStreamInterruptedCategory(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:         "req-client-abort-stream-category",
+		AttemptIndex:      0,
+		ChannelID:         8,
+		RequestedGroup:    "auto",
+		SelectedGroup:     "vip",
+		ModelName:         "gpt-5.5",
+		ErrorCategory:     "stream_interrupted",
+		StreamInterrupted: true,
+		ClientAborted:     true,
+		Duration:          900 * time.Millisecond,
+	})
+
+	require.Eventually(t, func() bool {
+		var summary model.ModelGatewayUserRequestSummary
+		err := db.Where("request_id = ?", "req-client-abort-stream-category").First(&summary).Error
+		return err == nil && summary.FinalErrorCategory == model.ModelGatewayUserRequestErrorClientAborted
+	}, time.Second, 10*time.Millisecond)
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-client-abort-stream-category").First(&summary).Error)
+	require.True(t, summary.ClientAborted)
+	require.Equal(t, model.ModelGatewayUserRequestErrorClientAborted, summary.FinalErrorCategory)
 }

@@ -97,16 +97,16 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 		smartSelector := scheduler.NewDefaultSmartChannelSelector(
 			NewModelCandidatePoolBuilder(),
 			snapshotStore,
-			scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+			scheduler.NewScoreCalculatorFactory(runtimePolicy.ScoreWeights),
 		).WithRuntimeSnapshotEnricher(scheduler.NewRuntimeSnapshotEnricher(
 			scheduler.NewServiceRuntimeStateProvider(),
 			runtimePolicy.QueueTimeoutMs,
 			runtimePolicy.QueueMaxDepth,
 			runtimePolicy.QueueDepthMultiplier,
 		).WithCircuitBreaker(circuitBreaker)).WithStickyRouter(stickyRouter)
+		healthMonitor := scheduler.NewRuntimeHealthMonitor(snapshotStore, circuitBreaker)
 		recorder := modelgateway.NewExecutionRecorderChain(
-			recording.NewAsyncExecutionRecorder(1024),
-			scheduler.NewRuntimeHealthMonitor(snapshotStore, circuitBreaker),
+			recording.NewAsyncExecutionRecorder(1024).WithPostProcessors(healthMonitor),
 		)
 		facade := modelgateway.NewSmartDispatchFacade(modelgateway.SmartDispatchDeps{
 			PolicyResolver: policy.NewDefaultGroupPolicyResolver(settingsProvider),

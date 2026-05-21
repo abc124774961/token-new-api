@@ -85,6 +85,73 @@ func TestCircuitBreakerUsesErrorPolicyForRateLimit(t *testing.T) {
 	require.Equal(t, 2, snapshot.HalfOpenProbeMax)
 }
 
+func TestCircuitBreakerDoesNotOpenForConcurrencyLimit429(t *testing.T) {
+	now := time.Unix(350, 0)
+	breaker := scheduler.NewCircuitBreakerForTest(scheduler.CircuitBreakerOptions{
+		FailureThreshold:   1,
+		MinSamples:         1,
+		OpenDuration:       time.Minute,
+		HalfOpenProbeCount: 1,
+		ErrorPolicies: map[string]scheduler.CircuitErrorPolicy{
+			scheduler.CircuitErrorRateLimit: {
+				FailureThreshold:   1,
+				MinSamples:         1,
+				OpenDuration:       time.Second,
+				HalfOpenProbeCount: 1,
+			},
+		},
+	}, func() time.Time { return now })
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 15, Group: "vip"}
+
+	for idx := 0; idx < 3; idx++ {
+		breaker.Report(core.AttemptResult{
+			Key:                key,
+			ChannelID:          15,
+			StatusCode:         http.StatusTooManyRequests,
+			ErrorMessage:       "Too many pending requests, please retry later",
+			ConcurrencyLimited: true,
+		})
+	}
+
+	snapshot := breaker.Snapshot(key)
+	require.Equal(t, core.CircuitStateClosed, snapshot.State)
+	require.Zero(t, snapshot.SampleCount)
+	require.Empty(t, snapshot.ErrorCounts)
+	require.Equal(t, scheduler.CircuitErrorConcurrencyLimit, scheduler.ClassifyCircuitError(core.AttemptResult{
+		StatusCode:   http.StatusTooManyRequests,
+		ErrorMessage: "Too many pending requests, please retry later",
+	}))
+}
+
+func TestCircuitBreakerIgnoresClientAbortedStream(t *testing.T) {
+	now := time.Unix(360, 0)
+	breaker := scheduler.NewCircuitBreakerForTest(scheduler.CircuitBreakerOptions{
+		FailureThreshold:   1,
+		MinSamples:         1,
+		OpenDuration:       time.Minute,
+		HalfOpenProbeCount: 1,
+	}, func() time.Time { return now })
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 16, Group: "vip"}
+
+	breaker.Report(core.AttemptResult{
+		Key:               key,
+		ChannelID:         16,
+		StatusCode:        499,
+		StreamInterrupted: true,
+		ClientAborted:     true,
+	})
+
+	snapshot := breaker.Snapshot(key)
+	require.Equal(t, core.CircuitStateClosed, snapshot.State)
+	require.Zero(t, snapshot.SampleCount)
+	require.Empty(t, snapshot.ErrorCounts)
+	require.Empty(t, scheduler.ClassifyCircuitError(core.AttemptResult{
+		StatusCode:        499,
+		StreamInterrupted: true,
+		ClientAborted:     true,
+	}))
+}
+
 func TestCircuitBreakerErrorPolicyCanCountAuthAndQuota(t *testing.T) {
 	now := time.Unix(400, 0)
 	breaker := scheduler.NewCircuitBreakerForTest(scheduler.CircuitBreakerOptions{

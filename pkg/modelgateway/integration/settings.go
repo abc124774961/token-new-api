@@ -34,6 +34,7 @@ type RuntimePolicySettings struct {
 	RuntimeSyncQueueMinInterval      int
 	RuntimeSyncEventPushEnabled      bool
 	RuntimeSyncEventSubscribeEnabled bool
+	ScoreWeights                     core.ScoreWeights
 }
 
 func NewSchedulerSettingsProvider() *SchedulerSettingsProvider {
@@ -72,6 +73,13 @@ func RuntimePolicySetting() RuntimePolicySettings {
 		RuntimeSyncQueueMinInterval:      setting.RuntimeSyncQueueMinIntervalMs,
 		RuntimeSyncEventPushEnabled:      setting.RuntimeSyncEventPushEnabled,
 		RuntimeSyncEventSubscribeEnabled: setting.RuntimeSyncEventSubscribeEnabled,
+		ScoreWeights: core.ScoreWeights{
+			Success: setting.SuccessWeight,
+			Speed:   setting.SpeedWeight,
+			Load:    setting.LoadWeight,
+			Cost:    setting.CostWeight,
+			Group:   setting.GroupWeight,
+		},
 	}
 }
 

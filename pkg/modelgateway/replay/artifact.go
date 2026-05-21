@@ -64,19 +64,22 @@ type RequestMeta struct {
 }
 
 type CandidateExplanation struct {
-	ChannelID       int                `json:"channel_id,omitempty"`
-	ChannelName     string             `json:"channel_name,omitempty"`
-	Group           string             `json:"group,omitempty"`
-	UpstreamModel   string             `json:"upstream_model,omitempty"`
-	ProviderProfile string             `json:"provider_profile,omitempty"`
-	ProxyMode       string             `json:"proxy_mode,omitempty"`
-	RuntimeKey      RuntimeKey         `json:"runtime_key,omitempty"`
-	Available       bool               `json:"available,omitempty"`
-	RejectReason    string             `json:"reject_reason,omitempty"`
-	ScoreTotal      float64            `json:"score_total,omitempty"`
-	ScoreBreakdown  map[string]float64 `json:"score_breakdown,omitempty"`
-	StickyMatched   bool               `json:"sticky_matched,omitempty"`
-	Selected        bool               `json:"selected,omitempty"`
+	ChannelID           int                `json:"channel_id,omitempty"`
+	ChannelName         string             `json:"channel_name,omitempty"`
+	Group               string             `json:"group,omitempty"`
+	UpstreamModel       string             `json:"upstream_model,omitempty"`
+	ProviderProfile     string             `json:"provider_profile,omitempty"`
+	ProxyMode           string             `json:"proxy_mode,omitempty"`
+	RuntimeKey          RuntimeKey         `json:"runtime_key,omitempty"`
+	Available           bool               `json:"available,omitempty"`
+	RejectReason        string             `json:"reject_reason,omitempty"`
+	ChannelStatus       int                `json:"channel_status,omitempty"`
+	StatusReason        string             `json:"status_reason,omitempty"`
+	BalanceInsufficient bool               `json:"balance_insufficient,omitempty"`
+	ScoreTotal          float64            `json:"score_total,omitempty"`
+	ScoreBreakdown      map[string]float64 `json:"score_breakdown,omitempty"`
+	StickyMatched       bool               `json:"sticky_matched,omitempty"`
+	Selected            bool               `json:"selected,omitempty"`
 }
 
 type RuntimeKey struct {
@@ -321,19 +324,22 @@ func sanitizeCandidateExplanations(candidates []CandidateExplanation, recordInde
 			channelID = sanitizedID(candidate.ChannelID, recordIndex, idx+3, options.StableIDs)
 		}
 		sanitized := CandidateExplanation{
-			ChannelID:       channelID,
-			ChannelName:     sanitizeName(candidate.ChannelName, "candidate_channel", channelID),
-			Group:           sanitizeLabel(candidate.Group),
-			UpstreamModel:   sanitizeLabel(candidate.UpstreamModel),
-			ProviderProfile: sanitizeLabel(candidate.ProviderProfile),
-			ProxyMode:       sanitizeLabel(candidate.ProxyMode),
-			RuntimeKey:      sanitizeRuntimeKey(candidate.RuntimeKey, recordIndex, idx+3, options, idMap),
-			Available:       candidate.Available,
-			RejectReason:    sanitizeLabel(candidate.RejectReason),
-			ScoreTotal:      candidate.ScoreTotal,
-			ScoreBreakdown:  copyFloatMap(candidate.ScoreBreakdown),
-			StickyMatched:   candidate.StickyMatched,
-			Selected:        candidate.Selected,
+			ChannelID:           channelID,
+			ChannelName:         sanitizeName(candidate.ChannelName, "candidate_channel", channelID),
+			Group:               sanitizeLabel(candidate.Group),
+			UpstreamModel:       sanitizeLabel(candidate.UpstreamModel),
+			ProviderProfile:     sanitizeLabel(candidate.ProviderProfile),
+			ProxyMode:           sanitizeLabel(candidate.ProxyMode),
+			RuntimeKey:          sanitizeRuntimeKey(candidate.RuntimeKey, recordIndex, idx+3, options, idMap),
+			Available:           candidate.Available,
+			RejectReason:        sanitizeLabel(candidate.RejectReason),
+			ChannelStatus:       candidate.ChannelStatus,
+			StatusReason:        sanitizeLabel(candidate.StatusReason),
+			BalanceInsufficient: candidate.BalanceInsufficient,
+			ScoreTotal:          candidate.ScoreTotal,
+			ScoreBreakdown:      copyFloatMap(candidate.ScoreBreakdown),
+			StickyMatched:       candidate.StickyMatched,
+			Selected:            candidate.Selected,
 		}
 		if sanitized.ChannelID == 0 {
 			sanitized.ChannelID = sanitized.RuntimeKey.ChannelID

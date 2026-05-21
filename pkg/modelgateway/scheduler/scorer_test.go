@@ -3,10 +3,13 @@ package scheduler_test
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -160,6 +163,58 @@ func TestSelectorSkipsFullConcurrencyCandidateWhenQueueDisabled(t *testing.T) {
 	require.Equal(t, 2, plan.Channel.Id)
 }
 
+func TestSelectorSkipsRequestLocalConcurrencyMarkedCandidate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+	service.MarkChannelConcurrencySkipped(ctx, 1)
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	firstKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 1, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	secondKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 2, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                firstKey,
+		SuccessRate:        1,
+		ActiveConcurrency:  0,
+		MaxConcurrency:     10,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        10,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                secondKey,
+		SuccessRate:        0.5,
+		ActiveConcurrency:  0,
+		MaxConcurrency:     10,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        10,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 1}, Group: "default", RuntimeKey: firstKey},
+			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: secondKey},
+		}),
+		store,
+		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+	)
+
+	plan, handled, apiErr := selector.Select(ctx, nil, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+		QueueEnabled:    false,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 2, plan.Channel.Id)
+	skipped := candidateExplanationByChannel(t, plan.Candidates, 1)
+	require.False(t, skipped.Available)
+	require.Equal(t, "local_concurrency_full", skipped.RejectReason)
+}
+
 func TestSelectorRecordsCandidateExplanations(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	rejectedKey := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 1, Group: "default", EndpointType: constant.EndpointTypeOpenAI, CapabilityFingerprint: "openai_codex"}
@@ -228,6 +283,71 @@ func TestSelectorRecordsCandidateExplanations(t *testing.T) {
 	require.Equal(t, selectedKey, selected.RuntimeKey)
 }
 
+func TestSelectorMarksBalanceInsufficientCandidateUnavailable(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	balanceKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 1, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	selectedKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 2, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	balancePaused := &model.Channel{Id: 1, Name: "balance-paused", Status: 3}
+	balancePaused.SetOtherInfo(map[string]interface{}{"status_reason": "balance_insufficient"})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: balancePaused, Group: "default", RuntimeKey: balanceKey},
+			{Channel: &model.Channel{Id: 2, Name: "healthy", Status: 1}, Group: "default", RuntimeKey: selectedKey},
+		}),
+		store,
+		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+	)
+
+	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 2, plan.Channel.Id)
+	paused := candidateExplanationByChannel(t, plan.Candidates, 1)
+	require.False(t, paused.Available)
+	require.True(t, paused.BalanceInsufficient)
+	require.Equal(t, "balance_insufficient", paused.StatusReason)
+	require.Equal(t, "balance_insufficient", paused.RejectReason)
+}
+
+func TestSelectorMarksConfirmedZeroBalanceCandidateUnavailable(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	balanceKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 1, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	selectedKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 2, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	zeroBalance := &model.Channel{Id: 1, Name: "zero-balance", Status: 1, Balance: 0, BalanceUpdatedTime: common.GetTimestamp()}
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: zeroBalance, Group: "default", RuntimeKey: balanceKey},
+			{Channel: &model.Channel{Id: 2, Name: "healthy", Status: 1}, Group: "default", RuntimeKey: selectedKey},
+		}),
+		store,
+		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+	)
+
+	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 2, plan.Channel.Id)
+	paused := candidateExplanationByChannel(t, plan.Candidates, 1)
+	require.False(t, paused.Available)
+	require.True(t, paused.BalanceInsufficient)
+	require.Equal(t, "balance_insufficient", paused.StatusReason)
+	require.Equal(t, "balance_insufficient", paused.RejectReason)
+}
+
 func TestSelectorAllowsShortQueueWhenQueueEnabled(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	firstKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 1, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
@@ -279,6 +399,97 @@ func TestSelectorAllowsShortQueueWhenQueueEnabled(t *testing.T) {
 	require.True(t, handled)
 	require.NotNil(t, plan)
 	require.Equal(t, 1, plan.Channel.Id)
+}
+
+func TestSlowCandidateCannotOutscoreFastCandidateWithRealLatencySamples(t *testing.T) {
+	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "default"}
+
+	fast := scorer.Score(candidate, core.RuntimeSnapshot{
+		SuccessRate:        0.96,
+		TTFTMs:             900,
+		DurationMs:         4200,
+		TokensPerSecond:    42,
+		ActiveConcurrency:  1,
+		MaxConcurrency:     8,
+		CostRatio:          1.1,
+		GroupPriorityRatio: 1,
+		SampleCount:        18,
+		SuccessScore:       0.96,
+		SpeedScore:         0.91,
+		ExperienceScore:    1,
+	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
+	slowCheap := scorer.Score(candidate, core.RuntimeSnapshot{
+		SuccessRate:        0.99,
+		TTFTMs:             52000,
+		DurationMs:         96000,
+		TokensPerSecond:    3,
+		ActiveConcurrency:  0,
+		MaxConcurrency:     8,
+		CostRatio:          0.2,
+		GroupPriorityRatio: 1,
+		SampleCount:        16,
+		SuccessScore:       0.99,
+		SpeedScore:         0.08,
+		ExperienceScore:    0.95,
+	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
+
+	require.Greater(t, fast.Total, slowCheap.Total)
+	require.Greater(t, fast.Breakdown["speed"], slowCheap.Breakdown["speed"])
+	require.Less(t, slowCheap.Total, 0.45)
+}
+
+func TestHighTTFTAppliesExplicitPenaltyEvenWithHealthySpeedScore(t *testing.T) {
+	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "default"}
+
+	normal := scorer.Score(candidate, core.RuntimeSnapshot{
+		SuccessRate:        0.99,
+		TTFTMs:             1500,
+		DurationMs:         5000,
+		TokensPerSecond:    45,
+		ActiveConcurrency:  1,
+		MaxConcurrency:     8,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+		SuccessScore:       0.99,
+		SpeedScore:         0.92,
+		ExperienceScore:    1,
+	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
+	slowFirstByte := scorer.Score(candidate, core.RuntimeSnapshot{
+		SuccessRate:        0.99,
+		TTFTMs:             36000,
+		DurationMs:         55000,
+		TokensPerSecond:    45,
+		ActiveConcurrency:  1,
+		MaxConcurrency:     8,
+		CostRatio:          0.2,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+		SuccessScore:       0.99,
+		SpeedScore:         0.92,
+		ExperienceScore:    1,
+	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
+
+	require.Greater(t, normal.Total, slowFirstByte.Total)
+	require.Contains(t, slowFirstByte.Breakdown, "ttft_penalty")
+	require.GreaterOrEqual(t, slowFirstByte.Breakdown["ttft_penalty"], 0.72)
+	require.Less(t, slowFirstByte.Breakdown["speed"], 0.28)
+	require.LessOrEqual(t, slowFirstByte.Total, 0.32)
+}
+
+func TestSpeedScoreWithoutSamplesIsConservative(t *testing.T) {
+	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+	score := scorer.Score(core.Candidate{Channel: &model.Channel{Id: 9}}, core.RuntimeSnapshot{
+		SuccessRate:        0.80,
+		CostRatio:          0.1,
+		GroupPriorityRatio: 1,
+		SampleCount:        0,
+	}, core.GroupSmartPolicy{})
+
+	require.LessOrEqual(t, score.Breakdown["speed"], 0.45)
+	require.Less(t, score.Total, 0.70)
 }
 
 func candidateExplanationByChannel(t *testing.T, candidates []core.CandidateExplanation, channelID int) core.CandidateExplanation {

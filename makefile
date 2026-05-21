@@ -1,7 +1,7 @@
 FRONTEND_CLASSIC_DIR = ./web/classic
 BACKEND_DIR = .
 
-.PHONY: all build-frontend build-frontend-classic build-all-frontends start-backend dev dev-api dev-up dev-down deploy-pro publish-pro pro-up pro-down dev-web dev-web-classic
+.PHONY: all build-frontend build-frontend-classic build-all-frontends start-backend dev dev-api dev-up dev-down deploy-alpha publish-alpha alpha-up alpha-down deploy-pro publish-pro pro-up pro-down dev-web dev-web-classic
 
 all: build-all-frontends start-backend
 
@@ -27,6 +27,19 @@ dev-up: dev-api
 dev-down:
 	@echo "Stopping local full-stack container (dev)..."
 	@docker compose --env-file .env.dev -f docker-compose.dev.yml down
+
+deploy-alpha: alpha-up
+
+publish-alpha: alpha-up
+
+alpha-up:
+	@echo "Starting alpha server container set (alpha)..."
+	@mkdir -p data-alpha logs-alpha
+	@docker compose --env-file .env.alpha -f docker-compose.alpha.yml up -d --build
+
+alpha-down:
+	@echo "Stopping alpha server container set (alpha)..."
+	@docker compose --env-file .env.alpha -f docker-compose.alpha.yml down
 
 deploy-pro: pro-up
 

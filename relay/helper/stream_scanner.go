@@ -40,15 +40,19 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		return
 	}
 
-	// 无条件新建 StreamStatus
-	info.StreamStatus = relaycommon.NewStreamStatus()
+	if info.StreamStatus == nil {
+		info.StreamStatus = relaycommon.NewStreamStatus()
+	}
+
+	var closeBodyOnce sync.Once
+	closeBody := func() {
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+	}
 
 	// 确保响应体总是被关闭
-	defer func() {
-		if resp.Body != nil {
-			resp.Body.Close()
-		}
-	}()
+	defer closeBodyOnce.Do(closeBody)
 
 	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
 
@@ -85,6 +89,8 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	defer func() {
 		// 通知所有 goroutine 停止
 		common.SafeSendBool(stopChan, true)
+		// 主动关闭上游响应体，避免客户端断开后 scanner.Scan() 继续阻塞到上游下一次输出。
+		closeBodyOnce.Do(closeBody)
 
 		ticker.Stop()
 		if pingTicker != nil {
@@ -152,7 +158,11 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 					case err := <-done:
 						if err != nil {
 							logger.LogError(c, "ping data error: "+err.Error())
-							info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonPingFail, err)
+							if c.Request != nil && c.Request.Context().Err() != nil {
+								info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
+							} else {
+								info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonPingFail, err)
+							}
 							return
 						}
 						if common.DebugEnabled {
@@ -285,10 +295,12 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	select {
 	case <-ticker.C:
 		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, nil)
+		closeBodyOnce.Do(closeBody)
 	case <-stopChan:
 		// EndReason already set by the goroutine that triggered stopChan
 	case <-c.Request.Context().Done():
 		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
+		closeBodyOnce.Do(closeBody)
 	}
 
 	if info.StreamStatus.IsNormalEnd() && !info.StreamStatus.HasErrors() {

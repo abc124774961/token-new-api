@@ -198,10 +198,28 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	}
 
 	applyUsagePostProcessing(info, usage, common.StringToByteSlice(lastStreamData))
+	markRelayEmptyOutput(c, info, usage, responseTextBuilder.String())
 
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
 	return usage, nil
+}
+
+func markRelayEmptyOutput(c *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage, responseText string) {
+	if c == nil || info == nil || !common.GetContextKeyBool(c, constant.ContextKeyIsStream) {
+		return
+	}
+	if info.StreamStatus == nil || !info.StreamStatus.IsNormalEnd() {
+		return
+	}
+	if usage == nil || usage.CompletionTokens > 0 {
+		return
+	}
+	if strings.TrimSpace(responseText) != "" {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyRelayEmptyOutput, true)
+	common.SetContextKey(c, constant.ContextKeyRelayExperienceIssue, "empty_output")
 }
 
 func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {

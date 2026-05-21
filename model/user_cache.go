@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -11,6 +12,12 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/bytedance/gopkg/util/gopool"
+	"golang.org/x/sync/singleflight"
+)
+
+const (
+	userBaseHotCacheTTL      = 30 * time.Second
+	userBaseHotCacheMaxItems = 2048
 )
 
 // UserBase struct remains the same as it represents the cached data structure
@@ -23,6 +30,17 @@ type UserBase struct {
 	Username string `json:"username"`
 	Setting  string `json:"setting"`
 }
+
+type userBaseHotCacheEntry struct {
+	user      UserBase
+	expiresAt time.Time
+}
+
+var (
+	userBaseHotCacheMu    sync.Mutex
+	userBaseHotCache      = map[int]userBaseHotCacheEntry{}
+	userBaseHotCacheGroup singleflight.Group
+)
 
 func (user *UserBase) WriteContext(c *gin.Context) {
 	common.SetContextKey(c, constant.ContextKeyUserGroup, user.Group)
@@ -51,6 +69,7 @@ func getUserCacheKey(userId int) string {
 
 // invalidateUserCache clears user cache
 func invalidateUserCache(userId int) error {
+	deleteUserBaseHotCache(userId)
 	if !common.RedisEnabled {
 		return nil
 	}
@@ -65,6 +84,7 @@ func InvalidateUserCache(userId int) error {
 
 // updateUserCache updates all user cache fields using hash
 func updateUserCache(user User) error {
+	setUserBaseHotCache(*user.ToBaseUser())
 	if !common.RedisEnabled {
 		return nil
 	}
@@ -91,31 +111,50 @@ func GetUserCache(userId int) (userCache *UserBase, err error) {
 		}
 	}()
 
+	if userCache, ok := getUserBaseHotCache(userId); ok {
+		return userCache, nil
+	}
+
 	// Try getting from Redis first
 	userCache, err = cacheGetUserBase(userId)
 	if err == nil {
+		setUserBaseHotCache(*userCache)
 		return userCache, nil
 	}
 
 	// If Redis fails, get from DB
 	fromDB = true
-	user, err = GetUserById(userId, false)
-	if err != nil {
+	value, queryErr, _ := userBaseHotCacheGroup.Do(fmt.Sprintf("%d", userId), func() (any, error) {
+		if cached, ok := getUserBaseHotCache(userId); ok {
+			return *cached, nil
+		}
+		dbUser, err := GetUserById(userId, false)
+		if err != nil {
+			return UserBase{}, err
+		}
+		base := *dbUser.ToBaseUser()
+		setUserBaseHotCache(base)
+		return base, nil
+	})
+	if queryErr != nil {
+		err = queryErr
 		return nil, err // Return nil and error if DB lookup fails
 	}
-
-	// Create cache object from user data
-	userCache = &UserBase{
-		Id:       user.Id,
-		Group:    user.Group,
-		Quota:    user.Quota,
-		Status:   user.Status,
-		Username: user.Username,
-		Setting:  user.Setting,
-		Email:    user.Email,
+	if loaded, ok := value.(UserBase); ok {
+		userBase := loaded
+		user = &User{
+			Id:       userBase.Id,
+			Group:    userBase.Group,
+			Quota:    userBase.Quota,
+			Status:   userBase.Status,
+			Username: userBase.Username,
+			Setting:  userBase.Setting,
+			Email:    userBase.Email,
+		}
+		return &userBase, nil
 	}
 
-	return userCache, nil
+	return nil, fmt.Errorf("user cache load failed")
 }
 
 func cacheGetUserBase(userId int) (*UserBase, error) {
@@ -129,6 +168,73 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 		return nil, err
 	}
 	return &userCache, nil
+}
+
+func getUserBaseHotCache(userId int) (*UserBase, bool) {
+	if userId <= 0 {
+		return nil, false
+	}
+	now := time.Now()
+	userBaseHotCacheMu.Lock()
+	defer userBaseHotCacheMu.Unlock()
+	entry, ok := userBaseHotCache[userId]
+	if !ok {
+		return nil, false
+	}
+	if now.After(entry.expiresAt) {
+		delete(userBaseHotCache, userId)
+		return nil, false
+	}
+	user := entry.user
+	return &user, true
+}
+
+func setUserBaseHotCache(user UserBase) {
+	if user.Id <= 0 {
+		return
+	}
+	userBaseHotCacheMu.Lock()
+	defer userBaseHotCacheMu.Unlock()
+	if len(userBaseHotCache) >= userBaseHotCacheMaxItems {
+		now := time.Now()
+		for id, entry := range userBaseHotCache {
+			if now.After(entry.expiresAt) {
+				delete(userBaseHotCache, id)
+			}
+		}
+		if len(userBaseHotCache) >= userBaseHotCacheMaxItems {
+			userBaseHotCache = map[int]userBaseHotCacheEntry{}
+		}
+	}
+	userBaseHotCache[user.Id] = userBaseHotCacheEntry{
+		user:      user,
+		expiresAt: time.Now().Add(userBaseHotCacheTTL),
+	}
+}
+
+func deleteUserBaseHotCache(userId int) {
+	if userId <= 0 {
+		return
+	}
+	userBaseHotCacheMu.Lock()
+	delete(userBaseHotCache, userId)
+	userBaseHotCacheMu.Unlock()
+}
+
+func updateUserBaseHotCacheField(userId int, update func(*UserBase)) {
+	if userId <= 0 || update == nil {
+		return
+	}
+	userBaseHotCacheMu.Lock()
+	defer userBaseHotCacheMu.Unlock()
+	entry, ok := userBaseHotCache[userId]
+	if !ok || time.Now().After(entry.expiresAt) {
+		delete(userBaseHotCache, userId)
+		return
+	}
+	update(&entry.user)
+	entry.expiresAt = time.Now().Add(userBaseHotCacheTTL)
+	userBaseHotCache[userId] = entry
 }
 
 // Add atomic quota operations using hash fields
@@ -186,6 +292,12 @@ func getUserSettingCache(userId int) (dto.UserSetting, error) {
 
 // New functions for individual field updates
 func updateUserStatusCache(userId int, status bool) error {
+	updateUserBaseHotCacheField(userId, func(user *UserBase) {
+		user.Status = common.UserStatusEnabled
+		if !status {
+			user.Status = common.UserStatusDisabled
+		}
+	})
 	if !common.RedisEnabled {
 		return nil
 	}
@@ -197,6 +309,9 @@ func updateUserStatusCache(userId int, status bool) error {
 }
 
 func updateUserQuotaCache(userId int, quota int) error {
+	updateUserBaseHotCacheField(userId, func(user *UserBase) {
+		user.Quota = quota
+	})
 	if !common.RedisEnabled {
 		return nil
 	}
@@ -204,6 +319,9 @@ func updateUserQuotaCache(userId int, quota int) error {
 }
 
 func updateUserGroupCache(userId int, group string) error {
+	updateUserBaseHotCacheField(userId, func(user *UserBase) {
+		user.Group = group
+	})
 	if !common.RedisEnabled {
 		return nil
 	}
@@ -215,6 +333,9 @@ func UpdateUserGroupCache(userId int, group string) error {
 }
 
 func updateUserNameCache(userId int, username string) error {
+	updateUserBaseHotCacheField(userId, func(user *UserBase) {
+		user.Username = username
+	})
 	if !common.RedisEnabled {
 		return nil
 	}
@@ -222,6 +343,9 @@ func updateUserNameCache(userId int, username string) error {
 }
 
 func updateUserSettingCache(userId int, setting string) error {
+	updateUserBaseHotCacheField(userId, func(user *UserBase) {
+		user.Setting = setting
+	})
 	if !common.RedisEnabled {
 		return nil
 	}
@@ -236,4 +360,11 @@ func GetUserLanguage(userId int) string {
 		return ""
 	}
 	return userCache.GetSetting().Language
+}
+
+func resetUserBaseHotCacheForTest() {
+	userBaseHotCacheMu.Lock()
+	userBaseHotCache = map[int]userBaseHotCacheEntry{}
+	userBaseHotCacheMu.Unlock()
+	userBaseHotCacheGroup = singleflight.Group{}
 }

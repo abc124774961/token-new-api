@@ -8,10 +8,12 @@ upload
 build
 *.db-journal
 logs
+logs-alpha/
 web/classic/dist
 web/node_modules
 web/dist
 .env
+.env.alpha
 one-api
 new-api
 /__debug_bin*
@@ -28,6 +30,7 @@ plans
 electron/node_modules
 electron/dist
 data/
+data-alpha/
 .gomodcache/
 .gocache-temp
 .gopath

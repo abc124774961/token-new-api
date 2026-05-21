@@ -72,6 +72,8 @@ const SiderBar = ({ onNavigate = () => {} }) => {
   const [openedKeys, setOpenedKeys] = useState([]);
   const location = useLocation();
   const [routerMapState, setRouterMapState] = useState(routerMap);
+  const isAdminUser = isAdmin();
+  const isRootUser = isRoot();
 
   const workspaceItems = useMemo(() => {
     const items = [
@@ -88,13 +90,13 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('渠道状态监控'),
         itemKey: 'channel_status',
         to: '/channel-status',
-        className: isAdmin() ? '' : 'tableHiddle',
+        adminOnly: true,
       },
       {
         text: t('智能模型网关'),
         itemKey: 'model_gateway',
         to: '/model-gateway',
-        className: isAdmin() ? '' : 'tableHiddle',
+        adminOnly: true,
       },
       {
         text: t('令牌管理'),
@@ -126,6 +128,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
     // 根据配置过滤项目
     const filteredItems = items.filter((item) => {
+      if (item.adminOnly && !isAdminUser) return false;
       const configVisible = isModuleVisible('console', item.itemKey);
       return configVisible;
     });
@@ -135,7 +138,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     localStorage.getItem('enable_data_export'),
     localStorage.getItem('enable_drawing'),
     localStorage.getItem('enable_task'),
-    isAdmin(),
+    isAdminUser,
     t,
     isModuleVisible,
   ]);
@@ -179,43 +182,43 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('渠道管理'),
         itemKey: 'channel',
         to: '/channel',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminUser ? '' : 'tableHiddle',
       },
       {
         text: t('订阅管理'),
         itemKey: 'subscription',
         to: '/subscription',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminUser ? '' : 'tableHiddle',
       },
       {
         text: t('模型管理'),
         itemKey: 'models',
         to: '/console/models',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminUser ? '' : 'tableHiddle',
       },
       {
         text: t('模型部署'),
         itemKey: 'deployment',
         to: '/deployment',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminUser ? '' : 'tableHiddle',
       },
       {
         text: t('兑换码管理'),
         itemKey: 'redemption',
         to: '/redemption',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminUser ? '' : 'tableHiddle',
       },
       {
         text: t('用户管理'),
         itemKey: 'user',
         to: '/user',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isAdminUser ? '' : 'tableHiddle',
       },
       {
         text: t('系统设置'),
         itemKey: 'setting',
         to: '/setting',
-        className: isRoot() ? '' : 'tableHiddle',
+        className: isRootUser ? '' : 'tableHiddle',
       },
     ];
 
@@ -226,7 +229,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     });
 
     return filteredItems;
-  }, [isAdmin(), isRoot(), t, isModuleVisible]);
+  }, [isAdminUser, isRootUser, t, isModuleVisible]);
 
   const chatMenuItems = useMemo(() => {
     const items = [
@@ -430,7 +433,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         type='sidebar'
         className=''
         collapsed={collapsed}
-        showAdmin={isAdmin()}
+        showAdmin={isAdminUser}
       >
         <Nav
           className='sidebar-nav'
@@ -472,7 +475,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           }}
         >
           {/* 聊天区域 */}
-          {hasSectionVisibleModules('chat') && (
+          {chatMenuItems.length > 0 && (
             <div className='sidebar-section'>
               {!collapsed && (
                 <div className='sidebar-group-label'>{t('聊天')}</div>
@@ -482,7 +485,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           )}
 
           {/* 控制台区域 */}
-          {hasSectionVisibleModules('console') && (
+          {workspaceItems.length > 0 && (
             <>
               <Divider className='sidebar-divider' />
               <div>
@@ -495,7 +498,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           )}
 
           {/* 个人中心区域 */}
-          {hasSectionVisibleModules('personal') && (
+          {financeItems.length > 0 && (
             <>
               <Divider className='sidebar-divider' />
               <div>
@@ -508,7 +511,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           )}
 
           {/* 管理员区域 - 只在管理员时显示且配置允许时显示 */}
-          {isAdmin() && hasSectionVisibleModules('admin') && (
+          {isAdminUser && adminItems.length > 0 && (
             <>
               <Divider className='sidebar-divider' />
               <div>

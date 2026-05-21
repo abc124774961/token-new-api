@@ -123,6 +123,11 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 cp .env.pro.example .env.pro
 mkdir -p data logs
 docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
+
+# Alphaサーバーデプロイ
+cp .env.alpha.example .env.alpha
+mkdir -p data-alpha logs-alpha
+docker compose --env-file .env.alpha -f docker-compose.alpha.yml up -d --build
 ```
 
 <details>
@@ -354,6 +359,11 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 cp .env.pro.example .env.pro
 mkdir -p data logs
 docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
+
+# Alphaサーバー環境
+cp .env.alpha.example .env.alpha
+mkdir -p data-alpha logs-alpha
+docker compose --env-file .env.alpha -f docker-compose.alpha.yml up -d --build
 ```
 
 </details>

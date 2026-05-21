@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
 const (
@@ -112,6 +113,7 @@ func (e *RuntimeSnapshotEnricher) Enrich(candidate core.Candidate, snapshot core
 	snapshot = e.applyConcurrency(snapshot, channelID, setting, policy)
 	snapshot.Cooldown = snapshot.Cooldown || e.stateProvider.ConcurrencyCooldownActive(channelID)
 	snapshot.FailureAvoidance = snapshot.FailureAvoidance || e.stateProvider.FailureAvoidanceActive(channelID)
+	snapshot = applyCostSnapshot(candidate, snapshot, policy)
 	snapshot = e.applyCircuit(snapshot, policy)
 	return snapshot
 }
@@ -121,8 +123,29 @@ func (e *RuntimeSnapshotEnricher) applyConcurrency(snapshot core.RuntimeSnapshot
 	if active > snapshot.ActiveConcurrency {
 		snapshot.ActiveConcurrency = active
 	}
-	if snapshot.MaxConcurrency <= 0 && setting.MaxConcurrency > 0 {
-		snapshot.MaxConcurrency = setting.MaxConcurrency
+	configuredLimit := setting.MaxConcurrencyCeiling
+	if configuredLimit <= 0 {
+		configuredLimit = setting.MaxConcurrency
+	}
+	if snapshot.ConfiguredConcurrencyLimit <= 0 {
+		snapshot.ConfiguredConcurrencyLimit = configuredLimit
+	}
+	if snapshot.LearnedConcurrencyLimit <= 0 {
+		snapshot.LearnedConcurrencyLimit = setting.MaxConcurrency
+	}
+	effectiveLimit := setting.MaxConcurrency
+	if snapshot.LearnedConcurrencyLimit > 0 {
+		effectiveLimit = snapshot.LearnedConcurrencyLimit
+	}
+	snapshot.EffectiveConcurrencyLimit = effectiveLimit
+	if snapshot.MaxConcurrency <= 0 && effectiveLimit > 0 {
+		snapshot.MaxConcurrency = effectiveLimit
+	}
+	if snapshot.ConfiguredConcurrencyLimit <= 0 && snapshot.MaxConcurrency > 0 {
+		snapshot.ConfiguredConcurrencyLimit = snapshot.MaxConcurrency
+	}
+	if snapshot.LearnedConcurrencyLimit <= 0 && snapshot.MaxConcurrency > 0 {
+		snapshot.LearnedConcurrencyLimit = snapshot.MaxConcurrency
 	}
 	if snapshot.MaxConcurrency <= 0 {
 		return snapshot
@@ -200,6 +223,48 @@ func appendCapabilityPart(fingerprint string, part string) string {
 	}
 	parts = append(parts, part)
 	return strings.Join(parts, "|")
+}
+
+func applyCostSnapshot(candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) core.RuntimeSnapshot {
+	if candidate.Channel == nil {
+		return snapshot
+	}
+	if channelCost := candidate.Channel.GetCostPerMillion(); channelCost > 0 {
+		snapshot.CostRatio = channelCost
+	} else if snapshot.CostRatio <= 0 {
+		snapshot.CostRatio = estimateCandidateCostPerMillion(candidate, policy)
+	}
+	if snapshot.GroupPriorityRatio <= 0 {
+		snapshot.GroupPriorityRatio = 1
+	}
+	return snapshot
+}
+
+func estimateCandidateCostPerMillion(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {
+	modelName := strings.TrimSpace(candidate.RuntimeKey.UpstreamModel)
+	if modelName == "" {
+		modelName = strings.TrimSpace(candidate.UpstreamModel)
+	}
+	if modelName == "" {
+		modelName = candidate.Channel.ResolveMappedModelName(candidate.RuntimeKey.RequestedModel)
+	}
+	if modelName == "" {
+		modelName = strings.TrimSpace(candidate.RuntimeKey.RequestedModel)
+	}
+	if modelName == "" {
+		return 0
+	}
+	groupRatio := service.GetUserGroupRatio(policy.UserGroup, candidate.Group)
+	if groupRatio <= 0 {
+		groupRatio = 1
+	}
+	if price, ok := ratio_setting.GetModelPrice(modelName, false); ok && price >= 0 {
+		return price * groupRatio
+	}
+	if ratio, ok, _ := ratio_setting.GetModelRatio(modelName); ok && ratio >= 0 {
+		return ratio * 2 * groupRatio
+	}
+	return 0
 }
 
 var _ core.RuntimeSnapshotEnricher = (*RuntimeSnapshotEnricher)(nil)

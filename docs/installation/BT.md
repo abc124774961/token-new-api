@@ -82,9 +82,20 @@ docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
 
 6. 在宝塔网站或 Docker 面板中为 `3000` 端口配置反向代理和域名
 
+如果需要部署 Alpha 服务器环境，使用独立的环境文件、端口和持久化目录：
+
+```bash
+cp .env.alpha.example .env.alpha
+mkdir -p data-alpha logs-alpha
+docker compose --env-file .env.alpha -f docker-compose.alpha.yml up -d --build
+```
+
+Alpha 默认监听宿主机 `3001` 端口，请在宝塔网站或 Docker 面板中按需配置反向代理和域名。
+
 > 说明：
 >
-> - 服务器端只使用 `docker-compose.pro.yml` + `Dockerfile.pro.cn`
+> - 生产服务器使用 `docker-compose.pro.yml` + `Dockerfile.pro.cn`
+> - Alpha 服务器使用 `docker-compose.alpha.yml` + `Dockerfile.pro.cn`
 > - 不要在服务器仓库里额外长期保留 `docker-compose.local.yml` 一类本地临时部署文件，否则后续 `git pull` 容易报冲突
 
 ***
@@ -139,6 +150,14 @@ volumes:
 cd /www/wwwroot/new-api
 git pull
 docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
+```
+
+Alpha 环境更新时使用：
+
+```bash
+cd /www/wwwroot/new-api
+git pull
+docker compose --env-file .env.alpha -f docker-compose.alpha.yml up -d --build
 ```
 
 如果 `git pull` 提示本地旧文件会被覆盖，先移走这些旧的本地部署文件再拉取：

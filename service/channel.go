@@ -81,6 +81,9 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	if err.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
 		return false
 	}
+	if IsUpstreamConcurrencyLimitError(err) {
+		return false
+	}
 	if types.IsChannelError(err) {
 		return true
 	}
@@ -116,6 +119,9 @@ func IsBalanceInsufficientError(err *types.NewAPIError) bool {
 	if err == nil {
 		return false
 	}
+	if err.GetErrorCode() == types.ErrorCodeInsufficientUserQuota {
+		return true
+	}
 	return IsBalanceInsufficientMessage(err.Error())
 }
 
@@ -123,6 +129,7 @@ func IsBalanceInsufficientMessage(message string) bool {
 	message = strings.ToLower(strings.TrimSpace(message))
 	for _, keyword := range []string{
 		"balance_insufficient",
+		"insufficient_user_quota",
 		"insufficient balance",
 		"insufficient credit",
 		"insufficient credits",
@@ -130,8 +137,10 @@ func IsBalanceInsufficientMessage(message string) bool {
 		"balance is too low",
 		"not enough balance",
 		"quota_not_enough",
+		"quota not enough",
 		"余额不足",
 		"余额不够",
+		"用户额度不足",
 		"账户余额",
 	} {
 		if strings.Contains(message, keyword) {
@@ -159,6 +168,19 @@ func IsBalanceInsufficientStatusReason(reason string) bool {
 	return normalized == ChannelStatusReasonBalanceInsufficient || strings.Contains(normalized, "余额不足")
 }
 
+func ChannelStatusReason(channel *model.Channel) string {
+	if channel == nil {
+		return ""
+	}
+	info := channel.GetOtherInfo()
+	reason, _ := info["status_reason"].(string)
+	reason = strings.TrimSpace(reason)
+	if reason == "" && IsConfirmedBalanceInsufficientChannel(channel) {
+		return ChannelStatusReasonBalanceInsufficient
+	}
+	return reason
+}
+
 func IsErrorPausedStatusReason(reason string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(reason))
 	return normalized == ChannelStatusReasonErrorPaused || strings.Contains(normalized, "错误暂停") || strings.Contains(normalized, "故障暂停")
@@ -172,18 +194,25 @@ func IsBalanceInsufficientPausedChannel(channel *model.Channel) bool {
 	if channel == nil || channel.Status != common.ChannelStatusAutoDisabled {
 		return false
 	}
-	info := channel.GetOtherInfo()
-	reason, _ := info["status_reason"].(string)
-	return IsBalanceInsufficientStatusReason(reason)
+	return IsBalanceInsufficientStatusReason(ChannelStatusReason(channel))
+}
+
+func IsConfirmedBalanceInsufficientChannel(channel *model.Channel) bool {
+	if channel == nil {
+		return false
+	}
+	return channel.BalanceUpdatedTime > 0 && channel.Balance <= 0
+}
+
+func IsKnownBalanceInsufficientChannel(channel *model.Channel) bool {
+	return IsBalanceInsufficientPausedChannel(channel) || IsConfirmedBalanceInsufficientChannel(channel)
 }
 
 func IsErrorPausedChannel(channel *model.Channel) bool {
 	if channel == nil || channel.Status != common.ChannelStatusAutoDisabled {
 		return false
 	}
-	info := channel.GetOtherInfo()
-	reason, _ := info["status_reason"].(string)
-	return IsErrorPausedStatusReason(reason)
+	return IsErrorPausedStatusReason(ChannelStatusReason(channel))
 }
 
 func IsManagedPausedChannel(channel *model.Channel) bool {

@@ -56,15 +56,18 @@ func (b *ModelCandidatePoolBuilder) buildGroupCandidates(req *core.DispatchReque
 		if !service.ChannelSupportsRequiredCapabilities(channel, req.ModelName, req.EndpointType, req.RequiresCodexImageTool) {
 			continue
 		}
+		upstreamModel := channel.ResolveMappedModelName(req.ModelName)
 		profile := b.providerProfile(channel, req.ModelName)
 		capability := profile.Capabilities(channel, req.ModelName)
 		candidates = append(candidates, core.Candidate{
 			Channel:         channel,
 			Group:           group,
+			UpstreamModel:   upstreamModel,
 			ProviderProfile: profile.Name(),
 			ProxyMode:       profile.ProxyMode(channel, req.ModelName),
 			RuntimeKey: core.RuntimeKey{
 				RequestedModel:        req.ModelName,
+				UpstreamModel:         upstreamModel,
 				ChannelID:             channel.Id,
 				Group:                 group,
 				EndpointType:          req.EndpointType,

@@ -91,13 +91,12 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		}
 		stickyMatched := hasSticky && isStickyCandidate(candidate, stickyRoute)
 		explanation := candidateExplanation(candidate, snapshot, stickyMatched)
-		if hasSticky && isStickyCandidate(candidate, stickyRoute) && stickyBreak == "" {
-			if reason := candidateUnavailableReason(snapshot, policy); reason != "" {
-				stickyBreak = reason
-			}
+		rejectReason := candidateUnavailableReason(c, candidate, snapshot, policy)
+		if stickyMatched && stickyBreak == "" && rejectReason != "" {
+			stickyBreak = rejectReason
 		}
-		if reason := candidateUnavailableReason(snapshot, policy); reason != "" {
-			explanation.RejectReason = reason
+		if rejectReason != "" {
+			explanation.RejectReason = rejectReason
 			appendCandidateExplanation(&explanations, explanation)
 			continue
 		}
@@ -182,16 +181,39 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 
 func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapshot, stickyMatched bool) core.CandidateExplanation {
 	explanation := core.CandidateExplanation{
-		Group:           candidate.Group,
-		UpstreamModel:   candidate.UpstreamModel,
-		ProviderProfile: candidate.ProviderProfile,
-		ProxyMode:       candidate.ProxyMode,
-		RuntimeKey:      candidateExplanationRuntimeKey(candidate, snapshot),
-		StickyMatched:   stickyMatched,
+		Group:                      candidate.Group,
+		UpstreamModel:              candidate.UpstreamModel,
+		ProviderProfile:            candidate.ProviderProfile,
+		ProxyMode:                  candidate.ProxyMode,
+		RuntimeKey:                 candidateExplanationRuntimeKey(candidate, snapshot),
+		SuccessRate:                snapshot.SuccessRate,
+		TTFTMs:                     snapshot.TTFTMs,
+		DurationMs:                 snapshot.DurationMs,
+		TokensPerSecond:            snapshot.TokensPerSecond,
+		SampleCount:                snapshot.SampleCount,
+		ActiveConcurrency:          snapshot.ActiveConcurrency,
+		MaxConcurrency:             snapshot.MaxConcurrency,
+		ConfiguredConcurrencyLimit: snapshot.ConfiguredConcurrencyLimit,
+		LearnedConcurrencyLimit:    snapshot.LearnedConcurrencyLimit,
+		EffectiveConcurrencyLimit:  snapshot.EffectiveConcurrencyLimit,
+		QueueDepth:                 snapshot.QueueDepth,
+		QueueCapacity:              snapshot.QueueCapacity,
+		EstimatedQueueWaitMs:       snapshot.EstimatedQueueWaitMs,
+		CostRatio:                  snapshot.CostRatio,
+		GroupPriorityRatio:         snapshot.GroupPriorityRatio,
+		SuccessScore:               snapshot.SuccessScore,
+		SpeedScore:                 snapshot.SpeedScore,
+		ExperienceScore:            snapshot.ExperienceScore,
+		EmptyOutputRate:            snapshot.EmptyOutputRate,
+		ExperienceIssueRate:        snapshot.ExperienceIssueRate,
+		StickyMatched:              stickyMatched,
 	}
 	if candidate.Channel != nil {
 		explanation.ChannelID = candidate.Channel.Id
 		explanation.ChannelName = candidate.Channel.Name
+		explanation.ChannelStatus = candidate.Channel.Status
+		explanation.StatusReason = service.ChannelStatusReason(candidate.Channel)
+		explanation.BalanceInsufficient = service.IsKnownBalanceInsufficientChannel(candidate.Channel)
 	}
 	if explanation.ChannelID == 0 {
 		explanation.ChannelID = explanation.RuntimeKey.ChannelID
@@ -201,6 +223,18 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 	}
 	if explanation.UpstreamModel == "" {
 		explanation.UpstreamModel = explanation.RuntimeKey.UpstreamModel
+	}
+	explanation.LoadScore = loadScore(snapshot)
+	explanation.CostScore = costScore(snapshot)
+	explanation.GroupScore = groupScore(snapshot)
+	if explanation.SuccessScore <= 0 {
+		explanation.SuccessScore = successScore(snapshot)
+	}
+	if explanation.SpeedScore <= 0 {
+		explanation.SpeedScore = speedScore(snapshot)
+	}
+	if explanation.ExperienceScore <= 0 {
+		explanation.ExperienceScore = experienceScore(snapshot)
 	}
 	return explanation
 }
@@ -275,7 +309,7 @@ func defaultSnapshot(candidate core.Candidate) core.RuntimeSnapshot {
 	return core.RuntimeSnapshot{
 		Key:                candidate.RuntimeKey,
 		SuccessRate:        0.80,
-		CostRatio:          1,
+		CostRatio:          0,
 		GroupPriorityRatio: 1,
 	}
 }
@@ -339,7 +373,13 @@ func isStickyCandidate(candidate core.Candidate, route core.StickyRoute) bool {
 	return true
 }
 
-func candidateUnavailableReason(snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) string {
+func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) string {
+	if candidate.Channel != nil && service.IsChannelConcurrencySkipped(c, candidate.Channel.Id) {
+		return "local_concurrency_full"
+	}
+	if candidate.Channel != nil && service.IsKnownBalanceInsufficientChannel(candidate.Channel) {
+		return service.ChannelStatusReasonBalanceInsufficient
+	}
 	if snapshot.CircuitOpen {
 		return "circuit_open"
 	}
@@ -349,7 +389,14 @@ func candidateUnavailableReason(snapshot core.RuntimeSnapshot, policy core.Group
 	if snapshot.FailureAvoidance {
 		return "failure_avoidance"
 	}
-	if snapshot.MaxConcurrency > 0 && snapshot.ActiveConcurrency >= snapshot.MaxConcurrency && !queueCanWait(snapshot, policy) {
+	limit := snapshot.EffectiveConcurrencyLimit
+	if limit <= 0 {
+		limit = snapshot.MaxConcurrency
+	}
+	if limit > 0 && snapshot.ActiveConcurrency >= limit && !queueCanWait(snapshot, policy) {
+		if snapshot.LearnedConcurrencyLimit > 0 && snapshot.ConfiguredConcurrencyLimit > snapshot.LearnedConcurrencyLimit {
+			return "learned_concurrency_full"
+		}
 		return "concurrency_full"
 	}
 	return ""

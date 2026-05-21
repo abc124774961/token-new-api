@@ -174,8 +174,12 @@ func handleProxyBridgeStreamResponse(c *gin.Context, info *relaycommon.RelayInfo
 		if info != nil && info.StreamStatus != nil {
 			reason = string(info.StreamStatus.EndReason)
 		}
-		common.SetContextKey(c, appconstant.ContextKeyRelayStreamInterrupted, true)
-		common.SysLog(fmt.Sprintf("proxy bridge stream interrupted before upstream done: %s", reason))
+		if info == nil || info.StreamStatus == nil || !info.StreamStatus.IsNormalEnd() {
+			common.SetContextKey(c, appconstant.ContextKeyRelayStreamInterrupted, true)
+			common.SysLog(fmt.Sprintf("proxy bridge stream interrupted before upstream done: %s", reason))
+		} else {
+			common.SysLog(fmt.Sprintf("proxy bridge stream ended without upstream done event: %s", reason))
+		}
 	}
 	if streamSender.Failed() {
 		common.SetContextKey(c, appconstant.ContextKeyRelayStreamInterrupted, true)

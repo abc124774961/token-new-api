@@ -107,24 +107,32 @@ type RuntimeKey struct {
 }
 
 type RuntimeSnapshot struct {
-	Key                  RuntimeKey
-	SuccessRate          float64
-	TTFTMs               float64
-	DurationMs           float64
-	TokensPerSecond      float64
-	ActiveConcurrency    int
-	MaxConcurrency       int
-	QueueDepth           int
-	QueueCapacity        int
-	QueueTimeoutMs       int
-	EstimatedQueueWaitMs float64
-	CostRatio            float64
-	GroupPriorityRatio   float64
-	CircuitState         CircuitState
-	CircuitOpen          bool
-	Cooldown             bool
-	FailureAvoidance     bool
-	SampleCount          int
+	Key                        RuntimeKey
+	SuccessRate                float64
+	TTFTMs                     float64
+	DurationMs                 float64
+	TokensPerSecond            float64
+	SuccessScore               float64
+	SpeedScore                 float64
+	ExperienceScore            float64
+	EmptyOutputRate            float64
+	ExperienceIssueRate        float64
+	ActiveConcurrency          int
+	MaxConcurrency             int
+	ConfiguredConcurrencyLimit int
+	LearnedConcurrencyLimit    int
+	EffectiveConcurrencyLimit  int
+	QueueDepth                 int
+	QueueCapacity              int
+	QueueTimeoutMs             int
+	EstimatedQueueWaitMs       float64
+	CostRatio                  float64
+	GroupPriorityRatio         float64
+	CircuitState               CircuitState
+	CircuitOpen                bool
+	Cooldown                   bool
+	FailureAvoidance           bool
+	SampleCount                int
 }
 
 type RuntimeQueueSnapshot struct {
@@ -257,19 +265,45 @@ type Candidate struct {
 }
 
 type CandidateExplanation struct {
-	ChannelID       int                `json:"channel_id"`
-	ChannelName     string             `json:"channel_name,omitempty"`
-	Group           string             `json:"group,omitempty"`
-	UpstreamModel   string             `json:"upstream_model,omitempty"`
-	ProviderProfile string             `json:"provider_profile,omitempty"`
-	ProxyMode       string             `json:"proxy_mode,omitempty"`
-	RuntimeKey      RuntimeKey         `json:"runtime_key"`
-	Available       bool               `json:"available"`
-	RejectReason    string             `json:"reject_reason,omitempty"`
-	ScoreTotal      float64            `json:"score_total,omitempty"`
-	ScoreBreakdown  map[string]float64 `json:"score_breakdown,omitempty"`
-	StickyMatched   bool               `json:"sticky_matched,omitempty"`
-	Selected        bool               `json:"selected,omitempty"`
+	ChannelID                  int                `json:"channel_id"`
+	ChannelName                string             `json:"channel_name,omitempty"`
+	Group                      string             `json:"group,omitempty"`
+	UpstreamModel              string             `json:"upstream_model,omitempty"`
+	ProviderProfile            string             `json:"provider_profile,omitempty"`
+	ProxyMode                  string             `json:"proxy_mode,omitempty"`
+	RuntimeKey                 RuntimeKey         `json:"runtime_key"`
+	Available                  bool               `json:"available"`
+	RejectReason               string             `json:"reject_reason,omitempty"`
+	ChannelStatus              int                `json:"channel_status,omitempty"`
+	StatusReason               string             `json:"status_reason,omitempty"`
+	BalanceInsufficient        bool               `json:"balance_insufficient,omitempty"`
+	ScoreTotal                 float64            `json:"score_total,omitempty"`
+	ScoreBreakdown             map[string]float64 `json:"score_breakdown,omitempty"`
+	SuccessRate                float64            `json:"success_rate,omitempty"`
+	TTFTMs                     float64            `json:"ttft_ms,omitempty"`
+	DurationMs                 float64            `json:"duration_ms,omitempty"`
+	TokensPerSecond            float64            `json:"tokens_per_second,omitempty"`
+	SampleCount                int                `json:"sample_count,omitempty"`
+	ActiveConcurrency          int                `json:"active_concurrency,omitempty"`
+	MaxConcurrency             int                `json:"max_concurrency,omitempty"`
+	ConfiguredConcurrencyLimit int                `json:"configured_concurrency_limit,omitempty"`
+	LearnedConcurrencyLimit    int                `json:"learned_concurrency_limit,omitempty"`
+	EffectiveConcurrencyLimit  int                `json:"effective_concurrency_limit,omitempty"`
+	QueueDepth                 int                `json:"queue_depth,omitempty"`
+	QueueCapacity              int                `json:"queue_capacity,omitempty"`
+	EstimatedQueueWaitMs       float64            `json:"estimated_queue_wait_ms,omitempty"`
+	CostRatio                  float64            `json:"cost_ratio,omitempty"`
+	GroupPriorityRatio         float64            `json:"group_priority_ratio,omitempty"`
+	SuccessScore               float64            `json:"success_score,omitempty"`
+	SpeedScore                 float64            `json:"speed_score,omitempty"`
+	LoadScore                  float64            `json:"load_score,omitempty"`
+	CostScore                  float64            `json:"cost_score,omitempty"`
+	GroupScore                 float64            `json:"group_score,omitempty"`
+	ExperienceScore            float64            `json:"experience_score,omitempty"`
+	EmptyOutputRate            float64            `json:"empty_output_rate,omitempty"`
+	ExperienceIssueRate        float64            `json:"experience_issue_rate,omitempty"`
+	StickyMatched              bool               `json:"sticky_matched,omitempty"`
+	Selected                   bool               `json:"selected,omitempty"`
 }
 
 type ScoreWeights struct {
@@ -306,21 +340,35 @@ type StickyRoute struct {
 }
 
 type AttemptResult struct {
-	Key               RuntimeKey
-	RequestID         string
-	AttemptIndex      int
-	ChannelID         int
-	RequestedGroup    string
-	SelectedGroup     string
-	ModelName         string
-	EndpointType      constant.EndpointType
-	Success           bool
-	StatusCode        int
-	ErrorCode         string
-	ErrorType         string
-	Duration          time.Duration
-	TTFT              time.Duration
-	StreamInterrupted bool
+	Key                            RuntimeKey
+	RequestID                      string
+	AttemptIndex                   int
+	ChannelID                      int
+	ChannelName                    string
+	RequestedGroup                 string
+	SelectedGroup                  string
+	ModelName                      string
+	EndpointType                   constant.EndpointType
+	Success                        bool
+	StatusCode                     int
+	ErrorCode                      string
+	ErrorType                      string
+	ErrorMessage                   string
+	ErrorCategory                  string
+	Duration                       time.Duration
+	TTFT                           time.Duration
+	StreamInterrupted              bool
+	ClientAborted                  bool
+	WillRetry                      bool
+	RetryAction                    string
+	ConcurrencyLimited             bool
+	EmptyOutput                    bool
+	ExperienceIssue                string
+	ActiveConcurrency              int
+	ConfiguredConcurrencyLimit     int
+	LearnedConcurrencyLimit        int
+	LearnedConcurrencyLimitChanged bool
+	UsedChannels                   []string
 }
 
 func (r AttemptResult) RuntimeKey() RuntimeKey {

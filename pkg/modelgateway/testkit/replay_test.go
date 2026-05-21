@@ -139,6 +139,15 @@ func TestReplayArtifactLoadsFixtureAndRunsScenarios(t *testing.T) {
 func TestReplayScoreDriftReportSeparatesScoreChangeFromSelectionRegression(t *testing.T) {
 	artifact, err := LoadReplayArtifact(filepath.Join("..", "testdata", "replay", "model_execution_replay.json"))
 	require.NoError(t, err)
+	require.NotEmpty(t, artifact.Records)
+	artifact.Records[0].ScoreTotal = 0.42
+	artifact.Records[0].ScoreBreakdown = map[string]float64{
+		"success": 0.1,
+		"speed":   0.1,
+		"load":    0.1,
+		"cost":    0.1,
+		"group":   0.1,
+	}
 
 	reports, err := EvaluateReplayScoreDrift(artifact, ReplayScoreDriftOptions{
 		ScoreTolerance:     0.01,

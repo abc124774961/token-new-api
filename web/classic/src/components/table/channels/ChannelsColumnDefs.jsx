@@ -268,6 +268,20 @@ const renderStatusReason = (reason, t) => {
   return reason;
 };
 
+const isBalanceInsufficientChannel = (record) => {
+  if (record?.balance_insufficient === true) return true;
+  const statusReason = String(
+    record?.status_reason ||
+      parseChannelOtherInfo(record?.other_info).status_reason ||
+      '',
+  )
+    .trim()
+    .toLowerCase();
+  return (
+    statusReason === 'balance_insufficient' || statusReason.includes('余额不足')
+  );
+};
+
 const ChannelStatusCell = ({ record, t, refresh }) => {
   const [nowSeconds, setNowSeconds] = React.useState(() =>
     Math.floor(Date.now() / 1000),
@@ -336,33 +350,36 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
     }
   };
 
-  const statusNode =
-    cooldownActive || circuitActive ? (
-      <Space spacing={4} wrap>
-        {cooldownActive && (
-          <Tag color='yellow' shape='circle'>
-            {t('冷却中')} {cooldownLabel}
-          </Tag>
-        )}
-        {circuitActive && (
-          <Tag color='orange' shape='circle'>
-            {t('熔断中')} {circuitLabel}
-          </Tag>
-        )}
-        {circuitActive && (
-          <Button
-            size='small'
-            type='tertiary'
-            loading={clearingCircuit}
-            onClick={clearCircuit}
-          >
-            {t('解除')}
-          </Button>
-        )}
-      </Space>
-    ) : (
-      renderStatus(record?.status, record?.channel_info, t)
-    );
+  const statusNode = isBalanceInsufficientChannel(record) ? (
+    <Tag color='red' shape='circle'>
+      {t('余额不足')}
+    </Tag>
+  ) : cooldownActive || circuitActive ? (
+    <Space spacing={4} wrap>
+      {cooldownActive && (
+        <Tag color='yellow' shape='circle'>
+          {t('冷却中')} {cooldownLabel}
+        </Tag>
+      )}
+      {circuitActive && (
+        <Tag color='orange' shape='circle'>
+          {t('熔断中')} {circuitLabel}
+        </Tag>
+      )}
+      {circuitActive && (
+        <Button
+          size='small'
+          type='tertiary'
+          loading={clearingCircuit}
+          onClick={clearCircuit}
+        >
+          {t('解除')}
+        </Button>
+      )}
+    </Space>
+  ) : (
+    renderStatus(record?.status, record?.channel_info, t)
+  );
 
   const tooltipLines = [];
   if (cooldownActive) {
@@ -501,6 +518,14 @@ const getUpstreamUpdateMeta = (record) => {
   };
 };
 
+const formatCostPerMillion = (value, t) => {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return t('未配置');
+  }
+  return `$${numeric.toFixed(numeric >= 1 ? 2 : 4)}/M`;
+};
+
 export const getChannelsColumns = ({
   t,
   COLUMN_KEYS,
@@ -545,6 +570,7 @@ export const getChannelsColumns = ({
           upstreamUpdateMeta.supported &&
           upstreamUpdateMeta.enabled &&
           (pendingAddCount > 0 || pendingRemoveCount > 0);
+        const balanceInsufficient = isBalanceInsufficientChannel(record);
         const nameNode =
           record.remark && record.remark.trim() !== '' ? (
             <Tooltip
@@ -580,7 +606,11 @@ export const getChannelsColumns = ({
             <span>{text}</span>
           );
 
-        if (!passThroughEnabled && !showUpstreamUpdateTag) {
+        if (
+          !passThroughEnabled &&
+          !showUpstreamUpdateTag &&
+          !balanceInsufficient
+        ) {
           return nameNode;
         }
 
@@ -600,6 +630,13 @@ export const getChannelsColumns = ({
                     style={{ color: 'var(--semi-color-warning)' }}
                   />
                 </span>
+              </Tooltip>
+            )}
+            {balanceInsufficient && (
+              <Tooltip content={t('渠道余额不足，已暂停调度')} position='top'>
+                <Tag color='red' type='light' size='small' shape='circle'>
+                  {t('余额不足')}
+                </Tag>
               </Tooltip>
             )}
             {showUpstreamUpdateTag && (
@@ -705,6 +742,39 @@ export const getChannelsColumns = ({
       title: t('响应时间'),
       dataIndex: 'response_time',
       render: (text, record, index) => <div>{renderResponseTime(text, t)}</div>,
+    },
+    {
+      key: COLUMN_KEYS.COST_PER_MILLION,
+      title: t('成本 / M'),
+      dataIndex: 'cost_per_million',
+      render: (text, record, index) => {
+        if (record.children !== undefined) {
+          return <span className='text-gray-400'>--</span>;
+        }
+        return (
+          <Tooltip content={t('每 1M tokens 的渠道成本，用于智能调度成本评分')}>
+            <InputNumber
+              style={{ width: 92 }}
+              name='cost_per_million'
+              onBlur={(e) => {
+                manageChannel(
+                  record.id,
+                  'cost_per_million',
+                  record,
+                  e.target.value,
+                );
+              }}
+              keepFocus={true}
+              defaultValue={Number(record.cost_per_million || 0)}
+              min={0}
+              step={0.01}
+              size='small'
+              prefix='$'
+              placeholder={formatCostPerMillion(0, t)}
+            />
+          </Tooltip>
+        );
+      },
     },
     {
       key: COLUMN_KEYS.BALANCE,

@@ -27,6 +27,7 @@ const FALLBACK_REFRESH_SECONDS = 30;
 const RECENT_RECORD_LIMIT = 50;
 const MANUAL_REFRESH_SOURCE = 'manual';
 const FALLBACK_REFRESH_SOURCE = 'fallback';
+const RECENT_USER_REQUEST_LIMIT = 50;
 
 function unwrapApiData(response) {
   return response?.data?.data || response?.data || {};
@@ -37,19 +38,60 @@ function mergeDelta(current, delta) {
   const recentRecords = Array.isArray(delta.recent_records)
     ? delta.recent_records
     : [];
-  if (recentRecords.length === 0) return current;
   const seen = new Set();
-  const mergedRecent = [...recentRecords, ...(current.recent_records || [])]
-    .filter((record) => {
-      const key = `${record.id || ''}:${record.request_id || ''}:${record.attempt_index || 0}:${record.created_at || ''}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, RECENT_RECORD_LIMIT);
+  const mergedRecent =
+    recentRecords.length > 0
+      ? [...recentRecords, ...(current.recent_records || [])]
+          .filter((record) => {
+            const key = `${record.id || ''}:${record.request_id || ''}:${record.attempt_index || 0}:${record.created_at || ''}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+          .slice(0, RECENT_RECORD_LIMIT)
+      : current.recent_records;
   return {
     ...current,
     recent_records: mergedRecent,
+    user_requests: mergeUserRequestDelta(
+      current.user_requests,
+      delta.user_requests_recent,
+    ),
+  };
+}
+
+function userRequestSortTime(record) {
+  const processing =
+    record?.status === 'processing' || !Number(record?.completed_at || 0);
+  return processing
+    ? Number(record?.created_at || 0) + 1_000_000_000
+    : Number(record?.completed_at || record?.created_at || 0);
+}
+
+function userRequestKey(record) {
+  return record?.request_id || `${record?.id || ''}:${record?.created_at || ''}`;
+}
+
+function mergeUserRequestDelta(userRequests, recentDelta) {
+  if (!userRequests || !Array.isArray(recentDelta) || recentDelta.length === 0) {
+    return userRequests;
+  }
+  const mergedByKey = new Map();
+  [...recentDelta, ...(userRequests.recent_requests || [])].forEach((record) => {
+    const key = userRequestKey(record);
+    if (!key || mergedByKey.has(key)) return;
+    mergedByKey.set(key, record);
+  });
+  const recentRequests = [...mergedByKey.values()]
+    .sort((left, right) => {
+      const timeDiff = userRequestSortTime(right) - userRequestSortTime(left);
+      if (timeDiff !== 0) return timeDiff;
+      return String(right?.request_id || '').localeCompare(left?.request_id || '');
+    })
+    .slice(0, RECENT_USER_REQUEST_LIMIT);
+  return {
+    ...userRequests,
+    recent_requests: recentRequests,
   };
 }
 
@@ -60,6 +102,7 @@ export function useModelGatewayObservabilityData({
   recentLimit,
   topN,
   appliedFilters,
+  viewMode,
   t,
 }) {
   const [data, setData] = useState(null);
@@ -78,12 +121,21 @@ export function useModelGatewayObservabilityData({
       top_n: topN,
       trend_bucket_seconds:
         trendBucket === defaultTrendBucket ? undefined : trendBucket,
+      view_mode: viewMode || undefined,
       model: appliedFilters.model || undefined,
       group: appliedFilters.group || undefined,
       channel_id: appliedFilters.channel_id || undefined,
       request_id: appliedFilters.request_id || undefined,
     }),
-    [appliedFilters, defaultTrendBucket, hours, recentLimit, topN, trendBucket],
+    [
+      appliedFilters,
+      defaultTrendBucket,
+      hours,
+      recentLimit,
+      topN,
+      trendBucket,
+      viewMode,
+    ],
   );
   const requestKey = useMemo(() => JSON.stringify(requestParams), [requestParams]);
   const latestRequestKeyRef = useRef(requestKey);
@@ -142,9 +194,12 @@ export function useModelGatewayObservabilityData({
     setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
   }, []);
 
-  const handleDelta = useCallback((payload) => {
-    setData((current) => mergeDelta(current, payload));
-  }, []);
+  const handleDelta = useCallback(
+    (payload) => {
+      setData((current) => mergeDelta(current, payload));
+    },
+    [],
+  );
 
   const handleRealtimeError = useCallback(
     (message) => {

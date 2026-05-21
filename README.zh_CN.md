@@ -123,21 +123,28 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 cp .env.pro.example .env.pro
 mkdir -p data logs
 docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
+
+# Alpha 服务器部署
+cp .env.alpha.example .env.alpha
+mkdir -p data-alpha logs-alpha
+docker compose --env-file .env.alpha -f docker-compose.alpha.yml up -d --build
 ```
 
 > [!IMPORTANT]
-> **当前仅保留两套 Docker 环境**
+> **当前保留三套 Docker 环境**
 >
 > - `docker-compose.dev.yml` + `Dockerfile.dev`：本地完整容器开发
+> - `docker-compose.alpha.yml` + `Dockerfile.pro.cn`：Alpha 服务器部署
 > - `docker-compose.pro.yml` + `Dockerfile.pro.cn`：服务器 / 生产部署
 >
 > 约定如下：
 >
 > - 本地机器复制 `.env.dev.example` 为 `.env.dev`
+> - Alpha 服务器复制 `.env.alpha.example` 为 `.env.alpha`
 > - 服务器复制 `.env.pro.example` 为 `.env.pro`
-> - 本地只使用 `dev` 这一套；服务器只使用 `pro` 这一套
+> - 本地只使用 `dev` 这一套；Alpha 使用 `alpha` 这一套；生产服务器使用 `pro` 这一套
 > - 不要再在服务器仓库内额外维护 `docker-compose.local.yml` 等本地自定义部署文件，否则后续 `git pull` 容易冲突
-> - 两套环境都挂载 `./data:/data` 和 `./logs:/app/logs`
+> - Alpha 挂载 `./data-alpha:/data` 和 `./logs-alpha:/app/logs`；生产挂载 `./data:/data` 和 `./logs:/app/logs`
 > - `SQL_DSN` 必须保持为**单行**
 > - Linux 容器访问宿主机 MySQL 时，使用 `host.docker.internal`，并保留 `extra_hosts: ["host.docker.internal:host-gateway"]`
 > - 如果未使用 Redis，可留空 `REDIS_CONN_STRING`
@@ -369,6 +376,11 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 cp .env.pro.example .env.pro
 mkdir -p data logs
 docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
+
+# Alpha 服务器环境
+cp .env.alpha.example .env.alpha
+mkdir -p data-alpha logs-alpha
+docker compose --env-file .env.alpha -f docker-compose.alpha.yml up -d --build
 ```
 
 </details>

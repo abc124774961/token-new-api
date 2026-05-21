@@ -672,7 +672,7 @@ func TestHandleProxyBridgeStreamResponseConvertsChatSSEToResponsesSSE(t *testing
 	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyRelayResponseStarted))
 }
 
-func TestHandleProxyBridgeStreamResponseTreatsEOFAsInterrupted(t *testing.T) {
+func TestHandleProxyBridgeStreamResponseTreatsDeliveredEOFAsNormalEnd(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	disableStreamPingForResponsesTest(t)
 
@@ -726,7 +726,7 @@ func TestHandleProxyBridgeStreamResponseTreatsEOFAsInterrupted(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "response.completed")
 	require.Equal(t, relaycommon.StreamEndReasonEOF, info.StreamStatus.EndReason)
 	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyRelayResponseStarted))
-	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyRelayStreamInterrupted))
+	require.False(t, common.GetContextKeyBool(ctx, constant.ContextKeyRelayStreamInterrupted))
 }
 
 func TestProxyBridgeStreamSenderUsageFallbackTextAggregatesDeliveredEvents(t *testing.T) {

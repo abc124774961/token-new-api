@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/types"
 )
 
 const (
@@ -23,6 +24,7 @@ const (
 	CircuitErrorQuota             = "quota"
 	CircuitErrorServer            = "server_error"
 	CircuitErrorUpstream          = "upstream_error"
+	CircuitErrorConcurrencyLimit  = "concurrency_limit"
 )
 
 type CircuitErrorPolicy struct {
@@ -141,7 +143,7 @@ func (b *CircuitBreaker) AllowProbe(key core.RuntimeKey) bool {
 }
 
 func (b *CircuitBreaker) Report(result core.AttemptResult) {
-	if b == nil || result.ChannelID <= 0 {
+	if b == nil || result.ChannelID <= 0 || result.ClientAborted {
 		return
 	}
 	key := result.RuntimeKey()
@@ -295,6 +297,9 @@ func (b *CircuitBreaker) classifyFailure(result core.AttemptResult) (string, boo
 	if kind == "" {
 		return "", false
 	}
+	if kind == CircuitErrorConcurrencyLimit {
+		return kind, false
+	}
 	if isDefaultCircuitFailure(result) {
 		return kind, true
 	}
@@ -307,13 +312,22 @@ func (b *CircuitBreaker) classifyFailure(result core.AttemptResult) (string, boo
 // mean the failure is counted by the circuit breaker; policies still decide
 // that in classifyFailure.
 func ClassifyCircuitError(result core.AttemptResult) string {
+	if result.ClientAborted {
+		return ""
+	}
 	if result.StreamInterrupted {
 		return CircuitErrorStreamInterrupted
+	}
+	if result.ConcurrencyLimited || isCircuitConcurrencyLimitResult(result) {
+		return CircuitErrorConcurrencyLimit
 	}
 	if result.StatusCode == http.StatusTooManyRequests {
 		return CircuitErrorRateLimit
 	}
-	label := strings.ToLower(strings.TrimSpace(result.ErrorCode + " " + result.ErrorType))
+	label := strings.ToLower(strings.TrimSpace(result.ErrorCode + " " + result.ErrorType + " " + result.ErrorMessage))
+	if containsAnyCircuitLabel(label, "concurrency limit exceeded for user", "too many pending requests") {
+		return CircuitErrorConcurrencyLimit
+	}
 	if containsAnyCircuitLabel(label, "rate_limit", "rate-limited", "rate_limited", "too_many_requests", "throttle") {
 		return CircuitErrorRateLimit
 	}
@@ -336,8 +350,14 @@ func ClassifyCircuitError(result core.AttemptResult) string {
 }
 
 func isDefaultCircuitFailure(result core.AttemptResult) bool {
+	if result.ClientAborted {
+		return false
+	}
 	if result.StreamInterrupted {
 		return true
+	}
+	if result.ConcurrencyLimited || isCircuitConcurrencyLimitResult(result) {
+		return false
 	}
 	if result.StatusCode == http.StatusTooManyRequests {
 		return true
@@ -349,6 +369,17 @@ func isDefaultCircuitFailure(result core.AttemptResult) bool {
 		return true
 	}
 	return false
+}
+
+func isCircuitConcurrencyLimitResult(result core.AttemptResult) bool {
+	if result.StatusCode != http.StatusTooManyRequests {
+		return false
+	}
+	if result.ErrorCode == string(types.ErrorCodeChannelConcurrencyLimit) {
+		return true
+	}
+	label := strings.ToLower(strings.TrimSpace(result.ErrorCode + " " + result.ErrorType + " " + result.ErrorMessage))
+	return containsAnyCircuitLabel(label, "concurrency limit exceeded for user", "too many pending requests")
 }
 
 func containsAnyCircuitLabel(label string, needles ...string) bool {
@@ -422,7 +453,7 @@ func normalizeCircuitErrorPolicies(src map[string]CircuitErrorPolicy, defaults C
 func normalizeCircuitErrorKind(kind string) string {
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	switch kind {
-	case CircuitErrorStreamInterrupted, CircuitErrorRateLimit, CircuitErrorAuth, CircuitErrorQuota, CircuitErrorServer, CircuitErrorUpstream:
+	case CircuitErrorStreamInterrupted, CircuitErrorRateLimit, CircuitErrorAuth, CircuitErrorQuota, CircuitErrorServer, CircuitErrorUpstream, CircuitErrorConcurrencyLimit:
 		return kind
 	default:
 		return ""

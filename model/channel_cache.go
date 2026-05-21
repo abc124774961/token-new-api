@@ -300,6 +300,25 @@ func CacheUpdateChannelStatus(id int, status int) {
 	addChannelToCacheIndex(channel)
 }
 
+func CacheUpdateChannelStatusInfo(id int, status int, otherInfo string) {
+	if !common.MemoryCacheEnabled {
+		return
+	}
+	channelSyncLock.Lock()
+	defer channelSyncLock.Unlock()
+	channel, ok := channelsIDM[id]
+	if !ok {
+		return
+	}
+	channel.Status = status
+	channel.OtherInfo = otherInfo
+	if status != common.ChannelStatusEnabled {
+		removeChannelFromCacheIndex(id)
+		return
+	}
+	addChannelToCacheIndex(channel)
+}
+
 func removeChannelFromCacheIndex(id int) {
 	for group, model2channels := range group2model2channels {
 		for model, channels := range model2channels {

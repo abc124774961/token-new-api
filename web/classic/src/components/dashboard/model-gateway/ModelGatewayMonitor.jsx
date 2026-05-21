@@ -43,9 +43,15 @@ import {
 import { VChart } from '@visactor/react-vchart';
 import {
   Activity,
+  Ban,
   Bot,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   CheckCircle2,
   Clock3,
+  Copy,
   Download,
   Eye,
   Gauge,
@@ -53,6 +59,7 @@ import {
   Info,
   Layers3,
   ListTree,
+  Search,
   RadioTower,
   RefreshCw,
   RotateCcw,
@@ -64,13 +71,14 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { API } from '../../../helpers/api';
-import { showError, timestamp2string } from '../../../helpers';
+import { copy, showError, timestamp2string } from '../../../helpers';
 import { useModelGatewayObservabilityData } from '../../../hooks/dashboard/useModelGatewayObservabilityData';
 import DashboardCard from '../DashboardCard';
 import './model-gateway.css';
 
 const DEFAULT_HOURS = 24;
 const RECENT_LIMIT = 50;
+const USER_REQUEST_PAGE_SIZE = 20;
 const TOP_N = 10;
 const STICKY_STORE_LIMIT = 100;
 const WINDOW_OPTIONS = [1, 6, 24, 72, 168];
@@ -93,6 +101,7 @@ const EMPTY_FILTERS = {
   circuit_error_type: '',
 };
 const VIEW_MODES = {
+  USER_REQUESTS: 'user_requests',
   OPERATIONS: 'operations',
   ENGINEERING: 'engineering',
 };
@@ -116,6 +125,7 @@ const LATENCY_THRESHOLDS = {
   avgDurationMs: { warning: 30000, danger: 60000 },
   p95DurationMs: { warning: 45000, danger: 90000 },
   ttftMs: { warning: 10000, danger: 20000 },
+  p95TtftMs: { warning: 15000, danger: 30000 },
 };
 const EMPTY_REPLAY_BATCH_FILTERS = {
   hours: DEFAULT_HOURS,
@@ -164,7 +174,32 @@ function formatTimestamp(timestamp) {
   return timestamp ? timestamp2string(timestamp) : '--';
 }
 
-function realtimeStatusMeta(connectionState, fallbackMode, fallbackCountdown, t) {
+function formatRelativeTime(timestamp, nowSeconds, t) {
+  const normalized = normalizeTimestamp(timestamp);
+  if (!normalized) return '--';
+  const diffSeconds = Math.max(0, Number(nowSeconds || 0) - normalized);
+  if (diffSeconds < 30) return t('刚刚');
+  if (diffSeconds < 3600) {
+    return t('{{count}}分钟前', {
+      count: Math.max(1, Math.floor(diffSeconds / 60)),
+    });
+  }
+  if (diffSeconds < 86400) {
+    return t('{{count}}小时前', {
+      count: Math.max(1, Math.floor(diffSeconds / 3600)),
+    });
+  }
+  return t('{{count}}天前', {
+    count: Math.max(1, Math.floor(diffSeconds / 86400)),
+  });
+}
+
+function realtimeStatusMeta(
+  connectionState,
+  fallbackMode,
+  fallbackCountdown,
+  t,
+) {
   if (fallbackMode) {
     return {
       color: 'orange',
@@ -466,8 +501,54 @@ function getStatusMeta(record, t) {
   return { color: 'red', label: t('失败') };
 }
 
+function isBalanceInsufficientStatus(record) {
+  const reason = String(record?.status_reason || record?.reject_reason || '')
+    .trim()
+    .toLowerCase();
+  return (
+    record?.balance_insufficient === true ||
+    reason === 'balance_insufficient' ||
+    reason.includes('余额不足')
+  );
+}
+
+function formatChannelStatusReason(reason, t) {
+  if (!reason) return '';
+  const normalized = String(reason).trim().toLowerCase();
+  if (
+    normalized === 'balance_insufficient' ||
+    normalized.includes('余额不足')
+  ) {
+    return t('余额不足');
+  }
+  if (normalized === 'local_concurrency_full') {
+    return t('本地并发已满');
+  }
+  if (
+    normalized === 'concurrency_full' ||
+    normalized === 'learned_concurrency_full'
+  ) {
+    return t('并发饱和');
+  }
+  return String(reason);
+}
+
 function isDispatch(record) {
   return record?.kind === 'dispatch';
+}
+
+function pickDispatchDetailRecord(records) {
+  if (!Array.isArray(records) || records.length === 0) return null;
+  return (
+    records.find((record) => isDispatch(record) && record?.smart_handled) ||
+    records.find((record) => isDispatch(record)) ||
+    records.find(
+      (record) =>
+        Array.isArray(getCandidateExplanations(record)) &&
+        getCandidateExplanations(record).length > 0,
+    ) ||
+    records[0]
+  );
 }
 
 function SummaryMetric({ icon: Icon, label, value, detail, tone = 'default' }) {
@@ -550,6 +631,9 @@ function AggregateNameCell({ record, type }) {
       <RadioTower size={16} />
     );
   const label = record.name || record.key || t('未知');
+  const balanceInsufficient =
+    type === 'channel' && isBalanceInsufficientStatus(record);
+  const statusReason = formatChannelStatusReason(record?.status_reason, t);
 
   return (
     <div className='ct-model-gateway-aggregate-name'>
@@ -557,8 +641,20 @@ function AggregateNameCell({ record, type }) {
         {icon}
       </Avatar>
       <div className='min-w-0'>
-        <div className='ct-model-gateway-aggregate-title' title={label}>
-          {label}
+        <div className='ct-model-gateway-aggregate-title-row'>
+          <div className='ct-model-gateway-aggregate-title' title={label}>
+            {label}
+          </div>
+          {balanceInsufficient && (
+            <Tooltip
+              content={statusReason || t('渠道余额不足，已暂停调度')}
+              position='top'
+            >
+              <Tag color='red' size='small' type='light' shape='circle'>
+                {t('余额不足')}
+              </Tag>
+            </Tooltip>
+          )}
         </div>
         {type === 'channel' && record.channel_id > 0 && (
           <Typography.Text type='secondary' size='small'>
@@ -697,6 +793,140 @@ function QueueStickyTags({
     return <Typography.Text type='tertiary'>--</Typography.Text>;
 
   return <div className='ct-model-gateway-queue-tags'>{tags}</div>;
+}
+
+function formatAttemptFlowAction(action, t) {
+  switch (action) {
+    case 'complete':
+      return t('请求完成');
+    case 'switch_channel':
+      return t('切换渠道');
+    case 'retry':
+      return t('继续重试');
+    case 'stop':
+      return t('停止重试');
+    default:
+      return action || '--';
+  }
+}
+
+function formatAttemptErrorCategory(category, t) {
+  switch (category) {
+    case 'upstream_concurrency_limit':
+      return t('上游并发受限');
+    case 'local_concurrency_limit':
+      return t('本地并发已满');
+    case 'upstream_rate_limit':
+      return t('上游限速');
+    case 'stream_interrupted':
+      return t('流中断');
+    case 'unsupported_capability':
+      return t('能力不匹配');
+    case 'balance_or_quota':
+      return t('余额或额度');
+    case 'server_error':
+      return t('服务端错误');
+    case 'upstream_error':
+      return t('上游错误');
+    case 'error':
+      return t('错误');
+    default:
+      return category || '--';
+  }
+}
+
+function flowActionTone(action, record) {
+  if (record?.concurrency_limited) return 'orange';
+  switch (action) {
+    case 'complete':
+      return 'green';
+    case 'switch_channel':
+      return 'orange';
+    case 'retry':
+      return 'blue';
+    case 'stop':
+      return 'red';
+    default:
+      return 'grey';
+  }
+}
+
+function getUsedChannels(record) {
+  const direct = record?.used_channels;
+  const meta = record?.request_meta?.used_channels;
+  const value = Array.isArray(direct) && direct.length ? direct : meta;
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item)).filter(Boolean);
+}
+
+function DispatchFlowTags({ record, t, compact = false }) {
+  const tagProps = compact ? { size: 'small' } : {};
+  const tags = [];
+  const action = record?.retry_action || (record?.will_retry ? 'retry' : '');
+  const category = record?.error_category;
+  const activeConcurrency = Number(record?.active_concurrency || 0);
+  const configuredLimit = Number(record?.configured_concurrency_limit || 0);
+  const learnedLimit = Number(record?.learned_concurrency_limit || 0);
+  const usedChannels = getUsedChannels(record);
+
+  if (action) {
+    tags.push(
+      <Tag
+        key='action'
+        color={flowActionTone(action, record)}
+        type='light'
+        {...tagProps}
+      >
+        {formatAttemptFlowAction(action, t)}
+      </Tag>,
+    );
+  }
+  if (category) {
+    tags.push(
+      <Tag key='category' color='grey' type='light' {...tagProps}>
+        {t('失败分类')}: {formatAttemptErrorCategory(category, t)}
+      </Tag>,
+    );
+  }
+  if (record?.concurrency_limited) {
+    tags.push(
+      <Tag key='concurrency-limited' color='orange' type='light' {...tagProps}>
+        {t('动态并发')}
+      </Tag>,
+    );
+  }
+  if (activeConcurrency > 0 || configuredLimit > 0) {
+    tags.push(
+      <Tag key='concurrency' color='cyan' type='light' {...tagProps}>
+        {t('并发')} {formatNumber(activeConcurrency)}
+        {configuredLimit > 0 ? ` / ${formatNumber(configuredLimit)}` : ''}
+      </Tag>,
+    );
+  }
+  if (learnedLimit > 0) {
+    tags.push(
+      <Tag
+        key='learned-limit'
+        color={record?.learned_concurrency_limit_changed ? 'orange' : 'grey'}
+        type='light'
+        {...tagProps}
+      >
+        {t('学习上限')} {formatNumber(learnedLimit)}
+      </Tag>,
+    );
+  }
+  if (usedChannels.length > 1) {
+    tags.push(
+      <Tag key='used-channels' color='blue' type='light' {...tagProps}>
+        {t('链路')} {usedChannels.join(' -> ')}
+      </Tag>,
+    );
+  }
+
+  if (!tags.length)
+    return <Typography.Text type='tertiary'>--</Typography.Text>;
+
+  return <div className='ct-model-gateway-flow-tags'>{tags}</div>;
 }
 
 function getRuntimeHealthMeta(status, t) {
@@ -896,6 +1126,317 @@ function durationP95FromRecords(records) {
   );
 }
 
+function userRequestSummaryFromData(data) {
+  return data?.user_requests?.summary || {};
+}
+
+function userRequestHealthTone(status) {
+  switch (status) {
+    case 'operational':
+      return 'success';
+    case 'critical':
+      return 'danger';
+    case 'degraded':
+      return 'warning';
+    default:
+      return 'default';
+  }
+}
+
+function getUserRequestHealth(data) {
+  const summary = userRequestSummaryFromData(data);
+  const requests = Number(summary.total_requests || 0);
+  const successRate = requests > 0 ? Number(summary.user_success_rate || 0) : 1;
+  const finalFailures = Number(summary.final_failures || 0);
+  const recovered = Number(summary.recovered || 0);
+  const emptyOutputs = Number(summary.empty_outputs || 0);
+  const experienceIssues = Number(summary.experience_issues || 0);
+  const p95TtftMs = Number(summary.p95_ttft_ms || 0);
+  let score = requests > 0 ? 100 : 0;
+  if (requests > 0) {
+    score -= Math.min(46, Math.max(0, 0.995 - successRate) * 560);
+    score -= Math.min(16, (finalFailures / Math.max(1, requests)) * 160);
+    score -= Math.min(
+      18,
+      ((emptyOutputs + experienceIssues) / Math.max(1, requests)) * 120,
+    );
+  }
+  if (p95TtftMs >= LATENCY_THRESHOLDS.p95TtftMs.danger) score -= 16;
+  else if (p95TtftMs >= LATENCY_THRESHOLDS.p95TtftMs.warning) score -= 8;
+  if (recovered > 0)
+    score -= Math.min(8, (recovered / Math.max(1, requests)) * 22);
+  score = Math.max(0, Math.min(100, Math.round(score)));
+
+  let status = 'operational';
+  if (score < 60 || successRate < 0.9) status = 'critical';
+  else if (
+    score < 86 ||
+    successRate < 0.98 ||
+    finalFailures > 0 ||
+    emptyOutputs > 0 ||
+    experienceIssues > 0
+  )
+    status = 'degraded';
+  else if (score < 94 || recovered > 0) status = 'watching';
+
+  return {
+    status,
+    tone: userRequestHealthTone(status),
+    score,
+  };
+}
+
+function getUserRequestStatusLabel(status, t) {
+  switch (status) {
+    case 'operational':
+      return t('用户感知稳定');
+    case 'watching':
+      return t('用户感知观察中');
+    case 'critical':
+      return t('用户感知异常');
+    default:
+      return t('用户感知降级');
+  }
+}
+
+function getUserRequestStatusMeta(record, t) {
+  if (record?.status === 'processing') {
+    return { color: 'blue', label: t('处理中'), tone: 'processing' };
+  }
+  if (
+    record?.client_aborted ||
+    record?.status === 'client_aborted' ||
+    record?.final_error_category === 'client_aborted' ||
+    Number(record?.final_status_code || 0) === 499
+  ) {
+    return { color: 'grey', label: t('用户取消'), tone: 'aborted' };
+  }
+  if (record?.final_success) {
+    if (record?.empty_output || record?.experience_issue) {
+      return { color: 'orange', label: t('体验异常'), tone: 'warning' };
+    }
+    return record?.recovered
+      ? { color: 'cyan', label: t('已恢复成功'), tone: 'recovered' }
+      : { color: 'green', label: t('成功'), tone: 'success' };
+  }
+  return { color: 'red', label: t('最终失败'), tone: 'failed' };
+}
+
+function isUserRequestProcessing(record) {
+  return record?.status === 'processing' || !Number(record?.completed_at || 0);
+}
+
+function formatUserRequestErrorCategory(category, t) {
+  switch (category) {
+    case 'rate_limit':
+      return t('最终失败类型：rate_limit');
+    case 'timeout':
+      return t('最终失败类型：timeout');
+    case 'upstream_error':
+      return t('最终失败类型：upstream_error');
+    case 'stream_interrupted':
+      return t('最终失败类型：stream_interrupted');
+    case 'client_aborted':
+      return t('用户主动终止');
+    case 'server_error':
+      return t('最终失败类型：server_error');
+    default:
+      return category || '--';
+  }
+}
+
+function formatUserRequestExperienceIssue(issue, t) {
+  switch (issue) {
+    case 'empty_output':
+      return t('空输出');
+    default:
+      return issue || t('体验异常');
+  }
+}
+
+function userRequestLiveDurationMs(record, nowSeconds) {
+  if (!isUserRequestProcessing(record)) {
+    return Number(record?.duration_ms || 0);
+  }
+  return Math.max(
+    0,
+    (Number(nowSeconds || 0) - Number(record?.created_at || nowSeconds)) * 1000,
+  );
+}
+
+function userRequestDisplayTime(record, nowSeconds, t) {
+  const timestamp = isUserRequestProcessing(record)
+    ? record?.created_at
+    : record?.completed_at || record?.created_at;
+  return formatRelativeTime(timestamp, nowSeconds, t);
+}
+
+function userRequestMatchesQuery(record, query) {
+  const normalizedQuery = String(query || '')
+    .trim()
+    .toLowerCase();
+  if (!normalizedQuery) return true;
+  return [
+    record?.request_id,
+    record?.requested_model,
+    record?.requested_group,
+    record?.selected_group,
+    record?.final_channel_id,
+    record?.final_channel_name,
+    record?.final_error_category,
+  ]
+    .map((value) => String(value || '').toLowerCase())
+    .some((value) => value.includes(normalizedQuery));
+}
+
+function formatUserRequestChannel(record) {
+  const channelId = Number(record?.final_channel_id || 0);
+  const channelName = String(record?.final_channel_name || '').trim();
+  const displayName = stripChannelRatioSuffix(channelName);
+  return displayName || (channelId > 0 ? `#${channelId}` : '--');
+}
+
+function stripChannelRatioSuffix(channelName) {
+  const value = String(channelName || '').trim();
+  if (!value) return '';
+  const stripped = value
+    .replace(/\s*(?:[-_/|:]\s*)?\(?\s*x\s*[0-9]+(?:\.[0-9]+)?\s*\)?$/i, '')
+    .replace(/\s*(?:[-_/|:]\s*)?\(?\s*[0-9]+(?:\.[0-9]+)?\s*x\s*\)?$/i, '')
+    .trim();
+  return stripped || value;
+}
+
+function formatUserRequestGroupFlow(record) {
+  const requestedGroup = String(record?.requested_group || '').trim();
+  const selectedGroup = String(record?.selected_group || '').trim();
+  if (requestedGroup && selectedGroup && requestedGroup !== selectedGroup) {
+    return `${requestedGroup}=>${selectedGroup}`;
+  }
+  return selectedGroup || requestedGroup || '--';
+}
+
+function userRequestChannelRatioValue(record) {
+  const explicitRatio = Number(
+    record?.channel_cost_ratio ||
+      record?.final_channel_cost_ratio ||
+      record?.cost_ratio ||
+      0,
+  );
+  if (Number.isFinite(explicitRatio) && explicitRatio > 0) {
+    return explicitRatio;
+  }
+
+  const channelName = String(record?.final_channel_name || '').trim();
+  const match =
+    channelName.match(/(?:^|[^a-z0-9])x\s*([0-9]+(?:\.[0-9]+)?)(?:\b|$)/i) ||
+    channelName.match(/(?:^|[^a-z0-9])([0-9]+(?:\.[0-9]+)?)\s*x(?:\b|$)/i);
+  const parsed = Number(match?.[1] || 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function formatChannelRatio(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '';
+  return `x ${numeric.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}`;
+}
+
+function userRequestSortTimestamp(record) {
+  return (
+    normalizeTimestamp(record?.created_at) ||
+    normalizeTimestamp(record?.completed_at) ||
+    normalizeTimestamp(record?.updated_at) ||
+    0
+  );
+}
+
+function compareUserRequestsForDisplay(a, b) {
+  const aProcessing = isUserRequestProcessing(a);
+  const bProcessing = isUserRequestProcessing(b);
+  if (aProcessing !== bProcessing) {
+    return aProcessing ? -1 : 1;
+  }
+  return userRequestSortTimestamp(b) - userRequestSortTimestamp(a);
+}
+
+function buildUserRequestSparkValues(trends, key) {
+  if (!Array.isArray(trends)) return [];
+  return trends
+    .filter((item) => Number(item?.requests) > 0)
+    .slice(-16)
+    .map((item) => Number(item?.[key]) || 0);
+}
+
+function buildUserRequestTrendSpec(trends, t) {
+  const trendRows = Array.isArray(trends) ? trends : [];
+  const values = trendRows.flatMap((item) => {
+    const bucket = formatBucketRange(item);
+    const requests = Number(item.requests || 0);
+    return [
+      {
+        bucket,
+        metric: t('请求量'),
+        value: requests,
+        axis: 'count',
+      },
+      {
+        bucket,
+        metric: t('用户成功率'),
+        value: Number(item.user_success_rate || 0) * 100,
+        axis: 'rate',
+      },
+      {
+        bucket,
+        metric: t('P95 首包'),
+        value: Number(item.p95_ttft_ms || 0),
+        axis: 'latency',
+      },
+    ];
+  });
+
+  return {
+    type: 'line',
+    data: [{ id: 'user-request-trends', values }],
+    xField: 'bucket',
+    yField: 'value',
+    seriesField: 'metric',
+    axes: [
+      {
+        orient: 'bottom',
+        label: { visible: false },
+        tick: { visible: false },
+        domainLine: { visible: false },
+      },
+      {
+        orient: 'left',
+        label: { style: { fill: '#64748b', fontSize: 11 } },
+        grid: { visible: true, style: { stroke: 'rgba(148, 163, 184, 0.16)' } },
+      },
+    ],
+    color: ['#14b8a6', '#059669', '#f97316'],
+    line: {
+      style: {
+        lineWidth: (datum) => (datum.metric === t('请求量') ? 1.2 : 2.3),
+        strokeOpacity: (datum) => (datum.metric === t('请求量') ? 0.45 : 1),
+      },
+    },
+    point: { visible: false },
+    legends: {
+      visible: true,
+      orient: 'top',
+      position: 'end',
+      item: {
+        label: { style: { fill: '#475569', fontSize: 11 } },
+      },
+    },
+    tooltip: {
+      visible: true,
+    },
+    padding: { top: 8, right: 12, bottom: 8, left: 44 },
+    background: { fill: 'transparent' },
+    animation: false,
+  };
+}
+
 function MiniSparkline({ values, tone = 'success', variant = 'line' }) {
   const spec = useMemo(() => {
     const normalizedValues = Array.isArray(values)
@@ -916,8 +1457,7 @@ function MiniSparkline({ values, tone = 'success', variant = 'line' }) {
         ? baseline + Math.sin(index * 1.7 + 0.35) * baseline * 0.045
         : value,
     }));
-    const color =
-      MINI_SPARKLINE_COLORS[tone] || MINI_SPARKLINE_COLORS.default;
+    const color = MINI_SPARKLINE_COLORS[tone] || MINI_SPARKLINE_COLORS.default;
 
     return {
       type: 'line',
@@ -1068,6 +1608,682 @@ function HealthOverviewCard({ health, summary, trends, t }) {
         {getHealthStatusDescription(health, t)}
       </Typography.Text>
     </DashboardCard>
+  );
+}
+
+function UserRequestHealthCard({ health, summary, trends, t }) {
+  return (
+    <DashboardCard
+      className={`ct-model-gateway-user-health ct-model-gateway-user-health-${health.tone}`}
+      bodyClassName='ct-model-gateway-user-health-body'
+    >
+      <div className='ct-model-gateway-user-health-head'>
+        <div className='ct-model-gateway-user-health-icon'>
+          <Gauge size={34} />
+        </div>
+        <div>
+          <span>{t('用户感知健康')}</span>
+          <strong>{formatNumber(health.score)}</strong>
+          <small>{getUserRequestStatusLabel(health.status, t)}</small>
+        </div>
+      </div>
+      <MiniSparkline
+        values={buildUserRequestSparkValues(trends, 'user_success_rate')}
+        tone={
+          health.tone === 'danger'
+            ? 'danger'
+            : health.tone === 'warning'
+              ? 'warning'
+              : 'success'
+        }
+      />
+      <div className='ct-model-gateway-user-health-metrics'>
+        <div>
+          <small>{t('请求成功')}</small>
+          <strong>{formatNumber(summary.successes)}</strong>
+          <span>{formatPercent(summary.user_success_rate)}</span>
+        </div>
+        <div>
+          <small>{t('最终失败')}</small>
+          <strong>{formatNumber(summary.final_failures)}</strong>
+          <span>
+            {formatNumber(summary.total_requests)} {t('用户请求')}
+          </span>
+        </div>
+        <div>
+          <small>{t('自动恢复')}</small>
+          <strong>{formatNumber(summary.recovered)}</strong>
+          <span>{t('内部重试后成功')}</span>
+        </div>
+      </div>
+    </DashboardCard>
+  );
+}
+
+function UserRequestTrendPanel({ trends, t }) {
+  const spec = useMemo(() => buildUserRequestTrendSpec(trends, t), [trends, t]);
+  return (
+    <DashboardCard
+      title={
+        <span className='ct-model-gateway-panel-title'>
+          <Activity size={17} />
+          {t('用户请求趋势')}
+        </span>
+      }
+      bodyClassName='ct-model-gateway-user-trend-body'
+    >
+      {Array.isArray(trends) &&
+      trends.some((item) => Number(item?.requests) > 0) ? (
+        <VChart spec={spec} option={MINI_SPARKLINE_CHART_OPTIONS} />
+      ) : (
+        <div className='ct-model-gateway-trend-empty'>
+          {t('暂无用户请求趋势')}
+        </div>
+      )}
+    </DashboardCard>
+  );
+}
+
+function UserRequestRankPanel({ title, icon: Icon, rows, type, t }) {
+  const items = [...(rows || [])]
+    .filter((item) => Number(item?.requests || 0) > 0)
+    .slice(0, 6);
+  return (
+    <DashboardCard
+      title={
+        <span className='ct-model-gateway-panel-title'>
+          <Icon size={17} />
+          {title}
+        </span>
+      }
+      bodyClassName='ct-model-gateway-user-rank-body'
+    >
+      <div className='ct-model-gateway-user-rank-head'>
+        <span>{type === 'model' ? t('模型') : t('分组')}</span>
+        <span>{t('用户成功率')}</span>
+        <span>{t('P95 首包')}</span>
+        <span>{t('自动恢复')}</span>
+        <span>{t('请求量')}</span>
+      </div>
+      {items.length ? (
+        items.map((item) => {
+          const rate = clampRate(item.user_success_rate);
+          const tone = getSuccessTone(item.user_success_rate, item.requests);
+          return (
+            <div
+              className='ct-model-gateway-user-rank-row'
+              key={`${type}-${item.key}`}
+            >
+              <div className='ct-model-gateway-leaderboard-name'>
+                <Avatar
+                  size='extra-small'
+                  color={type === 'model' ? 'blue' : 'cyan'}
+                >
+                  {type === 'model' ? <Bot size={13} /> : <Layers3 size={13} />}
+                </Avatar>
+                <Typography.Text strong ellipsis={{ showTooltip: true }}>
+                  {item.key || t('未知')}
+                </Typography.Text>
+              </div>
+              <div className='ct-model-gateway-user-rank-rate'>
+                <span
+                  className={`ct-model-gateway-leaderboard-rate ct-model-gateway-leaderboard-rate-${tone}`}
+                >
+                  {formatAttemptRate(item.user_success_rate, item.requests)}
+                </span>
+                <div className='ct-model-gateway-leaderboard-meter'>
+                  <span style={{ width: `${Math.round(rate * 100)}%` }} />
+                </div>
+              </div>
+              <span>{formatLatency(item.p95_ttft_ms)}</span>
+              <span>{formatNumber(item.recovered)}</span>
+              <span>{formatNumber(item.requests)}</span>
+            </div>
+          );
+        })
+      ) : (
+        <Typography.Text type='secondary' size='small'>
+          {t('暂无排行数据')}
+        </Typography.Text>
+      )}
+    </DashboardCard>
+  );
+}
+
+function UserRequestRecentTable({
+  records,
+  t,
+  refreshing,
+  onRefresh,
+  onOpenDispatchDetail,
+  dispatchDetailLoading,
+}) {
+  const [nowSeconds, setNowSeconds] = useState(() =>
+    Math.floor(Date.now() / 1000),
+  );
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [jumpPage, setJumpPage] = useState('1');
+  const hasProcessing = useMemo(
+    () => (records || []).some((record) => isUserRequestProcessing(record)),
+    [records],
+  );
+
+  useEffect(() => {
+    if (!hasProcessing) return undefined;
+    const timer = window.setInterval(() => {
+      setNowSeconds(Math.floor(Date.now() / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [hasProcessing]);
+
+  const filteredItems = useMemo(
+    () =>
+      [...(records || [])]
+        .filter((record) => userRequestMatchesQuery(record, query))
+        .sort(compareUserRequestsForDisplay),
+    [query, records],
+  );
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filteredItems.length / USER_REQUEST_PAGE_SIZE),
+  );
+  const currentPage = Math.min(page, totalPages);
+  const pageItems = filteredItems.slice(
+    (currentPage - 1) * USER_REQUEST_PAGE_SIZE,
+    currentPage * USER_REQUEST_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, records]);
+
+  useEffect(() => {
+    setJumpPage(String(currentPage));
+  }, [currentPage]);
+
+  const gotoPage = useCallback(
+    (nextPage) => {
+      setPage(Math.min(totalPages, Math.max(1, nextPage)));
+    },
+    [totalPages],
+  );
+  const submitJumpPage = useCallback(() => {
+    const nextPage = Number(jumpPage);
+    if (!Number.isFinite(nextPage)) {
+      setJumpPage(String(currentPage));
+      return;
+    }
+    gotoPage(nextPage);
+  }, [currentPage, gotoPage, jumpPage]);
+  const handleCopyRequestId = useCallback(
+    async (requestId) => {
+      if (!requestId) return;
+      const ok = await copy(requestId);
+      if (ok) {
+        Toast.success(t('复制成功'));
+      } else {
+        showError(t('复制失败'));
+      }
+    },
+    [t],
+  );
+  const visiblePages = useMemo(() => {
+    const start = Math.max(1, Math.min(currentPage - 2, totalPages - 4));
+    return Array.from(
+      { length: Math.min(5, totalPages) },
+      (_, index) => start + index,
+    );
+  }, [currentPage, totalPages]);
+
+  return (
+    <DashboardCard bodyClassName='ct-model-gateway-user-request-list-body'>
+      <div className='ct-model-gateway-user-request-list-head'>
+        <div>
+          <h3>{t('最近用户请求')}</h3>
+          <p>{t('按时间倒序展示最近的请求记录')}</p>
+        </div>
+        <div className='ct-model-gateway-user-request-list-actions'>
+          <Input
+            value={query}
+            onChange={setQuery}
+            prefix={<Search size={14} />}
+            placeholder={t('搜索请求 ID')}
+            className='ct-model-gateway-user-request-search'
+            showClear
+          />
+          <Button
+            icon={<RefreshCw size={15} />}
+            loading={refreshing}
+            onClick={onRefresh}
+          >
+            {t('刷新')}
+          </Button>
+        </div>
+      </div>
+
+      <div className='ct-model-gateway-user-request-table-wrap'>
+        <div className='ct-model-gateway-user-request-table'>
+          <div className='ct-model-gateway-user-request-table-head'>
+            {[
+              { key: 'status', label: t('状态') },
+              { key: 'request', label: t('请求信息') },
+              { key: 'group', label: t('渠道信息') },
+              { key: 'time', label: t('时间') },
+              { key: 'duration', label: t('总耗时'), hint: true },
+              { key: 'ttft', label: t('首包'), hint: true },
+              { key: 'attempt', label: t('尝试') },
+              { key: 'complete', label: t('完成时间') },
+              { key: 'action', label: t('操作') },
+            ].map(({ key, label, hint }) => (
+              <span key={key}>
+                {label}
+                {hint && <Info size={13} />}
+              </span>
+            ))}
+          </div>
+
+          {pageItems.length ? (
+            <div className='ct-model-gateway-user-request-rows'>
+              {pageItems.map((record) => {
+                const meta = getUserRequestStatusMeta(record, t);
+                const processing = isUserRequestProcessing(record);
+                const durationMs = userRequestLiveDurationMs(
+                  record,
+                  nowSeconds,
+                );
+                const attempts = Number(record.attempts || 0);
+                const requestId = record.request_id || '';
+                const channelLabel = formatUserRequestChannel(record);
+                const channelRatioLabel = formatChannelRatio(
+                  userRequestChannelRatioValue(record),
+                );
+                const groupFlowLabel = formatUserRequestGroupFlow(record);
+                const StatusIcon =
+                  meta.tone === 'processing'
+                    ? RadioTower
+                    : meta.tone === 'aborted'
+                      ? Ban
+                      : meta.tone === 'failed'
+                        ? Info
+                        : CheckCircle2;
+                const durationTone = getThresholdTone(
+                  durationMs,
+                  LATENCY_THRESHOLDS.avgDurationMs,
+                );
+                const ttftTone = getThresholdTone(
+                  record.ttft_ms,
+                  LATENCY_THRESHOLDS.ttftMs,
+                );
+
+                return (
+                  <div
+                    className={`ct-model-gateway-user-request-row ct-model-gateway-user-request-row-${meta.tone}`}
+                    key={requestId || record.id}
+                  >
+                    <div className='ct-model-gateway-user-request-status-col'>
+                      <div
+                        className={`ct-model-gateway-user-request-status-pill ct-model-gateway-user-request-status-pill-${meta.tone}`}
+                      >
+                        <StatusIcon size={13} />
+                        <span>{meta.label}</span>
+                      </div>
+                      <small
+                        className={
+                          !processing && record.recovered
+                            ? ''
+                            : 'ct-model-gateway-user-request-hidden-line'
+                        }
+                      >
+                        {t('自动恢复')}
+                      </small>
+                    </div>
+
+                    <div className='ct-model-gateway-user-request-info-col'>
+                      <span>{t('请求 ID')}</span>
+                      <div className='ct-model-gateway-user-request-id-line'>
+                        <Typography.Text
+                          ellipsis={{ showTooltip: true }}
+                          className='ct-model-gateway-request-id'
+                        >
+                          {requestId || '--'}
+                        </Typography.Text>
+                        {requestId && (
+                          <Tooltip content={t('复制')}>
+                            <Button
+                              aria-label={t('复制')}
+                              className='ct-model-gateway-user-request-copy-btn'
+                              icon={<Copy size={13} />}
+                              size='small'
+                              type='tertiary'
+                              onClick={() => handleCopyRequestId(requestId)}
+                            />
+                          </Tooltip>
+                        )}
+                      </div>
+                      {!record.final_success &&
+                        record.final_error_category &&
+                        meta.tone !== 'aborted' &&
+                        !processing && (
+                          <small className='ct-model-gateway-user-request-error'>
+                            {formatUserRequestErrorCategory(
+                              record.final_error_category,
+                              t,
+                            )}
+                          </small>
+                        )}
+                      {record.final_success &&
+                        (record.empty_output || record.experience_issue) &&
+                        !processing && (
+                          <small className='ct-model-gateway-user-request-error'>
+                            {formatUserRequestExperienceIssue(
+                              record.experience_issue ||
+                                (record.empty_output ? 'empty_output' : ''),
+                              t,
+                            )}
+                          </small>
+                        )}
+                    </div>
+
+                    <div className='ct-model-gateway-user-request-group-col'>
+                      <div
+                        className='ct-model-gateway-user-request-channel-primary'
+                        title={`${channelLabel}${
+                          channelRatioLabel ? ` ${channelRatioLabel}` : ''
+                        }`}
+                      >
+                        <strong>{channelLabel}</strong>
+                        {channelRatioLabel && (
+                          <em title={t('倍率')}>{channelRatioLabel}</em>
+                        )}
+                      </div>
+                      <div
+                        className='ct-model-gateway-user-request-channel-model'
+                        title={record.requested_model || '--'}
+                      >
+                        {record.requested_model || '--'}
+                      </div>
+                      <div
+                        className='ct-model-gateway-user-request-channel-flow'
+                        title={groupFlowLabel}
+                      >
+                        {groupFlowLabel}
+                      </div>
+                    </div>
+
+                    <div className='ct-model-gateway-user-request-time-col'>
+                      <span>{t('创建时间')}</span>
+                      <strong>{formatTimestamp(record.created_at)}</strong>
+                      <span>{t('完成时间')}</span>
+                      <strong>
+                        {processing
+                          ? '--'
+                          : formatTimestamp(record.completed_at)}
+                      </strong>
+                    </div>
+
+                    <div
+                      className={`ct-model-gateway-user-request-value-col ct-model-gateway-user-request-value-${durationTone}`}
+                    >
+                      <strong>{formatLatency(durationMs)}</strong>
+                      <span>
+                        {processing ? t('实时处理中') : t('仅供排查')}
+                      </span>
+                    </div>
+
+                    <div
+                      className={`ct-model-gateway-user-request-value-col ct-model-gateway-user-request-value-${ttftTone}`}
+                    >
+                      <strong>
+                        {processing ? '--' : formatLatency(record.ttft_ms)}
+                      </strong>
+                      <span>{processing ? t('等待完成') : t('首包延迟')}</span>
+                    </div>
+
+                    <div className='ct-model-gateway-user-request-attempt-col'>
+                      <strong>
+                        {processing
+                          ? '--'
+                          : formatNumber(Math.max(1, attempts))}
+                      </strong>
+                      <span>
+                        {record.recovered
+                          ? t('内部失败后最终成功')
+                          : processing
+                            ? t('处理中')
+                            : t('无恢复')}
+                      </span>
+                    </div>
+
+                    <div className='ct-model-gateway-user-request-complete-col'>
+                      <div>
+                        <span className='ct-model-gateway-user-request-dot' />
+                        <strong>
+                          {userRequestDisplayTime(record, nowSeconds, t)}
+                        </strong>
+                      </div>
+                      <span>
+                        {processing
+                          ? t('进行中')
+                          : meta.tone === 'aborted'
+                            ? t('用户已取消')
+                            : record.final_success
+                              ? t('请求完成')
+                              : t('请求失败')}
+                      </span>
+                    </div>
+
+                    <div className='ct-model-gateway-user-request-action-col'>
+                      <Tooltip content={t('调度详情')}>
+                        <Button
+                          size='small'
+                          type='tertiary'
+                          aria-label={t('查看详情')}
+                          icon={<Eye size={14} />}
+                          loading={dispatchDetailLoading === requestId}
+                          disabled={!requestId}
+                          onClick={() => onOpenDispatchDetail?.(record)}
+                        >
+                          {t('查看')}
+                        </Button>
+                      </Tooltip>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyState t={t} />
+          )}
+        </div>
+      </div>
+
+      <div className='ct-model-gateway-user-request-pagination'>
+        <span>{t('共 {{count}} 条', { count: filteredItems.length })}</span>
+        <div className='ct-model-gateway-user-request-page-size'>
+          {USER_REQUEST_PAGE_SIZE} {t('条/页')}
+        </div>
+        <div className='ct-model-gateway-user-request-page-actions'>
+          <Button
+            size='small'
+            type='tertiary'
+            disabled={currentPage <= 1}
+            onClick={() => gotoPage(1)}
+            icon={<ChevronsLeft size={14} />}
+            aria-label={t('第一页')}
+          ></Button>
+          <Button
+            size='small'
+            type='tertiary'
+            disabled={currentPage <= 1}
+            onClick={() => gotoPage(currentPage - 1)}
+            icon={<ChevronLeft size={14} />}
+            aria-label={t('上一页')}
+          ></Button>
+          {visiblePages.map((item) => (
+            <Button
+              key={item}
+              size='small'
+              type={item === currentPage ? 'primary' : 'tertiary'}
+              onClick={() => gotoPage(item)}
+            >
+              {item}
+            </Button>
+          ))}
+          <Button
+            size='small'
+            type='tertiary'
+            disabled={currentPage >= totalPages}
+            onClick={() => gotoPage(currentPage + 1)}
+            icon={<ChevronRight size={14} />}
+            aria-label={t('下一页')}
+          ></Button>
+          <Button
+            size='small'
+            type='tertiary'
+            disabled={currentPage >= totalPages}
+            onClick={() => gotoPage(totalPages)}
+            icon={<ChevronsRight size={14} />}
+            aria-label={t('最后一页')}
+          ></Button>
+        </div>
+        <div className='ct-model-gateway-user-request-page-jump'>
+          <span>{t('跳至')}</span>
+          <Input
+            value={jumpPage}
+            size='small'
+            onChange={setJumpPage}
+            onBlur={submitJumpPage}
+            onEnterPress={submitJumpPage}
+          />
+          <span>{t('页')}</span>
+        </div>
+      </div>
+    </DashboardCard>
+  );
+}
+
+function UserRequestDashboard({
+  data,
+  t,
+  refreshing,
+  onRefresh,
+  onOpenDispatchDetail,
+  dispatchDetailLoading,
+}) {
+  const userRequests = data?.user_requests || {};
+  const summary = userRequests.summary || {};
+  const trends = userRequests.trends || [];
+  const health = getUserRequestHealth(data);
+
+  return (
+    <div className='ct-model-gateway-user-layout'>
+      <div className='ct-model-gateway-user-top'>
+        <UserRequestHealthCard
+          health={health}
+          summary={summary}
+          trends={trends}
+          t={t}
+        />
+        <div className='ct-model-gateway-user-kpi-grid'>
+          <OperationKpiCard
+            icon={CheckCircle2}
+            label={t('用户成功率')}
+            value={formatAttemptRate(
+              summary.user_success_rate,
+              summary.total_requests,
+            )}
+            detail={`${formatNumber(summary.successes)} / ${formatNumber(
+              summary.total_requests,
+            )}`}
+            tone={getSuccessTone(
+              summary.user_success_rate,
+              summary.total_requests,
+            )}
+            sparkValues={buildUserRequestSparkValues(
+              trends,
+              'user_success_rate',
+            )}
+          />
+          <OperationKpiCard
+            icon={ListTree}
+            label={t('用户请求数')}
+            value={formatNumber(summary.total_requests)}
+            detail={`${formatNumber(summary.scanned_requests)} ${t('已扫描')}`}
+            tone='default'
+            sparkValues={buildUserRequestSparkValues(trends, 'requests')}
+          />
+          <OperationKpiCard
+            icon={GitBranch}
+            label={t('自动恢复')}
+            value={formatNumber(summary.recovered)}
+            detail={t('内部失败后最终成功')}
+            tone={Number(summary.recovered || 0) > 0 ? 'warning' : 'success'}
+            sparkValues={buildUserRequestSparkValues(trends, 'recovered')}
+          />
+          <OperationKpiCard
+            icon={Timer}
+            label={t('平均首包')}
+            value={formatLatency(summary.avg_ttft_ms)}
+            detail={t('首包延迟参考')}
+            tone={getThresholdTone(
+              summary.avg_ttft_ms,
+              LATENCY_THRESHOLDS.ttftMs,
+            )}
+            sparkValues={buildUserRequestSparkValues(trends, 'avg_ttft_ms')}
+          />
+          <OperationKpiCard
+            icon={Gauge}
+            label={t('P95 首包')}
+            value={formatLatency(summary.p95_ttft_ms)}
+            detail={t('首包延迟参考')}
+            tone={getThresholdTone(
+              summary.p95_ttft_ms,
+              LATENCY_THRESHOLDS.p95TtftMs,
+            )}
+            sparkValues={buildUserRequestSparkValues(trends, 'p95_ttft_ms')}
+          />
+          <OperationKpiCard
+            icon={Activity}
+            label={t('最终失败')}
+            value={formatNumber(summary.final_failures)}
+            detail={t('隐藏中间调度错误')}
+            tone={
+              Number(summary.final_failures || 0) > 0 ? 'danger' : 'success'
+            }
+            sparkValues={buildUserRequestSparkValues(trends, 'final_failures')}
+          />
+        </div>
+      </div>
+
+      <UserRequestTrendPanel trends={trends} t={t} />
+
+      <div className='ct-model-gateway-user-rank-grid'>
+        <UserRequestRankPanel
+          title={t('模型用户体验排行')}
+          icon={Bot}
+          rows={userRequests.by_model}
+          type='model'
+          t={t}
+        />
+        <UserRequestRankPanel
+          title={t('分组用户体验排行')}
+          icon={Layers3}
+          rows={userRequests.by_group}
+          type='group'
+          t={t}
+        />
+      </div>
+
+      <UserRequestRecentTable
+        records={userRequests.recent_requests || []}
+        t={t}
+        refreshing={refreshing}
+        onRefresh={onRefresh}
+        onOpenDispatchDetail={onOpenDispatchDetail}
+        dispatchDetailLoading={dispatchDetailLoading}
+      />
+    </div>
   );
 }
 
@@ -1301,21 +2517,23 @@ function IncidentWorkbench({ incidents, t, onReplayBatch }) {
 }
 
 function sortOperationalRows(items) {
-  return [...(items || [])].filter((item) => Number(item?.attempts || 0) > 0).sort((a, b) => {
-    const aRisk =
-      (1 - Number(a.success_rate || 0)) * 10000 +
-      Number(a.failures || 0) * 20 +
-      Number(a.stream_interrupted || 0) * 25 +
-      Number(a.avg_duration_ms || 0) / 100;
-    const bRisk =
-      (1 - Number(b.success_rate || 0)) * 10000 +
-      Number(b.failures || 0) * 20 +
-      Number(b.stream_interrupted || 0) * 25 +
-      Number(b.avg_duration_ms || 0) / 100;
-    return (
-      bRisk - aRisk || Number(b.dispatches || 0) - Number(a.dispatches || 0)
-    );
-  });
+  return [...(items || [])]
+    .filter((item) => Number(item?.attempts || 0) > 0)
+    .sort((a, b) => {
+      const aRisk =
+        (1 - Number(a.success_rate || 0)) * 10000 +
+        Number(a.failures || 0) * 20 +
+        Number(a.stream_interrupted || 0) * 25 +
+        Number(a.avg_duration_ms || 0) / 100;
+      const bRisk =
+        (1 - Number(b.success_rate || 0)) * 10000 +
+        Number(b.failures || 0) * 20 +
+        Number(b.stream_interrupted || 0) * 25 +
+        Number(b.avg_duration_ms || 0) / 100;
+      return (
+        bRisk - aRisk || Number(b.dispatches || 0) - Number(a.dispatches || 0)
+      );
+    });
 }
 
 function PerformanceLeaderboard({ title, icon: Icon, rows, type, t }) {
@@ -1350,7 +2568,9 @@ function PerformanceLeaderboard({ title, icon: Icon, rows, type, t }) {
               item.name ||
               item.key ||
               (item.channel_id ? `#${item.channel_id}` : t('未知'));
-            const successPercent = Math.round(clampRate(item.success_rate) * 100);
+            const successPercent = Math.round(
+              clampRate(item.success_rate) * 100,
+            );
             const streamRate =
               Number(item.attempts || 0) > 0
                 ? Number(item.stream_interrupted || 0) /
@@ -1673,6 +2893,11 @@ function EngineeringDiagnosisRail({
 function ViewModeSwitch({ value, onChange, t }) {
   const options = [
     {
+      key: VIEW_MODES.USER_REQUESTS,
+      icon: CheckCircle2,
+      label: t('用户请求视图'),
+    },
+    {
       key: VIEW_MODES.OPERATIONS,
       icon: Gauge,
       label: t('运营视图'),
@@ -1850,12 +3075,7 @@ function EngineeringSummaryDeck({
   );
 }
 
-function OperationsDashboard({
-  data,
-  runtimeStatus,
-  t,
-  onReplayBatch,
-}) {
+function OperationsDashboard({ data, runtimeStatus, t, onReplayBatch }) {
   const summary = data?.summary || {};
   const trends = data?.trends || [];
   const health = getModelGatewayHealth(data, runtimeStatus);
@@ -3800,7 +5020,8 @@ function TrendDimensionTags({ title, items, t, type = 'aggregate' }) {
                 size='small'
                 type='light'
               >
-                {item.key || t('未知')} · {formatAttemptRate(item.success_rate, item.attempts)} ·{' '}
+                {item.key || t('未知')} ·{' '}
+                {formatAttemptRate(item.success_rate, item.attempts)} ·{' '}
                 {formatNumber(item.attempts)} {t('尝试')}
               </Tag>
             );
@@ -4600,28 +5821,368 @@ function formatRuntimeKey(runtimeKey) {
     .join(' / ');
 }
 
+function getCandidateChannelLabel(candidate, t) {
+  const name = String(candidate?.channel_name || '').trim();
+  const id = Number(candidate?.channel_id || 0);
+  if (name && id > 0) return `${name} #${id}`;
+  if (name) return name;
+  if (id > 0) return `#${id}`;
+  return t('未知');
+}
+
+function getCandidateScore(candidate) {
+  const score = Number(candidate?.score_total);
+  return Number.isFinite(score) && score > 0 ? score : null;
+}
+
+function isAvailableCandidate(candidate) {
+  return (
+    candidate?.available === true && !isBalanceInsufficientStatus(candidate)
+  );
+}
+
+function findSelectedCandidate(record, candidates) {
+  if (!Array.isArray(candidates) || !candidates.length) return null;
+  const selected = candidates.find((candidate) => candidate?.selected === true);
+  if (selected) return selected;
+  const selectedID = Number(
+    record?.actual_channel_id || record?.channel_id || 0,
+  );
+  if (selectedID > 0) {
+    return (
+      candidates.find(
+        (candidate) => Number(candidate?.channel_id || 0) === selectedID,
+      ) || null
+    );
+  }
+  return null;
+}
+
+function formatSelectionReason(reason, t) {
+  const normalized = String(reason || '').trim();
+  if (!normalized) return '--';
+  if (normalized === 'weighted_score') return t('综合评分最高');
+  if (normalized === 'weighted_score_sticky_broken') {
+    return t('粘滞候选未达保留阈值，改选评分更高候选');
+  }
+  if (
+    normalized === 'user_sticky_retained' ||
+    normalized === 'cache_affinity_retained' ||
+    normalized.endsWith('_retained')
+  ) {
+    return t('粘滞路由保留');
+  }
+  return normalized;
+}
+
+function buildRejectReasonSummary(candidates, t) {
+  const counts = new Map();
+  (candidates || []).forEach((candidate) => {
+    if (isAvailableCandidate(candidate)) return;
+    const reason =
+      formatChannelStatusReason(candidate?.reject_reason, t) ||
+      formatChannelStatusReason(candidate?.status_reason, t) ||
+      (isBalanceInsufficientStatus(candidate)
+        ? t('余额不足')
+        : t('无过滤原因'));
+    counts.set(reason, (counts.get(reason) || 0) + 1);
+  });
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([reason, count]) => `${reason} ${formatNumber(count)}`);
+}
+
+function buildSelectionInsight(record, candidates, t) {
+  const selectedCandidate = findSelectedCandidate(record, candidates);
+  const selectedIndex = selectedCandidate
+    ? (candidates || []).findIndex(
+        (candidate) => candidate === selectedCandidate,
+      )
+    : -1;
+  const availableCandidates = (candidates || []).filter(isAvailableCandidate);
+  const selectedScore =
+    getCandidateScore(selectedCandidate) ?? getCandidateScore(record);
+  const scoredCandidates = availableCandidates.filter(
+    (candidate) => getCandidateScore(candidate) !== null,
+  );
+  const scores = scoredCandidates.map((candidate) =>
+    getCandidateScore(candidate),
+  );
+  const maxScore = scores.length ? Math.max(...scores) : null;
+  const sameScore = (left, right) =>
+    left !== null && right !== null && Math.abs(left - right) < 0.000001;
+  const selectedRank =
+    selectedScore !== null
+      ? scoredCandidates.filter(
+          (candidate) => (getCandidateScore(candidate) || 0) > selectedScore,
+        ).length + 1
+      : null;
+  const topTieCount =
+    maxScore !== null
+      ? scoredCandidates.filter((candidate) =>
+          sameScore(getCandidateScore(candidate), maxScore),
+        ).length
+      : 0;
+  const selectedTopTie =
+    selectedScore !== null &&
+    maxScore !== null &&
+    sameScore(selectedScore, maxScore);
+  const filteredCount = Math.max(
+    0,
+    Number(candidates?.length || 0) - availableCandidates.length,
+  );
+  const rawReason = String(record?.selected_reason || '').trim();
+  const reasonLabel = formatSelectionReason(rawReason, t);
+  const selectedLabel = selectedCandidate
+    ? getCandidateChannelLabel(selectedCandidate, t)
+    : record?.channel_name ||
+      (record?.channel_id ? `#${record.channel_id}` : '--');
+  const selectedTtftMs = Number(selectedCandidate?.ttft_ms || 0);
+  const selectedDurationMs = Number(selectedCandidate?.duration_ms || 0);
+  const selectedSamples = Number(selectedCandidate?.sample_count || 0);
+  const selectedSpeedScore = Number(selectedCandidate?.speed_score || 0);
+  const selectedExperienceScore = Number(
+    selectedCandidate?.experience_score || 0,
+  );
+  const activeConcurrency = Number(
+    selectedCandidate?.active_concurrency || record?.active_concurrency || 0,
+  );
+  const effectiveConcurrency = Number(
+    selectedCandidate?.effective_concurrency_limit ||
+      selectedCandidate?.max_concurrency ||
+      record?.configured_concurrency_limit ||
+      0,
+  );
+  const stickyRetained =
+    record?.sticky_retained === true || rawReason.endsWith('_retained');
+  const stickyBroken =
+    Boolean(record?.sticky_break) ||
+    rawReason === 'weighted_score_sticky_broken';
+  let explanation = t('根据当前策略从可用候选中完成选择');
+
+  if (selectedTopTie && topTieCount > 1 && rawReason === 'weighted_score') {
+    explanation = t('最高分并列，按候选顺序保留先出现候选');
+  } else if (selectedTopTie && rawReason === 'weighted_score') {
+    explanation = t('在可用候选中综合评分最高');
+  } else if (stickyRetained) {
+    explanation = t('命中粘滞路由并满足保留阈值，优先复用该渠道');
+  } else if (stickyBroken) {
+    explanation = t('原粘滞候选未满足保留条件，改选当前更优候选');
+  }
+
+  return {
+    selectedCandidate,
+    selectedLabel,
+    reasonLabel,
+    rawReason,
+    explanation,
+    metrics: [
+      {
+        key: 'score',
+        label: t('总评分'),
+        value: formatScore(selectedScore),
+      },
+      {
+        key: 'speed',
+        label: t('动态速度分'),
+        value: selectedSpeedScore > 0 ? formatScore(selectedSpeedScore) : '--',
+      },
+      {
+        key: 'latency',
+        label: t('动态首包'),
+        value: selectedTtftMs > 0 ? formatLatency(selectedTtftMs) : '--',
+      },
+      {
+        key: 'duration',
+        label: t('动态耗时'),
+        value: selectedDurationMs > 0 ? formatLatency(selectedDurationMs) : '--',
+      },
+      {
+        key: 'rank',
+        label: t('候选排名'),
+        value:
+          selectedRank && availableCandidates.length
+            ? `${formatNumber(selectedRank)} / ${formatNumber(
+                availableCandidates.length,
+              )}`
+            : '--',
+      },
+      {
+        key: 'order',
+        label: t('候选顺序'),
+        value:
+          selectedIndex >= 0
+            ? `${formatNumber(selectedIndex + 1)} / ${formatNumber(
+                candidates?.length || 0,
+              )}`
+            : '--',
+      },
+      {
+        key: 'tie',
+        label: t('并列最高'),
+        value:
+          selectedTopTie && topTieCount > 1 ? formatNumber(topTieCount) : '--',
+      },
+      {
+        key: 'available',
+        label: t('可用候选'),
+        value: `${formatNumber(availableCandidates.length)} / ${formatNumber(
+          candidates?.length || 0,
+        )}`,
+      },
+      {
+        key: 'filtered',
+        label: t('过滤候选'),
+        value: formatNumber(filteredCount),
+      },
+      {
+        key: 'concurrency',
+        label: t('生效并发'),
+        value:
+          activeConcurrency > 0 || effectiveConcurrency > 0
+            ? `${formatNumber(activeConcurrency)} / ${
+                effectiveConcurrency > 0 ? formatNumber(effectiveConcurrency) : '--'
+              }`
+            : '--',
+      },
+      {
+        key: 'samples',
+        label: t('评分样本'),
+        value: selectedSamples > 0 ? formatNumber(selectedSamples) : t('冷启动'),
+      },
+      {
+        key: 'experience',
+        label: t('体验分'),
+        value:
+          selectedExperienceScore > 0
+            ? formatScore(selectedExperienceScore)
+            : '--',
+      },
+    ],
+    scoreEntries: Object.entries(
+      selectedCandidate?.score_breakdown || record?.score_breakdown || {},
+    ).filter(([, score]) => Number.isFinite(Number(score))),
+    rejectReasons: buildRejectReasonSummary(candidates, t),
+  };
+}
+
+function SelectionInsightPanel({ record, candidates, t }) {
+  const insight = buildSelectionInsight(record, candidates, t);
+
+  return (
+    <section>
+      <Typography.Title heading={6}>{t('选择依据')}</Typography.Title>
+      <div className='ct-model-gateway-selection-insight'>
+        <div className='ct-model-gateway-selection-insight-head'>
+          <div className='ct-model-gateway-selection-insight-title'>
+            <Info size={16} />
+            <span>{t('最终选择')}</span>
+          </div>
+          <Tag color='green' type='solid' shape='circle'>
+            {insight.selectedLabel}
+          </Tag>
+        </div>
+        <div className='ct-model-gateway-selection-insight-copy'>
+          <Typography.Text strong>{insight.reasonLabel}</Typography.Text>
+          <Typography.Text type='secondary'>
+            {insight.explanation}
+          </Typography.Text>
+          {insight.rawReason && insight.rawReason !== insight.reasonLabel ? (
+            <Typography.Text type='tertiary' size='small'>
+              {t('原始原因')}: {insight.rawReason}
+            </Typography.Text>
+          ) : null}
+        </div>
+        <div className='ct-model-gateway-selection-insight-grid'>
+          {insight.metrics.map((metric) => (
+            <div
+              key={metric.key}
+              className='ct-model-gateway-selection-insight-item'
+            >
+              <span>{metric.label}</span>
+              <strong>{metric.value}</strong>
+            </div>
+          ))}
+        </div>
+        {insight.scoreEntries.length ? (
+          <div className='ct-model-gateway-score-list'>
+            {insight.scoreEntries.map(([key, value]) => (
+              <Tag key={key} color='cyan' type='light' size='small'>
+                {key}: {formatScore(value)}
+              </Tag>
+            ))}
+          </div>
+        ) : null}
+        {insight.rejectReasons.length ? (
+          <div className='ct-model-gateway-selection-insight-rejects'>
+            <Typography.Text type='tertiary' size='small'>
+              {t('主要过滤原因')}:
+            </Typography.Text>
+            <div className='ct-model-gateway-record-tags'>
+              {insight.rejectReasons.map((reason) => (
+                <Tag key={reason} color='orange' type='light' size='small'>
+                  {reason}
+                </Tag>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function CandidateExplanationCard({ candidate, index, t }) {
   const scoreEntries = Object.entries(candidate?.score_breakdown || {}).filter(
     ([, score]) => Number.isFinite(Number(score)),
   );
+  const scoreMetricEntries = [
+    ['success_score', t('成功'), candidate?.success_score],
+    ['speed_score', t('速度'), candidate?.speed_score],
+    ['load_score', t('负载'), candidate?.load_score],
+    ['cost_score', t('成本'), candidate?.cost_score],
+    ['group_score', t('分组'), candidate?.group_score],
+    ['experience_score', t('体验'), candidate?.experience_score],
+  ].filter(([, , value]) => Number(value) > 0);
   const available = candidate?.available === true;
   const unavailable = candidate?.available === false;
   const selected = candidate?.selected === true;
   const stickyMatched = candidate?.sticky_matched === true;
   const stickyKnown = typeof candidate?.sticky_matched === 'boolean';
+  const balanceInsufficient = isBalanceInsufficientStatus(candidate);
+  const statusReason = formatChannelStatusReason(candidate?.status_reason, t);
+  const fullChannelLabel = getCandidateChannelLabel(candidate, t);
   const channelLabel =
-    candidate?.channel_name ||
+    String(candidate?.channel_name || '').trim() ||
     (candidate?.channel_id ? `#${candidate.channel_id}` : t('未知'));
+  const activeConcurrency = Number(candidate?.active_concurrency || 0);
+  const effectiveConcurrency = Number(
+    candidate?.effective_concurrency_limit || candidate?.max_concurrency || 0,
+  );
+  const configuredConcurrency = Number(
+    candidate?.configured_concurrency_limit || 0,
+  );
+  const learnedConcurrency = Number(candidate?.learned_concurrency_limit || 0);
+  const sampleCount = Number(candidate?.sample_count || 0);
+  const ttftMs = Number(candidate?.ttft_ms || 0);
+  const durationMs = Number(candidate?.duration_ms || 0);
+  const emptyOutputRate = Number(candidate?.empty_output_rate || 0);
+  const issueRate = Number(candidate?.experience_issue_rate || 0);
 
   return (
     <div
       className={`ct-model-gateway-candidate-card${
         selected ? ' ct-model-gateway-candidate-card-selected' : ''
+      }${
+        balanceInsufficient
+          ? ' ct-model-gateway-candidate-card-balance-warning'
+          : ''
       }`}
     >
       <div className='ct-model-gateway-candidate-head'>
         <div className='ct-model-gateway-candidate-title'>
-          <span title={channelLabel}>{channelLabel}</span>
+          <span title={fullChannelLabel}>{channelLabel}</span>
           {candidate?.channel_id ? (
             <Typography.Text type='tertiary' size='small'>
               #{candidate.channel_id}
@@ -4634,12 +6195,22 @@ function CandidateExplanationCard({ candidate, index, t }) {
               {t('最终选择')}
             </Tag>
           )}
-          {available && (
+          {balanceInsufficient && (
+            <Tooltip
+              content={statusReason || t('渠道余额不足，已暂停调度')}
+              position='top'
+            >
+              <Tag color='red' type='light' size='small'>
+                {t('余额不足')}
+              </Tag>
+            </Tooltip>
+          )}
+          {available && !balanceInsufficient && (
             <Tag color='green' type='light' size='small'>
               {t('可用')}
             </Tag>
           )}
-          {unavailable && (
+          {(unavailable || balanceInsufficient) && (
             <Tag color='red' type='light' size='small'>
               {t('不可用')}
             </Tag>
@@ -4675,12 +6246,59 @@ function CandidateExplanationCard({ candidate, index, t }) {
         )}
       </div>
 
+      <div className='ct-model-gateway-candidate-dynamic-grid'>
+        <div>
+          <span>{t('动态首包')}</span>
+          <strong>{ttftMs > 0 ? formatLatency(ttftMs) : '--'}</strong>
+        </div>
+        <div>
+          <span>{t('动态耗时')}</span>
+          <strong>{durationMs > 0 ? formatLatency(durationMs) : '--'}</strong>
+        </div>
+        <div>
+          <span>{t('样本数')}</span>
+          <strong>{sampleCount > 0 ? formatNumber(sampleCount) : t('冷启动')}</strong>
+        </div>
+        <div>
+          <span>{t('生效并发')}</span>
+          <strong>
+            {activeConcurrency > 0 || effectiveConcurrency > 0
+              ? `${formatNumber(activeConcurrency)} / ${
+                  effectiveConcurrency > 0
+                    ? formatNumber(effectiveConcurrency)
+                    : '--'
+                }`
+              : '--'}
+          </strong>
+        </div>
+        <div>
+          <span>{t('配置上限')}</span>
+          <strong>
+            {configuredConcurrency > 0
+              ? formatNumber(configuredConcurrency)
+              : '--'}
+          </strong>
+        </div>
+        <div>
+          <span>{t('学习上限')}</span>
+          <strong>
+            {learnedConcurrency > 0 ? formatNumber(learnedConcurrency) : '--'}
+          </strong>
+        </div>
+      </div>
+
       <div className='ct-model-gateway-candidate-score-row'>
         <Tag color='cyan' type='light' size='small' shape='circle'>
           {t('总评分')}: {formatScore(candidate?.score_total)}
         </Tag>
         <div className='ct-model-gateway-score-list'>
-          {scoreEntries.length ? (
+          {scoreMetricEntries.length ? (
+            scoreMetricEntries.map(([key, label, value]) => (
+              <Tag key={key} color='cyan' type='light' size='small'>
+                {label}: {formatScore(value)}
+              </Tag>
+            ))
+          ) : scoreEntries.length ? (
             scoreEntries.map(([key, value]) => (
               <Tag key={key} color='cyan' type='light' size='small'>
                 {key}: {formatScore(value)}
@@ -4700,8 +6318,18 @@ function CandidateExplanationCard({ candidate, index, t }) {
           size='small'
           ellipsis={{ showTooltip: true }}
         >
-          {t('过滤原因')}: {candidate?.reject_reason || t('无过滤原因')}
+          {t('过滤原因')}:{' '}
+          {formatChannelStatusReason(candidate?.reject_reason, t) ||
+            t('无过滤原因')}
         </Typography.Text>
+      )}
+      {(emptyOutputRate > 0 || issueRate > 0) && (
+        <div className='ct-model-gateway-candidate-warning-line'>
+          <Info size={13} />
+          <span>
+            {t('体验异常率')}: {formatPercent(Math.max(emptyOutputRate, issueRate))}
+          </span>
+        </div>
       )}
     </div>
   );
@@ -4726,7 +6354,7 @@ function RecordDetailDrawer({ record, visible, onClose, onExportReplay, t }) {
       visible={visible}
       onCancel={onClose}
       placement='right'
-      width={520}
+      width='min(920px, 94vw)'
       footer={
         <div className='ct-model-gateway-modal-footer'>
           <Button onClick={onClose}>{t('关闭')}</Button>
@@ -4839,6 +6467,11 @@ function RecordDetailDrawer({ record, visible, onClose, onExportReplay, t }) {
                 ),
               },
               {
+                key: 'flow',
+                value: t('调度流转'),
+                content: <DispatchFlowTags record={record} t={t} />,
+              },
+              {
                 key: 'sticky',
                 value: t('粘滞路由'),
                 content: (
@@ -4853,6 +6486,12 @@ function RecordDetailDrawer({ record, visible, onClose, onExportReplay, t }) {
                 content: <DetailValue>{record.selected_reason}</DetailValue>,
               },
             ]}
+          />
+
+          <SelectionInsightPanel
+            record={record}
+            candidates={candidateExplanations}
+            t={t}
           />
 
           <section>
@@ -4943,6 +6582,21 @@ function RecordDetailDrawer({ record, visible, onClose, onExportReplay, t }) {
                     key: 'error_type',
                     value: t('错误类型'),
                     content: record.error_type || '--',
+                  },
+                  {
+                    key: 'error_category',
+                    value: t('失败分类'),
+                    content: formatAttemptErrorCategory(
+                      record.error_category,
+                      t,
+                    ),
+                  },
+                  {
+                    key: 'error_message',
+                    value: t('错误信息'),
+                    content: (
+                      <DetailValue>{record.error_message || '--'}</DetailValue>
+                    ),
                   },
                 ]}
               />
@@ -5182,8 +6836,9 @@ export default function ModelGatewayMonitor() {
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS);
   const [detailRecord, setDetailRecord] = useState(null);
+  const [dispatchDetailLoading, setDispatchDetailLoading] = useState('');
   const [stickyRefreshToken, setStickyRefreshToken] = useState(0);
-  const [viewMode, setViewMode] = useState(VIEW_MODES.OPERATIONS);
+  const [viewMode, setViewMode] = useState(VIEW_MODES.USER_REQUESTS);
   const [filtersVisible, setFiltersVisible] = useState(false);
   const {
     data,
@@ -5201,6 +6856,7 @@ export default function ModelGatewayMonitor() {
     recentLimit: RECENT_LIMIT,
     topN: TOP_N,
     appliedFilters,
+    viewMode,
     t,
   });
 
@@ -5282,6 +6938,47 @@ export default function ModelGatewayMonitor() {
     );
   }, [replayBatchFilters]);
 
+  const openUserRequestDispatchDetail = useCallback(
+    async (record) => {
+      const requestId = record?.request_id;
+      if (!requestId) {
+        Toast.warning(t('缺少请求 ID'));
+        return;
+      }
+      setDispatchDetailLoading(requestId);
+      try {
+        const response = await API.get(
+          '/api/model_gateway/observability/summary',
+          {
+            params: {
+              hours,
+              recent_limit: 200,
+              top_n: 1,
+              view_mode: VIEW_MODES.ENGINEERING,
+              request_id: requestId,
+            },
+            disableDuplicate: true,
+            skipErrorHandler: true,
+          },
+        );
+        const payload = unwrapApiData(response);
+        const detail = pickDispatchDetailRecord(payload?.recent_records || []);
+        if (!detail) {
+          Toast.warning(t('暂无调度详情'));
+          return;
+        }
+        setDetailRecord(detail);
+      } catch (err) {
+        const message =
+          err?.response?.data?.message || err?.message || t('加载调度详情失败');
+        showError(message);
+      } finally {
+        setDispatchDetailLoading('');
+      }
+    },
+    [hours, t],
+  );
+
   const exportTrends = useCallback(() => {
     const params = new URLSearchParams();
     params.set('hours', String(hours));
@@ -5305,12 +7002,24 @@ export default function ModelGatewayMonitor() {
   }, [appliedFilters, hours, trendBucket]);
 
   const summary = data?.summary || {};
+  const userRequestSummary = data?.user_requests?.summary || {};
   const runtimeStatus = data?.runtime_status || {};
-  const hasData = Number(summary.total_records) > 0;
+  const hasData =
+    viewMode === VIEW_MODES.USER_REQUESTS
+      ? Number(userRequestSummary.total_requests) > 0
+      : Number(summary.total_records) > 0;
   const lastUpdated = summary.end_time
     ? formatTimestamp(summary.end_time)
     : '--';
-  const hasActiveFilters = Object.values(appliedFilters).some(Boolean);
+  const visibleAppliedFilters =
+    viewMode === VIEW_MODES.USER_REQUESTS
+      ? {
+          model: appliedFilters.model,
+          group: appliedFilters.group,
+          request_id: appliedFilters.request_id,
+        }
+      : appliedFilters;
+  const hasActiveFilters = Object.values(visibleAppliedFilters).some(Boolean);
   const realtimeMeta = realtimeStatusMeta(
     connectionState,
     fallbackMode,
@@ -5326,11 +7035,15 @@ export default function ModelGatewayMonitor() {
     setAppliedFilters({
       model: filters.model.trim(),
       group: filters.group.trim(),
-      channel_id: filters.channel_id.trim(),
+      channel_id:
+        viewMode === VIEW_MODES.USER_REQUESTS ? '' : filters.channel_id.trim(),
       request_id: filters.request_id.trim(),
-      circuit_error_type: normalizeCircuitErrorType(filters.circuit_error_type),
+      circuit_error_type:
+        viewMode === VIEW_MODES.USER_REQUESTS
+          ? ''
+          : normalizeCircuitErrorType(filters.circuit_error_type),
     });
-  }, [filters]);
+  }, [filters, viewMode]);
 
   const resetFilters = useCallback(() => {
     setFilters(EMPTY_FILTERS);
@@ -5559,7 +7272,7 @@ export default function ModelGatewayMonitor() {
         key: 'recent-status',
         title: t('状态'),
         dataIndex: 'success',
-        width: 150,
+        width: 180,
         render: (_, record) => {
           const meta = getStatusMeta(record, t);
           return (
@@ -5567,6 +7280,11 @@ export default function ModelGatewayMonitor() {
               <Tag color={meta.color} shape='circle'>
                 {meta.label}
               </Tag>
+              {record.retry_action && (
+                <div className='text-xs text-semi-color-text-2'>
+                  {formatAttemptFlowAction(record.retry_action, t)}
+                </div>
+              )}
               {record.status_code > 0 && (
                 <div className='text-xs text-semi-color-text-2'>
                   HTTP {record.status_code}
@@ -5601,11 +7319,14 @@ export default function ModelGatewayMonitor() {
       },
       {
         key: 'recent-queue-sticky',
-        title: t('队列 / 粘滞'),
+        title: t('流转 / 队列'),
         dataIndex: 'queue_wait_ms',
-        width: 250,
+        width: 300,
         render: (_, record) => (
-          <QueueStickyTags record={record} t={t} compact />
+          <div className='ct-model-gateway-record-flow-stack'>
+            <DispatchFlowTags record={record} t={t} compact />
+            <QueueStickyTags record={record} t={t} compact />
+          </div>
         ),
       },
       {
@@ -5735,34 +7456,38 @@ export default function ModelGatewayMonitor() {
             placeholder={t('按分组筛选')}
             prefix={t('分组')}
           />
-          <Input
-            value={filters.channel_id}
-            onChange={(value) => updateFilter('channel_id', value)}
-            placeholder={t('按渠道 ID 筛选')}
-            prefix={t('渠道')}
-          />
+          {viewMode !== VIEW_MODES.USER_REQUESTS && (
+            <Input
+              value={filters.channel_id}
+              onChange={(value) => updateFilter('channel_id', value)}
+              placeholder={t('按渠道 ID 筛选')}
+              prefix={t('渠道')}
+            />
+          )}
           <Input
             value={filters.request_id}
             onChange={(value) => updateFilter('request_id', value)}
             placeholder={t('按请求 ID 筛选')}
             prefix={t('请求 ID')}
           />
-          <Select
-            value={filters.circuit_error_type}
-            onChange={(value) =>
-              updateFilter('circuit_error_type', value || '')
-            }
-            placeholder={t('按错误类型筛选')}
-            prefix={t('错误类型')}
-            showClear
-            className='ct-model-gateway-filter-select'
-          >
-            {CIRCUIT_ERROR_TYPE_OPTIONS.map((type) => (
-              <Select.Option key={type} value={type}>
-                {formatCircuitErrorType(type, t)}
-              </Select.Option>
-            ))}
-          </Select>
+          {viewMode !== VIEW_MODES.USER_REQUESTS && (
+            <Select
+              value={filters.circuit_error_type}
+              onChange={(value) =>
+                updateFilter('circuit_error_type', value || '')
+              }
+              placeholder={t('按错误类型筛选')}
+              prefix={t('错误类型')}
+              showClear
+              className='ct-model-gateway-filter-select'
+            >
+              {CIRCUIT_ERROR_TYPE_OPTIONS.map((type) => (
+                <Select.Option key={type} value={type}>
+                  {formatCircuitErrorType(type, t)}
+                </Select.Option>
+              ))}
+            </Select>
+          )}
           <div className='ct-model-gateway-filter-actions'>
             <Button type='primary' onClick={applyFilters}>
               {t('应用筛选')}
@@ -5776,6 +7501,15 @@ export default function ModelGatewayMonitor() {
 
       {loading ? (
         <MetricSkeleton />
+      ) : viewMode === VIEW_MODES.USER_REQUESTS ? (
+        <UserRequestDashboard
+          data={data}
+          t={t}
+          refreshing={refreshing}
+          onRefresh={refreshDashboard}
+          onOpenDispatchDetail={openUserRequestDispatchDetail}
+          dispatchDetailLoading={dispatchDetailLoading}
+        />
       ) : viewMode === VIEW_MODES.OPERATIONS ? (
         <OperationsDashboard
           data={data}
@@ -5855,7 +7589,8 @@ export default function ModelGatewayMonitor() {
         <DashboardCard bodyStyle={{ minHeight: 280 }}>
           <EmptyState t={t} />
         </DashboardCard>
-      ) : viewMode === VIEW_MODES.ENGINEERING ? (
+      ) : viewMode === VIEW_MODES.USER_REQUESTS ? null : viewMode ===
+        VIEW_MODES.ENGINEERING ? (
         <>
           <div className='ct-model-gateway-aggregate-grid'>
             <DashboardCard

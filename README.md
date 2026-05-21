@@ -123,22 +123,29 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 cp .env.pro.example .env.pro
 mkdir -p data logs
 docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
+
+# Alpha server deployment
+cp .env.alpha.example .env.alpha
+mkdir -p data-alpha logs-alpha
+docker compose --env-file .env.alpha -f docker-compose.alpha.yml up -d --build
 ```
 
 > [!IMPORTANT]
 > **Supported Docker Environments**
 >
-> The repository now keeps only two Docker entrypoints:
+> The repository keeps three Docker entrypoints:
 >
 > - `docker-compose.dev.yml` + `Dockerfile.dev` for local full-container development
+> - `docker-compose.alpha.yml` + `Dockerfile.pro.cn` for alpha server deployment
 > - `docker-compose.pro.yml` + `Dockerfile.pro.cn` for server / production deployment
 >
 > Typical usage:
 >
 > - local machine: copy `.env.dev.example` to `.env.dev`
+> - alpha server: copy `.env.alpha.example` to `.env.alpha`
 > - server: copy `.env.pro.example` to `.env.pro`
-> - both environments mount `./data:/data` and `./logs:/app/logs`
-> - both environments expect `SQL_DSN` on a single line
+> - alpha mounts `./data-alpha:/data` and `./logs-alpha:/app/logs`; production mounts `./data:/data` and `./logs:/app/logs`
+> - server environments expect `SQL_DSN` on a single line
 > - if a container needs host MySQL on Linux, use `host.docker.internal` together with `extra_hosts: ["host.docker.internal:host-gateway"]`
 > - if Redis is not used, `REDIS_CONN_STRING` can be left empty
 
@@ -369,6 +376,11 @@ docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 cp .env.pro.example .env.pro
 mkdir -p data logs
 docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
+
+# Alpha server environment
+cp .env.alpha.example .env.alpha
+mkdir -p data-alpha logs-alpha
+docker compose --env-file .env.alpha -f docker-compose.alpha.yml up -d --build
 ```
 
 </details>

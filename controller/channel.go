@@ -75,6 +75,8 @@ type channelResponse struct {
 	*model.Channel
 	FailureAvoidance    *service.ChannelFailureAvoidanceStatus   `json:"failure_avoidance,omitempty"`
 	ConcurrencyCooldown *service.ChannelConcurrencyControlStatus `json:"concurrency_cooldown,omitempty"`
+	StatusReason        string                                   `json:"status_reason,omitempty"`
+	BalanceInsufficient bool                                     `json:"balance_insufficient"`
 }
 
 func buildChannelResponse(channel *model.Channel) *channelResponse {
@@ -82,10 +84,13 @@ func buildChannelResponse(channel *model.Channel) *channelResponse {
 		return nil
 	}
 	clearChannelInfo(channel)
+	statusReason := service.ChannelStatusReason(channel)
 	return &channelResponse{
 		Channel:             channel,
 		FailureAvoidance:    service.GetChannelFailureAvoidanceStatus(channel.Id),
 		ConcurrencyCooldown: service.GetChannelConcurrencyCooldownStatus(channel.Id),
+		StatusReason:        statusReason,
+		BalanceInsufficient: service.IsKnownBalanceInsufficientChannel(channel),
 	}
 }
 
@@ -892,6 +897,13 @@ func validateTwoFactorAuth(twoFA *model.TwoFA, code string) bool {
 
 // validateChannel 通用的渠道校验函数
 func validateChannel(channel *model.Channel, isAdd bool) error {
+	if channel == nil {
+		return fmt.Errorf("channel cannot be empty")
+	}
+	if channel.CostPerMillion != nil && *channel.CostPerMillion < 0 {
+		return fmt.Errorf("渠道成本不能为负数")
+	}
+
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
 		return fmt.Errorf("渠道额外设置[channel setting] 格式错误：%s", err.Error())
@@ -899,7 +911,7 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 
 	// 如果是添加操作，检查 channel 和 key 是否为空
 	if isAdd {
-		if channel == nil || channel.Key == "" {
+		if channel.Key == "" {
 			return fmt.Errorf("channel cannot be empty")
 		}
 

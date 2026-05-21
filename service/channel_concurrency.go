@@ -58,6 +58,13 @@ type ChannelConcurrencyControlStatus struct {
 	SuccessStreak int    `json:"success_streak,omitempty"`
 }
 
+type ChannelConcurrencyLearnResult struct {
+	LearnedLimit  int
+	CeilingLimit  int
+	PreviousLimit int
+	Changed       bool
+}
+
 func getChannelConcurrencyCounter(channelID int) *channelConcurrencyCounter {
 	actual, _ := channelConcurrency.LoadOrStore(channelID, &channelConcurrencyCounter{})
 	return actual.(*channelConcurrencyCounter)
@@ -155,42 +162,9 @@ func IsUpstreamConcurrencyLimitError(err *types.NewAPIError) bool {
 	if err == nil || err.StatusCode != http.StatusTooManyRequests {
 		return false
 	}
-	if hasThrottleMetadata(err.Metadata) {
-		return true
-	}
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "concurrency limit exceeded for user") ||
-		strings.Contains(message, "too many pending requests") ||
-		strings.Contains(message, "too many requests") ||
-		strings.Contains(message, "rate limit")
-}
-
-func hasThrottleMetadata(metadata []byte) bool {
-	if len(metadata) == 0 {
-		return false
-	}
-	var parsed map[string]any
-	if err := common.Unmarshal(metadata, &parsed); err != nil {
-		return false
-	}
-	for _, key := range []string{
-		"retry_after",
-		"retry_after_seconds",
-		"rate_limit_limit",
-		"rate_limit_remaining",
-		"rate_limit_reset",
-		"rate_limit_requests",
-		"rate_limit_remaining_requests",
-		"rate_limit_reset_requests",
-		"rate_limit_tokens",
-		"rate_limit_remaining_tokens",
-		"rate_limit_reset_tokens",
-	} {
-		if _, ok := parsed[key]; ok {
-			return true
-		}
-	}
-	return false
+		strings.Contains(message, "too many pending requests")
 }
 
 func resolveChannelThrottleCooldown(err *types.NewAPIError) time.Duration {
@@ -412,8 +386,12 @@ func parseSettingInt(value any) (int, bool) {
 }
 
 func LearnChannelConcurrencyLimit(ctx *gin.Context, channelID int, activeAtLimit int, err *types.NewAPIError) {
+	_ = LearnChannelConcurrencyLimitWithResult(ctx, channelID, activeAtLimit, err)
+}
+
+func LearnChannelConcurrencyLimitWithResult(ctx *gin.Context, channelID int, activeAtLimit int, err *types.NewAPIError) ChannelConcurrencyLearnResult {
 	if channelID <= 0 || activeAtLimit <= 1 || !IsUpstreamConcurrencyLimitError(err) {
-		return
+		return ChannelConcurrencyLearnResult{}
 	}
 	learnedLimit := activeAtLimit - 1
 	if learnedLimit < 1 {
@@ -426,7 +404,7 @@ func LearnChannelConcurrencyLimit(ctx *gin.Context, channelID int, activeAtLimit
 	channel, getErr := model.GetChannelById(channelID, true)
 	if getErr != nil || channel == nil {
 		logChannelConcurrencyError(ctx, fmt.Sprintf("failed to learn channel concurrency limit: channel_id=%d, error=%v", channelID, getErr))
-		return
+		return ChannelConcurrencyLearnResult{}
 	}
 	setting := channel.GetSetting()
 	currentLimit := setting.MaxConcurrency
@@ -448,25 +426,30 @@ func LearnChannelConcurrencyLimit(ctx *gin.Context, channelID int, activeAtLimit
 			settingStr, marshalErr := buildLearnedChannelSetting(channel, currentLimit, currentCeiling)
 			if marshalErr != nil {
 				logChannelConcurrencyError(ctx, fmt.Sprintf("failed to preserve channel concurrency ceiling: channel_id=%d, error=%v", channelID, marshalErr))
-				return
+				return ChannelConcurrencyLearnResult{}
 			}
 			if err := model.DB.Model(&model.Channel{}).Where("id = ?", channelID).Update("setting", settingStr).Error; err != nil {
 				logChannelConcurrencyError(ctx, fmt.Sprintf("failed to save channel concurrency ceiling: channel_id=%d, error=%v", channelID, err))
-				return
+				return ChannelConcurrencyLearnResult{}
 			}
 			channel.Setting = &settingStr
 			model.CacheUpdateChannel(channel)
 		}
-		return
+		return ChannelConcurrencyLearnResult{
+			LearnedLimit:  learnedLimit,
+			CeilingLimit:  currentCeiling,
+			PreviousLimit: currentLimit,
+			Changed:       false,
+		}
 	}
 	settingStr, marshalErr := buildLearnedChannelSetting(channel, learnedLimit, currentCeiling)
 	if marshalErr != nil {
 		logChannelConcurrencyError(ctx, fmt.Sprintf("failed to marshal learned channel concurrency limit: channel_id=%d, error=%v", channelID, marshalErr))
-		return
+		return ChannelConcurrencyLearnResult{}
 	}
 	if err := model.DB.Model(&model.Channel{}).Where("id = ?", channelID).Update("setting", settingStr).Error; err != nil {
 		logChannelConcurrencyError(ctx, fmt.Sprintf("failed to save learned channel concurrency limit: channel_id=%d, error=%v", channelID, err))
-		return
+		return ChannelConcurrencyLearnResult{}
 	}
 	channel.Setting = &settingStr
 	model.CacheUpdateChannel(channel)
@@ -474,6 +457,12 @@ func LearnChannelConcurrencyLimit(ctx *gin.Context, channelID int, activeAtLimit
 		logChannelConcurrencyInfo(ctx, fmt.Sprintf("learned channel #%d max concurrency: %d (was %d, ceiling %d)", channelID, learnedLimit, currentLimit, currentCeiling))
 	} else {
 		logChannelConcurrencyInfo(ctx, fmt.Sprintf("learned channel #%d max concurrency: %d (ceiling %d)", channelID, learnedLimit, currentCeiling))
+	}
+	return ChannelConcurrencyLearnResult{
+		LearnedLimit:  learnedLimit,
+		CeilingLimit:  currentCeiling,
+		PreviousLimit: currentLimit,
+		Changed:       true,
 	}
 }
 

@@ -141,6 +141,7 @@ export const useChannelsData = () => {
     CAPABILITIES: 'capabilities',
     STATUS: 'status',
     RESPONSE_TIME: 'response_time',
+    COST_PER_MILLION: 'cost_per_million',
     BALANCE: 'balance',
     PRIORITY: 'priority',
     WEIGHT: 'weight',
@@ -182,6 +183,7 @@ export const useChannelsData = () => {
       [COLUMN_KEYS.CAPABILITIES]: true,
       [COLUMN_KEYS.STATUS]: true,
       [COLUMN_KEYS.RESPONSE_TIME]: true,
+      [COLUMN_KEYS.COST_PER_MILLION]: true,
       [COLUMN_KEYS.BALANCE]: true,
       [COLUMN_KEYS.PRIORITY]: true,
       [COLUMN_KEYS.WEIGHT]: true,
@@ -471,6 +473,18 @@ export const useChannelsData = () => {
         if (data.weight < 0) data.weight = 0;
         res = await API.put('/api/channel/', data);
         break;
+      case 'cost_per_million':
+        if (value === '') value = 0;
+        data.cost_per_million = Number(value);
+        if (
+          !Number.isFinite(data.cost_per_million) ||
+          data.cost_per_million < 0
+        ) {
+          showInfo(t('渠道成本必须是非负数'));
+          return;
+        }
+        res = await API.put('/api/channel/', data);
+        break;
       case 'enable_all':
         data.channel_info = record.channel_info;
         data.channel_info.multi_key_status_list = {};
@@ -483,7 +497,9 @@ export const useChannelsData = () => {
       let channel = res.data.data;
       let newChannels = [...channels];
       if (action !== 'delete') {
-        record.status = channel.status;
+        if (channel) {
+          Object.assign(record, channel);
+        }
       }
       setChannels(newChannels);
     } else {
@@ -916,7 +932,8 @@ export const useChannelsData = () => {
         return Promise.resolve();
       }
 
-      const { success, message, time, error_code } = res.data;
+      const { success, message, time, error_code, balance_insufficient } =
+        res.data;
 
       // 更新测试结果
       setModelTestResults((prev) => ({
@@ -954,6 +971,28 @@ export const useChannelsData = () => {
           );
         }
       } else {
+        if (balance_insufficient) {
+          updateChannelProperty(record.id, (channel) => {
+            channel.status = 3;
+            channel.status_reason = 'balance_insufficient';
+            channel.balance_insufficient = true;
+            const otherInfo =
+              typeof channel.other_info === 'string'
+                ? (() => {
+                    try {
+                      return JSON.parse(channel.other_info) || {};
+                    } catch (error) {
+                      return {};
+                    }
+                  })()
+                : channel.other_info && typeof channel.other_info === 'object'
+                  ? { ...channel.other_info }
+                  : {};
+            otherInfo.status_reason = 'balance_insufficient';
+            otherInfo.status_time = Math.floor(Date.now() / 1000);
+            channel.other_info = JSON.stringify(otherInfo);
+          });
+        }
         showError(message);
       }
     } catch (error) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/observability/userrequest"
 	bus "github.com/QuantumNous/new-api/pkg/realtime"
 	"golang.org/x/sync/singleflight"
 )
@@ -48,6 +49,7 @@ type params struct {
 	RecentLimit        int
 	TopN               int
 	TrendBucketSeconds int64
+	ViewMode           string
 	Model              string
 	Group              string
 	ChannelID          int
@@ -60,7 +62,8 @@ type cacheEntry struct {
 }
 
 type Delta struct {
-	RecentRecords []controller.ModelGatewayObservabilityRecord `json:"recent_records,omitempty"`
+	RecentRecords      []controller.ModelGatewayObservabilityRecord `json:"recent_records,omitempty"`
+	UserRequestsRecent []controller.ModelGatewayUserRequestRecord   `json:"user_requests_recent,omitempty"`
 }
 
 func NewTopic() *Topic {
@@ -129,6 +132,49 @@ func (t *Topic) Publish(record model.ModelExecutionRecord) {
 	}
 }
 
+func (t *Topic) PublishUserRequest(event userrequest.Event) {
+	if t == nil {
+		return
+	}
+	record := userRequestRecordFromRealtimeRecord(event.Record)
+	t.mu.Lock()
+	deliveries := make(map[string][]*subscriptionState)
+	for groupKey, groupSubscriptions := range t.groups {
+		if len(groupSubscriptions) == 0 {
+			continue
+		}
+		var sample *subscriptionState
+		for _, subscription := range groupSubscriptions {
+			sample = subscription
+			break
+		}
+		if sample == nil || sample.params.ViewMode != "user_requests" || !sample.params.matchesUserRequest(record) {
+			continue
+		}
+		if event.Kind == userrequest.EventFinished {
+			t.pending[groupKey] = true
+			delete(t.cache, groupKey)
+		}
+		for _, subscription := range groupSubscriptions {
+			deliveries[groupKey] = append(deliveries[groupKey], subscription)
+		}
+	}
+	t.mu.Unlock()
+	if len(deliveries) == 0 {
+		return
+	}
+	for _, subscriptions := range deliveries {
+		for _, subscription := range subscriptions {
+			subscription.subscriber.Send(bus.ServerMessage{
+				Type:  bus.MessageTypeDelta,
+				ID:    subscription.id,
+				Topic: TopicName,
+				Data:  Delta{UserRequestsRecent: []controller.ModelGatewayUserRequestRecord{record}},
+			})
+		}
+	}
+}
+
 func (t *Topic) Close() {
 	if t == nil {
 		return
@@ -165,7 +211,7 @@ func (t *Topic) handleRecord(record model.ModelExecutionRecord) {
 			sample = subscription
 			break
 		}
-		if sample == nil || !sample.params.matches(record) {
+		if sample == nil || sample.params.ViewMode == "user_requests" || !sample.params.matches(record) {
 			continue
 		}
 		t.pending[groupKey] = true
@@ -245,7 +291,7 @@ func (t *Topic) snapshot(params params) (controller.ModelGatewayObservabilityRes
 	t.mu.Lock()
 	if entry, ok := t.cache[groupKey]; ok && now.Before(entry.expiresAt) {
 		t.mu.Unlock()
-		return entry.response, nil
+		return mergeUserRequestPendingSnapshot(entry.response, params), nil
 	}
 	t.mu.Unlock()
 
@@ -263,7 +309,7 @@ func (t *Topic) snapshot(params params) (controller.ModelGatewayObservabilityRes
 		return controller.ModelGatewayObservabilityResponse{}, err
 	}
 	response, _ := value.(controller.ModelGatewayObservabilityResponse)
-	return response, nil
+	return mergeUserRequestPendingSnapshot(response, params), nil
 }
 
 func (t *Topic) broadcast(groupKey string, message bus.ServerMessage) {
@@ -325,6 +371,7 @@ func parseParams(raw map[string]any) params {
 	result.RecentLimit = intParam(raw, "recent_limit", result.RecentLimit)
 	result.TopN = intParam(raw, "top_n", result.TopN)
 	result.TrendBucketSeconds = int64Param(raw, "trend_bucket_seconds", 0)
+	result.ViewMode = stringParam(raw, "view_mode")
 	result.Model = stringParam(raw, "model")
 	result.Group = stringParam(raw, "group")
 	result.ChannelID = intParam(raw, "channel_id", 0)
@@ -338,6 +385,7 @@ func (p params) toControllerOptions() controller.ModelGatewayObservabilityOption
 		RecentLimit:        p.RecentLimit,
 		TopN:               p.TopN,
 		TrendBucketSeconds: p.TrendBucketSeconds,
+		ViewMode:           p.ViewMode,
 		Model:              p.Model,
 		Group:              p.Group,
 		ChannelID:          p.ChannelID,
@@ -351,6 +399,7 @@ func (p params) key() string {
 		"recent_limit=" + strconv.Itoa(p.RecentLimit),
 		"top_n=" + strconv.Itoa(p.TopN),
 		"trend_bucket_seconds=" + strconv.FormatInt(p.TrendBucketSeconds, 10),
+		"view_mode=" + p.ViewMode,
 		"model=" + p.Model,
 		"group=" + p.Group,
 		"channel_id=" + strconv.Itoa(p.ChannelID),
@@ -380,6 +429,109 @@ func (p params) matches(record model.ModelExecutionRecord) bool {
 		}
 	}
 	return true
+}
+
+func (p params) matchesUserRequest(record controller.ModelGatewayUserRequestRecord) bool {
+	if p.Model != "" && p.Model != record.RequestedModel {
+		return false
+	}
+	if p.Group != "" && p.Group != record.RequestedGroup && p.Group != record.SelectedGroup {
+		return false
+	}
+	if p.ChannelID > 0 && p.ChannelID != record.FinalChannelID {
+		return false
+	}
+	if p.RequestID != "" && p.RequestID != record.RequestID {
+		return false
+	}
+	if p.Hours > 0 {
+		cutoff := time.Now().Add(-time.Duration(p.Hours) * time.Hour).Unix()
+		if record.CreatedAt < cutoff {
+			return false
+		}
+	}
+	return true
+}
+
+func userRequestRecordFromRealtimeRecord(record userrequest.Record) controller.ModelGatewayUserRequestRecord {
+	return controller.ModelGatewayUserRequestRecord{
+		ID:                 record.ID,
+		CreatedAt:          record.CreatedAt,
+		CompletedAt:        record.CompletedAt,
+		RequestID:          record.RequestID,
+		RequestedModel:     record.RequestedModel,
+		RequestedGroup:     record.RequestedGroup,
+		SelectedGroup:      record.SelectedGroup,
+		FinalChannelID:     record.FinalChannelID,
+		FinalChannelName:   record.FinalChannelName,
+		Attempts:           record.Attempts,
+		FinalSuccess:       record.FinalSuccess,
+		Recovered:          record.Recovered,
+		FinalStatusCode:    record.FinalStatusCode,
+		FinalErrorCategory: record.FinalErrorCategory,
+		EmptyOutput:        record.EmptyOutput,
+		ExperienceIssue:    record.ExperienceIssue,
+		ClientAborted:      record.ClientAborted,
+		DurationMs:         record.DurationMs,
+		TTFTMs:             record.TTFTMs,
+		Status:             record.Status,
+	}
+}
+
+func mergeUserRequestPendingSnapshot(response controller.ModelGatewayObservabilityResponse, params params) controller.ModelGatewayObservabilityResponse {
+	if params.ViewMode != "user_requests" {
+		return response
+	}
+	response.UserRequests.RecentRequests = mergeUserRequestRealtimeRecords(
+		response.UserRequests.RecentRequests,
+		userrequest.Snapshot(params.RecentLimit, userrequest.Filters{
+			Model:     params.Model,
+			Group:     params.Group,
+			ChannelID: params.ChannelID,
+			RequestID: params.RequestID,
+			Hours:     params.Hours,
+		}),
+		params.RecentLimit,
+	)
+	return response
+}
+
+func mergeUserRequestRealtimeRecords(completed []controller.ModelGatewayUserRequestRecord, pending []userrequest.Record, limit int) []controller.ModelGatewayUserRequestRecord {
+	merged := make([]controller.ModelGatewayUserRequestRecord, 0, len(completed)+len(pending))
+	seen := map[string]bool{}
+	for _, item := range pending {
+		record := userRequestRecordFromRealtimeRecord(item)
+		if strings.TrimSpace(record.RequestID) == "" {
+			continue
+		}
+		seen[record.RequestID] = true
+		merged = append(merged, record)
+	}
+	for _, record := range completed {
+		if strings.TrimSpace(record.RequestID) != "" && seen[record.RequestID] {
+			continue
+		}
+		merged = append(merged, record)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		left := userRequestSortTime(merged[i])
+		right := userRequestSortTime(merged[j])
+		if left != right {
+			return left > right
+		}
+		return merged[i].RequestID > merged[j].RequestID
+	})
+	if limit > 0 && len(merged) > limit {
+		return merged[:limit]
+	}
+	return merged
+}
+
+func userRequestSortTime(record controller.ModelGatewayUserRequestRecord) int64 {
+	if record.CompletedAt > 0 {
+		return record.CompletedAt
+	}
+	return record.CreatedAt
 }
 
 func stringParam(raw map[string]any, key string) string {

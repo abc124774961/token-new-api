@@ -79,6 +79,29 @@ func TestLearnChannelConcurrencyLimitKeepsLowerExistingLimit(t *testing.T) {
 	require.Equal(t, 3, channel.GetSetting().MaxConcurrency)
 }
 
+func TestLearnChannelConcurrencyLimitIgnoresGenericRateLimit(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+
+	seedChannelSelectChannel(t, db, 1010, "default", "gpt-5.5", 10, 100)
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 1010).Update("setting", `{"max_concurrency":8}`).Error)
+	model.InitChannelCache()
+
+	err := types.NewOpenAIError(
+		errors.New("status_code=429, rate limit exceeded, retry later"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)
+
+	result := LearnChannelConcurrencyLimitWithResult(nil, 1010, 8, err)
+	require.False(t, result.Changed)
+	require.Zero(t, result.LearnedLimit)
+
+	channel, getErr := model.GetChannelById(1010, true)
+	require.NoError(t, getErr)
+	require.Equal(t, 8, channel.GetSetting().MaxConcurrency)
+}
+
 func TestShouldDisableChannelIgnoresLocalConcurrencyLimit(t *testing.T) {
 	original := common.AutomaticDisableChannelEnabled
 	common.AutomaticDisableChannelEnabled = true
@@ -88,6 +111,20 @@ func TestShouldDisableChannelIgnoresLocalConcurrencyLimit(t *testing.T) {
 		errors.New("channel #1 reached configured max concurrency 1"),
 		types.ErrorCodeChannelConcurrencyLimit,
 		429,
+	)
+
+	require.False(t, ShouldDisableChannel(err))
+}
+
+func TestShouldDisableChannelIgnoresUpstreamPendingConcurrency(t *testing.T) {
+	original := common.AutomaticDisableChannelEnabled
+	common.AutomaticDisableChannelEnabled = true
+	t.Cleanup(func() { common.AutomaticDisableChannelEnabled = original })
+
+	err := types.NewOpenAIError(
+		errors.New("status_code=429, Too many pending requests, please retry later"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
 	)
 
 	require.False(t, ShouldDisableChannel(err))
@@ -124,6 +161,42 @@ func TestRecordChannelConcurrencyCooldownAndSelectionSkip(t *testing.T) {
 
 	time.Sleep(1100 * time.Millisecond)
 	require.Nil(t, GetChannelConcurrencyCooldownStatus(1004))
+}
+
+func TestSelectNonFullChannelSkipsActiveFullChannelWithoutCooldown(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	seedChannelSelectChannel(t, db, 1011, "default", "gpt-5.5", 10, 100)
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 1011).Update("setting", `{"max_concurrency":1}`).Error)
+	seedChannelSelectChannel(t, db, 1012, "default", "gpt-5.5", 9, 100)
+	model.InitChannelCache()
+
+	lease, ok := TryAcquireChannelConcurrency(1011, dto.ChannelSettings{MaxConcurrency: 1})
+	require.True(t, ok)
+	defer lease.Release()
+
+	channel, errSelect := selectChannelForGroup(newRetryContext(), "default", "gpt-5.5", "", false, 0, true)
+	require.NoError(t, errSelect)
+	require.NotNil(t, channel)
+	require.Equal(t, 1012, channel.Id)
+	require.Nil(t, GetChannelConcurrencyCooldownStatus(1011))
+}
+
+func TestUpstreamPendingConcurrencyDoesNotCreateCooldown(t *testing.T) {
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	err := types.NewOpenAIError(
+		errors.New("status_code=429, Too many pending requests, please retry later"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)
+
+	require.True(t, IsUpstreamConcurrencyLimitError(err))
+	require.Nil(t, GetChannelConcurrencyCooldownStatus(1013))
 }
 
 func TestChannelUpdatePreservesMaxConcurrencyCeiling(t *testing.T) {

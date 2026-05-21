@@ -4,10 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/bytedance/gopkg/util/gopool"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )
 
@@ -30,6 +33,22 @@ type Token struct {
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
+
+const (
+	tokenHotCacheTTL      = 30 * time.Second
+	tokenHotCacheMaxItems = 1024
+)
+
+type tokenHotCacheEntry struct {
+	token     Token
+	expiresAt time.Time
+}
+
+var (
+	tokenHotCacheMu    sync.Mutex
+	tokenHotCache      = map[string]tokenHotCacheEntry{}
+	tokenHotCacheGroup singleflight.Group
+)
 
 func (token *Token) Clean() {
 	token.Key = ""
@@ -54,6 +73,96 @@ func (token *Token) GetFullKey() string {
 
 func (token *Token) GetMaskedKey() string {
 	return MaskTokenKey(token.Key)
+}
+
+func getTokenHotCache(key string) (*Token, bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, false
+	}
+	cacheKey := common.GenerateHMAC(key)
+	now := time.Now()
+	tokenHotCacheMu.Lock()
+	defer tokenHotCacheMu.Unlock()
+	entry, ok := tokenHotCache[cacheKey]
+	if !ok {
+		return nil, false
+	}
+	if now.After(entry.expiresAt) {
+		delete(tokenHotCache, cacheKey)
+		return nil, false
+	}
+	token := entry.token
+	token.Key = key
+	return &token, true
+}
+
+func setTokenHotCache(token Token) {
+	key := strings.TrimSpace(token.Key)
+	if key == "" {
+		return
+	}
+	cacheKey := common.GenerateHMAC(key)
+	tokenHotCacheMu.Lock()
+	defer tokenHotCacheMu.Unlock()
+	if len(tokenHotCache) >= tokenHotCacheMaxItems {
+		now := time.Now()
+		for key, entry := range tokenHotCache {
+			if now.After(entry.expiresAt) {
+				delete(tokenHotCache, key)
+			}
+		}
+		if len(tokenHotCache) >= tokenHotCacheMaxItems {
+			tokenHotCache = map[string]tokenHotCacheEntry{}
+		}
+	}
+	tokenHotCache[cacheKey] = tokenHotCacheEntry{
+		token:     token,
+		expiresAt: time.Now().Add(tokenHotCacheTTL),
+	}
+}
+
+func deleteTokenHotCache(key string) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	tokenHotCacheMu.Lock()
+	delete(tokenHotCache, common.GenerateHMAC(key))
+	tokenHotCacheMu.Unlock()
+}
+
+func deleteTokenHotCacheByID(id int) {
+	if id <= 0 {
+		return
+	}
+	tokenHotCacheMu.Lock()
+	defer tokenHotCacheMu.Unlock()
+	for key, entry := range tokenHotCache {
+		if entry.token.Id == id {
+			delete(tokenHotCache, key)
+		}
+	}
+}
+
+func updateTokenHotCacheQuota(key string, delta int) {
+	key = strings.TrimSpace(key)
+	if key == "" || delta == 0 {
+		return
+	}
+	cacheKey := common.GenerateHMAC(key)
+	tokenHotCacheMu.Lock()
+	defer tokenHotCacheMu.Unlock()
+	entry, ok := tokenHotCache[cacheKey]
+	if !ok || time.Now().After(entry.expiresAt) {
+		delete(tokenHotCache, cacheKey)
+		return
+	}
+	entry.token.RemainQuota += delta
+	entry.token.UsedQuota -= delta
+	entry.token.AccessedTime = common.GetTimestamp()
+	entry.expiresAt = time.Now().Add(tokenHotCacheTTL)
+	tokenHotCache[cacheKey] = entry
 }
 
 func (token *Token) GetIpLimits() []string {
@@ -263,22 +372,49 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 			})
 		}
 	}()
+	if !fromDB {
+		if token, ok := getTokenHotCache(key); ok {
+			return token, nil
+		}
+	}
 	if !fromDB && common.RedisEnabled {
 		// Try Redis first
 		token, err := cacheGetTokenByKey(key)
 		if err == nil {
+			setTokenHotCache(*token)
 			return token, nil
 		}
 		// Don't return error - fall through to DB
 	}
 	fromDB = true
-	err = DB.Where(commonKeyCol+" = ?", key).First(&token).Error
-	return token, err
+	value, queryErr, _ := tokenHotCacheGroup.Do(key, func() (any, error) {
+		if cached, ok := getTokenHotCache(key); ok {
+			return *cached, nil
+		}
+		var dbToken Token
+		if err := DB.Where(commonKeyCol+" = ?", key).First(&dbToken).Error; err != nil {
+			return Token{}, err
+		}
+		setTokenHotCache(dbToken)
+		return dbToken, nil
+	})
+	if queryErr != nil {
+		err = queryErr
+		return nil, err
+	}
+	if loaded, ok := value.(Token); ok {
+		token = &loaded
+		return token, nil
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (token *Token) Insert() error {
 	var err error
 	err = DB.Create(token).Error
+	if err == nil {
+		setTokenHotCache(*token)
+	}
 	return err
 }
 
@@ -296,6 +432,9 @@ func (token *Token) Update() (err error) {
 	}()
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry").Updates(token).Error
+	if err == nil {
+		setTokenHotCache(*token)
+	}
 	return err
 }
 
@@ -311,7 +450,11 @@ func (token *Token) SelectUpdate() (err error) {
 		}
 	}()
 	// This can update zero values
-	return DB.Model(token).Select("accessed_time", "status").Updates(token).Error
+	err = DB.Model(token).Select("accessed_time", "status").Updates(token).Error
+	if err == nil {
+		setTokenHotCache(*token)
+	}
+	return err
 }
 
 func (token *Token) Delete() (err error) {
@@ -326,6 +469,9 @@ func (token *Token) Delete() (err error) {
 		}
 	}()
 	err = DB.Delete(token).Error
+	if err == nil {
+		deleteTokenHotCache(token.Key)
+	}
 	return err
 }
 
@@ -372,10 +518,18 @@ func DeleteTokenById(id int, userId int) (err error) {
 	return token.Delete()
 }
 
+func resetTokenHotCacheForTest() {
+	tokenHotCacheMu.Lock()
+	tokenHotCache = map[string]tokenHotCacheEntry{}
+	tokenHotCacheMu.Unlock()
+	tokenHotCacheGroup = singleflight.Group{}
+}
+
 func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
+	updateTokenHotCacheQuota(key, quota)
 	if common.RedisEnabled {
 		gopool.Go(func() {
 			err := cacheIncrTokenQuota(key, int64(quota))
@@ -399,6 +553,9 @@ func increaseTokenQuota(id int, quota int) (err error) {
 			"accessed_time": common.GetTimestamp(),
 		},
 	).Error
+	if err == nil {
+		deleteTokenHotCacheByID(id)
+	}
 	return err
 }
 
@@ -406,6 +563,7 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
+	updateTokenHotCacheQuota(key, -quota)
 	if common.RedisEnabled {
 		gopool.Go(func() {
 			err := cacheDecrTokenQuota(key, int64(quota))
@@ -429,6 +587,9 @@ func decreaseTokenQuota(id int, quota int) (err error) {
 			"accessed_time": common.GetTimestamp(),
 		},
 	).Error
+	if err == nil {
+		deleteTokenHotCacheByID(id)
+	}
 	return err
 }
 

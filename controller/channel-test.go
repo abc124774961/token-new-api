@@ -852,6 +852,7 @@ func TestChannel(c *gin.Context) {
 	tik := time.Now()
 	result := testChannel(channel, testModel, endpointType, isStream)
 	if result.localErr != nil {
+		shouldMarkBalanceInsufficient := markChannelBalanceInsufficientFromTest(channel, result)
 		resp := gin.H{
 			"success": false,
 			"message": result.localErr.Error(),
@@ -859,6 +860,10 @@ func TestChannel(c *gin.Context) {
 		}
 		if result.newAPIError != nil {
 			resp["error_code"] = result.newAPIError.GetErrorCode()
+			if shouldMarkBalanceInsufficient {
+				resp["balance_insufficient"] = true
+				resp["status_reason"] = service.ChannelStatusReasonBalanceInsufficient
+			}
 		}
 		c.JSON(http.StatusOK, resp)
 		return
@@ -868,11 +873,14 @@ func TestChannel(c *gin.Context) {
 	go channel.UpdateResponseTime(milliseconds)
 	consumedTime := float64(milliseconds) / 1000.0
 	if result.newAPIError != nil {
+		shouldMarkBalanceInsufficient := markChannelBalanceInsufficientFromTest(channel, result)
 		c.JSON(http.StatusOK, gin.H{
-			"success":    false,
-			"message":    result.newAPIError.Error(),
-			"time":       consumedTime,
-			"error_code": result.newAPIError.GetErrorCode(),
+			"success":              false,
+			"message":              result.newAPIError.Error(),
+			"time":                 consumedTime,
+			"error_code":           result.newAPIError.GetErrorCode(),
+			"balance_insufficient": shouldMarkBalanceInsufficient,
+			"status_reason":        service.ChannelStatusReasonBalanceInsufficient,
 		})
 		return
 	}
@@ -881,6 +889,28 @@ func TestChannel(c *gin.Context) {
 		"message": "",
 		"time":    consumedTime,
 	})
+}
+
+func markChannelBalanceInsufficientFromTest(channel *model.Channel, result testResult) bool {
+	if channel == nil || result.newAPIError == nil {
+		return false
+	}
+	if !service.ShouldDisableChannelForBalance(result.newAPIError) || !channel.GetAutoBan() {
+		return false
+	}
+	usingKey := ""
+	if result.context != nil {
+		usingKey = common.GetContextKeyString(result.context, constant.ContextKeyChannelKey)
+	}
+	service.DisableChannelForBalance(*types.NewChannelError(
+		channel.Id,
+		channel.Type,
+		channel.Name,
+		channel.ChannelInfo.IsMultiKey,
+		usingKey,
+		channel.GetAutoBan(),
+	))
+	return true
 }
 
 var testAllChannelsLock sync.Mutex

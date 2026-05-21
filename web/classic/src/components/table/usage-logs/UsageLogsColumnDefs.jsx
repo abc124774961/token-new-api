@@ -117,8 +117,8 @@ function formatChannelFailureReason(failure, t) {
   if (failure.temporary_avoidance_reason) {
     primary.push(`${t('临时规避')}：${failure.temporary_avoidance_reason}`);
   }
-  if (failure.concurrency_cooldown) {
-    primary.push(t('并发冷却'));
+  if (failure.concurrency_limited || failure.concurrency_cooldown) {
+    primary.push(`${t('本地并发已满')} / ${t('切换渠道')}`);
   }
   if (failure.status_code) {
     details.push(`HTTP ${failure.status_code}`);

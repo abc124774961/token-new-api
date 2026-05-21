@@ -19,6 +19,7 @@ import (
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
 	modelgatewayscheduler "github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
@@ -44,10 +45,12 @@ const (
 	modelGatewayObservabilitySummaryFreshTTL    = 3 * time.Second
 	modelGatewayObservabilitySummaryStaleTTL    = 30 * time.Second
 	modelGatewayObservabilitySummaryMaxCache    = 128
+	modelGatewayObservabilityViewUserRequests   = "user_requests"
 )
 
 type ModelGatewayObservabilityResponse struct {
 	Summary           ModelGatewayObservabilitySummary                `json:"summary"`
+	UserRequests      ModelGatewayUserRequestObservabilityResponse    `json:"user_requests"`
 	Trends            []ModelGatewayObservabilityTrendPoint           `json:"trends"`
 	Risk              ModelGatewayRiskSnapshot                        `json:"risk"`
 	RiskTimeline      []ModelGatewayRiskEvent                         `json:"risk_timeline"`
@@ -152,6 +155,92 @@ type ModelGatewayObservabilitySummary struct {
 	CircuitErrorTypes       []ModelGatewayTrendReasonCount `json:"circuit_error_types,omitempty"`
 }
 
+type ModelGatewayUserRequestObservabilityResponse struct {
+	Summary        ModelGatewayUserRequestSummary      `json:"summary"`
+	Trends         []ModelGatewayUserRequestTrendPoint `json:"trends"`
+	ByModel        []ModelGatewayUserRequestAggregate  `json:"by_model"`
+	ByGroup        []ModelGatewayUserRequestAggregate  `json:"by_group"`
+	RecentRequests []ModelGatewayUserRequestRecord     `json:"recent_requests"`
+}
+
+type ModelGatewayUserRequestSummary struct {
+	WindowHours        int     `json:"window_hours"`
+	TrendBucketSeconds int64   `json:"trend_bucket_seconds"`
+	StartTime          int64   `json:"start_time"`
+	EndTime            int64   `json:"end_time"`
+	TotalRequests      int64   `json:"total_requests"`
+	ScannedRequests    int     `json:"scanned_requests"`
+	Truncated          bool    `json:"truncated"`
+	Successes          int64   `json:"successes"`
+	FinalFailures      int64   `json:"final_failures"`
+	ClientAborted      int64   `json:"client_aborted"`
+	Recovered          int64   `json:"recovered"`
+	EmptyOutputs       int64   `json:"empty_outputs"`
+	ExperienceIssues   int64   `json:"experience_issues"`
+	UserSuccessRate    float64 `json:"user_success_rate"`
+	AvgDurationMs      int64   `json:"avg_duration_ms"`
+	P95DurationMs      int64   `json:"p95_duration_ms"`
+	AvgTTFTMs          int64   `json:"avg_ttft_ms"`
+	P95TTFTMs          int64   `json:"p95_ttft_ms"`
+}
+
+type ModelGatewayUserRequestTrendPoint struct {
+	BucketStart      int64   `json:"bucket_start"`
+	BucketEnd        int64   `json:"bucket_end"`
+	Requests         int64   `json:"requests"`
+	Successes        int64   `json:"successes"`
+	FinalFailures    int64   `json:"final_failures"`
+	ClientAborted    int64   `json:"client_aborted"`
+	Recovered        int64   `json:"recovered"`
+	EmptyOutputs     int64   `json:"empty_outputs"`
+	ExperienceIssues int64   `json:"experience_issues"`
+	UserSuccessRate  float64 `json:"user_success_rate"`
+	AvgDurationMs    int64   `json:"avg_duration_ms"`
+	P95DurationMs    int64   `json:"p95_duration_ms"`
+	AvgTTFTMs        int64   `json:"avg_ttft_ms"`
+	P95TTFTMs        int64   `json:"p95_ttft_ms"`
+}
+
+type ModelGatewayUserRequestAggregate struct {
+	Key              string  `json:"key"`
+	Requests         int64   `json:"requests"`
+	Successes        int64   `json:"successes"`
+	FinalFailures    int64   `json:"final_failures"`
+	ClientAborted    int64   `json:"client_aborted"`
+	Recovered        int64   `json:"recovered"`
+	EmptyOutputs     int64   `json:"empty_outputs"`
+	ExperienceIssues int64   `json:"experience_issues"`
+	UserSuccessRate  float64 `json:"user_success_rate"`
+	AvgDurationMs    int64   `json:"avg_duration_ms"`
+	P95DurationMs    int64   `json:"p95_duration_ms"`
+	AvgTTFTMs        int64   `json:"avg_ttft_ms"`
+	P95TTFTMs        int64   `json:"p95_ttft_ms"`
+	LastRequestAt    int64   `json:"last_request_at"`
+}
+
+type ModelGatewayUserRequestRecord struct {
+	ID                 int    `json:"id"`
+	CreatedAt          int64  `json:"created_at"`
+	CompletedAt        int64  `json:"completed_at"`
+	RequestID          string `json:"request_id"`
+	RequestedModel     string `json:"requested_model"`
+	RequestedGroup     string `json:"requested_group"`
+	SelectedGroup      string `json:"selected_group,omitempty"`
+	FinalChannelID     int    `json:"final_channel_id,omitempty"`
+	FinalChannelName   string `json:"final_channel_name,omitempty"`
+	Attempts           int    `json:"attempts"`
+	FinalSuccess       bool   `json:"final_success"`
+	Recovered          bool   `json:"recovered"`
+	FinalStatusCode    int    `json:"final_status_code,omitempty"`
+	FinalErrorCategory string `json:"final_error_category,omitempty"`
+	EmptyOutput        bool   `json:"empty_output,omitempty"`
+	ExperienceIssue    string `json:"experience_issue,omitempty"`
+	ClientAborted      bool   `json:"client_aborted,omitempty"`
+	DurationMs         int64  `json:"duration_ms,omitempty"`
+	TTFTMs             int64  `json:"ttft_ms,omitempty"`
+	Status             string `json:"status,omitempty"`
+}
+
 type ModelGatewayObservabilityTrendPoint struct {
 	BucketStart            int64                                `json:"bucket_start"`
 	BucketEnd              int64                                `json:"bucket_end"`
@@ -239,6 +328,9 @@ type ModelGatewayObservabilityAggregate struct {
 	Key                     string             `json:"key"`
 	Name                    string             `json:"name,omitempty"`
 	ChannelID               int                `json:"channel_id,omitempty"`
+	ChannelStatus           int                `json:"channel_status,omitempty"`
+	StatusReason            string             `json:"status_reason,omitempty"`
+	BalanceInsufficient     bool               `json:"balance_insufficient,omitempty"`
 	Records                 int64              `json:"records"`
 	Dispatches              int64              `json:"dispatches"`
 	Attempts                int64              `json:"attempts"`
@@ -270,66 +362,105 @@ type ModelGatewayObservabilityScoreBreakdown struct {
 }
 
 type ModelGatewayObservabilityRecord struct {
-	ID                    int                                `json:"id"`
-	Kind                  string                             `json:"kind"`
-	CreatedAt             int64                              `json:"created_at"`
-	RequestID             string                             `json:"request_id"`
-	AttemptIndex          int                                `json:"attempt_index"`
-	RequestedGroup        string                             `json:"requested_group"`
-	SelectedGroup         string                             `json:"selected_group"`
-	ActualGroup           string                             `json:"actual_group,omitempty"`
-	RequestedModel        string                             `json:"requested_model"`
-	ChannelID             int                                `json:"channel_id"`
-	ChannelName           string                             `json:"channel_name,omitempty"`
-	ActualChannelID       int                                `json:"actual_channel_id,omitempty"`
-	ActualChannelName     string                             `json:"actual_channel_name,omitempty"`
-	EndpointType          string                             `json:"endpoint_type,omitempty"`
-	PolicyMode            string                             `json:"policy_mode,omitempty"`
-	AutoMode              string                             `json:"auto_mode,omitempty"`
-	Strategy              string                             `json:"strategy,omitempty"`
-	Shadow                bool                               `json:"shadow"`
-	SmartHandled          bool                               `json:"smart_handled"`
-	FallbackUsed          bool                               `json:"fallback_used"`
-	Success               bool                               `json:"success"`
-	StatusCode            int                                `json:"status_code,omitempty"`
-	ErrorCode             string                             `json:"error_code,omitempty"`
-	ErrorType             string                             `json:"error_type,omitempty"`
-	DurationMs            int64                              `json:"duration_ms,omitempty"`
-	TTFTMs                int64                              `json:"ttft_ms,omitempty"`
-	StreamInterrupted     bool                               `json:"stream_interrupted"`
-	ScoreTotal            float64                            `json:"score_total,omitempty"`
-	ScoreBreakdown        map[string]float64                 `json:"score_breakdown,omitempty"`
-	CandidateGroups       []string                           `json:"candidate_groups,omitempty"`
-	CandidateExplanations []ModelGatewayCandidateExplanation `json:"candidate_explanations,omitempty"`
-	SelectedReason        string                             `json:"selected_reason,omitempty"`
-	QueueEnabled          bool                               `json:"queue_enabled,omitempty"`
-	QueueWaitMs           int64                              `json:"queue_wait_ms,omitempty"`
-	QueueDepth            int                                `json:"queue_depth,omitempty"`
-	QueueCapacity         int                                `json:"queue_capacity,omitempty"`
-	StickySource          string                             `json:"sticky_source,omitempty"`
-	StickyRetained        bool                               `json:"sticky_retained,omitempty"`
-	StickyBreak           string                             `json:"sticky_break,omitempty"`
-	CacheAffinity         bool                               `json:"cache_affinity,omitempty"`
-	RequestMeta           map[string]any                     `json:"request_meta,omitempty"`
-	ScoreBreakdownError   bool                               `json:"score_breakdown_error,omitempty"`
-	CandidateGroupsError  bool                               `json:"candidate_groups_error,omitempty"`
-	RequestMetaError      bool                               `json:"request_meta_error,omitempty"`
+	ID                             int                                `json:"id"`
+	Kind                           string                             `json:"kind"`
+	CreatedAt                      int64                              `json:"created_at"`
+	RequestID                      string                             `json:"request_id"`
+	AttemptIndex                   int                                `json:"attempt_index"`
+	RequestedGroup                 string                             `json:"requested_group"`
+	SelectedGroup                  string                             `json:"selected_group"`
+	ActualGroup                    string                             `json:"actual_group,omitempty"`
+	RequestedModel                 string                             `json:"requested_model"`
+	ChannelID                      int                                `json:"channel_id"`
+	ChannelName                    string                             `json:"channel_name,omitempty"`
+	ActualChannelID                int                                `json:"actual_channel_id,omitempty"`
+	ActualChannelName              string                             `json:"actual_channel_name,omitempty"`
+	EndpointType                   string                             `json:"endpoint_type,omitempty"`
+	PolicyMode                     string                             `json:"policy_mode,omitempty"`
+	AutoMode                       string                             `json:"auto_mode,omitempty"`
+	Strategy                       string                             `json:"strategy,omitempty"`
+	Shadow                         bool                               `json:"shadow"`
+	SmartHandled                   bool                               `json:"smart_handled"`
+	FallbackUsed                   bool                               `json:"fallback_used"`
+	Success                        bool                               `json:"success"`
+	StatusCode                     int                                `json:"status_code,omitempty"`
+	ErrorCode                      string                             `json:"error_code,omitempty"`
+	ErrorType                      string                             `json:"error_type,omitempty"`
+	DurationMs                     int64                              `json:"duration_ms,omitempty"`
+	TTFTMs                         int64                              `json:"ttft_ms,omitempty"`
+	StreamInterrupted              bool                               `json:"stream_interrupted"`
+	ScoreTotal                     float64                            `json:"score_total,omitempty"`
+	ScoreBreakdown                 map[string]float64                 `json:"score_breakdown,omitempty"`
+	CandidateGroups                []string                           `json:"candidate_groups,omitempty"`
+	CandidateExplanations          []ModelGatewayCandidateExplanation `json:"candidate_explanations,omitempty"`
+	SelectedReason                 string                             `json:"selected_reason,omitempty"`
+	QueueEnabled                   bool                               `json:"queue_enabled,omitempty"`
+	QueueWaitMs                    int64                              `json:"queue_wait_ms,omitempty"`
+	QueueDepth                     int                                `json:"queue_depth,omitempty"`
+	QueueCapacity                  int                                `json:"queue_capacity,omitempty"`
+	StickySource                   string                             `json:"sticky_source,omitempty"`
+	StickyRetained                 bool                               `json:"sticky_retained,omitempty"`
+	StickyBreak                    string                             `json:"sticky_break,omitempty"`
+	CacheAffinity                  bool                               `json:"cache_affinity,omitempty"`
+	ErrorMessage                   string                             `json:"error_message,omitempty"`
+	ErrorCategory                  string                             `json:"error_category,omitempty"`
+	RetryAction                    string                             `json:"retry_action,omitempty"`
+	WillRetry                      bool                               `json:"will_retry,omitempty"`
+	ClientAborted                  bool                               `json:"client_aborted,omitempty"`
+	ConcurrencyLimited             bool                               `json:"concurrency_limited,omitempty"`
+	ActiveConcurrency              int                                `json:"active_concurrency,omitempty"`
+	ConfiguredConcurrencyLimit     int                                `json:"configured_concurrency_limit,omitempty"`
+	LearnedConcurrencyLimit        int                                `json:"learned_concurrency_limit,omitempty"`
+	LearnedConcurrencyLimitChanged bool                               `json:"learned_concurrency_limit_changed,omitempty"`
+	EmptyOutput                    bool                               `json:"empty_output,omitempty"`
+	ExperienceIssue                string                             `json:"experience_issue,omitempty"`
+	UsedChannels                   []string                           `json:"used_channels,omitempty"`
+	RequestMeta                    map[string]any                     `json:"request_meta,omitempty"`
+	ScoreBreakdownError            bool                               `json:"score_breakdown_error,omitempty"`
+	CandidateGroupsError           bool                               `json:"candidate_groups_error,omitempty"`
+	RequestMetaError               bool                               `json:"request_meta_error,omitempty"`
 }
 
 type ModelGatewayCandidateExplanation struct {
-	ChannelID       int                    `json:"channel_id"`
-	ChannelName     string                 `json:"channel_name,omitempty"`
-	Group           string                 `json:"group,omitempty"`
-	UpstreamModel   string                 `json:"upstream_model,omitempty"`
-	ProviderProfile string                 `json:"provider_profile,omitempty"`
-	ProxyMode       string                 `json:"proxy_mode,omitempty"`
-	RuntimeKey      ModelGatewayRuntimeKey `json:"runtime_key"`
-	Available       bool                   `json:"available"`
-	RejectReason    string                 `json:"reject_reason,omitempty"`
-	ScoreTotal      float64                `json:"score_total,omitempty"`
-	ScoreBreakdown  map[string]float64     `json:"score_breakdown,omitempty"`
-	StickyMatched   bool                   `json:"sticky_matched,omitempty"`
-	Selected        bool                   `json:"selected,omitempty"`
+	ChannelID                  int                    `json:"channel_id"`
+	ChannelName                string                 `json:"channel_name,omitempty"`
+	Group                      string                 `json:"group,omitempty"`
+	UpstreamModel              string                 `json:"upstream_model,omitempty"`
+	ProviderProfile            string                 `json:"provider_profile,omitempty"`
+	ProxyMode                  string                 `json:"proxy_mode,omitempty"`
+	RuntimeKey                 ModelGatewayRuntimeKey `json:"runtime_key"`
+	Available                  bool                   `json:"available"`
+	RejectReason               string                 `json:"reject_reason,omitempty"`
+	ChannelStatus              int                    `json:"channel_status,omitempty"`
+	StatusReason               string                 `json:"status_reason,omitempty"`
+	BalanceInsufficient        bool                   `json:"balance_insufficient,omitempty"`
+	ScoreTotal                 float64                `json:"score_total,omitempty"`
+	ScoreBreakdown             map[string]float64     `json:"score_breakdown,omitempty"`
+	SuccessRate                float64                `json:"success_rate,omitempty"`
+	TTFTMs                     float64                `json:"ttft_ms,omitempty"`
+	DurationMs                 float64                `json:"duration_ms,omitempty"`
+	TokensPerSecond            float64                `json:"tokens_per_second,omitempty"`
+	SampleCount                int                    `json:"sample_count,omitempty"`
+	ActiveConcurrency          int                    `json:"active_concurrency,omitempty"`
+	MaxConcurrency             int                    `json:"max_concurrency,omitempty"`
+	ConfiguredConcurrencyLimit int                    `json:"configured_concurrency_limit,omitempty"`
+	LearnedConcurrencyLimit    int                    `json:"learned_concurrency_limit,omitempty"`
+	EffectiveConcurrencyLimit  int                    `json:"effective_concurrency_limit,omitempty"`
+	QueueDepth                 int                    `json:"queue_depth,omitempty"`
+	QueueCapacity              int                    `json:"queue_capacity,omitempty"`
+	EstimatedQueueWaitMs       float64                `json:"estimated_queue_wait_ms,omitempty"`
+	CostRatio                  float64                `json:"cost_ratio,omitempty"`
+	GroupPriorityRatio         float64                `json:"group_priority_ratio,omitempty"`
+	SuccessScore               float64                `json:"success_score,omitempty"`
+	SpeedScore                 float64                `json:"speed_score,omitempty"`
+	LoadScore                  float64                `json:"load_score,omitempty"`
+	CostScore                  float64                `json:"cost_score,omitempty"`
+	GroupScore                 float64                `json:"group_score,omitempty"`
+	ExperienceScore            float64                `json:"experience_score,omitempty"`
+	EmptyOutputRate            float64                `json:"empty_output_rate,omitempty"`
+	ExperienceIssueRate        float64                `json:"experience_issue_rate,omitempty"`
+	StickyMatched              bool                   `json:"sticky_matched,omitempty"`
+	Selected                   bool                   `json:"selected,omitempty"`
 }
 
 type ModelGatewayRuntimeKey struct {
@@ -347,6 +478,7 @@ type ModelGatewayObservabilityOptions struct {
 	TopN               int
 	ScanLimit          int
 	TrendBucketSeconds int64
+	ViewMode           string
 	Model              string
 	Group              string
 	ChannelID          int
@@ -545,6 +677,7 @@ func parseModelGatewayObservabilityOptions(c *gin.Context) (ModelGatewayObservab
 		TopN:               normalizeModelGatewayObservabilityInt(c.Query("top_n"), modelGatewayObservabilityDefaultTopN, 1, modelGatewayObservabilityMaxTopN),
 		ScanLimit:          normalizeModelGatewayObservabilityInt(c.Query("scan_limit"), modelGatewayObservabilityDefaultScanLimit, 1, modelGatewayObservabilityMaxScanLimit),
 		TrendBucketSeconds: trendBucketSeconds,
+		ViewMode:           strings.TrimSpace(c.Query("view_mode")),
 		Model:              strings.TrimSpace(c.Query("model")),
 		Group:              strings.TrimSpace(c.Query("group")),
 		ChannelID:          channelID,
@@ -647,6 +780,7 @@ func normalizeModelGatewayObservabilityOptions(options ModelGatewayObservability
 	options.TopN = clampModelGatewayObservabilityValue(options.TopN, 1, modelGatewayObservabilityMaxTopN)
 	options.ScanLimit = normalizeModelGatewayObservabilityScanLimit(options.ScanLimit)
 	options.TrendBucketSeconds = modelGatewayObservabilityTrendBucketSeconds(options.Hours, options.TrendBucketSeconds)
+	options.ViewMode = normalizeModelGatewayObservabilityViewMode(options.ViewMode)
 	options.Model = strings.TrimSpace(options.Model)
 	options.Group = strings.TrimSpace(options.Group)
 	options.RequestID = strings.TrimSpace(options.RequestID)
@@ -654,6 +788,16 @@ func normalizeModelGatewayObservabilityOptions(options ModelGatewayObservability
 		options.ChannelID = 0
 	}
 	return options
+}
+
+func normalizeModelGatewayObservabilityViewMode(raw string) string {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case modelGatewayObservabilityViewUserRequests:
+		return mode
+	default:
+		return ""
+	}
 }
 
 func modelGatewayObservabilitySummaryCacheKey(options ModelGatewayObservabilityOptions) string {
@@ -664,6 +808,7 @@ func modelGatewayObservabilitySummaryCacheKey(options ModelGatewayObservabilityO
 	values.Set("top_n", strconv.Itoa(options.TopN))
 	values.Set("scan_limit", strconv.Itoa(options.ScanLimit))
 	values.Set("trend_bucket_seconds", strconv.FormatInt(options.TrendBucketSeconds, 10))
+	values.Set("view_mode", options.ViewMode)
 	values.Set("model", options.Model)
 	values.Set("group", options.Group)
 	values.Set("channel_id", strconv.Itoa(options.ChannelID))
@@ -802,10 +947,12 @@ func BuildModelGatewayObservabilitySummary(options ModelGatewayObservabilityOpti
 	key := modelGatewayObservabilitySummaryCacheKey(options)
 	now := time.Now()
 	if response, ok := modelGatewayObservabilitySummaryCache.lookupFresh(key, now); ok {
+		applyModelGatewayCurrentChannelStatus(&response)
 		return response, nil
 	}
 	if response, ok := modelGatewayObservabilitySummaryCache.lookupStale(key, now); ok {
 		go refreshModelGatewayObservabilitySummaryCache(key, options)
+		applyModelGatewayCurrentChannelStatus(&response)
 		return response, nil
 	}
 
@@ -819,11 +966,13 @@ func BuildModelGatewayObservabilitySummary(options ModelGatewayObservabilityOpti
 	})
 	if err != nil {
 		if response, ok := modelGatewayObservabilitySummaryCache.lookupStale(key, time.Now()); ok {
+			applyModelGatewayCurrentChannelStatus(&response)
 			return response, nil
 		}
 		return ModelGatewayObservabilityResponse{}, err
 	}
 	response, _ := value.(ModelGatewayObservabilityResponse)
+	applyModelGatewayCurrentChannelStatus(&response)
 	return response, nil
 }
 
@@ -836,6 +985,22 @@ func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabi
 
 	endTime := common.GetTimestamp()
 	startTime := endTime - int64(options.Hours*3600)
+	if options.ViewMode == modelGatewayObservabilityViewUserRequests {
+		userRequests, err := buildModelGatewayUserRequestObservability(startTime, endTime, options)
+		if err != nil {
+			return ModelGatewayObservabilityResponse{}, err
+		}
+		return ModelGatewayObservabilityResponse{
+			Summary: ModelGatewayObservabilitySummary{
+				WindowHours:        options.Hours,
+				TrendBucketSeconds: options.TrendBucketSeconds,
+				StartTime:          startTime,
+				EndTime:            endTime,
+			},
+			UserRequests: userRequests,
+		}, nil
+	}
+
 	base := model.DB.Model(&model.ModelExecutionRecord{}).Where("created_at >= ?", startTime)
 	base = applyModelGatewayObservabilityFilters(base, options)
 
@@ -860,6 +1025,11 @@ func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabi
 	}
 
 	response := buildModelGatewayObservabilityFromRecords(records, totalRecords, startTime, endTime, options)
+	userRequests, err := buildModelGatewayUserRequestObservability(startTime, endTime, options)
+	if err != nil {
+		return ModelGatewayObservabilityResponse{}, err
+	}
+	response.UserRequests = userRequests
 	response.RuntimeStatus = defaultModelGatewayRuntimeStatusService().Build(modelgatewayobservability.RuntimeStatusQuery{
 		Model:     options.Model,
 		Group:     options.Group,
@@ -905,6 +1075,337 @@ func applyModelGatewayObservabilityFilters(tx *gorm.DB, options ModelGatewayObse
 		tx = tx.Where("request_id = ?", options.RequestID)
 	}
 	return tx
+}
+
+func applyModelGatewayUserRequestObservabilityFilters(tx *gorm.DB, options ModelGatewayObservabilityOptions) *gorm.DB {
+	if options.Model != "" {
+		tx = tx.Where("requested_model = ?", options.Model)
+	}
+	if options.Group != "" {
+		tx = tx.Where("(requested_group = ? OR selected_group = ?)", options.Group, options.Group)
+	}
+	if options.ChannelID > 0 {
+		tx = tx.Where("final_channel_id = ?", options.ChannelID)
+	}
+	if options.RequestID != "" {
+		tx = tx.Where("request_id = ?", options.RequestID)
+	}
+	return tx
+}
+
+func buildModelGatewayUserRequestObservability(startTime int64, endTime int64, options ModelGatewayObservabilityOptions) (ModelGatewayUserRequestObservabilityResponse, error) {
+	base := model.DB.Model(&model.ModelGatewayUserRequestSummary{}).
+		Where("completed_at >= ? AND completed_at > 0", startTime)
+	base = applyModelGatewayUserRequestObservabilityFilters(base, options)
+
+	userRequests := make([]model.ModelGatewayUserRequestSummary, 0)
+	queryLimit := options.ScanLimit
+	var totalRequests int64
+	if options.IncludeTotal {
+		if err := base.Count(&totalRequests).Error; err != nil {
+			return ModelGatewayUserRequestObservabilityResponse{}, err
+		}
+	} else {
+		queryLimit = options.ScanLimit + 1
+	}
+	if err := base.Order("completed_at desc, id desc").Limit(queryLimit).Find(&userRequests).Error; err != nil {
+		return ModelGatewayUserRequestObservabilityResponse{}, err
+	}
+	if !options.IncludeTotal {
+		totalRequests = int64(len(userRequests))
+		if len(userRequests) > options.ScanLimit {
+			userRequests = userRequests[:options.ScanLimit]
+		}
+	}
+
+	return buildModelGatewayUserRequestObservabilityFromSummaries(userRequests, totalRequests, startTime, endTime, options), nil
+}
+
+type modelGatewayUserRequestAccumulator struct {
+	ModelGatewayUserRequestAggregate
+	durationSum     int64
+	durationSamples int64
+	durationValues  []int64
+	ttftSum         int64
+	ttftSamples     int64
+	ttftValues      []int64
+}
+
+type modelGatewayUserRequestTrendAccumulator struct {
+	modelGatewayUserRequestAccumulator
+}
+
+func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model.ModelGatewayUserRequestSummary, totalRequests int64, startTime int64, endTime int64, options ModelGatewayObservabilityOptions) ModelGatewayUserRequestObservabilityResponse {
+	response := ModelGatewayUserRequestObservabilityResponse{
+		Summary: ModelGatewayUserRequestSummary{
+			WindowHours:        options.Hours,
+			TrendBucketSeconds: options.TrendBucketSeconds,
+			StartTime:          startTime,
+			EndTime:            endTime,
+			TotalRequests:      totalRequests,
+			ScannedRequests:    len(userRequests),
+			Truncated:          totalRequests > int64(len(userRequests)),
+		},
+		Trends:         make([]ModelGatewayUserRequestTrendPoint, 0),
+		ByModel:        make([]ModelGatewayUserRequestAggregate, 0),
+		ByGroup:        make([]ModelGatewayUserRequestAggregate, 0),
+		RecentRequests: make([]ModelGatewayUserRequestRecord, 0, minModelGatewayObservabilityInt(options.RecentLimit, len(userRequests))),
+	}
+	totalAccumulator := newModelGatewayUserRequestAccumulator("all")
+	modelAccumulators := make(map[string]*modelGatewayUserRequestAccumulator)
+	groupAccumulators := make(map[string]*modelGatewayUserRequestAccumulator)
+	trendAccumulators := make(map[int64]*modelGatewayUserRequestTrendAccumulator)
+
+	for idx, userRequest := range userRequests {
+		applyModelGatewayUserRequestAccumulator(totalAccumulator, userRequest)
+		applyModelGatewayUserRequestAccumulator(
+			modelGatewayUserRequestAccumulatorFor(modelAccumulators, modelGatewayUserRequestModelKey(userRequest)),
+			userRequest,
+		)
+		applyModelGatewayUserRequestAccumulator(
+			modelGatewayUserRequestAccumulatorFor(groupAccumulators, modelGatewayUserRequestGroupKey(userRequest)),
+			userRequest,
+		)
+		if bucketStart, ok := modelGatewayObservabilityTrendBucketStart(userRequest.CompletedAt, startTime, endTime, options.TrendBucketSeconds); ok {
+			applyModelGatewayUserRequestAccumulator(
+				&modelGatewayUserRequestTrendAccumulatorFor(trendAccumulators, bucketStart).modelGatewayUserRequestAccumulator,
+				userRequest,
+			)
+		}
+		if idx < options.RecentLimit {
+			response.RecentRequests = append(response.RecentRequests, modelGatewayUserRequestRecord(userRequest))
+		}
+	}
+
+	response.Summary = modelGatewayUserRequestSummaryFromAccumulator(response.Summary, totalAccumulator)
+	response.ByModel = finalizeModelGatewayUserRequestAggregates(modelAccumulators, options.TopN)
+	response.ByGroup = finalizeModelGatewayUserRequestAggregates(groupAccumulators, options.TopN)
+	response.Trends = finalizeModelGatewayUserRequestTrends(trendAccumulators, startTime, endTime, options.TrendBucketSeconds)
+	return response
+}
+
+func newModelGatewayUserRequestAccumulator(key string) *modelGatewayUserRequestAccumulator {
+	return &modelGatewayUserRequestAccumulator{
+		ModelGatewayUserRequestAggregate: ModelGatewayUserRequestAggregate{
+			Key: key,
+		},
+	}
+}
+
+func modelGatewayUserRequestAccumulatorFor(accumulators map[string]*modelGatewayUserRequestAccumulator, key string) *modelGatewayUserRequestAccumulator {
+	if key == "" {
+		key = "unknown"
+	}
+	if existing, ok := accumulators[key]; ok {
+		return existing
+	}
+	accumulator := newModelGatewayUserRequestAccumulator(key)
+	accumulators[key] = accumulator
+	return accumulator
+}
+
+func modelGatewayUserRequestTrendAccumulatorFor(accumulators map[int64]*modelGatewayUserRequestTrendAccumulator, bucketStart int64) *modelGatewayUserRequestTrendAccumulator {
+	if existing, ok := accumulators[bucketStart]; ok {
+		return existing
+	}
+	accumulator := &modelGatewayUserRequestTrendAccumulator{
+		modelGatewayUserRequestAccumulator: *newModelGatewayUserRequestAccumulator(strconv.FormatInt(bucketStart, 10)),
+	}
+	accumulators[bucketStart] = accumulator
+	return accumulator
+}
+
+func applyModelGatewayUserRequestAccumulator(accumulator *modelGatewayUserRequestAccumulator, userRequest model.ModelGatewayUserRequestSummary) {
+	if accumulator == nil {
+		return
+	}
+	accumulator.Requests++
+	clientAborted := modelGatewayUserRequestClientAborted(userRequest)
+	if clientAborted {
+		accumulator.ClientAborted++
+	} else if userRequest.FinalSuccess {
+		accumulator.Successes++
+	} else {
+		accumulator.FinalFailures++
+	}
+	if userRequest.Recovered && !clientAborted {
+		accumulator.Recovered++
+	}
+	if userRequest.EmptyOutput && !clientAborted {
+		accumulator.EmptyOutputs++
+	}
+	if strings.TrimSpace(userRequest.ExperienceIssue) != "" && !clientAborted {
+		accumulator.ExperienceIssues++
+	}
+	if userRequest.DurationMs > 0 && !clientAborted {
+		accumulator.durationSum += userRequest.DurationMs
+		accumulator.durationSamples++
+		accumulator.durationValues = append(accumulator.durationValues, userRequest.DurationMs)
+	}
+	if userRequest.TTFTMs > 0 && !clientAborted {
+		accumulator.ttftSum += userRequest.TTFTMs
+		accumulator.ttftSamples++
+		accumulator.ttftValues = append(accumulator.ttftValues, userRequest.TTFTMs)
+	}
+	if userRequest.CompletedAt > accumulator.LastRequestAt {
+		accumulator.LastRequestAt = userRequest.CompletedAt
+	}
+}
+
+func modelGatewayUserRequestSummaryFromAccumulator(summary ModelGatewayUserRequestSummary, accumulator *modelGatewayUserRequestAccumulator) ModelGatewayUserRequestSummary {
+	if accumulator == nil {
+		return summary
+	}
+	summary.Successes = accumulator.Successes
+	summary.FinalFailures = accumulator.FinalFailures
+	summary.ClientAborted = accumulator.ClientAborted
+	summary.Recovered = accumulator.Recovered
+	summary.EmptyOutputs = accumulator.EmptyOutputs
+	summary.ExperienceIssues = accumulator.ExperienceIssues
+	summary.UserSuccessRate = successRateModelGatewayObservability(accumulator.Successes, accumulator.Requests-accumulator.ClientAborted)
+	summary.AvgDurationMs = averageInt64(accumulator.durationSum, accumulator.durationSamples)
+	summary.P95DurationMs = percentileModelGatewayObservabilityInt64(accumulator.durationValues, 0.95)
+	summary.AvgTTFTMs = averageInt64(accumulator.ttftSum, accumulator.ttftSamples)
+	summary.P95TTFTMs = percentileModelGatewayObservabilityInt64(accumulator.ttftValues, 0.95)
+	return summary
+}
+
+func finalizeModelGatewayUserRequestAggregates(accumulators map[string]*modelGatewayUserRequestAccumulator, topN int) []ModelGatewayUserRequestAggregate {
+	items := make([]ModelGatewayUserRequestAggregate, 0, len(accumulators))
+	for _, accumulator := range accumulators {
+		item := accumulator.ModelGatewayUserRequestAggregate
+		item.UserSuccessRate = successRateModelGatewayObservability(item.Successes, item.Requests-item.ClientAborted)
+		item.AvgDurationMs = averageInt64(accumulator.durationSum, accumulator.durationSamples)
+		item.P95DurationMs = percentileModelGatewayObservabilityInt64(accumulator.durationValues, 0.95)
+		item.AvgTTFTMs = averageInt64(accumulator.ttftSum, accumulator.ttftSamples)
+		item.P95TTFTMs = percentileModelGatewayObservabilityInt64(accumulator.ttftValues, 0.95)
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].UserSuccessRate != items[j].UserSuccessRate {
+			return items[i].UserSuccessRate > items[j].UserSuccessRate
+		}
+		if items[i].Requests != items[j].Requests {
+			return items[i].Requests > items[j].Requests
+		}
+		if items[i].FinalFailures != items[j].FinalFailures {
+			return items[i].FinalFailures < items[j].FinalFailures
+		}
+		return items[i].Key < items[j].Key
+	})
+	if topN > 0 && len(items) > topN {
+		return items[:topN]
+	}
+	return items
+}
+
+func finalizeModelGatewayUserRequestTrends(accumulators map[int64]*modelGatewayUserRequestTrendAccumulator, startTime int64, endTime int64, bucketSeconds int64) []ModelGatewayUserRequestTrendPoint {
+	if startTime <= 0 || endTime <= startTime || bucketSeconds <= 0 {
+		return []ModelGatewayUserRequestTrendPoint{}
+	}
+	bucketCount := int((endTime - startTime + bucketSeconds - 1) / bucketSeconds)
+	if bucketCount <= 0 {
+		return []ModelGatewayUserRequestTrendPoint{}
+	}
+	items := make([]ModelGatewayUserRequestTrendPoint, 0, bucketCount)
+	for idx := 0; idx < bucketCount; idx++ {
+		bucketStart := startTime + int64(idx)*bucketSeconds
+		bucketEnd := bucketStart + bucketSeconds
+		if bucketEnd > endTime {
+			bucketEnd = endTime
+		}
+		items = append(items, modelGatewayUserRequestTrendPointFromAccumulator(bucketStart, bucketEnd, accumulators[bucketStart]))
+	}
+	return items
+}
+
+func modelGatewayUserRequestTrendPointFromAccumulator(bucketStart int64, bucketEnd int64, accumulator *modelGatewayUserRequestTrendAccumulator) ModelGatewayUserRequestTrendPoint {
+	point := ModelGatewayUserRequestTrendPoint{
+		BucketStart: bucketStart,
+		BucketEnd:   bucketEnd,
+	}
+	if accumulator == nil {
+		return point
+	}
+	point.Requests = accumulator.Requests
+	point.Successes = accumulator.Successes
+	point.FinalFailures = accumulator.FinalFailures
+	point.ClientAborted = accumulator.ClientAborted
+	point.Recovered = accumulator.Recovered
+	point.EmptyOutputs = accumulator.EmptyOutputs
+	point.ExperienceIssues = accumulator.ExperienceIssues
+	point.UserSuccessRate = successRateModelGatewayObservability(accumulator.Successes, accumulator.Requests-accumulator.ClientAborted)
+	point.AvgDurationMs = averageInt64(accumulator.durationSum, accumulator.durationSamples)
+	point.P95DurationMs = percentileModelGatewayObservabilityInt64(accumulator.durationValues, 0.95)
+	point.AvgTTFTMs = averageInt64(accumulator.ttftSum, accumulator.ttftSamples)
+	point.P95TTFTMs = percentileModelGatewayObservabilityInt64(accumulator.ttftValues, 0.95)
+	return point
+}
+
+func ModelGatewayUserRequestRecordFromSummary(userRequest model.ModelGatewayUserRequestSummary) ModelGatewayUserRequestRecord {
+	clientAborted := modelGatewayUserRequestClientAborted(userRequest)
+	return ModelGatewayUserRequestRecord{
+		ID:                 userRequest.Id,
+		CreatedAt:          userRequest.CreatedAt,
+		CompletedAt:        userRequest.CompletedAt,
+		RequestID:          userRequest.RequestId,
+		RequestedModel:     userRequest.RequestedModel,
+		RequestedGroup:     userRequest.RequestedGroup,
+		SelectedGroup:      userRequest.SelectedGroup,
+		FinalChannelID:     userRequest.FinalChannelID,
+		FinalChannelName:   userRequest.FinalChannelName,
+		Attempts:           userRequest.Attempts,
+		FinalSuccess:       userRequest.FinalSuccess,
+		Recovered:          userRequest.Recovered,
+		FinalStatusCode:    userRequest.FinalStatusCode,
+		FinalErrorCategory: userRequest.FinalErrorCategory,
+		EmptyOutput:        userRequest.EmptyOutput,
+		ExperienceIssue:    userRequest.ExperienceIssue,
+		ClientAborted:      clientAborted,
+		DurationMs:         userRequest.DurationMs,
+		TTFTMs:             userRequest.TTFTMs,
+		Status:             modelGatewayUserRequestStatus(userRequest.FinalSuccess, clientAborted),
+	}
+}
+
+func modelGatewayUserRequestRecord(userRequest model.ModelGatewayUserRequestSummary) ModelGatewayUserRequestRecord {
+	return ModelGatewayUserRequestRecordFromSummary(userRequest)
+}
+
+func modelGatewayUserRequestStatus(success bool, clientAborted bool) string {
+	if clientAborted {
+		return "client_aborted"
+	}
+	if success {
+		return "success"
+	}
+	return "failed"
+}
+
+func modelGatewayUserRequestClientAborted(userRequest model.ModelGatewayUserRequestSummary) bool {
+	category := strings.ToLower(strings.TrimSpace(userRequest.FinalErrorCategory))
+	return userRequest.ClientAborted ||
+		userRequest.FinalStatusCode == relayStatusClientClosedRequest ||
+		category == model.ModelGatewayUserRequestErrorClientAborted ||
+		strings.Contains(category, "client_abort") ||
+		strings.Contains(category, "client_gone")
+}
+
+func modelGatewayUserRequestModelKey(userRequest model.ModelGatewayUserRequestSummary) string {
+	if userRequest.RequestedModel != "" {
+		return userRequest.RequestedModel
+	}
+	return "unknown"
+}
+
+func modelGatewayUserRequestGroupKey(userRequest model.ModelGatewayUserRequestSummary) string {
+	if userRequest.SelectedGroup != "" {
+		return userRequest.SelectedGroup
+	}
+	if userRequest.RequestedGroup != "" {
+		return userRequest.RequestedGroup
+	}
+	return "unknown"
 }
 
 func buildModelGatewayObservabilityFromRecords(records []model.ModelExecutionRecord, totalRecords int64, startTime int64, endTime int64, options ModelGatewayObservabilityOptions) ModelGatewayObservabilityResponse {
@@ -993,6 +1494,7 @@ func buildModelGatewayObservabilityFromRecords(records []model.ModelExecutionRec
 	response.Summary.CircuitOpenReasons = finalizeModelGatewayTrendReasonCounts(modelGatewayCircuitOpenReasonCountsFromTrends(response.Trends), modelGatewayObservabilityTrendTopN)
 	response.Summary.CircuitErrorTypes = finalizeModelGatewayTrendReasonCounts(modelGatewayCircuitErrorTypeCountsFromTrends(response.Trends), modelGatewayObservabilityTrendTopN)
 	response.Summary.CircuitErrorCounts = response.Summary.CircuitErrorTypes
+	applyModelGatewayCurrentChannelStatus(&response)
 	applyModelGatewayTrendRiskTimeline(&response)
 	return response
 }
@@ -1022,49 +1524,63 @@ func modelGatewayObservabilitySummaryFromAccumulator(summary ModelGatewayObserva
 
 func modelGatewayObservabilityRecentRecord(record model.ModelExecutionRecord, scoreBreakdown map[string]float64, candidateGroups []string, requestMeta map[string]any) ModelGatewayObservabilityRecord {
 	meta := modelGatewayObservabilityMetaFromRequestMeta(requestMeta)
+	attemptMeta := modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta)
 	candidateExplanations := modelGatewayCandidateExplanationsFromRequestMeta(requestMeta)
 	return ModelGatewayObservabilityRecord{
-		ID:                    record.Id,
-		Kind:                  modelGatewayObservabilityRecordKind(record),
-		CreatedAt:             record.CreatedAt,
-		RequestID:             record.RequestId,
-		AttemptIndex:          record.AttemptIndex,
-		RequestedGroup:        record.RequestedGroup,
-		SelectedGroup:         record.SelectedGroup,
-		ActualGroup:           record.ActualGroup,
-		RequestedModel:        record.RequestedModel,
-		ChannelID:             record.ChannelId,
-		ChannelName:           record.ChannelName,
-		ActualChannelID:       record.ActualChannelId,
-		ActualChannelName:     record.ActualChannelName,
-		EndpointType:          record.EndpointType,
-		PolicyMode:            record.PolicyMode,
-		AutoMode:              record.AutoMode,
-		Strategy:              record.Strategy,
-		Shadow:                record.Shadow,
-		SmartHandled:          record.SmartHandled,
-		FallbackUsed:          record.FallbackUsed,
-		Success:               record.Success,
-		StatusCode:            record.StatusCode,
-		ErrorCode:             record.ErrorCode,
-		ErrorType:             record.ErrorType,
-		DurationMs:            record.DurationMs,
-		TTFTMs:                record.TTFTMs,
-		StreamInterrupted:     record.StreamInterrupted,
-		ScoreTotal:            roundModelGatewayObservabilityFloat(record.ScoreTotal),
-		ScoreBreakdown:        scoreBreakdown,
-		CandidateGroups:       candidateGroups,
-		CandidateExplanations: candidateExplanations,
-		SelectedReason:        record.SelectedReason,
-		QueueEnabled:          meta.QueueEnabled,
-		QueueWaitMs:           meta.QueueWaitMs,
-		QueueDepth:            meta.QueueDepth,
-		QueueCapacity:         meta.QueueCapacity,
-		StickySource:          meta.StickySource,
-		StickyRetained:        meta.StickyRetained,
-		StickyBreak:           meta.StickyBreak,
-		CacheAffinity:         meta.CacheAffinity,
-		RequestMeta:           requestMeta,
+		ID:                             record.Id,
+		Kind:                           modelGatewayObservabilityRecordKind(record),
+		CreatedAt:                      record.CreatedAt,
+		RequestID:                      record.RequestId,
+		AttemptIndex:                   record.AttemptIndex,
+		RequestedGroup:                 record.RequestedGroup,
+		SelectedGroup:                  record.SelectedGroup,
+		ActualGroup:                    record.ActualGroup,
+		RequestedModel:                 record.RequestedModel,
+		ChannelID:                      record.ChannelId,
+		ChannelName:                    record.ChannelName,
+		ActualChannelID:                record.ActualChannelId,
+		ActualChannelName:              record.ActualChannelName,
+		EndpointType:                   record.EndpointType,
+		PolicyMode:                     record.PolicyMode,
+		AutoMode:                       record.AutoMode,
+		Strategy:                       record.Strategy,
+		Shadow:                         record.Shadow,
+		SmartHandled:                   record.SmartHandled,
+		FallbackUsed:                   record.FallbackUsed,
+		Success:                        record.Success,
+		StatusCode:                     record.StatusCode,
+		ErrorCode:                      record.ErrorCode,
+		ErrorType:                      record.ErrorType,
+		DurationMs:                     record.DurationMs,
+		TTFTMs:                         record.TTFTMs,
+		StreamInterrupted:              record.StreamInterrupted,
+		ScoreTotal:                     roundModelGatewayObservabilityFloat(record.ScoreTotal),
+		ScoreBreakdown:                 scoreBreakdown,
+		CandidateGroups:                candidateGroups,
+		CandidateExplanations:          candidateExplanations,
+		SelectedReason:                 record.SelectedReason,
+		QueueEnabled:                   meta.QueueEnabled,
+		QueueWaitMs:                    meta.QueueWaitMs,
+		QueueDepth:                     meta.QueueDepth,
+		QueueCapacity:                  meta.QueueCapacity,
+		StickySource:                   meta.StickySource,
+		StickyRetained:                 meta.StickyRetained,
+		StickyBreak:                    meta.StickyBreak,
+		CacheAffinity:                  meta.CacheAffinity,
+		ErrorMessage:                   attemptMeta.ErrorMessage,
+		ErrorCategory:                  attemptMeta.ErrorCategory,
+		RetryAction:                    attemptMeta.RetryAction,
+		WillRetry:                      attemptMeta.WillRetry,
+		ClientAborted:                  attemptMeta.ClientAborted,
+		ConcurrencyLimited:             attemptMeta.ConcurrencyLimited,
+		EmptyOutput:                    attemptMeta.EmptyOutput,
+		ExperienceIssue:                attemptMeta.ExperienceIssue,
+		ActiveConcurrency:              attemptMeta.ActiveConcurrency,
+		ConfiguredConcurrencyLimit:     attemptMeta.ConfiguredConcurrencyLimit,
+		LearnedConcurrencyLimit:        attemptMeta.LearnedConcurrencyLimit,
+		LearnedConcurrencyLimitChanged: attemptMeta.LearnedConcurrencyLimitChanged,
+		UsedChannels:                   attemptMeta.UsedChannels,
+		RequestMeta:                    requestMeta,
 	}
 }
 
@@ -1092,22 +1608,25 @@ func applyModelGatewayObservabilityRecord(accumulator *modelGatewayObservability
 		accumulator.FallbackUsed++
 	}
 	if isModelGatewayAttemptRecord(record) {
-		accumulator.Attempts++
-		if record.Success {
-			accumulator.Successes++
-		} else {
-			accumulator.Failures++
-		}
-		if record.StreamInterrupted {
-			accumulator.StreamInterrupted++
-		}
-		if record.DurationMs > 0 {
-			accumulator.durationSum += record.DurationMs
-			accumulator.durationSamples++
-		}
-		if record.TTFTMs > 0 {
-			accumulator.ttftSum += record.TTFTMs
-			accumulator.ttftSamples++
+		attemptMeta := modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta)
+		if !attemptMeta.ClientAborted {
+			accumulator.Attempts++
+			if record.Success {
+				accumulator.Successes++
+			} else {
+				accumulator.Failures++
+			}
+			if record.StreamInterrupted {
+				accumulator.StreamInterrupted++
+			}
+			if record.DurationMs > 0 {
+				accumulator.durationSum += record.DurationMs
+				accumulator.durationSamples++
+			}
+			if record.TTFTMs > 0 {
+				accumulator.ttftSum += record.TTFTMs
+				accumulator.ttftSamples++
+			}
 		}
 	}
 	if hasModelGatewayScoreTotalSample(record) {
@@ -1140,6 +1659,22 @@ type modelGatewayObservabilityDispatchMeta struct {
 	StickyRetained bool
 	StickyBreak    string
 	CacheAffinity  bool
+}
+
+type modelGatewayObservabilityAttemptMeta struct {
+	ErrorMessage                   string
+	ErrorCategory                  string
+	RetryAction                    string
+	WillRetry                      bool
+	ClientAborted                  bool
+	ConcurrencyLimited             bool
+	EmptyOutput                    bool
+	ExperienceIssue                string
+	ActiveConcurrency              int
+	ConfiguredConcurrencyLimit     int
+	LearnedConcurrencyLimit        int
+	LearnedConcurrencyLimitChanged bool
+	UsedChannels                   []string
 }
 
 type modelGatewayProfileProxyMeta struct {
@@ -1217,6 +1752,131 @@ func modelGatewayObservabilityMetaFromRequestMeta(requestMeta map[string]any) mo
 	}
 }
 
+type modelGatewayCurrentChannelStatus struct {
+	Status              int
+	StatusReason        string
+	BalanceInsufficient bool
+}
+
+func applyModelGatewayCurrentChannelStatus(response *ModelGatewayObservabilityResponse) {
+	if response == nil {
+		return
+	}
+	channelIDs := make(map[int]struct{})
+	for _, item := range response.ByChannel {
+		if item.ChannelID > 0 {
+			channelIDs[item.ChannelID] = struct{}{}
+		}
+	}
+	for _, record := range response.RecentRecords {
+		for _, candidate := range record.CandidateExplanations {
+			id := modelGatewayCandidateChannelID(candidate)
+			if id > 0 {
+				channelIDs[id] = struct{}{}
+			}
+		}
+	}
+	if len(channelIDs) == 0 {
+		return
+	}
+	statuses := modelGatewayCurrentChannelStatuses(channelIDs)
+	if len(statuses) == 0 {
+		return
+	}
+	for idx := range response.ByChannel {
+		status, ok := statuses[response.ByChannel[idx].ChannelID]
+		if !ok {
+			continue
+		}
+		response.ByChannel[idx].ChannelStatus = status.Status
+		response.ByChannel[idx].StatusReason = status.StatusReason
+		response.ByChannel[idx].BalanceInsufficient = status.BalanceInsufficient
+	}
+	for recordIdx := range response.RecentRecords {
+		for candidateIdx := range response.RecentRecords[recordIdx].CandidateExplanations {
+			candidate := &response.RecentRecords[recordIdx].CandidateExplanations[candidateIdx]
+			status, ok := statuses[modelGatewayCandidateChannelID(*candidate)]
+			if !ok {
+				continue
+			}
+			applyModelGatewayCandidateChannelStatus(candidate, status)
+		}
+	}
+}
+
+func modelGatewayCurrentChannelStatuses(channelIDs map[int]struct{}) map[int]modelGatewayCurrentChannelStatus {
+	ids := make([]int, 0, len(channelIDs))
+	for id := range channelIDs {
+		if id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	channels, err := model.GetChannelsByIds(ids)
+	if err != nil || len(channels) == 0 {
+		return nil
+	}
+	statuses := make(map[int]modelGatewayCurrentChannelStatus, len(channels))
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		statuses[channel.Id] = modelGatewayCurrentChannelStatus{
+			Status:              channel.Status,
+			StatusReason:        service.ChannelStatusReason(channel),
+			BalanceInsufficient: service.IsKnownBalanceInsufficientChannel(channel),
+		}
+	}
+	return statuses
+}
+
+func modelGatewayCandidateChannelID(candidate ModelGatewayCandidateExplanation) int {
+	if candidate.ChannelID > 0 {
+		return candidate.ChannelID
+	}
+	return candidate.RuntimeKey.ChannelID
+}
+
+func applyModelGatewayCandidateChannelStatus(candidate *ModelGatewayCandidateExplanation, status modelGatewayCurrentChannelStatus) {
+	if candidate == nil {
+		return
+	}
+	candidate.ChannelStatus = status.Status
+	candidate.StatusReason = status.StatusReason
+	if !status.BalanceInsufficient {
+		candidate.BalanceInsufficient = false
+		return
+	}
+	candidate.BalanceInsufficient = true
+	candidate.Available = false
+	if strings.TrimSpace(candidate.RejectReason) == "" {
+		candidate.RejectReason = service.ChannelStatusReasonBalanceInsufficient
+	}
+}
+
+func modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta map[string]any) modelGatewayObservabilityAttemptMeta {
+	if len(requestMeta) == 0 {
+		return modelGatewayObservabilityAttemptMeta{}
+	}
+	return modelGatewayObservabilityAttemptMeta{
+		ErrorMessage:                   strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["error_message"])),
+		ErrorCategory:                  strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["error_category"])),
+		RetryAction:                    strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["retry_action"])),
+		WillRetry:                      modelGatewayObservabilityMetaBool(requestMeta["will_retry"]),
+		ClientAborted:                  modelGatewayObservabilityMetaBool(requestMeta["client_aborted"]),
+		ConcurrencyLimited:             modelGatewayObservabilityMetaBool(requestMeta["concurrency_limited"]),
+		EmptyOutput:                    modelGatewayObservabilityMetaBool(requestMeta["empty_output"]),
+		ExperienceIssue:                strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["experience_issue"])),
+		ActiveConcurrency:              int(modelGatewayObservabilityMetaInt64(requestMeta["active_concurrency"])),
+		ConfiguredConcurrencyLimit:     int(modelGatewayObservabilityMetaInt64(requestMeta["configured_concurrency_limit"])),
+		LearnedConcurrencyLimit:        int(modelGatewayObservabilityMetaInt64(requestMeta["learned_concurrency_limit"])),
+		LearnedConcurrencyLimitChanged: modelGatewayObservabilityMetaBool(requestMeta["learned_concurrency_limit_changed"]),
+		UsedChannels:                   modelGatewayObservabilityStringSlice(requestMeta["used_channels"]),
+	}
+}
+
 func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any) []ModelGatewayCandidateExplanation {
 	if len(requestMeta) == 0 {
 		return nil
@@ -1239,19 +1899,45 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 	out := make([]ModelGatewayCandidateExplanation, 0, len(candidates))
 	for _, candidate := range candidates {
 		item := ModelGatewayCandidateExplanation{
-			ChannelID:       candidate.ChannelID,
-			ChannelName:     candidate.ChannelName,
-			Group:           candidate.Group,
-			UpstreamModel:   candidate.UpstreamModel,
-			ProviderProfile: candidate.ProviderProfile,
-			ProxyMode:       candidate.ProxyMode,
-			RuntimeKey:      modelGatewayRuntimeKeyFromCore(candidate.RuntimeKey),
-			Available:       candidate.Available,
-			RejectReason:    candidate.RejectReason,
-			ScoreTotal:      roundModelGatewayObservabilityFloat(candidate.ScoreTotal),
-			ScoreBreakdown:  roundModelGatewayScoreMap(candidate.ScoreBreakdown),
-			StickyMatched:   candidate.StickyMatched,
-			Selected:        candidate.Selected,
+			ChannelID:                  candidate.ChannelID,
+			ChannelName:                candidate.ChannelName,
+			Group:                      candidate.Group,
+			UpstreamModel:              candidate.UpstreamModel,
+			ProviderProfile:            candidate.ProviderProfile,
+			ProxyMode:                  candidate.ProxyMode,
+			RuntimeKey:                 modelGatewayRuntimeKeyFromCore(candidate.RuntimeKey),
+			Available:                  candidate.Available,
+			RejectReason:               candidate.RejectReason,
+			ChannelStatus:              candidate.ChannelStatus,
+			StatusReason:               candidate.StatusReason,
+			BalanceInsufficient:        candidate.BalanceInsufficient,
+			ScoreTotal:                 roundModelGatewayObservabilityFloat(candidate.ScoreTotal),
+			ScoreBreakdown:             roundModelGatewayScoreMap(candidate.ScoreBreakdown),
+			SuccessRate:                roundModelGatewayObservabilityFloat(candidate.SuccessRate),
+			TTFTMs:                     roundModelGatewayObservabilityFloat(candidate.TTFTMs),
+			DurationMs:                 roundModelGatewayObservabilityFloat(candidate.DurationMs),
+			TokensPerSecond:            roundModelGatewayObservabilityFloat(candidate.TokensPerSecond),
+			SampleCount:                candidate.SampleCount,
+			ActiveConcurrency:          candidate.ActiveConcurrency,
+			MaxConcurrency:             candidate.MaxConcurrency,
+			ConfiguredConcurrencyLimit: candidate.ConfiguredConcurrencyLimit,
+			LearnedConcurrencyLimit:    candidate.LearnedConcurrencyLimit,
+			EffectiveConcurrencyLimit:  candidate.EffectiveConcurrencyLimit,
+			QueueDepth:                 candidate.QueueDepth,
+			QueueCapacity:              candidate.QueueCapacity,
+			EstimatedQueueWaitMs:       roundModelGatewayObservabilityFloat(candidate.EstimatedQueueWaitMs),
+			CostRatio:                  roundModelGatewayObservabilityFloat(candidate.CostRatio),
+			GroupPriorityRatio:         roundModelGatewayObservabilityFloat(candidate.GroupPriorityRatio),
+			SuccessScore:               roundModelGatewayObservabilityFloat(candidate.SuccessScore),
+			SpeedScore:                 roundModelGatewayObservabilityFloat(candidate.SpeedScore),
+			LoadScore:                  roundModelGatewayObservabilityFloat(candidate.LoadScore),
+			CostScore:                  roundModelGatewayObservabilityFloat(candidate.CostScore),
+			GroupScore:                 roundModelGatewayObservabilityFloat(candidate.GroupScore),
+			ExperienceScore:            roundModelGatewayObservabilityFloat(candidate.ExperienceScore),
+			EmptyOutputRate:            roundModelGatewayObservabilityFloat(candidate.EmptyOutputRate),
+			ExperienceIssueRate:        roundModelGatewayObservabilityFloat(candidate.ExperienceIssueRate),
+			StickyMatched:              candidate.StickyMatched,
+			Selected:                   candidate.Selected,
 		}
 		out = append(out, item)
 	}
@@ -1385,6 +2071,23 @@ func modelGatewayObservabilityMetaString(value any) string {
 		return typed
 	default:
 		return ""
+	}
+}
+
+func modelGatewayObservabilityStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		values := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := strings.TrimSpace(fmt.Sprint(item)); text != "" {
+				values = append(values, text)
+			}
+		}
+		return values
+	default:
+		return nil
 	}
 }
 
@@ -2115,19 +2818,30 @@ func modelGatewayCircuitErrorTypeFromRecord(record model.ModelExecutionRecord) s
 	if !isModelGatewayAttemptRecord(record) || record.Success {
 		return ""
 	}
-	result := modelgatewaycore.AttemptResult{
-		ChannelID:         record.ChannelId,
-		RequestedGroup:    record.RequestedGroup,
-		SelectedGroup:     record.SelectedGroup,
-		ModelName:         record.RequestedModel,
-		EndpointType:      constantEndpointTypeFromString(record.EndpointType),
-		Success:           record.Success,
-		StatusCode:        record.StatusCode,
-		ErrorCode:         record.ErrorCode,
-		ErrorType:         record.ErrorType,
-		StreamInterrupted: record.StreamInterrupted,
+	requestMeta, _ := parseModelGatewayRequestMeta(record.RequestMeta)
+	attemptMeta := modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta)
+	if attemptMeta.ClientAborted {
+		return ""
 	}
-	return modelgatewayscheduler.ClassifyCircuitError(result)
+	result := modelgatewaycore.AttemptResult{
+		ChannelID:          record.ChannelId,
+		RequestedGroup:     record.RequestedGroup,
+		SelectedGroup:      record.SelectedGroup,
+		ModelName:          record.RequestedModel,
+		EndpointType:       constantEndpointTypeFromString(record.EndpointType),
+		Success:            record.Success,
+		StatusCode:         record.StatusCode,
+		ErrorCode:          record.ErrorCode,
+		ErrorType:          record.ErrorType,
+		ErrorMessage:       attemptMeta.ErrorMessage,
+		ConcurrencyLimited: attemptMeta.ConcurrencyLimited,
+		StreamInterrupted:  record.StreamInterrupted,
+	}
+	kind := modelgatewayscheduler.ClassifyCircuitError(result)
+	if kind == modelgatewayscheduler.CircuitErrorConcurrencyLimit {
+		return ""
+	}
+	return kind
 }
 
 func constantEndpointTypeFromString(value string) constant.EndpointType {

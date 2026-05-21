@@ -14,6 +14,7 @@ import (
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -163,6 +164,7 @@ func TestGetModelGatewayObservabilitySummaryAggregatesRecentRecords(t *testing.T
 			DurationMs:        2200,
 			TTFTMs:            500,
 			StreamInterrupted: true,
+			RequestMeta:       `{"error_category":"stream_interrupted","retry_action":"stop","error_message":"upstream stream interrupted"}`,
 		},
 		{
 			CreatedAt:      now - 14,
@@ -237,6 +239,9 @@ func TestGetModelGatewayObservabilitySummaryAggregatesRecentRecords(t *testing.T
 	require.Len(t, payload.Data.RecentRecords, 4)
 	require.Equal(t, "dispatch", payload.Data.RecentRecords[0].Kind)
 	require.Equal(t, "attempt", payload.Data.RecentRecords[1].Kind)
+	require.Equal(t, "stream_interrupted", payload.Data.RecentRecords[1].ErrorCategory)
+	require.Equal(t, "stop", payload.Data.RecentRecords[1].RetryAction)
+	require.Equal(t, "upstream stream interrupted", payload.Data.RecentRecords[1].ErrorMessage)
 	require.Equal(t, []string{"default", "vip"}, payload.Data.RecentRecords[3].CandidateGroups)
 	require.Equal(t, "mimo_codex_chat", payload.Data.RecentRecords[3].RequestMeta["provider_profile"])
 	require.Equal(t, "responses_via_chat", payload.Data.RecentRecords[3].RequestMeta["proxy_mode"])
@@ -313,6 +318,422 @@ func TestGetModelGatewayObservabilitySummaryAggregatesRecentRecords(t *testing.T
 	requireObservabilityMetaAggregate(t, payload.Data.ByChannel, "202", 1, 0, 0, 1, 0, 1, 0)
 	requireObservabilityMetaAggregate(t, payload.Data.ByProviderProfile, "mimo_codex_chat", 1, 1, 640, 1, 1, 0, 1)
 	requireObservabilityMetaAggregate(t, payload.Data.ByProxyMode, "responses_via_chat", 1, 1, 640, 1, 1, 0, 1)
+}
+
+func TestGetModelGatewayObservabilitySummaryTreatsPending429AsConcurrencyFlow(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.ModelExecutionRecord{
+		CreatedAt:      now - 1,
+		RequestId:      "req-pending",
+		AttemptIndex:   0,
+		RequestedGroup: "auto",
+		SelectedGroup:  "vip",
+		RequestedModel: "gpt-5.5",
+		ChannelId:      8,
+		ChannelName:    "pending-channel",
+		Success:        false,
+		StatusCode:     http.StatusTooManyRequests,
+		ErrorCode:      string(types.ErrorCodeBadResponseStatusCode),
+		ErrorType:      string(types.ErrorTypeOpenAIError),
+		DurationMs:     900,
+		RequestMeta: `{
+			"error_message":"Too many pending requests, please retry later",
+			"error_category":"upstream_concurrency_limit",
+			"retry_action":"switch_channel",
+			"will_retry":true,
+			"concurrency_limited":true,
+			"active_concurrency":47,
+			"configured_concurrency_limit":64,
+			"learned_concurrency_limit":46,
+			"learned_concurrency_limit_changed":true,
+			"used_channels":["8"]
+		}`,
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 1,
+		TopN:        5,
+		ScanLimit:   10,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.RecentRecords, 1)
+	record := response.RecentRecords[0]
+	require.Equal(t, "upstream_concurrency_limit", record.ErrorCategory)
+	require.Equal(t, "switch_channel", record.RetryAction)
+	require.True(t, record.WillRetry)
+	require.True(t, record.ConcurrencyLimited)
+	require.Equal(t, 47, record.ActiveConcurrency)
+	require.Equal(t, 64, record.ConfiguredConcurrencyLimit)
+	require.Equal(t, 46, record.LearnedConcurrencyLimit)
+	require.True(t, record.LearnedConcurrencyLimitChanged)
+	require.Equal(t, []string{"8"}, record.UsedChannels)
+	require.Empty(t, response.Summary.CircuitErrorTypes)
+	require.Empty(t, response.Summary.CircuitErrorCounts)
+}
+
+func TestModelGatewayObservabilityOverlaysCurrentBalanceStatus(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	channel := model.Channel{
+		Id:     201,
+		Name:   "balance-paused",
+		Status: common.ChannelStatusAutoDisabled,
+	}
+	channel.SetOtherInfo(map[string]interface{}{
+		"status_reason": "balance_insufficient",
+	})
+	require.NoError(t, db.Create(&channel).Error)
+	requestMeta, err := common.Marshal(map[string]any{
+		"candidate_explanations": []core.CandidateExplanation{
+			{
+				ChannelID:   201,
+				ChannelName: "balance-paused",
+				RuntimeKey: core.RuntimeKey{
+					ChannelID:     201,
+					Group:         "default",
+					UpstreamModel: "gpt-5.5",
+				},
+				Available:  true,
+				ScoreTotal: 0.9,
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create([]model.ModelExecutionRecord{
+		{
+			CreatedAt:      now - 10,
+			RequestId:      "balance-dispatch",
+			RequestedGroup: "default",
+			SelectedGroup:  "default",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      201,
+			ChannelName:    "balance-paused",
+			PolicyMode:     "active",
+			SmartHandled:   true,
+			RequestMeta:    string(requestMeta),
+		},
+		{
+			CreatedAt:      now - 9,
+			RequestId:      "balance-dispatch",
+			RequestedGroup: "default",
+			SelectedGroup:  "default",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      201,
+			ChannelName:    "balance-paused",
+			Success:        true,
+			DurationMs:     100,
+		},
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 2,
+		TopN:        5,
+		ScanLimit:   20,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, response.RecentRecords, 2)
+	require.Len(t, response.RecentRecords[1].CandidateExplanations, 1)
+	candidate := response.RecentRecords[1].CandidateExplanations[0]
+	require.False(t, candidate.Available)
+	require.True(t, candidate.BalanceInsufficient)
+	require.Equal(t, "balance_insufficient", candidate.StatusReason)
+	require.Equal(t, "balance_insufficient", candidate.RejectReason)
+	aggregate := requireAggregate(t, response.ByChannel, "201", 1, 1, 0)
+	require.True(t, aggregate.BalanceInsufficient)
+	require.Equal(t, "balance_insufficient", aggregate.StatusReason)
+}
+
+func TestModelGatewayObservabilityOverlaysConfirmedZeroBalanceStatus(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	channel := model.Channel{
+		Id:                 202,
+		Name:               "zero-balance",
+		Status:             common.ChannelStatusEnabled,
+		Balance:            0,
+		BalanceUpdatedTime: now,
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	requestMeta, err := common.Marshal(map[string]any{
+		"candidate_explanations": []core.CandidateExplanation{
+			{
+				ChannelID:   202,
+				ChannelName: "zero-balance",
+				RuntimeKey: core.RuntimeKey{
+					ChannelID:     202,
+					Group:         "default",
+					UpstreamModel: "gpt-5.5",
+				},
+				Available:  true,
+				ScoreTotal: 0.9,
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create([]model.ModelExecutionRecord{
+		{
+			CreatedAt:      now - 10,
+			RequestId:      "zero-balance-dispatch",
+			RequestedGroup: "default",
+			SelectedGroup:  "default",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      202,
+			ChannelName:    "zero-balance",
+			PolicyMode:     "active",
+			SmartHandled:   true,
+			RequestMeta:    string(requestMeta),
+		},
+		{
+			CreatedAt:      now - 9,
+			RequestId:      "zero-balance-dispatch",
+			RequestedGroup: "default",
+			SelectedGroup:  "default",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      202,
+			ChannelName:    "zero-balance",
+			Success:        true,
+			DurationMs:     100,
+		},
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 2,
+		TopN:        5,
+		ScanLimit:   20,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, response.RecentRecords, 2)
+	require.Len(t, response.RecentRecords[1].CandidateExplanations, 1)
+	candidate := response.RecentRecords[1].CandidateExplanations[0]
+	require.False(t, candidate.Available)
+	require.True(t, candidate.BalanceInsufficient)
+	require.Equal(t, "balance_insufficient", candidate.StatusReason)
+	require.Equal(t, "balance_insufficient", candidate.RejectReason)
+	aggregate := requireAggregate(t, response.ByChannel, "202", 1, 1, 0)
+	require.True(t, aggregate.BalanceInsufficient)
+	require.Equal(t, "balance_insufficient", aggregate.StatusReason)
+}
+
+func TestGetModelGatewayObservabilitySummaryIgnoresClientAbortHealthSample(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&[]model.ModelExecutionRecord{
+		{
+			CreatedAt:      now - 2,
+			RequestId:      "req-ok",
+			AttemptIndex:   0,
+			RequestedGroup: "auto",
+			SelectedGroup:  "vip",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      201,
+			ChannelName:    "primary",
+			Success:        true,
+			DurationMs:     1000,
+		},
+		{
+			CreatedAt:         now - 1,
+			RequestId:         "req-client-abort",
+			AttemptIndex:      0,
+			RequestedGroup:    "auto",
+			SelectedGroup:     "vip",
+			RequestedModel:    "gpt-5.5",
+			ChannelId:         201,
+			ChannelName:       "primary",
+			StatusCode:        499,
+			DurationMs:        800,
+			StreamInterrupted: true,
+			RequestMeta:       `{"client_aborted":true,"error_category":"client_aborted","retry_action":"client_aborted"}`,
+		},
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), response.Summary.TotalRecords)
+	require.Equal(t, int64(1), response.Summary.Attempts)
+	require.Equal(t, int64(1), response.Summary.Successes)
+	require.Zero(t, response.Summary.Failures)
+	require.Zero(t, response.Summary.StreamInterrupted)
+	require.Equal(t, 1.0, response.Summary.SuccessRate)
+	requireAggregate(t, response.ByChannel, "201", 1, 1, 0)
+	require.Len(t, response.RecentRecords, 2)
+	require.True(t, response.RecentRecords[0].ClientAborted)
+	require.Empty(t, response.Summary.CircuitErrorTypes)
+}
+
+func TestBuildModelGatewayObservabilitySummaryIncludesUserRequests(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&[]model.ModelGatewayUserRequestSummary{
+		{
+			CreatedAt:        now - 70,
+			UpdatedAt:        now - 65,
+			CompletedAt:      now - 60,
+			RequestId:        "req-user-success",
+			RequestedGroup:   "auto",
+			SelectedGroup:    "vip",
+			RequestedModel:   "gpt-5.5",
+			FinalChannelID:   21,
+			FinalChannelName: "healthy-channel",
+			Attempts:         2,
+			LastAttemptIndex: 1,
+			FinalSuccess:     true,
+			Recovered:        true,
+			DurationMs:       1200,
+			TTFTMs:           180,
+		},
+		{
+			CreatedAt:          now - 55,
+			UpdatedAt:          now - 50,
+			CompletedAt:        now - 45,
+			RequestId:          "req-user-failed",
+			RequestedGroup:     "auto",
+			SelectedGroup:      "vip",
+			RequestedModel:     "gpt-5.5",
+			Attempts:           2,
+			LastAttemptIndex:   1,
+			FinalSuccess:       false,
+			FinalStatusCode:    http.StatusBadGateway,
+			FinalErrorCategory: model.ModelGatewayUserRequestErrorUpstream,
+			DurationMs:         2400,
+			TTFTMs:             320,
+		},
+		{
+			CreatedAt:        now - 40,
+			UpdatedAt:        now - 35,
+			CompletedAt:      now - 30,
+			RequestId:        "req-user-other",
+			RequestedGroup:   "default",
+			SelectedGroup:    "default",
+			RequestedModel:   "claude-4",
+			Attempts:         1,
+			LastAttemptIndex: 0,
+			FinalSuccess:     true,
+			DurationMs:       3600,
+			TTFTMs:           520,
+		},
+		{
+			CreatedAt:          now - 20,
+			UpdatedAt:          now - 18,
+			CompletedAt:        0,
+			RequestId:          "req-user-pending",
+			RequestedGroup:     "auto",
+			SelectedGroup:      "vip",
+			RequestedModel:     "gpt-5.5",
+			Attempts:           1,
+			LastAttemptIndex:   0,
+			FinalSuccess:       false,
+			FinalStatusCode:    0,
+			FinalErrorCategory: "",
+			DurationMs:         0,
+		},
+		{
+			CreatedAt:          now - 18,
+			UpdatedAt:          now - 17,
+			CompletedAt:        now - 16,
+			RequestId:          "req-user-aborted",
+			RequestedGroup:     "auto",
+			SelectedGroup:      "vip",
+			RequestedModel:     "gpt-5.5",
+			Attempts:           1,
+			LastAttemptIndex:   0,
+			FinalSuccess:       false,
+			FinalStatusCode:    499,
+			FinalErrorCategory: model.ModelGatewayUserRequestErrorClientAborted,
+			ClientAborted:      true,
+			StreamInterrupted:  true,
+			DurationMs:         900,
+		},
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+	})
+	require.NoError(t, err)
+
+	userRequests := response.UserRequests
+	require.Equal(t, int64(4), userRequests.Summary.TotalRequests)
+	require.Equal(t, 4, userRequests.Summary.ScannedRequests)
+	require.Equal(t, int64(2), userRequests.Summary.Successes)
+	require.Equal(t, int64(1), userRequests.Summary.FinalFailures)
+	require.Equal(t, int64(1), userRequests.Summary.ClientAborted)
+	require.Equal(t, int64(1), userRequests.Summary.Recovered)
+	require.Equal(t, 0.6667, userRequests.Summary.UserSuccessRate)
+	require.Equal(t, int64(2400), userRequests.Summary.AvgDurationMs)
+	require.Equal(t, int64(3600), userRequests.Summary.P95DurationMs)
+	require.Equal(t, int64(340), userRequests.Summary.AvgTTFTMs)
+	require.Equal(t, int64(520), userRequests.Summary.P95TTFTMs)
+	require.Len(t, userRequests.RecentRequests, 4)
+	require.Equal(t, "req-user-aborted", userRequests.RecentRequests[0].RequestID)
+	require.True(t, userRequests.RecentRequests[0].ClientAborted)
+	require.Equal(t, "client_aborted", userRequests.RecentRequests[0].Status)
+	require.Equal(t, "req-user-other", userRequests.RecentRequests[1].RequestID)
+	require.Equal(t, model.ModelGatewayUserRequestErrorUpstream, userRequests.RecentRequests[2].FinalErrorCategory)
+	require.Empty(t, userRequests.RecentRequests[1].FinalErrorCategory)
+	require.Equal(t, 21, userRequests.RecentRequests[3].FinalChannelID)
+	require.Equal(t, "healthy-channel", userRequests.RecentRequests[3].FinalChannelName)
+	requireUserRequestAggregate(t, userRequests.ByModel, "gpt-5.5", 3, 1, 1, 1)
+	requireUserRequestAggregate(t, userRequests.ByModel, "claude-4", 1, 1, 0, 0)
+	requireUserRequestAggregate(t, userRequests.ByGroup, "vip", 3, 1, 1, 1)
+	requireUserRequestAggregate(t, userRequests.ByGroup, "default", 1, 1, 0, 0)
+	trend := requireModelGatewayUserRequestTrendWithRequests(t, userRequests.Trends, 4)
+	require.Equal(t, int64(340), trend.AvgTTFTMs)
+	require.Equal(t, int64(520), trend.P95TTFTMs)
+}
+
+func TestBuildModelGatewayObservabilitySummaryUserRequestViewSkipsExecutionRecords(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.ModelExecutionRecord{
+		CreatedAt:      now - 20,
+		RequestId:      "req-engineering-only",
+		RequestedGroup: "default",
+		SelectedGroup:  "default",
+		RequestedModel: "gpt-5.4",
+		ChannelId:      8,
+		Success:        true,
+		DurationMs:     100,
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		CreatedAt:      now - 10,
+		UpdatedAt:      now - 9,
+		CompletedAt:    now - 8,
+		RequestId:      "req-user-view",
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		RequestedModel: "gpt-5.5",
+		Attempts:       1,
+		FinalSuccess:   true,
+		DurationMs:     900,
+		TTFTMs:         120,
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(0), response.Summary.TotalRecords)
+	require.Empty(t, response.RecentRecords)
+	require.Equal(t, int64(1), response.UserRequests.Summary.TotalRequests)
+	require.Equal(t, int64(1), response.UserRequests.Summary.Successes)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	require.Equal(t, "req-user-view", response.UserRequests.RecentRequests[0].RequestID)
 }
 
 func TestBuildModelGatewayObservabilitySummaryUsesDefaultScanLimit(t *testing.T) {
@@ -1084,7 +1505,7 @@ func decodeModelGatewayRuntimeStatusResponse(t *testing.T, recorder *httptest.Re
 	return payload
 }
 
-func requireAggregate(t *testing.T, items []ModelGatewayObservabilityAggregate, key string, attempts int64, successes int64, failures int64) {
+func requireAggregate(t *testing.T, items []ModelGatewayObservabilityAggregate, key string, attempts int64, successes int64, failures int64) ModelGatewayObservabilityAggregate {
 	t.Helper()
 	for _, item := range items {
 		if item.Key != key {
@@ -1093,9 +1514,10 @@ func requireAggregate(t *testing.T, items []ModelGatewayObservabilityAggregate, 
 		require.Equal(t, attempts, item.Attempts, fmt.Sprintf("attempts for %s", key))
 		require.Equal(t, successes, item.Successes, fmt.Sprintf("successes for %s", key))
 		require.Equal(t, failures, item.Failures, fmt.Sprintf("failures for %s", key))
-		return
+		return item
 	}
 	require.Failf(t, "aggregate not found", "key=%s items=%+v", key, items)
+	return ModelGatewayObservabilityAggregate{}
 }
 
 func requireObservabilityMetaAggregate(t *testing.T, items []ModelGatewayObservabilityAggregate, key string, queueEnabled int64, queued int64, avgQueueWaitMs int64, stickyRoutes int64, stickyRetained int64, stickyBroken int64, cacheAffinity int64) {
@@ -1127,6 +1549,42 @@ func requireModelGatewayTrendWithRecords(t *testing.T, items []ModelGatewayObser
 	}
 	require.Failf(t, "trend bucket not found", "records=%d items=%+v", records, items)
 	return ModelGatewayObservabilityTrendPoint{}
+}
+
+func requireModelGatewayUserRequestTrendWithRequests(t *testing.T, items []ModelGatewayUserRequestTrendPoint, requests int64) ModelGatewayUserRequestTrendPoint {
+	t.Helper()
+	for _, item := range items {
+		if item.Requests == requests {
+			require.Greater(t, item.BucketStart, int64(0))
+			require.Greater(t, item.BucketEnd, item.BucketStart)
+			return item
+		}
+	}
+	require.Failf(t, "user request trend bucket not found", "requests=%d items=%+v", requests, items)
+	return ModelGatewayUserRequestTrendPoint{}
+}
+
+func requireUserRequestAggregate(t *testing.T, items []ModelGatewayUserRequestAggregate, key string, requests int64, successes int64, finalFailures int64, recovered int64) {
+	t.Helper()
+	for _, item := range items {
+		if item.Key != key {
+			continue
+		}
+		require.Equal(t, requests, item.Requests, fmt.Sprintf("requests for %s", key))
+		require.Equal(t, successes, item.Successes, fmt.Sprintf("successes for %s", key))
+		require.Equal(t, finalFailures, item.FinalFailures, fmt.Sprintf("final failures for %s", key))
+		require.Equal(t, recovered, item.Recovered, fmt.Sprintf("recovered for %s", key))
+		if key == "gpt-5.5" || key == "vip" {
+			require.Equal(t, int64(250), item.AvgTTFTMs, fmt.Sprintf("avg ttft for %s", key))
+			require.Equal(t, int64(320), item.P95TTFTMs, fmt.Sprintf("p95 ttft for %s", key))
+		}
+		if key == "claude-4" || key == "default" {
+			require.Equal(t, int64(520), item.AvgTTFTMs, fmt.Sprintf("avg ttft for %s", key))
+			require.Equal(t, int64(520), item.P95TTFTMs, fmt.Sprintf("p95 ttft for %s", key))
+		}
+		return
+	}
+	require.Failf(t, "user request aggregate not found", "key=%s items=%+v", key, items)
 }
 
 func requireTrendRejectReason(t *testing.T, items []ModelGatewayTrendReasonCount, reason string, count int64) {
