@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
@@ -18,6 +19,7 @@ import (
 )
 
 var channelConcurrency sync.Map           // channel_id -> *channelConcurrencyCounter
+var channelSelectionReservation sync.Map  // channel_id -> *channelConcurrencyCounter
 var channelConcurrencyLearnLocks sync.Map // channel_id -> *sync.Mutex
 var channelConcurrencyControl sync.Map    // channel_id -> *channelConcurrencyControlState
 
@@ -70,6 +72,11 @@ func getChannelConcurrencyCounter(channelID int) *channelConcurrencyCounter {
 	return actual.(*channelConcurrencyCounter)
 }
 
+func getChannelSelectionReservationCounter(channelID int) *channelConcurrencyCounter {
+	actual, _ := channelSelectionReservation.LoadOrStore(channelID, &channelConcurrencyCounter{})
+	return actual.(*channelConcurrencyCounter)
+}
+
 func getChannelConcurrencyLearnLock(channelID int) *sync.Mutex {
 	actual, _ := channelConcurrencyLearnLocks.LoadOrStore(channelID, &sync.Mutex{})
 	return actual.(*sync.Mutex)
@@ -94,12 +101,145 @@ func GetChannelActiveConcurrency(channelID int) int {
 	return counter.active
 }
 
+func GetChannelSelectionReservations(channelID int) int {
+	if channelID <= 0 {
+		return 0
+	}
+	value, ok := channelSelectionReservation.Load(channelID)
+	if !ok {
+		return 0
+	}
+	counter := value.(*channelConcurrencyCounter)
+	counter.mu.Lock()
+	defer counter.mu.Unlock()
+	return counter.active
+}
+
+func GetChannelEffectiveActiveConcurrency(channelID int) int {
+	active := GetChannelActiveConcurrency(channelID)
+	reserved := GetChannelSelectionReservations(channelID)
+	return active + reserved
+}
+
 func IsChannelConcurrencyFull(channelID int, setting dto.ChannelSettings) bool {
 	limit := setting.MaxConcurrency
 	if channelID <= 0 || limit <= 0 {
 		return false
 	}
-	return GetChannelActiveConcurrency(channelID) >= limit
+	return GetChannelEffectiveActiveConcurrency(channelID) >= limit
+}
+
+func ReserveChannelSelection(ctx *gin.Context, channelID int, setting dto.ChannelSettings) bool {
+	return ReserveChannelSelectionWithLimit(ctx, channelID, setting, 0)
+}
+
+func ReserveChannelSelectionRouting(ctx *gin.Context, channelID int) bool {
+	return reserveChannelSelection(ctx, channelID, 0)
+}
+
+func ReserveChannelSelectionWithLimit(ctx *gin.Context, channelID int, setting dto.ChannelSettings, reservationLimit int) bool {
+	if ctx == nil || channelID <= 0 {
+		return false
+	}
+	limit := setting.MaxConcurrency
+	effectiveLimit := limit
+	if reservationLimit > 0 && (effectiveLimit <= 0 || reservationLimit < effectiveLimit) {
+		effectiveLimit = reservationLimit
+	}
+	return reserveChannelSelection(ctx, channelID, effectiveLimit)
+}
+
+func reserveChannelSelection(ctx *gin.Context, channelID int, effectiveLimit int) bool {
+	if ctx == nil || channelID <= 0 {
+		return false
+	}
+	activeCounter := getChannelConcurrencyCounter(channelID)
+	reservationCounter := getChannelSelectionReservationCounter(channelID)
+	activeCounter.mu.Lock()
+	reservationCounter.mu.Lock()
+	if effectiveLimit > 0 && activeCounter.active+reservationCounter.active >= effectiveLimit {
+		reservationCounter.mu.Unlock()
+		activeCounter.mu.Unlock()
+		return false
+	}
+	reservationCounter.active++
+	reservationCounter.mu.Unlock()
+	activeCounter.mu.Unlock()
+	reserved, _ := common.GetContextKeyType[[]int](ctx, constant.ContextKeyChannelSelectionReserved)
+	reserved = append(reserved, channelID)
+	common.SetContextKey(ctx, constant.ContextKeyChannelSelectionReserved, reserved)
+	return true
+}
+
+func MarkChannelSelectionSkipped(ctx *gin.Context, channelID int) {
+	if ctx == nil || channelID <= 0 {
+		return
+	}
+	channelIDs, _ := common.GetContextKeyType[[]int](ctx, constant.ContextKeyChannelSelectionSkipped)
+	for _, existing := range channelIDs {
+		if existing == channelID {
+			return
+		}
+	}
+	channelIDs = append(channelIDs, channelID)
+	common.SetContextKey(ctx, constant.ContextKeyChannelSelectionSkipped, channelIDs)
+}
+
+func IsChannelSelectionSkipped(ctx *gin.Context, channelID int) bool {
+	if ctx == nil || channelID <= 0 {
+		return false
+	}
+	channelIDs, ok := common.GetContextKeyType[[]int](ctx, constant.ContextKeyChannelSelectionSkipped)
+	if !ok {
+		return false
+	}
+	for _, existing := range channelIDs {
+		if existing == channelID {
+			return true
+		}
+	}
+	return false
+}
+
+func ReleaseChannelSelectionReservation(ctx *gin.Context, channelID int) {
+	if ctx == nil || channelID <= 0 {
+		return
+	}
+	counterValue, ok := channelSelectionReservation.Load(channelID)
+	if ok {
+		counter := counterValue.(*channelConcurrencyCounter)
+		counter.mu.Lock()
+		if counter.active > 0 {
+			counter.active--
+		}
+		counter.mu.Unlock()
+	}
+	reserved, ok := common.GetContextKeyType[[]int](ctx, constant.ContextKeyChannelSelectionReserved)
+	if !ok || len(reserved) == 0 {
+		return
+	}
+	for i, id := range reserved {
+		if id == channelID {
+			reserved = append(reserved[:i], reserved[i+1:]...)
+			common.SetContextKey(ctx, constant.ContextKeyChannelSelectionReserved, reserved)
+			return
+		}
+	}
+}
+
+func ReleaseChannelSelectionReservations(ctx *gin.Context) {
+	if ctx == nil {
+		return
+	}
+	reserved, ok := common.GetContextKeyType[[]int](ctx, constant.ContextKeyChannelSelectionReserved)
+	if !ok || len(reserved) == 0 {
+		return
+	}
+	for len(reserved) > 0 {
+		channelID := reserved[len(reserved)-1]
+		ReleaseChannelSelectionReservation(ctx, channelID)
+		reserved, _ = common.GetContextKeyType[[]int](ctx, constant.ContextKeyChannelSelectionReserved)
+	}
 }
 
 func TryAcquireChannelConcurrency(channelID int, setting dto.ChannelSettings) (*ChannelConcurrencyLease, bool) {
@@ -125,6 +265,24 @@ func TryAcquireChannelConcurrency(channelID int, setting dto.ChannelSettings) (*
 		activeAtHit: counter.active,
 		counter:     counter,
 	}, true
+}
+
+func TrackChannelConcurrency(channelID int, setting dto.ChannelSettings) *ChannelConcurrencyLease {
+	limit := setting.MaxConcurrency
+	if channelID <= 0 {
+		return &ChannelConcurrencyLease{ChannelID: channelID, Limit: limit}
+	}
+	counter := getChannelConcurrencyCounter(channelID)
+	counter.mu.Lock()
+	counter.active++
+	active := counter.active
+	counter.mu.Unlock()
+	return &ChannelConcurrencyLease{
+		ChannelID:   channelID,
+		Limit:       limit,
+		activeAtHit: active,
+		counter:     counter,
+	}
 }
 
 func (lease *ChannelConcurrencyLease) Release() {
@@ -258,6 +416,9 @@ func GetChannelConcurrencyCooldownStatus(channelID int) *ChannelConcurrencyContr
 
 func RecordChannelConcurrencyCooldown(channelID int, err *types.NewAPIError) {
 	if channelID <= 0 || err == nil {
+		return
+	}
+	if err.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit || IsUpstreamConcurrencyLimitError(err) {
 		return
 	}
 	if err.StatusCode != http.StatusTooManyRequests && err.GetErrorCode() != types.ErrorCodeChannelConcurrencyLimit {
@@ -505,6 +666,10 @@ func ClearChannelConcurrencyForTest() {
 		channelConcurrency.Delete(key)
 		return true
 	})
+	channelSelectionReservation.Range(func(key, value any) bool {
+		channelSelectionReservation.Delete(key)
+		return true
+	})
 	channelConcurrencyLearnLocks.Range(func(key, value any) bool {
 		channelConcurrencyLearnLocks.Delete(key)
 		return true
@@ -513,6 +678,11 @@ func ClearChannelConcurrencyForTest() {
 		channelConcurrencyControl.Delete(key)
 		return true
 	})
+	channelBalanceInsufficientRuntime.Range(func(key, value any) bool {
+		channelBalanceInsufficientRuntime.Delete(key)
+		return true
+	})
+	clearChannelFirstByteWaitersForTest()
 }
 
 func getChannelConcurrencyCooldownSet() map[int]struct{} {

@@ -50,6 +50,7 @@ type GroupSmartPolicy struct {
 	QueueHighPriority     bool
 	QueuePriority         int
 	CircuitBreakerEnabled bool
+	GroupPriorityRatio    map[string]float64
 }
 
 func (p GroupSmartPolicy) IsActive() bool {
@@ -72,29 +73,31 @@ type AutoGroupPlan struct {
 }
 
 type DispatchPlan struct {
-	Channel         *model.Channel
-	SelectedGroup   string
-	RequestedGroup  string
-	RuntimeKey      RuntimeKey
-	ProviderProfile string
-	ProxyMode       string
-	ScoreTotal      float64
-	ScoreBreakdown  map[string]float64
-	QueueWaitMs     int
-	QueueEnabled    bool
-	QueueDepth      int
-	QueueCapacity   int
-	QueuePriority   int
-	SelectedReason  string
-	StickySource    string
-	StickyKeyFP     string
-	StickyRetained  bool
-	StickyBreak     string
-	CacheAffinity   bool
-	FallbackUsed    bool
-	PolicyMode      string
-	AutoMode        string
-	Candidates      []CandidateExplanation
+	Channel               *model.Channel
+	SelectedGroup         string
+	RequestedGroup        string
+	RuntimeKey            RuntimeKey
+	ProviderProfile       string
+	ProxyMode             string
+	ScoreTotal            float64
+	ScoreBreakdown        map[string]float64
+	RoutingScoreTotal     float64
+	RoutingScoreBreakdown map[string]float64
+	QueueWaitMs           int
+	QueueEnabled          bool
+	QueueDepth            int
+	QueueCapacity         int
+	QueuePriority         int
+	SelectedReason        string
+	StickySource          string
+	StickyKeyFP           string
+	StickyRetained        bool
+	StickyBreak           string
+	CacheAffinity         bool
+	FallbackUsed          bool
+	PolicyMode            string
+	AutoMode              string
+	Candidates            []CandidateExplanation
 }
 
 type RuntimeKey struct {
@@ -108,6 +111,9 @@ type RuntimeKey struct {
 
 type RuntimeSnapshot struct {
 	Key                        RuntimeKey
+	MatchedRuntimeKey          RuntimeKey
+	SampleSource               string
+	RecentLatencySamples       []RuntimeLatencySample
 	SuccessRate                float64
 	TTFTMs                     float64
 	DurationMs                 float64
@@ -126,6 +132,9 @@ type RuntimeSnapshot struct {
 	QueueCapacity              int
 	QueueTimeoutMs             int
 	EstimatedQueueWaitMs       float64
+	FirstBytePending           int
+	SlowFirstBytePending       int
+	OldestFirstByteWaitMs      float64
 	CostRatio                  float64
 	GroupPriorityRatio         float64
 	CircuitState               CircuitState
@@ -133,6 +142,12 @@ type RuntimeSnapshot struct {
 	Cooldown                   bool
 	FailureAvoidance           bool
 	SampleCount                int
+}
+
+type RuntimeLatencySample struct {
+	ObservedAt int64   `json:"observed_at,omitempty"`
+	DurationMs float64 `json:"duration_ms,omitempty"`
+	TTFTMs     float64 `json:"ttft_ms,omitempty"`
 }
 
 type RuntimeQueueSnapshot struct {
@@ -274,11 +289,14 @@ type CandidateExplanation struct {
 	RuntimeKey                 RuntimeKey         `json:"runtime_key"`
 	Available                  bool               `json:"available"`
 	RejectReason               string             `json:"reject_reason,omitempty"`
+	SelectionSkipReason        string             `json:"selection_skip_reason,omitempty"`
 	ChannelStatus              int                `json:"channel_status,omitempty"`
 	StatusReason               string             `json:"status_reason,omitempty"`
 	BalanceInsufficient        bool               `json:"balance_insufficient,omitempty"`
 	ScoreTotal                 float64            `json:"score_total,omitempty"`
 	ScoreBreakdown             map[string]float64 `json:"score_breakdown,omitempty"`
+	RoutingScoreTotal          float64            `json:"routing_score_total,omitempty"`
+	RoutingScoreBreakdown      map[string]float64 `json:"routing_score_breakdown,omitempty"`
 	SuccessRate                float64            `json:"success_rate,omitempty"`
 	TTFTMs                     float64            `json:"ttft_ms,omitempty"`
 	DurationMs                 float64            `json:"duration_ms,omitempty"`
@@ -292,10 +310,14 @@ type CandidateExplanation struct {
 	QueueDepth                 int                `json:"queue_depth,omitempty"`
 	QueueCapacity              int                `json:"queue_capacity,omitempty"`
 	EstimatedQueueWaitMs       float64            `json:"estimated_queue_wait_ms,omitempty"`
+	FirstBytePending           int                `json:"first_byte_pending,omitempty"`
+	SlowFirstBytePending       int                `json:"slow_first_byte_pending,omitempty"`
+	OldestFirstByteWaitMs      float64            `json:"oldest_first_byte_wait_ms,omitempty"`
 	CostRatio                  float64            `json:"cost_ratio,omitempty"`
 	GroupPriorityRatio         float64            `json:"group_priority_ratio,omitempty"`
 	SuccessScore               float64            `json:"success_score,omitempty"`
 	SpeedScore                 float64            `json:"speed_score,omitempty"`
+	ScoreSpeedFactor           float64            `json:"score_speed_factor,omitempty"`
 	LoadScore                  float64            `json:"load_score,omitempty"`
 	CostScore                  float64            `json:"cost_score,omitempty"`
 	GroupScore                 float64            `json:"group_score,omitempty"`
@@ -304,6 +326,8 @@ type CandidateExplanation struct {
 	ExperienceIssueRate        float64            `json:"experience_issue_rate,omitempty"`
 	StickyMatched              bool               `json:"sticky_matched,omitempty"`
 	Selected                   bool               `json:"selected,omitempty"`
+	ScoreSampleSource          string             `json:"score_sample_source,omitempty"`
+	MatchedRuntimeKey          RuntimeKey         `json:"matched_runtime_key,omitempty"`
 }
 
 type ScoreWeights struct {
@@ -315,9 +339,11 @@ type ScoreWeights struct {
 }
 
 type ScoreResult struct {
-	Total     float64
-	Breakdown map[string]float64
-	Reason    string
+	Total            float64
+	Breakdown        map[string]float64
+	RoutingTotal     float64
+	RoutingBreakdown map[string]float64
+	Reason           string
 }
 
 type CacheAffinitySignal struct {
@@ -355,6 +381,7 @@ type AttemptResult struct {
 	ErrorType                      string
 	ErrorMessage                   string
 	ErrorCategory                  string
+	ObservedAt                     time.Time
 	Duration                       time.Duration
 	TTFT                           time.Duration
 	StreamInterrupted              bool
@@ -369,6 +396,8 @@ type AttemptResult struct {
 	LearnedConcurrencyLimit        int
 	LearnedConcurrencyLimitChanged bool
 	UsedChannels                   []string
+	IsHealthProbe                  bool
+	ProbeReason                    string
 }
 
 func (r AttemptResult) RuntimeKey() RuntimeKey {
@@ -387,6 +416,9 @@ func (r AttemptResult) RuntimeKey() RuntimeKey {
 	}
 	if key.EndpointType == "" {
 		key.EndpointType = r.EndpointType
+	}
+	if key.EndpointType == "" {
+		key.EndpointType = constant.EndpointTypeOpenAI
 	}
 	return key
 }

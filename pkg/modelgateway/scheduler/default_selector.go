@@ -2,7 +2,9 @@ package scheduler
 
 import (
 	"errors"
+	"strings"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
@@ -74,18 +76,23 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	}
 	scorer := s.scorerFactory.ForStrategy(policy.Strategy)
 	stickyRoute, hasSticky := s.stickyRoute(c, &req, policy)
-	var bestCandidate core.Candidate
-	var bestSnapshot core.RuntimeSnapshot
-	var bestScore core.ScoreResult
+	var bestAvailableCandidate core.Candidate
+	var bestAvailableSnapshot core.RuntimeSnapshot
+	var bestAvailableScore core.ScoreResult
+	var bestSaturatedCandidate core.Candidate
+	var bestSaturatedSnapshot core.RuntimeSnapshot
+	var bestSaturatedScore core.ScoreResult
 	var stickyCandidate core.Candidate
 	var stickySnapshot core.RuntimeSnapshot
 	var stickyScore core.ScoreResult
+	stickySaturated := false
 	var stickyBreak string
 	stickyFound := false
-	found := false
+	availableFound := false
+	saturatedFound := false
 	explanations := make([]core.CandidateExplanation, 0, minInt(len(candidates), maxCandidateExplanations))
 	for _, candidate := range candidates {
-		snapshot := s.snapshotForCandidate(candidate)
+		snapshot := s.snapshotForCandidate(candidate, policy)
 		if s.snapshotEnricher != nil {
 			snapshot = s.snapshotEnricher.Enrich(candidate, snapshot, policy)
 		}
@@ -104,21 +111,53 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		explanation.Available = true
 		explanation.ScoreTotal = score.Total
 		explanation.ScoreBreakdown = score.Breakdown
+		explanation.RoutingScoreTotal = score.RoutingTotal
+		explanation.RoutingScoreBreakdown = score.RoutingBreakdown
+		applyScoredMetricsToCandidateExplanation(&explanation, score)
+		if routingConcurrencySaturated(snapshot) {
+			explanation.SelectionSkipReason = "concurrency_saturated"
+		}
 		appendCandidateExplanation(&explanations, explanation)
 		if hasSticky && stickyMatched {
 			stickyCandidate = candidate
 			stickySnapshot = snapshot
 			stickyScore = score
+			stickySaturated = routingConcurrencySaturated(snapshot)
 			stickyFound = true
 		}
-		if !found || score.Total > bestScore.Total {
-			bestCandidate = candidate
-			bestSnapshot = snapshot
-			bestScore = score
-			found = true
+		if routingConcurrencySaturated(snapshot) {
+			if !saturatedFound || score.RoutingTotal > bestSaturatedScore.RoutingTotal {
+				bestSaturatedCandidate = candidate
+				bestSaturatedSnapshot = snapshot
+				bestSaturatedScore = score
+				saturatedFound = true
+			}
+			continue
+		}
+		if !availableFound || score.RoutingTotal > bestAvailableScore.RoutingTotal {
+			bestAvailableCandidate = candidate
+			bestAvailableSnapshot = snapshot
+			bestAvailableScore = score
+			availableFound = true
 		}
 	}
-	if !found || bestCandidate.Channel == nil {
+	var bestCandidate core.Candidate
+	var bestSnapshot core.RuntimeSnapshot
+	var bestScore core.ScoreResult
+	selectedSaturated := false
+	if availableFound {
+		bestCandidate = bestAvailableCandidate
+		bestSnapshot = bestAvailableSnapshot
+		bestScore = bestAvailableScore
+	} else if saturatedFound {
+		bestCandidate = bestSaturatedCandidate
+		bestSnapshot = bestSaturatedSnapshot
+		bestScore = bestSaturatedScore
+		selectedSaturated = true
+	} else {
+		return nil, false, nil
+	}
+	if bestCandidate.Channel == nil {
 		return nil, false, nil
 	}
 	if hasSticky {
@@ -127,10 +166,13 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			if keepRatio <= 0 {
 				keepRatio = defaultStickyKeepScoreRatio
 			}
-			if stickyScore.Total >= bestScore.Total*keepRatio {
+			if stickySaturated && availableFound {
+				stickyBreak = "concurrency_saturated"
+			} else if stickyScore.Total >= bestScore.Total*keepRatio {
 				bestCandidate = stickyCandidate
 				bestSnapshot = stickySnapshot
 				bestScore = stickyScore
+				selectedSaturated = stickySaturated
 				bestScore.Reason = stickyRoute.Source + "_retained"
 				stickyBreak = ""
 			} else if stickyBreak == "" {
@@ -147,28 +189,30 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		}
 	}
 	plan := &core.DispatchPlan{
-		Channel:         bestCandidate.Channel,
-		SelectedGroup:   bestCandidate.Group,
-		RequestedGroup:  req.RequestedGroup,
-		RuntimeKey:      bestSnapshot.Key,
-		ProviderProfile: bestCandidate.ProviderProfile,
-		ProxyMode:       bestCandidate.ProxyMode,
-		ScoreTotal:      bestScore.Total,
-		ScoreBreakdown:  bestScore.Breakdown,
-		QueueWaitMs:     selectedQueueWaitMs(bestSnapshot, policy),
-		QueueEnabled:    policy.QueueEnabled,
-		QueueDepth:      bestSnapshot.QueueDepth,
-		QueueCapacity:   bestSnapshot.QueueCapacity,
-		QueuePriority:   policy.QueuePriority,
-		SelectedReason:  bestScore.Reason,
-		StickySource:    stickyRoute.Source,
-		StickyKeyFP:     stickyRoute.KeyFingerprint,
-		StickyRetained:  hasSticky && stickyBreak == "",
-		StickyBreak:     stickyBreak,
-		CacheAffinity:   hasSticky && stickyRoute.CacheAware,
-		PolicyMode:      policy.Mode,
-		AutoMode:        policy.AutoMode,
-		Candidates:      explanations,
+		Channel:               bestCandidate.Channel,
+		SelectedGroup:         bestCandidate.Group,
+		RequestedGroup:        req.RequestedGroup,
+		RuntimeKey:            bestSnapshot.Key,
+		ProviderProfile:       bestCandidate.ProviderProfile,
+		ProxyMode:             bestCandidate.ProxyMode,
+		ScoreTotal:            bestScore.Total,
+		ScoreBreakdown:        bestScore.Breakdown,
+		RoutingScoreTotal:     bestScore.RoutingTotal,
+		RoutingScoreBreakdown: bestScore.RoutingBreakdown,
+		QueueWaitMs:           selectedQueueWaitMs(bestSnapshot, policy, selectedSaturated),
+		QueueEnabled:          policy.QueueEnabled,
+		QueueDepth:            bestSnapshot.QueueDepth,
+		QueueCapacity:         bestSnapshot.QueueCapacity,
+		QueuePriority:         policy.QueuePriority,
+		SelectedReason:        bestScore.Reason,
+		StickySource:          stickyRoute.Source,
+		StickyKeyFP:           stickyRoute.KeyFingerprint,
+		StickyRetained:        hasSticky && stickyBreak == "",
+		StickyBreak:           stickyBreak,
+		CacheAffinity:         hasSticky && stickyRoute.CacheAware,
+		PolicyMode:            policy.Mode,
+		AutoMode:              policy.AutoMode,
+		Candidates:            explanations,
 	}
 	if s.shouldSaveStickyOnSelect() {
 		s.stickyRouter.Save(c, &req, plan)
@@ -177,6 +221,24 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		plan.SelectedReason = "weighted_score_sticky_broken"
 	}
 	return plan, true, nil
+}
+
+func routingConcurrencySaturated(snapshot core.RuntimeSnapshot) bool {
+	limit := routingConcurrencyLimit(snapshot)
+	return limit > 0 && snapshot.ActiveConcurrency >= limit
+}
+
+func selectedQueueWaitMs(snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy, selectedSaturated bool) int {
+	if !selectedSaturated || !policy.QueueEnabled {
+		return 0
+	}
+	if snapshot.QueueCapacity > 0 && snapshot.QueueDepth >= snapshot.QueueCapacity {
+		return 0
+	}
+	if snapshot.QueueTimeoutMs > 0 {
+		return snapshot.QueueTimeoutMs
+	}
+	return defaultQueueTimeoutMs
 }
 
 func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapshot, stickyMatched bool) core.CandidateExplanation {
@@ -199,6 +261,9 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 		QueueDepth:                 snapshot.QueueDepth,
 		QueueCapacity:              snapshot.QueueCapacity,
 		EstimatedQueueWaitMs:       snapshot.EstimatedQueueWaitMs,
+		FirstBytePending:           snapshot.FirstBytePending,
+		SlowFirstBytePending:       snapshot.SlowFirstBytePending,
+		OldestFirstByteWaitMs:      snapshot.OldestFirstByteWaitMs,
 		CostRatio:                  snapshot.CostRatio,
 		GroupPriorityRatio:         snapshot.GroupPriorityRatio,
 		SuccessScore:               snapshot.SuccessScore,
@@ -207,6 +272,8 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 		EmptyOutputRate:            snapshot.EmptyOutputRate,
 		ExperienceIssueRate:        snapshot.ExperienceIssueRate,
 		StickyMatched:              stickyMatched,
+		ScoreSampleSource:          snapshot.SampleSource,
+		MatchedRuntimeKey:          snapshot.MatchedRuntimeKey,
 	}
 	if candidate.Channel != nil {
 		explanation.ChannelID = candidate.Channel.Id
@@ -224,19 +291,46 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 	if explanation.UpstreamModel == "" {
 		explanation.UpstreamModel = explanation.RuntimeKey.UpstreamModel
 	}
-	explanation.LoadScore = loadScore(snapshot)
+	explanation.LoadScore = healthLoadScore(snapshot)
 	explanation.CostScore = costScore(snapshot)
 	explanation.GroupScore = groupScore(snapshot)
-	if explanation.SuccessScore <= 0 {
+	if snapshot.SampleCount > 0 && explanation.SuccessScore <= 0 {
 		explanation.SuccessScore = successScore(snapshot)
 	}
-	if explanation.SpeedScore <= 0 {
-		explanation.SpeedScore = speedScore(snapshot)
+	if snapshot.SampleCount > 0 && explanation.SpeedScore <= 0 {
+		explanation.SpeedScore = rawSpeedScore(snapshot)
 	}
 	if explanation.ExperienceScore <= 0 {
 		explanation.ExperienceScore = experienceScore(snapshot)
 	}
 	return explanation
+}
+
+func applyScoredMetricsToCandidateExplanation(explanation *core.CandidateExplanation, score core.ScoreResult) {
+	if explanation == nil || len(score.Breakdown) == 0 {
+		return
+	}
+	if value, ok := score.Breakdown[breakdownSuccess]; ok {
+		explanation.SuccessScore = value
+	}
+	if value, ok := score.Breakdown[breakdownSpeed]; ok {
+		explanation.ScoreSpeedFactor = value
+	} else if explanation.SampleCount <= 0 {
+		explanation.SpeedScore = 0
+		explanation.ScoreSpeedFactor = 0
+	}
+	if value, ok := score.Breakdown[breakdownLoad]; ok {
+		explanation.LoadScore = value
+	}
+	if value, ok := score.Breakdown[breakdownCost]; ok {
+		explanation.CostScore = value
+	}
+	if value, ok := score.Breakdown[breakdownGroup]; ok {
+		explanation.GroupScore = value
+	}
+	if value, ok := score.Breakdown["experience"]; ok {
+		explanation.ExperienceScore = value
+	}
 }
 
 func candidateExplanationRuntimeKey(candidate core.Candidate, snapshot core.RuntimeSnapshot) core.RuntimeKey {
@@ -259,7 +353,7 @@ func candidateExplanationRuntimeKey(candidate core.Candidate, snapshot core.Runt
 	if key.CapabilityFingerprint == "" {
 		key.CapabilityFingerprint = candidate.RuntimeKey.CapabilityFingerprint
 	}
-	return key
+	return normalizeRuntimeKey(key)
 }
 
 func appendCandidateExplanation(explanations *[]core.CandidateExplanation, explanation core.CandidateExplanation) {
@@ -295,52 +389,159 @@ func markSelectedCandidateExplanation(explanations []core.CandidateExplanation, 
 	}
 }
 
-func (s *DefaultSmartChannelSelector) snapshotForCandidate(candidate core.Candidate) core.RuntimeSnapshot {
-	if s.snapshotStore == nil {
-		return defaultSnapshot(candidate)
+func (s *DefaultSmartChannelSelector) snapshotForCandidate(candidate core.Candidate, policy core.GroupSmartPolicy) core.RuntimeSnapshot {
+	base := defaultSnapshot(candidate)
+	if s.snapshotEnricher != nil {
+		base = s.snapshotEnricher.Enrich(candidate, base, policy)
 	}
-	if snapshot, ok := s.snapshotStore.Get(candidate.RuntimeKey); ok {
+	base = normalizeRuntimeSnapshot(base)
+	if s.snapshotStore == nil {
+		return base
+	}
+	if snapshot, ok := s.snapshotStore.Get(base.Key); ok {
+		snapshot = normalizeRuntimeSnapshot(snapshot)
+		snapshot.MatchedRuntimeKey = snapshot.Key
+		snapshot.SampleSource = "exact"
 		return snapshot
 	}
-	return defaultSnapshot(candidate)
+	legacyKey := normalizeRuntimeKey(candidate.RuntimeKey)
+	if legacyKey != base.Key {
+		if snapshot, ok := s.snapshotStore.Get(legacyKey); ok {
+			snapshot = normalizeRuntimeSnapshot(snapshot)
+			snapshot.MatchedRuntimeKey = snapshot.Key
+			snapshot.SampleSource = "legacy_exact"
+			return snapshot
+		}
+	}
+	if snapshot, ok := s.fallbackSnapshotForCandidate(candidate); ok {
+		return snapshot
+	}
+	return base
 }
 
 func defaultSnapshot(candidate core.Candidate) core.RuntimeSnapshot {
+	key := candidate.RuntimeKey
+	if key.ChannelID == 0 && candidate.Channel != nil {
+		key.ChannelID = candidate.Channel.Id
+	}
+	if key.Group == "" {
+		key.Group = candidate.Group
+	}
+	if key.UpstreamModel == "" {
+		key.UpstreamModel = candidate.UpstreamModel
+	}
+	if key.EndpointType == "" {
+		key.EndpointType = constant.EndpointTypeOpenAI
+	}
 	return core.RuntimeSnapshot{
-		Key:                candidate.RuntimeKey,
-		SuccessRate:        0.80,
+		Key:                normalizeRuntimeKey(key),
 		CostRatio:          0,
 		GroupPriorityRatio: 1,
+		SampleSource:       "none",
 	}
 }
 
-func queueCanWait(snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) bool {
-	if !policy.QueueEnabled {
-		return false
+func (s *DefaultSmartChannelSelector) fallbackSnapshotForCandidate(candidate core.Candidate) (core.RuntimeSnapshot, bool) {
+	if s == nil || s.snapshotStore == nil {
+		return core.RuntimeSnapshot{}, false
 	}
-	if snapshot.QueueCapacity <= 0 {
-		return false
+	base := defaultSnapshot(candidate)
+	best, ok := mostRelevantSnapshot(base.Key, s.snapshotStore.ListCandidates(&core.DispatchRequest{
+		ModelName: base.Key.RequestedModel,
+	}))
+	if !ok {
+		return core.RuntimeSnapshot{}, false
 	}
-	if snapshot.QueueDepth >= snapshot.QueueCapacity {
-		return false
+	best = normalizeRuntimeSnapshot(best)
+	matchedKey := best.Key
+	best.Key = base.Key
+	if best.Key.ChannelID == 0 {
+		best.Key.ChannelID = matchedKey.ChannelID
 	}
-	if snapshot.QueueTimeoutMs <= 0 {
-		return false
+	if best.Key.RequestedModel == "" {
+		best.Key.RequestedModel = matchedKey.RequestedModel
 	}
-	if snapshot.EstimatedQueueWaitMs <= 0 {
-		return true
+	if best.Key.UpstreamModel == "" {
+		best.Key.UpstreamModel = matchedKey.UpstreamModel
 	}
-	return snapshot.EstimatedQueueWaitMs <= float64(snapshot.QueueTimeoutMs)
+	if best.Key.Group == "" {
+		best.Key.Group = matchedKey.Group
+	}
+	if best.Key.EndpointType == "" {
+		best.Key.EndpointType = matchedKey.EndpointType
+	}
+	if best.Key.CapabilityFingerprint == "" {
+		best.Key.CapabilityFingerprint = matchedKey.CapabilityFingerprint
+	}
+	best.MatchedRuntimeKey = matchedKey
+	best.SampleSource = "similar"
+	return best, true
 }
 
-func selectedQueueWaitMs(snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) int {
-	if snapshot.MaxConcurrency <= 0 || snapshot.ActiveConcurrency < snapshot.MaxConcurrency || !queueCanWait(snapshot, policy) {
-		return 0
+func mostRelevantSnapshot(key core.RuntimeKey, snapshots []core.RuntimeSnapshot) (core.RuntimeSnapshot, bool) {
+	var best core.RuntimeSnapshot
+	bestScore := -1
+	for _, snapshot := range snapshots {
+		snapshot = normalizeRuntimeSnapshot(snapshot)
+		if snapshot.SampleCount <= 0 || snapshot.Key.ChannelID <= 0 {
+			continue
+		}
+		if key.ChannelID > 0 && snapshot.Key.ChannelID != key.ChannelID {
+			continue
+		}
+		score := 0
+		if snapshot.Key.RequestedModel != "" && key.RequestedModel != "" && snapshot.Key.RequestedModel == key.RequestedModel {
+			score += 32
+		}
+		if snapshot.Key.UpstreamModel != "" && key.UpstreamModel != "" && snapshot.Key.UpstreamModel == key.UpstreamModel {
+			score += 16
+		}
+		if snapshot.Key.EndpointType != "" && key.EndpointType != "" && snapshot.Key.EndpointType == key.EndpointType {
+			score += 12
+		}
+		if snapshot.Key.CapabilityFingerprint != "" && key.CapabilityFingerprint != "" && snapshot.Key.CapabilityFingerprint == key.CapabilityFingerprint {
+			score += 8
+		}
+		if snapshot.Key.CapabilityFingerprint != "" && key.CapabilityFingerprint != "" && runtimeFingerprintOverlaps(snapshot.Key.CapabilityFingerprint, key.CapabilityFingerprint) {
+			score += 4
+		}
+		if snapshot.Key.Group != "" && key.Group != "" && snapshot.Key.Group == key.Group {
+			score += 4
+		}
+		if score == 0 {
+			continue
+		}
+		if score > bestScore || (score == bestScore && snapshot.SampleCount > best.SampleCount) {
+			best = snapshot
+			bestScore = score
+		}
 	}
-	if snapshot.EstimatedQueueWaitMs > 0 {
-		return int(snapshot.EstimatedQueueWaitMs)
+	return best, bestScore >= 0
+}
+
+func runtimeFingerprintOverlaps(left string, right string) bool {
+	leftParts := runtimeFingerprintSet(left)
+	if len(leftParts) == 0 {
+		return false
 	}
-	return snapshot.QueueTimeoutMs
+	for part := range runtimeFingerprintSet(right) {
+		if _, ok := leftParts[part]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func runtimeFingerprintSet(value string) map[string]struct{} {
+	parts := strings.Split(value, "|")
+	out := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out[part] = struct{}{}
+		}
+	}
+	return out
 }
 
 func (s *DefaultSmartChannelSelector) stickyRoute(c *gin.Context, req *core.DispatchRequest, policy core.GroupSmartPolicy) (core.StickyRoute, bool) {
@@ -374,11 +575,17 @@ func isStickyCandidate(candidate core.Candidate, route core.StickyRoute) bool {
 }
 
 func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) string {
-	if candidate.Channel != nil && service.IsChannelConcurrencySkipped(c, candidate.Channel.Id) {
-		return "local_concurrency_full"
+	if candidate.Channel != nil && service.IsChannelBalanceSkipped(c, candidate.Channel.Id) {
+		return service.ChannelStatusReasonBalanceInsufficient
 	}
 	if candidate.Channel != nil && service.IsKnownBalanceInsufficientChannel(candidate.Channel) {
 		return service.ChannelStatusReasonBalanceInsufficient
+	}
+	if candidate.Channel != nil && service.IsRuntimeBalanceInsufficientChannelID(candidate.Channel.Id) {
+		return service.ChannelStatusReasonBalanceInsufficient
+	}
+	if candidate.Channel != nil && service.IsChannelSelectionSkipped(c, candidate.Channel.Id) {
+		return "routing_slot_reserved"
 	}
 	if snapshot.CircuitOpen {
 		return "circuit_open"
@@ -388,16 +595,6 @@ func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapsh
 	}
 	if snapshot.FailureAvoidance {
 		return "failure_avoidance"
-	}
-	limit := snapshot.EffectiveConcurrencyLimit
-	if limit <= 0 {
-		limit = snapshot.MaxConcurrency
-	}
-	if limit > 0 && snapshot.ActiveConcurrency >= limit && !queueCanWait(snapshot, policy) {
-		if snapshot.LearnedConcurrencyLimit > 0 && snapshot.ConfiguredConcurrencyLimit > snapshot.LearnedConcurrencyLimit {
-			return "learned_concurrency_full"
-		}
-		return "concurrency_full"
 	}
 	return ""
 }

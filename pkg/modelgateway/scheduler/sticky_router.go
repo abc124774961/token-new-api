@@ -619,15 +619,21 @@ func (r *MemoryStickyRouter) userStickyKey(c *gin.Context, req *core.DispatchReq
 	if group == "" {
 		group = req.UserGroup
 	}
+	endpointType := req.EndpointType
+	if endpointType == "" {
+		endpointType = constant.EndpointTypeOpenAI
+	}
+	sessionKey := stickySessionKey(c)
+	if sessionKey == "" {
+		return ""
+	}
 	parts := []string{
 		actor,
 		group,
 		req.ModelName,
-		string(req.EndpointType),
+		string(endpointType),
 		fmt.Sprintf("codex_image=%t", req.RequiresCodexImageTool),
-	}
-	if sessionKey := stickySessionKey(c); sessionKey != "" {
-		parts = append(parts, sessionKey)
+		sessionKey,
 	}
 	return strings.Join(parts, "\n")
 }

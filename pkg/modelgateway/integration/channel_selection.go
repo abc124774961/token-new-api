@@ -2,6 +2,7 @@ package integration
 
 import (
 	"errors"
+	"sync"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
@@ -22,6 +23,7 @@ type SelectionResult struct {
 type ChannelSelectionWrapper struct {
 	Facade core.SmartDispatchFacadeInterface
 	Legacy core.LegacyChannelSelector
+	mu     sync.Mutex
 }
 
 func NewChannelSelectionWrapper(facade core.SmartDispatchFacadeInterface, legacy core.LegacyChannelSelector) *ChannelSelectionWrapper {
@@ -66,24 +68,36 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 	if w.Facade == nil {
 		return nil, nil
 	}
-	plan, handled, apiErr := w.Facade.Select(c, param)
-	if apiErr != nil {
-		return nil, apiErr
+	for attempts := 0; attempts < 4; attempts++ {
+		w.mu.Lock()
+		plan, handled, apiErr := w.Facade.Select(c, param)
+		if apiErr != nil {
+			w.mu.Unlock()
+			return nil, apiErr
+		}
+		if !handled || plan == nil || plan.Channel == nil {
+			w.mu.Unlock()
+			return nil, nil
+		}
+		if !service.ReserveChannelSelectionRouting(c, plan.Channel.Id) {
+			service.MarkChannelSelectionSkipped(c, plan.Channel.Id)
+			w.mu.Unlock()
+			continue
+		}
+		w.mu.Unlock()
+		SetSelectedPlan(c, plan)
+		if plan.StickySource != "" {
+			SetFailedStickyPlan(c, plan)
+		}
+		if plan.CacheAffinity {
+			service.MarkChannelAffinityUsed(c, plan.SelectedGroup, plan.Channel.Id)
+		}
+		return &SelectionResult{
+			Channel:      plan.Channel,
+			Group:        plan.SelectedGroup,
+			Plan:         plan,
+			SmartHandled: true,
+		}, nil
 	}
-	if !handled || plan == nil || plan.Channel == nil {
-		return nil, nil
-	}
-	SetSelectedPlan(c, plan)
-	if plan.StickySource != "" {
-		SetFailedStickyPlan(c, plan)
-	}
-	if plan.CacheAffinity {
-		service.MarkChannelAffinityUsed(c, plan.SelectedGroup, plan.Channel.Id)
-	}
-	return &SelectionResult{
-		Channel:      plan.Channel,
-		Group:        plan.SelectedGroup,
-		Plan:         plan,
-		SmartHandled: true,
-	}, nil
+	return nil, nil
 }

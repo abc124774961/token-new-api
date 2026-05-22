@@ -77,6 +77,7 @@ func NewRuntimeSyncEventStore(options RuntimeSyncEventStoreOptions) *RuntimeSync
 }
 
 func (s *RuntimeSyncEventStore) PutSnapshot(snapshot core.RuntimeSnapshot) {
+	snapshot = normalizeRuntimeSnapshot(snapshot)
 	if s == nil || s.store == nil || snapshot.Key.ChannelID <= 0 {
 		return
 	}
@@ -93,6 +94,9 @@ func (s *RuntimeSyncEventStore) ListSnapshots(req *core.DispatchRequest) []core.
 		return nil
 	}
 	snapshots := s.store.ListSnapshots(req)
+	for i := range snapshots {
+		snapshots[i] = normalizeRuntimeSnapshot(snapshots[i])
+	}
 	pending := s.pendingEvents(runtimeSyncEventSnapshot)
 	if len(pending) == 0 {
 		return snapshots
@@ -102,7 +106,7 @@ func (s *RuntimeSyncEventStore) ListSnapshots(req *core.DispatchRequest) []core.
 		byKey[runtimeKeyCacheKey(snapshot.Key)] = i
 	}
 	for _, event := range pending {
-		snapshot := event.snapshot
+		snapshot := normalizeRuntimeSnapshot(event.snapshot)
 		if req != nil && req.ModelName != "" && snapshot.Key.RequestedModel != "" && snapshot.Key.RequestedModel != req.ModelName {
 			continue
 		}
@@ -118,6 +122,7 @@ func (s *RuntimeSyncEventStore) ListSnapshots(req *core.DispatchRequest) []core.
 }
 
 func (s *RuntimeSyncEventStore) PutCircuit(snapshot core.CircuitSnapshot) {
+	snapshot = normalizeCircuitSnapshot(snapshot)
 	if s == nil || s.store == nil || snapshot.Key.ChannelID <= 0 {
 		return
 	}
@@ -130,6 +135,7 @@ func (s *RuntimeSyncEventStore) PutCircuit(snapshot core.CircuitSnapshot) {
 }
 
 func (s *RuntimeSyncEventStore) GetCircuit(key core.RuntimeKey) (core.CircuitSnapshot, bool) {
+	key = normalizeRuntimeKey(key)
 	if s == nil || s.store == nil || key.ChannelID <= 0 {
 		return core.CircuitSnapshot{}, false
 	}
@@ -138,7 +144,7 @@ func (s *RuntimeSyncEventStore) GetCircuit(key core.RuntimeKey) (core.CircuitSna
 	event, ok := s.pending[cacheKey]
 	s.mu.Unlock()
 	if ok {
-		return event.circuit, true
+		return normalizeCircuitSnapshot(event.circuit), true
 	}
 	return s.store.GetCircuit(key)
 }
@@ -148,6 +154,9 @@ func (s *RuntimeSyncEventStore) ListCircuits() []core.CircuitSnapshot {
 		return nil
 	}
 	circuits := s.store.ListCircuits()
+	for i := range circuits {
+		circuits[i] = normalizeCircuitSnapshot(circuits[i])
+	}
 	pending := s.pendingEvents(runtimeSyncEventCircuit)
 	if len(pending) == 0 {
 		return circuits
@@ -157,13 +166,14 @@ func (s *RuntimeSyncEventStore) ListCircuits() []core.CircuitSnapshot {
 		byKey[runtimeKeyCacheKey(snapshot.Key)] = i
 	}
 	for _, event := range pending {
-		key := runtimeKeyCacheKey(event.circuit.Key)
+		circuit := normalizeCircuitSnapshot(event.circuit)
+		key := runtimeKeyCacheKey(circuit.Key)
 		if index, ok := byKey[key]; ok {
-			circuits[index] = event.circuit
+			circuits[index] = circuit
 			continue
 		}
 		byKey[key] = len(circuits)
-		circuits = append(circuits, event.circuit)
+		circuits = append(circuits, circuit)
 	}
 	return circuits
 }

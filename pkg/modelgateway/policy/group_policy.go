@@ -31,6 +31,9 @@ func (r *DefaultGroupPolicyResolver) Resolve(c *gin.Context, req *core.DispatchR
 			Mode:           core.ModeOff,
 			Strategy:       normalizeStrategy(settings.DefaultStrategy),
 			AutoMode:       core.AutoModeSequential,
+			GroupPriorityRatio: copyGroupPriorityRatio(
+				settings.GroupPriorityRatio,
+			),
 		}
 	}
 	policySetting, ok := settings.GroupPolicies[req.RequestedGroup]
@@ -41,6 +44,9 @@ func (r *DefaultGroupPolicyResolver) Resolve(c *gin.Context, req *core.DispatchR
 			Mode:           normalizeMode(settings.DefaultMode),
 			Strategy:       normalizeStrategy(settings.DefaultStrategy),
 			AutoMode:       core.AutoModeSequential,
+			GroupPriorityRatio: copyGroupPriorityRatio(
+				settings.GroupPriorityRatio,
+			),
 		}
 	}
 	return core.GroupSmartPolicy{
@@ -56,7 +62,22 @@ func (r *DefaultGroupPolicyResolver) Resolve(c *gin.Context, req *core.DispatchR
 		QueueHighPriority:     policySetting.QueueHighPriority,
 		QueuePriority:         queuePriorityForPolicy(req.RequestedGroup, policySetting, settings),
 		CircuitBreakerEnabled: policySetting.CircuitBreakerEnabled,
+		GroupPriorityRatio:    copyGroupPriorityRatio(settings.GroupPriorityRatio),
 	}
+}
+
+func copyGroupPriorityRatio(values map[string]float64) map[string]float64 {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(values))
+	for group, ratio := range values {
+		if group == "" || ratio <= 0 {
+			continue
+		}
+		out[group] = ratio
+	}
+	return out
 }
 
 func queuePriorityForPolicy(group string, policySetting core.GroupPolicySetting, settings core.SchedulerSettings) int {

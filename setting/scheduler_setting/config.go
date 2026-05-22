@@ -73,6 +73,12 @@ type SchedulerSetting struct {
 	RuntimeSyncQueueMinIntervalMs    int                                  `json:"runtime_sync_queue_min_interval_ms"`
 	RuntimeSyncEventPushEnabled      bool                                 `json:"runtime_sync_event_push_enabled"`
 	RuntimeSyncEventSubscribeEnabled bool                                 `json:"runtime_sync_event_subscribe_enabled"`
+	ProbeEnabled                     bool                                 `json:"probe_enabled"`
+	ProbeIntervalSeconds             int                                  `json:"probe_interval_seconds"`
+	ProbeWorkerCount                 int                                  `json:"probe_worker_count"`
+	ProbeTimeoutSeconds              int                                  `json:"probe_timeout_seconds"`
+	ProbeMaxPerTick                  int                                  `json:"probe_max_per_tick"`
+	ProbeMinChannelIntervalSeconds   int                                  `json:"probe_min_channel_interval_seconds"`
 	SuccessWeight                    float64                              `json:"success_weight"`
 	SpeedWeight                      float64                              `json:"speed_weight"`
 	LoadWeight                       float64                              `json:"load_weight"`
@@ -120,6 +126,12 @@ var schedulerSetting = SchedulerSetting{
 	RuntimeSyncQueueMinIntervalMs:    500,
 	RuntimeSyncEventPushEnabled:      false,
 	RuntimeSyncEventSubscribeEnabled: false,
+	ProbeEnabled:                     true,
+	ProbeIntervalSeconds:             60,
+	ProbeWorkerCount:                 2,
+	ProbeTimeoutSeconds:              8,
+	ProbeMaxPerTick:                  5,
+	ProbeMinChannelIntervalSeconds:   300,
 	SuccessWeight:                    0.32,
 	SpeedWeight:                      0.28,
 	LoadWeight:                       0.20,
@@ -192,6 +204,12 @@ func defaultSchedulerSetting() SchedulerSetting {
 	setting.RuntimeSyncQueueMinIntervalMs = 500
 	setting.RuntimeSyncEventPushEnabled = false
 	setting.RuntimeSyncEventSubscribeEnabled = false
+	setting.ProbeEnabled = true
+	setting.ProbeIntervalSeconds = 60
+	setting.ProbeWorkerCount = 2
+	setting.ProbeTimeoutSeconds = 8
+	setting.ProbeMaxPerTick = 5
+	setting.ProbeMinChannelIntervalSeconds = 300
 	setting.SuccessWeight = 0.32
 	setting.SpeedWeight = 0.28
 	setting.LoadWeight = 0.20

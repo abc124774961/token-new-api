@@ -21,6 +21,7 @@ func (s *MemoryRuntimeSnapshotStore) Get(key core.RuntimeKey) (core.RuntimeSnaps
 	if s == nil {
 		return core.RuntimeSnapshot{}, false
 	}
+	key = normalizeRuntimeKey(key)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	snapshot, ok := s.snapshots[key]
@@ -29,6 +30,10 @@ func (s *MemoryRuntimeSnapshotStore) Get(key core.RuntimeKey) (core.RuntimeSnaps
 
 func (s *MemoryRuntimeSnapshotStore) Put(snapshot core.RuntimeSnapshot) {
 	if s == nil {
+		return
+	}
+	snapshot = normalizeRuntimeSnapshot(snapshot)
+	if snapshot.Key.ChannelID <= 0 {
 		return
 	}
 	s.mu.Lock()
@@ -44,6 +49,7 @@ func (s *MemoryRuntimeSnapshotStore) ListCandidates(req *core.DispatchRequest) [
 	defer s.mu.RUnlock()
 	result := make([]core.RuntimeSnapshot, 0, len(s.snapshots))
 	for _, snapshot := range s.snapshots {
+		snapshot = normalizeRuntimeSnapshot(snapshot)
 		if req != nil && req.ModelName != "" && snapshot.Key.RequestedModel != "" && snapshot.Key.RequestedModel != req.ModelName {
 			continue
 		}

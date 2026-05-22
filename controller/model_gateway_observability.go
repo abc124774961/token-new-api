@@ -87,6 +87,65 @@ type ModelGatewayStickyClearResponse struct {
 	Deleted   int    `json:"deleted"`
 }
 
+type ModelGatewayScoreHistoryResponse struct {
+	ChannelID    int                            `json:"channel_id"`
+	ChannelName  string                         `json:"channel_name,omitempty"`
+	RuntimeKey   ModelGatewayRuntimeKey         `json:"runtime_key,omitempty"`
+	Hours        int                            `json:"hours"`
+	Limit        int                            `json:"limit"`
+	TotalMatched int                            `json:"total_matched"`
+	Truncated    bool                           `json:"truncated"`
+	Items        []ModelGatewayScoreHistoryItem `json:"items"`
+	Current      *ModelGatewayScoreHistoryItem  `json:"current,omitempty"`
+	Previous     *ModelGatewayScoreHistoryItem  `json:"previous,omitempty"`
+	ScoreDelta   float64                        `json:"score_delta,omitempty"`
+	MetricDeltas map[string]float64             `json:"metric_deltas,omitempty"`
+	GeneratedAt  int64                          `json:"generated_at"`
+}
+
+type ModelGatewayScoreHistoryItem struct {
+	ID                    int                    `json:"id"`
+	Source                string                 `json:"source,omitempty"`
+	CreatedAt             int64                  `json:"created_at"`
+	RequestID             string                 `json:"request_id"`
+	RequestedModel        string                 `json:"requested_model,omitempty"`
+	RequestedGroup        string                 `json:"requested_group,omitempty"`
+	SelectedGroup         string                 `json:"selected_group,omitempty"`
+	ChannelID             int                    `json:"channel_id"`
+	ChannelName           string                 `json:"channel_name,omitempty"`
+	RuntimeKey            ModelGatewayRuntimeKey `json:"runtime_key,omitempty"`
+	Selected              bool                   `json:"selected,omitempty"`
+	SelectedReason        string                 `json:"selected_reason,omitempty"`
+	Available             bool                   `json:"available"`
+	RejectReason          string                 `json:"reject_reason,omitempty"`
+	StatusReason          string                 `json:"status_reason,omitempty"`
+	ScoreTotal            float64                `json:"score_total,omitempty"`
+	ScoreDelta            float64                `json:"score_delta,omitempty"`
+	ScoreBreakdown        map[string]float64     `json:"score_breakdown,omitempty"`
+	ScoreBreakdownDelta   map[string]float64     `json:"score_breakdown_delta,omitempty"`
+	RoutingScoreTotal     float64                `json:"routing_score_total,omitempty"`
+	RoutingScoreBreakdown map[string]float64     `json:"routing_score_breakdown,omitempty"`
+	SuccessScore          float64                `json:"success_score,omitempty"`
+	SpeedScore            float64                `json:"speed_score,omitempty"`
+	ScoreSpeedFactor      float64                `json:"score_speed_factor,omitempty"`
+	LoadScore             float64                `json:"load_score,omitempty"`
+	CostScore             float64                `json:"cost_score,omitempty"`
+	GroupScore            float64                `json:"group_score,omitempty"`
+	ExperienceScore       float64                `json:"experience_score,omitempty"`
+	SampleCount           int                    `json:"sample_count,omitempty"`
+	TTFTMs                float64                `json:"ttft_ms,omitempty"`
+	DurationMs            float64                `json:"duration_ms,omitempty"`
+	ActiveConcurrency     int                    `json:"active_concurrency,omitempty"`
+	EffectiveConcurrency  int                    `json:"effective_concurrency_limit,omitempty"`
+}
+
+type modelGatewayScoreHistoryOptions struct {
+	Hours      int
+	Limit      int
+	ChannelID  int
+	RuntimeKey ModelGatewayRuntimeKey
+}
+
 type ModelGatewayTrendExport struct {
 	Kind      string                                `json:"kind"`
 	Filters   ModelGatewayTrendExportFilters        `json:"filters"`
@@ -219,26 +278,73 @@ type ModelGatewayUserRequestAggregate struct {
 }
 
 type ModelGatewayUserRequestRecord struct {
-	ID                 int    `json:"id"`
-	CreatedAt          int64  `json:"created_at"`
-	CompletedAt        int64  `json:"completed_at"`
-	RequestID          string `json:"request_id"`
-	RequestedModel     string `json:"requested_model"`
-	RequestedGroup     string `json:"requested_group"`
-	SelectedGroup      string `json:"selected_group,omitempty"`
-	FinalChannelID     int    `json:"final_channel_id,omitempty"`
-	FinalChannelName   string `json:"final_channel_name,omitempty"`
-	Attempts           int    `json:"attempts"`
-	FinalSuccess       bool   `json:"final_success"`
-	Recovered          bool   `json:"recovered"`
-	FinalStatusCode    int    `json:"final_status_code,omitempty"`
-	FinalErrorCategory string `json:"final_error_category,omitempty"`
-	EmptyOutput        bool   `json:"empty_output,omitempty"`
-	ExperienceIssue    string `json:"experience_issue,omitempty"`
-	ClientAborted      bool   `json:"client_aborted,omitempty"`
-	DurationMs         int64  `json:"duration_ms,omitempty"`
-	TTFTMs             int64  `json:"ttft_ms,omitempty"`
-	Status             string `json:"status,omitempty"`
+	ID                 int                                 `json:"id"`
+	CreatedAt          int64                               `json:"created_at"`
+	CompletedAt        int64                               `json:"completed_at"`
+	RequestID          string                              `json:"request_id"`
+	RequestedModel     string                              `json:"requested_model"`
+	RequestedGroup     string                              `json:"requested_group"`
+	SelectedGroup      string                              `json:"selected_group,omitempty"`
+	FinalChannelID     int                                 `json:"final_channel_id,omitempty"`
+	FinalChannelName   string                              `json:"final_channel_name,omitempty"`
+	Attempts           int                                 `json:"attempts"`
+	FinalSuccess       bool                                `json:"final_success"`
+	Recovered          bool                                `json:"recovered"`
+	FinalStatusCode    int                                 `json:"final_status_code,omitempty"`
+	FinalErrorCategory string                              `json:"final_error_category,omitempty"`
+	EmptyOutput        bool                                `json:"empty_output,omitempty"`
+	ExperienceIssue    string                              `json:"experience_issue,omitempty"`
+	ClientAborted      bool                                `json:"client_aborted,omitempty"`
+	DurationMs         int64                               `json:"duration_ms,omitempty"`
+	TTFTMs             int64                               `json:"ttft_ms,omitempty"`
+	Status             string                              `json:"status,omitempty"`
+	Billing            *ModelGatewayUserRequestBillingInfo `json:"billing,omitempty"`
+	DispatchRecord     *ModelGatewayObservabilityRecord    `json:"dispatch_record,omitempty"`
+}
+
+type ModelGatewayUserRequestBillingInfo struct {
+	LogID                    int     `json:"log_id,omitempty"`
+	CreatedAt                int64   `json:"created_at,omitempty"`
+	Quota                    int     `json:"quota"`
+	PromptTokens             int     `json:"prompt_tokens,omitempty"`
+	CompletionTokens         int     `json:"completion_tokens,omitempty"`
+	TotalTokens              int     `json:"total_tokens,omitempty"`
+	ChannelID                int     `json:"channel_id,omitempty"`
+	Group                    string  `json:"group,omitempty"`
+	ModelName                string  `json:"model_name,omitempty"`
+	Content                  string  `json:"content,omitempty"`
+	ModelRatio               float64 `json:"model_ratio,omitempty"`
+	GroupRatio               float64 `json:"group_ratio,omitempty"`
+	UserGroupRatio           float64 `json:"user_group_ratio,omitempty"`
+	CompletionRatio          float64 `json:"completion_ratio,omitempty"`
+	CacheTokens              int     `json:"cache_tokens,omitempty"`
+	CacheRatio               float64 `json:"cache_ratio,omitempty"`
+	CacheCreationTokens      int     `json:"cache_creation_tokens,omitempty"`
+	CacheCreationRatio       float64 `json:"cache_creation_ratio,omitempty"`
+	CacheCreationTokens5m    int     `json:"cache_creation_tokens_5m,omitempty"`
+	CacheCreationRatio5m     float64 `json:"cache_creation_ratio_5m,omitempty"`
+	CacheCreationTokens1h    int     `json:"cache_creation_tokens_1h,omitempty"`
+	CacheCreationRatio1h     float64 `json:"cache_creation_ratio_1h,omitempty"`
+	CacheWriteTokens         int     `json:"cache_write_tokens,omitempty"`
+	ModelPrice               float64 `json:"model_price,omitempty"`
+	BillingMode              string  `json:"billing_mode,omitempty"`
+	BillingSource            string  `json:"billing_source,omitempty"`
+	BillingSubtype           string  `json:"billing_subtype,omitempty"`
+	SubscriptionConsumed     int     `json:"subscription_consumed,omitempty"`
+	WalletQuotaDeducted      int     `json:"wallet_quota_deducted,omitempty"`
+	WebSearchCallCount       int     `json:"web_search_call_count,omitempty"`
+	WebSearchPrice           float64 `json:"web_search_price,omitempty"`
+	FileSearchCallCount      int     `json:"file_search_call_count,omitempty"`
+	FileSearchPrice          float64 `json:"file_search_price,omitempty"`
+	AudioInputTokenCount     int     `json:"audio_input_token_count,omitempty"`
+	AudioInputPrice          float64 `json:"audio_input_price,omitempty"`
+	ImageTokens              int     `json:"image_tokens,omitempty"`
+	ImageRatio               float64 `json:"image_ratio,omitempty"`
+	ImageGenerationCallCount int     `json:"image_generation_call_count,omitempty"`
+	ImageGenerationCallPrice float64 `json:"image_generation_call_price,omitempty"`
+	ImageGenerationQuality   string  `json:"image_generation_call_quality,omitempty"`
+	ImageGenerationSize      string  `json:"image_generation_call_size,omitempty"`
+	UsageSemantic            string  `json:"usage_semantic,omitempty"`
 }
 
 type ModelGatewayObservabilityTrendPoint struct {
@@ -415,6 +521,8 @@ type ModelGatewayObservabilityRecord struct {
 	EmptyOutput                    bool                               `json:"empty_output,omitempty"`
 	ExperienceIssue                string                             `json:"experience_issue,omitempty"`
 	UsedChannels                   []string                           `json:"used_channels,omitempty"`
+	IsHealthProbe                  bool                               `json:"is_health_probe,omitempty"`
+	ProbeReason                    string                             `json:"probe_reason,omitempty"`
 	RequestMeta                    map[string]any                     `json:"request_meta,omitempty"`
 	ScoreBreakdownError            bool                               `json:"score_breakdown_error,omitempty"`
 	CandidateGroupsError           bool                               `json:"candidate_groups_error,omitempty"`
@@ -431,11 +539,14 @@ type ModelGatewayCandidateExplanation struct {
 	RuntimeKey                 ModelGatewayRuntimeKey `json:"runtime_key"`
 	Available                  bool                   `json:"available"`
 	RejectReason               string                 `json:"reject_reason,omitempty"`
+	SelectionSkipReason        string                 `json:"selection_skip_reason,omitempty"`
 	ChannelStatus              int                    `json:"channel_status,omitempty"`
 	StatusReason               string                 `json:"status_reason,omitempty"`
 	BalanceInsufficient        bool                   `json:"balance_insufficient,omitempty"`
 	ScoreTotal                 float64                `json:"score_total,omitempty"`
 	ScoreBreakdown             map[string]float64     `json:"score_breakdown,omitempty"`
+	RoutingScoreTotal          float64                `json:"routing_score_total,omitempty"`
+	RoutingScoreBreakdown      map[string]float64     `json:"routing_score_breakdown,omitempty"`
 	SuccessRate                float64                `json:"success_rate,omitempty"`
 	TTFTMs                     float64                `json:"ttft_ms,omitempty"`
 	DurationMs                 float64                `json:"duration_ms,omitempty"`
@@ -453,6 +564,7 @@ type ModelGatewayCandidateExplanation struct {
 	GroupPriorityRatio         float64                `json:"group_priority_ratio,omitempty"`
 	SuccessScore               float64                `json:"success_score,omitempty"`
 	SpeedScore                 float64                `json:"speed_score,omitempty"`
+	ScoreSpeedFactor           float64                `json:"score_speed_factor,omitempty"`
 	LoadScore                  float64                `json:"load_score,omitempty"`
 	CostScore                  float64                `json:"cost_score,omitempty"`
 	GroupScore                 float64                `json:"group_score,omitempty"`
@@ -461,6 +573,8 @@ type ModelGatewayCandidateExplanation struct {
 	ExperienceIssueRate        float64                `json:"experience_issue_rate,omitempty"`
 	StickyMatched              bool                   `json:"sticky_matched,omitempty"`
 	Selected                   bool                   `json:"selected,omitempty"`
+	ScoreSampleSource          string                 `json:"score_sample_source,omitempty"`
+	MatchedRuntimeKey          ModelGatewayRuntimeKey `json:"matched_runtime_key,omitempty"`
 }
 
 type ModelGatewayRuntimeKey struct {
@@ -599,6 +713,20 @@ func GetModelGatewayRuntimeStatus(c *gin.Context) {
 	common.ApiSuccess(c, defaultModelGatewayRuntimeStatusService().Build(query))
 }
 
+func GetModelGatewayScoreHistory(c *gin.Context) {
+	options, err := parseModelGatewayScoreHistoryOptions(c)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	response, err := BuildModelGatewayScoreHistory(options)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, response)
+}
+
 func GetModelGatewayStickyStore(c *gin.Context) {
 	limit := normalizeModelGatewayObservabilityInt(c.Query("limit"), 100, 1, 500)
 	items := modelGatewayStickyStoreItems(limit)
@@ -701,6 +829,102 @@ func parseModelGatewayRuntimeStatusQuery(c *gin.Context) (modelgatewayobservabil
 		ChannelID: channelID,
 		Limit:     normalizeModelGatewayObservabilityInt(c.Query("limit"), modelGatewayRuntimeStatusDefaultLimit, 1, modelGatewayRuntimeStatusMaxLimit),
 	}, nil
+}
+
+func parseModelGatewayScoreHistoryOptions(c *gin.Context) (modelGatewayScoreHistoryOptions, error) {
+	channelID := 0
+	if raw := strings.TrimSpace(c.Query("channel_id")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			return modelGatewayScoreHistoryOptions{}, errors.New("invalid channel_id")
+		}
+		channelID = parsed
+	}
+	if channelID <= 0 {
+		return modelGatewayScoreHistoryOptions{}, errors.New("missing channel_id")
+	}
+	return modelGatewayScoreHistoryOptions{
+		Hours:     normalizeModelGatewayObservabilityInt(c.Query("hours"), modelGatewayObservabilityDefaultHours, 1, modelGatewayObservabilityMaxHours),
+		Limit:     normalizeModelGatewayObservabilityInt(c.Query("limit"), 50, 1, 200),
+		ChannelID: channelID,
+		RuntimeKey: ModelGatewayRuntimeKey{
+			RequestedModel:        strings.TrimSpace(c.Query("requested_model")),
+			UpstreamModel:         strings.TrimSpace(c.Query("upstream_model")),
+			ChannelID:             channelID,
+			Group:                 strings.TrimSpace(c.Query("group")),
+			EndpointType:          strings.TrimSpace(c.Query("endpoint_type")),
+			CapabilityFingerprint: strings.TrimSpace(c.Query("capability_fingerprint")),
+		},
+	}, nil
+}
+
+func BuildModelGatewayScoreHistory(options modelGatewayScoreHistoryOptions) (ModelGatewayScoreHistoryResponse, error) {
+	if model.DB == nil {
+		return ModelGatewayScoreHistoryResponse{}, errors.New("database is not initialized")
+	}
+	options.Hours = clampModelGatewayObservabilityValue(options.Hours, 1, modelGatewayObservabilityMaxHours)
+	options.Limit = clampModelGatewayObservabilityValue(options.Limit, 1, 200)
+	if options.ChannelID <= 0 {
+		return ModelGatewayScoreHistoryResponse{}, errors.New("missing channel_id")
+	}
+
+	endTime := common.GetTimestamp()
+	startTime := endTime - int64(options.Hours*3600)
+	scanLimit := minModelGatewayObservabilityInt(modelGatewayObservabilityMaxScanLimit, maxModelGatewayObservabilityInt(options.Limit*40, 500))
+	records := make([]model.ModelExecutionRecord, 0)
+	base := model.DB.Model(&model.ModelExecutionRecord{}).
+		Where("created_at >= ?", startTime).
+		Where("request_meta <> ''")
+	if options.RuntimeKey.RequestedModel != "" {
+		base = base.Where("requested_model = ?", options.RuntimeKey.RequestedModel)
+	}
+	if err := base.Order("created_at desc, id desc").
+		Limit(scanLimit).
+		Find(&records).Error; err != nil {
+		return ModelGatewayScoreHistoryResponse{}, err
+	}
+
+	response := ModelGatewayScoreHistoryResponse{
+		ChannelID:   options.ChannelID,
+		RuntimeKey:  options.RuntimeKey,
+		Hours:       options.Hours,
+		Limit:       options.Limit,
+		Items:       make([]ModelGatewayScoreHistoryItem, 0, minModelGatewayObservabilityInt(options.Limit, len(records))),
+		GeneratedAt: endTime,
+	}
+	for _, record := range records {
+		requestMeta, err := parseModelGatewayRequestMeta(record.RequestMeta)
+		if err != nil {
+			continue
+		}
+		candidates := modelGatewayCandidateExplanationsFromRequestMeta(requestMeta)
+		for _, candidate := range candidates {
+			if !modelGatewayScoreHistoryCandidateMatches(candidate, options) {
+				continue
+			}
+			if candidate.ScoreTotal <= 0 {
+				continue
+			}
+			item := modelGatewayScoreHistoryItem(record, candidate)
+			response.TotalMatched++
+			if len(response.Items) >= options.Limit {
+				response.Truncated = true
+				break
+			}
+			response.Items = append(response.Items, item)
+			if response.ChannelName == "" {
+				response.ChannelName = item.ChannelName
+			}
+			if modelGatewayRuntimeKeyIsEmpty(response.RuntimeKey) {
+				response.RuntimeKey = item.RuntimeKey
+			}
+			break
+		}
+	}
+
+	applyModelGatewayScoreHistoryRuntimeCurrent(&response, options)
+	applyModelGatewayScoreHistoryDeltas(&response)
+	return response, nil
 }
 
 func modelGatewayStickyStoreItems(limit int) []ModelGatewayStickyStoreItem {
@@ -1058,6 +1282,7 @@ func defaultModelGatewayRuntimeStatusService() *modelgatewayobservability.Runtim
 		deps.SnapshotStore = runtimeDeps.SnapshotStore
 		deps.Circuit = runtimeDeps.CircuitBreaker
 	}
+	deps.ScoreWeights = modelgatewayintegration.RuntimePolicySetting().ScoreWeights
 	return modelgatewayobservability.NewRuntimeStatusService(deps)
 }
 
@@ -1176,12 +1401,218 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 			response.RecentRequests = append(response.RecentRequests, modelGatewayUserRequestRecord(userRequest))
 		}
 	}
+	attachModelGatewayUserRequestBilling(response.RecentRequests)
 
 	response.Summary = modelGatewayUserRequestSummaryFromAccumulator(response.Summary, totalAccumulator)
 	response.ByModel = finalizeModelGatewayUserRequestAggregates(modelAccumulators, options.TopN)
 	response.ByGroup = finalizeModelGatewayUserRequestAggregates(groupAccumulators, options.TopN)
 	response.Trends = finalizeModelGatewayUserRequestTrends(trendAccumulators, startTime, endTime, options.TrendBucketSeconds)
+	attachModelGatewayUserRequestDispatchRecords(response.RecentRequests)
 	return response
+}
+
+func attachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequestRecord) {
+	if len(records) == 0 || model.DB == nil {
+		return
+	}
+	requestIDs := make([]string, 0, len(records))
+	seen := make(map[string]bool, len(records))
+	for _, record := range records {
+		requestID := strings.TrimSpace(record.RequestID)
+		if requestID == "" || seen[requestID] {
+			continue
+		}
+		seen[requestID] = true
+		requestIDs = append(requestIDs, requestID)
+	}
+	if len(requestIDs) == 0 {
+		return
+	}
+
+	dispatchRecords := make([]model.ModelExecutionRecord, 0, len(requestIDs))
+	if err := model.DB.
+		Where("request_id IN ? AND (smart_handled = ? OR policy_mode <> '' OR score_total > 0 OR score_breakdown <> '' OR candidate_groups <> '')", requestIDs, true).
+		Order("created_at desc, id desc").
+		Find(&dispatchRecords).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to load model gateway user request dispatch records: %v", err))
+		return
+	}
+	if len(dispatchRecords) == 0 {
+		return
+	}
+
+	dispatchByRequestID := make(map[string]ModelGatewayObservabilityRecord, len(dispatchRecords))
+	for _, record := range dispatchRecords {
+		requestID := strings.TrimSpace(record.RequestId)
+		if requestID == "" {
+			continue
+		}
+		if _, exists := dispatchByRequestID[requestID]; exists {
+			continue
+		}
+		dispatchByRequestID[requestID] = ModelGatewayObservabilityRecordFromModelRecord(record)
+	}
+	for idx := range records {
+		dispatch, ok := dispatchByRequestID[strings.TrimSpace(records[idx].RequestID)]
+		if !ok {
+			continue
+		}
+		records[idx].DispatchRecord = &dispatch
+	}
+}
+
+func attachModelGatewayUserRequestBilling(records []ModelGatewayUserRequestRecord) {
+	if len(records) == 0 || model.LOG_DB == nil {
+		return
+	}
+	requestIDs := make([]string, 0, len(records))
+	seen := make(map[string]bool, len(records))
+	for _, record := range records {
+		requestID := strings.TrimSpace(record.RequestID)
+		if requestID == "" || seen[requestID] {
+			continue
+		}
+		seen[requestID] = true
+		requestIDs = append(requestIDs, requestID)
+	}
+	if len(requestIDs) == 0 {
+		return
+	}
+
+	logs := make([]model.Log, 0, len(requestIDs))
+	if err := model.LOG_DB.
+		Where("request_id IN ? AND type = ?", requestIDs, model.LogTypeConsume).
+		Order("created_at desc, id desc").
+		Find(&logs).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to load model gateway user request billing logs: %v", err))
+		return
+	}
+	if len(logs) == 0 {
+		return
+	}
+
+	billingByRequestID := make(map[string]*ModelGatewayUserRequestBillingInfo, len(logs))
+	for _, log := range logs {
+		requestID := strings.TrimSpace(log.RequestId)
+		if requestID == "" {
+			continue
+		}
+		if _, exists := billingByRequestID[requestID]; exists {
+			continue
+		}
+		billingByRequestID[requestID] = modelGatewayUserRequestBillingInfoFromLog(log)
+	}
+	for idx := range records {
+		records[idx].Billing = billingByRequestID[strings.TrimSpace(records[idx].RequestID)]
+	}
+}
+
+func modelGatewayUserRequestBillingInfoFromLog(log model.Log) *ModelGatewayUserRequestBillingInfo {
+	other := make(map[string]interface{})
+	if strings.TrimSpace(log.Other) != "" {
+		if err := common.UnmarshalJsonStr(log.Other, &other); err != nil {
+			other = map[string]interface{}{}
+		}
+	}
+
+	info := &ModelGatewayUserRequestBillingInfo{
+		LogID:                    log.Id,
+		CreatedAt:                log.CreatedAt,
+		Quota:                    log.Quota,
+		PromptTokens:             log.PromptTokens,
+		CompletionTokens:         log.CompletionTokens,
+		TotalTokens:              log.PromptTokens + log.CompletionTokens,
+		ChannelID:                log.ChannelId,
+		Group:                    log.Group,
+		ModelName:                log.ModelName,
+		Content:                  log.Content,
+		ModelRatio:               modelGatewayBillingFloat(other, "model_ratio"),
+		GroupRatio:               modelGatewayBillingFloat(other, "group_ratio"),
+		UserGroupRatio:           modelGatewayBillingFloat(other, "user_group_ratio"),
+		CompletionRatio:          modelGatewayBillingFloat(other, "completion_ratio"),
+		CacheTokens:              modelGatewayBillingInt(other, "cache_tokens"),
+		CacheRatio:               modelGatewayBillingFloat(other, "cache_ratio"),
+		CacheCreationTokens:      modelGatewayBillingInt(other, "cache_creation_tokens"),
+		CacheCreationRatio:       modelGatewayBillingFloat(other, "cache_creation_ratio"),
+		CacheCreationTokens5m:    modelGatewayBillingInt(other, "cache_creation_tokens_5m"),
+		CacheCreationRatio5m:     modelGatewayBillingFloat(other, "cache_creation_ratio_5m"),
+		CacheCreationTokens1h:    modelGatewayBillingInt(other, "cache_creation_tokens_1h"),
+		CacheCreationRatio1h:     modelGatewayBillingFloat(other, "cache_creation_ratio_1h"),
+		CacheWriteTokens:         modelGatewayBillingInt(other, "cache_write_tokens"),
+		ModelPrice:               modelGatewayBillingFloat(other, "model_price"),
+		BillingMode:              modelGatewayBillingString(other, "billing_mode"),
+		BillingSource:            modelGatewayBillingString(other, "billing_source"),
+		BillingSubtype:           modelGatewayBillingString(other, "billing_subtype"),
+		SubscriptionConsumed:     modelGatewayBillingInt(other, "subscription_consumed"),
+		WalletQuotaDeducted:      modelGatewayBillingInt(other, "wallet_quota_deducted"),
+		WebSearchCallCount:       modelGatewayBillingInt(other, "web_search_call_count"),
+		WebSearchPrice:           modelGatewayBillingFloat(other, "web_search_price"),
+		FileSearchCallCount:      modelGatewayBillingInt(other, "file_search_call_count"),
+		FileSearchPrice:          modelGatewayBillingFloat(other, "file_search_price"),
+		AudioInputTokenCount:     modelGatewayBillingInt(other, "audio_input_token_count"),
+		AudioInputPrice:          modelGatewayBillingFloat(other, "audio_input_price"),
+		ImageTokens:              modelGatewayBillingInt(other, "image_output"),
+		ImageRatio:               modelGatewayBillingFloat(other, "image_ratio"),
+		ImageGenerationCallCount: modelGatewayBillingInt(other, "image_generation_call_count"),
+		ImageGenerationCallPrice: modelGatewayBillingFloat(other, "image_generation_call_price"),
+		ImageGenerationQuality:   modelGatewayBillingString(other, "image_generation_call_quality"),
+		ImageGenerationSize:      modelGatewayBillingString(other, "image_generation_call_size"),
+		UsageSemantic:            modelGatewayBillingString(other, "usage_semantic"),
+	}
+	if info.CacheWriteTokens == 0 && info.CacheCreationTokens > 0 {
+		info.CacheWriteTokens = info.CacheCreationTokens
+	}
+	if info.ImageGenerationCallCount == 0 && info.ImageGenerationCallPrice > 0 {
+		info.ImageGenerationCallCount = 1
+	}
+	return info
+}
+
+func modelGatewayBillingFloat(values map[string]interface{}, key string) float64 {
+	value, ok := values[key]
+	if !ok || value == nil {
+		return 0
+	}
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case int32:
+		return float64(typed)
+	case uint:
+		return float64(typed)
+	case uint64:
+		return float64(typed)
+	case uint32:
+		return float64(typed)
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		if err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func modelGatewayBillingInt(values map[string]interface{}, key string) int {
+	value := modelGatewayBillingFloat(values, key)
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	return int(math.Round(value))
+}
+
+func modelGatewayBillingString(values map[string]interface{}, key string) string {
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(common.Interface2String(value))
 }
 
 func newModelGatewayUserRequestAccumulator(key string) *modelGatewayUserRequestAccumulator {
@@ -1580,6 +2011,8 @@ func modelGatewayObservabilityRecentRecord(record model.ModelExecutionRecord, sc
 		LearnedConcurrencyLimit:        attemptMeta.LearnedConcurrencyLimit,
 		LearnedConcurrencyLimitChanged: attemptMeta.LearnedConcurrencyLimitChanged,
 		UsedChannels:                   attemptMeta.UsedChannels,
+		IsHealthProbe:                  attemptMeta.IsHealthProbe,
+		ProbeReason:                    attemptMeta.ProbeReason,
 		RequestMeta:                    requestMeta,
 	}
 }
@@ -1675,6 +2108,8 @@ type modelGatewayObservabilityAttemptMeta struct {
 	LearnedConcurrencyLimit        int
 	LearnedConcurrencyLimitChanged bool
 	UsedChannels                   []string
+	IsHealthProbe                  bool
+	ProbeReason                    string
 }
 
 type modelGatewayProfileProxyMeta struct {
@@ -1839,6 +2274,249 @@ func modelGatewayCandidateChannelID(candidate ModelGatewayCandidateExplanation) 
 	return candidate.RuntimeKey.ChannelID
 }
 
+func modelGatewayScoreHistoryCandidateMatches(candidate ModelGatewayCandidateExplanation, options modelGatewayScoreHistoryOptions) bool {
+	if modelGatewayCandidateChannelID(candidate) != options.ChannelID {
+		return false
+	}
+	return modelGatewayRuntimeKeyMatchesFilter(candidate.RuntimeKey, options.RuntimeKey)
+}
+
+func applyModelGatewayScoreHistoryRuntimeCurrent(response *ModelGatewayScoreHistoryResponse, options modelGatewayScoreHistoryOptions) {
+	if response == nil || options.ChannelID <= 0 {
+		return
+	}
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	if runtimeDeps == nil || runtimeDeps.SnapshotStore == nil {
+		return
+	}
+	query := modelgatewayobservability.RuntimeStatusQuery{
+		Model:     options.RuntimeKey.RequestedModel,
+		Group:     options.RuntimeKey.Group,
+		ChannelID: options.ChannelID,
+		Limit:     modelGatewayRuntimeStatusMaxLimit,
+	}
+	status := defaultModelGatewayRuntimeStatusService().Build(query)
+	var best *modelgatewayobservability.RuntimeStatusItem
+	for idx := range status.Items {
+		item := status.Items[idx]
+		if !modelGatewayRuntimeStatusItemMatchesScoreHistory(item, options.RuntimeKey) {
+			continue
+		}
+		if best == nil || modelGatewayRuntimeStatusItemBetterForScoreHistory(item, *best) {
+			best = &item
+		}
+	}
+	if best == nil || best.ChannelID <= 0 || best.SampleCount <= 0 || best.ScoreTotal <= 0 {
+		return
+	}
+	runtimeItem := modelGatewayScoreHistoryItemFromRuntime(*best, response.GeneratedAt)
+	if response.ChannelName == "" {
+		response.ChannelName = runtimeItem.ChannelName
+	}
+	if modelGatewayRuntimeKeyIsEmpty(response.RuntimeKey) || modelGatewayRuntimeKeyIsEmpty(options.RuntimeKey) {
+		response.RuntimeKey = runtimeItem.RuntimeKey
+	}
+	response.Items = append([]ModelGatewayScoreHistoryItem{runtimeItem}, response.Items...)
+	if len(response.Items) > response.Limit {
+		response.Items = response.Items[:response.Limit]
+		response.Truncated = true
+	}
+}
+
+func modelGatewayRuntimeStatusItemMatchesScoreHistory(item modelgatewayobservability.RuntimeStatusItem, filter ModelGatewayRuntimeKey) bool {
+	if filter.UpstreamModel != "" && item.UpstreamModel != filter.UpstreamModel {
+		return false
+	}
+	if filter.EndpointType != "" && item.EndpointType != filter.EndpointType {
+		return false
+	}
+	if filter.CapabilityFingerprint != "" && item.CapabilityFingerprint != filter.CapabilityFingerprint {
+		return false
+	}
+	return true
+}
+
+func modelGatewayRuntimeStatusItemBetterForScoreHistory(left modelgatewayobservability.RuntimeStatusItem, right modelgatewayobservability.RuntimeStatusItem) bool {
+	if left.SampleCount != right.SampleCount {
+		return left.SampleCount > right.SampleCount
+	}
+	if left.TTFTMs != right.TTFTMs {
+		return left.TTFTMs > right.TTFTMs
+	}
+	return left.ScoreTotal < right.ScoreTotal
+}
+
+func modelGatewayScoreHistoryItemFromRuntime(item modelgatewayobservability.RuntimeStatusItem, generatedAt int64) ModelGatewayScoreHistoryItem {
+	return ModelGatewayScoreHistoryItem{
+		Source:                "runtime_current",
+		CreatedAt:             generatedAt,
+		RequestID:             "runtime-current",
+		RequestedModel:        item.RequestedModel,
+		RequestedGroup:        item.Group,
+		SelectedGroup:         item.Group,
+		ChannelID:             item.ChannelID,
+		ChannelName:           modelGatewayRuntimeChannelName(item.ChannelID),
+		RuntimeKey:            modelGatewayRuntimeKeyFromStatusItem(item),
+		Available:             item.HealthStatus != "circuit_open",
+		RejectReason:          modelGatewayRuntimeStatusRejectReason(item),
+		ScoreTotal:            roundModelGatewayObservabilityFloat(item.ScoreTotal),
+		ScoreBreakdown:        roundModelGatewayScoreMap(item.ScoreBreakdown),
+		RoutingScoreTotal:     roundModelGatewayObservabilityFloat(item.RoutingScoreTotal),
+		RoutingScoreBreakdown: roundModelGatewayScoreMap(item.RoutingScoreBreakdown),
+		SuccessScore:          roundModelGatewayObservabilityFloat(item.SuccessScore),
+		SpeedScore:            roundModelGatewayObservabilityFloat(item.SpeedScore),
+		ScoreSpeedFactor:      roundModelGatewayObservabilityFloat(item.ScoreSpeedFactor),
+		LoadScore:             roundModelGatewayObservabilityFloat(item.LoadScore),
+		CostScore:             roundModelGatewayObservabilityFloat(item.CostScore),
+		GroupScore:            roundModelGatewayObservabilityFloat(item.GroupScore),
+		ExperienceScore:       roundModelGatewayObservabilityFloat(item.ExperienceScore),
+		SampleCount:           item.SampleCount,
+		TTFTMs:                roundModelGatewayObservabilityFloat(item.TTFTMs),
+		DurationMs:            roundModelGatewayObservabilityFloat(item.DurationMs),
+		ActiveConcurrency:     item.ActiveConcurrency,
+		EffectiveConcurrency:  item.MaxConcurrency,
+	}
+}
+
+func modelGatewayRuntimeKeyFromStatusItem(item modelgatewayobservability.RuntimeStatusItem) ModelGatewayRuntimeKey {
+	return ModelGatewayRuntimeKey{
+		RequestedModel:        item.RequestedModel,
+		UpstreamModel:         item.UpstreamModel,
+		ChannelID:             item.ChannelID,
+		Group:                 item.Group,
+		EndpointType:          item.EndpointType,
+		CapabilityFingerprint: item.CapabilityFingerprint,
+	}
+}
+
+func modelGatewayRuntimeStatusRejectReason(item modelgatewayobservability.RuntimeStatusItem) string {
+	switch item.HealthStatus {
+	case "circuit_open":
+		return "circuit_open"
+	case "cooldown":
+		return "concurrency_cooldown"
+	case "failure_avoidance":
+		return "failure_avoidance"
+	case "high_pressure":
+		return "concurrency_pressure"
+	default:
+		return ""
+	}
+}
+
+func modelGatewayRuntimeChannelName(channelID int) string {
+	if channelID <= 0 {
+		return ""
+	}
+	channel, err := model.GetChannelById(channelID, false)
+	if err != nil || channel == nil {
+		return ""
+	}
+	return channel.Name
+}
+
+func modelGatewayRuntimeKeyMatchesFilter(candidate ModelGatewayRuntimeKey, filter ModelGatewayRuntimeKey) bool {
+	if filter.RequestedModel != "" && filter.RequestedModel != candidate.RequestedModel {
+		return false
+	}
+	if filter.UpstreamModel != "" && filter.UpstreamModel != candidate.UpstreamModel {
+		return false
+	}
+	if filter.Group != "" && filter.Group != candidate.Group {
+		return false
+	}
+	if filter.EndpointType != "" && filter.EndpointType != candidate.EndpointType {
+		return false
+	}
+	if filter.CapabilityFingerprint != "" && filter.CapabilityFingerprint != candidate.CapabilityFingerprint {
+		return false
+	}
+	return true
+}
+
+func modelGatewayRuntimeKeyIsEmpty(key ModelGatewayRuntimeKey) bool {
+	return key.RequestedModel == "" &&
+		key.UpstreamModel == "" &&
+		key.ChannelID == 0 &&
+		key.Group == "" &&
+		key.EndpointType == "" &&
+		key.CapabilityFingerprint == ""
+}
+
+func modelGatewayScoreHistoryItem(record model.ModelExecutionRecord, candidate ModelGatewayCandidateExplanation) ModelGatewayScoreHistoryItem {
+	return ModelGatewayScoreHistoryItem{
+		ID:                    record.Id,
+		CreatedAt:             record.CreatedAt,
+		RequestID:             record.RequestId,
+		RequestedModel:        record.RequestedModel,
+		RequestedGroup:        record.RequestedGroup,
+		SelectedGroup:         record.SelectedGroup,
+		ChannelID:             modelGatewayCandidateChannelID(candidate),
+		ChannelName:           candidate.ChannelName,
+		RuntimeKey:            candidate.RuntimeKey,
+		Selected:              candidate.Selected,
+		SelectedReason:        record.SelectedReason,
+		Available:             candidate.Available,
+		RejectReason:          candidate.RejectReason,
+		StatusReason:          candidate.StatusReason,
+		ScoreTotal:            candidate.ScoreTotal,
+		ScoreBreakdown:        candidate.ScoreBreakdown,
+		RoutingScoreTotal:     candidate.RoutingScoreTotal,
+		RoutingScoreBreakdown: candidate.RoutingScoreBreakdown,
+		SuccessScore:          candidate.SuccessScore,
+		SpeedScore:            candidate.SpeedScore,
+		ScoreSpeedFactor:      candidate.ScoreSpeedFactor,
+		LoadScore:             candidate.LoadScore,
+		CostScore:             candidate.CostScore,
+		GroupScore:            candidate.GroupScore,
+		ExperienceScore:       candidate.ExperienceScore,
+		SampleCount:           candidate.SampleCount,
+		TTFTMs:                candidate.TTFTMs,
+		DurationMs:            candidate.DurationMs,
+		ActiveConcurrency:     candidate.ActiveConcurrency,
+		EffectiveConcurrency:  candidate.EffectiveConcurrencyLimit,
+	}
+}
+
+func applyModelGatewayScoreHistoryDeltas(response *ModelGatewayScoreHistoryResponse) {
+	if response == nil || len(response.Items) == 0 {
+		return
+	}
+	for idx := range response.Items {
+		if idx+1 >= len(response.Items) {
+			continue
+		}
+		current := &response.Items[idx]
+		previous := response.Items[idx+1]
+		current.ScoreDelta = roundModelGatewayObservabilityFloat(current.ScoreTotal - previous.ScoreTotal)
+		current.ScoreBreakdownDelta = modelGatewayScoreMapDelta(current.ScoreBreakdown, previous.ScoreBreakdown)
+	}
+	response.Current = &response.Items[0]
+	if len(response.Items) > 1 {
+		response.Previous = &response.Items[1]
+		response.ScoreDelta = response.Items[0].ScoreDelta
+		response.MetricDeltas = response.Items[0].ScoreBreakdownDelta
+	}
+}
+
+func modelGatewayScoreMapDelta(current map[string]float64, previous map[string]float64) map[string]float64 {
+	if len(current) == 0 && len(previous) == 0 {
+		return nil
+	}
+	keys := make(map[string]struct{}, len(current)+len(previous))
+	for key := range current {
+		keys[key] = struct{}{}
+	}
+	for key := range previous {
+		keys[key] = struct{}{}
+	}
+	out := make(map[string]float64, len(keys))
+	for key := range keys {
+		out[key] = roundModelGatewayObservabilityFloat(current[key] - previous[key])
+	}
+	return out
+}
+
 func applyModelGatewayCandidateChannelStatus(candidate *ModelGatewayCandidateExplanation, status modelGatewayCurrentChannelStatus) {
 	if candidate == nil {
 		return
@@ -1874,6 +2552,8 @@ func modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta map[string]
 		LearnedConcurrencyLimit:        int(modelGatewayObservabilityMetaInt64(requestMeta["learned_concurrency_limit"])),
 		LearnedConcurrencyLimitChanged: modelGatewayObservabilityMetaBool(requestMeta["learned_concurrency_limit_changed"]),
 		UsedChannels:                   modelGatewayObservabilityStringSlice(requestMeta["used_channels"]),
+		IsHealthProbe:                  modelGatewayObservabilityMetaBool(requestMeta["is_health_probe"]),
+		ProbeReason:                    strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["probe_reason"])),
 	}
 }
 
@@ -1908,11 +2588,14 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			RuntimeKey:                 modelGatewayRuntimeKeyFromCore(candidate.RuntimeKey),
 			Available:                  candidate.Available,
 			RejectReason:               candidate.RejectReason,
+			SelectionSkipReason:        candidate.SelectionSkipReason,
 			ChannelStatus:              candidate.ChannelStatus,
 			StatusReason:               candidate.StatusReason,
 			BalanceInsufficient:        candidate.BalanceInsufficient,
 			ScoreTotal:                 roundModelGatewayObservabilityFloat(candidate.ScoreTotal),
 			ScoreBreakdown:             roundModelGatewayScoreMap(candidate.ScoreBreakdown),
+			RoutingScoreTotal:          roundModelGatewayObservabilityFloat(candidate.RoutingScoreTotal),
+			RoutingScoreBreakdown:      roundModelGatewayScoreMap(candidate.RoutingScoreBreakdown),
 			SuccessRate:                roundModelGatewayObservabilityFloat(candidate.SuccessRate),
 			TTFTMs:                     roundModelGatewayObservabilityFloat(candidate.TTFTMs),
 			DurationMs:                 roundModelGatewayObservabilityFloat(candidate.DurationMs),
@@ -1930,6 +2613,7 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			GroupPriorityRatio:         roundModelGatewayObservabilityFloat(candidate.GroupPriorityRatio),
 			SuccessScore:               roundModelGatewayObservabilityFloat(candidate.SuccessScore),
 			SpeedScore:                 roundModelGatewayObservabilityFloat(candidate.SpeedScore),
+			ScoreSpeedFactor:           roundModelGatewayObservabilityFloat(candidate.ScoreSpeedFactor),
 			LoadScore:                  roundModelGatewayObservabilityFloat(candidate.LoadScore),
 			CostScore:                  roundModelGatewayObservabilityFloat(candidate.CostScore),
 			GroupScore:                 roundModelGatewayObservabilityFloat(candidate.GroupScore),
@@ -1938,10 +2622,52 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			ExperienceIssueRate:        roundModelGatewayObservabilityFloat(candidate.ExperienceIssueRate),
 			StickyMatched:              candidate.StickyMatched,
 			Selected:                   candidate.Selected,
+			ScoreSampleSource:          candidate.ScoreSampleSource,
+			MatchedRuntimeKey:          modelGatewayRuntimeKeyFromCore(candidate.MatchedRuntimeKey),
 		}
+		normalizeModelGatewayCandidateExplanation(&item)
 		out = append(out, item)
 	}
 	return out
+}
+
+func normalizeModelGatewayCandidateExplanation(candidate *ModelGatewayCandidateExplanation) {
+	if candidate == nil {
+		return
+	}
+	if candidate.SampleCount > 0 || !modelGatewayCandidateUsesSyntheticScores(candidate) {
+		return
+	}
+	candidate.SuccessRate = 0
+	candidate.SuccessScore = 0
+	candidate.SpeedScore = 0
+	candidate.ScoreBreakdown = removeModelGatewaySyntheticScores(candidate.ScoreBreakdown)
+	candidate.RoutingScoreBreakdown = removeModelGatewaySyntheticScores(candidate.RoutingScoreBreakdown)
+}
+
+func modelGatewayCandidateUsesSyntheticScores(candidate *ModelGatewayCandidateExplanation) bool {
+	if candidate == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(candidate.ScoreSampleSource), "none") {
+		return true
+	}
+	if _, ok := candidate.ScoreBreakdown["explore_baseline"]; ok {
+		return true
+	}
+	if _, ok := candidate.RoutingScoreBreakdown["explore_baseline"]; ok {
+		return true
+	}
+	return false
+}
+
+func removeModelGatewaySyntheticScores(scores map[string]float64) map[string]float64 {
+	if len(scores) == 0 {
+		return scores
+	}
+	delete(scores, "success")
+	delete(scores, "speed")
+	return scores
 }
 
 func modelGatewayRejectReasonsFromRequestMeta(requestMeta map[string]any) []string {
@@ -2600,8 +3326,8 @@ func modelGatewayRuntimeRiskReason(item modelgatewayobservability.RuntimeStatusI
 		return strings.TrimSpace(item.FailureAvoidanceReason)
 	case "queued":
 		return "queue_depth"
-	case "saturated":
-		return "concurrency_saturated"
+	case "high_pressure":
+		return "concurrency_pressure"
 	case "degraded":
 		return "success_rate_below_threshold"
 	default:
@@ -2619,7 +3345,7 @@ func modelGatewayRiskStatusForRejectReason(reason string) string {
 	case strings.Contains(normalized, "avoid"):
 		return "failure_avoidance"
 	case strings.Contains(normalized, "concurrency") || strings.Contains(normalized, "queue"):
-		return "saturated"
+		return "queued"
 	case strings.Contains(normalized, "fallback"):
 		return "fallback"
 	default:
@@ -2642,7 +3368,7 @@ func modelGatewayRiskSeverityForStatus(status string) string {
 	switch status {
 	case "stream_interrupted", "failure_spike", "circuit_open":
 		return "critical"
-	case "fallback", "candidate_rejected", "queued", "saturated", "cooldown", "failure_avoidance", "degraded", "circuit_error":
+	case "fallback", "candidate_rejected", "queued", "high_pressure", "cooldown", "failure_avoidance", "degraded", "circuit_error":
 		return "warning"
 	default:
 		return "info"
@@ -3147,6 +3873,13 @@ func normalizeModelGatewayObservabilityScanLimit(value int) int {
 
 func minModelGatewayObservabilityInt(a int, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxModelGatewayObservabilityInt(a int, b int) int {
+	if a > b {
 		return a
 	}
 	return b

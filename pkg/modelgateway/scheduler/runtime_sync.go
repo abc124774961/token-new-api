@@ -169,6 +169,7 @@ func combineRuntimeSyncRedisEnabled(defaultEnabled func() bool, configured func(
 }
 
 func (s *HybridRuntimeSyncStore) PutSnapshot(snapshot core.RuntimeSnapshot) {
+	snapshot = normalizeRuntimeSnapshot(snapshot)
 	if s == nil || s.snapshots == nil || snapshot.Key.ChannelID <= 0 {
 		return
 	}
@@ -189,6 +190,7 @@ func (s *HybridRuntimeSyncStore) ListSnapshots(req *core.DispatchRequest) []core
 		if err != nil || !found {
 			continue
 		}
+		snapshot = normalizeRuntimeSnapshot(snapshot)
 		if req != nil && req.ModelName != "" && snapshot.Key.RequestedModel != "" && snapshot.Key.RequestedModel != req.ModelName {
 			continue
 		}
@@ -198,6 +200,7 @@ func (s *HybridRuntimeSyncStore) ListSnapshots(req *core.DispatchRequest) []core
 }
 
 func (s *HybridRuntimeSyncStore) PutCircuit(snapshot core.CircuitSnapshot) {
+	snapshot = normalizeCircuitSnapshot(snapshot)
 	if s == nil || s.circuits == nil || snapshot.Key.ChannelID <= 0 {
 		return
 	}
@@ -212,6 +215,7 @@ func (s *HybridRuntimeSyncStore) GetCircuit(key core.RuntimeKey) (core.CircuitSn
 	if err != nil || !found {
 		return core.CircuitSnapshot{}, false
 	}
+	snapshot = normalizeCircuitSnapshot(snapshot)
 	return snapshot, true
 }
 
@@ -229,6 +233,7 @@ func (s *HybridRuntimeSyncStore) ListCircuits() []core.CircuitSnapshot {
 		if err != nil || !found {
 			continue
 		}
+		snapshot = normalizeCircuitSnapshot(snapshot)
 		snapshots = append(snapshots, snapshot)
 	}
 	return snapshots

@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
+	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
@@ -48,6 +49,7 @@ func UpdateModelGatewayConfig(c *gin.Context) {
 	}
 	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
 	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()
+	modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()
 	common.ApiSuccess(c, buildModelGatewayConfigResponse())
 }
 
@@ -59,6 +61,7 @@ func ResetModelGatewayConfig(c *gin.Context) {
 	}
 	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
 	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()
+	modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()
 	common.ApiSuccess(c, buildModelGatewayConfigResponse())
 }
 
@@ -113,6 +116,11 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	setting.RuntimeSyncNodeID = strings.TrimSpace(setting.RuntimeSyncNodeID)
 	setting.RuntimeSyncTTLSeconds = normalizeModelGatewayConfigMin(setting.RuntimeSyncTTLSeconds, 1, defaults.RuntimeSyncTTLSeconds)
 	setting.RuntimeSyncQueueMinIntervalMs = normalizeModelGatewayConfigNonNegative(setting.RuntimeSyncQueueMinIntervalMs)
+	setting.ProbeIntervalSeconds = normalizeModelGatewayConfigMin(setting.ProbeIntervalSeconds, 10, defaults.ProbeIntervalSeconds)
+	setting.ProbeWorkerCount = normalizeModelGatewayConfigMin(setting.ProbeWorkerCount, 1, defaults.ProbeWorkerCount)
+	setting.ProbeTimeoutSeconds = normalizeModelGatewayConfigMin(setting.ProbeTimeoutSeconds, 1, defaults.ProbeTimeoutSeconds)
+	setting.ProbeMaxPerTick = normalizeModelGatewayConfigMin(setting.ProbeMaxPerTick, 1, defaults.ProbeMaxPerTick)
+	setting.ProbeMinChannelIntervalSeconds = normalizeModelGatewayConfigMin(setting.ProbeMinChannelIntervalSeconds, 10, defaults.ProbeMinChannelIntervalSeconds)
 	setting.FailureFastWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureFastWindowSeconds, 1, defaults.FailureFastWindowSeconds)
 	setting.FailureMainWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureMainWindowSeconds, 1, defaults.FailureMainWindowSeconds)
 	setting.FailureFallbackWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureFallbackWindowSeconds, 1, defaults.FailureFallbackWindowSeconds)
@@ -291,6 +299,12 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 		"runtime_sync_queue_min_interval_ms":   strconv.Itoa(setting.RuntimeSyncQueueMinIntervalMs),
 		"runtime_sync_event_push_enabled":      strconv.FormatBool(setting.RuntimeSyncEventPushEnabled),
 		"runtime_sync_event_subscribe_enabled": strconv.FormatBool(setting.RuntimeSyncEventSubscribeEnabled),
+		"probe_enabled":                        strconv.FormatBool(setting.ProbeEnabled),
+		"probe_interval_seconds":               strconv.Itoa(setting.ProbeIntervalSeconds),
+		"probe_worker_count":                   strconv.Itoa(setting.ProbeWorkerCount),
+		"probe_timeout_seconds":                strconv.Itoa(setting.ProbeTimeoutSeconds),
+		"probe_max_per_tick":                   strconv.Itoa(setting.ProbeMaxPerTick),
+		"probe_min_channel_interval_seconds":   strconv.Itoa(setting.ProbeMinChannelIntervalSeconds),
 		"success_weight":                       strconv.FormatFloat(setting.SuccessWeight, 'f', -1, 64),
 		"speed_weight":                         strconv.FormatFloat(setting.SpeedWeight, 'f', -1, 64),
 		"load_weight":                          strconv.FormatFloat(setting.LoadWeight, 'f', -1, 64),

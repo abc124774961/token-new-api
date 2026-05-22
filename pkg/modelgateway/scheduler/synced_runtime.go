@@ -25,6 +25,7 @@ func (s *SyncedRuntimeSnapshotStore) Get(key core.RuntimeKey) (core.RuntimeSnaps
 	if s == nil {
 		return core.RuntimeSnapshot{}, false
 	}
+	key = normalizeRuntimeKey(key)
 	if s.local != nil {
 		if snapshot, ok := s.local.Get(key); ok {
 			return snapshot, true
@@ -42,6 +43,7 @@ func (s *SyncedRuntimeSnapshotStore) Put(snapshot core.RuntimeSnapshot) {
 	if s == nil {
 		return
 	}
+	snapshot = normalizeRuntimeSnapshot(snapshot)
 	if s.local != nil {
 		s.local.Put(snapshot)
 	}
@@ -57,10 +59,12 @@ func (s *SyncedRuntimeSnapshotStore) ListCandidates(req *core.DispatchRequest) [
 	snapshots := make(map[core.RuntimeKey]core.RuntimeSnapshot)
 	if s.local != nil {
 		for _, snapshot := range s.local.ListCandidates(req) {
+			snapshot = normalizeRuntimeSnapshot(snapshot)
 			snapshots[snapshot.Key] = snapshot
 		}
 	}
 	for _, snapshot := range s.remoteSnapshots(req) {
+		snapshot = normalizeRuntimeSnapshot(snapshot)
 		if current, ok := snapshots[snapshot.Key]; ok && current.SampleCount >= snapshot.SampleCount {
 			continue
 		}
@@ -105,6 +109,7 @@ func (b *SyncedCircuitBreaker) Snapshot(key core.RuntimeKey) core.CircuitSnapsho
 	if b == nil {
 		return core.CircuitSnapshot{Key: key, State: core.CircuitStateClosed}
 	}
+	key = normalizeRuntimeKey(key)
 	local := core.CircuitSnapshot{Key: key, State: core.CircuitStateClosed}
 	if b.local != nil {
 		local = b.local.Snapshot(key)
@@ -123,11 +128,13 @@ func (b *SyncedCircuitBreaker) ListSnapshots() []core.CircuitSnapshot {
 	snapshots := make(map[core.RuntimeKey]core.CircuitSnapshot)
 	if b.local != nil {
 		for _, snapshot := range b.local.ListSnapshots() {
+			snapshot = normalizeCircuitSnapshot(snapshot)
 			snapshots[snapshot.Key] = snapshot
 		}
 	}
 	if b.sync != nil {
 		for _, snapshot := range b.sync.ListCircuits() {
+			snapshot = normalizeCircuitSnapshot(snapshot)
 			current, ok := snapshots[snapshot.Key]
 			if !ok {
 				snapshots[snapshot.Key] = snapshot
@@ -164,6 +171,7 @@ func (b *SyncedCircuitBreaker) Report(result core.AttemptResult) {
 	if b == nil {
 		return
 	}
+	result.Key = normalizeRuntimeKey(result.RuntimeKey())
 	if b.local != nil {
 		b.local.Report(result)
 	}
@@ -177,6 +185,7 @@ func (b *SyncedCircuitBreaker) Report(result core.AttemptResult) {
 }
 
 func (b *SyncedCircuitBreaker) remoteSnapshot(key core.RuntimeKey) (core.CircuitSnapshot, bool) {
+	key = normalizeRuntimeKey(key)
 	if b == nil || b.sync == nil || key.ChannelID <= 0 {
 		return core.CircuitSnapshot{}, false
 	}

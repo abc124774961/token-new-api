@@ -97,6 +97,7 @@ func (b *CircuitBreaker) Snapshot(key core.RuntimeKey) core.CircuitSnapshot {
 	if b == nil {
 		return core.CircuitSnapshot{Key: key, State: core.CircuitStateClosed}
 	}
+	key = normalizeRuntimeKey(key)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	state := b.stateForLocked(key)
@@ -123,6 +124,7 @@ func (b *CircuitBreaker) AllowProbe(key core.RuntimeKey) bool {
 	if b == nil {
 		return true
 	}
+	key = normalizeRuntimeKey(key)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	state := b.stateForLocked(key)
@@ -146,7 +148,7 @@ func (b *CircuitBreaker) Report(result core.AttemptResult) {
 	if b == nil || result.ChannelID <= 0 || result.ClientAborted {
 		return
 	}
-	key := result.RuntimeKey()
+	key := normalizeRuntimeKey(result.RuntimeKey())
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	state := b.stateForLocked(key)

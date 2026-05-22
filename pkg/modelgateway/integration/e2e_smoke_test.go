@@ -66,7 +66,7 @@ func TestSmallTrafficE2ESmokeSmartAutoQueueAndProxyBridge(t *testing.T) {
 		SuccessRate:        0.88,
 		TTFTMs:             2800,
 		TokensPerSecond:    18,
-		ActiveConcurrency:  0,
+		ActiveConcurrency:  4,
 		MaxConcurrency:     4,
 		QueueCapacity:      4,
 		QueueTimeoutMs:     200,
@@ -123,7 +123,7 @@ func TestSmallTrafficE2ESmokeSmartAutoQueueAndProxyBridge(t *testing.T) {
 	require.Equal(t, core.AutoModeFusion, result.Plan.AutoMode)
 	require.True(t, result.Plan.QueueEnabled)
 	require.Equal(t, 100, result.Plan.QueuePriority)
-	require.Equal(t, 50, result.Plan.QueueWaitMs)
+	require.Equal(t, 200, result.Plan.QueueWaitMs)
 	requireCandidateSelected(t, result.Plan.Candidates, channelFast.Id, true)
 	requireCandidateSelected(t, result.Plan.Candidates, channelDefault.Id, false)
 

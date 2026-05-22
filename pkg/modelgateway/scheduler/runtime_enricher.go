@@ -20,6 +20,7 @@ type RuntimeStateProvider interface {
 	ActiveConcurrency(channelID int) int
 	ConcurrencyCooldownActive(channelID int) bool
 	FailureAvoidanceActive(channelID int) bool
+	FirstBytePendingStatus(channelID int) *service.ChannelFirstBytePendingStatus
 }
 
 type ServiceRuntimeStateProvider struct{}
@@ -29,7 +30,7 @@ func NewServiceRuntimeStateProvider() *ServiceRuntimeStateProvider {
 }
 
 func (p *ServiceRuntimeStateProvider) ActiveConcurrency(channelID int) int {
-	return service.GetChannelActiveConcurrency(channelID)
+	return service.GetChannelEffectiveActiveConcurrency(channelID)
 }
 
 func (p *ServiceRuntimeStateProvider) ConcurrencyCooldownActive(channelID int) bool {
@@ -38,6 +39,10 @@ func (p *ServiceRuntimeStateProvider) ConcurrencyCooldownActive(channelID int) b
 
 func (p *ServiceRuntimeStateProvider) FailureAvoidanceActive(channelID int) bool {
 	return service.GetChannelFailureAvoidanceStatus(channelID) != nil
+}
+
+func (p *ServiceRuntimeStateProvider) FirstBytePendingStatus(channelID int) *service.ChannelFirstBytePendingStatus {
+	return service.GetChannelFirstBytePendingStatus(channelID)
 }
 
 type RuntimeSnapshotEnricher struct {
@@ -111,10 +116,29 @@ func (e *RuntimeSnapshotEnricher) Enrich(candidate core.Candidate, snapshot core
 	channelID := candidate.Channel.Id
 	setting := candidate.Channel.GetSetting()
 	snapshot = e.applyConcurrency(snapshot, channelID, setting, policy)
+	snapshot = e.applyFirstBytePending(snapshot, channelID)
 	snapshot.Cooldown = snapshot.Cooldown || e.stateProvider.ConcurrencyCooldownActive(channelID)
 	snapshot.FailureAvoidance = snapshot.FailureAvoidance || e.stateProvider.FailureAvoidanceActive(channelID)
 	snapshot = applyCostSnapshot(candidate, snapshot, policy)
 	snapshot = e.applyCircuit(snapshot, policy)
+	return snapshot
+}
+
+func (e *RuntimeSnapshotEnricher) applyFirstBytePending(snapshot core.RuntimeSnapshot, channelID int) core.RuntimeSnapshot {
+	status := e.stateProvider.FirstBytePendingStatus(channelID)
+	if status == nil {
+		return snapshot
+	}
+	if status.Pending > snapshot.FirstBytePending {
+		snapshot.FirstBytePending = status.Pending
+	}
+	if status.SlowPending > snapshot.SlowFirstBytePending {
+		snapshot.SlowFirstBytePending = status.SlowPending
+	}
+	oldestMs := float64(status.OldestMs)
+	if oldestMs > snapshot.OldestFirstByteWaitMs {
+		snapshot.OldestFirstByteWaitMs = oldestMs
+	}
 	return snapshot
 }
 
@@ -130,14 +154,25 @@ func (e *RuntimeSnapshotEnricher) applyConcurrency(snapshot core.RuntimeSnapshot
 	if snapshot.ConfiguredConcurrencyLimit <= 0 {
 		snapshot.ConfiguredConcurrencyLimit = configuredLimit
 	}
-	if snapshot.LearnedConcurrencyLimit <= 0 {
+	if snapshot.LearnedConcurrencyLimit <= 0 && setting.MaxConcurrency > 0 {
 		snapshot.LearnedConcurrencyLimit = setting.MaxConcurrency
 	}
 	effectiveLimit := setting.MaxConcurrency
-	if snapshot.LearnedConcurrencyLimit > 0 {
+	if effectiveLimit <= 0 && snapshot.LearnedConcurrencyLimit > 0 {
 		effectiveLimit = snapshot.LearnedConcurrencyLimit
 	}
-	snapshot.EffectiveConcurrencyLimit = effectiveLimit
+	if effectiveLimit <= 0 && snapshot.EffectiveConcurrencyLimit > 0 {
+		effectiveLimit = snapshot.EffectiveConcurrencyLimit
+	}
+	if effectiveLimit <= 0 && snapshot.MaxConcurrency > 0 {
+		effectiveLimit = snapshot.MaxConcurrency
+	}
+	if effectiveLimit <= 0 && configuredLimit > 0 {
+		effectiveLimit = configuredLimit
+	}
+	if effectiveLimit > 0 {
+		snapshot.EffectiveConcurrencyLimit = effectiveLimit
+	}
 	if snapshot.MaxConcurrency <= 0 && effectiveLimit > 0 {
 		snapshot.MaxConcurrency = effectiveLimit
 	}
@@ -157,15 +192,6 @@ func (e *RuntimeSnapshotEnricher) applyConcurrency(snapshot core.RuntimeSnapshot
 		}
 		if snapshot.QueueTimeoutMs <= 0 {
 			snapshot.QueueTimeoutMs = e.queueTimeoutMs
-		}
-		if snapshot.ActiveConcurrency >= snapshot.MaxConcurrency {
-			overflow := snapshot.ActiveConcurrency - snapshot.MaxConcurrency + 1
-			if overflow > snapshot.QueueDepth {
-				snapshot.QueueDepth = overflow
-			}
-			if snapshot.EstimatedQueueWaitMs <= 0 {
-				snapshot.EstimatedQueueWaitMs = estimateQueueWaitMs(snapshot)
-			}
 		}
 	}
 	return snapshot
@@ -192,19 +218,6 @@ func (e *RuntimeSnapshotEnricher) applyCircuit(snapshot core.RuntimeSnapshot, po
 		snapshot.CircuitOpen = circuit.HalfOpenProbeMax > 0 && circuit.HalfOpenProbeUsed >= circuit.HalfOpenProbeMax
 	}
 	return snapshot
-}
-
-func estimateQueueWaitMs(snapshot core.RuntimeSnapshot) float64 {
-	if snapshot.TokensPerSecond > 0 && snapshot.DurationMs > 0 {
-		return math.Max(snapshot.DurationMs/2, 1)
-	}
-	if snapshot.DurationMs > 0 {
-		return math.Max(snapshot.DurationMs/2, 1)
-	}
-	if snapshot.TTFTMs > 0 {
-		return math.Max(snapshot.TTFTMs*2, 1)
-	}
-	return 1000
 }
 
 func appendCapabilityPart(fingerprint string, part string) string {
@@ -234,10 +247,23 @@ func applyCostSnapshot(candidate core.Candidate, snapshot core.RuntimeSnapshot, 
 	} else if snapshot.CostRatio <= 0 {
 		snapshot.CostRatio = estimateCandidateCostPerMillion(candidate, policy)
 	}
-	if snapshot.GroupPriorityRatio <= 0 {
+	if ratio := candidateGroupPriorityRatio(candidate, policy); ratio > 0 {
+		snapshot.GroupPriorityRatio = ratio
+	} else if snapshot.GroupPriorityRatio <= 0 {
 		snapshot.GroupPriorityRatio = 1
 	}
 	return snapshot
+}
+
+func candidateGroupPriorityRatio(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {
+	group := strings.TrimSpace(candidate.Group)
+	if group == "" {
+		group = strings.TrimSpace(candidate.RuntimeKey.Group)
+	}
+	if group == "" || len(policy.GroupPriorityRatio) == 0 {
+		return 0
+	}
+	return policy.GroupPriorityRatio[group]
 }
 
 func estimateCandidateCostPerMillion(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {

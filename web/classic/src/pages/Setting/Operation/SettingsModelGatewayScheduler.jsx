@@ -21,7 +21,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Banner,
   Button,
+  Checkbox,
   Col,
+  Dropdown,
   Form,
   Input,
   Modal,
@@ -34,7 +36,7 @@ import {
   Tag,
   Typography,
 } from '@douyinfe/semi-ui';
-import { IconDelete, IconPlus } from '@douyinfe/semi-icons';
+import { IconChevronDown, IconDelete, IconPlus } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
 import { API, showError, showSuccess, showWarning } from '../../../helpers';
 
@@ -59,6 +61,12 @@ const STICKY_FAILURE_POLICY_OPTIONS = ['clear', 'keep'];
 const DEFAULT_SETTING = {
   enabled: false,
   runtime_sync_event_subscribe_enabled: false,
+  probe_enabled: true,
+  probe_interval_seconds: 60,
+  probe_worker_count: 2,
+  probe_timeout_seconds: 8,
+  probe_max_per_tick: 5,
+  probe_min_channel_interval_seconds: 300,
   default_mode: 'off',
   rollout_percent: 0,
   default_strategy: 'balanced',
@@ -103,6 +111,204 @@ const numberOrDefault = (value, fallback = 0) => {
 
 const makeSelectOptions = (values, labeler = (value) => value) =>
   (values || []).map((value) => ({ label: labeler(value), value }));
+
+const normalizeCandidateGroups = (value) => {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((x) => String(x).trim()).filter(Boolean))];
+  }
+  return [
+    ...new Set(
+      String(value || '')
+        .split(/[\n,]/)
+        .map((x) => x.trim())
+        .filter(Boolean),
+    ),
+  ];
+};
+
+const makeGroupOption = (group, info = {}) => ({
+  label: group,
+  value: group,
+  description: info?.desc || group,
+  ratio: info?.ratio,
+});
+
+const parseGroupOptions = (data) => {
+  if (Array.isArray(data)) {
+    return data.map((group) => makeGroupOption(group));
+  }
+  return Object.entries(data || {}).map(([group, info]) =>
+    makeGroupOption(group, info),
+  );
+};
+
+const mergeGroupOptions = (...optionGroups) => {
+  const optionMap = new Map();
+  for (const options of optionGroups) {
+    for (const option of options || []) {
+      if (!option?.value) continue;
+      optionMap.set(option.value, {
+        ...(optionMap.get(option.value) || makeGroupOption(option.value)),
+        ...option,
+      });
+    }
+  }
+  return Array.from(optionMap.values());
+};
+
+const renderGroupOptionItem = (option, t) => (
+  <div style={{ minWidth: 240 }}>
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        gap: 12,
+      }}
+    >
+      <Typography.Text strong>{option.value}</Typography.Text>
+      {option.ratio !== undefined && (
+        <Typography.Text type='tertiary' size='small'>
+          {t('分组倍率')} {option.ratio}
+        </Typography.Text>
+      )}
+    </div>
+    {option.description && option.description !== option.value && (
+      <Typography.Text type='tertiary' size='small' ellipsis>
+        {option.description}
+      </Typography.Text>
+    )}
+  </div>
+);
+
+const CandidateGroupsEditor = ({
+  value,
+  optionList,
+  placeholder,
+  onChange,
+  t,
+}) => {
+  const selectedGroups = normalizeCandidateGroups(value);
+  const selectedSet = new Set(selectedGroups);
+
+  const toggleGroup = (group) => {
+    if (!group) return;
+    if (selectedSet.has(group)) {
+      onChange(selectedGroups.filter((item) => item !== group));
+      return;
+    }
+    onChange([...selectedGroups, group]);
+  };
+
+  const removeGroup = (group, event) => {
+    event?.stopPropagation?.();
+    onChange(selectedGroups.filter((item) => item !== group));
+  };
+
+  const clearGroups = (event) => {
+    event?.stopPropagation?.();
+    onChange([]);
+  };
+
+  const dropdownContent = (
+    <div
+      style={{
+        width: 320,
+        maxHeight: 280,
+        overflowY: 'auto',
+        padding: 8,
+      }}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {optionList.length ? (
+        optionList.map((option) => {
+          const group = option.value;
+          const checked = selectedSet.has(group);
+          return (
+            <div
+              key={group}
+              role='button'
+              tabIndex={0}
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 8,
+                padding: '8px 10px',
+                borderRadius: 6,
+                cursor: 'pointer',
+              }}
+              onClick={() => toggleGroup(group)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  toggleGroup(group);
+                }
+              }}
+            >
+              <Checkbox checked={checked} style={{ pointerEvents: 'none' }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {renderGroupOptionItem(option, t)}
+              </div>
+            </div>
+          );
+        })
+      ) : (
+        <Typography.Text type='tertiary'>{t('暂无数据')}</Typography.Text>
+      )}
+    </div>
+  );
+
+  return (
+    <Dropdown trigger='click' position='bottomLeft' render={dropdownContent}>
+      <div
+        role='button'
+        tabIndex={0}
+        style={{
+          minHeight: 32,
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          padding: '4px 8px',
+          borderRadius: 6,
+          background: 'var(--semi-color-fill-0)',
+          border: '1px solid var(--semi-color-border)',
+          cursor: 'pointer',
+        }}
+      >
+        <Space wrap spacing={4} style={{ flex: 1, minWidth: 0 }}>
+          {selectedGroups.length ? (
+            selectedGroups.map((group) => (
+              <Tag
+                key={group}
+                size='small'
+                color='blue'
+                closable
+                onClose={(_, event) => removeGroup(group, event)}
+              >
+                {group}
+              </Tag>
+            ))
+          ) : (
+            <Typography.Text type='tertiary'>{placeholder}</Typography.Text>
+          )}
+        </Space>
+        <Space spacing={4}>
+          {selectedGroups.length ? (
+            <Typography.Text
+              type='tertiary'
+              onClick={clearGroups}
+              style={{ cursor: 'pointer' }}
+            >
+              x
+            </Typography.Text>
+          ) : null}
+          <IconChevronDown size='small' />
+        </Space>
+      </div>
+    </Dropdown>
+  );
+};
 
 const schedulerModeLabel = (mode, t) => {
   switch (mode) {
@@ -227,7 +433,7 @@ const policyMapToRows = (policies = {}, priorities = {}) =>
       strategy: policy?.strategy || 'balanced',
       auto_mode: policy?.auto_mode || 'auto_sequential',
       cross_group_fusion: !!policy?.cross_group_fusion,
-      candidate_groups_text: (policy?.candidate_groups || []).join('\n'),
+      candidate_groups: normalizeCandidateGroups(policy?.candidate_groups),
       cache_affinity_enabled: !!policy?.cache_affinity_enabled,
       queue_enabled: !!policy?.queue_enabled,
       queue_high_priority: !!policy?.queue_high_priority,
@@ -240,10 +446,9 @@ const rowsToPolicyMaps = (rows) => {
   for (const row of rows || []) {
     const group = (row.group || '').trim();
     if (!group) continue;
-    const candidateGroups = (row.candidate_groups_text || '')
-      .split('\n')
-      .map((x) => x.trim())
-      .filter(Boolean);
+    const candidateGroups = normalizeCandidateGroups(
+      row.candidate_groups ?? row.candidate_groups_text,
+    );
     policies[group] = {
       mode: row.mode || 'off',
       strategy: row.strategy || 'balanced',
@@ -279,6 +484,7 @@ export default function SettingsModelGatewayScheduler() {
     strategies: STRATEGY_OPTIONS,
     auto_modes: AUTO_MODE_OPTIONS,
   });
+  const [groupOptions, setGroupOptions] = useState([]);
 
   const modeOptions = useMemo(
     () =>
@@ -309,6 +515,50 @@ export default function SettingsModelGatewayScheduler() {
       })),
     [t],
   );
+  const candidateGroupOptions = useMemo(() => {
+    const optionMap = new Map();
+    for (const option of groupOptions || []) {
+      if (!option?.value) continue;
+      optionMap.set(option.value, option);
+    }
+    for (const row of policyRows || []) {
+      const group = String(row.group || '').trim();
+      if (group && !optionMap.has(group)) {
+        optionMap.set(group, makeGroupOption(group));
+      }
+      for (const group of normalizeCandidateGroups(row.candidate_groups)) {
+        if (!optionMap.has(group)) {
+          optionMap.set(group, makeGroupOption(group));
+        }
+      }
+    }
+    return Array.from(optionMap.values());
+  }, [groupOptions, policyRows]);
+
+  const loadGroups = async () => {
+    try {
+      const [adminRes, userRes] = await Promise.all([
+        API.get('/api/group/', {
+          disableDuplicate: true,
+        }),
+        API.get('/api/user/self/groups', {
+          disableDuplicate: true,
+        }).catch(() => undefined),
+      ]);
+      const { success, data, message } = adminRes.data;
+      if (!success) {
+        showWarning(t(message || '加载分组失败'));
+        return;
+      }
+      const adminOptions = parseGroupOptions(data);
+      const userOptions = userRes?.data?.success
+        ? parseGroupOptions(userRes.data.data)
+        : [];
+      setGroupOptions(mergeGroupOptions(adminOptions, userOptions));
+    } catch (error) {
+      showWarning(t('加载分组失败'));
+    }
+  };
 
   const loadConfig = async () => {
     try {
@@ -343,6 +593,7 @@ export default function SettingsModelGatewayScheduler() {
 
   useEffect(() => {
     loadConfig();
+    loadGroups();
   }, []);
 
   const updateSetting = (field, value) => {
@@ -366,7 +617,7 @@ export default function SettingsModelGatewayScheduler() {
         strategy: setting.default_strategy || 'balanced',
         auto_mode: 'auto_fusion',
         cross_group_fusion: false,
-        candidate_groups_text: '',
+        candidate_groups: [],
         cache_affinity_enabled: setting.cache_affinity_enabled,
         queue_enabled: setting.queue_enabled,
         queue_high_priority: false,
@@ -435,6 +686,17 @@ export default function SettingsModelGatewayScheduler() {
         3,
       ),
       cooldown_max_seconds: numberOrDefault(setting.cooldown_max_seconds, 600),
+      probe_interval_seconds: numberOrDefault(
+        setting.probe_interval_seconds,
+        60,
+      ),
+      probe_worker_count: numberOrDefault(setting.probe_worker_count, 2),
+      probe_timeout_seconds: numberOrDefault(setting.probe_timeout_seconds, 8),
+      probe_max_per_tick: numberOrDefault(setting.probe_max_per_tick, 5),
+      probe_min_channel_interval_seconds: numberOrDefault(
+        setting.probe_min_channel_interval_seconds,
+        300,
+      ),
       success_weight: numberOrDefault(setting.success_weight, 0.32),
       speed_weight: numberOrDefault(setting.speed_weight, 0.28),
       load_weight: numberOrDefault(setting.load_weight, 0.2),
@@ -527,10 +789,19 @@ export default function SettingsModelGatewayScheduler() {
       dataIndex: 'group',
       width: 150,
       render: (_, row) => (
-        <Input
-          value={row.group}
-          placeholder='vip'
-          onChange={(value) => updatePolicyRow(row.id, { group: value })}
+        <Select
+          value={row.group || undefined}
+          optionList={candidateGroupOptions}
+          placeholder={t('请选择分组')}
+          filter
+          allowCreate
+          showClear
+          style={{ width: '100%' }}
+          onChange={(value) =>
+            updatePolicyRow(row.id, { group: String(value || '') })
+          }
+          renderSelectedItem={(optionNode) => optionNode?.value || ''}
+          renderOptionItem={(option) => renderGroupOptionItem(option, t)}
         />
       ),
     },
@@ -585,21 +856,19 @@ export default function SettingsModelGatewayScheduler() {
     },
     {
       title: t('候选分组'),
-      dataIndex: 'candidate_groups_text',
-      width: 220,
+      dataIndex: 'candidate_groups',
+      width: 330,
       render: (_, row) => (
-        <Input
-          value={(row.candidate_groups_text || '').replace(/\n/g, ', ')}
-          placeholder='default, vip'
+        <CandidateGroupsEditor
+          value={normalizeCandidateGroups(row.candidate_groups)}
+          optionList={candidateGroupOptions}
+          placeholder={t('请选择候选分组')}
           onChange={(value) =>
             updatePolicyRow(row.id, {
-              candidate_groups_text: value
-                .split(',')
-                .map((x) => x.trim())
-                .filter(Boolean)
-                .join('\n'),
+              candidate_groups: normalizeCandidateGroups(value),
             })
           }
+          t={t}
         />
       ),
     },
@@ -1053,6 +1322,89 @@ export default function SettingsModelGatewayScheduler() {
                   updateSetting(
                     'circuit_open_seconds',
                     numberOrDefault(value, 30),
+                  )
+                }
+              />
+            </Col>
+          </Row>
+          <Banner
+            type='info'
+            fullMode={false}
+            closeIcon={null}
+            title={t('渠道健康探活')}
+            description={t(
+              '后台低频探测低分、缺样本或长时间未成功的渠道，只进入渠道健康评分和管理员消费日志，不进入用户请求视图。',
+            )}
+            style={{ marginTop: 8, marginBottom: 16 }}
+          />
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={4}>
+              <Form.Switch
+                field='probe_enabled'
+                label={t('启用健康探活')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) => updateSetting('probe_enabled', value)}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='probe_interval_seconds'
+                label={t('探活扫描间隔')}
+                min={10}
+                suffix={t('秒')}
+                onChange={(value) =>
+                  updateSetting(
+                    'probe_interval_seconds',
+                    numberOrDefault(value, 60),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='probe_worker_count'
+                label={t('探活 Worker 数')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting('probe_worker_count', numberOrDefault(value, 2))
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='probe_timeout_seconds'
+                label={t('单次探活超时')}
+                min={1}
+                suffix={t('秒')}
+                onChange={(value) =>
+                  updateSetting(
+                    'probe_timeout_seconds',
+                    numberOrDefault(value, 8),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='probe_max_per_tick'
+                label={t('每轮最多探活')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting('probe_max_per_tick', numberOrDefault(value, 5))
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='probe_min_channel_interval_seconds'
+                label={t('单渠道最小间隔')}
+                min={10}
+                suffix={t('秒')}
+                onChange={(value) =>
+                  updateSetting(
+                    'probe_min_channel_interval_seconds',
+                    numberOrDefault(value, 300),
                   )
                 }
               />

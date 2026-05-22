@@ -1,6 +1,8 @@
 package integration
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -29,6 +31,7 @@ type DefaultRuntimeObservability struct {
 	RuntimeSyncStore      scheduler.RuntimeSyncStore
 	RuntimeSyncEventStore *scheduler.RuntimeSyncEventStore
 	QueueSnapshotSyncer   *scheduler.RuntimeQueueSnapshotSyncer
+	SnapshotPersistence   *scheduler.RuntimeSnapshotPersistence
 	RuntimeSyncNodeID     string
 }
 
@@ -77,6 +80,34 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 			})
 		}
 		snapshotStore := scheduler.NewSyncedRuntimeSnapshotStore(localSnapshotStore, runtimeSyncStore)
+		snapshotPersistence := scheduler.NewRuntimeSnapshotPersistence(snapshotStore, scheduler.RuntimeSnapshotPersistenceOptions{})
+		runtimeSnapshotCtx := context.Background()
+		if snapshotPersistence.Available(runtimeSnapshotCtx) {
+			if err := snapshotPersistence.Restore(runtimeSnapshotCtx); err != nil {
+				common.SysLog(fmt.Sprintf("model gateway runtime snapshot restore failed: %v", err))
+			}
+			hasSnapshots, err := snapshotPersistence.HasPersistedSnapshots(runtimeSnapshotCtx)
+			if err != nil {
+				common.SysLog(fmt.Sprintf("model gateway runtime snapshot count failed: %v", err))
+			}
+			hasLatencySamples, sampleErr := snapshotPersistence.HasPersistedLatencySamples(runtimeSnapshotCtx)
+			if sampleErr != nil {
+				common.SysLog(fmt.Sprintf("model gateway runtime snapshot latency sample count failed: %v", sampleErr))
+			}
+			if err == nil && (!hasSnapshots || !hasLatencySamples) {
+				seeded, seedErr := SeedRuntimeSnapshotsFromExecutionRecords(runtimeSnapshotCtx, snapshotStore, defaultRuntimeSnapshotSeedLimit)
+				if seedErr != nil {
+					common.SysLog(fmt.Sprintf("model gateway runtime snapshot seed failed: %v", seedErr))
+				} else if seeded > 0 {
+					if flushErr := snapshotPersistence.Flush(runtimeSnapshotCtx); flushErr != nil {
+						common.SysLog(fmt.Sprintf("model gateway runtime snapshot seed flush failed: %v", flushErr))
+					} else {
+						common.SysLog(fmt.Sprintf("model gateway runtime snapshot seeded from %d historical attempts", seeded))
+					}
+				}
+			}
+		}
+		snapshotPersistence.Start()
 		localCircuitBreaker := scheduler.NewCircuitBreaker(scheduler.CircuitBreakerOptions{
 			FailureThreshold:   runtimePolicy.CircuitFailureThreshold,
 			MinSamples:         runtimePolicy.CircuitMinSamples,
@@ -125,10 +156,15 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 			RuntimeSyncStore:      runtimeSyncStore,
 			RuntimeSyncEventStore: runtimeSyncEventStore,
 			QueueSnapshotSyncer:   queueSnapshotSyncer,
+			SnapshotPersistence:   snapshotPersistence,
 			RuntimeSyncNodeID:     runtimeSyncNodeID,
 		}
 	})
 	return defaultWrapper
+}
+
+func WarmupDefaultRuntimeObservability() {
+	DefaultChannelSelectionWrapper()
 }
 
 func DefaultRuntimeObservabilityDeps() *DefaultRuntimeObservability {
@@ -141,6 +177,9 @@ func ResetDefaultRuntimeObservabilityDeps() {
 	defer defaultWrapperMu.Unlock()
 	if defaultRuntime != nil && defaultRuntime.RuntimeSyncEventStore != nil {
 		defaultRuntime.RuntimeSyncEventStore.Close()
+	}
+	if defaultRuntime != nil && defaultRuntime.SnapshotPersistence != nil {
+		defaultRuntime.SnapshotPersistence.Close()
 	}
 	defaultWrapperOnce = sync.Once{}
 	defaultWrapper = nil

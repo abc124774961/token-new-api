@@ -254,12 +254,19 @@ func migrateDB() error {
 	if err := migrateTokenModelLimitsToText(); err != nil {
 		return err
 	}
+	if err := migrateRuntimeSnapshotCapabilityFingerprintToText(); err != nil {
+		return err
+	}
+	if err := ensureRuntimeSnapshotLatencySamplesColumn(); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
 		&ChannelFailureEvent{},
 		&ModelExecutionRecord{},
 		&ModelGatewayUserRequestSummary{},
+		&ModelGatewayRuntimeSnapshot{},
 		&Token{},
 		&User{},
 		&PasskeyCredential{},
@@ -315,6 +322,7 @@ func migrateDBFast() error {
 		{&ChannelFailureEvent{}, "ChannelFailureEvent"},
 		{&ModelExecutionRecord{}, "ModelExecutionRecord"},
 		{&ModelGatewayUserRequestSummary{}, "ModelGatewayUserRequestSummary"},
+		{&ModelGatewayRuntimeSnapshot{}, "ModelGatewayRuntimeSnapshot"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
 		{&PasskeyCredential{}, "PasskeyCredential"},
@@ -479,6 +487,69 @@ func migrateTokenModelLimitsToText() error {
 	}
 
 	if !DB.Migrator().HasColumn(&Token{}, columnName) {
+		return nil
+	}
+
+	var alterSQL string
+	if common.UsingPostgreSQL {
+		var dataType string
+		if err := DB.Raw(`SELECT data_type FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
+			tableName, columnName).Scan(&dataType).Error; err != nil {
+			common.SysLog(fmt.Sprintf("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
+		} else if dataType == "text" {
+			return nil
+		}
+		alterSQL = fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE text`, tableName, columnName)
+	} else if common.UsingMySQL {
+		var columnType string
+		if err := DB.Raw(`SELECT COLUMN_TYPE FROM information_schema.columns
+				WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+			tableName, columnName).Scan(&columnType).Error; err != nil {
+			common.SysLog(fmt.Sprintf("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
+		} else if strings.ToLower(columnType) == "text" {
+			return nil
+		}
+		alterSQL = fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s text", tableName, columnName)
+	} else {
+		return nil
+	}
+
+	if alterSQL != "" {
+		if err := DB.Exec(alterSQL).Error; err != nil {
+			return fmt.Errorf("failed to migrate %s.%s to text: %w", tableName, columnName, err)
+		}
+		common.SysLog(fmt.Sprintf("Successfully migrated %s.%s to text", tableName, columnName))
+	}
+	return nil
+}
+
+func ensureRuntimeSnapshotLatencySamplesColumn() error {
+	if DB == nil || !DB.Migrator().HasTable(&ModelGatewayRuntimeSnapshot{}) {
+		return nil
+	}
+	if DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, "latency_samples") {
+		return nil
+	}
+	return DB.Migrator().AddColumn(&ModelGatewayRuntimeSnapshot{}, "LatencySamples")
+}
+
+// migrateRuntimeSnapshotCapabilityFingerprintToText migrates capability_fingerprint
+// from varchar to text. Provider capability fingerprints can include serialized
+// feature profiles and proxy mode metadata, so 191 chars is too small.
+func migrateRuntimeSnapshotCapabilityFingerprintToText() error {
+	if common.UsingSQLite {
+		return nil
+	}
+
+	tableName := "model_gateway_runtime_snapshots"
+	columnName := "capability_fingerprint"
+
+	if !DB.Migrator().HasTable(tableName) {
+		return nil
+	}
+
+	if !DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, columnName) {
 		return nil
 	}
 

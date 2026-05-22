@@ -25,6 +25,9 @@ import (
 
 func TestChannelSelectionWrapperActiveUsesSmartPlan(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
 	h := testkit.NewDispatchTestHarness(core.SchedulerSettings{
 		Enabled:         true,
 		DefaultMode:     core.ModeOff,
@@ -55,8 +58,186 @@ func TestChannelSelectionWrapperActiveUsesSmartPlan(t *testing.T) {
 	require.Zero(t, h.Legacy.Calls)
 }
 
+func TestChannelSelectionWrapperSmartPlanReservesRoutingSlotBeforeRelayAcquire(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
+	h := testkit.NewDispatchTestHarness(core.SchedulerSettings{
+		Enabled:         true,
+		DefaultMode:     core.ModeOff,
+		DefaultStrategy: core.StrategyBalanced,
+		GroupPolicies: map[string]core.GroupPolicySetting{
+			"default": {Mode: core.ModeActive, Strategy: core.StrategyBalanced, AutoMode: core.AutoModeSequential},
+		},
+	})
+	h.Selector.Plan = &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 101, Name: "reserved-smart", Setting: common.GetPointer(`{"max_concurrency":1}`)},
+		SelectedGroup: "default",
+		Candidates: []core.CandidateExplanation{
+			{ChannelID: 101, Selected: true, SampleCount: 12},
+		},
+	}
+	h.Selector.Handled = true
+	wrapper := integration.NewChannelSelectionWrapper(h.Facade, h.Legacy)
+
+	firstCtx, _ := gin.CreateTestContext(nil)
+	first, apiErr := wrapper.Select(firstCtx, &service.RetryParam{
+		Ctx:          firstCtx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-4.1",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+	require.Nil(t, apiErr)
+	require.NotNil(t, first)
+	require.Equal(t, 1, service.GetChannelSelectionReservations(101))
+	service.ReleaseChannelSelectionReservations(firstCtx)
+	require.Equal(t, 0, service.GetChannelSelectionReservations(101))
+
+	secondCtx, _ := gin.CreateTestContext(nil)
+	second, apiErr := wrapper.SelectSmartOnly(secondCtx, &service.RetryParam{
+		Ctx:          secondCtx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-4.1",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+	require.Nil(t, apiErr)
+	require.NotNil(t, second)
+	require.Equal(t, 101, second.Channel.Id)
+	require.Equal(t, 1, service.GetChannelSelectionReservations(101))
+	service.ReleaseChannelSelectionReservations(secondCtx)
+	require.Equal(t, 0, service.GetChannelSelectionReservations(101))
+}
+
+func TestChannelSelectionWrapperDoesNotColdStartProbeCap(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
+	h := testkit.NewDispatchTestHarness(core.SchedulerSettings{
+		Enabled:         true,
+		DefaultMode:     core.ModeOff,
+		DefaultStrategy: core.StrategyBalanced,
+		GroupPolicies: map[string]core.GroupPolicySetting{
+			"default": {Mode: core.ModeActive, Strategy: core.StrategyBalanced, AutoMode: core.AutoModeSequential},
+		},
+	})
+	h.Selector.Plan = &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 102, Name: "cold-smart", Setting: common.GetPointer(`{"max_concurrency":20}`)},
+		SelectedGroup: "default",
+		Candidates: []core.CandidateExplanation{
+			{ChannelID: 102, Selected: true, Available: true, SampleCount: 0},
+			{ChannelID: 105, Available: true, SampleCount: 0},
+		},
+	}
+	h.Selector.Handled = true
+	wrapper := integration.NewChannelSelectionWrapper(h.Facade, h.Legacy)
+
+	for i := 0; i < 6; i++ {
+		ctx, _ := gin.CreateTestContext(nil)
+		result, apiErr := wrapper.SelectSmartOnly(ctx, &service.RetryParam{
+			Ctx:          ctx,
+			TokenGroup:   "default",
+			ModelName:    "gpt-4.1",
+			EndpointType: constant.EndpointTypeOpenAI,
+		})
+		require.Nil(t, apiErr)
+		require.NotNil(t, result)
+		require.Equal(t, 102, result.Channel.Id)
+		service.ReleaseChannelSelectionReservations(ctx)
+	}
+	require.Equal(t, 0, service.GetChannelSelectionReservations(102))
+}
+
+func TestChannelSelectionWrapperDoesNotColdStartCapWhenNoConfiguredLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
+	h := testkit.NewDispatchTestHarness(core.SchedulerSettings{
+		Enabled:         true,
+		DefaultMode:     core.ModeOff,
+		DefaultStrategy: core.StrategyBalanced,
+		GroupPolicies: map[string]core.GroupPolicySetting{
+			"default": {Mode: core.ModeActive, Strategy: core.StrategyBalanced, AutoMode: core.AutoModeSequential},
+		},
+	})
+	h.Selector.Plan = &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 106, Name: "uncapped-cold", Setting: common.GetPointer(`{"max_concurrency_ceiling":46}`)},
+		SelectedGroup: "default",
+		Candidates: []core.CandidateExplanation{
+			{ChannelID: 106, Selected: true, Available: true, SampleCount: 0},
+			{ChannelID: 107, Available: true, SampleCount: 0},
+		},
+	}
+	h.Selector.Handled = true
+	wrapper := integration.NewChannelSelectionWrapper(h.Facade, h.Legacy)
+
+	for i := 0; i < 6; i++ {
+		ctx, _ := gin.CreateTestContext(nil)
+		result, apiErr := wrapper.SelectSmartOnly(ctx, &service.RetryParam{
+			Ctx:          ctx,
+			TokenGroup:   "default",
+			ModelName:    "gpt-4.1",
+			EndpointType: constant.EndpointTypeOpenAI,
+		})
+		require.Nil(t, apiErr)
+		require.NotNil(t, result)
+		require.Equal(t, 106, result.Channel.Id)
+		service.ReleaseChannelSelectionReservations(ctx)
+	}
+	require.Equal(t, 0, service.GetChannelSelectionReservations(106))
+}
+
+func TestChannelSelectionWrapperDoesNotRetryWhenSelectedPlanWouldHaveBeenBurstFull(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
+	facade := &sequenceFacade{
+		plans: []*core.DispatchPlan{
+			{
+				Channel:       &model.Channel{Id: 103, Name: "slow-busy", Setting: common.GetPointer(`{"max_concurrency":50}`)},
+				SelectedGroup: "default",
+				Candidates: []core.CandidateExplanation{
+					{ChannelID: 103, Selected: true, Available: true, SampleCount: 20, SuccessRate: 0.90, TTFTMs: 13000},
+					{ChannelID: 104, Available: true, SampleCount: 20, SuccessRate: 0.99, TTFTMs: 1000},
+				},
+			},
+			{
+				Channel:       &model.Channel{Id: 104, Name: "fast-peer", Setting: common.GetPointer(`{"max_concurrency":50}`)},
+				SelectedGroup: "default",
+				Candidates: []core.CandidateExplanation{
+					{ChannelID: 103, Available: true, SampleCount: 20, SuccessRate: 0.90, TTFTMs: 13000},
+					{ChannelID: 104, Selected: true, Available: true, SampleCount: 20, SuccessRate: 0.99, TTFTMs: 1000},
+				},
+			},
+		},
+	}
+	wrapper := integration.NewChannelSelectionWrapper(facade, &testkit.FakeLegacyChannelSelector{})
+
+	ctx, _ := gin.CreateTestContext(nil)
+	result, apiErr := wrapper.SelectSmartOnly(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-4.1",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
+	require.Equal(t, 103, result.Channel.Id)
+	require.Equal(t, 1, facade.SelectCalls)
+	require.Equal(t, 1, service.GetChannelSelectionReservations(103))
+	service.ReleaseChannelSelectionReservations(ctx)
+	require.Equal(t, 0, service.GetChannelSelectionReservations(103))
+}
+
 func TestSelectorRetainsSmartStickyContextOnlyWhenHandled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
 	h := testkit.NewDispatchTestHarness(core.SchedulerSettings{
 		Enabled:         true,
 		DefaultMode:     core.ModeOff,
@@ -439,3 +620,25 @@ func (f *shadowInspectFacade) Shadow(c *gin.Context, param *service.RetryParam, 
 }
 
 func (f *shadowInspectFacade) Report(c *gin.Context, result *core.AttemptResult) {}
+
+type sequenceFacade struct {
+	plans       []*core.DispatchPlan
+	SelectCalls int
+}
+
+func (f *sequenceFacade) Select(c *gin.Context, param *service.RetryParam) (*core.DispatchPlan, bool, *types.NewAPIError) {
+	f.SelectCalls++
+	if len(f.plans) == 0 {
+		return nil, false, nil
+	}
+	plan := f.plans[0]
+	if len(f.plans) > 1 {
+		f.plans = f.plans[1:]
+	}
+	return plan, true, nil
+}
+
+func (f *sequenceFacade) Shadow(c *gin.Context, param *service.RetryParam, actual *model.Channel, actualGroup string) {
+}
+
+func (f *sequenceFacade) Report(c *gin.Context, result *core.AttemptResult) {}

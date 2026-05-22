@@ -17,6 +17,9 @@ func NewDispatchRequestFromGin(c *gin.Context, param *service.RetryParam) Dispat
 		req.Retry = param.GetRetry()
 		req.ExtraRetries = param.GetExtraRetries()
 	}
+	if req.EndpointType == "" {
+		req.EndpointType = constant.EndpointTypeOpenAI
+	}
 	if c == nil {
 		return req
 	}

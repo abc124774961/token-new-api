@@ -724,6 +724,7 @@ func TestProcessChannelErrorUpdatesBalanceReasonWhenAlreadyAutoDisabled(t *testi
 	common.AutomaticDisableChannelEnabled = true
 	t.Cleanup(func() {
 		common.AutomaticDisableChannelEnabled = originalAutomaticDisable
+		service.ClearChannelConcurrencyForTest()
 	})
 	autoBan := 1
 	channel := model.Channel{
@@ -744,13 +745,40 @@ func TestProcessChannelErrorUpdatesBalanceReasonWhenAlreadyAutoDisabled(t *testi
 		types.NewOpenAIError(errors.New("insufficient balance"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests),
 		true,
 	)
-	require.Eventually(t, func() bool {
-		updated, err := model.GetChannelById(channel.Id, true)
-		return err == nil && service.IsBalanceInsufficientPausedChannel(updated)
-	}, time.Second, 10*time.Millisecond)
 
 	updated, err := model.GetChannelById(channel.Id, true)
 	require.NoError(t, err)
 	require.True(t, service.IsBalanceInsufficientPausedChannel(updated))
 	require.Equal(t, service.ChannelStatusReasonBalanceInsufficient, service.ChannelStatusReason(updated))
+}
+
+func TestProcessChannelErrorMarksBalanceInsufficientSynchronously(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
+	common.AutomaticDisableChannelEnabled = true
+	t.Cleanup(func() {
+		common.AutomaticDisableChannelEnabled = originalAutomaticDisable
+		service.ClearChannelConcurrencyForTest()
+	})
+	autoBan := 1
+	channel := model.Channel{
+		Id:      910,
+		Name:    "balance-fast-skip",
+		Type:    constant.ChannelTypeOpenAI,
+		Status:  common.ChannelStatusEnabled,
+		AutoBan: &autoBan,
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	processChannelError(
+		newRelayRetryContext(),
+		*types.NewChannelError(channel.Id, channel.Type, channel.Name, false, "", true),
+		types.NewOpenAIError(errors.New("insufficient account balance"), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden),
+		false,
+	)
+
+	require.True(t, service.IsRuntimeBalanceInsufficientChannelID(channel.Id))
+	updated, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	require.True(t, service.IsBalanceInsufficientPausedChannel(updated))
 }

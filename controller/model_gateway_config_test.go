@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -42,6 +43,7 @@ func setupModelGatewayConfigControllerTestDB(t *testing.T) *gorm.DB {
 	common.OptionMap = map[string]string{}
 	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.DefaultSetting())
 	t.Cleanup(func() {
+		modelgatewayprobe.StopDefaultProbeScheduler()
 		restoreSetting()
 		model.DB = oldDB
 		common.OptionMap = oldOptionMap
@@ -75,6 +77,12 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	setting.RuntimeSyncQueueMinIntervalMs = 250
 	setting.RuntimeSyncEventPushEnabled = true
 	setting.RuntimeSyncEventSubscribeEnabled = true
+	setting.ProbeEnabled = true
+	setting.ProbeIntervalSeconds = 45
+	setting.ProbeWorkerCount = 4
+	setting.ProbeTimeoutSeconds = 6
+	setting.ProbeMaxPerTick = 7
+	setting.ProbeMinChannelIntervalSeconds = 180
 	setting.StickySaveOnSelect = true
 	setting.StickyRenewOnSuccess = false
 	setting.StickyFailurePolicy = scheduler_setting.StickyFailurePolicyKeep
@@ -133,6 +141,12 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.Equal(t, 250, payload.Data.Setting.RuntimeSyncQueueMinIntervalMs)
 	require.True(t, payload.Data.Setting.RuntimeSyncEventPushEnabled)
 	require.True(t, payload.Data.Setting.RuntimeSyncEventSubscribeEnabled)
+	require.True(t, payload.Data.Setting.ProbeEnabled)
+	require.Equal(t, 45, payload.Data.Setting.ProbeIntervalSeconds)
+	require.Equal(t, 4, payload.Data.Setting.ProbeWorkerCount)
+	require.Equal(t, 6, payload.Data.Setting.ProbeTimeoutSeconds)
+	require.Equal(t, 7, payload.Data.Setting.ProbeMaxPerTick)
+	require.Equal(t, 180, payload.Data.Setting.ProbeMinChannelIntervalSeconds)
 	require.True(t, payload.Data.Setting.StickySaveOnSelect)
 	require.False(t, payload.Data.Setting.StickyRenewOnSuccess)
 	require.Equal(t, scheduler_setting.StickyFailurePolicyKeep, payload.Data.Setting.StickyFailurePolicy)
@@ -171,6 +185,12 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	var runtimeSyncEventSubscribeOption model.Option
 	require.NoError(t, db.First(&runtimeSyncEventSubscribeOption, "key = ?", "scheduler_setting.runtime_sync_event_subscribe_enabled").Error)
 	require.Equal(t, "true", runtimeSyncEventSubscribeOption.Value)
+	var probeMaxPerTickOption model.Option
+	require.NoError(t, db.First(&probeMaxPerTickOption, "key = ?", "scheduler_setting.probe_max_per_tick").Error)
+	require.Equal(t, "7", probeMaxPerTickOption.Value)
+	var probeMinIntervalOption model.Option
+	require.NoError(t, db.First(&probeMinIntervalOption, "key = ?", "scheduler_setting.probe_min_channel_interval_seconds").Error)
+	require.Equal(t, "180", probeMinIntervalOption.Value)
 	var circuitErrorPolicyOption model.Option
 	require.NoError(t, db.First(&circuitErrorPolicyOption, "key = ?", "scheduler_setting.circuit_error_policies").Error)
 	require.Contains(t, circuitErrorPolicyOption.Value, `"rate_limit"`)

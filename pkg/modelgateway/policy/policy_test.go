@@ -23,6 +23,36 @@ func TestGroupPolicyResolverDefaultsToOffWhenDisabled(t *testing.T) {
 	require.Equal(t, core.AutoModeSequential, p.AutoMode)
 }
 
+func TestGroupPolicyResolverCarriesGroupPriorityRatio(t *testing.T) {
+	resolver := policy.NewDefaultGroupPolicyResolver(testkit.StaticSettingsProvider{
+		Settings: core.SchedulerSettings{
+			Enabled:         true,
+			DefaultMode:     core.ModeActive,
+			DefaultStrategy: core.StrategyCostFirst,
+			GroupPriorityRatio: map[string]float64{
+				"codex-plus": 1.4,
+				"codex-pro":  0.7,
+			},
+			GroupPolicies: map[string]core.GroupPolicySetting{
+				"auto": {
+					Mode:             core.ModeActive,
+					Strategy:         core.StrategyCostFirst,
+					AutoMode:         core.AutoModeFusion,
+					CandidateGroups:  []string{"codex-plus", "codex-pro"},
+					CrossGroupFusion: true,
+				},
+			},
+		},
+	})
+
+	p := resolver.Resolve(nil, &core.DispatchRequest{RequestedGroup: "auto", UserGroup: "vip"})
+
+	require.Equal(t, core.ModeActive, p.Mode)
+	require.Equal(t, core.StrategyCostFirst, p.Strategy)
+	require.Equal(t, 1.4, p.GroupPriorityRatio["codex-plus"])
+	require.Equal(t, 0.7, p.GroupPriorityRatio["codex-pro"])
+}
+
 func TestAutoGroupResolverSequentialUsesUserAutoGroups(t *testing.T) {
 	groupService := &testkit.FakeGroupPermissionService{
 		UsableGroups: map[string]map[string]string{

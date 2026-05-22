@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/service"
 )
 
 const (
@@ -16,6 +17,7 @@ const (
 	defaultHealthScore       = 0.55
 	healthEWMAAlpha          = 0.20
 	healthSlowTTFTAlpha      = 0.45
+	performanceClearTTFTMs   = 5000
 )
 
 type RuntimeHealthMonitor struct {
@@ -26,14 +28,16 @@ type RuntimeHealthMonitor struct {
 }
 
 type healthStats struct {
-	successCount int
-	sampleCount  int
-	durationMs   float64
-	ttftMs       float64
-	successScore float64
-	speedScore   float64
-	emptyRate    float64
-	issueRate    float64
+	successCount   int
+	sampleCount    int
+	durationMs     float64
+	ttftMs         float64
+	speedSamples   int
+	successScore   float64
+	speedScore     float64
+	emptyRate      float64
+	issueRate      float64
+	latencySamples []core.RuntimeLatencySample
 }
 
 func NewRuntimeHealthMonitor(store core.RuntimeSnapshotStore, breaker core.CircuitBreaker) *RuntimeHealthMonitor {
@@ -56,18 +60,27 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	if m.breaker != nil {
 		m.breaker.Report(result)
 	}
+	if result.ConcurrencyLimited {
+		return
+	}
+	m.clearFailureAvoidanceAfterFastSuccess(result)
 	if m.store == nil {
 		return
 	}
-	key := result.RuntimeKey()
+	key := normalizeRuntimeKey(result.RuntimeKey())
 	if key.ChannelID <= 0 {
 		return
 	}
 	m.mu.Lock()
 	stats := m.stats[key]
+	snapshot, ok := m.store.Get(key)
 	if stats == nil {
-		stats = &healthStats{}
+		stats = healthStatsFromSnapshot(snapshot, ok)
 		m.stats[key] = stats
+	}
+	observedAt := result.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now()
 	}
 	stats.sampleCount++
 	if result.Success {
@@ -75,15 +88,17 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	}
 	resultSuccess := result.Success && !result.EmptyOutput && strings.TrimSpace(result.ExperienceIssue) == ""
 	stats.successScore = ewma(stats.successScore, boolScore(resultSuccess, 0.05))
-	stats.durationMs = ewma(stats.durationMs, durationMs(result.Duration, defaultHealthDurationMs))
-	if result.TTFT > 0 {
-		nextTTFTMs := durationMs(result.TTFT, 0)
-		stats.ttftMs = ewmaWithAlpha(stats.ttftMs, nextTTFTMs, ttftEWMAAlpha(stats.ttftMs, nextTTFTMs))
+	if result.Success {
+		if sample, valid := runtimeLatencySampleFromAttempt(result, observedAt); valid {
+			stats.latencySamples = appendRuntimeLatencySample(stats.latencySamples, sample)
+			stats.durationMs, stats.ttftMs, stats.speedScore = runtimeLatencyStats(stats.latencySamples)
+			stats.speedSamples = len(stats.latencySamples)
+		}
+	} else if stats.durationMs <= 0 {
+		stats.durationMs = durationMs(result.Duration, 0)
 	}
-	stats.speedScore = ewmaWithAlpha(stats.speedScore, attemptSpeedScore(result), ttftEWMAAlpha(stats.ttftMs, durationMs(result.TTFT, 0)))
 	stats.emptyRate = ewma(stats.emptyRate, boolScore(result.EmptyOutput, 0))
 	stats.issueRate = ewma(stats.issueRate, boolScore(strings.TrimSpace(result.ExperienceIssue) != "", 0))
-	snapshot, ok := m.store.Get(key)
 	if !ok {
 		snapshot = core.RuntimeSnapshot{
 			Key:                key,
@@ -93,6 +108,7 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	}
 	snapshot.Key = key
 	snapshot.SampleCount = stats.sampleCount
+	snapshot.RecentLatencySamples = append([]core.RuntimeLatencySample(nil), stats.latencySamples...)
 	snapshot.SuccessRate = successRate(stats)
 	snapshot.SuccessScore = stats.successScore
 	snapshot.SpeedScore = stats.speedScore
@@ -110,6 +126,48 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	}
 	m.store.Put(snapshot)
 	m.mu.Unlock()
+}
+
+func healthStatsFromSnapshot(snapshot core.RuntimeSnapshot, ok bool) *healthStats {
+	stats := &healthStats{}
+	if !ok || snapshot.SampleCount <= 0 {
+		return stats
+	}
+	stats.sampleCount = snapshot.SampleCount
+	stats.successCount = int(math.Round(snapshot.SuccessRate * float64(snapshot.SampleCount)))
+	if stats.successCount < 0 {
+		stats.successCount = 0
+	}
+	if stats.successCount > stats.sampleCount {
+		stats.successCount = stats.sampleCount
+	}
+	stats.durationMs = snapshot.DurationMs
+	stats.ttftMs = snapshot.TTFTMs
+	stats.latencySamples = normalizeRuntimeLatencySamples(snapshot.RecentLatencySamples)
+	if len(stats.latencySamples) > 0 {
+		stats.durationMs, stats.ttftMs, stats.speedScore = runtimeLatencyStats(stats.latencySamples)
+		stats.speedSamples = len(stats.latencySamples)
+	} else {
+		stats.durationMs = 0
+		stats.ttftMs = 0
+	}
+	stats.successScore = snapshot.SuccessScore
+	if len(stats.latencySamples) == 0 {
+		stats.speedScore = 0
+	}
+	stats.emptyRate = snapshot.EmptyOutputRate
+	stats.issueRate = snapshot.ExperienceIssueRate
+	return stats
+}
+
+func (m *RuntimeHealthMonitor) clearFailureAvoidanceAfterFastSuccess(result core.AttemptResult) {
+	if result.ChannelID <= 0 || result.ConcurrencyLimited || result.ClientAborted {
+		return
+	}
+	ttftMs := result.TTFT.Milliseconds()
+	if result.Success && ttftMs > 0 && ttftMs <= performanceClearTTFTMs {
+		service.ClearChannelFailureAvoidance(result.ChannelID)
+	}
 }
 
 func ewma(current float64, next float64) float64 {
@@ -158,6 +216,12 @@ func boolScore(value bool, falseScore float64) float64 {
 }
 
 func attemptSpeedScore(result core.AttemptResult) float64 {
+	if sample, ok := runtimeLatencySampleFromAttempt(result, time.Time{}); ok {
+		_, _, speedScore := runtimeLatencyStats([]core.RuntimeLatencySample{sample})
+		if speedScore > 0 {
+			return speedScore
+		}
+	}
 	if result.TTFT > 0 {
 		ttftMs := durationMs(result.TTFT, 0)
 		return inverseLatencyScore(ttftMs, 800, 20000)

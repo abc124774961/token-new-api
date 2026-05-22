@@ -35,7 +35,11 @@ func TestBalanceInsufficientPausedChannelDetection(t *testing.T) {
 }
 
 func TestKnownBalanceInsufficientChannelDetectionUsesConfirmedBalance(t *testing.T) {
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
 	channel := &model.Channel{
+		Id:                 411,
 		Status:             common.ChannelStatusEnabled,
 		Balance:            0,
 		BalanceUpdatedTime: common.GetTimestamp(),
@@ -52,6 +56,12 @@ func TestKnownBalanceInsufficientChannelDetectionUsesConfirmedBalance(t *testing
 	channel.Balance = 0
 	channel.BalanceUpdatedTime = 0
 	require.False(t, IsConfirmedBalanceInsufficientChannel(channel))
+	require.False(t, IsKnownBalanceInsufficientChannel(channel))
+
+	MarkChannelBalanceInsufficient(channel.Id)
+	require.True(t, IsKnownBalanceInsufficientChannel(channel))
+	require.Equal(t, ChannelStatusReasonBalanceInsufficient, ChannelStatusReason(channel))
+	ClearChannelBalanceInsufficient(channel.Id)
 	require.False(t, IsKnownBalanceInsufficientChannel(channel))
 }
 
@@ -88,6 +98,16 @@ func TestBalanceInsufficientErrorUsesBalancePauseInsteadOfHealthDisable(t *testi
 	require.True(t, IsBalanceInsufficientError(err))
 	require.True(t, ShouldDisableChannelForBalance(err))
 	require.False(t, ShouldDisableChannel(err))
+}
+
+func TestEnglishAccountBalanceMessageIsBalanceInsufficient(t *testing.T) {
+	err := types.NewOpenAIError(
+		errors.New(`{"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}`),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusForbidden,
+	)
+
+	require.True(t, IsBalanceInsufficientError(err))
 }
 
 func TestInsufficientUserQuotaOnlyPausesChannelWhenRetryable(t *testing.T) {

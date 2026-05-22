@@ -21,7 +21,7 @@ import (
 
 func TestSelectorRetainsHealthyStickyRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx, _ := gin.CreateTestContext(nil)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-retain-healthy"}`, nil)
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, 42)
 	req := core.DispatchRequest{
 		RequestedGroup: "default",
@@ -93,7 +93,7 @@ func TestSelectorRetainsHealthyStickyRoute(t *testing.T) {
 
 func TestSelectorBreaksStickyRouteOnCooldown(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx, _ := gin.CreateTestContext(nil)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-break-cooldown"}`, nil)
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, 43)
 	req := core.DispatchRequest{
 		RequestedGroup: "default",
@@ -157,9 +157,9 @@ func TestSelectorBreaksStickyRouteOnCooldown(t *testing.T) {
 	require.Equal(t, "weighted_score_sticky_broken", plan.SelectedReason)
 }
 
-func TestSelectorBreaksStickyRouteWhenQueueCannotWait(t *testing.T) {
+func TestSelectorDoesNotBreakStickyRouteBelowConcurrencyLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx, _ := gin.CreateTestContext(nil)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-local-pressure"}`, nil)
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, 44)
 	req := core.DispatchRequest{
 		RequestedGroup: "default",
@@ -180,7 +180,7 @@ func TestSelectorBreaksStickyRouteWhenQueueCannotWait(t *testing.T) {
 		SuccessRate:        1,
 		TTFTMs:             300,
 		TokensPerSecond:    80,
-		ActiveConcurrency:  2,
+		ActiveConcurrency:  1,
 		MaxConcurrency:     2,
 		CostRatio:          1,
 		GroupPriorityRatio: 1,
@@ -221,14 +221,84 @@ func TestSelectorBreaksStickyRouteWhenQueueCannotWait(t *testing.T) {
 	require.Nil(t, apiErr)
 	require.True(t, handled)
 	require.NotNil(t, plan)
+	require.Equal(t, 1, plan.Channel.Id)
+	require.True(t, plan.StickyRetained)
+	require.Empty(t, plan.StickyBreak)
+}
+
+func TestSelectorBreaksSaturatedStickyRouteWhenPeerHasCapacity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-saturated-sticky"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 47)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+	}
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{}, nil)
+	sticky.Save(ctx, &req, &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 1},
+		SelectedGroup: "default",
+	})
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	stickyKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 1, Group: "default"}
+	peerKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 2, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                stickyKey,
+		SuccessRate:        1,
+		TTFTMs:             300,
+		TokensPerSecond:    80,
+		ActiveConcurrency:  2,
+		MaxConcurrency:     2,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                peerKey,
+		SuccessRate:        0.75,
+		TTFTMs:             900,
+		TokensPerSecond:    30,
+		ActiveConcurrency:  0,
+		MaxConcurrency:     2,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 1}, Group: "default", RuntimeKey: stickyKey},
+			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: peerKey},
+		}),
+		store,
+		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+	).WithStickyRouter(sticky)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+		QueueEnabled:    true,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
 	require.Equal(t, 2, plan.Channel.Id)
 	require.False(t, plan.StickyRetained)
-	require.Equal(t, "concurrency_full", plan.StickyBreak)
+	require.Equal(t, "concurrency_saturated", plan.StickyBreak)
+	require.Equal(t, "weighted_score_sticky_broken", plan.SelectedReason)
 }
 
 func TestStickyRouterSharesStoreAcrossInstances(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx, _ := gin.CreateTestContext(nil)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-shared-store"}`, nil)
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, 45)
 	req := core.DispatchRequest{
 		RequestedGroup: "default",
@@ -254,6 +324,28 @@ func TestStickyRouterSharesStoreAcrossInstances(t *testing.T) {
 	require.Equal(t, "default", route.Group)
 	require.Equal(t, "user_sticky", route.Source)
 	require.NotEmpty(t, route.KeyFingerprint)
+}
+
+func TestStickyRouterRequiresExplicitSessionSignal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 46)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	router := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{
+		Store: scheduler.NewMemoryStickyStore(8),
+	}, nil)
+
+	router.Save(ctx, &req, &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 8},
+		SelectedGroup: "default",
+	})
+	_, ok := router.Route(ctx, &req, core.GroupSmartPolicy{RequestedGroup: "default"})
+	require.False(t, ok)
 }
 
 func TestStickyRouterUsesSessionAndConversationSignals(t *testing.T) {

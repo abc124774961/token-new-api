@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/service"
@@ -121,6 +122,7 @@ func (s *FakeRuntimeSnapshotStore) Get(key core.RuntimeKey) (core.RuntimeSnapsho
 	if s == nil {
 		return core.RuntimeSnapshot{}, false
 	}
+	key = normalizeRuntimeKeyForTest(key)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	snapshot, ok := s.snapshots[key]
@@ -136,6 +138,7 @@ func (s *FakeRuntimeSnapshotStore) Put(snapshot core.RuntimeSnapshot) {
 	if s.snapshots == nil {
 		s.snapshots = map[core.RuntimeKey]core.RuntimeSnapshot{}
 	}
+	snapshot.Key = normalizeRuntimeKeyForTest(snapshot.Key)
 	s.snapshots[snapshot.Key] = snapshot
 }
 
@@ -147,6 +150,7 @@ func (s *FakeRuntimeSnapshotStore) ListCandidates(req *core.DispatchRequest) []c
 	defer s.mu.RUnlock()
 	result := make([]core.RuntimeSnapshot, 0, len(s.snapshots))
 	for _, snapshot := range s.snapshots {
+		snapshot.Key = normalizeRuntimeKeyForTest(snapshot.Key)
 		if req != nil && req.ModelName != "" && snapshot.Key.RequestedModel != "" && snapshot.Key.RequestedModel != req.ModelName {
 			continue
 		}
@@ -155,10 +159,18 @@ func (s *FakeRuntimeSnapshotStore) ListCandidates(req *core.DispatchRequest) []c
 	return result
 }
 
+func normalizeRuntimeKeyForTest(key core.RuntimeKey) core.RuntimeKey {
+	if key.EndpointType == "" {
+		key.EndpointType = constant.EndpointTypeOpenAI
+	}
+	return key
+}
+
 type FakeRuntimeStateProvider struct {
 	ActiveConcurrencyByChannel map[int]int
 	CooldownByChannel          map[int]bool
 	FailureAvoidanceByChannel  map[int]bool
+	FirstBytePendingByChannel  map[int]*service.ChannelFirstBytePendingStatus
 }
 
 func (p *FakeRuntimeStateProvider) ActiveConcurrency(channelID int) int {
@@ -180,6 +192,13 @@ func (p *FakeRuntimeStateProvider) FailureAvoidanceActive(channelID int) bool {
 		return false
 	}
 	return p.FailureAvoidanceByChannel[channelID]
+}
+
+func (p *FakeRuntimeStateProvider) FirstBytePendingStatus(channelID int) *service.ChannelFirstBytePendingStatus {
+	if p == nil {
+		return nil
+	}
+	return p.FirstBytePendingByChannel[channelID]
 }
 
 func copyStringMap(src map[string]string) map[string]string {

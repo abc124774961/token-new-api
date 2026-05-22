@@ -207,6 +207,99 @@ func TestAsyncExecutionRecorderSummarizesRecoveredUserRequest(t *testing.T) {
 	require.Greater(t, summary.CompletedAt, int64(0))
 }
 
+func TestAsyncExecutionRecorderSameAttemptIndexCannotMarkRecoveredUserRequest(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:      "req-same-index",
+		AttemptIndex:   0,
+		ChannelID:      8,
+		ChannelName:    "busy-channel",
+		RequestedGroup: "auto",
+		SelectedGroup:  "vip",
+		ModelName:      "gpt-5.5",
+		StatusCode:     429,
+		ErrorCategory:  "upstream_concurrency_limit",
+		WillRetry:      true,
+		RetryAction:    "switch_channel",
+	})
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:      "req-same-index",
+		AttemptIndex:   0,
+		ChannelID:      9,
+		ChannelName:    "healthy-channel",
+		RequestedGroup: "auto",
+		SelectedGroup:  "vip",
+		ModelName:      "gpt-5.5",
+		Success:        true,
+		RetryAction:    "complete",
+	})
+
+	require.Eventually(t, func() bool {
+		var summary model.ModelGatewayUserRequestSummary
+		err := db.Where("request_id = ?", "req-same-index").First(&summary).Error
+		return err == nil
+	}, time.Second, 10*time.Millisecond)
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-same-index").First(&summary).Error)
+	require.True(t, summary.FinalSuccess)
+	require.False(t, summary.Recovered)
+	require.Equal(t, 1, summary.Attempts)
+	require.Equal(t, 9, summary.FinalChannelID)
+}
+
+func TestAsyncExecutionRecorderSkipsHealthProbeUserRequestSummary(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:      "probe-1",
+		AttemptIndex:   0,
+		ChannelID:      8,
+		ChannelName:    "probe-channel",
+		RequestedGroup: "default",
+		SelectedGroup:  "default",
+		ModelName:      "gpt-4.1",
+		Success:        true,
+		StatusCode:     200,
+		Duration:       450 * time.Millisecond,
+		TTFT:           90 * time.Millisecond,
+		IsHealthProbe:  true,
+		ProbeReason:    "low_score",
+	})
+
+	require.Eventually(t, func() bool {
+		var executions int64
+		require.NoError(t, db.Model(&model.ModelExecutionRecord{}).Where("request_id = ?", "probe-1").Count(&executions).Error)
+		return executions == 1
+	}, time.Second, 10*time.Millisecond)
+
+	var summaryCount int64
+	require.NoError(t, db.Model(&model.ModelGatewayUserRequestSummary{}).Where("request_id = ?", "probe-1").Count(&summaryCount).Error)
+	require.Zero(t, summaryCount)
+
+	var record model.ModelExecutionRecord
+	require.NoError(t, db.Where("request_id = ?", "probe-1").First(&record).Error)
+	require.Contains(t, record.RequestMeta, "is_health_probe")
+	require.Contains(t, record.RequestMeta, "low_score")
+}
+
 func TestAsyncExecutionRecorderSummarizesClientAbortAsUserCanceled(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)

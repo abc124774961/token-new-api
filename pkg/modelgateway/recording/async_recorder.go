@@ -60,7 +60,9 @@ func (r *AsyncExecutionRecorder) Report(ctx context.Context, result core.Attempt
 	if r == nil {
 		return
 	}
-	userrequest.Finish(result, nil)
+	if !result.IsHealthProbe {
+		userrequest.Finish(result, nil)
+	}
 	r.offer(event{result: &result})
 }
 
@@ -81,9 +83,11 @@ func (r *AsyncExecutionRecorder) run() {
 			continue
 		}
 		if e.result != nil {
-			summary := model.RecordModelGatewayUserRequestAttempt(modelGatewayUserRequestAttemptFromResult(*e.result))
-			if summary != nil {
-				userrequest.Finish(*e.result, summary)
+			if !e.result.IsHealthProbe {
+				summary := model.RecordModelGatewayUserRequestAttempt(modelGatewayUserRequestAttemptFromResult(*e.result))
+				if summary != nil {
+					userrequest.Finish(*e.result, summary)
+				}
 			}
 			model.RecordModelExecution(modelExecutionRecordFromAttempt(*e.result))
 			r.forwardResult(*e.result)
@@ -174,6 +178,8 @@ type attemptRequestMeta struct {
 	LearnedConcurrencyLimit        int      `json:"learned_concurrency_limit,omitempty"`
 	LearnedConcurrencyLimitChanged bool     `json:"learned_concurrency_limit_changed,omitempty"`
 	UsedChannels                   []string `json:"used_channels,omitempty"`
+	IsHealthProbe                  bool     `json:"is_health_probe,omitempty"`
+	ProbeReason                    string   `json:"probe_reason,omitempty"`
 }
 
 func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
@@ -207,6 +213,7 @@ func modelExecutionRecordFromAttempt(result core.AttemptResult) *model.ModelExec
 		RequestedGroup:    result.RequestedGroup,
 		SelectedGroup:     result.SelectedGroup,
 		RequestedModel:    result.ModelName,
+		EndpointType:      string(result.EndpointType),
 		Success:           result.Success,
 		StatusCode:        result.StatusCode,
 		ErrorCode:         result.ErrorCode,
@@ -262,6 +269,8 @@ func attemptRequestMetaFromResult(result core.AttemptResult) attemptRequestMeta 
 		LearnedConcurrencyLimit:        result.LearnedConcurrencyLimit,
 		LearnedConcurrencyLimitChanged: result.LearnedConcurrencyLimitChanged,
 		UsedChannels:                   append([]string(nil), result.UsedChannels...),
+		IsHealthProbe:                  result.IsHealthProbe,
+		ProbeReason:                    result.ProbeReason,
 	}
 }
 
@@ -278,7 +287,9 @@ func emptyAttemptRequestMeta(meta attemptRequestMeta) bool {
 		meta.ConfiguredConcurrencyLimit <= 0 &&
 		meta.LearnedConcurrencyLimit <= 0 &&
 		!meta.LearnedConcurrencyLimitChanged &&
-		len(meta.UsedChannels) == 0
+		len(meta.UsedChannels) == 0 &&
+		!meta.IsHealthProbe &&
+		meta.ProbeReason == ""
 }
 
 func marshalToString(v any) string {

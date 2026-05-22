@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,8 +42,35 @@ func TestRuntimeHealthMonitorUpdatesSnapshotAndCircuit(t *testing.T) {
 	require.Equal(t, 2, snapshot.SampleCount)
 	require.Equal(t, 0.0, snapshot.SuccessRate)
 	require.Greater(t, snapshot.DurationMs, 0.0)
+	require.Zero(t, snapshot.SpeedScore)
+	require.Zero(t, snapshot.TTFTMs)
 	require.Equal(t, core.CircuitStateOpen, snapshot.CircuitState)
 	require.True(t, snapshot.CircuitOpen)
+}
+
+func TestRuntimeHealthMonitorDoesNotLearnSpeedFromFastFailures(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 83, Group: "default"}
+
+	for i := 0; i < 5; i++ {
+		monitor.Report(context.Background(), core.AttemptResult{
+			Key:        key,
+			ChannelID:  83,
+			StatusCode: http.StatusTooManyRequests,
+			ErrorCode:  "rate_limit",
+			Duration:   80 * time.Millisecond,
+			TTFT:       20 * time.Millisecond,
+		})
+	}
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.Equal(t, 5, snapshot.SampleCount)
+	require.Equal(t, 0.0, snapshot.SuccessRate)
+	require.InEpsilon(t, 0.05, snapshot.SuccessScore, 0.001)
+	require.Zero(t, snapshot.SpeedScore)
+	require.Zero(t, snapshot.TTFTMs)
 }
 
 func TestRuntimeHealthMonitorSuccessImprovesSnapshot(t *testing.T) {
@@ -63,6 +92,38 @@ func TestRuntimeHealthMonitorSuccessImprovesSnapshot(t *testing.T) {
 	require.Equal(t, 1.0, snapshot.SuccessRate)
 	require.Equal(t, 300.0, snapshot.DurationMs)
 	require.Equal(t, 120.0, snapshot.TTFTMs)
+}
+
+func TestRuntimeHealthMonitorContinuesRestoredSnapshotSamples(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "standard-openai", ChannelID: 82, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                 key,
+		SampleCount:         20,
+		SuccessRate:         0.90,
+		SuccessScore:        0.88,
+		SpeedScore:          0.70,
+		DurationMs:          900,
+		TTFTMs:              300,
+		ExperienceScore:     1,
+		EmptyOutputRate:     0,
+		ExperienceIssueRate: 0,
+	})
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:       key,
+		ChannelID: 82,
+		Success:   true,
+		Duration:  500 * time.Millisecond,
+		TTFT:      180 * time.Millisecond,
+	})
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.Equal(t, 21, snapshot.SampleCount)
+	require.InEpsilon(t, float64(19)/float64(21), snapshot.SuccessRate, 0.001)
+	require.Greater(t, snapshot.SpeedScore, 0.70)
 }
 
 func TestRuntimeHealthMonitorIgnoresClientAbort(t *testing.T) {
@@ -120,24 +181,156 @@ func TestRuntimeHealthMonitorFastTracksSlowTTFTRegression(t *testing.T) {
 	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
 	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 99, Group: "codex-plus"}
 
+	for i := 0; i < 20; i++ {
+		monitor.Report(context.Background(), core.AttemptResult{
+			Key:        key,
+			ChannelID:  99,
+			Success:    true,
+			ObservedAt: time.Unix(int64(100+i), 0),
+			Duration:   2 * time.Second,
+			TTFT:       500 * time.Millisecond,
+		})
+	}
 	monitor.Report(context.Background(), core.AttemptResult{
-		Key:       key,
-		ChannelID: 99,
-		Success:   true,
-		Duration:  2 * time.Second,
-		TTFT:      500 * time.Millisecond,
-	})
-	monitor.Report(context.Background(), core.AttemptResult{
-		Key:       key,
-		ChannelID: 99,
-		Success:   true,
-		Duration:  70 * time.Second,
-		TTFT:      36 * time.Second,
+		Key:        key,
+		ChannelID:  99,
+		Success:    true,
+		ObservedAt: time.Unix(200, 0),
+		Duration:   70 * time.Second,
+		TTFT:       36 * time.Second,
 	})
 
 	snapshot, ok := store.Get(key)
 	require.True(t, ok)
-	require.Equal(t, 2, snapshot.SampleCount)
-	require.GreaterOrEqual(t, snapshot.TTFTMs, 16000.0)
-	require.Less(t, snapshot.SpeedScore, 0.60)
+	require.Equal(t, 21, snapshot.SampleCount)
+	require.InEpsilon(t, 500.0, snapshot.TTFTMs, 0.001)
+	require.Greater(t, snapshot.SpeedScore, 0.95)
+}
+
+func TestRuntimeHealthMonitorSmallLatencyWindowIgnoresSingleOutlier(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 104, Group: "codex-plus"}
+
+	for i, ttft := range []time.Duration{900 * time.Millisecond, 920 * time.Millisecond, 28 * time.Second} {
+		monitor.Report(context.Background(), core.AttemptResult{
+			Key:        key,
+			ChannelID:  104,
+			Success:    true,
+			ObservedAt: time.Unix(int64(100+i), 0),
+			Duration:   ttft + 1200*time.Millisecond,
+			TTFT:       ttft,
+		})
+	}
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.Equal(t, 3, snapshot.SampleCount)
+	require.Len(t, snapshot.RecentLatencySamples, 3)
+	require.InEpsilon(t, 920.0, snapshot.TTFTMs, 0.001)
+	require.Greater(t, snapshot.SpeedScore, 0.98)
+}
+
+func TestRuntimeHealthMonitorSlowSuccessfulTTFTDoesNotCreateFailureAvoidance(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 6
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(100)
+	})
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 100, Group: "auto"}
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:           key,
+		RequestID:     "req-slow",
+		ChannelID:     100,
+		ChannelName:   "dora",
+		SelectedGroup: "auto",
+		ModelName:     "gpt-5.5",
+		Success:       true,
+		Duration:      46 * time.Second,
+		TTFT:          45 * time.Second,
+	})
+
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(100))
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.Equal(t, 1, snapshot.SampleCount)
+	require.GreaterOrEqual(t, snapshot.TTFTMs, 45000.0)
+	require.Less(t, snapshot.SpeedScore, 0.10)
+}
+
+func TestRuntimeHealthMonitorUsesTrimmedLatencyWindow(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 102, Group: "codex-plus"}
+
+	for i := 0; i < 18; i++ {
+		monitor.Report(context.Background(), core.AttemptResult{
+			Key:        key,
+			ChannelID:  102,
+			Success:    true,
+			ObservedAt: time.Unix(int64(100+i), 0),
+			Duration:   2 * time.Second,
+			TTFT:       900 * time.Millisecond,
+		})
+	}
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:        key,
+		ChannelID:  102,
+		Success:    true,
+		ObservedAt: time.Unix(200, 0),
+		Duration:   80 * time.Second,
+		TTFT:       45 * time.Second,
+	})
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:        key,
+		ChannelID:  102,
+		Success:    true,
+		ObservedAt: time.Unix(201, 0),
+		Duration:   80 * time.Millisecond,
+		TTFT:       30 * time.Millisecond,
+	})
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.Equal(t, 20, snapshot.SampleCount)
+	require.Len(t, snapshot.RecentLatencySamples, 20)
+	require.InEpsilon(t, 900.0, snapshot.TTFTMs, 0.001)
+	require.Greater(t, snapshot.SpeedScore, 0.98)
+}
+
+func TestRuntimeHealthMonitorClearsAvoidanceAfterFastSuccess(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 6
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(101)
+	})
+
+	service.RecordChannelFailureAvoidance(101, "upstream_error:502:bad_response_status_code")
+	require.NotNil(t, service.GetChannelFailureAvoidanceStatus(101))
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 101, Group: "auto"}
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:       key,
+		ChannelID: 101,
+		Success:   true,
+		Duration:  2 * time.Second,
+		TTFT:      600 * time.Millisecond,
+	})
+
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(101))
 }

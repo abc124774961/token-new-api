@@ -163,14 +163,37 @@ func TestCacheGetRandomSatisfiedChannelPrefersUnusedPeerChannel(t *testing.T) {
 	require.Equal(t, 102, channel.Id)
 }
 
-func TestCacheGetRandomSatisfiedChannelSkipsFullConcurrencyChannel(t *testing.T) {
+func TestCacheGetRandomSatisfiedChannelSkipsRequestSelectionMarkedChannel(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+
+	seedChannelSelectChannel(t, db, 121, "default", "gpt-5.5", 10, 100)
+	seedChannelSelectChannel(t, db, 122, "default", "gpt-5.5", 10, 100)
+	model.InitChannelCache()
+
+	ctx := newRetryContext("121")
+	MarkChannelSelectionSkipped(ctx, 121)
+	param := &RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.Equal(t, "default", group)
+	require.NotNil(t, channel)
+	require.Equal(t, 122, channel.Id)
+}
+
+func TestCacheGetRandomSatisfiedChannelDoesNotSkipFullConcurrencyChannel(t *testing.T) {
 	db := setupChannelSelectTestDB(t)
 	withChannelSelectMemoryCache(t, true)
 	ClearChannelConcurrencyForTest()
 	t.Cleanup(ClearChannelConcurrencyForTest)
 
 	seedChannelSelectChannel(t, db, 111, "default", "gpt-5.5", 10, 100)
-	seedChannelSelectChannel(t, db, 112, "default", "gpt-5.5", 10, 100)
 	limitSetting := `{"max_concurrency":1}`
 	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 111).Update("setting", limitSetting).Error)
 	model.InitChannelCache()
@@ -190,19 +213,21 @@ func TestCacheGetRandomSatisfiedChannelSkipsFullConcurrencyChannel(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, "default", group)
 	require.NotNil(t, channel)
-	require.Equal(t, 112, channel.Id)
+	require.Equal(t, 111, channel.Id)
 }
 
-func TestCacheGetRandomSatisfiedChannelSkipsRequestLocalConcurrencyMarkedChannel(t *testing.T) {
+func TestCacheGetRandomSatisfiedChannelSkipsRequestBalanceMarkedChannel(t *testing.T) {
 	db := setupChannelSelectTestDB(t)
 	withChannelSelectMemoryCache(t, true)
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
 
-	seedChannelSelectChannel(t, db, 113, "default", "gpt-5.5", 10, 100)
-	seedChannelSelectChannel(t, db, 114, "default", "gpt-5.5", 10, 100)
+	seedChannelSelectChannel(t, db, 115, "default", "gpt-5.5", 10, 100)
+	seedChannelSelectChannel(t, db, 116, "default", "gpt-5.5", 10, 100)
 	model.InitChannelCache()
 
 	ctx := newRetryContext()
-	MarkChannelConcurrencySkipped(ctx, 113)
+	MarkChannelBalanceSkipped(ctx, 115)
 	param := &RetryParam{
 		Ctx:        ctx,
 		TokenGroup: "default",
@@ -214,7 +239,32 @@ func TestCacheGetRandomSatisfiedChannelSkipsRequestLocalConcurrencyMarkedChannel
 	require.NoError(t, err)
 	require.Equal(t, "default", group)
 	require.NotNil(t, channel)
-	require.Equal(t, 114, channel.Id)
+	require.Equal(t, 116, channel.Id)
+}
+
+func TestCacheGetRandomSatisfiedChannelSkipsRuntimeBalanceInsufficientChannel(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	seedChannelSelectChannel(t, db, 117, "default", "gpt-5.5", 10, 100)
+	seedChannelSelectChannel(t, db, 118, "default", "gpt-5.5", 10, 100)
+	model.InitChannelCache()
+
+	MarkChannelBalanceInsufficient(117)
+	param := &RetryParam{
+		Ctx:        newRetryContext(),
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.Equal(t, "default", group)
+	require.NotNil(t, channel)
+	require.Equal(t, 118, channel.Id)
 }
 
 func TestCacheGetRandomSatisfiedChannelKeepsImageApiSeparateFromCodexTool(t *testing.T) {
@@ -455,6 +505,32 @@ func TestRecordChannelFailureAvoidanceKeepsFailureCountUntilCleared(t *testing.T
 	require.NotNil(t, thirdRecord)
 	require.Equal(t, 1, thirdRecord.FailureCount)
 	require.InDelta(t, 6, thirdRecord.Remaining.Seconds(), 1)
+}
+
+func TestRecordChannelPerformanceAvoidanceDoesNotPauseChannel(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = int(channelFailureAvoidancePauseDuration.Seconds())
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	record := RecordChannelPerformanceAvoidance(384, "slow_ttft", &ChannelPerformanceAvoidanceContext{
+		ChannelName: "dora",
+		Group:       "auto",
+		ModelName:   "gpt-5.5",
+		RequestId:   "req-slow",
+		TTFTMs:      41000,
+		DurationMs:  42000,
+	})
+
+	require.NotNil(t, record)
+	require.True(t, record.Active)
+	require.False(t, record.ShouldPause)
+	require.Equal(t, "slow_ttft", record.Reason)
 }
 
 func TestRecordChannelFailureAvoidancePersistsEventContext(t *testing.T) {

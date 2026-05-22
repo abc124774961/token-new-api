@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -98,6 +99,7 @@ type RelayInfo struct {
 	StartTime         time.Time
 	FirstResponseTime time.Time
 	isFirstResponse   bool
+	firstResponseMu   sync.Mutex
 	//SendLastReasoningResponse bool
 	IsStream               bool
 	IsGeminiBatchEmbedding bool
@@ -818,10 +820,27 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
 }
 
 func (info *RelayInfo) SetFirstResponseTime() {
+	if info == nil {
+		return
+	}
+	info.firstResponseMu.Lock()
+	defer info.firstResponseMu.Unlock()
 	if info.isFirstResponse {
 		info.FirstResponseTime = time.Now()
 		info.isFirstResponse = false
 	}
+}
+
+func (info *RelayInfo) ForceSetFirstResponseTime() {
+	if info == nil {
+		return
+	}
+	info.firstResponseMu.Lock()
+	defer info.firstResponseMu.Unlock()
+	if info.isFirstResponse {
+		info.isFirstResponse = false
+	}
+	info.FirstResponseTime = time.Now()
 }
 
 func (info *RelayInfo) HasSendResponse() bool {

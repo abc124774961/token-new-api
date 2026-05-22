@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -59,6 +60,7 @@ func MarkRelayResponseStarted(c *gin.Context) {
 	if c == nil {
 		return
 	}
+	service.MarkChannelFirstByteObserved(c)
 	common.SetContextKey(c, constant.ContextKeyRelayResponseStarted, true)
 }
 

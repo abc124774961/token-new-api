@@ -114,8 +114,20 @@ func (p *SchedulerSettingsProvider) Get() core.SchedulerSettings {
 			AbsoluteMaxDepth:          setting.QueueAbsoluteMaxDepth,
 		},
 		CircuitBreakerEnabled: setting.CircuitBreakerEnabled,
+		GroupPriorityRatio:    copyFloatMap(setting.GroupPriorityRatio),
 		GroupPolicies:         policies,
 	}
+}
+
+func copyFloatMap(values map[string]float64) map[string]float64 {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
 }
 
 func circuitErrorPolicies(policies map[string]scheduler_setting.CircuitErrorPolicySetting) map[string]scheduler.CircuitErrorPolicy {

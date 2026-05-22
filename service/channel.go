@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -15,6 +16,10 @@ import (
 
 const ChannelStatusReasonBalanceInsufficient = "balance_insufficient"
 const ChannelStatusReasonErrorPaused = "error_paused"
+
+const channelBalanceInsufficientRuntimeTTL = 10 * time.Minute
+
+var channelBalanceInsufficientRuntime sync.Map // channel_id -> time.Time
 
 func formatNotifyType(channelId int, status int) string {
 	return fmt.Sprintf("%s_%d_%d", dto.NotifyTypeChannelUpdate, channelId, status)
@@ -39,6 +44,7 @@ func DisableChannel(channelError types.ChannelError, reason string) {
 }
 
 func DisableChannelForBalance(channelError types.ChannelError) {
+	MarkChannelBalanceInsufficient(channelError.ChannelId)
 	DisableChannel(channelError, ChannelStatusReasonBalanceInsufficient)
 }
 
@@ -65,10 +71,45 @@ func PauseChannelForError(channelError types.ChannelError, until time.Time, reas
 func EnableChannel(channelId int, usingKey string, channelName string) {
 	success := model.UpdateChannelStatus(channelId, usingKey, common.ChannelStatusEnabled, "")
 	if success {
+		ClearChannelBalanceInsufficient(channelId)
 		subject := fmt.Sprintf("通道「%s」（#%d）已被启用", channelName, channelId)
 		content := fmt.Sprintf("通道「%s」（#%d）已被启用", channelName, channelId)
 		NotifyRootUser(formatNotifyType(channelId, common.ChannelStatusEnabled), subject, content)
 	}
+}
+
+func MarkChannelBalanceInsufficient(channelID int) {
+	if channelID <= 0 {
+		return
+	}
+	channelBalanceInsufficientRuntime.Store(channelID, time.Now().Add(channelBalanceInsufficientRuntimeTTL))
+}
+
+func ClearChannelBalanceInsufficient(channelID int) {
+	if channelID <= 0 {
+		return
+	}
+	channelBalanceInsufficientRuntime.Delete(channelID)
+}
+
+func IsRuntimeBalanceInsufficientChannelID(channelID int) bool {
+	if channelID <= 0 {
+		return false
+	}
+	value, ok := channelBalanceInsufficientRuntime.Load(channelID)
+	if !ok {
+		return false
+	}
+	until, ok := value.(time.Time)
+	if !ok || !until.After(time.Now()) {
+		channelBalanceInsufficientRuntime.Delete(channelID)
+		return false
+	}
+	return true
+}
+
+func IsRuntimeBalanceInsufficientChannel(channel *model.Channel) bool {
+	return channel != nil && IsRuntimeBalanceInsufficientChannelID(channel.Id)
 }
 
 func ShouldDisableChannel(err *types.NewAPIError) bool {
@@ -130,6 +171,7 @@ func IsBalanceInsufficientMessage(message string) bool {
 	for _, keyword := range []string{
 		"balance_insufficient",
 		"insufficient_user_quota",
+		"insufficient account balance",
 		"insufficient balance",
 		"insufficient credit",
 		"insufficient credits",
@@ -178,6 +220,9 @@ func ChannelStatusReason(channel *model.Channel) string {
 	if reason == "" && IsConfirmedBalanceInsufficientChannel(channel) {
 		return ChannelStatusReasonBalanceInsufficient
 	}
+	if reason == "" && IsRuntimeBalanceInsufficientChannel(channel) {
+		return ChannelStatusReasonBalanceInsufficient
+	}
 	return reason
 }
 
@@ -205,7 +250,7 @@ func IsConfirmedBalanceInsufficientChannel(channel *model.Channel) bool {
 }
 
 func IsKnownBalanceInsufficientChannel(channel *model.Channel) bool {
-	return IsBalanceInsufficientPausedChannel(channel) || IsConfirmedBalanceInsufficientChannel(channel)
+	return IsBalanceInsufficientPausedChannel(channel) || IsConfirmedBalanceInsufficientChannel(channel) || IsRuntimeBalanceInsufficientChannel(channel)
 }
 
 func IsErrorPausedChannel(channel *model.Channel) bool {

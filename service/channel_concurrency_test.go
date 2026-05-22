@@ -3,6 +3,8 @@ package service
 import (
 	"errors"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,6 +33,107 @@ func TestTryAcquireChannelConcurrencyHonorsConfiguredLimit(t *testing.T) {
 	third, ok := TryAcquireChannelConcurrency(1001, setting)
 	require.True(t, ok)
 	third.Release()
+}
+
+func TestTrackChannelConcurrencyIgnoresConfiguredLimit(t *testing.T) {
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	setting := dto.ChannelSettings{MaxConcurrency: 1}
+	first := TrackChannelConcurrency(1006, setting)
+	require.Equal(t, 1, first.ActiveAtHit())
+	second := TrackChannelConcurrency(1006, setting)
+	require.Equal(t, 2, second.ActiveAtHit())
+	require.Equal(t, 2, GetChannelActiveConcurrency(1006))
+
+	second.Release()
+	first.Release()
+	require.Zero(t, GetChannelActiveConcurrency(1006))
+}
+
+func TestChannelSelectionReservationCountsTowardEffectiveConcurrency(t *testing.T) {
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	ctx := newRetryContext()
+	setting := dto.ChannelSettings{MaxConcurrency: 1}
+
+	require.True(t, ReserveChannelSelection(ctx, 1008, setting))
+	require.Equal(t, 1, GetChannelSelectionReservations(1008))
+	require.Equal(t, 1, GetChannelEffectiveActiveConcurrency(1008))
+	require.True(t, IsChannelConcurrencyFull(1008, setting))
+	require.False(t, ReserveChannelSelection(ctx, 1008, setting))
+
+	ReleaseChannelSelectionReservation(ctx, 1008)
+	require.Equal(t, 0, GetChannelSelectionReservations(1008))
+	require.False(t, IsChannelConcurrencyFull(1008, setting))
+}
+
+func TestChannelSelectionReservationDoesNotOverReserveConcurrently(t *testing.T) {
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	setting := dto.ChannelSettings{MaxConcurrency: 3}
+	var reserved int32
+	var wg sync.WaitGroup
+
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ReserveChannelSelection(newRetryContext(), 1009, setting) {
+				atomic.AddInt32(&reserved, 1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	require.Equal(t, int32(3), reserved)
+	require.Equal(t, 3, GetChannelSelectionReservations(1009))
+	require.True(t, IsChannelConcurrencyFull(1009, setting))
+}
+
+func TestChannelFirstByteWaitTracksSlowPendingAndReleases(t *testing.T) {
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	lease := BeginChannelFirstByteWait(newRetryContext(), 1014, "req-first-byte", 0)
+	require.NotNil(t, lease)
+	status := GetChannelFirstBytePendingStatus(1014)
+	require.NotNil(t, status)
+	require.Equal(t, 1, status.Pending)
+	require.Equal(t, 0, status.SlowPending)
+
+	counter := getChannelFirstByteWaitCounter(1014)
+	counter.mu.Lock()
+	for key := range counter.waiters {
+		counter.waiters[key] = time.Now().Add(-9 * time.Second)
+	}
+	counter.mu.Unlock()
+
+	status = GetChannelFirstBytePendingStatus(1014)
+	require.NotNil(t, status)
+	require.Equal(t, 1, status.Pending)
+	require.Equal(t, 1, status.SlowPending)
+	require.GreaterOrEqual(t, status.OldestMs, int64(8000))
+
+	lease.Release()
+	require.Nil(t, GetChannelFirstBytePendingStatus(1014))
+}
+
+func TestMarkChannelFirstByteObservedReleasesContextLease(t *testing.T) {
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	ctx := newRetryContext()
+	lease := BeginChannelFirstByteWait(ctx, 1015, "req-first-byte", 1)
+	require.NotNil(t, lease)
+	require.NotNil(t, GetChannelFirstBytePendingStatus(1015))
+
+	MarkChannelFirstByteObserved(ctx)
+	require.Nil(t, GetChannelFirstBytePendingStatus(1015))
+	lease.Release()
+	require.Nil(t, GetChannelFirstBytePendingStatus(1015))
 }
 
 func TestLearnChannelConcurrencyLimitSavesObservedLimit(t *testing.T) {
@@ -130,7 +233,7 @@ func TestShouldDisableChannelIgnoresUpstreamPendingConcurrency(t *testing.T) {
 	require.False(t, ShouldDisableChannel(err))
 }
 
-func TestRecordChannelConcurrencyCooldownAndSelectionSkip(t *testing.T) {
+func TestConcurrencyLimitDoesNotCreateCooldown(t *testing.T) {
 	db := setupChannelSelectTestDB(t)
 	withChannelSelectMemoryCache(t, true)
 	ClearChannelConcurrencyForTest()
@@ -150,20 +253,15 @@ func TestRecordChannelConcurrencyCooldownAndSelectionSkip(t *testing.T) {
 	err.Metadata = metadata
 
 	RecordChannelConcurrencyCooldown(1004, err)
-	status := GetChannelConcurrencyCooldownStatus(1004)
-	require.NotNil(t, status)
-	require.True(t, status.Active)
+	require.Nil(t, GetChannelConcurrencyCooldownStatus(1004))
 
 	channel, errSelect := selectChannelForGroup(newRetryContext(), "default", "gpt-5.5", "", false, 0, true)
 	require.NoError(t, errSelect)
 	require.NotNil(t, channel)
-	require.Equal(t, 1005, channel.Id)
-
-	time.Sleep(1100 * time.Millisecond)
-	require.Nil(t, GetChannelConcurrencyCooldownStatus(1004))
+	require.Contains(t, []int{1004, 1005}, channel.Id)
 }
 
-func TestSelectNonFullChannelSkipsActiveFullChannelWithoutCooldown(t *testing.T) {
+func TestSelectNonFullChannelDoesNotSkipActiveFullChannelWithoutCooldown(t *testing.T) {
 	db := setupChannelSelectTestDB(t)
 	withChannelSelectMemoryCache(t, true)
 	ClearChannelConcurrencyForTest()
@@ -181,7 +279,7 @@ func TestSelectNonFullChannelSkipsActiveFullChannelWithoutCooldown(t *testing.T)
 	channel, errSelect := selectChannelForGroup(newRetryContext(), "default", "gpt-5.5", "", false, 0, true)
 	require.NoError(t, errSelect)
 	require.NotNil(t, channel)
-	require.Equal(t, 1012, channel.Id)
+	require.Equal(t, 1011, channel.Id)
 	require.Nil(t, GetChannelConcurrencyCooldownStatus(1011))
 }
 

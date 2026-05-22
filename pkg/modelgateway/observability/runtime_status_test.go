@@ -255,7 +255,8 @@ func TestRuntimeStatusServiceMergesSnapshotCircuitQueueAndLiveState(t *testing.T
 	require.Equal(t, 1, response.Summary.CircuitOpen)
 	require.Equal(t, 1, response.Summary.CooldownChannels)
 	require.Equal(t, 1, response.Summary.FailureAvoidanceChannels)
-	require.Equal(t, 1, response.Summary.SaturatedChannels)
+	require.Equal(t, 1, response.Summary.HighPressureChannels)
+	require.Zero(t, response.Summary.SaturatedChannels)
 	require.NotNil(t, response.QueueSnapshot)
 	require.Equal(t, 5, response.QueueSnapshot.Summary.TotalQueued)
 	require.Equal(t, 2, response.QueueSnapshot.Summary.QueueChannels)
@@ -306,7 +307,7 @@ func TestRuntimeStatusServiceFiltersAndHandlesMissingDeps(t *testing.T) {
 	require.Len(t, response.Items, 1)
 	require.Equal(t, 55, response.Items[0].ChannelID)
 	require.Equal(t, 2, response.Items[0].QueueDepth)
-	require.Equal(t, "healthy", response.Items[0].HealthStatus)
+	require.Equal(t, "queued", response.Items[0].HealthStatus)
 
 	empty := observability.NewRuntimeStatusService(observability.RuntimeStatusDeps{}).Build(observability.RuntimeStatusQuery{})
 	require.Empty(t, empty.Items)
