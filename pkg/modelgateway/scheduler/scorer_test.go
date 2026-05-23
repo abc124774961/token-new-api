@@ -793,7 +793,8 @@ func TestSelectorReadsSnapshotStoredUnderEnrichedRuntimeKey(t *testing.T) {
 	require.Equal(t, 3, candidate.SampleCount)
 	require.Equal(t, 45000.0, candidate.TTFTMs)
 	require.Less(t, candidate.ScoreTotal, 0.35)
-	require.Less(t, candidate.SpeedScore, 0.10)
+	require.Greater(t, candidate.SpeedScore, 0.20)
+	require.Less(t, candidate.SpeedScore, 0.30)
 	require.Equal(t, candidate.ScoreBreakdown["speed"], candidate.ScoreSpeedFactor)
 	require.Equal(t, 0.78, candidate.ScoreBreakdown["ttft_penalty"])
 }
@@ -1394,6 +1395,29 @@ func TestSpeedScoreWithoutSamplesIsConservative(t *testing.T) {
 	require.NotContains(t, score.Breakdown, "success")
 	require.NotContains(t, score.Breakdown, "speed")
 	require.Equal(t, 1.0, score.Breakdown["explore_baseline"])
+}
+
+func TestSingleSlowSampleDoesNotCrushSpeedScore(t *testing.T) {
+	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+	candidate := core.Candidate{Channel: &model.Channel{Id: 9}, Group: "default"}
+
+	score := scorer.Score(candidate, core.RuntimeSnapshot{
+		SuccessRate:        1,
+		SuccessScore:       1,
+		SpeedScore:         0.038,
+		TTFTMs:             19260,
+		DurationMs:         26410,
+		CostRatio:          0.1,
+		CostReferenceRatio: 0.1,
+		GroupPriorityRatio: 1,
+		SampleCount:        1,
+		ExperienceScore:    1,
+	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
+
+	require.Greater(t, score.Breakdown["speed"], 0.40)
+	require.Less(t, score.Breakdown["speed"], 0.45)
+	require.InEpsilon(t, 0.1067, score.Breakdown["ttft_penalty"], 0.001)
+	require.Greater(t, score.Total, 0.70)
 }
 
 func TestSpeedFactorDoesNotOverwriteDisplayedSpeedScore(t *testing.T) {

@@ -327,6 +327,67 @@ func TestGetModelGatewayObservabilitySummaryAggregatesRecentRecords(t *testing.T
 	requireObservabilityMetaAggregate(t, payload.Data.ByProxyMode, "responses_via_chat", 1, 1, 640, 1, 1, 0, 1)
 }
 
+func TestModelGatewayObservabilityNormalizesLowSampleLegacySpeedScores(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	requestMeta, err := common.Marshal(map[string]any{
+		"candidate_explanations": []core.CandidateExplanation{
+			{
+				ChannelID:   11,
+				ChannelName: "qicun",
+				Group:       "codex-plus",
+				RuntimeKey: core.RuntimeKey{
+					RequestedModel: "gpt-5.5",
+					UpstreamModel:  "gpt-5.5",
+					ChannelID:      11,
+					Group:          "codex-plus",
+					EndpointType:   constant.EndpointTypeOpenAIResponse,
+				},
+				Available:      true,
+				ScoreTotal:     0.52,
+				ScoreBreakdown: map[string]float64{"success": 1, "speed": 0.03, "cost": 0.782, "group": 0.9},
+				SuccessScore:   1,
+				SpeedScore:     0.038,
+				TTFTMs:         19260,
+				DurationMs:     26410,
+				SampleCount:    1,
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ModelExecutionRecord{
+		CreatedAt:      now - 10,
+		RequestId:      "low-sample-speed",
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		RequestedModel: "gpt-5.5",
+		ChannelId:      4,
+		ChannelName:    "toioto",
+		ScoreTotal:     0.65,
+		SmartHandled:   true,
+		PolicyMode:     "active",
+		RequestMeta:    string(requestMeta),
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/model_gateway/observability/summary", GetModelGatewayObservabilitySummary)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/observability/summary?hours=1&recent_limit=1&top_n=5&scan_limit=10", nil)
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayObservabilityResponse(t, resp)
+	require.True(t, payload.Success)
+	require.Len(t, payload.Data.RecentRecords, 1)
+	require.Len(t, payload.Data.RecentRecords[0].CandidateExplanations, 1)
+	candidate := payload.Data.RecentRecords[0].CandidateExplanations[0]
+	require.Equal(t, 1, candidate.SampleCount)
+	require.Equal(t, 19260.0, candidate.TTFTMs)
+	require.InEpsilon(t, 0.4476, candidate.SpeedScore, 0.0002)
+	require.InEpsilon(t, 0.4166, candidate.ScoreSpeedFactor, 0.0002)
+	require.Equal(t, candidate.ScoreSpeedFactor, candidate.ScoreBreakdown["speed"])
+}
+
 func TestGetModelGatewayObservabilitySummaryTreatsPending429AsConcurrencyFlow(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()

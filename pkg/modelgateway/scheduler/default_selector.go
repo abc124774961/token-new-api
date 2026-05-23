@@ -324,8 +324,10 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 	if snapshot.SampleCount > 0 && explanation.SuccessScore <= 0 {
 		explanation.SuccessScore = successScore(snapshot)
 	}
-	if snapshot.SampleCount > 0 && explanation.SpeedScore <= 0 {
-		explanation.SpeedScore = rawSpeedScore(snapshot)
+	if snapshot.SampleCount > 0 {
+		if speedScore := displayedSpeedScore(snapshot); speedScore > 0 {
+			explanation.SpeedScore = speedScore
+		}
 	}
 	if explanation.ExperienceScore <= 0 {
 		explanation.ExperienceScore = experienceScore(snapshot)

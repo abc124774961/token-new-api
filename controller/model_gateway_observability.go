@@ -2764,6 +2764,7 @@ func normalizeModelGatewayCandidateExplanation(candidate *ModelGatewayCandidateE
 	if candidate == nil {
 		return
 	}
+	normalizeModelGatewayCandidateSpeedScores(candidate)
 	if candidate.SampleCount > 0 || !modelGatewayCandidateUsesSyntheticScores(candidate) {
 		return
 	}
@@ -2772,6 +2773,96 @@ func normalizeModelGatewayCandidateExplanation(candidate *ModelGatewayCandidateE
 	candidate.SpeedScore = 0
 	candidate.ScoreBreakdown = removeModelGatewaySyntheticScores(candidate.ScoreBreakdown)
 	candidate.RoutingScoreBreakdown = removeModelGatewaySyntheticScores(candidate.RoutingScoreBreakdown)
+}
+
+func normalizeModelGatewayCandidateSpeedScores(candidate *ModelGatewayCandidateExplanation) {
+	if candidate == nil || candidate.SampleCount <= 0 {
+		return
+	}
+	rawSpeed := candidate.SpeedScore
+	if rawSpeed <= 0 {
+		rawSpeed = candidate.ScoreBreakdown["speed"]
+	}
+	if rawSpeed <= 0 {
+		return
+	}
+	adjustedSpeed := modelGatewaySampleAdjustedSpeedScore(rawSpeed, candidate.SampleCount)
+	if adjustedSpeed > candidate.SpeedScore {
+		candidate.SpeedScore = roundModelGatewayObservabilityFloat(adjustedSpeed)
+	}
+	if len(candidate.ScoreBreakdown) == 0 {
+		return
+	}
+	speedFactor, ok := candidate.ScoreBreakdown["speed"]
+	if !ok || speedFactor <= 0 {
+		return
+	}
+	penalty := modelGatewaySampleAdjustedTTFTPenalty(candidate.TTFTMs, candidate.SampleCount)
+	if penalty > 0 {
+		speedFactor = modelGatewayApplyTTFTPenaltyToSpeed(adjustedSpeed, penalty)
+	} else if speedFactor < adjustedSpeed && rawSpeed > 0 {
+		ratio := speedFactor / rawSpeed
+		if ratio > 0 && ratio < 1 {
+			speedFactor = adjustedSpeed * ratio
+		} else {
+			speedFactor = adjustedSpeed
+		}
+	} else if speedFactor < adjustedSpeed {
+		speedFactor = adjustedSpeed
+	}
+	speedFactor = roundModelGatewayObservabilityFloat(speedFactor)
+	if speedFactor > candidate.ScoreBreakdown["speed"] {
+		candidate.ScoreBreakdown["speed"] = speedFactor
+		candidate.ScoreSpeedFactor = speedFactor
+		if len(candidate.RoutingScoreBreakdown) > 0 && candidate.RoutingScoreBreakdown["speed"] > 0 && speedFactor > candidate.RoutingScoreBreakdown["speed"] {
+			candidate.RoutingScoreBreakdown["speed"] = speedFactor
+		}
+	}
+}
+
+func modelGatewaySampleAdjustedSpeedScore(score float64, sampleCount int) float64 {
+	score = clampModelGatewayObservabilityFloat(score, 0, 1)
+	if sampleCount <= 0 || sampleCount >= modelgatewayscheduler.LowSampleSpeedStableSamples {
+		return score
+	}
+	confidence := float64(sampleCount) / float64(modelgatewayscheduler.LowSampleSpeedStableSamples)
+	return clampModelGatewayObservabilityFloat(modelgatewayscheduler.LowSampleSpeedBaseline*(1-confidence)+score*confidence, 0, 1)
+}
+
+func modelGatewaySampleAdjustedTTFTPenalty(ttftMs float64, sampleCount int) float64 {
+	if sampleCount <= 0 || ttftMs <= 8000 {
+		return 0
+	}
+	penalty := 0.0
+	switch {
+	case ttftMs >= 120000:
+		penalty = 0.94
+	case ttftMs >= 60000:
+		penalty = 0.86
+	case ttftMs >= 30000:
+		penalty = 0.78
+	case ttftMs >= 20000:
+		penalty = 0.55
+	case ttftMs >= 12000:
+		penalty = 0.32
+	default:
+		penalty = 0.18
+	}
+	if sampleCount >= modelgatewayscheduler.LatencyGateStableSamples {
+		return penalty
+	}
+	return clampModelGatewayObservabilityFloat(penalty*float64(sampleCount)/float64(modelgatewayscheduler.LatencyGateStableSamples), 0, 1)
+}
+
+func modelGatewayApplyTTFTPenaltyToSpeed(score float64, penalty float64) float64 {
+	score = clampModelGatewayObservabilityFloat(score, 0, 1)
+	penalty = clampModelGatewayObservabilityFloat(penalty, 0, 1)
+	if penalty <= 0 {
+		return score
+	}
+	capValue := clampModelGatewayObservabilityFloat(1-penalty, 0, 1)
+	weighted := score * (1 - penalty*0.65)
+	return math.Min(weighted, capValue)
 }
 
 func modelGatewayCandidateUsesSyntheticScores(candidate *ModelGatewayCandidateExplanation) bool {
@@ -3982,6 +4073,16 @@ func averageFloat64(sum float64, count int64) float64 {
 
 func roundModelGatewayObservabilityFloat(value float64) float64 {
 	return math.Round(value*10000) / 10000
+}
+
+func clampModelGatewayObservabilityFloat(value float64, minValue float64, maxValue float64) float64 {
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
 }
 
 func clampModelGatewayObservabilityValue(value int, minValue int, maxValue int) int {

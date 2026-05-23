@@ -31,6 +31,12 @@ const (
 const costFirstRelativeCostPower = 1.35
 const missingCostReferenceScore = 0.50
 
+const (
+	LowSampleSpeedBaseline      = 0.55
+	LowSampleSpeedStableSamples = 5
+	LatencyGateStableSamples    = 3
+)
+
 type WeightedScoreCalculator struct {
 	weights  core.ScoreWeights
 	strategy string
@@ -222,7 +228,16 @@ func speedScore(snapshot core.RuntimeSnapshot) float64 {
 			score = 0.35
 		}
 	}
+	score = sampleAdjustedSpeedScore(score, snapshot.SampleCount)
 	return applyTTFTPenaltyToSpeed(score, ttftPenaltyScore(snapshot))
+}
+
+func displayedSpeedScore(snapshot core.RuntimeSnapshot) float64 {
+	score := rawSpeedScore(snapshot)
+	if score <= 0 {
+		return 0
+	}
+	return sampleAdjustedSpeedScore(score, snapshot.SampleCount)
 }
 
 func rawSpeedScore(snapshot core.RuntimeSnapshot) float64 {
@@ -241,6 +256,15 @@ func rawSpeedScore(snapshot core.RuntimeSnapshot) float64 {
 		score = inverseLatencyScore(snapshot.DurationMs, 3000, 90000)
 	}
 	return clamp01(score)
+}
+
+func sampleAdjustedSpeedScore(score float64, sampleCount int) float64 {
+	score = clamp01(score)
+	if sampleCount <= 0 || sampleCount >= LowSampleSpeedStableSamples {
+		return score
+	}
+	confidence := float64(sampleCount) / float64(LowSampleSpeedStableSamples)
+	return clamp01(LowSampleSpeedBaseline*(1-confidence) + score*confidence)
 }
 
 func reliabilityAdjustedSpeedScore(speed float64, success float64, sampleCount int) float64 {
@@ -492,20 +516,33 @@ func ttftPenaltyScore(snapshot core.RuntimeSnapshot) float64 {
 	if snapshot.SampleCount <= 0 || snapshot.TTFTMs <= ttftPenaltyWarningMs {
 		return 0
 	}
+	penalty := 0.0
 	switch {
 	case snapshot.TTFTMs >= ttftPenaltyExtremeMs:
-		return 0.94
+		penalty = 0.94
 	case snapshot.TTFTMs >= ttftPenaltySevereMs:
-		return 0.86
+		penalty = 0.86
 	case snapshot.TTFTMs >= ttftPenaltyCriticalMs:
-		return 0.78
+		penalty = 0.78
 	case snapshot.TTFTMs >= ttftPenaltyPoorMs:
-		return 0.55
+		penalty = 0.55
 	case snapshot.TTFTMs >= ttftPenaltySlowMs:
-		return 0.32
+		penalty = 0.32
 	default:
-		return 0.18
+		penalty = 0.18
 	}
+	return sampleAdjustedLatencyPenalty(penalty, snapshot.SampleCount)
+}
+
+func sampleAdjustedLatencyPenalty(penalty float64, sampleCount int) float64 {
+	penalty = clamp01(penalty)
+	if penalty <= 0 || sampleCount >= LatencyGateStableSamples {
+		return penalty
+	}
+	if sampleCount <= 0 {
+		return 0
+	}
+	return clamp01(penalty * float64(sampleCount) / float64(LatencyGateStableSamples))
 }
 
 func applyTTFTPenaltyToSpeed(score float64, penalty float64) float64 {
@@ -568,28 +605,44 @@ func applyLatencyGate(total float64, snapshot core.RuntimeSnapshot) float64 {
 	if snapshot.SampleCount <= 0 {
 		return total * 0.92
 	}
+	capValue := 1.0
 	switch {
 	case snapshot.TTFTMs >= 60000:
-		return math.Min(total, 0.20)
+		capValue = 0.20
 	case snapshot.TTFTMs >= 45000:
-		return math.Min(total, 0.26)
+		capValue = 0.26
 	case snapshot.TTFTMs >= 30000:
-		return math.Min(total, 0.32)
+		capValue = 0.32
 	case snapshot.TTFTMs >= 20000:
-		return math.Min(total, 0.40)
+		capValue = 0.40
 	case snapshot.TTFTMs >= 12000:
-		return math.Min(total, 0.52)
+		capValue = 0.52
 	case snapshot.TTFTMs >= 8000:
-		return math.Min(total, 0.65)
+		capValue = 0.65
 	case snapshot.DurationMs >= 120000:
-		return math.Min(total, 0.38)
+		capValue = 0.38
 	case snapshot.DurationMs >= 90000:
-		return math.Min(total, 0.45)
+		capValue = 0.45
 	case snapshot.DurationMs >= 60000:
-		return math.Min(total, 0.55)
-	default:
+		capValue = 0.55
+	}
+	if capValue >= 1 {
 		return total
 	}
+	capValue = sampleAdjustedLatencyCap(capValue, snapshot.SampleCount)
+	return math.Min(total, capValue)
+}
+
+func sampleAdjustedLatencyCap(capValue float64, sampleCount int) float64 {
+	capValue = clamp01(capValue)
+	if sampleCount >= LatencyGateStableSamples {
+		return capValue
+	}
+	if sampleCount <= 0 {
+		return 1
+	}
+	confidence := float64(sampleCount) / float64(LatencyGateStableSamples)
+	return clamp01(capValue + (1-capValue)*(1-confidence))
 }
 
 func confidenceScore(sampleCount int) float64 {
