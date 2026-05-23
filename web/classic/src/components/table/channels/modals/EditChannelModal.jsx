@@ -24,6 +24,7 @@ import {
   showError,
   showInfo,
   showSuccess,
+  toBoolean,
   verifyJSON,
 } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
@@ -49,6 +50,7 @@ import {
   Col,
   Highlight,
   Input,
+  InputNumber,
   Tooltip,
   Collapse,
   Dropdown,
@@ -87,6 +89,8 @@ import {
   IconBolt,
   IconSearch,
   IconChevronDown,
+  IconRefresh,
+  IconPriceTag,
 } from '@douyinfe/semi-icons';
 
 const { Text, Title } = Typography;
@@ -149,6 +153,95 @@ const PARAM_OVERRIDE_OPERATIONS_TEMPLATE = {
 
 const DEPRECATED_DOUBAO_CODING_PLAN_BASE_URL = 'doubao-coding-plan';
 
+const COST_PROFILE_NUMERIC_FIELDS = [
+  'token_multiplier',
+  'input_cost_multiplier',
+  'output_cost_multiplier',
+  'cache_cost_multiplier',
+  'cache_read_multiplier',
+  'cache_write_multiplier',
+  'request_cost_multiplier',
+  'request_price',
+  'recharge_multiplier',
+];
+
+const createEmptyCostProfile = () => ({
+  id: 0,
+  upstream_model: '*',
+  currency: 'USD',
+  effective_time: 0,
+  version: 1,
+  token_multiplier: 1,
+  input_cost_multiplier: 1,
+  output_cost_multiplier: 1,
+  cache_cost_multiplier: 1,
+  cache_read_multiplier: 1,
+  cache_write_multiplier: 1,
+  request_cost_multiplier: 1,
+  request_price: 0,
+  recharge_multiplier: 1,
+  pricing_mode: 'token',
+  accuracy: 'estimated',
+  metadata_json: '',
+  tool_prices_json: '',
+  source: 'system_ratio',
+});
+
+const normalizeCostProfileModel = (value) => String(value || '').trim();
+const COST_PROFILE_SYSTEM_RATIO_SOURCE = 'system_ratio';
+const normalizeCostProfileMultiplier = (value, fallback = 1) => {
+  const next = Number(value || 0);
+  if (Number.isFinite(next) && next > 0) return next;
+  return fallback;
+};
+
+const resolveUnifiedCacheCostMultiplier = (profile) => {
+  const direct = Number(profile?.cache_cost_multiplier || 0);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const read = Number(profile?.cache_read_multiplier || 0);
+  if (Number.isFinite(read) && read > 0) return read;
+  const write = Number(profile?.cache_write_multiplier || 0);
+  if (Number.isFinite(write) && write > 0) return write;
+  return 1;
+};
+
+const resolveUnifiedTokenCostMultiplier = (profile) => {
+  const direct = Number(profile?.token_multiplier || 0);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const input = Number(profile?.input_cost_multiplier || 0);
+  if (Number.isFinite(input) && input > 0) return input;
+  const output = Number(profile?.output_cost_multiplier || 0);
+  if (Number.isFinite(output) && output > 0) return output;
+  return resolveUnifiedCacheCostMultiplier(profile);
+};
+
+const CHANNEL_SWITCH_FIELDS = [
+  'auto_ban',
+  'force_format',
+  'thinking_to_content',
+  'pass_through_body_enabled',
+  'system_prompt_override',
+  'codex_compatibility_mode',
+  'codex_image_generation_tool_supported',
+  'is_enterprise_account',
+  'allow_service_tier',
+  'disable_store',
+  'allow_safety_identifier',
+  'allow_include_obfuscation',
+  'allow_inference_geo',
+  'allow_speed',
+  'claude_beta_query',
+  'upstream_model_update_check_enabled',
+  'upstream_model_update_auto_sync_enabled',
+];
+
+const normalizeChannelSwitchFields = (data) => {
+  CHANNEL_SWITCH_FIELDS.forEach((field) => {
+    data[field] = toBoolean(data[field]);
+  });
+  return data;
+};
+
 // 支持并且已适配通过接口获取模型列表的渠道类型
 const MODEL_FETCHABLE_TYPES = new Set([
   1, 4, 14, 34, 17, 26, 27, 24, 47, 25, 20, 23, 31, 40, 42, 48, 43,
@@ -186,6 +279,8 @@ const EditChannelModal = (props) => {
   const isEdit = channelId !== undefined;
   const [loading, setLoading] = useState(isEdit);
   const isMobile = useIsMobile();
+  const desktopSheetWidth = 680;
+  const sheetWidth = isMobile ? '100%' : desktopSheetWidth;
   const handleCancel = () => {
     props.handleClose();
   };
@@ -201,12 +296,11 @@ const EditChannelModal = (props) => {
     param_override: '',
     status_code_mapping: '',
     models: [],
-    auto_ban: 1,
+    auto_ban: true,
     test_model: '',
     groups: ['default'],
     priority: 0,
     weight: 0,
-    cost_per_million: 0,
     tag: '',
     multi_key_mode: 'random',
     // 渠道额外设置的默认值
@@ -412,6 +506,12 @@ const EditChannelModal = (props) => {
   const [codexCredentialRefreshing, setCodexCredentialRefreshing] =
     useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [costProfiles, setCostProfiles] = useState([]);
+  const [costProfilesLoading, setCostProfilesLoading] = useState(false);
+  const [costProfilesError, setCostProfilesError] = useState('');
+  const [costQuote, setCostQuote] = useState({ models: [], quotes: {} });
+  const [savingCostProfileId, setSavingCostProfileId] = useState(null);
+  const costQuoteReloadKeyRef = useRef('');
   const [codexProbeState, setCodexProbeState] = useState(() =>
     buildCodexProbeState(),
   );
@@ -656,6 +756,10 @@ const EditChannelModal = (props) => {
     }
     if (name === 'models' && Array.isArray(value)) {
       value = Array.from(new Set(value.map((m) => (m || '').trim())));
+      loadUnsavedCostQuote(value, inputs.model_mapping);
+    }
+    if (name === 'model_mapping') {
+      loadUnsavedCostQuote(inputs.models, value);
     }
 
     if (name === 'base_url' && value.endsWith('/v1')) {
@@ -726,6 +830,7 @@ const EditChannelModal = (props) => {
       if (inputs.models.length === 0) {
         setInputs((inputs) => ({ ...inputs, models: localModels }));
       }
+      loadUnsavedCostQuote(localModels, inputs.model_mapping);
       setBasicModels(localModels);
 
       // 重置手动输入模式状态
@@ -803,6 +908,404 @@ const EditChannelModal = (props) => {
       throw new Error(t('当前参数覆盖不是合法的 JSON'));
     }
     return JSON.parse(raw);
+  };
+
+  const resolveCostProfileError = (error, fallbackMessage) => {
+    if (error?.response?.data?.message) {
+      return error.response.data.message;
+    }
+    if (error?.name === 'AxiosError' && !error.response) {
+      return fallbackMessage;
+    }
+    return error?.message || fallbackMessage;
+  };
+
+  const setCostProfileDraftFromSource = (sourceProfile) => {
+    const defaultProfile = sourceProfile || createEmptyCostProfile();
+    const tokenMultiplier = resolveUnifiedTokenCostMultiplier(defaultProfile);
+    setCostProfiles([
+      {
+        ...createEmptyCostProfile(),
+        ...defaultProfile,
+        upstream_model: '*',
+        currency: defaultProfile?.currency || 'USD',
+        pricing_mode: defaultProfile?.pricing_mode || 'token',
+        accuracy: defaultProfile?.accuracy || 'estimated',
+        token_multiplier: tokenMultiplier,
+        input_cost_multiplier: tokenMultiplier,
+        output_cost_multiplier: tokenMultiplier,
+        cache_cost_multiplier: tokenMultiplier,
+        cache_read_multiplier: tokenMultiplier,
+        cache_write_multiplier: tokenMultiplier,
+        request_cost_multiplier: 1,
+        request_price: Math.max(0, Number(defaultProfile?.request_price || 0)),
+        recharge_multiplier: normalizeCostProfileMultiplier(
+          defaultProfile?.recharge_multiplier,
+        ),
+        source: defaultProfile?.source || COST_PROFILE_SYSTEM_RATIO_SOURCE,
+      },
+    ]);
+  };
+
+  const applyCostQuoteResponse = (
+    responseData,
+    fallbackModels = [],
+    updateDraft = true,
+  ) => {
+    const responseModels = Array.isArray(responseData?.models)
+      ? responseData.models
+      : [];
+    const normalizedFallbackModels = (Array.isArray(fallbackModels)
+      ? fallbackModels
+      : []
+    )
+      .map((model) => normalizeCostProfileModel(model))
+      .filter(Boolean);
+    const models =
+      responseModels.length > 0 ? responseModels : normalizedFallbackModels;
+    setCostQuote({
+      models,
+      quotes: responseData?.quotes || {},
+    });
+    if (updateDraft && responseData?.default_profile) {
+      setCostProfileDraftFromSource(responseData.default_profile);
+    }
+  };
+
+  const loadUnsavedCostQuote = async (
+    models = inputs.models,
+    modelMapping = inputs.model_mapping,
+    updateDraft = true,
+  ) => {
+    const normalizedModels = (Array.isArray(models) ? models : [])
+      .map((model) => normalizeCostProfileModel(model))
+      .filter(Boolean);
+    if (normalizedModels.length === 0) {
+      setCostQuote({ models: [], quotes: {} });
+      return false;
+    }
+    try {
+      const res = await API.post(
+        '/api/channel/upstream_cost_quote',
+        {
+          models: normalizedModels,
+          model_mapping: modelMapping || '',
+        },
+        {
+          disableDuplicate: true,
+          skipErrorHandler: true,
+        },
+      );
+      if (res?.data?.success) {
+        applyCostQuoteResponse(res.data.data, normalizedModels, updateDraft);
+        return true;
+      }
+    } catch (error) {
+      setCostQuote({ models: normalizedModels, quotes: {} });
+    }
+    return false;
+  };
+
+  const loadCostProfiles = async (
+    fallbackModels = inputs.models,
+    fallbackModelMapping = inputs.model_mapping,
+  ) => {
+    if (!isEdit || !channelId) {
+      setCostProfiles([createEmptyCostProfile()]);
+      setCostProfilesError('');
+      return;
+    }
+    setCostProfilesLoading(true);
+    setCostProfilesError('');
+    try {
+      const [res, quoteRes] = await Promise.all([
+        API.get(`/api/channel/${channelId}/upstream_cost_profiles`, {
+          disableDuplicate: true,
+          skipErrorHandler: true,
+        }),
+        API.get(`/api/channel/${channelId}/upstream_cost_quote`, {
+          disableDuplicate: true,
+          skipErrorHandler: true,
+        }).catch(() => null),
+      ]);
+      if (quoteRes?.data?.success) {
+        applyCostQuoteResponse(quoteRes.data.data, fallbackModels, false);
+      }
+      if (res?.data?.success) {
+        const rows = Array.isArray(res.data.data) ? res.data.data : [];
+        const defaultProfile = rows[0] || quoteRes?.data?.data?.default_profile;
+        setCostProfileDraftFromSource(defaultProfile);
+      } else {
+        setCostProfilesError(res?.data?.message || t('加载上游成本倍率失败'));
+        setCostProfileDraftFromSource(quoteRes?.data?.data?.default_profile);
+      }
+    } catch (error) {
+      const fallbackLoaded = await loadUnsavedCostQuote(
+        fallbackModels,
+        fallbackModelMapping,
+      );
+      if (fallbackLoaded) {
+        setCostProfilesError('');
+        return;
+      }
+      setCostProfilesError(
+        resolveCostProfileError(error, t('加载上游成本倍率失败')),
+      );
+      if (costProfiles.length === 0) {
+        setCostProfileDraftFromSource();
+      }
+    } finally {
+      setCostProfilesLoading(false);
+    }
+  };
+
+  const reloadSavedChannelCostQuote = async (
+    fallbackModels = inputs.models,
+    fallbackModelMapping = inputs.model_mapping,
+  ) => {
+    const normalizedModels = (Array.isArray(fallbackModels) ? fallbackModels : [])
+      .map((model) => normalizeCostProfileModel(model))
+      .filter(Boolean);
+    if (!isEdit || !channelId || normalizedModels.length === 0) {
+      return false;
+    }
+    try {
+      const quoteRes = await API.get(`/api/channel/${channelId}/upstream_cost_quote`, {
+        disableDuplicate: true,
+        skipErrorHandler: true,
+      });
+      if (quoteRes?.data?.success) {
+        applyCostQuoteResponse(quoteRes.data.data, normalizedModels, false);
+        return true;
+      }
+    } catch (error) {
+      // Fall through to the unsaved quote endpoint, using the loaded channel models.
+    }
+    return loadUnsavedCostQuote(
+      normalizedModels,
+      fallbackModelMapping,
+      false,
+    );
+  };
+
+  const updateCostProfileDraft = (index, field, value) => {
+    setCostProfiles((prev) =>
+      prev.map((item, idx) =>
+        idx === index
+          ? {
+              ...item,
+              [field]: COST_PROFILE_NUMERIC_FIELDS.includes(field)
+                ? Number(value || 0)
+                : value,
+            }
+          : item,
+      ),
+    );
+  };
+
+  const validateCostProfileDraft = (profile) => {
+    for (const field of COST_PROFILE_NUMERIC_FIELDS) {
+      const value = Number(profile[field] || 0);
+      if (!Number.isFinite(value) || value < 0) {
+        throw new Error(t('成本配置数值必须是非负数'));
+      }
+    }
+    const tokenMultiplier = Math.max(
+      0,
+      Number(profile.token_multiplier || profile.input_cost_multiplier || 1),
+    );
+    return {
+      ...createEmptyCostProfile(),
+      ...profile,
+      upstream_model: '*',
+      currency: 'USD',
+      pricing_mode: 'token',
+      accuracy: 'estimated',
+      source: COST_PROFILE_SYSTEM_RATIO_SOURCE,
+      effective_time: 0,
+      version: 1,
+      token_multiplier: tokenMultiplier,
+      input_cost_multiplier: tokenMultiplier,
+      output_cost_multiplier: tokenMultiplier,
+      cache_cost_multiplier: tokenMultiplier,
+      cache_read_multiplier: tokenMultiplier,
+      cache_write_multiplier: tokenMultiplier,
+      request_cost_multiplier: 1,
+      request_price: Math.max(0, Number(profile.request_price || 0)),
+      recharge_multiplier: Math.max(
+        0,
+        Number(profile.recharge_multiplier || 1),
+      ),
+      metadata_json: '',
+      tool_prices_json: '',
+    };
+  };
+
+  const saveCostProfileDraft = async (index) => {
+    if (!isEdit || !channelId) {
+      showInfo(t('创建渠道时会随渠道一起保存成本倍率和充值倍率'));
+      return;
+    }
+    let payload;
+    try {
+      payload = validateCostProfileDraft(costProfiles[index]);
+    } catch (error) {
+      showError(error.message);
+      return;
+    }
+    setSavingCostProfileId(payload.id || `new-${index}`);
+    try {
+      const res = await API[payload.id ? 'put' : 'post'](
+        `/api/channel/${channelId}/upstream_cost_profiles`,
+        payload,
+        { skipErrorHandler: true },
+      );
+      if (!res?.data?.success) {
+        showError(res?.data?.message || t('保存上游成本倍率失败'));
+        return;
+      }
+      showSuccess(t('上游成本倍率已保存'));
+      await loadCostProfiles(inputs.models, inputs.model_mapping);
+      await reloadSavedChannelCostQuote(inputs.models, inputs.model_mapping);
+    } catch (error) {
+      showError(resolveCostProfileError(error, t('保存上游成本倍率失败')));
+    } finally {
+      setSavingCostProfileId(null);
+    }
+  };
+
+  const persistCostProfileDraftForChannel = async (
+    targetChannelId,
+    profile,
+    forceCreate = false,
+  ) => {
+    const payload = validateCostProfileDraft(profile || costProfiles[0]);
+    if (forceCreate) {
+      payload.id = 0;
+    }
+    const method = payload.id ? 'put' : 'post';
+    const res = await API[method](
+      `/api/channel/${targetChannelId}/upstream_cost_profiles`,
+      payload,
+      { skipErrorHandler: true },
+    );
+    if (!res?.data?.success) {
+      throw new Error(res?.data?.message || t('保存上游成本倍率失败'));
+    }
+    return res.data.data;
+  };
+
+  const formatCostProfileUpdatedAt = (timestamp) => {
+    const value = Number(timestamp || 0);
+    if (!value) return t('未保存');
+    return new Date(value * 1000).toLocaleString();
+  };
+
+  const quoteHasConfiguredPrice = (quote) => {
+    if (!quote) return false;
+    if (quote.price_source && quote.price_source !== 'missing') return true;
+    return [
+      'input_per_million',
+      'output_per_million',
+      'cache_read_per_million',
+      'cache_write_per_million',
+      'request_price',
+      'image_input_per_million',
+      'audio_input_per_million',
+      'audio_output_per_million',
+    ].some((field) => Number(quote?.[field] || 0) > 0);
+  };
+
+  const firstConfiguredCostModel = () => {
+    const models = (costQuote.models?.length ? costQuote.models : inputs.models || [])
+      .map((model) => normalizeCostProfileModel(model))
+      .filter(Boolean);
+    return (
+      models.find((model) => quoteHasConfiguredPrice(costQuote.quotes?.[model])) ||
+      models[0] ||
+      ''
+    );
+  };
+
+  const hasAnyCostQuote = () =>
+    Object.values(costQuote.quotes || {}).some((quote) =>
+      quoteHasConfiguredPrice(quote),
+    );
+
+  const quotePrice = (model, field) => {
+    const value = Number(costQuote.quotes?.[model]?.[field] || 0);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  };
+
+  const costProfileMultiplier = (profile, field) => {
+    const value = Number(profile?.[field] || 0);
+    return Number.isFinite(value) && value > 0 ? value : 1;
+  };
+
+  const buildCostProfileDerivedPrices = (profile) => {
+    const model = firstConfiguredCostModel();
+    const quote = costQuote.quotes?.[model];
+    const tokenMultiplier = costProfileMultiplier(
+      profile,
+      'token_multiplier',
+    );
+    const rechargeMultiplier = costProfileMultiplier(
+      profile,
+      'recharge_multiplier',
+    );
+    const requestPrice = Math.max(0, Number(profile?.request_price || 0));
+    const applyTokenMultiplier = (value) =>
+      value > 0 && rechargeMultiplier > 0
+        ? value * tokenMultiplier / rechargeMultiplier
+        : 0;
+    const applyRequestPrice = (value) =>
+      value > 0 && rechargeMultiplier > 0 ? value / rechargeMultiplier : 0;
+    const sourceRequest = quotePrice(model, 'request_price');
+    const requestBase = requestPrice > 0 ? requestPrice : sourceRequest;
+    return {
+      model,
+      hasQuote: Boolean(quote),
+      hasConfiguredPrice: quoteHasConfiguredPrice(quote),
+      tokenMultiplier,
+      rechargeMultiplier,
+      configuredRequestPrice: requestPrice,
+      pricingMode: quote?.pricing_mode || 'token',
+      priceSource: quote?.price_source || 'missing',
+      pricingModel: quote?.pricing_model || quote?.model || model,
+      sourceInput: quotePrice(model, 'input_per_million'),
+      sourceOutput: quotePrice(model, 'output_per_million'),
+      sourceCacheRead: quotePrice(model, 'cache_read_per_million'),
+      sourceCacheWrite: quotePrice(model, 'cache_write_per_million'),
+      sourceRequest,
+      requestBase,
+      requestPrice: applyRequestPrice(requestBase),
+      input: applyTokenMultiplier(quotePrice(model, 'input_per_million')),
+      output: applyTokenMultiplier(quotePrice(model, 'output_per_million')),
+      cacheRead: applyTokenMultiplier(
+        quotePrice(model, 'cache_read_per_million'),
+      ),
+      cacheWrite: applyTokenMultiplier(
+        quotePrice(model, 'cache_write_per_million'),
+      ),
+      cacheWrite1h: applyTokenMultiplier(
+        quotePrice(model, 'cache_write_1h_per_million'),
+      ),
+      imageInput: applyTokenMultiplier(
+        quotePrice(model, 'image_input_per_million'),
+      ),
+      audioInput: applyTokenMultiplier(
+        quotePrice(model, 'audio_input_per_million'),
+      ),
+      audioOutput: applyTokenMultiplier(
+        quotePrice(model, 'audio_output_per_million'),
+      ),
+    };
+  };
+
+  const formatCostProfilePrice = (value) => {
+    const numberValue = Number(value || 0);
+    if (!Number.isFinite(numberValue) || numberValue <= 0) return '$0';
+    return `$${numberValue.toFixed(numberValue < 1 ? 6 : 4)}`;
   };
 
   const applyParamOverrideTemplate = (
@@ -906,15 +1409,18 @@ const EditChannelModal = (props) => {
       if (data.setting) {
         try {
           const parsedSettings = JSON.parse(data.setting);
-          data.force_format = parsedSettings.force_format || false;
-          data.thinking_to_content =
-            parsedSettings.thinking_to_content || false;
+          data.force_format = toBoolean(parsedSettings.force_format);
+          data.thinking_to_content = toBoolean(
+            parsedSettings.thinking_to_content,
+          );
           data.proxy = parsedSettings.proxy || '';
-          data.pass_through_body_enabled =
-            parsedSettings.pass_through_body_enabled || false;
+          data.pass_through_body_enabled = toBoolean(
+            parsedSettings.pass_through_body_enabled,
+          );
           data.system_prompt = parsedSettings.system_prompt || '';
-          data.system_prompt_override =
-            parsedSettings.system_prompt_override || false;
+          data.system_prompt_override = toBoolean(
+            parsedSettings.system_prompt_override,
+          );
         } catch (error) {
           console.error('解析渠道设置失败:', error);
           data.force_format = false;
@@ -975,16 +1481,21 @@ const EditChannelModal = (props) => {
           data.is_enterprise_account =
             parsedSettings.openrouter_enterprise === true;
           // 读取字段透传控制设置
-          data.allow_service_tier = parsedSettings.allow_service_tier || false;
-          data.disable_store = parsedSettings.disable_store || false;
-          data.allow_safety_identifier =
-            parsedSettings.allow_safety_identifier || false;
-          data.allow_include_obfuscation =
-            parsedSettings.allow_include_obfuscation || false;
-          data.allow_inference_geo =
-            parsedSettings.allow_inference_geo || false;
-          data.allow_speed = parsedSettings.allow_speed || false;
-          data.claude_beta_query = parsedSettings.claude_beta_query || false;
+          data.allow_service_tier = toBoolean(
+            parsedSettings.allow_service_tier,
+          );
+          data.disable_store = toBoolean(parsedSettings.disable_store);
+          data.allow_safety_identifier = toBoolean(
+            parsedSettings.allow_safety_identifier,
+          );
+          data.allow_include_obfuscation = toBoolean(
+            parsedSettings.allow_include_obfuscation,
+          );
+          data.allow_inference_geo = toBoolean(
+            parsedSettings.allow_inference_geo,
+          );
+          data.allow_speed = toBoolean(parsedSettings.allow_speed);
+          data.claude_beta_query = toBoolean(parsedSettings.claude_beta_query);
           data.upstream_model_update_check_enabled =
             parsedSettings.upstream_model_update_check_enabled === true;
           data.upstream_model_update_auto_sync_enabled =
@@ -1062,6 +1573,9 @@ const EditChannelModal = (props) => {
         data.base_url = 'https://ark.cn-beijing.volces.com';
       }
 
+      normalizeChannelSwitchFields(data);
+      const normalizedAutoBan = data.auto_ban;
+      data.auto_ban = normalizedAutoBan;
       initialBaseUrlRef.current = data.base_url || '';
       setInputs(data);
       const initialCodexProbeState =
@@ -1083,11 +1597,7 @@ const EditChannelModal = (props) => {
       if (formApiRef.current) {
         formApiRef.current.setValues(data);
       }
-      if (data.auto_ban === 0) {
-        setAutoBan(false);
-      } else {
-        setAutoBan(true);
-      }
+      setAutoBan(normalizedAutoBan);
       // 同步企业账户状态
       setIsEnterpriseAccount(data.is_enterprise_account || false);
       setBasicModels(getChannelModels(data.type));
@@ -1098,7 +1608,7 @@ const EditChannelModal = (props) => {
         proxy: data.proxy,
         pass_through_body_enabled: data.pass_through_body_enabled,
         system_prompt: data.system_prompt,
-        system_prompt_override: data.system_prompt_override || false,
+        system_prompt_override: data.system_prompt_override,
       });
       initialModelsRef.current = (data.models || [])
         .map((model) => (model || '').trim())
@@ -1135,7 +1645,6 @@ const EditChannelModal = (props) => {
         (data.remark && data.remark.trim()) ||
         (data.priority && data.priority !== 0) ||
         (data.weight && data.weight !== 0) ||
-        (data.cost_per_million && Number(data.cost_per_million) > 0) ||
         (data.proxy && data.proxy.trim()) ||
         (data.system_prompt && data.system_prompt.trim()) ||
         data.thinking_to_content ||
@@ -1151,6 +1660,9 @@ const EditChannelModal = (props) => {
           probeCodexImageToolSupport({ silent: true });
         }, 0);
       }
+      costQuoteReloadKeyRef.current = '';
+      loadCostProfiles(data.models, data.model_mapping);
+      reloadSavedChannelCostQuote(data.models, data.model_mapping);
     } else {
       showError(message);
     }
@@ -1499,6 +2011,333 @@ const EditChannelModal = (props) => {
     );
   };
 
+  const renderCostProfileNumberInput = (
+    profile,
+    index,
+    field,
+    label,
+    step = 0.01,
+    suffix,
+  ) => (
+    <div className='min-w-[126px]'>
+      <Text
+        type='tertiary'
+        size='small'
+        className='mb-1 block whitespace-nowrap'
+      >
+        {label}
+      </Text>
+      <InputNumber
+        value={Number(profile[field] || 0)}
+        min={0}
+        step={step}
+        precision={6}
+        suffix={suffix}
+        size='small'
+        style={{ width: '100%' }}
+        onChange={(value) => updateCostProfileDraft(index, field, value)}
+      />
+    </div>
+  );
+
+  const renderCostProfileInputs = (profile, index, derived) => {
+    const isRequestMode = derived?.pricingMode === 'request';
+    return (
+      <>
+        <div>
+          <div className='mb-2 flex flex-wrap items-center gap-2'>
+            <Tag color={isRequestMode ? 'green' : 'blue'} type='light' size='small'>
+              {isRequestMode ? t('按次成本设置') : t('成本倍率设置')}
+            </Tag>
+            <Text type='tertiary' size='small'>
+              {isRequestMode
+                ? t('固定按次价格模型只使用按次成本')
+                : t('Token 模型只使用统一成本倍率')}
+            </Text>
+          </div>
+          <div className='grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-2'>
+            {isRequestMode
+              ? renderCostProfileNumberInput(
+                  profile,
+                  index,
+                  'request_price',
+                  t('按次成本'),
+                  0.001,
+                  '$',
+                )
+              : renderCostProfileNumberInput(
+                  profile,
+                  index,
+                  'token_multiplier',
+                  t('成本倍率'),
+                  0.01,
+                  'x',
+                )}
+            {renderCostProfileNumberInput(
+              profile,
+              index,
+              'recharge_multiplier',
+              t('充值倍率'),
+              0.01,
+              'x',
+            )}
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  const renderCostProfileDerivedCost = (derived) => {
+    const isRequestMode = derived.pricingMode === 'request';
+    const rows = isRequestMode
+      ? [
+          {
+            key: 'request',
+            label: t('按次'),
+            priceLabel: t('价格/次'),
+            costLabel: t('推导成本/次'),
+            price: derived.requestBase,
+            cost: derived.requestPrice,
+          },
+        ].filter((row) => row.price > 0 || row.cost > 0)
+      : [
+          {
+            key: 'input',
+            label: t('输入'),
+            price: derived.sourceInput,
+            cost: derived.input,
+          },
+          {
+            key: 'output',
+            label: t('输出'),
+            price: derived.sourceOutput,
+            cost: derived.output,
+          },
+          {
+            key: 'cache_read',
+            label: t('缓存读'),
+            price: derived.sourceCacheRead,
+            cost: derived.cacheRead,
+          },
+          {
+            key: 'cache_write',
+            label: t('缓存写'),
+            price: derived.sourceCacheWrite,
+            cost: derived.cacheWrite,
+          },
+          {
+            key: 'cache_write_1h',
+            label: t('缓存写 1h'),
+            price: quotePrice(derived.model, 'cache_write_1h_per_million'),
+            cost: derived.cacheWrite1h,
+          },
+          {
+            key: 'image_input',
+            label: t('图片输入'),
+            price: quotePrice(derived.model, 'image_input_per_million'),
+            cost: derived.imageInput,
+          },
+          {
+            key: 'audio_input',
+            label: t('音频输入'),
+            price: quotePrice(derived.model, 'audio_input_per_million'),
+            cost: derived.audioInput,
+          },
+          {
+            key: 'audio_output',
+            label: t('音频输出'),
+            price: quotePrice(derived.model, 'audio_output_per_million'),
+            cost: derived.audioOutput,
+          },
+        ].filter((row) => row.price > 0 || row.cost > 0);
+    const sourceLabel = derived.hasConfiguredPrice
+      ? t('配置价格设置')
+      : t('未配置');
+    return (
+      <div className='rounded-lg border border-gray-100 bg-gray-50/70 p-3'>
+        <div className='mb-2 flex flex-wrap items-center justify-between gap-2'>
+          <Text strong className='text-sm'>
+            {t('推导成本')}
+          </Text>
+          <Text type='tertiary' size='small'>
+            {derived.model
+              ? t('样例模型 {{model}}', { model: derived.model })
+              : t('请选择模型')}
+          </Text>
+        </div>
+        {rows.length > 0 ? (
+          <div className='grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-2'>
+            {rows.map((row) => (
+              <div key={row.key} className='rounded-md bg-white px-2 py-2'>
+                <Text className='mb-1 block text-xs font-medium text-gray-700'>
+                  {row.label}
+                </Text>
+                <div className='flex items-center justify-between gap-2 text-xs'>
+                  <Text type='tertiary'>
+                    {row.priceLabel || t('价格/M')}
+                  </Text>
+                  <Text className='font-medium text-gray-800'>
+                    {formatCostProfilePrice(row.price)}
+                  </Text>
+                </div>
+                <div className='mt-1 flex items-center justify-between gap-2 text-xs'>
+                  <Text type='tertiary'>
+                    {row.costLabel || t('推导成本/M')}
+                  </Text>
+                  <Text className='font-semibold text-cyan-700'>
+                    {formatCostProfilePrice(row.cost)}
+                  </Text>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <Text type='warning' size='small' className='mt-2 block'>
+            {t('未获取到模型定价，无法推导成本')}
+          </Text>
+        )}
+        {derived.model && derived.hasConfiguredPrice ? (
+          <Text type='tertiary' size='small' className='mt-2 block'>
+            {t('价格来源')}: {sourceLabel}
+            {derived.pricingModel && derived.pricingModel !== derived.model
+              ? ` · ${t('上游模型')}: ${derived.pricingModel}`
+              : ''}
+          </Text>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderCostProfileEditor = () => (
+    <div className='py-3 border-b border-gray-100' id='channel-upstream-cost-ratios'>
+      <div className='flex flex-col gap-3 mb-3 md:flex-row md:items-start md:justify-between'>
+        <div className='min-w-0'>
+          <Text className='text-sm font-medium text-gray-500 block'>
+            {t('上游成本配置')}
+          </Text>
+          <Text type='tertiary' size='small'>
+            {t('基础价格来自配置价格设置；成本倍率和充值倍率来自渠道设置。')}
+          </Text>
+        </div>
+        <Tooltip content={t('刷新')}>
+          <Button
+            size='small'
+            type='tertiary'
+            icon={<IconRefresh />}
+            loading={costProfilesLoading}
+            disabled={!isEdit}
+            onClick={() => {
+              costQuoteReloadKeyRef.current = '';
+              loadCostProfiles(inputs.models, inputs.model_mapping);
+              reloadSavedChannelCostQuote(inputs.models, inputs.model_mapping);
+            }}
+          />
+        </Tooltip>
+      </div>
+
+      {!isEdit && (
+        <Banner
+          type='info'
+          closeIcon={null}
+          className='mb-3 rounded-xl'
+          description={t('创建渠道时会随渠道一起保存成本倍率和充值倍率')}
+        />
+      )}
+
+      {costProfilesError && (
+        <Banner
+          type='danger'
+          closeIcon={null}
+          className='mb-3 rounded-xl'
+          description={
+            <div className='flex flex-col gap-2 md:flex-row md:items-center md:justify-between'>
+              <span>{costProfilesError}</span>
+              <Button
+                size='small'
+                type='danger'
+                theme='borderless'
+                icon={<IconRefresh />}
+                loading={costProfilesLoading}
+                onClick={() => {
+                  costQuoteReloadKeyRef.current = '';
+                  loadCostProfiles(inputs.models, inputs.model_mapping);
+                  reloadSavedChannelCostQuote(inputs.models, inputs.model_mapping);
+                }}
+              >
+                {t('重试')}
+              </Button>
+            </div>
+          }
+        />
+      )}
+
+      <Spin spinning={costProfilesLoading}>
+        {costProfiles.length === 0 ? (
+          <div className='rounded-xl border border-dashed border-gray-200 p-4 text-center text-sm text-gray-500'>
+            {t('暂无上游成本配置')}
+          </div>
+        ) : (
+          <div className='space-y-3'>
+            {costProfiles.map((profile, index) => {
+              const key = profile.id || `draft-${index}`;
+              const saving =
+                savingCostProfileId === profile.id ||
+                savingCostProfileId === `new-${index}`;
+              const derived = buildCostProfileDerivedPrices(profile);
+              return (
+                <div
+                  key={key}
+                  className='rounded-lg border border-gray-100 bg-white p-3 shadow-sm'
+                >
+                  <div className='flex flex-wrap items-start justify-between gap-2'>
+                    <div className='min-w-0 flex-1'>
+                      <Text className='text-sm font-medium text-gray-700 block'>
+                        {derived.pricingMode === 'request'
+                          ? t('按次成本 / 充值倍率')
+                          : t('成本倍率 / 充值倍率')}
+                      </Text>
+                    </div>
+                    <Button
+                      size='small'
+                      type='primary'
+                      icon={<IconSave />}
+                      loading={saving}
+                      onClick={() => saveCostProfileDraft(index)}
+                    >
+                      {isEdit ? t('保存') : t('随渠道保存')}
+                    </Button>
+                  </div>
+
+                  <div className='mt-3 space-y-3'>
+                    {renderCostProfileInputs(profile, index, derived)}
+                  </div>
+
+                  <div className='mt-3'>{renderCostProfileDerivedCost(derived)}</div>
+
+                  <div className='flex flex-wrap items-center gap-2 mt-2 text-xs text-gray-500'>
+                    <Tag color='cyan' type='light' size='small'>
+                      system_ratio
+                    </Tag>
+                    <span>USD</span>
+                    <span>
+                      {t('最近更新')}:{' '}
+                      {formatCostProfileUpdatedAt(profile.updated_at)}
+                    </span>
+                    {profile.id ? (
+                      <span>#{profile.id}</span>
+                    ) : (
+                      <span>{t('未保存')}</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Spin>
+    </div>
+  );
+
   const openModelMappingValueModal = async ({ pairKey, value }) => {
     const mappingKey = String(pairKey ?? '').trim();
     if (!mappingKey) return;
@@ -1721,6 +2560,9 @@ const EditChannelModal = (props) => {
         loadChannel();
       } else {
         formApiRef.current?.setValues(getInitValues());
+        setCostProfileDraftFromSource();
+        setCostProfilesError('');
+        loadUnsavedCostQuote(getChannelModels(inputs.type));
         try {
           navigator?.clipboard
             ?.readText()
@@ -1741,10 +2583,11 @@ const EditChannelModal = (props) => {
         isEdit &&
           localStorage.getItem(ADVANCED_SETTINGS_EXPANDED_KEY) === 'true',
       );
-    } else {
-      // 统一的模态框关闭重置逻辑
-      resetModalState();
-    }
+      } else {
+        // 统一的模态框关闭重置逻辑
+        costQuoteReloadKeyRef.current = '';
+        resetModalState();
+      }
   }, [props.visible, channelId]);
 
   useEffect(() => {
@@ -1754,6 +2597,34 @@ const EditChannelModal = (props) => {
       initialStatusCodeMappingRef.current = '';
     }
   }, [isEdit, props.visible]);
+
+  useEffect(() => {
+    if (!props.visible || !isEdit || !channelId || costProfilesLoading) {
+      return;
+    }
+    const normalizedModels = (inputs.models || [])
+      .map((model) => normalizeCostProfileModel(model))
+      .filter(Boolean);
+    if (normalizedModels.length === 0 || hasAnyCostQuote()) {
+      return;
+    }
+    const reloadKey = `${channelId}|${normalizedModels.join(',')}|${
+      inputs.model_mapping || ''
+    }`;
+    if (costQuoteReloadKeyRef.current === reloadKey) {
+      return;
+    }
+    costQuoteReloadKeyRef.current = reloadKey;
+    reloadSavedChannelCostQuote(normalizedModels, inputs.model_mapping);
+  }, [
+    props.visible,
+    isEdit,
+    channelId,
+    inputs.models,
+    inputs.model_mapping,
+    costProfilesLoading,
+    costQuote,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -1786,6 +2657,11 @@ const EditChannelModal = (props) => {
     doubaoApiClickCountRef.current = 0;
     setModelSearchValue('');
     setSubmitting(false);
+    setCostProfiles([]);
+    setCostQuote({ models: [], quotes: {} });
+    costQuoteReloadKeyRef.current = '';
+    setCostProfilesLoading(false);
+    setSavingCostProfileId(null);
     codexProbeRequestIdRef.current += 1;
     setCodexProbeState(buildCodexProbeState());
     // 重置高级设置折叠状态
@@ -1943,14 +2819,6 @@ const EditChannelModal = (props) => {
     const formValues = formApiRef.current ? formApiRef.current.getValues() : {};
     let localInputs = { ...formValues };
     localInputs.param_override = inputs.param_override;
-    localInputs.cost_per_million = Number(localInputs.cost_per_million || 0);
-    if (
-      !Number.isFinite(localInputs.cost_per_million) ||
-      localInputs.cost_per_million < 0
-    ) {
-      showInfo(t('渠道成本必须是非负数'));
-      return;
-    }
 
     if (localInputs.type === 57) {
       if (batch) {
@@ -2313,6 +3181,7 @@ const EditChannelModal = (props) => {
     delete localInputs.upstream_model_update_last_check_time;
     delete localInputs.upstream_model_update_last_detected_models;
     delete localInputs.upstream_model_update_ignored_models;
+    delete localInputs.cost_per_million;
 
     let res;
     localInputs.auto_ban = localInputs.auto_ban ? 1 : 0;
@@ -2344,8 +3213,30 @@ const EditChannelModal = (props) => {
         if (isEdit) {
           showSuccess(t('渠道更新成功！'));
         } else {
+          const createdChannelIds = Array.isArray(res.data?.data?.channel_ids)
+            ? res.data.data.channel_ids
+            : [];
+          if (createdChannelIds.length > 0 && costProfiles[0]) {
+            try {
+              await Promise.all(
+                createdChannelIds.map((createdChannelId) =>
+                  persistCostProfileDraftForChannel(
+                    createdChannelId,
+                    costProfiles[0],
+                    true,
+                  ),
+                ),
+              );
+            } catch (error) {
+              showError(
+                resolveCostProfileError(error, t('保存上游成本倍率失败')),
+              );
+              return;
+            }
+          }
           showSuccess(t('渠道创建成功！'));
           setInputs(originInputs);
+          setCostProfiles([createEmptyCostProfile()]);
         }
         props.refresh();
         props.handleClose();
@@ -2644,7 +3535,7 @@ const EditChannelModal = (props) => {
         }
         bodyStyle={{ padding: '0' }}
         visible={props.visible}
-        width={isMobile ? '100%' : 600}
+        width={sheetWidth}
         footer={
           <div className='flex justify-end items-center gap-2'>
             <Button
@@ -2996,23 +3887,6 @@ const EditChannelModal = (props) => {
                         style={{ width: '100%' }}
                       />
                     </Col>
-                    <Col span={8}>
-                      <Form.InputNumber
-                        field='cost_per_million'
-                        label={t('成本 / M')}
-                        placeholder={t('成本 / M')}
-                        min={0}
-                        step={0.01}
-                        prefix='$'
-                        onNumberChange={(value) =>
-                          handleInputChange('cost_per_million', value)
-                        }
-                        style={{ width: '100%' }}
-                        extraText={t(
-                          '每 1M tokens 的渠道成本，用于智能调度成本评分',
-                        )}
-                      />
-                    </Col>
                   </Row>
 
                   {inputs.type === 1 && (
@@ -3343,6 +4217,8 @@ const EditChannelModal = (props) => {
                         onChange={(value) => handleInputChange('type', value)}
                         disabled={isIonetLocked}
                       />
+
+                      {renderCostProfileEditor()}
 
                       {inputs.type === 57 && (
                         <Banner
@@ -4493,7 +5369,7 @@ const EditChannelModal = (props) => {
                         extraText={t(
                           '仅当自动禁用开启时有效，关闭后不会自动禁用该渠道',
                         )}
-                        initValue={autoBan}
+                        checked={autoBan}
                       />
 
                       {/* Test Model - Core Config */}
@@ -4584,8 +5460,8 @@ const EditChannelModal = (props) => {
                   <div
                     className='fixed top-0 h-full overflow-y-auto z-[999] semi-sidesheet-inner'
                     style={{
-                      width: 600,
-                      [isEdit ? 'right' : 'left']: 600,
+                      width: desktopSheetWidth,
+                      [isEdit ? 'right' : 'left']: desktopSheetWidth,
                       backgroundColor: 'var(--semi-color-bg-0)',
                       borderLeft: isEdit
                         ? 'none'
@@ -4625,7 +5501,7 @@ const EditChannelModal = (props) => {
                               color='orange'
                               className='mr-2 shadow-md'
                             >
-                              <IconSetting size={16} />
+                              <IconPriceTag size={16} />
                             </Avatar>
                             <div>
                               <Text className='text-lg font-medium'>

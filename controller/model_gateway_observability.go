@@ -16,10 +16,12 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
 	modelgatewayscheduler "github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
@@ -278,28 +280,36 @@ type ModelGatewayUserRequestAggregate struct {
 }
 
 type ModelGatewayUserRequestRecord struct {
-	ID                 int                                 `json:"id"`
-	CreatedAt          int64                               `json:"created_at"`
-	CompletedAt        int64                               `json:"completed_at"`
-	RequestID          string                              `json:"request_id"`
-	RequestedModel     string                              `json:"requested_model"`
-	RequestedGroup     string                              `json:"requested_group"`
-	SelectedGroup      string                              `json:"selected_group,omitempty"`
-	FinalChannelID     int                                 `json:"final_channel_id,omitempty"`
-	FinalChannelName   string                              `json:"final_channel_name,omitempty"`
-	Attempts           int                                 `json:"attempts"`
-	FinalSuccess       bool                                `json:"final_success"`
-	Recovered          bool                                `json:"recovered"`
-	FinalStatusCode    int                                 `json:"final_status_code,omitempty"`
-	FinalErrorCategory string                              `json:"final_error_category,omitempty"`
-	EmptyOutput        bool                                `json:"empty_output,omitempty"`
-	ExperienceIssue    string                              `json:"experience_issue,omitempty"`
-	ClientAborted      bool                                `json:"client_aborted,omitempty"`
-	DurationMs         int64                               `json:"duration_ms,omitempty"`
-	TTFTMs             int64                               `json:"ttft_ms,omitempty"`
-	Status             string                              `json:"status,omitempty"`
-	Billing            *ModelGatewayUserRequestBillingInfo `json:"billing,omitempty"`
-	DispatchRecord     *ModelGatewayObservabilityRecord    `json:"dispatch_record,omitempty"`
+	ID                    int                                 `json:"id"`
+	CreatedAt             int64                               `json:"created_at"`
+	CompletedAt           int64                               `json:"completed_at"`
+	RequestID             string                              `json:"request_id"`
+	RequestedModel        string                              `json:"requested_model"`
+	RequestedGroup        string                              `json:"requested_group"`
+	SelectedGroup         string                              `json:"selected_group,omitempty"`
+	ActualGroup           string                              `json:"actual_group,omitempty"`
+	ActualGroupRatio      float64                             `json:"actual_group_ratio,omitempty"`
+	FinalChannelID        int                                 `json:"final_channel_id,omitempty"`
+	FinalChannelName      string                              `json:"final_channel_name,omitempty"`
+	ActualChannelCost     float64                             `json:"actual_channel_cost,omitempty"`
+	UpstreamCostTotal     float64                             `json:"upstream_cost_total,omitempty"`
+	UpstreamCostModel     string                              `json:"upstream_cost_model,omitempty"`
+	UpstreamCostBreakdown map[string]interface{}              `json:"upstream_cost_breakdown,omitempty"`
+	UpstreamCostSource    string                              `json:"upstream_cost_source,omitempty"`
+	UpstreamCostAccuracy  string                              `json:"upstream_cost_accuracy,omitempty"`
+	Attempts              int                                 `json:"attempts"`
+	FinalSuccess          bool                                `json:"final_success"`
+	Recovered             bool                                `json:"recovered"`
+	FinalStatusCode       int                                 `json:"final_status_code,omitempty"`
+	FinalErrorCategory    string                              `json:"final_error_category,omitempty"`
+	EmptyOutput           bool                                `json:"empty_output,omitempty"`
+	ExperienceIssue       string                              `json:"experience_issue,omitempty"`
+	ClientAborted         bool                                `json:"client_aborted,omitempty"`
+	DurationMs            int64                               `json:"duration_ms,omitempty"`
+	TTFTMs                int64                               `json:"ttft_ms,omitempty"`
+	Status                string                              `json:"status,omitempty"`
+	Billing               *ModelGatewayUserRequestBillingInfo `json:"billing,omitempty"`
+	DispatchRecord        *ModelGatewayObservabilityRecord    `json:"dispatch_record,omitempty"`
 }
 
 type ModelGatewayUserRequestBillingInfo struct {
@@ -1402,6 +1412,7 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 		}
 	}
 	attachModelGatewayUserRequestBilling(response.RecentRequests)
+	attachModelGatewayUserRequestCosts(response.RecentRequests)
 
 	response.Summary = modelGatewayUserRequestSummaryFromAccumulator(response.Summary, totalAccumulator)
 	response.ByModel = finalizeModelGatewayUserRequestAggregates(modelAccumulators, options.TopN)
@@ -1409,6 +1420,67 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 	response.Trends = finalizeModelGatewayUserRequestTrends(trendAccumulators, startTime, endTime, options.TrendBucketSeconds)
 	attachModelGatewayUserRequestDispatchRecords(response.RecentRequests)
 	return response
+}
+
+func attachModelGatewayUserRequestCosts(records []ModelGatewayUserRequestRecord) {
+	if len(records) == 0 || model.DB == nil {
+		return
+	}
+	requestIDs := make([]string, 0, len(records))
+	seen := make(map[string]bool, len(records))
+	for _, record := range records {
+		requestID := strings.TrimSpace(record.RequestID)
+		if requestID == "" || seen[requestID] {
+			continue
+		}
+		seen[requestID] = true
+		requestIDs = append(requestIDs, requestID)
+	}
+	if len(requestIDs) == 0 {
+		return
+	}
+
+	summaries := make([]model.ModelGatewayRequestCostSummary, 0, len(requestIDs))
+	if err := model.DB.
+		Where("request_id IN ?", requestIDs).
+		Find(&summaries).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to load model gateway user request costs: %v", err))
+		return
+	}
+
+	summaryByRequestID := make(map[string]model.ModelGatewayRequestCostSummary, len(summaries))
+	for _, summary := range summaries {
+		requestID := strings.TrimSpace(summary.RequestId)
+		if requestID == "" {
+			continue
+		}
+		summaryByRequestID[requestID] = summary
+	}
+	for idx := range records {
+		summary, ok := summaryByRequestID[strings.TrimSpace(records[idx].RequestID)]
+		if !ok {
+			records[idx].UpstreamCostSource = modelgatewaycost.SourcePending
+			records[idx].UpstreamCostAccuracy = modelgatewaycost.AccuracyPending
+			continue
+		}
+		records[idx].UpstreamCostTotal = summary.UpstreamCostTotal
+		records[idx].ActualChannelCost = summary.UpstreamCostTotal
+		records[idx].UpstreamCostModel = strings.TrimSpace(summary.UpstreamModel)
+		records[idx].UpstreamCostSource = strings.TrimSpace(summary.CostSource)
+		records[idx].UpstreamCostAccuracy = strings.TrimSpace(summary.CostAccuracy)
+		if records[idx].UpstreamCostSource == "" {
+			records[idx].UpstreamCostSource = modelgatewaycost.SourcePending
+		}
+		if records[idx].UpstreamCostAccuracy == "" {
+			records[idx].UpstreamCostAccuracy = modelgatewaycost.AccuracyPending
+		}
+		if strings.TrimSpace(summary.BreakdownJSON) != "" {
+			breakdown := map[string]interface{}{}
+			if err := common.UnmarshalJsonStr(summary.BreakdownJSON, &breakdown); err == nil {
+				records[idx].UpstreamCostBreakdown = breakdown
+			}
+		}
+	}
 }
 
 func attachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequestRecord) {
@@ -1503,7 +1575,9 @@ func attachModelGatewayUserRequestBilling(records []ModelGatewayUserRequestRecor
 		billingByRequestID[requestID] = modelGatewayUserRequestBillingInfoFromLog(log)
 	}
 	for idx := range records {
-		records[idx].Billing = billingByRequestID[strings.TrimSpace(records[idx].RequestID)]
+		billing := billingByRequestID[strings.TrimSpace(records[idx].RequestID)]
+		records[idx].Billing = billing
+		applyModelGatewayUserRequestActualGroup(&records[idx], billing)
 	}
 }
 
@@ -1566,6 +1640,36 @@ func modelGatewayUserRequestBillingInfoFromLog(log model.Log) *ModelGatewayUserR
 		info.ImageGenerationCallCount = 1
 	}
 	return info
+}
+
+func applyModelGatewayUserRequestActualGroup(record *ModelGatewayUserRequestRecord, billing *ModelGatewayUserRequestBillingInfo) {
+	if record == nil {
+		return
+	}
+	actualGroup := strings.TrimSpace(record.ActualGroup)
+	if actualGroup == "" {
+		actualGroup = modelGatewayUserRequestActualGroup(record.RequestedGroup, record.SelectedGroup)
+	}
+	if actualGroup == "" && billing != nil {
+		actualGroup = strings.TrimSpace(billing.Group)
+	}
+	record.ActualGroup = actualGroup
+	if actualGroup == "" {
+		record.ActualGroupRatio = 0
+		return
+	}
+	if billing != nil && billing.GroupRatio > 0 && strings.TrimSpace(billing.Group) == actualGroup {
+		record.ActualGroupRatio = billing.GroupRatio
+		return
+	}
+	if record.ActualGroupRatio > 0 && (billing == nil || strings.TrimSpace(billing.Group) == "" || strings.TrimSpace(billing.Group) == actualGroup) {
+		return
+	}
+	if record.CompletedAt <= 0 {
+		record.ActualGroupRatio = 0
+		return
+	}
+	record.ActualGroupRatio = ratio_setting.GetGroupRatio(actualGroup)
 }
 
 func modelGatewayBillingFloat(values map[string]interface{}, key string) float64 {
@@ -1775,6 +1879,11 @@ func modelGatewayUserRequestTrendPointFromAccumulator(bucketStart int64, bucketE
 
 func ModelGatewayUserRequestRecordFromSummary(userRequest model.ModelGatewayUserRequestSummary) ModelGatewayUserRequestRecord {
 	clientAborted := modelGatewayUserRequestClientAborted(userRequest)
+	actualGroup := modelGatewayUserRequestActualGroup(userRequest.RequestedGroup, userRequest.SelectedGroup)
+	actualGroupRatio := 0.0
+	if userRequest.CompletedAt > 0 && actualGroup != "" {
+		actualGroupRatio = ratio_setting.GetGroupRatio(actualGroup)
+	}
 	return ModelGatewayUserRequestRecord{
 		ID:                 userRequest.Id,
 		CreatedAt:          userRequest.CreatedAt,
@@ -1783,6 +1892,8 @@ func ModelGatewayUserRequestRecordFromSummary(userRequest model.ModelGatewayUser
 		RequestedModel:     userRequest.RequestedModel,
 		RequestedGroup:     userRequest.RequestedGroup,
 		SelectedGroup:      userRequest.SelectedGroup,
+		ActualGroup:        actualGroup,
+		ActualGroupRatio:   actualGroupRatio,
 		FinalChannelID:     userRequest.FinalChannelID,
 		FinalChannelName:   userRequest.FinalChannelName,
 		Attempts:           userRequest.Attempts,
@@ -1797,6 +1908,16 @@ func ModelGatewayUserRequestRecordFromSummary(userRequest model.ModelGatewayUser
 		TTFTMs:             userRequest.TTFTMs,
 		Status:             modelGatewayUserRequestStatus(userRequest.FinalSuccess, clientAborted),
 	}
+}
+
+func modelGatewayUserRequestActualGroup(requestedGroup string, selectedGroup string) string {
+	if group := strings.TrimSpace(selectedGroup); group != "" {
+		return group
+	}
+	if group := strings.TrimSpace(requestedGroup); group != "" {
+		return group
+	}
+	return ""
 }
 
 func modelGatewayUserRequestRecord(userRequest model.ModelGatewayUserRequestSummary) ModelGatewayUserRequestRecord {

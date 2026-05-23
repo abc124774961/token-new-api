@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -99,4 +101,16 @@ func TestResponsesRequestHasImageGenerationToolIgnoresPlainImagePromptWithoutKey
 	}`)
 
 	require.False(t, responsesRequestHasImageGenerationTool(ctx))
+}
+
+func TestApplySelectedGroupContextUsesSelectedGroupForAutoRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "auto")
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "auto")
+
+	applySelectedGroupContext(ctx, "auto", "codex-plus")
+
+	require.Equal(t, "codex-plus", common.GetContextKeyString(ctx, constant.ContextKeyUsingGroup))
+	require.Equal(t, "codex-plus", common.GetContextKeyString(ctx, constant.ContextKeyAutoGroup))
 }

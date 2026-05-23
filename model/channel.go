@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -421,6 +420,7 @@ func BatchInsertChannels(channels []Channel) error {
 		}
 	}()
 
+	inserted := 0
 	for _, chunk := range lo.Chunk(channels, 50) {
 		if err := tx.Create(&chunk).Error; err != nil {
 			tx.Rollback()
@@ -432,6 +432,8 @@ func BatchInsertChannels(channels []Channel) error {
 				return err
 			}
 		}
+		copy(channels[inserted:inserted+len(chunk)], chunk)
+		inserted += len(chunk)
 	}
 	if err := tx.Commit().Error; err != nil {
 		return err
@@ -503,17 +505,6 @@ func (channel *Channel) GetStatusCodeMapping() string {
 		return ""
 	}
 	return *channel.StatusCodeMapping
-}
-
-func (channel *Channel) GetCostPerMillion() float64 {
-	if channel == nil || channel.CostPerMillion == nil {
-		return 0
-	}
-	value := *channel.CostPerMillion
-	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0
-	}
-	return value
 }
 
 func (channel *Channel) ResolveMappedModelName(modelName string) string {

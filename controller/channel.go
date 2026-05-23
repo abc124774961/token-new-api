@@ -84,6 +84,7 @@ func buildChannelResponse(channel *model.Channel) *channelResponse {
 		return nil
 	}
 	clearChannelInfo(channel)
+	channel.CostPerMillion = nil
 	statusReason := service.ChannelStatusReason(channel)
 	return &channelResponse{
 		Channel:             channel,
@@ -900,9 +901,6 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	if channel == nil {
 		return fmt.Errorf("channel cannot be empty")
 	}
-	if channel.CostPerMillion != nil && *channel.CostPerMillion < 0 {
-		return fmt.Errorf("渠道成本不能为负数")
-	}
 
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
@@ -1050,6 +1048,7 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 
+	addChannelRequest.Channel.CostPerMillion = nil
 	addChannelRequest.Channel.CreatedTime = common.GetTimestamp()
 	keys := make([]string, 0)
 	switch addChannelRequest.Mode {
@@ -1126,9 +1125,18 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 	service.ResetProxyClientCache()
+	channelIDs := make([]int, 0, len(channels))
+	for _, channel := range channels {
+		if channel.Id > 0 {
+			channelIDs = append(channelIDs, channel.Id)
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
+		"data": gin.H{
+			"channel_ids": channelIDs,
+		},
 	})
 	return
 }
@@ -1337,6 +1345,7 @@ func UpdateChannel(c *gin.Context) {
 
 	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
 	channel.ChannelInfo = originChannel.ChannelInfo
+	channel.CostPerMillion = nil
 
 	// If the request explicitly specifies a new MultiKeyMode, apply it on top of the original info.
 	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {

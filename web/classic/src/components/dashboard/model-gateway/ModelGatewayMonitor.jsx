@@ -821,10 +821,36 @@ function buildUserRequestDetailRecord(userRequest, records) {
       userRequest?.selected_group ||
       dispatch?.selected_group ||
       attempt?.selected_group,
+    actual_group:
+      userRequest?.actual_group || dispatch?.actual_group || attempt?.actual_group,
+    actual_group_ratio:
+      userRequest?.actual_group_ratio ||
+      dispatch?.actual_group_ratio ||
+      attempt?.actual_group_ratio,
     channel_id: finalChannelId,
     channel_name: finalChannelName,
     actual_channel_id: finalChannelId,
     actual_channel_name: finalChannelName,
+    upstream_cost_total:
+      userRequest?.upstream_cost_total ||
+      attempt?.upstream_cost_total ||
+      dispatch?.upstream_cost_total,
+    upstream_cost_model:
+      userRequest?.upstream_cost_model ||
+      attempt?.upstream_cost_model ||
+      dispatch?.upstream_cost_model,
+    upstream_cost_breakdown:
+      userRequest?.upstream_cost_breakdown ||
+      attempt?.upstream_cost_breakdown ||
+      dispatch?.upstream_cost_breakdown,
+    upstream_cost_source:
+      userRequest?.upstream_cost_source ||
+      attempt?.upstream_cost_source ||
+      dispatch?.upstream_cost_source,
+    upstream_cost_accuracy:
+      userRequest?.upstream_cost_accuracy ||
+      attempt?.upstream_cost_accuracy ||
+      dispatch?.upstream_cost_accuracy,
     success: userRequest?.final_success === true || attempt?.success === true,
     final_success: userRequest?.final_success === true,
     status_code: userRequest?.final_status_code || attempt?.status_code || 0,
@@ -1606,6 +1632,7 @@ function userRequestMatchesQuery(record, query) {
     record?.requested_model,
     record?.requested_group,
     record?.selected_group,
+    record?.actual_group,
     record?.final_channel_id,
     record?.final_channel_name,
     record?.final_error_category,
@@ -1639,10 +1666,8 @@ function stripChannelRatioSuffix(channelName) {
 function formatUserRequestGroupFlow(record) {
   const requestedGroup = String(record?.requested_group || '').trim();
   const selectedGroup = String(record?.selected_group || '').trim();
-  if (requestedGroup && selectedGroup && requestedGroup !== selectedGroup) {
-    return `${requestedGroup}=>${selectedGroup}`;
-  }
-  return selectedGroup || requestedGroup || '--';
+  const actualGroup = String(record?.actual_group || '').trim();
+  return actualGroup || selectedGroup || requestedGroup || '--';
 }
 
 function safeNumber(value, fallback = 0) {
@@ -1657,9 +1682,39 @@ function formatBillingRatio(value) {
 }
 
 function formatUserRequestGroupRatio(record) {
-  const ratio = Number(record?.billing?.group_ratio || 0);
+  const actualGroup = String(record?.actual_group || '').trim();
+  const billingGroup = String(record?.billing?.group || '').trim();
+  const ratio = Number(
+    record?.actual_group_ratio ||
+      (actualGroup && billingGroup === actualGroup
+        ? record?.billing?.group_ratio
+        : 0) ||
+      0,
+  );
   if (!Number.isFinite(ratio) || ratio <= 0) return '';
-  return ratio.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+  return `${formatBillingRatio(ratio)}x`;
+}
+
+function formatUsdCostAmount(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '--';
+  if (numeric < 0.00000001) {
+    return `$${numeric.toExponential(2).replace('e', 'E')}`;
+  }
+  const digits = numeric < 0.000001 ? 12 : numeric < 0.01 ? 8 : 6;
+  return `$${numeric.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}`;
+}
+
+function formatCostUnitPrice(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '--';
+  const digits = numeric < 0.000001 ? 12 : numeric < 1 ? 6 : 4;
+  return `$${numeric.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}`;
+}
+
+function formatCostRatio(value) {
+  const text = formatBillingRatio(value);
+  return text === '--' ? '--' : `${text}x`;
 }
 
 function formatBillingTokenCount(value) {
@@ -2094,6 +2149,318 @@ function UserRequestCostCell({ billing, t }) {
             ? `${formatBillingTokenCount(billing.total_tokens)} ${t('tokens')}`
             : t('费用参考')}
         </span>
+      </HoverCard>
+    </div>
+  );
+}
+
+function upstreamCostSourceLabel(source, accuracy, t) {
+  if (source === 'pending' || accuracy === 'pending') return t('计算中');
+  if (source === 'missing' || accuracy === 'missing') return t('未配置');
+  if (source === 'auto_synced') return t('自动同步');
+  if (source === 'manual') return t('手动规则');
+  return source || '--';
+}
+
+function upstreamCostStatus(record) {
+  const source = String(record?.upstream_cost_source || '').trim();
+  const accuracy = String(record?.upstream_cost_accuracy || '').trim();
+  const total = safeNumber(record?.upstream_cost_total);
+  if (source === 'pending' || accuracy === 'pending' || (!source && total <= 0)) {
+    return { source: 'pending', accuracy: 'pending', amount: 0 };
+  }
+  if (source === 'missing' || accuracy === 'missing') {
+    return { source: 'missing', accuracy: 'missing', amount: 0 };
+  }
+  return {
+    source,
+    accuracy,
+    amount: Number.isFinite(total) && total > 0 ? total : 0,
+  };
+}
+
+function upstreamCostComponentRows(breakdown, t) {
+  const components = [
+    ['input', t('输入')],
+    ['output', t('输出')],
+    ['cache_read', t('缓存读取')],
+    ['cache_write', t('缓存写入')],
+    ['cache_write_5m', t('缓存写入 5m')],
+    ['cache_write_1h', t('缓存写入 1h')],
+    ['image_input', t('图片输入')],
+    ['image_output', t('图片输出')],
+    ['audio_input', t('音频输入')],
+    ['audio_output', t('音频输出')],
+    ['request', t('按次')],
+  ];
+  const rows = [];
+  components.forEach(([key, label]) => {
+    const item = breakdown?.[key];
+    const amount = safeNumber(item?.amount);
+    const tokens = safeNumber(item?.tokens);
+    const count = safeNumber(item?.count);
+    const price = safeNumber(item?.price_per_million || item?.unit_price);
+    if (amount <= 0 && tokens <= 0 && count <= 0 && price <= 0) return;
+    const metaParts = [];
+    if (tokens > 0) {
+      metaParts.push(`${formatBillingTokenCount(tokens)} ${t('tokens')}`);
+    } else if (count > 0) {
+      metaParts.push(`${formatNumber(count)} ${t('次')}`);
+    }
+    if (item?.price_per_million) {
+      metaParts.push(`${t('推导成本/M')} ${formatCostUnitPrice(item.price_per_million)}`);
+    } else if (item?.unit_price) {
+      metaParts.push(`${t('按次成本')} ${formatCostUnitPrice(item.unit_price)}`);
+    }
+    rows.push({ label, amount, meta: metaParts.join(' · ') });
+  });
+  Object.entries(breakdown?.tools || {}).forEach(([name, item]) => {
+    const amount = safeNumber(item?.amount);
+    const count = safeNumber(item?.count);
+    const price = safeNumber(item?.unit_price);
+    if (amount <= 0 && count <= 0 && price <= 0) return;
+    const metaParts = [];
+    if (count > 0) metaParts.push(`${formatNumber(count)} ${t('次')}`);
+    if (item?.unit_price) {
+      metaParts.push(`${t('按次成本')} ${formatCostUnitPrice(item.unit_price)}`);
+    }
+    rows.push({
+      label: name,
+      amount,
+      meta: metaParts.join(' · '),
+    });
+  });
+  return rows;
+}
+
+function upstreamCostSummaryComponentRows(breakdown, t) {
+  return upstreamCostComponentRows(breakdown, t).filter(
+    (row) => row.amount > 0,
+  );
+}
+
+function UserRequestUpstreamCostTooltip({ record, t }) {
+  const status = upstreamCostStatus(record);
+  const breakdown = record?.upstream_cost_breakdown || {};
+  const rows = upstreamCostComponentRows(breakdown, t);
+  const pricingRows = upstreamCostPricingRows(breakdown, t);
+  return (
+    <div className='ct-model-gateway-cost-tooltip'>
+      <div className='ct-model-gateway-cost-tooltip-title'>
+        {t('上游成本明细')}
+      </div>
+      <div className='ct-model-gateway-cost-tooltip-row'>
+        <span>{t('状态')}</span>
+        <strong>
+          {upstreamCostSourceLabel(status.source, status.accuracy, t)}
+        </strong>
+      </div>
+      <div className='ct-model-gateway-cost-tooltip-row'>
+        <span>{t('供应商成本')}</span>
+        <strong>{status.amount > 0 ? formatUsdCostAmount(status.amount) : '--'}</strong>
+      </div>
+      {pricingRows.length > 0 && (
+        <>
+          <div className='ct-model-gateway-cost-tooltip-divider' />
+          <div className='ct-model-gateway-cost-tooltip-section'>
+            {t('渠道成本配置')}
+          </div>
+          {pricingRows.map(([label, value]) => (
+            <div className='ct-model-gateway-cost-tooltip-row' key={label}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </div>
+          ))}
+        </>
+      )}
+      {rows.length > 0 && <div className='ct-model-gateway-cost-tooltip-divider' />}
+      {rows.map((row) => (
+        <div className='ct-model-gateway-cost-tooltip-row' key={row.label}>
+          <span>
+            {row.label}
+            {row.meta && <em>{row.meta}</em>}
+          </span>
+          <strong>{row.amount > 0 ? formatUsdCostAmount(row.amount) : '--'}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function upstreamCostPricingRows(breakdown, t) {
+  const tokenMultiplier = safeNumber(breakdown?.token_multiplier);
+  const rechargeMultiplier = safeNumber(breakdown?.recharge_multiplier);
+  const effectiveCostRatio =
+    tokenMultiplier > 0 && rechargeMultiplier > 0
+      ? tokenMultiplier / rechargeMultiplier
+      : 0;
+  return [
+    [
+      t('成本倍率'),
+      tokenMultiplier > 0 ? formatCostRatio(tokenMultiplier) : '--',
+    ],
+    [
+      t('充值倍率'),
+      rechargeMultiplier > 0 ? formatCostRatio(rechargeMultiplier) : '--',
+    ],
+    [
+      t('有效成本系数'),
+      effectiveCostRatio > 0 ? formatCostRatio(effectiveCostRatio) : '--',
+    ],
+  ].filter(([, value]) => value && value !== '--');
+}
+
+function upstreamCostConfigSummary(record, t) {
+  const breakdown = record?.upstream_cost_breakdown || {};
+  const tokenMultiplier = safeNumber(breakdown?.token_multiplier);
+  const rechargeMultiplier = safeNumber(breakdown?.recharge_multiplier);
+  const effectiveCostRatio =
+    tokenMultiplier > 0 && rechargeMultiplier > 0
+      ? tokenMultiplier / rechargeMultiplier
+      : 0;
+  const parts = [];
+  if (tokenMultiplier > 0) {
+    parts.push(`${t('成本倍率')} ${formatCostRatio(tokenMultiplier)}`);
+  }
+  if (rechargeMultiplier > 0) {
+    parts.push(`${t('充值倍率')} ${formatCostRatio(rechargeMultiplier)}`);
+  }
+  if (effectiveCostRatio > 0) {
+    parts.push(`${t('有效')} ${formatCostRatio(effectiveCostRatio)}`);
+  }
+  return parts.join(' / ');
+}
+
+function upstreamCostCompactConfig(record) {
+  const breakdown = record?.upstream_cost_breakdown || {};
+  const tokenMultiplier = safeNumber(breakdown?.token_multiplier);
+  const rechargeMultiplier = safeNumber(breakdown?.recharge_multiplier);
+  if (tokenMultiplier > 0 && rechargeMultiplier > 0) {
+    return `${formatBillingRatio(tokenMultiplier)}x/${formatBillingRatio(
+      rechargeMultiplier,
+    )}x`;
+  }
+  if (rechargeMultiplier > 0) {
+    return `${formatBillingRatio(rechargeMultiplier)}x`;
+  }
+  return '';
+}
+
+function upstreamCostComponentSummary(record, t) {
+  const rows = upstreamCostSummaryComponentRows(
+    record?.upstream_cost_breakdown || {},
+    t,
+  );
+  if (!rows.length) return '';
+  return rows
+    .slice(0, 2)
+    .map((row) => {
+      const amount = row.amount > 0 ? formatUsdCostAmount(row.amount) : '--';
+      return row.meta ? `${row.label} ${amount} (${row.meta})` : `${row.label} ${amount}`;
+    })
+    .join(' / ');
+}
+
+function UpstreamCostDetailPanel({ record, t }) {
+  const status = upstreamCostStatus(record);
+  const breakdown = record?.upstream_cost_breakdown || {};
+  const rows = upstreamCostSummaryComponentRows(breakdown, t);
+  const pricingRows = upstreamCostPricingRows(breakdown, t);
+  const source = upstreamCostSourceLabel(status.source, status.accuracy, t);
+  const upstreamModel =
+    record?.upstream_cost_model ||
+    record?.upstream_model ||
+    record?.requested_model ||
+    '';
+  return (
+    <div className='ct-model-gateway-upstream-cost-detail'>
+      <div className='ct-model-gateway-upstream-cost-detail-kpis'>
+        <div>
+          <span>{t('供应商成本')}</span>
+          <strong>
+            {status.amount > 0 ? formatUsdCostAmount(status.amount) : source}
+          </strong>
+        </div>
+        <div>
+          <span>{t('成本来源')}</span>
+          <strong>{source}</strong>
+        </div>
+        <div>
+          <span>{t('上游模型')}</span>
+          <strong title={upstreamModel}>{upstreamModel || '--'}</strong>
+        </div>
+      </div>
+
+      {pricingRows.length > 0 && (
+        <div className='ct-model-gateway-upstream-cost-config'>
+          {pricingRows.map(([label, value]) => (
+            <Tag key={label} color='cyan' type='light' shape='circle'>
+              {label} {value}
+            </Tag>
+          ))}
+        </div>
+      )}
+
+      {rows.length > 0 ? (
+        <div className='ct-model-gateway-upstream-cost-breakdown'>
+          <div className='ct-model-gateway-upstream-cost-breakdown-head'>
+            <span>{t('成本项')}</span>
+            <span>{t('本次用量')}</span>
+            <span>{t('推导单价')}</span>
+            <span>{t('金额')}</span>
+          </div>
+          {rows.map((row) => {
+            const itemLabel = row.label || '--';
+            const metaParts = String(row.meta || '').split(' · ');
+            return (
+              <div
+                className='ct-model-gateway-upstream-cost-breakdown-row'
+                key={itemLabel}
+              >
+                <strong>{itemLabel}</strong>
+                <span>{metaParts[0] || '--'}</span>
+                <span>{metaParts[1] || '--'}</span>
+                <strong>
+                  {row.amount > 0 ? formatUsdCostAmount(row.amount) : '--'}
+                </strong>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <Typography.Text type='tertiary'>
+          {status.source === 'pending'
+            ? t('成本正在后台异步计算')
+            : t('暂无可展示的成本明细')}
+        </Typography.Text>
+      )}
+    </div>
+  );
+}
+
+function UserRequestChannelCostCell({ record, t }) {
+  const status = upstreamCostStatus(record);
+  const hasCost = status.amount > 0;
+  const label = hasCost
+    ? formatUsdCostAmount(status.amount)
+    : upstreamCostSourceLabel(status.source, status.accuracy, t);
+  const sourceMeta = upstreamCostSourceLabel(status.source, status.accuracy, t);
+  const configMeta =
+    upstreamCostConfigSummary(record, t) || upstreamCostCompactConfig(record);
+  const componentMeta = upstreamCostComponentSummary(record, t);
+  return (
+    <div
+      className={`ct-model-gateway-user-request-cost-col ct-model-gateway-user-request-cost-col-upstream ${
+        hasCost ? '' : `ct-model-gateway-user-request-cost-${status.source || 'pending'}`
+      }`}
+    >
+      <HoverCard
+        content={<UserRequestUpstreamCostTooltip record={record} t={t} />}
+        className='ct-model-gateway-user-request-cost-trigger'
+      >
+        <strong>{label}</strong>
+        <span>{configMeta || sourceMeta}</span>
+        {componentMeta && <small>{componentMeta}</small>}
       </HoverCard>
     </div>
   );
@@ -2628,7 +2995,8 @@ function UserRequestRecentTable({
               { key: 'status', label: t('状态') },
               { key: 'request', label: t('请求信息') },
               { key: 'group', label: t('渠道信息') },
-              { key: 'cost', label: t('费用'), hint: true },
+              { key: 'channel_cost', label: t('上游成本'), hint: true },
+              { key: 'cost', label: t('扣费'), hint: true },
               { key: 'duration', label: t('总耗时'), hint: true },
               { key: 'ttft', label: t('首包'), hint: true },
               { key: 'complete', label: t('完成时间') },
@@ -2750,11 +3118,6 @@ function UserRequestRecentTable({
                         {channelIdLabel && (
                           <code title={t('渠道 ID')}>{channelIdLabel}</code>
                         )}
-                        {groupRatioLabel && (
-                          <em title={t('分组倍率')}>
-                            {t('分组倍率')} {groupRatioLabel}
-                          </em>
-                        )}
                       </div>
                       <div
                         className='ct-model-gateway-user-request-channel-model'
@@ -2766,10 +3129,14 @@ function UserRequestRecentTable({
                         className='ct-model-gateway-user-request-channel-flow'
                         title={groupFlowLabel}
                       >
-                        {groupFlowLabel}
+                        <strong>{groupFlowLabel}</strong>
+                        {groupRatioLabel && (
+                          <em title={groupRatioLabel}>{groupRatioLabel}</em>
+                        )}
                       </div>
                     </div>
 
+                    <UserRequestChannelCostCell record={record} t={t} />
                     <UserRequestCostCell billing={record.billing} t={t} />
 
                     <div
@@ -7815,6 +8182,11 @@ function RecordDetailDrawer({
             candidates={candidateExplanations}
             t={t}
           />
+
+          <section>
+            <Typography.Title heading={6}>{t('上游成本明细')}</Typography.Title>
+            <UpstreamCostDetailPanel record={record} t={t} />
+          </section>
 
           <section>
             <Typography.Title heading={6}>{t('候选分组')}</Typography.Title>

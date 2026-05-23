@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/observability/userrequest"
 	bus "github.com/QuantumNous/new-api/pkg/realtime"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -435,7 +436,7 @@ func (p params) matchesUserRequest(record controller.ModelGatewayUserRequestReco
 	if p.Model != "" && p.Model != record.RequestedModel {
 		return false
 	}
-	if p.Group != "" && p.Group != record.RequestedGroup && p.Group != record.SelectedGroup {
+	if p.Group != "" && p.Group != record.RequestedGroup && p.Group != record.SelectedGroup && p.Group != record.ActualGroup {
 		return false
 	}
 	if p.ChannelID > 0 && p.ChannelID != record.FinalChannelID {
@@ -454,6 +455,14 @@ func (p params) matchesUserRequest(record controller.ModelGatewayUserRequestReco
 }
 
 func userRequestRecordFromRealtimeRecord(record userrequest.Record) controller.ModelGatewayUserRequestRecord {
+	actualGroup := strings.TrimSpace(record.SelectedGroup)
+	if actualGroup == "" {
+		actualGroup = strings.TrimSpace(record.RequestedGroup)
+	}
+	actualGroupRatio := 0.0
+	if record.CompletedAt > 0 && actualGroup != "" {
+		actualGroupRatio = ratio_setting.GetGroupRatio(actualGroup)
+	}
 	return controller.ModelGatewayUserRequestRecord{
 		ID:                 record.ID,
 		CreatedAt:          record.CreatedAt,
@@ -462,6 +471,8 @@ func userRequestRecordFromRealtimeRecord(record userrequest.Record) controller.M
 		RequestedModel:     record.RequestedModel,
 		RequestedGroup:     record.RequestedGroup,
 		SelectedGroup:      record.SelectedGroup,
+		ActualGroup:        actualGroup,
+		ActualGroupRatio:   actualGroupRatio,
 		FinalChannelID:     record.FinalChannelID,
 		FinalChannelName:   record.FinalChannelName,
 		Attempts:           record.Attempts,

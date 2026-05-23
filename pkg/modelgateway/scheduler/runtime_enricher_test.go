@@ -8,11 +8,21 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/testkit"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/stretchr/testify/require"
 )
+
+type fakeCostProfileProvider struct {
+	ratio float64
+	ok    bool
+}
+
+func (p fakeCostProfileProvider) CostRatio(channelID int, upstreamModel string) (float64, bool) {
+	return p.ratio, p.ok
+}
 
 func TestRuntimeSnapshotEnricherAppliesConcurrencyCooldownAndAvoidance(t *testing.T) {
 	setting, err := common.Marshal(map[string]any{"max_concurrency": 2})
@@ -87,19 +97,56 @@ func TestRuntimeSnapshotEnricherAppliesCircuitBreakerState(t *testing.T) {
 	require.True(t, snapshot.CircuitOpen)
 }
 
-func TestRuntimeSnapshotEnricherPrefersChannelCostPerMillion(t *testing.T) {
-	costPerMillion := 0.42
+func TestRuntimeSnapshotEnricherUsesCostProfileProvider(t *testing.T) {
 	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{}, 1500, 8, 2)
+	enricher.WithCostProfileProvider(fakeCostProfileProvider{ratio: 0.42, ok: true})
 
 	snapshot := enricher.Enrich(core.Candidate{
-		Channel: &model.Channel{Id: 7, CostPerMillion: &costPerMillion},
+		Channel: &model.Channel{Id: 7},
 		Group:   "default",
 		RuntimeKey: core.RuntimeKey{
 			RequestedModel: "gpt-5-codex",
 		},
 	}, core.RuntimeSnapshot{CostRatio: 1}, core.GroupSmartPolicy{})
 
-	require.Equal(t, costPerMillion, snapshot.CostRatio)
+	require.Equal(t, 0.42, snapshot.CostRatio)
+}
+
+func TestRuntimeSnapshotEnricherIgnoresDeprecatedChannelCostPerMillion(t *testing.T) {
+	deprecatedCost := 0.01
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{}, 1500, 8, 2)
+
+	snapshot := enricher.Enrich(core.Candidate{
+		Channel: &model.Channel{Id: 7, CostPerMillion: &deprecatedCost},
+		Group:   "default",
+		RuntimeKey: core.RuntimeKey{
+			RequestedModel: "gpt-5-codex",
+		},
+	}, core.RuntimeSnapshot{CostRatio: 1}, core.GroupSmartPolicy{})
+
+	require.Equal(t, 1.0, snapshot.CostRatio)
+}
+
+func TestRuntimeSnapshotEnricherDoesNotRefreshCostProfileOnRequestPath(t *testing.T) {
+	previousDB := model.DB
+	model.DB = nil
+	defer func() {
+		model.DB = previousDB
+		modelgatewaycost.InvalidateDefaultProfileCache()
+	}()
+	modelgatewaycost.InvalidateDefaultProfileCache()
+
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{}, 1500, 8, 2)
+
+	snapshot := enricher.Enrich(core.Candidate{
+		Channel: &model.Channel{Id: 7},
+		Group:   "default",
+		RuntimeKey: core.RuntimeKey{
+			RequestedModel: "gpt-5-codex",
+		},
+	}, core.RuntimeSnapshot{}, core.GroupSmartPolicy{})
+
+	require.NotNil(t, snapshot)
 }
 
 func TestRuntimeSnapshotEnricherAppliesGroupPriorityRatio(t *testing.T) {

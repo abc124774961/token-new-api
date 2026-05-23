@@ -266,6 +266,8 @@ func migrateDB() error {
 		&ChannelFailureEvent{},
 		&ModelExecutionRecord{},
 		&ModelGatewayUserRequestSummary{},
+		&ModelGatewayChannelCostProfile{},
+		&ModelGatewayRequestCostSummary{},
 		&ModelGatewayRuntimeSnapshot{},
 		&Token{},
 		&User{},
@@ -304,6 +306,9 @@ func migrateDB() error {
 			return err
 		}
 	}
+	if err := dropDeprecatedModelGatewayCostProfileIndex(); err != nil {
+		return err
+	}
 	if err := BackfillAbilityCapabilities(); err != nil {
 		return err
 	}
@@ -322,6 +327,8 @@ func migrateDBFast() error {
 		{&ChannelFailureEvent{}, "ChannelFailureEvent"},
 		{&ModelExecutionRecord{}, "ModelExecutionRecord"},
 		{&ModelGatewayUserRequestSummary{}, "ModelGatewayUserRequestSummary"},
+		{&ModelGatewayChannelCostProfile{}, "ModelGatewayChannelCostProfile"},
+		{&ModelGatewayRequestCostSummary{}, "ModelGatewayRequestCostSummary"},
 		{&ModelGatewayRuntimeSnapshot{}, "ModelGatewayRuntimeSnapshot"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
@@ -380,6 +387,9 @@ func migrateDBFast() error {
 			return err
 		}
 	}
+	if err := dropDeprecatedModelGatewayCostProfileIndex(); err != nil {
+		return err
+	}
 	if err := BackfillAbilityCapabilities(); err != nil {
 		return err
 	}
@@ -393,6 +403,17 @@ func migrateLOGDB() error {
 		return err
 	}
 	return nil
+}
+
+func dropDeprecatedModelGatewayCostProfileIndex() error {
+	if DB == nil || !DB.Migrator().HasTable(&ModelGatewayChannelCostProfile{}) {
+		return nil
+	}
+	const deprecatedIndex = "idx_mg_channel_cost_profile"
+	if !DB.Migrator().HasIndex(&ModelGatewayChannelCostProfile{}, deprecatedIndex) {
+		return nil
+	}
+	return DB.Migrator().DropIndex(&ModelGatewayChannelCostProfile{}, deprecatedIndex)
 }
 
 type sqliteColumnDef struct {

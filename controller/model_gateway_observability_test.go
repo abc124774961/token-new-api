@@ -14,6 +14,7 @@ import (
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -614,6 +615,11 @@ func TestGetModelGatewayObservabilitySummaryIgnoresClientAbortHealthSample(t *te
 
 func TestBuildModelGatewayObservabilitySummaryIncludesUserRequests(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
+	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"auto":0.25,"default":1,"vip":0.8}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroupRatio))
+	})
 	now := common.GetTimestamp()
 	require.NoError(t, db.Create(&[]model.ModelGatewayUserRequestSummary{
 		{
@@ -752,10 +758,14 @@ func TestBuildModelGatewayObservabilitySummaryIncludesUserRequests(t *testing.T)
 	require.True(t, userRequests.RecentRequests[0].ClientAborted)
 	require.Equal(t, "client_aborted", userRequests.RecentRequests[0].Status)
 	require.Equal(t, "req-user-other", userRequests.RecentRequests[1].RequestID)
+	require.Equal(t, "default", userRequests.RecentRequests[1].ActualGroup)
+	require.Equal(t, 1.0, userRequests.RecentRequests[1].ActualGroupRatio)
 	require.Equal(t, model.ModelGatewayUserRequestErrorUpstream, userRequests.RecentRequests[2].FinalErrorCategory)
 	require.Empty(t, userRequests.RecentRequests[1].FinalErrorCategory)
 	require.Equal(t, 21, userRequests.RecentRequests[3].FinalChannelID)
 	require.Equal(t, "healthy-channel", userRequests.RecentRequests[3].FinalChannelName)
+	require.Equal(t, "vip", userRequests.RecentRequests[3].ActualGroup)
+	require.Equal(t, 0.8, userRequests.RecentRequests[3].ActualGroupRatio)
 	require.NotNil(t, userRequests.RecentRequests[3].Billing)
 	require.Equal(t, 1588, userRequests.RecentRequests[3].Billing.Quota)
 	require.Equal(t, 1200, userRequests.RecentRequests[3].Billing.PromptTokens)
@@ -768,6 +778,8 @@ func TestBuildModelGatewayObservabilitySummaryIncludesUserRequests(t *testing.T)
 	require.Equal(t, 1200, userRequests.RecentRequests[3].Billing.SubscriptionConsumed)
 	require.Equal(t, 388, userRequests.RecentRequests[3].Billing.WalletQuotaDeducted)
 	require.Equal(t, 1, userRequests.RecentRequests[3].Billing.WebSearchCallCount)
+	require.Equal(t, "pending", userRequests.RecentRequests[3].UpstreamCostSource)
+	require.Equal(t, "pending", userRequests.RecentRequests[3].UpstreamCostAccuracy)
 	requireUserRequestAggregate(t, userRequests.ByModel, "gpt-5.5", 3, 1, 1, 1)
 	requireUserRequestAggregate(t, userRequests.ByModel, "claude-4", 1, 1, 0, 0)
 	requireUserRequestAggregate(t, userRequests.ByGroup, "vip", 3, 1, 1, 1)
@@ -775,6 +787,93 @@ func TestBuildModelGatewayObservabilitySummaryIncludesUserRequests(t *testing.T)
 	trend := requireModelGatewayUserRequestTrendWithRequests(t, userRequests.Trends, 4)
 	require.Equal(t, int64(340), trend.AvgTTFTMs)
 	require.Equal(t, int64(520), trend.P95TTFTMs)
+}
+
+func TestBuildModelGatewayObservabilitySummaryUsesSelectedGroupRatioWhenBillingGroupIsRequestedGroup(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"auto":0.25,"codex-plus":1.6}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroupRatio))
+	})
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		CreatedAt:        now - 20,
+		UpdatedAt:        now - 18,
+		CompletedAt:      now - 16,
+		RequestId:        "req-auto-to-codex-plus",
+		RequestedGroup:   "auto",
+		SelectedGroup:    "codex-plus",
+		RequestedModel:   "gpt-5.5",
+		FinalChannelID:   7,
+		FinalChannelName: "dora",
+		Attempts:         1,
+		FinalSuccess:     true,
+		DurationMs:       900,
+		TTFTMs:           120,
+	}).Error)
+	consumeOther, err := common.Marshal(map[string]any{
+		"group_ratio": 0.25,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.Log{
+		CreatedAt:        now - 15,
+		Type:             model.LogTypeConsume,
+		RequestId:        "req-auto-to-codex-plus",
+		Quota:            100,
+		PromptTokens:     10,
+		CompletionTokens: 5,
+		ChannelId:        7,
+		Group:            "auto",
+		ModelName:        "gpt-5.5",
+		Other:            string(consumeOther),
+	}).Error)
+	breakdown, err := common.Marshal(map[string]any{
+		"currency": "USD",
+		"input": map[string]any{
+			"tokens":            10,
+			"price_per_million": 0.05,
+			"amount":            0.0000005,
+		},
+		"output": map[string]any{
+			"tokens":            5,
+			"price_per_million": 0.1,
+			"amount":            0.0000005,
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ModelGatewayRequestCostSummary{
+		RequestId:         "req-auto-to-codex-plus",
+		ChannelID:         7,
+		UpstreamModel:     "gpt-5.5",
+		UpstreamCostTotal: 0.000001,
+		BreakdownJSON:     string(breakdown),
+		CostSource:        "manual",
+		CostAccuracy:      "precise",
+		CalculatedAt:      now - 14,
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	record := response.UserRequests.RecentRequests[0]
+	require.Equal(t, "auto", record.RequestedGroup)
+	require.Equal(t, "codex-plus", record.SelectedGroup)
+	require.Equal(t, "codex-plus", record.ActualGroup)
+	require.Equal(t, 1.6, record.ActualGroupRatio)
+	require.Equal(t, 0.000001, record.ActualChannelCost)
+	require.Equal(t, 0.000001, record.UpstreamCostTotal)
+	require.Equal(t, "manual", record.UpstreamCostSource)
+	require.Equal(t, "precise", record.UpstreamCostAccuracy)
+	require.NotEmpty(t, record.UpstreamCostBreakdown)
+	require.NotNil(t, record.Billing)
+	require.Equal(t, "auto", record.Billing.Group)
+	require.Equal(t, 0.25, record.Billing.GroupRatio)
 }
 
 func TestBuildModelGatewayObservabilitySummaryUserRequestViewSkipsExecutionRecords(t *testing.T) {

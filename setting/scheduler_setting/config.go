@@ -79,6 +79,10 @@ type SchedulerSetting struct {
 	ProbeTimeoutSeconds              int                                  `json:"probe_timeout_seconds"`
 	ProbeMaxPerTick                  int                                  `json:"probe_max_per_tick"`
 	ProbeMinChannelIntervalSeconds   int                                  `json:"probe_min_channel_interval_seconds"`
+	CostCalculationEnabled           bool                                 `json:"cost_calculation_enabled"`
+	CostCalculationIntervalSeconds   int                                  `json:"cost_calculation_interval_seconds"`
+	CostCalculationWorkerCount       int                                  `json:"cost_calculation_worker_count"`
+	CostCalculationBatchSize         int                                  `json:"cost_calculation_batch_size"`
 	SuccessWeight                    float64                              `json:"success_weight"`
 	SpeedWeight                      float64                              `json:"speed_weight"`
 	LoadWeight                       float64                              `json:"load_weight"`
@@ -132,6 +136,10 @@ var schedulerSetting = SchedulerSetting{
 	ProbeTimeoutSeconds:              8,
 	ProbeMaxPerTick:                  5,
 	ProbeMinChannelIntervalSeconds:   300,
+	CostCalculationEnabled:           true,
+	CostCalculationIntervalSeconds:   5,
+	CostCalculationWorkerCount:       2,
+	CostCalculationBatchSize:         100,
 	SuccessWeight:                    0.32,
 	SpeedWeight:                      0.28,
 	LoadWeight:                       0.20,
@@ -210,6 +218,10 @@ func defaultSchedulerSetting() SchedulerSetting {
 	setting.ProbeTimeoutSeconds = 8
 	setting.ProbeMaxPerTick = 5
 	setting.ProbeMinChannelIntervalSeconds = 300
+	setting.CostCalculationEnabled = true
+	setting.CostCalculationIntervalSeconds = 5
+	setting.CostCalculationWorkerCount = 2
+	setting.CostCalculationBatchSize = 100
 	setting.SuccessWeight = 0.32
 	setting.SpeedWeight = 0.28
 	setting.LoadWeight = 0.20

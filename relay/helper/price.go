@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -33,7 +34,7 @@ func modelPriceNotConfiguredError(modelName string, userId int) error {
 }
 
 // https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
-const claudeCacheCreation1hMultiplier = 6 / 3.75
+const claudeCacheCreation1hMultiplier = 1.6
 
 // HandleGroupRatio checks for "auto_group" in the context and updates the group ratio and relayInfo.UsingGroup if present
 func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.GroupRatioInfo {
@@ -61,6 +62,32 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
 	}
 
+	return groupRatioInfo
+}
+
+func ApplySelectedGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, selectedGroup string) types.GroupRatioInfo {
+	if relayInfo == nil {
+		return types.GroupRatioInfo{
+			GroupRatio:        1.0,
+			GroupSpecialRatio: -1,
+		}
+	}
+	selectedGroup = strings.TrimSpace(selectedGroup)
+	if selectedGroup != "" {
+		relayInfo.UsingGroup = selectedGroup
+		if ctx != nil {
+			common.SetContextKey(ctx, constant.ContextKeyUsingGroup, selectedGroup)
+			if relayInfo.TokenGroup == "auto" || common.GetContextKeyString(ctx, constant.ContextKeyTokenGroup) == "auto" {
+				common.SetContextKey(ctx, constant.ContextKeyAutoGroup, selectedGroup)
+			}
+		}
+	}
+	groupRatioInfo := HandleGroupRatio(ctx, relayInfo)
+	relayInfo.PriceData.GroupRatioInfo = groupRatioInfo
+	if snap := relayInfo.TieredBillingSnapshot; snap != nil {
+		snap.GroupRatio = groupRatioInfo.GroupRatio
+		snap.EstimatedQuotaAfterGroup = billingexpr.QuotaRound(snap.EstimatedQuotaBeforeGroup * groupRatioInfo.GroupRatio)
+	}
 	return groupRatioInfo
 }
 

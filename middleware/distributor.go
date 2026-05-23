@@ -191,6 +191,7 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 				}
+				applySelectedGroupContext(c, usingGroup, selectGroup)
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
@@ -201,6 +202,22 @@ func Distribute() func(c *gin.Context) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+func applySelectedGroupContext(c *gin.Context, requestedGroup, selectedGroup string) {
+	if c == nil {
+		return
+	}
+	selectedGroup = strings.TrimSpace(selectedGroup)
+	if selectedGroup == "" {
+		return
+	}
+	requestedGroup = strings.TrimSpace(requestedGroup)
+	tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
+	if requestedGroup == "auto" || tokenGroup == "auto" {
+		common.SetContextKey(c, constant.ContextKeyAutoGroup, selectedGroup)
+	}
+	common.SetContextKey(c, constant.ContextKeyUsingGroup, selectedGroup)
 }
 
 func logCodexEffectiveModelCapabilityForRequest(c *gin.Context, modelRequest *ModelRequest) {

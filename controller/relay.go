@@ -152,6 +152,7 @@ func logRelaySelectedChannelTrace(c *gin.Context, info *relaycommon.RelayInfo, r
 	if !service.ShouldLogClientRequestTrace(c) {
 		return
 	}
+	selectGroup = selectedRelayGroupForTrace(c, info, retryParam, selectGroup)
 	trace := map[string]any{
 		"stage":          "relay_selected_channel",
 		"selected_group": selectGroup,
@@ -196,6 +197,33 @@ func logRelaySelectedChannelTrace(c *gin.Context, info *relaycommon.RelayInfo, r
 		}
 	}
 	logger.LogInfo(c, "relay channel trace: "+service.MarshalTraceForLog(trace))
+}
+
+func selectedRelayGroupForTrace(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, selectedGroup string) string {
+	if group := strings.TrimSpace(selectedGroup); group != "" && group != "auto" {
+		return group
+	}
+	if info != nil {
+		if group := strings.TrimSpace(info.UsingGroup); group != "" && group != "auto" {
+			return group
+		}
+	}
+	if group := strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyUsingGroup)); group != "" && group != "auto" {
+		return group
+	}
+	if group := strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyAutoGroup)); group != "" && group != "auto" {
+		return group
+	}
+	if group := strings.TrimSpace(selectedGroup); group != "" {
+		return group
+	}
+	if info != nil && strings.TrimSpace(info.UsingGroup) != "" {
+		return strings.TrimSpace(info.UsingGroup)
+	}
+	if retryParam != nil {
+		return strings.TrimSpace(retryParam.TokenGroup)
+	}
+	return ""
 }
 
 func requiredEndpointTypeForRelay(info *relaycommon.RelayInfo) constant.EndpointType {
@@ -678,8 +706,6 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	}
 	selection, selectionErr := modelgatewayintegration.DefaultChannelSelectionWrapper().Select(c, retryParam)
 
-	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
-
 	if selectionErr != nil {
 		return nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（retry）: %s", retryParam.TokenGroup, info.OriginModelName, selectionErr.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
@@ -693,6 +719,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在（retry）", selectGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 
+	helper.ApplySelectedGroupRatio(c, info, selectGroup)
 	logRelaySelectedChannelTrace(c, info, retryParam, channel, selectGroup, false)
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
 	if newAPIError != nil {

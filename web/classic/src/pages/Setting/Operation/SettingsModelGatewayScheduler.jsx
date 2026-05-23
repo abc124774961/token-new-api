@@ -67,6 +67,10 @@ const DEFAULT_SETTING = {
   probe_timeout_seconds: 8,
   probe_max_per_tick: 5,
   probe_min_channel_interval_seconds: 300,
+  cost_calculation_enabled: true,
+  cost_calculation_interval_seconds: 5,
+  cost_calculation_worker_count: 2,
+  cost_calculation_batch_size: 100,
   default_mode: 'off',
   rollout_percent: 0,
   default_strategy: 'balanced',
@@ -696,6 +700,18 @@ export default function SettingsModelGatewayScheduler() {
       probe_min_channel_interval_seconds: numberOrDefault(
         setting.probe_min_channel_interval_seconds,
         300,
+      ),
+      cost_calculation_interval_seconds: numberOrDefault(
+        setting.cost_calculation_interval_seconds,
+        5,
+      ),
+      cost_calculation_worker_count: numberOrDefault(
+        setting.cost_calculation_worker_count,
+        2,
+      ),
+      cost_calculation_batch_size: numberOrDefault(
+        setting.cost_calculation_batch_size,
+        100,
       ),
       success_weight: numberOrDefault(setting.success_weight, 0.32),
       speed_weight: numberOrDefault(setting.speed_weight, 0.28),
@@ -1405,6 +1421,69 @@ export default function SettingsModelGatewayScheduler() {
                   updateSetting(
                     'probe_min_channel_interval_seconds',
                     numberOrDefault(value, 300),
+                  )
+                }
+              />
+            </Col>
+          </Row>
+          <Banner
+            type='info'
+            fullMode={false}
+            closeIcon={null}
+            title={t('上游成本补算')}
+            description={t(
+              '后台异步读取消费日志并补算供应商成本，只写入成本汇总表；用户请求、首包和流式转发不等待成本计算。',
+            )}
+            style={{ marginTop: 8, marginBottom: 16 }}
+          />
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={6}>
+              <Form.Switch
+                field='cost_calculation_enabled'
+                label={t('启用成本补算')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting('cost_calculation_enabled', value)
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Form.InputNumber
+                field='cost_calculation_interval_seconds'
+                label={t('成本补算间隔')}
+                min={1}
+                suffix={t('秒')}
+                onChange={(value) =>
+                  updateSetting(
+                    'cost_calculation_interval_seconds',
+                    numberOrDefault(value, 5),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Form.InputNumber
+                field='cost_calculation_worker_count'
+                label={t('成本 Worker 数')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting(
+                    'cost_calculation_worker_count',
+                    numberOrDefault(value, 2),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Form.InputNumber
+                field='cost_calculation_batch_size'
+                label={t('每批补算数量')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting(
+                    'cost_calculation_batch_size',
+                    numberOrDefault(value, 100),
                   )
                 }
               />

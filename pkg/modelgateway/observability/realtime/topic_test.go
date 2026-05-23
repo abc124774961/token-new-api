@@ -139,6 +139,8 @@ func TestTopicPublishesProcessingUserRequestDelta(t *testing.T) {
 	require.Len(t, delta.UserRequestsRecent, 1)
 	require.Equal(t, "req-ws-processing", delta.UserRequestsRecent[0].RequestID)
 	require.Equal(t, "processing", delta.UserRequestsRecent[0].Status)
+	require.Equal(t, "codex-plus", delta.UserRequestsRecent[0].ActualGroup)
+	require.Zero(t, delta.UserRequestsRecent[0].ActualGroupRatio)
 }
 
 func TestProcessingUserRequestDeltaDoesNotMarkSnapshotPending(t *testing.T) {

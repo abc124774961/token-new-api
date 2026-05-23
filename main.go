@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
+	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayrealtime "github.com/QuantumNous/new-api/pkg/modelgateway/observability/realtime"
 	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
@@ -110,6 +111,7 @@ func main() {
 
 	go controller.AutomaticallyTestChannels()
 	modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()
+	modelgatewaycost.SyncDefaultWorkerLifecycle()
 
 	// Codex credential auto-refresh check every 10 minutes, refresh when expires within 1 day
 	service.StartCodexCredentialAutoRefreshTask()

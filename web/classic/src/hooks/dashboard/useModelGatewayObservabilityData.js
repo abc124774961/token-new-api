@@ -72,15 +72,40 @@ function userRequestKey(record) {
   return record?.request_id || `${record?.id || ''}:${record?.created_at || ''}`;
 }
 
+function mergeUserRequestRecord(existing, incoming) {
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+  return {
+    ...existing,
+    ...incoming,
+    billing: incoming.billing || existing.billing,
+    dispatch_record: incoming.dispatch_record || existing.dispatch_record,
+    actual_group: incoming.actual_group || existing.actual_group,
+    actual_channel_cost:
+      Number(incoming.actual_channel_cost || 0) > 0
+        ? incoming.actual_channel_cost
+        : existing.actual_channel_cost,
+    actual_group_ratio:
+      Number(incoming.actual_group_ratio || 0) > 0
+        ? incoming.actual_group_ratio
+        : existing.actual_group_ratio,
+  };
+}
+
 function mergeUserRequestDelta(userRequests, recentDelta) {
   if (!userRequests || !Array.isArray(recentDelta) || recentDelta.length === 0) {
     return userRequests;
   }
   const mergedByKey = new Map();
-  [...recentDelta, ...(userRequests.recent_requests || [])].forEach((record) => {
+  (userRequests.recent_requests || []).forEach((record) => {
     const key = userRequestKey(record);
     if (!key || mergedByKey.has(key)) return;
     mergedByKey.set(key, record);
+  });
+  recentDelta.forEach((record) => {
+    const key = userRequestKey(record);
+    if (!key) return;
+    mergedByKey.set(key, mergeUserRequestRecord(mergedByKey.get(key), record));
   });
   const recentRequests = [...mergedByKey.values()]
     .sort((left, right) => {

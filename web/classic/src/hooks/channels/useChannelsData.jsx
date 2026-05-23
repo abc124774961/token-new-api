@@ -141,7 +141,6 @@ export const useChannelsData = () => {
     CAPABILITIES: 'capabilities',
     STATUS: 'status',
     RESPONSE_TIME: 'response_time',
-    COST_PER_MILLION: 'cost_per_million',
     BALANCE: 'balance',
     PRIORITY: 'priority',
     WEIGHT: 'weight',
@@ -183,7 +182,6 @@ export const useChannelsData = () => {
       [COLUMN_KEYS.CAPABILITIES]: true,
       [COLUMN_KEYS.STATUS]: true,
       [COLUMN_KEYS.RESPONSE_TIME]: true,
-      [COLUMN_KEYS.COST_PER_MILLION]: true,
       [COLUMN_KEYS.BALANCE]: true,
       [COLUMN_KEYS.PRIORITY]: true,
       [COLUMN_KEYS.WEIGHT]: true,
@@ -471,18 +469,6 @@ export const useChannelsData = () => {
         if (value === '') return;
         data.weight = parseInt(value);
         if (data.weight < 0) data.weight = 0;
-        res = await API.put('/api/channel/', data);
-        break;
-      case 'cost_per_million':
-        if (value === '') value = 0;
-        data.cost_per_million = Number(value);
-        if (
-          !Number.isFinite(data.cost_per_million) ||
-          data.cost_per_million < 0
-        ) {
-          showInfo(t('渠道成本必须是非负数'));
-          return;
-        }
         res = await API.put('/api/channel/', data);
         break;
       case 'enable_all':

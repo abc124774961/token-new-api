@@ -26,17 +26,6 @@ import {
 import axios from 'axios';
 import { MESSAGE_ROLES } from '../constants/playground.constants';
 
-export let API = axios.create({
-  baseURL: import.meta.env.VITE_REACT_APP_SERVER_URL
-    ? import.meta.env.VITE_REACT_APP_SERVER_URL
-    : '',
-  headers: {
-    'New-API-User': getUserIdFromLocalStorage(),
-    'Cache-Control': 'no-store',
-  },
-});
-
-
 function redirectToOAuthUrl(url, options = {}) {
   const { openInNewTab = false } = options;
   const targetUrl = typeof url === 'string' ? url : url.toString();
@@ -78,10 +67,37 @@ function patchAPIInstance(instance) {
   };
 }
 
-patchAPIInstance(API);
+function applyDynamicRequestHeaders(config) {
+  const userId = getUserIdFromLocalStorage();
+  if (config.headers && typeof config.headers.set === 'function') {
+    config.headers.set('New-API-User', userId);
+    config.headers.set('Cache-Control', 'no-store');
+    return config;
+  }
+  config.headers = {
+    ...(config.headers || {}),
+    'New-API-User': userId,
+    'Cache-Control': 'no-store',
+  };
+  return config;
+}
 
-export function updateAPI() {
-  API = axios.create({
+function applyResponseInterceptor(instance) {
+  instance.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      // 如果请求配置中显式要求跳过全局错误处理，则不弹出默认错误提示
+      if (error.config && error.config.skipErrorHandler) {
+        return Promise.reject(error);
+      }
+      showError(error);
+      return Promise.reject(error);
+    },
+  );
+}
+
+function createAPIInstance() {
+  const instance = axios.create({
     baseURL: import.meta.env.VITE_REACT_APP_SERVER_URL
       ? import.meta.env.VITE_REACT_APP_SERVER_URL
       : '',
@@ -90,21 +106,17 @@ export function updateAPI() {
       'Cache-Control': 'no-store',
     },
   });
-
-  patchAPIInstance(API);
+  patchAPIInstance(instance);
+  instance.interceptors.request.use(applyDynamicRequestHeaders);
+  applyResponseInterceptor(instance);
+  return instance;
 }
 
-API.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    // 如果请求配置中显式要求跳过全局错误处理，则不弹出默认错误提示
-    if (error.config && error.config.skipErrorHandler) {
-      return Promise.reject(error);
-    }
-    showError(error);
-    return Promise.reject(error);
-  },
-);
+export let API = createAPIInstance();
+
+export function updateAPI() {
+  API = createAPIInstance();
+}
 
 // playground
 

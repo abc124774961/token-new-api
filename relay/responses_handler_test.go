@@ -19,9 +19,11 @@ import (
 	modelgatewayproxy "github.com/QuantumNous/new-api/pkg/modelgateway/proxy"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -238,6 +240,50 @@ func TestResponsesHelperNativeNonStreamSmoke(t *testing.T) {
 	require.Equal(t, "req-responses-helper-smoke", consumeLog.RequestId)
 	require.Contains(t, consumeLog.Other, `"request_path":"/v1/responses"`)
 	require.Contains(t, consumeLog.Other, `"request_conversion":["OpenAI Responses"]`)
+}
+
+func TestResponsesHelperConsumeLogUsesSelectedGroupRatioForAutoRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupResponsesHelperSmokeDB(t)
+	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"auto":1,"codex-plus":0.1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroupRatio))
+	})
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "resp_group_ratio",
+			"object": "response",
+			"created_at": 1710000000,
+			"model": "gpt-5.5",
+			"output": [
+				{"id": "msg_1", "type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}
+			],
+			"usage": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30}
+		}`))
+	}))
+	defer upstream.Close()
+
+	ctx, _, info := prepareResponsesHelperSmoke(t, db, upstream.URL, "req-auto-selected-codex-plus", "gpt-5.5")
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "auto")
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "auto")
+	common.SetContextKey(ctx, constant.ContextKeyAutoGroup, "auto")
+	info.TokenGroup = "auto"
+	helper.ApplySelectedGroupRatio(ctx, info, "codex-plus")
+
+	apiErr := ResponsesHelper(ctx, info)
+
+	require.Nil(t, apiErr)
+	var consumeLog model.Log
+	require.NoError(t, model.LOG_DB.Where("request_id = ? AND type = ?", "req-auto-selected-codex-plus", model.LogTypeConsume).First(&consumeLog).Error)
+	require.Equal(t, "codex-plus", consumeLog.Group)
+	require.Equal(t, 3, consumeLog.Quota)
+
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(consumeLog.Other, &other))
+	require.Equal(t, float64(0.1), other["group_ratio"])
 }
 
 func TestResponsesHelperNativeNonStreamErrorDoesNotConsume(t *testing.T) {

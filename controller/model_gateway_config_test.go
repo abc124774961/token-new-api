@@ -83,6 +83,10 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	setting.ProbeTimeoutSeconds = 6
 	setting.ProbeMaxPerTick = 7
 	setting.ProbeMinChannelIntervalSeconds = 180
+	setting.CostCalculationEnabled = true
+	setting.CostCalculationIntervalSeconds = 4
+	setting.CostCalculationWorkerCount = 3
+	setting.CostCalculationBatchSize = 80
 	setting.StickySaveOnSelect = true
 	setting.StickyRenewOnSuccess = false
 	setting.StickyFailurePolicy = scheduler_setting.StickyFailurePolicyKeep
@@ -147,6 +151,10 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.Equal(t, 6, payload.Data.Setting.ProbeTimeoutSeconds)
 	require.Equal(t, 7, payload.Data.Setting.ProbeMaxPerTick)
 	require.Equal(t, 180, payload.Data.Setting.ProbeMinChannelIntervalSeconds)
+	require.True(t, payload.Data.Setting.CostCalculationEnabled)
+	require.Equal(t, 4, payload.Data.Setting.CostCalculationIntervalSeconds)
+	require.Equal(t, 3, payload.Data.Setting.CostCalculationWorkerCount)
+	require.Equal(t, 80, payload.Data.Setting.CostCalculationBatchSize)
 	require.True(t, payload.Data.Setting.StickySaveOnSelect)
 	require.False(t, payload.Data.Setting.StickyRenewOnSuccess)
 	require.Equal(t, scheduler_setting.StickyFailurePolicyKeep, payload.Data.Setting.StickyFailurePolicy)
@@ -191,6 +199,12 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	var probeMinIntervalOption model.Option
 	require.NoError(t, db.First(&probeMinIntervalOption, "key = ?", "scheduler_setting.probe_min_channel_interval_seconds").Error)
 	require.Equal(t, "180", probeMinIntervalOption.Value)
+	var costWorkerOption model.Option
+	require.NoError(t, db.First(&costWorkerOption, "key = ?", "scheduler_setting.cost_calculation_worker_count").Error)
+	require.Equal(t, "3", costWorkerOption.Value)
+	var costBatchOption model.Option
+	require.NoError(t, db.First(&costBatchOption, "key = ?", "scheduler_setting.cost_calculation_batch_size").Error)
+	require.Equal(t, "80", costBatchOption.Value)
 	var circuitErrorPolicyOption model.Option
 	require.NoError(t, db.First(&circuitErrorPolicyOption, "key = ?", "scheduler_setting.circuit_error_policies").Error)
 	require.Contains(t, circuitErrorPolicyOption.Value, `"rate_limit"`)

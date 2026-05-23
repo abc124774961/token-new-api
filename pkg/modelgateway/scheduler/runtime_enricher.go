@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
@@ -21,6 +22,10 @@ type RuntimeStateProvider interface {
 	ConcurrencyCooldownActive(channelID int) bool
 	FailureAvoidanceActive(channelID int) bool
 	FirstBytePendingStatus(channelID int) *service.ChannelFirstBytePendingStatus
+}
+
+type CostProfileProvider interface {
+	CostRatio(channelID int, upstreamModel string) (float64, bool)
 }
 
 type ServiceRuntimeStateProvider struct{}
@@ -47,6 +52,7 @@ func (p *ServiceRuntimeStateProvider) FirstBytePendingStatus(channelID int) *ser
 
 type RuntimeSnapshotEnricher struct {
 	stateProvider        RuntimeStateProvider
+	costProvider         CostProfileProvider
 	circuitBreaker       core.CircuitBreaker
 	queueTimeoutMs       int
 	queueMaxDepth        int
@@ -79,6 +85,14 @@ func (e *RuntimeSnapshotEnricher) WithCircuitBreaker(breaker core.CircuitBreaker
 		return nil
 	}
 	e.circuitBreaker = breaker
+	return e
+}
+
+func (e *RuntimeSnapshotEnricher) WithCostProfileProvider(provider CostProfileProvider) *RuntimeSnapshotEnricher {
+	if e == nil {
+		return nil
+	}
+	e.costProvider = provider
 	return e
 }
 
@@ -119,7 +133,7 @@ func (e *RuntimeSnapshotEnricher) Enrich(candidate core.Candidate, snapshot core
 	snapshot = e.applyFirstBytePending(snapshot, channelID)
 	snapshot.Cooldown = snapshot.Cooldown || e.stateProvider.ConcurrencyCooldownActive(channelID)
 	snapshot.FailureAvoidance = snapshot.FailureAvoidance || e.stateProvider.FailureAvoidanceActive(channelID)
-	snapshot = applyCostSnapshot(candidate, snapshot, policy)
+	snapshot = e.applyCostSnapshot(candidate, snapshot, policy)
 	snapshot = e.applyCircuit(snapshot, policy)
 	return snapshot
 }
@@ -238,14 +252,14 @@ func appendCapabilityPart(fingerprint string, part string) string {
 	return strings.Join(parts, "|")
 }
 
-func applyCostSnapshot(candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) core.RuntimeSnapshot {
+func (e *RuntimeSnapshotEnricher) applyCostSnapshot(candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) core.RuntimeSnapshot {
 	if candidate.Channel == nil {
 		return snapshot
 	}
-	if channelCost := candidate.Channel.GetCostPerMillion(); channelCost > 0 {
-		snapshot.CostRatio = channelCost
+	if ratio, ok := e.lookupProfileCostRatio(candidate); ok {
+		snapshot.CostRatio = ratio
 	} else if snapshot.CostRatio <= 0 {
-		snapshot.CostRatio = estimateCandidateCostPerMillion(candidate, policy)
+		snapshot.CostRatio = estimateCandidateCostPerMillion(candidate)
 	}
 	if ratio := candidateGroupPriorityRatio(candidate, policy); ratio > 0 {
 		snapshot.GroupPriorityRatio = ratio
@@ -253,6 +267,19 @@ func applyCostSnapshot(candidate core.Candidate, snapshot core.RuntimeSnapshot, 
 		snapshot.GroupPriorityRatio = 1
 	}
 	return snapshot
+}
+
+func (e *RuntimeSnapshotEnricher) lookupProfileCostRatio(candidate core.Candidate) (float64, bool) {
+	if candidate.Channel == nil {
+		return 0, false
+	}
+	modelName := candidateCostModelName(candidate)
+	if e != nil && e.costProvider != nil {
+		if ratio, ok := e.costProvider.CostRatio(candidate.Channel.Id, modelName); ok && ratio > 0 {
+			return ratio, true
+		}
+	}
+	return modelgatewaycost.CostRatioFromProfileForModel(modelgatewaycost.LookupCachedDefaultProfile(candidate.Channel.Id, modelName), modelName)
 }
 
 func candidateGroupPriorityRatio(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {
@@ -266,31 +293,32 @@ func candidateGroupPriorityRatio(candidate core.Candidate, policy core.GroupSmar
 	return policy.GroupPriorityRatio[group]
 }
 
-func estimateCandidateCostPerMillion(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {
+func estimateCandidateCostPerMillion(candidate core.Candidate) float64 {
+	modelName := candidateCostModelName(candidate)
+	if modelName == "" {
+		return 0
+	}
+	if price, ok := ratio_setting.GetModelPrice(modelName, false); ok && price >= 0 {
+		return price
+	}
+	if ratio, ok, _ := ratio_setting.GetModelRatio(modelName); ok && ratio >= 0 {
+		return ratio * 2
+	}
+	return 0
+}
+
+func candidateCostModelName(candidate core.Candidate) string {
 	modelName := strings.TrimSpace(candidate.RuntimeKey.UpstreamModel)
 	if modelName == "" {
 		modelName = strings.TrimSpace(candidate.UpstreamModel)
 	}
-	if modelName == "" {
+	if modelName == "" && candidate.Channel != nil {
 		modelName = candidate.Channel.ResolveMappedModelName(candidate.RuntimeKey.RequestedModel)
 	}
 	if modelName == "" {
 		modelName = strings.TrimSpace(candidate.RuntimeKey.RequestedModel)
 	}
-	if modelName == "" {
-		return 0
-	}
-	groupRatio := service.GetUserGroupRatio(policy.UserGroup, candidate.Group)
-	if groupRatio <= 0 {
-		groupRatio = 1
-	}
-	if price, ok := ratio_setting.GetModelPrice(modelName, false); ok && price >= 0 {
-		return price * groupRatio
-	}
-	if ratio, ok, _ := ratio_setting.GetModelRatio(modelName); ok && ratio >= 0 {
-		return ratio * 2 * groupRatio
-	}
-	return 0
+	return modelName
 }
 
 var _ core.RuntimeSnapshotEnricher = (*RuntimeSnapshotEnricher)(nil)

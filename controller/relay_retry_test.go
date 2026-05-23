@@ -33,6 +33,21 @@ func newRelayRetryContext() *gin.Context {
 	return ctx
 }
 
+func TestSelectedRelayGroupForTracePrefersActualGroupOverAuto(t *testing.T) {
+	ctx := newRelayRetryContext()
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "auto")
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "codex-plus")
+	common.SetContextKey(ctx, constant.ContextKeyAutoGroup, "codex-plus")
+	info := &relaycommon.RelayInfo{
+		TokenGroup:  "auto",
+		UsingGroup: "codex-plus",
+	}
+
+	group := selectedRelayGroupForTrace(ctx, info, &service.RetryParam{TokenGroup: "auto"}, "auto")
+
+	require.Equal(t, "codex-plus", group)
+}
+
 func initRelayRetryColumnNames(t *testing.T) {
 	t.Helper()
 

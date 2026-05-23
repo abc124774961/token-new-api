@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
@@ -50,6 +51,7 @@ func UpdateModelGatewayConfig(c *gin.Context) {
 	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
 	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()
 	modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()
+	modelgatewaycost.SyncDefaultWorkerLifecycle()
 	common.ApiSuccess(c, buildModelGatewayConfigResponse())
 }
 
@@ -62,6 +64,7 @@ func ResetModelGatewayConfig(c *gin.Context) {
 	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
 	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()
 	modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()
+	modelgatewaycost.SyncDefaultWorkerLifecycle()
 	common.ApiSuccess(c, buildModelGatewayConfigResponse())
 }
 
@@ -121,6 +124,9 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	setting.ProbeTimeoutSeconds = normalizeModelGatewayConfigMin(setting.ProbeTimeoutSeconds, 1, defaults.ProbeTimeoutSeconds)
 	setting.ProbeMaxPerTick = normalizeModelGatewayConfigMin(setting.ProbeMaxPerTick, 1, defaults.ProbeMaxPerTick)
 	setting.ProbeMinChannelIntervalSeconds = normalizeModelGatewayConfigMin(setting.ProbeMinChannelIntervalSeconds, 10, defaults.ProbeMinChannelIntervalSeconds)
+	setting.CostCalculationIntervalSeconds = normalizeModelGatewayConfigMin(setting.CostCalculationIntervalSeconds, 1, defaults.CostCalculationIntervalSeconds)
+	setting.CostCalculationWorkerCount = normalizeModelGatewayConfigMin(setting.CostCalculationWorkerCount, 1, defaults.CostCalculationWorkerCount)
+	setting.CostCalculationBatchSize = normalizeModelGatewayConfigMin(setting.CostCalculationBatchSize, 1, defaults.CostCalculationBatchSize)
 	setting.FailureFastWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureFastWindowSeconds, 1, defaults.FailureFastWindowSeconds)
 	setting.FailureMainWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureMainWindowSeconds, 1, defaults.FailureMainWindowSeconds)
 	setting.FailureFallbackWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureFallbackWindowSeconds, 1, defaults.FailureFallbackWindowSeconds)
@@ -305,6 +311,10 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 		"probe_timeout_seconds":                strconv.Itoa(setting.ProbeTimeoutSeconds),
 		"probe_max_per_tick":                   strconv.Itoa(setting.ProbeMaxPerTick),
 		"probe_min_channel_interval_seconds":   strconv.Itoa(setting.ProbeMinChannelIntervalSeconds),
+		"cost_calculation_enabled":             strconv.FormatBool(setting.CostCalculationEnabled),
+		"cost_calculation_interval_seconds":    strconv.Itoa(setting.CostCalculationIntervalSeconds),
+		"cost_calculation_worker_count":        strconv.Itoa(setting.CostCalculationWorkerCount),
+		"cost_calculation_batch_size":          strconv.Itoa(setting.CostCalculationBatchSize),
 		"success_weight":                       strconv.FormatFloat(setting.SuccessWeight, 'f', -1, 64),
 		"speed_weight":                         strconv.FormatFloat(setting.SpeedWeight, 'f', -1, 64),
 		"load_weight":                          strconv.FormatFloat(setting.LoadWeight, 'f', -1, 64),
