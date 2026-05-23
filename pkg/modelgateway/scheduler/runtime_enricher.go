@@ -8,7 +8,6 @@ import (
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
 const (
@@ -26,6 +25,10 @@ type RuntimeStateProvider interface {
 
 type CostProfileProvider interface {
 	CostRatio(channelID int, upstreamModel string) (float64, bool)
+}
+
+type CostReferenceProvider interface {
+	CostReferenceRatio(upstreamModel string, pricingMode string) (float64, bool)
 }
 
 type costPricingModeProvider interface {
@@ -264,8 +267,13 @@ func (e *RuntimeSnapshotEnricher) applyCostSnapshot(candidate core.Candidate, sn
 		snapshot.CostRatio = ratio
 		snapshot.CostPricingMode = e.lookupProfileCostPricingMode(candidate)
 	} else {
-		snapshot.CostRatio = estimateCandidateCostPerMillion(candidate)
-		snapshot.CostPricingMode = "token"
+		snapshot.CostRatio = 0
+		snapshot.CostPricingMode = ""
+	}
+	if snapshot.CostRatio > 0 {
+		if reference, ok := e.lookupReferenceCostRatio(candidate, snapshot.CostPricingMode); ok && reference > 0 {
+			snapshot.CostReferenceRatio = reference
+		}
 	}
 	if ratio := candidateGroupPriorityRatio(candidate, policy); ratio > 0 {
 		snapshot.GroupPriorityRatio = ratio
@@ -303,6 +311,21 @@ func (e *RuntimeSnapshotEnricher) lookupProfileCostPricingMode(candidate core.Ca
 	return modelgatewaycost.CostPricingModeFromProfileForModel(modelgatewaycost.LookupCachedDefaultProfile(candidate.Channel.Id, modelName), modelName)
 }
 
+func (e *RuntimeSnapshotEnricher) lookupReferenceCostRatio(candidate core.Candidate, pricingMode string) (float64, bool) {
+	modelName := candidateCostModelName(candidate)
+	if modelName == "" {
+		return 0, false
+	}
+	if e != nil && e.costProvider != nil {
+		if provider, ok := e.costProvider.(CostReferenceProvider); ok {
+			if ratio, found := provider.CostReferenceRatio(modelName, pricingMode); found && ratio > 0 {
+				return ratio, true
+			}
+		}
+	}
+	return modelgatewaycost.LookupCachedReferenceCostRatio(modelName, pricingMode)
+}
+
 func candidateGroupPriorityRatio(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {
 	group := strings.TrimSpace(candidate.Group)
 	if group == "" {
@@ -312,20 +335,6 @@ func candidateGroupPriorityRatio(candidate core.Candidate, policy core.GroupSmar
 		return 0
 	}
 	return policy.GroupPriorityRatio[group]
-}
-
-func estimateCandidateCostPerMillion(candidate core.Candidate) float64 {
-	modelName := candidateCostModelName(candidate)
-	if modelName == "" {
-		return 0
-	}
-	if price, ok := ratio_setting.GetModelPrice(modelName, false); ok && price >= 0 {
-		return price
-	}
-	if ratio, ok, _ := ratio_setting.GetModelRatio(modelName); ok && ratio >= 0 {
-		return ratio * 2
-	}
-	return 0
 }
 
 func candidateCostModelName(candidate core.Candidate) string {

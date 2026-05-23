@@ -147,6 +147,7 @@ func TestScoreFactoryStrategiesShiftWeights(t *testing.T) {
 		ActiveConcurrency:  1,
 		MaxConcurrency:     10,
 		CostRatio:          3,
+		CostReferenceRatio: 0.5,
 		GroupPriorityRatio: 1,
 		SampleCount:        30,
 	}
@@ -157,6 +158,7 @@ func TestScoreFactoryStrategiesShiftWeights(t *testing.T) {
 		ActiveConcurrency:  1,
 		MaxConcurrency:     10,
 		CostRatio:          0.5,
+		CostReferenceRatio: 0.5,
 		GroupPriorityRatio: 1,
 		SampleCount:        30,
 	}
@@ -180,6 +182,7 @@ func TestCostFirstPrefersCheapCandidateOverFasterExpensiveCandidate(t *testing.T
 		TTFTMs:             7200,
 		DurationMs:         5800,
 		CostRatio:          0.13,
+		CostReferenceRatio: 0.13,
 		GroupPriorityRatio: 1,
 		SampleCount:        100,
 		ExperienceScore:    1,
@@ -191,6 +194,7 @@ func TestCostFirstPrefersCheapCandidateOverFasterExpensiveCandidate(t *testing.T
 		TTFTMs:             3200,
 		DurationMs:         3600,
 		CostRatio:          0.30,
+		CostReferenceRatio: 0.13,
 		GroupPriorityRatio: 1,
 		SampleCount:        100,
 		ExperienceScore:    1,
@@ -261,7 +265,7 @@ func TestCostFirstAmplifiesLargeRelativeCostGap(t *testing.T) {
 	require.Greater(t, cheap.RoutingTotal, expensive.RoutingTotal)
 }
 
-func TestCostScoreKeepsAbsoluteFallbackWithoutCandidateReference(t *testing.T) {
+func TestCostScoreUsesNeutralValueWithoutReference(t *testing.T) {
 	scorer := scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()).ForStrategy(core.StrategyCostFirst)
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "auto"}
 	score := scorer.Score(candidate, core.RuntimeSnapshot{
@@ -274,8 +278,7 @@ func TestCostScoreKeepsAbsoluteFallbackWithoutCandidateReference(t *testing.T) {
 		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
 
-	require.InEpsilon(t, 0.885, score.Breakdown["cost"], 0.001)
-	require.Greater(t, score.Breakdown["cost"], 0.80)
+	require.Equal(t, 0.5, score.Breakdown["cost"])
 }
 
 func TestCostFirstUsesConfiguredGroupWeightAndLowerGroupRatio(t *testing.T) {
@@ -294,6 +297,7 @@ func TestCostFirstUsesConfiguredGroupWeightAndLowerGroupRatio(t *testing.T) {
 		TTFTMs:             6800,
 		DurationMs:         7200,
 		CostRatio:          0.12,
+		CostReferenceRatio: 0.12,
 		GroupPriorityRatio: 0.1,
 		SampleCount:        120,
 		ExperienceScore:    1,
@@ -313,6 +317,7 @@ func TestCostFirstUsesConfiguredGroupWeightAndLowerGroupRatio(t *testing.T) {
 		TTFTMs:             1600,
 		DurationMs:         2600,
 		CostRatio:          0.24,
+		CostReferenceRatio: 0.12,
 		GroupPriorityRatio: 0.2,
 		SampleCount:        120,
 		ExperienceScore:    1,
@@ -370,6 +375,15 @@ func TestCostFirstDoesNotRouteToHigherCostGroupOnlyBecauseCheapGroupIsBusy(t *te
 		}),
 		store,
 		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+	).WithRuntimeSnapshotEnricher(
+		scheduler.NewRuntimeSnapshotEnricher(nil, 1500, 8, 2).WithCostProfileProvider(fakeCostProfileProvider{
+			ratiosByChannel: map[int]float64{
+				4: 0.05,
+				9: 0.12,
+			},
+			reference: 0.05,
+			ok:        true,
+		}),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{

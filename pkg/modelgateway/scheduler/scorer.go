@@ -29,6 +29,7 @@ const (
 )
 
 const costFirstRelativeCostPower = 1.35
+const missingCostReferenceScore = 0.50
 
 type WeightedScoreCalculator struct {
 	weights  core.ScoreWeights
@@ -416,20 +417,14 @@ func costScore(snapshot core.RuntimeSnapshot) float64 {
 }
 
 func costScoreForStrategy(snapshot core.RuntimeSnapshot, strategy string) float64 {
-	if snapshot.CostRatio <= 0 {
-		if strategy == core.StrategyCostFirst {
-			return 0.45
-		}
-		return 0.70
+	if snapshot.CostRatio <= 0 || snapshot.CostReferenceRatio <= 0 {
+		return missingCostReferenceScore
 	}
-	if snapshot.CostReferenceRatio > 0 {
-		score := clamp01(snapshot.CostReferenceRatio / snapshot.CostRatio)
-		if strategy == core.StrategyCostFirst {
-			return clamp01(math.Pow(score, costFirstRelativeCostPower))
-		}
-		return score
+	score := clamp01(snapshot.CostReferenceRatio / snapshot.CostRatio)
+	if strategy == core.StrategyCostFirst {
+		return clamp01(math.Pow(score, costFirstRelativeCostPower))
 	}
-	return clamp01(1 / (1 + snapshot.CostRatio))
+	return score
 }
 
 func groupScore(snapshot core.RuntimeSnapshot) float64 {

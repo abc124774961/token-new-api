@@ -476,6 +476,36 @@ func (c *ProfileCache) Lookup(channelID int, upstreamModel string) *model.ModelG
 	return nil
 }
 
+func (c *ProfileCache) ReferenceCostRatio(upstreamModel string, pricingMode string) (float64, bool) {
+	if c == nil {
+		return 0, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if len(c.profiles) == 0 || c.loadedAt.IsZero() {
+		return 0, false
+	}
+	pricingMode = strings.TrimSpace(strings.ToLower(pricingMode))
+	reference := 0.0
+	for _, profile := range c.profiles {
+		mode := CostPricingModeFromProfileForModel(&profile, upstreamModel)
+		if pricingMode != "" && mode != pricingMode {
+			continue
+		}
+		ratio, ok := CostRatioFromProfileForModel(&profile, upstreamModel)
+		if !ok || ratio <= 0 {
+			continue
+		}
+		if reference <= 0 || ratio < reference {
+			reference = ratio
+		}
+	}
+	if reference <= 0 {
+		return 0, false
+	}
+	return reference, true
+}
+
 func (c *ProfileCache) loaded() bool {
 	if c == nil {
 		return false
@@ -535,6 +565,10 @@ func LookupCachedDefaultProfile(channelID int, upstreamModel string) *model.Mode
 
 func LookupDefaultProfile(channelID int, upstreamModel string) *model.ModelGatewayChannelCostProfile {
 	return LookupCachedDefaultProfile(channelID, upstreamModel)
+}
+
+func LookupCachedReferenceCostRatio(upstreamModel string, pricingMode string) (float64, bool) {
+	return defaultCache.ReferenceCostRatio(upstreamModel, pricingMode)
 }
 
 func DefaultSystemRatioProfile(channelID int) *model.ModelGatewayChannelCostProfile {

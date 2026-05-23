@@ -16,12 +16,25 @@ import (
 )
 
 type fakeCostProfileProvider struct {
-	ratio float64
-	ok    bool
+	ratio           float64
+	ratiosByChannel map[int]float64
+	reference       float64
+	ok              bool
 }
 
 func (p fakeCostProfileProvider) CostRatio(channelID int, upstreamModel string) (float64, bool) {
+	if p.ratiosByChannel != nil {
+		ratio, ok := p.ratiosByChannel[channelID]
+		return ratio, ok
+	}
 	return p.ratio, p.ok
+}
+
+func (p fakeCostProfileProvider) CostReferenceRatio(upstreamModel string, pricingMode string) (float64, bool) {
+	if !p.ok || p.reference <= 0 {
+		return 0, false
+	}
+	return p.reference, true
 }
 
 func TestRuntimeSnapshotEnricherAppliesConcurrencyCooldownAndAvoidance(t *testing.T) {
@@ -99,7 +112,7 @@ func TestRuntimeSnapshotEnricherAppliesCircuitBreakerState(t *testing.T) {
 
 func TestRuntimeSnapshotEnricherUsesCostProfileProvider(t *testing.T) {
 	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{}, 1500, 8, 2)
-	enricher.WithCostProfileProvider(fakeCostProfileProvider{ratio: 0.42, ok: true})
+	enricher.WithCostProfileProvider(fakeCostProfileProvider{ratio: 0.42, reference: 0.21, ok: true})
 
 	snapshot := enricher.Enrich(core.Candidate{
 		Channel: &model.Channel{Id: 7},
@@ -110,6 +123,7 @@ func TestRuntimeSnapshotEnricherUsesCostProfileProvider(t *testing.T) {
 	}, core.RuntimeSnapshot{CostRatio: 1}, core.GroupSmartPolicy{})
 
 	require.Equal(t, 0.42, snapshot.CostRatio)
+	require.Equal(t, 0.21, snapshot.CostReferenceRatio)
 }
 
 func TestRuntimeSnapshotEnricherIgnoresDeprecatedChannelCostPerMillionAndStaleSnapshotCost(t *testing.T) {

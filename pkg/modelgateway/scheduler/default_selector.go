@@ -110,8 +110,8 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		if stickyMatched && stickyBreak == "" && rejectReason != "" {
 			stickyBreak = rejectReason
 		}
-		if rejectReason == "" && snapshot.CostRatio > 0 && (costReferenceRatio <= 0 || snapshot.CostRatio < costReferenceRatio) {
-			costReferenceRatio = snapshot.CostRatio
+		if snapshot.CostReferenceRatio > 0 && (costReferenceRatio <= 0 || snapshot.CostReferenceRatio < costReferenceRatio) {
+			costReferenceRatio = snapshot.CostReferenceRatio
 		}
 		evaluations = append(evaluations, candidateEvaluation{
 			candidate:     candidate,
@@ -127,18 +127,18 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			snapshot.CostReferenceRatio = costReferenceRatio
 		}
 		explanation := candidateExplanation(candidate, snapshot, evaluation.stickyMatched)
-		if evaluation.rejectReason != "" {
-			explanation.RejectReason = evaluation.rejectReason
-			appendCandidateExplanation(&explanations, explanation)
-			continue
-		}
 		score := scorer.Score(candidate, snapshot, policy)
-		explanation.Available = true
 		explanation.ScoreTotal = score.Total
 		explanation.ScoreBreakdown = score.Breakdown
 		explanation.RoutingScoreTotal = score.RoutingTotal
 		explanation.RoutingScoreBreakdown = score.RoutingBreakdown
 		applyScoredMetricsToCandidateExplanation(&explanation, score)
+		if evaluation.rejectReason != "" {
+			explanation.RejectReason = evaluation.rejectReason
+			appendCandidateExplanation(&explanations, explanation)
+			continue
+		}
+		explanation.Available = true
 		if routingConcurrencySaturated(snapshot) {
 			explanation.SelectionSkipReason = "concurrency_saturated"
 		}
