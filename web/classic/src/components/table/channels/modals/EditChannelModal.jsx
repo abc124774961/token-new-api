@@ -129,6 +129,74 @@ const buildCodexProbeState = ({
   checkedAt,
 });
 
+const codexProbeStateFromSettings = (settings = {}) =>
+  buildCodexProbeState({
+    status:
+      settings.codex_image_generation_tool_supported === true
+        ? 'supported'
+        : Number(settings.codex_image_generation_tool_probe_time) > 0
+          ? 'unsupported'
+          : 'idle',
+    supported: settings.codex_image_generation_tool_supported === true,
+    message:
+      typeof settings.codex_image_generation_tool_probe_message === 'string'
+        ? settings.codex_image_generation_tool_probe_message
+        : '',
+    models: Array.isArray(settings.codex_image_generation_tool_probe_models)
+      ? settings.codex_image_generation_tool_probe_models
+      : [],
+    tools: Array.isArray(settings.codex_supported_tools)
+      ? settings.codex_supported_tools
+      : settings.codex_image_generation_tool_supported === true
+        ? [CODEX_IMAGE_GENERATION_TOOL]
+        : [],
+    checkedAt: Number(settings.codex_image_generation_tool_probe_time) || 0,
+  });
+
+const mergeCodexProbeSettings = (settings = {}, ...states) => {
+  const preserved = states.find(
+    (state) => state && (Number(state.checkedAt) > 0 || state.status !== 'idle'),
+  );
+  if (!preserved) {
+    settings.codex_image_generation_tool_supported =
+      settings.codex_image_generation_tool_supported === true;
+    settings.codex_image_generation_tool_probe_time =
+      Number(settings.codex_image_generation_tool_probe_time) || 0;
+    settings.codex_image_generation_tool_probe_message =
+      typeof settings.codex_image_generation_tool_probe_message === 'string'
+        ? settings.codex_image_generation_tool_probe_message
+        : '';
+    settings.codex_image_generation_tool_probe_models = Array.isArray(
+      settings.codex_image_generation_tool_probe_models,
+    )
+      ? settings.codex_image_generation_tool_probe_models
+      : [];
+    settings.codex_supported_tools = Array.isArray(settings.codex_supported_tools)
+      ? settings.codex_supported_tools
+      : settings.codex_image_generation_tool_supported
+        ? [CODEX_IMAGE_GENERATION_TOOL]
+        : [];
+    return settings;
+  }
+  const supported = preserved.supported === true;
+  settings.codex_image_generation_tool_supported = supported;
+  settings.codex_image_generation_tool_probe_time =
+    Number(preserved.checkedAt) || 0;
+  settings.codex_image_generation_tool_probe_message =
+    typeof preserved.message === 'string' ? preserved.message : '';
+  settings.codex_image_generation_tool_probe_models = Array.isArray(
+    preserved.models,
+  )
+    ? preserved.models
+    : [];
+  settings.codex_supported_tools = Array.isArray(preserved.tools)
+    ? preserved.tools
+    : supported
+      ? [CODEX_IMAGE_GENERATION_TOOL]
+      : [];
+  return settings;
+};
+
 const PARAM_OVERRIDE_LEGACY_TEMPLATE = {
   temperature: 0,
 };
@@ -583,6 +651,8 @@ const EditChannelModal = (props) => {
     buildCodexProbeState(),
   );
   const codexProbeRequestIdRef = useRef(0);
+  const initialCodexProbeStateRef = useRef(buildCodexProbeState());
+  const latestCodexProbeStateRef = useRef(buildCodexProbeState());
   const [paramOverrideEditorVisible, setParamOverrideEditorVisible] =
     useState(false);
 
@@ -766,7 +836,16 @@ const EditChannelModal = (props) => {
 
     if (key === 'codex_compatibility_mode') {
       if (value === true) {
-        probeCodexImageToolSupport({ silent: false });
+        const preservedState = codexProbeStateFromSettings(settings);
+        if (
+          Number(preservedState.checkedAt) > 0 ||
+          preservedState.status !== 'idle'
+        ) {
+          setCodexProbeState(preservedState);
+          latestCodexProbeStateRef.current = preservedState;
+        } else {
+          probeCodexImageToolSupport({ silent: false });
+        }
       } else {
         applyCodexProbeResult(buildCodexProbeState());
       }
@@ -843,6 +922,7 @@ const EditChannelModal = (props) => {
     setInputs((inputs) => ({ ...inputs, [name]: value }));
     if (name === 'type') {
       if (value !== 1) {
+        initialCodexProbeStateRef.current = buildCodexProbeState();
         applyCodexProbeResult(buildCodexProbeState());
       }
       let localModels = [];
@@ -1763,19 +1843,20 @@ const EditChannelModal = (props) => {
       setInputs(data);
       const initialCodexProbeState =
         data.type === 1 && data.codex_compatibility_mode === true
-          ? buildCodexProbeState({
-              status: data.codex_image_generation_tool_supported
-                ? 'supported'
-                : data.codex_image_generation_tool_probe_time > 0
-                  ? 'unsupported'
-                  : 'idle',
-              supported: data.codex_image_generation_tool_supported === true,
-              message: data.codex_image_generation_tool_probe_message || '',
-              models: data.codex_image_generation_tool_probe_models || [],
-              tools: data.codex_supported_tools || [],
-              checkedAt: data.codex_image_generation_tool_probe_time || 0,
+          ? codexProbeStateFromSettings({
+              codex_image_generation_tool_supported:
+                data.codex_image_generation_tool_supported,
+              codex_image_generation_tool_probe_time:
+                data.codex_image_generation_tool_probe_time,
+              codex_image_generation_tool_probe_message:
+                data.codex_image_generation_tool_probe_message,
+              codex_image_generation_tool_probe_models:
+                data.codex_image_generation_tool_probe_models,
+              codex_supported_tools: data.codex_supported_tools,
             })
           : buildCodexProbeState();
+      initialCodexProbeStateRef.current = initialCodexProbeState;
+      latestCodexProbeStateRef.current = initialCodexProbeState;
       setCodexProbeState(initialCodexProbeState);
       if (formApiRef.current) {
         formApiRef.current.setValues(data);
@@ -1925,6 +2006,7 @@ const EditChannelModal = (props) => {
 
   const applyCodexProbeResult = (nextState, options = {}) => {
     const persistToForm = options.persistToForm !== false;
+    latestCodexProbeStateRef.current = nextState;
     setCodexProbeState(nextState);
     const supported = nextState.supported === true;
     const checkedAt = nextState.checkedAt || 0;
@@ -2953,6 +3035,8 @@ const EditChannelModal = (props) => {
     setCostProfilesLoading(false);
     setSavingCostProfileId(null);
     codexProbeRequestIdRef.current += 1;
+    initialCodexProbeStateRef.current = buildCodexProbeState();
+    latestCodexProbeStateRef.current = buildCodexProbeState();
     setCodexProbeState(buildCodexProbeState());
     // 重置高级设置折叠状态
     setAdvancedSettingsOpen(false);
@@ -3352,41 +3436,24 @@ const EditChannelModal = (props) => {
       settings.codex_compatibility_mode =
         localInputs.codex_compatibility_mode === true;
       if (settings.codex_compatibility_mode) {
-        const probeCheckedAt =
-          Number(localInputs.codex_image_generation_tool_probe_time) ||
-          Number(settings.codex_image_generation_tool_probe_time) ||
-          0;
-        const probeSupported =
-          localInputs.codex_image_generation_tool_supported === true ||
-          settings.codex_image_generation_tool_supported === true;
-        settings.codex_image_generation_tool_supported = probeSupported;
-        settings.codex_image_generation_tool_probe_time = probeCheckedAt;
-        settings.codex_image_generation_tool_probe_message =
-          typeof localInputs.codex_image_generation_tool_probe_message ===
-          'string' &&
-          localInputs.codex_image_generation_tool_probe_message !== ''
-            ? localInputs.codex_image_generation_tool_probe_message
-            : typeof settings.codex_image_generation_tool_probe_message ===
-                'string'
-              ? settings.codex_image_generation_tool_probe_message
-              : '';
-        settings.codex_image_generation_tool_probe_models = Array.isArray(
-          localInputs.codex_image_generation_tool_probe_models,
-        ) && localInputs.codex_image_generation_tool_probe_models.length > 0
-          ? localInputs.codex_image_generation_tool_probe_models
-          : Array.isArray(settings.codex_image_generation_tool_probe_models)
-            ? settings.codex_image_generation_tool_probe_models
-            : [];
-        settings.codex_supported_tools = Array.isArray(
-          localInputs.codex_supported_tools,
-        ) && localInputs.codex_supported_tools.length > 0
-          ? localInputs.codex_supported_tools
-          : Array.isArray(settings.codex_supported_tools) &&
-              settings.codex_supported_tools.length > 0
-            ? settings.codex_supported_tools
-            : probeSupported
-              ? [CODEX_IMAGE_GENERATION_TOOL]
-              : [];
+        const formProbeState = codexProbeStateFromSettings({
+          codex_image_generation_tool_supported:
+            localInputs.codex_image_generation_tool_supported,
+          codex_image_generation_tool_probe_time:
+            localInputs.codex_image_generation_tool_probe_time,
+          codex_image_generation_tool_probe_message:
+            localInputs.codex_image_generation_tool_probe_message,
+          codex_image_generation_tool_probe_models:
+            localInputs.codex_image_generation_tool_probe_models,
+          codex_supported_tools: localInputs.codex_supported_tools,
+        });
+        mergeCodexProbeSettings(
+          settings,
+          formProbeState,
+          latestCodexProbeStateRef.current,
+          initialCodexProbeStateRef.current,
+          codexProbeStateFromSettings(settings),
+        );
       } else {
         delete settings.codex_image_generation_tool_supported;
         delete settings.codex_image_generation_tool_probe_time;

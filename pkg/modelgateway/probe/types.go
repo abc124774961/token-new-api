@@ -21,6 +21,7 @@ const (
 	reasonLongNoSuccess = "long_no_success"
 	reasonCircuitProbe  = "circuit_half_open"
 	reasonSampling      = "sampling"
+	reasonLowTraffic    = "low_traffic"
 )
 
 type ProbeConfig struct {
@@ -52,6 +53,7 @@ type ProbeRunResult struct {
 	Model       string
 	Group       string
 	RuntimeKey  core.RuntimeKey
+	TargetKey   core.RuntimeKey
 	Context     *gin.Context
 	RelayInfo   *relaycommon.RelayInfo
 	Usage       *dto.Usage

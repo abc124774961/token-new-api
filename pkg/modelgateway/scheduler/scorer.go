@@ -28,6 +28,8 @@ const (
 	ttftPenaltyExtremeMs  = 120000
 )
 
+const costFirstRelativeCostPower = 1.35
+
 type WeightedScoreCalculator struct {
 	weights  core.ScoreWeights
 	strategy string
@@ -60,7 +62,6 @@ func (c *WeightedScoreCalculator) Score(candidate core.Candidate, snapshot core.
 		healthLoadScore*c.weights.Load +
 		costScore*c.weights.Cost +
 		groupScore*c.weights.Group
-	total = applyExperienceGate(total, experienceScore)
 	total = applyTTFTPenaltyGate(total, firstBytePenalty)
 	total = applyLatencyGate(total, snapshot)
 	routingTotal := successScore*c.weights.Success +
@@ -68,7 +69,6 @@ func (c *WeightedScoreCalculator) Score(candidate core.Candidate, snapshot core.
 		routingLoadScore*c.weights.Load +
 		costScore*c.weights.Cost +
 		groupScore*c.weights.Group
-	routingTotal = applyExperienceGate(routingTotal, experienceScore)
 	routingTotal = applyTTFTPenaltyGate(routingTotal, firstBytePenalty)
 	routingTotal = applyFirstBytePendingGate(routingTotal, firstBytePendingPenalty)
 	routingTotal = applyLatencyGate(routingTotal, snapshot)
@@ -422,6 +422,13 @@ func costScoreForStrategy(snapshot core.RuntimeSnapshot, strategy string) float6
 		}
 		return 0.70
 	}
+	if snapshot.CostReferenceRatio > 0 {
+		score := clamp01(snapshot.CostReferenceRatio / snapshot.CostRatio)
+		if strategy == core.StrategyCostFirst {
+			return clamp01(math.Pow(score, costFirstRelativeCostPower))
+		}
+		return score
+	}
 	return clamp01(1 / (1 + snapshot.CostRatio))
 }
 
@@ -484,10 +491,6 @@ func experienceScore(snapshot core.RuntimeSnapshot) float64 {
 		return clamp01(snapshot.ExperienceScore)
 	}
 	return clamp01(1 - clamp01(snapshot.EmptyOutputRate)*0.85 - clamp01(snapshot.ExperienceIssueRate)*0.65)
-}
-
-func applyExperienceGate(total float64, experience float64) float64 {
-	return total * (0.55 + 0.45*clamp01(experience))
 }
 
 func ttftPenaltyScore(snapshot core.RuntimeSnapshot) float64 {

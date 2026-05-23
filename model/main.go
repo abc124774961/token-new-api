@@ -260,6 +260,9 @@ func migrateDB() error {
 	if err := ensureRuntimeSnapshotLatencySamplesColumn(); err != nil {
 		return err
 	}
+	if err := ensureRuntimeSnapshotProbeColumns(); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -553,6 +556,32 @@ func ensureRuntimeSnapshotLatencySamplesColumn() error {
 		return nil
 	}
 	return DB.Migrator().AddColumn(&ModelGatewayRuntimeSnapshot{}, "LatencySamples")
+}
+
+func ensureRuntimeSnapshotProbeColumns() error {
+	if DB == nil || !DB.Migrator().HasTable(&ModelGatewayRuntimeSnapshot{}) {
+		return nil
+	}
+	columns := []struct {
+		dbName    string
+		fieldName string
+	}{
+		{"last_real_attempt_at", "LastRealAttemptAt"},
+		{"last_real_success_at", "LastRealSuccessAt"},
+		{"last_real_failure_at", "LastRealFailureAt"},
+		{"real_sample_count_30m", "RealSampleCount30m"},
+		{"last_probe_at", "LastProbeAt"},
+		{"last_probe_success_at", "LastProbeSuccessAt"},
+	}
+	for _, column := range columns {
+		if DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, column.dbName) {
+			continue
+		}
+		if err := DB.Migrator().AddColumn(&ModelGatewayRuntimeSnapshot{}, column.fieldName); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // migrateRuntimeSnapshotCapabilityFingerprintToText migrates capability_fingerprint

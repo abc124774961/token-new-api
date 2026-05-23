@@ -73,6 +73,47 @@ func TestRuntimeHealthMonitorDoesNotLearnSpeedFromFastFailures(t *testing.T) {
 	require.Zero(t, snapshot.TTFTMs)
 }
 
+func TestRuntimeHealthMonitorSkipsBalanceInsufficientForSuccessRate(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	breaker := scheduler.NewCircuitBreaker(scheduler.CircuitBreakerOptions{
+		FailureThreshold:   1,
+		MinSamples:         1,
+		OpenDuration:       time.Minute,
+		HalfOpenProbeCount: 1,
+		ErrorPolicies: map[string]scheduler.CircuitErrorPolicy{
+			scheduler.CircuitErrorQuota: {
+				FailureThreshold:   1,
+				MinSamples:         1,
+				OpenDuration:       time.Minute,
+				HalfOpenProbeCount: 1,
+			},
+		},
+	})
+	monitor := scheduler.NewRuntimeHealthMonitor(store, breaker)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 84, Group: "default"}
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:                 key,
+		ChannelID:           84,
+		StatusCode:          http.StatusForbidden,
+		ErrorCode:           "insufficient_user_quota",
+		ErrorMessage:        "insufficient account balance",
+		ErrorCategory:       "balance_or_quota",
+		BalanceInsufficient: true,
+		Duration:            80 * time.Millisecond,
+		TTFT:                20 * time.Millisecond,
+	})
+
+	_, ok := store.Get(key)
+	require.False(t, ok)
+	circuit := breaker.Snapshot(key)
+	require.Equal(t, core.CircuitStateClosed, circuit.State)
+	require.Zero(t, circuit.SampleCount)
+	require.Empty(t, circuit.ErrorCounts)
+	require.True(t, service.IsRuntimeBalanceInsufficientChannelID(84))
+	service.ClearChannelBalanceInsufficient(84)
+}
+
 func TestRuntimeHealthMonitorSuccessImprovesSnapshot(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)

@@ -112,7 +112,7 @@ func TestRuntimeSnapshotEnricherUsesCostProfileProvider(t *testing.T) {
 	require.Equal(t, 0.42, snapshot.CostRatio)
 }
 
-func TestRuntimeSnapshotEnricherIgnoresDeprecatedChannelCostPerMillion(t *testing.T) {
+func TestRuntimeSnapshotEnricherIgnoresDeprecatedChannelCostPerMillionAndStaleSnapshotCost(t *testing.T) {
 	deprecatedCost := 0.01
 	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{}, 1500, 8, 2)
 
@@ -124,7 +124,8 @@ func TestRuntimeSnapshotEnricherIgnoresDeprecatedChannelCostPerMillion(t *testin
 		},
 	}, core.RuntimeSnapshot{CostRatio: 1}, core.GroupSmartPolicy{})
 
-	require.Equal(t, 1.0, snapshot.CostRatio)
+	require.Zero(t, snapshot.CostRatio)
+	require.NotEqual(t, deprecatedCost, snapshot.CostRatio)
 }
 
 func TestRuntimeSnapshotEnricherDoesNotRefreshCostProfileOnRequestPath(t *testing.T) {

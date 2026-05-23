@@ -22,6 +22,12 @@ type ModelGatewayRuntimeSnapshot struct {
 	ExperienceScore       float64 `json:"experience_score" gorm:"default:0"`
 	EmptyOutputRate       float64 `json:"empty_output_rate" gorm:"default:0"`
 	ExperienceIssueRate   float64 `json:"experience_issue_rate" gorm:"default:0"`
+	LastRealAttemptAt     int64   `json:"last_real_attempt_at" gorm:"bigint;index;default:0"`
+	LastRealSuccessAt     int64   `json:"last_real_success_at" gorm:"bigint;default:0"`
+	LastRealFailureAt     int64   `json:"last_real_failure_at" gorm:"bigint;default:0"`
+	RealSampleCount30m    int     `json:"real_sample_count_30m" gorm:"column:real_sample_count_30m;default:0"`
+	LastProbeAt           int64   `json:"last_probe_at" gorm:"bigint;index;default:0"`
+	LastProbeSuccessAt    int64   `json:"last_probe_success_at" gorm:"bigint;default:0"`
 }
 
 func (ModelGatewayRuntimeSnapshot) TableName() string {

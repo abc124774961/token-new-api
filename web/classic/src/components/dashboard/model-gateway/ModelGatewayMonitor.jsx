@@ -690,8 +690,15 @@ function isBalanceInsufficientStatus(record) {
   const reason = String(record?.status_reason || record?.reject_reason || '')
     .trim()
     .toLowerCase();
+  const category = String(
+    record?.error_category || record?.final_error_category || '',
+  )
+    .trim()
+    .toLowerCase();
   return (
     record?.balance_insufficient === true ||
+    record?.request_meta?.balance_insufficient === true ||
+    category === 'balance_or_quota' ||
     reason === 'balance_insufficient' ||
     reason.includes('余额不足')
   );
@@ -1210,6 +1217,7 @@ function DispatchFlowTags({ record, t, compact = false }) {
   const tags = [];
   const action = record?.retry_action || (record?.will_retry ? 'retry' : '');
   const category = record?.error_category;
+  const balanceInsufficient = isBalanceInsufficientStatus(record);
   const activeConcurrency = Number(record?.active_concurrency || 0);
   const configuredLimit = Number(record?.configured_concurrency_limit || 0);
   const learnedLimit = Number(record?.learned_concurrency_limit || 0);
@@ -1231,6 +1239,13 @@ function DispatchFlowTags({ record, t, compact = false }) {
     tags.push(
       <Tag key='category' color='grey' type='light' {...tagProps}>
         {t('失败分类')}: {formatAttemptErrorCategory(category, t)}
+      </Tag>,
+    );
+  }
+  if (balanceInsufficient) {
+    tags.push(
+      <Tag key='balance-insufficient' color='red' type='light' {...tagProps}>
+        {t('余额不足')}
       </Tag>,
     );
   }
@@ -1589,6 +1604,8 @@ function formatUserRequestErrorCategory(category, t) {
       return t('最终失败类型：stream_interrupted');
     case 'client_aborted':
       return t('用户主动终止');
+    case 'balance_or_quota':
+      return t('余额或额度');
     case 'server_error':
       return t('最终失败类型：server_error');
     default:
@@ -2130,38 +2147,6 @@ function UserRequestCostTooltip({ billing, t }) {
   );
 }
 
-function UserRequestCostCell({ billing, t }) {
-  if (!billing) {
-    return (
-      <div className='ct-model-gateway-user-request-cost-col ct-model-gateway-user-request-cost-empty'>
-        <HoverCard
-          content={<UserRequestCostTooltip billing={billing} t={t} />}
-          className='ct-model-gateway-user-request-cost-trigger'
-        >
-          <strong>--</strong>
-          <span>{t('暂无日志')}</span>
-        </HoverCard>
-      </div>
-    );
-  }
-
-  return (
-    <div className='ct-model-gateway-user-request-cost-col'>
-      <HoverCard
-        content={<UserRequestCostTooltip billing={billing} t={t} />}
-        className='ct-model-gateway-user-request-cost-trigger'
-      >
-        <strong>{renderQuota(billingReferenceQuota(billing), 6)}</strong>
-        <span>
-          {safeNumber(billing.total_tokens) > 0
-            ? `${formatBillingTokenCount(billing.total_tokens)} ${t('tokens')}`
-            : t('费用参考')}
-        </span>
-      </HoverCard>
-    </div>
-  );
-}
-
 function upstreamCostSourceLabel(source, accuracy, t) {
   if (source === 'pending' || accuracy === 'pending') return t('计算中');
   if (source === 'missing' || accuracy === 'missing') return t('未配置');
@@ -2320,59 +2305,6 @@ function upstreamCostPricingRows(breakdown, t) {
   ].filter(([, value]) => value && value !== '--');
 }
 
-function upstreamCostConfigSummary(record, t) {
-  const breakdown = record?.upstream_cost_breakdown || {};
-  const costCoefficient = safeNumber(breakdown?.cost_coefficient);
-  const feeMultiplier = safeNumber(breakdown?.fee_multiplier);
-  const tokenMultiplier = safeNumber(breakdown?.token_multiplier);
-  const rechargeMultiplier = safeNumber(breakdown?.recharge_multiplier);
-  const parts = [];
-  if (costCoefficient > 0) {
-    parts.push(`${t('成本系数')} ${formatCostRatio(costCoefficient)}`);
-  }
-  if (feeMultiplier > 0) {
-    parts.push(`${t('费用计算倍率')} ${formatCostRatio(feeMultiplier)}`);
-  }
-  if (tokenMultiplier > 0) {
-    parts.push(`${t('1:1')} ${formatCostRatio(tokenMultiplier)}`);
-  }
-  if (rechargeMultiplier > 0) {
-    parts.push(`${t('充值倍率')} ${formatCostRatio(rechargeMultiplier)}`);
-  }
-  return parts.join(' / ');
-}
-
-function upstreamCostCompactConfig(record) {
-  const breakdown = record?.upstream_cost_breakdown || {};
-  const costCoefficient = safeNumber(breakdown?.cost_coefficient);
-  const feeMultiplier = safeNumber(breakdown?.fee_multiplier);
-  const tokenMultiplier = safeNumber(breakdown?.token_multiplier);
-  if (tokenMultiplier > 0) {
-    return `1:1 ${formatBillingRatio(tokenMultiplier)}x`;
-  }
-  if (costCoefficient > 0 && feeMultiplier > 0) {
-    return `${formatBillingRatio(costCoefficient)}x*${formatBillingRatio(
-      feeMultiplier,
-    )}x`;
-  }
-  return '';
-}
-
-function upstreamCostComponentSummary(record, t) {
-  const rows = upstreamCostSummaryComponentRows(
-    record?.upstream_cost_breakdown || {},
-    t,
-  );
-  if (!rows.length) return '';
-  return rows
-    .slice(0, 2)
-    .map((row) => {
-      const amount = row.amount > 0 ? formatUsdCostAmount(row.amount) : '--';
-      return row.meta ? `${row.label} ${amount} (${row.meta})` : `${row.label} ${amount}`;
-    })
-    .join(' / ');
-}
-
 function UpstreamCostDetailPanel({ record, t }) {
   const status = upstreamCostStatus(record);
   const breakdown = record?.upstream_cost_breakdown || {};
@@ -2450,29 +2382,56 @@ function UpstreamCostDetailPanel({ record, t }) {
   );
 }
 
-function UserRequestChannelCostCell({ record, t }) {
+function UserRequestCostSummaryTooltip({ record, t }) {
+  return (
+    <div className='ct-model-gateway-cost-summary-tooltip'>
+      <UserRequestUpstreamCostTooltip record={record} t={t} />
+      <div className='ct-model-gateway-cost-summary-tooltip-divider' />
+      <UserRequestCostTooltip billing={record?.billing} t={t} />
+    </div>
+  );
+}
+
+function UserRequestCostSummaryCell({ record, t }) {
   const status = upstreamCostStatus(record);
+  const billing = record?.billing;
+  const channelRatio = safeNumber(
+    record?.upstream_cost_breakdown?.token_multiplier,
+  );
   const hasCost = status.amount > 0;
-  const label = hasCost
+  const upstreamLabel = hasCost
     ? formatUsdCostAmount(status.amount)
     : upstreamCostSourceLabel(status.source, status.accuracy, t);
-  const sourceMeta = upstreamCostSourceLabel(status.source, status.accuracy, t);
-  const configMeta =
-    upstreamCostConfigSummary(record, t) || upstreamCostCompactConfig(record);
-  const componentMeta = upstreamCostComponentSummary(record, t);
+  const billingLabel = billing
+    ? renderQuota(billingReferenceQuota(billing), 6)
+    : '--';
+
   return (
     <div
-      className={`ct-model-gateway-user-request-cost-col ct-model-gateway-user-request-cost-col-upstream ${
-        hasCost ? '' : `ct-model-gateway-user-request-cost-${status.source || 'pending'}`
+      className={`ct-model-gateway-user-request-cost-summary-col ${
+        hasCost
+          ? ''
+          : `ct-model-gateway-user-request-cost-summary-${status.source || 'pending'}`
       }`}
     >
       <HoverCard
-        content={<UserRequestUpstreamCostTooltip record={record} t={t} />}
-        className='ct-model-gateway-user-request-cost-trigger'
+        content={<UserRequestCostSummaryTooltip record={record} t={t} />}
+        className='ct-model-gateway-user-request-cost-summary-trigger'
       >
-        <strong>{label}</strong>
-        <span>{configMeta || sourceMeta}</span>
-        {componentMeta && <small>{componentMeta}</small>}
+        <div className='ct-model-gateway-user-request-cost-summary-line'>
+          <span>{t('上游成本')}</span>
+          <strong>{upstreamLabel}</strong>
+        </div>
+        <div className='ct-model-gateway-user-request-cost-summary-line ct-model-gateway-user-request-cost-summary-billing'>
+          <span>{t('扣费')}</span>
+          <strong>{billingLabel}</strong>
+        </div>
+        <div className='ct-model-gateway-user-request-cost-summary-line ct-model-gateway-user-request-cost-summary-ratio'>
+          <span title={t('1:1 实际成本倍率')}>1:1</span>
+          <strong title={t('1:1 实际成本倍率')}>
+            {channelRatio > 0 ? formatCostRatio(channelRatio) : '--'}
+          </strong>
+        </div>
       </HoverCard>
     </div>
   );
@@ -2494,6 +2453,12 @@ function compareUserRequestsForDisplay(a, b) {
     return aProcessing ? -1 : 1;
   }
   return userRequestSortTimestamp(b) - userRequestSortTimestamp(a);
+}
+
+function compactUserRequestId(requestId) {
+  const value = String(requestId || '').trim();
+  if (!value || value.length <= 22) return value;
+  return `${value.slice(0, 12)}...${value.slice(-6)}`;
 }
 
 function buildUserRequestSparkValues(trends, key) {
@@ -3005,13 +2970,11 @@ function UserRequestRecentTable({
           <div className='ct-model-gateway-user-request-table-head'>
             {[
               { key: 'status', label: t('状态') },
-              { key: 'request', label: t('请求信息') },
-              { key: 'group', label: t('渠道信息') },
-              { key: 'channel_cost', label: t('上游成本'), hint: true },
-              { key: 'cost', label: t('扣费'), hint: true },
+              { key: 'request', label: t('请求模型') },
+              { key: 'cost', label: t('成本'), hint: true },
               { key: 'duration', label: t('总耗时'), hint: true },
               { key: 'ttft', label: t('首包'), hint: true },
-              { key: 'complete', label: t('完成时间') },
+              { key: 'complete', label: t('完成') },
               { key: 'action', label: t('操作') },
             ].map(({ key, label, hint }) => (
               <span key={key}>
@@ -3035,6 +2998,24 @@ function UserRequestRecentTable({
                 const channelIdLabel = formatUserRequestChannelId(record);
                 const groupFlowLabel = formatUserRequestGroupFlow(record);
                 const groupRatioLabel = formatUserRequestGroupRatio(record);
+                const issueLabel =
+                  !record.final_success &&
+                  record.final_error_category &&
+                  meta.tone !== 'aborted' &&
+                  !processing
+                    ? formatUserRequestErrorCategory(
+                        record.final_error_category,
+                        t,
+                      )
+                    : record.final_success &&
+                        (record.empty_output || record.experience_issue) &&
+                        !processing
+                      ? formatUserRequestExperienceIssue(
+                          record.experience_issue ||
+                            (record.empty_output ? 'empty_output' : ''),
+                          t,
+                        )
+                      : '';
                 const StatusIcon =
                   meta.tone === 'processing'
                     ? RadioTower
@@ -3075,14 +3056,14 @@ function UserRequestRecentTable({
                       </small>
                     </div>
 
-                    <div className='ct-model-gateway-user-request-info-col'>
-                      <span>{t('请求 ID')}</span>
+                    <div className='ct-model-gateway-user-request-summary-col'>
                       <div className='ct-model-gateway-user-request-id-line'>
                         <Typography.Text
                           ellipsis={{ showTooltip: true }}
                           className='ct-model-gateway-request-id'
+                          title={requestId || '--'}
                         >
-                          {requestId || '--'}
+                          {compactUserRequestId(requestId) || '--'}
                         </Typography.Text>
                         {requestId && (
                           <Tooltip content={t('复制')}>
@@ -3097,59 +3078,27 @@ function UserRequestRecentTable({
                           </Tooltip>
                         )}
                       </div>
-                      {!record.final_success &&
-                        record.final_error_category &&
-                        meta.tone !== 'aborted' &&
-                        !processing && (
-                          <small className='ct-model-gateway-user-request-error'>
-                            {formatUserRequestErrorCategory(
-                              record.final_error_category,
-                              t,
-                            )}
-                          </small>
-                        )}
-                      {record.final_success &&
-                        (record.empty_output || record.experience_issue) &&
-                        !processing && (
-                          <small className='ct-model-gateway-user-request-error'>
-                            {formatUserRequestExperienceIssue(
-                              record.experience_issue ||
-                                (record.empty_output ? 'empty_output' : ''),
-                              t,
-                            )}
-                          </small>
-                        )}
-                    </div>
-
-                    <div className='ct-model-gateway-user-request-group-col'>
-                      <div
-                        className='ct-model-gateway-user-request-channel-primary'
-                        title={channelLabel}
-                      >
-                        <strong>{channelLabel}</strong>
+                      <div className='ct-model-gateway-user-request-route-line'>
+                        <strong title={record.requested_model || '--'}>
+                          {record.requested_model || '--'}
+                        </strong>
+                        <span title={channelLabel}>{channelLabel}</span>
                         {channelIdLabel && (
                           <code title={t('渠道 ID')}>{channelIdLabel}</code>
                         )}
                       </div>
-                      <div
-                        className='ct-model-gateway-user-request-channel-model'
-                        title={record.requested_model || '--'}
-                      >
-                        {record.requested_model || '--'}
-                      </div>
-                      <div
-                        className='ct-model-gateway-user-request-channel-flow'
-                        title={groupFlowLabel}
-                      >
-                        <strong>{groupFlowLabel}</strong>
+                      <div className='ct-model-gateway-user-request-group-line'>
+                        <span title={groupFlowLabel}>{groupFlowLabel}</span>
                         {groupRatioLabel && (
                           <em title={groupRatioLabel}>{groupRatioLabel}</em>
+                        )}
+                        {issueLabel && (
+                          <small title={issueLabel}>{issueLabel}</small>
                         )}
                       </div>
                     </div>
 
-                    <UserRequestChannelCostCell record={record} t={t} />
-                    <UserRequestCostCell billing={record.billing} t={t} />
+                    <UserRequestCostSummaryCell record={record} t={t} />
 
                     <div
                       className={`ct-model-gateway-user-request-value-col ct-model-gateway-user-request-value-${durationTone}`}

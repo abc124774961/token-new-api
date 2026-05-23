@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,6 +60,7 @@ func (e *ProbeExecutor) Execute(ctx context.Context, candidate ProbeCandidate) P
 		Model:      candidate.Model,
 		Group:      candidate.Group,
 		RuntimeKey: candidate.Key,
+		TargetKey:  candidate.Key,
 		StartedAt:  startedAt,
 	}
 	if candidate.Channel == nil {
@@ -102,7 +104,8 @@ func (e *ProbeExecutor) execute(ctx context.Context, result ProbeRunResult) Prob
 
 	common.SetContextKey(c, constant.ContextKeyHealthProbe, true)
 	common.SetContextKey(c, constant.ContextKeyHealthProbeReason, result.Reason)
-	common.SetContextKey(c, constant.ContextKeyHealthProbeRuntimeKey, result.RuntimeKey)
+	common.SetContextKey(c, constant.ContextKeyHealthProbeRuntimeKey, result.TargetKey)
+	common.SetContextKey(c, constant.ContextKeyTokenSpecificChannelId, strconv.Itoa(result.TargetKey.ChannelID))
 	body, err := common.Marshal(request)
 	if err != nil {
 		result.Err = err
@@ -191,6 +194,7 @@ func (r ProbeRunResult) AttemptResult() core.AttemptResult {
 		channelName = r.Channel.Name
 	}
 	concurrencyLimited := r.NewAPIError != nil && (service.IsUpstreamConcurrencyLimitError(r.NewAPIError) || r.NewAPIError.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit)
+	balanceInsufficient := r.NewAPIError != nil && service.IsBalanceInsufficientError(r.NewAPIError)
 	activeConcurrency := 0
 	learnedLimit := 0
 	learnedChanged := false
@@ -221,7 +225,7 @@ func (r ProbeRunResult) AttemptResult() core.AttemptResult {
 		ttft = r.Duration
 	}
 	return core.AttemptResult{
-		Key:                            key,
+		Key:                            r.AttemptRuntimeKey(),
 		RequestID:                      r.ProbeID,
 		AttemptIndex:                   0,
 		ChannelID:                      channelID,
@@ -240,12 +244,24 @@ func (r ProbeRunResult) AttemptResult() core.AttemptResult {
 		Duration:                       r.Duration,
 		TTFT:                           ttft,
 		ConcurrencyLimited:             concurrencyLimited,
+		BalanceInsufficient:            balanceInsufficient,
 		ActiveConcurrency:              activeConcurrency,
 		LearnedConcurrencyLimit:        learnedLimit,
 		LearnedConcurrencyLimitChanged: learnedChanged,
 		IsHealthProbe:                  true,
 		ProbeReason:                    r.Reason,
 	}
+}
+
+func (r ProbeRunResult) AttemptRuntimeKey() core.RuntimeKey {
+	if r.TargetKey.ChannelID > 0 {
+		key := r.TargetKey
+		if key.EndpointType == "" {
+			key.EndpointType = r.RuntimeKey.EndpointType
+		}
+		return key
+	}
+	return r.RuntimeKey
 }
 
 func writeRootContext(c *gin.Context, probeID string, group string) error {

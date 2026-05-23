@@ -222,9 +222,12 @@ func (s *RuntimeStatusService) Build(query RuntimeStatusQuery) RuntimeStatusResp
 		if !runtimeStatusItemMatchesQuery(*item, query) {
 			continue
 		}
-		s.applyScore(item)
-		item.HealthStatus = runtimeHealthStatus(*item)
 		result = append(result, *item)
+	}
+	costReferenceRatio := runtimeStatusCostReferenceRatio(result)
+	for i := range result {
+		s.applyScore(&result[i], costReferenceRatio)
+		result[i].HealthStatus = runtimeHealthStatus(result[i])
 	}
 	sortRuntimeStatusItems(result)
 	if len(result) > query.Limit {
@@ -292,7 +295,7 @@ func (s *RuntimeStatusService) applyLiveState(item *RuntimeStatusItem) {
 	}
 }
 
-func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem) {
+func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem, costReferenceRatio float64) {
 	if item == nil || item.ChannelID <= 0 {
 		return
 	}
@@ -319,6 +322,7 @@ func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem) {
 		SlowFirstBytePending:  item.SlowFirstBytePending,
 		OldestFirstByteWaitMs: item.OldestFirstByteWaitMs,
 		CostRatio:             item.CostRatio,
+		CostReferenceRatio:    costReferenceRatio,
 		GroupPriorityRatio:    item.GroupPriorityRatio,
 		SuccessScore:          item.SuccessScore,
 		SpeedScore:            item.SpeedScore,
@@ -342,6 +346,19 @@ func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem) {
 	item.CostScore = scoreBreakdownValue(item.ScoreBreakdown, "cost")
 	item.GroupScore = scoreBreakdownValue(item.ScoreBreakdown, "group")
 	item.ExperienceScore = scoreBreakdownValue(item.ScoreBreakdown, "experience")
+}
+
+func runtimeStatusCostReferenceRatio(items []RuntimeStatusItem) float64 {
+	reference := 0.0
+	for _, item := range items {
+		if item.CostRatio <= 0 || item.ChannelID <= 0 {
+			continue
+		}
+		if reference <= 0 || item.CostRatio < reference {
+			reference = item.CostRatio
+		}
+	}
+	return reference
 }
 
 func scoreBreakdownValue(values map[string]float64, key string) float64 {

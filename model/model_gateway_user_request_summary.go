@@ -17,6 +17,7 @@ const (
 	ModelGatewayUserRequestErrorStreamInterrupted = "stream_interrupted"
 	ModelGatewayUserRequestErrorServer            = "server_error"
 	ModelGatewayUserRequestErrorClientAborted     = "client_aborted"
+	ModelGatewayUserRequestErrorBalanceOrQuota    = "balance_or_quota"
 )
 
 type ModelGatewayUserRequestSummary struct {
@@ -340,6 +341,11 @@ func NormalizeModelGatewayUserRequestErrorCategory(category string, errorCode st
 		return ModelGatewayUserRequestErrorStreamInterrupted
 	case strings.Contains(normalizedCategory, "timeout") || strings.Contains(normalizedCode, "timeout") || statusCode == http.StatusRequestTimeout || statusCode == http.StatusGatewayTimeout:
 		return ModelGatewayUserRequestErrorTimeout
+	case strings.Contains(normalizedCategory, "balance_or_quota") ||
+		strings.Contains(normalizedCode, "insufficient_user_quota") ||
+		strings.Contains(normalizedCode, "balance_not_enough") ||
+		strings.Contains(normalizedCode, "quota_not_enough"):
+		return ModelGatewayUserRequestErrorBalanceOrQuota
 	case strings.Contains(normalizedCategory, "rate_limit") ||
 		strings.Contains(normalizedCategory, "concurrency_limit") ||
 		strings.Contains(normalizedCategory, "quota") ||

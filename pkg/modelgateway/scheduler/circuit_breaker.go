@@ -145,7 +145,7 @@ func (b *CircuitBreaker) AllowProbe(key core.RuntimeKey) bool {
 }
 
 func (b *CircuitBreaker) Report(result core.AttemptResult) {
-	if b == nil || result.ChannelID <= 0 || result.ClientAborted {
+	if b == nil || result.ChannelID <= 0 || result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) {
 		return
 	}
 	key := normalizeRuntimeKey(result.RuntimeKey())
@@ -314,7 +314,7 @@ func (b *CircuitBreaker) classifyFailure(result core.AttemptResult) (string, boo
 // mean the failure is counted by the circuit breaker; policies still decide
 // that in classifyFailure.
 func ClassifyCircuitError(result core.AttemptResult) string {
-	if result.ClientAborted {
+	if result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) {
 		return ""
 	}
 	if result.StreamInterrupted {
@@ -352,7 +352,7 @@ func ClassifyCircuitError(result core.AttemptResult) string {
 }
 
 func isDefaultCircuitFailure(result core.AttemptResult) bool {
-	if result.ClientAborted {
+	if result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) {
 		return false
 	}
 	if result.StreamInterrupted {
@@ -382,6 +382,25 @@ func isCircuitConcurrencyLimitResult(result core.AttemptResult) bool {
 	}
 	label := strings.ToLower(strings.TrimSpace(result.ErrorCode + " " + result.ErrorType + " " + result.ErrorMessage))
 	return containsAnyCircuitLabel(label, "concurrency limit exceeded for user", "too many pending requests")
+}
+
+func isCircuitBalanceInsufficientResult(result core.AttemptResult) bool {
+	if strings.TrimSpace(result.ErrorCategory) == "balance_or_quota" {
+		return true
+	}
+	label := strings.ToLower(strings.TrimSpace(result.ErrorCode + " " + result.ErrorType + " " + result.ErrorMessage))
+	return containsAnyCircuitLabel(label,
+		"balance_insufficient",
+		"insufficient_user_quota",
+		"insufficient account balance",
+		"insufficient balance",
+		"insufficient credit",
+		"insufficient credits",
+		"balance_not_enough",
+		"quota_not_enough",
+		"quota not enough",
+		"余额不足",
+	)
 }
 
 func containsAnyCircuitLabel(label string, needles ...string) bool {

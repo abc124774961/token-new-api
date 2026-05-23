@@ -570,7 +570,7 @@
 }
 
 .ct-model-gateway-user-request-table {
-  min-width: 1740px;
+  min-width: 1188px;
 }
 
 .ct-model-gateway-user-request-table-head,
@@ -578,8 +578,8 @@
   display: grid;
   align-items: center;
   grid-template-columns:
-    98px minmax(320px, 1.18fr) minmax(260px, 1fr) 300px
-    112px 96px 94px 124px 92px;
+    106px minmax(330px, 1.35fr) minmax(196px, 0.72fr)
+    104px 102px 126px 84px;
 }
 
 .ct-model-gateway-user-request-table-head {
@@ -606,8 +606,7 @@
 
 .ct-model-gateway-user-request-row {
   position: relative;
-  height: 96px;
-  min-height: 96px;
+  min-height: 78px;
   border-bottom: 1px solid rgba(225, 231, 240, 0.86);
   color: #263650;
   background: #fff;
@@ -680,7 +679,7 @@
   position: relative;
   min-width: 0;
   height: 100%;
-  padding: 8px 16px;
+  padding: 8px 13px;
 }
 
 .ct-model-gateway-user-request-row > div:not(:last-child)::after {
@@ -701,10 +700,12 @@
 .ct-model-gateway-user-request-status-col,
 .ct-model-gateway-user-request-info-col,
 .ct-model-gateway-user-request-group-col,
+.ct-model-gateway-user-request-summary-col,
 .ct-model-gateway-user-request-time-col,
 .ct-model-gateway-user-request-value-col,
 .ct-model-gateway-user-request-attempt-col,
 .ct-model-gateway-user-request-cost-col,
+.ct-model-gateway-user-request-cost-summary-col,
 .ct-model-gateway-user-request-complete-col,
 .ct-model-gateway-user-request-action-col {
   display: flex;
@@ -715,6 +716,10 @@
 }
 
 .ct-model-gateway-user-request-group-col {
+  gap: 6px;
+}
+
+.ct-model-gateway-user-request-summary-col {
   gap: 6px;
 }
 
@@ -840,10 +845,12 @@
 
 .ct-model-gateway-user-request-status-col small,
 .ct-model-gateway-user-request-info-col span,
+.ct-model-gateway-user-request-summary-col span,
 .ct-model-gateway-user-request-time-col span,
 .ct-model-gateway-user-request-value-col span,
 .ct-model-gateway-user-request-attempt-col span,
 .ct-model-gateway-user-request-cost-col span,
+.ct-model-gateway-user-request-cost-summary-col span,
 .ct-model-gateway-user-request-complete-col span {
   overflow: hidden;
   color: #66758b;
@@ -869,6 +876,14 @@
   font-weight: 780;
 }
 
+.ct-model-gateway-user-request-summary-col .ct-model-gateway-request-id {
+  max-width: 100%;
+  color: #253551;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 780;
+}
+
 .ct-model-gateway-user-request-copy-btn.semi-button {
   width: 20px;
   height: 20px;
@@ -887,6 +902,10 @@
 }
 
 .ct-model-gateway-user-request-error {
+  display: inline-flex;
+  max-width: 142px;
+  min-width: 0;
+  overflow: hidden;
   align-self: flex-start;
   border-radius: 8px;
   padding: 3px 7px;
@@ -894,6 +913,92 @@
   background: rgba(254, 226, 226, 0.8);
   font-size: 12px;
   font-weight: 800;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-model-gateway-user-request-route-line,
+.ct-model-gateway-user-request-group-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.ct-model-gateway-user-request-route-line strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #10233f;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-model-gateway-user-request-route-line span {
+  max-width: 170px;
+  min-width: 0;
+  overflow: hidden;
+  color: #51647e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-model-gateway-user-request-route-line code {
+  flex: 0 0 auto;
+  border: 1px solid rgba(20, 184, 166, 0.18);
+  border-radius: 6px;
+  padding: 1px 5px;
+  color: #08776f;
+  background: rgba(240, 253, 250, 0.9);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.ct-model-gateway-user-request-group-line span {
+  min-width: 0;
+  overflow: hidden;
+  color: #66758b;
+  font-size: 12px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-model-gateway-user-request-group-line em {
+  flex: 0 0 auto;
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  border-radius: 6px;
+  padding: 1px 5px;
+  color: #0369a1;
+  background: rgba(240, 249, 255, 0.9);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.ct-model-gateway-user-request-group-line small {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  padding: 3px 7px;
+  color: #b91c1c;
+  background: rgba(254, 226, 226, 0.78);
+  font-size: 11px;
+  font-weight: 820;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ct-model-gateway-user-request-chip-row {
@@ -1050,6 +1155,7 @@
 .ct-model-gateway-user-request-value-col strong,
 .ct-model-gateway-user-request-attempt-col strong,
 .ct-model-gateway-user-request-cost-col strong,
+.ct-model-gateway-user-request-cost-summary-col strong,
 .ct-model-gateway-user-request-complete-col strong {
   overflow: hidden;
   color: #253551;
@@ -1066,6 +1172,8 @@
 .ct-model-gateway-user-request-attempt-col span,
 .ct-model-gateway-user-request-cost-col span,
 .ct-model-gateway-user-request-cost-col small,
+.ct-model-gateway-user-request-cost-summary-col span,
+.ct-model-gateway-user-request-cost-summary-col small,
 .ct-model-gateway-user-request-complete-col span,
 .ct-model-gateway-user-request-status-col small {
   height: 14px;
@@ -1078,6 +1186,7 @@
 .ct-model-gateway-user-request-value-col strong,
 .ct-model-gateway-user-request-attempt-col strong,
 .ct-model-gateway-user-request-cost-col strong,
+.ct-model-gateway-user-request-cost-summary-col strong,
 .ct-model-gateway-user-request-complete-col strong {
   height: 17px;
 }
@@ -1169,6 +1278,61 @@
 
 .ct-model-gateway-user-request-cost-empty strong {
   color: #94a3b8;
+}
+
+.ct-model-gateway-user-request-cost-summary-col {
+  gap: 4px;
+}
+
+.ct-model-gateway-user-request-cost-summary-trigger {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  cursor: help;
+}
+
+.ct-model-gateway-user-request-cost-summary-line {
+  display: grid;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+  grid-template-columns: 58px minmax(0, 1fr);
+}
+
+.ct-model-gateway-user-request-cost-summary-line span {
+  color: #66758b;
+  font-size: 11px;
+  font-weight: 660;
+}
+
+.ct-model-gateway-user-request-cost-summary-line strong {
+  color: #047857;
+  font-size: 12px;
+  font-weight: 880;
+  text-align: right;
+}
+
+.ct-model-gateway-user-request-cost-summary-billing strong {
+  color: #0f766e;
+}
+
+.ct-model-gateway-user-request-cost-summary-ratio strong {
+  color: #0369a1;
+}
+
+.ct-model-gateway-user-request-cost-summary-pending strong,
+.ct-model-gateway-user-request-cost-summary-missing strong {
+  color: #94a3b8;
+}
+
+.ct-model-gateway-cost-summary-tooltip {
+  display: grid;
+  gap: 10px;
+}
+
+.ct-model-gateway-cost-summary-tooltip-divider {
+  height: 1px;
+  background: rgba(148, 163, 184, 0.22);
 }
 
 .ct-model-gateway-user-request-complete-trigger {

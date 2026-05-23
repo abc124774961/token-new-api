@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/recording"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
@@ -88,6 +89,14 @@ func (s *ProbeScheduler) run(ctx context.Context) {
 
 func (s *ProbeScheduler) tick(ctx context.Context) {
 	if s == nil || s.selector == nil || s.executor == nil {
+		return
+	}
+	active, err := recentRealUserTrafficActive()
+	if err != nil {
+		common.SysLog(fmt.Sprintf("model gateway probe traffic gate failed: %v", err))
+		return
+	}
+	if !active {
 		return
 	}
 	candidates, err := s.selector.Select(s.config)
@@ -204,4 +213,16 @@ func logProbeResult(result ProbeRunResult) {
 	}
 	common.SysLog(fmt.Sprintf("model gateway probe failed: probe_id=%s channel_id=%d model=%s reason=%s error=%s",
 		result.ProbeID, channelID, result.Model, result.Reason, common.MaskSensitiveInfo(errText)))
+}
+
+func recentRealUserTrafficActive() (bool, error) {
+	if model.DB == nil {
+		return false, nil
+	}
+	cutoff := time.Now().Add(-probeActivationWindow).Unix()
+	var count int64
+	err := model.DB.Model(&model.ModelGatewayUserRequestSummary{}).
+		Where("completed_at >= ?", cutoff).
+		Count(&count).Error
+	return count > 0, err
 }

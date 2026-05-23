@@ -25,6 +25,13 @@ type stickySaveOnSelectRouter interface {
 	SaveOnSelect() bool
 }
 
+type candidateEvaluation struct {
+	candidate     core.Candidate
+	snapshot      core.RuntimeSnapshot
+	stickyMatched bool
+	rejectReason  string
+}
+
 func NewDefaultSmartChannelSelector(candidateBuilder core.CandidatePoolBuilder, snapshotStore core.RuntimeSnapshotStore, scorerFactory core.ScoreCalculatorFactory) *DefaultSmartChannelSelector {
 	if scorerFactory == nil {
 		scorerFactory = NewScoreCalculatorFactory(DefaultScoreWeights())
@@ -91,19 +98,37 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	availableFound := false
 	saturatedFound := false
 	explanations := make([]core.CandidateExplanation, 0, minInt(len(candidates), maxCandidateExplanations))
+	evaluations := make([]candidateEvaluation, 0, len(candidates))
+	costReferenceRatio := 0.0
 	for _, candidate := range candidates {
 		snapshot := s.snapshotForCandidate(candidate, policy)
 		if s.snapshotEnricher != nil {
 			snapshot = s.snapshotEnricher.Enrich(candidate, snapshot, policy)
 		}
 		stickyMatched := hasSticky && isStickyCandidate(candidate, stickyRoute)
-		explanation := candidateExplanation(candidate, snapshot, stickyMatched)
 		rejectReason := candidateUnavailableReason(c, candidate, snapshot, policy)
 		if stickyMatched && stickyBreak == "" && rejectReason != "" {
 			stickyBreak = rejectReason
 		}
-		if rejectReason != "" {
-			explanation.RejectReason = rejectReason
+		if rejectReason == "" && snapshot.CostRatio > 0 && (costReferenceRatio <= 0 || snapshot.CostRatio < costReferenceRatio) {
+			costReferenceRatio = snapshot.CostRatio
+		}
+		evaluations = append(evaluations, candidateEvaluation{
+			candidate:     candidate,
+			snapshot:      snapshot,
+			stickyMatched: stickyMatched,
+			rejectReason:  rejectReason,
+		})
+	}
+	for _, evaluation := range evaluations {
+		candidate := evaluation.candidate
+		snapshot := evaluation.snapshot
+		if costReferenceRatio > 0 {
+			snapshot.CostReferenceRatio = costReferenceRatio
+		}
+		explanation := candidateExplanation(candidate, snapshot, evaluation.stickyMatched)
+		if evaluation.rejectReason != "" {
+			explanation.RejectReason = evaluation.rejectReason
 			appendCandidateExplanation(&explanations, explanation)
 			continue
 		}
@@ -118,7 +143,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			explanation.SelectionSkipReason = "concurrency_saturated"
 		}
 		appendCandidateExplanation(&explanations, explanation)
-		if hasSticky && stickyMatched {
+		if hasSticky && evaluation.stickyMatched {
 			stickyCandidate = candidate
 			stickySnapshot = snapshot
 			stickyScore = score
@@ -265,6 +290,7 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 		SlowFirstBytePending:       snapshot.SlowFirstBytePending,
 		OldestFirstByteWaitMs:      snapshot.OldestFirstByteWaitMs,
 		CostRatio:                  snapshot.CostRatio,
+		CostReferenceRatio:         snapshot.CostReferenceRatio,
 		CostPricingMode:            snapshot.CostPricingMode,
 		GroupPriorityRatio:         snapshot.GroupPriorityRatio,
 		SuccessScore:               snapshot.SuccessScore,

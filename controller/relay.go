@@ -583,6 +583,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if service.IsBalanceInsufficientError(newAPIError) && !clientAbort {
 			service.MarkChannelBalanceSkipped(c, channel.Id)
 			service.MarkChannelBalanceInsufficient(channel.Id)
+			flow.BalanceInsufficient = true
 		}
 		concurrencyLease.Release()
 
@@ -768,6 +769,7 @@ type modelGatewayAttemptFlow struct {
 	WillRetry                      bool
 	ClientAborted                  bool
 	ConcurrencyLimited             bool
+	BalanceInsufficient            bool
 	EmptyOutput                    bool
 	ExperienceIssue                string
 	ActiveConcurrency              int
@@ -834,6 +836,7 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 	result.RetryAction = flow.RetryAction
 	result.ClientAborted = flow.ClientAborted
 	result.ConcurrencyLimited = flow.ConcurrencyLimited
+	result.BalanceInsufficient = flow.BalanceInsufficient
 	result.EmptyOutput = flow.EmptyOutput || relayEmptyOutput(c)
 	result.ExperienceIssue = relayExperienceIssue(c, flow.ExperienceIssue)
 	result.ActiveConcurrency = flow.ActiveConcurrency

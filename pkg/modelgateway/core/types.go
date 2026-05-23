@@ -136,6 +136,7 @@ type RuntimeSnapshot struct {
 	SlowFirstBytePending       int
 	OldestFirstByteWaitMs      float64
 	CostRatio                  float64
+	CostReferenceRatio         float64
 	CostPricingMode            string
 	GroupPriorityRatio         float64
 	CircuitState               CircuitState
@@ -143,6 +144,12 @@ type RuntimeSnapshot struct {
 	Cooldown                   bool
 	FailureAvoidance           bool
 	SampleCount                int
+	LastRealAttemptAt          int64
+	LastRealSuccessAt          int64
+	LastRealFailureAt          int64
+	RealSampleCount30m         int
+	LastProbeAt                int64
+	LastProbeSuccessAt         int64
 }
 
 type RuntimeLatencySample struct {
@@ -315,6 +322,7 @@ type CandidateExplanation struct {
 	SlowFirstBytePending       int                `json:"slow_first_byte_pending,omitempty"`
 	OldestFirstByteWaitMs      float64            `json:"oldest_first_byte_wait_ms,omitempty"`
 	CostRatio                  float64            `json:"cost_ratio,omitempty"`
+	CostReferenceRatio         float64            `json:"cost_reference_ratio,omitempty"`
 	CostPricingMode            string             `json:"cost_pricing_mode,omitempty"`
 	GroupPriorityRatio         float64            `json:"group_priority_ratio,omitempty"`
 	SuccessScore               float64            `json:"success_score,omitempty"`
@@ -391,6 +399,7 @@ type AttemptResult struct {
 	WillRetry                      bool
 	RetryAction                    string
 	ConcurrencyLimited             bool
+	BalanceInsufficient            bool
 	EmptyOutput                    bool
 	ExperienceIssue                string
 	ActiveConcurrency              int

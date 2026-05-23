@@ -16,10 +16,11 @@ import (
 const defaultRuntimeSnapshotSeedLimit = 5000
 
 type runtimeSnapshotSeedAttemptMeta struct {
-	ClientAborted      bool   `json:"client_aborted,omitempty"`
-	ConcurrencyLimited bool   `json:"concurrency_limited,omitempty"`
-	EmptyOutput        bool   `json:"empty_output,omitempty"`
-	ExperienceIssue    string `json:"experience_issue,omitempty"`
+	ClientAborted       bool   `json:"client_aborted,omitempty"`
+	ConcurrencyLimited  bool   `json:"concurrency_limited,omitempty"`
+	BalanceInsufficient bool   `json:"balance_insufficient,omitempty"`
+	EmptyOutput         bool   `json:"empty_output,omitempty"`
+	ExperienceIssue     string `json:"experience_issue,omitempty"`
 }
 
 func SeedRuntimeSnapshotsFromExecutionRecords(ctx context.Context, store core.RuntimeSnapshotStore, limit int) (int, error) {
@@ -94,7 +95,7 @@ func runtimeSnapshotSeedChannels(ctx context.Context, records []model.ModelExecu
 
 func runtimeSnapshotSeedAttempt(record model.ModelExecutionRecord, channel *model.Channel, registry provider.ProviderRegistry) (core.AttemptResult, bool) {
 	meta := runtimeSnapshotSeedMeta(record.RequestMeta)
-	if meta.ClientAborted || meta.ConcurrencyLimited {
+	if meta.ClientAborted || meta.ConcurrencyLimited || meta.BalanceInsufficient {
 		return core.AttemptResult{}, false
 	}
 	key := runtimeSnapshotSeedKey(record, channel, registry)
@@ -103,27 +104,28 @@ func runtimeSnapshotSeedAttempt(record model.ModelExecutionRecord, channel *mode
 	}
 	success := record.Success && !record.StreamInterrupted
 	return core.AttemptResult{
-		Key:                key,
-		RequestID:          record.RequestId,
-		AttemptIndex:       record.AttemptIndex,
-		ChannelID:          channel.Id,
-		ChannelName:        channel.Name,
-		RequestedGroup:     record.RequestedGroup,
-		SelectedGroup:      runtimeSnapshotSeedGroup(record, channel),
-		ModelName:          key.RequestedModel,
-		EndpointType:       key.EndpointType,
-		Success:            success,
-		StatusCode:         record.StatusCode,
-		ErrorCode:          record.ErrorCode,
-		ErrorType:          record.ErrorType,
-		ObservedAt:         time.Unix(record.CreatedAt, 0),
-		Duration:           time.Duration(record.DurationMs) * time.Millisecond,
-		TTFT:               time.Duration(record.TTFTMs) * time.Millisecond,
-		StreamInterrupted:  record.StreamInterrupted,
-		ClientAborted:      meta.ClientAborted,
-		ConcurrencyLimited: meta.ConcurrencyLimited,
-		EmptyOutput:        meta.EmptyOutput,
-		ExperienceIssue:    meta.ExperienceIssue,
+		Key:                 key,
+		RequestID:           record.RequestId,
+		AttemptIndex:        record.AttemptIndex,
+		ChannelID:           channel.Id,
+		ChannelName:         channel.Name,
+		RequestedGroup:      record.RequestedGroup,
+		SelectedGroup:       runtimeSnapshotSeedGroup(record, channel),
+		ModelName:           key.RequestedModel,
+		EndpointType:        key.EndpointType,
+		Success:             success,
+		StatusCode:          record.StatusCode,
+		ErrorCode:           record.ErrorCode,
+		ErrorType:           record.ErrorType,
+		ObservedAt:          time.Unix(record.CreatedAt, 0),
+		Duration:            time.Duration(record.DurationMs) * time.Millisecond,
+		TTFT:                time.Duration(record.TTFTMs) * time.Millisecond,
+		StreamInterrupted:   record.StreamInterrupted,
+		ClientAborted:       meta.ClientAborted,
+		ConcurrencyLimited:  meta.ConcurrencyLimited,
+		BalanceInsufficient: meta.BalanceInsufficient,
+		EmptyOutput:         meta.EmptyOutput,
+		ExperienceIssue:     meta.ExperienceIssue,
 	}, true
 }
 

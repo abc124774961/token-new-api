@@ -174,6 +174,7 @@ func SaveChannelUpstreamCostProfile(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	modelgatewaycost.StoreCachedDefaultProfile(saved)
 	common.ApiSuccess(c, saved)
 }
 
@@ -197,7 +198,7 @@ func DeleteChannelUpstreamCostProfile(c *gin.Context) {
 		common.ApiErrorMsg(c, "成本规则不存在")
 		return
 	}
-	modelgatewaycost.InvalidateDefaultProfileCache()
+	modelgatewaycost.RemoveCachedDefaultProfilesForChannel(channelID)
 	common.ApiSuccess(c, nil)
 }
 

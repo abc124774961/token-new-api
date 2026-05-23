@@ -171,6 +171,7 @@ type attemptRequestMeta struct {
 	WillRetry                      bool     `json:"will_retry,omitempty"`
 	ClientAborted                  bool     `json:"client_aborted,omitempty"`
 	ConcurrencyLimited             bool     `json:"concurrency_limited,omitempty"`
+	BalanceInsufficient            bool     `json:"balance_insufficient,omitempty"`
 	EmptyOutput                    bool     `json:"empty_output,omitempty"`
 	ExperienceIssue                string   `json:"experience_issue,omitempty"`
 	ActiveConcurrency              int      `json:"active_concurrency,omitempty"`
@@ -262,6 +263,7 @@ func attemptRequestMetaFromResult(result core.AttemptResult) attemptRequestMeta 
 		WillRetry:                      result.WillRetry,
 		ClientAborted:                  result.ClientAborted,
 		ConcurrencyLimited:             result.ConcurrencyLimited,
+		BalanceInsufficient:            result.BalanceInsufficient,
 		EmptyOutput:                    result.EmptyOutput,
 		ExperienceIssue:                result.ExperienceIssue,
 		ActiveConcurrency:              result.ActiveConcurrency,
@@ -281,6 +283,7 @@ func emptyAttemptRequestMeta(meta attemptRequestMeta) bool {
 		!meta.WillRetry &&
 		!meta.ClientAborted &&
 		!meta.ConcurrencyLimited &&
+		!meta.BalanceInsufficient &&
 		!meta.EmptyOutput &&
 		meta.ExperienceIssue == "" &&
 		meta.ActiveConcurrency <= 0 &&

@@ -18,6 +18,7 @@ const (
 	healthEWMAAlpha          = 0.20
 	healthSlowTTFTAlpha      = 0.45
 	performanceClearTTFTMs   = 5000
+	realSampleWindow         = 30 * time.Minute
 )
 
 type RuntimeHealthMonitor struct {
@@ -38,6 +39,7 @@ type healthStats struct {
 	emptyRate      float64
 	issueRate      float64
 	latencySamples []core.RuntimeLatencySample
+	realSampleAt   []int64
 }
 
 func NewRuntimeHealthMonitor(store core.RuntimeSnapshotStore, breaker core.CircuitBreaker) *RuntimeHealthMonitor {
@@ -55,6 +57,12 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 		return
 	}
 	if result.ClientAborted {
+		return
+	}
+	if result.BalanceInsufficient || isBalanceInsufficientAttempt(result) {
+		if result.ChannelID > 0 {
+			service.MarkChannelBalanceInsufficient(result.ChannelID)
+		}
 		return
 	}
 	if m.breaker != nil {
@@ -82,6 +90,7 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	if observedAt.IsZero() {
 		observedAt = time.Now()
 	}
+	observedAtUnix := observedAt.Unix()
 	stats.sampleCount++
 	if result.Success {
 		stats.successCount++
@@ -119,6 +128,21 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	snapshot.EmptyOutputRate = stats.emptyRate
 	snapshot.ExperienceIssueRate = stats.issueRate
 	snapshot.ExperienceScore = experienceScoreFromRates(stats.emptyRate, stats.issueRate)
+	if result.IsHealthProbe {
+		snapshot.LastProbeAt = observedAtUnix
+		if result.Success {
+			snapshot.LastProbeSuccessAt = observedAtUnix
+		}
+	} else {
+		stats.realSampleAt = appendRecentRealSample(stats.realSampleAt, observedAtUnix, observedAt)
+		snapshot.LastRealAttemptAt = observedAtUnix
+		if result.Success {
+			snapshot.LastRealSuccessAt = observedAtUnix
+		} else {
+			snapshot.LastRealFailureAt = observedAtUnix
+		}
+		snapshot.RealSampleCount30m = len(stats.realSampleAt)
+	}
 	if m.breaker != nil {
 		circuit := m.breaker.Snapshot(key)
 		snapshot.CircuitState = circuit.State
@@ -157,6 +181,7 @@ func healthStatsFromSnapshot(snapshot core.RuntimeSnapshot, ok bool) *healthStat
 	}
 	stats.emptyRate = snapshot.EmptyOutputRate
 	stats.issueRate = snapshot.ExperienceIssueRate
+	stats.realSampleAt = realSamplesFromSnapshot(snapshot, time.Now())
 	return stats
 }
 
@@ -203,8 +228,51 @@ func nonEmptyOutputExperienceIssue(result core.AttemptResult) bool {
 	return issue != "" && issue != "empty_output" && !result.EmptyOutput
 }
 
+func isBalanceInsufficientAttempt(result core.AttemptResult) bool {
+	if strings.TrimSpace(result.ErrorCategory) == "balance_or_quota" {
+		return true
+	}
+	label := strings.ToLower(strings.TrimSpace(result.ErrorCode + " " + result.ErrorType + " " + result.ErrorMessage))
+	return service.IsBalanceInsufficientMessage(label)
+}
+
 func experienceScoreFromRates(emptyRate float64, issueRate float64) float64 {
 	return clampHealthScore(1 - clamp01(emptyRate)*0.85 - clamp01(issueRate)*0.65)
+}
+
+func appendRecentRealSample(samples []int64, observedAtUnix int64, now time.Time) []int64 {
+	cutoff := now.Add(-realSampleWindow).Unix()
+	out := samples[:0]
+	for _, sampleAt := range samples {
+		if sampleAt >= cutoff {
+			out = append(out, sampleAt)
+		}
+	}
+	if observedAtUnix > 0 {
+		out = append(out, observedAtUnix)
+	}
+	return out
+}
+
+func realSamplesFromSnapshot(snapshot core.RuntimeSnapshot, now time.Time) []int64 {
+	count := snapshot.RealSampleCount30m
+	if count <= 0 || snapshot.LastRealAttemptAt <= 0 {
+		return nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if snapshot.LastRealAttemptAt < now.Add(-realSampleWindow).Unix() {
+		return nil
+	}
+	if count > snapshot.SampleCount && snapshot.SampleCount > 0 {
+		count = snapshot.SampleCount
+	}
+	samples := make([]int64, 0, count)
+	for i := 0; i < count; i++ {
+		samples = append(samples, snapshot.LastRealAttemptAt)
+	}
+	return samples
 }
 
 func ttftEWMAAlpha(current float64, next float64) float64 {

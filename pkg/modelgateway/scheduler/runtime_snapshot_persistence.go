@@ -197,6 +197,12 @@ func (p *RuntimeSnapshotPersistence) Flush(ctx context.Context) error {
 			"experience_score",
 			"empty_output_rate",
 			"experience_issue_rate",
+			"last_real_attempt_at",
+			"last_real_success_at",
+			"last_real_failure_at",
+			"real_sample_count_30m",
+			"last_probe_at",
+			"last_probe_success_at",
 		}),
 	}).CreateInBatches(rows, p.batch).Error; err != nil {
 		return err
@@ -299,6 +305,12 @@ func runtimeSnapshotToDB(snapshot core.RuntimeSnapshot, updatedAt int64) (model.
 		ExperienceScore:       snapshot.ExperienceScore,
 		EmptyOutputRate:       snapshot.EmptyOutputRate,
 		ExperienceIssueRate:   snapshot.ExperienceIssueRate,
+		LastRealAttemptAt:     snapshot.LastRealAttemptAt,
+		LastRealSuccessAt:     snapshot.LastRealSuccessAt,
+		LastRealFailureAt:     snapshot.LastRealFailureAt,
+		RealSampleCount30m:    snapshot.RealSampleCount30m,
+		LastProbeAt:           snapshot.LastProbeAt,
+		LastProbeSuccessAt:    snapshot.LastProbeSuccessAt,
 	}, true
 }
 
@@ -344,6 +356,12 @@ func runtimeSnapshotFromDB(row model.ModelGatewayRuntimeSnapshot) (core.RuntimeS
 		ExperienceScore:      row.ExperienceScore,
 		EmptyOutputRate:      row.EmptyOutputRate,
 		ExperienceIssueRate:  row.ExperienceIssueRate,
+		LastRealAttemptAt:    row.LastRealAttemptAt,
+		LastRealSuccessAt:    row.LastRealSuccessAt,
+		LastRealFailureAt:    row.LastRealFailureAt,
+		RealSampleCount30m:   row.RealSampleCount30m,
+		LastProbeAt:          row.LastProbeAt,
+		LastProbeSuccessAt:   row.LastProbeSuccessAt,
 		GroupPriorityRatio:   1,
 		CircuitState:         core.CircuitStateClosed,
 		SampleCount:          row.SampleCount,
@@ -438,6 +456,12 @@ func mergeRuntimeSnapshotRows(left, right model.ModelGatewayRuntimeSnapshot) mod
 	left.ExperienceScore = weightedRuntimeSnapshotAverage(left.ExperienceScore, left.SampleCount, right.ExperienceScore, right.SampleCount)
 	left.EmptyOutputRate = weightedRuntimeSnapshotAverage(left.EmptyOutputRate, left.SampleCount, right.EmptyOutputRate, right.SampleCount)
 	left.ExperienceIssueRate = weightedRuntimeSnapshotAverage(left.ExperienceIssueRate, left.SampleCount, right.ExperienceIssueRate, right.SampleCount)
+	left.LastRealAttemptAt = maxInt64(left.LastRealAttemptAt, right.LastRealAttemptAt)
+	left.LastRealSuccessAt = maxInt64(left.LastRealSuccessAt, right.LastRealSuccessAt)
+	left.LastRealFailureAt = maxInt64(left.LastRealFailureAt, right.LastRealFailureAt)
+	left.RealSampleCount30m += right.RealSampleCount30m
+	left.LastProbeAt = maxInt64(left.LastProbeAt, right.LastProbeAt)
+	left.LastProbeSuccessAt = maxInt64(left.LastProbeSuccessAt, right.LastProbeSuccessAt)
 	left.SampleCount = total
 	return left
 }
@@ -448,4 +472,11 @@ func weightedRuntimeSnapshotAverage(left float64, leftCount int, right float64, 
 		return 0
 	}
 	return (left*float64(leftCount) + right*float64(rightCount)) / float64(total)
+}
+
+func maxInt64(left int64, right int64) int64 {
+	if right > left {
+		return right
+	}
+	return left
 }

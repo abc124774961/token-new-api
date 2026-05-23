@@ -524,6 +524,7 @@ type ModelGatewayObservabilityRecord struct {
 	WillRetry                      bool                               `json:"will_retry,omitempty"`
 	ClientAborted                  bool                               `json:"client_aborted,omitempty"`
 	ConcurrencyLimited             bool                               `json:"concurrency_limited,omitempty"`
+	BalanceInsufficient            bool                               `json:"balance_insufficient,omitempty"`
 	ActiveConcurrency              int                                `json:"active_concurrency,omitempty"`
 	ConfiguredConcurrencyLimit     int                                `json:"configured_concurrency_limit,omitempty"`
 	LearnedConcurrencyLimit        int                                `json:"learned_concurrency_limit,omitempty"`
@@ -571,6 +572,7 @@ type ModelGatewayCandidateExplanation struct {
 	QueueCapacity              int                    `json:"queue_capacity,omitempty"`
 	EstimatedQueueWaitMs       float64                `json:"estimated_queue_wait_ms,omitempty"`
 	CostRatio                  float64                `json:"cost_ratio,omitempty"`
+	CostReferenceRatio         float64                `json:"cost_reference_ratio,omitempty"`
 	CostPricingMode            string                 `json:"cost_pricing_mode,omitempty"`
 	GroupPriorityRatio         float64                `json:"group_priority_ratio,omitempty"`
 	SuccessScore               float64                `json:"success_score,omitempty"`
@@ -2126,6 +2128,7 @@ func modelGatewayObservabilityRecentRecord(record model.ModelExecutionRecord, sc
 		WillRetry:                      attemptMeta.WillRetry,
 		ClientAborted:                  attemptMeta.ClientAborted,
 		ConcurrencyLimited:             attemptMeta.ConcurrencyLimited,
+		BalanceInsufficient:            attemptMeta.BalanceInsufficient,
 		EmptyOutput:                    attemptMeta.EmptyOutput,
 		ExperienceIssue:                attemptMeta.ExperienceIssue,
 		ActiveConcurrency:              attemptMeta.ActiveConcurrency,
@@ -2223,6 +2226,7 @@ type modelGatewayObservabilityAttemptMeta struct {
 	WillRetry                      bool
 	ClientAborted                  bool
 	ConcurrencyLimited             bool
+	BalanceInsufficient            bool
 	EmptyOutput                    bool
 	ExperienceIssue                string
 	ActiveConcurrency              int
@@ -2667,6 +2671,7 @@ func modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta map[string]
 		WillRetry:                      modelGatewayObservabilityMetaBool(requestMeta["will_retry"]),
 		ClientAborted:                  modelGatewayObservabilityMetaBool(requestMeta["client_aborted"]),
 		ConcurrencyLimited:             modelGatewayObservabilityMetaBool(requestMeta["concurrency_limited"]),
+		BalanceInsufficient:            modelGatewayObservabilityMetaBool(requestMeta["balance_insufficient"]),
 		EmptyOutput:                    modelGatewayObservabilityMetaBool(requestMeta["empty_output"]),
 		ExperienceIssue:                strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["experience_issue"])),
 		ActiveConcurrency:              int(modelGatewayObservabilityMetaInt64(requestMeta["active_concurrency"])),
@@ -2732,6 +2737,7 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			QueueCapacity:              candidate.QueueCapacity,
 			EstimatedQueueWaitMs:       roundModelGatewayObservabilityFloat(candidate.EstimatedQueueWaitMs),
 			CostRatio:                  roundModelGatewayObservabilityFloat(candidate.CostRatio),
+			CostReferenceRatio:         roundModelGatewayObservabilityFloat(candidate.CostReferenceRatio),
 			CostPricingMode:            strings.TrimSpace(candidate.CostPricingMode),
 			GroupPriorityRatio:         roundModelGatewayObservabilityFloat(candidate.GroupPriorityRatio),
 			SuccessScore:               roundModelGatewayObservabilityFloat(candidate.SuccessScore),
@@ -3669,22 +3675,23 @@ func modelGatewayCircuitErrorTypeFromRecord(record model.ModelExecutionRecord) s
 	}
 	requestMeta, _ := parseModelGatewayRequestMeta(record.RequestMeta)
 	attemptMeta := modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta)
-	if attemptMeta.ClientAborted {
+	if attemptMeta.ClientAborted || attemptMeta.BalanceInsufficient {
 		return ""
 	}
 	result := modelgatewaycore.AttemptResult{
-		ChannelID:          record.ChannelId,
-		RequestedGroup:     record.RequestedGroup,
-		SelectedGroup:      record.SelectedGroup,
-		ModelName:          record.RequestedModel,
-		EndpointType:       constantEndpointTypeFromString(record.EndpointType),
-		Success:            record.Success,
-		StatusCode:         record.StatusCode,
-		ErrorCode:          record.ErrorCode,
-		ErrorType:          record.ErrorType,
-		ErrorMessage:       attemptMeta.ErrorMessage,
-		ConcurrencyLimited: attemptMeta.ConcurrencyLimited,
-		StreamInterrupted:  record.StreamInterrupted,
+		ChannelID:           record.ChannelId,
+		RequestedGroup:      record.RequestedGroup,
+		SelectedGroup:       record.SelectedGroup,
+		ModelName:           record.RequestedModel,
+		EndpointType:        constantEndpointTypeFromString(record.EndpointType),
+		Success:             record.Success,
+		StatusCode:          record.StatusCode,
+		ErrorCode:           record.ErrorCode,
+		ErrorType:           record.ErrorType,
+		ErrorMessage:        attemptMeta.ErrorMessage,
+		ConcurrencyLimited:  attemptMeta.ConcurrencyLimited,
+		BalanceInsufficient: attemptMeta.BalanceInsufficient,
+		StreamInterrupted:   record.StreamInterrupted,
 	}
 	kind := modelgatewayscheduler.ClassifyCircuitError(result)
 	if kind == modelgatewayscheduler.CircuitErrorConcurrencyLimit {

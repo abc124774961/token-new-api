@@ -13,21 +13,34 @@ import (
 	"github.com/QuantumNous/new-api/service"
 )
 
+const probeActivationWindow = 30 * time.Minute
+
 type ProbeSelector struct {
 	store     core.RuntimeSnapshotStore
 	breaker   core.CircuitBreaker
 	mu        sync.Mutex
-	lastProbe map[int]time.Time
-	lastOK    map[int]time.Time
+	lastProbe map[core.RuntimeKey]time.Time
+	lastOK    map[core.RuntimeKey]time.Time
 	now       func() time.Time
+}
+
+type probeRecentScopes struct {
+	pairs  map[string]struct{}
+	groups map[string]struct{}
+}
+
+type probeRecentRequestScopeRow struct {
+	RequestedModel string
+	RequestedGroup string
+	SelectedGroup  string
 }
 
 func NewProbeSelector(store core.RuntimeSnapshotStore, breaker core.CircuitBreaker) *ProbeSelector {
 	return &ProbeSelector{
 		store:     store,
 		breaker:   breaker,
-		lastProbe: map[int]time.Time{},
-		lastOK:    map[int]time.Time{},
+		lastProbe: map[core.RuntimeKey]time.Time{},
+		lastOK:    map[core.RuntimeKey]time.Time{},
 		now:       time.Now,
 	}
 }
@@ -36,67 +49,157 @@ func (s *ProbeSelector) Select(config ProbeConfig) ([]ProbeCandidate, error) {
 	if s == nil {
 		return nil, nil
 	}
+	now := s.now()
+	config = normalizeProbeConfig(config)
+	recent, err := recentProbeScopes(now)
+	if err != nil {
+		return nil, err
+	}
+	if recent.Empty() {
+		return nil, nil
+	}
 	channels, err := model.GetAllChannels(0, 0, true, false)
 	if err != nil {
 		return nil, err
 	}
-	now := s.now()
-	config = normalizeProbeConfig(config)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	candidates := make([]ProbeCandidate, 0, len(channels))
-	for _, channel := range channels {
-		candidate, ok := s.candidateForChannelLocked(channel, now, config)
-		if !ok {
+	channelByID := eligibleProbeChannels(channels)
+	candidateByKey := map[core.RuntimeKey]ProbeCandidate{}
+	for _, candidate := range s.lowHealthCandidatesLocked(channelByID, recent, now, config) {
+		candidateByKey[candidate.Key] = candidate
+	}
+	for _, candidate := range s.lowTrafficCandidatesLocked(channelByID, recent, now, config) {
+		if _, exists := candidateByKey[candidate.Key]; exists {
 			continue
 		}
+		candidateByKey[candidate.Key] = candidate
+	}
+	candidates := make([]ProbeCandidate, 0, len(candidateByKey))
+	for _, candidate := range candidateByKey {
 		candidates = append(candidates, candidate)
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		if candidates[i].Score != candidates[j].Score {
 			return candidates[i].Score > candidates[j].Score
 		}
-		return candidates[i].Channel.Id < candidates[j].Channel.Id
+		if candidates[i].Channel.Id != candidates[j].Channel.Id {
+			return candidates[i].Channel.Id < candidates[j].Channel.Id
+		}
+		if candidates[i].Model != candidates[j].Model {
+			return candidates[i].Model < candidates[j].Model
+		}
+		return candidates[i].Group < candidates[j].Group
 	})
 	if config.MaxPerTick > 0 && len(candidates) > config.MaxPerTick {
 		candidates = candidates[:config.MaxPerTick]
 	}
 	for _, candidate := range candidates {
-		s.lastProbe[candidate.Channel.Id] = now
+		s.lastProbe[candidate.Key] = now
 	}
 	return candidates, nil
 }
 
 func (s *ProbeSelector) MarkResult(result ProbeRunResult) {
-	if s == nil || result.Channel == nil || !result.Success {
+	if s == nil || !result.Success {
+		return
+	}
+	key := normalizeProbeRuntimeKey(result.AttemptRuntimeKey())
+	if key.ChannelID <= 0 {
 		return
 	}
 	s.mu.Lock()
-	s.lastOK[result.Channel.Id] = s.now()
+	s.lastOK[key] = s.now()
 	s.mu.Unlock()
 }
 
-func (s *ProbeSelector) candidateForChannelLocked(channel *model.Channel, now time.Time, config ProbeConfig) (ProbeCandidate, bool) {
-	if !probeChannelEligible(channel) {
-		return ProbeCandidate{}, false
+func (s *ProbeSelector) lowHealthCandidatesLocked(channelByID map[int]*model.Channel, recent probeRecentScopes, now time.Time, config ProbeConfig) []ProbeCandidate {
+	if s.store == nil {
+		return nil
 	}
-	if last := s.lastProbe[channel.Id]; !last.IsZero() && now.Sub(last) < config.MinChannelInterval {
-		return ProbeCandidate{}, false
+	snapshots := s.store.ListCandidates(nil)
+	candidates := make([]ProbeCandidate, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		key := normalizeProbeRuntimeKey(snapshot.Key)
+		if key.ChannelID <= 0 || !recent.Contains(key.RequestedModel, key.Group) {
+			continue
+		}
+		snapshot.Key = key
+		channel := channelByID[key.ChannelID]
+		if channel == nil || !probeRuntimeKeyModelSupported(key) || !probeChannelSupportsKey(channel, key) {
+			continue
+		}
+		reason, score := s.probeReasonForSnapshotLocked(snapshot, now, config)
+		if reason == "" {
+			continue
+		}
+		if !s.probeIntervalPassedLocked(key, snapshot, now, config) {
+			continue
+		}
+		candidates = append(candidates, probeCandidateFromSnapshot(channel, snapshot, reason, score))
 	}
-	modelName := selectProbeModel(channel)
-	if modelName == "" {
-		return ProbeCandidate{}, false
+	return candidates
+}
+
+func (s *ProbeSelector) lowTrafficCandidatesLocked(channelByID map[int]*model.Channel, recent probeRecentScopes, now time.Time, config ProbeConfig) []ProbeCandidate {
+	candidates := make([]ProbeCandidate, 0)
+	for _, channel := range channelByID {
+		for _, group := range channel.GetGroups() {
+			group = strings.TrimSpace(group)
+			if group == "" || !recent.HasGroup(group) {
+				continue
+			}
+			for _, modelName := range channel.GetModels() {
+				modelName = strings.TrimSpace(modelName)
+				if !recent.Contains(modelName, group) || !probeModelSupported(modelName) {
+					continue
+				}
+				key := core.RuntimeKey{
+					RequestedModel: modelName,
+					UpstreamModel:  channel.ResolveMappedModelName(modelName),
+					ChannelID:      channel.Id,
+					Group:          group,
+					EndpointType:   endpointTypeForProbe(channel, modelName),
+				}
+				key = normalizeProbeRuntimeKey(key)
+				if !probeChannelSupportsKey(channel, key) {
+					continue
+				}
+				snapshot, ok := s.snapshotForKey(key)
+				if !lowTrafficProbeNeeded(snapshot, ok, now, config) {
+					continue
+				}
+				if !s.probeIntervalPassedLocked(key, snapshot, now, config) {
+					continue
+				}
+				score := 55.0
+				if !ok || snapshot.SampleCount <= 0 {
+					score = 58
+				}
+				candidates = append(candidates, ProbeCandidate{
+					Channel: channel,
+					Model:   modelName,
+					Group:   group,
+					Key:     key,
+					Reason:  reasonLowTraffic,
+					Score:   score,
+				})
+			}
+		}
 	}
-	group := selectProbeGroup(channel)
-	key := core.RuntimeKey{
-		RequestedModel: modelName,
-		UpstreamModel:  modelName,
-		ChannelID:      channel.Id,
-		Group:          group,
-		EndpointType:   endpointTypeForProbe(channel, modelName),
+	return candidates
+}
+
+func (s *ProbeSelector) snapshotForKey(key core.RuntimeKey) (core.RuntimeSnapshot, bool) {
+	if s.store == nil {
+		return core.RuntimeSnapshot{}, false
 	}
-	snapshot, ok := s.bestSnapshot(key, modelName, channel.Id, group)
+	return s.store.Get(key)
+}
+
+func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapshot, now time.Time, config ProbeConfig) (string, float64) {
+	key := normalizeProbeRuntimeKey(snapshot.Key)
 	reason := ""
 	score := 0.0
 	if s.breaker != nil {
@@ -106,63 +209,42 @@ func (s *ProbeSelector) candidateForChannelLocked(channel *model.Channel, now ti
 				reason = reasonCircuitProbe
 				score = 100
 			} else {
-				return ProbeCandidate{}, false
+				return "", 0
 			}
 		}
 	}
 	if reason == "" {
-		reason, score = probeReason(snapshot, ok, now, s.lastOK[channel.Id], config)
+		reason, score = probeReason(snapshot, true, now, s.lastOKTimeLocked(key, snapshot), config)
 	}
-	if reason == "" {
-		return ProbeCandidate{}, false
-	}
-	if ok {
-		key = snapshot.Key
-		if key.EndpointType == "" {
-			key.EndpointType = endpointTypeForProbe(channel, modelName)
-		}
-	}
-	return ProbeCandidate{
-		Channel: channel,
-		Model:   modelName,
-		Group:   group,
-		Key:     key,
-		Reason:  reason,
-		Score:   score,
-	}, true
+	return reason, score
 }
 
-func (s *ProbeSelector) bestSnapshot(key core.RuntimeKey, modelName string, channelID int, group string) (core.RuntimeSnapshot, bool) {
-	if s.store == nil {
-		return core.RuntimeSnapshot{}, false
+func (s *ProbeSelector) probeIntervalPassedLocked(key core.RuntimeKey, snapshot core.RuntimeSnapshot, now time.Time, config ProbeConfig) bool {
+	if last := s.lastProbe[key]; !last.IsZero() && now.Sub(last) < config.MinChannelInterval {
+		return false
 	}
-	if snapshot, ok := s.store.Get(key); ok {
-		return snapshot, true
+	if snapshot.LastProbeAt > 0 && now.Unix()-snapshot.LastProbeAt < int64(config.MinChannelInterval.Seconds()) {
+		return false
 	}
-	snapshots := s.store.ListCandidates(&core.DispatchRequest{ModelName: modelName})
-	var best core.RuntimeSnapshot
-	found := false
-	for _, snapshot := range snapshots {
-		if snapshot.Key.ChannelID != channelID {
-			continue
-		}
-		if group != "" && snapshot.Key.Group != "" && snapshot.Key.Group != group {
-			continue
-		}
-		if !found || snapshot.SampleCount > best.SampleCount {
-			best = snapshot
-			found = true
-		}
+	return true
+}
+
+func (s *ProbeSelector) lastOKTimeLocked(key core.RuntimeKey, snapshot core.RuntimeSnapshot) time.Time {
+	if last := s.lastOK[key]; !last.IsZero() {
+		return last
 	}
-	return best, found
+	if snapshot.LastProbeSuccessAt > 0 {
+		return time.Unix(snapshot.LastProbeSuccessAt, 0)
+	}
+	if snapshot.LastRealSuccessAt > 0 {
+		return time.Unix(snapshot.LastRealSuccessAt, 0)
+	}
+	return time.Time{}
 }
 
 func probeReason(snapshot core.RuntimeSnapshot, ok bool, now time.Time, lastOK time.Time, config ProbeConfig) (string, float64) {
 	if !ok || snapshot.SampleCount <= 0 {
-		return reasonNoSamples, 90
-	}
-	if snapshot.SampleCount < config.MissingSampleThreshold {
-		return reasonNoSamples, 80 - float64(snapshot.SampleCount)
+		return "", 0
 	}
 	healthScore := effectiveProbeHealthScore(snapshot)
 	if healthScore > 0 && healthScore < config.LowScoreThreshold {
@@ -173,12 +255,99 @@ func probeReason(snapshot core.RuntimeSnapshot, ok bool, now time.Time, lastOK t
 			return reasonLongNoSuccess, 60
 		}
 	}
-	if config.HighScoreSamplingInterval > 0 {
-		if lastOK.IsZero() || now.Sub(lastOK) >= config.HighScoreSamplingInterval {
-			return reasonSampling, 10
+	return "", 0
+}
+
+func probeCandidateFromSnapshot(channel *model.Channel, snapshot core.RuntimeSnapshot, reason string, score float64) ProbeCandidate {
+	key := normalizeProbeRuntimeKey(snapshot.Key)
+	modelName := strings.TrimSpace(key.RequestedModel)
+	if modelName == "" {
+		modelName = strings.TrimSpace(key.UpstreamModel)
+	}
+	return ProbeCandidate{
+		Channel: channel,
+		Model:   modelName,
+		Group:   key.Group,
+		Key:     key,
+		Reason:  reason,
+		Score:   score,
+	}
+}
+
+func lowTrafficProbeNeeded(snapshot core.RuntimeSnapshot, ok bool, now time.Time, config ProbeConfig) bool {
+	if !ok || snapshot.SampleCount <= 0 {
+		return true
+	}
+	if snapshot.LastRealAttemptAt <= 0 || snapshot.LastRealAttemptAt < now.Add(-probeActivationWindow).Unix() {
+		return true
+	}
+	if snapshot.RealSampleCount30m <= 0 {
+		return true
+	}
+	return snapshot.SampleCount < config.MissingSampleThreshold
+}
+
+func eligibleProbeChannels(channels []*model.Channel) map[int]*model.Channel {
+	result := make(map[int]*model.Channel, len(channels))
+	for _, channel := range channels {
+		if !probeChannelEligible(channel) {
+			continue
+		}
+		result[channel.Id] = channel
+	}
+	return result
+}
+
+func recentProbeScopes(now time.Time) (probeRecentScopes, error) {
+	scopes := probeRecentScopes{
+		pairs:  map[string]struct{}{},
+		groups: map[string]struct{}{},
+	}
+	if model.DB == nil {
+		return scopes, nil
+	}
+	cutoff := now.Add(-probeActivationWindow).Unix()
+	rows := make([]probeRecentRequestScopeRow, 0)
+	err := model.DB.Model(&model.ModelGatewayUserRequestSummary{}).
+		Select("requested_model, requested_group, selected_group").
+		Where("completed_at >= ?", cutoff).
+		Find(&rows).Error
+	if err != nil {
+		return scopes, err
+	}
+	for _, row := range rows {
+		modelName := strings.TrimSpace(row.RequestedModel)
+		if !probeModelSupported(modelName) {
+			continue
+		}
+		for _, group := range []string{row.SelectedGroup, row.RequestedGroup} {
+			group = strings.TrimSpace(group)
+			if group == "" || group == "auto" {
+				continue
+			}
+			scopes.groups[group] = struct{}{}
+			scopes.pairs[probeScopeKey(modelName, group)] = struct{}{}
 		}
 	}
-	return "", 0
+	return scopes, nil
+}
+
+func (s probeRecentScopes) Empty() bool {
+	return len(s.pairs) == 0
+}
+
+func (s probeRecentScopes) Contains(modelName string, group string) bool {
+	_, ok := s.pairs[probeScopeKey(modelName, group)]
+	return ok
+}
+
+func (s probeRecentScopes) HasGroup(group string) bool {
+	_, ok := s.groups[strings.TrimSpace(group)]
+	return ok
+}
+
+func probeScopeKey(modelName string, group string) string {
+	return strings.TrimSpace(modelName) + "\x00" + strings.TrimSpace(group)
 }
 
 func probeChannelEligible(channel *model.Channel) bool {
@@ -233,15 +402,27 @@ func probeModelSupported(modelName string) bool {
 	return true
 }
 
-func selectProbeGroup(channel *model.Channel) string {
-	groups := channel.GetGroups()
-	for _, group := range groups {
-		group = strings.TrimSpace(group)
-		if group != "" {
-			return group
-		}
+func probeRuntimeKeyModelSupported(key core.RuntimeKey) bool {
+	modelName := strings.TrimSpace(key.RequestedModel)
+	if modelName == "" {
+		modelName = strings.TrimSpace(key.UpstreamModel)
 	}
-	return "default"
+	return probeModelSupported(modelName)
+}
+
+func probeChannelSupportsKey(channel *model.Channel, key core.RuntimeKey) bool {
+	if channel == nil || key.ChannelID <= 0 || channel.Id != key.ChannelID {
+		return false
+	}
+	modelName := strings.TrimSpace(key.RequestedModel)
+	if modelName == "" {
+		modelName = strings.TrimSpace(key.UpstreamModel)
+	}
+	group := strings.TrimSpace(key.Group)
+	if modelName == "" || group == "" {
+		return false
+	}
+	return model.IsChannelEnabledForGroupModel(group, modelName, channel.Id)
 }
 
 func effectiveProbeHealthScore(snapshot core.RuntimeSnapshot) float64 {
@@ -301,4 +482,13 @@ func runtimeKeyEndpointType(key core.RuntimeKey) constant.EndpointType {
 		return constant.EndpointTypeOpenAI
 	}
 	return key.EndpointType
+}
+
+func normalizeProbeRuntimeKey(key core.RuntimeKey) core.RuntimeKey {
+	key.RequestedModel = strings.TrimSpace(key.RequestedModel)
+	key.UpstreamModel = strings.TrimSpace(key.UpstreamModel)
+	key.Group = strings.TrimSpace(key.Group)
+	key.CapabilityFingerprint = strings.TrimSpace(key.CapabilityFingerprint)
+	key.EndpointType = runtimeKeyEndpointType(key)
+	return key
 }

@@ -152,7 +152,7 @@ func TestCircuitBreakerIgnoresClientAbortedStream(t *testing.T) {
 	}))
 }
 
-func TestCircuitBreakerErrorPolicyCanCountAuthAndQuota(t *testing.T) {
+func TestCircuitBreakerErrorPolicyCanCountAuth(t *testing.T) {
 	now := time.Unix(400, 0)
 	breaker := scheduler.NewCircuitBreakerForTest(scheduler.CircuitBreakerOptions{
 		FailureThreshold:   1,
@@ -166,6 +166,23 @@ func TestCircuitBreakerErrorPolicyCanCountAuthAndQuota(t *testing.T) {
 				OpenDuration:       5 * time.Second,
 				HalfOpenProbeCount: 1,
 			},
+		},
+	}, func() time.Time { return now })
+	authKey := core.RuntimeKey{RequestedModel: "openai-codex", ChannelID: 11, Group: "codex"}
+
+	breaker.Report(core.AttemptResult{Key: authKey, ChannelID: 11, StatusCode: http.StatusUnauthorized})
+	authSnapshot := breaker.Snapshot(authKey)
+	require.Equal(t, core.CircuitStateOpen, authSnapshot.State)
+	require.Equal(t, scheduler.CircuitErrorAuth, authSnapshot.OpenReason)
+}
+
+func TestCircuitBreakerIgnoresBalanceInsufficient(t *testing.T) {
+	breaker := scheduler.NewCircuitBreakerForTest(scheduler.CircuitBreakerOptions{
+		FailureThreshold:   1,
+		MinSamples:         1,
+		OpenDuration:       time.Second,
+		HalfOpenProbeCount: 1,
+		ErrorPolicies: map[string]scheduler.CircuitErrorPolicy{
 			scheduler.CircuitErrorQuota: {
 				FailureThreshold:   1,
 				MinSamples:         1,
@@ -173,19 +190,20 @@ func TestCircuitBreakerErrorPolicyCanCountAuthAndQuota(t *testing.T) {
 				HalfOpenProbeCount: 1,
 			},
 		},
-	}, func() time.Time { return now })
-	authKey := core.RuntimeKey{RequestedModel: "openai-codex", ChannelID: 11, Group: "codex"}
+	}, func() time.Time { return time.Unix(410, 0) })
 	quotaKey := core.RuntimeKey{RequestedModel: "deepseek-v4-pro", ChannelID: 12, Group: "codex"}
 
-	breaker.Report(core.AttemptResult{Key: authKey, ChannelID: 11, StatusCode: http.StatusUnauthorized})
-	authSnapshot := breaker.Snapshot(authKey)
-	require.Equal(t, core.CircuitStateOpen, authSnapshot.State)
-	require.Equal(t, scheduler.CircuitErrorAuth, authSnapshot.OpenReason)
-
-	breaker.Report(core.AttemptResult{Key: quotaKey, ChannelID: 12, StatusCode: http.StatusForbidden, ErrorCode: "insufficient_user_quota"})
+	breaker.Report(core.AttemptResult{Key: quotaKey, ChannelID: 12, StatusCode: http.StatusForbidden, ErrorCode: "insufficient_user_quota", ErrorCategory: "balance_or_quota", BalanceInsufficient: true})
 	quotaSnapshot := breaker.Snapshot(quotaKey)
-	require.Equal(t, core.CircuitStateOpen, quotaSnapshot.State)
-	require.Equal(t, scheduler.CircuitErrorQuota, quotaSnapshot.OpenReason)
+	require.Equal(t, core.CircuitStateClosed, quotaSnapshot.State)
+	require.Zero(t, quotaSnapshot.SampleCount)
+	require.Empty(t, quotaSnapshot.ErrorCounts)
+	require.Empty(t, scheduler.ClassifyCircuitError(core.AttemptResult{
+		StatusCode:          http.StatusForbidden,
+		ErrorCode:           "insufficient_user_quota",
+		ErrorCategory:       "balance_or_quota",
+		BalanceInsufficient: true,
+	}))
 }
 
 func TestCircuitBreakerDoesNotCountAuthWithoutErrorPolicy(t *testing.T) {

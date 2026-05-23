@@ -89,6 +89,34 @@ func TestLowSuccessCapsSpeedContribution(t *testing.T) {
 	require.Less(t, score.RoutingTotal, 0.50)
 }
 
+func TestExperienceAnomalyOnlyAppearsInBreakdown(t *testing.T) {
+	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+	snapshot := core.RuntimeSnapshot{
+		SuccessRate:         0.90,
+		SuccessScore:        0.90,
+		SpeedScore:          0.80,
+		TTFTMs:              1200,
+		DurationMs:          1800,
+		CostRatio:           0.25,
+		GroupPriorityRatio:  1,
+		SampleCount:         80,
+		EmptyOutputRate:     0.80,
+		ExperienceIssueRate: 0.30,
+	}
+
+	score := scorer.Score(core.Candidate{Channel: &model.Channel{Id: 11}}, snapshot, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
+
+	require.InEpsilon(t, 0.125, score.Breakdown["experience"], 0.000001)
+	require.Equal(t, score.Breakdown["load"], score.RoutingBreakdown["load"])
+	expected := score.Breakdown["success"]*0.35 +
+		score.Breakdown["speed"]*0.35 +
+		score.Breakdown["load"]*0.15 +
+		score.Breakdown["cost"]*0.08 +
+		score.Breakdown["group"]*0.07
+	require.InEpsilon(t, expected, score.Total, 0.0002)
+	require.InEpsilon(t, expected, score.RoutingTotal, 0.0002)
+}
+
 func TestLongTermLowSuccessCapsRecentRecoveryScore(t *testing.T) {
 	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
 	score := scorer.Score(core.Candidate{Channel: &model.Channel{Id: 8}}, core.RuntimeSnapshot{
@@ -173,7 +201,67 @@ func TestCostFirstPrefersCheapCandidateOverFasterExpensiveCandidate(t *testing.T
 	require.Greater(t, cheapPlus.RoutingTotal, fastPro.RoutingTotal)
 }
 
-func TestCostFirstUsesGentleAbsoluteUnitCostScore(t *testing.T) {
+func TestCostScoreUsesCandidateMinimumCostReference(t *testing.T) {
+	scorer := scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()).ForStrategy(core.StrategyCostFirst)
+	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "auto"}
+	lowest := scorer.Score(candidate, core.RuntimeSnapshot{
+		SuccessRate:        1,
+		SuccessScore:       1,
+		SpeedScore:         0.70,
+		CostRatio:          8,
+		CostReferenceRatio: 8,
+		GroupPriorityRatio: 1,
+		SampleCount:        100,
+		ExperienceScore:    1,
+	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
+	expensive := scorer.Score(candidate, core.RuntimeSnapshot{
+		SuccessRate:        1,
+		SuccessScore:       1,
+		SpeedScore:         0.70,
+		CostRatio:          20,
+		CostReferenceRatio: 8,
+		GroupPriorityRatio: 1,
+		SampleCount:        100,
+		ExperienceScore:    1,
+	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
+
+	require.Equal(t, 1.0, lowest.Breakdown["cost"])
+	require.InEpsilon(t, 0.2903, expensive.Breakdown["cost"], 0.0001)
+	require.Greater(t, lowest.Total, expensive.Total)
+	require.Greater(t, lowest.RoutingTotal, expensive.RoutingTotal)
+}
+
+func TestCostFirstAmplifiesLargeRelativeCostGap(t *testing.T) {
+	scorer := scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()).ForStrategy(core.StrategyCostFirst)
+	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "auto"}
+	cheap := scorer.Score(candidate, core.RuntimeSnapshot{
+		SuccessRate:        0.96,
+		SuccessScore:       0.96,
+		SpeedScore:         0.70,
+		CostRatio:          0.4091,
+		CostReferenceRatio: 0.4091,
+		GroupPriorityRatio: 0.1,
+		SampleCount:        84,
+		ExperienceScore:    1,
+	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
+	expensive := scorer.Score(candidate, core.RuntimeSnapshot{
+		SuccessRate:        0.96,
+		SuccessScore:       0.96,
+		SpeedScore:         0.94,
+		CostRatio:          0.8838,
+		CostReferenceRatio: 0.4091,
+		GroupPriorityRatio: 0.1,
+		SampleCount:        83,
+		ExperienceScore:    1,
+	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
+
+	require.Equal(t, 1.0, cheap.Breakdown["cost"])
+	require.InEpsilon(t, 0.3535, expensive.Breakdown["cost"], 0.0001)
+	require.Greater(t, cheap.Total, expensive.Total)
+	require.Greater(t, cheap.RoutingTotal, expensive.RoutingTotal)
+}
+
+func TestCostScoreKeepsAbsoluteFallbackWithoutCandidateReference(t *testing.T) {
 	scorer := scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()).ForStrategy(core.StrategyCostFirst)
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "auto"}
 	score := scorer.Score(candidate, core.RuntimeSnapshot{
@@ -301,6 +389,10 @@ func TestCostFirstDoesNotRouteToHigherCostGroupOnlyBecauseCheapGroupIsBusy(t *te
 	require.Equal(t, 4, plan.Channel.Id)
 	cheapPlus := candidateExplanationByChannel(t, plan.Candidates, 4)
 	fastPro := candidateExplanationByChannel(t, plan.Candidates, 9)
+	require.Equal(t, 0.05, cheapPlus.CostReferenceRatio)
+	require.Equal(t, 0.05, fastPro.CostReferenceRatio)
+	require.Equal(t, 1.0, cheapPlus.ScoreBreakdown["cost"])
+	require.InEpsilon(t, 0.3067, fastPro.ScoreBreakdown["cost"], 0.0001)
 	require.Greater(t, cheapPlus.RoutingScoreTotal, fastPro.RoutingScoreTotal)
 	require.Equal(t, cheapPlus.ScoreBreakdown["load"], cheapPlus.RoutingScoreBreakdown["load"])
 	require.NotContains(t, cheapPlus.RoutingScoreBreakdown, "routing_pressure")
@@ -523,7 +615,7 @@ func TestSelectorDoesNotLimitColdStartProbeConcurrency(t *testing.T) {
 		ActiveConcurrency:         2,
 		MaxConcurrency:            6,
 		EffectiveConcurrencyLimit: 6,
-		CostRatio:                 0.08,
+		CostRatio:                 0.12,
 		GroupPriorityRatio:        1,
 		SampleCount:               0,
 	})

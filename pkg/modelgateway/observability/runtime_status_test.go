@@ -284,6 +284,7 @@ func TestRuntimeStatusServiceMergesSnapshotCircuitQueueAndLiveState(t *testing.T
 	require.True(t, openItem.FailureAvoidance)
 	require.Equal(t, "upstream_5xx", openItem.FailureAvoidanceReason)
 	require.Equal(t, "circuit_open", openItem.HealthStatus)
+	require.Equal(t, 1.0, openItem.ScoreBreakdown["cost"])
 
 	healthyItem := response.Items[1]
 	require.Equal(t, 101, healthyItem.ChannelID)
@@ -291,6 +292,7 @@ func TestRuntimeStatusServiceMergesSnapshotCircuitQueueAndLiveState(t *testing.T
 	require.Equal(t, 2, healthyItem.QueueDepth)
 	require.True(t, healthyItem.Cooldown)
 	require.Equal(t, "cooldown", healthyItem.HealthStatus)
+	require.InEpsilon(t, 0.6667, healthyItem.ScoreBreakdown["cost"], 0.0001)
 }
 
 func TestRuntimeStatusServiceFiltersAndHandlesMissingDeps(t *testing.T) {

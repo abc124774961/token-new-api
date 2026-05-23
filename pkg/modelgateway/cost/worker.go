@@ -55,8 +55,14 @@ func (w *Worker) Start(ctx context.Context) {
 	if w == nil || !w.config.Enabled {
 		return
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if !common.IsMasterNode {
-		common.SysLog("model gateway cost worker skipped on non-master node")
+		w.once.Do(func() {
+			go w.runCacheRefresher(ctx)
+		})
+		common.SysLog("model gateway cost worker skipped on non-master node; profile cache refresher started")
 		return
 	}
 	w.once.Do(func() {
@@ -76,9 +82,6 @@ func (w *Worker) Stop() {
 }
 
 func (w *Worker) run(ctx context.Context) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	ticker := time.NewTicker(w.config.Interval)
 	defer ticker.Stop()
 	common.SysLog(fmt.Sprintf("model gateway cost worker started: interval=%s workers=%d batch=%d", w.config.Interval, w.config.Workers, w.config.Batch))
@@ -95,13 +98,27 @@ func (w *Worker) run(ctx context.Context) {
 	}
 }
 
+func (w *Worker) runCacheRefresher(ctx context.Context) {
+	ticker := time.NewTicker(w.config.Interval)
+	defer ticker.Stop()
+	w.refreshProfileCache(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-w.stop:
+			return
+		case <-ticker.C:
+			w.refreshProfileCache(ctx)
+		}
+	}
+}
+
 func (w *Worker) tick(ctx context.Context) {
 	if w == nil || model.DB == nil || model.LOG_DB == nil {
 		return
 	}
-	if err := w.cache.Refresh(ctx); err != nil {
-		common.SysLog(fmt.Sprintf("model gateway cost profile refresh failed: %v", err))
-	}
+	w.refreshProfileCache(ctx)
 	logs, scannedThroughID, err := w.loadPendingConsumeLogs(w.config.Batch)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("model gateway cost pending log load failed: %v", err))
@@ -160,6 +177,15 @@ func (w *Worker) tick(ctx context.Context) {
 		return
 	}
 	w.advanceCursor(scannedThroughID)
+}
+
+func (w *Worker) refreshProfileCache(ctx context.Context) {
+	if w == nil || w.cache == nil || model.DB == nil {
+		return
+	}
+	if err := w.cache.Refresh(ctx); err != nil {
+		common.SysLog(fmt.Sprintf("model gateway cost profile refresh failed: %v", err))
+	}
 }
 
 func (w *Worker) calculateLog(log model.Log) error {
@@ -395,6 +421,41 @@ func (c *ProfileCache) Invalidate() {
 	c.mu.Unlock()
 }
 
+func (c *ProfileCache) Store(profile model.ModelGatewayChannelCostProfile) {
+	if c == nil || profile.ChannelID <= 0 {
+		return
+	}
+	profile.UpstreamModel = normalizeProfileModel(profile.UpstreamModel)
+	if profile.EffectiveTime > common.GetTimestamp() {
+		return
+	}
+	if profile.Version <= 0 {
+		profile.Version = 1
+	}
+	c.mu.Lock()
+	if c.profiles == nil {
+		c.profiles = make(map[string]model.ModelGatewayChannelCostProfile)
+	}
+	c.profiles[profileKey(profile.ChannelID, profile.UpstreamModel)] = profile
+	c.loadedAt = time.Now()
+	c.mu.Unlock()
+}
+
+func (c *ProfileCache) DeleteChannel(channelID int) {
+	if c == nil || channelID <= 0 {
+		return
+	}
+	prefix := fmt.Sprintf("%d:", channelID)
+	c.mu.Lock()
+	for key := range c.profiles {
+		if strings.HasPrefix(key, prefix) {
+			delete(c.profiles, key)
+		}
+	}
+	c.loadedAt = time.Now()
+	c.mu.Unlock()
+}
+
 func (c *ProfileCache) Lookup(channelID int, upstreamModel string) *model.ModelGatewayChannelCostProfile {
 	if c == nil || channelID <= 0 {
 		return nil
@@ -622,6 +683,14 @@ func InvalidateDefaultProfileCache() {
 	defaultWorkerMu.Lock()
 	defer defaultWorkerMu.Unlock()
 	defaultCache.Invalidate()
+}
+
+func StoreCachedDefaultProfile(profile model.ModelGatewayChannelCostProfile) {
+	defaultCache.Store(profile)
+}
+
+func RemoveCachedDefaultProfilesForChannel(channelID int) {
+	defaultCache.DeleteChannel(channelID)
 }
 
 func stopDefaultWorkerLocked() {

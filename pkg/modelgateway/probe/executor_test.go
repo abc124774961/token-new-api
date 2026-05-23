@@ -85,7 +85,7 @@ func TestProbeExecutorUsesNormalDistributorSelection(t *testing.T) {
 	require.NoError(t, db.Create(&root).Error)
 
 	candidateChannel := seedProbeExecutorChannel(t, db, 1, "candidate-low", "gpt-4.1", 1)
-	selectedChannel := seedProbeExecutorChannel(t, db, 2, "selected-high", "gpt-4.1", 10)
+	_ = seedProbeExecutorChannel(t, db, 2, "selected-high", "gpt-4.1", 10)
 	model.InitChannelCache()
 
 	oldInvoker := relayInvoker
@@ -94,7 +94,7 @@ func TestProbeExecutorUsesNormalDistributorSelection(t *testing.T) {
 		invoked = true
 		require.Equal(t, types.RelayFormatOpenAI, relayFormat)
 		require.True(t, common.GetContextKeyBool(c, constant.ContextKeyHealthProbe))
-		require.Equal(t, selectedChannel.Id, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+		require.Equal(t, candidateChannel.Id, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 
 		start := time.Now().Add(-50 * time.Millisecond)
 		info := &relaycommon.RelayInfo{
@@ -111,8 +111,8 @@ func TestProbeExecutorUsesNormalDistributorSelection(t *testing.T) {
 			IsChannelTest:     true,
 			RelayFormat:       types.RelayFormatOpenAI,
 			ChannelMeta: &relaycommon.ChannelMeta{
-				ChannelId:         selectedChannel.Id,
-				ChannelType:       selectedChannel.Type,
+				ChannelId:         candidateChannel.Id,
+				ChannelType:       candidateChannel.Type,
 				UpstreamModelName: "gpt-4.1",
 			},
 			PriceData: types.PriceData{
@@ -147,8 +147,8 @@ func TestProbeExecutorUsesNormalDistributorSelection(t *testing.T) {
 	require.NoError(t, result.Err)
 	require.True(t, result.Success)
 	require.NotNil(t, result.Channel)
-	require.Equal(t, selectedChannel.Id, result.Channel.Id)
-	require.Equal(t, selectedChannel.Id, result.RuntimeKey.ChannelID)
+	require.Equal(t, candidateChannel.Id, result.Channel.Id)
+	require.Equal(t, candidateChannel.Id, result.RuntimeKey.ChannelID)
 	require.Equal(t, "default", result.Group)
 	require.Equal(t, constant.EndpointTypeOpenAI, result.RuntimeKey.EndpointType)
 	require.Greater(t, result.TTFT, time.Duration(0))

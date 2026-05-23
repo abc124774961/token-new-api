@@ -263,7 +263,7 @@ func (e *RuntimeSnapshotEnricher) applyCostSnapshot(candidate core.Candidate, sn
 	if ratio, ok := e.lookupProfileCostRatio(candidate); ok {
 		snapshot.CostRatio = ratio
 		snapshot.CostPricingMode = e.lookupProfileCostPricingMode(candidate)
-	} else if snapshot.CostRatio <= 0 {
+	} else {
 		snapshot.CostRatio = estimateCandidateCostPerMillion(candidate)
 		snapshot.CostPricingMode = "token"
 	}

@@ -300,6 +300,49 @@ func TestAsyncExecutionRecorderSkipsHealthProbeUserRequestSummary(t *testing.T) 
 	require.Contains(t, record.RequestMeta, "low_score")
 }
 
+func TestAsyncExecutionRecorderPersistsBalanceInsufficientMeta(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:           "req-balance",
+		AttemptIndex:        0,
+		ChannelID:           8,
+		ChannelName:         "balance-channel",
+		RequestedGroup:      "default",
+		SelectedGroup:       "default",
+		ModelName:           "gpt-4.1",
+		StatusCode:          403,
+		ErrorCode:           "insufficient_user_quota",
+		ErrorCategory:       "balance_or_quota",
+		ErrorMessage:        "insufficient account balance",
+		BalanceInsufficient: true,
+		Duration:            120 * time.Millisecond,
+	})
+
+	require.Eventually(t, func() bool {
+		var executions int64
+		require.NoError(t, db.Model(&model.ModelExecutionRecord{}).Where("request_id = ?", "req-balance").Count(&executions).Error)
+		return executions == 1
+	}, time.Second, 10*time.Millisecond)
+
+	var record model.ModelExecutionRecord
+	require.NoError(t, db.Where("request_id = ?", "req-balance").First(&record).Error)
+	require.Contains(t, record.RequestMeta, "balance_insufficient")
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-balance").First(&summary).Error)
+	require.False(t, summary.FinalSuccess)
+	require.Equal(t, "balance_or_quota", summary.FinalErrorCategory)
+}
+
 func TestAsyncExecutionRecorderSummarizesClientAbortAsUserCanceled(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
