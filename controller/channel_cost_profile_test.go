@@ -40,6 +40,28 @@ type channelCostQuoteAPIResponse struct {
 	} `json:"data"`
 }
 
+type channelListAPIResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Data    struct {
+		Items []struct {
+			Id                  int `json:"id"`
+			UpstreamCostDisplay struct {
+				Configured            bool    `json:"configured"`
+				PriceConfigured       bool    `json:"price_configured"`
+				Model                 string  `json:"model"`
+				PricingModel          string  `json:"pricing_model"`
+				CostCoefficient       float64 `json:"cost_coefficient"`
+				FeeMultiplier         float64 `json:"fee_multiplier"`
+				ActualTokenMultiplier float64 `json:"actual_token_multiplier"`
+				InputPerMillion       float64 `json:"input_per_million"`
+				OutputPerMillion      float64 `json:"output_per_million"`
+				CacheReadPerMillion   float64 `json:"cache_read_per_million"`
+			} `json:"upstream_cost_display"`
+		} `json:"items"`
+	} `json:"data"`
+}
+
 func setupChannelCostProfileControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -81,6 +103,7 @@ func TestChannelUpstreamCostProfileCRUD(t *testing.T) {
 	createBody, err := common.Marshal(model.ModelGatewayChannelCostProfile{
 		UpstreamModel:        " gpt-5.5 ",
 		Currency:             "",
+		CostCoefficient:      0.5,
 		TokenMultiplier:      0.06,
 		InputCostMultiplier:  0.05,
 		OutputCostMultiplier: 0.08,
@@ -88,6 +111,7 @@ func TestChannelUpstreamCostProfileCRUD(t *testing.T) {
 		CacheWriteMultiplier: 0.03,
 		RequestPrice:         0.003,
 		RechargeMultiplier:   0.8,
+		MetadataJSON:         `{"recharge_paid_amount":50.6,"recharge_received_amount":100,"recharge_multiplier_source":"paid_received_ratio"}`,
 	})
 	require.NoError(t, err)
 
@@ -103,6 +127,7 @@ func TestChannelUpstreamCostProfileCRUD(t *testing.T) {
 	require.Equal(t, "token", createPayload.Data.PricingMode)
 	require.Equal(t, "estimated", createPayload.Data.Accuracy)
 	require.Equal(t, 1, createPayload.Data.Version)
+	require.Equal(t, 0.5, createPayload.Data.CostCoefficient)
 	require.Equal(t, 0.06, createPayload.Data.TokenMultiplier)
 	require.Equal(t, 0.06, createPayload.Data.InputCostMultiplier)
 	require.Equal(t, 0.06, createPayload.Data.OutputCostMultiplier)
@@ -110,6 +135,9 @@ func TestChannelUpstreamCostProfileCRUD(t *testing.T) {
 	require.Equal(t, 0.06, createPayload.Data.CacheWriteMultiplier)
 	require.Equal(t, 1.0, createPayload.Data.RequestCostMultiplier)
 	require.Equal(t, 0.003, createPayload.Data.RequestPrice)
+	require.Equal(t, 0.8, createPayload.Data.RechargeMultiplier)
+	require.Contains(t, createPayload.Data.MetadataJSON, "recharge_paid_amount")
+	require.Contains(t, createPayload.Data.MetadataJSON, "paid_received_ratio")
 	require.Zero(t, createPayload.Data.InputPerMillion)
 	require.Zero(t, createPayload.Data.OutputPerMillion)
 
@@ -117,6 +145,7 @@ func TestChannelUpstreamCostProfileCRUD(t *testing.T) {
 		Id:                  createPayload.Data.Id,
 		UpstreamModel:       "gpt-5.5",
 		Currency:            "usd",
+		CostCoefficient:     0.25,
 		InputCostMultiplier: 0.1,
 		RequestPrice:        0.004,
 		RechargeMultiplier:  1,
@@ -127,6 +156,7 @@ func TestChannelUpstreamCostProfileCRUD(t *testing.T) {
 	router.ServeHTTP(updateRecorder, updateReq)
 	updatePayload := decodeChannelCostProfileResponse(t, updateRecorder)
 	require.True(t, updatePayload.Success, updateRecorder.Body.String())
+	require.Equal(t, 0.25, updatePayload.Data.CostCoefficient)
 	require.Equal(t, 0.1, updatePayload.Data.TokenMultiplier)
 	require.Equal(t, 0.1, updatePayload.Data.InputCostMultiplier)
 	require.Equal(t, 0.1, updatePayload.Data.OutputCostMultiplier)
@@ -198,6 +228,7 @@ func TestChannelUpstreamCostProfileSystemRatioDerivation(t *testing.T) {
 
 	body, err := common.Marshal(model.ModelGatewayChannelCostProfile{
 		UpstreamModel:      "gpt-4o",
+		CostCoefficient:    0.5,
 		TokenMultiplier:    0.05,
 		RechargeMultiplier: 0.8,
 	})
@@ -210,6 +241,7 @@ func TestChannelUpstreamCostProfileSystemRatioDerivation(t *testing.T) {
 	require.True(t, payload.Success, recorder.Body.String())
 	require.Equal(t, "system_ratio", payload.Data.Source)
 	require.Equal(t, "estimated", payload.Data.Accuracy)
+	require.Equal(t, 0.5, payload.Data.CostCoefficient)
 	require.Equal(t, 0.05, payload.Data.TokenMultiplier)
 	require.Equal(t, 0.05, payload.Data.InputCostMultiplier)
 	require.Equal(t, 0.05, payload.Data.OutputCostMultiplier)
@@ -222,9 +254,9 @@ func TestChannelUpstreamCostProfileSystemRatioDerivation(t *testing.T) {
 	require.Zero(t, payload.Data.CacheReadPerMillion)
 
 	derived := modelgatewaycost.DeriveSystemRatioProfile("gpt-4o", payload.Data)
-	require.InEpsilon(t, 0.15625, derived.InputPerMillion, 0.000001)
-	require.InEpsilon(t, 0.625, derived.OutputPerMillion, 0.000001)
-	require.InEpsilon(t, 0.078125, derived.CacheReadPerMillion, 0.000001)
+	require.InEpsilon(t, 0.078125, derived.InputPerMillion, 0.000001)
+	require.InEpsilon(t, 0.3125, derived.OutputPerMillion, 0.000001)
+	require.InEpsilon(t, 0.0390625, derived.CacheReadPerMillion, 0.000001)
 }
 
 func TestChannelUpstreamCostQuoteUsesMappedUpstreamPricingModel(t *testing.T) {
@@ -276,6 +308,57 @@ func TestChannelUpstreamCostQuoteUsesMappedUpstreamPricingModel(t *testing.T) {
 	require.InEpsilon(t, 2.5, unsavedQuote.InputPerMillion, 0.000001)
 }
 
+func TestChannelListIncludesOneToOneUpstreamCostDisplay(t *testing.T) {
+	db := setupChannelCostProfileControllerTestDB(t)
+	modelMapping := `{"codex-plus":"gpt-5.4"}`
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-5.4":1.25}`))
+	require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(`{"gpt-5.4":6}`))
+	require.NoError(t, ratio_setting.UpdateCacheRatioByJSONString(`{"gpt-5.4":0.1}`))
+	require.NoError(t, db.Create(&model.Channel{
+		Id:           4,
+		Name:         "toioto",
+		Key:          "sk",
+		Models:       "codex-plus",
+		ModelMapping: &modelMapping,
+		Group:        "default",
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayChannelCostProfile{
+		ChannelID:          4,
+		UpstreamModel:      "*",
+		Currency:           "USD",
+		PricingMode:        "token",
+		Source:             "system_ratio",
+		Accuracy:           "estimated",
+		CostCoefficient:    0.05,
+		TokenMultiplier:    4.1,
+		RechargeMultiplier: 2,
+		Version:            1,
+		CreatedAt:          common.GetTimestamp(),
+		UpdatedAt:          common.GetTimestamp(),
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/channel/", GetAllChannels)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/channel/?p=1&page_size=20", nil)
+	router.ServeHTTP(recorder, req)
+	payload := decodeChannelListResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Len(t, payload.Data.Items, 1)
+	display := payload.Data.Items[0].UpstreamCostDisplay
+	require.True(t, display.Configured)
+	require.True(t, display.PriceConfigured)
+	require.Equal(t, "codex-plus", display.Model)
+	require.Equal(t, "gpt-5.4", display.PricingModel)
+	require.InEpsilon(t, 0.05, display.CostCoefficient, 0.000001)
+	require.InEpsilon(t, 4.1, display.FeeMultiplier, 0.000001)
+	require.InEpsilon(t, 0.1025, display.ActualTokenMultiplier, 0.000001)
+	require.InEpsilon(t, 0.25625, display.InputPerMillion, 0.000001)
+	require.InEpsilon(t, 1.5375, display.OutputPerMillion, 0.000001)
+	require.InEpsilon(t, 0.025625, display.CacheReadPerMillion, 0.000001)
+}
+
 func TestChannelUpstreamCostProfileValidation(t *testing.T) {
 	db := setupChannelCostProfileControllerTestDB(t)
 	require.NoError(t, db.Create(&model.Channel{Id: 8, Name: "primary", Key: "sk", Models: "gpt-5.5", Group: "default"}).Error)
@@ -324,6 +407,13 @@ func decodeChannelCostProfileListResponse(t *testing.T, recorder *httptest.Respo
 func decodeChannelCostQuoteResponse(t *testing.T, recorder *httptest.ResponseRecorder) channelCostQuoteAPIResponse {
 	t.Helper()
 	var payload channelCostQuoteAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload), recorder.Body.String())
+	return payload
+}
+
+func decodeChannelListResponse(t *testing.T, recorder *httptest.ResponseRecorder) channelListAPIResponse {
+	t.Helper()
+	var payload channelListAPIResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload), recorder.Body.String())
 	return payload
 }

@@ -21,32 +21,31 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
-	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	relayconstant "github.com/QuantumNous/new-api/relay/constant"
-	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
-	"github.com/samber/lo"
 )
 
 type ProbeExecutor struct {
 	timeout time.Duration
-	billing *ProbeBillingRecorder
 }
 
-func NewProbeExecutor(timeout time.Duration, billing *ProbeBillingRecorder) *ProbeExecutor {
+type RelayInvoker func(*gin.Context, types.RelayFormat)
+
+var relayInvoker RelayInvoker
+
+func RegisterRelayInvoker(invoker RelayInvoker) {
+	relayInvoker = invoker
+}
+
+func NewProbeExecutor(timeout time.Duration, _ *ProbeBillingRecorder) *ProbeExecutor {
 	if timeout <= 0 {
 		timeout = 8 * time.Second
 	}
-	if billing == nil {
-		billing = NewProbeBillingRecorder()
-	}
 	return &ProbeExecutor{
 		timeout: timeout,
-		billing: billing,
 	}
 }
 
@@ -84,169 +83,85 @@ func (e *ProbeExecutor) Execute(ctx context.Context, candidate ProbeCandidate) P
 }
 
 func (e *ProbeExecutor) execute(ctx context.Context, result ProbeRunResult) ProbeRunResult {
-	channel := result.Channel
-	endpointType := endpointTypeForProbe(channel, result.Model)
-	requestPath := requestPathForEndpoint(endpointType)
-	request := buildProbeRequest(result.Model, endpointType)
+	probeEndpointType := probeEndpointType(result.Channel, result.Model, result.RuntimeKey.EndpointType)
+	requestPath := requestPathForEndpoint(probeEndpointType, result.Model)
+	request := buildProbeRequest(result.Model, probeEndpointType)
 	if request == nil {
 		result.Err = fmt.Errorf("model %s is not supported for health probe", result.Model)
 		return result
 	}
 
 	c, recorder := newProbeGinContext(ctx, result.ProbeID, requestPath)
+	result.Context = c
+	defer common.CleanupBodyStorage(c)
 	if err := writeRootContext(c, result.ProbeID, result.Group); err != nil {
 		result.Err = err
 		result.NewAPIError = types.NewError(err, types.ErrorCodeGetChannelFailed)
 		return result
 	}
 
-	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, result.Model)
-	if newAPIError != nil {
-		result.Context = c
-		result.NewAPIError = newAPIError
-		result.Err = newAPIError
-		result.StatusCode = newAPIError.StatusCode
+	common.SetContextKey(c, constant.ContextKeyHealthProbe, true)
+	common.SetContextKey(c, constant.ContextKeyHealthProbeReason, result.Reason)
+	common.SetContextKey(c, constant.ContextKeyHealthProbeRuntimeKey, result.RuntimeKey)
+	body, err := common.Marshal(request)
+	if err != nil {
+		result.Err = err
+		result.NewAPIError = types.NewError(err, types.ErrorCodeJsonMarshalFailed)
 		return result
 	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	c.Request.ContentLength = int64(len(body))
+	c.Request.Header.Set("Accept", "text/event-stream")
 	c.Request.Header.Set("Content-Type", "application/json")
-	relayFormat := relayFormatForEndpoint(endpointType)
-	info, err := relaycommon.GenRelayInfo(c, relayFormat, request, nil)
-	if err != nil {
-		result.Context = c
-		result.Err = err
-		result.NewAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
-		return result
-	}
-	info.IsChannelTest = true
-	info.InitChannelMeta(c)
-	if err = attachProbeBillingRequestInput(info, request); err != nil {
-		result.Context = c
-		result.RelayInfo = info
-		result.Err = err
-		result.NewAPIError = types.NewError(err, types.ErrorCodeJsonMarshalFailed)
-		return result
-	}
-	if err = helper.ModelMappedHelper(c, info, request); err != nil {
-		result.Context = c
-		result.RelayInfo = info
-		result.Err = err
-		result.NewAPIError = types.NewError(err, types.ErrorCodeChannelModelMappedError)
-		return result
-	}
-	request.SetModelName(info.UpstreamModelName)
 
-	apiType, _ := common.ChannelType2APIType(channel.Type)
-	if info.RelayMode == relayconstant.RelayModeResponsesCompact &&
-		apiType != constant.APITypeOpenAI &&
-		apiType != constant.APITypeCodex {
-		err = fmt.Errorf("responses compaction probe only supports openai/codex channels, got api type %d", apiType)
-		result.Context = c
-		result.RelayInfo = info
+	invoker := relayInvoker
+	if invoker == nil {
+		err := errors.New("probe relay invoker is not registered")
 		result.Err = err
-		result.NewAPIError = types.NewError(err, types.ErrorCodeInvalidApiType)
+		result.NewAPIError = types.NewError(err, types.ErrorCodeGetChannelFailed)
 		return result
 	}
-	adaptor := relay.GetAdaptor(apiType)
-	if adaptor == nil {
-		err = fmt.Errorf("invalid api type: %d, adaptor is nil", apiType)
-		result.Context = c
-		result.RelayInfo = info
-		result.Err = err
-		result.NewAPIError = types.NewError(err, types.ErrorCodeInvalidApiType)
-		return result
-	}
-
-	priceData, err := helper.ModelPriceHelper(c, info, 0, request.GetTokenCountMeta())
-	if err != nil {
-		result.Context = c
-		result.RelayInfo = info
-		result.Err = err
-		result.NewAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
-		return result
-	}
-	adaptor.Init(info)
-
-	converted, err := convertProbeRequest(c, adaptor, info, request)
-	if err != nil {
-		result.Context = c
-		result.RelayInfo = info
-		result.Err = err
-		result.NewAPIError = types.NewError(err, types.ErrorCodeConvertRequestFailed)
-		return result
-	}
-	payload, err := common.Marshal(converted)
-	if err != nil {
-		result.Context = c
-		result.RelayInfo = info
-		result.Err = err
-		result.NewAPIError = types.NewError(err, types.ErrorCodeJsonMarshalFailed)
-		return result
-	}
-	if len(info.ParamOverride) > 0 {
-		payload, err = relaycommon.ApplyParamOverrideWithRelayInfo(payload, info)
-		if err != nil {
-			if fixedErr, ok := relaycommon.AsParamOverrideReturnError(err); ok {
-				result.Context = c
-				result.RelayInfo = info
-				result.Err = fixedErr
-				result.NewAPIError = relaycommon.NewAPIErrorFromParamOverride(fixedErr)
-				return result
-			}
-			result.Context = c
-			result.RelayInfo = info
-			result.Err = err
-			result.NewAPIError = types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid)
-			return result
-		}
-	}
-
-	c.Request.Body = io.NopCloser(bytes.NewReader(payload))
-	respAny, err := adaptor.DoRequest(c, info, bytes.NewReader(payload))
-	if err != nil {
-		result.Context = c
-		result.RelayInfo = info
-		result.Err = err
-		result.NewAPIError = ensureNewAPIError(err, types.ErrorCodeDoRequestFailed, http.StatusBadGateway)
-		return result
-	}
-	httpResp, _ := respAny.(*http.Response)
-	if httpResp != nil && httpResp.StatusCode != http.StatusOK {
-		newAPIError := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
-		result.Context = c
-		result.RelayInfo = info
-		result.Err = newAPIError
-		result.NewAPIError = types.NewOpenAIError(newAPIError, types.ErrorCodeBadResponseStatusCode, httpResp.StatusCode)
-		result.StatusCode = httpResp.StatusCode
-		return result
-	}
-	usageAny, newAPIError := adaptor.DoResponse(c, httpResp, info)
-	if newAPIError != nil {
-		result.Context = c
-		result.RelayInfo = info
-		result.Err = newAPIError
-		result.NewAPIError = newAPIError
-		result.StatusCode = newAPIError.StatusCode
-		return result
-	}
-
-	usage := coerceProbeUsage(usageAny, info.GetEstimatePromptTokens())
-	info.SetEstimatePromptTokens(usage.PromptTokens)
+	var relayFormat types.RelayFormat
+	middleware.DistributeWithNext(func(c *gin.Context) {
+		relayFormat = relayFormatForEndpoint(probeEndpointType)
+		invoker(c, relayFormat)
+	})(c)
 	result.Duration = time.Since(result.StartedAt)
-	result.TTFT = probeTTFT(info)
-	result.Context = c
-	result.RelayInfo = info
-	result.Usage = usage
-	result.PriceData = priceData
-	result.StatusCode = http.StatusOK
-	result.Success = true
-
-	if e.billing != nil {
-		if quota, err := e.billing.RecordSuccess(c, result, priceData, usage); err != nil {
-			common.SysLog(fmt.Sprintf("model gateway probe billing failed: probe_id=%s channel_id=%d error=%v", result.ProbeID, channel.Id, err))
-		} else {
-			result.Quota = quota
+	result.StatusCode = recorder.Code
+	if result.StatusCode == 0 {
+		result.StatusCode = http.StatusOK
+	}
+	if info, ok := common.GetContextKeyType[*relaycommon.RelayInfo](c, constant.ContextKeyRelayInfo); ok {
+		result.RelayInfo = info
+		result.TTFT = probeTTFT(info)
+		result.PriceData = info.PriceData
+		result.Usage = normalizeProbeUsage(nil, info.GetEstimatePromptTokens())
+		result.Quota = probeQuotaFromBilling(info)
+	}
+	if channelID := common.GetContextKeyInt(c, constant.ContextKeyChannelId); channelID > 0 {
+		if selected, err := model.CacheGetChannel(channelID); err == nil && selected != nil {
+			result.Channel = selected
+			result.RuntimeKey.ChannelID = selected.Id
+			if result.RuntimeKey.UpstreamModel == "" && result.RelayInfo != nil {
+				result.RuntimeKey.UpstreamModel = result.RelayInfo.UpstreamModelName
+			}
 		}
 	}
+	if group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup); strings.TrimSpace(group) != "" {
+		result.Group = group
+		result.RuntimeKey.Group = group
+	}
+	if relayFormat != "" {
+		result.RuntimeKey.EndpointType = endpointTypeForRelayFormat(relayFormat)
+	} else if result.RuntimeKey.EndpointType == "" {
+		result.RuntimeKey.EndpointType = probeEndpointType
+	}
+	if c.IsAborted() || result.StatusCode >= http.StatusBadRequest {
+		result.Err = fmt.Errorf("probe relay failed with status %d", result.StatusCode)
+		result.NewAPIError = types.NewErrorWithStatusCode(result.Err, types.ErrorCodeDoRequestFailed, result.StatusCode)
+		return result
+	}
+	result.Success = true
 	_ = recorder.Result().Body.Close()
 	return result
 }
@@ -373,32 +288,51 @@ func newProbeGinContext(ctx context.Context, probeID string, path string) (*gin.
 }
 
 func buildProbeRequest(modelName string, endpointType constant.EndpointType) dto.Request {
-	stream := false
+	stream := true
+	streamOptions := &dto.StreamOptions{IncludeUsage: true}
 	switch endpointType {
 	case constant.EndpointTypeOpenAIResponse:
 		maxTokens := uint(8)
 		return &dto.OpenAIResponsesRequest{
 			Model:           modelName,
-			Input:           []byte(`[{"role":"user","content":"hi"}]`),
+			Input:           []byte(`[{"role":"user","content":"Reply with exactly the word ok."}]`),
 			Stream:          &stream,
+			StreamOptions:   streamOptions,
 			MaxOutputTokens: &maxTokens,
 		}
-	case constant.EndpointTypeOpenAIResponseCompact:
-		return &dto.OpenAIResponsesCompactionRequest{
-			Model: modelName,
-			Input: []byte(`[{"role":"user","content":"hi"}]`),
-		}
-	case constant.EndpointTypeOpenAI, constant.EndpointTypeAnthropic, constant.EndpointTypeGemini:
+	case constant.EndpointTypeAnthropic:
 		maxTokens := uint(8)
-		if endpointType == constant.EndpointTypeGemini {
-			maxTokens = 128
+		return &dto.ClaudeRequest{
+			Model: modelName,
+			Messages: []dto.ClaudeMessage{{
+				Role:    "user",
+				Content: "Reply with exactly the word ok.",
+			}},
+			MaxTokens: &maxTokens,
+			Stream:    &stream,
 		}
+	case constant.EndpointTypeGemini:
+		maxTokens := uint(128)
+		return &dto.GeminiChatRequest{
+			Contents: []dto.GeminiChatContent{{
+				Role: "user",
+				Parts: []dto.GeminiPart{{
+					Text: "Reply with exactly the word ok.",
+				}},
+			}},
+			GenerationConfig: dto.GeminiChatGenerationConfig{
+				MaxOutputTokens: &maxTokens,
+			},
+		}
+	case constant.EndpointTypeOpenAI:
+		maxTokens := uint(8)
 		return &dto.GeneralOpenAIRequest{
-			Model:  modelName,
-			Stream: &stream,
+			Model:         modelName,
+			Stream:        &stream,
+			StreamOptions: streamOptions,
 			Messages: []dto.Message{{
 				Role:    "user",
-				Content: "hi",
+				Content: "Reply with exactly the word ok.",
 			}},
 			MaxTokens: &maxTokens,
 		}
@@ -407,10 +341,24 @@ func buildProbeRequest(modelName string, endpointType constant.EndpointType) dto
 	}
 }
 
+func probeEndpointType(channel *model.Channel, modelName string, fallback constant.EndpointType) constant.EndpointType {
+	endpointType := fallback
+	if endpointType == "" {
+		endpointType = endpointTypeForProbe(channel, modelName)
+	}
+	if endpointType == constant.EndpointTypeOpenAIResponseCompact {
+		return constant.EndpointTypeOpenAIResponse
+	}
+	if endpointType != "" {
+		return endpointType
+	}
+	return constant.EndpointTypeOpenAI
+}
+
 func endpointTypeForProbe(channel *model.Channel, modelName string) constant.EndpointType {
 	modelName = strings.TrimSpace(modelName)
 	if strings.HasSuffix(modelName, ratio_setting.CompactModelSuffix) {
-		return constant.EndpointTypeOpenAIResponseCompact
+		return constant.EndpointTypeOpenAIResponse
 	}
 	if channel != nil && channel.Type == constant.ChannelTypeCodex {
 		return constant.EndpointTypeOpenAIResponse
@@ -427,7 +375,10 @@ func endpointTypeForProbe(channel *model.Channel, modelName string) constant.End
 	return constant.EndpointTypeOpenAI
 }
 
-func requestPathForEndpoint(endpointType constant.EndpointType) string {
+func requestPathForEndpoint(endpointType constant.EndpointType, modelName string) string {
+	if endpointType == constant.EndpointTypeGemini {
+		return fmt.Sprintf("/v1beta/models/%s:streamGenerateContent", url.PathEscape(strings.TrimSpace(modelName)))
+	}
 	if info, ok := common.GetDefaultEndpointInfo(endpointType); ok && info.Path != "" {
 		return info.Path
 	}
@@ -449,61 +400,18 @@ func relayFormatForEndpoint(endpointType constant.EndpointType) types.RelayForma
 	}
 }
 
-func convertProbeRequest(c *gin.Context, adaptor interface {
-	ConvertOpenAIRequest(*gin.Context, *relaycommon.RelayInfo, *dto.GeneralOpenAIRequest) (any, error)
-	ConvertOpenAIResponsesRequest(*gin.Context, *relaycommon.RelayInfo, dto.OpenAIResponsesRequest) (any, error)
-}, info *relaycommon.RelayInfo, request dto.Request) (any, error) {
-	switch info.RelayMode {
-	case relayconstant.RelayModeResponses:
-		responseReq, ok := request.(*dto.OpenAIResponsesRequest)
-		if !ok {
-			return nil, errors.New("invalid responses probe request")
-		}
-		return adaptor.ConvertOpenAIResponsesRequest(c, info, *responseReq)
-	case relayconstant.RelayModeResponsesCompact:
-		switch req := request.(type) {
-		case *dto.OpenAIResponsesCompactionRequest:
-			return adaptor.ConvertOpenAIResponsesRequest(c, info, dto.OpenAIResponsesRequest{
-				Model:              req.Model,
-				Input:              req.Input,
-				Instructions:       req.Instructions,
-				PreviousResponseID: req.PreviousResponseID,
-				MaxOutputTokens:    lo.ToPtr(uint(8)),
-			})
-		case *dto.OpenAIResponsesRequest:
-			return adaptor.ConvertOpenAIResponsesRequest(c, info, *req)
-		default:
-			return nil, errors.New("invalid responses compaction probe request")
-		}
+func endpointTypeForRelayFormat(relayFormat types.RelayFormat) constant.EndpointType {
+	switch relayFormat {
+	case types.RelayFormatOpenAIResponses:
+		return constant.EndpointTypeOpenAIResponse
+	case types.RelayFormatOpenAIResponsesCompaction:
+		return constant.EndpointTypeOpenAIResponseCompact
+	case types.RelayFormatClaude:
+		return constant.EndpointTypeAnthropic
+	case types.RelayFormatGemini:
+		return constant.EndpointTypeGemini
 	default:
-		generalReq, ok := request.(*dto.GeneralOpenAIRequest)
-		if !ok {
-			return nil, errors.New("invalid openai probe request")
-		}
-		return adaptor.ConvertOpenAIRequest(c, info, generalReq)
-	}
-}
-
-func attachProbeBillingRequestInput(info *relaycommon.RelayInfo, request dto.Request) error {
-	if info == nil {
-		return nil
-	}
-	input, err := helper.BuildBillingExprRequestInputFromRequest(request, info.RequestHeaders)
-	if err != nil {
-		return err
-	}
-	info.BillingRequestInput = &input
-	return nil
-}
-
-func coerceProbeUsage(value any, estimatePromptTokens int) *dto.Usage {
-	switch usage := value.(type) {
-	case *dto.Usage:
-		return normalizeProbeUsage(usage, estimatePromptTokens)
-	case dto.Usage:
-		return normalizeProbeUsage(&usage, estimatePromptTokens)
-	default:
-		return normalizeProbeUsage(nil, estimatePromptTokens)
+		return constant.EndpointTypeOpenAI
 	}
 }
 
@@ -528,6 +436,16 @@ func normalizeProbeUsage(usage *dto.Usage, estimatePromptTokens int) *dto.Usage 
 		usage.TotalTokens = 1
 	}
 	return usage
+}
+
+func probeQuotaFromBilling(info *relaycommon.RelayInfo) int {
+	if info == nil || info.Billing == nil {
+		return 0
+	}
+	if quota := info.FinalPreConsumedQuota + int(info.SubscriptionPostDelta); quota > 0 {
+		return quota
+	}
+	return info.Billing.GetPreConsumedQuota()
 }
 
 func settleProbeQuota(info *relaycommon.RelayInfo, priceData types.PriceData, usage *dto.Usage) (int, *billingexpr.TieredResult) {
@@ -557,14 +475,6 @@ func settleProbeQuota(info *relaycommon.RelayInfo, priceData types.PriceData, us
 		quota = 1
 	}
 	return quota, nil
-}
-
-func ensureNewAPIError(err error, code types.ErrorCode, status int) *types.NewAPIError {
-	var newAPIError *types.NewAPIError
-	if errors.As(err, &newAPIError) {
-		return newAPIError
-	}
-	return types.NewErrorWithStatusCode(err, code, status)
 }
 
 func probeTTFT(info *relaycommon.RelayInfo) time.Duration {

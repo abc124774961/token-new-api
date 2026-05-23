@@ -64,6 +64,8 @@ type BreakdownComponent struct {
 type Breakdown struct {
 	Currency             string                        `json:"currency"`
 	UsageSemantic        string                        `json:"usage_semantic,omitempty"`
+	CostCoefficient      float64                       `json:"cost_coefficient,omitempty"`
+	FeeMultiplier        float64                       `json:"fee_multiplier,omitempty"`
 	TokenMultiplier      float64                       `json:"token_multiplier,omitempty"`
 	InputMultiplier      float64                       `json:"input_multiplier,omitempty"`
 	OutputMultiplier     float64                       `json:"output_multiplier,omitempty"`
@@ -98,27 +100,39 @@ type Result struct {
 }
 
 type SystemRatioQuote struct {
-	Model                  string  `json:"model"`
-	PricingModel           string  `json:"pricing_model,omitempty"`
-	PriceSource            string  `json:"price_source"`
-	Currency               string  `json:"currency"`
-	PricingMode            string  `json:"pricing_mode"`
-	TokenMultiplier        float64 `json:"token_multiplier"`
-	InputCostMultiplier    float64 `json:"input_cost_multiplier"`
-	OutputCostMultiplier   float64 `json:"output_cost_multiplier"`
-	CacheReadMultiplier    float64 `json:"cache_read_multiplier"`
-	CacheWriteMultiplier   float64 `json:"cache_write_multiplier"`
-	RechargeMultiplier     float64 `json:"recharge_multiplier"`
-	InputPerMillion        float64 `json:"input_per_million"`
-	OutputPerMillion       float64 `json:"output_per_million"`
-	CacheReadPerMillion    float64 `json:"cache_read_per_million"`
-	CacheWritePerMillion   float64 `json:"cache_write_per_million"`
-	CacheWrite1hPerMillion float64 `json:"cache_write_1h_per_million"`
-	ImageInputPerMillion   float64 `json:"image_input_per_million"`
-	AudioInputPerMillion   float64 `json:"audio_input_per_million"`
-	AudioOutputPerMillion  float64 `json:"audio_output_per_million"`
-	RequestPrice           float64 `json:"request_price"`
-	Accuracy               string  `json:"accuracy"`
+	Model                      string  `json:"model"`
+	PricingModel               string  `json:"pricing_model,omitempty"`
+	PriceSource                string  `json:"price_source"`
+	Currency                   string  `json:"currency"`
+	PricingMode                string  `json:"pricing_mode"`
+	CostCoefficient            float64 `json:"cost_coefficient"`
+	FeeMultiplier              float64 `json:"fee_multiplier"`
+	BaseCostMultiplier         float64 `json:"base_cost_multiplier"`
+	TokenMultiplier            float64 `json:"token_multiplier"`
+	ActualTokenMultiplier      float64 `json:"actual_token_multiplier"`
+	BaseInputPerMillion        float64 `json:"base_input_per_million"`
+	BaseOutputPerMillion       float64 `json:"base_output_per_million"`
+	BaseCacheReadPerMillion    float64 `json:"base_cache_read_per_million"`
+	BaseCacheWritePerMillion   float64 `json:"base_cache_write_per_million"`
+	BaseCacheWrite1hPerMillion float64 `json:"base_cache_write_1h_per_million"`
+	BaseImageInputPerMillion   float64 `json:"base_image_input_per_million"`
+	BaseAudioInputPerMillion   float64 `json:"base_audio_input_per_million"`
+	BaseAudioOutputPerMillion  float64 `json:"base_audio_output_per_million"`
+	InputCostMultiplier        float64 `json:"input_cost_multiplier"`
+	OutputCostMultiplier       float64 `json:"output_cost_multiplier"`
+	CacheReadMultiplier        float64 `json:"cache_read_multiplier"`
+	CacheWriteMultiplier       float64 `json:"cache_write_multiplier"`
+	RechargeMultiplier         float64 `json:"recharge_multiplier"`
+	InputPerMillion            float64 `json:"input_per_million"`
+	OutputPerMillion           float64 `json:"output_per_million"`
+	CacheReadPerMillion        float64 `json:"cache_read_per_million"`
+	CacheWritePerMillion       float64 `json:"cache_write_per_million"`
+	CacheWrite1hPerMillion     float64 `json:"cache_write_1h_per_million"`
+	ImageInputPerMillion       float64 `json:"image_input_per_million"`
+	AudioInputPerMillion       float64 `json:"audio_input_per_million"`
+	AudioOutputPerMillion      float64 `json:"audio_output_per_million"`
+	RequestPrice               float64 `json:"request_price"`
+	Accuracy                   string  `json:"accuracy"`
 }
 
 func Calculate(usage UsageSnapshot, profile *model.ModelGatewayChannelCostProfile) Result {
@@ -145,8 +159,12 @@ func Calculate(usage UsageSnapshot, profile *model.ModelGatewayChannelCostProfil
 	if strings.TrimSpace(profile.Currency) != "" {
 		result.Breakdown.Currency = strings.TrimSpace(profile.Currency)
 	}
-	tokenMultiplier := normalizedTokenMultiplier(*profile)
+	costCoefficient := normalizedCostCoefficient(*profile)
+	feeMultiplier := normalizedTokenMultiplier(*profile)
+	tokenMultiplier := normalizedActualTokenMultiplier(*profile)
 	if !strings.EqualFold(strings.TrimSpace(profile.PricingMode), "request") {
+		result.Breakdown.CostCoefficient = costCoefficient
+		result.Breakdown.FeeMultiplier = feeMultiplier
 		result.Breakdown.TokenMultiplier = tokenMultiplier
 		result.Breakdown.InputMultiplier = tokenMultiplier
 		result.Breakdown.OutputMultiplier = tokenMultiplier
@@ -234,15 +252,17 @@ func DeriveSystemRatioProfile(modelName string, profile model.ModelGatewayChanne
 	if modelName == "" || modelName == "*" {
 		modelName = strings.TrimSpace(profile.UpstreamModel)
 	}
-	tokenMultiplier := normalizedTokenMultiplier(profile)
+	costCoefficient := normalizedCostCoefficient(profile)
+	feeMultiplier := normalizedTokenMultiplier(profile)
 	rechargeMultiplier := normalizedPositive(profile.RechargeMultiplier)
 	configuredRequestPrice := profile.RequestPrice
 	resetSystemRatioDerivedPrices(&profile)
-	profile.TokenMultiplier = tokenMultiplier
-	profile.InputCostMultiplier = tokenMultiplier
-	profile.OutputCostMultiplier = tokenMultiplier
-	profile.CacheReadMultiplier = tokenMultiplier
-	profile.CacheWriteMultiplier = tokenMultiplier
+	profile.CostCoefficient = costCoefficient
+	profile.TokenMultiplier = feeMultiplier
+	profile.InputCostMultiplier = feeMultiplier
+	profile.OutputCostMultiplier = feeMultiplier
+	profile.CacheReadMultiplier = feeMultiplier
+	profile.CacheWriteMultiplier = feeMultiplier
 	profile.RequestCostMultiplier = 1
 	if systemRequestPrice, ok := ratio_setting.GetModelPrice(modelName, false); ok && systemRequestPrice >= 0 {
 		requestPrice := configuredRequestPrice
@@ -262,16 +282,17 @@ func DeriveSystemRatioProfile(modelName string, profile model.ModelGatewayChanne
 		profile.Accuracy = AccuracyMissing
 		return profile
 	}
-	profile.InputPerMillion = roundCostPrice(unitPrice * costMultiplier(tokenMultiplier, rechargeMultiplier))
-	profile.OutputPerMillion = roundCostPrice(unitPrice * systemCompletionRatio(modelName) * costMultiplier(tokenMultiplier, rechargeMultiplier))
-	profile.CacheReadPerMillion = roundCostPrice(unitPrice * systemCacheReadRatio(modelName) * costMultiplier(tokenMultiplier, rechargeMultiplier))
-	cacheWrite := roundCostPrice(unitPrice * systemCacheWriteRatio(modelName) * costMultiplier(tokenMultiplier, rechargeMultiplier))
+	actualMultiplier := costMultiplier(costCoefficient*feeMultiplier, rechargeMultiplier)
+	profile.InputPerMillion = roundCostPrice(unitPrice * actualMultiplier)
+	profile.OutputPerMillion = roundCostPrice(unitPrice * systemCompletionRatio(modelName) * actualMultiplier)
+	profile.CacheReadPerMillion = roundCostPrice(unitPrice * systemCacheReadRatio(modelName) * actualMultiplier)
+	cacheWrite := roundCostPrice(unitPrice * systemCacheWriteRatio(modelName) * actualMultiplier)
 	profile.CacheWritePerMillion = cacheWrite
 	profile.CacheWrite5mPerMillion = cacheWrite
 	profile.CacheWrite1hPerMillion = roundCostPrice(cacheWrite * claudeCacheCreation1hMultiplier)
-	profile.ImageInputPerMillion = roundCostPrice(unitPrice * systemImageRatio(modelName) * costMultiplier(tokenMultiplier, rechargeMultiplier))
-	profile.AudioInputPerMillion = roundCostPrice(unitPrice * systemAudioInputRatio(modelName) * costMultiplier(tokenMultiplier, rechargeMultiplier))
-	profile.AudioOutputPerMillion = roundCostPrice(unitPrice * systemAudioInputRatio(modelName) * systemAudioOutputRatio(modelName) * costMultiplier(tokenMultiplier, rechargeMultiplier))
+	profile.ImageInputPerMillion = roundCostPrice(unitPrice * systemImageRatio(modelName) * actualMultiplier)
+	profile.AudioInputPerMillion = roundCostPrice(unitPrice * systemAudioInputRatio(modelName) * actualMultiplier)
+	profile.AudioOutputPerMillion = roundCostPrice(unitPrice * systemAudioInputRatio(modelName) * systemAudioOutputRatio(modelName) * actualMultiplier)
 	if strings.TrimSpace(profile.Currency) == "" {
 		profile.Currency = "USD"
 	}
@@ -284,28 +305,65 @@ func DeriveSystemRatioProfile(modelName string, profile model.ModelGatewayChanne
 
 func QuoteSystemRatioProfile(modelName string, profile model.ModelGatewayChannelCostProfile) SystemRatioQuote {
 	derived := DeriveSystemRatioProfile(modelName, profile)
+	costCoefficient := normalizedCostCoefficient(derived)
+	feeMultiplier := normalizedTokenMultiplier(derived)
+	rechargeMultiplier := normalizedPositive(derived.RechargeMultiplier)
+	baseCostMultiplier := costCoefficient
+	actualMultiplier := costMultiplier(costCoefficient*feeMultiplier, rechargeMultiplier)
+	unitPrice := inferredSystemInputPricePerMillion(modelName)
+	baseInputPerMillion := roundCostPrice(unitPrice * baseCostMultiplier)
+	baseOutputPerMillion := roundCostPrice(unitPrice * systemCompletionRatio(modelName) * baseCostMultiplier)
+	baseCacheReadPerMillion := roundCostPrice(unitPrice * systemCacheReadRatio(modelName) * baseCostMultiplier)
+	baseCacheWrite := roundCostPrice(unitPrice * systemCacheWriteRatio(modelName) * baseCostMultiplier)
+	baseImageInputPerMillion := roundCostPrice(unitPrice * systemImageRatio(modelName) * baseCostMultiplier)
+	baseAudioInputPerMillion := roundCostPrice(unitPrice * systemAudioInputRatio(modelName) * baseCostMultiplier)
+	baseAudioOutputPerMillion := roundCostPrice(unitPrice * systemAudioInputRatio(modelName) * systemAudioOutputRatio(modelName) * baseCostMultiplier)
+	requestBase := profile.RequestPrice
+	actualRequestPrice := derived.RequestPrice
+	if normalizeSource(profile.Source) == SourceSystemRatio {
+		systemRequestPrice, ok := ratio_setting.GetModelPrice(modelName, false)
+		if ok && systemRequestPrice >= 0 && requestBase <= 0 {
+			requestBase = systemRequestPrice
+		}
+		actualRequestPrice = roundCostPrice(costMultiplier(requestBase, rechargeMultiplier))
+	}
+	if actualRequestPrice <= 0 {
+		actualRequestPrice = roundCostPrice(requestBase)
+	}
 	return SystemRatioQuote{
-		Model:                  strings.TrimSpace(modelName),
-		PricingModel:           strings.TrimSpace(modelName),
-		PriceSource:            inferSystemPriceSource(modelName),
-		Currency:               firstString(strings.TrimSpace(derived.Currency), "USD"),
-		PricingMode:            firstString(strings.TrimSpace(derived.PricingMode), "token"),
-		TokenMultiplier:        normalizedTokenMultiplier(derived),
-		InputCostMultiplier:    normalizedPositive(derived.InputCostMultiplier),
-		OutputCostMultiplier:   normalizedPositive(derived.OutputCostMultiplier),
-		CacheReadMultiplier:    normalizedPositive(derived.CacheReadMultiplier),
-		CacheWriteMultiplier:   normalizedPositive(derived.CacheWriteMultiplier),
-		RechargeMultiplier:     normalizedPositive(derived.RechargeMultiplier),
-		InputPerMillion:        derived.InputPerMillion,
-		OutputPerMillion:       derived.OutputPerMillion,
-		CacheReadPerMillion:    derived.CacheReadPerMillion,
-		CacheWritePerMillion:   derived.CacheWritePerMillion,
-		CacheWrite1hPerMillion: derived.CacheWrite1hPerMillion,
-		ImageInputPerMillion:   derived.ImageInputPerMillion,
-		AudioInputPerMillion:   derived.AudioInputPerMillion,
-		AudioOutputPerMillion:  derived.AudioOutputPerMillion,
-		RequestPrice:           derived.RequestPrice,
-		Accuracy:               normalizeAccuracy(derived.Accuracy),
+		Model:                      strings.TrimSpace(modelName),
+		PricingModel:               strings.TrimSpace(modelName),
+		PriceSource:                inferSystemPriceSource(modelName),
+		Currency:                   firstString(strings.TrimSpace(derived.Currency), "USD"),
+		PricingMode:                firstString(strings.TrimSpace(derived.PricingMode), "token"),
+		CostCoefficient:            costCoefficient,
+		FeeMultiplier:              feeMultiplier,
+		BaseCostMultiplier:         baseCostMultiplier,
+		TokenMultiplier:            feeMultiplier,
+		ActualTokenMultiplier:      actualMultiplier,
+		BaseInputPerMillion:        baseInputPerMillion,
+		BaseOutputPerMillion:       baseOutputPerMillion,
+		BaseCacheReadPerMillion:    baseCacheReadPerMillion,
+		BaseCacheWritePerMillion:   baseCacheWrite,
+		BaseCacheWrite1hPerMillion: roundCostPrice(baseCacheWrite * claudeCacheCreation1hMultiplier),
+		BaseImageInputPerMillion:   baseImageInputPerMillion,
+		BaseAudioInputPerMillion:   baseAudioInputPerMillion,
+		BaseAudioOutputPerMillion:  baseAudioOutputPerMillion,
+		InputCostMultiplier:        normalizedPositive(derived.InputCostMultiplier),
+		OutputCostMultiplier:       normalizedPositive(derived.OutputCostMultiplier),
+		CacheReadMultiplier:        normalizedPositive(derived.CacheReadMultiplier),
+		CacheWriteMultiplier:       normalizedPositive(derived.CacheWriteMultiplier),
+		RechargeMultiplier:         rechargeMultiplier,
+		InputPerMillion:            derived.InputPerMillion,
+		OutputPerMillion:           derived.OutputPerMillion,
+		CacheReadPerMillion:        derived.CacheReadPerMillion,
+		CacheWritePerMillion:       derived.CacheWritePerMillion,
+		CacheWrite1hPerMillion:     derived.CacheWrite1hPerMillion,
+		ImageInputPerMillion:       derived.ImageInputPerMillion,
+		AudioInputPerMillion:       derived.AudioInputPerMillion,
+		AudioOutputPerMillion:      derived.AudioOutputPerMillion,
+		RequestPrice:               actualRequestPrice,
+		Accuracy:                   normalizeAccuracy(derived.Accuracy),
 	}
 }
 
@@ -593,6 +651,13 @@ func normalizedPositive(value float64) float64 {
 	return value
 }
 
+func normalizedCostCoefficient(profile model.ModelGatewayChannelCostProfile) float64 {
+	if profile.CostCoefficient > 0 {
+		return profile.CostCoefficient
+	}
+	return 1
+}
+
 func normalizedTokenMultiplier(profile model.ModelGatewayChannelCostProfile) float64 {
 	if profile.TokenMultiplier > 0 {
 		return profile.TokenMultiplier
@@ -601,6 +666,13 @@ func normalizedTokenMultiplier(profile model.ModelGatewayChannelCostProfile) flo
 		return profile.InputCostMultiplier
 	}
 	return 1
+}
+
+func normalizedActualTokenMultiplier(profile model.ModelGatewayChannelCostProfile) float64 {
+	return costMultiplier(
+		normalizedCostCoefficient(profile)*normalizedTokenMultiplier(profile),
+		normalizedPositive(profile.RechargeMultiplier),
+	)
 }
 
 func roundCostPrice(value float64) float64 {

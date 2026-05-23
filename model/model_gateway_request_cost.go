@@ -22,6 +22,7 @@ type ModelGatewayChannelCostProfile struct {
 	ToolPricesJSON         string  `json:"tool_prices_json" gorm:"type:text"`
 	Source                 string  `json:"source" gorm:"type:varchar(32);index;default:'manual'"`
 	Accuracy               string  `json:"accuracy" gorm:"type:varchar(32);index;default:'precise'"`
+	CostCoefficient        float64 `json:"cost_coefficient" gorm:"type:decimal(18,8);default:1"`
 	TokenMultiplier        float64 `json:"token_multiplier" gorm:"type:decimal(18,8);default:1"`
 	InputCostMultiplier    float64 `json:"input_cost_multiplier" gorm:"type:decimal(18,8);default:1"`
 	OutputCostMultiplier   float64 `json:"output_cost_multiplier" gorm:"type:decimal(18,8);default:1"`

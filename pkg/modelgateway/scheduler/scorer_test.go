@@ -173,6 +173,23 @@ func TestCostFirstPrefersCheapCandidateOverFasterExpensiveCandidate(t *testing.T
 	require.Greater(t, cheapPlus.RoutingTotal, fastPro.RoutingTotal)
 }
 
+func TestCostFirstUsesGentleAbsoluteUnitCostScore(t *testing.T) {
+	scorer := scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()).ForStrategy(core.StrategyCostFirst)
+	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "auto"}
+	score := scorer.Score(candidate, core.RuntimeSnapshot{
+		SuccessRate:        1,
+		SuccessScore:       1,
+		SpeedScore:         0.70,
+		CostRatio:          0.13,
+		GroupPriorityRatio: 1,
+		SampleCount:        100,
+		ExperienceScore:    1,
+	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
+
+	require.InEpsilon(t, 0.885, score.Breakdown["cost"], 0.001)
+	require.Greater(t, score.Breakdown["cost"], 0.80)
+}
+
 func TestCostFirstUsesConfiguredGroupWeightAndLowerGroupRatio(t *testing.T) {
 	scorer := scheduler.NewScoreCalculatorFactory(core.ScoreWeights{
 		Success: 0.32,

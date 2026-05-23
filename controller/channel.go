@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
@@ -77,9 +78,52 @@ type channelResponse struct {
 	ConcurrencyCooldown *service.ChannelConcurrencyControlStatus `json:"concurrency_cooldown,omitempty"`
 	StatusReason        string                                   `json:"status_reason,omitempty"`
 	BalanceInsufficient bool                                     `json:"balance_insufficient"`
+	UpstreamCostDisplay *channelUpstreamCostDisplay              `json:"upstream_cost_display,omitempty"`
+}
+
+type channelUpstreamCostDisplay struct {
+	Configured                 bool    `json:"configured"`
+	PriceConfigured            bool    `json:"price_configured"`
+	Model                      string  `json:"model,omitempty"`
+	PricingModel               string  `json:"pricing_model,omitempty"`
+	Currency                   string  `json:"currency,omitempty"`
+	PricingMode                string  `json:"pricing_mode,omitempty"`
+	PriceSource                string  `json:"price_source,omitempty"`
+	Accuracy                   string  `json:"accuracy,omitempty"`
+	CostCoefficient            float64 `json:"cost_coefficient,omitempty"`
+	FeeMultiplier              float64 `json:"fee_multiplier,omitempty"`
+	BaseCostMultiplier         float64 `json:"base_cost_multiplier,omitempty"`
+	TokenMultiplier            float64 `json:"token_multiplier,omitempty"`
+	RechargeMultiplier         float64 `json:"recharge_multiplier,omitempty"`
+	ActualTokenMultiplier      float64 `json:"actual_token_multiplier,omitempty"`
+	BaseInputPerMillion        float64 `json:"base_input_per_million,omitempty"`
+	BaseOutputPerMillion       float64 `json:"base_output_per_million,omitempty"`
+	BaseCacheReadPerMillion    float64 `json:"base_cache_read_per_million,omitempty"`
+	BaseCacheWritePerMillion   float64 `json:"base_cache_write_per_million,omitempty"`
+	BaseCacheWrite1hPerMillion float64 `json:"base_cache_write_1h_per_million,omitempty"`
+	BaseImageInputPerMillion   float64 `json:"base_image_input_per_million,omitempty"`
+	BaseAudioInputPerMillion   float64 `json:"base_audio_input_per_million,omitempty"`
+	BaseAudioOutputPerMillion  float64 `json:"base_audio_output_per_million,omitempty"`
+	InputPerMillion            float64 `json:"input_per_million,omitempty"`
+	OutputPerMillion           float64 `json:"output_per_million,omitempty"`
+	CacheReadPerMillion        float64 `json:"cache_read_per_million,omitempty"`
+	CacheWritePerMillion       float64 `json:"cache_write_per_million,omitempty"`
+	CacheWrite1hPerMillion     float64 `json:"cache_write_1h_per_million,omitempty"`
+	ImageInputPerMillion       float64 `json:"image_input_per_million,omitempty"`
+	AudioInputPerMillion       float64 `json:"audio_input_per_million,omitempty"`
+	AudioOutputPerMillion      float64 `json:"audio_output_per_million,omitempty"`
+	RequestPrice               float64 `json:"request_price,omitempty"`
 }
 
 func buildChannelResponse(channel *model.Channel) *channelResponse {
+	if channel == nil {
+		return nil
+	}
+	costDisplays := buildChannelCostDisplays([]*model.Channel{channel})
+	return buildChannelResponseWithCostDisplay(channel, costDisplays[channel.Id])
+}
+
+func buildChannelResponseWithCostDisplay(channel *model.Channel, costDisplay *channelUpstreamCostDisplay) *channelResponse {
 	if channel == nil {
 		return nil
 	}
@@ -92,15 +136,168 @@ func buildChannelResponse(channel *model.Channel) *channelResponse {
 		ConcurrencyCooldown: service.GetChannelConcurrencyCooldownStatus(channel.Id),
 		StatusReason:        statusReason,
 		BalanceInsufficient: service.IsKnownBalanceInsufficientChannel(channel),
+		UpstreamCostDisplay: costDisplay,
 	}
 }
 
 func buildChannelResponses(channels []*model.Channel) []*channelResponse {
 	responses := make([]*channelResponse, 0, len(channels))
+	costDisplays := buildChannelCostDisplays(channels)
 	for _, channel := range channels {
-		responses = append(responses, buildChannelResponse(channel))
+		responses = append(responses, buildChannelResponseWithCostDisplay(channel, costDisplays[channel.Id]))
 	}
 	return responses
+}
+
+func buildChannelCostDisplays(channels []*model.Channel) map[int]*channelUpstreamCostDisplay {
+	displays := make(map[int]*channelUpstreamCostDisplay, len(channels))
+	if len(channels) == 0 || model.DB == nil {
+		return displays
+	}
+	channelByID := make(map[int]*model.Channel, len(channels))
+	ids := make([]int, 0, len(channels))
+	for _, channel := range channels {
+		if channel == nil || channel.Id <= 0 {
+			continue
+		}
+		if _, exists := channelByID[channel.Id]; exists {
+			continue
+		}
+		channelByID[channel.Id] = channel
+		ids = append(ids, channel.Id)
+	}
+	if len(ids) == 0 {
+		return displays
+	}
+
+	profiles := make([]model.ModelGatewayChannelCostProfile, 0, len(ids))
+	if err := model.DB.
+		Where("channel_id IN ? AND upstream_model = ?", ids, defaultChannelCostModel).
+		Find(&profiles).Error; err != nil {
+		common.SysError("failed to load channel upstream cost displays: " + err.Error())
+		return displays
+	}
+
+	now := common.GetTimestamp()
+	profileByChannelID := make(map[int]model.ModelGatewayChannelCostProfile, len(profiles))
+	for _, profile := range profiles {
+		if profile.ChannelID <= 0 || profile.EffectiveTime > now {
+			continue
+		}
+		if current, exists := profileByChannelID[profile.ChannelID]; !exists || betterChannelCostDisplayProfile(profile, current) {
+			profileByChannelID[profile.ChannelID] = profile
+		}
+	}
+
+	for channelID, profile := range profileByChannelID {
+		if channel := channelByID[channelID]; channel != nil {
+			if display := buildChannelCostDisplay(channel, profile); display != nil {
+				displays[channelID] = display
+			}
+		}
+	}
+	return displays
+}
+
+func betterChannelCostDisplayProfile(next model.ModelGatewayChannelCostProfile, current model.ModelGatewayChannelCostProfile) bool {
+	if next.EffectiveTime != current.EffectiveTime {
+		return next.EffectiveTime > current.EffectiveTime
+	}
+	if next.Version != current.Version {
+		return next.Version > current.Version
+	}
+	if next.UpdatedAt != current.UpdatedAt {
+		return next.UpdatedAt > current.UpdatedAt
+	}
+	return next.Id > current.Id
+}
+
+func buildChannelCostDisplay(channel *model.Channel, profile model.ModelGatewayChannelCostProfile) *channelUpstreamCostDisplay {
+	if channel == nil || profile.Id <= 0 {
+		return nil
+	}
+	models := normalizeCostQuoteModels(channel.GetModels())
+	if len(models) == 0 {
+		display := channelCostDisplayFromQuote("", "", modelgatewaycost.QuoteSystemRatioProfile("", profile))
+		display.Configured = true
+		display.PriceConfigured = false
+		return display
+	}
+
+	var fallback *channelUpstreamCostDisplay
+	for _, modelName := range models {
+		pricingModel := channel.ResolveMappedModelName(modelName)
+		quote := modelgatewaycost.QuoteSystemRatioProfile(pricingModel, profile)
+		quote.Model = modelName
+		quote.PricingModel = pricingModel
+		display := channelCostDisplayFromQuote(modelName, pricingModel, quote)
+		if display.PriceConfigured {
+			return display
+		}
+		if fallback == nil {
+			fallback = display
+		}
+	}
+	return fallback
+}
+
+func channelCostDisplayFromQuote(modelName string, pricingModel string, quote modelgatewaycost.SystemRatioQuote) *channelUpstreamCostDisplay {
+	rechargeMultiplier := quote.RechargeMultiplier
+	if rechargeMultiplier <= 0 {
+		rechargeMultiplier = 1
+	}
+	display := &channelUpstreamCostDisplay{
+		Configured:                 true,
+		PriceConfigured:            channelCostQuoteHasPrice(quote),
+		Model:                      strings.TrimSpace(modelName),
+		PricingModel:               strings.TrimSpace(pricingModel),
+		Currency:                   strings.TrimSpace(quote.Currency),
+		PricingMode:                strings.TrimSpace(quote.PricingMode),
+		PriceSource:                strings.TrimSpace(quote.PriceSource),
+		Accuracy:                   strings.TrimSpace(quote.Accuracy),
+		CostCoefficient:            quote.CostCoefficient,
+		FeeMultiplier:              quote.FeeMultiplier,
+		BaseCostMultiplier:         quote.BaseCostMultiplier,
+		TokenMultiplier:            quote.TokenMultiplier,
+		RechargeMultiplier:         rechargeMultiplier,
+		ActualTokenMultiplier:      quote.ActualTokenMultiplier,
+		BaseInputPerMillion:        quote.BaseInputPerMillion,
+		BaseOutputPerMillion:       quote.BaseOutputPerMillion,
+		BaseCacheReadPerMillion:    quote.BaseCacheReadPerMillion,
+		BaseCacheWritePerMillion:   quote.BaseCacheWritePerMillion,
+		BaseCacheWrite1hPerMillion: quote.BaseCacheWrite1hPerMillion,
+		BaseImageInputPerMillion:   quote.BaseImageInputPerMillion,
+		BaseAudioInputPerMillion:   quote.BaseAudioInputPerMillion,
+		BaseAudioOutputPerMillion:  quote.BaseAudioOutputPerMillion,
+		InputPerMillion:            quote.InputPerMillion,
+		OutputPerMillion:           quote.OutputPerMillion,
+		CacheReadPerMillion:        quote.CacheReadPerMillion,
+		CacheWritePerMillion:       quote.CacheWritePerMillion,
+		CacheWrite1hPerMillion:     quote.CacheWrite1hPerMillion,
+		ImageInputPerMillion:       quote.ImageInputPerMillion,
+		AudioInputPerMillion:       quote.AudioInputPerMillion,
+		AudioOutputPerMillion:      quote.AudioOutputPerMillion,
+		RequestPrice:               quote.RequestPrice,
+	}
+	if display.PricingModel == "" {
+		display.PricingModel = strings.TrimSpace(quote.PricingModel)
+	}
+	if display.Model == "" {
+		display.Model = strings.TrimSpace(quote.Model)
+	}
+	return display
+}
+
+func channelCostQuoteHasPrice(quote modelgatewaycost.SystemRatioQuote) bool {
+	return quote.InputPerMillion > 0 ||
+		quote.OutputPerMillion > 0 ||
+		quote.CacheReadPerMillion > 0 ||
+		quote.CacheWritePerMillion > 0 ||
+		quote.CacheWrite1hPerMillion > 0 ||
+		quote.ImageInputPerMillion > 0 ||
+		quote.AudioInputPerMillion > 0 ||
+		quote.AudioOutputPerMillion > 0 ||
+		quote.RequestPrice > 0
 }
 
 func GetAllChannels(c *gin.Context) {

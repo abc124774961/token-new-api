@@ -571,6 +571,7 @@ type ModelGatewayCandidateExplanation struct {
 	QueueCapacity              int                    `json:"queue_capacity,omitempty"`
 	EstimatedQueueWaitMs       float64                `json:"estimated_queue_wait_ms,omitempty"`
 	CostRatio                  float64                `json:"cost_ratio,omitempty"`
+	CostPricingMode            string                 `json:"cost_pricing_mode,omitempty"`
 	GroupPriorityRatio         float64                `json:"group_priority_ratio,omitempty"`
 	SuccessScore               float64                `json:"success_score,omitempty"`
 	SpeedScore                 float64                `json:"speed_score,omitempty"`
@@ -2731,6 +2732,7 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			QueueCapacity:              candidate.QueueCapacity,
 			EstimatedQueueWaitMs:       roundModelGatewayObservabilityFloat(candidate.EstimatedQueueWaitMs),
 			CostRatio:                  roundModelGatewayObservabilityFloat(candidate.CostRatio),
+			CostPricingMode:            strings.TrimSpace(candidate.CostPricingMode),
 			GroupPriorityRatio:         roundModelGatewayObservabilityFloat(candidate.GroupPriorityRatio),
 			SuccessScore:               roundModelGatewayObservabilityFloat(candidate.SuccessScore),
 			SpeedScore:                 roundModelGatewayObservabilityFloat(candidate.SpeedScore),

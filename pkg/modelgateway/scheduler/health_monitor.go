@@ -97,8 +97,8 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	} else if stats.durationMs <= 0 {
 		stats.durationMs = durationMs(result.Duration, 0)
 	}
-	stats.emptyRate = ewma(stats.emptyRate, boolScore(result.EmptyOutput, 0))
-	stats.issueRate = ewma(stats.issueRate, boolScore(strings.TrimSpace(result.ExperienceIssue) != "", 0))
+	stats.emptyRate = rateEWMA(stats.emptyRate, result.EmptyOutput)
+	stats.issueRate = rateEWMA(stats.issueRate, nonEmptyOutputExperienceIssue(result))
 	if !ok {
 		snapshot = core.RuntimeSnapshot{
 			Key:                key,
@@ -118,7 +118,7 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	}
 	snapshot.EmptyOutputRate = stats.emptyRate
 	snapshot.ExperienceIssueRate = stats.issueRate
-	snapshot.ExperienceScore = clampHealthScore(1 - stats.emptyRate*0.85 - stats.issueRate*0.65)
+	snapshot.ExperienceScore = experienceScoreFromRates(stats.emptyRate, stats.issueRate)
 	if m.breaker != nil {
 		circuit := m.breaker.Snapshot(key)
 		snapshot.CircuitState = circuit.State
@@ -174,6 +174,17 @@ func ewma(current float64, next float64) float64 {
 	return ewmaWithAlpha(current, next, healthEWMAAlpha)
 }
 
+func rateEWMA(current float64, hit bool) float64 {
+	next := 0.0
+	if hit {
+		next = 1
+	}
+	if current <= 0 {
+		return next * healthEWMAAlpha
+	}
+	return ewmaWithAlpha(current, next, healthEWMAAlpha)
+}
+
 func ewmaWithAlpha(current float64, next float64, alpha float64) float64 {
 	if next < 0 || math.IsNaN(next) || math.IsInf(next, 0) {
 		return current
@@ -185,6 +196,15 @@ func ewmaWithAlpha(current float64, next float64, alpha float64) float64 {
 		alpha = healthEWMAAlpha
 	}
 	return current*(1-alpha) + next*alpha
+}
+
+func nonEmptyOutputExperienceIssue(result core.AttemptResult) bool {
+	issue := strings.TrimSpace(result.ExperienceIssue)
+	return issue != "" && issue != "empty_output" && !result.EmptyOutput
+}
+
+func experienceScoreFromRates(emptyRate float64, issueRate float64) float64 {
+	return clampHealthScore(1 - clamp01(emptyRate)*0.85 - clamp01(issueRate)*0.65)
 }
 
 func ttftEWMAAlpha(current float64, next float64) float64 {

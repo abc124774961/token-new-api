@@ -518,6 +518,182 @@ const getUpstreamUpdateMeta = (record) => {
   };
 };
 
+const trimFixedNumber = (value, precision) => {
+  const numberValue = Number(value || 0);
+  if (!Number.isFinite(numberValue) || numberValue <= 0) {
+    return '0';
+  }
+  return numberValue
+    .toFixed(precision)
+    .replace(/0+$/, '')
+    .replace(/\.$/, '');
+};
+
+const formatChannelCostRatio = (value) => {
+  const numberValue = Number(value || 0);
+  if (!Number.isFinite(numberValue) || numberValue <= 0) {
+    return '0x';
+  }
+  return `${trimFixedNumber(numberValue, numberValue < 0.01 ? 6 : 4)}x`;
+};
+
+const formatChannelCostPrice = (value) => {
+  const numberValue = Number(value || 0);
+  if (!Number.isFinite(numberValue) || numberValue <= 0) {
+    return '$0';
+  }
+  return `$${trimFixedNumber(numberValue, numberValue < 1 ? 6 : 4)}`;
+};
+
+const channelCostMetricTone = {
+  input: 'border-sky-100 bg-sky-50/70 text-sky-700',
+  output: 'border-emerald-100 bg-emerald-50/70 text-emerald-700',
+  cache_read: 'border-amber-100 bg-amber-50/70 text-amber-700',
+  cache_write: 'border-violet-100 bg-violet-50/70 text-violet-700',
+  request: 'border-cyan-100 bg-cyan-50/70 text-cyan-700',
+};
+
+const buildChannelCostPriceRows = (display, t) => {
+  if (!display) return [];
+  if (display.pricing_mode === 'request') {
+    return [
+      {
+        key: 'request',
+        label: t('按次'),
+        value: display.request_price,
+        suffix: '',
+      },
+    ].filter((item) => Number(item.value || 0) > 0);
+  }
+  return [
+    {
+      key: 'input',
+      label: t('输入'),
+      shortLabel: 'I',
+      value: display.input_per_million,
+    },
+    {
+      key: 'output',
+      label: t('输出'),
+      shortLabel: 'O',
+      value: display.output_per_million,
+    },
+    {
+      key: 'cache_read',
+      label: t('缓存读'),
+      shortLabel: 'C',
+      value: display.cache_read_per_million,
+    },
+    {
+      key: 'cache_write',
+      label: t('缓存写'),
+      shortLabel: 'W',
+      value: display.cache_write_per_million,
+    },
+  ].filter((item) => Number(item.value || 0) > 0);
+};
+
+const renderChannelCostDisplay = (record, t) => {
+  if (record?.children !== undefined) {
+    return <Typography.Text type='tertiary'>-</Typography.Text>;
+  }
+  const display = record?.upstream_cost_display;
+  if (!display?.configured) {
+    return (
+      <Tag color='grey' type='light' size='small' shape='circle'>
+        {t('未配置')}
+      </Tag>
+    );
+  }
+
+  const rows = buildChannelCostPriceRows(display, t);
+  const hasPrices = display.price_configured && rows.length > 0;
+  const actualRatio = Number(display.actual_token_multiplier || 0);
+  const ratioText =
+    display.pricing_mode === 'request'
+      ? formatChannelCostPrice(display.request_price)
+      : formatChannelCostRatio(actualRatio);
+
+  const tooltipContent = (
+    <div className='flex flex-col gap-1 min-w-[180px] text-xs'>
+      {display.model ? (
+        <div>
+          {t('模型')}: {display.model}
+        </div>
+      ) : null}
+      {display.pricing_model && display.pricing_model !== display.model ? (
+        <div>
+          {t('定价模型')}: {display.pricing_model}
+        </div>
+      ) : null}
+      {display.pricing_mode === 'request' ? (
+        <div>
+          {t('1:1 实际按次成本')}: {ratioText}
+        </div>
+      ) : (
+        <>
+          <div>
+            {t('成本系数')}: {formatChannelCostRatio(display.cost_coefficient)}
+          </div>
+          <div>
+            {t('费用计算倍率')}: {formatChannelCostRatio(display.fee_multiplier)}
+          </div>
+          <div>
+            {t('1:1 实际成本倍率')}: {ratioText}
+          </div>
+        </>
+      )}
+      {rows.map((row) => (
+        <div key={row.key}>
+          {row.label}: {formatChannelCostPrice(row.value)}
+          {row.suffix === '' ? '' : '/M'}
+        </div>
+      ))}
+      {!hasPrices ? <div>{t('模型定价未配置')}</div> : null}
+    </div>
+  );
+
+  return (
+    <Tooltip content={tooltipContent} position='topLeft'>
+      <div className='inline-flex min-w-[164px] max-w-[210px] cursor-default flex-col gap-1.5 rounded-md border border-cyan-100 bg-gradient-to-br from-white to-cyan-50/50 px-2.5 py-1.5 shadow-[0_1px_0_rgba(15,118,110,0.08)] leading-none'>
+        <div className='flex items-baseline gap-1.5'>
+          <span className='rounded bg-cyan-100 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700'>
+            1:1
+          </span>
+          <span className='text-[14px] font-semibold tabular-nums text-cyan-900'>
+            {ratioText}
+          </span>
+          <span className='text-[10px] text-[var(--semi-color-text-2)]'>
+            {display.pricing_mode === 'request' ? t('按次') : t('实际倍率')}
+          </span>
+        </div>
+        {hasPrices ? (
+          <div className='grid grid-cols-3 gap-1'>
+            {rows.slice(0, 3).map((row) => (
+              <div
+                key={row.key}
+                className={`rounded border px-1.5 py-1 ${channelCostMetricTone[row.key] || 'border-gray-100 bg-gray-50 text-gray-600'}`}
+              >
+                <div className='text-[10px] font-semibold leading-none'>
+                  {row.shortLabel || row.label}
+                </div>
+                <div className='mt-0.5 whitespace-nowrap text-[10px] font-medium leading-none tabular-nums'>
+                  {formatChannelCostPrice(row.value)}
+                  {row.suffix === '' ? '' : '/M'}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <span className='text-[11px] text-[var(--semi-color-text-2)]'>
+            {t('未配置')}
+          </span>
+        )}
+      </div>
+    </Tooltip>
+  );
+};
+
 export const getChannelsColumns = ({
   t,
   COLUMN_KEYS,
@@ -701,6 +877,13 @@ export const getChannelsColumns = ({
           </Space>
         </div>
       ),
+    },
+    {
+      key: COLUMN_KEYS.COST,
+      title: t('成本'),
+      dataIndex: 'upstream_cost_display',
+      width: 220,
+      render: (text, record) => renderChannelCostDisplay(record, t),
     },
     {
       key: COLUMN_KEYS.TYPE,

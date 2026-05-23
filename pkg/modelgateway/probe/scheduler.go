@@ -150,6 +150,10 @@ func SyncDefaultProbeSchedulerLifecycle() *ProbeScheduler {
 	if !config.Enabled {
 		return nil
 	}
+	if relayInvoker == nil {
+		common.SysLog("model gateway probe scheduler skipped: relay invoker is not registered")
+		return nil
+	}
 	deps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
 	if deps == nil {
 		return nil

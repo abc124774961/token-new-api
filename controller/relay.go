@@ -331,6 +331,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
 	}
+	common.SetContextKey(c, constant.ContextKeyRelayInfo, relayInfo)
+	if common.GetContextKeyBool(c, constant.ContextKeyHealthProbe) {
+		relayInfo.IsChannelTest = true
+	}
 	logger.LogInfo(c, fmt.Sprintf(
 		"relay model trace initialized: format=%s, request_model=%s, context_model=%s, origin_model=%s, path=%s",
 		relayFormat,

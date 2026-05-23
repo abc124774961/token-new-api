@@ -136,6 +136,7 @@ type RuntimeSnapshot struct {
 	SlowFirstBytePending       int
 	OldestFirstByteWaitMs      float64
 	CostRatio                  float64
+	CostPricingMode            string
 	GroupPriorityRatio         float64
 	CircuitState               CircuitState
 	CircuitOpen                bool
@@ -314,6 +315,7 @@ type CandidateExplanation struct {
 	SlowFirstBytePending       int                `json:"slow_first_byte_pending,omitempty"`
 	OldestFirstByteWaitMs      float64            `json:"oldest_first_byte_wait_ms,omitempty"`
 	CostRatio                  float64            `json:"cost_ratio,omitempty"`
+	CostPricingMode            string             `json:"cost_pricing_mode,omitempty"`
 	GroupPriorityRatio         float64            `json:"group_priority_ratio,omitempty"`
 	SuccessScore               float64            `json:"success_score,omitempty"`
 	SpeedScore                 float64            `json:"speed_score,omitempty"`

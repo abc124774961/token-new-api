@@ -273,7 +273,7 @@ function scoreMetricDescription(key, t) {
       return t('仅影响调度避让，不计入渠道健康评分');
     case 'cost':
     case 'cost_score':
-      return t('成本倍率越高，这项越低');
+      return t('由参考单位成本换算，成本越低这项越高');
     case 'group':
     case 'group_score':
       return t('分组权重越高，这项越高');
@@ -1712,6 +1712,14 @@ function formatCostUnitPrice(value) {
   return `$${numeric.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}`;
 }
 
+function formatCandidateReferenceCost(candidate, t) {
+  const cost = Number(candidate?.cost_ratio || 0);
+  if (!Number.isFinite(cost) || cost <= 0) return '';
+  const mode = String(candidate?.cost_pricing_mode || '').trim();
+  const suffix = mode === 'request' ? t('/次') : t('/M');
+  return `${formatCostUnitPrice(cost)} ${suffix}`;
+}
+
 function formatCostRatio(value) {
   const text = formatBillingRatio(value);
   return text === '--' ? '--' : `${text}x`;
@@ -2288,60 +2296,64 @@ function UserRequestUpstreamCostTooltip({ record, t }) {
 }
 
 function upstreamCostPricingRows(breakdown, t) {
+  const costCoefficient = safeNumber(breakdown?.cost_coefficient);
+  const feeMultiplier = safeNumber(breakdown?.fee_multiplier);
   const tokenMultiplier = safeNumber(breakdown?.token_multiplier);
   const rechargeMultiplier = safeNumber(breakdown?.recharge_multiplier);
-  const effectiveCostRatio =
-    tokenMultiplier > 0 && rechargeMultiplier > 0
-      ? tokenMultiplier / rechargeMultiplier
-      : 0;
   return [
     [
-      t('成本倍率'),
-      tokenMultiplier > 0 ? formatCostRatio(tokenMultiplier) : '--',
+      t('成本系数'),
+      costCoefficient > 0 ? formatCostRatio(costCoefficient) : '--',
+    ],
+    [
+      t('费用计算倍率'),
+      feeMultiplier > 0 ? formatCostRatio(feeMultiplier) : '--',
     ],
     [
       t('充值倍率'),
       rechargeMultiplier > 0 ? formatCostRatio(rechargeMultiplier) : '--',
     ],
     [
-      t('有效成本系数'),
-      effectiveCostRatio > 0 ? formatCostRatio(effectiveCostRatio) : '--',
+      t('1:1 实际成本倍率'),
+      tokenMultiplier > 0 ? formatCostRatio(tokenMultiplier) : '--',
     ],
   ].filter(([, value]) => value && value !== '--');
 }
 
 function upstreamCostConfigSummary(record, t) {
   const breakdown = record?.upstream_cost_breakdown || {};
+  const costCoefficient = safeNumber(breakdown?.cost_coefficient);
+  const feeMultiplier = safeNumber(breakdown?.fee_multiplier);
   const tokenMultiplier = safeNumber(breakdown?.token_multiplier);
   const rechargeMultiplier = safeNumber(breakdown?.recharge_multiplier);
-  const effectiveCostRatio =
-    tokenMultiplier > 0 && rechargeMultiplier > 0
-      ? tokenMultiplier / rechargeMultiplier
-      : 0;
   const parts = [];
+  if (costCoefficient > 0) {
+    parts.push(`${t('成本系数')} ${formatCostRatio(costCoefficient)}`);
+  }
+  if (feeMultiplier > 0) {
+    parts.push(`${t('费用计算倍率')} ${formatCostRatio(feeMultiplier)}`);
+  }
   if (tokenMultiplier > 0) {
-    parts.push(`${t('成本倍率')} ${formatCostRatio(tokenMultiplier)}`);
+    parts.push(`${t('1:1')} ${formatCostRatio(tokenMultiplier)}`);
   }
   if (rechargeMultiplier > 0) {
     parts.push(`${t('充值倍率')} ${formatCostRatio(rechargeMultiplier)}`);
-  }
-  if (effectiveCostRatio > 0) {
-    parts.push(`${t('有效')} ${formatCostRatio(effectiveCostRatio)}`);
   }
   return parts.join(' / ');
 }
 
 function upstreamCostCompactConfig(record) {
   const breakdown = record?.upstream_cost_breakdown || {};
+  const costCoefficient = safeNumber(breakdown?.cost_coefficient);
+  const feeMultiplier = safeNumber(breakdown?.fee_multiplier);
   const tokenMultiplier = safeNumber(breakdown?.token_multiplier);
-  const rechargeMultiplier = safeNumber(breakdown?.recharge_multiplier);
-  if (tokenMultiplier > 0 && rechargeMultiplier > 0) {
-    return `${formatBillingRatio(tokenMultiplier)}x/${formatBillingRatio(
-      rechargeMultiplier,
-    )}x`;
+  if (tokenMultiplier > 0) {
+    return `1:1 ${formatBillingRatio(tokenMultiplier)}x`;
   }
-  if (rechargeMultiplier > 0) {
-    return `${formatBillingRatio(rechargeMultiplier)}x`;
+  if (costCoefficient > 0 && feeMultiplier > 0) {
+    return `${formatBillingRatio(costCoefficient)}x*${formatBillingRatio(
+      feeMultiplier,
+    )}x`;
   }
   return '';
 }
@@ -7701,7 +7713,7 @@ function CandidateExplanationCard({
       t('速度因子'),
       hasRealSamples ? getCandidateScoreSpeedFactor(candidate) : 0,
     ],
-    ['cost_score', t('成本'), candidate?.cost_score],
+    ['cost_score', t('成本分'), candidate?.cost_score],
     ['group_score', t('分组'), candidate?.group_score],
     [
       'experience_score',
@@ -7740,6 +7752,7 @@ function CandidateExplanationCard({
   const durationMs = Number(candidate?.duration_ms || 0);
   const emptyOutputRate = Number(candidate?.empty_output_rate || 0);
   const issueRate = Number(candidate?.experience_issue_rate || 0);
+  const referenceCost = formatCandidateReferenceCost(candidate, t);
   const decisionText = buildCandidateDecisionText(
     candidate,
     candidates,
@@ -7927,9 +7940,11 @@ function CandidateExplanationCard({
         <div className='ct-model-gateway-score-list'>
           {scoreMetricEntries.length ? (
             scoreMetricEntries.map(([key, label, value]) => (
-              <Tag key={key} color='cyan' type='light' size='small'>
-                {label}: {formatScore(value)}
-              </Tag>
+              <Tooltip key={key} content={scoreMetricDescription(key, t)}>
+                <Tag color='cyan' type='light' size='small'>
+                  {label}: {formatScore(value)}
+                </Tag>
+              </Tooltip>
             ))
           ) : scoreEntries.length ? (
             scoreEntries.map(([key, value]) => (
@@ -7944,6 +7959,18 @@ function CandidateExplanationCard({
           )}
         </div>
       </div>
+      {referenceCost ? (
+        <div className='ct-model-gateway-candidate-routing-row'>
+          <Typography.Text type='tertiary' size='small'>
+            {t('成本参考')}
+          </Typography.Text>
+          <Tooltip content={t('参考成本来自渠道上游成本配置，用于换算成本分，不代表本次实际消费')}>
+            <Tag color='grey' type='light' size='small'>
+              {t('参考成本')}: {referenceCost}
+            </Tag>
+          </Tooltip>
+        </div>
+      ) : null}
       {routingEntries.length ? (
         <div className='ct-model-gateway-candidate-routing-row'>
           <Typography.Text type='tertiary' size='small'>
@@ -7992,10 +8019,20 @@ function CandidateExplanationCard({
       {(emptyOutputRate > 0 || issueRate > 0) && (
         <div className='ct-model-gateway-candidate-warning-line'>
           <Info size={13} />
-          <span>
-            {t('体验异常率')}:{' '}
-            {formatPercent(Math.max(emptyOutputRate, issueRate))}
-          </span>
+          {emptyOutputRate > 0 ? (
+            <Tooltip content={t('空输出率单独统计，不再重复计入体验异常率')}>
+              <span>
+                {t('空输出率')}: {formatPercent(emptyOutputRate)}
+              </span>
+            </Tooltip>
+          ) : null}
+          {issueRate > 0 ? (
+            <Tooltip content={t('体验异常率不包含空输出，只统计非空输出的体验问题')}>
+              <span>
+                {t('体验异常率')}: {formatPercent(issueRate)}
+              </span>
+            </Tooltip>
+          ) : null}
         </div>
       )}
     </div>

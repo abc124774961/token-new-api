@@ -385,6 +385,24 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.Price
 	return other
 }
 
+func annotateHealthProbeLog(ctx *gin.Context, other map[string]interface{}) {
+	if ctx == nil || other == nil || !common.GetContextKeyBool(ctx, constant.ContextKeyHealthProbe) {
+		return
+	}
+	other["is_health_probe"] = true
+	other["billing_source"] = "model_gateway_probe"
+	other["source"] = "health_probe"
+	if probeID := strings.TrimSpace(common.GetContextKeyString(ctx, common.RequestIdKey)); probeID != "" {
+		other["probe_id"] = probeID
+	}
+	if reason := strings.TrimSpace(common.GetContextKeyString(ctx, constant.ContextKeyHealthProbeReason)); reason != "" {
+		other["probe_reason"] = reason
+	}
+	if key, ok := common.GetContextKey(ctx, constant.ContextKeyHealthProbeRuntimeKey); ok {
+		other["runtime_key"] = key
+	}
+}
+
 // InjectTieredBillingInfo overlays tiered billing fields onto an existing
 // module-specific other map. Call this after GenerateTextOtherInfo /
 // GenerateClaudeOtherInfo / etc. when the request used tiered_expr billing.

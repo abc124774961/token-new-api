@@ -28,6 +28,10 @@ type CostProfileProvider interface {
 	CostRatio(channelID int, upstreamModel string) (float64, bool)
 }
 
+type costPricingModeProvider interface {
+	CostPricingMode(channelID int, upstreamModel string) string
+}
+
 type ServiceRuntimeStateProvider struct{}
 
 func NewServiceRuntimeStateProvider() *ServiceRuntimeStateProvider {
@@ -258,8 +262,10 @@ func (e *RuntimeSnapshotEnricher) applyCostSnapshot(candidate core.Candidate, sn
 	}
 	if ratio, ok := e.lookupProfileCostRatio(candidate); ok {
 		snapshot.CostRatio = ratio
+		snapshot.CostPricingMode = e.lookupProfileCostPricingMode(candidate)
 	} else if snapshot.CostRatio <= 0 {
 		snapshot.CostRatio = estimateCandidateCostPerMillion(candidate)
+		snapshot.CostPricingMode = "token"
 	}
 	if ratio := candidateGroupPriorityRatio(candidate, policy); ratio > 0 {
 		snapshot.GroupPriorityRatio = ratio
@@ -280,6 +286,21 @@ func (e *RuntimeSnapshotEnricher) lookupProfileCostRatio(candidate core.Candidat
 		}
 	}
 	return modelgatewaycost.CostRatioFromProfileForModel(modelgatewaycost.LookupCachedDefaultProfile(candidate.Channel.Id, modelName), modelName)
+}
+
+func (e *RuntimeSnapshotEnricher) lookupProfileCostPricingMode(candidate core.Candidate) string {
+	if candidate.Channel == nil {
+		return ""
+	}
+	modelName := candidateCostModelName(candidate)
+	if e != nil && e.costProvider != nil {
+		if provider, ok := e.costProvider.(costPricingModeProvider); ok {
+			if mode := strings.TrimSpace(provider.CostPricingMode(candidate.Channel.Id, modelName)); mode != "" {
+				return mode
+			}
+		}
+	}
+	return modelgatewaycost.CostPricingModeFromProfileForModel(modelgatewaycost.LookupCachedDefaultProfile(candidate.Channel.Id, modelName), modelName)
 }
 
 func candidateGroupPriorityRatio(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {

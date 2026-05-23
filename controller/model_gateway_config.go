@@ -48,6 +48,7 @@ func UpdateModelGatewayConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	modelgatewayprobe.RegisterRelayInvoker(Relay)
 	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
 	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()
 	modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()
@@ -61,6 +62,7 @@ func ResetModelGatewayConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	modelgatewayprobe.RegisterRelayInvoker(Relay)
 	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
 	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()
 	modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()

@@ -484,6 +484,7 @@ func DefaultSystemRatioProfile(channelID int) *model.ModelGatewayChannelCostProf
 		PricingMode:           "token",
 		Source:                SourceSystemRatio,
 		Accuracy:              "estimated",
+		CostCoefficient:       1,
 		InputCostMultiplier:   1,
 		OutputCostMultiplier:  1,
 		CacheReadMultiplier:   1,
@@ -505,23 +506,74 @@ func CostRatioFromProfileForModel(profile *model.ModelGatewayChannelCostProfile,
 	}
 	derived := DeriveSystemRatioProfile(upstreamModel, *profile)
 	profile = &derived
-	// The scheduler needs a cheap, stable relative signal. A simple blended
-	// 1M-token scenario keeps this out of the request path and avoids per-request
-	// usage assumptions.
+	if cost := blendedTokenReferenceCost(*profile); cost > 0 {
+		return cost, true
+	}
+	if profile.RequestPrice > 0 {
+		return profile.RequestPrice, true
+	}
+	return 0, false
+}
+
+func CostPricingModeFromProfileForModel(profile *model.ModelGatewayChannelCostProfile, upstreamModel string) string {
+	if profile == nil {
+		return ""
+	}
+	derived := DeriveSystemRatioProfile(upstreamModel, *profile)
+	if blendedTokenReferenceCost(derived) > 0 {
+		return "token"
+	}
+	if derived.RequestPrice > 0 {
+		return "request"
+	}
+	return ""
+}
+
+func blendedTokenReferenceCost(profile model.ModelGatewayChannelCostProfile) float64 {
 	input := profile.InputPerMillion
 	output := profile.OutputPerMillion
+	cacheRead := profile.CacheReadPerMillion
+	cacheWrite := profile.CacheWritePerMillion
+	if profile.CacheWrite5mPerMillion > 0 {
+		cacheWrite = profile.CacheWrite5mPerMillion
+	}
+	imageInput := profile.ImageInputPerMillion
+	audioInput := profile.AudioInputPerMillion
+	audioOutput := profile.AudioOutputPerMillion
+
 	switch {
 	case input > 0 && output > 0:
-		return (input + output) / 2, true
+		cost := input*0.45 + output*0.45
+		weight := 0.90
+		if cacheRead > 0 {
+			cost += cacheRead * 0.05
+			weight += 0.05
+		}
+		if cacheWrite > 0 {
+			cost += cacheWrite * 0.03
+			weight += 0.03
+		}
+		if imageInput > 0 {
+			cost += imageInput * 0.01
+			weight += 0.01
+		}
+		if audioInput > 0 {
+			cost += audioInput * 0.005
+			weight += 0.005
+		}
+		if audioOutput > 0 {
+			cost += audioOutput * 0.005
+			weight += 0.005
+		}
+		if weight > 0 {
+			return cost / weight
+		}
 	case input > 0:
-		return input, true
+		return input
 	case output > 0:
-		return output, true
-	case profile.RequestPrice > 0:
-		return profile.RequestPrice, true
-	default:
-		return 0, false
+		return output
 	}
+	return 0
 }
 
 func normalizeWorkerConfig(config WorkerConfig) WorkerConfig {

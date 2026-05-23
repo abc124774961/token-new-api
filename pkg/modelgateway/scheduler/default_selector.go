@@ -265,6 +265,7 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 		SlowFirstBytePending:       snapshot.SlowFirstBytePending,
 		OldestFirstByteWaitMs:      snapshot.OldestFirstByteWaitMs,
 		CostRatio:                  snapshot.CostRatio,
+		CostPricingMode:            snapshot.CostPricingMode,
 		GroupPriorityRatio:         snapshot.GroupPriorityRatio,
 		SuccessScore:               snapshot.SuccessScore,
 		SpeedScore:                 snapshot.SpeedScore,

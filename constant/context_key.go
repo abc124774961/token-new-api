@@ -47,6 +47,10 @@ const (
 	ContextKeyRelayStreamInterrupted    ContextKey = "relay_stream_interrupted"
 	ContextKeyRelayEmptyOutput          ContextKey = "relay_empty_output"
 	ContextKeyRelayExperienceIssue      ContextKey = "relay_experience_issue"
+	ContextKeyRelayInfo                 ContextKey = "relay_info"
+	ContextKeyHealthProbe               ContextKey = "health_probe"
+	ContextKeyHealthProbeReason         ContextKey = "health_probe_reason"
+	ContextKeyHealthProbeRuntimeKey     ContextKey = "health_probe_runtime_key"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"

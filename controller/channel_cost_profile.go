@@ -70,6 +70,7 @@ func GetChannelUpstreamCostQuote(c *gin.Context) {
 		baseProfile = defaultChannelCostProfile(channelID)
 	}
 	quoteProfile := baseProfile
+	quoteProfile.CostCoefficient = 1
 	quoteProfile.TokenMultiplier = 1
 	quoteProfile.InputCostMultiplier = 1
 	quoteProfile.OutputCostMultiplier = 1
@@ -234,6 +235,7 @@ func defaultChannelCostProfile(channelID int) model.ModelGatewayChannelCostProfi
 		PricingMode:           defaultChannelCostPricingMode,
 		Source:                channelCostProfileSourceSystemRatio,
 		Accuracy:              defaultChannelCostAccuracy,
+		CostCoefficient:       1,
 		TokenMultiplier:       1,
 		InputCostMultiplier:   1,
 		OutputCostMultiplier:  1,
@@ -276,8 +278,11 @@ func normalizeChannelCostProfile(channelID int, req model.ModelGatewayChannelCos
 	profile.Source = channelCostProfileSourceSystemRatio
 	profile.SourceURL = ""
 	profile.SyncedAt = 0
-	if profile.TokenMultiplier < 0 || profile.RechargeMultiplier < 0 {
+	if profile.CostCoefficient < 0 || profile.TokenMultiplier < 0 || profile.RechargeMultiplier < 0 {
 		return profile, fmt.Errorf("倍率必须是非负数")
+	}
+	if profile.CostCoefficient <= 0 {
+		profile.CostCoefficient = 1
 	}
 	if profile.TokenMultiplier <= 0 {
 		if profile.InputCostMultiplier < 0 {

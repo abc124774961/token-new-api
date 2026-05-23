@@ -143,6 +143,7 @@ func TestCalculateDerivesSystemRatioProfileByActualModel(t *testing.T) {
 		ChannelID:          7,
 		UpstreamModel:      "*",
 		Source:             SourceSystemRatio,
+		CostCoefficient:    0.5,
 		TokenMultiplier:    0.05,
 		RechargeMultiplier: 0.8,
 	}
@@ -151,10 +152,13 @@ func TestCalculateDerivesSystemRatioProfileByActualModel(t *testing.T) {
 
 	require.Equal(t, SourceSystemRatio, result.Source)
 	require.Equal(t, "estimated", result.Accuracy)
-	require.InEpsilon(t, 0.000125, result.Breakdown.Input.Amount, 0.000001)
-	require.InEpsilon(t, 0.0000625, result.Breakdown.Output.Amount, 0.000001)
-	require.InEpsilon(t, 0.000015625, result.Breakdown.CacheRead.Amount, 0.000001)
-	require.InEpsilon(t, 0.000203125, result.Total, 0.000001)
+	require.InEpsilon(t, 0.5, result.Breakdown.CostCoefficient, 0.000001)
+	require.InEpsilon(t, 0.05, result.Breakdown.FeeMultiplier, 0.000001)
+	require.InEpsilon(t, 0.03125, result.Breakdown.TokenMultiplier, 0.000001)
+	require.InEpsilon(t, 0.0000625, result.Breakdown.Input.Amount, 0.000001)
+	require.InEpsilon(t, 0.00003125, result.Breakdown.Output.Amount, 0.000001)
+	require.InEpsilon(t, 0.0000078125, result.Breakdown.CacheRead.Amount, 0.000001)
+	require.InEpsilon(t, 0.0001015625, result.Total, 0.000001)
 }
 
 func TestCalculateDerivesToiotoCostFromSystemModelPricing(t *testing.T) {
@@ -169,20 +173,25 @@ func TestCalculateDerivesToiotoCostFromSystemModelPricing(t *testing.T) {
 		ChannelID:             4,
 		UpstreamModel:         "*",
 		Source:                SourceSystemRatio,
-		TokenMultiplier:       0.2,
-		InputCostMultiplier:   0.2,
-		OutputCostMultiplier:  0.2,
-		CacheReadMultiplier:   0.2,
-		CacheWriteMultiplier:  0.2,
+		CostCoefficient:       0.05,
+		TokenMultiplier:       4.1,
+		InputCostMultiplier:   4.1,
+		OutputCostMultiplier:  4.1,
+		CacheReadMultiplier:   4.1,
+		CacheWriteMultiplier:  4.1,
 		RequestCostMultiplier: 0.2,
 		RechargeMultiplier:    2,
 	}
 
 	quote := QuoteSystemRatioProfile("gpt-5.4", profile)
 	require.Equal(t, "model_ratio", quote.PriceSource)
-	require.InEpsilon(t, 0.25, quote.InputPerMillion, 0.000001)
-	require.InEpsilon(t, 1.5, quote.OutputPerMillion, 0.000001)
-	require.InEpsilon(t, 0.025, quote.CacheReadPerMillion, 0.000001)
+	require.InEpsilon(t, 0.05, quote.CostCoefficient, 0.000001)
+	require.InEpsilon(t, 4.1, quote.FeeMultiplier, 0.000001)
+	require.InEpsilon(t, 0.1025, quote.ActualTokenMultiplier, 0.000001)
+	require.InEpsilon(t, 0.125, quote.BaseInputPerMillion, 0.000001)
+	require.InEpsilon(t, 0.25625, quote.InputPerMillion, 0.000001)
+	require.InEpsilon(t, 1.5375, quote.OutputPerMillion, 0.000001)
+	require.InEpsilon(t, 0.025625, quote.CacheReadPerMillion, 0.000001)
 	require.Zero(t, quote.CacheWritePerMillion)
 
 	result := Calculate(UsageSnapshot{
@@ -197,10 +206,13 @@ func TestCalculateDerivesToiotoCostFromSystemModelPricing(t *testing.T) {
 	require.Equal(t, SourceSystemRatio, result.Source)
 	require.Equal(t, "estimated", result.Accuracy)
 	require.Equal(t, 1_000_000, result.Breakdown.BaseInputTokens)
-	require.InEpsilon(t, 0.25, result.Breakdown.Input.Amount, 0.000001)
-	require.InEpsilon(t, 0.025, result.Breakdown.CacheRead.Amount, 0.000001)
-	require.InEpsilon(t, 1.5, result.Breakdown.Output.Amount, 0.000001)
-	require.InEpsilon(t, 1.775, result.Total, 0.000001)
+	require.InEpsilon(t, 0.05, result.Breakdown.CostCoefficient, 0.000001)
+	require.InEpsilon(t, 4.1, result.Breakdown.FeeMultiplier, 0.000001)
+	require.InEpsilon(t, 0.1025, result.Breakdown.TokenMultiplier, 0.000001)
+	require.InEpsilon(t, 0.25625, result.Breakdown.Input.Amount, 0.000001)
+	require.InEpsilon(t, 0.025625, result.Breakdown.CacheRead.Amount, 0.000001)
+	require.InEpsilon(t, 1.5375, result.Breakdown.Output.Amount, 0.000001)
+	require.InEpsilon(t, 1.819375, result.Total, 0.000001)
 }
 
 func TestCostRatioFromSystemDefaultProfileUsesActualModel(t *testing.T) {
@@ -216,7 +228,45 @@ func TestCostRatioFromSystemDefaultProfileUsesActualModel(t *testing.T) {
 	ratio, ok := CostRatioFromProfileForModel(profile, "gpt-4o")
 
 	require.True(t, ok)
-	require.InEpsilon(t, 0.390625, ratio, 0.000001)
+	expected := blendedTokenReferenceCost(DeriveSystemRatioProfile("gpt-4o", *profile))
+	require.InEpsilon(t, expected, ratio, 0.000001)
+}
+
+func TestCostRatioFromProfileUsesBlendedTokenReferenceCost(t *testing.T) {
+	profile := &model.ModelGatewayChannelCostProfile{
+		ChannelID:             8,
+		UpstreamModel:         "gpt-5.5",
+		Source:                SourceManual,
+		InputPerMillion:       0.20,
+		OutputPerMillion:      1.20,
+		CacheReadPerMillion:   0.02,
+		CacheWritePerMillion:  0.25,
+		ImageInputPerMillion:  0.30,
+		AudioInputPerMillion:  0.40,
+		AudioOutputPerMillion: 1.60,
+		RequestPrice:          10,
+	}
+
+	ratio, ok := CostRatioFromProfileForModel(profile, "gpt-5.5")
+
+	require.True(t, ok)
+	require.InEpsilon(t, 0.6515, ratio, 0.0001)
+	require.Equal(t, "token", CostPricingModeFromProfileForModel(profile, "gpt-5.5"))
+}
+
+func TestCostRatioFromProfileFallsBackToRequestCost(t *testing.T) {
+	profile := &model.ModelGatewayChannelCostProfile{
+		ChannelID:     8,
+		UpstreamModel: "image-model",
+		Source:        SourceManual,
+		RequestPrice:  0.03,
+	}
+
+	ratio, ok := CostRatioFromProfileForModel(profile, "image-model")
+
+	require.True(t, ok)
+	require.InEpsilon(t, 0.03, ratio, 0.000001)
+	require.Equal(t, "request", CostPricingModeFromProfileForModel(profile, "image-model"))
 }
 
 func TestCalculateDerivesConfiguredRequestPriceWithoutCostMultiplier(t *testing.T) {

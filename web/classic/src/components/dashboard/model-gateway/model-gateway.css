@@ -3587,6 +3587,7 @@
 .ct-model-gateway-candidate-warning-line {
   display: inline-flex;
   min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: 5px;
   color: #b45309;

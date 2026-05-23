@@ -170,10 +170,69 @@ func TestRuntimeHealthMonitorTracksExperiencePenalty(t *testing.T) {
 	snapshot, ok := store.Get(key)
 	require.True(t, ok)
 	require.Equal(t, 1, snapshot.SampleCount)
-	require.True(t, snapshot.EmptyOutputRate > 0)
-	require.True(t, snapshot.ExperienceIssueRate > 0)
+	require.InEpsilon(t, 0.2, snapshot.EmptyOutputRate, 0.000001)
+	require.Zero(t, snapshot.ExperienceIssueRate)
 	require.True(t, snapshot.ExperienceScore < 1)
+	require.True(t, snapshot.ExperienceScore > 0.8)
 	require.True(t, snapshot.SuccessScore < 1)
+}
+
+func TestRuntimeHealthMonitorTracksNonEmptyExperienceIssueSeparately(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 89, Group: "default"}
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:             key,
+		ChannelID:       89,
+		Success:         true,
+		Duration:        2 * time.Second,
+		TTFT:            700 * time.Millisecond,
+		ExperienceIssue: "malformed_content",
+	})
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.Equal(t, 1, snapshot.SampleCount)
+	require.Zero(t, snapshot.EmptyOutputRate)
+	require.InEpsilon(t, 0.2, snapshot.ExperienceIssueRate, 0.000001)
+	require.True(t, snapshot.ExperienceScore < 1)
+	require.True(t, snapshot.ExperienceScore > 0.85)
+}
+
+func TestRuntimeHealthMonitorExperienceRatesRecoverAfterNormalSamples(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 90, Group: "default"}
+
+	for i := 0; i < 4; i++ {
+		monitor.Report(context.Background(), core.AttemptResult{
+			Key:             key,
+			ChannelID:       90,
+			Success:         true,
+			Duration:        2 * time.Second,
+			TTFT:            700 * time.Millisecond,
+			ExperienceIssue: "malformed_content",
+		})
+	}
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	raisedIssueRate := snapshot.ExperienceIssueRate
+	require.Greater(t, raisedIssueRate, 0.5)
+
+	for i := 0; i < 6; i++ {
+		monitor.Report(context.Background(), core.AttemptResult{
+			Key:       key,
+			ChannelID: 90,
+			Success:   true,
+			Duration:  2 * time.Second,
+			TTFT:      700 * time.Millisecond,
+		})
+	}
+	snapshot, ok = store.Get(key)
+	require.True(t, ok)
+	require.Less(t, snapshot.ExperienceIssueRate, raisedIssueRate)
+	require.Greater(t, snapshot.ExperienceScore, 0.89)
 }
 
 func TestRuntimeHealthMonitorFastTracksSlowTTFTRegression(t *testing.T) {

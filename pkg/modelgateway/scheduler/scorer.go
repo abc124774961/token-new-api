@@ -422,9 +422,6 @@ func costScoreForStrategy(snapshot core.RuntimeSnapshot, strategy string) float6
 		}
 		return 0.70
 	}
-	if strategy == core.StrategyCostFirst {
-		return clamp01(math.Exp(-5 * snapshot.CostRatio))
-	}
 	return clamp01(1 / (1 + snapshot.CostRatio))
 }
 
@@ -486,14 +483,7 @@ func experienceScore(snapshot core.RuntimeSnapshot) float64 {
 	if snapshot.ExperienceScore > 0 {
 		return clamp01(snapshot.ExperienceScore)
 	}
-	score := 1.0
-	if snapshot.EmptyOutputRate > 0 {
-		score -= math.Min(0.85, snapshot.EmptyOutputRate*0.85)
-	}
-	if snapshot.ExperienceIssueRate > 0 {
-		score -= math.Min(0.65, snapshot.ExperienceIssueRate*0.65)
-	}
-	return clamp01(score)
+	return clamp01(1 - clamp01(snapshot.EmptyOutputRate)*0.85 - clamp01(snapshot.ExperienceIssueRate)*0.65)
 }
 
 func applyExperienceGate(total float64, experience float64) float64 {
