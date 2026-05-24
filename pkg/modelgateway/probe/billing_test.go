@@ -152,6 +152,7 @@ func TestProbeAttemptResultLearnsUpstreamConcurrencyLimit(t *testing.T) {
 	}
 	attempt := result.AttemptResult()
 	require.True(t, attempt.ConcurrencyLimited)
+	require.Equal(t, core.ErrorCategoryOverloadSkip, attempt.ErrorCategory)
 	require.Equal(t, 4, attempt.ActiveConcurrency)
 	require.Equal(t, 3, attempt.LearnedConcurrencyLimit)
 	require.True(t, attempt.LearnedConcurrencyLimitChanged)
@@ -160,4 +161,22 @@ func TestProbeAttemptResultLearnsUpstreamConcurrencyLimit(t *testing.T) {
 	require.NoError(t, getErr)
 	require.Equal(t, 3, updated.GetSetting().MaxConcurrency)
 	require.Contains(t, *updated.Setting, `"custom_setting":"keep-me"`)
+}
+
+func TestProbeErrorCategoryMapsOverloadAndAuthConfig(t *testing.T) {
+	require.Equal(t, core.ErrorCategoryOverloadSkip, probeErrorCategory(types.NewErrorWithStatusCode(
+		errors.New("too many requests"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)))
+	require.Equal(t, core.ErrorCategoryAuthConfigError, probeErrorCategory(types.NewErrorWithStatusCode(
+		errors.New("invalid api key"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusUnauthorized,
+	)))
+	require.Equal(t, core.ErrorCategoryAuthConfigError, probeErrorCategory(types.NewErrorWithStatusCode(
+		errors.New("permission denied"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusForbidden,
+	)))
 }

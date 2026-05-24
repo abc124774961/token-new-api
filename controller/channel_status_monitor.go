@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -24,6 +26,7 @@ const (
 	channelStatusMonitorErrorTTL     = 60 * time.Second
 	channelStatusMonitorPartialTTL   = 15 * time.Second
 	channelStatusMonitorColdWait     = 900 * time.Millisecond
+	channelStatusMonitorRuntimeLimit = 8
 )
 
 var channelStatusMonitorCache = struct {
@@ -41,89 +44,149 @@ type channelStatusMonitorCacheItem struct {
 }
 
 type ChannelStatusMonitorItem struct {
-	ID                    int     `json:"id"`
-	Name                  string  `json:"name"`
-	Type                  int     `json:"type"`
-	Status                int     `json:"status"`
-	Group                 string  `json:"group"`
-	Models                string  `json:"models"`
-	Priority              int64   `json:"priority"`
-	ResponseTime          int     `json:"response_time"`
-	TestTime              int64   `json:"test_time"`
-	CreatedTime           int64   `json:"created_time"`
-	Enabled               bool    `json:"enabled"`
-	ActiveConcurrency     int     `json:"active_concurrency"`
-	MaxConcurrency        int     `json:"max_concurrency"`
-	ConcurrencyCeiling    int     `json:"concurrency_ceiling"`
-	ConcurrencyCooldown   int64   `json:"concurrency_cooldown_remaining_seconds,omitempty"`
-	ConcurrencyReason     string  `json:"concurrency_reason,omitempty"`
-	FailureAvoidance      int64   `json:"failure_avoidance_remaining_seconds,omitempty"`
-	FailureReason         string  `json:"failure_reason,omitempty"`
-	PauseType             string  `json:"pause_type,omitempty"`
-	PauseReason           string  `json:"pause_reason,omitempty"`
-	PauseUntil            int64   `json:"pause_until,omitempty"`
-	PauseRemaining        int64   `json:"pause_remaining_seconds,omitempty"`
-	LastRequestAt         int64   `json:"last_request_at,omitempty"`
-	LastSuccessAt         int64   `json:"last_success_at,omitempty"`
-	LastFailureAt         int64   `json:"last_failure_at,omitempty"`
-	RecentRequests        int64   `json:"recent_requests"`
-	RecentSuccesses       int64   `json:"recent_successes"`
-	RecentFailures        int64   `json:"recent_failures"`
-	RecentError429        int64   `json:"recent_error_429"`
-	RecentError5xx        int64   `json:"recent_error_5xx"`
-	RecentErrorTimeout    int64   `json:"recent_error_timeout"`
-	RecentBalanceErrors   int64   `json:"recent_balance_errors"`
-	RecentErrorRateLimit  int64   `json:"recent_error_rate_limit"`
-	RecentStreamErrors    int64   `json:"recent_stream_errors"`
-	RecentAvgLatencyMs    int64   `json:"recent_avg_latency_ms"`
-	RecentAvgFirstRespMs  int64   `json:"recent_avg_first_response_ms"`
-	RecentAvgOutputTokens int64   `json:"recent_avg_output_tokens"`
-	RecentTotalTokens     int64   `json:"recent_total_tokens"`
-	SuccessRate           float64 `json:"success_rate"`
-	HealthScore           int     `json:"health_score"`
-	HealthState           string  `json:"health_state"`
+	ID                     int                                           `json:"id"`
+	Name                   string                                        `json:"name"`
+	Type                   int                                           `json:"type"`
+	Status                 int                                           `json:"status"`
+	Group                  string                                        `json:"group"`
+	Models                 string                                        `json:"models"`
+	Priority               int64                                         `json:"priority"`
+	ResponseTime           int                                           `json:"response_time"`
+	TestTime               int64                                         `json:"test_time"`
+	CreatedTime            int64                                         `json:"created_time"`
+	Enabled                bool                                          `json:"enabled"`
+	ActiveConcurrency      int                                           `json:"active_concurrency"`
+	MaxConcurrency         int                                           `json:"max_concurrency"`
+	ConcurrencyCeiling     int                                           `json:"concurrency_ceiling"`
+	ConcurrencyCooldown    int64                                         `json:"concurrency_cooldown_remaining_seconds,omitempty"`
+	ConcurrencyReason      string                                        `json:"concurrency_reason,omitempty"`
+	FailureAvoidance       int64                                         `json:"failure_avoidance_remaining_seconds,omitempty"`
+	FailureReason          string                                        `json:"failure_reason,omitempty"`
+	PauseType              string                                        `json:"pause_type,omitempty"`
+	PauseReason            string                                        `json:"pause_reason,omitempty"`
+	PauseUntil             int64                                         `json:"pause_until,omitempty"`
+	PauseRemaining         int64                                         `json:"pause_remaining_seconds,omitempty"`
+	LastRequestAt          int64                                         `json:"last_request_at,omitempty"`
+	LastSuccessAt          int64                                         `json:"last_success_at,omitempty"`
+	LastFailureAt          int64                                         `json:"last_failure_at,omitempty"`
+	RecentRequests         int64                                         `json:"recent_requests"`
+	RecentSuccesses        int64                                         `json:"recent_successes"`
+	RecentFailures         int64                                         `json:"recent_failures"`
+	RecentError429         int64                                         `json:"recent_error_429"`
+	RecentError5xx         int64                                         `json:"recent_error_5xx"`
+	RecentErrorTimeout     int64                                         `json:"recent_error_timeout"`
+	RecentClientAborted    int64                                         `json:"recent_client_aborted"`
+	RecentRecovered        int64                                         `json:"recent_recovered"`
+	RecentEmptyOutputs     int64                                         `json:"recent_empty_outputs"`
+	RecentExperienceIssues int64                                         `json:"recent_experience_issues"`
+	RecentBalanceErrors    int64                                         `json:"recent_balance_errors"`
+	RecentErrorRateLimit   int64                                         `json:"recent_error_rate_limit"`
+	RecentStreamErrors     int64                                         `json:"recent_stream_errors"`
+	RecentAvgLatencyMs     int64                                         `json:"recent_avg_latency_ms"`
+	RecentAvgFirstRespMs   int64                                         `json:"recent_avg_first_response_ms"`
+	RecentAvgOutputTokens  int64                                         `json:"recent_avg_output_tokens"`
+	RecentTotalTokens      int64                                         `json:"recent_total_tokens"`
+	SuccessRate            float64                                       `json:"success_rate"`
+	HealthScore            int                                           `json:"health_score"`
+	HealthState            string                                        `json:"health_state"`
+	Runtime                *ChannelStatusMonitorRuntimeStats             `json:"runtime,omitempty"`
+	RuntimeItems           []modelgatewayobservability.RuntimeStatusItem `json:"runtime_items,omitempty"`
 }
 
 type ChannelStatusMonitorGroup struct {
-	Group              string                      `json:"group"`
-	GroupRatio         float64                     `json:"group_ratio"`
-	TotalChannels      int                         `json:"total_channels"`
-	EnabledChannels    int                         `json:"enabled_channels"`
-	DisabledChannels   int                         `json:"disabled_channels"`
-	BusyChannels       int                         `json:"busy_channels"`
-	CooldownChannels   int                         `json:"cooldown_channels"`
-	BadChannels        int                         `json:"bad_channels"`
-	HealthyChannels    int                         `json:"healthy_channels"`
-	RecentRequests     int64                       `json:"recent_requests"`
-	RecentSuccesses    int64                       `json:"recent_successes"`
-	RecentFailures     int64                       `json:"recent_failures"`
-	RecentError429     int64                       `json:"recent_error_429"`
-	RecentError5xx     int64                       `json:"recent_error_5xx"`
-	RecentErrorTimeout int64                       `json:"recent_error_timeout"`
-	SuccessRate        float64                     `json:"success_rate"`
-	AvgLatencyMs       int64                       `json:"avg_latency_ms"`
-	RecentStatus       []string                    `json:"recent_status"`
-	Channels           []*ChannelStatusMonitorItem `json:"channels"`
+	Group                  string                            `json:"group"`
+	GroupRatio             float64                           `json:"group_ratio"`
+	TotalChannels          int                               `json:"total_channels"`
+	EnabledChannels        int                               `json:"enabled_channels"`
+	DisabledChannels       int                               `json:"disabled_channels"`
+	BusyChannels           int                               `json:"busy_channels"`
+	CooldownChannels       int                               `json:"cooldown_channels"`
+	BadChannels            int                               `json:"bad_channels"`
+	HealthyChannels        int                               `json:"healthy_channels"`
+	RecentRequests         int64                             `json:"recent_requests"`
+	RecentSuccesses        int64                             `json:"recent_successes"`
+	RecentFailures         int64                             `json:"recent_failures"`
+	RecentError429         int64                             `json:"recent_error_429"`
+	RecentError5xx         int64                             `json:"recent_error_5xx"`
+	RecentErrorTimeout     int64                             `json:"recent_error_timeout"`
+	RecentClientAborted    int64                             `json:"recent_client_aborted"`
+	RecentRecovered        int64                             `json:"recent_recovered"`
+	RecentEmptyOutputs     int64                             `json:"recent_empty_outputs"`
+	RecentExperienceIssues int64                             `json:"recent_experience_issues"`
+	SuccessRate            float64                           `json:"success_rate"`
+	AvgLatencyMs           int64                             `json:"avg_latency_ms"`
+	AvgTTFTMs              int64                             `json:"avg_ttft_ms"`
+	RecentStatus           []string                          `json:"recent_status"`
+	RecentStatusSource     string                            `json:"recent_status_source,omitempty"`
+	Channels               []*ChannelStatusMonitorItem       `json:"channels"`
+	Runtime                *ChannelStatusMonitorRuntimeStats `json:"runtime,omitempty"`
 }
 
 type ChannelStatusMonitorSummary struct {
-	WindowHours        int     `json:"window_hours"`
-	TotalGroups        int     `json:"total_groups"`
-	TotalChannels      int     `json:"total_channels"`
-	EnabledChannels    int     `json:"enabled_channels"`
-	DisabledChannels   int     `json:"disabled_channels"`
-	BusyChannels       int     `json:"busy_channels"`
-	CooldownChannels   int     `json:"cooldown_channels"`
-	BadChannels        int     `json:"bad_channels"`
-	HealthyChannels    int     `json:"healthy_channels"`
-	RecentRequests     int64   `json:"recent_requests"`
-	RecentSuccesses    int64   `json:"recent_successes"`
-	RecentFailures     int64   `json:"recent_failures"`
-	RecentError429     int64   `json:"recent_error_429"`
-	RecentError5xx     int64   `json:"recent_error_5xx"`
-	RecentErrorTimeout int64   `json:"recent_error_timeout"`
-	SuccessRate        float64 `json:"success_rate"`
-	AvgLatencyMs       int64   `json:"avg_latency_ms"`
+	WindowHours            int                               `json:"window_hours"`
+	TotalGroups            int                               `json:"total_groups"`
+	TotalChannels          int                               `json:"total_channels"`
+	EnabledChannels        int                               `json:"enabled_channels"`
+	DisabledChannels       int                               `json:"disabled_channels"`
+	BusyChannels           int                               `json:"busy_channels"`
+	CooldownChannels       int                               `json:"cooldown_channels"`
+	BadChannels            int                               `json:"bad_channels"`
+	HealthyChannels        int                               `json:"healthy_channels"`
+	RecentRequests         int64                             `json:"recent_requests"`
+	RecentSuccesses        int64                             `json:"recent_successes"`
+	RecentFailures         int64                             `json:"recent_failures"`
+	RecentError429         int64                             `json:"recent_error_429"`
+	RecentError5xx         int64                             `json:"recent_error_5xx"`
+	RecentErrorTimeout     int64                             `json:"recent_error_timeout"`
+	RecentClientAborted    int64                             `json:"recent_client_aborted"`
+	RecentRecovered        int64                             `json:"recent_recovered"`
+	RecentEmptyOutputs     int64                             `json:"recent_empty_outputs"`
+	RecentExperienceIssues int64                             `json:"recent_experience_issues"`
+	SuccessRate            float64                           `json:"success_rate"`
+	AvgLatencyMs           int64                             `json:"avg_latency_ms"`
+	AvgTTFTMs              int64                             `json:"avg_ttft_ms"`
+	Runtime                *ChannelStatusMonitorRuntimeStats `json:"runtime,omitempty"`
+}
+
+type ChannelStatusMonitorRuntimeStats struct {
+	RuntimeKeys                 int     `json:"runtime_keys"`
+	Channels                    int     `json:"channels"`
+	AvailableRuntimeKeys        int     `json:"available_runtime_keys"`
+	HealthyRuntimeKeys          int     `json:"healthy_runtime_keys"`
+	RiskRuntimeKeys             int     `json:"risk_runtime_keys"`
+	CircuitOpenRuntimeKeys      int     `json:"circuit_open_runtime_keys"`
+	CircuitHalfOpenRuntimeKeys  int     `json:"circuit_half_open_runtime_keys"`
+	CooldownRuntimeKeys         int     `json:"cooldown_runtime_keys"`
+	FailureAvoidanceRuntimeKeys int     `json:"failure_avoidance_runtime_keys"`
+	HighPressureRuntimeKeys     int     `json:"high_pressure_runtime_keys"`
+	ConfigIsolatedRuntimeKeys   int     `json:"config_isolated_runtime_keys"`
+	AvgScore                    float64 `json:"avg_score"`
+	AvgRoutingScore             float64 `json:"avg_routing_score"`
+	AvgSuccessRate              float64 `json:"avg_success_rate"`
+	AvgTTFTMs                   float64 `json:"avg_ttft_ms"`
+	AvgDurationMs               float64 `json:"avg_duration_ms"`
+	AvgCostScore                float64 `json:"avg_cost_score"`
+	AvgExperienceScore          float64 `json:"avg_experience_score"`
+	AvgCostRatio                float64 `json:"avg_cost_ratio"`
+	CostPricingMode             string  `json:"cost_pricing_mode,omitempty"`
+	AvgGroupPriorityRatio       float64 `json:"avg_group_priority_ratio"`
+	AvgEmptyOutputRate          float64 `json:"avg_empty_output_rate"`
+	AvgExperienceIssueRate      float64 `json:"avg_experience_issue_rate"`
+	SampleCount                 int     `json:"sample_count"`
+	RealSampleCount30m          int     `json:"real_sample_count_30m"`
+	ActiveConcurrency           int     `json:"active_concurrency"`
+	MaxConcurrency              int     `json:"max_concurrency"`
+	QueueDepth                  int     `json:"queue_depth"`
+	QueueCapacity               int     `json:"queue_capacity"`
+	FirstBytePending            int     `json:"first_byte_pending"`
+	SlowFirstBytePending        int     `json:"slow_first_byte_pending"`
+	OldestFirstByteWaitMs       float64 `json:"oldest_first_byte_wait_ms"`
+	LastRealAttemptAt           int64   `json:"last_real_attempt_at,omitempty"`
+	LastRealSuccessAt           int64   `json:"last_real_success_at,omitempty"`
+	LastRealFailureAt           int64   `json:"last_real_failure_at,omitempty"`
+	LastProbeAt                 int64   `json:"last_probe_at,omitempty"`
+	LastProbeSuccessAt          int64   `json:"last_probe_success_at,omitempty"`
+	HealthStatus                string  `json:"health_status"`
 }
 
 type ChannelStatusMonitorResponse struct {
@@ -246,6 +309,7 @@ func buildChannelStatusMonitorPartial(windowHours int) (ChannelStatusMonitorResp
 		return result, err
 	}
 	result.Partial = true
+	applyChannelStatusMonitorRuntimeStatus(&result, buildChannelStatusMonitorRuntimeStatus())
 	return result, nil
 }
 
@@ -282,25 +346,29 @@ func buildChannelStatusMonitorWithLogLimit(windowHours int, logLimit int) (Chann
 	if err != nil {
 		return ChannelStatusMonitorResponse{}, err
 	}
-	enabledChannelIds := make([]int, 0, len(channels))
 	groupNames := make([]string, 0, len(channels))
 	for _, channel := range channels {
 		if shouldIncludeChannelInStatusMonitor(channel) {
-			enabledChannelIds = append(enabledChannelIds, channel.Id)
 			groupNames = append(groupNames, channelMonitorGroups(channel)...)
 		}
 	}
 
 	startTs := time.Now().Add(-time.Duration(windowHours) * time.Hour).Unix()
-	logRows, err := model.GetChannelStatusMonitorLogs(startTs, enabledChannelIds, logLimit)
+	userRequestLimit := logLimit
+	if userRequestLimit <= 0 {
+		userRequestLimit = channelStatusMonitorLogLimit
+	}
+	userRequestRows, err := model.GetChannelStatusMonitorUserRequests(startTs, groupNames, userRequestLimit)
 	if err != nil {
 		return ChannelStatusMonitorResponse{}, err
 	}
-	recentLogRows, err := model.GetChannelStatusMonitorRecentLogsByGroups(groupNames, channelStatusMonitorRecentLimit)
+	recentUserRequestRows, err := model.GetChannelStatusMonitorRecentUserRequestsByGroups(groupNames, channelStatusMonitorRecentLimit)
 	if err != nil {
-		return ChannelStatusMonitorResponse{}, err
+		recentUserRequestRows = nil
 	}
-	return buildChannelStatusMonitorFromRowsWithChannels(windowHours, channels, logRows, recentLogRows), nil
+	result := buildChannelStatusMonitorFromRowsWithChannelsAndUserRequests(windowHours, channels, nil, nil, userRequestRows, recentUserRequestRows)
+	applyChannelStatusMonitorRuntimeStatus(&result, buildChannelStatusMonitorRuntimeStatus())
+	return result, nil
 }
 
 func buildChannelStatusMonitorFromRows(windowHours int, logRows []model.ChannelStatusMonitorLogRow, recentLogRows []model.ChannelStatusMonitorRecentLogRow) (ChannelStatusMonitorResponse, error) {
@@ -313,8 +381,13 @@ func buildChannelStatusMonitorFromRows(windowHours int, logRows []model.ChannelS
 }
 
 func buildChannelStatusMonitorFromRowsWithChannels(windowHours int, channels []*model.Channel, logRows []model.ChannelStatusMonitorLogRow, recentLogRows []model.ChannelStatusMonitorRecentLogRow) ChannelStatusMonitorResponse {
+	return buildChannelStatusMonitorFromRowsWithChannelsAndUserRequests(windowHours, channels, logRows, recentLogRows, nil, nil)
+}
+
+func buildChannelStatusMonitorFromRowsWithChannelsAndUserRequests(windowHours int, channels []*model.Channel, logRows []model.ChannelStatusMonitorLogRow, recentLogRows []model.ChannelStatusMonitorRecentLogRow, userRequestRows []model.ModelGatewayUserRequestSummary, recentUserRequestRows []model.ModelGatewayUserRequestSummary) ChannelStatusMonitorResponse {
 	logStats := buildChannelMonitorLogStats(logRows)
-	recentStatusByGroup := buildChannelMonitorRecentStatus(recentLogRows, channelStatusMonitorRecentLimit)
+	userRequestStats := buildChannelMonitorUserRequestStats(userRequestRows)
+	recentUserStatusByGroup := buildChannelMonitorRecentUserRequestStatus(recentUserRequestRows, channelStatusMonitorRecentLimit)
 	groupMap := map[string]*ChannelStatusMonitorGroup{}
 	summary := ChannelStatusMonitorSummary{WindowHours: windowHours}
 	for _, channel := range channels {
@@ -323,7 +396,7 @@ func buildChannelStatusMonitorFromRowsWithChannels(windowHours int, channels []*
 		}
 		summary.TotalChannels++
 
-		item := buildChannelStatusMonitorItem(channel, logStats.totalByChannel[channel.Id])
+		item := buildChannelStatusMonitorItem(channel, channelMonitorPreferredStats(userRequestStats.totalByChannel[channel.Id], logStats.totalByChannel[channel.Id]))
 		if item.Enabled {
 			summary.EnabledChannels++
 		} else {
@@ -350,7 +423,7 @@ func buildChannelStatusMonitorFromRowsWithChannels(windowHours int, channels []*
 				}
 				groupMap[groupName] = group
 			}
-			groupItem := buildChannelStatusMonitorItem(channel, logStats.byChannelGroup[channel.Id][groupName])
+			groupItem := buildChannelStatusMonitorItem(channel, channelMonitorPreferredStats(userRequestStats.byChannelGroup[channel.Id][groupName], logStats.byChannelGroup[channel.Id][groupName]))
 			groupItem.Group = groupName
 			group.Channels = append(group.Channels, groupItem)
 			group.TotalChannels++
@@ -375,17 +448,22 @@ func buildChannelStatusMonitorFromRowsWithChannels(windowHours int, channels []*
 
 	groups := make([]*ChannelStatusMonitorGroup, 0, len(groupMap))
 	for _, group := range groupMap {
-		if groupStat := logStats.byGroup[group.Group]; groupStat != nil {
+		if groupStat := userRequestStats.byGroup[group.Group]; groupStat != nil {
 			group.RecentRequests = groupStat.requests
 			group.RecentSuccesses = groupStat.successes
 			group.RecentFailures = groupStat.failures
 			group.RecentError429 = groupStat.error429
 			group.RecentError5xx = groupStat.error5xx
 			group.RecentErrorTimeout = groupStat.errorTimeout
+			group.RecentClientAborted = groupStat.clientAborted
+			group.RecentRecovered = groupStat.recovered
+			group.RecentEmptyOutputs = groupStat.emptyOutputs
+			group.RecentExperienceIssues = groupStat.experienceIssues
 			group.AvgLatencyMs = avgInt64(groupStat.latencySum, groupStat.latencyCount)
+			group.AvgTTFTMs = avgInt64(groupStat.firstRespSum, groupStat.firstRespCount)
 		}
 		if group.RecentRequests > 0 {
-			group.SuccessRate = float64(group.RecentSuccesses) / float64(group.RecentRequests) * 100
+			group.SuccessRate = channelMonitorUserSuccessRate(group.RecentSuccesses, group.RecentRequests, group.RecentClientAborted)
 		}
 		if len(group.Channels) > 0 {
 			sort.Slice(group.Channels, func(i, j int) bool {
@@ -395,7 +473,10 @@ func buildChannelStatusMonitorFromRowsWithChannels(windowHours int, channels []*
 				return group.Channels[i].HealthScore < group.Channels[j].HealthScore
 			})
 		}
-		group.RecentStatus = recentStatusByGroup[group.Group]
+		if statuses := recentUserStatusByGroup[group.Group]; len(statuses) > 0 {
+			group.RecentStatus = statuses
+			group.RecentStatusSource = "user_requests"
+		}
 		groups = append(groups, group)
 	}
 
@@ -406,23 +487,393 @@ func buildChannelStatusMonitorFromRowsWithChannels(windowHours int, channels []*
 		return groups[i].RecentRequests > groups[j].RecentRequests
 	})
 	summary.TotalGroups = len(groups)
-	if overallStat := logStats.overall; overallStat != nil {
+	if overallStat := userRequestStats.overall; overallStat != nil {
 		summary.RecentRequests = overallStat.requests
 		summary.RecentSuccesses = overallStat.successes
 		summary.RecentFailures = overallStat.failures
 		summary.RecentError429 = overallStat.error429
 		summary.RecentError5xx = overallStat.error5xx
 		summary.RecentErrorTimeout = overallStat.errorTimeout
+		summary.RecentClientAborted = overallStat.clientAborted
+		summary.RecentRecovered = overallStat.recovered
+		summary.RecentEmptyOutputs = overallStat.emptyOutputs
+		summary.RecentExperienceIssues = overallStat.experienceIssues
 		summary.AvgLatencyMs = avgInt64(overallStat.latencySum, overallStat.latencyCount)
+		summary.AvgTTFTMs = avgInt64(overallStat.firstRespSum, overallStat.firstRespCount)
 	}
 	if summary.RecentRequests > 0 {
-		summary.SuccessRate = float64(summary.RecentSuccesses) / float64(summary.RecentRequests) * 100
+		summary.SuccessRate = channelMonitorUserSuccessRate(summary.RecentSuccesses, summary.RecentRequests, summary.RecentClientAborted)
 	}
 
 	return ChannelStatusMonitorResponse{
 		Summary: summary,
 		Groups:  groups,
 	}
+}
+
+func buildChannelStatusMonitorRuntimeStatus() modelgatewayobservability.RuntimeStatusResponse {
+	return defaultModelGatewayRuntimeStatusService().Build(modelgatewayobservability.RuntimeStatusQuery{
+		Limit: modelGatewayRuntimeStatusMaxLimit,
+	})
+}
+
+type channelStatusRuntimeItemKey struct {
+	group     string
+	channelID int
+}
+
+type channelStatusRuntimeAgg struct {
+	stats                         ChannelStatusMonitorRuntimeStats
+	channelIDs                    map[int]struct{}
+	activeConcurrencyByChannel    map[int]int
+	maxConcurrencyByChannel       map[int]int
+	queueDepthByChannel           map[int]int
+	queueCapacityByChannel        map[int]int
+	firstBytePendingByChannel     map[int]int
+	slowFirstBytePendingByChannel map[int]int
+	oldestFirstByteWaitByChannel  map[int]float64
+	scoreSum                      float64
+	scoreCount                    int
+	routingScoreSum               float64
+	routingScoreCount             int
+	successRateSum                float64
+	successRateCount              int
+	ttftSum                       float64
+	ttftCount                     int
+	durationSum                   float64
+	durationCount                 int
+	costScoreSum                  float64
+	costScoreCount                int
+	experienceScoreSum            float64
+	experienceScoreCount          int
+	costRatioSum                  float64
+	costRatioCount                int
+	groupPriorityRatioSum         float64
+	groupPriorityRatioCount       int
+	emptyOutputRateSum            float64
+	emptyOutputRateCount          int
+	experienceIssueRateSum        float64
+	experienceIssueRateCount      int
+}
+
+func newChannelStatusRuntimeAgg() *channelStatusRuntimeAgg {
+	return &channelStatusRuntimeAgg{
+		channelIDs:                    map[int]struct{}{},
+		activeConcurrencyByChannel:    map[int]int{},
+		maxConcurrencyByChannel:       map[int]int{},
+		queueDepthByChannel:           map[int]int{},
+		queueCapacityByChannel:        map[int]int{},
+		firstBytePendingByChannel:     map[int]int{},
+		slowFirstBytePendingByChannel: map[int]int{},
+		oldestFirstByteWaitByChannel:  map[int]float64{},
+	}
+}
+
+func applyChannelStatusMonitorRuntimeStatus(response *ChannelStatusMonitorResponse, runtimeStatus modelgatewayobservability.RuntimeStatusResponse) {
+	if response == nil || len(runtimeStatus.Items) == 0 {
+		return
+	}
+	groupByName := make(map[string]*ChannelStatusMonitorGroup, len(response.Groups))
+	channelByRuntimeKey := make(map[channelStatusRuntimeItemKey]*ChannelStatusMonitorItem)
+	groupAggs := map[string]*channelStatusRuntimeAgg{}
+	channelAggs := map[channelStatusRuntimeItemKey]*channelStatusRuntimeAgg{}
+	summaryAgg := newChannelStatusRuntimeAgg()
+
+	for _, group := range response.Groups {
+		if group == nil {
+			continue
+		}
+		groupName := normalizeChannelGroup(group.Group)
+		groupByName[groupName] = group
+		for _, channel := range group.Channels {
+			if channel == nil {
+				continue
+			}
+			channelByRuntimeKey[channelStatusRuntimeItemKey{group: groupName, channelID: channel.ID}] = channel
+		}
+	}
+
+	for _, item := range runtimeStatus.Items {
+		if item.ChannelID <= 0 {
+			continue
+		}
+		groupName := normalizeChannelGroup(item.Group)
+		if _, ok := groupByName[groupName]; !ok {
+			continue
+		}
+		summaryAgg.add(item)
+		groupAgg := groupAggs[groupName]
+		if groupAgg == nil {
+			groupAgg = newChannelStatusRuntimeAgg()
+			groupAggs[groupName] = groupAgg
+		}
+		groupAgg.add(item)
+
+		key := channelStatusRuntimeItemKey{group: groupName, channelID: item.ChannelID}
+		channel := channelByRuntimeKey[key]
+		if channel == nil {
+			continue
+		}
+		channel.RuntimeItems = append(channel.RuntimeItems, item)
+		channelAgg := channelAggs[key]
+		if channelAgg == nil {
+			channelAgg = newChannelStatusRuntimeAgg()
+			channelAggs[key] = channelAgg
+		}
+		channelAgg.add(item)
+	}
+
+	if summary := summaryAgg.finalize(); summary != nil {
+		response.Summary.Runtime = summary
+	}
+	for groupName, agg := range groupAggs {
+		if group := groupByName[groupName]; group != nil {
+			group.Runtime = agg.finalize()
+		}
+	}
+	for key, agg := range channelAggs {
+		channel := channelByRuntimeKey[key]
+		if channel == nil {
+			continue
+		}
+		channel.Runtime = agg.finalize()
+		if len(channel.RuntimeItems) > channelStatusMonitorRuntimeLimit {
+			channel.RuntimeItems = channel.RuntimeItems[:channelStatusMonitorRuntimeLimit]
+		}
+	}
+}
+
+func (a *channelStatusRuntimeAgg) add(item modelgatewayobservability.RuntimeStatusItem) {
+	if a == nil {
+		return
+	}
+	a.stats.RuntimeKeys++
+	if item.ChannelID > 0 {
+		a.channelIDs[item.ChannelID] = struct{}{}
+		setMaxInt(a.activeConcurrencyByChannel, item.ChannelID, item.ActiveConcurrency)
+		setMaxInt(a.maxConcurrencyByChannel, item.ChannelID, runtimeMonitorConcurrencyLimit(item))
+		setMaxInt(a.queueDepthByChannel, item.ChannelID, item.QueueDepth)
+		setMaxInt(a.queueCapacityByChannel, item.ChannelID, item.QueueCapacity)
+		setMaxInt(a.firstBytePendingByChannel, item.ChannelID, item.FirstBytePending)
+		setMaxInt(a.slowFirstBytePendingByChannel, item.ChannelID, item.SlowFirstBytePending)
+		setMaxFloat64(a.oldestFirstByteWaitByChannel, item.ChannelID, item.OldestFirstByteWaitMs)
+	}
+	if runtimeMonitorItemAvailable(item) {
+		a.stats.AvailableRuntimeKeys++
+	}
+	if item.HealthStatus == "healthy" {
+		a.stats.HealthyRuntimeKeys++
+	}
+	if runtimeMonitorItemAtRisk(item) {
+		a.stats.RiskRuntimeKeys++
+	}
+	if item.CircuitOpen || item.CircuitState == "open" {
+		a.stats.CircuitOpenRuntimeKeys++
+	}
+	if item.CircuitState == "half_open" {
+		a.stats.CircuitHalfOpenRuntimeKeys++
+	}
+	if item.Cooldown {
+		a.stats.CooldownRuntimeKeys++
+	}
+	if item.FailureAvoidance {
+		a.stats.FailureAvoidanceRuntimeKeys++
+	}
+	if item.HealthStatus == "high_pressure" || runtimeMonitorPressureRatio(item) >= 0.9 {
+		a.stats.HighPressureRuntimeKeys++
+	}
+	if item.ConfigErrorIsolated {
+		a.stats.ConfigIsolatedRuntimeKeys++
+	}
+	addPositiveAverage(&a.scoreSum, &a.scoreCount, item.ScoreTotal)
+	addPositiveAverage(&a.routingScoreSum, &a.routingScoreCount, item.RoutingScoreTotal)
+	if item.SampleCount > 0 || item.SuccessRate > 0 {
+		a.successRateSum += item.SuccessRate
+		a.successRateCount++
+	}
+	addPositiveAverage(&a.ttftSum, &a.ttftCount, item.TTFTMs)
+	addPositiveAverage(&a.durationSum, &a.durationCount, item.DurationMs)
+	addPositiveAverage(&a.costScoreSum, &a.costScoreCount, item.CostScore)
+	if item.SampleCount > 0 || item.ExperienceScore > 0 {
+		a.experienceScoreSum += item.ExperienceScore
+		a.experienceScoreCount++
+	}
+	addPositiveAverage(&a.costRatioSum, &a.costRatioCount, item.CostRatio)
+	addPositiveAverage(&a.groupPriorityRatioSum, &a.groupPriorityRatioCount, item.GroupPriorityRatio)
+	if item.SampleCount > 0 || item.EmptyOutputRate > 0 {
+		a.emptyOutputRateSum += item.EmptyOutputRate
+		a.emptyOutputRateCount++
+	}
+	if item.SampleCount > 0 || item.ExperienceIssueRate > 0 {
+		a.experienceIssueRateSum += item.ExperienceIssueRate
+		a.experienceIssueRateCount++
+	}
+	a.stats.SampleCount += item.SampleCount
+	a.stats.RealSampleCount30m += item.RealSampleCount30m
+	a.stats.LastRealAttemptAt = maxInt64(a.stats.LastRealAttemptAt, item.LastRealAttemptAt)
+	a.stats.LastRealSuccessAt = maxInt64(a.stats.LastRealSuccessAt, item.LastRealSuccessAt)
+	a.stats.LastRealFailureAt = maxInt64(a.stats.LastRealFailureAt, item.LastRealFailureAt)
+	a.stats.LastProbeAt = maxInt64(a.stats.LastProbeAt, item.LastProbeAt)
+	a.stats.LastProbeSuccessAt = maxInt64(a.stats.LastProbeSuccessAt, item.LastProbeSuccessAt)
+	a.applyCostPricingMode(item.CostPricingMode)
+}
+
+func (a *channelStatusRuntimeAgg) finalize() *ChannelStatusMonitorRuntimeStats {
+	if a == nil || a.stats.RuntimeKeys <= 0 {
+		return nil
+	}
+	stats := a.stats
+	stats.Channels = len(a.channelIDs)
+	stats.ActiveConcurrency = sumIntMap(a.activeConcurrencyByChannel)
+	stats.MaxConcurrency = sumIntMap(a.maxConcurrencyByChannel)
+	stats.QueueDepth = sumIntMap(a.queueDepthByChannel)
+	stats.QueueCapacity = sumIntMap(a.queueCapacityByChannel)
+	stats.FirstBytePending = sumIntMap(a.firstBytePendingByChannel)
+	stats.SlowFirstBytePending = sumIntMap(a.slowFirstBytePendingByChannel)
+	stats.OldestFirstByteWaitMs = maxFloat64Map(a.oldestFirstByteWaitByChannel)
+	stats.AvgScore = averageRuntimeMonitorValue(a.scoreSum, a.scoreCount)
+	stats.AvgRoutingScore = averageRuntimeMonitorValue(a.routingScoreSum, a.routingScoreCount)
+	stats.AvgSuccessRate = averageRuntimeMonitorValue(a.successRateSum, a.successRateCount)
+	stats.AvgTTFTMs = averageRuntimeMonitorValue(a.ttftSum, a.ttftCount)
+	stats.AvgDurationMs = averageRuntimeMonitorValue(a.durationSum, a.durationCount)
+	stats.AvgCostScore = averageRuntimeMonitorValue(a.costScoreSum, a.costScoreCount)
+	stats.AvgExperienceScore = averageRuntimeMonitorValue(a.experienceScoreSum, a.experienceScoreCount)
+	stats.AvgCostRatio = averageRuntimeMonitorValue(a.costRatioSum, a.costRatioCount)
+	stats.AvgGroupPriorityRatio = averageRuntimeMonitorValue(a.groupPriorityRatioSum, a.groupPriorityRatioCount)
+	stats.AvgEmptyOutputRate = averageRuntimeMonitorValue(a.emptyOutputRateSum, a.emptyOutputRateCount)
+	stats.AvgExperienceIssueRate = averageRuntimeMonitorValue(a.experienceIssueRateSum, a.experienceIssueRateCount)
+	stats.HealthStatus = channelStatusRuntimeHealthStatus(stats)
+	return &stats
+}
+
+func (a *channelStatusRuntimeAgg) applyCostPricingMode(mode string) {
+	if a == nil {
+		return
+	}
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		return
+	}
+	if a.stats.CostPricingMode == "" {
+		a.stats.CostPricingMode = mode
+		return
+	}
+	if a.stats.CostPricingMode != mode {
+		a.stats.CostPricingMode = "mixed"
+	}
+}
+
+func runtimeMonitorItemAvailable(item modelgatewayobservability.RuntimeStatusItem) bool {
+	return !item.CircuitOpen &&
+		item.CircuitState != "open" &&
+		!item.Cooldown &&
+		!item.FailureAvoidance &&
+		!item.ConfigErrorIsolated
+}
+
+func runtimeMonitorItemAtRisk(item modelgatewayobservability.RuntimeStatusItem) bool {
+	if !runtimeMonitorItemAvailable(item) {
+		return true
+	}
+	switch item.HealthStatus {
+	case "healthy":
+		return false
+	default:
+		return strings.TrimSpace(item.HealthStatus) != ""
+	}
+}
+
+func runtimeMonitorConcurrencyLimit(item modelgatewayobservability.RuntimeStatusItem) int {
+	if item.EffectiveConcurrencyLimit > 0 {
+		return item.EffectiveConcurrencyLimit
+	}
+	if item.LearnedConcurrencyLimit > 0 {
+		return item.LearnedConcurrencyLimit
+	}
+	if item.ConfiguredConcurrencyLimit > 0 {
+		return item.ConfiguredConcurrencyLimit
+	}
+	return item.MaxConcurrency
+}
+
+func runtimeMonitorPressureRatio(item modelgatewayobservability.RuntimeStatusItem) float64 {
+	limit := runtimeMonitorConcurrencyLimit(item)
+	if limit <= 0 {
+		return 0
+	}
+	return float64(item.ActiveConcurrency) / float64(limit)
+}
+
+func channelStatusRuntimeHealthStatus(stats ChannelStatusMonitorRuntimeStats) string {
+	switch {
+	case stats.RuntimeKeys <= 0:
+		return ""
+	case stats.CircuitOpenRuntimeKeys > 0:
+		return "circuit_open"
+	case stats.ConfigIsolatedRuntimeKeys > 0:
+		return "config_isolated"
+	case stats.CooldownRuntimeKeys > 0:
+		return "cooldown"
+	case stats.FailureAvoidanceRuntimeKeys > 0:
+		return "failure_avoidance"
+	case stats.HighPressureRuntimeKeys > 0:
+		return "high_pressure"
+	case stats.RiskRuntimeKeys > 0:
+		return "degraded"
+	default:
+		return "healthy"
+	}
+}
+
+func addPositiveAverage(sum *float64, count *int, value float64) {
+	if sum == nil || count == nil || value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return
+	}
+	*sum += value
+	*count++
+}
+
+func averageRuntimeMonitorValue(sum float64, count int) float64 {
+	if count <= 0 || math.IsNaN(sum) || math.IsInf(sum, 0) {
+		return 0
+	}
+	return math.Round((sum/float64(count))*10000) / 10000
+}
+
+func setMaxInt(values map[int]int, key int, value int) {
+	if key <= 0 || value <= 0 {
+		return
+	}
+	if value > values[key] {
+		values[key] = value
+	}
+}
+
+func setMaxFloat64(values map[int]float64, key int, value float64) {
+	if key <= 0 || value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return
+	}
+	if value > values[key] {
+		values[key] = value
+	}
+}
+
+func sumIntMap(values map[int]int) int {
+	total := 0
+	for _, value := range values {
+		total += value
+	}
+	return total
+}
+
+func maxFloat64Map(values map[int]float64) float64 {
+	maxValue := 0.0
+	for _, value := range values {
+		if value > maxValue {
+			maxValue = value
+		}
+	}
+	return averageRuntimeMonitorValue(maxValue, 1)
 }
 
 func shouldIncludeChannelInStatusMonitor(channel *model.Channel) bool {
@@ -433,24 +884,28 @@ func shouldIncludeChannelInStatusMonitor(channel *model.Channel) bool {
 }
 
 type channelMonitorLogStats struct {
-	requests       int64
-	successes      int64
-	failures       int64
-	error429       int64
-	error5xx       int64
-	errorTimeout   int64
-	balanceErrors  int64
-	errorRateLimit int64
-	streamErrors   int64
-	latencySum     int64
-	latencyCount   int64
-	firstRespSum   int64
-	firstRespCount int64
-	outputTokens   int64
-	totalTokens    int64
-	lastRequestAt  int64
-	lastSuccessAt  int64
-	lastFailureAt  int64
+	requests         int64
+	successes        int64
+	failures         int64
+	error429         int64
+	error5xx         int64
+	errorTimeout     int64
+	clientAborted    int64
+	recovered        int64
+	emptyOutputs     int64
+	experienceIssues int64
+	balanceErrors    int64
+	errorRateLimit   int64
+	streamErrors     int64
+	latencySum       int64
+	latencyCount     int64
+	firstRespSum     int64
+	firstRespCount   int64
+	outputTokens     int64
+	totalTokens      int64
+	lastRequestAt    int64
+	lastSuccessAt    int64
+	lastFailureAt    int64
 }
 
 type channelMonitorLogStatsIndex struct {
@@ -554,6 +1009,191 @@ func buildChannelMonitorRecentStatus(rows []model.ChannelStatusMonitorRecentLogR
 		result[groupName] = statuses
 	}
 	return result
+}
+
+func channelMonitorUniqueUserRequestRows(rows []model.ModelGatewayUserRequestSummary) []model.ModelGatewayUserRequestSummary {
+	if len(rows) == 0 {
+		return rows
+	}
+	seen := make(map[string]struct{}, len(rows))
+	unique := make([]model.ModelGatewayUserRequestSummary, 0, len(rows))
+	for _, row := range rows {
+		key := strings.TrimSpace(row.RequestId)
+		if key == "" {
+			key = "summary:" + strconv.Itoa(row.Id)
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, row)
+	}
+	return unique
+}
+
+func buildChannelMonitorRecentUserRequestStatus(rows []model.ModelGatewayUserRequestSummary, limit int) map[string][]string {
+	if limit <= 0 {
+		limit = channelStatusMonitorRecentLimit
+	}
+	result := make(map[string][]string)
+	grouped := make(map[string][]model.ModelGatewayUserRequestSummary)
+	for _, row := range channelMonitorUniqueUserRequestRows(rows) {
+		groupName := channelMonitorUserRequestGroup(row)
+		if groupName == "" {
+			continue
+		}
+		grouped[groupName] = append(grouped[groupName], row)
+	}
+	for groupName, groupRows := range grouped {
+		sort.Slice(groupRows, func(i, j int) bool {
+			if groupRows[i].CompletedAt == groupRows[j].CompletedAt {
+				return groupRows[i].Id > groupRows[j].Id
+			}
+			return groupRows[i].CompletedAt > groupRows[j].CompletedAt
+		})
+		if len(groupRows) > limit {
+			groupRows = groupRows[:limit]
+		}
+		statuses := make([]string, 0, len(groupRows))
+		for i := len(groupRows) - 1; i >= 0; i-- {
+			statuses = append(statuses, channelMonitorUserRequestStatus(groupRows[i]))
+		}
+		result[groupName] = statuses
+	}
+	return result
+}
+
+func buildChannelMonitorUserRequestStats(rows []model.ModelGatewayUserRequestSummary) channelMonitorLogStatsIndex {
+	index := channelMonitorLogStatsIndex{
+		totalByChannel: make(map[int]*channelMonitorLogStats),
+		byChannelGroup: make(map[int]map[string]*channelMonitorLogStats),
+		byGroup:        make(map[string]*channelMonitorLogStats),
+		overall:        &channelMonitorLogStats{},
+	}
+	for _, row := range channelMonitorUniqueUserRequestRows(rows) {
+		groupName := channelMonitorUserRequestGroup(row)
+		if groupName == "" {
+			continue
+		}
+		applyChannelMonitorUserRequestRow(index.overall, row)
+		groupStats := index.byGroup[groupName]
+		if groupStats == nil {
+			groupStats = &channelMonitorLogStats{}
+			index.byGroup[groupName] = groupStats
+		}
+		applyChannelMonitorUserRequestRow(groupStats, row)
+		if row.FinalChannelID <= 0 {
+			continue
+		}
+		applyChannelMonitorUserRequestRowForChannel(index.totalByChannel, row.FinalChannelID, row)
+		channelGroupStats := index.byChannelGroup[row.FinalChannelID]
+		if channelGroupStats == nil {
+			channelGroupStats = make(map[string]*channelMonitorLogStats)
+			index.byChannelGroup[row.FinalChannelID] = channelGroupStats
+		}
+		applyChannelMonitorUserRequestRowForChannel(channelGroupStats, groupName, row)
+	}
+	return index
+}
+
+func applyChannelMonitorUserRequestRowForChannel[K comparable](stats map[K]*channelMonitorLogStats, key K, row model.ModelGatewayUserRequestSummary) {
+	agg := stats[key]
+	if agg == nil {
+		agg = &channelMonitorLogStats{}
+		stats[key] = agg
+	}
+	applyChannelMonitorUserRequestRow(agg, row)
+}
+
+func applyChannelMonitorUserRequestRow(stats *channelMonitorLogStats, row model.ModelGatewayUserRequestSummary) {
+	if stats == nil {
+		return
+	}
+	status := channelMonitorUserRequestStatus(row)
+	stats.requests++
+	stats.lastRequestAt = maxInt64(stats.lastRequestAt, row.CompletedAt)
+	if row.Recovered {
+		stats.recovered++
+	}
+	if row.EmptyOutput {
+		stats.emptyOutputs++
+	}
+	if strings.TrimSpace(row.ExperienceIssue) != "" && !row.EmptyOutput {
+		stats.experienceIssues++
+	}
+	if row.TTFTMs > 0 {
+		stats.firstRespSum += row.TTFTMs
+		stats.firstRespCount++
+	}
+	if row.DurationMs > 0 {
+		stats.latencySum += row.DurationMs
+		stats.latencyCount++
+	}
+	if status == "client_aborted" {
+		stats.clientAborted++
+		return
+	}
+	if row.FinalSuccess {
+		stats.successes++
+		stats.lastSuccessAt = maxInt64(stats.lastSuccessAt, row.CompletedAt)
+		return
+	}
+	stats.failures++
+	stats.lastFailureAt = maxInt64(stats.lastFailureAt, row.CompletedAt)
+	applyMonitorStatusToStats(stats, status)
+	if status == "stream_interrupted" {
+		stats.streamErrors++
+	}
+	if row.FinalErrorCategory == model.ModelGatewayUserRequestErrorBalanceOrQuota ||
+		row.FinalErrorCategory == model.ModelGatewayUserRequestErrorAuthConfig {
+		stats.balanceErrors++
+	}
+}
+
+func channelMonitorUserRequestGroup(row model.ModelGatewayUserRequestSummary) string {
+	groupName := strings.TrimSpace(row.SelectedGroup)
+	if groupName == "" {
+		groupName = strings.TrimSpace(row.RequestedGroup)
+	}
+	return normalizeChannelGroup(groupName)
+}
+
+func channelMonitorUserRequestStatus(row model.ModelGatewayUserRequestSummary) string {
+	if row.ClientAborted || strings.TrimSpace(row.FinalErrorCategory) == model.ModelGatewayUserRequestErrorClientAborted || row.FinalStatusCode == relayStatusClientClosedRequest {
+		return "client_aborted"
+	}
+	if row.FinalSuccess {
+		if row.EmptyOutput {
+			return "empty_output"
+		}
+		if strings.TrimSpace(row.ExperienceIssue) != "" {
+			return "experience_issue"
+		}
+		return "success"
+	}
+	switch strings.TrimSpace(row.FinalErrorCategory) {
+	case model.ModelGatewayUserRequestErrorRateLimit:
+		return "rate_limit"
+	case model.ModelGatewayUserRequestErrorTimeout:
+		return "timeout"
+	case model.ModelGatewayUserRequestErrorServer, model.ModelGatewayUserRequestErrorUpstream:
+		return "server_error"
+	case model.ModelGatewayUserRequestErrorStreamInterrupted:
+		return "stream_interrupted"
+	case model.ModelGatewayUserRequestErrorBalanceOrQuota, model.ModelGatewayUserRequestErrorAuthConfig:
+		return "error"
+	default:
+		if row.FinalStatusCode == http.StatusTooManyRequests {
+			return "rate_limit"
+		}
+		if isTimeoutStatus(row.FinalStatusCode) {
+			return "timeout"
+		}
+		if row.FinalStatusCode >= http.StatusInternalServerError {
+			return "server_error"
+		}
+		return "error"
+	}
 }
 
 func buildChannelMonitorRequestLog(row model.ChannelStatusMonitorLogRow, groupName string) channelMonitorRequestLog {
@@ -712,12 +1352,16 @@ func monitorLogStatusWeight(status string) int {
 		return 0
 	case "error":
 		return 1
-	case "timeout":
+	case "empty_output", "experience_issue", "client_aborted":
 		return 2
-	case "server_error":
+	case "timeout":
 		return 3
-	case "rate_limit":
+	case "stream_interrupted":
 		return 4
+	case "server_error":
+		return 5
+	case "rate_limit":
+		return 6
 	default:
 		return 1
 	}
@@ -735,6 +1379,8 @@ func applyMonitorStatusToStats(stats *channelMonitorLogStats, status string) {
 		stats.error5xx++
 	case "timeout":
 		stats.errorTimeout++
+	case "stream_interrupted":
+		stats.streamErrors++
 	}
 }
 
@@ -908,6 +1554,10 @@ func buildChannelStatusMonitorItem(channel *model.Channel, logStat *channelMonit
 		item.RecentError429 = logStat.error429
 		item.RecentError5xx = logStat.error5xx
 		item.RecentErrorTimeout = logStat.errorTimeout
+		item.RecentClientAborted = logStat.clientAborted
+		item.RecentRecovered = logStat.recovered
+		item.RecentEmptyOutputs = logStat.emptyOutputs
+		item.RecentExperienceIssues = logStat.experienceIssues
 		item.RecentBalanceErrors = logStat.balanceErrors
 		item.RecentErrorRateLimit = logStat.errorRateLimit
 		item.RecentStreamErrors = logStat.streamErrors
@@ -990,6 +1640,17 @@ func avgInt64(sum, count int64) int64 {
 		return 0
 	}
 	return sum / count
+}
+
+func channelMonitorPreferredStats(primary, fallback *channelMonitorLogStats) *channelMonitorLogStats {
+	if primary != nil && primary.requests > 0 {
+		return primary
+	}
+	return fallback
+}
+
+func channelMonitorUserSuccessRate(successes, requests, clientAborted int64) float64 {
+	return successRate(successes, requests-clientAborted)
 }
 
 func successRate(successes, requests int64) float64 {

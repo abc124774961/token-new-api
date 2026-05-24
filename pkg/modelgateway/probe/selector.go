@@ -126,6 +126,9 @@ func (s *ProbeSelector) lowHealthCandidatesLocked(channelByID map[int]*model.Cha
 			continue
 		}
 		snapshot.Key = key
+		if configErrorIsolatedSnapshot(snapshot) || configErrorIsolatedRuntimeKey(key) {
+			continue
+		}
 		channel := channelByID[key.ChannelID]
 		if channel == nil || !probeRuntimeKeyModelSupported(key) || !probeChannelSupportsKey(channel, key) {
 			continue
@@ -167,6 +170,9 @@ func (s *ProbeSelector) lowTrafficCandidatesLocked(channelByID map[int]*model.Ch
 					continue
 				}
 				snapshot, ok := s.snapshotForKey(key)
+				if configErrorIsolatedRuntimeKey(key) || (ok && configErrorIsolatedSnapshot(snapshot)) {
+					continue
+				}
 				if !lowTrafficProbeNeeded(snapshot, ok, now, config) {
 					continue
 				}
@@ -357,16 +363,57 @@ func probeChannelEligible(channel *model.Channel) bool {
 	switch channel.Status {
 	case common.ChannelStatusEnabled:
 	case common.ChannelStatusAutoDisabled:
+		if configErrorIsolatedChannel(channel) {
+			return false
+		}
 		if !service.IsErrorPausedChannel(channel) || !service.ShouldResumeErrorPausedChannel(channel, nil) {
 			return false
 		}
 	default:
 		return false
 	}
+	if configErrorIsolatedChannel(channel) {
+		return false
+	}
 	if service.IsConfirmedBalanceInsufficientChannel(channel) || service.IsRuntimeBalanceInsufficientChannel(channel) {
 		return false
 	}
 	return true
+}
+
+func configErrorIsolatedChannel(channel *model.Channel) bool {
+	if channel == nil {
+		return false
+	}
+	return configErrorIsolatedInfo(channel.GetOtherInfo())
+}
+
+func configErrorIsolatedSnapshot(snapshot core.RuntimeSnapshot) bool {
+	return snapshot.ConfigErrorIsolated
+}
+
+func configErrorIsolatedRuntimeKey(key core.RuntimeKey) bool {
+	key = normalizeProbeRuntimeKey(key)
+	if key.ChannelID <= 0 || key.RequestedModel == "" || key.Group == "" {
+		return false
+	}
+	return service.IsChannelConfigIsolated(service.NewChannelConfigIsolationKey(
+		key.ChannelID,
+		key.RequestedModel,
+		key.Group,
+		key.EndpointType,
+	))
+}
+
+func configErrorIsolatedInfo(info map[string]any) bool {
+	if value, ok := info["config_error_isolated"].(bool); ok && value {
+		return true
+	}
+	if value, ok := info["config_error_isolated"].(string); ok && strings.EqualFold(strings.TrimSpace(value), "true") {
+		return true
+	}
+	reason, _ := info["isolation_reason"].(string)
+	return strings.TrimSpace(reason) == core.ErrorCategoryAuthConfigError
 }
 
 func selectProbeModel(channel *model.Channel) string {

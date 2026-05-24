@@ -21,6 +21,7 @@ type RuntimeStateProvider interface {
 	ConcurrencyCooldownActive(channelID int) bool
 	FailureAvoidanceActive(channelID int) bool
 	FirstBytePendingStatus(channelID int) *service.ChannelFirstBytePendingStatus
+	ConfigErrorIsolationStatus(key core.RuntimeKey) *service.ChannelConfigIsolationStatus
 }
 
 type CostProfileProvider interface {
@@ -55,6 +56,15 @@ func (p *ServiceRuntimeStateProvider) FailureAvoidanceActive(channelID int) bool
 
 func (p *ServiceRuntimeStateProvider) FirstBytePendingStatus(channelID int) *service.ChannelFirstBytePendingStatus {
 	return service.GetChannelFirstBytePendingStatus(channelID)
+}
+
+func (p *ServiceRuntimeStateProvider) ConfigErrorIsolationStatus(key core.RuntimeKey) *service.ChannelConfigIsolationStatus {
+	return service.GetChannelConfigIsolationStatus(service.NewChannelConfigIsolationKey(
+		key.ChannelID,
+		key.RequestedModel,
+		key.Group,
+		key.EndpointType,
+	))
 }
 
 type RuntimeSnapshotEnricher struct {
@@ -140,8 +150,22 @@ func (e *RuntimeSnapshotEnricher) Enrich(candidate core.Candidate, snapshot core
 	snapshot = e.applyFirstBytePending(snapshot, channelID)
 	snapshot.Cooldown = snapshot.Cooldown || e.stateProvider.ConcurrencyCooldownActive(channelID)
 	snapshot.FailureAvoidance = snapshot.FailureAvoidance || e.stateProvider.FailureAvoidanceActive(channelID)
+	snapshot = e.applyConfigErrorIsolation(snapshot)
 	snapshot = e.applyCostSnapshot(candidate, snapshot, policy)
 	snapshot = e.applyCircuit(snapshot, policy)
+	return snapshot
+}
+
+func (e *RuntimeSnapshotEnricher) applyConfigErrorIsolation(snapshot core.RuntimeSnapshot) core.RuntimeSnapshot {
+	status := e.stateProvider.ConfigErrorIsolationStatus(snapshot.Key)
+	if status == nil {
+		return snapshot
+	}
+	snapshot.ConfigErrorIsolated = status.Active
+	snapshot.IsolationReason = status.Reason
+	snapshot.IsolationUntil = status.Until
+	snapshot.AuthConfigErrorCount = status.FailureCount
+	snapshot.LastAuthConfigErrorAt = status.LastErrorAt
 	return snapshot
 }
 

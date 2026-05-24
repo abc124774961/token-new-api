@@ -572,6 +572,11 @@ func ensureRuntimeSnapshotProbeColumns() error {
 		{"real_sample_count_30m", "RealSampleCount30m"},
 		{"last_probe_at", "LastProbeAt"},
 		{"last_probe_success_at", "LastProbeSuccessAt"},
+		{"config_error_isolated", "ConfigErrorIsolated"},
+		{"isolation_reason", "IsolationReason"},
+		{"isolation_until", "IsolationUntil"},
+		{"auth_config_error_count", "AuthConfigErrorCount"},
+		{"last_auth_config_error_at", "LastAuthConfigErrorAt"},
 	}
 	for _, column := range columns {
 		if DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, column.dbName) {

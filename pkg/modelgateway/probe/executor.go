@@ -504,22 +504,25 @@ func probeErrorCategory(apiErr *types.NewAPIError) string {
 	if apiErr == nil {
 		return ""
 	}
+	if apiErr.StatusCode == http.StatusTooManyRequests {
+		return core.ErrorCategoryOverloadSkip
+	}
+	if apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden {
+		return core.ErrorCategoryAuthConfigError
+	}
 	if service.IsUpstreamConcurrencyLimitError(apiErr) || apiErr.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
-		return "upstream_concurrency_limit"
+		return core.ErrorCategoryUpstreamConcurrencyLimit
 	}
 	if service.IsBalanceInsufficientError(apiErr) {
-		return "balance_or_quota"
-	}
-	if apiErr.StatusCode == http.StatusTooManyRequests {
-		return "rate_limit"
+		return core.ErrorCategoryBalanceOrQuota
 	}
 	if apiErr.StatusCode == http.StatusGatewayTimeout || errors.Is(apiErr, context.DeadlineExceeded) {
-		return "timeout"
+		return core.ErrorCategoryTimeout
 	}
 	if apiErr.StatusCode >= http.StatusInternalServerError {
-		return "server_error"
+		return core.ErrorCategoryServerError
 	}
-	return "upstream_error"
+	return core.ErrorCategoryUpstreamError
 }
 
 func newProbeID() string {

@@ -219,6 +219,7 @@ func modelExecutionRecordFromAttempt(result core.AttemptResult) *model.ModelExec
 		StatusCode:        result.StatusCode,
 		ErrorCode:         result.ErrorCode,
 		ErrorType:         result.ErrorType,
+		ErrorCategory:     result.ErrorCategory,
 		DurationMs:        result.Duration.Milliseconds(),
 		TTFTMs:            result.TTFT.Milliseconds(),
 		StreamInterrupted: result.StreamInterrupted,

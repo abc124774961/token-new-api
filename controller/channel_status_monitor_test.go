@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/stretchr/testify/require"
 )
@@ -234,6 +235,184 @@ func TestChannelMonitorRecentStatusIsGroupedByUserRequestOutcome(t *testing.T) {
 
 	require.Equal(t, []string{"success", "server_error"}, statuses["codex-subscription"])
 	require.Equal(t, []string{"success"}, statuses["codex-plus"])
+}
+
+func TestChannelMonitorRecentUserRequestStatusUsesFinalOutcome(t *testing.T) {
+	rows := []model.ModelGatewayUserRequestSummary{
+		{
+			Id:             1,
+			CompletedAt:    100,
+			RequestedGroup: "codex-pro",
+			FinalSuccess:   true,
+		},
+		{
+			Id:                 2,
+			CompletedAt:        101,
+			RequestedGroup:     "codex-pro",
+			FinalErrorCategory: model.ModelGatewayUserRequestErrorRateLimit,
+			FinalStatusCode:    429,
+		},
+		{
+			Id:              3,
+			CompletedAt:     102,
+			RequestedGroup:  "codex-pro",
+			FinalSuccess:    true,
+			ExperienceIssue: "malformed_content",
+		},
+		{
+			Id:                 4,
+			CompletedAt:        103,
+			RequestedGroup:     "codex-plus",
+			FinalErrorCategory: model.ModelGatewayUserRequestErrorTimeout,
+			FinalStatusCode:    504,
+		},
+	}
+
+	statuses := buildChannelMonitorRecentUserRequestStatus(rows, 60)
+
+	require.Equal(t, []string{"success", "rate_limit", "experience_issue"}, statuses["codex-pro"])
+	require.Equal(t, []string{"timeout"}, statuses["codex-plus"])
+}
+
+func TestChannelMonitorRecentUserRequestStatusPrefersSelectedGroup(t *testing.T) {
+	rows := []model.ModelGatewayUserRequestSummary{
+		{
+			Id:             1,
+			CompletedAt:    100,
+			RequestedGroup: "auto",
+			SelectedGroup:  "codex-pro",
+			FinalSuccess:   true,
+		},
+	}
+
+	statuses := buildChannelMonitorRecentUserRequestStatus(rows, 60)
+
+	require.Empty(t, statuses["auto"])
+	require.Equal(t, []string{"success"}, statuses["codex-pro"])
+}
+
+func TestChannelMonitorUserRequestStatsUseUserPerspective(t *testing.T) {
+	rows := []model.ModelGatewayUserRequestSummary{
+		{
+			Id:             1,
+			RequestId:      "req-success",
+			CompletedAt:    100,
+			SelectedGroup:  "codex-pro",
+			FinalChannelID: 10,
+			FinalSuccess:   true,
+			DurationMs:     1200,
+			TTFTMs:         250,
+		},
+		{
+			Id:                 2,
+			RequestId:          "req-rate-limit",
+			CompletedAt:        101,
+			RequestedGroup:     "codex-pro",
+			FinalChannelID:     10,
+			FinalErrorCategory: model.ModelGatewayUserRequestErrorRateLimit,
+			FinalStatusCode:    429,
+		},
+		{
+			Id:                 3,
+			RequestId:          "req-cancelled",
+			CompletedAt:        102,
+			RequestedGroup:     "codex-pro",
+			FinalChannelID:     11,
+			FinalErrorCategory: model.ModelGatewayUserRequestErrorClientAborted,
+			FinalStatusCode:    relayStatusClientClosedRequest,
+			ClientAborted:      true,
+		},
+		{
+			Id:              4,
+			RequestId:       "req-empty",
+			CompletedAt:     103,
+			RequestedGroup:  "codex-plus",
+			FinalChannelID:  12,
+			FinalSuccess:    true,
+			EmptyOutput:     true,
+			ExperienceIssue: "empty_output",
+		},
+	}
+
+	stats := buildChannelMonitorUserRequestStats(rows)
+
+	proStats := stats.byGroup["codex-pro"]
+	require.NotNil(t, proStats)
+	require.EqualValues(t, 3, proStats.requests)
+	require.EqualValues(t, 1, proStats.successes)
+	require.EqualValues(t, 1, proStats.failures)
+	require.EqualValues(t, 1, proStats.clientAborted)
+	require.EqualValues(t, 1, proStats.error429)
+	require.EqualValues(t, 1200, avgInt64(proStats.latencySum, proStats.latencyCount))
+	require.EqualValues(t, 250, avgInt64(proStats.firstRespSum, proStats.firstRespCount))
+	require.Equal(t, float64(50), channelMonitorUserSuccessRate(proStats.successes, proStats.requests, proStats.clientAborted))
+
+	plusStats := stats.byGroup["codex-plus"]
+	require.NotNil(t, plusStats)
+	require.EqualValues(t, 1, plusStats.requests)
+	require.EqualValues(t, 1, plusStats.successes)
+	require.EqualValues(t, 1, plusStats.emptyOutputs)
+	require.EqualValues(t, 0, plusStats.experienceIssues)
+}
+
+func TestChannelMonitorRuntimeDoesNotFillUserRequestHistory(t *testing.T) {
+	channel := &model.Channel{
+		Id:     30,
+		Name:   "runtime-channel",
+		Status: common.ChannelStatusEnabled,
+		Group:  "codex-pro",
+		Models: "gpt-5.5",
+	}
+	response := buildChannelStatusMonitorFromRowsWithChannels(24, []*model.Channel{channel}, nil, nil)
+
+	applyChannelStatusMonitorRuntimeStatus(&response, modelgatewayobservability.RuntimeStatusResponse{
+		Items: []modelgatewayobservability.RuntimeStatusItem{
+			{
+				ChannelID:    30,
+				Group:        "codex-pro",
+				HealthStatus: "healthy",
+				SampleCount:  2,
+				SuccessRate:  1,
+				ScoreTotal:   0.9,
+			},
+		},
+	})
+
+	require.Len(t, response.Groups, 1)
+	require.Empty(t, response.Groups[0].RecentStatusSource)
+	require.Empty(t, response.Groups[0].RecentStatus)
+}
+
+func TestChannelMonitorRuntimeRecentStatusDoesNotOverrideUserRequests(t *testing.T) {
+	channel := &model.Channel{
+		Id:     31,
+		Name:   "runtime-channel",
+		Status: common.ChannelStatusEnabled,
+		Group:  "codex-pro",
+		Models: "gpt-5.5",
+	}
+	response := buildChannelStatusMonitorFromRowsWithChannelsAndUserRequests(24, []*model.Channel{channel}, nil, nil, nil, []model.ModelGatewayUserRequestSummary{
+		{
+			Id:             1,
+			CompletedAt:    100,
+			RequestedGroup: "codex-pro",
+			FinalSuccess:   true,
+		},
+	})
+
+	applyChannelStatusMonitorRuntimeStatus(&response, modelgatewayobservability.RuntimeStatusResponse{
+		Items: []modelgatewayobservability.RuntimeStatusItem{
+			{
+				ChannelID:    31,
+				Group:        "codex-pro",
+				HealthStatus: "degraded",
+			},
+		},
+	})
+
+	require.Len(t, response.Groups, 1)
+	require.Equal(t, "user_requests", response.Groups[0].RecentStatusSource)
+	require.Equal(t, []string{"success"}, response.Groups[0].RecentStatus)
 }
 
 func TestChannelMonitorStreamConsumeErrorIsNotSuccessful(t *testing.T) {

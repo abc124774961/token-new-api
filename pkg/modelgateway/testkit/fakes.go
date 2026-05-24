@@ -171,6 +171,7 @@ type FakeRuntimeStateProvider struct {
 	CooldownByChannel          map[int]bool
 	FailureAvoidanceByChannel  map[int]bool
 	FirstBytePendingByChannel  map[int]*service.ChannelFirstBytePendingStatus
+	ConfigIsolationByKey       map[core.RuntimeKey]*service.ChannelConfigIsolationStatus
 }
 
 func (p *FakeRuntimeStateProvider) ActiveConcurrency(channelID int) int {
@@ -199,6 +200,13 @@ func (p *FakeRuntimeStateProvider) FirstBytePendingStatus(channelID int) *servic
 		return nil
 	}
 	return p.FirstBytePendingByChannel[channelID]
+}
+
+func (p *FakeRuntimeStateProvider) ConfigErrorIsolationStatus(key core.RuntimeKey) *service.ChannelConfigIsolationStatus {
+	if p == nil {
+		return nil
+	}
+	return p.ConfigIsolationByKey[normalizeRuntimeKeyForTest(key)]
 }
 
 func copyStringMap(src map[string]string) map[string]string {

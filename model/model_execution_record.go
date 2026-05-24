@@ -33,6 +33,7 @@ type ModelExecutionRecord struct {
 	StatusCode        int     `json:"status_code" gorm:"default:0;index"`
 	ErrorCode         string  `json:"error_code" gorm:"type:varchar(128);default:''"`
 	ErrorType         string  `json:"error_type" gorm:"type:varchar(64);default:''"`
+	ErrorCategory     string  `json:"error_category" gorm:"type:varchar(64);index;default:''"`
 	DurationMs        int64   `json:"duration_ms" gorm:"default:0"`
 	TTFTMs            int64   `json:"ttft_ms" gorm:"default:0"`
 	StreamInterrupted bool    `json:"stream_interrupted" gorm:"default:false;index"`

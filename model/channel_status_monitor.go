@@ -139,11 +139,88 @@ func GetChannelStatusMonitorRecentLogsByGroups(groupNames []string, perGroupLimi
 	return rows, nil
 }
 
+func GetChannelStatusMonitorUserRequests(startTs int64, groupNames []string, limit int) ([]ModelGatewayUserRequestSummary, error) {
+	if startTs <= 0 {
+		startTs = time.Now().Add(-24 * time.Hour).Unix()
+	}
+	groupNames = uniqueNormalizedMonitorGroups(groupNames)
+	if len(groupNames) == 0 || DB == nil {
+		return []ModelGatewayUserRequestSummary{}, nil
+	}
+	rows := make([]ModelGatewayUserRequestSummary, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), channelStatusMonitorQueryTimeout)
+	defer cancel()
+	tx := DB.Model(&ModelGatewayUserRequestSummary{}).
+		WithContext(ctx).
+		Select("id, request_id, completed_at, requested_group, selected_group, final_channel_id, final_channel_name, final_success, recovered, final_status_code, final_error_category, empty_output, experience_issue, stream_interrupted, client_aborted, duration_ms, ttft_ms").
+		Where("completed_at >= ? AND completed_at > 0", startTs).
+		Order("completed_at desc, id desc")
+	tx = applyChannelStatusMonitorUserRequestGroupsFilter(tx, groupNames)
+	if limit > 0 {
+		tx = tx.Limit(limit)
+	}
+	err := tx.Find(&rows).Error
+	return rows, err
+}
+
+func GetChannelStatusMonitorRecentUserRequestsByGroups(groupNames []string, perGroupLimit int) ([]ModelGatewayUserRequestSummary, error) {
+	if perGroupLimit <= 0 {
+		perGroupLimit = 60
+	}
+	groupNames = uniqueNormalizedMonitorGroups(groupNames)
+	if len(groupNames) == 0 || DB == nil {
+		return []ModelGatewayUserRequestSummary{}, nil
+	}
+	rows := make([]ModelGatewayUserRequestSummary, 0, len(groupNames)*perGroupLimit)
+	ctx, cancel := context.WithTimeout(context.Background(), channelStatusMonitorQueryTimeout)
+	defer cancel()
+	for _, groupName := range groupNames {
+		groupRows := make([]ModelGatewayUserRequestSummary, 0, perGroupLimit)
+		tx := DB.Model(&ModelGatewayUserRequestSummary{}).
+			WithContext(ctx).
+			Select("id, request_id, completed_at, requested_group, selected_group, final_success, final_status_code, final_error_category, empty_output, experience_issue, stream_interrupted, client_aborted").
+			Where("completed_at > 0").
+			Order("completed_at desc, id desc").
+			Limit(perGroupLimit)
+		tx = applyChannelStatusMonitorUserRequestGroupFilter(tx, groupName)
+		if err := tx.Find(&groupRows).Error; err != nil {
+			return nil, err
+		}
+		rows = append(rows, groupRows...)
+	}
+	return rows, nil
+}
+
 func applyChannelStatusMonitorGroupFilter(tx *gorm.DB, groupName string) *gorm.DB {
 	if groupName == "default" {
 		return tx.Where("("+logGroupCol+" = ? OR "+logGroupCol+" = ?)", groupName, "")
 	}
 	return tx.Where(logGroupCol+" = ?", groupName)
+}
+
+func applyChannelStatusMonitorUserRequestGroupFilter(tx *gorm.DB, groupName string) *gorm.DB {
+	if groupName == "default" {
+		return tx.Where("((selected_group <> ? AND selected_group = ?) OR (selected_group = ? AND (requested_group = ? OR requested_group = ?)))", "", groupName, "", groupName, "")
+	}
+	return tx.Where("((selected_group <> ? AND selected_group = ?) OR (selected_group = ? AND requested_group = ?))", "", groupName, "", groupName)
+}
+
+func applyChannelStatusMonitorUserRequestGroupsFilter(tx *gorm.DB, groupNames []string) *gorm.DB {
+	groupNames = uniqueNormalizedMonitorGroups(groupNames)
+	if len(groupNames) == 0 {
+		return tx
+	}
+	hasDefault := false
+	for _, groupName := range groupNames {
+		if groupName == "default" {
+			hasDefault = true
+			break
+		}
+	}
+	if hasDefault {
+		return tx.Where("(selected_group IN ? OR (selected_group = ? AND requested_group IN ?) OR (selected_group = ? AND requested_group = ?))", groupNames, "", groupNames, "", "")
+	}
+	return tx.Where("(selected_group IN ? OR (selected_group = ? AND requested_group IN ?))", groupNames, "", groupNames)
 }
 
 func uniqueNormalizedMonitorGroups(groupNames []string) []string {

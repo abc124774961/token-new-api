@@ -1,6 +1,8 @@
 package modelgateway_test
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -125,6 +127,8 @@ func TestPortableFacadeShadowRecordsOnly(t *testing.T) {
 func TestFacadeReportAppliesStickyLifecycle(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(nil)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Request.Header.Set("X-Session-Id", "facade-sticky-lifecycle")
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, 901)
 
 	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{

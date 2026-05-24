@@ -18,6 +18,8 @@ const (
 	ModelGatewayUserRequestErrorServer            = "server_error"
 	ModelGatewayUserRequestErrorClientAborted     = "client_aborted"
 	ModelGatewayUserRequestErrorBalanceOrQuota    = "balance_or_quota"
+	ModelGatewayUserRequestErrorAuthConfig        = "auth_config_error"
+	ModelGatewayUserRequestErrorUnknown           = "unknown"
 )
 
 type ModelGatewayUserRequestSummary struct {
@@ -346,7 +348,12 @@ func NormalizeModelGatewayUserRequestErrorCategory(category string, errorCode st
 		strings.Contains(normalizedCode, "balance_not_enough") ||
 		strings.Contains(normalizedCode, "quota_not_enough"):
 		return ModelGatewayUserRequestErrorBalanceOrQuota
-	case strings.Contains(normalizedCategory, "rate_limit") ||
+	case strings.Contains(normalizedCategory, "auth_config") ||
+		statusCode == http.StatusUnauthorized ||
+		statusCode == http.StatusForbidden:
+		return ModelGatewayUserRequestErrorAuthConfig
+	case strings.Contains(normalizedCategory, "overload_skip") ||
+		strings.Contains(normalizedCategory, "rate_limit") ||
 		strings.Contains(normalizedCategory, "concurrency_limit") ||
 		strings.Contains(normalizedCategory, "quota") ||
 		statusCode == http.StatusTooManyRequests:
@@ -357,6 +364,8 @@ func NormalizeModelGatewayUserRequestErrorCategory(category string, errorCode st
 		return ModelGatewayUserRequestErrorUpstream
 	case statusCode >= http.StatusInternalServerError:
 		return ModelGatewayUserRequestErrorServer
+	case normalizedCategory == "" && normalizedCode == "" && normalizedType == "" && statusCode <= 0:
+		return ModelGatewayUserRequestErrorUnknown
 	default:
 		return ModelGatewayUserRequestErrorUpstream
 	}

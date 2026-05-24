@@ -298,6 +298,11 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 		ExperienceScore:            snapshot.ExperienceScore,
 		EmptyOutputRate:            snapshot.EmptyOutputRate,
 		ExperienceIssueRate:        snapshot.ExperienceIssueRate,
+		ConfigErrorIsolated:        snapshot.ConfigErrorIsolated,
+		IsolationReason:            snapshot.IsolationReason,
+		IsolationUntil:             snapshot.IsolationUntil,
+		AuthConfigErrorCount:       snapshot.AuthConfigErrorCount,
+		LastAuthConfigErrorAt:      snapshot.LastAuthConfigErrorAt,
 		StickyMatched:              stickyMatched,
 		ScoreSampleSource:          snapshot.SampleSource,
 		MatchedRuntimeKey:          snapshot.MatchedRuntimeKey,
@@ -604,6 +609,9 @@ func isStickyCandidate(candidate core.Candidate, route core.StickyRoute) bool {
 }
 
 func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) string {
+	if snapshot.ConfigErrorIsolated {
+		return "config_error_isolated"
+	}
 	if candidate.Channel != nil && service.IsChannelBalanceSkipped(c, candidate.Channel.Id) {
 		return service.ChannelStatusReasonBalanceInsufficient
 	}

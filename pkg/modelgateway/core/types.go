@@ -143,6 +143,11 @@ type RuntimeSnapshot struct {
 	CircuitOpen                bool
 	Cooldown                   bool
 	FailureAvoidance           bool
+	ConfigErrorIsolated        bool
+	IsolationReason            string
+	IsolationUntil             int64
+	AuthConfigErrorCount       int
+	LastAuthConfigErrorAt      int64
 	SampleCount                int
 	LastRealAttemptAt          int64
 	LastRealSuccessAt          int64
@@ -334,6 +339,11 @@ type CandidateExplanation struct {
 	ExperienceScore            float64            `json:"experience_score,omitempty"`
 	EmptyOutputRate            float64            `json:"empty_output_rate,omitempty"`
 	ExperienceIssueRate        float64            `json:"experience_issue_rate,omitempty"`
+	ConfigErrorIsolated        bool               `json:"config_error_isolated,omitempty"`
+	IsolationReason            string             `json:"isolation_reason,omitempty"`
+	IsolationUntil             int64              `json:"isolation_until,omitempty"`
+	AuthConfigErrorCount       int                `json:"auth_config_error_count,omitempty"`
+	LastAuthConfigErrorAt      int64              `json:"last_auth_config_error_at,omitempty"`
 	StickyMatched              bool               `json:"sticky_matched,omitempty"`
 	Selected                   bool               `json:"selected,omitempty"`
 	ScoreSampleSource          string             `json:"score_sample_source,omitempty"`

@@ -157,6 +157,85 @@ func TestSelectorBreaksStickyRouteOnCooldown(t *testing.T) {
 	require.Equal(t, "weighted_score_sticky_broken", plan.SelectedReason)
 }
 
+func TestSelectorRejectsConfigIsolatedStickyCandidateAndUsesAlternative(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-config-isolated"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 143)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+	}
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{}, nil)
+	sticky.Save(ctx, &req, &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 1},
+		SelectedGroup: "default",
+	})
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	stickyKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 1, Group: "default"}
+	peerKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 2, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                   stickyKey,
+		SuccessRate:           1,
+		TTFTMs:                300,
+		TokensPerSecond:       80,
+		CostRatio:             1,
+		GroupPriorityRatio:    1,
+		ConfigErrorIsolated:   true,
+		IsolationReason:       "auth_config_error",
+		IsolationUntil:        1770000000,
+		AuthConfigErrorCount:  2,
+		LastAuthConfigErrorAt: 1769999900,
+		SampleCount:           20,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                peerKey,
+		SuccessRate:        0.82,
+		TTFTMs:             900,
+		TokensPerSecond:    30,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 1}, Group: "default", RuntimeKey: stickyKey},
+			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: peerKey},
+		}),
+		store,
+		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+	).WithStickyRouter(sticky)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 2, plan.Channel.Id)
+	require.False(t, plan.StickyRetained)
+	require.Equal(t, "config_error_isolated", plan.StickyBreak)
+	require.Equal(t, "weighted_score_sticky_broken", plan.SelectedReason)
+
+	isolated := candidateExplanationByChannel(t, plan.Candidates, 1)
+	require.False(t, isolated.Available)
+	require.Equal(t, "config_error_isolated", isolated.RejectReason)
+	require.True(t, isolated.ConfigErrorIsolated)
+	require.Equal(t, "auth_config_error", isolated.IsolationReason)
+	require.EqualValues(t, 1770000000, isolated.IsolationUntil)
+	require.Equal(t, 2, isolated.AuthConfigErrorCount)
+	require.EqualValues(t, 1769999900, isolated.LastAuthConfigErrorAt)
+}
+
 func TestSelectorDoesNotBreakStickyRouteBelowConcurrencyLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := newStickyRequestContext(t, `{"session_id":"sess-local-pressure"}`, nil)

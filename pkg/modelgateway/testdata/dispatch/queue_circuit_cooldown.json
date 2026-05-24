@@ -75,7 +75,7 @@
   ],
   "expected": {
     "handled": true,
-    "selected_channel_id": 12,
+    "selected_channel_id": 13,
     "selected_group": "default",
     "fallback_used": false,
     "context_keys": {},

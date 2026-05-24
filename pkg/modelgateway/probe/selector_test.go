@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -82,6 +83,69 @@ func TestProbeSelectorSelectsLowTrafficOnlyForRecentScopes(t *testing.T) {
 	require.Equal(t, target.Id, candidates[0].Channel.Id)
 	require.Equal(t, "gpt-4.1", candidates[0].Model)
 	require.Equal(t, "codex-pro", candidates[0].Group)
+}
+
+func TestProbeSelectorSkipsConfigErrorIsolatedSnapshot(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-config-isolated", "gpt-4.1", "default", "default", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "config-isolated", "default", "gpt-4.1", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "gpt-4.1", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                 key,
+		SampleCount:         8,
+		SuccessRate:         0.4,
+		SuccessScore:        0.3,
+		ConfigErrorIsolated: true,
+		IsolationReason:     core.ErrorCategoryAuthConfigError,
+		LastRealAttemptAt:   now.Unix(),
+		RealSampleCount30m:  2,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: time.Second, LowScoreThreshold: 0.7})
+	require.NoError(t, err)
+	require.Empty(t, candidates)
+}
+
+func TestProbeSelectorSkipsConfigErrorIsolatedChannel(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-channel-config-isolated", "gpt-4.1", "default", "default", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "config-isolated", "default", "gpt-4.1", 1)
+	channel.SetOtherInfo(map[string]interface{}{
+		"config_error_isolated": true,
+		"isolation_reason":      core.ErrorCategoryAuthConfigError,
+	})
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", channel.Id).Update("other_info", channel.OtherInfo).Error)
+	model.InitChannelCache()
+
+	selector := NewProbeSelector(scheduler.NewMemoryRuntimeSnapshotStore(), nil)
+	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: time.Second})
+	require.NoError(t, err)
+	require.Empty(t, candidates)
+}
+
+func TestProbeSelectorSkipsServiceConfigErrorIsolatedRoute(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-service-config-isolated", "gpt-4.1", "default", "default", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "config-isolated", "default", "gpt-4.1", 1)
+	model.InitChannelCache()
+
+	key := service.NewChannelConfigIsolationKey(channel.Id, "gpt-4.1", "default", constant.EndpointTypeOpenAI)
+	service.ClearChannelConfigIsolation(key)
+	t.Cleanup(func() { service.ClearChannelConfigIsolation(key) })
+	service.RecordChannelConfigAuthError(key, core.ErrorCategoryAuthConfigError)
+	service.RecordChannelConfigAuthError(key, core.ErrorCategoryAuthConfigError)
+
+	selector := NewProbeSelector(scheduler.NewMemoryRuntimeSnapshotStore(), nil)
+	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: time.Second})
+	require.NoError(t, err)
+	require.Empty(t, candidates)
 }
 
 func TestProbeSelectorRateLimitsByRuntimeKey(t *testing.T) {

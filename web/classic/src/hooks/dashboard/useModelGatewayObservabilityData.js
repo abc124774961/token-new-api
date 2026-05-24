@@ -28,6 +28,7 @@ const RECENT_RECORD_LIMIT = 50;
 const MANUAL_REFRESH_SOURCE = 'manual';
 const FALLBACK_REFRESH_SOURCE = 'fallback';
 const RECENT_USER_REQUEST_LIMIT = 50;
+const MANUAL_REFRESH_DEBOUNCE_MS = 800;
 
 function unwrapApiData(response) {
   return response?.data?.data || response?.data || {};
@@ -165,32 +166,69 @@ export function useModelGatewayObservabilityData({
   const requestKey = useMemo(() => JSON.stringify(requestParams), [requestParams]);
   const latestRequestKeyRef = useRef(requestKey);
   const hasSnapshotRef = useRef(false);
+  const activeRequestRef = useRef(null);
+  const lastManualRefreshAtRef = useRef(0);
+
+  const abortActiveRequest = useCallback(() => {
+    const activeRequest = activeRequestRef.current;
+    if (!activeRequest?.controller) return;
+    activeRequest.controller.abort();
+    activeRequestRef.current = null;
+  }, []);
+
+  const isAbortError = useCallback((err) => {
+    return (
+      err?.name === 'CanceledError' ||
+      err?.name === 'AbortError' ||
+      err?.code === 'ERR_CANCELED' ||
+      err?.message === 'canceled'
+    );
+  }, []);
 
   const loadSummary = useCallback(
     async (silent = false, source = MANUAL_REFRESH_SOURCE) => {
       const activeRequestKey = requestKey;
       const isActiveRequest = () =>
         latestRequestKeyRef.current === activeRequestKey;
+      const activeRequest = activeRequestRef.current;
+      if (activeRequest?.key === activeRequestKey) {
+        if (silent) {
+          setRefreshing(true);
+        }
+        return activeRequest.promise;
+      }
+      abortActiveRequest();
+      const controller = new AbortController();
       if (silent) {
         setRefreshing(true);
       } else {
         setLoading(true);
       }
       setError('');
-      try {
+      const requestPromise = (async () => {
         const response = await API.get(
           '/api/model_gateway/observability/summary',
           {
             params: requestParams,
             disableDuplicate: true,
             skipErrorHandler: true,
+            signal: controller.signal,
           },
         );
         if (!isActiveRequest()) return;
         if (source === FALLBACK_REFRESH_SOURCE && hasSnapshotRef.current) return;
         setData(unwrapApiData(response));
         setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
+      })();
+      activeRequestRef.current = {
+        key: activeRequestKey,
+        controller,
+        promise: requestPromise,
+      };
+      try {
+        await requestPromise;
       } catch (err) {
+        if (isAbortError(err)) return;
         if (!isActiveRequest()) return;
         if (source === FALLBACK_REFRESH_SOURCE && hasSnapshotRef.current) return;
         const message =
@@ -200,13 +238,16 @@ export function useModelGatewayObservabilityData({
           showError(message);
         }
       } finally {
+        if (activeRequestRef.current?.promise === requestPromise) {
+          activeRequestRef.current = null;
+        }
         if (!isActiveRequest()) return;
         setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
         setLoading(false);
         setRefreshing(false);
       }
     },
-    [requestKey, requestParams, t],
+    [abortActiveRequest, isAbortError, requestKey, requestParams, t],
   );
 
   const handleSnapshot = useCallback((payload) => {
@@ -239,6 +280,7 @@ export function useModelGatewayObservabilityData({
   }, []);
 
   useEffect(() => {
+    abortActiveRequest();
     latestRequestKeyRef.current = requestKey;
     hasSnapshotRef.current = false;
     setData(null);
@@ -247,7 +289,9 @@ export function useModelGatewayObservabilityData({
     setError('');
     setFallbackMode(false);
     setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
-  }, [requestKey]);
+  }, [abortActiveRequest, requestKey]);
+
+  useEffect(() => () => abortActiveRequest(), [abortActiveRequest]);
 
   const { connectionState } = useRealtimeSubscription({
     topic: 'model_gateway.observability',
@@ -287,6 +331,11 @@ export function useModelGatewayObservabilityData({
   ]);
 
   const refresh = useCallback(() => {
+    const now = Date.now();
+    if (now - lastManualRefreshAtRef.current < MANUAL_REFRESH_DEBOUNCE_MS) {
+      return;
+    }
+    lastManualRefreshAtRef.current = now;
     loadSummary(true, MANUAL_REFRESH_SOURCE);
   }, [loadSummary]);
 

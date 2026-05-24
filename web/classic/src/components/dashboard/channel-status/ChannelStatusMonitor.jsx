@@ -89,6 +89,12 @@ function formatPercent(value) {
   return `${Number(value).toFixed(2)}%`;
 }
 
+function formatRatePercent(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '0.00%';
+  return formatPercent(numeric * 100);
+}
+
 function formatSuccessRate(value, requests) {
   return Number(requests) > 0 ? formatPercent(value) : '--';
 }
@@ -98,6 +104,30 @@ function formatLatency(value) {
   if (latency <= 0) return '--';
   if (latency >= 1000) return `${(latency / 1000).toFixed(2)}s`;
   return `${Math.round(latency)}ms`;
+}
+
+function formatScore(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '--';
+  return numeric.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function formatCostUnitPrice(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '--';
+  const digits = numeric < 0.000001 ? 12 : numeric < 1 ? 6 : 4;
+  return `$${numeric.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}`;
+}
+
+function formatReferenceCost(runtime, t) {
+  const cost = Number(runtime?.avg_cost_ratio || 0);
+  if (!Number.isFinite(cost) || cost <= 0) return '';
+  const mode = String(runtime?.cost_pricing_mode || '').trim();
+  if (mode === 'mixed') {
+    return `${formatCostUnitPrice(cost)} ${t('混合')}`;
+  }
+  const suffix = mode === 'request' ? t('/次') : t('/M');
+  return `${formatCostUnitPrice(cost)} ${suffix}`;
 }
 
 function formatTimestamp(timestamp) {
@@ -124,9 +154,32 @@ function getHealthMeta(state, t) {
   }
 }
 
+function hasRuntime(group) {
+  return Number(group?.runtime?.runtime_keys || 0) > 0;
+}
+
 function getGroupHealth(group) {
   if (!group || group.enabled_channels === 0) {
     return 'critical';
+  }
+  if (hasRuntime(group)) {
+    const runtime = group.runtime;
+    if (
+      Number(runtime.available_runtime_keys || 0) <= 0 ||
+      runtime.health_status === 'circuit_open' ||
+      runtime.health_status === 'config_isolated'
+    ) {
+      return 'critical';
+    }
+    if (
+      Number(runtime.risk_runtime_keys || 0) > 0 ||
+      ['cooldown', 'failure_avoidance', 'high_pressure', 'degraded'].includes(
+        runtime.health_status,
+      )
+    ) {
+      return 'warning';
+    }
+    return 'healthy';
   }
   const recentRequests = Number(group.recent_requests) || 0;
   const successRate = Number(group.success_rate) || 0;
@@ -166,6 +219,18 @@ function getOverallStatus(data, error) {
   if (summary.enabled_channels <= 0) {
     return { state: 'offline', label: 'OFFLINE' };
   }
+  if (Number(summary.runtime?.runtime_keys || 0) > 0) {
+    if (Number(summary.runtime.available_runtime_keys || 0) <= 0) {
+      return { state: 'offline', label: 'OFFLINE' };
+    }
+    if (
+      Number(summary.runtime.risk_runtime_keys || 0) > 0 ||
+      Number(summary.runtime.queue_depth || 0) > 0
+    ) {
+      return { state: 'degraded', label: 'DEGRADED' };
+    }
+    return { state: 'operational', label: 'OPERATIONAL' };
+  }
   if (summary.recent_requests > 0 && summary.success_rate < 99) {
     return { state: 'degraded', label: 'DEGRADED' };
   }
@@ -181,6 +246,9 @@ function getOverallStatus(data, error) {
 function isGroupAvailable(group) {
   if (!group || Number(group.enabled_channels) <= 0) {
     return false;
+  }
+  if (hasRuntime(group)) {
+    return Number(group.runtime?.available_runtime_keys || 0) > 0;
   }
   if (
     Number(group.cooldown_channels) >= Number(group.total_channels) &&
@@ -248,6 +316,29 @@ function getChannelCooldown(channel) {
   return Number(channel?.failure_avoidance_remaining_seconds) || 0;
 }
 
+function getRuntimeStatusMeta(status, t) {
+  switch (status) {
+    case 'healthy':
+      return { color: 'green', label: t('健康') };
+    case 'circuit_open':
+      return { color: 'red', label: t('熔断') };
+    case 'config_isolated':
+      return { color: 'red', label: t('配置隔离') };
+    case 'cooldown':
+      return { color: 'orange', label: t('冷却') };
+    case 'failure_avoidance':
+      return { color: 'orange', label: t('避险') };
+    case 'high_pressure':
+      return { color: 'orange', label: t('高压') };
+    case 'queued':
+      return { color: 'blue', label: t('排队') };
+    case 'degraded':
+      return { color: 'orange', label: t('降级') };
+    default:
+      return { color: 'grey', label: t('暂无运行态') };
+  }
+}
+
 function getChannelPauseMeta(channel, t) {
   if (channel?.pause_type === 'balance_insufficient') {
     return {
@@ -282,8 +373,25 @@ function getStatusLabel(status, t) {
       return '5xx';
     case 'timeout':
       return t('超时');
+    case 'empty_output':
+      return t('空输出');
+    case 'experience_issue':
+      return t('体验异常');
+    case 'stream_interrupted':
+      return t('流中断');
+    case 'client_aborted':
+      return t('客户端中断');
     default:
       return t('错误');
+  }
+}
+
+function getRecentStatusSourceLabel(source, t) {
+  switch (source) {
+    case 'user_requests':
+      return t('客户端请求');
+    default:
+      return '';
   }
 }
 
@@ -361,6 +469,7 @@ function ChannelNameCell({ channel }) {
   const { t } = useTranslation();
   const cooldown = getChannelCooldown(channel);
   const pause = getChannelPauseMeta(channel, t);
+  const runtimeMeta = getRuntimeStatusMeta(channel?.runtime?.health_status, t);
 
   return (
     <div className='min-w-[220px]'>
@@ -371,7 +480,13 @@ function ChannelNameCell({ channel }) {
         <Typography.Text type='secondary' size='small'>
           #{channel.id}
         </Typography.Text>
-        <HealthTag state={channel.health_state} />
+        {channel.runtime ? (
+          <Tag color={runtimeMeta.color} shape='circle' size='small'>
+            {runtimeMeta.label}
+          </Tag>
+        ) : (
+          <HealthTag state={channel.health_state} />
+        )}
         {!channel.enabled && !pause && (
           <Tag color='grey' shape='circle' size='small'>
             {t('禁用')}
@@ -450,12 +565,17 @@ function StatusHistoryBar({ group }) {
     Array.isArray(group.recent_status) && group.recent_status.length > 0
       ? group.recent_status
       : [];
+  const sourceLabel = getRecentStatusSourceLabel(
+    group.recent_status_source,
+    t,
+  );
 
   return (
     <div className='ct-channel-monitor-history'>
       <div className='ct-channel-monitor-history-head'>
-        <span>{t('近 60 次请求')}</span>
+        <span>{t('近 60 次客户端请求记录')}</span>
         <span>
+          {sourceLabel ? `${sourceLabel} · ` : ''}
           {REFRESH_INTERVAL_SECONDS} {t('秒')} {t('自动刷新')}
         </span>
       </div>
@@ -480,7 +600,7 @@ function StatusHistoryBar({ group }) {
         </>
       ) : (
         <div className='ct-channel-monitor-no-history'>
-          {t('暂无近期请求记录')}
+          {t('暂无近期客户端请求记录')}
         </div>
       )}
     </div>
@@ -497,15 +617,31 @@ function GroupPanel({ group, windowDays }) {
   const dominantTypeMeta = getChannelTypeMeta(dominantType);
   const healthMeta = getHealthMeta(health, t);
   const canViewChannelDetails = isAdmin();
+  const runtime = group.runtime || {};
+  const hasSmartRuntime = hasRuntime(group);
   const recentRequests = Number(group.recent_requests) || 0;
   const channelHealthPercent =
     group.total_channels > 0
       ? Math.round((group.healthy_channels / group.total_channels) * 100)
       : 0;
-  const availabilityPercent = Math.max(
-    0,
-    Math.min(recentRequests > 0 ? Number(group.success_rate) || 0 : 0, 100),
-  );
+  const availabilityPercent = hasSmartRuntime
+    ? Math.max(
+        0,
+        Math.min(
+          (Number(runtime.available_runtime_keys || 0) /
+            Math.max(Number(runtime.runtime_keys || 0), 1)) *
+            100,
+          100,
+        ),
+      )
+    : Math.max(
+        0,
+        Math.min(recentRequests > 0 ? Number(group.success_rate) || 0 : 0, 100),
+      );
+  const runtimeAvailabilityText = hasSmartRuntime
+    ? `${formatNumber(runtime.available_runtime_keys)} / ${formatNumber(runtime.runtime_keys)}`
+    : formatSuccessRate(group.success_rate, group.recent_requests);
+  const runtimeReferenceCost = formatReferenceCost(runtime, t);
 
   const columns = useMemo(
     () => [
@@ -522,31 +658,66 @@ function GroupPanel({ group, windowDays }) {
         render: (value) => <ChannelTypeBadge type={value} />,
       },
       {
-        title: t('健康评分'),
-        dataIndex: 'health_score',
+        title: t('运行态'),
+        dataIndex: 'runtime',
         width: 110,
-        sorter: (a, b) => a.health_score - b.health_score,
-        render: (value, record) => (
-          <Typography.Text
-            strong
-            type={record.health_state === 'critical' ? 'danger' : 'primary'}
-          >
-            {formatNumber(value)}
-          </Typography.Text>
-        ),
+        sorter: (a, b) =>
+          Number(a.runtime?.runtime_keys || 0) -
+          Number(b.runtime?.runtime_keys || 0),
+        render: (_, record) => {
+          const runtimeMeta = getRuntimeStatusMeta(
+            record.runtime?.health_status,
+            t,
+          );
+          return record.runtime ? (
+            <div>
+              <Tag color={runtimeMeta.color} type='light' size='small'>
+                {runtimeMeta.label}
+              </Tag>
+              <div className='mt-1 text-xs text-semi-color-text-2'>
+                {formatNumber(record.runtime.available_runtime_keys)} /{' '}
+                {formatNumber(record.runtime.runtime_keys)}
+              </div>
+            </div>
+          ) : (
+            <Typography.Text
+              strong
+              type={record.health_state === 'critical' ? 'danger' : 'primary'}
+            >
+              {formatNumber(record.health_score)}
+            </Typography.Text>
+          );
+        },
       },
       {
-        title: t('成功率'),
-        dataIndex: 'success_rate',
-        width: 110,
-        sorter: (a, b) => a.success_rate - b.success_rate,
-        render: (value) => formatPercent(value),
+        title: t('调度分'),
+        dataIndex: 'runtime',
+        width: 130,
+        sorter: (a, b) =>
+          Number(a.runtime?.avg_routing_score || a.runtime?.avg_score || 0) -
+          Number(b.runtime?.avg_routing_score || b.runtime?.avg_score || 0),
+        render: (_, record) =>
+          record.runtime ? (
+            <div>
+              <div className='font-mono font-semibold'>
+                {formatScore(
+                  record.runtime.avg_routing_score || record.runtime.avg_score,
+                )}
+              </div>
+              <div className='text-xs text-semi-color-text-2'>
+                {t('健康分')} {formatScore(record.runtime.avg_score)}
+              </div>
+            </div>
+          ) : (
+            formatPercent(record.success_rate)
+          ),
       },
       {
-        title: t('请求数'),
-        dataIndex: 'recent_requests',
+        title: t('客户端请求'),
+        dataIndex: 'runtime',
         width: 120,
-        sorter: (a, b) => a.recent_requests - b.recent_requests,
+        sorter: (a, b) =>
+          Number(a.recent_requests || 0) - Number(b.recent_requests || 0),
         render: (_, record) => (
           <div>
             <div className='font-mono font-semibold'>
@@ -560,72 +731,115 @@ function GroupPanel({ group, windowDays }) {
         ),
       },
       {
-        title: t('延迟'),
-        dataIndex: 'recent_avg_latency_ms',
+        title: t('首包 / 耗时'),
+        dataIndex: 'runtime',
         width: 120,
         sorter: (a, b) =>
-          (a.recent_avg_latency_ms || a.response_time || 0) -
-          (b.recent_avg_latency_ms || b.response_time || 0),
+          (a.runtime?.avg_ttft_ms ||
+            a.recent_avg_first_response_ms ||
+            a.response_time ||
+            0) -
+          (b.runtime?.avg_ttft_ms ||
+            b.recent_avg_first_response_ms ||
+            b.response_time ||
+            0),
         render: (_, record) => (
           <div>
             <div className='font-mono font-semibold'>
               {formatLatency(
-                record.recent_avg_latency_ms || record.response_time,
+                record.runtime?.avg_ttft_ms ||
+                  record.recent_avg_first_response_ms ||
+                  record.response_time,
               )}
             </div>
             <div className='text-xs text-semi-color-text-2'>
-              {t('首包')} {formatLatency(record.recent_avg_first_response_ms)}
+              {t('耗时')}{' '}
+              {formatLatency(
+                record.runtime?.avg_duration_ms || record.recent_avg_latency_ms,
+              )}
             </div>
           </div>
         ),
       },
       {
-        title: t('并发'),
+        title: t('并发 / 队列'),
         dataIndex: 'active_concurrency',
         width: 110,
         render: (_, record) => (
           <div>
             <div className='font-mono font-semibold'>
-              {record.max_concurrency > 0
-                ? `${record.active_concurrency}/${record.max_concurrency}`
-                : formatNumber(record.active_concurrency)}
+              {record.runtime
+                ? record.runtime.max_concurrency > 0
+                  ? `${record.runtime.active_concurrency}/${record.runtime.max_concurrency}`
+                  : formatNumber(record.runtime.active_concurrency)
+                : record.max_concurrency > 0
+                  ? `${record.active_concurrency}/${record.max_concurrency}`
+                  : formatNumber(record.active_concurrency)}
             </div>
-            {record.concurrency_ceiling > 0 && (
+            {record.runtime ? (
+              <div className='text-xs text-semi-color-text-2'>
+                {t('队列')} {formatNumber(record.runtime.queue_depth)}
+              </div>
+            ) : record.concurrency_ceiling > 0 ? (
               <div className='text-xs text-semi-color-text-2'>
                 {t('上限')} {record.concurrency_ceiling}
               </div>
-            )}
+            ) : null}
           </div>
         ),
       },
       {
-        title: `429 / 5xx / ${t('超时')}`,
-        dataIndex: 'recent_error_429',
+        title: t('成本 / 体验'),
+        dataIndex: 'runtime',
         width: 140,
+        render: (_, record) =>
+          record.runtime ? (
+            <div>
+              <div className='font-mono font-semibold'>
+                {formatScore(record.runtime.avg_cost_score)} /{' '}
+                {formatScore(record.runtime.avg_experience_score)}
+              </div>
+              <div className='text-xs text-semi-color-text-2'>
+                {formatReferenceCost(record.runtime, t) || t('暂无参考成本')}
+              </div>
+            </div>
+          ) : (
+            <Typography.Text
+              type={record.recent_failures > 0 ? 'danger' : 'secondary'}
+              className='font-mono'
+            >
+              {formatNumber(record.recent_error_429)} /{' '}
+              {formatNumber(record.recent_error_5xx)} /{' '}
+              {formatNumber(record.recent_error_timeout)}
+            </Typography.Text>
+          ),
+      },
+      {
+        title: t('空输出 / 体验异常'),
+        dataIndex: 'runtime',
+        width: 145,
+        render: (_, record) =>
+          record.runtime ? (
+            <Typography.Text type='secondary' className='font-mono'>
+              {formatRatePercent(record.runtime.avg_empty_output_rate)} /{' '}
+              {formatRatePercent(record.runtime.avg_experience_issue_rate)}
+            </Typography.Text>
+          ) : (
+            formatNumber(getChannelModelCount(record.models))
+          ),
+      },
+      {
+        title: t('客户端请求时间'),
+        dataIndex: 'runtime',
+        width: 190,
         render: (_, record) => (
-          <Typography.Text
-            type={record.recent_failures > 0 ? 'danger' : 'secondary'}
-            className='font-mono'
-          >
-            {formatNumber(record.recent_error_429)} /{' '}
-            {formatNumber(record.recent_error_5xx)} /{' '}
-            {formatNumber(record.recent_error_timeout)}
-          </Typography.Text>
-        ),
-      },
-      {
-        title: t('模型数'),
-        dataIndex: 'models',
-        width: 110,
-        render: (value) => formatNumber(getChannelModelCount(value)),
-      },
-      {
-        title: t('最近请求'),
-        dataIndex: 'last_request_at',
-        width: 170,
-        render: (value) => (
           <Typography.Text type='secondary' size='small'>
-            {formatTimestamp(value)}
+            <div>
+              {formatTimestamp(record.last_request_at)}
+            </div>
+            <div className='text-xs text-semi-color-text-2'>
+              {t('成功')} {formatTimestamp(record.last_success_at)}
+            </div>
           </Typography.Text>
         ),
       },
@@ -683,6 +897,11 @@ function GroupPanel({ group, windowDays }) {
                   >
                     {modelPreview.label}
                   </span>
+                  {hasSmartRuntime && (
+                    <span className='ct-channel-monitor-pill-muted'>
+                      {t('运行态')} {formatNumber(runtime.runtime_keys)}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -701,40 +920,49 @@ function GroupPanel({ group, windowDays }) {
             <div className='ct-channel-monitor-metric-box'>
               <div className='ct-channel-monitor-metric-label'>
                 <Timer size={16} />
-                <span>{t('对话延迟')}</span>
+                <span>{hasSmartRuntime ? t('平均首包') : t('对话延迟')}</span>
               </div>
               <div className='ct-channel-monitor-metric-value'>
-                {formatLatency(group.avg_latency_ms)}
+                {formatLatency(
+                  hasSmartRuntime
+                    ? group.avg_ttft_ms || runtime.avg_ttft_ms
+                    : group.avg_latency_ms,
+                )}
               </div>
             </div>
             <div className='ct-channel-monitor-metric-box'>
               <div className='ct-channel-monitor-metric-label'>
                 <Network size={16} />
-                <span>{t('端点 PING')}</span>
+                <span>{hasSmartRuntime ? t('调度分') : t('端点 PING')}</span>
               </div>
               <div className='ct-channel-monitor-metric-value'>
-                {formatLatency(
-                  Math.round(
-                    visibleChannels.reduce(
-                      (sum, channel) =>
-                        sum + (Number(channel.response_time) || 0),
-                      0,
-                    ) / Math.max(visibleChannels.length, 1),
-                  ),
-                )}
+                {hasSmartRuntime
+                  ? formatScore(runtime.avg_routing_score || runtime.avg_score)
+                  : formatLatency(
+                      Math.round(
+                        visibleChannels.reduce(
+                          (sum, channel) =>
+                            sum + (Number(channel.response_time) || 0),
+                          0,
+                        ) / Math.max(visibleChannels.length, 1),
+                      ),
+                    )}
               </div>
             </div>
           </div>
 
           <div className='ct-channel-monitor-availability'>
             <div className='ct-channel-monitor-availability-label'>
-              {t('可用性')} · {windowDays} {t('天')}
+              {hasSmartRuntime ? t('智能调度可用性') : t('可用性')} ·{' '}
+              {hasSmartRuntime ? t('运行态') : `${windowDays} ${t('天')}`}
             </div>
             <div className='ct-channel-monitor-availability-value'>
-              {formatSuccessRate(group.success_rate, group.recent_requests)}
+              {runtimeAvailabilityText}
             </div>
             <div className='ct-channel-monitor-availability-sub'>
-              + {formatNumber(modelPreview.count)} {t('模型')}
+              {hasSmartRuntime
+                ? `${windowDays}${t('天')} ${t('客户端请求')} ${formatNumber(group.recent_requests)} · ${t('成功')} ${formatNumber(group.recent_successes)}`
+                : `+ ${formatNumber(modelPreview.count)} ${t('模型')}`}
             </div>
             <div className='ct-channel-monitor-availability-track'>
               <span style={{ width: `${availabilityPercent}%` }} />
@@ -743,31 +971,58 @@ function GroupPanel({ group, windowDays }) {
 
           <div className='ct-channel-monitor-quick-grid'>
             <div>
-              <span>{t('请求数')}</span>
+              <span>{hasSmartRuntime ? t('客户端请求') : t('请求数')}</span>
               <strong>{formatNumber(group.recent_requests)}</strong>
             </div>
             <div>
-              <span>429 / 5xx / {t('超时')}</span>
+              <span>
+                {hasSmartRuntime
+                  ? t('并发 / 队列')
+                  : `429 / 5xx / ${t('超时')}`}
+              </span>
               <strong>
-                {formatNumber(group.recent_error_429)} /{' '}
-                {formatNumber(group.recent_error_5xx)} /{' '}
-                {formatNumber(group.recent_error_timeout)}
+                {hasSmartRuntime
+                  ? `${formatNumber(runtime.active_concurrency)} / ${formatNumber(runtime.queue_depth)}`
+                  : `${formatNumber(group.recent_error_429)} / ${formatNumber(group.recent_error_5xx)} / ${formatNumber(group.recent_error_timeout)}`}
               </strong>
             </div>
             <div>
               <span>
-                {t('错误冷却')} / {t('忙碌')}
+                {hasSmartRuntime
+                  ? t('成本分 / 体验分')
+                  : `${t('错误冷却')} / ${t('忙碌')}`}
               </span>
               <strong>
-                {formatNumber(group.cooldown_channels)} /{' '}
-                {formatNumber(group.busy_channels)}
+                {hasSmartRuntime
+                  ? `${formatScore(runtime.avg_cost_score)} / ${formatScore(runtime.avg_experience_score)}`
+                  : `${formatNumber(group.cooldown_channels)} / ${formatNumber(group.busy_channels)}`}
               </strong>
             </div>
             <div>
-              <span>{t('健康渠道占比')}</span>
-              <strong>{channelHealthPercent}%</strong>
+              <span>
+                {hasSmartRuntime ? t('空输出 / 体验异常') : t('健康渠道占比')}
+              </span>
+              <strong>
+                {hasSmartRuntime
+                  ? `${formatRatePercent(runtime.avg_empty_output_rate)} / ${formatRatePercent(runtime.avg_experience_issue_rate)}`
+                  : `${channelHealthPercent}%`}
+              </strong>
             </div>
           </div>
+
+          {hasSmartRuntime && runtimeReferenceCost && (
+            <div className='ct-channel-monitor-runtime-note'>
+              <Tooltip
+                content={t(
+                  '参考成本来自渠道上游成本配置，用于换算成本分，不代表本次实际消费',
+                )}
+              >
+                <span>
+                  {t('参考成本')}: {runtimeReferenceCost}
+                </span>
+              </Tooltip>
+            </div>
+          )}
 
           <StatusHistoryBar group={group} />
         </div>
@@ -838,6 +1093,8 @@ function GroupPanel({ group, windowDays }) {
 function ChannelStatusContent({ data, windowDays }) {
   const { t } = useTranslation();
   const summary = data?.summary || {};
+  const runtime = summary.runtime || {};
+  const hasSmartRuntime = Number(runtime.runtime_keys || 0) > 0;
   const groups = data?.groups || [];
   const availableGroups = groups.filter(isGroupAvailable).length;
   const availableGroupPercent =
@@ -853,22 +1110,37 @@ function ChannelStatusContent({ data, windowDays }) {
       <div className='ct-channel-monitor-summary-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-4'>
         <SummaryMetric
           icon={HeartPulse}
-          label={t('分组可用')}
-          value={formatPercent(availableGroupPercent)}
-          detail={`${formatNumber(availableGroups)} / ${formatNumber(groups.length)} ${t('可用分组')} · ${formatNumber(unhealthyChannels)} ${t('需关注渠道')}`}
-          tone={availableGroups === groups.length ? 'success' : 'warning'}
+          label={hasSmartRuntime ? t('智能运行态') : t('分组可用')}
+          value={
+            hasSmartRuntime
+              ? `${formatNumber(runtime.available_runtime_keys)} / ${formatNumber(runtime.runtime_keys)}`
+              : formatPercent(availableGroupPercent)
+          }
+          detail={
+            hasSmartRuntime
+              ? `${formatNumber(runtime.channels)} ${t('渠道')} · ${formatNumber(runtime.risk_runtime_keys)} ${t('风险运行态')}`
+              : `${formatNumber(availableGroups)} / ${formatNumber(groups.length)} ${t('可用分组')} · ${formatNumber(unhealthyChannels)} ${t('需关注渠道')}`
+          }
+          tone={
+            hasSmartRuntime
+              ? runtime.risk_runtime_keys > 0
+                ? 'warning'
+                : 'success'
+              : availableGroups === groups.length
+                ? 'success'
+                : 'warning'
+          }
         />
         <SummaryMetric
           icon={Activity}
-          label={t('最终成功率')}
-          value={formatSuccessRate(
-            summary.success_rate,
-            summary.recent_requests,
-          )}
+          label={t('客户端请求成功率')}
+          value={
+            formatSuccessRate(summary.success_rate, summary.recent_requests)
+          }
           detail={
             isPartial
               ? t('统计刷新中，当前显示基础渠道状态')
-              : `${formatNumber(summary.recent_requests)} / ${windowDays}${t('天')} ${t('请求数')}`
+              : `${formatNumber(summary.recent_requests)} / ${windowDays}${t('天')} ${t('客户端请求')}`
           }
           tone={
             summary.success_rate >= 99 || summary.recent_requests === 0
@@ -878,21 +1150,49 @@ function ChannelStatusContent({ data, windowDays }) {
         />
         <SummaryMetric
           icon={AlertTriangle}
-          label={t('最终失败')}
-          value={formatNumber(summary.recent_failures)}
-          detail={`429 ${formatNumber(summary.recent_error_429)} / 5xx ${formatNumber(summary.recent_error_5xx)}`}
+          label={hasSmartRuntime ? t('风险运行态') : t('最终失败')}
+          value={
+            hasSmartRuntime
+              ? formatNumber(runtime.risk_runtime_keys)
+              : formatNumber(summary.recent_failures)
+          }
+          detail={
+            hasSmartRuntime
+              ? `${t('熔断')} ${formatNumber(runtime.circuit_open_runtime_keys)} / ${t('冷却')} ${formatNumber(runtime.cooldown_runtime_keys)}`
+              : `429 ${formatNumber(summary.recent_error_429)} / 5xx ${formatNumber(summary.recent_error_5xx)}`
+          }
           tone={
-            summary.recent_requests > 0 && summary.success_rate < 99
-              ? 'danger'
-              : 'success'
+            hasSmartRuntime
+              ? runtime.risk_runtime_keys > 0
+                ? 'danger'
+                : 'success'
+              : summary.recent_requests > 0 && summary.success_rate < 99
+                ? 'danger'
+                : 'success'
           }
         />
         <SummaryMetric
           icon={Gauge}
-          label={t('活跃负载')}
-          value={formatNumber(summary.busy_channels)}
-          detail={`${formatLatency(summary.avg_latency_ms)} ${t('平均延迟')} / ${formatNumber(summary.cooldown_channels)} ${t('错误冷却')}`}
-          tone={summary.cooldown_channels > 0 ? 'warning' : 'default'}
+          label={hasSmartRuntime ? t('活跃队列') : t('活跃负载')}
+          value={
+            hasSmartRuntime
+              ? `${formatNumber(runtime.active_concurrency)} / ${formatNumber(runtime.queue_depth)}`
+              : formatNumber(summary.busy_channels)
+          }
+          detail={
+            hasSmartRuntime
+              ? `${t('调度分')} ${formatScore(runtime.avg_routing_score || runtime.avg_score)} / ${t('成本分')} ${formatScore(runtime.avg_cost_score)}`
+              : `${formatLatency(summary.avg_latency_ms)} ${t('平均延迟')} / ${formatNumber(summary.cooldown_channels)} ${t('错误冷却')}`
+          }
+          tone={
+            hasSmartRuntime
+              ? runtime.queue_depth > 0
+                ? 'warning'
+                : 'default'
+              : summary.cooldown_channels > 0
+                ? 'warning'
+                : 'default'
+          }
         />
       </div>
 
@@ -995,6 +1295,16 @@ const ChannelStatusMonitor = () => {
     }, REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [loadData]);
+
+  useEffect(() => {
+    if (!data?.partial || loading || refreshing) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      loadData({ silent: true });
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [data?.partial, loadData, loading, refreshing]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {

@@ -204,3 +204,38 @@ func TestRuntimeSnapshotEnricherAppliesFirstBytePending(t *testing.T) {
 	require.Equal(t, 2, snapshot.SlowFirstBytePending)
 	require.Equal(t, 14000.0, snapshot.OldestFirstByteWaitMs)
 }
+
+func TestRuntimeSnapshotEnricherAppliesConfigIsolation(t *testing.T) {
+	key := core.RuntimeKey{
+		RequestedModel: "gpt-5-codex",
+		ChannelID:      7,
+		Group:          "default",
+		EndpointType:   "openai",
+	}
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{
+		ConfigIsolationByKey: map[core.RuntimeKey]*service.ChannelConfigIsolationStatus{
+			key: {
+				Active:       true,
+				Reason:       "auth_config_error",
+				Until:        1770000000,
+				FailureCount: 2,
+				LastErrorAt:  1769999900,
+			},
+		},
+	}, 1500, 8, 2)
+
+	snapshot := enricher.Enrich(core.Candidate{
+		Channel: &model.Channel{Id: 7},
+		Group:   "default",
+		RuntimeKey: core.RuntimeKey{
+			RequestedModel: "gpt-5-codex",
+			EndpointType:   "openai",
+		},
+	}, core.RuntimeSnapshot{}, core.GroupSmartPolicy{})
+
+	require.True(t, snapshot.ConfigErrorIsolated)
+	require.Equal(t, "auth_config_error", snapshot.IsolationReason)
+	require.EqualValues(t, 1770000000, snapshot.IsolationUntil)
+	require.Equal(t, 2, snapshot.AuthConfigErrorCount)
+	require.EqualValues(t, 1769999900, snapshot.LastAuthConfigErrorAt)
+}

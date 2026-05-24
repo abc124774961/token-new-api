@@ -441,6 +441,124 @@ func TestGetModelGatewayObservabilitySummaryTreatsPending429AsConcurrencyFlow(t 
 	require.Empty(t, response.Summary.CircuitErrorCounts)
 }
 
+func TestBuildModelGatewayObservabilitySummaryExposesEngineeringErrorMetrics(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	dispatchMeta, err := common.Marshal(map[string]any{
+		"queue_enabled": true,
+		"queue_wait_ms": 250,
+		"candidate_explanations": []core.CandidateExplanation{
+			{
+				ChannelID:             12,
+				ChannelName:           "isolated",
+				Group:                 "auto",
+				UpstreamModel:         "gpt-5.5",
+				Available:             false,
+				RejectReason:          "config_error_isolated",
+				ConfigErrorIsolated:   true,
+				IsolationReason:       core.ErrorCategoryAuthConfigError,
+				IsolationUntil:        now + 3600,
+				AuthConfigErrorCount:  2,
+				LastAuthConfigErrorAt: now - 60,
+				RuntimeKey: core.RuntimeKey{
+					RequestedModel:        "gpt-5.5",
+					UpstreamModel:         "gpt-5.5",
+					ChannelID:             12,
+					Group:                 "auto",
+					EndpointType:          constant.EndpointTypeOpenAI,
+					CapabilityFingerprint: "openai_codex",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	records := []model.ModelExecutionRecord{
+		{
+			CreatedAt:      now - 5,
+			RequestId:      "engineering-dispatch",
+			RequestedGroup: "auto",
+			SelectedGroup:  "auto",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      12,
+			SmartHandled:   true,
+			PolicyMode:     "active",
+			RequestMeta:    string(dispatchMeta),
+		},
+		{
+			CreatedAt:      now - 4,
+			RequestId:      "engineering-overload",
+			AttemptIndex:   0,
+			RequestedGroup: "auto",
+			SelectedGroup:  "auto",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      12,
+			StatusCode:     http.StatusTooManyRequests,
+			ErrorCategory:  core.ErrorCategoryOverloadSkip,
+			DurationMs:     100,
+			RequestMeta:    `{"error_category":"overload_skip","retry_action":"switch_channel","concurrency_limited":true}`,
+		},
+		{
+			CreatedAt:      now - 3,
+			RequestId:      "engineering-auth",
+			AttemptIndex:   0,
+			RequestedGroup: "auto",
+			SelectedGroup:  "auto",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      13,
+			StatusCode:     http.StatusUnauthorized,
+			ErrorCategory:  core.ErrorCategoryAuthConfigError,
+			DurationMs:     120,
+			RequestMeta:    `{"error_category":"auth_config_error","retry_action":"switch_channel"}`,
+		},
+		{
+			CreatedAt:      now - 2,
+			RequestId:      "engineering-unknown",
+			AttemptIndex:   0,
+			RequestedGroup: "auto",
+			SelectedGroup:  "auto",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      14,
+			StatusCode:     http.StatusBadGateway,
+			ErrorCategory:  core.ErrorCategoryUnknown,
+			DurationMs:     140,
+			RequestMeta:    `{"error_category":"unknown","retry_action":"stop"}`,
+		},
+	}
+	require.NoError(t, db.Create(&records).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:              1,
+		RecentLimit:        10,
+		TopN:               10,
+		ScanLimit:          10,
+		TrendBucketSeconds: 3600,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), response.Summary.QueueWaitCount)
+	require.Equal(t, int64(1), response.Summary.QueuedDispatches)
+	require.Equal(t, int64(250), response.Summary.AvgQueueWaitMs)
+	require.Equal(t, int64(1), response.Summary.OverloadSkipCount)
+	require.Equal(t, int64(1), response.Summary.AuthConfigErrorCount)
+	require.Equal(t, int64(1), response.Summary.UnknownErrorCount)
+	require.Equal(t, int64(1), response.Summary.ConfigErrorIsolatedCount)
+
+	channel := requireAggregate(t, response.ByChannel, "12", 1, 0, 1)
+	require.Equal(t, int64(1), channel.QueueWaitCount)
+	require.Equal(t, int64(1), channel.OverloadSkipCount)
+	require.Equal(t, int64(1), channel.ConfigErrorIsolatedCount)
+
+	trend := requireModelGatewayTrendWithRecords(t, response.Trends, 4)
+	require.Equal(t, int64(1), trend.QueueWaitCount)
+	require.Equal(t, int64(1), trend.OverloadSkipCount)
+	require.Equal(t, int64(1), trend.AuthConfigErrorCount)
+	require.Equal(t, int64(1), trend.UnknownErrorCount)
+	require.Equal(t, int64(1), trend.ConfigErrorIsolatedCount)
+	require.Len(t, response.RecentRecords, 4)
+	require.True(t, response.RecentRecords[3].CandidateExplanations[0].ConfigErrorIsolated)
+	require.Equal(t, core.ErrorCategoryAuthConfigError, response.RecentRecords[3].CandidateExplanations[0].IsolationReason)
+	require.Equal(t, now+3600, response.RecentRecords[3].CandidateExplanations[0].IsolationUntil)
+}
+
 func TestBuildModelGatewayObservabilitySummaryExposesHealthProbeMarker(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()
@@ -1086,6 +1204,8 @@ func TestBuildModelGatewayObservabilitySummaryIncludesTotalWhenRequested(t *test
 }
 
 func TestModelGatewayObservabilitySummaryCacheKeyNormalizesAndEscapes(t *testing.T) {
+	require.Equal(t, 2*time.Second, modelGatewayObservabilitySummaryFreshTTL)
+
 	left := modelGatewayObservabilitySummaryCacheKey(ModelGatewayObservabilityOptions{
 		Hours:              0,
 		RecentLimit:        500,
@@ -1111,6 +1231,68 @@ func TestModelGatewayObservabilitySummaryCacheKeyNormalizesAndEscapes(t *testing
 	require.Equal(t, right, left)
 	require.Contains(t, left, "model=gpt%3D5%265")
 	require.Contains(t, left, "request_id=req%3Da%26b")
+}
+
+func TestBuildModelGatewayObservabilitySummaryCacheUsesFreshResultByQuery(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.ModelExecutionRecord{
+		CreatedAt:      now - 1,
+		RequestId:      "req-cache-a",
+		RequestedGroup: "vip",
+		SelectedGroup:  "vip",
+		RequestedModel: "gpt-5.5",
+		ChannelId:      42,
+		Success:        true,
+		DurationMs:     100,
+	}).Error)
+
+	options := ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 10,
+		TopN:        5,
+		ScanLimit:   20,
+		Group:       "vip",
+	}
+	first, err := BuildModelGatewayObservabilitySummary(options)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), first.Summary.Successes)
+
+	require.NoError(t, db.Create(&model.ModelExecutionRecord{
+		CreatedAt:      now,
+		RequestId:      "req-cache-b",
+		RequestedGroup: "vip",
+		SelectedGroup:  "vip",
+		RequestedModel: "gpt-5.5",
+		ChannelId:      42,
+		Success:        true,
+		DurationMs:     200,
+	}).Error)
+
+	cached, err := BuildModelGatewayObservabilitySummary(options)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cached.Summary.Successes)
+
+	filtered, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 10,
+		TopN:        5,
+		ScanLimit:   20,
+		Group:       "default",
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(0), filtered.Summary.Successes)
+
+	InvalidateModelGatewayObservabilitySummaryCacheForRecord(model.ModelExecutionRecord{
+		CreatedAt:      now,
+		RequestedGroup: "vip",
+		SelectedGroup:  "vip",
+		ChannelId:      42,
+		RequestedModel: "gpt-5.5",
+	})
+	refreshed, err := BuildModelGatewayObservabilitySummary(options)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), refreshed.Summary.Successes)
 }
 
 func TestInvalidateModelGatewayObservabilitySummaryCacheForRecord(t *testing.T) {

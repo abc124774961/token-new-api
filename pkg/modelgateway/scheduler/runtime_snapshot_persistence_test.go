@@ -32,15 +32,20 @@ func TestRuntimeSnapshotPersistenceFlushAndRestore(t *testing.T) {
 			{ObservedAt: 101, TTFTMs: 700, DurationMs: 2400},
 			{ObservedAt: 102, TTFTMs: 840, DurationMs: 2600},
 		},
-		SuccessRate:         0.96,
-		TTFTMs:              680,
-		DurationMs:          2400,
-		SuccessScore:        0.92,
-		SpeedScore:          0.84,
-		ExperienceScore:     0.98,
-		EmptyOutputRate:     0.01,
-		ExperienceIssueRate: 0.02,
-		SampleCount:         37,
+		SuccessRate:           0.96,
+		TTFTMs:                680,
+		DurationMs:            2400,
+		SuccessScore:          0.92,
+		SpeedScore:            0.84,
+		ExperienceScore:       0.98,
+		EmptyOutputRate:       0.01,
+		ExperienceIssueRate:   0.02,
+		ConfigErrorIsolated:   true,
+		IsolationReason:       core.ErrorCategoryAuthConfigError,
+		IsolationUntil:        1770000000,
+		AuthConfigErrorCount:  2,
+		LastAuthConfigErrorAt: 1769999900,
+		SampleCount:           37,
 	})
 
 	persistence := scheduler.NewRuntimeSnapshotPersistence(store, scheduler.RuntimeSnapshotPersistenceOptions{Batch: 2})
@@ -61,6 +66,11 @@ func TestRuntimeSnapshotPersistenceFlushAndRestore(t *testing.T) {
 	require.Equal(t, 700.0, snapshot.TTFTMs)
 	require.Greater(t, snapshot.SpeedScore, 0.99)
 	require.Len(t, snapshot.RecentLatencySamples, 3)
+	require.True(t, snapshot.ConfigErrorIsolated)
+	require.Equal(t, core.ErrorCategoryAuthConfigError, snapshot.IsolationReason)
+	require.EqualValues(t, 1770000000, snapshot.IsolationUntil)
+	require.Equal(t, 2, snapshot.AuthConfigErrorCount)
+	require.EqualValues(t, 1769999900, snapshot.LastAuthConfigErrorAt)
 	require.Zero(t, snapshot.ActiveConcurrency)
 	require.Zero(t, snapshot.QueueDepth)
 }

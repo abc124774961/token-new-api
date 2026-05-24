@@ -48,29 +48,35 @@ func TestRuntimeHealthMonitorUpdatesSnapshotAndCircuit(t *testing.T) {
 	require.True(t, snapshot.CircuitOpen)
 }
 
-func TestRuntimeHealthMonitorDoesNotLearnSpeedFromFastFailures(t *testing.T) {
+func TestRuntimeHealthMonitorSkipsOverloadSkip429(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
-	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	breaker := scheduler.NewCircuitBreaker(scheduler.CircuitBreakerOptions{
+		FailureThreshold:   1,
+		MinSamples:         1,
+		OpenDuration:       time.Minute,
+		HalfOpenProbeCount: 1,
+	})
+	monitor := scheduler.NewRuntimeHealthMonitor(store, breaker)
 	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 83, Group: "default"}
 
 	for i := 0; i < 5; i++ {
 		monitor.Report(context.Background(), core.AttemptResult{
-			Key:        key,
-			ChannelID:  83,
-			StatusCode: http.StatusTooManyRequests,
-			ErrorCode:  "rate_limit",
-			Duration:   80 * time.Millisecond,
-			TTFT:       20 * time.Millisecond,
+			Key:           key,
+			ChannelID:     83,
+			StatusCode:    http.StatusTooManyRequests,
+			ErrorCode:     "rate_limit",
+			ErrorCategory: core.ErrorCategoryOverloadSkip,
+			Duration:      80 * time.Millisecond,
+			TTFT:          20 * time.Millisecond,
 		})
 	}
 
-	snapshot, ok := store.Get(key)
-	require.True(t, ok)
-	require.Equal(t, 5, snapshot.SampleCount)
-	require.Equal(t, 0.0, snapshot.SuccessRate)
-	require.InEpsilon(t, 0.05, snapshot.SuccessScore, 0.001)
-	require.Zero(t, snapshot.SpeedScore)
-	require.Zero(t, snapshot.TTFTMs)
+	_, ok := store.Get(key)
+	require.False(t, ok)
+	circuit := breaker.Snapshot(key)
+	require.Equal(t, core.CircuitStateClosed, circuit.State)
+	require.Zero(t, circuit.SampleCount)
+	require.Empty(t, circuit.ErrorCounts)
 }
 
 func TestRuntimeHealthMonitorSkipsBalanceInsufficientForSuccessRate(t *testing.T) {

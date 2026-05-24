@@ -311,6 +311,11 @@ func runtimeSnapshotToDB(snapshot core.RuntimeSnapshot, updatedAt int64) (model.
 		RealSampleCount30m:    snapshot.RealSampleCount30m,
 		LastProbeAt:           snapshot.LastProbeAt,
 		LastProbeSuccessAt:    snapshot.LastProbeSuccessAt,
+		ConfigErrorIsolated:   snapshot.ConfigErrorIsolated,
+		IsolationReason:       snapshot.IsolationReason,
+		IsolationUntil:        snapshot.IsolationUntil,
+		AuthConfigErrorCount:  snapshot.AuthConfigErrorCount,
+		LastAuthConfigErrorAt: snapshot.LastAuthConfigErrorAt,
 	}, true
 }
 
@@ -345,26 +350,31 @@ func runtimeSnapshotFromDB(row model.ModelGatewayRuntimeSnapshot) (core.RuntimeS
 		durationMs, ttftMs, speedScore = runtimeLatencyStats(latencySamples)
 	}
 	return core.RuntimeSnapshot{
-		Key:                  key,
-		RecentLatencySamples: latencySamples,
-		SuccessRate:          row.SuccessRate,
-		TTFTMs:               ttftMs,
-		DurationMs:           durationMs,
-		TokensPerSecond:      row.TokensPerSecond,
-		SuccessScore:         row.SuccessScore,
-		SpeedScore:           speedScore,
-		ExperienceScore:      row.ExperienceScore,
-		EmptyOutputRate:      row.EmptyOutputRate,
-		ExperienceIssueRate:  row.ExperienceIssueRate,
-		LastRealAttemptAt:    row.LastRealAttemptAt,
-		LastRealSuccessAt:    row.LastRealSuccessAt,
-		LastRealFailureAt:    row.LastRealFailureAt,
-		RealSampleCount30m:   row.RealSampleCount30m,
-		LastProbeAt:          row.LastProbeAt,
-		LastProbeSuccessAt:   row.LastProbeSuccessAt,
-		GroupPriorityRatio:   1,
-		CircuitState:         core.CircuitStateClosed,
-		SampleCount:          row.SampleCount,
+		Key:                   key,
+		RecentLatencySamples:  latencySamples,
+		SuccessRate:           row.SuccessRate,
+		TTFTMs:                ttftMs,
+		DurationMs:            durationMs,
+		TokensPerSecond:       row.TokensPerSecond,
+		SuccessScore:          row.SuccessScore,
+		SpeedScore:            speedScore,
+		ExperienceScore:       row.ExperienceScore,
+		EmptyOutputRate:       row.EmptyOutputRate,
+		ExperienceIssueRate:   row.ExperienceIssueRate,
+		LastRealAttemptAt:     row.LastRealAttemptAt,
+		LastRealSuccessAt:     row.LastRealSuccessAt,
+		LastRealFailureAt:     row.LastRealFailureAt,
+		RealSampleCount30m:    row.RealSampleCount30m,
+		LastProbeAt:           row.LastProbeAt,
+		LastProbeSuccessAt:    row.LastProbeSuccessAt,
+		ConfigErrorIsolated:   row.ConfigErrorIsolated,
+		IsolationReason:       row.IsolationReason,
+		IsolationUntil:        row.IsolationUntil,
+		AuthConfigErrorCount:  row.AuthConfigErrorCount,
+		LastAuthConfigErrorAt: row.LastAuthConfigErrorAt,
+		GroupPriorityRatio:    1,
+		CircuitState:          core.CircuitStateClosed,
+		SampleCount:           row.SampleCount,
 	}, true
 }
 
@@ -462,6 +472,13 @@ func mergeRuntimeSnapshotRows(left, right model.ModelGatewayRuntimeSnapshot) mod
 	left.RealSampleCount30m += right.RealSampleCount30m
 	left.LastProbeAt = maxInt64(left.LastProbeAt, right.LastProbeAt)
 	left.LastProbeSuccessAt = maxInt64(left.LastProbeSuccessAt, right.LastProbeSuccessAt)
+	if right.ConfigErrorIsolated || right.LastAuthConfigErrorAt > left.LastAuthConfigErrorAt {
+		left.ConfigErrorIsolated = right.ConfigErrorIsolated
+		left.IsolationReason = right.IsolationReason
+		left.IsolationUntil = right.IsolationUntil
+		left.AuthConfigErrorCount = right.AuthConfigErrorCount
+		left.LastAuthConfigErrorAt = right.LastAuthConfigErrorAt
+	}
 	left.SampleCount = total
 	return left
 }

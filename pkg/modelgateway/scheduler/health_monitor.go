@@ -65,6 +65,9 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 		}
 		return
 	}
+	if isCircuitOverloadSkipResult(result) {
+		return
+	}
 	if m.breaker != nil {
 		m.breaker.Report(result)
 	}

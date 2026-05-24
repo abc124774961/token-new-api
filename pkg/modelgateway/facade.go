@@ -128,6 +128,9 @@ func (f *SmartDispatchFacade) updateStickyLifecycle(c *gin.Context, result *core
 	if req.RequestedGroup == "" {
 		req.RequestedGroup = plan.SelectedGroup
 	}
+	if req.UserGroup == "" {
+		req.UserGroup = req.RequestedGroup
+	}
 	if req.ModelName == "" {
 		req.ModelName = plan.RuntimeKey.RequestedModel
 	}

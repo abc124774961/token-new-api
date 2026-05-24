@@ -39,7 +39,7 @@ func TestSelectedRelayGroupForTracePrefersActualGroupOverAuto(t *testing.T) {
 	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "codex-plus")
 	common.SetContextKey(ctx, constant.ContextKeyAutoGroup, "codex-plus")
 	info := &relaycommon.RelayInfo{
-		TokenGroup:  "auto",
+		TokenGroup: "auto",
 		UsingGroup: "codex-plus",
 	}
 
@@ -255,16 +255,19 @@ func TestShouldRetryAllowsCodexPendingRequestsFailoverWhenAlternativeGroupExists
 	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyForceNextAutoGroup))
 }
 
-func TestShouldRetryRejectsGeneric429WhenNoRetryBudget(t *testing.T) {
-	serviceSetupRelayRetryDB(t)
+func TestShouldRetryAllowsGeneric429FailoverWhenAlternativePeerChannelExists(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 461, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 462, "default", "gpt-5.5", 10)
 
 	ctx := newRelayRetryContext()
-	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "auto")
+	ctx.Set("use_channel", []string{"461"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
 	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
 
 	param := &service.RetryParam{
 		Ctx:        ctx,
-		TokenGroup: "auto",
+		TokenGroup: "default",
 		ModelName:  "gpt-5.5",
 		Retry:      common.GetPointer(0),
 	}
@@ -273,6 +276,36 @@ func TestShouldRetryRejectsGeneric429WhenNoRetryBudget(t *testing.T) {
 		errors.New("rate limit exceeded"),
 		types.ErrorCodeBadResponseStatusCode,
 		429,
+	)
+
+	require.True(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, 1, param.GetExtraRetries())
+	require.Equal(t, "overload_skip", classifyRelayAttemptError(ctx, err))
+	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
+}
+
+func TestShouldRetryRejectsGeneric429ForSpecificChannel(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 463, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 464, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Set("specific_channel_id", 463)
+	ctx.Set("use_channel", []string{"463"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	err := types.NewOpenAIError(
+		errors.New("rate limit exceeded"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
 	)
 
 	require.False(t, shouldRetry(ctx, err, param, 0))
@@ -511,6 +544,35 @@ func TestProcessChannelErrorSkipsPersistingRetriableIntermediateFailure(t *testi
 	require.Nil(t, service.GetChannelFailureAvoidanceStatus(2))
 }
 
+func TestProcessChannelErrorSkipsFailureAvoidanceForOverload429(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 45
+	common.AutomaticDisableChannelEnabled = true
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		common.AutomaticDisableChannelEnabled = originalAutomaticDisable
+		service.ClearChannelFailureAvoidance(916)
+		service.ClearChannelConcurrencyForTest()
+	})
+
+	err := types.NewOpenAIError(
+		errors.New("rate limit exceeded"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)
+	ctx := newRelayRetryContext()
+	processChannelError(ctx, *types.NewChannelError(916, 1, "channel-916", false, "", true), err, false)
+
+	require.Equal(t, "overload_skip", classifyRelayAttemptError(ctx, err))
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(916))
+	require.Nil(t, service.GetChannelConcurrencyCooldownStatus(916))
+	require.False(t, service.IsRuntimeBalanceInsufficientChannelID(916))
+}
+
 func TestProcessChannelErrorRecordsTemporaryAvoidanceForBadGateway(t *testing.T) {
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
@@ -691,6 +753,24 @@ func TestTraceChannelFailureMarksConcurrencyLimitedWithoutCooldown(t *testing.T)
 	require.NotContains(t, trace[0], "concurrency_cooldown")
 }
 
+func TestTraceChannelFailureAddsOverloadCategoryAndSwitchAction(t *testing.T) {
+	ctx := newRelayRetryContext()
+	err := types.NewOpenAIError(
+		errors.New("rate limit exceeded"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)
+
+	traceChannelFailure(ctx, *types.NewChannelError(917, 1, "channel-917", false, "", false), err, false)
+
+	trace, ok := common.GetContextKeyType[[]map[string]interface{}](ctx, constant.ContextKeyChannelFailureTrace)
+	require.True(t, ok)
+	require.Len(t, trace, 1)
+	require.Equal(t, "overload_skip", trace[0]["error_category"])
+	require.Equal(t, "switch_channel", trace[0]["retry_action"])
+	require.NotContains(t, trace[0], "temporary_avoidance_reason")
+}
+
 func TestProcessChannelErrorSkipsTemporaryAvoidanceForUpstreamConcurrencyBusy(t *testing.T) {
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
@@ -796,4 +876,58 @@ func TestProcessChannelErrorMarksBalanceInsufficientSynchronously(t *testing.T) 
 	updated, err := model.GetChannelById(channel.Id, true)
 	require.NoError(t, err)
 	require.True(t, service.IsBalanceInsufficientPausedChannel(updated))
+}
+
+func TestProcessChannelErrorRecordsConfigIsolationAfterTwoAuthFailures(t *testing.T) {
+	t.Cleanup(func() {
+		service.ClearChannelConfigIsolation(service.NewChannelConfigIsolationKey(918, "gpt-5.5", "default", constant.EndpointTypeOpenAI))
+		service.ClearChannelFailureAvoidance(918)
+	})
+
+	ctx := newRelayRetryContext()
+	ctx.Set("original_model", "gpt-5.5")
+	ctx.Set("group", "default")
+	err := types.NewOpenAIError(
+		errors.New("invalid API key"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusUnauthorized,
+	)
+	key := service.NewChannelConfigIsolationKey(918, "gpt-5.5", "default", constant.EndpointTypeOpenAI)
+
+	processChannelError(ctx, *types.NewChannelError(918, 1, "channel-918", false, "", true), err, false)
+	status := service.GetChannelConfigIsolationStatus(key)
+	require.NotNil(t, status)
+	require.False(t, status.Active)
+	require.Equal(t, 1, status.FailureCount)
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(918))
+
+	processChannelError(ctx, *types.NewChannelError(918, 1, "channel-918", false, "", true), err, false)
+	status = service.GetChannelConfigIsolationStatus(key)
+	require.NotNil(t, status)
+	require.True(t, status.Active)
+	require.Equal(t, 2, status.FailureCount)
+	require.Equal(t, "auth_config_error", classifyRelayAttemptError(ctx, err))
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(918))
+}
+
+func TestRelayChannelConfigSuccessClearsIsolation(t *testing.T) {
+	t.Cleanup(func() {
+		service.ClearChannelConfigIsolation(service.NewChannelConfigIsolationKey(919, "gpt-5.5", "default", constant.EndpointTypeOpenAI))
+	})
+
+	ctx := newRelayRetryContext()
+	ctx.Set("original_model", "gpt-5.5")
+	ctx.Set("group", "default")
+	key := service.NewChannelConfigIsolationKey(919, "gpt-5.5", "default", constant.EndpointTypeOpenAI)
+	service.RecordChannelConfigAuthError(key, "401")
+	service.RecordChannelConfigAuthError(key, "403")
+	require.True(t, service.IsChannelConfigIsolated(key))
+
+	recordRelayChannelConfigSuccess(ctx, 919, nil, &service.RetryParam{
+		TokenGroup:   "default",
+		ModelName:    "gpt-5.5",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Nil(t, service.GetChannelConfigIsolationStatus(key))
 }

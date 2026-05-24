@@ -44,7 +44,7 @@ const (
 	modelGatewayTrendExportPreviewLimit         = 20
 	modelGatewayRuntimeStatusDefaultLimit       = 200
 	modelGatewayRuntimeStatusMaxLimit           = 1000
-	modelGatewayObservabilitySummaryFreshTTL    = 3 * time.Second
+	modelGatewayObservabilitySummaryFreshTTL    = 2 * time.Second
 	modelGatewayObservabilitySummaryStaleTTL    = 30 * time.Second
 	modelGatewayObservabilitySummaryMaxCache    = 128
 	modelGatewayObservabilityViewUserRequests   = "user_requests"
@@ -182,38 +182,43 @@ type ModelGatewayTrendExportPreview struct {
 }
 
 type ModelGatewayObservabilitySummary struct {
-	WindowHours             int                            `json:"window_hours"`
-	TrendBucketSeconds      int64                          `json:"trend_bucket_seconds"`
-	StartTime               int64                          `json:"start_time"`
-	EndTime                 int64                          `json:"end_time"`
-	TotalRecords            int64                          `json:"total_records"`
-	ScannedRecords          int                            `json:"scanned_records"`
-	Truncated               bool                           `json:"truncated"`
-	Dispatches              int64                          `json:"dispatches"`
-	Attempts                int64                          `json:"attempts"`
-	Successes               int64                          `json:"successes"`
-	Failures                int64                          `json:"failures"`
-	StreamInterrupted       int64                          `json:"stream_interrupted"`
-	FallbackUsed            int64                          `json:"fallback_used"`
-	SuccessRate             float64                        `json:"success_rate"`
-	AvgDurationMs           int64                          `json:"avg_duration_ms"`
-	AvgTTFTMs               int64                          `json:"avg_ttft_ms"`
-	AvgScoreTotal           float64                        `json:"avg_score_total"`
-	QueueEnabledDispatches  int64                          `json:"queue_enabled_dispatches"`
-	QueuedDispatches        int64                          `json:"queued_dispatches"`
-	AvgQueueWaitMs          int64                          `json:"avg_queue_wait_ms"`
-	StickyRoutes            int64                          `json:"sticky_routes"`
-	StickyRetained          int64                          `json:"sticky_retained"`
-	StickyBroken            int64                          `json:"sticky_broken"`
-	CacheAffinityRoutes     int64                          `json:"cache_affinity_routes"`
-	ScoreBreakdownSamples   int64                          `json:"score_breakdown_samples"`
-	ScoreBreakdownParseErrs int64                          `json:"score_breakdown_parse_errors"`
-	RiskEvents              int64                          `json:"risk_events"`
-	RiskStatusChanges       int64                          `json:"risk_status_changes"`
-	CurrentRiskRuntimeKeys  int                            `json:"current_risk_runtime_keys"`
-	CircuitOpenReasons      []ModelGatewayTrendReasonCount `json:"circuit_open_reasons,omitempty"`
-	CircuitErrorCounts      []ModelGatewayTrendReasonCount `json:"circuit_error_counts,omitempty"`
-	CircuitErrorTypes       []ModelGatewayTrendReasonCount `json:"circuit_error_types,omitempty"`
+	WindowHours              int                            `json:"window_hours"`
+	TrendBucketSeconds       int64                          `json:"trend_bucket_seconds"`
+	StartTime                int64                          `json:"start_time"`
+	EndTime                  int64                          `json:"end_time"`
+	TotalRecords             int64                          `json:"total_records"`
+	ScannedRecords           int                            `json:"scanned_records"`
+	Truncated                bool                           `json:"truncated"`
+	Dispatches               int64                          `json:"dispatches"`
+	Attempts                 int64                          `json:"attempts"`
+	Successes                int64                          `json:"successes"`
+	Failures                 int64                          `json:"failures"`
+	StreamInterrupted        int64                          `json:"stream_interrupted"`
+	FallbackUsed             int64                          `json:"fallback_used"`
+	SuccessRate              float64                        `json:"success_rate"`
+	AvgDurationMs            int64                          `json:"avg_duration_ms"`
+	AvgTTFTMs                int64                          `json:"avg_ttft_ms"`
+	AvgScoreTotal            float64                        `json:"avg_score_total"`
+	QueueEnabledDispatches   int64                          `json:"queue_enabled_dispatches"`
+	QueuedDispatches         int64                          `json:"queued_dispatches"`
+	QueueWaitCount           int64                          `json:"queue_wait_count"`
+	AvgQueueWaitMs           int64                          `json:"avg_queue_wait_ms"`
+	StickyRoutes             int64                          `json:"sticky_routes"`
+	StickyRetained           int64                          `json:"sticky_retained"`
+	StickyBroken             int64                          `json:"sticky_broken"`
+	CacheAffinityRoutes      int64                          `json:"cache_affinity_routes"`
+	OverloadSkipCount        int64                          `json:"overload_skip_count"`
+	AuthConfigErrorCount     int64                          `json:"auth_config_error_count"`
+	UnknownErrorCount        int64                          `json:"unknown_error_count"`
+	ConfigErrorIsolatedCount int64                          `json:"config_error_isolated_count"`
+	ScoreBreakdownSamples    int64                          `json:"score_breakdown_samples"`
+	ScoreBreakdownParseErrs  int64                          `json:"score_breakdown_parse_errors"`
+	RiskEvents               int64                          `json:"risk_events"`
+	RiskStatusChanges        int64                          `json:"risk_status_changes"`
+	CurrentRiskRuntimeKeys   int                            `json:"current_risk_runtime_keys"`
+	CircuitOpenReasons       []ModelGatewayTrendReasonCount `json:"circuit_open_reasons,omitempty"`
+	CircuitErrorCounts       []ModelGatewayTrendReasonCount `json:"circuit_error_counts,omitempty"`
+	CircuitErrorTypes        []ModelGatewayTrendReasonCount `json:"circuit_error_types,omitempty"`
 }
 
 type ModelGatewayUserRequestObservabilityResponse struct {
@@ -358,36 +363,41 @@ type ModelGatewayUserRequestBillingInfo struct {
 }
 
 type ModelGatewayObservabilityTrendPoint struct {
-	BucketStart            int64                                `json:"bucket_start"`
-	BucketEnd              int64                                `json:"bucket_end"`
-	Records                int64                                `json:"records"`
-	Dispatches             int64                                `json:"dispatches"`
-	Attempts               int64                                `json:"attempts"`
-	Successes              int64                                `json:"successes"`
-	Failures               int64                                `json:"failures"`
-	StreamInterrupted      int64                                `json:"stream_interrupted"`
-	FallbackUsed           int64                                `json:"fallback_used"`
-	SuccessRate            float64                              `json:"success_rate"`
-	AvgDurationMs          int64                                `json:"avg_duration_ms"`
-	AvgTTFTMs              int64                                `json:"avg_ttft_ms"`
-	QueueEnabledDispatches int64                                `json:"queue_enabled_dispatches"`
-	QueuedDispatches       int64                                `json:"queued_dispatches"`
-	AvgQueueWaitMs         int64                                `json:"avg_queue_wait_ms"`
-	QueueWaitP50Ms         int64                                `json:"queue_wait_p50_ms"`
-	QueueWaitP90Ms         int64                                `json:"queue_wait_p90_ms"`
-	QueueWaitP95Ms         int64                                `json:"queue_wait_p95_ms"`
-	StickyRoutes           int64                                `json:"sticky_routes"`
-	StickyRetained         int64                                `json:"sticky_retained"`
-	StickyBroken           int64                                `json:"sticky_broken"`
-	CacheAffinityRoutes    int64                                `json:"cache_affinity_routes"`
-	ByProviderProfile      []ModelGatewayObservabilityAggregate `json:"by_provider_profile,omitempty"`
-	ByProxyMode            []ModelGatewayObservabilityAggregate `json:"by_proxy_mode,omitempty"`
-	RejectReasons          []ModelGatewayTrendReasonCount       `json:"reject_reasons,omitempty"`
-	CircuitOpenReasons     []ModelGatewayTrendReasonCount       `json:"circuit_open_reasons,omitempty"`
-	CircuitErrorCounts     []ModelGatewayTrendReasonCount       `json:"circuit_error_counts,omitempty"`
-	CircuitErrorTypes      []ModelGatewayTrendReasonCount       `json:"circuit_error_types,omitempty"`
-	Risk                   *ModelGatewayRiskSnapshot            `json:"risk,omitempty"`
-	RiskEvents             []ModelGatewayRiskEvent              `json:"risk_events,omitempty"`
+	BucketStart              int64                                `json:"bucket_start"`
+	BucketEnd                int64                                `json:"bucket_end"`
+	Records                  int64                                `json:"records"`
+	Dispatches               int64                                `json:"dispatches"`
+	Attempts                 int64                                `json:"attempts"`
+	Successes                int64                                `json:"successes"`
+	Failures                 int64                                `json:"failures"`
+	StreamInterrupted        int64                                `json:"stream_interrupted"`
+	FallbackUsed             int64                                `json:"fallback_used"`
+	SuccessRate              float64                              `json:"success_rate"`
+	AvgDurationMs            int64                                `json:"avg_duration_ms"`
+	AvgTTFTMs                int64                                `json:"avg_ttft_ms"`
+	QueueEnabledDispatches   int64                                `json:"queue_enabled_dispatches"`
+	QueuedDispatches         int64                                `json:"queued_dispatches"`
+	QueueWaitCount           int64                                `json:"queue_wait_count"`
+	AvgQueueWaitMs           int64                                `json:"avg_queue_wait_ms"`
+	QueueWaitP50Ms           int64                                `json:"queue_wait_p50_ms"`
+	QueueWaitP90Ms           int64                                `json:"queue_wait_p90_ms"`
+	QueueWaitP95Ms           int64                                `json:"queue_wait_p95_ms"`
+	StickyRoutes             int64                                `json:"sticky_routes"`
+	StickyRetained           int64                                `json:"sticky_retained"`
+	StickyBroken             int64                                `json:"sticky_broken"`
+	CacheAffinityRoutes      int64                                `json:"cache_affinity_routes"`
+	OverloadSkipCount        int64                                `json:"overload_skip_count"`
+	AuthConfigErrorCount     int64                                `json:"auth_config_error_count"`
+	UnknownErrorCount        int64                                `json:"unknown_error_count"`
+	ConfigErrorIsolatedCount int64                                `json:"config_error_isolated_count"`
+	ByProviderProfile        []ModelGatewayObservabilityAggregate `json:"by_provider_profile,omitempty"`
+	ByProxyMode              []ModelGatewayObservabilityAggregate `json:"by_proxy_mode,omitempty"`
+	RejectReasons            []ModelGatewayTrendReasonCount       `json:"reject_reasons,omitempty"`
+	CircuitOpenReasons       []ModelGatewayTrendReasonCount       `json:"circuit_open_reasons,omitempty"`
+	CircuitErrorCounts       []ModelGatewayTrendReasonCount       `json:"circuit_error_counts,omitempty"`
+	CircuitErrorTypes        []ModelGatewayTrendReasonCount       `json:"circuit_error_types,omitempty"`
+	Risk                     *ModelGatewayRiskSnapshot            `json:"risk,omitempty"`
+	RiskEvents               []ModelGatewayRiskEvent              `json:"risk_events,omitempty"`
 }
 
 type ModelGatewayTrendReasonCount struct {
@@ -441,34 +451,39 @@ type ModelGatewayRiskSnapshot struct {
 }
 
 type ModelGatewayObservabilityAggregate struct {
-	Key                     string             `json:"key"`
-	Name                    string             `json:"name,omitempty"`
-	ChannelID               int                `json:"channel_id,omitempty"`
-	ChannelStatus           int                `json:"channel_status,omitempty"`
-	StatusReason            string             `json:"status_reason,omitempty"`
-	BalanceInsufficient     bool               `json:"balance_insufficient,omitempty"`
-	Records                 int64              `json:"records"`
-	Dispatches              int64              `json:"dispatches"`
-	Attempts                int64              `json:"attempts"`
-	Successes               int64              `json:"successes"`
-	Failures                int64              `json:"failures"`
-	StreamInterrupted       int64              `json:"stream_interrupted"`
-	FallbackUsed            int64              `json:"fallback_used"`
-	SuccessRate             float64            `json:"success_rate"`
-	AvgDurationMs           int64              `json:"avg_duration_ms"`
-	AvgTTFTMs               int64              `json:"avg_ttft_ms"`
-	AvgScoreTotal           float64            `json:"avg_score_total"`
-	QueueEnabledDispatches  int64              `json:"queue_enabled_dispatches"`
-	QueuedDispatches        int64              `json:"queued_dispatches"`
-	AvgQueueWaitMs          int64              `json:"avg_queue_wait_ms"`
-	StickyRoutes            int64              `json:"sticky_routes"`
-	StickyRetained          int64              `json:"sticky_retained"`
-	StickyBroken            int64              `json:"sticky_broken"`
-	CacheAffinityRoutes     int64              `json:"cache_affinity_routes"`
-	ScoreBreakdown          map[string]float64 `json:"score_breakdown,omitempty"`
-	ScoreBreakdownSamples   int64              `json:"score_breakdown_samples"`
-	ScoreBreakdownParseErrs int64              `json:"score_breakdown_parse_errors"`
-	LastRecordAt            int64              `json:"last_record_at"`
+	Key                      string             `json:"key"`
+	Name                     string             `json:"name,omitempty"`
+	ChannelID                int                `json:"channel_id,omitempty"`
+	ChannelStatus            int                `json:"channel_status,omitempty"`
+	StatusReason             string             `json:"status_reason,omitempty"`
+	BalanceInsufficient      bool               `json:"balance_insufficient,omitempty"`
+	Records                  int64              `json:"records"`
+	Dispatches               int64              `json:"dispatches"`
+	Attempts                 int64              `json:"attempts"`
+	Successes                int64              `json:"successes"`
+	Failures                 int64              `json:"failures"`
+	StreamInterrupted        int64              `json:"stream_interrupted"`
+	FallbackUsed             int64              `json:"fallback_used"`
+	SuccessRate              float64            `json:"success_rate"`
+	AvgDurationMs            int64              `json:"avg_duration_ms"`
+	AvgTTFTMs                int64              `json:"avg_ttft_ms"`
+	AvgScoreTotal            float64            `json:"avg_score_total"`
+	QueueEnabledDispatches   int64              `json:"queue_enabled_dispatches"`
+	QueuedDispatches         int64              `json:"queued_dispatches"`
+	QueueWaitCount           int64              `json:"queue_wait_count"`
+	AvgQueueWaitMs           int64              `json:"avg_queue_wait_ms"`
+	StickyRoutes             int64              `json:"sticky_routes"`
+	StickyRetained           int64              `json:"sticky_retained"`
+	StickyBroken             int64              `json:"sticky_broken"`
+	CacheAffinityRoutes      int64              `json:"cache_affinity_routes"`
+	OverloadSkipCount        int64              `json:"overload_skip_count"`
+	AuthConfigErrorCount     int64              `json:"auth_config_error_count"`
+	UnknownErrorCount        int64              `json:"unknown_error_count"`
+	ConfigErrorIsolatedCount int64              `json:"config_error_isolated_count"`
+	ScoreBreakdown           map[string]float64 `json:"score_breakdown,omitempty"`
+	ScoreBreakdownSamples    int64              `json:"score_breakdown_samples"`
+	ScoreBreakdownParseErrs  int64              `json:"score_breakdown_parse_errors"`
+	LastRecordAt             int64              `json:"last_record_at"`
 }
 
 type ModelGatewayObservabilityScoreBreakdown struct {
@@ -584,6 +599,11 @@ type ModelGatewayCandidateExplanation struct {
 	ExperienceScore            float64                `json:"experience_score,omitempty"`
 	EmptyOutputRate            float64                `json:"empty_output_rate,omitempty"`
 	ExperienceIssueRate        float64                `json:"experience_issue_rate,omitempty"`
+	ConfigErrorIsolated        bool                   `json:"config_error_isolated,omitempty"`
+	IsolationReason            string                 `json:"isolation_reason,omitempty"`
+	IsolationUntil             int64                  `json:"isolation_until,omitempty"`
+	AuthConfigErrorCount       int                    `json:"auth_config_error_count,omitempty"`
+	LastAuthConfigErrorAt      int64                  `json:"last_auth_config_error_at,omitempty"`
 	StickyMatched              bool                   `json:"sticky_matched,omitempty"`
 	Selected                   bool                   `json:"selected,omitempty"`
 	ScoreSampleSource          string                 `json:"score_sample_source,omitempty"`
@@ -615,16 +635,17 @@ type ModelGatewayObservabilityOptions struct {
 
 type modelGatewayObservabilityAccumulator struct {
 	ModelGatewayObservabilityAggregate
-	durationSum       int64
-	durationSamples   int64
-	ttftSum           int64
-	ttftSamples       int64
-	scoreTotalSum     float64
-	scoreTotalSamples int64
-	queueWaitSum      int64
-	queueWaitSamples  int64
-	queueWaitValues   []int64
-	scoreSums         map[string]float64
+	durationSum         int64
+	durationSamples     int64
+	ttftSum             int64
+	ttftSamples         int64
+	scoreTotalSum       float64
+	scoreTotalSamples   int64
+	queueWaitSum        int64
+	queueWaitSamples    int64
+	queueWaitValues     []int64
+	scoreSums           map[string]float64
+	configIsolationKeys map[string]struct{}
 }
 
 type modelGatewayObservabilityTrendAccumulator struct {
@@ -2067,11 +2088,16 @@ func modelGatewayObservabilitySummaryFromAccumulator(summary ModelGatewayObserva
 	summary.AvgScoreTotal = averageFloat64(accumulator.scoreTotalSum, accumulator.scoreTotalSamples)
 	summary.QueueEnabledDispatches = accumulator.QueueEnabledDispatches
 	summary.QueuedDispatches = accumulator.QueuedDispatches
+	summary.QueueWaitCount = accumulator.QueueWaitCount
 	summary.AvgQueueWaitMs = averageInt64(accumulator.queueWaitSum, accumulator.queueWaitSamples)
 	summary.StickyRoutes = accumulator.StickyRoutes
 	summary.StickyRetained = accumulator.StickyRetained
 	summary.StickyBroken = accumulator.StickyBroken
 	summary.CacheAffinityRoutes = accumulator.CacheAffinityRoutes
+	summary.OverloadSkipCount = accumulator.OverloadSkipCount
+	summary.AuthConfigErrorCount = accumulator.AuthConfigErrorCount
+	summary.UnknownErrorCount = accumulator.UnknownErrorCount
+	summary.ConfigErrorIsolatedCount = accumulator.ConfigErrorIsolatedCount
 	summary.ScoreBreakdownSamples = accumulator.ScoreBreakdownSamples
 	summary.ScoreBreakdownParseErrs = accumulator.ScoreBreakdownParseErrs
 	return summary
@@ -2173,6 +2199,7 @@ func applyModelGatewayObservabilityRecord(accumulator *modelGatewayObservability
 				accumulator.Successes++
 			} else {
 				accumulator.Failures++
+				applyModelGatewayErrorCategoryCounts(accumulator, record, attemptMeta)
 			}
 			if record.StreamInterrupted {
 				accumulator.StreamInterrupted++
@@ -2191,6 +2218,23 @@ func applyModelGatewayObservabilityRecord(accumulator *modelGatewayObservability
 		accumulator.scoreTotalSum += record.ScoreTotal
 		accumulator.scoreTotalSamples++
 	}
+	for _, candidate := range modelGatewayCandidateExplanationsFromRequestMeta(requestMeta) {
+		if !candidate.ConfigErrorIsolated {
+			continue
+		}
+		key := modelGatewayConfigIsolationCandidateKey(candidate)
+		if key == "" {
+			continue
+		}
+		if accumulator.configIsolationKeys == nil {
+			accumulator.configIsolationKeys = make(map[string]struct{})
+		}
+		if _, exists := accumulator.configIsolationKeys[key]; exists {
+			continue
+		}
+		accumulator.configIsolationKeys[key] = struct{}{}
+		accumulator.ConfigErrorIsolatedCount++
+	}
 	if scoreErr {
 		accumulator.ScoreBreakdownParseErrs++
 		return
@@ -2205,6 +2249,59 @@ func applyModelGatewayObservabilityRecord(accumulator *modelGatewayObservability
 		accumulator.scoreSums[key] += value
 	}
 	accumulator.ScoreBreakdownSamples++
+}
+
+func applyModelGatewayErrorCategoryCounts(accumulator *modelGatewayObservabilityAccumulator, record model.ModelExecutionRecord, attemptMeta modelGatewayObservabilityAttemptMeta) {
+	if accumulator == nil {
+		return
+	}
+	category := strings.TrimSpace(record.ErrorCategory)
+	if category == "" {
+		category = strings.TrimSpace(attemptMeta.ErrorCategory)
+	}
+	if category == "" {
+		category = modelgatewaycore.ErrorCategoryUnknown
+	}
+	switch category {
+	case modelgatewaycore.ErrorCategoryOverloadSkip:
+		accumulator.OverloadSkipCount++
+	case modelgatewaycore.ErrorCategoryAuthConfigError:
+		accumulator.AuthConfigErrorCount++
+	case modelgatewaycore.ErrorCategoryUnknown:
+		accumulator.UnknownErrorCount++
+	}
+}
+
+func modelGatewayConfigIsolationCandidateKey(candidate ModelGatewayCandidateExplanation) string {
+	if !candidate.ConfigErrorIsolated {
+		return ""
+	}
+	key := candidate.RuntimeKey
+	if key.ChannelID <= 0 {
+		key.ChannelID = candidate.ChannelID
+	}
+	if key.Group == "" {
+		key.Group = candidate.Group
+	}
+	if key.UpstreamModel == "" {
+		key.UpstreamModel = candidate.UpstreamModel
+	}
+	if key.ChannelID <= 0 &&
+		key.RequestedModel == "" &&
+		key.UpstreamModel == "" &&
+		key.Group == "" &&
+		key.EndpointType == "" &&
+		key.CapabilityFingerprint == "" {
+		return ""
+	}
+	return fmt.Sprintf("%d|%s|%s|%s|%s|%s",
+		key.ChannelID,
+		key.RequestedModel,
+		key.UpstreamModel,
+		key.Group,
+		key.EndpointType,
+		key.CapabilityFingerprint,
+	)
 }
 
 type modelGatewayObservabilityDispatchMeta struct {
@@ -2277,6 +2374,7 @@ func applyModelGatewayObservabilityDispatchMeta(accumulator *modelGatewayObserva
 		accumulator.QueuedDispatches++
 	}
 	if meta.QueueWaitSet {
+		accumulator.QueueWaitCount++
 		accumulator.queueWaitSum += meta.QueueWaitMs
 		accumulator.queueWaitSamples++
 		accumulator.queueWaitValues = append(accumulator.queueWaitValues, meta.QueueWaitMs)
@@ -2749,6 +2847,11 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			ExperienceScore:            roundModelGatewayObservabilityFloat(candidate.ExperienceScore),
 			EmptyOutputRate:            roundModelGatewayObservabilityFloat(candidate.EmptyOutputRate),
 			ExperienceIssueRate:        roundModelGatewayObservabilityFloat(candidate.ExperienceIssueRate),
+			ConfigErrorIsolated:        candidate.ConfigErrorIsolated,
+			IsolationReason:            strings.TrimSpace(candidate.IsolationReason),
+			IsolationUntil:             candidate.IsolationUntil,
+			AuthConfigErrorCount:       candidate.AuthConfigErrorCount,
+			LastAuthConfigErrorAt:      candidate.LastAuthConfigErrorAt,
 			StickyMatched:              candidate.StickyMatched,
 			Selected:                   candidate.Selected,
 			ScoreSampleSource:          candidate.ScoreSampleSource,
@@ -3045,6 +3148,7 @@ func finalizeModelGatewayObservabilityAggregates(accumulators map[string]*modelG
 		item.AvgDurationMs = averageInt64(accumulator.durationSum, accumulator.durationSamples)
 		item.AvgTTFTMs = averageInt64(accumulator.ttftSum, accumulator.ttftSamples)
 		item.AvgScoreTotal = averageFloat64(accumulator.scoreTotalSum, accumulator.scoreTotalSamples)
+		item.QueueWaitCount = accumulator.QueueWaitCount
 		item.AvgQueueWaitMs = averageInt64(accumulator.queueWaitSum, accumulator.queueWaitSamples)
 		item.ScoreBreakdown = averageModelGatewayObservabilityScoreBreakdown(accumulator)
 		items = append(items, item)
@@ -3107,6 +3211,7 @@ func modelGatewayObservabilityTrendPointFromAccumulator(bucketStart int64, bucke
 	point.AvgTTFTMs = averageInt64(accumulator.ttftSum, accumulator.ttftSamples)
 	point.QueueEnabledDispatches = accumulator.QueueEnabledDispatches
 	point.QueuedDispatches = accumulator.QueuedDispatches
+	point.QueueWaitCount = accumulator.QueueWaitCount
 	point.AvgQueueWaitMs = averageInt64(accumulator.queueWaitSum, accumulator.queueWaitSamples)
 	point.QueueWaitP50Ms = percentileModelGatewayObservabilityInt64(accumulator.queueWaitValues, 0.50)
 	point.QueueWaitP90Ms = percentileModelGatewayObservabilityInt64(accumulator.queueWaitValues, 0.90)
@@ -3115,6 +3220,10 @@ func modelGatewayObservabilityTrendPointFromAccumulator(bucketStart int64, bucke
 	point.StickyRetained = accumulator.StickyRetained
 	point.StickyBroken = accumulator.StickyBroken
 	point.CacheAffinityRoutes = accumulator.CacheAffinityRoutes
+	point.OverloadSkipCount = accumulator.OverloadSkipCount
+	point.AuthConfigErrorCount = accumulator.AuthConfigErrorCount
+	point.UnknownErrorCount = accumulator.UnknownErrorCount
+	point.ConfigErrorIsolatedCount = accumulator.ConfigErrorIsolatedCount
 	point.ByProviderProfile = finalizeModelGatewayObservabilityAggregates(accumulator.ProviderProfileAccumulators, modelGatewayObservabilityTrendTopN)
 	point.ByProxyMode = finalizeModelGatewayObservabilityAggregates(accumulator.ProxyModeAccumulators, modelGatewayObservabilityTrendTopN)
 	point.RejectReasons = finalizeModelGatewayTrendReasonCounts(accumulator.RejectReasons, modelGatewayObservabilityTrendTopN)

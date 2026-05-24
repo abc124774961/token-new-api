@@ -51,11 +51,11 @@ func TestCircuitBreakerReopensOnHalfOpenFailure(t *testing.T) {
 	now = now.Add(time.Second + time.Millisecond)
 	require.True(t, breaker.AllowProbe(key))
 
-	breaker.Report(core.AttemptResult{Key: key, ChannelID: 7, StatusCode: http.StatusTooManyRequests})
+	breaker.Report(core.AttemptResult{Key: key, ChannelID: 7, StatusCode: http.StatusBadGateway})
 	require.Equal(t, core.CircuitStateOpen, breaker.Snapshot(key).State)
 }
 
-func TestCircuitBreakerUsesErrorPolicyForRateLimit(t *testing.T) {
+func TestCircuitBreakerDoesNotOpenFor429EvenWithRateLimitPolicy(t *testing.T) {
 	now := time.Unix(300, 0)
 	breaker := scheduler.NewCircuitBreakerForTest(scheduler.CircuitBreakerOptions{
 		FailureThreshold:   1,
@@ -78,14 +78,17 @@ func TestCircuitBreakerUsesErrorPolicyForRateLimit(t *testing.T) {
 
 	breaker.Report(core.AttemptResult{Key: key, ChannelID: 10, StatusCode: http.StatusTooManyRequests})
 	snapshot := breaker.Snapshot(key)
-	require.Equal(t, core.CircuitStateOpen, snapshot.State)
-	require.Equal(t, scheduler.CircuitErrorRateLimit, snapshot.OpenReason)
-	require.Equal(t, 2, snapshot.ErrorCounts[scheduler.CircuitErrorRateLimit])
-	require.Equal(t, now.Add(2*time.Second).Unix(), snapshot.OpenUntil.Unix())
-	require.Equal(t, 2, snapshot.HalfOpenProbeMax)
+	require.Equal(t, core.CircuitStateClosed, snapshot.State)
+	require.Zero(t, snapshot.SampleCount)
+	require.Empty(t, snapshot.OpenReason)
+	require.Empty(t, snapshot.ErrorCounts)
+	require.Empty(t, scheduler.ClassifyCircuitError(core.AttemptResult{
+		StatusCode: http.StatusTooManyRequests,
+		ErrorCode:  "rate_limit",
+	}))
 }
 
-func TestCircuitBreakerDoesNotOpenForConcurrencyLimit429(t *testing.T) {
+func TestCircuitBreakerDoesNotOpenForOverloadSkip429(t *testing.T) {
 	now := time.Unix(350, 0)
 	breaker := scheduler.NewCircuitBreakerForTest(scheduler.CircuitBreakerOptions{
 		FailureThreshold:   1,
@@ -117,9 +120,11 @@ func TestCircuitBreakerDoesNotOpenForConcurrencyLimit429(t *testing.T) {
 	require.Equal(t, core.CircuitStateClosed, snapshot.State)
 	require.Zero(t, snapshot.SampleCount)
 	require.Empty(t, snapshot.ErrorCounts)
-	require.Equal(t, scheduler.CircuitErrorConcurrencyLimit, scheduler.ClassifyCircuitError(core.AttemptResult{
-		StatusCode:   http.StatusTooManyRequests,
-		ErrorMessage: "Too many pending requests, please retry later",
+	require.Empty(t, scheduler.ClassifyCircuitError(core.AttemptResult{
+		StatusCode:         http.StatusTooManyRequests,
+		ErrorMessage:       "Too many pending requests, please retry later",
+		ErrorCategory:      core.ErrorCategoryOverloadSkip,
+		ConcurrencyLimited: true,
 	}))
 }
 

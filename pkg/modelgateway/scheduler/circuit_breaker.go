@@ -145,7 +145,7 @@ func (b *CircuitBreaker) AllowProbe(key core.RuntimeKey) bool {
 }
 
 func (b *CircuitBreaker) Report(result core.AttemptResult) {
-	if b == nil || result.ChannelID <= 0 || result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) {
+	if b == nil || result.ChannelID <= 0 || result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) {
 		return
 	}
 	key := normalizeRuntimeKey(result.RuntimeKey())
@@ -314,7 +314,7 @@ func (b *CircuitBreaker) classifyFailure(result core.AttemptResult) (string, boo
 // mean the failure is counted by the circuit breaker; policies still decide
 // that in classifyFailure.
 func ClassifyCircuitError(result core.AttemptResult) string {
-	if result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) {
+	if result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) {
 		return ""
 	}
 	if result.StreamInterrupted {
@@ -322,9 +322,6 @@ func ClassifyCircuitError(result core.AttemptResult) string {
 	}
 	if result.ConcurrencyLimited || isCircuitConcurrencyLimitResult(result) {
 		return CircuitErrorConcurrencyLimit
-	}
-	if result.StatusCode == http.StatusTooManyRequests {
-		return CircuitErrorRateLimit
 	}
 	label := strings.ToLower(strings.TrimSpace(result.ErrorCode + " " + result.ErrorType + " " + result.ErrorMessage))
 	if containsAnyCircuitLabel(label, "concurrency limit exceeded for user", "too many pending requests") {
@@ -352,7 +349,7 @@ func ClassifyCircuitError(result core.AttemptResult) string {
 }
 
 func isDefaultCircuitFailure(result core.AttemptResult) bool {
-	if result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) {
+	if result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) {
 		return false
 	}
 	if result.StreamInterrupted {
@@ -361,9 +358,6 @@ func isDefaultCircuitFailure(result core.AttemptResult) bool {
 	if result.ConcurrencyLimited || isCircuitConcurrencyLimitResult(result) {
 		return false
 	}
-	if result.StatusCode == http.StatusTooManyRequests {
-		return true
-	}
 	if result.StatusCode >= http.StatusInternalServerError {
 		return true
 	}
@@ -371,6 +365,13 @@ func isDefaultCircuitFailure(result core.AttemptResult) bool {
 		return true
 	}
 	return false
+}
+
+func isCircuitOverloadSkipResult(result core.AttemptResult) bool {
+	if strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryOverloadSkip {
+		return true
+	}
+	return result.StatusCode == http.StatusTooManyRequests
 }
 
 func isCircuitConcurrencyLimitResult(result core.AttemptResult) bool {

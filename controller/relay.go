@@ -488,7 +488,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				traceChannelFailure(c, *newChannelErrorFromSelectedChannel(c, channel), newAPIError, !willRetry)
 			}
 			reportModelGatewayAttempt(c, relayInfo, retryParam, channel, newAPIError, time.Since(relayInfo.StartTime), modelGatewayAttemptFlow{
-				ErrorCategory:              lo.Ternary(clientAbort, "client_aborted", "local_concurrency_limit"),
+				ErrorCategory:              lo.Ternary(clientAbort, modelgatewaycore.ErrorCategoryClientAborted, modelgatewaycore.ErrorCategoryLocalConcurrencyLimit),
 				RetryAction:                lo.Ternary(clientAbort, "client_aborted", lo.Ternary(willRetry, "switch_channel", "stop")),
 				WillRetry:                  willRetry,
 				ClientAborted:              clientAbort,
@@ -541,7 +541,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 					relayStatusClientClosedRequest,
 					types.ErrOptionWithSkipRetry(),
 				), time.Since(relayInfo.StartTime), modelGatewayAttemptFlow{
-					ErrorCategory: "client_aborted",
+					ErrorCategory: modelgatewaycore.ErrorCategoryClientAborted,
 					RetryAction:   "client_aborted",
 					ClientAborted: true,
 					UsedChannels:  append([]string(nil), c.GetStringSlice("use_channel")...),
@@ -551,6 +551,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 			relayInfo.LastError = nil
 			service.ClearChannelFailureAvoidance(channel.Id)
+			recordRelayChannelConfigSuccess(c, channel.Id, relayInfo, retryParam)
 			service.RecordChannelConcurrencySuccess(channel.Id)
 			reportModelGatewayAttempt(c, relayInfo, retryParam, channel, nil, time.Since(relayInfo.StartTime), modelGatewayAttemptFlow{
 				RetryAction: "complete",
@@ -562,13 +563,17 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 		clientAbort := relayClientAborted(c, relayInfo, newAPIError)
+		errorCategory := classifyRelayAttemptError(c, newAPIError)
+		overloadSkip := errorCategory == modelgatewaycore.ErrorCategoryOverloadSkip
 		flow := modelGatewayAttemptFlow{
-			ErrorCategory:      classifyRelayAttemptError(c, newAPIError),
-			ConcurrencyLimited: service.IsUpstreamConcurrencyLimitError(newAPIError),
+			ErrorCategory:      errorCategory,
+			ConcurrencyLimited: overloadSkip || service.IsUpstreamConcurrencyLimitError(newAPIError),
 			ClientAborted:      clientAbort,
 		}
-		if service.IsUpstreamConcurrencyLimitError(newAPIError) && !clientAbort {
+		if (overloadSkip || service.IsUpstreamConcurrencyLimitError(newAPIError)) && !clientAbort {
 			service.MarkChannelSelectionSkipped(c, channel.Id)
+		}
+		if service.IsUpstreamConcurrencyLimitError(newAPIError) && !clientAbort {
 			flow.ActiveConcurrency = concurrencyLease.CurrentActive()
 			if concurrencyLease.Limit > 0 {
 				flow.ConfiguredConcurrencyLimit = concurrencyLease.Limit
@@ -619,7 +624,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			addUsedChannel(c, lastConcurrencyLimitChannel.Id)
 			traceChannelFailure(c, *newChannelErrorFromSelectedChannel(c, lastConcurrencyLimitChannel), newAPIError, true)
 			reportModelGatewayAttempt(c, relayInfo, retryParam, lastConcurrencyLimitChannel, newAPIError, time.Since(relayInfo.StartTime), modelGatewayAttemptFlow{
-				ErrorCategory:              "local_concurrency_limit",
+				ErrorCategory:              modelgatewaycore.ErrorCategoryLocalConcurrencyLimit,
 				RetryAction:                "stop",
 				ConcurrencyLimited:         true,
 				ConfiguredConcurrencyLimit: limit,
@@ -863,33 +868,36 @@ func classifyRelayAttemptError(c *gin.Context, apiErr *types.NewAPIError) string
 		return ""
 	}
 	if relayClientAborted(c, nil, apiErr) {
-		return "client_aborted"
+		return modelgatewaycore.ErrorCategoryClientAborted
 	}
 	if relayStreamInterrupted(c) || relayResponseAlreadyStarted(c) {
-		return "stream_interrupted"
+		return modelgatewaycore.ErrorCategoryStreamInterrupted
 	}
 	if apiErr.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
-		return "local_concurrency_limit"
-	}
-	if service.IsUpstreamConcurrencyLimitError(apiErr) {
-		return "upstream_concurrency_limit"
-	}
-	if isUpstreamRateLimitLikeError(apiErr) {
-		return "upstream_rate_limit"
+		return modelgatewaycore.ErrorCategoryLocalConcurrencyLimit
 	}
 	if service.IsBalanceInsufficientError(apiErr) {
-		return "balance_or_quota"
+		return modelgatewaycore.ErrorCategoryBalanceOrQuota
+	}
+	if isRelayOverloadSkipError(apiErr) {
+		return modelgatewaycore.ErrorCategoryOverloadSkip
+	}
+	if isUpstreamRateLimitLikeError(apiErr) {
+		return modelgatewaycore.ErrorCategoryRateLimit
+	}
+	if isRelayAuthConfigError(apiErr) {
+		return modelgatewaycore.ErrorCategoryAuthConfigError
 	}
 	if shouldFailoverOnUnsupportedCapability(c, apiErr) {
-		return "unsupported_capability"
-	}
-	if isUpstreamFailoverCandidate(apiErr) {
-		return "upstream_error"
+		return modelgatewaycore.ErrorCategoryUnsupportedCapability
 	}
 	if apiErr.StatusCode >= http.StatusInternalServerError {
-		return "server_error"
+		return modelgatewaycore.ErrorCategoryServerError
 	}
-	return "error"
+	if isUpstreamFailoverCandidate(apiErr) {
+		return modelgatewaycore.ErrorCategoryUpstreamError
+	}
+	return modelgatewaycore.ErrorCategoryUnknown
 }
 
 func retryActionForAttempt(c *gin.Context, apiErr *types.NewAPIError, willRetry bool) string {
@@ -902,7 +910,8 @@ func retryActionForAttempt(c *gin.Context, apiErr *types.NewAPIError, willRetry 
 	if !willRetry {
 		return "stop"
 	}
-	if service.IsUpstreamConcurrencyLimitError(apiErr) ||
+	if isRelayOverloadSkipError(apiErr) ||
+		service.IsUpstreamConcurrencyLimitError(apiErr) ||
 		apiErr.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit ||
 		shouldFailoverToAlternativeChannel(c, apiErr) {
 		return "switch_channel"
@@ -1006,7 +1015,7 @@ func reportModelGatewayClientAbortIfNeeded(c *gin.Context, info *relaycommon.Rel
 		relayStatusClientClosedRequest,
 		types.ErrOptionWithSkipRetry(),
 	), time.Since(info.StartTime), modelGatewayAttemptFlow{
-		ErrorCategory: "client_aborted",
+		ErrorCategory: modelgatewaycore.ErrorCategoryClientAborted,
 		RetryAction:   "client_aborted",
 		ClientAborted: true,
 		UsedChannels:  append([]string(nil), c.GetStringSlice("use_channel")...),
@@ -1082,9 +1091,6 @@ func shouldFailoverOnConcurrencyLimit(c *gin.Context, openaiErr *types.NewAPIErr
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
-	if !isConcurrencyBusyError(openaiErr) {
-		return false
-	}
 	return true
 }
 
@@ -1148,25 +1154,60 @@ func isUpstreamRateLimitLikeError(openaiErr *types.NewAPIError) bool {
 		strings.Contains(message, "限速规则")
 }
 
+func isRelayOverloadSkipError(apiErr *types.NewAPIError) bool {
+	return apiErr != nil &&
+		apiErr.StatusCode == http.StatusTooManyRequests &&
+		apiErr.GetErrorCode() != types.ErrorCodeChannelConcurrencyLimit
+}
+
+func isRelayAuthConfigError(apiErr *types.NewAPIError) bool {
+	if apiErr == nil || service.IsBalanceInsufficientError(apiErr) {
+		return false
+	}
+	if apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden {
+		return true
+	}
+	message := strings.ToLower(apiErr.Error())
+	return strings.Contains(message, "invalid api key") ||
+		strings.Contains(message, "invalid_key") ||
+		strings.Contains(message, "unauthorized") ||
+		strings.Contains(message, "forbidden") ||
+		strings.Contains(message, "access denied") ||
+		strings.Contains(message, "access_denied") ||
+		strings.Contains(message, "permission denied") ||
+		strings.Contains(message, "permission_denied") ||
+		strings.Contains(message, "model not allowed") ||
+		strings.Contains(message, "provider account forbidden")
+}
+
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, persistLog bool) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
+	errorCategory := classifyRelayAttemptError(c, err)
+	if errorCategory == modelgatewaycore.ErrorCategoryAuthConfigError {
+		recordRelayChannelConfigAuthError(c, channelError.ChannelId, err)
+	}
 	traceChannelFailure(c, channelError, err, persistLog)
+	if errorCategory == modelgatewaycore.ErrorCategoryOverloadSkip {
+		return
+	}
 	if service.ShouldDisableChannelForBalance(err) && channelError.AutoBan {
 		service.DisableChannelForBalance(channelError)
 	}
-	if reason, ok := channelFailureAvoidanceReason(err); ok {
-		if avoidance := service.RecordChannelFailureAvoidanceWithContext(channelError.ChannelId, reason, buildChannelFailureAvoidanceContext(c, channelError, err, persistLog)); avoidance != nil && avoidance.ShouldPause {
+	if errorCategory != modelgatewaycore.ErrorCategoryAuthConfigError {
+		if reason, ok := channelFailureAvoidanceReason(err); ok {
+			if avoidance := service.RecordChannelFailureAvoidanceWithContext(channelError.ChannelId, reason, buildChannelFailureAvoidanceContext(c, channelError, err, persistLog)); avoidance != nil && avoidance.ShouldPause {
+				gopool.Go(func() {
+					service.PauseChannelForError(channelError, avoidance.Until, avoidance.Reason)
+				})
+			}
+		}
+		// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
+		// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
+		if service.ShouldDisableChannel(err) && channelError.AutoBan {
 			gopool.Go(func() {
-				service.PauseChannelForError(channelError, avoidance.Until, avoidance.Reason)
+				service.DisableChannel(channelError, err.ErrorWithStatusCode())
 			})
 		}
-	}
-	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
-	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	if service.ShouldDisableChannel(err) && channelError.AutoBan {
-		gopool.Go(func() {
-			service.DisableChannel(channelError, err.ErrorWithStatusCode())
-		})
 	}
 
 	if persistLog && constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
@@ -1240,6 +1281,59 @@ func buildChannelFailureAvoidanceContext(c *gin.Context, channelError types.Chan
 	return failureContext
 }
 
+func relayChannelConfigIsolationKey(c *gin.Context, channelID int, info *relaycommon.RelayInfo, retryParam *service.RetryParam) service.ChannelConfigIsolationKey {
+	modelName := ""
+	if retryParam != nil {
+		modelName = strings.TrimSpace(retryParam.ModelName)
+	}
+	if modelName == "" && info != nil {
+		modelName = strings.TrimSpace(info.OriginModelName)
+	}
+	if modelName == "" && c != nil {
+		modelName = strings.TrimSpace(c.GetString("original_model"))
+	}
+
+	selectedGroup := ""
+	endpointType := constant.EndpointType("")
+	if plan := selectedModelGatewayPlan(c); plan != nil {
+		selectedGroup = strings.TrimSpace(plan.SelectedGroup)
+		endpointType = plan.RuntimeKey.EndpointType
+	}
+	if selectedGroup == "" && info != nil {
+		selectedGroup = strings.TrimSpace(info.UsingGroup)
+	}
+	if selectedGroup == "" && c != nil {
+		selectedGroup = strings.TrimSpace(currentRelayLogGroup(c))
+	}
+	if selectedGroup == "" && retryParam != nil {
+		selectedGroup = strings.TrimSpace(retryParam.TokenGroup)
+	}
+	if endpointType == "" && retryParam != nil {
+		endpointType = retryParam.EndpointType
+	}
+	if endpointType == "" && info != nil {
+		endpointType = requiredEndpointTypeForRelay(info)
+	}
+
+	return service.NewChannelConfigIsolationKey(channelID, modelName, selectedGroup, endpointType)
+}
+
+func recordRelayChannelConfigAuthError(c *gin.Context, channelID int, err *types.NewAPIError) {
+	if channelID <= 0 || err == nil {
+		return
+	}
+	key := relayChannelConfigIsolationKey(c, channelID, nil, nil)
+	service.RecordChannelConfigAuthError(key, err.MaskSensitiveError())
+}
+
+func recordRelayChannelConfigSuccess(c *gin.Context, channelID int, info *relaycommon.RelayInfo, retryParam *service.RetryParam) {
+	if channelID <= 0 {
+		return
+	}
+	key := relayChannelConfigIsolationKey(c, channelID, info, retryParam)
+	service.RecordChannelConfigSuccess(key)
+}
+
 func appendChannelFailureTraceAdminInfo(c *gin.Context, adminInfo map[string]interface{}) {
 	if c == nil || adminInfo == nil {
 		return
@@ -1256,17 +1350,23 @@ func traceChannelFailure(c *gin.Context, channelError types.ChannelError, err *t
 		return
 	}
 	item := map[string]interface{}{
-		"channel_id":    channelError.ChannelId,
-		"channel_name":  channelError.ChannelName,
-		"channel_type":  channelError.ChannelType,
-		"status_code":   err.StatusCode,
-		"error_type":    err.GetErrorType(),
-		"error_code":    err.GetErrorCode(),
-		"message":       err.MaskSensitiveError(),
-		"final_failure": finalFailure,
+		"channel_id":     channelError.ChannelId,
+		"channel_name":   channelError.ChannelName,
+		"channel_type":   channelError.ChannelType,
+		"status_code":    err.StatusCode,
+		"error_type":     err.GetErrorType(),
+		"error_code":     err.GetErrorCode(),
+		"error_category": classifyRelayAttemptError(c, err),
+		"message":        err.MaskSensitiveError(),
+		"final_failure":  finalFailure,
 	}
-	if reason, ok := channelFailureAvoidanceReason(err); ok {
-		item["temporary_avoidance_reason"] = reason
+	if item["error_category"] != modelgatewaycore.ErrorCategoryOverloadSkip {
+		if reason, ok := channelFailureAvoidanceReason(err); ok {
+			item["temporary_avoidance_reason"] = reason
+		}
+	}
+	if item["error_category"] == modelgatewaycore.ErrorCategoryOverloadSkip {
+		item["retry_action"] = "switch_channel"
 	}
 	if service.IsUpstreamConcurrencyLimitError(err) || err.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
 		item["concurrency_limited"] = true

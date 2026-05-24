@@ -225,7 +225,7 @@ function scoreMetricLabel(key, t) {
       return t('成功分');
     case 'score_speed_factor':
     case 'speed':
-      return t('速度因子');
+      return t('速度分');
     case 'speed_score':
       return t('动态速度分');
     case 'load':
@@ -261,7 +261,7 @@ function scoreMetricDescription(key, t) {
       return t('近期成功率越高，这项越高');
     case 'score_speed_factor':
     case 'speed':
-      return t('用于本次评分的速度因子，会叠加样本置信和首包惩罚');
+      return t('计入本次评分的速度分，已结合样本置信和首包惩罚');
     case 'speed_score':
       return t('近期成功样本的首包或总耗时去头去尾均值换算分');
     case 'load':
@@ -289,7 +289,10 @@ function scoreMetricDescription(key, t) {
 
 function scoreMetricEntries(value = {}, delta = {}, t) {
   return Object.entries(value || {})
-    .filter(([, score]) => Number.isFinite(Number(score)))
+    .filter(
+      ([key, score]) =>
+        Number.isFinite(Number(score)) && !scoreMetricIsHidden(key),
+    )
     .map(([key, score]) => ({
       key,
       label: scoreMetricLabel(key, t),
@@ -308,7 +311,10 @@ function scoreMetricEntries(value = {}, delta = {}, t) {
 function importantScoreDeltas(delta = {}, totalDelta = 0, t) {
   const direction = scoreDeltaTone(totalDelta);
   const entries = Object.entries(delta || {})
-    .filter(([, value]) => Number.isFinite(Number(value)))
+    .filter(
+      ([key, value]) =>
+        Number.isFinite(Number(value)) && !scoreMetricIsHidden(key),
+    )
     .map(([key, value]) => ({ key, value: Number(value) }))
     .filter((entry) => Math.abs(entry.value) >= 0.0001);
   const directional = entries.filter((entry) => {
@@ -664,7 +670,7 @@ function getStatusMeta(record, t) {
   }
   if (record?.kind === 'user_request_detail') {
     if (record?.client_aborted) {
-      return { color: 'grey', label: t('用户取消') };
+      return { color: 'grey', label: t('客户端中断') };
     }
     if (record?.success || record?.final_success) {
       return { color: 'green', label: t('成功') };
@@ -829,7 +835,9 @@ function buildUserRequestDetailRecord(userRequest, records) {
       dispatch?.selected_group ||
       attempt?.selected_group,
     actual_group:
-      userRequest?.actual_group || dispatch?.actual_group || attempt?.actual_group,
+      userRequest?.actual_group ||
+      dispatch?.actual_group ||
+      attempt?.actual_group,
     actual_group_ratio:
       userRequest?.actual_group_ratio ||
       dispatch?.actual_group_ratio ||
@@ -1575,7 +1583,7 @@ function getUserRequestStatusMeta(record, t) {
     record?.final_error_category === 'client_aborted' ||
     Number(record?.final_status_code || 0) === 499
   ) {
-    return { color: 'grey', label: t('用户取消'), tone: 'aborted' };
+    return { color: 'grey', label: t('客户端中断'), tone: 'aborted' };
   }
   if (record?.final_success) {
     if (record?.empty_output || record?.experience_issue) {
@@ -2159,7 +2167,11 @@ function upstreamCostStatus(record) {
   const source = String(record?.upstream_cost_source || '').trim();
   const accuracy = String(record?.upstream_cost_accuracy || '').trim();
   const total = safeNumber(record?.upstream_cost_total);
-  if (source === 'pending' || accuracy === 'pending' || (!source && total <= 0)) {
+  if (
+    source === 'pending' ||
+    accuracy === 'pending' ||
+    (!source && total <= 0)
+  ) {
     return { source: 'pending', accuracy: 'pending', amount: 0 };
   }
   if (source === 'missing' || accuracy === 'missing') {
@@ -2201,9 +2213,13 @@ function upstreamCostComponentRows(breakdown, t) {
       metaParts.push(`${formatNumber(count)} ${t('次')}`);
     }
     if (item?.price_per_million) {
-      metaParts.push(`${t('推导成本/M')} ${formatCostUnitPrice(item.price_per_million)}`);
+      metaParts.push(
+        `${t('推导成本/M')} ${formatCostUnitPrice(item.price_per_million)}`,
+      );
     } else if (item?.unit_price) {
-      metaParts.push(`${t('按次成本')} ${formatCostUnitPrice(item.unit_price)}`);
+      metaParts.push(
+        `${t('按次成本')} ${formatCostUnitPrice(item.unit_price)}`,
+      );
     }
     rows.push({ label, amount, meta: metaParts.join(' · ') });
   });
@@ -2215,7 +2231,9 @@ function upstreamCostComponentRows(breakdown, t) {
     const metaParts = [];
     if (count > 0) metaParts.push(`${formatNumber(count)} ${t('次')}`);
     if (item?.unit_price) {
-      metaParts.push(`${t('按次成本')} ${formatCostUnitPrice(item.unit_price)}`);
+      metaParts.push(
+        `${t('按次成本')} ${formatCostUnitPrice(item.unit_price)}`,
+      );
     }
     rows.push({
       label: name,
@@ -2250,7 +2268,9 @@ function UserRequestUpstreamCostTooltip({ record, t }) {
       </div>
       <div className='ct-model-gateway-cost-tooltip-row'>
         <span>{t('供应商成本')}</span>
-        <strong>{status.amount > 0 ? formatUsdCostAmount(status.amount) : '--'}</strong>
+        <strong>
+          {status.amount > 0 ? formatUsdCostAmount(status.amount) : '--'}
+        </strong>
       </div>
       {pricingRows.length > 0 && (
         <>
@@ -2266,14 +2286,18 @@ function UserRequestUpstreamCostTooltip({ record, t }) {
           ))}
         </>
       )}
-      {rows.length > 0 && <div className='ct-model-gateway-cost-tooltip-divider' />}
+      {rows.length > 0 && (
+        <div className='ct-model-gateway-cost-tooltip-divider' />
+      )}
       {rows.map((row) => (
         <div className='ct-model-gateway-cost-tooltip-row' key={row.label}>
           <span>
             {row.label}
             {row.meta && <em>{row.meta}</em>}
           </span>
-          <strong>{row.amount > 0 ? formatUsdCostAmount(row.amount) : '--'}</strong>
+          <strong>
+            {row.amount > 0 ? formatUsdCostAmount(row.amount) : '--'}
+          </strong>
         </div>
       ))}
     </div>
@@ -2750,7 +2774,7 @@ function UserRequestHealthCard({ health, summary, trends, t }) {
           <small>{t('最终失败')}</small>
           <strong>{formatNumber(summary.final_failures)}</strong>
           <span>
-            {formatNumber(summary.total_requests)} {t('用户请求')}
+            {formatNumber(summary.total_requests)} {t('客户端请求')}
           </span>
         </div>
         <div>
@@ -2770,7 +2794,7 @@ function UserRequestTrendPanel({ trends, t }) {
       title={
         <span className='ct-model-gateway-panel-title'>
           <Activity size={17} />
-          {t('用户请求趋势')}
+          {t('客户端请求趋势')}
         </span>
       }
       bodyClassName='ct-model-gateway-user-trend-body'
@@ -2780,7 +2804,7 @@ function UserRequestTrendPanel({ trends, t }) {
         <VChart spec={spec} option={MINI_SPARKLINE_CHART_OPTIONS} />
       ) : (
         <div className='ct-model-gateway-trend-empty'>
-          {t('暂无用户请求趋势')}
+          {t('暂无客户端请求趋势')}
         </div>
       )}
     </DashboardCard>
@@ -2943,7 +2967,7 @@ function UserRequestRecentTable({
     <DashboardCard bodyClassName='ct-model-gateway-user-request-list-body'>
       <div className='ct-model-gateway-user-request-list-head'>
         <div>
-          <h3>{t('最近用户请求')}</h3>
+          <h3>{t('最近客户端请求')}</h3>
           <p>{t('按时间倒序展示最近的请求记录')}</p>
         </div>
         <div className='ct-model-gateway-user-request-list-actions'>
@@ -3281,7 +3305,7 @@ function UserRequestDashboard({
           />
           <OperationKpiCard
             icon={ListTree}
-            label={t('用户请求数')}
+            label={t('客户端请求数')}
             value={formatNumber(summary.total_requests)}
             detail={`${formatNumber(summary.scanned_requests)} ${t('已扫描')}`}
             tone='default'
@@ -3969,7 +3993,7 @@ function ViewModeSwitch({ value, onChange, t }) {
     {
       key: VIEW_MODES.USER_REQUESTS,
       icon: CheckCircle2,
-      label: t('用户请求视图'),
+      label: t('客户端请求视图'),
     },
     {
       key: VIEW_MODES.OPERATIONS,
@@ -4025,6 +4049,13 @@ function EngineeringSummaryDeck({
   const stickyRetained = Number(summary.sticky_retained || 0);
   const stickyBroken = Number(summary.sticky_broken || 0);
   const stickyRate = stickyRoutes > 0 ? stickyRetained / stickyRoutes : null;
+  const overloadSkipCount = Number(summary.overload_skip_count || 0);
+  const authConfigErrorCount = Number(summary.auth_config_error_count || 0);
+  const unknownErrorCount = Number(summary.unknown_error_count || 0);
+  const configErrorIsolatedCount = Number(
+    summary.config_error_isolated_count || 0,
+  );
+  const queueWaitCount = Number(summary.queue_wait_count || 0);
   const trends = data?.trends || [];
   const latestTrend = latestTrendWithRecords(trends);
   const runtimeUpdatedAt =
@@ -4093,6 +4124,36 @@ function EngineeringSummaryDeck({
       detail: t('按当前筛选导出排障样本'),
       tone: 'default',
       action: onReplayBatch,
+    },
+    {
+      icon: RadioTower,
+      label: t('过载跳过'),
+      value: formatNumber(overloadSkipCount),
+      detail: t('仅当前请求换候选，不降权'),
+      tone: overloadSkipCount > 0 ? 'warning' : 'success',
+    },
+    {
+      icon: Ban,
+      label: t('配置隔离'),
+      value: `${formatNumber(configErrorIsolatedCount)} / ${formatNumber(
+        authConfigErrorCount,
+      )}`,
+      detail: t('隔离路由 / 权限配置错误'),
+      tone: configErrorIsolatedCount > 0 ? 'danger' : 'success',
+    },
+    {
+      icon: Info,
+      label: t('未知失败'),
+      value: formatNumber(unknownErrorCount),
+      detail: t('需补充分类型的失败样本'),
+      tone: unknownErrorCount > 0 ? 'warning' : 'success',
+    },
+    {
+      icon: Timer,
+      label: t('队列等待样本'),
+      value: formatNumber(queueWaitCount),
+      detail: `${formatNumber(summary.queued_dispatches)} ${t('已排队')} · ${formatLatency(summary.avg_queue_wait_ms)}`,
+      tone: queueWaitCount > 0 ? 'warning' : 'success',
     },
   ];
 
@@ -6891,6 +6952,71 @@ function DetailValue({ children }) {
   );
 }
 
+function DetailPanel({ title, children, className = '' }) {
+  return (
+    <section
+      className={`ct-model-gateway-detail-panel${
+        className ? ` ${className}` : ''
+      }`}
+    >
+      <Typography.Title heading={6}>{title}</Typography.Title>
+      {children}
+    </section>
+  );
+}
+
+function isDisplayEmpty(value) {
+  return value === undefined || value === null || value === '';
+}
+
+function DetailMetricTile({ label, value, detail, tone = 'default' }) {
+  return (
+    <div
+      className={`ct-model-gateway-detail-metric ct-model-gateway-detail-metric-${tone}`}
+    >
+      <span>{label}</span>
+      <strong>{isDisplayEmpty(value) ? '--' : value}</strong>
+      {detail ? <small>{detail}</small> : null}
+    </div>
+  );
+}
+
+function DetailInfoGrid({ items = [] }) {
+  return (
+    <div className='ct-model-gateway-detail-info-grid'>
+      {items.map((item) => (
+        <div key={item.key} className='ct-model-gateway-detail-info-item'>
+          <span>{item.label}</span>
+          <div>{isDisplayEmpty(item.value) ? '--' : item.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DetailAccordion({
+  title,
+  meta,
+  children,
+  defaultOpen = false,
+  className = '',
+}) {
+  return (
+    <details
+      className={`ct-model-gateway-detail-accordion${
+        className ? ` ${className}` : ''
+      }`}
+      open={defaultOpen}
+    >
+      <summary>
+        <span>{title}</span>
+        {meta ? <em>{meta}</em> : null}
+      </summary>
+      <div className='ct-model-gateway-detail-accordion-body'>{children}</div>
+    </details>
+  );
+}
+
 function getCandidateExplanations(record) {
   const topLevel = record?.candidate_explanations;
   const metaLevel = record?.request_meta?.candidate_explanations;
@@ -7053,6 +7179,11 @@ function getCandidateRoutingScore(candidate) {
   return Number.isFinite(score) && score > 0 ? score : null;
 }
 
+function getRecordRoutingScore(record) {
+  const score = Number(record?.routing_score_total);
+  return Number.isFinite(score) && score > 0 ? score : null;
+}
+
 function getCandidateSelectionScore(candidate) {
   return getCandidateRoutingScore(candidate) ?? getCandidateScore(candidate);
 }
@@ -7123,13 +7254,13 @@ function buildStickyBreakText(reason, t) {
 function buildSelectionSummaryText(insight, t) {
   const label = insight.selectedLabel || '--';
   if (insight.stickyRetained) {
-    return t('本次最终选择 {{channel}}，因为命中粘滞路由且满足保留阈值。', {
+    return t('选择 {{channel}}：命中粘滞路由且质量仍满足保留阈值。', {
       channel: label,
     });
   }
   if (insight.stickyBroken) {
     return t(
-      '本次最终选择 {{channel}}，因为原粘滞候选未满足保留条件，系统改选当前调度分更优的可用候选。',
+      '选择 {{channel}}：原粘滞渠道未满足保留条件，已切到当前更优候选。',
       {
         channel: label,
       },
@@ -7137,21 +7268,18 @@ function buildSelectionSummaryText(insight, t) {
   }
   if (insight.selectedTopTie && insight.topTieCount > 1) {
     return t(
-      '本次最终选择 {{channel}}，因为多个候选本次调度分并列最高，系统按候选顺序保留先出现的渠道。',
+      '选择 {{channel}}：多个候选调度分并列最高，按候选顺序保留先出现渠道。',
       {
         channel: label,
       },
     );
   }
   if (insight.selectedTopTie) {
-    return t(
-      '本次最终选择 {{channel}}，因为它在当前可用候选中本次调度分最高。',
-      {
-        channel: label,
-      },
-    );
+    return t('选择 {{channel}}：它是当前可用候选里调度分最高的渠道。', {
+      channel: label,
+    });
   }
-  return t('本次最终选择 {{channel}}，系统根据当前策略从可用候选中完成调度。', {
+  return t('选择 {{channel}}：系统从当前可用候选中完成调度。', {
     channel: label,
   });
 }
@@ -7295,7 +7423,7 @@ function buildSelectionInsight(record, candidates, t) {
   const availableCandidates = (candidates || []).filter(isAvailableCandidate);
   const selectedScore =
     getCandidateSelectionScore(selectedCandidate) ??
-    getCandidateRoutingScore(record) ??
+    getRecordRoutingScore(record) ??
     getCandidateScore(record);
   const selectedHealthScore = getCandidateScore(selectedCandidate);
   const scoredCandidates = availableCandidates.filter(
@@ -7338,7 +7466,6 @@ function buildSelectionInsight(record, candidates, t) {
   const selectedDurationMs = Number(selectedCandidate?.duration_ms || 0);
   const selectedSamples = Number(selectedCandidate?.sample_count || 0);
   const selectedHasRealSamples = selectedSamples > 0;
-  const selectedSpeedScore = Number(selectedCandidate?.speed_score || 0);
   const selectedScoreSpeedFactor =
     getCandidateScoreSpeedFactor(selectedCandidate);
   const selectedExperienceScore = Number(
@@ -7379,6 +7506,119 @@ function buildSelectionInsight(record, candidates, t) {
     explanation = t('原粘滞候选未满足保留条件，改选当前调度分更优候选');
   }
 
+  const primaryMetricKeys = new Set([
+    'score',
+    'health_score',
+    'latency',
+    'duration',
+    'rank',
+    'concurrency',
+  ]);
+  const metrics = [
+    {
+      key: 'score',
+      label: selectedHasRealSamples ? t('本次调度分') : t('探索参考'),
+      value: selectedHasRealSamples
+        ? formatScore(selectedScore)
+        : t('暂无真实样本'),
+    },
+    {
+      key: 'health_score',
+      label: t('健康评分'),
+      value:
+        selectedHasRealSamples && selectedHealthScore !== null
+          ? formatScore(selectedHealthScore)
+          : '--',
+    },
+    {
+      key: 'score_speed_factor',
+      label: t('速度分'),
+      value:
+        selectedHasRealSamples && selectedScoreSpeedFactor !== null
+          ? formatScore(selectedScoreSpeedFactor)
+          : '--',
+    },
+    {
+      key: 'latency',
+      label: t('动态首包'),
+      value: selectedTtftMs > 0 ? formatLatency(selectedTtftMs) : '--',
+    },
+    {
+      key: 'duration',
+      label: t('动态耗时'),
+      value: selectedDurationMs > 0 ? formatLatency(selectedDurationMs) : '--',
+    },
+    {
+      key: 'rank',
+      label: t('候选排名'),
+      value:
+        selectedRank && availableCandidates.length
+          ? `${formatNumber(selectedRank)} / ${formatNumber(
+              availableCandidates.length,
+            )}`
+          : '--',
+    },
+    {
+      key: 'order',
+      label: t('候选顺序'),
+      value:
+        selectedIndex >= 0
+          ? `${formatNumber(selectedIndex + 1)} / ${formatNumber(
+              candidates?.length || 0,
+            )}`
+          : '--',
+    },
+    {
+      key: 'tie',
+      label: t('并列最高'),
+      value:
+        selectedTopTie && topTieCount > 1 ? formatNumber(topTieCount) : '--',
+    },
+    {
+      key: 'available',
+      label: t('可用候选'),
+      value: `${formatNumber(availableCandidates.length)} / ${formatNumber(
+        candidates?.length || 0,
+      )}`,
+    },
+    {
+      key: 'filtered',
+      label: t('过滤候选'),
+      value: formatNumber(filteredCount),
+    },
+    {
+      key: 'concurrency',
+      label: t('生效并发'),
+      value:
+        activeConcurrency > 0 || effectiveConcurrency > 0
+          ? `${formatNumber(activeConcurrency)} / ${
+              effectiveConcurrency > 0
+                ? formatNumber(effectiveConcurrency)
+                : '--'
+            }`
+          : '--',
+    },
+    {
+      key: 'sample_source',
+      label: t('样本来源'),
+      value: formatScoreSampleSource(selectedCandidate?.score_sample_source, t),
+    },
+    {
+      key: 'samples',
+      label: t('评分样本'),
+      value:
+        selectedSamples > 0 ? formatNumber(selectedSamples) : t('暂无真实样本'),
+    },
+    {
+      key: 'experience',
+      label: t('体验分'),
+      value:
+        selectedHasRealSamples && selectedExperienceScore > 0
+          ? formatScore(selectedExperienceScore)
+          : '--',
+    },
+  ];
+
   return {
     selectedCandidate,
     selectedLabel,
@@ -7393,124 +7633,13 @@ function buildSelectionInsight(record, candidates, t) {
     selectedTopTie,
     topTieCount,
     summary: '',
-    metrics: [
-      {
-        key: 'score',
-        label: selectedHasRealSamples ? t('本次调度分') : t('探索参考'),
-        value: selectedHasRealSamples
-          ? formatScore(selectedScore)
-          : t('暂无真实样本'),
-      },
-      {
-        key: 'health_score',
-        label: selectedHasRealSamples ? t('健康评分') : t('健康评分'),
-        value:
-          selectedHasRealSamples && selectedHealthScore !== null
-            ? formatScore(selectedHealthScore)
-            : '--',
-      },
-      {
-        key: 'speed',
-        label: t('动态速度分'),
-        value:
-          selectedHasRealSamples && selectedSpeedScore > 0
-            ? formatScore(selectedSpeedScore)
-            : t('暂无真实样本'),
-      },
-      {
-        key: 'score_speed_factor',
-        label: t('速度因子'),
-        value:
-          selectedHasRealSamples && selectedScoreSpeedFactor !== null
-            ? formatScore(selectedScoreSpeedFactor)
-            : '--',
-      },
-      {
-        key: 'latency',
-        label: t('动态首包'),
-        value: selectedTtftMs > 0 ? formatLatency(selectedTtftMs) : '--',
-      },
-      {
-        key: 'duration',
-        label: t('动态耗时'),
-        value:
-          selectedDurationMs > 0 ? formatLatency(selectedDurationMs) : '--',
-      },
-      {
-        key: 'rank',
-        label: t('候选排名'),
-        value:
-          selectedRank && availableCandidates.length
-            ? `${formatNumber(selectedRank)} / ${formatNumber(
-                availableCandidates.length,
-              )}`
-            : '--',
-      },
-      {
-        key: 'order',
-        label: t('候选顺序'),
-        value:
-          selectedIndex >= 0
-            ? `${formatNumber(selectedIndex + 1)} / ${formatNumber(
-                candidates?.length || 0,
-              )}`
-            : '--',
-      },
-      {
-        key: 'tie',
-        label: t('并列最高'),
-        value:
-          selectedTopTie && topTieCount > 1 ? formatNumber(topTieCount) : '--',
-      },
-      {
-        key: 'available',
-        label: t('可用候选'),
-        value: `${formatNumber(availableCandidates.length)} / ${formatNumber(
-          candidates?.length || 0,
-        )}`,
-      },
-      {
-        key: 'filtered',
-        label: t('过滤候选'),
-        value: formatNumber(filteredCount),
-      },
-      {
-        key: 'concurrency',
-        label: t('生效并发'),
-        value:
-          activeConcurrency > 0 || effectiveConcurrency > 0
-            ? `${formatNumber(activeConcurrency)} / ${
-                effectiveConcurrency > 0
-                  ? formatNumber(effectiveConcurrency)
-                  : '--'
-              }`
-            : '--',
-      },
-      {
-        key: 'sample_source',
-        label: t('样本来源'),
-        value: formatScoreSampleSource(
-          selectedCandidate?.score_sample_source,
-          t,
-        ),
-      },
-      {
-        key: 'samples',
-        label: t('评分样本'),
-        value:
-          selectedSamples > 0
-            ? formatNumber(selectedSamples)
-            : t('暂无真实样本'),
-      },
-      {
-        key: 'experience',
-        label: t('体验分'),
-        value:
-          selectedHasRealSamples && selectedExperienceScore > 0
-            ? formatScore(selectedExperienceScore)
-            : '--',
-      },
-    ],
+    metrics,
+    primaryMetrics: metrics.filter((metric) =>
+      primaryMetricKeys.has(metric.key),
+    ),
+    secondaryMetrics: metrics.filter(
+      (metric) => !primaryMetricKeys.has(metric.key),
+    ),
     scoreEntries: Object.entries(
       selectedCandidate?.score_breakdown || record?.score_breakdown || {},
     ).filter(
@@ -7573,7 +7702,7 @@ function SelectionInsightPanel({ record, candidates, t }) {
           </div>
         </div>
         <div className='ct-model-gateway-selection-insight-grid'>
-          {insight.metrics.map((metric) => (
+          {insight.primaryMetrics.map((metric) => (
             <div
               key={metric.key}
               className='ct-model-gateway-selection-insight-item'
@@ -7583,15 +7712,6 @@ function SelectionInsightPanel({ record, candidates, t }) {
             </div>
           ))}
         </div>
-        {insight.scoreEntries.length ? (
-          <div className='ct-model-gateway-score-list'>
-            {insight.scoreEntries.map(([key, value]) => (
-              <Tag key={key} color='cyan' type='light' size='small'>
-                {scoreMetricLabel(key, t)}: {formatScore(value)}
-              </Tag>
-            ))}
-          </div>
-        ) : null}
         {insight.rejectReasons.length ? (
           <div className='ct-model-gateway-selection-insight-rejects'>
             <Typography.Text type='tertiary' size='small'>
@@ -7605,6 +7725,37 @@ function SelectionInsightPanel({ record, candidates, t }) {
               ))}
             </div>
           </div>
+        ) : null}
+        {insight.secondaryMetrics.length || insight.scoreEntries.length ? (
+          <DetailAccordion
+            title={t('选择补充指标')}
+            meta={t('指标 {{count}} 项', {
+              count:
+                insight.secondaryMetrics.length + insight.scoreEntries.length,
+            })}
+            className='ct-model-gateway-inline-accordion'
+          >
+            <div className='ct-model-gateway-selection-insight-grid'>
+              {insight.secondaryMetrics.map((metric) => (
+                <div
+                  key={metric.key}
+                  className='ct-model-gateway-selection-insight-item'
+                >
+                  <span>{metric.label}</span>
+                  <strong>{metric.value}</strong>
+                </div>
+              ))}
+            </div>
+            {insight.scoreEntries.length ? (
+              <div className='ct-model-gateway-score-list'>
+                {insight.scoreEntries.map(([key, value]) => (
+                  <Tag key={key} color='cyan' type='light' size='small'>
+                    {scoreMetricLabel(key, t)}: {formatScore(value)}
+                  </Tag>
+                ))}
+              </div>
+            ) : null}
+          </DetailAccordion>
         ) : null}
       </div>
     </section>
@@ -7621,13 +7772,21 @@ function formatScoreSampleSource(source, t) {
 
 function scoreEntryIsVisible(key, sampleCount) {
   const normalized = String(key || '').trim();
+  if (scoreMetricIsHidden(normalized)) {
+    return false;
+  }
   if (
     Number(sampleCount || 0) <= 0 &&
-    ['success', 'speed', 'success_score', 'speed_score'].includes(normalized)
+    ['success', 'speed', 'success_score'].includes(normalized)
   ) {
     return false;
   }
   return normalized !== 'explore_baseline';
+}
+
+function scoreMetricIsHidden(key) {
+  const normalized = String(key || '').trim();
+  return normalized === 'speed_score';
 }
 
 function CandidateExplanationCard({
@@ -7653,13 +7812,8 @@ function CandidateExplanationCard({
   const scoreMetricEntries = [
     ['success_score', t('成功'), hasRealSamples ? candidate?.success_score : 0],
     [
-      'speed_score',
-      t('动态速度分'),
-      hasRealSamples ? candidate?.speed_score : 0,
-    ],
-    [
       'score_speed_factor',
-      t('速度因子'),
+      t('速度分'),
       hasRealSamples ? getCandidateScoreSpeedFactor(candidate) : 0,
     ],
     ['cost_score', t('成本分'), candidate?.cost_score],
@@ -7708,6 +7862,40 @@ function CandidateExplanationCard({
     record,
     t,
   );
+  const candidateSummaryMetrics = [
+    {
+      key: 'ttft',
+      label: t('动态首包'),
+      value: ttftMs > 0 ? formatLatency(ttftMs) : '--',
+    },
+    {
+      key: 'duration',
+      label: t('动态耗时'),
+      value: durationMs > 0 ? formatLatency(durationMs) : '--',
+    },
+    {
+      key: 'concurrency',
+      label: t('生效并发'),
+      value:
+        activeConcurrency > 0 || displayConcurrencyLimit > 0
+          ? `${formatNumber(activeConcurrency)} / ${
+              displayConcurrencyLimit > 0
+                ? formatNumber(displayConcurrencyLimit)
+                : '--'
+            }`
+          : '--',
+    },
+    {
+      key: 'cost',
+      label: t('成本参考'),
+      value: referenceCost || '--',
+    },
+    {
+      key: 'routing_score',
+      label: t('调度分'),
+      value: routingScore > 0 ? formatScore(routingScore) : '--',
+    },
+  ];
 
   return (
     <div
@@ -7769,21 +7957,12 @@ function CandidateExplanationCard({
         </div>
       ) : null}
 
-      <div className='ct-model-gateway-candidate-meta'>
+      <div className='ct-model-gateway-candidate-meta ct-model-gateway-candidate-meta-summary'>
         <span>
           {t('分组')}: {candidate?.group || '--'}
         </span>
         <span>
           {t('上游模型')}: {candidate?.upstream_model || '--'}
-        </span>
-        <span>
-          {t('提供商画像')}: {candidate?.provider_profile || '--'}
-        </span>
-        <span>
-          {t('代理模式')}: {candidate?.proxy_mode || '--'}
-        </span>
-        <span>
-          {t('运行键')}: {formatRuntimeKey(candidate?.runtime_key)}
         </span>
         {stickyKnown && (
           <span>
@@ -7793,147 +7972,13 @@ function CandidateExplanationCard({
       </div>
 
       <div className='ct-model-gateway-candidate-dynamic-grid'>
-        <div>
-          <span>{t('动态首包')}</span>
-          <strong>{ttftMs > 0 ? formatLatency(ttftMs) : '--'}</strong>
-        </div>
-        <div>
-          <span>{t('动态耗时')}</span>
-          <strong>{durationMs > 0 ? formatLatency(durationMs) : '--'}</strong>
-        </div>
-        <div>
-          <span>{t('样本数')}</span>
-          <strong>
-            {sampleCount > 0 ? formatNumber(sampleCount) : t('暂无真实样本')}
-          </strong>
-        </div>
-        <div>
-          <span>{t('生效并发')}</span>
-          <strong>
-            {activeConcurrency > 0 || displayConcurrencyLimit > 0
-              ? `${formatNumber(activeConcurrency)} / ${
-                  displayConcurrencyLimit > 0
-                    ? formatNumber(displayConcurrencyLimit)
-                    : '--'
-                }`
-              : '--'}
-          </strong>
-        </div>
-        <div>
-          <span>{t('首包等待')}</span>
-          <strong>
-            {firstBytePending > 0
-              ? `${formatNumber(firstBytePending)}${
-                  slowFirstBytePending > 0
-                    ? ` / ${formatNumber(slowFirstBytePending)} ${t('慢')}`
-                    : ''
-                }`
-              : '--'}
-          </strong>
-        </div>
-        <div>
-          <span>{t('最长等待')}</span>
-          <strong>
-            {oldestFirstByteWaitMs > 0
-              ? formatLatency(oldestFirstByteWaitMs)
-              : '--'}
-          </strong>
-        </div>
-        <div>
-          <span>{t('配置上限')}</span>
-          <strong>
-            {configuredConcurrency > 0
-              ? formatNumber(configuredConcurrency)
-              : '--'}
-          </strong>
-        </div>
-        <div>
-          <span>{t('学习上限')}</span>
-          <strong>
-            {learnedConcurrency > 0 ? formatNumber(learnedConcurrency) : '--'}
-          </strong>
-        </div>
-        <div>
-          <span>{t('样本来源')}</span>
-          <strong>
-            {formatScoreSampleSource(candidate?.score_sample_source, t)}
-          </strong>
-        </div>
+        {candidateSummaryMetrics.map((metric) => (
+          <div key={metric.key}>
+            <span>{metric.label}</span>
+            <strong>{metric.value}</strong>
+          </div>
+        ))}
       </div>
-
-      <div className='ct-model-gateway-candidate-score-row'>
-        <Tooltip content={t('查看评分变更记录')}>
-          <Tag
-            className='ct-model-gateway-score-trigger'
-            color='cyan'
-            type='light'
-            size='small'
-            shape='circle'
-            onClick={() => onOpenScoreHistory?.(candidate)}
-          >
-            {hasRealSamples ? t('总评分') : t('探索参考')}:{' '}
-            {hasRealSamples
-              ? formatScore(candidate?.score_total)
-              : t('暂无真实样本')}
-          </Tag>
-        </Tooltip>
-        {routingScore > 0 ? (
-          <Tooltip
-            content={t('调度分会叠加当前并发、排队和首包等待，只用于本次选路')}
-          >
-            <Tag color='grey' type='light' size='small' shape='circle'>
-              {t('调度分')}: {formatScore(routingScore)}
-            </Tag>
-          </Tooltip>
-        ) : null}
-        <div className='ct-model-gateway-score-list'>
-          {scoreMetricEntries.length ? (
-            scoreMetricEntries.map(([key, label, value]) => (
-              <Tooltip key={key} content={scoreMetricDescription(key, t)}>
-                <Tag color='cyan' type='light' size='small'>
-                  {label}: {formatScore(value)}
-                </Tag>
-              </Tooltip>
-            ))
-          ) : scoreEntries.length ? (
-            scoreEntries.map(([key, value]) => (
-              <Tag key={key} color='cyan' type='light' size='small'>
-                {key}: {formatScore(value)}
-              </Tag>
-            ))
-          ) : (
-            <Typography.Text type='tertiary' size='small'>
-              {t('评分拆解')}: {t('暂无真实样本')}
-            </Typography.Text>
-          )}
-        </div>
-      </div>
-      {referenceCost ? (
-        <div className='ct-model-gateway-candidate-routing-row'>
-          <Typography.Text type='tertiary' size='small'>
-            {t('成本参考')}
-          </Typography.Text>
-          <Tooltip content={t('参考成本来自渠道上游成本配置，用于换算成本分，不代表本次实际消费')}>
-            <Tag color='grey' type='light' size='small'>
-              {t('参考成本')}: {referenceCost}
-            </Tag>
-          </Tooltip>
-        </div>
-      ) : null}
-      {routingEntries.length ? (
-        <div className='ct-model-gateway-candidate-routing-row'>
-          <Typography.Text type='tertiary' size='small'>
-            {t('调度因子')}
-          </Typography.Text>
-          {routingEntries
-            .filter(([key]) => ['load', 'ttft_pending'].includes(key))
-            .map(([key, value]) => (
-              <Tag key={key} color='grey' type='light' size='small'>
-                {scoreMetricLabel(key, t)}: {formatScore(value)}
-              </Tag>
-            ))}
-        </div>
-      ) : null}
 
       {!available && (
         <Typography.Text
@@ -7965,6 +8010,134 @@ function CandidateExplanationCard({
             ) || t('当前策略')}
           </Typography.Text>
         )}
+      <DetailAccordion
+        title={t('技术详情')}
+        meta={t('运行键、评分与等待状态')}
+        className='ct-model-gateway-inline-accordion ct-model-gateway-candidate-tech-accordion'
+      >
+        <div className='ct-model-gateway-candidate-meta'>
+          <span>
+            {t('提供商画像')}: {candidate?.provider_profile || '--'}
+          </span>
+          <span>
+            {t('代理模式')}: {candidate?.proxy_mode || '--'}
+          </span>
+          <span>
+            {t('运行键')}: {formatRuntimeKey(candidate?.runtime_key)}
+          </span>
+        </div>
+        <div className='ct-model-gateway-candidate-dynamic-grid'>
+          <div>
+            <span>{t('样本数')}</span>
+            <strong>
+              {sampleCount > 0 ? formatNumber(sampleCount) : t('暂无真实样本')}
+            </strong>
+          </div>
+          <div>
+            <span>{t('首包等待')}</span>
+            <strong>
+              {firstBytePending > 0
+                ? `${formatNumber(firstBytePending)}${
+                    slowFirstBytePending > 0
+                      ? ` / ${formatNumber(slowFirstBytePending)} ${t('慢')}`
+                      : ''
+                  }`
+                : '--'}
+            </strong>
+          </div>
+          <div>
+            <span>{t('最长等待')}</span>
+            <strong>
+              {oldestFirstByteWaitMs > 0
+                ? formatLatency(oldestFirstByteWaitMs)
+                : '--'}
+            </strong>
+          </div>
+          <div>
+            <span>{t('配置上限')}</span>
+            <strong>
+              {configuredConcurrency > 0
+                ? formatNumber(configuredConcurrency)
+                : '--'}
+            </strong>
+          </div>
+          <div>
+            <span>{t('学习上限')}</span>
+            <strong>
+              {learnedConcurrency > 0 ? formatNumber(learnedConcurrency) : '--'}
+            </strong>
+          </div>
+          <div>
+            <span>{t('样本来源')}</span>
+            <strong>
+              {formatScoreSampleSource(candidate?.score_sample_source, t)}
+            </strong>
+          </div>
+        </div>
+        <div className='ct-model-gateway-candidate-score-row'>
+          <Tooltip content={t('查看评分变更记录')}>
+            <Tag
+              className='ct-model-gateway-score-trigger'
+              color='cyan'
+              type='light'
+              size='small'
+              shape='circle'
+              onClick={() => onOpenScoreHistory?.(candidate)}
+            >
+              {hasRealSamples ? t('总评分') : t('探索参考')}:{' '}
+              {hasRealSamples
+                ? formatScore(candidate?.score_total)
+                : t('暂无真实样本')}
+            </Tag>
+          </Tooltip>
+          {routingScore > 0 ? (
+            <Tooltip
+              content={t(
+                '调度分会叠加当前并发、排队和首包等待，只用于本次选路',
+              )}
+            >
+              <Tag color='grey' type='light' size='small' shape='circle'>
+                {t('调度分')}: {formatScore(routingScore)}
+              </Tag>
+            </Tooltip>
+          ) : null}
+          <div className='ct-model-gateway-score-list'>
+            {scoreMetricEntries.length ? (
+              scoreMetricEntries.map(([key, label, value]) => (
+                <Tooltip key={key} content={scoreMetricDescription(key, t)}>
+                  <Tag color='cyan' type='light' size='small'>
+                    {label}: {formatScore(value)}
+                  </Tag>
+                </Tooltip>
+              ))
+            ) : scoreEntries.length ? (
+              scoreEntries.map(([key, value]) => (
+                <Tag key={key} color='cyan' type='light' size='small'>
+                  {scoreMetricLabel(key, t)}: {formatScore(value)}
+                </Tag>
+              ))
+            ) : (
+              <Typography.Text type='tertiary' size='small'>
+                {t('评分拆解')}: {t('暂无真实样本')}
+              </Typography.Text>
+            )}
+          </div>
+        </div>
+        {routingEntries.length ? (
+          <div className='ct-model-gateway-candidate-routing-row'>
+            <Typography.Text type='tertiary' size='small'>
+              {t('调度因子')}
+            </Typography.Text>
+            {routingEntries
+              .filter(([key]) => ['load', 'ttft_pending'].includes(key))
+              .map(([key, value]) => (
+                <Tag key={key} color='grey' type='light' size='small'>
+                  {scoreMetricLabel(key, t)}: {formatScore(value)}
+                </Tag>
+              ))}
+          </div>
+        ) : null}
+      </DetailAccordion>
       {(emptyOutputRate > 0 || issueRate > 0) && (
         <div className='ct-model-gateway-candidate-warning-line'>
           <Info size={13} />
@@ -7976,7 +8149,9 @@ function CandidateExplanationCard({
             </Tooltip>
           ) : null}
           {issueRate > 0 ? (
-            <Tooltip content={t('体验异常率不包含空输出，只统计非空输出的体验问题')}>
+            <Tooltip
+              content={t('体验异常率不包含空输出，只统计非空输出的体验问题')}
+            >
               <span>
                 {t('体验异常率')}: {formatPercent(issueRate)}
               </span>
@@ -8001,7 +8176,10 @@ function RecordDetailDrawer({
     record?.is_health_probe === true || requestMeta?.is_health_probe === true;
   const probeReason = getProbeReason(record);
   const candidateExplanations = getCandidateExplanations(record);
-  const scoreEntries = Object.entries(record?.score_breakdown || {});
+  const scoreEntries = Object.entries(record?.score_breakdown || {}).filter(
+    ([key, value]) =>
+      Number.isFinite(Number(value)) && scoreEntryIsVisible(key, 1),
+  );
   const metaEntries = Object.entries(requestMeta).filter(
     ([key, value]) =>
       key !== 'candidate_explanations' &&
@@ -8010,6 +8188,82 @@ function RecordDetailDrawer({
       value !== null,
   );
   const status = record ? getStatusMeta(record, t) : null;
+  const recordType =
+    record?.kind === 'user_request_detail'
+      ? t('客户端请求')
+      : isDispatch(record)
+        ? t('调度')
+        : t('尝试');
+  const groupRoute = `${record?.requested_group || '--'} -> ${
+    record?.selected_group || '--'
+  }${record?.actual_group ? ` -> ${record.actual_group}` : ''}`;
+  const channelRoute = `#${record?.channel_id || '--'} ${
+    record?.channel_name || ''
+  }${
+    record?.actual_channel_id
+      ? ` -> #${record.actual_channel_id} ${record.actual_channel_name || ''}`
+      : ''
+  }`;
+  const selectedCandidate = findSelectedCandidate(
+    record,
+    candidateExplanations,
+  );
+  const selectedChannelLabel = selectedCandidate
+    ? getCandidateChannelLabel(selectedCandidate, t)
+    : record?.actual_channel_name ||
+      record?.channel_name ||
+      (record?.channel_id ? `#${record.channel_id}` : '--');
+  const availableCandidateCount =
+    candidateExplanations.filter(isAvailableCandidate).length;
+  const filteredCandidateCount = Math.max(
+    0,
+    candidateExplanations.length - availableCandidateCount,
+  );
+  const upstreamStatus = upstreamCostStatus(record);
+  const costSource = upstreamCostSourceLabel(
+    upstreamStatus.source,
+    upstreamStatus.accuracy,
+    t,
+  );
+  const candidateGroups = record?.candidate_groups || [];
+  const groupTags = candidateGroups.length ? (
+    <div className='ct-model-gateway-record-tags'>
+      {candidateGroups.map((group) => (
+        <Tag key={group} color='blue' type='light'>
+          {group}
+        </Tag>
+      ))}
+    </div>
+  ) : (
+    <Typography.Text type='tertiary'>--</Typography.Text>
+  );
+  const policyTags = (
+    <div className='ct-model-gateway-record-tags'>
+      {record?.policy_mode && <Tag>{record.policy_mode}</Tag>}
+      {record?.auto_mode && <Tag>{record.auto_mode}</Tag>}
+      {record?.strategy && <Tag>{record.strategy}</Tag>}
+      {record?.shadow && <Tag color='purple'>{t('影子')}</Tag>}
+      {isHealthProbe && (
+        <Tag color='cyan' type='light'>
+          {t('健康探活')}
+        </Tag>
+      )}
+    </div>
+  );
+  const selectionInsight = buildSelectionInsight(
+    record,
+    candidateExplanations,
+    t,
+  );
+  const selectionSummary = buildSelectionSummaryText(selectionInsight, t);
+  const hasErrorDetail = Boolean(
+    record?.error_code || record?.error_type || record?.status_code,
+  );
+  const technicalMeta = [
+    t('评分 {{count}} 项', { count: scoreEntries.length }),
+    t('元数据 {{count}} 项', { count: metaEntries.length }),
+    t('错误 {{count}} 项', { count: hasErrorDetail ? 1 : 0 }),
+  ].join(' · ');
 
   return (
     <SideSheet
@@ -8017,7 +8271,7 @@ function RecordDetailDrawer({
       visible={visible}
       onCancel={onClose}
       placement='right'
-      width='min(920px, 94vw)'
+      width='min(1280px, 96vw)'
       footer={
         <div className='ct-model-gateway-modal-footer'>
           <Button onClick={onClose}>{t('关闭')}</Button>
@@ -8035,133 +8289,148 @@ function RecordDetailDrawer({
     >
       {!record ? null : (
         <div className='ct-model-gateway-detail'>
-          <Descriptions
-            align='plain'
-            size='small'
-            data={[
-              {
-                key: t('请求 ID'),
-                value: <DetailValue>{record.request_id}</DetailValue>,
-              },
-              {
-                key: t('记录类型'),
-                value:
-                  record.kind === 'user_request_detail'
-                    ? t('用户请求')
-                    : isDispatch(record)
-                      ? t('调度')
-                      : t('尝试'),
-              },
-              {
-                key: t('状态'),
-                value: (
-                  <Tag color={status.color} shape='circle'>
-                    {status.label}
-                  </Tag>
-                ),
-              },
-              {
-                key: t('请求模型'),
-                value: <DetailValue>{record.requested_model}</DetailValue>,
-              },
-              {
-                key: t('端点类型'),
-                value: <DetailValue>{record.endpoint_type}</DetailValue>,
-              },
-              {
-                key: t('分组链路'),
-                value: (
-                  <DetailValue>
-                    {`${record.requested_group || '--'} -> ${
-                      record.selected_group || '--'
-                    }${record.actual_group ? ` -> ${record.actual_group}` : ''}`}
-                  </DetailValue>
-                ),
-              },
-              {
-                key: t('渠道链路'),
-                value: (
-                  <DetailValue>
-                    {`#${record.channel_id || '--'} ${
-                      record.channel_name || ''
-                    }${
-                      record.actual_channel_id
-                        ? ` -> #${record.actual_channel_id} ${
-                            record.actual_channel_name || ''
-                          }`
-                        : ''
-                    }`}
-                  </DetailValue>
-                ),
-              },
-              {
-                key: t('策略'),
-                value: (
-                  <div className='ct-model-gateway-record-tags'>
-                    {record.policy_mode && <Tag>{record.policy_mode}</Tag>}
-                    {record.auto_mode && <Tag>{record.auto_mode}</Tag>}
-                    {record.strategy && <Tag>{record.strategy}</Tag>}
-                    {record.shadow && <Tag color='purple'>{t('影子')}</Tag>}
-                    {isHealthProbe && (
-                      <Tag color='cyan' type='light'>
-                        {t('健康探活')}
-                      </Tag>
-                    )}
-                  </div>
-                ),
-              },
-              ...(isHealthProbe
-                ? [
-                    {
-                      key: t('探活原因'),
-                      value: (
-                        <DetailValue>
-                          {formatProbeReason(probeReason, t)}
-                        </DetailValue>
-                      ),
-                    },
-                  ]
-                : []),
-              {
-                key: t('耗时'),
-                value: `${formatLatency(record.duration_ms)} / ${t(
-                  '首包',
-                )} ${formatLatency(record.ttft_ms)}`,
-              },
-              {
-                key: t('评分'),
-                value: formatScore(record.score_total),
-              },
-              {
-                key: t('队列等待'),
-                value: (
-                  <div className='ct-model-gateway-record-tags'>
-                    <QueueStickyTags record={record} t={t} showSticky={false} />
-                  </div>
-                ),
-              },
-              {
-                key: t('调度流转'),
-                value: <DispatchFlowTags record={record} t={t} />,
-              },
-              {
-                key: t('粘滞路由'),
-                value: (
-                  <div className='ct-model-gateway-record-tags'>
-                    <QueueStickyTags record={record} t={t} showQueue={false} />
-                  </div>
-                ),
-              },
-              {
-                key: t('选择原因'),
-                value: (
-                  <DetailValue>
-                    {formatSelectionReason(record.selected_reason, t)}
-                  </DetailValue>
-                ),
-              },
-            ]}
-          />
+          <div className='ct-model-gateway-detail-hero'>
+            <div className='ct-model-gateway-detail-hero-main'>
+              <div className='ct-model-gateway-detail-eyebrow'>
+                <Tag color={status.color} shape='circle'>
+                  {status.label}
+                </Tag>
+                <span>{recordType}</span>
+              </div>
+              <div className='ct-model-gateway-detail-title-row'>
+                <Typography.Title heading={5}>
+                  {record.requested_model || '--'}
+                </Typography.Title>
+                <Tag color='green' type='light' shape='circle'>
+                  {selectedChannelLabel}
+                </Tag>
+              </div>
+              <div className='ct-model-gateway-detail-route'>
+                <span title={record.request_id}>{record.request_id}</span>
+                <span title={groupRoute}>{groupRoute}</span>
+                <span title={channelRoute}>{channelRoute}</span>
+              </div>
+              <div className='ct-model-gateway-detail-summary'>
+                <Info size={14} />
+                <span>{selectionSummary}</span>
+              </div>
+            </div>
+            <div className='ct-model-gateway-detail-hero-metrics'>
+              <DetailMetricTile
+                label={t('评分')}
+                value={formatScore(record.score_total)}
+                detail={t('本次综合评分')}
+                tone='score'
+              />
+              <DetailMetricTile
+                label={t('总耗时')}
+                value={formatLatency(record.duration_ms)}
+                detail={t('用户最终等待')}
+              />
+              <DetailMetricTile
+                label={t('首包')}
+                value={formatLatency(record.ttft_ms)}
+                detail={t('首次响应')}
+              />
+              <DetailMetricTile
+                label={t('候选渠道')}
+                value={`${formatNumber(availableCandidateCount)} / ${formatNumber(
+                  candidateExplanations.length,
+                )}`}
+                detail={
+                  filteredCandidateCount > 0
+                    ? `${formatNumber(filteredCandidateCount)} ${t('已过滤')}`
+                    : t('全部可用')
+                }
+              />
+            </div>
+          </div>
+
+          <div className='ct-model-gateway-detail-two-col'>
+            <DetailPanel title={t('请求概览')}>
+              <DetailInfoGrid
+                items={[
+                  {
+                    key: 'request_id',
+                    label: t('请求 ID'),
+                    value: <DetailValue>{record.request_id}</DetailValue>,
+                  },
+                  {
+                    key: 'endpoint_type',
+                    label: t('端点类型'),
+                    value: <DetailValue>{record.endpoint_type}</DetailValue>,
+                  },
+                  {
+                    key: 'flow',
+                    label: t('调度流转'),
+                    value: <DispatchFlowTags record={record} t={t} compact />,
+                  },
+                  {
+                    key: 'groups',
+                    label: t('候选分组'),
+                    value: groupTags,
+                  },
+                  ...(isHealthProbe
+                    ? [
+                        {
+                          key: 'probe_reason',
+                          label: t('探活原因'),
+                          value: (
+                            <DetailValue>
+                              {formatProbeReason(probeReason, t)}
+                            </DetailValue>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            </DetailPanel>
+
+            <DetailPanel title={t('调度状态')}>
+              <DetailInfoGrid
+                items={[
+                  {
+                    key: 'queue',
+                    label: t('队列等待'),
+                    value: (
+                      <QueueStickyTags
+                        record={record}
+                        t={t}
+                        compact
+                        showSticky={false}
+                      />
+                    ),
+                  },
+                  {
+                    key: 'sticky',
+                    label: t('粘滞路由'),
+                    value: (
+                      <QueueStickyTags
+                        record={record}
+                        t={t}
+                        compact
+                        showQueue={false}
+                      />
+                    ),
+                  },
+                  {
+                    key: 'policy',
+                    label: t('策略'),
+                    value: policyTags,
+                  },
+                  {
+                    key: 'cost',
+                    label: t('成本状态'),
+                    value:
+                      upstreamStatus.amount > 0
+                        ? formatUsdCostAmount(upstreamStatus.amount)
+                        : costSource,
+                  },
+                ]}
+              />
+            </DetailPanel>
+          </div>
 
           <SelectionInsightPanel
             record={record}
@@ -8169,28 +8438,11 @@ function RecordDetailDrawer({
             t={t}
           />
 
-          <section>
-            <Typography.Title heading={6}>{t('上游成本明细')}</Typography.Title>
+          <DetailPanel title={t('上游成本明细')}>
             <UpstreamCostDetailPanel record={record} t={t} />
-          </section>
+          </DetailPanel>
 
-          <section>
-            <Typography.Title heading={6}>{t('候选分组')}</Typography.Title>
-            <div className='ct-model-gateway-record-tags'>
-              {(record.candidate_groups || []).length ? (
-                record.candidate_groups.map((group) => (
-                  <Tag key={group} color='blue' type='light'>
-                    {group}
-                  </Tag>
-                ))
-              ) : (
-                <Typography.Text type='tertiary'>--</Typography.Text>
-              )}
-            </div>
-          </section>
-
-          <section>
-            <Typography.Title heading={6}>{t('候选渠道解释')}</Typography.Title>
+          <DetailPanel title={t('候选渠道解释')}>
             {candidateExplanations.length ? (
               <div className='ct-model-gateway-candidate-list'>
                 {candidateExplanations.map((candidate, index) => (
@@ -8210,72 +8462,78 @@ function RecordDetailDrawer({
             ) : (
               <Typography.Text type='tertiary'>--</Typography.Text>
             )}
-          </section>
+          </DetailPanel>
 
-          <section>
-            <Typography.Title heading={6}>{t('评分拆解')}</Typography.Title>
-            <div className='ct-model-gateway-score-list'>
-              {scoreEntries.length ? (
-                scoreEntries.map(([key, value]) => (
-                  <Tag key={key} color='cyan' type='light' shape='circle'>
-                    {key}: {formatScore(value)}
-                  </Tag>
-                ))
-              ) : (
-                <Typography.Text type='tertiary'>--</Typography.Text>
+          <DetailAccordion title={t('技术明细')} meta={technicalMeta}>
+            <div className='ct-model-gateway-technical-grid'>
+              <DetailPanel title={t('评分拆解')}>
+                <div className='ct-model-gateway-score-list'>
+                  {scoreEntries.length ? (
+                    scoreEntries.map(([key, value]) => (
+                      <Tag key={key} color='cyan' type='light' shape='circle'>
+                        {scoreMetricLabel(key, t)}: {formatScore(value)}
+                      </Tag>
+                    ))
+                  ) : (
+                    <Typography.Text type='tertiary'>--</Typography.Text>
+                  )}
+                </div>
+              </DetailPanel>
+
+              <DetailPanel title={t('调度元数据')}>
+                {metaEntries.length ? (
+                  <Descriptions
+                    align='plain'
+                    size='small'
+                    data={metaEntries.map(([key, value]) => ({
+                      key,
+                      value: String(value),
+                    }))}
+                  />
+                ) : (
+                  <Typography.Text type='tertiary'>--</Typography.Text>
+                )}
+              </DetailPanel>
+
+              {hasErrorDetail && (
+                <DetailPanel title={t('错误信息')}>
+                  <Descriptions
+                    align='plain'
+                    size='small'
+                    data={[
+                      {
+                        key: 'HTTP',
+                        value: record.status_code || '--',
+                      },
+                      {
+                        key: t('错误码'),
+                        value: record.error_code || '--',
+                      },
+                      {
+                        key: t('错误类型'),
+                        value: record.error_type || '--',
+                      },
+                      {
+                        key: t('失败分类'),
+                        value: formatAttemptErrorCategory(
+                          record.error_category,
+                          t,
+                        ),
+                      },
+                      {
+                        key: t('错误信息'),
+                        value: (
+                          <DetailValue>
+                            {record.error_message || '--'}
+                          </DetailValue>
+                        ),
+                      },
+                    ]}
+                  />
+                </DetailPanel>
               )}
             </div>
-          </section>
-
-          <section>
-            <Typography.Title heading={6}>{t('调度元数据')}</Typography.Title>
-            {metaEntries.length ? (
-              <Descriptions
-                align='plain'
-                size='small'
-                data={metaEntries.map(([key, value]) => ({
-                  key,
-                  value: String(value),
-                }))}
-              />
-            ) : (
-              <Typography.Text type='tertiary'>--</Typography.Text>
-            )}
-          </section>
-
-          {(record.error_code || record.error_type || record.status_code) && (
-            <section>
-              <Typography.Title heading={6}>{t('错误信息')}</Typography.Title>
-              <Descriptions
-                align='plain'
-                size='small'
-                data={[
-                  {
-                    key: 'HTTP',
-                    value: record.status_code || '--',
-                  },
-                  {
-                    key: t('错误码'),
-                    value: record.error_code || '--',
-                  },
-                  {
-                    key: t('错误类型'),
-                    value: record.error_type || '--',
-                  },
-                  {
-                    key: t('失败分类'),
-                    value: formatAttemptErrorCategory(record.error_category, t),
-                  },
-                  {
-                    key: t('错误信息'),
-                    value: (
-                      <DetailValue>{record.error_message || '--'}</DetailValue>
-                    ),
-                  },
-                ]}
-              />
-            </section>
-          )}
+          </DetailAccordion>
         </div>
       )}
     </SideSheet>

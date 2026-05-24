@@ -28,6 +28,11 @@ type ModelGatewayRuntimeSnapshot struct {
 	RealSampleCount30m    int     `json:"real_sample_count_30m" gorm:"column:real_sample_count_30m;default:0"`
 	LastProbeAt           int64   `json:"last_probe_at" gorm:"bigint;index;default:0"`
 	LastProbeSuccessAt    int64   `json:"last_probe_success_at" gorm:"bigint;default:0"`
+	ConfigErrorIsolated   bool    `json:"config_error_isolated" gorm:"default:false;index"`
+	IsolationReason       string  `json:"isolation_reason" gorm:"type:varchar(64);default:''"`
+	IsolationUntil        int64   `json:"isolation_until" gorm:"bigint;index;default:0"`
+	AuthConfigErrorCount  int     `json:"auth_config_error_count" gorm:"default:0"`
+	LastAuthConfigErrorAt int64   `json:"last_auth_config_error_at" gorm:"bigint;default:0"`
 }
 
 func (ModelGatewayRuntimeSnapshot) TableName() string {
