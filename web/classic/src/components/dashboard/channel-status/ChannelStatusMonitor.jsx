@@ -95,8 +95,48 @@ function formatRatePercent(value) {
   return formatPercent(numeric * 100);
 }
 
+function clampRate(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.min(1, Math.max(0, numeric));
+}
+
+function getRuntimeOutputStabilityRate(runtime) {
+  const emptyOutputRate = clampRate(runtime?.avg_empty_output_rate);
+  const experienceIssueRate = clampRate(runtime?.avg_experience_issue_rate);
+  return Math.max(0, 1 - Math.min(1, emptyOutputRate + experienceIssueRate));
+}
+
+function getRuntimeCompleteResponseRate(runtime) {
+  return 1 - clampRate(runtime?.avg_empty_output_rate);
+}
+
+function getRuntimeNormalExperienceRate(runtime) {
+  return 1 - clampRate(runtime?.avg_experience_issue_rate);
+}
+
 function formatSuccessRate(value, requests) {
   return Number(requests) > 0 ? formatPercent(value) : '--';
+}
+
+function getClientSuccessPercent(item) {
+  const requests =
+    (Number(item?.recent_requests) || 0) -
+    (Number(item?.recent_client_aborted) || 0);
+  const fallback = Number(item?.success_rate);
+  if (Number.isFinite(fallback) && fallback > 0) {
+    return Math.max(0, Math.min(fallback, 100));
+  }
+  if (requests <= 0) return null;
+  return Math.max(
+    0,
+    Math.min(((Number(item?.recent_successes) || 0) / requests) * 100, 100),
+  );
+}
+
+function formatClientSuccessRate(item) {
+  const percent = getClientSuccessPercent(item);
+  return percent === null ? '--' : formatPercent(percent);
 }
 
 function formatLatency(value) {
@@ -374,9 +414,9 @@ function getStatusLabel(status, t) {
     case 'timeout':
       return t('超时');
     case 'empty_output':
-      return t('空输出');
+      return t('响应为空');
     case 'experience_issue':
-      return t('体验异常');
+      return t('体验波动');
     case 'stream_interrupted':
       return t('流中断');
     case 'client_aborted':
@@ -620,27 +660,15 @@ function GroupPanel({ group, windowDays }) {
   const runtime = group.runtime || {};
   const hasSmartRuntime = hasRuntime(group);
   const recentRequests = Number(group.recent_requests) || 0;
+  const clientAborted = Number(group.recent_client_aborted) || 0;
+  const effectiveRequests = Math.max(recentRequests - clientAborted, 0);
   const channelHealthPercent =
     group.total_channels > 0
       ? Math.round((group.healthy_channels / group.total_channels) * 100)
       : 0;
-  const availabilityPercent = hasSmartRuntime
-    ? Math.max(
-        0,
-        Math.min(
-          (Number(runtime.available_runtime_keys || 0) /
-            Math.max(Number(runtime.runtime_keys || 0), 1)) *
-            100,
-          100,
-        ),
-      )
-    : Math.max(
-        0,
-        Math.min(recentRequests > 0 ? Number(group.success_rate) || 0 : 0, 100),
-      );
-  const runtimeAvailabilityText = hasSmartRuntime
-    ? `${formatNumber(runtime.available_runtime_keys)} / ${formatNumber(runtime.runtime_keys)}`
-    : formatSuccessRate(group.success_rate, group.recent_requests);
+  const clientSuccessPercent = getClientSuccessPercent(group);
+  const availabilityPercent = clientSuccessPercent ?? 0;
+  const runtimeAvailabilityText = formatClientSuccessRate(group);
   const runtimeReferenceCost = formatReferenceCost(runtime, t);
 
   const columns = useMemo(
@@ -815,15 +843,23 @@ function GroupPanel({ group, windowDays }) {
           ),
       },
       {
-        title: t('空输出 / 体验异常'),
+        title: t('响应稳定性'),
         dataIndex: 'runtime',
-        width: 145,
+        width: 155,
         render: (_, record) =>
           record.runtime ? (
-            <Typography.Text type='secondary' className='font-mono'>
-              {formatRatePercent(record.runtime.avg_empty_output_rate)} /{' '}
-              {formatRatePercent(record.runtime.avg_experience_issue_rate)}
-            </Typography.Text>
+            <Tooltip
+              content={`${t('完整响应')} ${formatRatePercent(getRuntimeCompleteResponseRate(record.runtime))} · ${t('体验正常')} ${formatRatePercent(getRuntimeNormalExperienceRate(record.runtime))}`}
+            >
+              <div>
+                <div className='font-mono font-semibold'>
+                  {formatRatePercent(getRuntimeOutputStabilityRate(record.runtime))}
+                </div>
+                <div className='text-xs text-semi-color-text-2'>
+                  {t('完整响应 / 体验正常')}
+                </div>
+              </div>
+            </Tooltip>
           ) : (
             formatNumber(getChannelModelCount(record.models))
           ),
@@ -953,15 +989,14 @@ function GroupPanel({ group, windowDays }) {
 
           <div className='ct-channel-monitor-availability'>
             <div className='ct-channel-monitor-availability-label'>
-              {hasSmartRuntime ? t('智能调度可用性') : t('可用性')} ·{' '}
-              {hasSmartRuntime ? t('运行态') : `${windowDays} ${t('天')}`}
+              {t('客户端成功率')} · {windowDays} {t('天')}
             </div>
             <div className='ct-channel-monitor-availability-value'>
               {runtimeAvailabilityText}
             </div>
             <div className='ct-channel-monitor-availability-sub'>
               {hasSmartRuntime
-                ? `${windowDays}${t('天')} ${t('客户端请求')} ${formatNumber(group.recent_requests)} · ${t('成功')} ${formatNumber(group.recent_successes)}`
+                ? `${t('有效请求')} ${formatNumber(effectiveRequests)} · ${t('最终成功')} ${formatNumber(group.recent_successes)} · ${t('自动恢复')} ${formatNumber(group.recent_recovered)}`
                 : `+ ${formatNumber(modelPreview.count)} ${t('模型')}`}
             </div>
             <div className='ct-channel-monitor-availability-track'>
@@ -989,22 +1024,22 @@ function GroupPanel({ group, windowDays }) {
             <div>
               <span>
                 {hasSmartRuntime
-                  ? t('成本分 / 体验分')
+                  ? t('自动恢复 / 最终失败')
                   : `${t('错误冷却')} / ${t('忙碌')}`}
               </span>
               <strong>
                 {hasSmartRuntime
-                  ? `${formatScore(runtime.avg_cost_score)} / ${formatScore(runtime.avg_experience_score)}`
+                  ? `${formatNumber(group.recent_recovered)} / ${formatNumber(group.recent_failures)}`
                   : `${formatNumber(group.cooldown_channels)} / ${formatNumber(group.busy_channels)}`}
               </strong>
             </div>
             <div>
               <span>
-                {hasSmartRuntime ? t('空输出 / 体验异常') : t('健康渠道占比')}
+                {hasSmartRuntime ? t('输出稳定性') : t('健康渠道占比')}
               </span>
               <strong>
                 {hasSmartRuntime
-                  ? `${formatRatePercent(runtime.avg_empty_output_rate)} / ${formatRatePercent(runtime.avg_experience_issue_rate)}`
+                  ? formatRatePercent(getRuntimeOutputStabilityRate(runtime))
                   : `${channelHealthPercent}%`}
               </strong>
             </div>
@@ -1058,8 +1093,7 @@ function GroupPanel({ group, windowDays }) {
             {t('渠道数')} {group.total_channels}
           </Tag>
           <Tag shape='circle'>
-            {t('成功率')}{' '}
-            {formatSuccessRate(group.success_rate, group.recent_requests)}
+            {t('成功率')} {formatClientSuccessRate(group)}
           </Tag>
           <Tag
             color={group.recent_failures > 0 ? 'red' : 'green'}
@@ -1134,16 +1168,14 @@ function ChannelStatusContent({ data, windowDays }) {
         <SummaryMetric
           icon={Activity}
           label={t('客户端请求成功率')}
-          value={
-            formatSuccessRate(summary.success_rate, summary.recent_requests)
-          }
+          value={formatClientSuccessRate(summary)}
           detail={
             isPartial
               ? t('统计刷新中，当前显示基础渠道状态')
               : `${formatNumber(summary.recent_requests)} / ${windowDays}${t('天')} ${t('客户端请求')}`
           }
           tone={
-            summary.success_rate >= 99 || summary.recent_requests === 0
+            (getClientSuccessPercent(summary) ?? 100) >= 99
               ? 'success'
               : 'warning'
           }
@@ -1166,7 +1198,7 @@ function ChannelStatusContent({ data, windowDays }) {
               ? runtime.risk_runtime_keys > 0
                 ? 'danger'
                 : 'success'
-              : summary.recent_requests > 0 && summary.success_rate < 99
+              : (getClientSuccessPercent(summary) ?? 100) < 99
                 ? 'danger'
                 : 'success'
           }
@@ -1181,7 +1213,7 @@ function ChannelStatusContent({ data, windowDays }) {
           }
           detail={
             hasSmartRuntime
-              ? `${t('调度分')} ${formatScore(runtime.avg_routing_score || runtime.avg_score)} / ${t('成本分')} ${formatScore(runtime.avg_cost_score)}`
+              ? `${t('并发')} ${formatNumber(runtime.active_concurrency)} / ${t('排队')} ${formatNumber(runtime.queue_depth)}`
               : `${formatLatency(summary.avg_latency_ms)} ${t('平均延迟')} / ${formatNumber(summary.cooldown_channels)} ${t('错误冷却')}`
           }
           tone={
