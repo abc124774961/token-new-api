@@ -411,6 +411,9 @@ type AttemptResult struct {
 	ObservedAt                     time.Time
 	Duration                       time.Duration
 	TTFT                           time.Duration
+	QueueWait                      time.Duration
+	RelayToFirstByte               time.Duration
+	RelayTotal                     time.Duration
 	StreamInterrupted              bool
 	ClientAborted                  bool
 	WillRetry                      bool

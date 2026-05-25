@@ -168,22 +168,31 @@ type dispatchRequestMeta struct {
 }
 
 type attemptRequestMeta struct {
-	ErrorMessage                   string   `json:"error_message,omitempty"`
-	ErrorCategory                  string   `json:"error_category,omitempty"`
-	RetryAction                    string   `json:"retry_action,omitempty"`
-	WillRetry                      bool     `json:"will_retry,omitempty"`
-	ClientAborted                  bool     `json:"client_aborted,omitempty"`
-	ConcurrencyLimited             bool     `json:"concurrency_limited,omitempty"`
-	BalanceInsufficient            bool     `json:"balance_insufficient,omitempty"`
-	EmptyOutput                    bool     `json:"empty_output,omitempty"`
-	ExperienceIssue                string   `json:"experience_issue,omitempty"`
-	ActiveConcurrency              int      `json:"active_concurrency,omitempty"`
-	ConfiguredConcurrencyLimit     int      `json:"configured_concurrency_limit,omitempty"`
-	LearnedConcurrencyLimit        int      `json:"learned_concurrency_limit,omitempty"`
-	LearnedConcurrencyLimitChanged bool     `json:"learned_concurrency_limit_changed,omitempty"`
-	UsedChannels                   []string `json:"used_channels,omitempty"`
-	IsHealthProbe                  bool     `json:"is_health_probe,omitempty"`
-	ProbeReason                    string   `json:"probe_reason,omitempty"`
+	ErrorMessage                   string             `json:"error_message,omitempty"`
+	ErrorCategory                  string             `json:"error_category,omitempty"`
+	RetryAction                    string             `json:"retry_action,omitempty"`
+	WillRetry                      bool               `json:"will_retry,omitempty"`
+	ClientAborted                  bool               `json:"client_aborted,omitempty"`
+	ConcurrencyLimited             bool               `json:"concurrency_limited,omitempty"`
+	BalanceInsufficient            bool               `json:"balance_insufficient,omitempty"`
+	EmptyOutput                    bool               `json:"empty_output,omitempty"`
+	ExperienceIssue                string             `json:"experience_issue,omitempty"`
+	ActiveConcurrency              int                `json:"active_concurrency,omitempty"`
+	ConfiguredConcurrencyLimit     int                `json:"configured_concurrency_limit,omitempty"`
+	LearnedConcurrencyLimit        int                `json:"learned_concurrency_limit,omitempty"`
+	LearnedConcurrencyLimitChanged bool               `json:"learned_concurrency_limit_changed,omitempty"`
+	UsedChannels                   []string           `json:"used_channels,omitempty"`
+	IsHealthProbe                  bool               `json:"is_health_probe,omitempty"`
+	ProbeReason                    string             `json:"probe_reason,omitempty"`
+	Timing                         *attemptTimingMeta `json:"timing,omitempty"`
+}
+
+type attemptTimingMeta struct {
+	QueueWaitMs        int64 `json:"queue_wait_ms,omitempty"`
+	RelayToFirstByteMs int64 `json:"relay_to_first_byte_ms,omitempty"`
+	RelayTotalMs       int64 `json:"relay_total_ms,omitempty"`
+	PreFirstByteMs     int64 `json:"pre_first_byte_ms,omitempty"`
+	PostFirstByteMs    int64 `json:"post_first_byte_ms,omitempty"`
 }
 
 func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
@@ -280,6 +289,7 @@ func attemptRequestMetaFromResult(result core.AttemptResult) attemptRequestMeta 
 		UsedChannels:                   append([]string(nil), result.UsedChannels...),
 		IsHealthProbe:                  result.IsHealthProbe,
 		ProbeReason:                    result.ProbeReason,
+		Timing:                         attemptTimingMetaFromResult(result),
 	}
 }
 
@@ -299,7 +309,43 @@ func emptyAttemptRequestMeta(meta attemptRequestMeta) bool {
 		!meta.LearnedConcurrencyLimitChanged &&
 		len(meta.UsedChannels) == 0 &&
 		!meta.IsHealthProbe &&
-		meta.ProbeReason == ""
+		meta.ProbeReason == "" &&
+		meta.Timing == nil
+}
+
+func attemptTimingMetaFromResult(result core.AttemptResult) *attemptTimingMeta {
+	timing := &attemptTimingMeta{
+		QueueWaitMs:        positiveDurationMs(result.QueueWait),
+		RelayToFirstByteMs: positiveDurationMs(result.RelayToFirstByte),
+		RelayTotalMs:       positiveDurationMs(result.RelayTotal),
+	}
+	if timing.RelayToFirstByteMs <= 0 {
+		timing.RelayToFirstByteMs = positiveDurationMs(result.TTFT)
+	}
+	if timing.RelayTotalMs <= 0 {
+		timing.RelayTotalMs = positiveDurationMs(result.Duration)
+	}
+	if timing.QueueWaitMs > 0 || timing.RelayToFirstByteMs > 0 {
+		timing.PreFirstByteMs = timing.QueueWaitMs + timing.RelayToFirstByteMs
+	}
+	if timing.RelayTotalMs > 0 && timing.RelayToFirstByteMs > 0 && timing.RelayTotalMs > timing.RelayToFirstByteMs {
+		timing.PostFirstByteMs = timing.RelayTotalMs - timing.RelayToFirstByteMs
+	}
+	if timing.QueueWaitMs <= 0 &&
+		timing.RelayToFirstByteMs <= 0 &&
+		timing.RelayTotalMs <= 0 &&
+		timing.PreFirstByteMs <= 0 &&
+		timing.PostFirstByteMs <= 0 {
+		return nil
+	}
+	return timing
+}
+
+func positiveDurationMs(value time.Duration) int64 {
+	if value <= 0 {
+		return 0
+	}
+	return value.Milliseconds()
 }
 
 func marshalToString(v any) string {

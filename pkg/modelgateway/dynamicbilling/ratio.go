@@ -536,11 +536,14 @@ func requestedModelPricePerMillion(modelName string, ratio float64) float64 {
 	if modelName == "" || ratio <= 0 {
 		return 0
 	}
-	modelRatio, ok, _ := ratio_setting.GetModelRatio(modelName)
-	if !ok || modelRatio <= 0 {
+	value, usePrice, ok := ratio_setting.GetModelRatioOrPrice(modelName)
+	if !ok || value <= 0 {
 		return 0
 	}
-	return modelRatio * 2 * ratio
+	if usePrice {
+		return value * ratio
+	}
+	return value * 2 * ratio
 }
 
 func cacheRatio(modelName string) float64 {

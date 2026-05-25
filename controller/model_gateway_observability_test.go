@@ -1185,22 +1185,26 @@ func TestModelGatewayObservabilitySummaryExposesDynamicBillingOverview(t *testin
 	require.Equal(t, 300, response.DynamicBilling.WindowSamples)
 	require.Len(t, response.DynamicBilling.Groups, 1)
 	group := response.DynamicBilling.Groups[0]
+	expectedCurrentPrice := modelGatewayDynamicBillingPricePerMillion(modelGatewayDynamicBillingDisplayModel, group.CurrentRatio)
+	expectedMinPrice := modelGatewayDynamicBillingPricePerMillion(modelGatewayDynamicBillingDisplayModel, group.MinRatio)
+	expectedMaxPrice := modelGatewayDynamicBillingPricePerMillion(modelGatewayDynamicBillingDisplayModel, group.MaxRatio)
+	expectedAveragePrice := modelGatewayDynamicBillingPricePerMillion(modelGatewayDynamicBillingDisplayModel, group.AverageRatio)
 	require.Equal(t, "auto", group.PolicyGroup)
 	require.Equal(t, []string{"auto", "codex-plus", "codex-pro"}, group.TargetGroups)
 	require.Equal(t, "active", group.Status)
 	require.Equal(t, 0.41, group.CurrentRatio)
-	require.Equal(t, 1.66, group.CurrentPricePerM)
+	require.Equal(t, expectedCurrentPrice, group.CurrentPricePerM)
 	require.Equal(t, "codex-pro", group.CurrentTargetGroup)
 	require.Equal(t, "gpt-5.4", group.CurrentModel)
 	require.Equal(t, "gpt-5.4", group.ReferenceModel)
 	require.Equal(t, 0.37, group.MinRatio)
 	require.Equal(t, 0.41, group.MaxRatio)
-	require.Equal(t, 1.48, group.MinPricePerM)
-	require.Equal(t, 1.66, group.MaxPricePerM)
+	require.Equal(t, expectedMinPrice, group.MinPricePerM)
+	require.Equal(t, expectedMaxPrice, group.MaxPricePerM)
 	require.InEpsilon(t, 0.3922222222, group.AverageRatio, 0.000001)
-	require.InEpsilon(t, 1.58, group.AveragePricePerM, 0.000001)
+	require.Equal(t, expectedAveragePrice, group.AveragePricePerM)
 	require.InEpsilon(t, 0.3922222222, group.BlendedRatio, 0.000001)
-	require.InEpsilon(t, 1.58, group.BlendedPricePerM, 0.000001)
+	require.Equal(t, expectedAveragePrice, group.BlendedPricePerM)
 	require.Equal(t, 18, group.SampleCount)
 	require.Equal(t, 18, group.EffectiveSamples)
 	require.Equal(t, 2, group.ModelCount)
@@ -1224,7 +1228,7 @@ func TestModelGatewayObservabilitySummaryCurrentDynamicBillingPrefersRatioOverPr
 		GroupPolicies: map[string]scheduler_setting.GroupPolicySetting{
 			"auto": {
 				BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
-				CandidateGroups:  []string{"codex-plus"},
+				CandidateGroups:  []string{"codex-pro", "codex-plus"},
 			},
 		},
 	})
@@ -1240,9 +1244,9 @@ func TestModelGatewayObservabilitySummaryCurrentDynamicBillingPrefersRatioOverPr
 			SampleCount:    4,
 			CalculatedAt:   now,
 		},
-		"model-high-ratio-low-price:codex-plus": {
+		"model-high-ratio-low-price:codex-pro": {
 			RequestedModel: "model-high-ratio-low-price",
-			Group:          "codex-plus",
+			Group:          "codex-pro",
 			Ratio:          0.5,
 			PricePerM:      1,
 			SampleCount:    3,
@@ -1262,8 +1266,10 @@ func TestModelGatewayObservabilitySummaryCurrentDynamicBillingPrefersRatioOverPr
 	require.Len(t, response.DynamicBilling.Groups, 1)
 	group := response.DynamicBilling.Groups[0]
 	require.Equal(t, 0.5, group.CurrentRatio)
-	require.Equal(t, 1.0, group.CurrentPricePerM)
+	require.Equal(t, modelGatewayDynamicBillingPricePerMillion(modelGatewayDynamicBillingDisplayModel, 0.5), group.CurrentPricePerM)
+	require.Equal(t, "codex-pro", group.CurrentTargetGroup)
 	require.Equal(t, "model-high-ratio-low-price", group.CurrentModel)
+	require.Equal(t, "gpt-5.4", group.ReferenceModel)
 }
 
 func TestModelGatewayObservabilitySummary7dOverviewSkipsSamplesBeforeDynamicBillingEnabledAt(t *testing.T) {
@@ -1364,22 +1370,23 @@ func TestModelGatewayObservabilitySummary7dOverviewSkipsSamplesBeforeDynamicBill
 	require.NoError(t, err)
 	require.Len(t, response.DynamicBilling7d.Groups, 1)
 	group := response.DynamicBilling7d.Groups[0]
+	expectedPrice := modelGatewayDynamicBillingPricePerMillion(modelGatewayDynamicBillingDisplayModel, 1.2)
 	require.Equal(t, "auto", group.PolicyGroup)
 	require.Equal(t, "codex-plus", group.CurrentTargetGroup)
 	require.Equal(t, "gpt-test", group.CurrentModel)
-	require.Equal(t, "gpt-test", group.ReferenceModel)
+	require.Equal(t, "gpt-5.4", group.ReferenceModel)
 	require.Equal(t, 1, group.SampleCount)
 	require.Equal(t, "active", group.Status)
 	require.InEpsilon(t, 1.2, group.CurrentRatio, 0.000001)
-	require.InEpsilon(t, 4.8, group.CurrentPricePerM, 0.000001)
+	require.Equal(t, expectedPrice, group.CurrentPricePerM)
 	require.InEpsilon(t, 1.2, group.AverageRatio, 0.000001)
-	require.InEpsilon(t, 4.8, group.AveragePricePerM, 0.000001)
+	require.Equal(t, expectedPrice, group.AveragePricePerM)
 	require.InEpsilon(t, 1.2, group.BlendedRatio, 0.000001)
-	require.InEpsilon(t, 4.8, group.BlendedPricePerM, 0.000001)
+	require.Equal(t, expectedPrice, group.BlendedPricePerM)
 	require.InEpsilon(t, 1.2, group.MinRatio, 0.000001)
 	require.InEpsilon(t, 1.2, group.MaxRatio, 0.000001)
-	require.InEpsilon(t, 4.8, group.MinPricePerM, 0.000001)
-	require.InEpsilon(t, 4.8, group.MaxPricePerM, 0.000001)
+	require.Equal(t, expectedPrice, group.MinPricePerM)
+	require.Equal(t, expectedPrice, group.MaxPricePerM)
 	require.Equal(t, 1, group.EffectiveSamples)
 	require.Equal(t, 1, group.ModelCount)
 	require.GreaterOrEqual(t, group.LatestCalculatedAt, enabledAt)

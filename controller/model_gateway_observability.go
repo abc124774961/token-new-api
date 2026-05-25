@@ -50,6 +50,7 @@ const (
 	modelGatewayObservabilitySummaryStaleTTL    = 30 * time.Second
 	modelGatewayObservabilitySummaryMaxCache    = 128
 	modelGatewayObservabilityViewUserRequests   = "user_requests"
+	modelGatewayDynamicBillingDisplayModel      = "gpt-5.4"
 )
 
 type ModelGatewayObservabilityResponse struct {
@@ -1307,8 +1308,8 @@ func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabi
 				EndTime:            endTime,
 			},
 			UserRequests:     userRequests,
-			DynamicBilling:   buildModelGatewayDynamicBillingOverview(time.Now().Unix(), 0),
-			DynamicBilling7d: buildModelGatewayDynamicBillingOverview(time.Now().Unix(), 7*24*60),
+			DynamicBilling:   buildModelGatewayDynamicBillingOverviewForDisplay(time.Now().Unix(), 0),
+			DynamicBilling7d: buildModelGatewayDynamicBillingOverviewForDisplay(time.Now().Unix(), 7*24*60),
 		}, nil
 	}
 
@@ -1341,8 +1342,8 @@ func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabi
 		return ModelGatewayObservabilityResponse{}, err
 	}
 	response.UserRequests = userRequests
-	response.DynamicBilling = buildModelGatewayDynamicBillingOverview(time.Now().Unix(), 0)
-	response.DynamicBilling7d = buildModelGatewayDynamicBillingOverview(time.Now().Unix(), 7*24*60)
+	response.DynamicBilling = buildModelGatewayDynamicBillingOverviewForDisplay(time.Now().Unix(), 0)
+	response.DynamicBilling7d = buildModelGatewayDynamicBillingOverviewForDisplay(time.Now().Unix(), 7*24*60)
 	response.RuntimeStatus = defaultModelGatewayRuntimeStatusService().Build(modelgatewayobservability.RuntimeStatusQuery{
 		Model:     options.Model,
 		Group:     options.Group,
@@ -1354,6 +1355,20 @@ func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabi
 }
 
 func buildModelGatewayDynamicBillingOverview(now int64, windowMinutesOverride int) ModelGatewayDynamicBillingOverview {
+	return buildModelGatewayDynamicBillingOverviewWithOptions(now, windowMinutesOverride, modelGatewayDynamicBillingOverviewOptions{})
+}
+
+type modelGatewayDynamicBillingOverviewOptions struct {
+	DisplayReferenceModel string
+}
+
+func buildModelGatewayDynamicBillingOverviewForDisplay(now int64, windowMinutesOverride int) ModelGatewayDynamicBillingOverview {
+	return buildModelGatewayDynamicBillingOverviewWithOptions(now, windowMinutesOverride, modelGatewayDynamicBillingOverviewOptions{
+		DisplayReferenceModel: modelGatewayDynamicBillingDisplayModel,
+	})
+}
+
+func buildModelGatewayDynamicBillingOverviewWithOptions(now int64, windowMinutesOverride int, options modelGatewayDynamicBillingOverviewOptions) ModelGatewayDynamicBillingOverview {
 	setting := scheduler_setting.GetSetting()
 	windowSamples := setting.DynamicBillingWindowSamples
 	if windowSamples <= 0 {
@@ -1382,8 +1397,11 @@ func buildModelGatewayDynamicBillingOverview(now int64, windowMinutesOverride in
 		appliedOverview, err := buildModelGatewayDynamicBillingAppliedOverview(now, windowMinutesOverride, setting, overview)
 		if err != nil {
 			common.SysLog(fmt.Sprintf("model gateway dynamic billing applied overview refresh (%d minutes) failed: %v", windowMinutesOverride, err))
-			return buildModelGatewayDynamicBillingAppliedSkeleton(setting, overview)
+			skeleton := buildModelGatewayDynamicBillingAppliedSkeleton(setting, overview)
+			normalizeModelGatewayDynamicBillingOverviewDisplay(&skeleton, options.DisplayReferenceModel)
+			return skeleton
 		}
+		normalizeModelGatewayDynamicBillingOverviewDisplay(&appliedOverview, options.DisplayReferenceModel)
 		return appliedOverview
 	}
 	baselines := modelgatewaydynamicbilling.DefaultBaselineSnapshots()
@@ -1572,7 +1590,48 @@ func buildModelGatewayDynamicBillingOverview(now int64, windowMinutesOverride in
 		return groups[i].PolicyGroup < groups[j].PolicyGroup
 	})
 	overview.Groups = groups
+	normalizeModelGatewayDynamicBillingOverviewDisplay(&overview, options.DisplayReferenceModel)
 	return overview
+}
+
+func normalizeModelGatewayDynamicBillingOverviewDisplay(overview *ModelGatewayDynamicBillingOverview, referenceModel string) {
+	if overview == nil {
+		return
+	}
+	referenceModel = strings.TrimSpace(referenceModel)
+	if referenceModel == "" {
+		return
+	}
+	for idx := range overview.Groups {
+		normalizeModelGatewayDynamicBillingGroupDisplay(&overview.Groups[idx], referenceModel)
+	}
+}
+
+func normalizeModelGatewayDynamicBillingGroupDisplay(group *ModelGatewayDynamicBillingGroupOverview, referenceModel string) {
+	if group == nil {
+		return
+	}
+	group.ReferenceModel = referenceModel
+	group.CurrentPricePerM = modelGatewayDynamicBillingPricePerMillion(referenceModel, group.CurrentRatio)
+	group.AveragePricePerM = modelGatewayDynamicBillingPricePerMillion(referenceModel, group.AverageRatio)
+	group.BlendedPricePerM = modelGatewayDynamicBillingPricePerMillion(referenceModel, group.BlendedRatio)
+	group.MinPricePerM = modelGatewayDynamicBillingPricePerMillion(referenceModel, group.MinRatio)
+	group.MaxPricePerM = modelGatewayDynamicBillingPricePerMillion(referenceModel, group.MaxRatio)
+}
+
+func modelGatewayDynamicBillingPricePerMillion(modelName string, ratio float64) float64 {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" || ratio <= 0 {
+		return 0
+	}
+	value, usePrice, ok := ratio_setting.GetModelRatioOrPrice(modelName)
+	if !ok || value <= 0 {
+		return 0
+	}
+	if usePrice {
+		return value * ratio
+	}
+	return value * 2 * ratio
 }
 
 func buildModelGatewayDynamicBillingAppliedSkeleton(setting scheduler_setting.SchedulerSetting, overview ModelGatewayDynamicBillingOverview) ModelGatewayDynamicBillingOverview {

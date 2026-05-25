@@ -3128,25 +3128,6 @@ function DynamicBillingMiniPanel({
     );
   });
   const primary = prioritizedGroups[0] || {};
-  const hiddenGroups = prioritizedGroups.slice(1);
-  const hiddenCount = hiddenGroups.length;
-  const hiddenSummary = hiddenGroups
-    .map(
-      (item) =>
-        `${item?.policy_group || '--'} · ${formatDynamicBillingOverviewStatus(
-          item?.status,
-          t,
-        )} · ${
-          averageMode
-            ? formatDynamicBillingRatioAverage(item)
-            : formatDynamicBillingRatioCurrent(item)
-        } · ${
-          averageMode
-            ? formatDynamicBillingPriceAverage(item)
-            : formatDynamicBillingPriceCompact(item)
-        }`,
-    )
-    .join('\n');
   const priceValue = averageMode
     ? formatDynamicBillingPriceAverage(primary)
     : formatDynamicBillingPriceCompact(primary);
@@ -3167,7 +3148,7 @@ function DynamicBillingMiniPanel({
     ? primary?.policy_group || '--'
     : primary?.current_target_group || primary?.policy_group || '--';
   const referenceModelValue = String(
-    primary?.current_model || primary?.reference_model || '',
+    primary?.reference_model || primary?.current_model || '',
   ).trim();
   const priceLabel = averageMode ? t('均价') : t('参考价');
   const refreshCountdown = countdownEnabled
@@ -3200,20 +3181,6 @@ function DynamicBillingMiniPanel({
               {refreshCountdown}s
             </span>
           ) : null}
-          {hiddenCount > 0 ? (
-            <Tooltip content={hiddenSummary} position='top' showArrow>
-              <span className='ct-model-gateway-dynamic-mini-chip is-more'>
-                {`+${hiddenCount}`}
-              </span>
-            </Tooltip>
-          ) : null}
-          <span
-            className={`ct-model-gateway-dynamic-mini-status ${dynamicBillingOverviewStatusClassName(
-              primary?.status,
-            )}`}
-          >
-            {formatDynamicBillingOverviewStatus(primary?.status, t)}
-          </span>
         </div>
       </div>
       <div className='ct-model-gateway-dynamic-mini-main-row'>
@@ -7495,6 +7462,132 @@ function DetailInfoGrid({ items = [] }) {
   );
 }
 
+function buildTimingBreakdown(record) {
+  const timing = record?.request_meta?.timing || {};
+  const queueWaitMs = Number(timing.queue_wait_ms || 0);
+  const relayToFirstByteMs = Number(timing.relay_to_first_byte_ms || 0);
+  const relayTotalMs = Number(timing.relay_total_ms || 0);
+  const ttftMs = Number(record?.ttft_ms || 0);
+  const durationMs = Number(record?.duration_ms || 0);
+  const effectiveRelayFirstByteMs =
+    relayToFirstByteMs > 0
+      ? relayToFirstByteMs
+      : ttftMs > 0
+        ? Math.max(0, ttftMs - queueWaitMs)
+        : 0;
+  const effectiveRelayTotalMs =
+    relayTotalMs > 0
+      ? relayTotalMs
+      : durationMs > 0
+        ? Math.max(0, durationMs - queueWaitMs)
+        : 0;
+  const postFirstByteMs =
+    Number(timing.post_first_byte_ms || 0) ||
+    (effectiveRelayTotalMs > effectiveRelayFirstByteMs
+      ? effectiveRelayTotalMs - effectiveRelayFirstByteMs
+      : 0);
+  const preFirstByteMs =
+    Number(timing.pre_first_byte_ms || 0) ||
+    (queueWaitMs > 0 || effectiveRelayFirstByteMs > 0
+      ? queueWaitMs + effectiveRelayFirstByteMs
+      : 0);
+  const totalKnownMs =
+    queueWaitMs + effectiveRelayFirstByteMs + postFirstByteMs;
+
+  if (
+    queueWaitMs <= 0 &&
+    effectiveRelayFirstByteMs <= 0 &&
+    effectiveRelayTotalMs <= 0 &&
+    postFirstByteMs <= 0
+  ) {
+    return null;
+  }
+
+  return {
+    queueWaitMs,
+    relayToFirstByteMs: effectiveRelayFirstByteMs,
+    relayTotalMs: effectiveRelayTotalMs,
+    preFirstByteMs,
+    postFirstByteMs,
+    totalKnownMs,
+  };
+}
+
+function dominantTimingSegment(timing, t) {
+  if (!timing) return '';
+  const segments = [
+    [t('队列等待'), timing.queueWaitMs],
+    [t('转发首包'), timing.relayToFirstByteMs],
+    [t('首包后生成'), timing.postFirstByteMs],
+  ].filter(([, value]) => Number(value) > 0);
+  if (!segments.length) return '';
+  segments.sort((a, b) => Number(b[1]) - Number(a[1]));
+  return t('主要耗时在 {{segment}}', { segment: segments[0][0] });
+}
+
+function TimingBreakdownPanel({ record, t }) {
+  const timing = buildTimingBreakdown(record);
+  if (!timing) return null;
+  const total = Math.max(Number(timing.totalKnownMs || 0), 1);
+  const items = [
+    {
+      key: 'queue',
+      label: t('队列等待'),
+      value: timing.queueWaitMs,
+      detail: t('本地并发队列等待'),
+      tone: 'queue',
+    },
+    {
+      key: 'first_byte',
+      label: t('转发首包'),
+      value: timing.relayToFirstByteMs,
+      detail: t('网关转发到上游首包'),
+      tone: 'relay',
+    },
+    {
+      key: 'generation',
+      label: t('首包后生成'),
+      value: timing.postFirstByteMs,
+      detail: t('首包之后到完成'),
+      tone: 'generation',
+    },
+  ];
+
+  return (
+    <DetailPanel title={t('耗时拆解')}>
+      <div className='ct-model-gateway-timing-breakdown'>
+        <div className='ct-model-gateway-timing-summary'>
+          <Timer size={15} />
+          <span>{dominantTimingSegment(timing, t)}</span>
+          <Tag color='blue' type='light' shape='circle'>
+            {t('首包前')} {formatLatency(timing.preFirstByteMs)}
+          </Tag>
+        </div>
+        <div className='ct-model-gateway-timing-bars'>
+          {items.map((item) => {
+            const width = `${Math.max(4, (Number(item.value || 0) / total) * 100)}%`;
+            return (
+              <div
+                key={item.key}
+                className={`ct-model-gateway-timing-row ct-model-gateway-timing-row-${item.tone}`}
+              >
+                <div className='ct-model-gateway-timing-label'>
+                  <span>{item.label}</span>
+                  <strong>{formatLatency(item.value)}</strong>
+                </div>
+                <div className='ct-model-gateway-timing-track'>
+                  <i style={{ width }} />
+                </div>
+                <small>{item.detail}</small>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </DetailPanel>
+  );
+}
+
 function DetailAccordion({
   title,
   meta,
@@ -8945,6 +9038,8 @@ function RecordDetailDrawer({
           <DetailPanel title={t('上游成本明细')}>
             <UpstreamCostDetailPanel record={record} t={t} />
           </DetailPanel>
+
+          <TimingBreakdownPanel record={record} t={t} />
 
           <DetailPanel title={t('候选渠道解释')}>
             {candidateExplanations.length ? (

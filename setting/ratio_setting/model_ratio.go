@@ -58,7 +58,9 @@ var defaultModelRatio = map[string]float64{
 	"gpt-4.1-mini-2025-04-14":          0.2,  // $0.4 / 1M tokens
 	"gpt-4.1-nano":                     0.05, // $0.1 / 1M tokens
 	"gpt-4.1-nano-2025-04-14":          0.05, // $0.1 / 1M tokens
-	"gpt-image-1":                      2.5,  // $5 / 1M tokens
+	"gpt-5.5":                          5,  // $5 / 1M tokens
+	"gpt-5.4":                          2.5, // $2.5 / 1M tokens
+	"gpt-image-1":                      5,  // $5 / 1M tokens
 	"o1":                               7.5,  // $15 / 1M tokens
 	"o1-2024-12-17":                    7.5,  // $15 / 1M tokens
 	"o1-preview":                       7.5,  // $15 / 1M tokens

@@ -122,8 +122,8 @@ func getCachedUserGroupDynamicBillingDisplay() map[string]userGroupDynamicBillin
 	userGroupDynamicBillingCache.mu.RUnlock()
 
 	values := buildUserGroupDynamicBillingDisplayMap(
-		buildModelGatewayDynamicBillingOverview(now.Unix(), 0),
-		buildModelGatewayDynamicBillingOverview(now.Unix(), 7*24*60),
+		buildModelGatewayDynamicBillingOverviewForDisplay(now.Unix(), 0),
+		buildModelGatewayDynamicBillingOverviewForDisplay(now.Unix(), 7*24*60),
 	)
 	ttl := time.Duration(settingValue.DynamicBillingRefreshSeconds) * time.Second
 	if ttl <= 0 {

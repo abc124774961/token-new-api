@@ -148,6 +148,52 @@ func TestAsyncExecutionRecorderRecordsAttemptFlowMeta(t *testing.T) {
 	require.Equal(t, int64(0), summaries)
 }
 
+func TestAsyncExecutionRecorderRecordsAttemptTimingMeta(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:        "req-timing",
+		AttemptIndex:     0,
+		ChannelID:        4,
+		ChannelName:      "timing-channel",
+		RequestedGroup:   "codex-plus",
+		SelectedGroup:    "codex-plus",
+		ModelName:        "gpt-5.4",
+		Success:          true,
+		RetryAction:      "complete",
+		Duration:         24 * time.Second,
+		TTFT:             12 * time.Second,
+		QueueWait:        9 * time.Second,
+		RelayToFirstByte: 2 * time.Second,
+		RelayTotal:       13 * time.Second,
+	})
+
+	require.Eventually(t, func() bool {
+		var count int64
+		require.NoError(t, db.Model(&model.ModelExecutionRecord{}).Where("request_id = ?", "req-timing").Count(&count).Error)
+		return count == 1
+	}, time.Second, 10*time.Millisecond)
+
+	var record model.ModelExecutionRecord
+	require.NoError(t, db.Where("request_id = ?", "req-timing").First(&record).Error)
+	require.Equal(t, int64(24000), record.DurationMs)
+	require.Equal(t, int64(12000), record.TTFTMs)
+	require.Contains(t, record.RequestMeta, `"timing"`)
+	require.Contains(t, record.RequestMeta, `"queue_wait_ms":9000`)
+	require.Contains(t, record.RequestMeta, `"relay_to_first_byte_ms":2000`)
+	require.Contains(t, record.RequestMeta, `"relay_total_ms":13000`)
+	require.Contains(t, record.RequestMeta, `"pre_first_byte_ms":11000`)
+	require.Contains(t, record.RequestMeta, `"post_first_byte_ms":11000`)
+}
+
 func TestAsyncExecutionRecorderSummarizesRecoveredUserRequest(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
