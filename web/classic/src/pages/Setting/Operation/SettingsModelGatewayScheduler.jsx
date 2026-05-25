@@ -57,6 +57,7 @@ const CIRCUIT_ERROR_TYPES = [
   'upstream_error',
 ];
 const STICKY_FAILURE_POLICY_OPTIONS = ['clear', 'keep'];
+const BILLING_RATIO_MODE_OPTIONS = ['static', 'dynamic'];
 
 const DEFAULT_SETTING = {
   enabled: false,
@@ -71,6 +72,12 @@ const DEFAULT_SETTING = {
   cost_calculation_interval_seconds: 5,
   cost_calculation_worker_count: 2,
   cost_calculation_batch_size: 100,
+  dynamic_billing_enabled: false,
+  dynamic_billing_profit_rate: 0.2,
+  dynamic_billing_window_samples: 300,
+  dynamic_billing_min_samples: 5,
+  dynamic_billing_refresh_seconds: 30,
+  dynamic_billing_max_age_seconds: 300,
   default_mode: 'off',
   rollout_percent: 0,
   default_strategy: 'balanced',
@@ -111,6 +118,29 @@ const DEFAULT_SETTING = {
 const numberOrDefault = (value, fallback = 0) => {
   const next = Number(value);
   return Number.isFinite(next) ? next : fallback;
+};
+
+const formatRatioValue = (value, digits = 4) => {
+  const next = Number(value);
+  if (!Number.isFinite(next)) {
+    return '-';
+  }
+  return `${parseFloat(next.toFixed(digits))}x`;
+};
+
+const formatPricePerMillion = (value) => {
+  const next = Number(value);
+  if (!Number.isFinite(next) || next <= 0) {
+    return '-';
+  }
+  return `$${parseFloat(next.toFixed(6))}/M`;
+};
+
+const formatStaticBillingRatio = (group, ratio, t) => {
+  if (String(group || '').trim() === 'auto' && !Number.isFinite(Number(ratio))) {
+    return t('按实际分组');
+  }
+  return formatRatioValue(ratio);
 };
 
 const makeSelectOptions = (values, labeler = (value) => value) =>
@@ -383,6 +413,17 @@ const stickyFailurePolicyLabel = (policy, t) => {
   }
 };
 
+const billingRatioModeLabel = (mode, t) => {
+  switch (mode) {
+    case 'dynamic':
+      return t('动态收费倍率');
+    case 'static':
+      return t('静态收费倍率');
+    default:
+      return mode;
+  }
+};
+
 const makeCircuitErrorRows = (policies = {}) =>
   CIRCUIT_ERROR_TYPES.map((type) => {
     const policy = policies?.[type] || {};
@@ -433,6 +474,7 @@ const policyMapToRows = (policies = {}, priorities = {}) =>
       group,
       priority_ratio:
         priorities[group] === undefined ? '' : String(priorities[group]),
+      billing_ratio_mode: policy?.billing_ratio_mode || 'static',
       mode: policy?.mode || 'off',
       strategy: policy?.strategy || 'balanced',
       auto_mode: policy?.auto_mode || 'auto_sequential',
@@ -459,6 +501,7 @@ const rowsToPolicyMaps = (rows) => {
       auto_mode: row.auto_mode || 'auto_sequential',
       cross_group_fusion: !!row.cross_group_fusion,
       candidate_groups: [...new Set(candidateGroups)],
+      billing_ratio_mode: row.billing_ratio_mode || 'static',
       cache_affinity_enabled: !!row.cache_affinity_enabled,
       queue_enabled: !!row.queue_enabled,
       queue_high_priority: !!row.queue_high_priority,
@@ -489,6 +532,7 @@ export default function SettingsModelGatewayScheduler() {
     auto_modes: AUTO_MODE_OPTIONS,
   });
   const [groupOptions, setGroupOptions] = useState([]);
+  const [dynamicBillingBaselines, setDynamicBillingBaselines] = useState([]);
 
   const modeOptions = useMemo(
     () =>
@@ -519,6 +563,14 @@ export default function SettingsModelGatewayScheduler() {
       })),
     [t],
   );
+  const billingRatioModeOptions = useMemo(
+    () =>
+      BILLING_RATIO_MODE_OPTIONS.map((value) => ({
+        value,
+        label: billingRatioModeLabel(value, t),
+      })),
+    [t],
+  );
   const candidateGroupOptions = useMemo(() => {
     const optionMap = new Map();
     for (const option of groupOptions || []) {
@@ -538,6 +590,67 @@ export default function SettingsModelGatewayScheduler() {
     }
     return Array.from(optionMap.values());
   }, [groupOptions, policyRows]);
+  const groupRatioMap = useMemo(() => {
+    const ratioMap = new Map();
+    for (const option of candidateGroupOptions || []) {
+      if (!option?.value) continue;
+      const ratio = Number(option.ratio);
+      if (Number.isFinite(ratio)) {
+        ratioMap.set(option.value, ratio);
+      }
+    }
+    return ratioMap;
+  }, [candidateGroupOptions]);
+  const dynamicBillingByGroup = useMemo(() => {
+    const result = new Map();
+    for (const item of dynamicBillingBaselines || []) {
+      const group = String(item?.group || '').trim();
+      const ratio = Number(item?.ratio);
+      if (!group || !Number.isFinite(ratio) || ratio <= 0) continue;
+      const pricePerM = Number(item?.price_per_m);
+      result.set(group, {
+        ratio,
+        pricePerM: Number.isFinite(pricePerM) && pricePerM > 0 ? pricePerM : 0,
+        sampleCount: Number(item?.sample_count) || 0,
+        modelCount: Number(item?.model_count) || 0,
+        referenceModel: String(
+          item?.reference_model || item?.requested_model || '',
+        ).trim(),
+        latestCalculatedAt: Number(item?.calculated_at) || 0,
+        group,
+      });
+    }
+    return result;
+  }, [dynamicBillingBaselines]);
+
+  const resolveDynamicBillingInfo = useCallback(
+    (row) => {
+      if (!row) return null;
+      const directGroup = String(row.group || '').trim();
+      const candidates = normalizeCandidateGroups(row.candidate_groups);
+      const searchGroups = [
+        directGroup,
+        ...candidates.filter((group) => group !== directGroup),
+      ];
+      let best = null;
+      for (const group of searchGroups) {
+        const info = dynamicBillingByGroup.get(group);
+        if (!info) continue;
+        if (
+          !best ||
+          Number(info.latestCalculatedAt || 0) >
+            Number(best.latestCalculatedAt || 0) ||
+          (Number(info.latestCalculatedAt || 0) ===
+            Number(best.latestCalculatedAt || 0) &&
+            Number(info.sampleCount || 0) > Number(best.sampleCount || 0))
+        ) {
+          best = info;
+        }
+      }
+      return best;
+    },
+    [dynamicBillingByGroup],
+  );
 
   const loadGroups = async () => {
     try {
@@ -583,6 +696,7 @@ export default function SettingsModelGatewayScheduler() {
         strategies: data?.strategies || STRATEGY_OPTIONS,
         auto_modes: data?.auto_modes || AUTO_MODE_OPTIONS,
       });
+      setDynamicBillingBaselines(data?.dynamic_billing_baselines || []);
       setPolicyRows(
         policyMapToRows(next.group_policies, next.group_priority_ratio),
       );
@@ -622,6 +736,7 @@ export default function SettingsModelGatewayScheduler() {
         auto_mode: 'auto_fusion',
         cross_group_fusion: false,
         candidate_groups: [],
+        billing_ratio_mode: 'static',
         cache_affinity_enabled: setting.cache_affinity_enabled,
         queue_enabled: setting.queue_enabled,
         queue_high_priority: false,
@@ -713,6 +828,26 @@ export default function SettingsModelGatewayScheduler() {
         setting.cost_calculation_batch_size,
         100,
       ),
+      dynamic_billing_profit_rate: numberOrDefault(
+        setting.dynamic_billing_profit_rate,
+        0.2,
+      ),
+      dynamic_billing_window_samples: numberOrDefault(
+        setting.dynamic_billing_window_samples,
+        300,
+      ),
+      dynamic_billing_min_samples: numberOrDefault(
+        setting.dynamic_billing_min_samples,
+        5,
+      ),
+      dynamic_billing_refresh_seconds: numberOrDefault(
+        setting.dynamic_billing_refresh_seconds,
+        30,
+      ),
+      dynamic_billing_max_age_seconds: numberOrDefault(
+        setting.dynamic_billing_max_age_seconds,
+        300,
+      ),
       success_weight: numberOrDefault(setting.success_weight, 0.32),
       speed_weight: numberOrDefault(setting.speed_weight, 0.28),
       load_weight: numberOrDefault(setting.load_weight, 0.2),
@@ -755,6 +890,7 @@ export default function SettingsModelGatewayScheduler() {
       showSuccess(t('保存成功'));
       const next = normalizeSetting(data?.setting);
       setSetting(next);
+      setDynamicBillingBaselines(data?.dynamic_billing_baselines || []);
       setPolicyRows(
         policyMapToRows(next.group_policies, next.group_priority_ratio),
       );
@@ -783,6 +919,7 @@ export default function SettingsModelGatewayScheduler() {
           showSuccess(t('已恢复默认配置'));
           const next = normalizeSetting(data?.setting || defaults);
           setSetting(next);
+          setDynamicBillingBaselines(data?.dynamic_billing_baselines || []);
           setPolicyRows(
             policyMapToRows(next.group_policies, next.group_priority_ratio),
           );
@@ -889,7 +1026,7 @@ export default function SettingsModelGatewayScheduler() {
       ),
     },
     {
-      title: t('分组倍率'),
+      title: t('调度权重'),
       dataIndex: 'priority_ratio',
       width: 120,
       render: (_, row) => (
@@ -901,6 +1038,84 @@ export default function SettingsModelGatewayScheduler() {
           }
         />
       ),
+    },
+    {
+      title: t('收费倍率'),
+      dataIndex: 'billing_ratio_mode',
+      width: 220,
+      render: (_, row) => {
+        const mode = row.billing_ratio_mode || 'static';
+        const staticRatio = groupRatioMap.get(row.group);
+        const staticRatioText = formatStaticBillingRatio(
+          row.group,
+          staticRatio,
+          t,
+        );
+        const dynamicInfo = resolveDynamicBillingInfo(row);
+        const hasDynamic = !!dynamicInfo;
+        const dynamicRatioText = hasDynamic
+          ? formatRatioValue(dynamicInfo.ratio)
+          : '-';
+        const dynamicPriceText =
+          hasDynamic && dynamicInfo.pricePerM > 0
+            ? formatPricePerMillion(dynamicInfo.pricePerM)
+            : '';
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <Select
+              value={mode}
+              optionList={billingRatioModeOptions}
+              onChange={(value) =>
+                updatePolicyRow(row.id, {
+                  billing_ratio_mode: value || 'static',
+                })
+              }
+            />
+            {mode === 'dynamic' ? (
+              <Space spacing={6} wrap>
+                <Tag
+                  color={
+                    !setting.dynamic_billing_enabled
+                      ? 'grey'
+                      : hasDynamic
+                        ? 'green'
+                        : 'amber'
+                  }
+                >
+                  {!setting.dynamic_billing_enabled
+                    ? t('未启用')
+                    : hasDynamic
+                      ? t('动态可用')
+                      : t('等待样本')}
+                </Tag>
+                {hasDynamic ? (
+                  <Typography.Text type='tertiary' size='small'>
+                    {dynamicInfo.group && dynamicInfo.group !== row.group
+                      ? `${dynamicInfo.group} · `
+                      : ''}
+                    {dynamicRatioText}
+                    {dynamicPriceText ? ` · ${dynamicPriceText}` : ''}
+                    {dynamicInfo.referenceModel
+                      ? ` · ${dynamicInfo.referenceModel}`
+                      : ''}
+                    {dynamicInfo.sampleCount
+                      ? ` · ${dynamicInfo.sampleCount}${t('个样本')}`
+                      : ''}
+                  </Typography.Text>
+                ) : (
+                  <Typography.Text type='tertiary' size='small'>
+                    {t('回退静态')} {staticRatioText}
+                  </Typography.Text>
+                )}
+              </Space>
+            ) : (
+              <Typography.Text type='tertiary' size='small'>
+                {t('静态分组倍率')} {staticRatioText}
+              </Typography.Text>
+            )}
+          </div>
+        );
+      },
     },
     {
       title: t('能力'),
@@ -1489,7 +1704,107 @@ export default function SettingsModelGatewayScheduler() {
               />
             </Col>
           </Row>
+          <Banner
+            type='info'
+            fullMode={false}
+            closeIcon={null}
+            title={t('动态收费倍率')}
+            description={t(
+              '分组策略选择动态收费倍率后，请求会按实际选中的分组读取后台动态倍率；未命中时自动回退静态分组倍率。',
+            )}
+            style={{ marginTop: 8, marginBottom: 16 }}
+          />
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={4}>
+              <Form.Switch
+                field='dynamic_billing_enabled'
+                label={t('启用动态收费')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting('dynamic_billing_enabled', value)
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='dynamic_billing_profit_rate'
+                label={t('利润率')}
+                min={0}
+                step={0.01}
+                suffix='x'
+                onChange={(value) =>
+                  updateSetting(
+                    'dynamic_billing_profit_rate',
+                    numberOrDefault(value, 0.2),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='dynamic_billing_window_samples'
+                label={t('后台样本窗口')}
+                min={1}
+                suffix={t('份')}
+                onChange={(value) =>
+                  updateSetting(
+                    'dynamic_billing_window_samples',
+                    numberOrDefault(value, 300),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='dynamic_billing_min_samples'
+                label={t('最小样本数')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting(
+                    'dynamic_billing_min_samples',
+                    numberOrDefault(value, 5),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='dynamic_billing_refresh_seconds'
+                label={t('后台刷新间隔')}
+                min={1}
+                suffix={t('秒')}
+                onChange={(value) =>
+                  updateSetting(
+                    'dynamic_billing_refresh_seconds',
+                    numberOrDefault(value, 30),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='dynamic_billing_max_age_seconds'
+                label={t('最大有效期')}
+                min={1}
+                suffix={t('秒')}
+                onChange={(value) =>
+                  updateSetting(
+                    'dynamic_billing_max_age_seconds',
+                    numberOrDefault(value, 300),
+                  )
+                }
+              />
+            </Col>
+          </Row>
           <div style={{ marginTop: 8, marginBottom: 16 }}>
+            <Banner
+              type='info'
+              fullMode={false}
+              closeIcon={null}
+              description={t('请求链路只读取内存动态价格结果，样本窗口按最近样本数由后台任务计算。')}
+              style={{ marginBottom: 12 }}
+            />
             <Typography.Text strong>{t('按错误类型熔断策略')}</Typography.Text>
             <Banner
               type='warning'
@@ -1609,7 +1924,7 @@ export default function SettingsModelGatewayScheduler() {
               {t('暂无分组智能调度策略')}
             </div>
           }
-          scroll={{ x: 1520 }}
+          scroll={{ x: 1680 }}
         />
       </div>
     </Spin>

@@ -150,11 +150,11 @@ function App() {
         <Route
           path='/console/channel-status'
           element={
-            <AdminRoute>
+            <PrivateRoute>
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                 <ChannelStatus />
               </Suspense>
-            </AdminRoute>
+            </PrivateRoute>
           }
         />
         <Route

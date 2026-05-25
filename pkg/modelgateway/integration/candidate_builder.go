@@ -65,6 +65,7 @@ func (b *ModelCandidatePoolBuilder) buildGroupCandidates(req *core.DispatchReque
 			UpstreamModel:   upstreamModel,
 			ProviderProfile: profile.Name(),
 			ProxyMode:       profile.ProxyMode(channel, req.ModelName),
+			RequiresCodexImageTool: req.RequiresCodexImageTool,
 			RuntimeKey: core.RuntimeKey{
 				RequestedModel:        req.ModelName,
 				UpstreamModel:         upstreamModel,

@@ -956,7 +956,7 @@ function GroupPanel({ group, windowDays }) {
             <div className='ct-channel-monitor-metric-box'>
               <div className='ct-channel-monitor-metric-label'>
                 <Timer size={16} />
-                <span>{hasSmartRuntime ? t('平均首包') : t('对话延迟')}</span>
+                <span>{hasSmartRuntime ? t('平均首包') : t('首包')}</span>
               </div>
               <div className='ct-channel-monitor-metric-value'>
                 {formatLatency(

@@ -70,6 +70,7 @@ func (p *ServiceRuntimeStateProvider) ConfigErrorIsolationStatus(key core.Runtim
 type RuntimeSnapshotEnricher struct {
 	stateProvider        RuntimeStateProvider
 	costProvider         CostProfileProvider
+	costBaselineProvider core.CostBaselineProvider
 	circuitBreaker       core.CircuitBreaker
 	queueTimeoutMs       int
 	queueMaxDepth        int
@@ -110,6 +111,14 @@ func (e *RuntimeSnapshotEnricher) WithCostProfileProvider(provider CostProfilePr
 		return nil
 	}
 	e.costProvider = provider
+	return e
+}
+
+func (e *RuntimeSnapshotEnricher) WithCostBaselineProvider(provider core.CostBaselineProvider) *RuntimeSnapshotEnricher {
+	if e == nil {
+		return nil
+	}
+	e.costBaselineProvider = provider
 	return e
 }
 
@@ -295,7 +304,9 @@ func (e *RuntimeSnapshotEnricher) applyCostSnapshot(candidate core.Candidate, sn
 		snapshot.CostPricingMode = ""
 	}
 	if snapshot.CostRatio > 0 {
-		if reference, ok := e.lookupReferenceCostRatio(candidate, snapshot.CostPricingMode); ok && reference > 0 {
+		if reference, ok := e.lookupCandidateSetCostBaseline(candidate); ok && reference > 0 {
+			snapshot.CostReferenceRatio = reference
+		} else if reference, ok := e.lookupReferenceCostRatio(candidate, snapshot.CostPricingMode); ok && reference > 0 {
 			snapshot.CostReferenceRatio = reference
 		}
 	}
@@ -348,6 +359,19 @@ func (e *RuntimeSnapshotEnricher) lookupReferenceCostRatio(candidate core.Candid
 		}
 	}
 	return modelgatewaycost.LookupCachedReferenceCostRatio(modelName, pricingMode)
+}
+
+func (e *RuntimeSnapshotEnricher) lookupCandidateSetCostBaseline(candidate core.Candidate) (float64, bool) {
+	if e == nil || e.costBaselineProvider == nil {
+		return 0, false
+	}
+	scope := core.CostBaselineScope{
+		RequestedModel:         strings.TrimSpace(candidate.RuntimeKey.RequestedModel),
+		Group:                  strings.TrimSpace(candidate.Group),
+		EndpointType:           strings.TrimSpace(string(candidate.RuntimeKey.EndpointType)),
+		RequiresCodexImageTool: candidate.RequiresCodexImageTool,
+	}
+	return e.costBaselineProvider.Baseline(scope)
 }
 
 func candidateGroupPriorityRatio(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {

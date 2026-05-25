@@ -1,0 +1,216 @@
+package controller
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+)
+
+type logsAPIResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Items []model.Log `json:"items"`
+		Total int         `json:"total"`
+	} `json:"data"`
+}
+
+func TestGetAllLogsAttachesModelGatewayCostSummary(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.Channel{
+		Id:   77,
+		Name: "codex-upstream",
+	}).Error)
+	require.NoError(t, db.Create(&model.Log{
+		UserId:           1001,
+		CreatedAt:        now,
+		Type:             model.LogTypeConsume,
+		Username:         "cost-user",
+		TokenName:        "cost-token",
+		ModelName:        "gpt-5.5",
+		Quota:            42,
+		PromptTokens:     12,
+		CompletionTokens: 8,
+		ChannelId:        77,
+		Group:            "auto",
+		RequestId:        "req-log-cost",
+		Other:            `{"model_ratio":0.5}`,
+	}).Error)
+	breakdown, err := common.Marshal(map[string]any{
+		"currency":            "USD",
+		"cost_coefficient":    1.2,
+		"fee_multiplier":      0.8,
+		"token_multiplier":    0.4,
+		"recharge_multiplier": 2,
+		"input": map[string]any{
+			"tokens":            12,
+			"price_per_million": 0.1,
+			"amount":            0.0000012,
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ModelGatewayRequestCostSummary{
+		RequestId:         "req-log-cost",
+		ChannelID:         77,
+		UpstreamModel:     "mimo-codex",
+		UpstreamCostTotal: 0.0000012,
+		BreakdownJSON:     string(breakdown),
+		CostSource:        "manual",
+		CostAccuracy:      "precise",
+		CalculatedAt:      now,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/log", GetAllLogs)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/log?type=2&page_size=20", nil)
+	router.ServeHTTP(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	var payload logsAPIResponse
+	require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, "codex-upstream", payload.Data.Items[0].ChannelName)
+
+	other := map[string]any{}
+	require.NoError(t, common.UnmarshalJsonStr(payload.Data.Items[0].Other, &other))
+	costSummary, ok := other["model_gateway_cost"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(77), costSummary["channel_id"])
+	require.Equal(t, "mimo-codex", costSummary["upstream_model"])
+	require.Equal(t, 0.0000012, costSummary["upstream_cost_total"])
+	breakdownMap, ok := costSummary["breakdown"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, 0.4, breakdownMap["token_multiplier"])
+	require.NotContains(t, breakdownMap, "input")
+	require.Equal(t, float64(42), costSummary["billing_quota"])
+	require.Equal(t, 0.5, other["model_ratio"])
+}
+
+func TestGetAllLogsAttachesEstimatedChannelCostWhenSummaryMissing(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     78,
+		Name:   "estimated-cost-channel",
+		Models: "gpt-4o",
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayChannelCostProfile{
+		ChannelID:            78,
+		UpstreamModel:        "*",
+		Source:               "manual",
+		Accuracy:             "precise",
+		Currency:             "USD",
+		PricingMode:          "token",
+		InputPerMillion:      2,
+		OutputPerMillion:     10,
+		TokenMultiplier:      0.5,
+		CostCoefficient:      1,
+		RechargeMultiplier:   1,
+		InputCostMultiplier:  0.5,
+		OutputCostMultiplier: 0.5,
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}).Error)
+	require.NoError(t, db.Create(&model.Log{
+		UserId:           1003,
+		CreatedAt:        now,
+		Type:             model.LogTypeConsume,
+		Username:         "estimated-cost-user",
+		TokenName:        "estimated-cost-token",
+		ModelName:        "gpt-4o",
+		Quota:            123,
+		PromptTokens:     1000,
+		CompletionTokens: 500,
+		ChannelId:        78,
+		Group:            "auto",
+		RequestId:        "req-log-estimated-cost",
+		Other:            `{"model_ratio":1.25,"group_ratio":0.5}`,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/log", GetAllLogs)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/log?type=2&page_size=20", nil)
+	router.ServeHTTP(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	var payload logsAPIResponse
+	require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Len(t, payload.Data.Items, 1)
+
+	other := map[string]any{}
+	require.NoError(t, common.UnmarshalJsonStr(payload.Data.Items[0].Other, &other))
+	costSummary, ok := other["model_gateway_cost"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(78), costSummary["channel_id"])
+	require.Equal(t, "gpt-4o", costSummary["upstream_model"])
+	require.Equal(t, "manual", costSummary["cost_source"])
+	require.Equal(t, "precise", costSummary["cost_accuracy"])
+	require.InEpsilon(t, 0.007, costSummary["upstream_cost_total"], 0.000001)
+	require.Equal(t, float64(123), costSummary["billing_quota"])
+
+	breakdownMap, ok := costSummary["breakdown"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "USD", breakdownMap["currency"])
+	require.Equal(t, 0.5, breakdownMap["token_multiplier"])
+	require.NotContains(t, breakdownMap, "input")
+	require.NotContains(t, breakdownMap, "output")
+}
+
+func TestGetUserLogsDoesNotExposeModelGatewayCostSummary(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.Log{
+		UserId:    1002,
+		CreatedAt: now,
+		Type:      model.LogTypeConsume,
+		Username:  "normal-user",
+		ModelName: "gpt-5.5",
+		ChannelId: 88,
+		Group:     "auto",
+		RequestId: "req-user-log-cost",
+		Other:     `{"admin_info":{"use_channel":[88]},"model_ratio":0.6}`,
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayRequestCostSummary{
+		RequestId:         "req-user-log-cost",
+		ChannelID:         88,
+		UpstreamModel:     "deepseek-codex",
+		UpstreamCostTotal: 0.000002,
+		CostSource:        "manual",
+		CostAccuracy:      "precise",
+		CalculatedAt:      now,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/user/log", func(c *gin.Context) {
+		c.Set("id", 1002)
+		GetUserLogs(c)
+	})
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/user/log?type=2&page_size=20", nil)
+	router.ServeHTTP(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	var payload logsAPIResponse
+	require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Len(t, payload.Data.Items, 1)
+	require.Empty(t, payload.Data.Items[0].ChannelName)
+
+	other := map[string]any{}
+	require.NoError(t, common.UnmarshalJsonStr(payload.Data.Items[0].Other, &other))
+	require.NotContains(t, other, "model_gateway_cost")
+	require.NotContains(t, other, "admin_info")
+	require.Equal(t, 0.6, other["model_ratio"])
+}

@@ -221,6 +221,7 @@ func SetApiRouter(router *gin.Engine) {
 			ratioSyncRoute.GET("/channels", controller.GetSyncableChannels)
 			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)
 		}
+		apiRouter.GET("/channel/status_monitor", middleware.UserAuth(), controller.GetChannelStatusMonitor)
 		channelRoute := apiRouter.Group("/channel")
 		channelRoute.Use(middleware.AdminAuth())
 		{
@@ -228,7 +229,6 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.GET("/search", controller.SearchChannels)
 			channelRoute.GET("/models", controller.ChannelListModels)
 			channelRoute.GET("/models_enabled", controller.EnabledListModels)
-			channelRoute.GET("/status_monitor", controller.GetChannelStatusMonitor)
 			channelRoute.GET("/group_summary", controller.GetChannelGroupSummary)
 			channelRoute.POST("/upstream_cost_quote", controller.GetUnsavedChannelUpstreamCostQuote)
 			channelRoute.GET("/:id/upstream_cost_quote", controller.GetChannelUpstreamCostQuote)

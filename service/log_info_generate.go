@@ -236,6 +236,27 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other map[string]interf
 	if relayInfo == nil || other == nil {
 		return
 	}
+	if snapshot := relayInfo.DynamicBilling; snapshot != nil {
+		other["dynamic_billing_applied"] = snapshot.Applied
+		other["dynamic_billing_group"] = snapshot.Group
+		other["dynamic_billing_static_group_ratio"] = snapshot.StaticGroupRatio
+		if snapshot.Applied {
+			other["billing_mode"] = "model_gateway_dynamic"
+			other["billing_source_detail"] = "dynamic_group_ratio"
+			other["dynamic_billing_ratio"] = snapshot.DynamicRatio
+			if snapshot.PricePerM > 0 {
+				other["dynamic_billing_price_per_m"] = snapshot.PricePerM
+			}
+			other["dynamic_profit_rate"] = snapshot.ProfitRate
+			other["dynamic_billing_sample_count"] = snapshot.SampleCount
+			other["dynamic_billing_calculated_at"] = snapshot.CalculatedAt
+			other["dynamic_billing_window_start"] = snapshot.WindowStart
+			other["dynamic_billing_window_end"] = snapshot.WindowEnd
+		} else if snapshot.FallbackReason != "" {
+			other["dynamic_billing_fallback"] = true
+			other["dynamic_fallback_reason"] = snapshot.FallbackReason
+		}
+	}
 	// billing_source: "wallet", "subscription", or "subscription_wallet"
 	if relayInfo.BillingSource != "" {
 		other["billing_source"] = relayInfo.BillingSource

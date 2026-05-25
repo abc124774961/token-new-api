@@ -8,6 +8,21 @@ type GroupRatioInfo struct {
 	HasSpecialRatio   bool
 }
 
+type DynamicBillingSnapshot struct {
+	Applied          bool    `json:"applied"`
+	FallbackReason   string  `json:"fallback_reason,omitempty"`
+	RequestedModel   string  `json:"requested_model,omitempty"`
+	Group            string  `json:"group,omitempty"`
+	StaticGroupRatio float64 `json:"static_group_ratio,omitempty"`
+	DynamicRatio     float64 `json:"dynamic_ratio,omitempty"`
+	PricePerM        float64 `json:"price_per_m,omitempty"`
+	ProfitRate       float64 `json:"profit_rate,omitempty"`
+	SampleCount      int     `json:"sample_count,omitempty"`
+	CalculatedAt     int64   `json:"calculated_at,omitempty"`
+	WindowStart      int64   `json:"window_start,omitempty"`
+	WindowEnd        int64   `json:"window_end,omitempty"`
+}
+
 type PriceData struct {
 	FreeModel            bool
 	ModelPrice           float64
@@ -24,6 +39,7 @@ type PriceData struct {
 	UsePrice             bool
 	Quota                int // 按次计费的最终额度（MJ / Task）
 	QuotaToPreConsume    int // 按量计费的预消耗额度
+	QuotaBeforeGroup     float64
 	GroupRatioInfo       GroupRatioInfo
 }
 

@@ -18,6 +18,12 @@ var group2model2channels map[string]map[string][]int // enabled channel
 var channelsIDM map[int]*Channel                     // all channels include disabled
 var channelSyncLock sync.RWMutex
 
+type EnabledChannelBinding struct {
+	Group   string
+	Model   string
+	Channel *Channel
+}
+
 func InitChannelCache() {
 	if !common.MemoryCacheEnabled {
 		return
@@ -384,4 +390,88 @@ func CacheUpdateChannel(channel *Channel) {
 		return
 	}
 	channelsIDM[channel.Id] = channel
+}
+
+func ListEnabledChannelBindings() ([]EnabledChannelBinding, error) {
+	if DB == nil {
+		return nil, nil
+	}
+	if !common.MemoryCacheEnabled || group2model2channels == nil {
+		return listEnabledChannelBindingsFromDB()
+	}
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	bindings := make([]EnabledChannelBinding, 0)
+	for group, model2channels := range group2model2channels {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		for modelName, channelIDs := range model2channels {
+			modelName = strings.TrimSpace(modelName)
+			if modelName == "" {
+				continue
+			}
+			for _, channelID := range channelIDs {
+				channel, ok := channelsIDM[channelID]
+				if !ok || channel == nil || channel.Status != common.ChannelStatusEnabled {
+					continue
+				}
+				bindings = append(bindings, EnabledChannelBinding{
+					Group:   group,
+					Model:   modelName,
+					Channel: channel,
+				})
+			}
+		}
+	}
+	return bindings, nil
+}
+
+func listEnabledChannelBindingsFromDB() ([]EnabledChannelBinding, error) {
+	abilities, err := GetAllEnableAbilityWithChannels()
+	if err != nil {
+		return nil, err
+	}
+	if len(abilities) == 0 {
+		return nil, nil
+	}
+	channelIDs := make([]int, 0, len(abilities))
+	seenChannelIDs := make(map[int]struct{}, len(abilities))
+	for _, ability := range abilities {
+		if ability.ChannelId <= 0 {
+			continue
+		}
+		if _, ok := seenChannelIDs[ability.ChannelId]; ok {
+			continue
+		}
+		seenChannelIDs[ability.ChannelId] = struct{}{}
+		channelIDs = append(channelIDs, ability.ChannelId)
+	}
+	channels, err := GetChannelsByIds(channelIDs)
+	if err != nil {
+		return nil, err
+	}
+	channelByID := make(map[int]*Channel, len(channels))
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		channelByID[channel.Id] = channel
+	}
+	bindings := make([]EnabledChannelBinding, 0, len(abilities))
+	for _, ability := range abilities {
+		group := strings.TrimSpace(ability.Group)
+		modelName := strings.TrimSpace(ability.Model)
+		channel := channelByID[ability.ChannelId]
+		if group == "" || modelName == "" || channel == nil || channel.Status != common.ChannelStatusEnabled {
+			continue
+		}
+		bindings = append(bindings, EnabledChannelBinding{
+			Group:   group,
+			Model:   modelName,
+			Channel: channel,
+		})
+	}
+	return bindings, nil
 }

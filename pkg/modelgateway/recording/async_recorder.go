@@ -121,6 +121,8 @@ func modelExecutionRecordFromDispatch(record core.DispatchRecord) *model.ModelEx
 	dbRecord := &model.ModelExecutionRecord{
 		CreatedAt:       createdAt,
 		RequestId:       record.Request.RequestID,
+		UserId:          record.Request.UserID,
+		TokenId:         record.Request.TokenID,
 		RequestedGroup:  record.Request.RequestedGroup,
 		RequestedModel:  record.Request.ModelName,
 		EndpointType:    string(record.Request.EndpointType),
@@ -156,6 +158,7 @@ type dispatchRequestMeta struct {
 	QueueEnabled          bool                        `json:"queue_enabled,omitempty"`
 	QueueDepth            int                         `json:"queue_depth,omitempty"`
 	QueueCapacity         int                         `json:"queue_capacity,omitempty"`
+	BillingRatioMode      string                      `json:"billing_ratio_mode,omitempty"`
 	StickySource          string                      `json:"sticky_source,omitempty"`
 	StickyKeyFP           string                      `json:"sticky_key_fp,omitempty"`
 	StickyRetained        bool                        `json:"sticky_retained,omitempty"`
@@ -188,17 +191,18 @@ func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
 		return dispatchRequestMeta{}
 	}
 	return dispatchRequestMeta{
-		ProviderProfile: plan.ProviderProfile,
-		ProxyMode:       plan.ProxyMode,
-		QueueWaitMs:     plan.QueueWaitMs,
-		QueueEnabled:    plan.QueueEnabled,
-		QueueDepth:      plan.QueueDepth,
-		QueueCapacity:   plan.QueueCapacity,
-		StickySource:    plan.StickySource,
-		StickyKeyFP:     plan.StickyKeyFP,
-		StickyRetained:  plan.StickyRetained,
-		StickyBreak:     plan.StickyBreak,
-		CacheAffinity:   plan.CacheAffinity,
+		ProviderProfile:  plan.ProviderProfile,
+		ProxyMode:        plan.ProxyMode,
+		QueueWaitMs:      plan.QueueWaitMs,
+		QueueEnabled:     plan.QueueEnabled,
+		QueueDepth:       plan.QueueDepth,
+		QueueCapacity:    plan.QueueCapacity,
+		BillingRatioMode: plan.BillingRatioMode,
+		StickySource:     plan.StickySource,
+		StickyKeyFP:      plan.StickyKeyFP,
+		StickyRetained:   plan.StickyRetained,
+		StickyBreak:      plan.StickyBreak,
+		CacheAffinity:    plan.CacheAffinity,
 		CandidateExplanations: append([]core.CandidateExplanation(nil),
 			plan.Candidates...),
 	}
@@ -208,6 +212,8 @@ func modelExecutionRecordFromAttempt(result core.AttemptResult) *model.ModelExec
 	record := &model.ModelExecutionRecord{
 		CreatedAt:         time.Now().Unix(),
 		RequestId:         result.RequestID,
+		UserId:            result.UserID,
+		TokenId:           result.TokenID,
 		AttemptIndex:      result.AttemptIndex,
 		ChannelId:         result.ChannelID,
 		ChannelName:       result.ChannelName,

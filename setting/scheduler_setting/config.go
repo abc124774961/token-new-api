@@ -17,6 +17,9 @@ const (
 
 	StickyFailurePolicyKeep  = "keep"
 	StickyFailurePolicyClear = "clear"
+
+	BillingRatioModeStatic  = "static"
+	BillingRatioModeDynamic = "dynamic"
 )
 
 type GroupPolicySetting struct {
@@ -25,6 +28,7 @@ type GroupPolicySetting struct {
 	AutoMode              string   `json:"auto_mode"`
 	CrossGroupFusion      bool     `json:"cross_group_fusion"`
 	CandidateGroups       []string `json:"candidate_groups"`
+	BillingRatioMode      string   `json:"billing_ratio_mode"`
 	CacheAffinityEnabled  bool     `json:"cache_affinity_enabled"`
 	QueueEnabled          bool     `json:"queue_enabled"`
 	QueueHighPriority     bool     `json:"queue_high_priority"`
@@ -83,6 +87,14 @@ type SchedulerSetting struct {
 	CostCalculationIntervalSeconds   int                                  `json:"cost_calculation_interval_seconds"`
 	CostCalculationWorkerCount       int                                  `json:"cost_calculation_worker_count"`
 	CostCalculationBatchSize         int                                  `json:"cost_calculation_batch_size"`
+	DynamicBillingEnabled            bool                                 `json:"dynamic_billing_enabled"`
+	DynamicBillingProfitRate         float64                              `json:"dynamic_billing_profit_rate"`
+	DynamicBillingWindowSamples      int                                  `json:"dynamic_billing_window_samples"`
+	DynamicBillingWindowMinutes      int                                  `json:"dynamic_billing_window_minutes"`
+	DynamicBillingMinSamples         int                                  `json:"dynamic_billing_min_samples"`
+	DynamicBillingRefreshSeconds     int                                  `json:"dynamic_billing_refresh_seconds"`
+	DynamicBillingMaxAgeSeconds      int                                  `json:"dynamic_billing_max_age_seconds"`
+	DynamicBillingEnabledAt          int64                                `json:"dynamic_billing_enabled_at"`
 	SuccessWeight                    float64                              `json:"success_weight"`
 	SpeedWeight                      float64                              `json:"speed_weight"`
 	LoadWeight                       float64                              `json:"load_weight"`
@@ -140,6 +152,13 @@ var schedulerSetting = SchedulerSetting{
 	CostCalculationIntervalSeconds:   5,
 	CostCalculationWorkerCount:       2,
 	CostCalculationBatchSize:         100,
+	DynamicBillingEnabled:            false,
+	DynamicBillingProfitRate:         0.20,
+	DynamicBillingWindowSamples:      300,
+	DynamicBillingWindowMinutes:      60,
+	DynamicBillingMinSamples:         5,
+	DynamicBillingRefreshSeconds:     30,
+	DynamicBillingMaxAgeSeconds:      300,
 	SuccessWeight:                    0.32,
 	SpeedWeight:                      0.28,
 	LoadWeight:                       0.20,
@@ -222,6 +241,13 @@ func defaultSchedulerSetting() SchedulerSetting {
 	setting.CostCalculationIntervalSeconds = 5
 	setting.CostCalculationWorkerCount = 2
 	setting.CostCalculationBatchSize = 100
+	setting.DynamicBillingEnabled = false
+	setting.DynamicBillingProfitRate = 0.20
+	setting.DynamicBillingWindowSamples = 300
+	setting.DynamicBillingWindowMinutes = 60
+	setting.DynamicBillingMinSamples = 5
+	setting.DynamicBillingRefreshSeconds = 30
+	setting.DynamicBillingMaxAgeSeconds = 300
 	setting.SuccessWeight = 0.32
 	setting.SpeedWeight = 0.28
 	setting.LoadWeight = 0.20

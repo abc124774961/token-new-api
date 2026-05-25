@@ -61,6 +61,7 @@ func (f *SmartDispatchFacade) Select(c *gin.Context, param *service.RetryParam) 
 	if handled && plan != nil {
 		plan.PolicyMode = policy.Mode
 		plan.AutoMode = policy.AutoMode
+		plan.BillingRatioMode = policy.BillingRatioMode
 		f.recorder.Record(context.Background(), core.DispatchRecord{
 			Request:    req,
 			Policy:     policy,

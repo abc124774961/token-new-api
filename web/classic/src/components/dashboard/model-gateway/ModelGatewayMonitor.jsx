@@ -66,6 +66,7 @@ import {
   Info,
   Layers3,
   ListTree,
+  UserRound,
   Search,
   RadioTower,
   RefreshCw,
@@ -385,6 +386,30 @@ function realtimeStatusMeta(
     return { color: 'orange', label: t('实时重连中') };
   }
   return { color: 'grey', label: t('实时未连接') };
+}
+
+function dynamicBillingRefreshCountdown(
+  connectionState,
+  fallbackMode,
+  fallbackCountdown,
+  refreshSeconds,
+) {
+  const configured = Math.max(0, Number(refreshSeconds || 0));
+  if (configured <= 0) return 0;
+  if (fallbackMode) return Math.max(0, Number(fallbackCountdown || 0));
+  if (connectionState === 'connected') return configured;
+  return configured;
+}
+
+function dynamicBillingRemainingSeconds(latestCalculatedAt, refreshSeconds, nowMs) {
+  const interval = Math.max(0, Number(refreshSeconds || 0));
+  if (interval <= 0) return 0;
+  const anchor = normalizeTimestamp(latestCalculatedAt);
+  if (!anchor) return interval;
+  const nowSeconds = Math.max(0, Math.floor(Number(nowMs || Date.now()) / 1000));
+  const elapsed = Math.max(0, nowSeconds - anchor);
+  const remainder = interval - (elapsed % interval);
+  return remainder > 0 ? remainder : interval;
 }
 
 function normalizeTimestamp(value) {
@@ -747,6 +772,18 @@ function formatChannelStatusReason(reason, t) {
     return t('排队已满');
   }
   return String(reason);
+}
+
+function formatStickyBreakReason(reason, t) {
+  if (!reason) return '';
+  const normalized = String(reason).trim().toLowerCase();
+  if (normalized === 'score_below_threshold') {
+    return t('粘滞候选未达保留阈值，改选调度分更高候选');
+  }
+  if (normalized === 'cost_first_cheaper_higher_score') {
+    return t('成本优先发现明显更低成本且调度分更高的候选');
+  }
+  return formatChannelStatusReason(reason, t);
 }
 
 function formatProbeReason(value, t) {
@@ -1131,7 +1168,7 @@ function QueueStickyTags({
   if (showSticky && (record?.sticky_break || stickyBroken > 0)) {
     const reason =
       typeof record?.sticky_break === 'string' && record.sticky_break
-        ? `: ${record.sticky_break}`
+        ? `: ${formatStickyBreakReason(record.sticky_break, t)}`
         : stickyBroken > 0
           ? ` ${formatNumber(stickyBroken)}`
           : '';
@@ -1654,6 +1691,8 @@ function userRequestMatchesQuery(record, query) {
   if (!normalizedQuery) return true;
   return [
     record?.request_id,
+    record?.username,
+    record?.user_id,
     record?.requested_model,
     record?.requested_group,
     record?.selected_group,
@@ -1664,6 +1703,20 @@ function userRequestMatchesQuery(record, query) {
   ]
     .map((value) => String(value || '').toLowerCase())
     .some((value) => value.includes(normalizedQuery));
+}
+
+function formatUserRequestUser(record) {
+  const username = String(record?.username || '').trim();
+  const userID = Number(record?.user_id || 0);
+  if (username) {
+    return username;
+  }
+  return userID > 0 ? `#${userID}` : '--';
+}
+
+function formatUserRequestUserID(record, t) {
+  const userID = Number(record?.user_id || 0);
+  return userID > 0 ? `${t('用户 ID')} #${userID}` : t('未知用户');
 }
 
 function formatUserRequestChannel(record) {
@@ -1771,6 +1824,233 @@ function billingQuotaPerUnit() {
 function billingReferenceQuota(billing) {
   if (!billing) return 0;
   return safeNumber(billing.quota);
+}
+
+function dynamicBillingSummaryLabel(billing, t) {
+  if (!billing) return '';
+  if (billing.dynamic_billing_applied) {
+    return [
+      formatCostRatio(billing.dynamic_billing_ratio || billing.group_ratio),
+      billing.dynamic_billing_price_per_m > 0
+        ? `${formatUsdCostAmount(billing.dynamic_billing_price_per_m)}/M`
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  }
+  if (billing.dynamic_billing_fallback) {
+    return `${t('回退静态')} ${billing.dynamic_fallback_reason || ''}`.trim();
+  }
+  return '';
+}
+
+function dynamicBillingOverviewFromData(data) {
+  const overview = data?.dynamic_billing_overview;
+  if (!overview || !Array.isArray(overview.groups)) {
+    return { enabled: false, groups: [] };
+  }
+  return overview;
+}
+
+function dynamicBilling7dOverviewFromData(data) {
+  const overview = data?.dynamic_billing_7d_overview;
+  if (!overview || !Array.isArray(overview.groups)) {
+    return { enabled: false, groups: [] };
+  }
+  return overview;
+}
+
+function formatDynamicBillingOverviewStatus(status, t) {
+  switch (status) {
+    case 'active':
+      return t('动态可用');
+    case 'expired':
+      return t('结果过期');
+    case 'global_disabled':
+      return t('全局未启用');
+    case 'waiting_samples':
+    default:
+      return t('等待样本');
+  }
+}
+
+function dynamicBillingOverviewStatusRank(status) {
+  switch (status) {
+    case 'active':
+      return 0;
+    case 'waiting_samples':
+      return 1;
+    case 'expired':
+      return 2;
+    case 'global_disabled':
+    default:
+      return 3;
+  }
+}
+
+function dynamicBillingOverviewStatusClassName(status) {
+  switch (status) {
+    case 'active':
+      return 'is-active';
+    case 'expired':
+      return 'is-expired';
+    case 'global_disabled':
+      return 'is-disabled';
+    case 'waiting_samples':
+    default:
+      return 'is-waiting';
+  }
+}
+
+function formatDynamicBillingRatioRange(item) {
+  if (!item) return '--';
+  const minRatio = safeNumber(item.min_ratio);
+  const maxRatio = safeNumber(item.max_ratio);
+  if (minRatio <= 0 && maxRatio <= 0) return '--';
+  if (minRatio > 0 && maxRatio > 0 && Math.abs(minRatio - maxRatio) >= 0.0001) {
+    return `${formatCostRatio(minRatio)}-${formatCostRatio(maxRatio)}`;
+  }
+  return formatCostRatio(maxRatio || minRatio);
+}
+
+function formatDynamicBillingRatioCurrent(item) {
+  if (!item) return '--';
+  const currentRatio = safeNumber(item.current_ratio);
+  if (currentRatio > 0) return formatCostRatio(currentRatio);
+  const blendedRatio = safeNumber(item.blended_ratio);
+  if (blendedRatio > 0) return formatCostRatio(blendedRatio);
+  return formatDynamicBillingRatioRange(item);
+}
+
+function formatDynamicBillingRatioAverage(item) {
+  if (!item) return '--';
+  const blendedRatio = safeNumber(item.blended_ratio);
+  if (blendedRatio > 0) return formatCostRatio(blendedRatio);
+  const averageRatio = safeNumber(item.average_ratio);
+  if (averageRatio > 0) return formatCostRatio(averageRatio);
+  return formatDynamicBillingRatioCurrent(item);
+}
+
+function formatDynamicBillingPriceRange(item) {
+  if (!item) return '--';
+  const minPrice = safeNumber(item.min_price_per_m);
+  const maxPrice = safeNumber(item.max_price_per_m);
+  if (minPrice <= 0 && maxPrice <= 0) return '--';
+  if (minPrice > 0 && maxPrice > 0 && Math.abs(minPrice - maxPrice) >= 0.000001) {
+    return `${formatUsdCostAmount(minPrice)}-${formatUsdCostAmount(maxPrice)}/M`;
+  }
+  return `${formatUsdCostAmount(maxPrice || minPrice)}/M`;
+}
+
+function formatDynamicBillingPriceCompact(item) {
+  if (!item) return '--';
+  const currentPrice = safeNumber(item.current_price_per_m);
+  if (currentPrice > 0) {
+    const digits = currentPrice < 0.01 ? 4 : currentPrice < 1 ? 3 : 2;
+    return `$${currentPrice.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
+  }
+  const blendedPrice = safeNumber(item.blended_price_per_m);
+  if (blendedPrice > 0) {
+    const digits = blendedPrice < 0.01 ? 4 : blendedPrice < 1 ? 3 : 2;
+    return `$${blendedPrice.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
+  }
+  const minPrice = safeNumber(item.min_price_per_m);
+  const maxPrice = safeNumber(item.max_price_per_m);
+  if (minPrice <= 0 && maxPrice <= 0) return '--';
+  const value = maxPrice || minPrice;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '--';
+  const digits = numeric < 0.01 ? 4 : numeric < 1 ? 3 : 2;
+  return `$${numeric.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
+}
+
+function formatDynamicBillingPriceAverage(item) {
+  if (!item) return '--';
+  const blendedPrice = safeNumber(item.blended_price_per_m);
+  if (blendedPrice > 0) {
+    const digits = blendedPrice < 0.01 ? 4 : blendedPrice < 1 ? 3 : 2;
+    return `$${blendedPrice.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
+  }
+  const averagePrice = safeNumber(item.average_price_per_m);
+  if (averagePrice > 0) {
+    const digits = averagePrice < 0.01 ? 4 : averagePrice < 1 ? 3 : 2;
+    return `$${averagePrice.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
+  }
+  return formatDynamicBillingPriceCompact(item);
+}
+
+function dynamicBillingCostFactor(overview) {
+  const profitRate = safeNumber(overview?.profit_rate);
+  const factor = 1 + profitRate;
+  return factor > 0 ? factor : 1;
+}
+
+function formatDynamicBillingCostPriceCompact(item, overview) {
+  if (!item) return '--';
+  const factor = dynamicBillingCostFactor(overview);
+  const currentPrice = safeNumber(item.current_price_per_m);
+  if (currentPrice > 0) {
+    const costPrice = currentPrice / factor;
+    const digits = costPrice < 0.01 ? 4 : costPrice < 1 ? 3 : 2;
+    return `$${costPrice.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
+  }
+  const blendedPrice = safeNumber(item.blended_price_per_m);
+  const fallbackPrice =
+    blendedPrice > 0
+      ? blendedPrice
+      : safeNumber(item.max_price_per_m || item.min_price_per_m);
+  if (fallbackPrice <= 0) return '--';
+  const costPrice = fallbackPrice / factor;
+  const digits = costPrice < 0.01 ? 4 : costPrice < 1 ? 3 : 2;
+  return `$${costPrice.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
+}
+
+function formatDynamicBillingCostRatioCurrent(item, overview) {
+  if (!item) return '--';
+  const factor = dynamicBillingCostFactor(overview);
+  const currentRatio = safeNumber(item.current_ratio);
+  if (currentRatio > 0) {
+    return formatCostRatio(currentRatio / factor);
+  }
+  const blendedRatio = safeNumber(item.blended_ratio);
+  if (blendedRatio > 0) {
+    return formatCostRatio(blendedRatio / factor);
+  }
+  const fallbackRatio = safeNumber(item.max_ratio || item.min_ratio);
+  if (fallbackRatio <= 0) return '--';
+  return formatCostRatio(fallbackRatio / factor);
+}
+
+function formatDynamicBillingCostPriceAverage(item, overview) {
+  if (!item) return '--';
+  const factor = dynamicBillingCostFactor(overview);
+  const blendedPrice = safeNumber(item.blended_price_per_m);
+  if (blendedPrice > 0) {
+    const costPrice = blendedPrice / factor;
+    const digits = costPrice < 0.01 ? 4 : costPrice < 1 ? 3 : 2;
+    return `$${costPrice.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
+  }
+  const averagePrice = safeNumber(item.average_price_per_m);
+  const fallbackPrice =
+    averagePrice > 0 ? averagePrice : safeNumber(item.current_price_per_m);
+  if (fallbackPrice <= 0) return formatDynamicBillingCostPriceCompact(item, overview);
+  const costPrice = fallbackPrice / factor;
+  const digits = costPrice < 0.01 ? 4 : costPrice < 1 ? 3 : 2;
+  return `$${costPrice.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
+}
+
+function formatDynamicBillingCostRatioAverage(item, overview) {
+  if (!item) return '--';
+  const factor = dynamicBillingCostFactor(overview);
+  const blendedRatio = safeNumber(item.blended_ratio);
+  if (blendedRatio > 0) {
+    return formatCostRatio(blendedRatio / factor);
+  }
+  const averageRatio = safeNumber(item.average_ratio);
+  if (averageRatio > 0) {
+    return formatCostRatio(averageRatio / factor);
+  }
+  return formatDynamicBillingCostRatioCurrent(item, overview);
 }
 
 function billingPromptTokens(billing) {
@@ -1884,6 +2164,8 @@ function billingSourceLabel(source, t) {
 
 function billingModeLabel(mode, t) {
   switch (mode) {
+    case 'model_gateway_dynamic':
+      return t('动态收费');
     case 'tiered_expr':
       return t('阶梯计费');
     default:
@@ -2112,6 +2394,24 @@ function UserRequestCostTooltip({ billing, t }) {
     ],
     [t('计费'), billingSourceLabel(billing.billing_source, t)],
   ];
+  if (billing.dynamic_billing_applied) {
+    settlementRows.splice(2, 0, [
+      t('动态收费'),
+      [
+        `${formatCostRatio(billing.dynamic_billing_ratio || billing.group_ratio)}`,
+        billing.dynamic_billing_price_per_m > 0
+          ? `${formatUsdCostAmount(billing.dynamic_billing_price_per_m)}/M`
+          : '',
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    ]);
+  } else if (billing.dynamic_billing_fallback) {
+    settlementRows.splice(2, 0, [
+      t('动态收费'),
+      `${t('回退静态')} ${billing.dynamic_fallback_reason || ''}`.trim(),
+    ]);
+  }
   if (safeNumber(billing.subscription_consumed) > 0) {
     settlementRows.push([
       t('订阅抵扣'),
@@ -2423,12 +2723,19 @@ function UserRequestCostSummaryCell({ record, t }) {
     record?.upstream_cost_breakdown?.token_multiplier,
   );
   const hasCost = status.amount > 0;
+  const upstreamRatioLabel =
+    channelRatio > 0 ? formatCostRatio(channelRatio) : '--';
   const upstreamLabel = hasCost
     ? formatUsdCostAmount(status.amount)
     : upstreamCostSourceLabel(status.source, status.accuracy, t);
+  const upstreamSummaryLabel =
+    upstreamRatioLabel !== '--'
+      ? `${upstreamLabel} · ${upstreamRatioLabel}`
+      : upstreamLabel;
   const billingLabel = billing
     ? renderQuota(billingReferenceQuota(billing), 6)
     : '--';
+  const dynamicBillingLabel = dynamicBillingSummaryLabel(billing, t);
 
   return (
     <div
@@ -2444,18 +2751,20 @@ function UserRequestCostSummaryCell({ record, t }) {
       >
         <div className='ct-model-gateway-user-request-cost-summary-line'>
           <span>{t('上游成本')}</span>
-          <strong>{upstreamLabel}</strong>
+          <strong title={t('1:1 实际成本倍率')}>
+            {upstreamSummaryLabel}
+          </strong>
         </div>
         <div className='ct-model-gateway-user-request-cost-summary-line ct-model-gateway-user-request-cost-summary-billing'>
           <span>{t('扣费')}</span>
           <strong>{billingLabel}</strong>
         </div>
-        <div className='ct-model-gateway-user-request-cost-summary-line ct-model-gateway-user-request-cost-summary-ratio'>
-          <span title={t('1:1 实际成本倍率')}>1:1</span>
-          <strong title={t('1:1 实际成本倍率')}>
-            {channelRatio > 0 ? formatCostRatio(channelRatio) : '--'}
-          </strong>
-        </div>
+        {dynamicBillingLabel && (
+          <div className='ct-model-gateway-user-request-cost-summary-line ct-model-gateway-user-request-cost-summary-dynamic'>
+            <span>{t('动态收费')}</span>
+            <strong title={dynamicBillingLabel}>{dynamicBillingLabel}</strong>
+          </div>
+        )}
       </HoverCard>
     </div>
   );
@@ -2787,6 +3096,147 @@ function UserRequestHealthCard({ health, summary, trends, t }) {
   );
 }
 
+function DynamicBillingMiniPanel({
+  overview,
+  t,
+  title,
+  countdownEnabled = true,
+  averageMode = false,
+}) {
+  const groups = Array.isArray(overview?.groups) ? overview.groups : [];
+  const [countdownNow, setCountdownNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCountdownNow(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  if (!groups.length) return null;
+  const prioritizedGroups = [...groups].sort((left, right) => {
+    const statusDiff =
+      dynamicBillingOverviewStatusRank(left?.status) -
+      dynamicBillingOverviewStatusRank(right?.status);
+    if (statusDiff !== 0) return statusDiff;
+    const latestDiff =
+      safeNumber(right?.latest_calculated_at) -
+      safeNumber(left?.latest_calculated_at);
+    if (latestDiff !== 0) return latestDiff;
+    return String(left?.policy_group || '').localeCompare(
+      String(right?.policy_group || ''),
+    );
+  });
+  const primary = prioritizedGroups[0] || {};
+  const hiddenGroups = prioritizedGroups.slice(1);
+  const hiddenCount = hiddenGroups.length;
+  const hiddenSummary = hiddenGroups
+    .map(
+      (item) =>
+        `${item?.policy_group || '--'} · ${formatDynamicBillingOverviewStatus(
+          item?.status,
+          t,
+        )} · ${
+          averageMode
+            ? formatDynamicBillingRatioAverage(item)
+            : formatDynamicBillingRatioCurrent(item)
+        } · ${
+          averageMode
+            ? formatDynamicBillingPriceAverage(item)
+            : formatDynamicBillingPriceCompact(item)
+        }`,
+    )
+    .join('\n');
+  const priceValue = averageMode
+    ? formatDynamicBillingPriceAverage(primary)
+    : formatDynamicBillingPriceCompact(primary);
+  const ratioValue = averageMode
+    ? formatDynamicBillingRatioAverage(primary)
+    : formatDynamicBillingRatioCurrent(primary);
+  const costPriceValue = averageMode
+    ? formatDynamicBillingCostPriceAverage(primary, overview)
+    : formatDynamicBillingCostPriceCompact(primary, overview);
+  const costRatioValue = averageMode
+    ? formatDynamicBillingCostRatioAverage(primary, overview)
+    : formatDynamicBillingCostRatioCurrent(primary, overview);
+  const costValue =
+    costPriceValue !== '--' || costRatioValue !== '--'
+      ? [costPriceValue, costRatioValue].filter((item) => item && item !== '--').join(' · ')
+      : '--';
+  const groupValue = averageMode
+    ? primary?.policy_group || '--'
+    : primary?.current_target_group || primary?.policy_group || '--';
+  const referenceModelValue = String(
+    primary?.current_model || primary?.reference_model || '',
+  ).trim();
+  const priceLabel = averageMode ? t('均价') : t('参考价');
+  const refreshCountdown = countdownEnabled
+    ? dynamicBillingRemainingSeconds(
+        primary?.latest_calculated_at,
+        overview?.refresh_seconds,
+        countdownNow,
+      )
+    : 0;
+  return (
+    <div className='ct-model-gateway-kpi-card ct-model-gateway-kpi-card-default ct-model-gateway-dynamic-mini-card'>
+      <div className='ct-model-gateway-kpi-head'>
+        <div className='ct-model-gateway-kpi-title'>
+          <Avatar size='extra-small' color='blue'>
+            <RadioTower size={14} />
+          </Avatar>
+          <span>{title || t('当前动态倍率')}</span>
+        </div>
+        <div className='ct-model-gateway-dynamic-mini-head-meta'>
+          <span className='ct-model-gateway-dynamic-mini-chip is-group'>
+            {groupValue}
+          </span>
+          {referenceModelValue ? (
+            <span className='ct-model-gateway-dynamic-mini-chip is-model'>
+              {referenceModelValue}
+            </span>
+          ) : null}
+          {refreshCountdown > 0 ? (
+            <span className='ct-model-gateway-dynamic-mini-chip is-countdown'>
+              {refreshCountdown}s
+            </span>
+          ) : null}
+          {hiddenCount > 0 ? (
+            <Tooltip content={hiddenSummary} position='top' showArrow>
+              <span className='ct-model-gateway-dynamic-mini-chip is-more'>
+                {`+${hiddenCount}`}
+              </span>
+            </Tooltip>
+          ) : null}
+          <span
+            className={`ct-model-gateway-dynamic-mini-status ${dynamicBillingOverviewStatusClassName(
+              primary?.status,
+            )}`}
+          >
+            {formatDynamicBillingOverviewStatus(primary?.status, t)}
+          </span>
+        </div>
+      </div>
+      <div className='ct-model-gateway-dynamic-mini-main-row'>
+        <strong className='ct-model-gateway-dynamic-mini-price'>{ratioValue}</strong>
+        {priceValue !== '--' ? (
+          <div className='ct-model-gateway-dynamic-mini-inline-ratio'>
+            <span className='ct-model-gateway-dynamic-mini-inline-ratio-label'>
+              {priceLabel}
+            </span>
+            <bdi className='ct-model-gateway-dynamic-mini-inline-ratio-value'>
+              {priceValue}
+            </bdi>
+          </div>
+        ) : null}
+      </div>
+      <div className='ct-model-gateway-dynamic-mini-cost-row'>
+        <span>{t('成本')}</span>
+        <bdi className='ct-model-gateway-dynamic-mini-cost-value'>{costValue}</bdi>
+      </div>
+    </div>
+  );
+}
+
 function UserRequestTrendPanel({ trends, t }) {
   const spec = useMemo(() => buildUserRequestTrendSpec(trends, t), [trends, t]);
   return (
@@ -2975,7 +3425,7 @@ function UserRequestRecentTable({
             value={query}
             onChange={setQuery}
             prefix={<Search size={14} />}
-            placeholder={t('搜索请求 ID')}
+            placeholder={t('搜索请求 ID / 用户')}
             className='ct-model-gateway-user-request-search'
             showClear
           />
@@ -2994,6 +3444,7 @@ function UserRequestRecentTable({
           <div className='ct-model-gateway-user-request-table-head'>
             {[
               { key: 'status', label: t('状态') },
+              { key: 'user', label: t('请求用户') },
               { key: 'request', label: t('请求模型') },
               { key: 'cost', label: t('成本'), hint: true },
               { key: 'duration', label: t('总耗时'), hint: true },
@@ -3018,6 +3469,8 @@ function UserRequestRecentTable({
                   nowSeconds,
                 );
                 const requestId = record.request_id || '';
+                const userLabel = formatUserRequestUser(record);
+                const userIDLabel = formatUserRequestUserID(record, t);
                 const channelLabel = formatUserRequestChannel(record);
                 const channelIdLabel = formatUserRequestChannelId(record);
                 const groupFlowLabel = formatUserRequestGroupFlow(record);
@@ -3078,6 +3531,19 @@ function UserRequestRecentTable({
                       >
                         {t('自动恢复')}
                       </small>
+                    </div>
+
+                    <div className='ct-model-gateway-user-request-user-col'>
+                      <div className='ct-model-gateway-user-request-user-line'>
+                        <UserRound size={14} />
+                        <Typography.Text
+                          ellipsis={{ showTooltip: true }}
+                          title={userLabel}
+                        >
+                          {userLabel}
+                        </Typography.Text>
+                      </div>
+                      <span title={userIDLabel}>{userIDLabel}</span>
                     </div>
 
                     <div className='ct-model-gateway-user-request-summary-col'>
@@ -3268,11 +3734,27 @@ function UserRequestDashboard({
   onRefresh,
   onOpenDispatchDetail,
   dispatchDetailLoading,
+  dynamicRefreshCountdown,
 }) {
   const userRequests = data?.user_requests || {};
   const summary = userRequests.summary || {};
   const trends = userRequests.trends || [];
   const health = getUserRequestHealth(data);
+  const dynamicBillingOverview = dynamicBillingOverviewFromData(data);
+  const dynamicBilling7dOverview = dynamicBilling7dOverviewFromData(data);
+  const dynamicBillingOverviewWithCountdown = useMemo(() => {
+    if (!dynamicBillingOverview) return dynamicBillingOverview;
+    return {
+      ...dynamicBillingOverview,
+      refresh_seconds: dynamicRefreshCountdown,
+    };
+  }, [dynamicBillingOverview, dynamicRefreshCountdown]);
+  const hasDynamicBilling7dOverview =
+    Array.isArray(dynamicBilling7dOverview?.groups) &&
+    dynamicBilling7dOverview.groups.length > 0;
+  const hasDynamicBillingOverview =
+    Array.isArray(dynamicBillingOverviewWithCountdown?.groups) &&
+    dynamicBillingOverviewWithCountdown.groups.length > 0;
 
   return (
     <div className='ct-model-gateway-user-layout'>
@@ -3283,7 +3765,13 @@ function UserRequestDashboard({
           trends={trends}
           t={t}
         />
-        <div className='ct-model-gateway-user-kpi-grid'>
+        <div
+          className={`ct-model-gateway-user-kpi-grid ${
+            hasDynamicBillingOverview || hasDynamicBilling7dOverview
+              ? 'ct-model-gateway-user-kpi-grid-with-dynamic'
+              : ''
+          }`}
+        >
           <OperationKpiCard
             icon={CheckCircle2}
             label={t('用户成功率')}
@@ -3303,6 +3791,19 @@ function UserRequestDashboard({
               'user_success_rate',
             )}
           />
+          <DynamicBillingMiniPanel
+            overview={dynamicBillingOverviewWithCountdown}
+            t={t}
+          />
+          {hasDynamicBilling7dOverview ? (
+          <DynamicBillingMiniPanel
+            overview={dynamicBilling7dOverview}
+            t={t}
+            title={t('7天动态均价')}
+            countdownEnabled={false}
+            averageMode
+          />
+        ) : null}
           <OperationKpiCard
             icon={ListTree}
             label={t('客户端请求数')}
@@ -7229,6 +7730,9 @@ function formatSelectionReason(reason, t) {
   const normalized = String(reason || '').trim();
   if (!normalized) return '--';
   if (normalized === 'weighted_score') return t('本次调度分最高');
+  if (normalized === 'cost_first_cheaper_higher_score') {
+    return t('成本优先发现明显更低成本且调度分更高的候选');
+  }
   if (normalized === 'weighted_score_sticky_broken') {
     return t('粘滞候选未达保留阈值，改选调度分更高候选');
   }
@@ -7244,7 +7748,7 @@ function formatSelectionReason(reason, t) {
 }
 
 function buildStickyBreakText(reason, t) {
-  const label = formatChannelStatusReason(reason, t);
+  const label = formatStickyBreakReason(reason, t);
   if (!label) return '';
   return t('原粘滞候选未被保留，原因是 {{reason}}。', {
     reason: label,
@@ -9276,6 +9780,12 @@ export default function ModelGatewayMonitor() {
     fallbackCountdown,
     t,
   );
+  const dynamicRefreshCountdown = dynamicBillingRefreshCountdown(
+    connectionState,
+    fallbackMode,
+    fallbackCountdown,
+    data?.dynamic_billing_overview?.refresh_seconds,
+  );
 
   const updateFilter = useCallback((key, value) => {
     setFilters((current) => ({ ...current, [key]: value }));
@@ -9771,6 +10281,7 @@ export default function ModelGatewayMonitor() {
           onRefresh={refreshDashboard}
           onOpenDispatchDetail={openUserRequestDispatchDetail}
           dispatchDetailLoading={dispatchDetailLoading}
+          dynamicRefreshCountdown={dynamicRefreshCountdown}
         />
       ) : viewMode === VIEW_MODES.OPERATIONS ? (
         <OperationsDashboard

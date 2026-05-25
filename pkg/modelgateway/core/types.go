@@ -23,6 +23,8 @@ const (
 
 type DispatchRequest struct {
 	RequestID                string
+	UserID                   int
+	TokenID                  int
 	RequestedGroup           string
 	UserGroup                string
 	ModelName                string
@@ -45,6 +47,7 @@ type GroupSmartPolicy struct {
 	AutoMode              string
 	CrossGroupFusion      bool
 	CandidateGroups       []string
+	BillingRatioMode      string
 	CacheAffinityEnabled  bool
 	QueueEnabled          bool
 	QueueHighPriority     bool
@@ -76,6 +79,7 @@ type DispatchPlan struct {
 	Channel               *model.Channel
 	SelectedGroup         string
 	RequestedGroup        string
+	BillingRatioMode      string
 	RuntimeKey            RuntimeKey
 	ProviderProfile       string
 	ProxyMode             string
@@ -284,12 +288,13 @@ type CircuitSnapshot struct {
 }
 
 type Candidate struct {
-	Channel         *model.Channel
-	Group           string
-	UpstreamModel   string
-	ProviderProfile string
-	ProxyMode       string
-	RuntimeKey      RuntimeKey
+	Channel                *model.Channel
+	Group                  string
+	UpstreamModel          string
+	ProviderProfile        string
+	ProxyMode              string
+	RequiresCodexImageTool bool
+	RuntimeKey             RuntimeKey
 }
 
 type CandidateExplanation struct {
@@ -388,6 +393,8 @@ type StickyRoute struct {
 type AttemptResult struct {
 	Key                            RuntimeKey
 	RequestID                      string
+	UserID                         int
+	TokenID                        int
 	AttemptIndex                   int
 	ChannelID                      int
 	ChannelName                    string

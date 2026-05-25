@@ -80,17 +80,9 @@ func (s *ProbeSelector) Select(config ProbeConfig) ([]ProbeCandidate, error) {
 	for _, candidate := range candidateByKey {
 		candidates = append(candidates, candidate)
 	}
+	candidates = collapseProbeCandidatesByChannel(candidates)
 	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].Score != candidates[j].Score {
-			return candidates[i].Score > candidates[j].Score
-		}
-		if candidates[i].Channel.Id != candidates[j].Channel.Id {
-			return candidates[i].Channel.Id < candidates[j].Channel.Id
-		}
-		if candidates[i].Model != candidates[j].Model {
-			return candidates[i].Model < candidates[j].Model
-		}
-		return candidates[i].Group < candidates[j].Group
+		return compareProbeCandidates(candidates[i], candidates[j]) < 0
 	})
 	if config.MaxPerTick > 0 && len(candidates) > config.MaxPerTick {
 		candidates = candidates[:config.MaxPerTick]
@@ -99,6 +91,82 @@ func (s *ProbeSelector) Select(config ProbeConfig) ([]ProbeCandidate, error) {
 		s.lastProbe[candidate.Key] = now
 	}
 	return candidates, nil
+}
+
+func collapseProbeCandidatesByChannel(candidates []ProbeCandidate) []ProbeCandidate {
+	if len(candidates) <= 1 {
+		return candidates
+	}
+	bestByChannel := make(map[int]ProbeCandidate, len(candidates))
+	for _, candidate := range candidates {
+		channelID := 0
+		if candidate.Channel != nil {
+			channelID = candidate.Channel.Id
+		}
+		if channelID <= 0 {
+			continue
+		}
+		current, exists := bestByChannel[channelID]
+		if !exists || compareProbeCandidates(candidate, current) < 0 {
+			bestByChannel[channelID] = candidate
+		}
+	}
+	collapsed := make([]ProbeCandidate, 0, len(bestByChannel))
+	for _, candidate := range bestByChannel {
+		collapsed = append(collapsed, candidate)
+	}
+	return collapsed
+}
+
+func compareProbeCandidates(left ProbeCandidate, right ProbeCandidate) int {
+	if left.Score != right.Score {
+		if left.Score > right.Score {
+			return -1
+		}
+		return 1
+	}
+	leftPreferred := probeCandidateUsesPreferredModel(left)
+	rightPreferred := probeCandidateUsesPreferredModel(right)
+	if leftPreferred != rightPreferred {
+		if leftPreferred {
+			return -1
+		}
+		return 1
+	}
+	leftChannelID := 0
+	if left.Channel != nil {
+		leftChannelID = left.Channel.Id
+	}
+	rightChannelID := 0
+	if right.Channel != nil {
+		rightChannelID = right.Channel.Id
+	}
+	if leftChannelID != rightChannelID {
+		if leftChannelID < rightChannelID {
+			return -1
+		}
+		return 1
+	}
+	if left.Model != right.Model {
+		if left.Model < right.Model {
+			return -1
+		}
+		return 1
+	}
+	if left.Group != right.Group {
+		if left.Group < right.Group {
+			return -1
+		}
+		return 1
+	}
+	return 0
+}
+
+func probeCandidateUsesPreferredModel(candidate ProbeCandidate) bool {
+	if candidate.Channel == nil {
+		return false
+	}
+	return strings.TrimSpace(candidate.Model) == selectProbeModel(candidate.Channel)
 }
 
 func (s *ProbeSelector) MarkResult(result ProbeRunResult) {

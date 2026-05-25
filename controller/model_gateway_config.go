@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
+	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
@@ -19,11 +20,12 @@ import (
 )
 
 type ModelGatewayConfigResponse struct {
-	Setting    scheduler_setting.SchedulerSetting `json:"setting"`
-	Defaults   scheduler_setting.SchedulerSetting `json:"defaults"`
-	Modes      []string                           `json:"modes"`
-	Strategies []string                           `json:"strategies"`
-	AutoModes  []string                           `json:"auto_modes"`
+	Setting                 scheduler_setting.SchedulerSetting         `json:"setting"`
+	Defaults                scheduler_setting.SchedulerSetting         `json:"defaults"`
+	Modes                   []string                                   `json:"modes"`
+	Strategies              []string                                   `json:"strategies"`
+	AutoModes               []string                                   `json:"auto_modes"`
+	DynamicBillingBaselines []modelgatewaydynamicbilling.RatioBaseline `json:"dynamic_billing_baselines"`
 }
 
 func GetModelGatewayConfig(c *gin.Context) {
@@ -31,6 +33,7 @@ func GetModelGatewayConfig(c *gin.Context) {
 }
 
 func UpdateModelGatewayConfig(c *gin.Context) {
+	before := scheduler_setting.GetSetting()
 	var setting scheduler_setting.SchedulerSetting
 	if err := common.DecodeJson(c.Request.Body, &setting); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -44,6 +47,7 @@ func UpdateModelGatewayConfig(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
+	normalized.DynamicBillingEnabledAt = nextModelGatewayDynamicBillingEnabledAt(before, normalized)
 	if err := persistModelGatewaySchedulerSetting(normalized); err != nil {
 		common.ApiError(c, err)
 		return
@@ -53,11 +57,13 @@ func UpdateModelGatewayConfig(c *gin.Context) {
 	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()
 	modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()
 	modelgatewaycost.SyncDefaultWorkerLifecycle()
+	modelgatewaydynamicbilling.SyncDefaultRefresherLifecycle()
 	common.ApiSuccess(c, buildModelGatewayConfigResponse())
 }
 
 func ResetModelGatewayConfig(c *gin.Context) {
 	setting := scheduler_setting.DefaultSetting()
+	setting.DynamicBillingEnabledAt = 0
 	if err := persistModelGatewaySchedulerSetting(setting); err != nil {
 		common.ApiError(c, err)
 		return
@@ -67,17 +73,50 @@ func ResetModelGatewayConfig(c *gin.Context) {
 	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()
 	modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()
 	modelgatewaycost.SyncDefaultWorkerLifecycle()
+	modelgatewaydynamicbilling.SyncDefaultRefresherLifecycle()
 	common.ApiSuccess(c, buildModelGatewayConfigResponse())
 }
 
 func buildModelGatewayConfigResponse() ModelGatewayConfigResponse {
 	return ModelGatewayConfigResponse{
-		Setting:    scheduler_setting.GetSetting(),
-		Defaults:   scheduler_setting.DefaultSetting(),
-		Modes:      []string{scheduler_setting.ModeOff, scheduler_setting.ModeShadow, scheduler_setting.ModeActive},
-		Strategies: []string{scheduler_setting.StrategyBalanced, scheduler_setting.StrategySpeedFirst, scheduler_setting.StrategyCostFirst, scheduler_setting.StrategyStabilityFirst},
-		AutoModes:  []string{scheduler_setting.AutoModeSequential, scheduler_setting.AutoModeFusion},
+		Setting:                 scheduler_setting.GetSetting(),
+		Defaults:                scheduler_setting.DefaultSetting(),
+		Modes:                   []string{scheduler_setting.ModeOff, scheduler_setting.ModeShadow, scheduler_setting.ModeActive},
+		Strategies:              []string{scheduler_setting.StrategyBalanced, scheduler_setting.StrategySpeedFirst, scheduler_setting.StrategyCostFirst, scheduler_setting.StrategyStabilityFirst},
+		AutoModes:               []string{scheduler_setting.AutoModeSequential, scheduler_setting.AutoModeFusion},
+		DynamicBillingBaselines: modelgatewaydynamicbilling.DefaultBaselineSnapshots(),
 	}
+}
+
+func nextModelGatewayDynamicBillingEnabledAt(before scheduler_setting.SchedulerSetting, after scheduler_setting.SchedulerSetting) int64 {
+	if !after.DynamicBillingEnabled {
+		return 0
+	}
+	if !before.DynamicBillingEnabled || before.DynamicBillingEnabledAt <= 0 {
+		return common.GetTimestamp()
+	}
+	if modelGatewayDynamicBillingPolicySignature(before) != modelGatewayDynamicBillingPolicySignature(after) {
+		return common.GetTimestamp()
+	}
+	return before.DynamicBillingEnabledAt
+}
+
+func modelGatewayDynamicBillingPolicySignature(setting scheduler_setting.SchedulerSetting) string {
+	if !setting.DynamicBillingEnabled || len(setting.GroupPolicies) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(setting.GroupPolicies))
+	for group, policy := range setting.GroupPolicies {
+		if strings.TrimSpace(policy.BillingRatioMode) != scheduler_setting.BillingRatioModeDynamic {
+			continue
+		}
+		targets := append([]string(nil), policy.CandidateGroups...)
+		targets = uniqueTrimmedModelGatewayStrings(targets)
+		sort.Strings(targets)
+		parts = append(parts, strings.TrimSpace(group)+"=>"+strings.Join(targets, ","))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "|")
 }
 
 func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSetting) (scheduler_setting.SchedulerSetting, error) {
@@ -129,6 +168,12 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	setting.CostCalculationIntervalSeconds = normalizeModelGatewayConfigMin(setting.CostCalculationIntervalSeconds, 1, defaults.CostCalculationIntervalSeconds)
 	setting.CostCalculationWorkerCount = normalizeModelGatewayConfigMin(setting.CostCalculationWorkerCount, 1, defaults.CostCalculationWorkerCount)
 	setting.CostCalculationBatchSize = normalizeModelGatewayConfigMin(setting.CostCalculationBatchSize, 1, defaults.CostCalculationBatchSize)
+	setting.DynamicBillingProfitRate = clampModelGatewayConfigFloat(defaultFloat(setting.DynamicBillingProfitRate, defaults.DynamicBillingProfitRate), 0, 10)
+	setting.DynamicBillingWindowSamples = normalizeModelGatewayConfigMin(setting.DynamicBillingWindowSamples, 1, defaults.DynamicBillingWindowSamples)
+	setting.DynamicBillingWindowMinutes = normalizeModelGatewayConfigMin(setting.DynamicBillingWindowMinutes, 1, defaults.DynamicBillingWindowMinutes)
+	setting.DynamicBillingMinSamples = normalizeModelGatewayConfigMin(setting.DynamicBillingMinSamples, 1, defaults.DynamicBillingMinSamples)
+	setting.DynamicBillingRefreshSeconds = normalizeModelGatewayConfigMin(setting.DynamicBillingRefreshSeconds, 1, defaults.DynamicBillingRefreshSeconds)
+	setting.DynamicBillingMaxAgeSeconds = normalizeModelGatewayConfigMin(setting.DynamicBillingMaxAgeSeconds, 1, defaults.DynamicBillingMaxAgeSeconds)
 	setting.FailureFastWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureFastWindowSeconds, 1, defaults.FailureFastWindowSeconds)
 	setting.FailureMainWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureMainWindowSeconds, 1, defaults.FailureMainWindowSeconds)
 	setting.FailureFallbackWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureFallbackWindowSeconds, 1, defaults.FailureFallbackWindowSeconds)
@@ -198,6 +243,12 @@ func normalizeModelGatewayGroupPolicies(src map[string]scheduler_setting.GroupPo
 		}
 		if !validModelGatewayConfigValue(policy.AutoMode, modelGatewayConfigAutoModes()) {
 			return nil, fmt.Errorf("invalid auto_mode for group %s", group)
+		}
+		if policy.BillingRatioMode == "" {
+			policy.BillingRatioMode = scheduler_setting.BillingRatioModeStatic
+		}
+		if policy.BillingRatioMode != scheduler_setting.BillingRatioModeStatic && policy.BillingRatioMode != scheduler_setting.BillingRatioModeDynamic {
+			return nil, fmt.Errorf("invalid billing_ratio_mode for group %s", group)
 		}
 		policy.CandidateGroups = uniqueTrimmedModelGatewayStrings(policy.CandidateGroups)
 		result[group] = policy
@@ -317,6 +368,13 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 		"cost_calculation_interval_seconds":    strconv.Itoa(setting.CostCalculationIntervalSeconds),
 		"cost_calculation_worker_count":        strconv.Itoa(setting.CostCalculationWorkerCount),
 		"cost_calculation_batch_size":          strconv.Itoa(setting.CostCalculationBatchSize),
+		"dynamic_billing_enabled":              strconv.FormatBool(setting.DynamicBillingEnabled),
+		"dynamic_billing_profit_rate":          strconv.FormatFloat(setting.DynamicBillingProfitRate, 'f', -1, 64),
+		"dynamic_billing_window_samples":       strconv.Itoa(setting.DynamicBillingWindowSamples),
+		"dynamic_billing_min_samples":          strconv.Itoa(setting.DynamicBillingMinSamples),
+		"dynamic_billing_refresh_seconds":      strconv.Itoa(setting.DynamicBillingRefreshSeconds),
+		"dynamic_billing_max_age_seconds":      strconv.Itoa(setting.DynamicBillingMaxAgeSeconds),
+		"dynamic_billing_enabled_at":           strconv.FormatInt(setting.DynamicBillingEnabledAt, 10),
 		"success_weight":                       strconv.FormatFloat(setting.SuccessWeight, 'f', -1, 64),
 		"speed_weight":                         strconv.FormatFloat(setting.SpeedWeight, 'f', -1, 64),
 		"load_weight":                          strconv.FormatFloat(setting.LoadWeight, 'f', -1, 64),

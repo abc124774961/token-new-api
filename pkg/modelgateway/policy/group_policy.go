@@ -57,6 +57,7 @@ func (r *DefaultGroupPolicyResolver) Resolve(c *gin.Context, req *core.DispatchR
 		AutoMode:              normalizeAutoMode(policySetting.AutoMode),
 		CrossGroupFusion:      policySetting.CrossGroupFusion,
 		CandidateGroups:       append([]string(nil), policySetting.CandidateGroups...),
+		BillingRatioMode:      normalizeBillingRatioMode(policySetting.BillingRatioMode),
 		CacheAffinityEnabled:  policySetting.CacheAffinityEnabled,
 		QueueEnabled:          policySetting.QueueEnabled,
 		QueueHighPriority:     policySetting.QueueHighPriority,
@@ -120,4 +121,11 @@ func normalizeStrategyWithDefault(strategy, fallback string) string {
 		return core.StrategyBalanced
 	}
 	return normalizeStrategy(fallback)
+}
+
+func normalizeBillingRatioMode(mode string) string {
+	if mode == "dynamic" {
+		return "dynamic"
+	}
+	return "static"
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
@@ -44,6 +45,7 @@ func setupModelGatewayConfigControllerTestDB(t *testing.T) *gorm.DB {
 	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.DefaultSetting())
 	t.Cleanup(func() {
 		modelgatewayprobe.StopDefaultProbeScheduler()
+		modelgatewaydynamicbilling.StopDefaultRefresher()
 		restoreSetting()
 		model.DB = oldDB
 		common.OptionMap = oldOptionMap
@@ -87,6 +89,7 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	setting.CostCalculationIntervalSeconds = 4
 	setting.CostCalculationWorkerCount = 3
 	setting.CostCalculationBatchSize = 80
+	setting.DynamicBillingWindowSamples = 280
 	setting.StickySaveOnSelect = true
 	setting.StickyRenewOnSuccess = false
 	setting.StickyFailurePolicy = scheduler_setting.StickyFailurePolicyKeep
@@ -155,6 +158,7 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.Equal(t, 4, payload.Data.Setting.CostCalculationIntervalSeconds)
 	require.Equal(t, 3, payload.Data.Setting.CostCalculationWorkerCount)
 	require.Equal(t, 80, payload.Data.Setting.CostCalculationBatchSize)
+	require.Equal(t, 280, payload.Data.Setting.DynamicBillingWindowSamples)
 	require.True(t, payload.Data.Setting.StickySaveOnSelect)
 	require.False(t, payload.Data.Setting.StickyRenewOnSuccess)
 	require.Equal(t, scheduler_setting.StickyFailurePolicyKeep, payload.Data.Setting.StickyFailurePolicy)
@@ -168,6 +172,7 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.Equal(t, payload.Data.Setting.CircuitOpenSeconds, payload.Data.Setting.CircuitErrorPolicies["server_error"].OpenSeconds)
 	require.Equal(t, payload.Data.Setting.CircuitHalfOpenProbeCount, payload.Data.Setting.CircuitErrorPolicies["server_error"].HalfOpenProbeCount)
 	require.Equal(t, []string{"vip", "default"}, payload.Data.Setting.GroupPolicies["vip"].CandidateGroups)
+	require.Equal(t, scheduler_setting.BillingRatioModeStatic, payload.Data.Setting.GroupPolicies["vip"].BillingRatioMode)
 	require.True(t, payload.Data.Setting.GroupPolicies["vip"].QueueHighPriority)
 	require.Equal(t, scheduler_setting.ModeActive, scheduler_setting.GetSetting().GroupPolicies["vip"].Mode)
 
@@ -205,6 +210,9 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	var costBatchOption model.Option
 	require.NoError(t, db.First(&costBatchOption, "key = ?", "scheduler_setting.cost_calculation_batch_size").Error)
 	require.Equal(t, "80", costBatchOption.Value)
+	var dynamicBillingWindowSamplesOption model.Option
+	require.NoError(t, db.First(&dynamicBillingWindowSamplesOption, "key = ?", "scheduler_setting.dynamic_billing_window_samples").Error)
+	require.Equal(t, "280", dynamicBillingWindowSamplesOption.Value)
 	var circuitErrorPolicyOption model.Option
 	require.NoError(t, db.First(&circuitErrorPolicyOption, "key = ?", "scheduler_setting.circuit_error_policies").Error)
 	require.Contains(t, circuitErrorPolicyOption.Value, `"rate_limit"`)
@@ -214,6 +222,94 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.NoError(t, db.First(&stickyFailurePolicyOption, "key = ?", "scheduler_setting.sticky_failure_policy").Error)
 	require.Equal(t, scheduler_setting.StickyFailurePolicyKeep, stickyFailurePolicyOption.Value)
 	require.Equal(t, "35", common.OptionMap["scheduler_setting.rollout_percent"])
+}
+
+func TestModelGatewayConfigUpdatePersistsDynamicBillingMode(t *testing.T) {
+	setupModelGatewayConfigControllerTestDB(t)
+	router := gin.New()
+	router.PUT("/api/model_gateway/config", UpdateModelGatewayConfig)
+
+	setting := scheduler_setting.DefaultSetting()
+	setting.DynamicBillingEnabled = true
+	setting.DynamicBillingProfitRate = 0.35
+	setting.GroupPolicies = map[string]scheduler_setting.GroupPolicySetting{
+		"codex-plus": {
+			Mode:             scheduler_setting.ModeActive,
+			Strategy:         scheduler_setting.StrategyBalanced,
+			AutoMode:         scheduler_setting.AutoModeFusion,
+			BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+		},
+	}
+	body, err := common.Marshal(setting)
+	require.NoError(t, err)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/model_gateway/config", bytes.NewReader(body))
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayConfigResponse(t, resp)
+	require.True(t, payload.Success, resp.Body.String())
+	require.True(t, payload.Data.Setting.DynamicBillingEnabled)
+	require.Equal(t, 0.35, payload.Data.Setting.DynamicBillingProfitRate)
+	require.Equal(t, scheduler_setting.BillingRatioModeDynamic, payload.Data.Setting.GroupPolicies["codex-plus"].BillingRatioMode)
+	require.Equal(t, scheduler_setting.BillingRatioModeDynamic, scheduler_setting.GetSetting().GroupPolicies["codex-plus"].BillingRatioMode)
+	require.Positive(t, payload.Data.Setting.DynamicBillingEnabledAt)
+	firstEnabledAt := payload.Data.Setting.DynamicBillingEnabledAt
+
+	body, err = common.Marshal(payload.Data.Setting)
+	require.NoError(t, err)
+
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/api/model_gateway/config", bytes.NewReader(body))
+	router.ServeHTTP(resp, req)
+
+	payload = decodeModelGatewayConfigResponse(t, resp)
+	require.True(t, payload.Success, resp.Body.String())
+	require.Equal(t, firstEnabledAt, payload.Data.Setting.DynamicBillingEnabledAt)
+}
+
+func TestModelGatewayConfigUpdateResetsDynamicBillingEnabledAtWhenDynamicPolicyChanges(t *testing.T) {
+	setupModelGatewayConfigControllerTestDB(t)
+	router := gin.New()
+	router.PUT("/api/model_gateway/config", UpdateModelGatewayConfig)
+
+	current := scheduler_setting.DefaultSetting()
+	current.DynamicBillingEnabled = true
+	current.DynamicBillingProfitRate = 0.35
+	current.DynamicBillingEnabledAt = 123
+	current.GroupPolicies = map[string]scheduler_setting.GroupPolicySetting{
+		"auto": {
+			Mode:             scheduler_setting.ModeActive,
+			Strategy:         scheduler_setting.StrategyBalanced,
+			AutoMode:         scheduler_setting.AutoModeFusion,
+			BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+			CandidateGroups:  []string{"auto"},
+		},
+	}
+	restoreSetting := scheduler_setting.SetSettingForTest(current)
+	defer restoreSetting()
+
+	next := current
+	next.GroupPolicies = map[string]scheduler_setting.GroupPolicySetting{
+		"auto": {
+			Mode:             scheduler_setting.ModeActive,
+			Strategy:         scheduler_setting.StrategyBalanced,
+			AutoMode:         scheduler_setting.AutoModeFusion,
+			BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+			CandidateGroups:  []string{"auto", "codex-plus"},
+		},
+	}
+	body, err := common.Marshal(next)
+	require.NoError(t, err)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/model_gateway/config", bytes.NewReader(body))
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayConfigResponse(t, resp)
+	require.True(t, payload.Success, resp.Body.String())
+	require.Greater(t, payload.Data.Setting.DynamicBillingEnabledAt, int64(123))
+	require.Equal(t, []string{"auto", "codex-plus"}, payload.Data.Setting.GroupPolicies["auto"].CandidateGroups)
 }
 
 func TestModelGatewayConfigRejectsInvalidPolicy(t *testing.T) {

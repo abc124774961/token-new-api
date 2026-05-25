@@ -25,10 +25,500 @@ body.sidebar-collapsed {
 }
 
 body {
-  font-family: Lato, 'Helvetica Neue', Arial, Helvetica, 'Microsoft YaHei',
-    sans-serif;
+  font-family:
+    Lato, 'Helvetica Neue', Arial, Helvetica, 'Microsoft YaHei', sans-serif;
   color: var(--semi-color-text-0);
   background-color: var(--semi-color-bg-0);
+}
+
+.token-group-option {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  padding: 9px 12px;
+  margin: 3px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.token-group-option:hover,
+.token-group-option--focused {
+  border-color: rgba(20, 184, 166, 0.18);
+  background: rgba(248, 252, 252, 0.98);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.05);
+}
+
+.token-group-option--selected {
+  border-color: rgba(20, 184, 166, 0.22);
+  background:
+    linear-gradient(180deg, rgba(250, 254, 253, 0.98), rgba(241, 250, 249, 0.98)),
+    rgba(255, 255, 255, 0.98);
+  box-shadow:
+    0 12px 24px rgba(15, 118, 110, 0.06),
+    0 0 0 1px rgba(255, 255, 255, 0.72) inset;
+}
+
+.token-group-option--disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.token-group-option__body {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.token-group-option__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.token-group-option__title-wrap {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.token-group-option__title {
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.token-group-option__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(20, 184, 166, 0.08);
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.token-group-option__state::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.85;
+}
+
+.token-group-option__description {
+  color: #64748b;
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+
+.token-group-option__ratio {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 10px;
+  border: 1px solid rgba(20, 184, 166, 0.18);
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.98);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.token-group-option__ratio strong {
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.token-group-option__ratio--dynamic {
+  border-color: rgba(56, 189, 248, 0.2);
+  background:
+    linear-gradient(180deg, rgba(239, 246, 255, 0.98), rgba(236, 254, 255, 0.98)),
+    rgba(248, 250, 252, 0.98);
+  color: #0369a1;
+}
+
+.token-group-option__ratio--static {
+  border-color: rgba(20, 184, 166, 0.16);
+  background: rgba(240, 253, 250, 0.9);
+  color: #0f766e;
+}
+
+.token-group-option__ratio-label {
+  color: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  opacity: 0.78;
+}
+
+.token-group-option__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 1px;
+}
+
+.token-group-option__meta-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.token-group-option__meta-item:not(:last-child)::after {
+  content: '';
+  width: 3px;
+  height: 3px;
+  margin-left: 1px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.7);
+}
+
+.token-group-option__meta-label {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.token-group-option__meta-value {
+  min-width: 0;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.token-group-option__meta-value--teal {
+  color: #0f766e;
+}
+
+.token-group-option__meta-value--indigo {
+  color: #4f46e5;
+}
+
+body[theme-mode='dark'] .token-group-option {
+  border-color: rgba(148, 163, 184, 0.14);
+  background: rgba(15, 23, 42, 0.92);
+}
+
+body[theme-mode='dark'] .token-group-option:hover,
+body[theme-mode='dark'] .token-group-option--focused {
+  border-color: rgba(45, 212, 191, 0.22);
+  background: rgba(15, 23, 42, 0.98);
+  box-shadow: 0 14px 30px rgba(2, 8, 23, 0.28);
+}
+
+body[theme-mode='dark'] .token-group-option--selected {
+  border-color: rgba(45, 212, 191, 0.28);
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(19, 78, 74, 0.22)),
+    rgba(15, 23, 42, 0.98);
+  box-shadow:
+    0 14px 32px rgba(2, 8, 23, 0.32),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+}
+
+body[theme-mode='dark'] .token-group-option__title {
+  color: #f8fafc;
+}
+
+body[theme-mode='dark'] .token-group-option__description,
+body[theme-mode='dark'] .token-group-option__meta-label {
+  color: #94a3b8;
+}
+
+body[theme-mode='dark'] .token-group-option__ratio {
+  border-color: rgba(148, 163, 184, 0.14);
+}
+
+body[theme-mode='dark'] .token-group-option__ratio--dynamic {
+  border-color: rgba(56, 189, 248, 0.22);
+  background: rgba(12, 74, 110, 0.24);
+  color: #7dd3fc;
+}
+
+body[theme-mode='dark'] .token-group-option__ratio--static {
+  border-color: rgba(45, 212, 191, 0.22);
+  background: rgba(15, 118, 110, 0.18);
+  color: #99f6e4;
+}
+
+body[theme-mode='dark'] .token-group-option__meta-item:not(:last-child)::after {
+  background: rgba(148, 163, 184, 0.52);
+}
+
+body[theme-mode='dark'] .token-group-option__meta-value {
+  color: #e2e8f0;
+}
+
+body[theme-mode='dark'] .token-group-option__meta-value--teal {
+  color: #99f6e4;
+}
+
+body[theme-mode='dark'] .token-group-option__meta-value--indigo {
+  color: #c7d2fe;
+}
+
+.usage-log-channel-cost-tooltip-popover.semi-tooltip-wrapper {
+  max-width: min(392px, calc(100vw - 48px));
+  padding: 13px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow:
+    0 18px 42px rgba(15, 23, 42, 0.16),
+    0 0 0 1px rgba(255, 255, 255, 0.78) inset;
+  color: #0f172a;
+  backdrop-filter: blur(12px);
+}
+
+.usage-log-channel-cost-tooltip-popover .semi-tooltip-icon-arrow {
+  color: rgba(255, 255, 255, 0.98);
+}
+
+body[theme-mode='dark']
+  .usage-log-channel-cost-tooltip-popover.semi-tooltip-wrapper {
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.98);
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.36),
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+  color: #f8fafc;
+}
+
+body[theme-mode='dark']
+  .usage-log-channel-cost-tooltip-popover
+  .semi-tooltip-icon-arrow {
+  color: rgba(15, 23, 42, 0.98);
+}
+
+.usage-log-channel-cost-tooltip {
+  width: min(362px, calc(100vw - 76px));
+  color: #0f172a;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+body[theme-mode='dark'] .usage-log-channel-cost-tooltip {
+  color: #f8fafc;
+}
+
+.usage-log-channel-cost-title {
+  margin-bottom: 9px;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+body[theme-mode='dark'] .usage-log-channel-cost-title {
+  color: #f8fafc;
+}
+
+.usage-log-channel-cost-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 9px;
+}
+
+.usage-log-channel-cost-metric {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 7px;
+  background: #f8fafc;
+}
+
+.usage-log-channel-cost-metric > span {
+  display: block;
+  margin-bottom: 3px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.usage-log-channel-cost-metric > strong {
+  display: flex;
+  min-height: 18px;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.usage-log-channel-cost-metric > strong > em {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  opacity: 0.82;
+}
+
+.usage-log-channel-cost-metric-cost {
+  border-color: rgba(251, 146, 60, 0.26);
+  background: linear-gradient(180deg, rgba(255, 247, 237, 0.96), #fff);
+}
+
+.usage-log-channel-cost-metric-cost > strong {
+  color: #c2410c;
+}
+
+.usage-log-channel-cost-metric-charge {
+  border-color: rgba(59, 130, 246, 0.22);
+  background: linear-gradient(180deg, rgba(239, 246, 255, 0.96), #fff);
+}
+
+.usage-log-channel-cost-metric-charge > strong {
+  color: #1d4ed8;
+}
+
+.usage-log-channel-cost-metric-profit {
+  grid-column: 1 / -1;
+  padding: 9px 10px;
+  border-color: rgba(16, 185, 129, 0.3);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(236, 253, 245, 0.98),
+      rgba(255, 255, 255, 0.98)
+    ),
+    radial-gradient(
+      circle at top right,
+      rgba(16, 185, 129, 0.16),
+      transparent 44%
+    );
+}
+
+.usage-log-channel-cost-metric-profit > strong {
+  color: #047857;
+  font-size: 15px;
+}
+
+.usage-log-channel-cost-metric-profit > span,
+.usage-log-channel-cost-metric-negative > span {
+  color: #475569;
+}
+
+.usage-log-channel-cost-metric-negative {
+  grid-column: 1 / -1;
+  padding: 9px 10px;
+  border-color: rgba(248, 113, 113, 0.3);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(254, 242, 242, 0.98),
+      rgba(255, 255, 255, 0.98)
+    ),
+    radial-gradient(
+      circle at top right,
+      rgba(248, 113, 113, 0.16),
+      transparent 44%
+    );
+}
+
+.usage-log-channel-cost-metric-negative > strong {
+  color: #dc2626;
+  font-size: 15px;
+}
+
+.usage-log-channel-cost-meta {
+  padding-top: 7px;
+  border-top: 1px solid rgba(15, 23, 42, 0.07);
+}
+
+.usage-log-channel-cost-row {
+  display: grid;
+  grid-template-columns: minmax(82px, 0.54fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  margin: 3px 0;
+}
+
+.usage-log-channel-cost-row > span {
+  min-width: 0;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+body[theme-mode='dark'] .usage-log-channel-cost-row > span {
+  color: rgba(203, 213, 225, 0.76);
+}
+
+.usage-log-channel-cost-row > strong {
+  min-width: 0;
+  color: #111827;
+  font-size: 11.5px;
+  font-weight: 750;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+body[theme-mode='dark'] .usage-log-channel-cost-row > strong {
+  color: #f8fafc;
+}
+
+body[theme-mode='dark'] .usage-log-channel-cost-metric {
+  border-color: rgba(148, 163, 184, 0.16);
+  background: rgba(30, 41, 59, 0.72);
+}
+
+body[theme-mode='dark'] .usage-log-channel-cost-metric > span {
+  color: rgba(203, 213, 225, 0.78);
+}
+
+body[theme-mode='dark'] .usage-log-channel-cost-metric > strong {
+  color: #f8fafc;
+}
+
+body[theme-mode='dark'] .usage-log-channel-cost-metric-cost > strong {
+  color: #fdba74;
+}
+
+body[theme-mode='dark'] .usage-log-channel-cost-metric-charge > strong {
+  color: #93c5fd;
+}
+
+body[theme-mode='dark'] .usage-log-channel-cost-metric-profit > strong {
+  color: #6ee7b7;
+}
+
+body[theme-mode='dark'] .usage-log-channel-cost-metric-negative > strong {
+  color: #fca5a5;
+}
+
+body[theme-mode='dark'] .usage-log-channel-cost-meta {
+  border-top-color: rgba(148, 163, 184, 0.18);
 }
 
 /* 桌面端禁止 body 纵向滚动 - 防止 VChart tooltip 触发页面滚动条 */
@@ -598,7 +1088,8 @@ body {
   overflow-x: hidden;
   overflow-y: auto;
   color: #0f172a;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       900px 520px at 15% 74%,
       rgba(20, 184, 166, 0.16),
       transparent 68%
@@ -613,7 +1104,8 @@ body {
 
 .dark .ct-auth-page {
   color: #f8fafc;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       900px 520px at 12% 74%,
       rgba(20, 184, 166, 0.18),
       transparent 68%
@@ -634,10 +1126,8 @@ body {
 }
 
 .ct-auth-bg-grid {
-  background-image: linear-gradient(
-      rgba(15, 23, 42, 0.055) 1px,
-      transparent 1px
-    ),
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.055) 1px, transparent 1px),
     linear-gradient(90deg, rgba(15, 23, 42, 0.055) 1px, transparent 1px);
   background-size: 52px 52px;
   mask-image: radial-gradient(
@@ -648,10 +1138,8 @@ body {
 }
 
 .dark .ct-auth-bg-grid {
-  background-image: linear-gradient(
-      rgba(255, 255, 255, 0.07) 1px,
-      transparent 1px
-    ),
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.07) 1px, transparent 1px);
 }
 
@@ -1553,7 +2041,8 @@ body {
   position: fixed;
   inset: 64px 0 0 var(--sidebar-current-width, 0);
   z-index: -1;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 14% 8%,
       rgba(20, 184, 166, 0.08),
       transparent 24%
@@ -1564,7 +2053,8 @@ body {
 }
 
 .dark .ct-dashboard-shell::before {
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 12% 12%,
       rgba(20, 184, 166, 0.16),
       transparent 25%
@@ -1658,7 +2148,8 @@ body {
   overflow: hidden;
   border: 1px solid rgba(15, 23, 42, 0.08) !important;
   border-radius: 24px !important;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(255, 255, 255, 0.92),
       rgba(248, 250, 252, 0.74)
@@ -1686,11 +2177,8 @@ body {
 
 .dark .ct-dashboard-card.semi-card {
   border-color: rgba(255, 255, 255, 0.08) !important;
-  background: linear-gradient(
-      135deg,
-      rgba(23, 24, 31, 0.92),
-      rgba(17, 18, 24, 0.82)
-    ),
+  background:
+    linear-gradient(135deg, rgba(23, 24, 31, 0.92), rgba(17, 18, 24, 0.82)),
     radial-gradient(
       circle at 100% 0%,
       var(--ct-dashboard-accent-soft, rgba(20, 184, 166, 0.14)),
@@ -1967,11 +2455,8 @@ body {
 
 .ct-topup-page::before {
   inset: 64px 0 0 var(--sidebar-current-width, 0);
-  background: linear-gradient(
-      135deg,
-      rgba(240, 253, 250, 0.92),
-      transparent 36%
-    ),
+  background:
+    linear-gradient(135deg, rgba(240, 253, 250, 0.92), transparent 36%),
     linear-gradient(215deg, rgba(239, 246, 255, 0.88), transparent 38%),
     radial-gradient(circle at 18% 0%, rgba(20, 184, 166, 0.2), transparent 30%),
     radial-gradient(
@@ -1995,11 +2480,8 @@ body {
 }
 
 .dark .ct-topup-page::before {
-  background: linear-gradient(
-      135deg,
-      rgba(20, 184, 166, 0.16),
-      transparent 34%
-    ),
+  background:
+    linear-gradient(135deg, rgba(20, 184, 166, 0.16), transparent 34%),
     linear-gradient(215deg, rgba(37, 99, 235, 0.16), transparent 38%),
     radial-gradient(
       circle at 16% 6%,
@@ -2049,7 +2531,8 @@ body {
   position: relative;
   border: 1px solid var(--ct-topup-border-strong) !important;
   border-radius: 24px !important;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       145deg,
       rgba(255, 255, 255, 0.96),
       rgba(241, 250, 249, 0.82)
@@ -2066,11 +2549,8 @@ body {
 .dark .ct-topup-panel.semi-card,
 .dark .ct-topup-invite-hero.semi-card {
   border-color: var(--ct-topup-border-strong) !important;
-  background: linear-gradient(
-      145deg,
-      rgba(17, 24, 39, 0.78),
-      rgba(10, 15, 24, 0.8)
-    ),
+  background:
+    linear-gradient(145deg, rgba(17, 24, 39, 0.78), rgba(10, 15, 24, 0.8)),
     radial-gradient(
       circle at 92% 0%,
       rgba(20, 184, 166, 0.16),
@@ -2291,8 +2771,9 @@ body {
   display: block;
   margin-top: 7px;
   color: var(--ct-topup-ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 19px;
   font-weight: 900;
   line-height: 1.1;
@@ -2618,7 +3099,8 @@ body {
   padding: 20px;
   border: 1px solid rgba(15, 118, 110, 0.14);
   border-radius: 20px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       145deg,
       rgba(255, 255, 255, 0.86),
       rgba(240, 253, 250, 0.72)
@@ -2669,11 +3151,8 @@ body {
 
 .dark .ct-topup-redeem-main-card {
   border-color: rgba(251, 191, 36, 0.16);
-  background: linear-gradient(
-      145deg,
-      rgba(15, 23, 42, 0.42),
-      rgba(30, 41, 59, 0.26)
-    ),
+  background:
+    linear-gradient(145deg, rgba(15, 23, 42, 0.42), rgba(30, 41, 59, 0.26)),
     radial-gradient(circle at 100% 0%, rgba(251, 191, 36, 0.1), transparent 34%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
@@ -2912,7 +3391,8 @@ body {
   justify-content: center;
   border: 1px solid rgba(20, 184, 166, 0.22);
   border-radius: 12px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(204, 251, 241, 0.92),
       rgba(224, 242, 254, 0.78)
@@ -2967,7 +3447,8 @@ body {
   padding: 14px;
   border: 1px solid rgba(15, 118, 110, 0.2);
   border-radius: 18px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       145deg,
       rgba(240, 253, 250, 0.88),
       rgba(255, 255, 255, 0.76) 54%,
@@ -2994,11 +3475,8 @@ body {
 
 .dark .ct-topup-current-card {
   border-color: rgba(94, 234, 212, 0.14);
-  background: linear-gradient(
-      145deg,
-      rgba(15, 23, 42, 0.44),
-      rgba(2, 6, 23, 0.28)
-    ),
+  background:
+    linear-gradient(145deg, rgba(15, 23, 42, 0.44), rgba(2, 6, 23, 0.28)),
     rgba(15, 23, 42, 0.32);
   box-shadow: none;
 }
@@ -3075,8 +3553,9 @@ body {
 
 .ct-topup-current-days strong {
   color: var(--ct-topup-blue);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 24px;
   font-weight: 900;
   line-height: 1;
@@ -3138,8 +3617,9 @@ body {
   overflow: hidden;
   margin-top: 3px;
   color: var(--ct-topup-ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 15px;
   font-weight: 900;
   line-height: 1.2;
@@ -3289,7 +3769,8 @@ body {
 
 .ct-topup-subscription-record-active {
   border-color: rgba(20, 184, 166, 0.22);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       145deg,
       rgba(240, 253, 250, 0.74),
       rgba(255, 255, 255, 0.62)
@@ -3308,11 +3789,8 @@ body {
 
 .dark .ct-topup-subscription-record-active {
   border-color: rgba(94, 234, 212, 0.14);
-  background: linear-gradient(
-      145deg,
-      rgba(20, 184, 166, 0.12),
-      rgba(15, 23, 42, 0.28)
-    ),
+  background:
+    linear-gradient(145deg, rgba(20, 184, 166, 0.12), rgba(15, 23, 42, 0.28)),
     rgba(15, 23, 42, 0.3);
 }
 
@@ -3415,8 +3893,9 @@ body {
   overflow: hidden;
   margin-top: 2px;
   color: var(--ct-topup-ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 13px;
   font-weight: 900;
   line-height: 1.2;
@@ -3728,8 +4207,8 @@ html.dark
   --ct-dash-amber: #fbbf24;
   --ct-dash-rose: #f472b6;
   --ct-dash-indigo: #a5b4fc;
-  --ct-dash-shadow: 0 24px 64px rgba(0, 0, 0, 0.34),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --ct-dash-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .ct-data-dashboard-page .ct-dashboard-main-flow {
@@ -3853,7 +4332,8 @@ html.dark
 .ct-data-dashboard-page .ct-dashboard-card.semi-card {
   border-color: var(--ct-dash-border) !important;
   border-radius: 22px !important;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(255, 255, 255, 0.92),
       rgba(248, 250, 252, 0.72)
@@ -3876,11 +4356,8 @@ html.dark
 
 .dark .ct-data-dashboard-page .ct-dashboard-card.semi-card {
   border-color: rgba(94, 234, 212, 0.11) !important;
-  background: linear-gradient(
-      145deg,
-      rgba(17, 24, 39, 0.86),
-      rgba(9, 14, 24, 0.88)
-    ),
+  background:
+    linear-gradient(145deg, rgba(17, 24, 39, 0.86), rgba(9, 14, 24, 0.88)),
     radial-gradient(
       circle at 96% 0%,
       rgba(20, 184, 166, 0.14),
@@ -3910,11 +4387,8 @@ html.dark
 
 .dark .ct-data-dashboard-page .ct-dashboard-card .semi-card-header {
   border-bottom-color: rgba(94, 234, 212, 0.1) !important;
-  background: linear-gradient(
-      90deg,
-      rgba(15, 23, 42, 0.72),
-      rgba(17, 24, 39, 0.38)
-    ),
+  background:
+    linear-gradient(90deg, rgba(15, 23, 42, 0.72), rgba(17, 24, 39, 0.38)),
     radial-gradient(circle at 0% 0%, rgba(20, 184, 166, 0.08), transparent 42%) !important;
 }
 
@@ -4243,10 +4717,8 @@ html.dark
   padding: 18px 18px 14px;
   border: 1px solid rgba(15, 23, 42, 0.06);
   border-radius: 18px;
-  background: linear-gradient(
-      rgba(255, 255, 255, 0.66),
-      rgba(255, 255, 255, 0.5)
-    ),
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.5)),
     radial-gradient(
       circle at 86% 6%,
       rgba(20, 184, 166, 0.08),
@@ -4263,7 +4735,8 @@ html.dark
 
 .dark .ct-data-dashboard-page .ct-dashboard-chart-stage {
   border-color: rgba(94, 234, 212, 0.1);
-  background: linear-gradient(rgba(8, 13, 23, 0.52), rgba(8, 13, 23, 0.48)),
+  background:
+    linear-gradient(rgba(8, 13, 23, 0.52), rgba(8, 13, 23, 0.48)),
     radial-gradient(circle at 88% 0%, rgba(20, 184, 166, 0.1), transparent 34%),
     radial-gradient(
       circle at 8% 100%,
@@ -4541,7 +5014,8 @@ html.dark
 .ct-channel-monitor-card.semi-card {
   position: relative;
   border-radius: 8px !important;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       rgba(255, 255, 255, 0.94),
       rgba(248, 250, 252, 0.9)
@@ -4556,11 +5030,8 @@ html.dark
 
 .dark .ct-channel-monitor-card.semi-card {
   border-color: rgba(148, 163, 184, 0.18) !important;
-  background: linear-gradient(
-      180deg,
-      rgba(23, 29, 38, 0.98),
-      rgba(17, 24, 33, 0.98)
-    ),
+  background:
+    linear-gradient(180deg, rgba(23, 29, 38, 0.98), rgba(17, 24, 33, 0.98)),
     radial-gradient(
       circle at 100% 0%,
       rgba(20, 184, 166, 0.12),
@@ -5221,7 +5692,8 @@ html.dark
 .ct-channel-monitor-card.semi-card {
   border-color: rgba(15, 23, 42, 0.1) !important;
   border-radius: 24px !important;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       145deg,
       rgba(255, 255, 255, 0.9),
       rgba(248, 250, 252, 0.74)
@@ -5245,11 +5717,8 @@ html.dark
 
 .dark .ct-channel-monitor-card.semi-card {
   border-color: rgba(255, 255, 255, 0.1) !important;
-  background: linear-gradient(
-      145deg,
-      rgba(17, 24, 39, 0.84),
-      rgba(10, 15, 24, 0.86)
-    ),
+  background:
+    linear-gradient(145deg, rgba(17, 24, 39, 0.84), rgba(10, 15, 24, 0.86)),
     radial-gradient(
       circle at 92% 6%,
       rgba(20, 184, 166, 0.18),
@@ -5625,8 +6094,8 @@ html.dark
 }
 
 code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+  font-family:
+    source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
 
 /* ==================== 布局相关样式 ==================== */
@@ -6380,7 +6849,8 @@ html:not(.dark) .blur-ball-teal {
   --ct-shadow: 0 18px 48px rgba(15, 42, 71, 0.08);
   min-height: 100vh;
   color: var(--ct-text);
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 52% 12%,
       rgba(20, 184, 166, 0.08),
       transparent 30%
@@ -6399,7 +6869,8 @@ html:not(.dark) .blur-ball-teal {
   --ct-muted: #a5b4c8;
   --ct-subtle: rgba(255, 255, 255, 0.06);
   --ct-shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 52% 12%,
       rgba(20, 184, 166, 0.08),
       transparent 30%
@@ -6416,11 +6887,8 @@ html:not(.dark) .blur-ball-teal {
   position: relative;
   min-height: 560px;
   padding: 78px 0 50px;
-  background: linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.86),
-      transparent 42%
-    ),
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.86), transparent 42%),
     radial-gradient(
       circle at 66% 54%,
       rgba(20, 184, 166, 0.13),
@@ -6433,10 +6901,8 @@ html:not(.dark) .blur-ball-teal {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background-image: linear-gradient(
-      rgba(15, 23, 42, 0.028) 1px,
-      transparent 1px
-    ),
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.028) 1px, transparent 1px),
     linear-gradient(90deg, rgba(15, 23, 42, 0.028) 1px, transparent 1px);
   background-size: 54px 54px;
   mask-image: linear-gradient(
@@ -6448,10 +6914,8 @@ html:not(.dark) .blur-ball-teal {
 }
 
 .dark .ct-hero::before {
-  background-image: linear-gradient(
-      rgba(255, 255, 255, 0.035) 1px,
-      transparent 1px
-    ),
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
 }
 
@@ -6574,7 +7038,8 @@ html:not(.dark) .blur-ball-teal {
   inset: 54px 192px 72px 138px;
   z-index: 0;
   pointer-events: none;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       90deg,
       transparent 0 18%,
       rgba(34, 197, 94, 0.32) 18% 19%,
@@ -7034,11 +7499,8 @@ html:not(.dark) .blur-ball-teal {
   position: relative;
   height: 300px;
   border-radius: 12px;
-  background: linear-gradient(
-      to top,
-      rgba(15, 23, 42, 0.07) 1px,
-      transparent 1px
-    ),
+  background:
+    linear-gradient(to top, rgba(15, 23, 42, 0.07) 1px, transparent 1px),
     linear-gradient(90deg, rgba(15, 23, 42, 0.04) 1px, transparent 1px),
     rgba(255, 255, 255, 0.42);
   background-size:
@@ -7048,11 +7510,8 @@ html:not(.dark) .blur-ball-teal {
 }
 
 .dark .ct-status-chart {
-  background: linear-gradient(
-      to top,
-      rgba(255, 255, 255, 0.07) 1px,
-      transparent 1px
-    ),
+  background:
+    linear-gradient(to top, rgba(255, 255, 255, 0.07) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
     rgba(255, 255, 255, 0.04);
 }
@@ -7598,7 +8057,8 @@ html:not(.dark) .blur-ball-teal {
   --ct-orange: #ff9f1c;
   --ct-green: #12c58d;
   --ct-shadow: 0 18px 48px rgba(31, 54, 82, 0.1);
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 72% 16%,
       rgba(34, 211, 208, 0.16),
       transparent 27%
@@ -7624,7 +8084,8 @@ html:not(.dark) .blur-ball-teal {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: repeating-linear-gradient(
+  background:
+    repeating-linear-gradient(
       90deg,
       transparent 0 124px,
       rgba(15, 174, 185, 0.058) 125px 126px
@@ -7657,7 +8118,8 @@ html:not(.dark) .blur-ball-teal {
   inset: 56px 0 0;
   z-index: 0;
   pointer-events: none;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       112deg,
       transparent 0 16%,
       rgba(34, 211, 208, 0.12) 24%,
@@ -7717,7 +8179,8 @@ html:not(.dark) .blur-ball-teal {
   display: flex;
   align-items: center;
   padding: clamp(86px, 7.4vh, 110px) 0 clamp(30px, 3.2vh, 46px);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       110deg,
       rgba(255, 255, 255, 0.9) 0 33%,
       rgba(255, 255, 255, 0.44) 33% 34%,
@@ -7744,10 +8207,8 @@ html:not(.dark) .blur-ball-teal {
 }
 
 .ct-hero::before {
-  background-image: radial-gradient(
-      rgba(15, 23, 42, 0.08) 0.7px,
-      transparent 0.7px
-    ),
+  background-image:
+    radial-gradient(rgba(15, 23, 42, 0.08) 0.7px, transparent 0.7px),
     linear-gradient(90deg, rgba(34, 211, 208, 0.06) 1px, transparent 1px);
   background-size:
     16px 16px,
@@ -7775,7 +8236,8 @@ html:not(.dark) .blur-ball-teal {
 }
 
 .ct-hero::after {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       90deg,
       transparent 0%,
       rgba(34, 211, 208, 0.16) 46%,
@@ -7815,11 +8277,8 @@ html:not(.dark) .blur-ball-teal {
   width: min(1180px, 66vw);
   height: 46%;
   border-radius: 50% 50% 0 0;
-  background: linear-gradient(
-      180deg,
-      rgba(34, 211, 208, 0.14),
-      transparent 72%
-    ),
+  background:
+    linear-gradient(180deg, rgba(34, 211, 208, 0.14), transparent 72%),
     repeating-linear-gradient(
       90deg,
       rgba(34, 211, 208, 0.18) 0 1px,
@@ -7998,7 +8457,8 @@ html:not(.dark) .blur-ball-teal {
   width: min(620px, 100%);
   aspect-ratio: 1.26;
   border-radius: 24px;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 50% 48%,
       rgba(34, 211, 208, 0.22),
       transparent 28%
@@ -8017,7 +8477,8 @@ html:not(.dark) .blur-ball-teal {
   position: absolute;
   inset: 7% 8%;
   border-radius: 50%;
-  background: repeating-radial-gradient(
+  background:
+    repeating-radial-gradient(
       circle at 50% 50%,
       rgba(34, 211, 208, 0.16) 0 1px,
       transparent 1px 42px
@@ -8126,7 +8587,8 @@ html:not(.dark) .blur-ball-teal {
   border: 1px solid rgba(34, 143, 205, 0.18);
   border-radius: 18px;
   color: var(--ct-text);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       rgba(216, 239, 255, 0.95),
       rgba(255, 255, 255, 0.78)
@@ -8388,7 +8850,8 @@ html:not(.dark) .blur-ball-teal {
   height: clamp(166px, 12vw, 240px);
   border-radius: 16px;
   border-color: rgba(34, 143, 205, 0.18);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       rgba(216, 239, 255, 0.94),
       rgba(255, 255, 255, 0.78)
@@ -8469,7 +8932,8 @@ html:not(.dark) .blur-ball-teal {
   bottom: clamp(-72px, -3.6vw, -48px);
   width: clamp(204px, 14vw, 292px);
   height: clamp(146px, 10vw, 210px);
-  background: repeating-linear-gradient(
+  background:
+    repeating-linear-gradient(
       90deg,
       rgba(45, 212, 191, 0.26) 0 1px,
       transparent 1px 13px
@@ -8556,7 +9020,8 @@ html:not(.dark) .blur-ball-teal {
   display: flex;
   align-items: flex-start;
   padding: clamp(34px, 4vh, 58px) 0 clamp(26px, 3vh, 42px);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       rgba(246, 251, 255, 0.72),
       rgba(247, 252, 255, 0.88)
@@ -8573,12 +9038,8 @@ html:not(.dark) .blur-ball-teal {
 }
 
 .ct-status-section::before {
-  background: linear-gradient(
-      90deg,
-      transparent,
-      rgba(15, 174, 185, 0.11),
-      transparent
-    ),
+  background:
+    linear-gradient(90deg, transparent, rgba(15, 174, 185, 0.11), transparent),
     repeating-linear-gradient(
       0deg,
       transparent 0 58px,
@@ -8658,7 +9119,8 @@ html:not(.dark) .blur-ball-teal {
   padding: clamp(16px, 1.5vw, 24px);
   border: 1px solid rgba(17, 34, 58, 0.075);
   border-radius: 8px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(255, 255, 255, 0.84),
       rgba(235, 249, 255, 0.52)
@@ -8692,7 +9154,8 @@ html:not(.dark) .blur-ball-teal {
   padding: clamp(13px, 1vw, 19px);
   border: 1px solid rgba(17, 34, 58, 0.065);
   border-radius: 8px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(255, 255, 255, 0.88),
       rgba(238, 250, 255, 0.52)
@@ -8730,7 +9193,8 @@ html:not(.dark) .blur-ball-teal {
   padding: clamp(12px, 1.1vw, 18px);
   border: 1px solid rgba(17, 34, 58, 0.06);
   border-radius: 8px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       rgba(255, 255, 255, 0.72),
       rgba(244, 251, 255, 0.48)
@@ -8873,7 +9337,8 @@ html:not(.dark) .blur-ball-teal {
   padding: clamp(18px, 1.4vw, 28px);
   border: 1px solid rgba(17, 34, 58, 0.07);
   border-radius: 8px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       rgba(255, 255, 255, 0.74),
       rgba(246, 252, 255, 0.64)
@@ -8945,11 +9410,8 @@ html:not(.dark) .blur-ball-teal {
 .ct-status-chart {
   height: clamp(280px, 30vh, 390px);
   border-radius: 0;
-  background: linear-gradient(
-      to top,
-      rgba(97, 132, 165, 0.2) 1px,
-      transparent 1px
-    ),
+  background:
+    linear-gradient(to top, rgba(97, 132, 165, 0.2) 1px, transparent 1px),
     linear-gradient(90deg, rgba(97, 132, 165, 0.12) 1px, transparent 1px),
     linear-gradient(
       180deg,
@@ -9112,7 +9574,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
   display: flex;
   align-items: flex-start;
   padding: clamp(28px, 3.2vh, 50px) 0 clamp(26px, 3.2vh, 48px);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       rgba(247, 252, 255, 0.86),
       rgba(251, 253, 255, 0.76)
@@ -9131,7 +9594,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
 }
 
 .ct-route-section::before {
-  background: repeating-linear-gradient(
+  background:
+    repeating-linear-gradient(
       90deg,
       transparent 0 104px,
       rgba(15, 174, 185, 0.075) 105px 106px
@@ -9160,17 +9624,17 @@ html.dark body.ct-home-route .ct-chart-tooltip {
 
 .ct-route-canvas {
   min-height: clamp(420px, 43vh, 540px);
-  grid-template-columns: minmax(260px, 0.72fr) minmax(220px, 0.58fr) minmax(
-      270px,
-      0.68fr
-    ) minmax(420px, 1.12fr);
+  grid-template-columns:
+    minmax(260px, 0.72fr) minmax(220px, 0.58fr) minmax(270px, 0.68fr)
+    minmax(420px, 1.12fr);
   column-gap: clamp(28px, 2.7vw, 56px);
   row-gap: clamp(14px, 1.5vh, 24px);
   align-items: center;
   padding: clamp(24px, 2.4vw, 42px);
   border: 1px solid rgba(17, 34, 58, 0.045);
   border-radius: 8px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(255, 255, 255, 0.6),
       rgba(239, 249, 255, 0.34)
@@ -9193,7 +9657,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       90deg,
       transparent 0 18%,
       rgba(34, 211, 208, 0.1) 31%,
@@ -9344,10 +9809,9 @@ html.dark body.ct-home-route .ct-chart-tooltip {
 }
 
 .ct-upstream-line {
-  grid-template-columns: minmax(92px, 1fr) minmax(64px, 0.6fr) minmax(
-      78px,
-      0.7fr
-    ) minmax(84px, 0.72fr) minmax(56px, 0.48fr);
+  grid-template-columns:
+    minmax(92px, 1fr) minmax(64px, 0.6fr) minmax(78px, 0.7fr)
+    minmax(84px, 0.72fr) minmax(56px, 0.48fr);
   gap: clamp(8px, 0.8vw, 14px);
   min-height: clamp(56px, 4.5vh, 74px);
   transition:
@@ -9375,11 +9839,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
 .ct-route-badges span {
   min-height: clamp(34px, 3.2vh, 48px);
   border: 1px solid rgba(34, 211, 208, 0.08);
-  background: linear-gradient(
-      90deg,
-      rgba(34, 211, 208, 0.08),
-      rgba(255, 255, 255, 0.46)
-    ),
+  background:
+    linear-gradient(90deg, rgba(34, 211, 208, 0.08), rgba(255, 255, 255, 0.46)),
     rgba(34, 211, 208, 0.075);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
 }
@@ -9395,7 +9856,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
   padding: clamp(14px, 1.2vw, 22px);
   border: 1px solid rgba(17, 34, 58, 0.06);
   border-radius: 8px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(255, 255, 255, 0.78),
       rgba(235, 249, 255, 0.5)
@@ -9478,7 +9940,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
   display: flex;
   align-items: flex-start;
   padding: clamp(24px, 3vh, 46px) 0 clamp(20px, 2.4vh, 38px);
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 12% 24%,
       rgba(34, 211, 208, 0.11),
       transparent 24%
@@ -9496,10 +9959,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
 }
 
 .ct-scenario-section::before {
-  background-image: radial-gradient(
-      rgba(15, 174, 185, 0.12) 1px,
-      transparent 1.3px
-    ),
+  background-image:
+    radial-gradient(rgba(15, 174, 185, 0.12) 1px, transparent 1.3px),
     linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.62), transparent);
   background-size:
     28px 28px,
@@ -9566,7 +10027,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
   width: clamp(96px, 7vw, 136px);
   height: clamp(70px, 5vw, 100px);
   border-radius: 8px;
-  background: repeating-linear-gradient(
+  background:
+    repeating-linear-gradient(
       90deg,
       rgba(255, 255, 255, 0.36) 0 7px,
       transparent 7px 18px
@@ -9595,7 +10057,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
 }
 
 .ct-scenario-card:nth-child(1) {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(225, 242, 255, 0.92),
       rgba(249, 252, 255, 0.98)
@@ -9608,7 +10071,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
 }
 
 .ct-scenario-card:nth-child(2) {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(241, 237, 255, 0.92),
       rgba(249, 252, 255, 0.98)
@@ -9621,7 +10085,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
 }
 
 .ct-scenario-card:nth-child(3) {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(229, 250, 255, 0.94),
       rgba(245, 255, 249, 0.98)
@@ -9634,7 +10099,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
 }
 
 .ct-scenario-card:nth-child(4) {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(229, 253, 250, 0.94),
       rgba(247, 251, 255, 0.98)
@@ -9668,11 +10134,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
   height: clamp(74px, 4.9vw, 96px);
   border-radius: 8px;
   color: #ffffff;
-  background: linear-gradient(
-      135deg,
-      rgba(15, 174, 185, 0.94),
-      rgba(83, 145, 214, 0.88)
-    ),
+  background:
+    linear-gradient(135deg, rgba(15, 174, 185, 0.94), rgba(83, 145, 214, 0.88)),
     repeating-linear-gradient(
       90deg,
       rgba(255, 255, 255, 0.18) 0 1px,
@@ -9716,7 +10179,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
   display: flex;
   align-items: center;
   padding: clamp(20px, 2.6vh, 40px) 0 clamp(44px, 5vh, 76px);
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 52% 48%,
       rgba(34, 211, 208, 0.13),
       transparent 32%
@@ -9730,12 +10194,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
 }
 
 .ct-final-section::before {
-  background: linear-gradient(
-      90deg,
-      transparent,
-      rgba(34, 211, 208, 0.13),
-      transparent
-    ),
+  background:
+    linear-gradient(90deg, transparent, rgba(34, 211, 208, 0.13), transparent),
     repeating-linear-gradient(
       90deg,
       transparent 0 120px,
@@ -9754,7 +10214,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
   padding: clamp(38px, 4vh, 64px) clamp(42px, 4vw, 78px);
   border: 1px solid rgba(17, 34, 58, 0.085);
   border-radius: 8px;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 72% 48%,
       rgba(34, 211, 208, 0.16),
       transparent 28%
@@ -9789,7 +10250,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       100deg,
       transparent 0 30%,
       rgba(34, 211, 208, 0.1) 44%,
@@ -9844,7 +10306,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
   right: clamp(18px, 4vw, 96px);
   width: clamp(420px, 36vw, 650px);
   height: 86%;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       90deg,
       rgba(34, 211, 208, 0.12),
       rgba(117, 104, 255, 0.075),
@@ -9874,12 +10337,8 @@ html.dark body.ct-home-route .ct-chart-tooltip {
   width: clamp(120px, 9vw, 180px);
   height: clamp(120px, 9vw, 180px);
   border: 1px solid rgba(34, 211, 208, 0.24);
-  background: linear-gradient(
-      90deg,
-      transparent,
-      rgba(34, 211, 208, 0.2),
-      transparent
-    ),
+  background:
+    linear-gradient(90deg, transparent, rgba(34, 211, 208, 0.2), transparent),
     repeating-linear-gradient(
       90deg,
       transparent 0 12px,
@@ -10737,7 +11196,8 @@ html.dark body.ct-home-route .ct-home {
   --ct-muted: #718197;
   --ct-subtle: #eef7fb;
   --ct-shadow: 0 14px 38px rgba(31, 54, 82, 0.08);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       rgba(255, 255, 255, 0.72) 0%,
       rgba(245, 250, 255, 0.92) 45%,
@@ -10747,10 +11207,8 @@ html.dark body.ct-home-route .ct-home {
 }
 
 html.dark body.ct-home-route .ct-hero::before {
-  background-image: radial-gradient(
-      rgba(15, 23, 42, 0.08) 0.7px,
-      transparent 0.7px
-    ),
+  background-image:
+    radial-gradient(rgba(15, 23, 42, 0.08) 0.7px, transparent 0.7px),
     linear-gradient(90deg, rgba(34, 211, 208, 0.06) 1px, transparent 1px);
 }
 
@@ -10766,7 +11224,8 @@ html.dark body.ct-home-route .ct-scenario-card {
 }
 
 html.dark body.ct-home-route .ct-gateway-card {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       rgba(216, 239, 255, 0.94),
       rgba(255, 255, 255, 0.78)
@@ -11001,7 +11460,8 @@ html.dark body.ct-home-route .ct-final-section {
   padding: clamp(14px, 1vw, 20px);
   border: 1px solid rgba(17, 34, 58, 0.08);
   border-radius: 8px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(255, 255, 255, 0.94),
       rgba(234, 250, 252, 0.62)
@@ -11140,7 +11600,8 @@ html.dark body.ct-home-route .ct-final-section {
   padding: clamp(12px, 0.9vw, 18px) clamp(15px, 1.1vw, 22px);
   border: 1px solid rgba(17, 34, 58, 0.065);
   border-radius: 8px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(255, 255, 255, 0.86),
       rgba(238, 250, 255, 0.58)
@@ -11218,7 +11679,8 @@ html.dark body.ct-home-route .ct-final-section {
 .ct-compare-section {
   position: relative;
   padding: clamp(30px, 4vh, 62px) 0;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 78% 26%,
       rgba(34, 211, 208, 0.18),
       transparent 28%
@@ -11239,7 +11701,8 @@ html.dark body.ct-home-route .ct-final-section {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: repeating-linear-gradient(
+  background:
+    repeating-linear-gradient(
       90deg,
       transparent 0 104px,
       rgba(255, 255, 255, 0.045) 105px 106px
@@ -11286,7 +11749,8 @@ html.dark body.ct-home-route .ct-final-section {
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   color: rgba(226, 232, 240, 0.84);
-  background: linear-gradient(
+  background:
+    linear-gradient(
       145deg,
       rgba(255, 255, 255, 0.1),
       rgba(255, 255, 255, 0.035)
@@ -11299,11 +11763,8 @@ html.dark body.ct-home-route .ct-final-section {
 
 .ct-compare-card.featured {
   border-color: rgba(34, 211, 208, 0.36);
-  background: linear-gradient(
-      145deg,
-      rgba(34, 211, 208, 0.24),
-      rgba(117, 104, 255, 0.1)
-    ),
+  background:
+    linear-gradient(145deg, rgba(34, 211, 208, 0.24), rgba(117, 104, 255, 0.1)),
     rgba(255, 255, 255, 0.055);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.16),
@@ -11411,7 +11872,8 @@ html.dark body.ct-home-route .ct-final-section {
 
 /* ==================== CodeToken 首页：视觉增强迭代层 ==================== */
 .ct-hero {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       90deg,
       rgba(255, 255, 255, 0.94) 0 32%,
       rgba(255, 255, 255, 0.54) 46%,
@@ -11460,7 +11922,8 @@ html.dark body.ct-home-route .ct-final-section {
 
 .ct-hero-orbit-stage {
   width: min(700px, 100%);
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 50% 48%,
       rgba(34, 211, 208, 0.26),
       transparent 29%
@@ -11502,7 +11965,8 @@ html.dark body.ct-home-route .ct-final-section {
   padding: 12px;
   border: 1px solid rgba(17, 34, 58, 0.08);
   border-radius: 10px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(255, 255, 255, 0.92),
       rgba(232, 250, 252, 0.82)
@@ -11586,11 +12050,8 @@ html.dark body.ct-home-route .ct-final-section {
   padding: 15px;
   border: 1px solid rgba(17, 34, 58, 0.065);
   border-radius: 8px;
-  background: linear-gradient(
-      135deg,
-      rgba(255, 255, 255, 0.9),
-      rgba(238, 250, 255, 0.6)
-    ),
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(238, 250, 255, 0.6)),
     linear-gradient(90deg, rgba(34, 211, 208, 0.06), transparent);
   box-shadow:
     0 12px 30px rgba(31, 54, 82, 0.052),
@@ -11700,7 +12161,8 @@ html.dark body.ct-home-route .ct-final-section {
 
 .ct-route-canvas {
   border-radius: 10px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(255, 255, 255, 0.74),
       rgba(235, 249, 255, 0.44)
@@ -11719,7 +12181,8 @@ html.dark body.ct-home-route .ct-final-section {
 
 .ct-scenario-section {
   padding-top: clamp(56px, 6vh, 92px);
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 12% 24%,
       rgba(34, 211, 208, 0.13),
       transparent 24%
@@ -11739,7 +12202,8 @@ html.dark body.ct-home-route .ct-final-section {
 .ct-home-plan-section {
   position: relative;
   padding: clamp(58px, 7vh, 104px) 0;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       circle at 78% 18%,
       rgba(34, 211, 208, 0.16),
       transparent 28%
@@ -11758,7 +12222,8 @@ html.dark body.ct-home-route .ct-final-section {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: repeating-linear-gradient(
+  background:
+    repeating-linear-gradient(
       115deg,
       transparent 0 62px,
       rgba(15, 174, 185, 0.04) 63px 64px
@@ -11788,7 +12253,8 @@ html.dark body.ct-home-route .ct-final-section {
 .ct-home-plan-panel {
   border: 1px solid rgba(17, 34, 58, 0.075);
   border-radius: 10px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       145deg,
       rgba(255, 255, 255, 0.86),
       rgba(239, 249, 255, 0.72)
@@ -12044,7 +12510,8 @@ html.dark body.ct-home-route .ct-final-section {
 .ct-scenario-card:nth-child(2),
 .ct-scenario-card:nth-child(3),
 .ct-scenario-card:nth-child(4) {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       145deg,
       rgba(255, 255, 255, 0.72),
       rgba(239, 249, 255, 0.78)
@@ -12062,7 +12529,8 @@ html.dark body.ct-home-route .ct-final-section {
 }
 
 .ct-scenario-card:nth-child(2) {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       145deg,
       rgba(255, 255, 255, 0.72),
       rgba(244, 240, 255, 0.72)
@@ -12081,7 +12549,8 @@ html.dark body.ct-home-route .ct-final-section {
 
 .ct-scenario-card:nth-child(3),
 .ct-scenario-card:nth-child(4) {
-  background: linear-gradient(
+  background:
+    linear-gradient(
       145deg,
       rgba(255, 255, 255, 0.72),
       rgba(231, 252, 248, 0.72)
@@ -12178,7 +12647,8 @@ html.dark body.ct-home-route .ct-final-section {
   padding: 16px 18px;
   border: 1px solid rgba(103, 232, 249, 0.16);
   border-radius: 8px;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(255, 255, 255, 0.08),
       rgba(34, 211, 208, 0.06)
@@ -12269,11 +12739,8 @@ html.dark body.ct-home-route .ct-final-section {
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background: radial-gradient(
-      circle at -5% -10%,
-      var(--pb1) 0%,
-      transparent 60%
-    ),
+  background:
+    radial-gradient(circle at -5% -10%, var(--pb1) 0%, transparent 60%),
     radial-gradient(circle at 105% -10%, var(--pb2) 0%, transparent 55%),
     radial-gradient(circle at 5% 110%, var(--pb3) 0%, transparent 55%),
     radial-gradient(circle at 105% 110%, var(--pb4) 0%, transparent 50%);
@@ -12877,8 +13344,9 @@ html.dark .with-pastel-balls::before {
   display: block;
   margin: 5px 0;
   color: var(--ct-topup-teal);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 28px;
   font-weight: 900;
 }
@@ -13100,8 +13568,9 @@ html.dark .with-pastel-balls::before {
 .ct-topup-order-lines strong,
 .ct-topup-order-method strong {
   color: var(--ct-topup-ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 15px;
   font-weight: 900;
 }
@@ -13136,8 +13605,9 @@ html.dark .with-pastel-balls::before {
 .ct-topup-order-arrival strong {
   margin-top: 6px;
   color: #2563eb;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 24px;
   font-weight: 900;
 }
@@ -13377,8 +13847,9 @@ html.dark .with-pastel-balls::before {
 }
 
 .ct-topup-plan-price strong {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 39px;
   font-weight: 900;
   line-height: 1;
@@ -13583,8 +14054,9 @@ html.dark .with-pastel-balls::before {
 
 .ct-topup-empty-plan-preview-card span {
   color: var(--ct-topup-teal);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 24px;
   font-weight: 900;
 }
@@ -13694,11 +14166,8 @@ html.dark .with-pastel-balls::before {
 }
 
 .ct-topup-page::before {
-  background: linear-gradient(
-      135deg,
-      rgba(220, 252, 231, 0.35),
-      transparent 30%
-    ),
+  background:
+    linear-gradient(135deg, rgba(220, 252, 231, 0.35), transparent 30%),
     linear-gradient(225deg, rgba(219, 234, 254, 0.5), transparent 34%),
     linear-gradient(180deg, #f8fafc 0%, #edf8f6 100%);
 }
@@ -13719,11 +14188,8 @@ html.dark .with-pastel-balls::before {
 }
 
 .dark .ct-topup-page::before {
-  background: linear-gradient(
-      135deg,
-      rgba(220, 252, 231, 0.35),
-      transparent 30%
-    ),
+  background:
+    linear-gradient(135deg, rgba(220, 252, 231, 0.35), transparent 30%),
     linear-gradient(225deg, rgba(219, 234, 254, 0.5), transparent 34%),
     linear-gradient(180deg, #f8fafc 0%, #edf8f6 100%);
 }
@@ -14062,8 +14528,9 @@ html.dark .with-pastel-balls::before {
 
 .ct-topup-order-quota strong {
   color: #2563eb;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 28px;
   font-weight: 900;
 }
@@ -14208,10 +14675,9 @@ html.dark .with-pastel-balls::before {
 }
 
 .ct-topup-current-band.semi-card .semi-card-body {
-  grid-template-columns: minmax(300px, 0.9fr) minmax(120px, 0.22fr) minmax(
-      380px,
-      0.76fr
-    ) minmax(330px, 0.58fr);
+  grid-template-columns:
+    minmax(300px, 0.9fr) minmax(120px, 0.22fr) minmax(380px, 0.76fr)
+    minmax(330px, 0.58fr);
   min-height: 132px;
   gap: 24px;
 }
@@ -14629,10 +15095,9 @@ html.dark .with-pastel-balls::before {
 }
 
 .ct-topup-current-band.semi-card .semi-card-body {
-  grid-template-columns: minmax(220px, 0.82fr) 62px minmax(
-      220px,
-      0.72fr
-    ) minmax(220px, 0.58fr);
+  grid-template-columns:
+    minmax(220px, 0.82fr) 62px minmax(220px, 0.72fr)
+    minmax(220px, 0.58fr);
   gap: 18px;
   min-height: 116px;
 }
@@ -14966,11 +15431,8 @@ html.dark
 
 .ct-topup-page::before,
 .dark .ct-topup-page::before {
-  background: linear-gradient(
-      132deg,
-      rgba(240, 253, 250, 0.76),
-      transparent 32%
-    ),
+  background:
+    linear-gradient(132deg, rgba(240, 253, 250, 0.76), transparent 32%),
     linear-gradient(222deg, rgba(239, 246, 255, 0.84), transparent 34%),
     linear-gradient(180deg, #f8fafc 0%, #eef8f7 100%);
 }
@@ -16625,10 +17087,9 @@ html.dark
 
 .ct-topup-page-subscription .ct-topup-current-band.semi-card .semi-card-body {
   display: grid;
-  grid-template-columns: minmax(300px, 0.58fr) minmax(260px, 0.34fr) minmax(
-      420px,
-      0.5fr
-    ) minmax(360px, 0.42fr);
+  grid-template-columns:
+    minmax(300px, 0.58fr) minmax(260px, 0.34fr) minmax(420px, 0.5fr)
+    minmax(360px, 0.42fr);
   gap: 0;
   align-items: center;
   min-height: 150px;
@@ -17059,10 +17520,9 @@ html.dark
 
 @media (max-width: 1480px) {
   .ct-topup-page-subscription .ct-topup-current-band.semi-card .semi-card-body {
-    grid-template-columns: minmax(280px, 0.64fr) minmax(210px, 0.32fr) minmax(
-        340px,
-        0.52fr
-      ) minmax(300px, 0.42fr);
+    grid-template-columns:
+      minmax(280px, 0.64fr) minmax(210px, 0.32fr) minmax(340px, 0.52fr)
+      minmax(300px, 0.42fr);
     padding-inline: 28px !important;
   }
 
@@ -17340,7 +17800,8 @@ html.dark .ct-topup-page-affiliate.ct-topup-page::before {
   position: fixed;
   inset: 64px 0 0 var(--sidebar-current-width, 180px);
   z-index: -1;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       760px 420px at 18% 14%,
       rgba(204, 251, 241, 0.6),
       transparent 62%
@@ -17506,8 +17967,9 @@ html.dark .ct-topup-page-affiliate.ct-topup-page::before {
   display: block;
   margin-top: 7px;
   color: #0f172a;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 28px;
   font-weight: 900;
   line-height: 1;
@@ -17766,10 +18228,9 @@ html.dark .ct-topup-page-affiliate.ct-topup-page::before {
 .ct-topup-page-affiliate .ct-topup-affiliate-table-head,
 .ct-topup-page-affiliate .ct-topup-affiliate-table-row {
   display: grid;
-  grid-template-columns: minmax(190px, 1.25fr) minmax(150px, 1fr) minmax(
-      92px,
-      0.72fr
-    ) minmax(92px, 0.72fr) minmax(76px, 0.5fr);
+  grid-template-columns:
+    minmax(190px, 1.25fr) minmax(150px, 1fr) minmax(92px, 0.72fr)
+    minmax(92px, 0.72fr) minmax(76px, 0.5fr);
   gap: 14px;
   align-items: center;
 }
@@ -17928,8 +18389,9 @@ html.dark .ct-topup-page-affiliate.ct-topup-page::before {
   display: block;
   margin: 7px 0;
   color: #0f9f9a;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 30px;
   font-weight: 900;
 }
@@ -18023,7 +18485,8 @@ html.dark
 body.ct-payment-growth-route,
 html.dark body.ct-payment-growth-route {
   color: #0f172a;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       760px 420px at 24% 12%,
       rgba(204, 251, 241, 0.46),
       transparent 62%
@@ -18202,7 +18665,8 @@ html.dark body.ct-payment-growth-route .ct-topup-page::before {
   position: fixed;
   inset: 72px 0 0 var(--sidebar-current-width, 180px);
   z-index: -1;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       760px 420px at 24% 10%,
       rgba(204, 251, 241, 0.5),
       transparent 62%
@@ -19021,7 +19485,8 @@ html.dark
   .ct-topup-page.ct-dashboard-shell::before,
 html.dark body.ct-topup-subscription-route .ct-topup-page::before {
   inset: 72px 0 0 var(--sidebar-current-width, 206px) !important;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       720px 400px at 20% 6%,
       rgba(204, 251, 241, 0.52),
       transparent 64%
@@ -19459,7 +19924,8 @@ html.dark body.ct-topup-affiliate-route:not(.sidebar-collapsed) {
 body.ct-topup-affiliate-route,
 html.dark body.ct-topup-affiliate-route {
   color: #0f172a !important;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       760px 430px at 22% 6%,
       rgba(204, 251, 241, 0.54),
       transparent 63%
@@ -19674,7 +20140,8 @@ html.dark body.ct-topup-affiliate-route .ct-topup-page::before {
   position: fixed;
   inset: 72px 0 0 var(--sidebar-current-width, 206px) !important;
   z-index: -1;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       760px 430px at 22% 6%,
       rgba(204, 251, 241, 0.54),
       transparent 63%
@@ -19890,8 +20357,9 @@ html.dark body.ct-topup-affiliate-route .ct-topup-invite-metric strong {
   display: block;
   margin-top: 8px;
   color: #0f172a !important;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 28px !important;
   font-weight: 900 !important;
   line-height: 1;
@@ -20216,10 +20684,9 @@ body.ct-topup-affiliate-route .ct-topup-affiliate-table-row,
 html.dark body.ct-topup-affiliate-route .ct-topup-affiliate-table-head,
 html.dark body.ct-topup-affiliate-route .ct-topup-affiliate-table-row {
   display: grid;
-  grid-template-columns: minmax(190px, 1.25fr) minmax(150px, 1fr) minmax(
-      92px,
-      0.72fr
-    ) minmax(92px, 0.72fr) minmax(76px, 0.5fr);
+  grid-template-columns:
+    minmax(190px, 1.25fr) minmax(150px, 1fr) minmax(92px, 0.72fr)
+    minmax(92px, 0.72fr) minmax(76px, 0.5fr);
   gap: 14px;
   align-items: center;
 }
@@ -20440,8 +20907,9 @@ html.dark body.ct-topup-affiliate-route .ct-topup-transfer-card strong {
   display: block;
   margin: 7px 0;
   color: #0f9f9a !important;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 30px;
   font-weight: 900;
 }
@@ -20573,7 +21041,8 @@ html.dark body.ct-topup-subscription-route:not(.sidebar-collapsed) {
 body.ct-topup-subscription-route,
 html.dark body.ct-topup-subscription-route {
   color: #0f172a !important;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       820px 420px at 25% 0%,
       rgba(204, 251, 241, 0.58),
       transparent 62%
@@ -20811,7 +21280,8 @@ html.dark body.ct-topup-subscription-route .ct-topup-page::before {
   position: fixed;
   inset: 72px 0 0 var(--sidebar-current-width, 206px) !important;
   z-index: -1;
-  background: radial-gradient(
+  background:
+    radial-gradient(
       820px 420px at 25% 0%,
       rgba(204, 251, 241, 0.58),
       transparent 62%
@@ -21077,8 +21547,9 @@ html.dark body.ct-topup-subscription-route .ct-topup-current-days > div {
 body.ct-topup-subscription-route .ct-topup-current-days strong,
 html.dark body.ct-topup-subscription-route .ct-topup-current-days strong {
   color: #0f9f9a !important;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 30px !important;
   font-weight: 950 !important;
   line-height: 1 !important;
@@ -21121,8 +21592,9 @@ html.dark
   .ct-topup-current-progress-head
   strong {
   color: #0f172a !important;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
   font-size: 14px !important;
   font-weight: 900 !important;
 }
@@ -22511,7 +22983,8 @@ body.ct-topup-subscription-route .ct-topup-empty-plan-card.semi-card,
 html.dark body.ct-topup-subscription-route .ct-topup-empty-plan-card.semi-card {
   border: 1px solid rgba(15, 23, 42, 0.075) !important;
   border-radius: 8px !important;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       135deg,
       rgba(255, 255, 255, 0.98),
       rgba(248, 250, 252, 0.94)
@@ -27735,7 +28208,8 @@ html.dark
   overflow: hidden !important;
   border: 1px solid rgba(15, 159, 154, 0.12) !important;
   border-radius: 10px !important;
-  background: linear-gradient(
+  background:
+    linear-gradient(
       180deg,
       rgba(240, 253, 250, 0.62) 0%,
       rgba(255, 255, 255, 0.98) 34%

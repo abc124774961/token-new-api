@@ -85,6 +85,27 @@ func TestProbeSelectorSelectsLowTrafficOnlyForRecentScopes(t *testing.T) {
 	require.Equal(t, "codex-pro", candidates[0].Group)
 }
 
+func TestProbeSelectorCollapsesCandidatesToSingleModelPerChannel(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-channel-one-model-a", "gpt-4.1", "codex-plus", "codex-plus", now.Unix())
+	seedProbeSelectorRecentRequest(t, db, "req-channel-one-model-b", "gpt-5.5", "codex-plus", "codex-plus", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "multi-model-channel", "codex-plus", "gpt-4.1,gpt-5.5", 1)
+	testModel := "gpt-5.5"
+	channel.TestModel = &testModel
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", channel.Id).Update("test_model", testModel).Error)
+	model.InitChannelCache()
+
+	selector := NewProbeSelector(scheduler.NewMemoryRuntimeSnapshotStore(), nil)
+	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: time.Second})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, channel.Id, candidates[0].Channel.Id)
+	require.Equal(t, reasonLowTraffic, candidates[0].Reason)
+	require.Equal(t, "gpt-5.5", candidates[0].Model)
+	require.Equal(t, "codex-plus", candidates[0].Group)
+}
+
 func TestProbeSelectorSkipsConfigErrorIsolatedSnapshot(t *testing.T) {
 	db := setupProbeSelectorTestDB(t)
 	now := time.Now()

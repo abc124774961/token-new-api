@@ -11,10 +11,12 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -902,6 +904,8 @@ func TestBuildModelGatewayObservabilitySummaryIncludesUserRequests(t *testing.T)
 		CreatedAt:        now - 58,
 		Type:             model.LogTypeConsume,
 		RequestId:        "req-user-success",
+		UserId:           1001,
+		Username:         "request_user",
 		Quota:            1588,
 		PromptTokens:     1200,
 		CompletionTokens: 320,
@@ -943,9 +947,13 @@ func TestBuildModelGatewayObservabilitySummaryIncludesUserRequests(t *testing.T)
 	require.Empty(t, userRequests.RecentRequests[1].FinalErrorCategory)
 	require.Equal(t, 21, userRequests.RecentRequests[3].FinalChannelID)
 	require.Equal(t, "healthy-channel", userRequests.RecentRequests[3].FinalChannelName)
+	require.Equal(t, 1001, userRequests.RecentRequests[3].UserID)
+	require.Equal(t, "request_user", userRequests.RecentRequests[3].Username)
 	require.Equal(t, "vip", userRequests.RecentRequests[3].ActualGroup)
 	require.Equal(t, 0.8, userRequests.RecentRequests[3].ActualGroupRatio)
 	require.NotNil(t, userRequests.RecentRequests[3].Billing)
+	require.Equal(t, 1001, userRequests.RecentRequests[3].Billing.UserID)
+	require.Equal(t, "request_user", userRequests.RecentRequests[3].Billing.Username)
 	require.Equal(t, 1588, userRequests.RecentRequests[3].Billing.Quota)
 	require.Equal(t, 1200, userRequests.RecentRequests[3].Billing.PromptTokens)
 	require.Equal(t, 320, userRequests.RecentRequests[3].Billing.CompletionTokens)
@@ -1055,6 +1063,486 @@ func TestBuildModelGatewayObservabilitySummaryUsesSelectedGroupRatioWhenBillingG
 	require.Equal(t, 0.25, record.Billing.GroupRatio)
 }
 
+func TestModelGatewayUserRequestsExposeDynamicBillingFields(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	other, err := common.Marshal(map[string]any{
+		"billing_mode":                       "model_gateway_dynamic",
+		"billing_source_detail":              "dynamic_group_ratio",
+		"group_ratio":                        0.37,
+		"model_ratio":                        2,
+		"completion_ratio":                   1,
+		"dynamic_billing_applied":            true,
+		"dynamic_billing_ratio":              0.37,
+		"dynamic_billing_price_per_m":        1.48,
+		"dynamic_billing_sample_count":       8,
+		"dynamic_billing_static_group_ratio": 0.1,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		RequestId:        "req-dynamic-summary",
+		CreatedAt:        now - 3,
+		UpdatedAt:        now - 1,
+		CompletedAt:      now - 1,
+		RequestedModel:   "gpt-test",
+		RequestedGroup:   "auto",
+		SelectedGroup:    "codex-plus",
+		FinalChannelID:   4,
+		FinalChannelName: "toioto",
+		Attempts:         1,
+		FinalSuccess:     true,
+		FinalStatusCode:  200,
+		DurationMs:       900,
+		TTFTMs:           120,
+	}).Error)
+	require.NoError(t, db.Create(&model.Log{
+		Type:             model.LogTypeConsume,
+		CreatedAt:        now - 1,
+		RequestId:        "req-dynamic-summary",
+		ModelName:        "gpt-test",
+		Group:            "codex-plus",
+		ChannelId:        4,
+		PromptTokens:     100,
+		CompletionTokens: 50,
+		Quota:            111,
+		Other:            string(other),
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	record := response.UserRequests.RecentRequests[0]
+	require.Equal(t, "codex-plus", record.ActualGroup)
+	require.Equal(t, 0.37, record.ActualGroupRatio)
+	require.NotNil(t, record.Billing)
+	require.Equal(t, "model_gateway_dynamic", record.Billing.BillingMode)
+	require.True(t, record.Billing.DynamicBillingApplied)
+	require.Equal(t, 0.37, record.Billing.DynamicBillingRatio)
+	require.Equal(t, 1.48, record.Billing.DynamicBillingPricePerM)
+	require.Equal(t, 8, record.Billing.DynamicBillingSampleCount)
+}
+
+func TestModelGatewayObservabilitySummaryExposesDynamicBillingOverview(t *testing.T) {
+	setupModelGatewayReplayControllerTestDB(t)
+	resetModelGatewayObservabilitySummaryCache()
+	defer resetModelGatewayObservabilitySummaryCache()
+
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		DynamicBillingEnabled:        true,
+		DynamicBillingProfitRate:     0.2,
+		DynamicBillingWindowSamples:  300,
+		DynamicBillingMinSamples:     5,
+		DynamicBillingRefreshSeconds: 30,
+		DynamicBillingMaxAgeSeconds:  300,
+		GroupPolicies: map[string]scheduler_setting.GroupPolicySetting{
+			"auto": {
+				BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+				CandidateGroups:  []string{"codex-plus", "codex-pro"},
+			},
+		},
+	})
+	defer restoreSetting()
+
+	now := common.GetTimestamp()
+	restoreBaselines := modelgatewaydynamicbilling.StoreDefaultBaselinesForTest(map[string]modelgatewaydynamicbilling.RatioBaseline{
+		"gpt-5.5:codex-plus": {
+			RequestedModel: "gpt-5.5",
+			Group:          "codex-plus",
+			Ratio:          0.37,
+			PricePerM:      1.48,
+			SampleCount:    8,
+			CalculatedAt:   now - 30,
+		},
+		"gpt-5.4:codex-pro": {
+			RequestedModel: "gpt-5.4",
+			Group:          "codex-pro",
+			Ratio:          0.41,
+			PricePerM:      1.66,
+			SampleCount:    10,
+			CalculatedAt:   now - 20,
+		},
+	})
+	defer restoreBaselines()
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+	})
+	require.NoError(t, err)
+	require.True(t, response.DynamicBilling.Enabled)
+	require.Equal(t, 1, response.DynamicBilling.PolicyCount)
+	require.Equal(t, 1, response.DynamicBilling.ActiveCount)
+	require.Equal(t, 0, response.DynamicBilling.WaitingCount)
+	require.Equal(t, 300, response.DynamicBilling.WindowSamples)
+	require.Len(t, response.DynamicBilling.Groups, 1)
+	group := response.DynamicBilling.Groups[0]
+	require.Equal(t, "auto", group.PolicyGroup)
+	require.Equal(t, []string{"auto", "codex-plus", "codex-pro"}, group.TargetGroups)
+	require.Equal(t, "active", group.Status)
+	require.Equal(t, 0.41, group.CurrentRatio)
+	require.Equal(t, 1.66, group.CurrentPricePerM)
+	require.Equal(t, "codex-pro", group.CurrentTargetGroup)
+	require.Equal(t, "gpt-5.4", group.CurrentModel)
+	require.Equal(t, "gpt-5.4", group.ReferenceModel)
+	require.Equal(t, 0.37, group.MinRatio)
+	require.Equal(t, 0.41, group.MaxRatio)
+	require.Equal(t, 1.48, group.MinPricePerM)
+	require.Equal(t, 1.66, group.MaxPricePerM)
+	require.InEpsilon(t, 0.3922222222, group.AverageRatio, 0.000001)
+	require.InEpsilon(t, 1.58, group.AveragePricePerM, 0.000001)
+	require.InEpsilon(t, 0.3922222222, group.BlendedRatio, 0.000001)
+	require.InEpsilon(t, 1.58, group.BlendedPricePerM, 0.000001)
+	require.Equal(t, 18, group.SampleCount)
+	require.Equal(t, 18, group.EffectiveSamples)
+	require.Equal(t, 2, group.ModelCount)
+	require.True(t, response.DynamicBilling7d.Enabled)
+	require.Equal(t, 7*24*60, response.DynamicBilling7d.WindowMinutes)
+	require.Len(t, response.DynamicBilling7d.Groups, 1)
+}
+
+func TestModelGatewayObservabilitySummaryCurrentDynamicBillingPrefersRatioOverPrice(t *testing.T) {
+	setupModelGatewayReplayControllerTestDB(t)
+	resetModelGatewayObservabilitySummaryCache()
+	defer resetModelGatewayObservabilitySummaryCache()
+
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		DynamicBillingEnabled:        true,
+		DynamicBillingProfitRate:     0.2,
+		DynamicBillingWindowSamples:  300,
+		DynamicBillingMinSamples:     1,
+		DynamicBillingRefreshSeconds: 30,
+		DynamicBillingMaxAgeSeconds:  300,
+		GroupPolicies: map[string]scheduler_setting.GroupPolicySetting{
+			"auto": {
+				BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+				CandidateGroups:  []string{"codex-plus"},
+			},
+		},
+	})
+	defer restoreSetting()
+
+	now := common.GetTimestamp()
+	restoreBaselines := modelgatewaydynamicbilling.StoreDefaultBaselinesForTest(map[string]modelgatewaydynamicbilling.RatioBaseline{
+		"model-low-ratio-high-price:codex-plus": {
+			RequestedModel: "model-low-ratio-high-price",
+			Group:          "codex-plus",
+			Ratio:          0.2,
+			PricePerM:      10,
+			SampleCount:    4,
+			CalculatedAt:   now,
+		},
+		"model-high-ratio-low-price:codex-plus": {
+			RequestedModel: "model-high-ratio-low-price",
+			Group:          "codex-plus",
+			Ratio:          0.5,
+			PricePerM:      1,
+			SampleCount:    3,
+			CalculatedAt:   now,
+		},
+	})
+	defer restoreBaselines()
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.DynamicBilling.Groups, 1)
+	group := response.DynamicBilling.Groups[0]
+	require.Equal(t, 0.5, group.CurrentRatio)
+	require.Equal(t, 1.0, group.CurrentPricePerM)
+	require.Equal(t, "model-high-ratio-low-price", group.CurrentModel)
+}
+
+func TestModelGatewayObservabilitySummary7dOverviewSkipsSamplesBeforeDynamicBillingEnabledAt(t *testing.T) {
+	setupModelGatewayReplayControllerTestDB(t)
+	resetModelGatewayObservabilitySummaryCache()
+	defer resetModelGatewayObservabilitySummaryCache()
+
+	now := common.GetTimestamp()
+	enabledAt := now - 3600
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		DynamicBillingEnabled:        true,
+		DynamicBillingEnabledAt:      enabledAt,
+		DynamicBillingProfitRate:     0.2,
+		DynamicBillingWindowSamples:  300,
+		DynamicBillingMinSamples:     1,
+		DynamicBillingRefreshSeconds: 30,
+		DynamicBillingMaxAgeSeconds:  300,
+		GroupPolicies: map[string]scheduler_setting.GroupPolicySetting{
+			"auto": {
+				BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+				CandidateGroups:  []string{"codex-plus"},
+			},
+		},
+	})
+	defer restoreSetting()
+
+	db := model.DB
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		RequestId:       "req-before-enabled",
+		CreatedAt:       enabledAt - 60,
+		UpdatedAt:       enabledAt - 60,
+		CompletedAt:     enabledAt - 60,
+		RequestedModel:  "gpt-test",
+		RequestedGroup:  "auto",
+		SelectedGroup:   "codex-plus",
+		FinalChannelID:  4,
+		Attempts:        1,
+		FinalSuccess:    true,
+		FinalStatusCode: 200,
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		RequestId:       "req-after-enabled",
+		CreatedAt:       enabledAt + 60,
+		UpdatedAt:       enabledAt + 60,
+		CompletedAt:     enabledAt + 60,
+		RequestedModel:  "gpt-test",
+		RequestedGroup:  "auto",
+		SelectedGroup:   "codex-plus",
+		FinalChannelID:  4,
+		Attempts:        1,
+		FinalSuccess:    true,
+		FinalStatusCode: 200,
+	}).Error)
+	beforeOther, err := common.Marshal(map[string]any{
+		"dynamic_billing_applied":     true,
+		"dynamic_billing_group":       "codex-plus",
+		"dynamic_billing_ratio":       9.99,
+		"dynamic_billing_price_per_m": 39.96,
+	})
+	require.NoError(t, err)
+	afterOther, err := common.Marshal(map[string]any{
+		"dynamic_billing_applied":     true,
+		"dynamic_billing_group":       "codex-plus",
+		"dynamic_billing_ratio":       1.2,
+		"dynamic_billing_price_per_m": 4.8,
+	})
+	require.NoError(t, err)
+	require.NoError(t, model.LOG_DB.Create(&model.Log{
+		Type:             model.LogTypeConsume,
+		RequestId:        "req-before-enabled",
+		CreatedAt:        enabledAt - 60,
+		ModelName:        "gpt-test",
+		Group:            "codex-plus",
+		PromptTokens:     100,
+		CompletionTokens: 100,
+		Quota:            100,
+		Other:            string(beforeOther),
+	}).Error)
+	require.NoError(t, model.LOG_DB.Create(&model.Log{
+		Type:             model.LogTypeConsume,
+		RequestId:        "req-after-enabled",
+		CreatedAt:        enabledAt + 60,
+		ModelName:        "gpt-test",
+		Group:            "codex-plus",
+		PromptTokens:     100,
+		CompletionTokens: 100,
+		Quota:            100,
+		Other:            string(afterOther),
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.DynamicBilling7d.Groups, 1)
+	group := response.DynamicBilling7d.Groups[0]
+	require.Equal(t, "auto", group.PolicyGroup)
+	require.Equal(t, "codex-plus", group.CurrentTargetGroup)
+	require.Equal(t, "gpt-test", group.CurrentModel)
+	require.Equal(t, "gpt-test", group.ReferenceModel)
+	require.Equal(t, 1, group.SampleCount)
+	require.Equal(t, "active", group.Status)
+	require.InEpsilon(t, 1.2, group.CurrentRatio, 0.000001)
+	require.InEpsilon(t, 4.8, group.CurrentPricePerM, 0.000001)
+	require.InEpsilon(t, 1.2, group.AverageRatio, 0.000001)
+	require.InEpsilon(t, 4.8, group.AveragePricePerM, 0.000001)
+	require.InEpsilon(t, 1.2, group.BlendedRatio, 0.000001)
+	require.InEpsilon(t, 4.8, group.BlendedPricePerM, 0.000001)
+	require.InEpsilon(t, 1.2, group.MinRatio, 0.000001)
+	require.InEpsilon(t, 1.2, group.MaxRatio, 0.000001)
+	require.InEpsilon(t, 4.8, group.MinPricePerM, 0.000001)
+	require.InEpsilon(t, 4.8, group.MaxPricePerM, 0.000001)
+	require.Equal(t, 1, group.EffectiveSamples)
+	require.Equal(t, 1, group.ModelCount)
+	require.GreaterOrEqual(t, group.LatestCalculatedAt, enabledAt)
+}
+
+func TestModelGatewayObservabilitySummary7dOverviewWaitsWithoutAppliedSamplesAfterEnabledAt(t *testing.T) {
+	setupModelGatewayReplayControllerTestDB(t)
+	resetModelGatewayObservabilitySummaryCache()
+	defer resetModelGatewayObservabilitySummaryCache()
+
+	now := common.GetTimestamp()
+	enabledAt := now - 3600
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		DynamicBillingEnabled:        true,
+		DynamicBillingEnabledAt:      enabledAt,
+		DynamicBillingProfitRate:     0.2,
+		DynamicBillingWindowSamples:  300,
+		DynamicBillingMinSamples:     1,
+		DynamicBillingRefreshSeconds: 30,
+		DynamicBillingMaxAgeSeconds:  300,
+		GroupPolicies: map[string]scheduler_setting.GroupPolicySetting{
+			"auto": {
+				BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+				CandidateGroups:  []string{"codex-plus"},
+			},
+		},
+	})
+	defer restoreSetting()
+
+	require.NoError(t, model.DB.Create(&model.ModelGatewayUserRequestSummary{
+		RequestId:       "req-not-applied",
+		CreatedAt:       enabledAt + 60,
+		UpdatedAt:       enabledAt + 60,
+		CompletedAt:     enabledAt + 60,
+		RequestedModel:  "gpt-test",
+		RequestedGroup:  "auto",
+		SelectedGroup:   "codex-plus",
+		FinalChannelID:  4,
+		Attempts:        1,
+		FinalSuccess:    true,
+		FinalStatusCode: 200,
+	}).Error)
+
+	other, err := common.Marshal(map[string]any{
+		"dynamic_billing_applied":     false,
+		"dynamic_billing_group":       "codex-plus",
+		"dynamic_billing_ratio":       0.8,
+		"dynamic_billing_price_per_m": 3.2,
+	})
+	require.NoError(t, err)
+	require.NoError(t, model.LOG_DB.Create(&model.Log{
+		Type:             model.LogTypeConsume,
+		RequestId:        "req-not-applied",
+		CreatedAt:        enabledAt + 60,
+		ModelName:        "gpt-test",
+		Group:            "codex-plus",
+		PromptTokens:     100,
+		CompletionTokens: 100,
+		Quota:            100,
+		Other:            string(other),
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.DynamicBilling7d.Groups, 1)
+	group := response.DynamicBilling7d.Groups[0]
+	require.Equal(t, "auto", group.PolicyGroup)
+	require.Equal(t, "waiting_samples", group.Status)
+	require.Zero(t, group.SampleCount)
+	require.Zero(t, group.EffectiveSamples)
+	require.Zero(t, group.CurrentRatio)
+	require.Zero(t, group.CurrentPricePerM)
+	require.Zero(t, group.AverageRatio)
+	require.Zero(t, group.AveragePricePerM)
+	require.Zero(t, group.BlendedRatio)
+	require.Zero(t, group.BlendedPricePerM)
+	require.Equal(t, 1, response.DynamicBilling7d.WaitingCount)
+	require.Zero(t, response.DynamicBilling7d.ActiveCount)
+}
+
+func TestModelGatewayObservabilitySummaryDynamicBillingOverviewWaitingWithoutBaseline(t *testing.T) {
+	setupModelGatewayReplayControllerTestDB(t)
+	resetModelGatewayObservabilitySummaryCache()
+	defer resetModelGatewayObservabilitySummaryCache()
+
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		DynamicBillingEnabled:        true,
+		DynamicBillingWindowSamples:  300,
+		DynamicBillingMinSamples:     5,
+		DynamicBillingRefreshSeconds: 30,
+		DynamicBillingMaxAgeSeconds:  300,
+		GroupPolicies: map[string]scheduler_setting.GroupPolicySetting{
+			"auto": {
+				BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+				CandidateGroups:  []string{"codex-plus"},
+			},
+		},
+	})
+	defer restoreSetting()
+
+	restoreBaselines := modelgatewaydynamicbilling.StoreDefaultBaselinesForTest(map[string]modelgatewaydynamicbilling.RatioBaseline{})
+	defer restoreBaselines()
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.DynamicBilling.Groups, 1)
+	require.Equal(t, "waiting_samples", response.DynamicBilling.Groups[0].Status)
+	require.Equal(t, 1, response.DynamicBilling.WaitingCount)
+}
+
+func TestModelGatewayObservabilitySummaryDynamicBillingOverviewGlobalDisabled(t *testing.T) {
+	setupModelGatewayReplayControllerTestDB(t)
+	resetModelGatewayObservabilitySummaryCache()
+	defer resetModelGatewayObservabilitySummaryCache()
+
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		DynamicBillingEnabled: false,
+		GroupPolicies: map[string]scheduler_setting.GroupPolicySetting{
+			"auto": {
+				BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+				CandidateGroups:  []string{"codex-plus"},
+			},
+		},
+	})
+	defer restoreSetting()
+
+	restoreBaselines := modelgatewaydynamicbilling.StoreDefaultBaselinesForTest(map[string]modelgatewaydynamicbilling.RatioBaseline{
+		"gpt-5.5:codex-plus": {
+			RequestedModel: "gpt-5.5",
+			Group:          "codex-plus",
+			Ratio:          0.37,
+			PricePerM:      1.48,
+			SampleCount:    8,
+			CalculatedAt:   common.GetTimestamp() - 30,
+		},
+	})
+	defer restoreBaselines()
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+	})
+	require.NoError(t, err)
+	require.False(t, response.DynamicBilling.Enabled)
+	require.Len(t, response.DynamicBilling.Groups, 1)
+	require.Equal(t, "global_disabled", response.DynamicBilling.Groups[0].Status)
+}
+
 func TestBuildModelGatewayObservabilitySummaryUserRequestViewSkipsExecutionRecords(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()
@@ -1095,6 +1583,55 @@ func TestBuildModelGatewayObservabilitySummaryUserRequestViewSkipsExecutionRecor
 	require.Equal(t, int64(1), response.UserRequests.Summary.Successes)
 	require.Len(t, response.UserRequests.RecentRequests, 1)
 	require.Equal(t, "req-user-view", response.UserRequests.RecentRequests[0].RequestID)
+}
+
+func TestBuildModelGatewayObservabilitySummaryUserRequestUsesDispatchUserFallback(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.User{
+		Id:       2001,
+		Username: "dispatch_user",
+		Password: "password",
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		CreatedAt:      now - 10,
+		UpdatedAt:      now - 9,
+		CompletedAt:    now - 8,
+		RequestId:      "req-dispatch-user",
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		RequestedModel: "gpt-5.5",
+		Attempts:       1,
+		FinalSuccess:   true,
+		DurationMs:     900,
+		TTFTMs:         120,
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelExecutionRecord{
+		CreatedAt:      now - 9,
+		RequestId:      "req-dispatch-user",
+		UserId:         2001,
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		RequestedModel: "gpt-5.5",
+		ChannelId:      8,
+		PolicyMode:     "active",
+		SmartHandled:   true,
+		ScoreTotal:     0.92,
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	record := response.UserRequests.RecentRequests[0]
+	require.Equal(t, "req-dispatch-user", record.RequestID)
+	require.Equal(t, 2001, record.UserID)
+	require.Equal(t, "dispatch_user", record.Username)
+	require.NotNil(t, record.DispatchRecord)
 }
 
 func TestBuildModelGatewayObservabilitySummaryUsesDefaultScanLimit(t *testing.T) {

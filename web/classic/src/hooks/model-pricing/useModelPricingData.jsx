@@ -97,12 +97,19 @@ export const useModelPricingData = () => {
 
   const filteredModels = useMemo(() => {
     let result = models;
+    const matchesGroup = (model, group) => {
+      const modelGroups = Array.isArray(model.enable_groups)
+        ? model.enable_groups
+        : [];
+      if (group === 'auto') {
+        return autoGroups.some((autoGroup) => modelGroups.includes(autoGroup));
+      }
+      return modelGroups.includes(group);
+    };
 
     // 分组筛选
     if (filterGroup !== 'all') {
-      result = result.filter((model) =>
-        model.enable_groups.includes(filterGroup),
-      );
+      result = result.filter((model) => matchesGroup(model, filterGroup));
     }
 
     // 计费类型筛选
@@ -166,6 +173,7 @@ export const useModelPricingData = () => {
     filterEndpointType,
     filterVendor,
     filterTag,
+    autoGroups,
   ]);
 
   const rowSelection = useMemo(
@@ -292,10 +300,12 @@ export const useModelPricingData = () => {
     setSelectedGroup(group);
     setFilterGroup(group);
     if (group === 'all') {
-      showInfo(t('已切换至最优倍率视图，每个模型使用其最低倍率分组'));
+      showInfo(t('已切换至最优分组价格视图，每个模型使用其最低价格分组'));
+    } else if (group === 'auto') {
+      showInfo(t('当前查看 auto 分组链路，价格按可用实际分组计算'));
     } else {
       showInfo(
-        t('当前查看的分组为：{{group}}，倍率为：{{ratio}}', {
+        t('当前查看的分组为：{{group}}，分组倍率为：{{ratio}}', {
           group: group,
           ratio: groupRatio[group] ?? 1,
         }),

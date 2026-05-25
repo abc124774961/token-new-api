@@ -229,6 +229,7 @@ export const processGroupsData = (data, userGroup) => {
     value: group,
     ratio: info.ratio,
     fullLabel: info.desc,
+    dynamic_billing: info.dynamic_billing || null,
   }));
 
   if (groupOptions.length === 0) {

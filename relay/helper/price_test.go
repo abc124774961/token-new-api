@@ -9,10 +9,14 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -104,4 +108,183 @@ func TestApplySelectedGroupRatioUsesActualSelectedGroupForAutoBilling(t *testing
 	require.Equal(t, 0.1, info.PriceData.GroupRatioInfo.GroupRatio)
 	require.Equal(t, 0.1, info.TieredBillingSnapshot.GroupRatio)
 	require.Equal(t, 100, info.TieredBillingSnapshot.EstimatedQuotaAfterGroup)
+}
+
+func TestApplySelectedGroupRatioUsesDynamicBillingForSelectedGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"auto":1,"codex-plus":0.1}`))
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		DynamicBillingEnabled:       true,
+		DynamicBillingProfitRate:    0.2,
+		DynamicBillingMinSamples:    1,
+		DynamicBillingMaxAgeSeconds: 300,
+	})
+	now := time.Now().Unix()
+	restoreBaselines := modelgatewaydynamicbilling.StoreDefaultBaselinesForTest(map[string]modelgatewaydynamicbilling.RatioBaseline{
+		"gpt-test\x00codex-plus": {
+			RequestedModel: "gpt-test",
+			Group:          "codex-plus",
+			Ratio:          0.37,
+			SampleCount:    3,
+			CalculatedAt:   now,
+			WindowStart:    now - 60,
+			WindowEnd:      now,
+			ProfitRate:     0.2,
+		},
+	})
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroupRatio))
+		restoreSetting()
+		restoreBaselines()
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "auto")
+	modelgatewayintegration.SetSelectedPlan(ctx, &core.DispatchPlan{
+		SelectedGroup:    "codex-plus",
+		BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+	})
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-test",
+		TokenGroup:      "auto",
+		UserGroup:       "default",
+		UsingGroup:      "auto",
+		PriceData:       types.PriceData{GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1}},
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+			GroupRatio:                1,
+			EstimatedQuotaBeforeGroup: 1000,
+			EstimatedQuotaAfterGroup:  1000,
+		},
+	}
+
+	groupRatioInfo := ApplySelectedGroupRatio(ctx, info, "codex-plus")
+
+	require.Equal(t, 0.37, groupRatioInfo.GroupRatio)
+	require.Equal(t, 0.37, info.PriceData.GroupRatioInfo.GroupRatio)
+	require.NotNil(t, info.DynamicBilling)
+	require.True(t, info.DynamicBilling.Applied)
+	require.Equal(t, 0.1, info.DynamicBilling.StaticGroupRatio)
+	require.Equal(t, 370, info.TieredBillingSnapshot.EstimatedQuotaAfterGroup)
+	require.Equal(t, 370, info.PriceData.QuotaToPreConsume)
+	require.Equal(t, 1000.0, info.PriceData.QuotaBeforeGroup)
+}
+
+func TestModelPriceHelperUsesDynamicBillingForPreselectedPlan(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
+	oldModelRatio := ratio_setting.ModelRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"codex-plus":0.1}`))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-test":2}`))
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		DynamicBillingEnabled:       true,
+		DynamicBillingProfitRate:    0.2,
+		DynamicBillingMinSamples:    1,
+		DynamicBillingMaxAgeSeconds: 300,
+	})
+	now := time.Now().Unix()
+	restoreBaselines := modelgatewaydynamicbilling.StoreDefaultBaselinesForTest(map[string]modelgatewaydynamicbilling.RatioBaseline{
+		"gpt-test\x00codex-plus": {
+			RequestedModel: "gpt-test",
+			Group:          "codex-plus",
+			Ratio:          0.37,
+			PricePerM:      1.48,
+			SampleCount:    3,
+			CalculatedAt:   now,
+			WindowStart:    now - 60,
+			WindowEnd:      now,
+			ProfitRate:     0.2,
+		},
+	})
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroupRatio))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldModelRatio))
+		restoreSetting()
+		restoreBaselines()
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "codex-plus")
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "codex-plus")
+	modelgatewayintegration.SetSelectedPlan(ctx, &core.DispatchPlan{
+		RequestedGroup:    "codex-plus",
+		SelectedGroup:     "codex-plus",
+		BillingRatioMode:  scheduler_setting.BillingRatioModeDynamic,
+	})
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-test",
+		TokenGroup:      "codex-plus",
+		UserGroup:       "default",
+		UsingGroup:      "codex-plus",
+	}
+
+	priceData, err := ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{})
+	require.NoError(t, err)
+	require.NotNil(t, info.DynamicBilling)
+	require.True(t, info.DynamicBilling.Applied)
+	require.Equal(t, 0.37, priceData.GroupRatioInfo.GroupRatio)
+	require.Equal(t, 0.37, info.PriceData.GroupRatioInfo.GroupRatio)
+}
+
+func TestApplySelectedGroupRatioUpdatesPreConsumeForDynamicRatio(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"auto":1,"codex-plus":0.1}`))
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		DynamicBillingEnabled:       true,
+		DynamicBillingMinSamples:    1,
+		DynamicBillingMaxAgeSeconds: 300,
+	})
+	now := time.Now().Unix()
+	restoreBaselines := modelgatewaydynamicbilling.StoreDefaultBaselinesForTest(map[string]modelgatewaydynamicbilling.RatioBaseline{
+		"gpt-test\x00codex-plus": {
+			RequestedModel: "gpt-test",
+			Group:          "codex-plus",
+			Ratio:          0.4,
+			SampleCount:    5,
+			CalculatedAt:   now,
+		},
+	})
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroupRatio))
+		restoreSetting()
+		restoreBaselines()
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "auto")
+	modelgatewayintegration.SetSelectedPlan(ctx, &core.DispatchPlan{
+		SelectedGroup:    "codex-plus",
+		BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+	})
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-test",
+		TokenGroup:      "auto",
+		UserGroup:       "default",
+		UsingGroup:      "auto",
+		PriceData: types.PriceData{
+			ModelRatio:        2,
+			QuotaBeforeGroup:  1000,
+			QuotaToPreConsume: 100,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 1,
+			},
+		},
+	}
+
+	groupRatioInfo := ApplySelectedGroupRatio(ctx, info, "codex-plus")
+
+	require.Equal(t, 0.4, groupRatioInfo.GroupRatio)
+	require.NotNil(t, info.DynamicBilling)
+	require.True(t, info.DynamicBilling.Applied)
+	require.Equal(t, 400, info.PriceData.QuotaToPreConsume)
 }

@@ -994,6 +994,7 @@ user_id/token_id + group + model + endpoint + capability_fingerprint
 - cache-aware sticky 主要面向上游 prompt/KV cache 命中。
 - cache-aware sticky 的保留阈值更强，默认要求锁定渠道分数 `>= bestScore * 0.75` 即可保留。
 - 健康状态和能力匹配仍然高于缓存亲和。
+- `cost_first` 策略下允许“成本逃逸”，但必须带滞后阈值：只有候选渠道成本明显更低、调度分明显更高、样本充足且成功率没有明显倒退时，才解除普通 sticky；如果是 cache-aware sticky，则使用更高的成本差距和分数差距门槛，避免过度切换导致上游 prompt/KV cache 命中率下降。
 
 该设计复用现有 `channel_affinity` 能力：当前项目已经支持 `/v1/responses` 的 `prompt_cache_key` 亲和，并会统计 cached tokens 命中情况。智能调度模块只将其提升为 scheduler 的标准输入信号。
 

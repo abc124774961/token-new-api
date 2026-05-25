@@ -28,6 +28,7 @@ type DefaultRuntimeObservability struct {
 	CircuitBreaker        *scheduler.SyncedCircuitBreaker
 	LocalCircuitBreaker   *scheduler.CircuitBreaker
 	StickyRouter          *scheduler.MemoryStickyRouter
+	CostBaselineCache     *scheduler.CostBaselineCache
 	RuntimeSyncStore      scheduler.RuntimeSyncStore
 	RuntimeSyncEventStore *scheduler.RuntimeSyncEventStore
 	QueueSnapshotSyncer   *scheduler.RuntimeQueueSnapshotSyncer
@@ -81,6 +82,7 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 		}
 		snapshotStore := scheduler.NewSyncedRuntimeSnapshotStore(localSnapshotStore, runtimeSyncStore)
 		snapshotPersistence := scheduler.NewRuntimeSnapshotPersistence(snapshotStore, scheduler.RuntimeSnapshotPersistenceOptions{})
+		costBaselineCache := scheduler.NewCostBaselineCache(time.Duration(maxInt(runtimePolicy.SnapshotRefreshMs, 100)) * time.Millisecond)
 		runtimeSnapshotCtx := context.Background()
 		if snapshotPersistence.Available(runtimeSnapshotCtx) {
 			if err := snapshotPersistence.Restore(runtimeSnapshotCtx); err != nil {
@@ -108,6 +110,7 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 			}
 		}
 		snapshotPersistence.Start()
+		costBaselineCache.Start(runtimeSnapshotCtx)
 		localCircuitBreaker := scheduler.NewCircuitBreaker(scheduler.CircuitBreakerOptions{
 			FailureThreshold:   runtimePolicy.CircuitFailureThreshold,
 			MinSamples:         runtimePolicy.CircuitMinSamples,
@@ -125,16 +128,17 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 			FailurePolicy:        scheduler.StickyFailurePolicy(runtimePolicy.StickyFailurePolicy),
 			Store:                scheduler.NewHybridStickyStore(0),
 		}, scheduler.NewServiceCacheAffinitySignalAdapter())
-		smartSelector := scheduler.NewDefaultSmartChannelSelector(
-			NewModelCandidatePoolBuilder(),
-			snapshotStore,
-			scheduler.NewScoreCalculatorFactory(runtimePolicy.ScoreWeights),
-		).WithRuntimeSnapshotEnricher(scheduler.NewRuntimeSnapshotEnricher(
+		runtimeEnricher := scheduler.NewRuntimeSnapshotEnricher(
 			scheduler.NewServiceRuntimeStateProvider(),
 			runtimePolicy.QueueTimeoutMs,
 			runtimePolicy.QueueMaxDepth,
 			runtimePolicy.QueueDepthMultiplier,
-		).WithCircuitBreaker(circuitBreaker)).WithStickyRouter(stickyRouter)
+		).WithCircuitBreaker(circuitBreaker).WithCostBaselineProvider(costBaselineCache)
+		smartSelector := scheduler.NewDefaultSmartChannelSelector(
+			NewModelCandidatePoolBuilder(),
+			snapshotStore,
+			scheduler.NewScoreCalculatorFactory(runtimePolicy.ScoreWeights),
+		).WithRuntimeSnapshotEnricher(runtimeEnricher).WithCostBaselineProvider(costBaselineCache).WithStickyRouter(stickyRouter)
 		healthMonitor := scheduler.NewRuntimeHealthMonitor(snapshotStore, circuitBreaker)
 		recorder := modelgateway.NewExecutionRecorderChain(
 			recording.NewAsyncExecutionRecorder(1024).WithPostProcessors(healthMonitor),
@@ -153,6 +157,7 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 			CircuitBreaker:        circuitBreaker,
 			LocalCircuitBreaker:   localCircuitBreaker,
 			StickyRouter:          stickyRouter,
+			CostBaselineCache:     costBaselineCache,
 			RuntimeSyncStore:      runtimeSyncStore,
 			RuntimeSyncEventStore: runtimeSyncEventStore,
 			QueueSnapshotSyncer:   queueSnapshotSyncer,
@@ -181,6 +186,9 @@ func ResetDefaultRuntimeObservabilityDeps() {
 	if defaultRuntime != nil && defaultRuntime.SnapshotPersistence != nil {
 		defaultRuntime.SnapshotPersistence.Close()
 	}
+	if defaultRuntime != nil && defaultRuntime.CostBaselineCache != nil {
+		defaultRuntime.CostBaselineCache.Close()
+	}
 	defaultWrapperOnce = sync.Once{}
 	defaultWrapper = nil
 	defaultRuntime = nil
@@ -205,6 +213,13 @@ func defaultRuntimeSyncEventFlushInterval(settings RuntimePolicySettings) time.D
 		return interval
 	}
 	return 500 * time.Millisecond
+}
+
+func maxInt(left int, right int) int {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func defaultRuntimeSyncNodeID(configured string) string {

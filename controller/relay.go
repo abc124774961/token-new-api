@@ -730,12 +730,47 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	}
 
 	helper.ApplySelectedGroupRatio(c, info, selectGroup)
+	if apiErr := reserveSelectedGroupBilling(c, info); apiErr != nil {
+		return nil, apiErr
+	}
 	logRelaySelectedChannelTrace(c, info, retryParam, channel, selectGroup, false)
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
 	if newAPIError != nil {
 		return nil, newAPIError
 	}
 	return channel, nil
+}
+
+func reserveSelectedGroupBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
+	if info == nil || info.Billing == nil || info.PriceData.FreeModel {
+		return nil
+	}
+	targetQuota := selectedGroupPreConsumeTarget(info)
+	if targetQuota <= info.Billing.GetPreConsumedQuota() {
+		return nil
+	}
+	if err := info.Billing.Reserve(targetQuota); err != nil {
+		return types.NewErrorWithStatusCode(
+			fmt.Errorf("selected group billing reserve failed: %w", err),
+			types.ErrorCodeInsufficientUserQuota,
+			http.StatusForbidden,
+			types.ErrOptionWithSkipRetry(),
+			types.ErrOptionWithNoRecordErrorLog(),
+		)
+	}
+	info.PriceData.QuotaToPreConsume = targetQuota
+	return nil
+}
+
+func selectedGroupPreConsumeTarget(info *relaycommon.RelayInfo) int {
+	if info == nil {
+		return 0
+	}
+	if snap := info.TieredBillingSnapshot; snap != nil {
+		return snap.EstimatedQuotaAfterGroup
+	}
+	priceData := info.PriceData
+	return priceData.QuotaToPreConsume
 }
 
 func selectedModelGatewayPlan(c *gin.Context) *modelgatewaycore.DispatchPlan {
@@ -809,6 +844,8 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 	}
 	result := &modelgatewaycore.AttemptResult{
 		RequestID:         info.RequestId,
+		UserID:            info.UserId,
+		TokenID:           info.TokenId,
 		AttemptIndex:      info.RetryIndex,
 		ChannelID:         channel.Id,
 		ChannelName:       channel.Name,

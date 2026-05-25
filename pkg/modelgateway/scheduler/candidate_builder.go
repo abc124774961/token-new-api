@@ -59,6 +59,7 @@ func (b *StaticCandidatePoolBuilder) Build(req *core.DispatchRequest, policy cor
 			if candidate.RuntimeKey.EndpointType == "" {
 				candidate.RuntimeKey.EndpointType = req.EndpointType
 			}
+			candidate.RequiresCodexImageTool = req.RequiresCodexImageTool
 		}
 		candidates = append(candidates, candidate)
 	}

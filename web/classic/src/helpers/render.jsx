@@ -838,19 +838,73 @@ export function renderGroup(group) {
 }
 
 export function renderRatio(ratio) {
+  const numericRatio = Number(ratio);
+  if (!Number.isFinite(numericRatio) || numericRatio <= 0) {
+    return null;
+  }
   let color = 'green';
-  if (ratio > 5) {
+  if (numericRatio > 5) {
     color = 'red';
-  } else if (ratio > 3) {
+  } else if (numericRatio > 3) {
     color = 'orange';
-  } else if (ratio > 1) {
+  } else if (numericRatio > 1) {
     color = 'blue';
   }
   return (
     <Tag color={color}>
-      {ratio}x {i18next.t('倍率')}
+      {`${numericRatio}x`}
     </Tag>
   );
+}
+
+function formatDynamicGroupRatio(ratio) {
+  const numericRatio = Number(ratio);
+  if (!Number.isFinite(numericRatio) || numericRatio <= 0) {
+    return '--';
+  }
+  return `${numericRatio.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}x`;
+}
+
+function formatDynamicGroupPrice(pricePerM) {
+  const numericPrice = Number(pricePerM);
+  if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
+    return '--';
+  }
+  const digits = numericPrice < 0.01 ? 4 : numericPrice < 1 ? 3 : 2;
+  return `$${numericPrice.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
+}
+
+function formatDynamicGroupPriceRange(minPricePerM, maxPricePerM) {
+  const minPrice = Number(minPricePerM);
+  const maxPrice = Number(maxPricePerM);
+  const hasMin = Number.isFinite(minPrice) && minPrice > 0;
+  const hasMax = Number.isFinite(maxPrice) && maxPrice > 0;
+  if (!hasMin && !hasMax) {
+    return '--';
+  }
+  if (hasMin && hasMax && Math.abs(minPrice - maxPrice) >= 0.000001) {
+    return `${formatDynamicGroupPrice(minPrice).replace('/M', '')}-${formatDynamicGroupPrice(maxPrice).replace('/M', '')}/M`;
+  }
+  return formatDynamicGroupPrice(hasMax ? maxPrice : minPrice);
+}
+
+function formatDynamicGroupRatioRange(minRatio, maxRatio) {
+  const minValue = Number(minRatio);
+  const maxValue = Number(maxRatio);
+  const hasMin = Number.isFinite(minValue) && minValue > 0;
+  const hasMax = Number.isFinite(maxValue) && maxValue > 0;
+  if (!hasMin && !hasMax) {
+    return '--';
+  }
+  if (hasMin && hasMax) {
+    const normalizedMin = Math.min(minValue, maxValue);
+    const normalizedMax = Math.max(minValue, maxValue);
+    if (Math.abs(normalizedMin - normalizedMax) < 0.000001) {
+      return formatDynamicGroupRatio(normalizedMax);
+    }
+    return `${formatDynamicGroupRatio(normalizedMin)}-${formatDynamicGroupRatio(normalizedMax)}`;
+  }
+  return formatDynamicGroupRatio(hasMax ? maxValue : minValue);
 }
 
 const measureTextWidth = (
@@ -946,22 +1000,35 @@ export const renderGroupOption = (item) => {
     emptyContent,
     ...rest
   } = item;
-
-  const baseStyle = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '8px 16px',
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    backgroundColor: focused ? 'var(--semi-color-fill-0)' : 'transparent',
-    opacity: disabled ? 0.5 : 1,
-    ...(selected && {
-      backgroundColor: 'var(--semi-color-primary-light-default)',
-    }),
-    '&:hover': {
-      backgroundColor: !disabled && 'var(--semi-color-fill-1)',
-    },
-  };
+  const dynamicBilling = item.dynamic_billing;
+  const currentDynamicRatio = dynamicBilling
+    ? formatDynamicGroupRatio(dynamicBilling.current_ratio)
+    : '--';
+  const averageDynamicRatio = dynamicBilling
+    ? formatDynamicGroupRatio(dynamicBilling.average_ratio_7d)
+    : '--';
+  const dynamicRatioRange = dynamicBilling
+    ? formatDynamicGroupRatioRange(
+        dynamicBilling.min_ratio_7d,
+        dynamicBilling.max_ratio_7d,
+      )
+    : '--';
+  const staticRatio = formatDynamicGroupRatio(item.ratio);
+  const showDynamicBillingMetrics =
+    !!dynamicBilling &&
+    (currentDynamicRatio !== '--' ||
+      averageDynamicRatio !== '--' ||
+      dynamicRatioRange !== '--');
+  const optionClassName = [
+    'token-group-option',
+    selected ? 'token-group-option--selected' : '',
+    focused ? 'token-group-option--focused' : '',
+    disabled ? 'token-group-option--disabled' : '',
+    showDynamicBillingMetrics ? 'token-group-option--dynamic' : '',
+    className || '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   const handleClick = () => {
     if (!disabled && onClick) {
@@ -977,19 +1044,74 @@ export const renderGroupOption = (item) => {
 
   return (
     <div
-      style={baseStyle}
+      className={optionClassName}
+      style={style}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
+      {...rest}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-        <Typography.Text strong type={disabled ? 'tertiary' : undefined}>
-          {value}
-        </Typography.Text>
-        <Typography.Text type='secondary' size='small'>
+      <div className='token-group-option__body'>
+        <div className='token-group-option__header'>
+          <div className='token-group-option__title-wrap'>
+            <Typography.Text
+              strong
+              type={disabled ? 'tertiary' : undefined}
+              className='token-group-option__title'
+            >
+              {value}
+            </Typography.Text>
+            {showDynamicBillingMetrics ? (
+              <span className='token-group-option__state'>
+                {i18next.t('动态')}
+              </span>
+            ) : null}
+          </div>
+          {showDynamicBillingMetrics && currentDynamicRatio !== '--' ? (
+            <span className='token-group-option__ratio token-group-option__ratio--dynamic'>
+              <span className='token-group-option__ratio-label'>
+                {i18next.t('当前')}
+              </span>
+              <strong>{currentDynamicRatio}</strong>
+            </span>
+          ) : null}
+          {!showDynamicBillingMetrics && staticRatio !== '--' ? (
+            <span className='token-group-option__ratio token-group-option__ratio--static'>
+              <strong>{staticRatio}</strong>
+            </span>
+          ) : null}
+        </div>
+        <Typography.Text
+          type='secondary'
+          size='small'
+          className='token-group-option__description'
+        >
           {label}
         </Typography.Text>
+        {showDynamicBillingMetrics ? (
+          <div className='token-group-option__meta'>
+            {averageDynamicRatio !== '--' ? (
+              <span className='token-group-option__meta-item'>
+                <span className='token-group-option__meta-label'>
+                  {i18next.t('7天均')}
+                </span>
+                <strong className='token-group-option__meta-value token-group-option__meta-value--teal'>
+                  {averageDynamicRatio}
+                </strong>
+              </span>
+            ) : null}
+            {dynamicRatioRange !== '--' ? (
+              <span className='token-group-option__meta-item'>
+                <span className='token-group-option__meta-label'>
+                  {i18next.t('7天倍率')}
+                </span>
+                <strong className='token-group-option__meta-value token-group-option__meta-value--indigo'>
+                  {dynamicRatioRange}
+                </strong>
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-      {item.ratio && renderRatio(item.ratio)}
     </div>
   );
 };

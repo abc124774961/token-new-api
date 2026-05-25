@@ -11,6 +11,7 @@ import (
 type SchedulerSettingsProvider struct{}
 
 type RuntimePolicySettings struct {
+	SnapshotRefreshMs                int
 	QueueTimeoutMs                   int
 	QueueMaxDepth                    int
 	QueueDepthMultiplier             int
@@ -44,6 +45,7 @@ func NewSchedulerSettingsProvider() *SchedulerSettingsProvider {
 func RuntimePolicySetting() RuntimePolicySettings {
 	setting := scheduler_setting.GetSetting()
 	return RuntimePolicySettings{
+		SnapshotRefreshMs:    setting.SnapshotRefreshMs,
 		QueueTimeoutMs:       setting.QueueDefaultTimeoutMs,
 		QueueMaxDepth:        setting.QueueMaxDepthPerChannel,
 		QueueDepthMultiplier: setting.QueueDepthMultiplier,
@@ -93,6 +95,7 @@ func (p *SchedulerSettingsProvider) Get() core.SchedulerSettings {
 			AutoMode:              policy.AutoMode,
 			CrossGroupFusion:      policy.CrossGroupFusion,
 			CandidateGroups:       append([]string(nil), policy.CandidateGroups...),
+			BillingRatioMode:      policy.BillingRatioMode,
 			CacheAffinityEnabled:  policy.CacheAffinityEnabled,
 			QueueEnabled:          policy.QueueEnabled,
 			QueueHighPriority:     policy.QueueHighPriority,

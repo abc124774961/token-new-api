@@ -90,7 +90,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('渠道状态监控'),
         itemKey: 'channel_status',
         to: '/channel-status',
-        adminOnly: true,
       },
       {
         text: t('智能模型网关'),

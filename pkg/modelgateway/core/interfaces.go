@@ -79,6 +79,7 @@ type GroupPolicySetting struct {
 	AutoMode              string
 	CrossGroupFusion      bool
 	CandidateGroups       []string
+	BillingRatioMode      string
 	CacheAffinityEnabled  bool
 	QueueEnabled          bool
 	QueueHighPriority     bool
@@ -89,6 +90,17 @@ type RuntimeSnapshotStore interface {
 	Get(key RuntimeKey) (RuntimeSnapshot, bool)
 	Put(snapshot RuntimeSnapshot)
 	ListCandidates(req *DispatchRequest) []RuntimeSnapshot
+}
+
+type CostBaselineScope struct {
+	RequestedModel         string
+	Group                  string
+	EndpointType           string
+	RequiresCodexImageTool bool
+}
+
+type CostBaselineProvider interface {
+	Baseline(scope CostBaselineScope) (float64, bool)
 }
 
 type RuntimeSnapshotEnricher interface {

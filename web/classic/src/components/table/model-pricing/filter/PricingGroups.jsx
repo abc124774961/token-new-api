@@ -35,6 +35,7 @@ const PricingGroups = ({
   setFilterGroup,
   usableGroup = {},
   groupRatio = {},
+  autoGroups = [],
   models = [],
   loading = false,
   t,
@@ -45,11 +46,19 @@ const PricingGroups = ({
   ];
 
   const items = groups.map((g) => {
+    const matchesGroup = (model) => {
+      const modelGroups = Array.isArray(model.enable_groups)
+        ? model.enable_groups
+        : [];
+      if (g === 'auto') {
+        return autoGroups.some((autoGroup) => modelGroups.includes(autoGroup));
+      }
+      return modelGroups.includes(g);
+    };
     const modelCount =
       g === 'all'
         ? models.length
-        : models.filter((m) => m.enable_groups && m.enable_groups.includes(g))
-            .length;
+        : models.filter(matchesGroup).length;
     let ratioDisplay = '';
     if (g === 'all') {
       // ratioDisplay = t('全部');

@@ -9,10 +9,13 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -83,18 +86,62 @@ func ApplySelectedGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		}
 	}
 	groupRatioInfo := HandleGroupRatio(ctx, relayInfo)
+	applyDynamicBillingRatio(ctx, relayInfo, &groupRatioInfo)
 	relayInfo.PriceData.GroupRatioInfo = groupRatioInfo
 	if snap := relayInfo.TieredBillingSnapshot; snap != nil {
 		snap.GroupRatio = groupRatioInfo.GroupRatio
 		snap.EstimatedQuotaAfterGroup = billingexpr.QuotaRound(snap.EstimatedQuotaBeforeGroup * groupRatioInfo.GroupRatio)
+		relayInfo.PriceData.QuotaToPreConsume = snap.EstimatedQuotaAfterGroup
+		relayInfo.PriceData.QuotaBeforeGroup = snap.EstimatedQuotaBeforeGroup
+	} else if relayInfo.PriceData.QuotaBeforeGroup > 0 {
+		relayInfo.PriceData.QuotaToPreConsume = billingexpr.QuotaRound(relayInfo.PriceData.QuotaBeforeGroup * groupRatioInfo.GroupRatio)
 	}
 	return groupRatioInfo
+}
+
+func applyCurrentPlanBillingRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, groupRatioInfo *types.GroupRatioInfo) {
+	if relayInfo == nil || groupRatioInfo == nil {
+		return
+	}
+	applyDynamicBillingRatio(ctx, relayInfo, groupRatioInfo)
+}
+
+func applyDynamicBillingRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, groupRatioInfo *types.GroupRatioInfo) {
+	if relayInfo == nil || groupRatioInfo == nil {
+		return
+	}
+	mode := scheduler_setting.BillingRatioModeStatic
+	if plan, ok := modelgatewayintegration.GetSelectedPlan(ctx); ok && plan != nil {
+		mode = strings.TrimSpace(plan.BillingRatioMode)
+	}
+	if mode != scheduler_setting.BillingRatioModeDynamic {
+		relayInfo.DynamicBilling = nil
+		return
+	}
+	staticRatio := groupRatioInfo.GroupRatio
+	setting := scheduler_setting.GetSetting()
+	snapshot := modelgatewaydynamicbilling.Apply(modelgatewaydynamicbilling.ApplyInput{
+		RequestedModel:   relayInfo.OriginModelName,
+		Group:            relayInfo.UsingGroup,
+		StaticGroupRatio: staticRatio,
+		Mode:             mode,
+		Setting:          setting,
+		Provider:         modelgatewaydynamicbilling.DefaultRatioProvider(),
+	})
+	relayInfo.DynamicBilling = &snapshot
+	if !snapshot.Applied {
+		return
+	}
+	groupRatioInfo.GroupRatio = snapshot.DynamicRatio
+	groupRatioInfo.GroupSpecialRatio = -1
+	groupRatioInfo.HasSpecialRatio = false
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
 
 	groupRatioInfo := HandleGroupRatio(c, info)
+	applyCurrentPlanBillingRatio(c, info, &groupRatioInfo)
 
 	// Check if this model uses tiered_expr billing
 	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModeTieredExpr {
@@ -102,6 +149,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	}
 
 	var preConsumedQuota int
+	var quotaBeforeGroup float64
 	var modelRatio float64
 	var completionRatio float64
 	var cacheRatio float64
@@ -138,12 +186,14 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		imageRatio, _ = ratio_setting.GetImageRatio(info.OriginModelName)
 		audioRatio = ratio_setting.GetAudioRatio(info.OriginModelName)
 		audioCompletionRatio = ratio_setting.GetAudioCompletionRatio(info.OriginModelName)
+		quotaBeforeGroup = float64(preConsumedTokens) * modelRatio
 		ratio := modelRatio * groupRatioInfo.GroupRatio
 		preConsumedQuota = int(float64(preConsumedTokens) * ratio)
 	} else {
 		if meta.ImagePriceRatio != 0 {
 			modelPrice = modelPrice * meta.ImagePriceRatio
 		}
+		quotaBeforeGroup = modelPrice * common.QuotaPerUnit
 		preConsumedQuota = int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 	}
 
@@ -181,6 +231,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		CacheCreation5mRatio: cacheCreationRatio5m,
 		CacheCreation1hRatio: cacheCreationRatio1h,
 		QuotaToPreConsume:    preConsumedQuota,
+		QuotaBeforeGroup:     quotaBeforeGroup,
 	}
 
 	if common.DebugEnabled {
@@ -193,6 +244,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 // ModelPriceHelperPerCall 按次/按量计费的 PriceHelper (MJ、Task)
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
+	applyCurrentPlanBillingRatio(c, info, &groupRatioInfo)
 
 	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
 	usePrice := success
@@ -324,6 +376,7 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 		FreeModel:         freeModel,
 		GroupRatioInfo:    groupRatioInfo,
 		QuotaToPreConsume: preConsumedQuota,
+		QuotaBeforeGroup:  quotaBeforeGroup,
 	}
 
 	if common.DebugEnabled {

@@ -134,6 +134,41 @@ func TestGenerateTextOtherInfoIncludesModelTrace(t *testing.T) {
 	require.Equal(t, "medium", other["upstream_reasoning_effort"])
 }
 
+func TestGenerateTextOtherInfoIncludesDynamicBillingSnapshot(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	now := time.Now().Unix()
+	relayInfo := &relaycommon.RelayInfo{
+		StartTime: time.Now(),
+		DynamicBilling: &types.DynamicBillingSnapshot{
+			Applied:          true,
+			RequestedModel:   "gpt-test",
+			Group:            "codex-plus",
+			StaticGroupRatio: 0.1,
+			DynamicRatio:     0.37,
+			PricePerM:        1.48,
+			ProfitRate:       0.2,
+			SampleCount:      8,
+			CalculatedAt:     now,
+			WindowStart:      now - 60,
+			WindowEnd:        now,
+		},
+	}
+
+	other := GenerateTextOtherInfo(ctx, relayInfo, 2, 0.37, 1, 0, 1, -1, -1)
+
+	require.Equal(t, "model_gateway_dynamic", other["billing_mode"])
+	require.Equal(t, "dynamic_group_ratio", other["billing_source_detail"])
+	require.Equal(t, true, other["dynamic_billing_applied"])
+	require.Equal(t, "codex-plus", other["dynamic_billing_group"])
+	require.Equal(t, 0.1, other["dynamic_billing_static_group_ratio"])
+	require.Equal(t, 0.37, other["dynamic_billing_ratio"])
+	require.Equal(t, 1.48, other["dynamic_billing_price_per_m"])
+	require.Equal(t, 8, other["dynamic_billing_sample_count"])
+}
+
 func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

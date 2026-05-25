@@ -33,6 +33,7 @@ const normalizeTags = (tags = '') =>
 export const usePricingFilterCounts = ({
   models = [],
   filterGroup = 'all',
+  autoGroups = [],
   filterQuotaType = 'all',
   filterEndpointType = 'all',
   filterVendor = 'all',
@@ -41,6 +42,15 @@ export const usePricingFilterCounts = ({
 }) => {
   // 均使用同一份模型列表，避免创建新引用
   const allModels = models;
+  const matchesGroup = (model, group) => {
+    const modelGroups = Array.isArray(model.enable_groups)
+      ? model.enable_groups
+      : [];
+    if (group === 'auto') {
+      return autoGroups.some((autoGroup) => modelGroups.includes(autoGroup));
+    }
+    return modelGroups.includes(group);
+  };
 
   /**
    * 通用过滤函数
@@ -51,8 +61,7 @@ export const usePricingFilterCounts = ({
   const matchesFilters = (model, ignore = []) => {
     // 分组
     if (!ignore.includes('group') && filterGroup !== 'all') {
-      if (!model.enable_groups || !model.enable_groups.includes(filterGroup))
-        return false;
+      if (!matchesGroup(model, filterGroup)) return false;
     }
 
     // 计费类型
@@ -109,6 +118,7 @@ export const usePricingFilterCounts = ({
     [
       allModels,
       filterGroup,
+      autoGroups,
       filterEndpointType,
       filterVendor,
       filterTag,
@@ -121,6 +131,7 @@ export const usePricingFilterCounts = ({
     [
       allModels,
       filterGroup,
+      autoGroups,
       filterQuotaType,
       filterVendor,
       filterTag,
@@ -133,6 +144,7 @@ export const usePricingFilterCounts = ({
     [
       allModels,
       filterGroup,
+      autoGroups,
       filterQuotaType,
       filterEndpointType,
       filterTag,
@@ -145,6 +157,7 @@ export const usePricingFilterCounts = ({
     [
       allModels,
       filterGroup,
+      autoGroups,
       filterQuotaType,
       filterEndpointType,
       filterVendor,
@@ -156,6 +169,7 @@ export const usePricingFilterCounts = ({
     () => allModels.filter((m) => matchesFilters(m, ['group'])),
     [
       allModels,
+      autoGroups,
       filterQuotaType,
       filterEndpointType,
       filterVendor,

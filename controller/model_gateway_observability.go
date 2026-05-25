@@ -17,11 +17,13 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
+	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
 	modelgatewayscheduler "github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
@@ -53,6 +55,8 @@ const (
 type ModelGatewayObservabilityResponse struct {
 	Summary           ModelGatewayObservabilitySummary                `json:"summary"`
 	UserRequests      ModelGatewayUserRequestObservabilityResponse    `json:"user_requests"`
+	DynamicBilling    ModelGatewayDynamicBillingOverview              `json:"dynamic_billing_overview"`
+	DynamicBilling7d  ModelGatewayDynamicBillingOverview              `json:"dynamic_billing_7d_overview"`
 	Trends            []ModelGatewayObservabilityTrendPoint           `json:"trends"`
 	Risk              ModelGatewayRiskSnapshot                        `json:"risk"`
 	RiskTimeline      []ModelGatewayRiskEvent                         `json:"risk_timeline"`
@@ -65,6 +69,43 @@ type ModelGatewayObservabilityResponse struct {
 	RecentRecords     []ModelGatewayObservabilityRecord               `json:"recent_records"`
 	ScoreBreakdown    ModelGatewayObservabilityScoreBreakdown         `json:"score_breakdown"`
 	RuntimeStatus     modelgatewayobservability.RuntimeStatusResponse `json:"runtime_status"`
+}
+
+type ModelGatewayDynamicBillingOverview struct {
+	Enabled        bool                                      `json:"enabled"`
+	ProfitRate     float64                                   `json:"profit_rate,omitempty"`
+	WindowSamples  int                                       `json:"window_samples,omitempty"`
+	WindowMinutes  int                                       `json:"window_minutes,omitempty"`
+	MinSamples     int                                       `json:"min_samples,omitempty"`
+	RefreshSeconds int                                       `json:"refresh_seconds,omitempty"`
+	MaxAgeSeconds  int                                       `json:"max_age_seconds,omitempty"`
+	PolicyCount    int                                       `json:"policy_count"`
+	ActiveCount    int                                       `json:"active_count"`
+	WaitingCount   int                                       `json:"waiting_count"`
+	Groups         []ModelGatewayDynamicBillingGroupOverview `json:"groups"`
+}
+
+type ModelGatewayDynamicBillingGroupOverview struct {
+	PolicyGroup        string   `json:"policy_group"`
+	TargetGroups       []string `json:"target_groups,omitempty"`
+	Status             string   `json:"status"`
+	CurrentRatio       float64  `json:"current_ratio,omitempty"`
+	CurrentPricePerM   float64  `json:"current_price_per_m,omitempty"`
+	AverageRatio       float64  `json:"average_ratio,omitempty"`
+	AveragePricePerM   float64  `json:"average_price_per_m,omitempty"`
+	BlendedRatio       float64  `json:"blended_ratio,omitempty"`
+	BlendedPricePerM   float64  `json:"blended_price_per_m,omitempty"`
+	CurrentTargetGroup string   `json:"current_target_group,omitempty"`
+	CurrentModel       string   `json:"current_model,omitempty"`
+	ReferenceModel     string   `json:"reference_model,omitempty"`
+	MinRatio           float64  `json:"min_ratio,omitempty"`
+	MaxRatio           float64  `json:"max_ratio,omitempty"`
+	MinPricePerM       float64  `json:"min_price_per_m,omitempty"`
+	MaxPricePerM       float64  `json:"max_price_per_m,omitempty"`
+	SampleCount        int      `json:"sample_count,omitempty"`
+	EffectiveSamples   int      `json:"effective_sample_count,omitempty"`
+	ModelCount         int      `json:"model_count,omitempty"`
+	LatestCalculatedAt int64    `json:"latest_calculated_at,omitempty"`
 }
 
 type ModelGatewayStickyStoreResponse struct {
@@ -289,6 +330,8 @@ type ModelGatewayUserRequestRecord struct {
 	CreatedAt             int64                               `json:"created_at"`
 	CompletedAt           int64                               `json:"completed_at"`
 	RequestID             string                              `json:"request_id"`
+	UserID                int                                 `json:"user_id,omitempty"`
+	Username              string                              `json:"username,omitempty"`
 	RequestedModel        string                              `json:"requested_model"`
 	RequestedGroup        string                              `json:"requested_group"`
 	SelectedGroup         string                              `json:"selected_group,omitempty"`
@@ -318,48 +361,56 @@ type ModelGatewayUserRequestRecord struct {
 }
 
 type ModelGatewayUserRequestBillingInfo struct {
-	LogID                    int     `json:"log_id,omitempty"`
-	CreatedAt                int64   `json:"created_at,omitempty"`
-	Quota                    int     `json:"quota"`
-	PromptTokens             int     `json:"prompt_tokens,omitempty"`
-	CompletionTokens         int     `json:"completion_tokens,omitempty"`
-	TotalTokens              int     `json:"total_tokens,omitempty"`
-	ChannelID                int     `json:"channel_id,omitempty"`
-	Group                    string  `json:"group,omitempty"`
-	ModelName                string  `json:"model_name,omitempty"`
-	Content                  string  `json:"content,omitempty"`
-	ModelRatio               float64 `json:"model_ratio,omitempty"`
-	GroupRatio               float64 `json:"group_ratio,omitempty"`
-	UserGroupRatio           float64 `json:"user_group_ratio,omitempty"`
-	CompletionRatio          float64 `json:"completion_ratio,omitempty"`
-	CacheTokens              int     `json:"cache_tokens,omitempty"`
-	CacheRatio               float64 `json:"cache_ratio,omitempty"`
-	CacheCreationTokens      int     `json:"cache_creation_tokens,omitempty"`
-	CacheCreationRatio       float64 `json:"cache_creation_ratio,omitempty"`
-	CacheCreationTokens5m    int     `json:"cache_creation_tokens_5m,omitempty"`
-	CacheCreationRatio5m     float64 `json:"cache_creation_ratio_5m,omitempty"`
-	CacheCreationTokens1h    int     `json:"cache_creation_tokens_1h,omitempty"`
-	CacheCreationRatio1h     float64 `json:"cache_creation_ratio_1h,omitempty"`
-	CacheWriteTokens         int     `json:"cache_write_tokens,omitempty"`
-	ModelPrice               float64 `json:"model_price,omitempty"`
-	BillingMode              string  `json:"billing_mode,omitempty"`
-	BillingSource            string  `json:"billing_source,omitempty"`
-	BillingSubtype           string  `json:"billing_subtype,omitempty"`
-	SubscriptionConsumed     int     `json:"subscription_consumed,omitempty"`
-	WalletQuotaDeducted      int     `json:"wallet_quota_deducted,omitempty"`
-	WebSearchCallCount       int     `json:"web_search_call_count,omitempty"`
-	WebSearchPrice           float64 `json:"web_search_price,omitempty"`
-	FileSearchCallCount      int     `json:"file_search_call_count,omitempty"`
-	FileSearchPrice          float64 `json:"file_search_price,omitempty"`
-	AudioInputTokenCount     int     `json:"audio_input_token_count,omitempty"`
-	AudioInputPrice          float64 `json:"audio_input_price,omitempty"`
-	ImageTokens              int     `json:"image_tokens,omitempty"`
-	ImageRatio               float64 `json:"image_ratio,omitempty"`
-	ImageGenerationCallCount int     `json:"image_generation_call_count,omitempty"`
-	ImageGenerationCallPrice float64 `json:"image_generation_call_price,omitempty"`
-	ImageGenerationQuality   string  `json:"image_generation_call_quality,omitempty"`
-	ImageGenerationSize      string  `json:"image_generation_call_size,omitempty"`
-	UsageSemantic            string  `json:"usage_semantic,omitempty"`
+	LogID                     int     `json:"log_id,omitempty"`
+	UserID                    int     `json:"user_id,omitempty"`
+	Username                  string  `json:"username,omitempty"`
+	CreatedAt                 int64   `json:"created_at,omitempty"`
+	Quota                     int     `json:"quota"`
+	PromptTokens              int     `json:"prompt_tokens,omitempty"`
+	CompletionTokens          int     `json:"completion_tokens,omitempty"`
+	TotalTokens               int     `json:"total_tokens,omitempty"`
+	ChannelID                 int     `json:"channel_id,omitempty"`
+	Group                     string  `json:"group,omitempty"`
+	ModelName                 string  `json:"model_name,omitempty"`
+	Content                   string  `json:"content,omitempty"`
+	ModelRatio                float64 `json:"model_ratio,omitempty"`
+	GroupRatio                float64 `json:"group_ratio,omitempty"`
+	UserGroupRatio            float64 `json:"user_group_ratio,omitempty"`
+	CompletionRatio           float64 `json:"completion_ratio,omitempty"`
+	CacheTokens               int     `json:"cache_tokens,omitempty"`
+	CacheRatio                float64 `json:"cache_ratio,omitempty"`
+	CacheCreationTokens       int     `json:"cache_creation_tokens,omitempty"`
+	CacheCreationRatio        float64 `json:"cache_creation_ratio,omitempty"`
+	CacheCreationTokens5m     int     `json:"cache_creation_tokens_5m,omitempty"`
+	CacheCreationRatio5m      float64 `json:"cache_creation_ratio_5m,omitempty"`
+	CacheCreationTokens1h     int     `json:"cache_creation_tokens_1h,omitempty"`
+	CacheCreationRatio1h      float64 `json:"cache_creation_ratio_1h,omitempty"`
+	CacheWriteTokens          int     `json:"cache_write_tokens,omitempty"`
+	ModelPrice                float64 `json:"model_price,omitempty"`
+	BillingMode               string  `json:"billing_mode,omitempty"`
+	BillingSource             string  `json:"billing_source,omitempty"`
+	BillingSubtype            string  `json:"billing_subtype,omitempty"`
+	DynamicBillingApplied     bool    `json:"dynamic_billing_applied,omitempty"`
+	DynamicBillingFallback    bool    `json:"dynamic_billing_fallback,omitempty"`
+	DynamicFallbackReason     string  `json:"dynamic_fallback_reason,omitempty"`
+	DynamicBillingRatio       float64 `json:"dynamic_billing_ratio,omitempty"`
+	DynamicBillingPricePerM   float64 `json:"dynamic_billing_price_per_m,omitempty"`
+	DynamicBillingSampleCount int     `json:"dynamic_billing_sample_count,omitempty"`
+	SubscriptionConsumed      int     `json:"subscription_consumed,omitempty"`
+	WalletQuotaDeducted       int     `json:"wallet_quota_deducted,omitempty"`
+	WebSearchCallCount        int     `json:"web_search_call_count,omitempty"`
+	WebSearchPrice            float64 `json:"web_search_price,omitempty"`
+	FileSearchCallCount       int     `json:"file_search_call_count,omitempty"`
+	FileSearchPrice           float64 `json:"file_search_price,omitempty"`
+	AudioInputTokenCount      int     `json:"audio_input_token_count,omitempty"`
+	AudioInputPrice           float64 `json:"audio_input_price,omitempty"`
+	ImageTokens               int     `json:"image_tokens,omitempty"`
+	ImageRatio                float64 `json:"image_ratio,omitempty"`
+	ImageGenerationCallCount  int     `json:"image_generation_call_count,omitempty"`
+	ImageGenerationCallPrice  float64 `json:"image_generation_call_price,omitempty"`
+	ImageGenerationQuality    string  `json:"image_generation_call_quality,omitempty"`
+	ImageGenerationSize       string  `json:"image_generation_call_size,omitempty"`
+	UsageSemantic             string  `json:"usage_semantic,omitempty"`
 }
 
 type ModelGatewayObservabilityTrendPoint struct {
@@ -1255,7 +1306,9 @@ func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabi
 				StartTime:          startTime,
 				EndTime:            endTime,
 			},
-			UserRequests: userRequests,
+			UserRequests:     userRequests,
+			DynamicBilling:   buildModelGatewayDynamicBillingOverview(time.Now().Unix(), 0),
+			DynamicBilling7d: buildModelGatewayDynamicBillingOverview(time.Now().Unix(), 7*24*60),
 		}, nil
 	}
 
@@ -1288,6 +1341,8 @@ func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabi
 		return ModelGatewayObservabilityResponse{}, err
 	}
 	response.UserRequests = userRequests
+	response.DynamicBilling = buildModelGatewayDynamicBillingOverview(time.Now().Unix(), 0)
+	response.DynamicBilling7d = buildModelGatewayDynamicBillingOverview(time.Now().Unix(), 7*24*60)
 	response.RuntimeStatus = defaultModelGatewayRuntimeStatusService().Build(modelgatewayobservability.RuntimeStatusQuery{
 		Model:     options.Model,
 		Group:     options.Group,
@@ -1296,6 +1351,558 @@ func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabi
 	})
 	applyModelGatewayRuntimeRiskEvents(&response)
 	return response, nil
+}
+
+func buildModelGatewayDynamicBillingOverview(now int64, windowMinutesOverride int) ModelGatewayDynamicBillingOverview {
+	setting := scheduler_setting.GetSetting()
+	windowSamples := setting.DynamicBillingWindowSamples
+	if windowSamples <= 0 {
+		windowSamples = scheduler_setting.DefaultSetting().DynamicBillingWindowSamples
+	}
+	overview := ModelGatewayDynamicBillingOverview{
+		Enabled:        setting.DynamicBillingEnabled,
+		ProfitRate:     setting.DynamicBillingProfitRate,
+		WindowSamples:  windowSamples,
+		MinSamples:     setting.DynamicBillingMinSamples,
+		RefreshSeconds: setting.DynamicBillingRefreshSeconds,
+		MaxAgeSeconds:  setting.DynamicBillingMaxAgeSeconds,
+		Groups:         make([]ModelGatewayDynamicBillingGroupOverview, 0),
+	}
+	if windowMinutesOverride > 0 {
+		overview.WindowSamples = 0
+		overview.WindowMinutes = windowMinutesOverride
+	}
+	if now <= 0 {
+		now = time.Now().Unix()
+	}
+	if len(setting.GroupPolicies) == 0 {
+		return overview
+	}
+	if windowMinutesOverride > 0 {
+		appliedOverview, err := buildModelGatewayDynamicBillingAppliedOverview(now, windowMinutesOverride, setting, overview)
+		if err != nil {
+			common.SysLog(fmt.Sprintf("model gateway dynamic billing applied overview refresh (%d minutes) failed: %v", windowMinutesOverride, err))
+			return buildModelGatewayDynamicBillingAppliedSkeleton(setting, overview)
+		}
+		return appliedOverview
+	}
+	baselines := modelgatewaydynamicbilling.DefaultBaselineSnapshots()
+	groupedBaselines := make(map[string][]modelgatewaydynamicbilling.RatioBaseline)
+	for _, baseline := range baselines {
+		group := strings.TrimSpace(baseline.Group)
+		if group == "" {
+			continue
+		}
+		groupedBaselines[group] = append(groupedBaselines[group], baseline)
+	}
+	groups := make([]ModelGatewayDynamicBillingGroupOverview, 0)
+	isActiveBaseline := func(baseline modelgatewaydynamicbilling.RatioBaseline) bool {
+		if baseline.Ratio <= 0 {
+			return false
+		}
+		if setting.DynamicBillingMinSamples > 0 && baseline.SampleCount < setting.DynamicBillingMinSamples {
+			return false
+		}
+		if setting.DynamicBillingMaxAgeSeconds > 0 && (baseline.CalculatedAt <= 0 || now-baseline.CalculatedAt > int64(setting.DynamicBillingMaxAgeSeconds)) {
+			return false
+		}
+		return true
+	}
+	shouldReplaceCurrentBaseline := func(current modelgatewaydynamicbilling.RatioBaseline, currentActive bool, candidate modelgatewaydynamicbilling.RatioBaseline, candidateActive bool, hasCurrent bool) bool {
+		if !hasCurrent {
+			return true
+		}
+		if candidateActive != currentActive {
+			return candidateActive
+		}
+		if candidate.CalculatedAt != current.CalculatedAt {
+			return candidate.CalculatedAt > current.CalculatedAt
+		}
+		if candidate.Ratio != current.Ratio {
+			return candidate.Ratio > current.Ratio
+		}
+		if candidate.SampleCount != current.SampleCount {
+			return candidate.SampleCount > current.SampleCount
+		}
+		if candidate.Group != current.Group {
+			return candidate.Group < current.Group
+		}
+		return candidate.RequestedModel < current.RequestedModel
+	}
+	for groupName, policy := range setting.GroupPolicies {
+		if strings.TrimSpace(policy.BillingRatioMode) != scheduler_setting.BillingRatioModeDynamic {
+			continue
+		}
+		targetGroups := normalizeModelGatewayDynamicTargetGroups(groupName, policy.CandidateGroups)
+		item := ModelGatewayDynamicBillingGroupOverview{
+			PolicyGroup:  strings.TrimSpace(groupName),
+			TargetGroups: targetGroups,
+			Status:       "waiting_samples",
+		}
+		overview.PolicyCount++
+		if !overview.Enabled {
+			item.Status = "global_disabled"
+			groups = append(groups, item)
+			continue
+		}
+		modelSet := make(map[string]struct{})
+		latestCalculatedAt := int64(0)
+		minRatio := 0.0
+		maxRatio := 0.0
+		minPrice := 0.0
+		maxPrice := 0.0
+		sampleCount := 0
+		averageRatioSum := 0.0
+		averageRatioWeight := 0
+		averagePriceSum := 0.0
+		averagePriceWeight := 0
+		blendedRatioSum := 0.0
+		blendedRatioWeight := 0
+		blendedPriceSum := 0.0
+		blendedPriceWeight := 0
+		active := false
+		expiredOnly := true
+		currentBaseline := modelgatewaydynamicbilling.RatioBaseline{}
+		currentBaselineActive := false
+		hasCurrentBaseline := false
+		for _, targetGroup := range targetGroups {
+			for _, baseline := range groupedBaselines[targetGroup] {
+				baselineWeight := baseline.SampleCount
+				if baselineWeight <= 0 {
+					baselineWeight = 1
+				}
+				if baseline.Ratio > 0 {
+					if minRatio <= 0 || baseline.Ratio < minRatio {
+						minRatio = baseline.Ratio
+					}
+					if baseline.Ratio > maxRatio {
+						maxRatio = baseline.Ratio
+					}
+					averageRatioSum += baseline.Ratio * float64(baselineWeight)
+					averageRatioWeight += baselineWeight
+				}
+				if baseline.PricePerM > 0 {
+					if minPrice <= 0 || baseline.PricePerM < minPrice {
+						minPrice = baseline.PricePerM
+					}
+					if baseline.PricePerM > maxPrice {
+						maxPrice = baseline.PricePerM
+					}
+					averagePriceSum += baseline.PricePerM * float64(baselineWeight)
+					averagePriceWeight += baselineWeight
+				}
+				if baseline.SampleCount > 0 {
+					sampleCount += baseline.SampleCount
+				}
+				if baseline.RequestedModel != "" {
+					modelSet[baseline.RequestedModel] = struct{}{}
+				}
+				if baseline.CalculatedAt > latestCalculatedAt {
+					latestCalculatedAt = baseline.CalculatedAt
+				}
+				baselineActive := isActiveBaseline(baseline)
+				if baseline.Ratio > 0 && shouldReplaceCurrentBaseline(currentBaseline, currentBaselineActive, baseline, baselineActive, hasCurrentBaseline) {
+					currentBaseline = baseline
+					currentBaselineActive = baselineActive
+					hasCurrentBaseline = true
+				}
+				if baseline.Ratio <= 0 {
+					continue
+				}
+				if setting.DynamicBillingMinSamples > 0 && baseline.SampleCount < setting.DynamicBillingMinSamples {
+					expiredOnly = false
+					continue
+				}
+				if setting.DynamicBillingMaxAgeSeconds > 0 && (baseline.CalculatedAt <= 0 || now-baseline.CalculatedAt > int64(setting.DynamicBillingMaxAgeSeconds)) {
+					continue
+				}
+				active = true
+				expiredOnly = false
+				if baselineWeight > 0 {
+					blendedRatioSum += baseline.Ratio * float64(baselineWeight)
+					blendedRatioWeight += baselineWeight
+					if baseline.PricePerM > 0 {
+						blendedPriceSum += baseline.PricePerM * float64(baselineWeight)
+						blendedPriceWeight += baselineWeight
+					}
+				}
+			}
+		}
+		item.MinRatio = minRatio
+		item.MaxRatio = maxRatio
+		item.MinPricePerM = minPrice
+		item.MaxPricePerM = maxPrice
+		if averageRatioWeight > 0 {
+			item.AverageRatio = averageRatioSum / float64(averageRatioWeight)
+		}
+		if averagePriceWeight > 0 {
+			item.AveragePricePerM = averagePriceSum / float64(averagePriceWeight)
+		}
+		item.SampleCount = sampleCount
+		item.ModelCount = len(modelSet)
+		item.LatestCalculatedAt = latestCalculatedAt
+		item.EffectiveSamples = blendedRatioWeight
+		if blendedRatioWeight > 0 {
+			item.BlendedRatio = blendedRatioSum / float64(blendedRatioWeight)
+		}
+		if blendedPriceWeight > 0 {
+			item.BlendedPricePerM = blendedPriceSum / float64(blendedPriceWeight)
+		}
+		if hasCurrentBaseline {
+			item.CurrentRatio = currentBaseline.Ratio
+			item.CurrentPricePerM = currentBaseline.PricePerM
+			item.CurrentTargetGroup = currentBaseline.Group
+			item.CurrentModel = currentBaseline.RequestedModel
+			item.ReferenceModel = firstNonEmptyTrimmed(currentBaseline.ReferenceModel, currentBaseline.RequestedModel)
+		}
+		switch {
+		case active:
+			item.Status = "active"
+			overview.ActiveCount++
+		case latestCalculatedAt > 0 && expiredOnly:
+			item.Status = "expired"
+			overview.WaitingCount++
+		default:
+			item.Status = "waiting_samples"
+			overview.WaitingCount++
+		}
+		groups = append(groups, item)
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].PolicyGroup < groups[j].PolicyGroup
+	})
+	overview.Groups = groups
+	return overview
+}
+
+func buildModelGatewayDynamicBillingAppliedSkeleton(setting scheduler_setting.SchedulerSetting, overview ModelGatewayDynamicBillingOverview) ModelGatewayDynamicBillingOverview {
+	groups := make([]ModelGatewayDynamicBillingGroupOverview, 0)
+	for groupName, policy := range setting.GroupPolicies {
+		if strings.TrimSpace(policy.BillingRatioMode) != scheduler_setting.BillingRatioModeDynamic {
+			continue
+		}
+		status := "waiting_samples"
+		if !overview.Enabled {
+			status = "global_disabled"
+		}
+		groups = append(groups, ModelGatewayDynamicBillingGroupOverview{
+			PolicyGroup:  strings.TrimSpace(groupName),
+			TargetGroups: normalizeModelGatewayDynamicTargetGroups(groupName, policy.CandidateGroups),
+			Status:       status,
+		})
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].PolicyGroup < groups[j].PolicyGroup
+	})
+	overview.PolicyCount = len(groups)
+	if overview.Enabled {
+		overview.WaitingCount = len(groups)
+	}
+	overview.Groups = groups
+	return overview
+}
+
+type modelGatewayDynamicBillingAppliedAccumulator struct {
+	LatestCalculatedAt int64
+	SampleCount        int
+	ModelSet           map[string]struct{}
+	CurrentRatio       float64
+	CurrentPricePerM   float64
+	CurrentTargetGroup string
+	CurrentModel       string
+	MinRatio           float64
+	MaxRatio           float64
+	MinPricePerM       float64
+	MaxPricePerM       float64
+	AverageRatioSum    float64
+	AverageRatioCount  int
+	AveragePriceSum    float64
+	AveragePriceCount  int
+}
+
+type modelGatewayDynamicBillingAppliedLog struct {
+	RequestId string
+	CreatedAt int64
+	ModelName string
+	Group     string
+	Other     string
+}
+
+func buildModelGatewayDynamicBillingAppliedOverview(now int64, windowMinutes int, setting scheduler_setting.SchedulerSetting, overview ModelGatewayDynamicBillingOverview) (ModelGatewayDynamicBillingOverview, error) {
+	groups := make([]ModelGatewayDynamicBillingGroupOverview, 0)
+	accumulators := make(map[string]*modelGatewayDynamicBillingAppliedAccumulator)
+	policyTargets := make(map[string]map[string]struct{})
+
+	for groupName, policy := range setting.GroupPolicies {
+		if strings.TrimSpace(policy.BillingRatioMode) != scheduler_setting.BillingRatioModeDynamic {
+			continue
+		}
+		targetGroups := normalizeModelGatewayDynamicTargetGroups(groupName, policy.CandidateGroups)
+		item := ModelGatewayDynamicBillingGroupOverview{
+			PolicyGroup:  strings.TrimSpace(groupName),
+			TargetGroups: targetGroups,
+			Status:       "waiting_samples",
+		}
+		overview.PolicyCount++
+		groups = append(groups, item)
+		if !overview.Enabled {
+			continue
+		}
+		targetSet := make(map[string]struct{}, len(targetGroups))
+		for _, targetGroup := range targetGroups {
+			targetSet[targetGroup] = struct{}{}
+		}
+		policyTargets[item.PolicyGroup] = targetSet
+		accumulators[item.PolicyGroup] = &modelGatewayDynamicBillingAppliedAccumulator{
+			ModelSet: make(map[string]struct{}),
+		}
+	}
+	if len(groups) == 0 {
+		overview.Groups = groups
+		return overview, nil
+	}
+	if !overview.Enabled {
+		for idx := range groups {
+			groups[idx].Status = "global_disabled"
+		}
+		sort.Slice(groups, func(i, j int) bool {
+			return groups[i].PolicyGroup < groups[j].PolicyGroup
+		})
+		overview.Groups = groups
+		return overview, nil
+	}
+	startTime := now - int64(windowMinutes*60)
+	if setting.DynamicBillingEnabledAt > 0 && setting.DynamicBillingEnabledAt > startTime {
+		startTime = setting.DynamicBillingEnabledAt
+	}
+	if startTime < 0 {
+		startTime = 0
+	}
+
+	appliedLogs, err := loadModelGatewayDynamicBillingAppliedLogs(startTime)
+	if err != nil {
+		return overview, err
+	}
+	if len(appliedLogs) == 0 {
+		sort.Slice(groups, func(i, j int) bool {
+			return groups[i].PolicyGroup < groups[j].PolicyGroup
+		})
+		overview.WaitingCount = len(groups)
+		overview.Groups = groups
+		return overview, nil
+	}
+	summaryByRequestID, err := loadModelGatewayDynamicBillingAppliedSummaries(appliedLogs)
+	if err != nil {
+		return overview, err
+	}
+	for _, logRow := range appliedLogs {
+		other := make(map[string]interface{})
+		if err := common.UnmarshalJsonStr(logRow.Other, &other); err != nil {
+			continue
+		}
+		if !modelGatewayBillingBool(other, "dynamic_billing_applied") {
+			continue
+		}
+		ratio := modelGatewayBillingFloat(other, "dynamic_billing_ratio")
+		if ratio <= 0 {
+			continue
+		}
+		pricePerM := modelGatewayBillingFloat(other, "dynamic_billing_price_per_m")
+		summary := summaryByRequestID[strings.TrimSpace(logRow.RequestId)]
+		targetGroup := firstNonEmptyTrimmed(
+			modelGatewayBillingString(other, "dynamic_billing_group"),
+			summary.SelectedGroup,
+			logRow.Group,
+		)
+		policyGroup := resolveModelGatewayDynamicPolicyGroup(
+			strings.TrimSpace(summary.RequestedGroup),
+			targetGroup,
+			policyTargets,
+		)
+		if policyGroup == "" {
+			continue
+		}
+		accumulator := accumulators[policyGroup]
+		if accumulator == nil {
+			continue
+		}
+		accumulator.SampleCount++
+		if modelName := strings.TrimSpace(logRow.ModelName); modelName != "" {
+			accumulator.ModelSet[modelName] = struct{}{}
+		}
+		if logRow.CreatedAt > accumulator.LatestCalculatedAt ||
+			(logRow.CreatedAt == accumulator.LatestCalculatedAt && ratio > accumulator.CurrentRatio) ||
+			(logRow.CreatedAt == accumulator.LatestCalculatedAt && ratio == accumulator.CurrentRatio && pricePerM > accumulator.CurrentPricePerM) {
+			accumulator.LatestCalculatedAt = logRow.CreatedAt
+			accumulator.CurrentRatio = ratio
+			accumulator.CurrentPricePerM = pricePerM
+			accumulator.CurrentTargetGroup = targetGroup
+			accumulator.CurrentModel = strings.TrimSpace(logRow.ModelName)
+		}
+		if accumulator.MinRatio <= 0 || ratio < accumulator.MinRatio {
+			accumulator.MinRatio = ratio
+		}
+		if ratio > accumulator.MaxRatio {
+			accumulator.MaxRatio = ratio
+		}
+		accumulator.AverageRatioSum += ratio
+		accumulator.AverageRatioCount++
+		if pricePerM > 0 {
+			if accumulator.MinPricePerM <= 0 || pricePerM < accumulator.MinPricePerM {
+				accumulator.MinPricePerM = pricePerM
+			}
+			if pricePerM > accumulator.MaxPricePerM {
+				accumulator.MaxPricePerM = pricePerM
+			}
+			accumulator.AveragePriceSum += pricePerM
+			accumulator.AveragePriceCount++
+		}
+	}
+
+	for idx := range groups {
+		accumulator := accumulators[groups[idx].PolicyGroup]
+		if accumulator == nil || accumulator.SampleCount == 0 {
+			groups[idx].Status = "waiting_samples"
+			overview.WaitingCount++
+			continue
+		}
+		groups[idx].Status = "active"
+		groups[idx].CurrentRatio = accumulator.CurrentRatio
+		groups[idx].CurrentPricePerM = accumulator.CurrentPricePerM
+		groups[idx].CurrentTargetGroup = accumulator.CurrentTargetGroup
+		groups[idx].CurrentModel = accumulator.CurrentModel
+		groups[idx].ReferenceModel = accumulator.CurrentModel
+		groups[idx].MinRatio = accumulator.MinRatio
+		groups[idx].MaxRatio = accumulator.MaxRatio
+		groups[idx].MinPricePerM = accumulator.MinPricePerM
+		groups[idx].MaxPricePerM = accumulator.MaxPricePerM
+		groups[idx].SampleCount = accumulator.SampleCount
+		groups[idx].ModelCount = len(accumulator.ModelSet)
+		groups[idx].LatestCalculatedAt = accumulator.LatestCalculatedAt
+		if accumulator.AverageRatioCount > 0 {
+			groups[idx].AverageRatio = accumulator.AverageRatioSum / float64(accumulator.AverageRatioCount)
+		}
+		if accumulator.AveragePriceCount > 0 {
+			groups[idx].AveragePricePerM = accumulator.AveragePriceSum / float64(accumulator.AveragePriceCount)
+		}
+		if accumulator.SampleCount > 0 {
+			groups[idx].BlendedRatio = groups[idx].AverageRatio
+			groups[idx].BlendedPricePerM = groups[idx].AveragePricePerM
+			groups[idx].EffectiveSamples = accumulator.SampleCount
+		}
+		overview.ActiveCount++
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].PolicyGroup < groups[j].PolicyGroup
+	})
+	overview.Groups = groups
+	return overview, nil
+}
+
+func loadModelGatewayDynamicBillingAppliedLogs(startTime int64) ([]modelGatewayDynamicBillingAppliedLog, error) {
+	rows := make([]model.Log, 0)
+	query := model.LOG_DB.Model(&model.Log{}).
+		Where("type = ? AND created_at >= ? AND request_id <> ''", model.LogTypeConsume, startTime)
+	query = query.Where("other LIKE ?", `%"dynamic_billing_applied":true%`)
+	if err := query.Order("created_at asc, id asc").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	logs := make([]modelGatewayDynamicBillingAppliedLog, 0, len(rows))
+	for _, row := range rows {
+		logs = append(logs, modelGatewayDynamicBillingAppliedLog{
+			RequestId: row.RequestId,
+			CreatedAt: row.CreatedAt,
+			ModelName: row.ModelName,
+			Group:     row.Group,
+			Other:     row.Other,
+		})
+	}
+	return logs, nil
+}
+
+func loadModelGatewayDynamicBillingAppliedSummaries(logs []modelGatewayDynamicBillingAppliedLog) (map[string]model.ModelGatewayUserRequestSummary, error) {
+	requestIDs := make([]string, 0, len(logs))
+	requestIDSeen := make(map[string]struct{}, len(logs))
+	for _, logRow := range logs {
+		requestID := strings.TrimSpace(logRow.RequestId)
+		if requestID == "" {
+			continue
+		}
+		if _, exists := requestIDSeen[requestID]; exists {
+			continue
+		}
+		requestIDSeen[requestID] = struct{}{}
+		requestIDs = append(requestIDs, requestID)
+	}
+	summaryByRequestID := make(map[string]model.ModelGatewayUserRequestSummary, len(requestIDs))
+	if len(requestIDs) == 0 {
+		return summaryByRequestID, nil
+	}
+	summaries := make([]model.ModelGatewayUserRequestSummary, 0, len(requestIDs))
+	if err := model.DB.Model(&model.ModelGatewayUserRequestSummary{}).
+		Select("request_id", "requested_group", "selected_group").
+		Where("request_id IN ?", requestIDs).
+		Find(&summaries).Error; err != nil {
+		return nil, err
+	}
+	for _, summary := range summaries {
+		summaryByRequestID[strings.TrimSpace(summary.RequestId)] = summary
+	}
+	return summaryByRequestID, nil
+}
+
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func resolveModelGatewayDynamicPolicyGroup(requestedGroup string, targetGroup string, policyTargets map[string]map[string]struct{}) string {
+	requestedGroup = strings.TrimSpace(requestedGroup)
+	if _, ok := policyTargets[requestedGroup]; ok {
+		return requestedGroup
+	}
+	targetGroup = strings.TrimSpace(targetGroup)
+	if targetGroup == "" {
+		return ""
+	}
+	resolved := ""
+	for policyGroup, targets := range policyTargets {
+		if _, ok := targets[targetGroup]; !ok {
+			continue
+		}
+		if resolved != "" && resolved != policyGroup {
+			return ""
+		}
+		resolved = policyGroup
+	}
+	return resolved
+}
+
+func normalizeModelGatewayDynamicTargetGroups(policyGroup string, candidateGroups []string) []string {
+	seen := make(map[string]struct{})
+	result := make([]string, 0, len(candidateGroups)+1)
+	appendGroup := func(value string) {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return
+		}
+		if _, ok := seen[trimmed]; ok {
+			return
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	appendGroup(policyGroup)
+	for _, candidate := range candidateGroups {
+		appendGroup(candidate)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func defaultModelGatewayRuntimeStatusService() *modelgatewayobservability.RuntimeStatusService {
@@ -1443,6 +2050,8 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 	response.ByGroup = finalizeModelGatewayUserRequestAggregates(groupAccumulators, options.TopN)
 	response.Trends = finalizeModelGatewayUserRequestTrends(trendAccumulators, startTime, endTime, options.TrendBucketSeconds)
 	attachModelGatewayUserRequestDispatchRecords(response.RecentRequests)
+	attachModelGatewayUserRequestExecutionUsers(response.RecentRequests)
+	attachModelGatewayUserRequestUsernames(response.RecentRequests)
 	return response
 }
 
@@ -1537,7 +2146,11 @@ func attachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequ
 		return
 	}
 
-	dispatchByRequestID := make(map[string]ModelGatewayObservabilityRecord, len(dispatchRecords))
+	type dispatchRecordWithUser struct {
+		record ModelGatewayObservabilityRecord
+		userID int
+	}
+	dispatchByRequestID := make(map[string]dispatchRecordWithUser, len(dispatchRecords))
 	for _, record := range dispatchRecords {
 		requestID := strings.TrimSpace(record.RequestId)
 		if requestID == "" {
@@ -1546,14 +2159,130 @@ func attachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequ
 		if _, exists := dispatchByRequestID[requestID]; exists {
 			continue
 		}
-		dispatchByRequestID[requestID] = ModelGatewayObservabilityRecordFromModelRecord(record)
+		dispatchByRequestID[requestID] = dispatchRecordWithUser{
+			record: ModelGatewayObservabilityRecordFromModelRecord(record),
+			userID: record.UserId,
+		}
 	}
 	for idx := range records {
 		dispatch, ok := dispatchByRequestID[strings.TrimSpace(records[idx].RequestID)]
 		if !ok {
 			continue
 		}
-		records[idx].DispatchRecord = &dispatch
+		records[idx].DispatchRecord = &dispatch.record
+		if records[idx].UserID == 0 && dispatch.userID > 0 {
+			records[idx].UserID = dispatch.userID
+		}
+	}
+}
+
+func attachModelGatewayUserRequestExecutionUsers(records []ModelGatewayUserRequestRecord) {
+	if len(records) == 0 || model.DB == nil {
+		return
+	}
+	requestIDs := make([]string, 0, len(records))
+	seen := make(map[string]bool, len(records))
+	for _, record := range records {
+		if record.UserID > 0 {
+			continue
+		}
+		requestID := strings.TrimSpace(record.RequestID)
+		if requestID == "" || seen[requestID] {
+			continue
+		}
+		seen[requestID] = true
+		requestIDs = append(requestIDs, requestID)
+	}
+	if len(requestIDs) == 0 {
+		return
+	}
+
+	type executionUserRow struct {
+		RequestID string `gorm:"column:request_id"`
+		UserID    int    `gorm:"column:user_id"`
+	}
+	rows := make([]executionUserRow, 0, len(requestIDs))
+	if err := model.DB.
+		Model(&model.ModelExecutionRecord{}).
+		Select("request_id", "user_id").
+		Where("request_id IN ? AND user_id > 0", requestIDs).
+		Order("created_at desc, id desc").
+		Find(&rows).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to load model gateway user request execution users: %v", err))
+		return
+	}
+	userByRequestID := make(map[string]int, len(rows))
+	for _, row := range rows {
+		requestID := strings.TrimSpace(row.RequestID)
+		if requestID == "" || row.UserID <= 0 {
+			continue
+		}
+		if _, exists := userByRequestID[requestID]; exists {
+			continue
+		}
+		userByRequestID[requestID] = row.UserID
+	}
+	for idx := range records {
+		if records[idx].UserID > 0 {
+			continue
+		}
+		if userID := userByRequestID[strings.TrimSpace(records[idx].RequestID)]; userID > 0 {
+			records[idx].UserID = userID
+		}
+	}
+}
+
+func attachModelGatewayUserRequestUsernames(records []ModelGatewayUserRequestRecord) {
+	if len(records) == 0 || model.DB == nil {
+		return
+	}
+	userIDs := make([]int, 0, len(records))
+	seen := make(map[int]bool, len(records))
+	for idx := range records {
+		records[idx].Username = strings.TrimSpace(records[idx].Username)
+		if records[idx].Billing != nil {
+			records[idx].Billing.Username = strings.TrimSpace(records[idx].Billing.Username)
+			if records[idx].UserID == 0 && records[idx].Billing.UserID > 0 {
+				records[idx].UserID = records[idx].Billing.UserID
+			}
+			if records[idx].Username == "" && records[idx].Billing.Username != "" {
+				records[idx].Username = records[idx].Billing.Username
+			}
+		}
+		if records[idx].UserID <= 0 || records[idx].Username != "" || seen[records[idx].UserID] {
+			continue
+		}
+		seen[records[idx].UserID] = true
+		userIDs = append(userIDs, records[idx].UserID)
+	}
+	if len(userIDs) == 0 {
+		return
+	}
+
+	users := make([]model.User, 0, len(userIDs))
+	if err := model.DB.
+		Model(&model.User{}).
+		Select("id", "username").
+		Where("id IN ?", userIDs).
+		Find(&users).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to load model gateway user request users: %v", err))
+		return
+	}
+	usernameByID := make(map[int]string, len(users))
+	for _, user := range users {
+		username := strings.TrimSpace(user.Username)
+		if user.Id > 0 && username != "" {
+			usernameByID[user.Id] = username
+		}
+	}
+	for idx := range records {
+		if records[idx].UserID <= 0 || records[idx].Username != "" {
+			continue
+		}
+		records[idx].Username = usernameByID[records[idx].UserID]
+		if records[idx].Billing != nil && records[idx].Billing.Username == "" && records[idx].Billing.UserID == records[idx].UserID {
+			records[idx].Billing.Username = records[idx].Username
+		}
 	}
 }
 
@@ -1601,6 +2330,10 @@ func attachModelGatewayUserRequestBilling(records []ModelGatewayUserRequestRecor
 	for idx := range records {
 		billing := billingByRequestID[strings.TrimSpace(records[idx].RequestID)]
 		records[idx].Billing = billing
+		if billing != nil {
+			records[idx].UserID = billing.UserID
+			records[idx].Username = strings.TrimSpace(billing.Username)
+		}
 		applyModelGatewayUserRequestActualGroup(&records[idx], billing)
 	}
 }
@@ -1614,48 +2347,56 @@ func modelGatewayUserRequestBillingInfoFromLog(log model.Log) *ModelGatewayUserR
 	}
 
 	info := &ModelGatewayUserRequestBillingInfo{
-		LogID:                    log.Id,
-		CreatedAt:                log.CreatedAt,
-		Quota:                    log.Quota,
-		PromptTokens:             log.PromptTokens,
-		CompletionTokens:         log.CompletionTokens,
-		TotalTokens:              log.PromptTokens + log.CompletionTokens,
-		ChannelID:                log.ChannelId,
-		Group:                    log.Group,
-		ModelName:                log.ModelName,
-		Content:                  log.Content,
-		ModelRatio:               modelGatewayBillingFloat(other, "model_ratio"),
-		GroupRatio:               modelGatewayBillingFloat(other, "group_ratio"),
-		UserGroupRatio:           modelGatewayBillingFloat(other, "user_group_ratio"),
-		CompletionRatio:          modelGatewayBillingFloat(other, "completion_ratio"),
-		CacheTokens:              modelGatewayBillingInt(other, "cache_tokens"),
-		CacheRatio:               modelGatewayBillingFloat(other, "cache_ratio"),
-		CacheCreationTokens:      modelGatewayBillingInt(other, "cache_creation_tokens"),
-		CacheCreationRatio:       modelGatewayBillingFloat(other, "cache_creation_ratio"),
-		CacheCreationTokens5m:    modelGatewayBillingInt(other, "cache_creation_tokens_5m"),
-		CacheCreationRatio5m:     modelGatewayBillingFloat(other, "cache_creation_ratio_5m"),
-		CacheCreationTokens1h:    modelGatewayBillingInt(other, "cache_creation_tokens_1h"),
-		CacheCreationRatio1h:     modelGatewayBillingFloat(other, "cache_creation_ratio_1h"),
-		CacheWriteTokens:         modelGatewayBillingInt(other, "cache_write_tokens"),
-		ModelPrice:               modelGatewayBillingFloat(other, "model_price"),
-		BillingMode:              modelGatewayBillingString(other, "billing_mode"),
-		BillingSource:            modelGatewayBillingString(other, "billing_source"),
-		BillingSubtype:           modelGatewayBillingString(other, "billing_subtype"),
-		SubscriptionConsumed:     modelGatewayBillingInt(other, "subscription_consumed"),
-		WalletQuotaDeducted:      modelGatewayBillingInt(other, "wallet_quota_deducted"),
-		WebSearchCallCount:       modelGatewayBillingInt(other, "web_search_call_count"),
-		WebSearchPrice:           modelGatewayBillingFloat(other, "web_search_price"),
-		FileSearchCallCount:      modelGatewayBillingInt(other, "file_search_call_count"),
-		FileSearchPrice:          modelGatewayBillingFloat(other, "file_search_price"),
-		AudioInputTokenCount:     modelGatewayBillingInt(other, "audio_input_token_count"),
-		AudioInputPrice:          modelGatewayBillingFloat(other, "audio_input_price"),
-		ImageTokens:              modelGatewayBillingInt(other, "image_output"),
-		ImageRatio:               modelGatewayBillingFloat(other, "image_ratio"),
-		ImageGenerationCallCount: modelGatewayBillingInt(other, "image_generation_call_count"),
-		ImageGenerationCallPrice: modelGatewayBillingFloat(other, "image_generation_call_price"),
-		ImageGenerationQuality:   modelGatewayBillingString(other, "image_generation_call_quality"),
-		ImageGenerationSize:      modelGatewayBillingString(other, "image_generation_call_size"),
-		UsageSemantic:            modelGatewayBillingString(other, "usage_semantic"),
+		LogID:                     log.Id,
+		UserID:                    log.UserId,
+		Username:                  strings.TrimSpace(log.Username),
+		CreatedAt:                 log.CreatedAt,
+		Quota:                     log.Quota,
+		PromptTokens:              log.PromptTokens,
+		CompletionTokens:          log.CompletionTokens,
+		TotalTokens:               log.PromptTokens + log.CompletionTokens,
+		ChannelID:                 log.ChannelId,
+		Group:                     log.Group,
+		ModelName:                 log.ModelName,
+		Content:                   log.Content,
+		ModelRatio:                modelGatewayBillingFloat(other, "model_ratio"),
+		GroupRatio:                modelGatewayBillingFloat(other, "group_ratio"),
+		UserGroupRatio:            modelGatewayBillingFloat(other, "user_group_ratio"),
+		CompletionRatio:           modelGatewayBillingFloat(other, "completion_ratio"),
+		CacheTokens:               modelGatewayBillingInt(other, "cache_tokens"),
+		CacheRatio:                modelGatewayBillingFloat(other, "cache_ratio"),
+		CacheCreationTokens:       modelGatewayBillingInt(other, "cache_creation_tokens"),
+		CacheCreationRatio:        modelGatewayBillingFloat(other, "cache_creation_ratio"),
+		CacheCreationTokens5m:     modelGatewayBillingInt(other, "cache_creation_tokens_5m"),
+		CacheCreationRatio5m:      modelGatewayBillingFloat(other, "cache_creation_ratio_5m"),
+		CacheCreationTokens1h:     modelGatewayBillingInt(other, "cache_creation_tokens_1h"),
+		CacheCreationRatio1h:      modelGatewayBillingFloat(other, "cache_creation_ratio_1h"),
+		CacheWriteTokens:          modelGatewayBillingInt(other, "cache_write_tokens"),
+		ModelPrice:                modelGatewayBillingFloat(other, "model_price"),
+		BillingMode:               modelGatewayBillingString(other, "billing_mode"),
+		BillingSource:             modelGatewayBillingString(other, "billing_source"),
+		BillingSubtype:            modelGatewayBillingString(other, "billing_subtype"),
+		DynamicBillingApplied:     modelGatewayBillingBool(other, "dynamic_billing_applied"),
+		DynamicBillingFallback:    modelGatewayBillingBool(other, "dynamic_billing_fallback"),
+		DynamicFallbackReason:     modelGatewayBillingString(other, "dynamic_fallback_reason"),
+		DynamicBillingRatio:       modelGatewayBillingFloat(other, "dynamic_billing_ratio"),
+		DynamicBillingPricePerM:   modelGatewayBillingFloat(other, "dynamic_billing_price_per_m"),
+		DynamicBillingSampleCount: modelGatewayBillingInt(other, "dynamic_billing_sample_count"),
+		SubscriptionConsumed:      modelGatewayBillingInt(other, "subscription_consumed"),
+		WalletQuotaDeducted:       modelGatewayBillingInt(other, "wallet_quota_deducted"),
+		WebSearchCallCount:        modelGatewayBillingInt(other, "web_search_call_count"),
+		WebSearchPrice:            modelGatewayBillingFloat(other, "web_search_price"),
+		FileSearchCallCount:       modelGatewayBillingInt(other, "file_search_call_count"),
+		FileSearchPrice:           modelGatewayBillingFloat(other, "file_search_price"),
+		AudioInputTokenCount:      modelGatewayBillingInt(other, "audio_input_token_count"),
+		AudioInputPrice:           modelGatewayBillingFloat(other, "audio_input_price"),
+		ImageTokens:               modelGatewayBillingInt(other, "image_output"),
+		ImageRatio:                modelGatewayBillingFloat(other, "image_ratio"),
+		ImageGenerationCallCount:  modelGatewayBillingInt(other, "image_generation_call_count"),
+		ImageGenerationCallPrice:  modelGatewayBillingFloat(other, "image_generation_call_price"),
+		ImageGenerationQuality:    modelGatewayBillingString(other, "image_generation_call_quality"),
+		ImageGenerationSize:       modelGatewayBillingString(other, "image_generation_call_size"),
+		UsageSemantic:             modelGatewayBillingString(other, "usage_semantic"),
 	}
 	if info.CacheWriteTokens == 0 && info.CacheCreationTokens > 0 {
 		info.CacheWriteTokens = info.CacheCreationTokens
@@ -1741,6 +2482,24 @@ func modelGatewayBillingString(values map[string]interface{}, key string) string
 		return ""
 	}
 	return strings.TrimSpace(common.Interface2String(value))
+}
+
+func modelGatewayBillingBool(values map[string]interface{}, key string) bool {
+	value, ok := values[key]
+	if !ok || value == nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true") || strings.TrimSpace(typed) == "1"
+	case float64:
+		return typed != 0
+	case int:
+		return typed != 0
+	}
+	return false
 }
 
 func newModelGatewayUserRequestAccumulator(key string) *modelGatewayUserRequestAccumulator {

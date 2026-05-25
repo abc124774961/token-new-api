@@ -32,6 +32,7 @@ const PricingFilterModal = ({ visible, onClose, sidebarProps, t }) => {
       setShowRatio: sidebarProps.setShowRatio,
       setViewMode: sidebarProps.setViewMode,
       setFilterGroup: sidebarProps.setFilterGroup,
+      setSelectedGroup: sidebarProps.setSelectedGroup,
       setFilterQuotaType: sidebarProps.setFilterQuotaType,
       setFilterEndpointType: sidebarProps.setFilterEndpointType,
       setFilterVendor: sidebarProps.setFilterVendor,

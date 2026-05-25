@@ -375,6 +375,213 @@ func TestSelectorBreaksSaturatedStickyRouteWhenPeerHasCapacity(t *testing.T) {
 	require.Equal(t, "weighted_score_sticky_broken", plan.SelectedReason)
 }
 
+func TestSelectorBreaksStickyRouteForCostFirstCheaperHigherScore(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-cost-first-escape"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 48)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+	}
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{}, nil)
+	sticky.Save(ctx, &req, &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 1},
+		SelectedGroup: "default",
+	})
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	stickyKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 1, Group: "default"}
+	cheapKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 2, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                stickyKey,
+		SuccessRate:        0.98,
+		TTFTMs:             600,
+		TokensPerSecond:    60,
+		ActiveConcurrency:  1,
+		MaxConcurrency:     10,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        30,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                cheapKey,
+		SuccessRate:        0.98,
+		TTFTMs:             550,
+		TokensPerSecond:    64,
+		ActiveConcurrency:  1,
+		MaxConcurrency:     10,
+		CostRatio:          0.05,
+		GroupPriorityRatio: 1,
+		SampleCount:        30,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 1}, Group: "default", RuntimeKey: stickyKey},
+			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: cheapKey},
+		}),
+		store,
+		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+	).WithStickyRouter(sticky)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyCostFirst,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 2, plan.Channel.Id)
+	require.False(t, plan.StickyRetained)
+	require.Equal(t, "cost_first_cheaper_higher_score", plan.StickyBreak)
+	require.Equal(t, "weighted_score_sticky_broken", plan.SelectedReason)
+}
+
+func TestSelectorRetainsStickyRouteForCostFirstSmallCostGap(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-cost-first-small-gap"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 49)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+	}
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{}, nil)
+	sticky.Save(ctx, &req, &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 1},
+		SelectedGroup: "default",
+	})
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	stickyKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 1, Group: "default"}
+	cheapKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 2, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                stickyKey,
+		SuccessRate:        0.98,
+		TTFTMs:             600,
+		TokensPerSecond:    60,
+		ActiveConcurrency:  1,
+		MaxConcurrency:     10,
+		CostRatio:          0.40,
+		GroupPriorityRatio: 1,
+		SampleCount:        30,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                cheapKey,
+		SuccessRate:        0.98,
+		TTFTMs:             550,
+		TokensPerSecond:    64,
+		ActiveConcurrency:  1,
+		MaxConcurrency:     10,
+		CostRatio:          0.32,
+		GroupPriorityRatio: 1,
+		SampleCount:        30,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 1}, Group: "default", RuntimeKey: stickyKey},
+			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: cheapKey},
+		}),
+		store,
+		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+	).WithStickyRouter(sticky)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyCostFirst,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 1, plan.Channel.Id)
+	require.True(t, plan.StickyRetained)
+	require.Equal(t, "user_sticky_retained", plan.SelectedReason)
+	require.Empty(t, plan.StickyBreak)
+}
+
+func TestSelectorRetainsCacheAffinityForCostFirstUnlessCostGapIsLarge(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	stickyKey := core.RuntimeKey{RequestedModel: "gpt-5", ChannelID: 1, Group: "default"}
+	cheapKey := core.RuntimeKey{RequestedModel: "gpt-5", ChannelID: 2, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                stickyKey,
+		SuccessRate:        0.98,
+		TTFTMs:             650,
+		TokensPerSecond:    55,
+		ActiveConcurrency:  1,
+		MaxConcurrency:     10,
+		CostRatio:          0.40,
+		GroupPriorityRatio: 1,
+		SampleCount:        30,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                cheapKey,
+		SuccessRate:        0.98,
+		TTFTMs:             520,
+		TokensPerSecond:    70,
+		ActiveConcurrency:  1,
+		MaxConcurrency:     10,
+		CostRatio:          0.24,
+		GroupPriorityRatio: 1,
+		SampleCount:        30,
+	})
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{
+		CacheKeepScoreRatio: 0.75,
+	}, scheduler.NewStaticCacheAffinitySignalAdapter(core.CacheAffinitySignal{
+		Key:                "fake-cache-key",
+		KeyFingerprint:     "cost-affinity-1",
+		Source:             "fake",
+		PreferredChannelID: 1,
+		PreferredGroup:     "default",
+	}, true))
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 1}, Group: "default", RuntimeKey: stickyKey},
+			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: cheapKey},
+		}),
+		store,
+		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+	).WithStickyRouter(sticky)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5",
+	}, core.GroupSmartPolicy{
+		Mode:                 core.ModeActive,
+		RequestedGroup:       "default",
+		CandidateGroups:      []string{"default"},
+		Strategy:             core.StrategyCostFirst,
+		CacheAffinityEnabled: true,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 1, plan.Channel.Id)
+	require.True(t, plan.CacheAffinity)
+	require.True(t, plan.StickyRetained)
+	require.Equal(t, "cache_affinity_retained", plan.SelectedReason)
+	require.Empty(t, plan.StickyBreak)
+}
+
 func TestStickyRouterSharesStoreAcrossInstances(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := newStickyRequestContext(t, `{"session_id":"sess-shared-store"}`, nil)

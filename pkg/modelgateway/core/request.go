@@ -24,6 +24,8 @@ func NewDispatchRequestFromGin(c *gin.Context, param *service.RetryParam) Dispat
 		return req
 	}
 	req.RequestID = c.GetString(common.RequestIdKey)
+	req.UserID = common.GetContextKeyInt(c, constant.ContextKeyUserId)
+	req.TokenID = common.GetContextKeyInt(c, constant.ContextKeyTokenId)
 	req.UserGroup = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 	req.CrossGroupRetry = common.GetContextKeyBool(c, constant.ContextKeyTokenCrossGroupRetry)
 	req.ForceNextAutoGroup = common.GetContextKeyBool(c, constant.ContextKeyForceNextAutoGroup)

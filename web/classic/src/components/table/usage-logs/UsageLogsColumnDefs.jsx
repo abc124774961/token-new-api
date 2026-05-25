@@ -32,6 +32,7 @@ import {
   stringToColor,
   getLogOther,
   renderModelTag,
+  getCurrencyConfig,
   renderModelPriceSimple,
   renderTieredModelPriceSimple,
 } from '../../../helpers';
@@ -64,6 +65,166 @@ function formatRatio(ratio) {
     return ratio.toFixed(4);
   }
   return String(ratio);
+}
+
+function toFiniteNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function formatBillingRatio(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '--';
+  return numeric.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function formatCostRatio(value) {
+  const text = formatBillingRatio(value);
+  return text === '--' ? '--' : `${text}x`;
+}
+
+function formatDisplayCostAmount(value, options = {}) {
+  const { allowNegative = false, showSign = false } = options;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '--';
+  if (!allowNegative && numeric <= 0) return '--';
+  const { symbol, rate } = getCurrencyConfig();
+  const converted = numeric * rate;
+  const absConverted = Math.abs(converted);
+  const sign = converted < 0 ? '-' : showSign && converted > 0 ? '+' : '';
+  if (absConverted === 0) {
+    return `${symbol}0`;
+  }
+  if (absConverted < 0.00000001) {
+    return `${sign}${symbol}${absConverted.toExponential(2).replace('e', 'E')}`;
+  }
+  const digits = absConverted < 0.000001 ? 12 : absConverted < 0.01 ? 8 : 6;
+  return `${sign}${symbol}${absConverted
+    .toFixed(digits)
+    .replace(/0+$/, '')
+    .replace(/\.$/, '')}`;
+}
+
+function quotaToUsdAmount(quota) {
+  const quotaValue = Number(quota || 0);
+  if (!Number.isFinite(quotaValue) || quotaValue <= 0) return 0;
+  const quotaPerUnit = Number(localStorage.getItem('quota_per_unit') || 500000);
+  if (!Number.isFinite(quotaPerUnit) || quotaPerUnit <= 0) return 0;
+  return quotaValue / quotaPerUnit;
+}
+
+function formatProfitRate(profit, billingUsdAmount) {
+  const profitValue = Number(profit);
+  const billingValue = Number(billingUsdAmount);
+  if (
+    !Number.isFinite(profitValue) ||
+    !Number.isFinite(billingValue) ||
+    billingValue <= 0
+  ) {
+    return null;
+  }
+  return `${profitValue >= 0 ? '+' : ''}${((profitValue / billingValue) * 100).toFixed(1)}%`;
+}
+
+function upstreamCostSourceLabel(source, accuracy, t) {
+  if (source === 'pending' || accuracy === 'pending') return t('计算中');
+  if (source === 'missing' || accuracy === 'missing') return t('未配置');
+  if (source === 'auto_synced') return t('自动同步');
+  if (source === 'system_ratio') return t('系统倍率估算');
+  if (source === 'log_billing') return t('日志计费');
+  if (source === 'manual') return t('手动规则');
+  return source || '--';
+}
+
+function buildChannelCostTooltip(record, other, channelContent, t) {
+  const cost = other?.model_gateway_cost;
+  const breakdown = cost?.breakdown || {};
+  const upstreamCost = toFiniteNumber(cost?.upstream_cost_total);
+  const channelLabel = record.channel_name || t('未知渠道');
+  const channelId =
+    cost?.channel_id || record?.channel || record?.channel_id || channelContent;
+  const upstreamStatus = cost
+    ? upstreamCostSourceLabel(cost.cost_source, cost.cost_accuracy, t)
+    : t('计算中');
+  const upstreamCostText =
+    upstreamCost > 0 ? formatDisplayCostAmount(upstreamCost) : upstreamStatus;
+  const actualCostRatio = toFiniteNumber(breakdown?.token_multiplier);
+  const billingQuota = toFiniteNumber(cost?.billing_quota, record?.quota || 0);
+  const billingUsdAmount = quotaToUsdAmount(billingQuota);
+  const profit =
+    upstreamCost > 0 && billingUsdAmount > 0
+      ? billingUsdAmount - upstreamCost
+      : null;
+  const profitText =
+    profit === null
+      ? '--'
+      : formatDisplayCostAmount(profit, {
+          allowNegative: true,
+          showSign: true,
+        });
+  const profitRateText =
+    profit === null ? null : formatProfitRate(profit, billingUsdAmount);
+  const metrics = [
+    {
+      key: 'cost',
+      label: t('供应商成本'),
+      value: upstreamCostText,
+      tone: 'cost',
+    },
+    {
+      key: 'charge',
+      label: t('实际扣费'),
+      value: billingQuota > 0 ? renderQuota(billingQuota, 6) : '--',
+      tone: 'charge',
+    },
+    {
+      key: 'profit',
+      label: t('利润'),
+      value: profitText,
+      hint: profitRateText,
+      tone: profit !== null && profit < 0 ? 'negative' : 'profit',
+    },
+  ];
+  const rows = [
+    [
+      t('渠道'),
+      `${channelId || '--'}${channelLabel ? ` · ${channelLabel}` : ''}`,
+    ],
+    [t('上游模型'), cost?.upstream_model || record.model_name || '--'],
+    [
+      t('1:1 实际成本倍率'),
+      actualCostRatio > 0 ? formatCostRatio(actualCostRatio) : '--',
+    ],
+    [t('成本来源'), upstreamStatus],
+  ];
+
+  return (
+    <div className='usage-log-channel-cost-tooltip'>
+      <div className='usage-log-channel-cost-title'>{t('渠道成本')}</div>
+      <div className='usage-log-channel-cost-metrics'>
+        {metrics.map((item) => (
+          <div
+            className={`usage-log-channel-cost-metric usage-log-channel-cost-metric-${item.key} usage-log-channel-cost-metric-${item.tone}`}
+            key={item.key}
+          >
+            <span>{item.label}</span>
+            <strong>
+              {item.value}
+              {item.hint ? <em>{item.hint}</em> : null}
+            </strong>
+          </div>
+        ))}
+      </div>
+      <div className='usage-log-channel-cost-meta'>
+        {rows.map(([label, value]) => (
+          <div className='usage-log-channel-cost-row' key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function buildChannelAffinityTooltip(affinity, t) {
@@ -740,7 +901,12 @@ export const getLogsColumns = ({
             record.type === 6) ? (
           <Space>
             <span style={{ position: 'relative', display: 'inline-block' }}>
-              <Tooltip content={record.channel_name || t('未知渠道')}>
+              <Tooltip
+                className='usage-log-channel-cost-tooltip-popover'
+                content={buildChannelCostTooltip(record, other, content, t)}
+                position='rightTop'
+                showArrow
+              >
                 <span>
                   <Tag
                     color={colors[parseInt(text) % colors.length]}

@@ -13,12 +13,22 @@ import (
 
 const maxCandidateExplanations = 32
 
+const (
+	costFirstStickyEscapeCostRatio       = 0.75
+	costFirstStickyEscapeScoreDelta      = 0.03
+	costFirstStickyEscapeCacheCostRatio  = 0.55
+	costFirstStickyEscapeCacheScoreDelta = 0.08
+	costFirstStickyEscapeMinSamples      = 5
+	costFirstStickyEscapeSuccessSlack    = 0.02
+)
+
 type DefaultSmartChannelSelector struct {
-	candidateBuilder core.CandidatePoolBuilder
-	snapshotStore    core.RuntimeSnapshotStore
-	scorerFactory    core.ScoreCalculatorFactory
-	snapshotEnricher core.RuntimeSnapshotEnricher
-	stickyRouter     core.StickyRouter
+	candidateBuilder     core.CandidatePoolBuilder
+	snapshotStore        core.RuntimeSnapshotStore
+	scorerFactory        core.ScoreCalculatorFactory
+	snapshotEnricher     core.RuntimeSnapshotEnricher
+	stickyRouter         core.StickyRouter
+	costBaselineProvider core.CostBaselineProvider
 }
 
 type stickySaveOnSelectRouter interface {
@@ -56,6 +66,14 @@ func (s *DefaultSmartChannelSelector) WithStickyRouter(router core.StickyRouter)
 		return nil
 	}
 	s.stickyRouter = router
+	return s
+}
+
+func (s *DefaultSmartChannelSelector) WithCostBaselineProvider(provider core.CostBaselineProvider) *DefaultSmartChannelSelector {
+	if s == nil {
+		return nil
+	}
+	s.costBaselineProvider = provider
 	return s
 }
 
@@ -97,9 +115,9 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	stickyFound := false
 	availableFound := false
 	saturatedFound := false
+	costReferenceRatio := 0.0
 	explanations := make([]core.CandidateExplanation, 0, minInt(len(candidates), maxCandidateExplanations))
 	evaluations := make([]candidateEvaluation, 0, len(candidates))
-	costReferenceRatio := 0.0
 	for _, candidate := range candidates {
 		snapshot := s.snapshotForCandidate(candidate, policy)
 		if s.snapshotEnricher != nil {
@@ -110,8 +128,12 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		if stickyMatched && stickyBreak == "" && rejectReason != "" {
 			stickyBreak = rejectReason
 		}
-		if snapshot.CostReferenceRatio > 0 && (costReferenceRatio <= 0 || snapshot.CostReferenceRatio < costReferenceRatio) {
-			costReferenceRatio = snapshot.CostReferenceRatio
+		referenceCandidate := snapshot.CostReferenceRatio
+		if referenceCandidate <= 0 && !(hasSticky && stickyRoute.CacheAware) {
+			referenceCandidate = snapshot.CostRatio
+		}
+		if snapshot.CostRatio > 0 && referenceCandidate > 0 && (costReferenceRatio <= 0 || referenceCandidate < costReferenceRatio) {
+			costReferenceRatio = referenceCandidate
 		}
 		evaluations = append(evaluations, candidateEvaluation{
 			candidate:     candidate,
@@ -123,8 +145,8 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	for _, evaluation := range evaluations {
 		candidate := evaluation.candidate
 		snapshot := evaluation.snapshot
-		if costReferenceRatio > 0 {
-			snapshot.CostReferenceRatio = costReferenceRatio
+		if reference, ok := s.costReferenceForCandidate(candidate, snapshot, policy, costReferenceRatio); ok {
+			snapshot.CostReferenceRatio = reference
 		}
 		explanation := candidateExplanation(candidate, snapshot, evaluation.stickyMatched)
 		score := scorer.Score(candidate, snapshot, policy)
@@ -193,6 +215,17 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			}
 			if stickySaturated && availableFound {
 				stickyBreak = "concurrency_saturated"
+			} else if shouldBreakStickyForCostFirst(
+				policy,
+				stickyRoute,
+				stickyCandidate,
+				stickySnapshot,
+				stickyScore,
+				bestCandidate,
+				bestSnapshot,
+				bestScore,
+			) {
+				stickyBreak = "cost_first_cheaper_higher_score"
 			} else if stickyScore.Total >= bestScore.Total*keepRatio {
 				bestCandidate = stickyCandidate
 				bestSnapshot = stickySnapshot
@@ -246,6 +279,52 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		plan.SelectedReason = "weighted_score_sticky_broken"
 	}
 	return plan, true, nil
+}
+
+func (s *DefaultSmartChannelSelector) costReferenceForCandidate(candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy, fallbackReference float64) (float64, bool) {
+	if s == nil || s.costBaselineProvider == nil || snapshot.CostRatio <= 0 {
+		if fallbackReference > 0 {
+			return fallbackReference, true
+		}
+		if snapshot.CostReferenceRatio > 0 {
+			return snapshot.CostReferenceRatio, true
+		}
+		return 0, false
+	}
+	groups := policy.CandidateGroups
+	if len(groups) == 0 {
+		group := strings.TrimSpace(candidate.Group)
+		if group == "" {
+			group = strings.TrimSpace(snapshot.Key.Group)
+		}
+		if group != "" {
+			groups = []string{group}
+		}
+	}
+	requestedModel := strings.TrimSpace(snapshot.Key.RequestedModel)
+	endpointType := strings.TrimSpace(string(snapshot.Key.EndpointType))
+	best := 0.0
+	for _, group := range groups {
+		scope := core.CostBaselineScope{
+			RequestedModel:         requestedModel,
+			Group:                  group,
+			EndpointType:           endpointType,
+			RequiresCodexImageTool: candidate.RequiresCodexImageTool,
+		}
+		if value, ok := s.costBaselineProvider.Baseline(scope); ok && value > 0 && (best <= 0 || value < best) {
+			best = value
+		}
+	}
+	if best > 0 {
+		return best, true
+	}
+	if fallbackReference > 0 {
+		return fallbackReference, true
+	}
+	if snapshot.CostReferenceRatio > 0 {
+		return snapshot.CostReferenceRatio, true
+	}
+	return 0, false
 }
 
 func routingConcurrencySaturated(snapshot core.RuntimeSnapshot) bool {
@@ -434,6 +513,9 @@ func (s *DefaultSmartChannelSelector) snapshotForCandidate(candidate core.Candid
 	}
 	if snapshot, ok := s.snapshotStore.Get(base.Key); ok {
 		snapshot = normalizeRuntimeSnapshot(snapshot)
+		if s.snapshotEnricher != nil {
+			snapshot = mergeRuntimeSnapshotDynamicFields(snapshot, base)
+		}
 		snapshot.MatchedRuntimeKey = snapshot.Key
 		snapshot.SampleSource = "exact"
 		return snapshot
@@ -442,6 +524,9 @@ func (s *DefaultSmartChannelSelector) snapshotForCandidate(candidate core.Candid
 	if legacyKey != base.Key {
 		if snapshot, ok := s.snapshotStore.Get(legacyKey); ok {
 			snapshot = normalizeRuntimeSnapshot(snapshot)
+			if s.snapshotEnricher != nil {
+				snapshot = mergeRuntimeSnapshotDynamicFields(snapshot, base)
+			}
 			snapshot.MatchedRuntimeKey = snapshot.Key
 			snapshot.SampleSource = "legacy_exact"
 			return snapshot
@@ -488,6 +573,9 @@ func (s *DefaultSmartChannelSelector) fallbackSnapshotForCandidate(candidate cor
 	}
 	best = normalizeRuntimeSnapshot(best)
 	matchedKey := best.Key
+	if s.snapshotEnricher != nil {
+		best = mergeRuntimeSnapshotDynamicFields(best, base)
+	}
 	best.Key = base.Key
 	if best.Key.ChannelID == 0 {
 		best.Key.ChannelID = matchedKey.ChannelID
@@ -510,6 +598,38 @@ func (s *DefaultSmartChannelSelector) fallbackSnapshotForCandidate(candidate cor
 	best.MatchedRuntimeKey = matchedKey
 	best.SampleSource = "similar"
 	return best, true
+}
+
+func mergeRuntimeSnapshotDynamicFields(snapshot core.RuntimeSnapshot, dynamic core.RuntimeSnapshot) core.RuntimeSnapshot {
+	snapshot.Key = dynamic.Key
+	snapshot.CostRatio = dynamic.CostRatio
+	snapshot.CostReferenceRatio = dynamic.CostReferenceRatio
+	snapshot.CostPricingMode = dynamic.CostPricingMode
+	if dynamic.GroupPriorityRatio > 0 {
+		snapshot.GroupPriorityRatio = dynamic.GroupPriorityRatio
+	}
+	snapshot.ActiveConcurrency = dynamic.ActiveConcurrency
+	snapshot.MaxConcurrency = dynamic.MaxConcurrency
+	snapshot.ConfiguredConcurrencyLimit = dynamic.ConfiguredConcurrencyLimit
+	snapshot.LearnedConcurrencyLimit = dynamic.LearnedConcurrencyLimit
+	snapshot.EffectiveConcurrencyLimit = dynamic.EffectiveConcurrencyLimit
+	snapshot.QueueDepth = dynamic.QueueDepth
+	snapshot.QueueCapacity = dynamic.QueueCapacity
+	snapshot.QueueTimeoutMs = dynamic.QueueTimeoutMs
+	snapshot.EstimatedQueueWaitMs = dynamic.EstimatedQueueWaitMs
+	snapshot.FirstBytePending = dynamic.FirstBytePending
+	snapshot.SlowFirstBytePending = dynamic.SlowFirstBytePending
+	snapshot.OldestFirstByteWaitMs = dynamic.OldestFirstByteWaitMs
+	snapshot.CircuitState = dynamic.CircuitState
+	snapshot.CircuitOpen = dynamic.CircuitOpen
+	snapshot.Cooldown = dynamic.Cooldown
+	snapshot.FailureAvoidance = dynamic.FailureAvoidance
+	snapshot.ConfigErrorIsolated = dynamic.ConfigErrorIsolated
+	snapshot.IsolationReason = dynamic.IsolationReason
+	snapshot.IsolationUntil = dynamic.IsolationUntil
+	snapshot.AuthConfigErrorCount = dynamic.AuthConfigErrorCount
+	snapshot.LastAuthConfigErrorAt = dynamic.LastAuthConfigErrorAt
+	return snapshot
 }
 
 func mostRelevantSnapshot(key core.RuntimeKey, snapshots []core.RuntimeSnapshot) (core.RuntimeSnapshot, bool) {
@@ -603,6 +723,74 @@ func isStickyCandidate(candidate core.Candidate, route core.StickyRoute) bool {
 		return false
 	}
 	if route.Group != "" && candidate.Group != route.Group {
+		return false
+	}
+	return true
+}
+
+func shouldBreakStickyForCostFirst(policy core.GroupSmartPolicy, route core.StickyRoute, stickyCandidate core.Candidate, stickySnapshot core.RuntimeSnapshot, stickyScore core.ScoreResult, bestCandidate core.Candidate, bestSnapshot core.RuntimeSnapshot, bestScore core.ScoreResult) bool {
+	if policy.Strategy != core.StrategyCostFirst {
+		return false
+	}
+	if sameRoutingCandidate(stickyCandidate, bestCandidate) {
+		return false
+	}
+	stickyCost := stickyEscapeCost(stickySnapshot)
+	bestCost := stickyEscapeCost(bestSnapshot)
+	if stickyCost <= 0 || bestCost <= 0 {
+		return false
+	}
+	if stickySnapshot.SampleCount < costFirstStickyEscapeMinSamples || bestSnapshot.SampleCount < costFirstStickyEscapeMinSamples {
+		return false
+	}
+	costRatio := costFirstStickyEscapeCostRatio
+	scoreDelta := costFirstStickyEscapeScoreDelta
+	if route.CacheAware {
+		costRatio = costFirstStickyEscapeCacheCostRatio
+		scoreDelta = costFirstStickyEscapeCacheScoreDelta
+	}
+	if bestCost > stickyCost*costRatio {
+		return false
+	}
+	if bestScore.RoutingTotal < stickyScore.RoutingTotal+scoreDelta {
+		return false
+	}
+	if bestScore.Total < stickyScore.Total+scoreDelta/2 {
+		return false
+	}
+	if bestSnapshot.SuccessRate+costFirstStickyEscapeSuccessSlack < stickySnapshot.SuccessRate {
+		return false
+	}
+	return true
+}
+
+func stickyEscapeCost(snapshot core.RuntimeSnapshot) float64 {
+	if snapshot.CostRatio <= 0 {
+		return 0
+	}
+	groupRatio := snapshot.GroupPriorityRatio
+	if groupRatio <= 0 {
+		groupRatio = 1
+	}
+	return snapshot.CostRatio * groupRatio
+}
+
+func sameRoutingCandidate(left core.Candidate, right core.Candidate) bool {
+	leftChannelID := 0
+	if left.Channel != nil {
+		leftChannelID = left.Channel.Id
+	}
+	rightChannelID := 0
+	if right.Channel != nil {
+		rightChannelID = right.Channel.Id
+	}
+	if leftChannelID != rightChannelID {
+		return false
+	}
+	if left.Group != "" && right.Group != "" && left.Group != right.Group {
+		return false
+	}
+	if left.RuntimeKey.Group != "" && right.RuntimeKey.Group != "" && left.RuntimeKey.Group != right.RuntimeKey.Group {
 		return false
 	}
 	return true

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { SideSheet, Typography, Button, Divider } from '@douyinfe/semi-ui';
+import { SideSheet, Typography, Divider } from '@douyinfe/semi-ui';
 import { IconClose } from '@douyinfe/semi-icons';
 
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
@@ -27,6 +27,7 @@ import ModelBasicInfo from './components/ModelBasicInfo';
 import ModelEndpoints from './components/ModelEndpoints';
 import ModelPricingTable from './components/ModelPricingTable';
 import DynamicPricingBreakdown from './components/DynamicPricingBreakdown';
+import { calculateModelPrice } from '../../../../helpers';
 
 const { Text } = Typography;
 
@@ -35,6 +36,7 @@ const ModelDetailSideSheet = ({
   onClose,
   modelData,
   groupRatio,
+  selectedGroup,
   currency,
   siteDisplayType,
   tokenUnit,
@@ -47,6 +49,30 @@ const ModelDetailSideSheet = ({
   t,
 }) => {
   const isMobile = useIsMobile();
+  const priceData = React.useMemo(() => {
+    if (!modelData) {
+      return null;
+    }
+    return calculateModelPrice({
+      record: modelData,
+      selectedGroup,
+      groupRatio,
+      autoGroups,
+      tokenUnit,
+      displayPrice,
+      currency,
+      quotaDisplayType: siteDisplayType,
+    });
+  }, [
+    modelData,
+    selectedGroup,
+    groupRatio,
+    autoGroups,
+    tokenUnit,
+    displayPrice,
+    currency,
+    siteDisplayType,
+  ]);
 
   return (
     <SideSheet
@@ -62,14 +88,7 @@ const ModelDetailSideSheet = ({
       }}
       visible={visible}
       width={isMobile ? '100%' : 600}
-      closeIcon={
-        <Button
-          className='semi-button-tertiary semi-button-size-small semi-button-borderless'
-          type='button'
-          icon={<IconClose />}
-          onClick={onClose}
-        />
-      }
+      closeIcon={<IconClose />}
       onCancel={onClose}
     >
       <div style={{ paddingTop: 16, paddingBottom: 16 }}>
@@ -101,6 +120,8 @@ const ModelDetailSideSheet = ({
                 <div style={{ padding: '0 24px' }}>
                   <DynamicPricingBreakdown
                     billingExpr={modelData.billing_expr}
+                    group={priceData?.usedGroup}
+                    groupRatio={priceData?.usedGroupRatio}
                     t={t}
                   />
                 </div>
