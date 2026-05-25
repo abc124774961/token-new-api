@@ -1019,6 +1019,14 @@ export const renderGroupOption = (item) => {
     (currentDynamicRatio !== '--' ||
       averageDynamicRatio !== '--' ||
       dynamicRatioRange !== '--');
+  const dynamicMetaParts = [];
+  if (averageDynamicRatio !== '--') {
+    dynamicMetaParts.push(`${i18next.t('7天均')} ${averageDynamicRatio}`);
+  }
+  if (dynamicRatioRange !== '--') {
+    dynamicMetaParts.push(`${i18next.t('7天倍率')} ${dynamicRatioRange}`);
+  }
+  const dynamicMetaText = dynamicMetaParts.join(' · ');
   const optionClassName = [
     'token-group-option',
     selected ? 'token-group-option--selected' : '',
@@ -1085,32 +1093,13 @@ export const renderGroupOption = (item) => {
           size='small'
           className='token-group-option__description'
         >
-          {label}
+          <span className='token-group-option__description-text'>{label}</span>
+          {showDynamicBillingMetrics && dynamicMetaText ? (
+            <span className='token-group-option__meta-summary'>
+              {dynamicMetaText}
+            </span>
+          ) : null}
         </Typography.Text>
-        {showDynamicBillingMetrics ? (
-          <div className='token-group-option__meta'>
-            {averageDynamicRatio !== '--' ? (
-              <span className='token-group-option__meta-item'>
-                <span className='token-group-option__meta-label'>
-                  {i18next.t('7天均')}
-                </span>
-                <strong className='token-group-option__meta-value token-group-option__meta-value--teal'>
-                  {averageDynamicRatio}
-                </strong>
-              </span>
-            ) : null}
-            {dynamicRatioRange !== '--' ? (
-              <span className='token-group-option__meta-item'>
-                <span className='token-group-option__meta-label'>
-                  {i18next.t('7天倍率')}
-                </span>
-                <strong className='token-group-option__meta-value token-group-option__meta-value--indigo'>
-                  {dynamicRatioRange}
-                </strong>
-              </span>
-            ) : null}
-          </div>
-        ) : null}
       </div>
     </div>
   );
