@@ -48,6 +48,7 @@ type ProbeCandidate struct {
 	Key     core.RuntimeKey
 	Reason  string
 	Score   float64
+	Plan    *core.DispatchPlan
 }
 
 type ProbeRunResult struct {
@@ -70,4 +71,5 @@ type ProbeRunResult struct {
 	StartedAt   time.Time
 	Duration    time.Duration
 	TTFT        time.Duration
+	Plan        *core.DispatchPlan
 }

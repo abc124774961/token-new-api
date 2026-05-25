@@ -1523,6 +1523,83 @@ func TestModelGatewayObservabilitySummary7dOverviewWaitsWithoutAppliedSamplesAft
 	require.Zero(t, response.DynamicBilling7d.ActiveCount)
 }
 
+func TestModelGatewayObservabilitySummary7dOverviewSkipsHealthProbeAppliedSamples(t *testing.T) {
+	setupModelGatewayReplayControllerTestDB(t)
+	resetModelGatewayObservabilitySummaryCache()
+	defer resetModelGatewayObservabilitySummaryCache()
+
+	now := common.GetTimestamp()
+	enabledAt := now - 3600
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		DynamicBillingEnabled:        true,
+		DynamicBillingEnabledAt:      enabledAt,
+		DynamicBillingProfitRate:     0.2,
+		DynamicBillingWindowSamples:  300,
+		DynamicBillingMinSamples:     1,
+		DynamicBillingRefreshSeconds: 30,
+		DynamicBillingMaxAgeSeconds:  300,
+		GroupPolicies: map[string]scheduler_setting.GroupPolicySetting{
+			"auto": {
+				BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+				CandidateGroups:  []string{"codex-plus"},
+			},
+		},
+	})
+	defer restoreSetting()
+
+	require.NoError(t, model.DB.Create(&model.ModelGatewayUserRequestSummary{
+		RequestId:       "req-health-probe-dynamic",
+		CreatedAt:       enabledAt + 60,
+		UpdatedAt:       enabledAt + 60,
+		CompletedAt:     enabledAt + 60,
+		RequestedModel:  "gpt-test",
+		RequestedGroup:  "auto",
+		SelectedGroup:   "codex-plus",
+		FinalChannelID:  4,
+		Attempts:        1,
+		FinalSuccess:    true,
+		FinalStatusCode: 200,
+	}).Error)
+
+	other, err := common.Marshal(map[string]any{
+		"dynamic_billing_applied":     true,
+		"dynamic_billing_group":       "codex-plus",
+		"dynamic_billing_ratio":       9.99,
+		"dynamic_billing_price_per_m": 39.96,
+		"is_health_probe":             true,
+		"billing_source":              "model_gateway_probe",
+	})
+	require.NoError(t, err)
+	require.NoError(t, model.LOG_DB.Create(&model.Log{
+		Type:             model.LogTypeConsume,
+		RequestId:        "req-health-probe-dynamic",
+		CreatedAt:        enabledAt + 60,
+		ModelName:        "gpt-test",
+		Group:            "codex-plus",
+		PromptTokens:     100,
+		CompletionTokens: 100,
+		Quota:            100,
+		Other:            string(other),
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.DynamicBilling7d.Groups, 1)
+	group := response.DynamicBilling7d.Groups[0]
+	require.Equal(t, "auto", group.PolicyGroup)
+	require.Equal(t, "waiting_samples", group.Status)
+	require.Zero(t, group.SampleCount)
+	require.Zero(t, group.CurrentRatio)
+	require.Equal(t, 1, response.DynamicBilling7d.WaitingCount)
+	require.Zero(t, response.DynamicBilling7d.ActiveCount)
+}
+
 func TestModelGatewayObservabilitySummaryDynamicBillingOverviewWaitingWithoutBaseline(t *testing.T) {
 	setupModelGatewayReplayControllerTestDB(t)
 	resetModelGatewayObservabilitySummaryCache()

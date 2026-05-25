@@ -110,6 +110,8 @@ type DispatchPlan struct {
 	RequiredTools             []string
 	CandidateFilterConditions []string
 	Candidates                []CandidateExplanation
+	IsHealthProbe             bool
+	ProbeReason               string
 }
 
 type RuntimeKey struct {

@@ -1768,6 +1768,9 @@ func buildModelGatewayDynamicBillingAppliedOverview(now int64, windowMinutes int
 		if err := common.UnmarshalJsonStr(logRow.Other, &other); err != nil {
 			continue
 		}
+		if skipModelGatewayDynamicBillingAppliedLog(other) {
+			continue
+		}
 		if !modelGatewayBillingBool(other, "dynamic_billing_applied") {
 			continue
 		}
@@ -1886,6 +1889,19 @@ func loadModelGatewayDynamicBillingAppliedLogs(startTime int64) ([]modelGatewayD
 		})
 	}
 	return logs, nil
+}
+
+func skipModelGatewayDynamicBillingAppliedLog(other map[string]interface{}) bool {
+	if len(other) == 0 {
+		return false
+	}
+	if modelGatewayBillingBool(other, "is_health_probe") {
+		return true
+	}
+	if strings.TrimSpace(modelGatewayBillingString(other, "billing_source")) == "model_gateway_probe" {
+		return true
+	}
+	return strings.TrimSpace(modelGatewayBillingString(other, "source")) == "health_probe"
 }
 
 func loadModelGatewayDynamicBillingAppliedSummaries(logs []modelGatewayDynamicBillingAppliedLog) (map[string]model.ModelGatewayUserRequestSummary, error) {

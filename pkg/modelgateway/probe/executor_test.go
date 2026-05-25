@@ -15,6 +15,8 @@ import (
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayprovider "github.com/QuantumNous/new-api/pkg/modelgateway/provider"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/recording"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -248,6 +250,105 @@ func TestProbeExecutorInjectsSelectedPlanForResponsesViaChatProbe(t *testing.T) 
 	require.NoError(t, result.Err)
 	require.True(t, result.Success)
 	require.Equal(t, constant.EndpointTypeOpenAIResponse, result.RuntimeKey.EndpointType)
+}
+
+func TestProbeSchedulerDispatchRecordIncludesScoreAndCandidateExplanation(t *testing.T) {
+	db := setupProbeExecutorTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	restoreSchedulerSetting := scheduler_setting.SetSettingForTest(scheduler_setting.DefaultSetting())
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(func() {
+		modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+		restoreSchedulerSetting()
+	})
+
+	root := model.User{
+		Id:       1,
+		Username: "root",
+		Role:     common.RoleRootUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		Quota:    100000,
+	}
+	require.NoError(t, db.Create(&root).Error)
+	channel := seedProbeExecutorChannel(t, db, 21, "score-probe", "default", "gpt-4.1", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{
+		RequestedModel: "gpt-4.1",
+		UpstreamModel:  "gpt-4.1",
+		ChannelID:      channel.Id,
+		Group:          "default",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SuccessRate:        0.5,
+		SuccessScore:       0.52,
+		SpeedScore:         0.48,
+		ExperienceScore:    0.7,
+		HealthScoreAverage: 0.5667,
+		SampleCount:        8,
+		CostRatio:          0.4,
+		CostReferenceRatio: 0.2,
+		GroupPriorityRatio: 1,
+	})
+	recorder := recording.NewAsyncExecutionRecorder(16)
+	s := NewProbeScheduler(ProbeConfig{Enabled: true}, nil, nil, recorder).
+		WithSnapshotStore(store)
+	plan := s.buildDispatchPlan(ProbeCandidate{
+		Channel: channel,
+		Model:   "gpt-4.1",
+		Group:   "default",
+		Key:     key,
+		Reason:  reasonLowScore,
+	})
+	require.NotNil(t, plan)
+	require.Greater(t, plan.ScoreTotal, 0.0)
+	require.Len(t, plan.Candidates, 1)
+	require.True(t, plan.Candidates[0].Selected)
+	require.Equal(t, reasonLowScore, plan.ProbeReason)
+
+	result := ProbeRunResult{
+		ProbeID:    "mg_probe_score_record",
+		Reason:     reasonLowScore,
+		Channel:    channel,
+		Model:      "gpt-4.1",
+		Group:      "default",
+		RuntimeKey: key,
+		TargetKey:  key,
+		StartedAt:  time.Now(),
+		Success:    true,
+		StatusCode: http.StatusOK,
+		Duration:   50 * time.Millisecond,
+		TTFT:       10 * time.Millisecond,
+		Plan:       plan,
+	}
+	recorder.Record(context.Background(), result.DispatchRecord())
+	recorder.Report(context.Background(), result.AttemptResult())
+
+	require.Eventually(t, func() bool {
+		var count int64
+		if err := db.Model(&model.ModelExecutionRecord{}).
+			Where("request_id = ?", result.ProbeID).
+			Count(&count).Error; err != nil {
+			return false
+		}
+		return count >= 2
+	}, time.Second, 10*time.Millisecond)
+
+	var dispatch model.ModelExecutionRecord
+	require.NoError(t, db.Where("request_id = ? AND smart_handled = ?", result.ProbeID, true).First(&dispatch).Error)
+	require.Greater(t, dispatch.ScoreTotal, 0.0)
+	require.Contains(t, dispatch.ScoreBreakdown, "success")
+	require.Contains(t, dispatch.RequestMeta, "candidate_explanations")
+	require.Contains(t, dispatch.RequestMeta, `"is_health_probe":true`)
+	require.Contains(t, dispatch.RequestMeta, `"probe_reason":"low_score"`)
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", result.ProbeID).First(&summary).Error)
+	require.True(t, summary.FinalSuccess)
 }
 
 func setupProbeExecutorTestDB(t *testing.T) *gorm.DB {

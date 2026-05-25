@@ -64,6 +64,7 @@ func (e *ProbeExecutor) Execute(ctx context.Context, candidate ProbeCandidate) P
 		RuntimeKey: candidate.Key,
 		TargetKey:  candidate.Key,
 		StartedAt:  startedAt,
+		Plan:       candidate.Plan,
 	}
 	if candidate.Channel == nil {
 		result.Err = errors.New("probe channel is nil")
@@ -108,7 +109,11 @@ func (e *ProbeExecutor) execute(ctx context.Context, result ProbeRunResult) Prob
 	common.SetContextKey(c, constant.ContextKeyHealthProbeReason, result.Reason)
 	common.SetContextKey(c, constant.ContextKeyHealthProbeRuntimeKey, result.TargetKey)
 	common.SetContextKey(c, constant.ContextKeyTokenSpecificChannelId, strconv.Itoa(result.TargetKey.ChannelID))
-	modelgatewayintegration.SetSelectedPlan(c, buildProbeDispatchPlan(result, probeEndpointType))
+	selectedPlan := result.Plan
+	if selectedPlan == nil {
+		selectedPlan = buildProbeDispatchPlan(result, probeEndpointType)
+	}
+	modelgatewayintegration.SetSelectedPlan(c, selectedPlan)
 	body, err := common.Marshal(request)
 	if err != nil {
 		result.Err = err

@@ -164,6 +164,8 @@ type dispatchRequestMeta struct {
 	RequiredTools             []string                    `json:"required_tools,omitempty"`
 	CandidateFilterConditions []string                    `json:"candidate_filter_conditions,omitempty"`
 	CandidateExplanations     []core.CandidateExplanation `json:"candidate_explanations,omitempty"`
+	IsHealthProbe             bool                        `json:"is_health_probe,omitempty"`
+	ProbeReason               string                      `json:"probe_reason,omitempty"`
 }
 
 type attemptRequestMeta struct {
@@ -217,6 +219,8 @@ func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
 			plan.CandidateFilterConditions...),
 		CandidateExplanations: append([]core.CandidateExplanation(nil),
 			plan.Candidates...),
+		IsHealthProbe: plan.IsHealthProbe,
+		ProbeReason:   plan.ProbeReason,
 	}
 }
 
