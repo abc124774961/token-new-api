@@ -21,6 +21,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
+	modelgatewayprovider "github.com/QuantumNous/new-api/pkg/modelgateway/provider"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -106,6 +108,7 @@ func (e *ProbeExecutor) execute(ctx context.Context, result ProbeRunResult) Prob
 	common.SetContextKey(c, constant.ContextKeyHealthProbeReason, result.Reason)
 	common.SetContextKey(c, constant.ContextKeyHealthProbeRuntimeKey, result.TargetKey)
 	common.SetContextKey(c, constant.ContextKeyTokenSpecificChannelId, strconv.Itoa(result.TargetKey.ChannelID))
+	modelgatewayintegration.SetSelectedPlan(c, buildProbeDispatchPlan(result, probeEndpointType))
 	body, err := common.Marshal(request)
 	if err != nil {
 		result.Err = err
@@ -369,6 +372,49 @@ func probeEndpointType(channel *model.Channel, modelName string, fallback consta
 		return endpointType
 	}
 	return constant.EndpointTypeOpenAI
+}
+
+func buildProbeDispatchPlan(result ProbeRunResult, endpointType constant.EndpointType) *core.DispatchPlan {
+	if result.Channel == nil {
+		return nil
+	}
+	registry := modelgatewayprovider.NewStandardProviderRegistry()
+	profile := registry.Best(result.Channel, result.Model)
+	if profile == nil {
+		profile = modelgatewayprovider.NewStandardOpenAICompatibleProfile()
+	}
+	runtimeKey := result.TargetKey
+	if runtimeKey.ChannelID == 0 {
+		runtimeKey.ChannelID = result.Channel.Id
+	}
+	if strings.TrimSpace(runtimeKey.RequestedModel) == "" {
+		runtimeKey.RequestedModel = strings.TrimSpace(result.Model)
+	}
+	if strings.TrimSpace(runtimeKey.UpstreamModel) == "" {
+		runtimeKey.UpstreamModel = result.Channel.ResolveMappedModelName(result.Model)
+	}
+	if strings.TrimSpace(runtimeKey.Group) == "" {
+		runtimeKey.Group = strings.TrimSpace(result.Group)
+	}
+	if runtimeKey.EndpointType == "" {
+		runtimeKey.EndpointType = endpointType
+	}
+	capability := profile.Capabilities(result.Channel, result.Model)
+	if strings.TrimSpace(runtimeKey.CapabilityFingerprint) == "" {
+		runtimeKey.CapabilityFingerprint = capability.CapabilityFingerprint
+	}
+	group := strings.TrimSpace(result.Group)
+	if group == "" {
+		group = strings.TrimSpace(runtimeKey.Group)
+	}
+	return &core.DispatchPlan{
+		Channel:         result.Channel,
+		SelectedGroup:   group,
+		RequestedGroup:  group,
+		RuntimeKey:      runtimeKey,
+		ProviderProfile: profile.Name(),
+		ProxyMode:       profile.ProxyMode(result.Channel, result.Model),
+	}
 }
 
 func endpointTypeForProbe(channel *model.Channel, modelName string) constant.EndpointType {

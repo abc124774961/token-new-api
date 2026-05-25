@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
+	modelgatewayprovider "github.com/QuantumNous/new-api/pkg/modelgateway/provider"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -84,8 +85,8 @@ func TestProbeExecutorUsesNormalDistributorSelection(t *testing.T) {
 	}
 	require.NoError(t, db.Create(&root).Error)
 
-	candidateChannel := seedProbeExecutorChannel(t, db, 1, "candidate-low", "gpt-4.1", 1)
-	_ = seedProbeExecutorChannel(t, db, 2, "selected-high", "gpt-4.1", 10)
+	candidateChannel := seedProbeExecutorChannel(t, db, 1, "candidate-low", "default", "gpt-4.1", 1)
+	_ = seedProbeExecutorChannel(t, db, 2, "selected-high", "default", "gpt-4.1", 10)
 	model.InitChannelCache()
 
 	oldInvoker := relayInvoker
@@ -154,6 +155,101 @@ func TestProbeExecutorUsesNormalDistributorSelection(t *testing.T) {
 	require.Greater(t, result.TTFT, time.Duration(0))
 }
 
+func TestProbeExecutorInjectsSelectedPlanForResponsesViaChatProbe(t *testing.T) {
+	db := setupProbeExecutorTestDB(t)
+	restoreSchedulerSetting := scheduler_setting.SetSettingForTest(scheduler_setting.DefaultSetting())
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(func() {
+		modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+		restoreSchedulerSetting()
+	})
+
+	root := model.User{
+		Id:       1,
+		Username: "root",
+		Role:     common.RoleRootUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		Quota:    100000,
+	}
+	require.NoError(t, db.Create(&root).Error)
+
+	channel := seedProbeExecutorChannel(t, db, 11, "mimo-probe", "default", "mimo-v1", 1)
+	settings := channel.GetOtherSettings()
+	settings.ProviderProfile = modelgatewayprovider.ProfileMiMoCodexChat
+	settings.ProxyProfile = modelgatewayprovider.ProxyModeResponsesViaChat
+	settingsBytes, err := common.Marshal(settings)
+	require.NoError(t, err)
+	channel.OtherSettings = string(settingsBytes)
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", channel.Id).Update("settings", channel.OtherSettings).Error)
+	model.InitChannelCache()
+
+	oldInvoker := relayInvoker
+	RegisterRelayInvoker(func(c *gin.Context, relayFormat types.RelayFormat) {
+		require.Equal(t, types.RelayFormat(types.RelayFormatOpenAIResponses), relayFormat)
+		plan, ok := modelgatewayintegration.GetSelectedPlan(c)
+		require.True(t, ok)
+		require.NotNil(t, plan)
+		require.Equal(t, channel.Id, plan.Channel.Id)
+		require.Equal(t, "default", plan.SelectedGroup)
+		require.Equal(t, modelgatewayprovider.ProfileMiMoCodexChat, plan.ProviderProfile)
+		require.Equal(t, modelgatewayprovider.ProxyModeResponsesViaChat, plan.ProxyMode)
+		require.Equal(t, "mimo-v1", plan.RuntimeKey.RequestedModel)
+		require.Equal(t, "mimo-v1", plan.RuntimeKey.UpstreamModel)
+		require.Equal(t, constant.EndpointTypeOpenAIResponse, plan.RuntimeKey.EndpointType)
+
+		start := time.Now().Add(-50 * time.Millisecond)
+		info := &relaycommon.RelayInfo{
+			RequestId:         c.GetString(common.RequestIdKey),
+			UserId:            root.Id,
+			UsingGroup:        "default",
+			UserGroup:         "default",
+			RequestModelName:  "mimo-v1",
+			OriginModelName:   "mimo-v1",
+			ContextModelName:  "mimo-v1",
+			StartTime:         start,
+			FirstResponseTime: start.Add(20 * time.Millisecond),
+			IsStream:          true,
+			IsChannelTest:     true,
+			RelayFormat:       types.RelayFormatOpenAIResponses,
+			ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelId:         channel.Id,
+				ChannelType:       channel.Type,
+				UpstreamModelName: "mimo-v1",
+			},
+			PriceData: types.PriceData{
+				ModelRatio:      1,
+				CompletionRatio: 1,
+				GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+			},
+		}
+		info.SetEstimatePromptTokens(4)
+		common.SetContextKey(c, constant.ContextKeyRelayInfo, info)
+		c.Status(http.StatusOK)
+	})
+	t.Cleanup(func() {
+		RegisterRelayInvoker(oldInvoker)
+	})
+
+	result := NewProbeExecutor(time.Second, nil).Execute(context.Background(), ProbeCandidate{
+		Channel: channel,
+		Model:   "mimo-v1",
+		Group:   "default",
+		Key: core.RuntimeKey{
+			RequestedModel: "mimo-v1",
+			UpstreamModel:  "mimo-v1",
+			ChannelID:      channel.Id,
+			Group:          "default",
+			EndpointType:   constant.EndpointTypeOpenAIResponse,
+		},
+		Reason: reasonFailureAvoidance,
+	})
+
+	require.NoError(t, result.Err)
+	require.True(t, result.Success)
+	require.Equal(t, constant.EndpointTypeOpenAIResponse, result.RuntimeKey.EndpointType)
+}
+
 func setupProbeExecutorTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -199,7 +295,7 @@ func setupProbeExecutorTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func seedProbeExecutorChannel(t *testing.T, db *gorm.DB, id int, name string, modelName string, priority int64) *model.Channel {
+func seedProbeExecutorChannel(t *testing.T, db *gorm.DB, id int, name string, group string, modelName string, priority int64) *model.Channel {
 	t.Helper()
 
 	weight := uint(100)
@@ -209,7 +305,7 @@ func seedProbeExecutorChannel(t *testing.T, db *gorm.DB, id int, name string, mo
 		Name:        name,
 		Key:         fmt.Sprintf("sk-%d", id),
 		Status:      common.ChannelStatusEnabled,
-		Group:       "default",
+		Group:       group,
 		Models:      modelName,
 		Weight:      &weight,
 		Priority:    &priority,
