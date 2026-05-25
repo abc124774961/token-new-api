@@ -125,6 +125,8 @@ func TestTopicPublishesProcessingUserRequestDelta(t *testing.T) {
 			RequestedModel: "gpt-5.5",
 			RequestedGroup: "auto",
 			SelectedGroup:  "codex-plus",
+			IsHealthProbe:  true,
+			ProbeReason:    "low_score",
 			Status:         userrequest.StatusProcessing,
 		},
 	})
@@ -141,6 +143,8 @@ func TestTopicPublishesProcessingUserRequestDelta(t *testing.T) {
 	require.Equal(t, "processing", delta.UserRequestsRecent[0].Status)
 	require.Equal(t, "codex-plus", delta.UserRequestsRecent[0].ActualGroup)
 	require.Zero(t, delta.UserRequestsRecent[0].ActualGroupRatio)
+	require.True(t, delta.UserRequestsRecent[0].IsHealthProbe)
+	require.Equal(t, "low_score", delta.UserRequestsRecent[0].ProbeReason)
 }
 
 func TestProcessingUserRequestDeltaDoesNotMarkSnapshotPending(t *testing.T) {

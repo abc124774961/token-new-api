@@ -3543,6 +3543,12 @@ function UserRequestRecentTable({
                         <strong title={record.requested_model || '--'}>
                           {record.requested_model || '--'}
                         </strong>
+                        {(record.is_health_probe ||
+                          record.request_meta?.is_health_probe) && (
+                          <Tag color='cyan' size='small' type='light'>
+                            {t('健康探活')}
+                          </Tag>
+                        )}
                         <span title={channelLabel}>{channelLabel}</span>
                         {channelIdLabel && (
                           <code title={t('渠道 ID')}>{channelIdLabel}</code>
@@ -3555,6 +3561,12 @@ function UserRequestRecentTable({
                         )}
                         {issueLabel && (
                           <small title={issueLabel}>{issueLabel}</small>
+                        )}
+                        {(record.is_health_probe ||
+                          record.request_meta?.is_health_probe) && (
+                          <small title={formatProbeReason(getProbeReason(record), t)}>
+                            {formatProbeReason(getProbeReason(record), t)}
+                          </small>
                         )}
                       </div>
                     </div>

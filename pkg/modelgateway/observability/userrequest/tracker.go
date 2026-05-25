@@ -49,6 +49,8 @@ type Record struct {
 	EmptyOutput        bool   `json:"empty_output,omitempty"`
 	ExperienceIssue    string `json:"experience_issue,omitempty"`
 	ClientAborted      bool   `json:"client_aborted,omitempty"`
+	IsHealthProbe      bool   `json:"is_health_probe,omitempty"`
+	ProbeReason        string `json:"probe_reason,omitempty"`
 	DurationMs         int64  `json:"duration_ms,omitempty"`
 	TTFTMs             int64  `json:"ttft_ms,omitempty"`
 	Status             string `json:"status,omitempty"`
@@ -316,6 +318,8 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 			EmptyOutput:        summary.EmptyOutput,
 			ExperienceIssue:    summary.ExperienceIssue,
 			ClientAborted:      clientAborted,
+			IsHealthProbe:      result.IsHealthProbe,
+			ProbeReason:        strings.TrimSpace(result.ProbeReason),
 			DurationMs:         summary.DurationMs,
 			TTFTMs:             summary.TTFTMs,
 			Status:             userRequestStatus(summary.FinalSuccess, clientAborted),
@@ -341,6 +345,8 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 		EmptyOutput:        result.EmptyOutput,
 		ExperienceIssue:    strings.TrimSpace(result.ExperienceIssue),
 		ClientAborted:      clientAborted,
+		IsHealthProbe:      result.IsHealthProbe,
+		ProbeReason:        strings.TrimSpace(result.ProbeReason),
 		DurationMs:         result.Duration.Milliseconds(),
 		TTFTMs:             result.TTFT.Milliseconds(),
 		Status:             userRequestStatus(success, clientAborted),

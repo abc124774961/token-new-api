@@ -359,7 +359,7 @@ func TestAsyncExecutionRecorderSameAttemptIndexCannotMarkRecoveredUserRequest(t 
 	require.Equal(t, 9, summary.FinalChannelID)
 }
 
-func TestAsyncExecutionRecorderSkipsHealthProbeUserRequestSummary(t *testing.T) {
+func TestAsyncExecutionRecorderRecordsHealthProbeUserRequestSummary(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
@@ -392,9 +392,17 @@ func TestAsyncExecutionRecorderSkipsHealthProbeUserRequestSummary(t *testing.T) 
 		return executions == 1
 	}, time.Second, 10*time.Millisecond)
 
-	var summaryCount int64
-	require.NoError(t, db.Model(&model.ModelGatewayUserRequestSummary{}).Where("request_id = ?", "probe-1").Count(&summaryCount).Error)
-	require.Zero(t, summaryCount)
+	require.Eventually(t, func() bool {
+		var summaryCount int64
+		require.NoError(t, db.Model(&model.ModelGatewayUserRequestSummary{}).Where("request_id = ?", "probe-1").Count(&summaryCount).Error)
+		return summaryCount == 1
+	}, time.Second, 10*time.Millisecond)
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "probe-1").First(&summary).Error)
+	require.True(t, summary.FinalSuccess)
+	require.Equal(t, "probe-channel", summary.FinalChannelName)
+	require.Equal(t, "gpt-4.1", summary.RequestedModel)
 
 	var record model.ModelExecutionRecord
 	require.NoError(t, db.Where("request_id = ?", "probe-1").First(&record).Error)

@@ -1587,7 +1587,7 @@ export default function SettingsModelGatewayScheduler() {
             closeIcon={null}
             title={t('渠道健康探活')}
             description={t(
-              '后台低频探测低分、缺样本或长时间未成功的渠道，只进入渠道健康评分和管理员消费日志，不进入用户请求视图。',
+              '后台低频探测低分、缺样本或长时间未成功的渠道，会回补健康评分，并以探活标记进入用户请求视图与消费日志。',
             )}
             style={{ marginTop: 8, marginBottom: 16 }}
           />

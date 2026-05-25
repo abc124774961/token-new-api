@@ -354,6 +354,8 @@ type ModelGatewayUserRequestRecord struct {
 	EmptyOutput           bool                                `json:"empty_output,omitempty"`
 	ExperienceIssue       string                              `json:"experience_issue,omitempty"`
 	ClientAborted         bool                                `json:"client_aborted,omitempty"`
+	IsHealthProbe         bool                                `json:"is_health_probe,omitempty"`
+	ProbeReason           string                              `json:"probe_reason,omitempty"`
 	DurationMs            int64                               `json:"duration_ms,omitempty"`
 	TTFTMs                int64                               `json:"ttft_ms,omitempty"`
 	Status                string                              `json:"status,omitempty"`
@@ -412,6 +414,8 @@ type ModelGatewayUserRequestBillingInfo struct {
 	ImageGenerationQuality    string  `json:"image_generation_call_quality,omitempty"`
 	ImageGenerationSize       string  `json:"image_generation_call_size,omitempty"`
 	UsageSemantic             string  `json:"usage_semantic,omitempty"`
+	IsHealthProbe             bool    `json:"is_health_probe,omitempty"`
+	ProbeReason               string  `json:"probe_reason,omitempty"`
 }
 
 type ModelGatewayObservabilityTrendPoint struct {
@@ -2234,6 +2238,12 @@ func attachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequ
 			continue
 		}
 		records[idx].DispatchRecord = &dispatch.record
+		if !records[idx].IsHealthProbe && dispatch.record.IsHealthProbe {
+			records[idx].IsHealthProbe = true
+		}
+		if records[idx].ProbeReason == "" && strings.TrimSpace(dispatch.record.ProbeReason) != "" {
+			records[idx].ProbeReason = strings.TrimSpace(dispatch.record.ProbeReason)
+		}
 		if records[idx].UserID == 0 && dispatch.userID > 0 {
 			records[idx].UserID = dispatch.userID
 		}
@@ -2397,6 +2407,12 @@ func attachModelGatewayUserRequestBilling(records []ModelGatewayUserRequestRecor
 		if billing != nil {
 			records[idx].UserID = billing.UserID
 			records[idx].Username = strings.TrimSpace(billing.Username)
+			if !records[idx].IsHealthProbe && billing.IsHealthProbe {
+				records[idx].IsHealthProbe = true
+			}
+			if records[idx].ProbeReason == "" && strings.TrimSpace(billing.ProbeReason) != "" {
+				records[idx].ProbeReason = strings.TrimSpace(billing.ProbeReason)
+			}
 		}
 		applyModelGatewayUserRequestActualGroup(&records[idx], billing)
 	}
@@ -2461,6 +2477,8 @@ func modelGatewayUserRequestBillingInfoFromLog(log model.Log) *ModelGatewayUserR
 		ImageGenerationQuality:    modelGatewayBillingString(other, "image_generation_call_quality"),
 		ImageGenerationSize:       modelGatewayBillingString(other, "image_generation_call_size"),
 		UsageSemantic:             modelGatewayBillingString(other, "usage_semantic"),
+		IsHealthProbe:             modelGatewayBillingBool(other, "is_health_probe"),
+		ProbeReason:               modelGatewayBillingString(other, "probe_reason"),
 	}
 	if info.CacheWriteTokens == 0 && info.CacheCreationTokens > 0 {
 		info.CacheWriteTokens = info.CacheCreationTokens
@@ -2751,6 +2769,8 @@ func ModelGatewayUserRequestRecordFromSummary(userRequest model.ModelGatewayUser
 		EmptyOutput:        userRequest.EmptyOutput,
 		ExperienceIssue:    userRequest.ExperienceIssue,
 		ClientAborted:      clientAborted,
+		IsHealthProbe:      false,
+		ProbeReason:        "",
 		DurationMs:         userRequest.DurationMs,
 		TTFTMs:             userRequest.TTFTMs,
 		Status:             modelGatewayUserRequestStatus(userRequest.FinalSuccess, clientAborted),

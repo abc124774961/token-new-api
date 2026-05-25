@@ -483,6 +483,8 @@ func userRequestRecordFromRealtimeRecord(record userrequest.Record) controller.M
 		EmptyOutput:        record.EmptyOutput,
 		ExperienceIssue:    record.ExperienceIssue,
 		ClientAborted:      record.ClientAborted,
+		IsHealthProbe:      record.IsHealthProbe,
+		ProbeReason:        record.ProbeReason,
 		DurationMs:         record.DurationMs,
 		TTFTMs:             record.TTFTMs,
 		Status:             record.Status,

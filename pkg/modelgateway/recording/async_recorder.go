@@ -60,9 +60,7 @@ func (r *AsyncExecutionRecorder) Report(ctx context.Context, result core.Attempt
 	if r == nil {
 		return
 	}
-	if !result.IsHealthProbe {
-		userrequest.Finish(result, nil)
-	}
+	userrequest.Finish(result, nil)
 	r.offer(event{result: &result})
 }
 
@@ -83,11 +81,9 @@ func (r *AsyncExecutionRecorder) run() {
 			continue
 		}
 		if e.result != nil {
-			if !e.result.IsHealthProbe {
-				summary := model.RecordModelGatewayUserRequestAttempt(modelGatewayUserRequestAttemptFromResult(*e.result))
-				if summary != nil {
-					userrequest.Finish(*e.result, summary)
-				}
+			summary := model.RecordModelGatewayUserRequestAttempt(modelGatewayUserRequestAttemptFromResult(*e.result))
+			if summary != nil {
+				userrequest.Finish(*e.result, summary)
 			}
 			model.RecordModelExecution(modelExecutionRecordFromAttempt(*e.result))
 			r.forwardResult(*e.result)

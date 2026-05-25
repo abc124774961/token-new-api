@@ -224,3 +224,41 @@ func TestTrackerCarriesExperienceIssueOnSuccessfulRequest(t *testing.T) {
 	require.True(t, finished.Record.EmptyOutput)
 	require.Equal(t, "empty_output", finished.Record.ExperienceIssue)
 }
+
+func TestTrackerCarriesHealthProbeMarker(t *testing.T) {
+	tracker := NewTracker(10, time.Minute)
+	var finished Event
+	tracker.AddObserver(func(event Event) {
+		if event.Kind == EventFinished {
+			finished = event
+		}
+	})
+
+	tracker.Finish(core.AttemptResult{
+		RequestID:      "req-probe-finish",
+		AttemptIndex:   0,
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		ModelName:      "gpt-5.5",
+		Success:        true,
+		IsHealthProbe:  true,
+		ProbeReason:    "low_score",
+		Duration:       time.Second,
+		TTFT:           200 * time.Millisecond,
+	}, &model.ModelGatewayUserRequestSummary{
+		Id:             11,
+		CreatedAt:      500,
+		CompletedAt:    501,
+		RequestId:      "req-probe-finish",
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		RequestedModel: "gpt-5.5",
+		Attempts:       1,
+		FinalSuccess:   true,
+		DurationMs:     1000,
+		TTFTMs:         200,
+	})
+
+	require.True(t, finished.Record.IsHealthProbe)
+	require.Equal(t, "low_score", finished.Record.ProbeReason)
+}

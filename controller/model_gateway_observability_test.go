@@ -976,6 +976,56 @@ func TestBuildModelGatewayObservabilitySummaryIncludesUserRequests(t *testing.T)
 	require.Equal(t, int64(520), trend.P95TTFTMs)
 }
 
+func TestBuildModelGatewayObservabilitySummaryIncludesHealthProbeUserRequest(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		CreatedAt:        now - 10,
+		UpdatedAt:        now - 8,
+		CompletedAt:      now - 5,
+		RequestId:        "req-user-probe",
+		RequestedGroup:   "auto",
+		SelectedGroup:    "vip",
+		RequestedModel:   "gpt-5.5",
+		FinalChannelID:   31,
+		FinalChannelName: "probe-channel",
+		Attempts:         1,
+		LastAttemptIndex: 0,
+		FinalSuccess:     true,
+		DurationMs:       900,
+		TTFTMs:           140,
+	}).Error)
+
+	require.NoError(t, db.Create(&model.Log{
+		CreatedAt:        now - 5,
+		Type:             model.LogTypeConsume,
+		RequestId:        "req-user-probe",
+		UserId:           1,
+		Username:         "root",
+		Quota:            10,
+		PromptTokens:     10,
+		CompletionTokens: 5,
+		ChannelId:        31,
+		Group:            "vip",
+		ModelName:        "gpt-5.5",
+		Content:          "probe",
+		Other:            `{"is_health_probe":true,"probe_reason":"low_score","billing_source":"model_gateway_probe"}`,
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+		ViewMode:    "user_requests",
+	})
+	require.NoError(t, err)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	require.True(t, response.UserRequests.RecentRequests[0].IsHealthProbe)
+	require.Equal(t, "low_score", response.UserRequests.RecentRequests[0].ProbeReason)
+}
+
 func TestBuildModelGatewayObservabilitySummaryUsesSelectedGroupRatioWhenBillingGroupIsRequestedGroup(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
