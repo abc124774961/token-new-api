@@ -43,132 +43,142 @@ type CircuitErrorPolicySetting struct {
 }
 
 type SchedulerSetting struct {
-	Enabled                          bool                                 `json:"enabled"`
-	DefaultMode                      string                               `json:"default_mode"`
-	RolloutPercent                   int                                  `json:"rollout_percent"`
-	DefaultStrategy                  string                               `json:"default_strategy"`
-	SnapshotRefreshMs                int                                  `json:"snapshot_refresh_ms"`
-	StickyTTLSeconds                 int                                  `json:"sticky_ttl_seconds"`
-	StickyKeepScoreRatio             float64                              `json:"sticky_keep_score_ratio"`
-	StickySaveOnSelect               bool                                 `json:"sticky_save_on_select"`
-	StickyRenewOnSuccess             bool                                 `json:"sticky_renew_on_success"`
-	StickyFailurePolicy              string                               `json:"sticky_failure_policy"`
-	CacheAffinityEnabled             bool                                 `json:"cache_affinity_enabled"`
-	CacheAffinityKeepScoreRatio      float64                              `json:"cache_affinity_keep_score_ratio"`
-	QueueEnabled                     bool                                 `json:"queue_enabled"`
-	QueueDefaultTimeoutMs            int                                  `json:"queue_default_timeout_ms"`
-	QueueMaxDepthPerChannel          int                                  `json:"queue_max_depth_per_channel"`
-	QueueDepthMultiplier             int                                  `json:"queue_depth_multiplier"`
-	QueueHighPriorityThreshold       int                                  `json:"queue_high_priority_threshold"`
-	QueueHighPriorityExtraDepth      int                                  `json:"queue_high_priority_extra_depth"`
-	QueueHighPriorityReservedDepth   int                                  `json:"queue_high_priority_reserved_depth"`
-	QueueAbsoluteMaxDepth            int                                  `json:"queue_absolute_max_depth"`
-	CircuitBreakerEnabled            bool                                 `json:"circuit_breaker_enabled"`
-	CircuitFailureThreshold          float64                              `json:"circuit_failure_threshold"`
-	CircuitMinSamples                int                                  `json:"circuit_min_samples"`
-	CircuitOpenSeconds               int                                  `json:"circuit_open_seconds"`
-	CircuitHalfOpenProbeCount        int                                  `json:"circuit_half_open_probe_count"`
-	CircuitErrorPolicies             map[string]CircuitErrorPolicySetting `json:"circuit_error_policies"`
-	CooldownMaxSeconds               int                                  `json:"cooldown_max_seconds"`
-	RuntimeSyncEnabled               bool                                 `json:"runtime_sync_enabled"`
-	RuntimeSyncRedisEnabled          bool                                 `json:"runtime_sync_redis_enabled"`
-	RuntimeSyncNodeID                string                               `json:"runtime_sync_node_id"`
-	RuntimeSyncTTLSeconds            int                                  `json:"runtime_sync_ttl_seconds"`
-	RuntimeSyncQueueMinIntervalMs    int                                  `json:"runtime_sync_queue_min_interval_ms"`
-	RuntimeSyncEventPushEnabled      bool                                 `json:"runtime_sync_event_push_enabled"`
-	RuntimeSyncEventSubscribeEnabled bool                                 `json:"runtime_sync_event_subscribe_enabled"`
-	ProbeEnabled                     bool                                 `json:"probe_enabled"`
-	ProbeIntervalSeconds             int                                  `json:"probe_interval_seconds"`
-	ProbeWorkerCount                 int                                  `json:"probe_worker_count"`
-	ProbeTimeoutSeconds              int                                  `json:"probe_timeout_seconds"`
-	ProbeMaxPerTick                  int                                  `json:"probe_max_per_tick"`
-	ProbeMinChannelIntervalSeconds   int                                  `json:"probe_min_channel_interval_seconds"`
-	CostCalculationEnabled           bool                                 `json:"cost_calculation_enabled"`
-	CostCalculationIntervalSeconds   int                                  `json:"cost_calculation_interval_seconds"`
-	CostCalculationWorkerCount       int                                  `json:"cost_calculation_worker_count"`
-	CostCalculationBatchSize         int                                  `json:"cost_calculation_batch_size"`
-	DynamicBillingEnabled            bool                                 `json:"dynamic_billing_enabled"`
-	DynamicBillingProfitRate         float64                              `json:"dynamic_billing_profit_rate"`
-	DynamicBillingWindowSamples      int                                  `json:"dynamic_billing_window_samples"`
-	DynamicBillingWindowMinutes      int                                  `json:"dynamic_billing_window_minutes"`
-	DynamicBillingMinSamples         int                                  `json:"dynamic_billing_min_samples"`
-	DynamicBillingRefreshSeconds     int                                  `json:"dynamic_billing_refresh_seconds"`
-	DynamicBillingMaxAgeSeconds      int                                  `json:"dynamic_billing_max_age_seconds"`
-	DynamicBillingEnabledAt          int64                                `json:"dynamic_billing_enabled_at"`
-	SuccessWeight                    float64                              `json:"success_weight"`
-	SpeedWeight                      float64                              `json:"speed_weight"`
-	LoadWeight                       float64                              `json:"load_weight"`
-	CostWeight                       float64                              `json:"cost_weight"`
-	GroupWeight                      float64                              `json:"group_weight"`
-	GroupPriorityRatio               map[string]float64                   `json:"group_priority_ratio"`
-	GroupPolicies                    map[string]GroupPolicySetting        `json:"group_policies"`
-	FailureFastWindowSeconds         int                                  `json:"failure_fast_window_seconds"`
-	FailureMainWindowSeconds         int                                  `json:"failure_main_window_seconds"`
-	FailureFallbackWindowSeconds     int                                  `json:"failure_fallback_window_seconds"`
+	Enabled                              bool                                 `json:"enabled"`
+	DefaultMode                          string                               `json:"default_mode"`
+	RolloutPercent                       int                                  `json:"rollout_percent"`
+	DefaultStrategy                      string                               `json:"default_strategy"`
+	SnapshotRefreshMs                    int                                  `json:"snapshot_refresh_ms"`
+	StickyTTLSeconds                     int                                  `json:"sticky_ttl_seconds"`
+	StickyKeepScoreRatio                 float64                              `json:"sticky_keep_score_ratio"`
+	StickySaveOnSelect                   bool                                 `json:"sticky_save_on_select"`
+	StickyRenewOnSuccess                 bool                                 `json:"sticky_renew_on_success"`
+	StickyFailurePolicy                  string                               `json:"sticky_failure_policy"`
+	CacheAffinityEnabled                 bool                                 `json:"cache_affinity_enabled"`
+	CacheAffinityKeepScoreRatio          float64                              `json:"cache_affinity_keep_score_ratio"`
+	QueueEnabled                         bool                                 `json:"queue_enabled"`
+	QueueDefaultTimeoutMs                int                                  `json:"queue_default_timeout_ms"`
+	QueueMaxDepthPerChannel              int                                  `json:"queue_max_depth_per_channel"`
+	QueueDepthMultiplier                 int                                  `json:"queue_depth_multiplier"`
+	QueueHighPriorityThreshold           int                                  `json:"queue_high_priority_threshold"`
+	QueueHighPriorityExtraDepth          int                                  `json:"queue_high_priority_extra_depth"`
+	QueueHighPriorityReservedDepth       int                                  `json:"queue_high_priority_reserved_depth"`
+	QueueAbsoluteMaxDepth                int                                  `json:"queue_absolute_max_depth"`
+	CircuitBreakerEnabled                bool                                 `json:"circuit_breaker_enabled"`
+	CircuitFailureThreshold              float64                              `json:"circuit_failure_threshold"`
+	CircuitMinSamples                    int                                  `json:"circuit_min_samples"`
+	CircuitOpenSeconds                   int                                  `json:"circuit_open_seconds"`
+	CircuitHalfOpenProbeCount            int                                  `json:"circuit_half_open_probe_count"`
+	CircuitErrorPolicies                 map[string]CircuitErrorPolicySetting `json:"circuit_error_policies"`
+	CooldownMaxSeconds                   int                                  `json:"cooldown_max_seconds"`
+	RuntimeSyncEnabled                   bool                                 `json:"runtime_sync_enabled"`
+	RuntimeSyncRedisEnabled              bool                                 `json:"runtime_sync_redis_enabled"`
+	RuntimeSyncNodeID                    string                               `json:"runtime_sync_node_id"`
+	RuntimeSyncTTLSeconds                int                                  `json:"runtime_sync_ttl_seconds"`
+	RuntimeSyncQueueMinIntervalMs        int                                  `json:"runtime_sync_queue_min_interval_ms"`
+	RuntimeSyncEventPushEnabled          bool                                 `json:"runtime_sync_event_push_enabled"`
+	RuntimeSyncEventSubscribeEnabled     bool                                 `json:"runtime_sync_event_subscribe_enabled"`
+	ProbeEnabled                         bool                                 `json:"probe_enabled"`
+	ProbeIntervalSeconds                 int                                  `json:"probe_interval_seconds"`
+	ProbeWorkerCount                     int                                  `json:"probe_worker_count"`
+	ProbeTimeoutSeconds                  int                                  `json:"probe_timeout_seconds"`
+	ProbeMaxPerTick                      int                                  `json:"probe_max_per_tick"`
+	ProbeMinChannelIntervalSeconds       int                                  `json:"probe_min_channel_interval_seconds"`
+	ProbeLowScoreThreshold               float64                              `json:"probe_low_score_threshold"`
+	ProbeMissingSampleThreshold          int                                  `json:"probe_missing_sample_threshold"`
+	ProbeLongNoSuccessSeconds            int                                  `json:"probe_long_no_success_seconds"`
+	ProbeRecoverySuccessesRequired       int                                  `json:"probe_recovery_successes_required"`
+	ProbeFailureAvoidancePriorityEnabled bool                                 `json:"probe_failure_avoidance_priority_enabled"`
+	CostCalculationEnabled               bool                                 `json:"cost_calculation_enabled"`
+	CostCalculationIntervalSeconds       int                                  `json:"cost_calculation_interval_seconds"`
+	CostCalculationWorkerCount           int                                  `json:"cost_calculation_worker_count"`
+	CostCalculationBatchSize             int                                  `json:"cost_calculation_batch_size"`
+	DynamicBillingEnabled                bool                                 `json:"dynamic_billing_enabled"`
+	DynamicBillingProfitRate             float64                              `json:"dynamic_billing_profit_rate"`
+	DynamicBillingWindowSamples          int                                  `json:"dynamic_billing_window_samples"`
+	DynamicBillingWindowMinutes          int                                  `json:"dynamic_billing_window_minutes"`
+	DynamicBillingMinSamples             int                                  `json:"dynamic_billing_min_samples"`
+	DynamicBillingRefreshSeconds         int                                  `json:"dynamic_billing_refresh_seconds"`
+	DynamicBillingMaxAgeSeconds          int                                  `json:"dynamic_billing_max_age_seconds"`
+	DynamicBillingEnabledAt              int64                                `json:"dynamic_billing_enabled_at"`
+	SuccessWeight                        float64                              `json:"success_weight"`
+	SpeedWeight                          float64                              `json:"speed_weight"`
+	LoadWeight                           float64                              `json:"load_weight"`
+	CostWeight                           float64                              `json:"cost_weight"`
+	GroupWeight                          float64                              `json:"group_weight"`
+	GroupPriorityRatio                   map[string]float64                   `json:"group_priority_ratio"`
+	GroupPolicies                        map[string]GroupPolicySetting        `json:"group_policies"`
+	FailureFastWindowSeconds             int                                  `json:"failure_fast_window_seconds"`
+	FailureMainWindowSeconds             int                                  `json:"failure_main_window_seconds"`
+	FailureFallbackWindowSeconds         int                                  `json:"failure_fallback_window_seconds"`
 }
 
 var schedulerSetting = SchedulerSetting{
-	Enabled:                          false,
-	DefaultMode:                      ModeOff,
-	RolloutPercent:                   0,
-	DefaultStrategy:                  StrategyBalanced,
-	SnapshotRefreshMs:                500,
-	StickyTTLSeconds:                 180,
-	StickyKeepScoreRatio:             0.85,
-	StickySaveOnSelect:               false,
-	StickyRenewOnSuccess:             true,
-	StickyFailurePolicy:              StickyFailurePolicyClear,
-	CacheAffinityEnabled:             true,
-	CacheAffinityKeepScoreRatio:      0.75,
-	QueueEnabled:                     true,
-	QueueDefaultTimeoutMs:            2000,
-	QueueMaxDepthPerChannel:          64,
-	QueueDepthMultiplier:             2,
-	QueueHighPriorityThreshold:       0,
-	QueueHighPriorityExtraDepth:      0,
-	QueueHighPriorityReservedDepth:   0,
-	QueueAbsoluteMaxDepth:            0,
-	CircuitBreakerEnabled:            true,
-	CircuitFailureThreshold:          0.5,
-	CircuitMinSamples:                10,
-	CircuitOpenSeconds:               30,
-	CircuitHalfOpenProbeCount:        3,
-	CircuitErrorPolicies:             map[string]CircuitErrorPolicySetting{},
-	CooldownMaxSeconds:               600,
-	RuntimeSyncEnabled:               true,
-	RuntimeSyncRedisEnabled:          true,
-	RuntimeSyncNodeID:                "",
-	RuntimeSyncTTLSeconds:            90,
-	RuntimeSyncQueueMinIntervalMs:    500,
-	RuntimeSyncEventPushEnabled:      false,
-	RuntimeSyncEventSubscribeEnabled: false,
-	ProbeEnabled:                     true,
-	ProbeIntervalSeconds:             60,
-	ProbeWorkerCount:                 2,
-	ProbeTimeoutSeconds:              8,
-	ProbeMaxPerTick:                  5,
-	ProbeMinChannelIntervalSeconds:   300,
-	CostCalculationEnabled:           true,
-	CostCalculationIntervalSeconds:   5,
-	CostCalculationWorkerCount:       2,
-	CostCalculationBatchSize:         100,
-	DynamicBillingEnabled:            false,
-	DynamicBillingProfitRate:         0.20,
-	DynamicBillingWindowSamples:      300,
-	DynamicBillingWindowMinutes:      60,
-	DynamicBillingMinSamples:         5,
-	DynamicBillingRefreshSeconds:     30,
-	DynamicBillingMaxAgeSeconds:      300,
-	SuccessWeight:                    0.32,
-	SpeedWeight:                      0.28,
-	LoadWeight:                       0.20,
-	CostWeight:                       0.15,
-	GroupWeight:                      0.05,
-	GroupPriorityRatio:               map[string]float64{},
-	GroupPolicies:                    map[string]GroupPolicySetting{},
-	FailureFastWindowSeconds:         60,
-	FailureMainWindowSeconds:         300,
-	FailureFallbackWindowSeconds:     1800,
+	Enabled:                              false,
+	DefaultMode:                          ModeOff,
+	RolloutPercent:                       0,
+	DefaultStrategy:                      StrategyBalanced,
+	SnapshotRefreshMs:                    500,
+	StickyTTLSeconds:                     180,
+	StickyKeepScoreRatio:                 0.85,
+	StickySaveOnSelect:                   false,
+	StickyRenewOnSuccess:                 true,
+	StickyFailurePolicy:                  StickyFailurePolicyClear,
+	CacheAffinityEnabled:                 true,
+	CacheAffinityKeepScoreRatio:          0.75,
+	QueueEnabled:                         true,
+	QueueDefaultTimeoutMs:                2000,
+	QueueMaxDepthPerChannel:              64,
+	QueueDepthMultiplier:                 2,
+	QueueHighPriorityThreshold:           0,
+	QueueHighPriorityExtraDepth:          0,
+	QueueHighPriorityReservedDepth:       0,
+	QueueAbsoluteMaxDepth:                0,
+	CircuitBreakerEnabled:                true,
+	CircuitFailureThreshold:              0.5,
+	CircuitMinSamples:                    10,
+	CircuitOpenSeconds:                   30,
+	CircuitHalfOpenProbeCount:            3,
+	CircuitErrorPolicies:                 map[string]CircuitErrorPolicySetting{},
+	CooldownMaxSeconds:                   600,
+	RuntimeSyncEnabled:                   true,
+	RuntimeSyncRedisEnabled:              true,
+	RuntimeSyncNodeID:                    "",
+	RuntimeSyncTTLSeconds:                90,
+	RuntimeSyncQueueMinIntervalMs:        500,
+	RuntimeSyncEventPushEnabled:          false,
+	RuntimeSyncEventSubscribeEnabled:     false,
+	ProbeEnabled:                         true,
+	ProbeIntervalSeconds:                 60,
+	ProbeWorkerCount:                     2,
+	ProbeTimeoutSeconds:                  8,
+	ProbeMaxPerTick:                      5,
+	ProbeMinChannelIntervalSeconds:       300,
+	ProbeLowScoreThreshold:               0.62,
+	ProbeMissingSampleThreshold:          3,
+	ProbeLongNoSuccessSeconds:            1800,
+	ProbeRecoverySuccessesRequired:       2,
+	ProbeFailureAvoidancePriorityEnabled: true,
+	CostCalculationEnabled:               true,
+	CostCalculationIntervalSeconds:       5,
+	CostCalculationWorkerCount:           2,
+	CostCalculationBatchSize:             100,
+	DynamicBillingEnabled:                false,
+	DynamicBillingProfitRate:             0.20,
+	DynamicBillingWindowSamples:          300,
+	DynamicBillingWindowMinutes:          60,
+	DynamicBillingMinSamples:             5,
+	DynamicBillingRefreshSeconds:         30,
+	DynamicBillingMaxAgeSeconds:          300,
+	SuccessWeight:                        0.32,
+	SpeedWeight:                          0.28,
+	LoadWeight:                           0.20,
+	CostWeight:                           0.15,
+	GroupWeight:                          0.05,
+	GroupPriorityRatio:                   map[string]float64{},
+	GroupPolicies:                        map[string]GroupPolicySetting{},
+	FailureFastWindowSeconds:             60,
+	FailureMainWindowSeconds:             300,
+	FailureFallbackWindowSeconds:         1800,
 }
 
 func init() {
@@ -237,6 +247,11 @@ func defaultSchedulerSetting() SchedulerSetting {
 	setting.ProbeTimeoutSeconds = 8
 	setting.ProbeMaxPerTick = 5
 	setting.ProbeMinChannelIntervalSeconds = 300
+	setting.ProbeLowScoreThreshold = 0.62
+	setting.ProbeMissingSampleThreshold = 3
+	setting.ProbeLongNoSuccessSeconds = 1800
+	setting.ProbeRecoverySuccessesRequired = 2
+	setting.ProbeFailureAvoidancePriorityEnabled = true
 	setting.CostCalculationEnabled = true
 	setting.CostCalculationIntervalSeconds = 5
 	setting.CostCalculationWorkerCount = 2

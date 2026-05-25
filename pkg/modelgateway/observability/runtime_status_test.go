@@ -71,17 +71,22 @@ func TestRuntimeStatusServiceMergesSnapshotCircuitQueueAndLiveState(t *testing.T
 		SampleCount:        24,
 	})
 	store.Put(core.RuntimeSnapshot{
-		Key:                keyOpen,
-		SuccessRate:        0.2,
-		DurationMs:         1800,
-		ActiveConcurrency:  4,
-		MaxConcurrency:     4,
-		QueueDepth:         1,
-		QueueCapacity:      8,
-		CostRatio:          0.8,
-		GroupPriorityRatio: 1.1,
-		CircuitState:       core.CircuitStateClosed,
-		SampleCount:        6,
+		Key:                       keyOpen,
+		SuccessRate:               0.2,
+		DurationMs:                1800,
+		ActiveConcurrency:         4,
+		MaxConcurrency:            4,
+		QueueDepth:                1,
+		QueueCapacity:             8,
+		CostRatio:                 0.8,
+		GroupPriorityRatio:        1.1,
+		CircuitState:              core.CircuitStateClosed,
+		SampleCount:               6,
+		HealthScoreAverage:        0.41,
+		ProbeRecoveryPending:      true,
+		ProbeRecoverySuccessCount: 1,
+		ProbeRecoveryRequired:     2,
+		ProbeTriggerReason:        "failure_avoidance",
 	})
 	store.Put(core.RuntimeSnapshot{Key: keyOther, SuccessRate: 0.99, SampleCount: 3})
 
@@ -255,6 +260,7 @@ func TestRuntimeStatusServiceMergesSnapshotCircuitQueueAndLiveState(t *testing.T
 	require.Equal(t, 1, response.Summary.CircuitOpen)
 	require.Equal(t, 1, response.Summary.CooldownChannels)
 	require.Equal(t, 1, response.Summary.FailureAvoidanceChannels)
+	require.Equal(t, 1, response.Summary.ProbeRecoveryPendingChannels)
 	require.Equal(t, 1, response.Summary.HighPressureChannels)
 	require.Zero(t, response.Summary.SaturatedChannels)
 	require.NotNil(t, response.QueueSnapshot)
@@ -283,6 +289,11 @@ func TestRuntimeStatusServiceMergesSnapshotCircuitQueueAndLiveState(t *testing.T
 	require.Equal(t, 3, openItem.QueueDepth)
 	require.True(t, openItem.FailureAvoidance)
 	require.Equal(t, "upstream_5xx", openItem.FailureAvoidanceReason)
+	require.True(t, openItem.ProbeRecoveryPending)
+	require.Equal(t, 1, openItem.ProbeRecoverySuccessCount)
+	require.Equal(t, 2, openItem.ProbeRecoveryRequired)
+	require.Equal(t, "failure_avoidance", openItem.ProbeTriggerReason)
+	require.Equal(t, 0.41, openItem.HealthScoreAverage)
 	require.Equal(t, "circuit_open", openItem.HealthStatus)
 	require.Equal(t, 0.5, openItem.ScoreBreakdown["cost"])
 

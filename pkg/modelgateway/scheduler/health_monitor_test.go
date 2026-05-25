@@ -412,7 +412,7 @@ func TestRuntimeHealthMonitorUsesTrimmedLatencyWindow(t *testing.T) {
 	require.Greater(t, snapshot.SpeedScore, 0.98)
 }
 
-func TestRuntimeHealthMonitorClearsAvoidanceAfterFastSuccess(t *testing.T) {
+func TestRuntimeHealthMonitorClearsAvoidanceAfterTwoFastProbeSuccesses(t *testing.T) {
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
 	common.ChannelFailureAvoidanceEnabled = true
@@ -431,12 +431,35 @@ func TestRuntimeHealthMonitorClearsAvoidanceAfterFastSuccess(t *testing.T) {
 	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 101, Group: "auto"}
 
 	monitor.Report(context.Background(), core.AttemptResult{
-		Key:       key,
-		ChannelID: 101,
-		Success:   true,
-		Duration:  2 * time.Second,
-		TTFT:      600 * time.Millisecond,
+		Key:           key,
+		ChannelID:     101,
+		Success:       true,
+		Duration:      2 * time.Second,
+		TTFT:          600 * time.Millisecond,
+		IsHealthProbe: true,
+		ProbeReason:   "failure_avoidance",
+	})
+
+	require.NotNil(t, service.GetChannelFailureAvoidanceStatus(101))
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.True(t, snapshot.ProbeRecoveryPending)
+	require.Equal(t, 1, snapshot.ProbeRecoverySuccessCount)
+	require.Equal(t, 2, snapshot.ProbeRecoveryRequired)
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:           key,
+		ChannelID:     101,
+		Success:       true,
+		Duration:      1800 * time.Millisecond,
+		TTFT:          500 * time.Millisecond,
+		IsHealthProbe: true,
+		ProbeReason:   "failure_avoidance",
 	})
 
 	require.Nil(t, service.GetChannelFailureAvoidanceStatus(101))
+	snapshot, ok = store.Get(key)
+	require.True(t, ok)
+	require.False(t, snapshot.ProbeRecoveryPending)
+	require.Equal(t, 2, snapshot.ProbeRecoverySuccessCount)
 }

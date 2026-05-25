@@ -766,7 +766,7 @@ function formatChannelStatusReason(reason, t) {
     return t('临时冷却');
   }
   if (normalized === 'failure_avoidance') {
-    return t('近期失败避让');
+    return t('近期失败恢复中');
   }
   if (normalized === 'max_depth_reached') {
     return t('排队已满');
@@ -792,7 +792,11 @@ function formatProbeReason(value, t) {
     case 'missing_samples':
       return t('缺少样本');
     case 'low_score':
-      return t('低分恢复');
+      return t('低分恢复探测');
+    case 'failure_avoidance':
+      return t('近期失败恢复中');
+    case 'cooldown':
+      return t('冷却恢复探测');
     case 'long_no_success':
       return t('长期未成功');
     case 'circuit_half_open':
@@ -1343,7 +1347,7 @@ function getRuntimeHealthMeta(status, t) {
     case 'cooldown':
       return { color: 'orange', label: t('冷却') };
     case 'failure_avoidance':
-      return { color: 'orange', label: t('失败降权') };
+      return { color: 'orange', label: t('恢复中') };
     case 'queued':
       return { color: 'cyan', label: t('队列中') };
     case 'high_pressure':
@@ -6911,11 +6915,23 @@ function RuntimeRiskPanel({ runtimeStatus, t }) {
           label={t('冷却隔离')}
           value={formatNumber(summary.cooldown_channels)}
           detail={`${formatNumber(
-            summary.failure_avoidance_channels,
-          )} ${t('失败降权')}`}
+            summary.probe_recovery_pending_channels,
+          )} ${t('恢复中')}`}
           tone={
             summary.cooldown_channels > 0 ||
-            summary.failure_avoidance_channels > 0
+            summary.probe_recovery_pending_channels > 0
+              ? 'warning'
+              : 'success'
+          }
+        />
+        <RuntimeMetricTile
+          label={t('低分恢复')}
+          value={formatNumber(summary.low_score_recovery_channels)}
+          detail={`${formatNumber(summary.recently_recovered_channels)} ${t(
+            '近期恢复',
+          )}`}
+          tone={
+            Number(summary.low_score_recovery_channels || 0) > 0
               ? 'warning'
               : 'success'
           }
@@ -7292,8 +7308,17 @@ function RuntimeStatusPanel({ runtimeStatus, t, circuitErrorType = '' }) {
           if (record.failure_avoidance) {
             tags.push(
               <Tag key='avoidance' color='amber' size='small' type='light'>
-                {t('失败降权')}{' '}
+                {t('恢复中')}{' '}
                 {formatNumber(record.failure_avoidance_remaining_seconds)}s
+              </Tag>,
+            );
+          }
+          if (record.probe_recovery_pending) {
+            tags.push(
+              <Tag key='recovery-progress' color='cyan' size='small' type='light'>
+                {t('恢复')}{' '}
+                {formatNumber(record.probe_recovery_success_count || 0)}/
+                {formatNumber(record.probe_recovery_required || 0)}
               </Tag>,
             );
           }
@@ -7329,7 +7354,8 @@ function RuntimeStatusPanel({ runtimeStatus, t, circuitErrorType = '' }) {
               {t('成本倍率')} {formatScore(record.cost_ratio)}
             </Typography.Text>
             <Typography.Text type='secondary' size='small'>
-              {t('分组倍率')} {formatScore(record.group_priority_ratio)}
+              {t('健康均分')} {formatScore(record.health_score_average)} ·{' '}
+              {formatProbeReason(record.probe_trigger_reason, t) || t('无探测')}
             </Typography.Text>
           </div>
         ),
@@ -7371,11 +7397,23 @@ function RuntimeStatusPanel({ runtimeStatus, t, circuitErrorType = '' }) {
           label={t('冷却渠道')}
           value={formatNumber(summary.cooldown_channels)}
           detail={`${formatNumber(
-            summary.failure_avoidance_channels,
-          )} ${t('失败降权')}`}
+            summary.probe_recovery_pending_channels,
+          )} ${t('恢复中')}`}
           tone={
             summary.cooldown_channels > 0 ||
-            summary.failure_avoidance_channels > 0
+            summary.probe_recovery_pending_channels > 0
+              ? 'warning'
+              : 'success'
+          }
+        />
+        <RuntimeMetricTile
+          label={t('低分恢复')}
+          value={formatNumber(summary.low_score_recovery_channels)}
+          detail={`${formatNumber(
+            summary.recently_recovered_channels,
+          )} ${t('近期恢复')}`}
+          tone={
+            Number(summary.low_score_recovery_channels || 0) > 0
               ? 'warning'
               : 'success'
           }
@@ -7622,6 +7660,102 @@ function getCandidateExplanations(record) {
   if (Array.isArray(topLevel) && topLevel.length) return topLevel;
   if (Array.isArray(metaLevel) && metaLevel.length) return metaLevel;
   return [];
+}
+
+function normalizeMetaStringList(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function getDispatchRequirements(record) {
+  const meta = record?.request_meta || {};
+  const requiresCodexImageTool =
+    meta?.requires_codex_image_tool === true ||
+    record?.requires_codex_image_tool === true;
+  const tools = normalizeMetaStringList(meta?.required_tools);
+  const conditions = normalizeMetaStringList(
+    meta?.candidate_filter_conditions,
+  );
+  if (requiresCodexImageTool && !tools.includes('image_generation')) {
+    tools.push('image_generation');
+  }
+  if (
+    requiresCodexImageTool &&
+    !conditions.includes('codex_image_generation_tool')
+  ) {
+    conditions.push('codex_image_generation_tool');
+  }
+  return {
+    requiresCodexImageTool,
+    tools,
+    conditions,
+    visible: tools.length > 0 || conditions.length > 0,
+  };
+}
+
+function formatDispatchTool(tool, t) {
+  const normalized = String(tool || '').trim();
+  if (normalized === 'image_generation') return 'image_generation';
+  return normalized || t('未知工具');
+}
+
+function formatDispatchFilterCondition(condition, t) {
+  const normalized = String(condition || '').trim();
+  if (normalized === 'codex_image_generation_tool') {
+    return t('需支持 Codex image_generation 工具');
+  }
+  return formatTechnicalCode(normalized) || t('未知过滤条件');
+}
+
+function DispatchRequirementNotice({ requirements, t }) {
+  if (!requirements?.visible) return null;
+  return (
+    <div className='ct-model-gateway-dispatch-requirement'>
+      <div className='ct-model-gateway-dispatch-requirement-head'>
+        <Wrench size={16} />
+        <span>{t('本次调用要求')}</span>
+      </div>
+      <div className='ct-model-gateway-dispatch-requirement-body'>
+        {requirements.tools.length ? (
+          <div className='ct-model-gateway-dispatch-requirement-row'>
+            <span>{t('当前调用工具')}</span>
+            <div className='ct-model-gateway-record-tags'>
+              {requirements.tools.map((tool) => (
+                <Tag key={tool} color='purple' type='solid' size='small'>
+                  {formatDispatchTool(tool, t)}
+                </Tag>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {requirements.conditions.length ? (
+          <div className='ct-model-gateway-dispatch-requirement-row'>
+            <span>{t('过滤条件')}</span>
+            <div className='ct-model-gateway-record-tags'>
+              {requirements.conditions.map((condition) => (
+                <Tag key={condition} color='orange' type='light' size='small'>
+                  {formatDispatchFilterCondition(condition, t)}
+                </Tag>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <Typography.Text type='secondary' size='small'>
+        {t('不满足本次工具能力要求的渠道不会进入候选列表')}
+      </Typography.Text>
+    </div>
+  );
 }
 
 function formatRuntimeKey(runtimeKey) {
@@ -8852,6 +8986,7 @@ function RecordDetailDrawer({
       )}
     </div>
   );
+  const dispatchRequirements = getDispatchRequirements(record);
   const selectionInsight = buildSelectionInsight(
     record,
     candidateExplanations,
@@ -8916,6 +9051,10 @@ function RecordDetailDrawer({
                 <Info size={14} />
                 <span>{selectionSummary}</span>
               </div>
+              <DispatchRequirementNotice
+                requirements={dispatchRequirements}
+                t={t}
+              />
             </div>
             <div className='ct-model-gateway-detail-hero-metrics'>
               <DetailMetricTile
@@ -8942,6 +9081,8 @@ function RecordDetailDrawer({
                 detail={
                   filteredCandidateCount > 0
                     ? `${formatNumber(filteredCandidateCount)} ${t('已过滤')}`
+                    : dispatchRequirements.visible
+                      ? t('工具过滤后候选')
                     : t('全部可用')
                 }
               />
@@ -8972,6 +9113,55 @@ function RecordDetailDrawer({
                     label: t('候选分组'),
                     value: groupTags,
                   },
+                  ...(dispatchRequirements.tools.length
+                    ? [
+                        {
+                          key: 'required_tools',
+                          label: t('当前调用工具'),
+                          value: (
+                            <div className='ct-model-gateway-record-tags'>
+                              {dispatchRequirements.tools.map((tool) => (
+                                <Tag
+                                  key={tool}
+                                  color='purple'
+                                  type='light'
+                                  size='small'
+                                >
+                                  {formatDispatchTool(tool, t)}
+                                </Tag>
+                              ))}
+                            </div>
+                          ),
+                        },
+                      ]
+                    : []),
+                  ...(dispatchRequirements.conditions.length
+                    ? [
+                        {
+                          key: 'filter_conditions',
+                          label: t('过滤条件'),
+                          value: (
+                            <div className='ct-model-gateway-record-tags'>
+                              {dispatchRequirements.conditions.map(
+                                (condition) => (
+                                  <Tag
+                                    key={condition}
+                                    color='orange'
+                                    type='light'
+                                    size='small'
+                                  >
+                                    {formatDispatchFilterCondition(
+                                      condition,
+                                      t,
+                                    )}
+                                  </Tag>
+                                ),
+                              )}
+                            </div>
+                          ),
+                        },
+                      ]
+                    : []),
                   ...(isHealthProbe
                     ? [
                         {

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
@@ -37,21 +38,28 @@ func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 			CandidateGroups: []string{"default"},
 		},
 		Plan: &core.DispatchPlan{
-			Channel:         &model.Channel{Id: 2, Name: "smart"},
-			SelectedGroup:   "default",
-			RuntimeKey:      core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "mimo-v1", ChannelID: 2, Group: "default", EndpointType: constant.EndpointTypeOpenAI},
-			ProviderProfile: "mimo_codex_chat",
-			ProxyMode:       "responses_via_chat",
-			ScoreTotal:      0.88,
-			ScoreBreakdown:  map[string]float64{"success": 0.9},
-			QueueEnabled:    true,
-			QueueDepth:      1,
-			QueueCapacity:   8,
-			StickySource:    "prompt_cache_key",
-			StickyKeyFP:     "abc123",
-			StickyRetained:  true,
-			CacheAffinity:   true,
-			SelectedReason:  "weighted_score",
+			Channel:                &model.Channel{Id: 2, Name: "smart"},
+			SelectedGroup:          "default",
+			RuntimeKey:             core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "mimo-v1", ChannelID: 2, Group: "default", EndpointType: constant.EndpointTypeOpenAI},
+			ProviderProfile:        "mimo_codex_chat",
+			ProxyMode:              "responses_via_chat",
+			ScoreTotal:             0.88,
+			ScoreBreakdown:         map[string]float64{"success": 0.9},
+			QueueEnabled:           true,
+			QueueDepth:             1,
+			QueueCapacity:          8,
+			StickySource:           "prompt_cache_key",
+			StickyKeyFP:            "abc123",
+			StickyRetained:         true,
+			CacheAffinity:          true,
+			SelectedReason:         "weighted_score",
+			RequiresCodexImageTool: true,
+			RequiredTools: []string{
+				core.DispatchRequiredToolCodexImageGeneration,
+			},
+			CandidateFilterConditions: []string{
+				core.DispatchFilterConditionCodexImageGenerationTool,
+			},
 			Candidates: []core.CandidateExplanation{
 				{
 					ChannelID:       2,
@@ -93,6 +101,11 @@ func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 	require.Contains(t, record.RequestMeta, "prompt_cache_key")
 	require.Contains(t, record.RequestMeta, "candidate_explanations")
 	require.Contains(t, record.RequestMeta, "mimo-v1")
+	var requestMeta dispatchRequestMeta
+	require.NoError(t, common.UnmarshalJsonStr(record.RequestMeta, &requestMeta))
+	require.True(t, requestMeta.RequiresCodexImageTool)
+	require.Equal(t, []string{core.DispatchRequiredToolCodexImageGeneration}, requestMeta.RequiredTools)
+	require.Equal(t, []string{core.DispatchFilterConditionCodexImageGenerationTool}, requestMeta.CandidateFilterConditions)
 }
 
 func TestAsyncExecutionRecorderRecordsAttemptFlowMeta(t *testing.T) {

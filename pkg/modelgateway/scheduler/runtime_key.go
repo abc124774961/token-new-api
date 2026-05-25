@@ -24,6 +24,7 @@ func normalizeRuntimeSnapshot(snapshot core.RuntimeSnapshot) core.RuntimeSnapsho
 	if snapshot.MatchedRuntimeKey.ChannelID > 0 {
 		snapshot.MatchedRuntimeKey = normalizeRuntimeKey(snapshot.MatchedRuntimeKey)
 	}
+	snapshot.ProbeTriggerReason = strings.TrimSpace(snapshot.ProbeTriggerReason)
 	return snapshot
 }
 

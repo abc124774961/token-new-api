@@ -85,6 +85,11 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	setting.ProbeTimeoutSeconds = 6
 	setting.ProbeMaxPerTick = 7
 	setting.ProbeMinChannelIntervalSeconds = 180
+	setting.ProbeLowScoreThreshold = 0.66
+	setting.ProbeMissingSampleThreshold = 4
+	setting.ProbeLongNoSuccessSeconds = 2400
+	setting.ProbeRecoverySuccessesRequired = 3
+	setting.ProbeFailureAvoidancePriorityEnabled = false
 	setting.CostCalculationEnabled = true
 	setting.CostCalculationIntervalSeconds = 4
 	setting.CostCalculationWorkerCount = 3
@@ -154,6 +159,11 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.Equal(t, 6, payload.Data.Setting.ProbeTimeoutSeconds)
 	require.Equal(t, 7, payload.Data.Setting.ProbeMaxPerTick)
 	require.Equal(t, 180, payload.Data.Setting.ProbeMinChannelIntervalSeconds)
+	require.Equal(t, 0.66, payload.Data.Setting.ProbeLowScoreThreshold)
+	require.Equal(t, 4, payload.Data.Setting.ProbeMissingSampleThreshold)
+	require.Equal(t, 2400, payload.Data.Setting.ProbeLongNoSuccessSeconds)
+	require.Equal(t, 3, payload.Data.Setting.ProbeRecoverySuccessesRequired)
+	require.False(t, payload.Data.Setting.ProbeFailureAvoidancePriorityEnabled)
 	require.True(t, payload.Data.Setting.CostCalculationEnabled)
 	require.Equal(t, 4, payload.Data.Setting.CostCalculationIntervalSeconds)
 	require.Equal(t, 3, payload.Data.Setting.CostCalculationWorkerCount)
@@ -204,6 +214,12 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	var probeMinIntervalOption model.Option
 	require.NoError(t, db.First(&probeMinIntervalOption, "key = ?", "scheduler_setting.probe_min_channel_interval_seconds").Error)
 	require.Equal(t, "180", probeMinIntervalOption.Value)
+	var probeLowScoreOption model.Option
+	require.NoError(t, db.First(&probeLowScoreOption, "key = ?", "scheduler_setting.probe_low_score_threshold").Error)
+	require.Equal(t, "0.66", probeLowScoreOption.Value)
+	var probeRecoveryOption model.Option
+	require.NoError(t, db.First(&probeRecoveryOption, "key = ?", "scheduler_setting.probe_recovery_successes_required").Error)
+	require.Equal(t, "3", probeRecoveryOption.Value)
 	var costWorkerOption model.Option
 	require.NoError(t, db.First(&costWorkerOption, "key = ?", "scheduler_setting.cost_calculation_worker_count").Error)
 	require.Equal(t, "3", costWorkerOption.Value)

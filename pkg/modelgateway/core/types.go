@@ -21,6 +21,11 @@ const (
 	StrategyStabilityFirst = "stability_first"
 )
 
+const (
+	DispatchRequiredToolCodexImageGeneration        = "image_generation"
+	DispatchFilterConditionCodexImageGenerationTool = "codex_image_generation_tool"
+)
+
 type DispatchRequest struct {
 	RequestID                string
 	UserID                   int
@@ -76,32 +81,35 @@ type AutoGroupPlan struct {
 }
 
 type DispatchPlan struct {
-	Channel               *model.Channel
-	SelectedGroup         string
-	RequestedGroup        string
-	BillingRatioMode      string
-	RuntimeKey            RuntimeKey
-	ProviderProfile       string
-	ProxyMode             string
-	ScoreTotal            float64
-	ScoreBreakdown        map[string]float64
-	RoutingScoreTotal     float64
-	RoutingScoreBreakdown map[string]float64
-	QueueWaitMs           int
-	QueueEnabled          bool
-	QueueDepth            int
-	QueueCapacity         int
-	QueuePriority         int
-	SelectedReason        string
-	StickySource          string
-	StickyKeyFP           string
-	StickyRetained        bool
-	StickyBreak           string
-	CacheAffinity         bool
-	FallbackUsed          bool
-	PolicyMode            string
-	AutoMode              string
-	Candidates            []CandidateExplanation
+	Channel                   *model.Channel
+	SelectedGroup             string
+	RequestedGroup            string
+	BillingRatioMode          string
+	RuntimeKey                RuntimeKey
+	ProviderProfile           string
+	ProxyMode                 string
+	ScoreTotal                float64
+	ScoreBreakdown            map[string]float64
+	RoutingScoreTotal         float64
+	RoutingScoreBreakdown     map[string]float64
+	QueueWaitMs               int
+	QueueEnabled              bool
+	QueueDepth                int
+	QueueCapacity             int
+	QueuePriority             int
+	SelectedReason            string
+	StickySource              string
+	StickyKeyFP               string
+	StickyRetained            bool
+	StickyBreak               string
+	CacheAffinity             bool
+	FallbackUsed              bool
+	PolicyMode                string
+	AutoMode                  string
+	RequiresCodexImageTool    bool
+	RequiredTools             []string
+	CandidateFilterConditions []string
+	Candidates                []CandidateExplanation
 }
 
 type RuntimeKey struct {
@@ -147,6 +155,11 @@ type RuntimeSnapshot struct {
 	CircuitOpen                bool
 	Cooldown                   bool
 	FailureAvoidance           bool
+	HealthScoreAverage         float64
+	ProbeRecoveryPending       bool
+	ProbeRecoverySuccessCount  int
+	ProbeRecoveryRequired      int
+	ProbeTriggerReason         string
 	ConfigErrorIsolated        bool
 	IsolationReason            string
 	IsolationUntil             int64
@@ -344,6 +357,11 @@ type CandidateExplanation struct {
 	ExperienceScore            float64            `json:"experience_score,omitempty"`
 	EmptyOutputRate            float64            `json:"empty_output_rate,omitempty"`
 	ExperienceIssueRate        float64            `json:"experience_issue_rate,omitempty"`
+	HealthScoreAverage         float64            `json:"health_score_average,omitempty"`
+	ProbeRecoveryPending       bool               `json:"probe_recovery_pending,omitempty"`
+	ProbeRecoverySuccessCount  int                `json:"probe_recovery_success_count,omitempty"`
+	ProbeRecoveryRequired      int                `json:"probe_recovery_required,omitempty"`
+	ProbeTriggerReason         string             `json:"probe_trigger_reason,omitempty"`
 	ConfigErrorIsolated        bool               `json:"config_error_isolated,omitempty"`
 	IsolationReason            string             `json:"isolation_reason,omitempty"`
 	IsolationUntil             int64              `json:"isolation_until,omitempty"`

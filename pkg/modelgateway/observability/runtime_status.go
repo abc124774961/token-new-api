@@ -56,19 +56,22 @@ type RuntimeStatusResponse struct {
 }
 
 type RuntimeStatusSummary struct {
-	UpdatedAt                int64 `json:"updated_at"`
-	RuntimeKeys              int   `json:"runtime_keys"`
-	Channels                 int   `json:"channels"`
-	ActiveConcurrency        int   `json:"active_concurrency"`
-	QueuedRequests           int   `json:"queued_requests"`
-	QueueChannels            int   `json:"queue_channels"`
-	MaxQueueDepth            int   `json:"max_queue_depth"`
-	CircuitOpen              int   `json:"circuit_open"`
-	CircuitHalfOpen          int   `json:"circuit_half_open"`
-	CooldownChannels         int   `json:"cooldown_channels"`
-	FailureAvoidanceChannels int   `json:"failure_avoidance_channels"`
-	HighPressureChannels     int   `json:"high_pressure_channels"`
-	SaturatedChannels        int   `json:"saturated_channels"`
+	UpdatedAt                    int64 `json:"updated_at"`
+	RuntimeKeys                  int   `json:"runtime_keys"`
+	Channels                     int   `json:"channels"`
+	ActiveConcurrency            int   `json:"active_concurrency"`
+	QueuedRequests               int   `json:"queued_requests"`
+	QueueChannels                int   `json:"queue_channels"`
+	MaxQueueDepth                int   `json:"max_queue_depth"`
+	CircuitOpen                  int   `json:"circuit_open"`
+	CircuitHalfOpen              int   `json:"circuit_half_open"`
+	CooldownChannels             int   `json:"cooldown_channels"`
+	FailureAvoidanceChannels     int   `json:"failure_avoidance_channels"`
+	LowScoreRecoveryChannels     int   `json:"low_score_recovery_channels"`
+	ProbeRecoveryPendingChannels int   `json:"probe_recovery_pending_channels"`
+	RecentlyRecoveredChannels    int   `json:"recently_recovered_channels"`
+	HighPressureChannels         int   `json:"high_pressure_channels"`
+	SaturatedChannels            int   `json:"saturated_channels"`
 }
 
 type RuntimeStatusItem struct {
@@ -129,6 +132,11 @@ type RuntimeStatusItem struct {
 	ExperienceScore                  float64                     `json:"experience_score,omitempty"`
 	EmptyOutputRate                  float64                     `json:"empty_output_rate,omitempty"`
 	ExperienceIssueRate              float64                     `json:"experience_issue_rate,omitempty"`
+	HealthScoreAverage               float64                     `json:"health_score_average,omitempty"`
+	ProbeRecoveryPending             bool                        `json:"probe_recovery_pending,omitempty"`
+	ProbeRecoverySuccessCount        int                         `json:"probe_recovery_success_count,omitempty"`
+	ProbeRecoveryRequired            int                         `json:"probe_recovery_required,omitempty"`
+	ProbeTriggerReason               string                      `json:"probe_trigger_reason,omitempty"`
 	ConfigErrorIsolated              bool                        `json:"config_error_isolated,omitempty"`
 	IsolationReason                  string                      `json:"isolation_reason,omitempty"`
 	IsolationUntil                   int64                       `json:"isolation_until,omitempty"`
@@ -354,6 +362,11 @@ func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem) {
 		CircuitOpen:                item.CircuitOpen,
 		Cooldown:                   item.Cooldown,
 		FailureAvoidance:           item.FailureAvoidance,
+		HealthScoreAverage:         item.HealthScoreAverage,
+		ProbeRecoveryPending:       item.ProbeRecoveryPending,
+		ProbeRecoverySuccessCount:  item.ProbeRecoverySuccessCount,
+		ProbeRecoveryRequired:      item.ProbeRecoveryRequired,
+		ProbeTriggerReason:         item.ProbeTriggerReason,
 		ConfigErrorIsolated:        item.ConfigErrorIsolated,
 		IsolationReason:            item.IsolationReason,
 		IsolationUntil:             item.IsolationUntil,
@@ -462,6 +475,11 @@ func applyRuntimeSnapshot(item *RuntimeStatusItem, snapshot core.RuntimeSnapshot
 	item.ExperienceScore = snapshot.ExperienceScore
 	item.EmptyOutputRate = snapshot.EmptyOutputRate
 	item.ExperienceIssueRate = snapshot.ExperienceIssueRate
+	item.HealthScoreAverage = snapshot.HealthScoreAverage
+	item.ProbeRecoveryPending = snapshot.ProbeRecoveryPending
+	item.ProbeRecoverySuccessCount = snapshot.ProbeRecoverySuccessCount
+	item.ProbeRecoveryRequired = snapshot.ProbeRecoveryRequired
+	item.ProbeTriggerReason = snapshot.ProbeTriggerReason
 	item.ConfigErrorIsolated = snapshot.ConfigErrorIsolated
 	item.IsolationReason = snapshot.IsolationReason
 	item.IsolationUntil = snapshot.IsolationUntil
@@ -604,6 +622,9 @@ func summarizeRuntimeStatus(items []RuntimeStatusItem, now time.Time) RuntimeSta
 	queueChannels := map[int]struct{}{}
 	cooldownChannels := map[int]struct{}{}
 	avoidanceChannels := map[int]struct{}{}
+	lowScoreRecoveryChannels := map[int]struct{}{}
+	pendingRecoveryChannels := map[int]struct{}{}
+	recentlyRecoveredChannels := map[int]struct{}{}
 	for _, item := range items {
 		if item.ChannelID > 0 {
 			channelIDs[item.ChannelID] = struct{}{}
@@ -628,6 +649,15 @@ func summarizeRuntimeStatus(items []RuntimeStatusItem, now time.Time) RuntimeSta
 		if item.FailureAvoidance {
 			avoidanceChannels[item.ChannelID] = struct{}{}
 		}
+		if item.ProbeTriggerReason == "low_score" {
+			lowScoreRecoveryChannels[item.ChannelID] = struct{}{}
+		}
+		if item.ProbeRecoveryPending {
+			pendingRecoveryChannels[item.ChannelID] = struct{}{}
+		}
+		if !item.FailureAvoidance && item.ProbeRecoverySuccessCount > 0 {
+			recentlyRecoveredChannels[item.ChannelID] = struct{}{}
+		}
 		if runtimeConcurrencyPressureRatio(item) >= 0.90 {
 			summary.HighPressureChannels++
 		}
@@ -636,6 +666,9 @@ func summarizeRuntimeStatus(items []RuntimeStatusItem, now time.Time) RuntimeSta
 	summary.QueueChannels = len(queueChannels)
 	summary.CooldownChannels = len(cooldownChannels)
 	summary.FailureAvoidanceChannels = len(avoidanceChannels)
+	summary.LowScoreRecoveryChannels = len(lowScoreRecoveryChannels)
+	summary.ProbeRecoveryPendingChannels = len(pendingRecoveryChannels)
+	summary.RecentlyRecoveredChannels = len(recentlyRecoveredChannels)
 	return summary
 }
 

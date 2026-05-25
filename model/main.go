@@ -263,6 +263,9 @@ func migrateDB() error {
 	if err := ensureRuntimeSnapshotProbeColumns(); err != nil {
 		return err
 	}
+	if err := ensureRuntimeSnapshotRecoveryColumns(); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -579,6 +582,31 @@ func ensureRuntimeSnapshotProbeColumns() error {
 		{"isolation_until", "IsolationUntil"},
 		{"auth_config_error_count", "AuthConfigErrorCount"},
 		{"last_auth_config_error_at", "LastAuthConfigErrorAt"},
+	}
+	for _, column := range columns {
+		if DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, column.dbName) {
+			continue
+		}
+		if err := DB.Migrator().AddColumn(&ModelGatewayRuntimeSnapshot{}, column.fieldName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureRuntimeSnapshotRecoveryColumns() error {
+	if DB == nil || !DB.Migrator().HasTable(&ModelGatewayRuntimeSnapshot{}) {
+		return nil
+	}
+	columns := []struct {
+		dbName    string
+		fieldName string
+	}{
+		{"health_score_average", "HealthScoreAverage"},
+		{"probe_recovery_pending", "ProbeRecoveryPending"},
+		{"probe_recovery_success_count", "ProbeRecoverySuccessCount"},
+		{"probe_recovery_required", "ProbeRecoveryRequired"},
+		{"probe_trigger_reason", "ProbeTriggerReason"},
 	}
 	for _, column := range columns {
 		if DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, column.dbName) {

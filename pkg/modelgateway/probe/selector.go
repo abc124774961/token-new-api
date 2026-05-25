@@ -89,6 +89,7 @@ func (s *ProbeSelector) Select(config ProbeConfig) ([]ProbeCandidate, error) {
 	}
 	for _, candidate := range candidates {
 		s.lastProbe[candidate.Key] = now
+		s.markProbeSelectionLocked(candidate.Key, candidate.Reason, config)
 	}
 	return candidates, nil
 }
@@ -119,6 +120,14 @@ func collapseProbeCandidatesByChannel(candidates []ProbeCandidate) []ProbeCandid
 }
 
 func compareProbeCandidates(left ProbeCandidate, right ProbeCandidate) int {
+	leftPriority := probeReasonPriority(left.Reason)
+	rightPriority := probeReasonPriority(right.Reason)
+	if leftPriority != rightPriority {
+		if leftPriority < rightPriority {
+			return -1
+		}
+		return 1
+	}
 	if left.Score != right.Score {
 		if left.Score > right.Score {
 			return -1
@@ -288,9 +297,37 @@ func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapsh
 		}
 	}
 	if reason == "" {
+		if config.FailureAvoidancePriorityEnabled && snapshot.FailureAvoidance {
+			return reasonFailureAvoidance, 96
+		}
+		if snapshot.Cooldown {
+			return reasonCooldown, 92
+		}
 		reason, score = probeReason(snapshot, true, now, s.lastOKTimeLocked(key, snapshot), config)
 	}
 	return reason, score
+}
+
+func (s *ProbeSelector) markProbeSelectionLocked(key core.RuntimeKey, reason string, config ProbeConfig) {
+	if s == nil || s.store == nil {
+		return
+	}
+	snapshot, ok := s.store.Get(key)
+	if !ok {
+		return
+	}
+	snapshot = normalizeProbeSelectionSnapshot(snapshot)
+	snapshot.HealthScoreAverage = effectiveProbeHealthScore(snapshot)
+	snapshot.ProbeTriggerReason = reason
+	snapshot.ProbeRecoveryRequired = config.RecoverySuccessesRequired
+	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || reason == reasonLowScore || reason == reasonFailureAvoidance
+	s.store.Put(snapshot)
+}
+
+func normalizeProbeSelectionSnapshot(snapshot core.RuntimeSnapshot) core.RuntimeSnapshot {
+	snapshot.Key = normalizeProbeRuntimeKey(snapshot.Key)
+	snapshot.MatchedRuntimeKey = normalizeProbeRuntimeKey(snapshot.MatchedRuntimeKey)
+	return snapshot
 }
 
 func (s *ProbeSelector) probeIntervalPassedLocked(key core.RuntimeKey, snapshot core.RuntimeSnapshot, now time.Time, config ProbeConfig) bool {
@@ -318,7 +355,7 @@ func (s *ProbeSelector) lastOKTimeLocked(key core.RuntimeKey, snapshot core.Runt
 
 func probeReason(snapshot core.RuntimeSnapshot, ok bool, now time.Time, lastOK time.Time, config ProbeConfig) (string, float64) {
 	if !ok || snapshot.SampleCount <= 0 {
-		return "", 0
+		return reasonNoSamples, 58
 	}
 	healthScore := effectiveProbeHealthScore(snapshot)
 	if healthScore > 0 && healthScore < config.LowScoreThreshold {
@@ -330,6 +367,29 @@ func probeReason(snapshot core.RuntimeSnapshot, ok bool, now time.Time, lastOK t
 		}
 	}
 	return "", 0
+}
+
+func probeReasonPriority(reason string) int {
+	switch strings.TrimSpace(reason) {
+	case reasonCircuitProbe:
+		return 1
+	case reasonFailureAvoidance:
+		return 2
+	case reasonCooldown:
+		return 3
+	case reasonLowScore:
+		return 4
+	case reasonLongNoSuccess:
+		return 5
+	case reasonNoSamples:
+		return 6
+	case reasonLowTraffic:
+		return 7
+	case reasonSampling:
+		return 8
+	default:
+		return 99
+	}
 }
 
 func probeCandidateFromSnapshot(channel *model.Channel, snapshot core.RuntimeSnapshot, reason string, score float64) ProbeCandidate {
@@ -585,6 +645,9 @@ func normalizeProbeConfig(config ProbeConfig) ProbeConfig {
 	}
 	if config.LongNoSuccessThreshold <= 0 {
 		config.LongNoSuccessThreshold = 30 * time.Minute
+	}
+	if config.RecoverySuccessesRequired <= 0 {
+		config.RecoverySuccessesRequired = 2
 	}
 	if config.HighScoreSamplingInterval <= 0 {
 		config.HighScoreSamplingInterval = 6 * time.Hour

@@ -285,37 +285,42 @@ func runtimeSnapshotToDB(snapshot core.RuntimeSnapshot, updatedAt int64) (model.
 		snapshot.SpeedScore = 0
 	}
 	return model.ModelGatewayRuntimeSnapshot{
-		RuntimeKeyHash:        runtimeSnapshotKeyHash(snapshot.Key),
-		RuntimeKey:            string(keyJSON),
-		UpdatedAt:             updatedAt,
-		RequestedModel:        snapshot.Key.RequestedModel,
-		UpstreamModel:         snapshot.Key.UpstreamModel,
-		ChannelID:             snapshot.Key.ChannelID,
-		Group:                 snapshot.Key.Group,
-		EndpointType:          string(snapshot.Key.EndpointType),
-		CapabilityFingerprint: snapshot.Key.CapabilityFingerprint,
-		LatencySamples:        latencySamples,
-		SampleCount:           snapshot.SampleCount,
-		SuccessRate:           snapshot.SuccessRate,
-		TTFTMs:                snapshot.TTFTMs,
-		DurationMs:            snapshot.DurationMs,
-		TokensPerSecond:       snapshot.TokensPerSecond,
-		SuccessScore:          snapshot.SuccessScore,
-		SpeedScore:            snapshot.SpeedScore,
-		ExperienceScore:       snapshot.ExperienceScore,
-		EmptyOutputRate:       snapshot.EmptyOutputRate,
-		ExperienceIssueRate:   snapshot.ExperienceIssueRate,
-		LastRealAttemptAt:     snapshot.LastRealAttemptAt,
-		LastRealSuccessAt:     snapshot.LastRealSuccessAt,
-		LastRealFailureAt:     snapshot.LastRealFailureAt,
-		RealSampleCount30m:    snapshot.RealSampleCount30m,
-		LastProbeAt:           snapshot.LastProbeAt,
-		LastProbeSuccessAt:    snapshot.LastProbeSuccessAt,
-		ConfigErrorIsolated:   snapshot.ConfigErrorIsolated,
-		IsolationReason:       snapshot.IsolationReason,
-		IsolationUntil:        snapshot.IsolationUntil,
-		AuthConfigErrorCount:  snapshot.AuthConfigErrorCount,
-		LastAuthConfigErrorAt: snapshot.LastAuthConfigErrorAt,
+		RuntimeKeyHash:            runtimeSnapshotKeyHash(snapshot.Key),
+		RuntimeKey:                string(keyJSON),
+		UpdatedAt:                 updatedAt,
+		RequestedModel:            snapshot.Key.RequestedModel,
+		UpstreamModel:             snapshot.Key.UpstreamModel,
+		ChannelID:                 snapshot.Key.ChannelID,
+		Group:                     snapshot.Key.Group,
+		EndpointType:              string(snapshot.Key.EndpointType),
+		CapabilityFingerprint:     snapshot.Key.CapabilityFingerprint,
+		LatencySamples:            latencySamples,
+		SampleCount:               snapshot.SampleCount,
+		SuccessRate:               snapshot.SuccessRate,
+		TTFTMs:                    snapshot.TTFTMs,
+		DurationMs:                snapshot.DurationMs,
+		TokensPerSecond:           snapshot.TokensPerSecond,
+		SuccessScore:              snapshot.SuccessScore,
+		SpeedScore:                snapshot.SpeedScore,
+		ExperienceScore:           snapshot.ExperienceScore,
+		EmptyOutputRate:           snapshot.EmptyOutputRate,
+		ExperienceIssueRate:       snapshot.ExperienceIssueRate,
+		HealthScoreAverage:        snapshot.HealthScoreAverage,
+		ProbeRecoveryPending:      snapshot.ProbeRecoveryPending,
+		ProbeRecoverySuccessCount: snapshot.ProbeRecoverySuccessCount,
+		ProbeRecoveryRequired:     snapshot.ProbeRecoveryRequired,
+		ProbeTriggerReason:        snapshot.ProbeTriggerReason,
+		LastRealAttemptAt:         snapshot.LastRealAttemptAt,
+		LastRealSuccessAt:         snapshot.LastRealSuccessAt,
+		LastRealFailureAt:         snapshot.LastRealFailureAt,
+		RealSampleCount30m:        snapshot.RealSampleCount30m,
+		LastProbeAt:               snapshot.LastProbeAt,
+		LastProbeSuccessAt:        snapshot.LastProbeSuccessAt,
+		ConfigErrorIsolated:       snapshot.ConfigErrorIsolated,
+		IsolationReason:           snapshot.IsolationReason,
+		IsolationUntil:            snapshot.IsolationUntil,
+		AuthConfigErrorCount:      snapshot.AuthConfigErrorCount,
+		LastAuthConfigErrorAt:     snapshot.LastAuthConfigErrorAt,
 	}, true
 }
 
@@ -350,31 +355,36 @@ func runtimeSnapshotFromDB(row model.ModelGatewayRuntimeSnapshot) (core.RuntimeS
 		durationMs, ttftMs, speedScore = runtimeLatencyStats(latencySamples)
 	}
 	return core.RuntimeSnapshot{
-		Key:                   key,
-		RecentLatencySamples:  latencySamples,
-		SuccessRate:           row.SuccessRate,
-		TTFTMs:                ttftMs,
-		DurationMs:            durationMs,
-		TokensPerSecond:       row.TokensPerSecond,
-		SuccessScore:          row.SuccessScore,
-		SpeedScore:            speedScore,
-		ExperienceScore:       row.ExperienceScore,
-		EmptyOutputRate:       row.EmptyOutputRate,
-		ExperienceIssueRate:   row.ExperienceIssueRate,
-		LastRealAttemptAt:     row.LastRealAttemptAt,
-		LastRealSuccessAt:     row.LastRealSuccessAt,
-		LastRealFailureAt:     row.LastRealFailureAt,
-		RealSampleCount30m:    row.RealSampleCount30m,
-		LastProbeAt:           row.LastProbeAt,
-		LastProbeSuccessAt:    row.LastProbeSuccessAt,
-		ConfigErrorIsolated:   row.ConfigErrorIsolated,
-		IsolationReason:       row.IsolationReason,
-		IsolationUntil:        row.IsolationUntil,
-		AuthConfigErrorCount:  row.AuthConfigErrorCount,
-		LastAuthConfigErrorAt: row.LastAuthConfigErrorAt,
-		GroupPriorityRatio:    1,
-		CircuitState:          core.CircuitStateClosed,
-		SampleCount:           row.SampleCount,
+		Key:                       key,
+		RecentLatencySamples:      latencySamples,
+		SuccessRate:               row.SuccessRate,
+		TTFTMs:                    ttftMs,
+		DurationMs:                durationMs,
+		TokensPerSecond:           row.TokensPerSecond,
+		SuccessScore:              row.SuccessScore,
+		SpeedScore:                speedScore,
+		ExperienceScore:           row.ExperienceScore,
+		EmptyOutputRate:           row.EmptyOutputRate,
+		ExperienceIssueRate:       row.ExperienceIssueRate,
+		HealthScoreAverage:        row.HealthScoreAverage,
+		ProbeRecoveryPending:      row.ProbeRecoveryPending,
+		ProbeRecoverySuccessCount: row.ProbeRecoverySuccessCount,
+		ProbeRecoveryRequired:     row.ProbeRecoveryRequired,
+		ProbeTriggerReason:        row.ProbeTriggerReason,
+		LastRealAttemptAt:         row.LastRealAttemptAt,
+		LastRealSuccessAt:         row.LastRealSuccessAt,
+		LastRealFailureAt:         row.LastRealFailureAt,
+		RealSampleCount30m:        row.RealSampleCount30m,
+		LastProbeAt:               row.LastProbeAt,
+		LastProbeSuccessAt:        row.LastProbeSuccessAt,
+		ConfigErrorIsolated:       row.ConfigErrorIsolated,
+		IsolationReason:           row.IsolationReason,
+		IsolationUntil:            row.IsolationUntil,
+		AuthConfigErrorCount:      row.AuthConfigErrorCount,
+		LastAuthConfigErrorAt:     row.LastAuthConfigErrorAt,
+		GroupPriorityRatio:        1,
+		CircuitState:              core.CircuitStateClosed,
+		SampleCount:               row.SampleCount,
 	}, true
 }
 
@@ -466,12 +476,19 @@ func mergeRuntimeSnapshotRows(left, right model.ModelGatewayRuntimeSnapshot) mod
 	left.ExperienceScore = weightedRuntimeSnapshotAverage(left.ExperienceScore, left.SampleCount, right.ExperienceScore, right.SampleCount)
 	left.EmptyOutputRate = weightedRuntimeSnapshotAverage(left.EmptyOutputRate, left.SampleCount, right.EmptyOutputRate, right.SampleCount)
 	left.ExperienceIssueRate = weightedRuntimeSnapshotAverage(left.ExperienceIssueRate, left.SampleCount, right.ExperienceIssueRate, right.SampleCount)
+	left.HealthScoreAverage = weightedRuntimeSnapshotAverage(left.HealthScoreAverage, left.SampleCount, right.HealthScoreAverage, right.SampleCount)
 	left.LastRealAttemptAt = maxInt64(left.LastRealAttemptAt, right.LastRealAttemptAt)
 	left.LastRealSuccessAt = maxInt64(left.LastRealSuccessAt, right.LastRealSuccessAt)
 	left.LastRealFailureAt = maxInt64(left.LastRealFailureAt, right.LastRealFailureAt)
 	left.RealSampleCount30m += right.RealSampleCount30m
 	left.LastProbeAt = maxInt64(left.LastProbeAt, right.LastProbeAt)
 	left.LastProbeSuccessAt = maxInt64(left.LastProbeSuccessAt, right.LastProbeSuccessAt)
+	if right.ProbeRecoveryPending || right.UpdatedAt >= left.UpdatedAt {
+		left.ProbeRecoveryPending = right.ProbeRecoveryPending
+		left.ProbeRecoverySuccessCount = right.ProbeRecoverySuccessCount
+		left.ProbeRecoveryRequired = right.ProbeRecoveryRequired
+		left.ProbeTriggerReason = right.ProbeTriggerReason
+	}
 	if right.ConfigErrorIsolated || right.LastAuthConfigErrorAt > left.LastAuthConfigErrorAt {
 		left.ConfigErrorIsolated = right.ConfigErrorIsolated
 		left.IsolationReason = right.IsolationReason

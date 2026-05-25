@@ -152,19 +152,22 @@ func modelExecutionRecordFromDispatch(record core.DispatchRecord) *model.ModelEx
 }
 
 type dispatchRequestMeta struct {
-	ProviderProfile       string                      `json:"provider_profile,omitempty"`
-	ProxyMode             string                      `json:"proxy_mode,omitempty"`
-	QueueWaitMs           int                         `json:"queue_wait_ms,omitempty"`
-	QueueEnabled          bool                        `json:"queue_enabled,omitempty"`
-	QueueDepth            int                         `json:"queue_depth,omitempty"`
-	QueueCapacity         int                         `json:"queue_capacity,omitempty"`
-	BillingRatioMode      string                      `json:"billing_ratio_mode,omitempty"`
-	StickySource          string                      `json:"sticky_source,omitempty"`
-	StickyKeyFP           string                      `json:"sticky_key_fp,omitempty"`
-	StickyRetained        bool                        `json:"sticky_retained,omitempty"`
-	StickyBreak           string                      `json:"sticky_break,omitempty"`
-	CacheAffinity         bool                        `json:"cache_affinity,omitempty"`
-	CandidateExplanations []core.CandidateExplanation `json:"candidate_explanations,omitempty"`
+	ProviderProfile           string                      `json:"provider_profile,omitempty"`
+	ProxyMode                 string                      `json:"proxy_mode,omitempty"`
+	QueueWaitMs               int                         `json:"queue_wait_ms,omitempty"`
+	QueueEnabled              bool                        `json:"queue_enabled,omitempty"`
+	QueueDepth                int                         `json:"queue_depth,omitempty"`
+	QueueCapacity             int                         `json:"queue_capacity,omitempty"`
+	BillingRatioMode          string                      `json:"billing_ratio_mode,omitempty"`
+	StickySource              string                      `json:"sticky_source,omitempty"`
+	StickyKeyFP               string                      `json:"sticky_key_fp,omitempty"`
+	StickyRetained            bool                        `json:"sticky_retained,omitempty"`
+	StickyBreak               string                      `json:"sticky_break,omitempty"`
+	CacheAffinity             bool                        `json:"cache_affinity,omitempty"`
+	RequiresCodexImageTool    bool                        `json:"requires_codex_image_tool,omitempty"`
+	RequiredTools             []string                    `json:"required_tools,omitempty"`
+	CandidateFilterConditions []string                    `json:"candidate_filter_conditions,omitempty"`
+	CandidateExplanations     []core.CandidateExplanation `json:"candidate_explanations,omitempty"`
 }
 
 type attemptRequestMeta struct {
@@ -200,18 +203,22 @@ func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
 		return dispatchRequestMeta{}
 	}
 	return dispatchRequestMeta{
-		ProviderProfile:  plan.ProviderProfile,
-		ProxyMode:        plan.ProxyMode,
-		QueueWaitMs:      plan.QueueWaitMs,
-		QueueEnabled:     plan.QueueEnabled,
-		QueueDepth:       plan.QueueDepth,
-		QueueCapacity:    plan.QueueCapacity,
-		BillingRatioMode: plan.BillingRatioMode,
-		StickySource:     plan.StickySource,
-		StickyKeyFP:      plan.StickyKeyFP,
-		StickyRetained:   plan.StickyRetained,
-		StickyBreak:      plan.StickyBreak,
-		CacheAffinity:    plan.CacheAffinity,
+		ProviderProfile:        plan.ProviderProfile,
+		ProxyMode:              plan.ProxyMode,
+		QueueWaitMs:            plan.QueueWaitMs,
+		QueueEnabled:           plan.QueueEnabled,
+		QueueDepth:             plan.QueueDepth,
+		QueueCapacity:          plan.QueueCapacity,
+		BillingRatioMode:       plan.BillingRatioMode,
+		StickySource:           plan.StickySource,
+		StickyKeyFP:            plan.StickyKeyFP,
+		StickyRetained:         plan.StickyRetained,
+		StickyBreak:            plan.StickyBreak,
+		CacheAffinity:          plan.CacheAffinity,
+		RequiresCodexImageTool: plan.RequiresCodexImageTool,
+		RequiredTools:          append([]string(nil), plan.RequiredTools...),
+		CandidateFilterConditions: append([]string(nil),
+			plan.CandidateFilterConditions...),
 		CandidateExplanations: append([]core.CandidateExplanation(nil),
 			plan.Candidates...),
 	}

@@ -12,29 +12,33 @@ import (
 )
 
 const (
-	BillingSource       = "model_gateway_probe"
-	TokenName           = "系统健康探活"
-	ConsumeLogContent   = "模型网关健康探活"
-	probeIDPrefix       = "mg_probe_"
-	reasonNoSamples     = "missing_samples"
-	reasonLowScore      = "low_score"
-	reasonLongNoSuccess = "long_no_success"
-	reasonCircuitProbe  = "circuit_half_open"
-	reasonSampling      = "sampling"
-	reasonLowTraffic    = "low_traffic"
+	BillingSource          = "model_gateway_probe"
+	TokenName              = "系统健康探活"
+	ConsumeLogContent      = "模型网关健康探活"
+	probeIDPrefix          = "mg_probe_"
+	reasonNoSamples        = "missing_samples"
+	reasonLowScore         = "low_score"
+	reasonLongNoSuccess    = "long_no_success"
+	reasonCircuitProbe     = "circuit_half_open"
+	reasonFailureAvoidance = "failure_avoidance"
+	reasonCooldown         = "cooldown"
+	reasonSampling         = "sampling"
+	reasonLowTraffic       = "low_traffic"
 )
 
 type ProbeConfig struct {
-	Enabled                   bool
-	Interval                  time.Duration
-	WorkerCount               int
-	Timeout                   time.Duration
-	MaxPerTick                int
-	MinChannelInterval        time.Duration
-	LowScoreThreshold         float64
-	MissingSampleThreshold    int
-	LongNoSuccessThreshold    time.Duration
-	HighScoreSamplingInterval time.Duration
+	Enabled                         bool
+	Interval                        time.Duration
+	WorkerCount                     int
+	Timeout                         time.Duration
+	MaxPerTick                      int
+	MinChannelInterval              time.Duration
+	LowScoreThreshold               float64
+	MissingSampleThreshold          int
+	LongNoSuccessThreshold          time.Duration
+	RecoverySuccessesRequired       int
+	FailureAvoidancePriorityEnabled bool
+	HighScoreSamplingInterval       time.Duration
 }
 
 type ProbeCandidate struct {

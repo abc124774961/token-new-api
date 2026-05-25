@@ -68,6 +68,11 @@ const DEFAULT_SETTING = {
   probe_timeout_seconds: 8,
   probe_max_per_tick: 5,
   probe_min_channel_interval_seconds: 300,
+  probe_low_score_threshold: 0.62,
+  probe_missing_sample_threshold: 3,
+  probe_long_no_success_seconds: 1800,
+  probe_recovery_successes_required: 2,
+  probe_failure_avoidance_priority_enabled: true,
   cost_calculation_enabled: true,
   cost_calculation_interval_seconds: 5,
   cost_calculation_worker_count: 2,
@@ -816,6 +821,24 @@ export default function SettingsModelGatewayScheduler() {
         setting.probe_min_channel_interval_seconds,
         300,
       ),
+      probe_low_score_threshold: numberOrDefault(
+        setting.probe_low_score_threshold,
+        0.62,
+      ),
+      probe_missing_sample_threshold: numberOrDefault(
+        setting.probe_missing_sample_threshold,
+        3,
+      ),
+      probe_long_no_success_seconds: numberOrDefault(
+        setting.probe_long_no_success_seconds,
+        1800,
+      ),
+      probe_recovery_successes_required: numberOrDefault(
+        setting.probe_recovery_successes_required,
+        2,
+      ),
+      probe_failure_avoidance_priority_enabled:
+        setting.probe_failure_avoidance_priority_enabled !== false,
       cost_calculation_interval_seconds: numberOrDefault(
         setting.cost_calculation_interval_seconds,
         5,
@@ -1636,6 +1659,75 @@ export default function SettingsModelGatewayScheduler() {
                   updateSetting(
                     'probe_min_channel_interval_seconds',
                     numberOrDefault(value, 300),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='probe_low_score_threshold'
+                label={t('低分阈值')}
+                min={0.01}
+                max={1}
+                step={0.01}
+                onChange={(value) =>
+                  updateSetting(
+                    'probe_low_score_threshold',
+                    numberOrDefault(value, 0.62),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='probe_missing_sample_threshold'
+                label={t('低样本阈值')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting(
+                    'probe_missing_sample_threshold',
+                    numberOrDefault(value, 3),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='probe_long_no_success_seconds'
+                label={t('长期未成功')}
+                min={1}
+                suffix={t('秒')}
+                onChange={(value) =>
+                  updateSetting(
+                    'probe_long_no_success_seconds',
+                    numberOrDefault(value, 1800),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='probe_recovery_successes_required'
+                label={t('恢复连续成功')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting(
+                    'probe_recovery_successes_required',
+                    numberOrDefault(value, 2),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Switch
+                field='probe_failure_avoidance_priority_enabled'
+                label={t('避让渠道优先探测')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting(
+                    'probe_failure_avoidance_priority_enabled',
+                    value,
                   )
                 }
               />

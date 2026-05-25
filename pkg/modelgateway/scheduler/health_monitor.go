@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 )
 
 const (
@@ -17,7 +18,6 @@ const (
 	defaultHealthScore       = 0.55
 	healthEWMAAlpha          = 0.20
 	healthSlowTTFTAlpha      = 0.45
-	performanceClearTTFTMs   = 5000
 	realSampleWindow         = 30 * time.Minute
 )
 
@@ -74,7 +74,6 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	if result.ConcurrencyLimited {
 		return
 	}
-	m.clearFailureAvoidanceAfterFastSuccess(result)
 	if m.store == nil {
 		return
 	}
@@ -131,6 +130,8 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	snapshot.EmptyOutputRate = stats.emptyRate
 	snapshot.ExperienceIssueRate = stats.issueRate
 	snapshot.ExperienceScore = experienceScoreFromRates(stats.emptyRate, stats.issueRate)
+	snapshot.HealthScoreAverage = healthScoreAverage(snapshot)
+	m.applyProbeRecovery(&snapshot, result)
 	if result.IsHealthProbe {
 		snapshot.LastProbeAt = observedAtUnix
 		if result.Success {
@@ -188,14 +189,65 @@ func healthStatsFromSnapshot(snapshot core.RuntimeSnapshot, ok bool) *healthStat
 	return stats
 }
 
-func (m *RuntimeHealthMonitor) clearFailureAvoidanceAfterFastSuccess(result core.AttemptResult) {
-	if result.ChannelID <= 0 || result.ConcurrencyLimited || result.ClientAborted {
+func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot, result core.AttemptResult) {
+	if snapshot == nil || result.ChannelID <= 0 || result.ConcurrencyLimited || result.ClientAborted {
 		return
 	}
-	ttftMs := result.TTFT.Milliseconds()
-	if result.Success && ttftMs > 0 && ttftMs <= performanceClearTTFTMs {
-		service.ClearChannelFailureAvoidance(result.ChannelID)
+	setting := scheduler_setting.GetSetting()
+	required := setting.ProbeRecoverySuccessesRequired
+	if required <= 0 {
+		required = 2
 	}
+	lowScoreThreshold := setting.ProbeLowScoreThreshold
+	if lowScoreThreshold <= 0 {
+		lowScoreThreshold = 0.62
+	}
+	snapshot.ProbeRecoveryRequired = required
+	if result.IsHealthProbe {
+		snapshot.ProbeTriggerReason = strings.TrimSpace(result.ProbeReason)
+	}
+	if result.IsHealthProbe && result.Success {
+		snapshot.ProbeRecoverySuccessCount++
+		if snapshot.ProbeRecoverySuccessCount >= required && service.GetChannelFailureAvoidanceStatus(result.ChannelID) != nil {
+			service.ClearChannelFailureAvoidance(result.ChannelID)
+			snapshot.FailureAvoidance = false
+			snapshot.ProbeRecoveryPending = false
+			snapshot.ProbeRecoverySuccessCount = required
+			return
+		}
+	}
+	if (result.IsHealthProbe && !result.Success) || (!result.IsHealthProbe && !result.Success) {
+		snapshot.ProbeRecoverySuccessCount = 0
+	}
+	if !result.IsHealthProbe && !result.Success {
+		snapshot.FailureAvoidance = snapshot.FailureAvoidance || service.GetChannelFailureAvoidanceStatus(result.ChannelID) != nil
+	}
+	snapshot.FailureAvoidance = snapshot.FailureAvoidance || service.GetChannelFailureAvoidanceStatus(result.ChannelID) != nil
+	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || (snapshot.HealthScoreAverage > 0 && snapshot.HealthScoreAverage < lowScoreThreshold)
+	if !snapshot.ProbeRecoveryPending && snapshot.ProbeRecoverySuccessCount > 0 {
+		snapshot.ProbeRecoverySuccessCount = 0
+	}
+}
+
+func healthScoreAverage(snapshot core.RuntimeSnapshot) float64 {
+	scores := []float64{}
+	if snapshot.SuccessScore > 0 {
+		scores = append(scores, snapshot.SuccessScore)
+	}
+	if snapshot.SpeedScore > 0 {
+		scores = append(scores, snapshot.SpeedScore)
+	}
+	if snapshot.ExperienceScore > 0 {
+		scores = append(scores, snapshot.ExperienceScore)
+	}
+	if len(scores) == 0 {
+		return 0
+	}
+	total := 0.0
+	for _, score := range scores {
+		total += score
+	}
+	return total / float64(len(scores))
 }
 
 func ewma(current float64, next float64) float64 {

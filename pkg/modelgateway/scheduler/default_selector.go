@@ -247,30 +247,33 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		}
 	}
 	plan := &core.DispatchPlan{
-		Channel:               bestCandidate.Channel,
-		SelectedGroup:         bestCandidate.Group,
-		RequestedGroup:        req.RequestedGroup,
-		RuntimeKey:            bestSnapshot.Key,
-		ProviderProfile:       bestCandidate.ProviderProfile,
-		ProxyMode:             bestCandidate.ProxyMode,
-		ScoreTotal:            bestScore.Total,
-		ScoreBreakdown:        bestScore.Breakdown,
-		RoutingScoreTotal:     bestScore.RoutingTotal,
-		RoutingScoreBreakdown: bestScore.RoutingBreakdown,
-		QueueWaitMs:           selectedQueueWaitMs(bestSnapshot, policy, selectedSaturated),
-		QueueEnabled:          policy.QueueEnabled,
-		QueueDepth:            bestSnapshot.QueueDepth,
-		QueueCapacity:         bestSnapshot.QueueCapacity,
-		QueuePriority:         policy.QueuePriority,
-		SelectedReason:        bestScore.Reason,
-		StickySource:          stickyRoute.Source,
-		StickyKeyFP:           stickyRoute.KeyFingerprint,
-		StickyRetained:        hasSticky && stickyBreak == "",
-		StickyBreak:           stickyBreak,
-		CacheAffinity:         hasSticky && stickyRoute.CacheAware,
-		PolicyMode:            policy.Mode,
-		AutoMode:              policy.AutoMode,
-		Candidates:            explanations,
+		Channel:                   bestCandidate.Channel,
+		SelectedGroup:             bestCandidate.Group,
+		RequestedGroup:            req.RequestedGroup,
+		RuntimeKey:                bestSnapshot.Key,
+		ProviderProfile:           bestCandidate.ProviderProfile,
+		ProxyMode:                 bestCandidate.ProxyMode,
+		ScoreTotal:                bestScore.Total,
+		ScoreBreakdown:            bestScore.Breakdown,
+		RoutingScoreTotal:         bestScore.RoutingTotal,
+		RoutingScoreBreakdown:     bestScore.RoutingBreakdown,
+		QueueWaitMs:               selectedQueueWaitMs(bestSnapshot, policy, selectedSaturated),
+		QueueEnabled:              policy.QueueEnabled,
+		QueueDepth:                bestSnapshot.QueueDepth,
+		QueueCapacity:             bestSnapshot.QueueCapacity,
+		QueuePriority:             policy.QueuePriority,
+		SelectedReason:            bestScore.Reason,
+		StickySource:              stickyRoute.Source,
+		StickyKeyFP:               stickyRoute.KeyFingerprint,
+		StickyRetained:            hasSticky && stickyBreak == "",
+		StickyBreak:               stickyBreak,
+		CacheAffinity:             hasSticky && stickyRoute.CacheAware,
+		PolicyMode:                policy.Mode,
+		AutoMode:                  policy.AutoMode,
+		RequiresCodexImageTool:    req.RequiresCodexImageTool,
+		RequiredTools:             requiredToolsForDispatchRequest(req),
+		CandidateFilterConditions: candidateFilterConditionsForDispatchRequest(req),
+		Candidates:                explanations,
 	}
 	if s.shouldSaveStickyOnSelect() {
 		s.stickyRouter.Save(c, &req, plan)
@@ -279,6 +282,22 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		plan.SelectedReason = "weighted_score_sticky_broken"
 	}
 	return plan, true, nil
+}
+
+func requiredToolsForDispatchRequest(req core.DispatchRequest) []string {
+	tools := make([]string, 0, 1)
+	if req.RequiresCodexImageTool {
+		tools = append(tools, core.DispatchRequiredToolCodexImageGeneration)
+	}
+	return tools
+}
+
+func candidateFilterConditionsForDispatchRequest(req core.DispatchRequest) []string {
+	conditions := make([]string, 0, 1)
+	if req.RequiresCodexImageTool {
+		conditions = append(conditions, core.DispatchFilterConditionCodexImageGenerationTool)
+	}
+	return conditions
 }
 
 func (s *DefaultSmartChannelSelector) costReferenceForCandidate(candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy, fallbackReference float64) (float64, bool) {
@@ -377,6 +396,11 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 		ExperienceScore:            snapshot.ExperienceScore,
 		EmptyOutputRate:            snapshot.EmptyOutputRate,
 		ExperienceIssueRate:        snapshot.ExperienceIssueRate,
+		HealthScoreAverage:         snapshot.HealthScoreAverage,
+		ProbeRecoveryPending:       snapshot.ProbeRecoveryPending,
+		ProbeRecoverySuccessCount:  snapshot.ProbeRecoverySuccessCount,
+		ProbeRecoveryRequired:      snapshot.ProbeRecoveryRequired,
+		ProbeTriggerReason:         snapshot.ProbeTriggerReason,
 		ConfigErrorIsolated:        snapshot.ConfigErrorIsolated,
 		IsolationReason:            snapshot.IsolationReason,
 		IsolationUntil:             snapshot.IsolationUntil,
@@ -624,6 +648,11 @@ func mergeRuntimeSnapshotDynamicFields(snapshot core.RuntimeSnapshot, dynamic co
 	snapshot.CircuitOpen = dynamic.CircuitOpen
 	snapshot.Cooldown = dynamic.Cooldown
 	snapshot.FailureAvoidance = dynamic.FailureAvoidance
+	snapshot.HealthScoreAverage = dynamic.HealthScoreAverage
+	snapshot.ProbeRecoveryPending = dynamic.ProbeRecoveryPending
+	snapshot.ProbeRecoverySuccessCount = dynamic.ProbeRecoverySuccessCount
+	snapshot.ProbeRecoveryRequired = dynamic.ProbeRecoveryRequired
+	snapshot.ProbeTriggerReason = dynamic.ProbeTriggerReason
 	snapshot.ConfigErrorIsolated = dynamic.ConfigErrorIsolated
 	snapshot.IsolationReason = dynamic.IsolationReason
 	snapshot.IsolationUntil = dynamic.IsolationUntil

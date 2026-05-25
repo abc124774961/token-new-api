@@ -149,12 +149,17 @@ func SyncDefaultProbeSchedulerLifecycle() *ProbeScheduler {
 	stopDefaultProbeSchedulerLocked()
 	setting := scheduler_setting.GetSetting()
 	config := ProbeConfig{
-		Enabled:            setting.ProbeEnabled,
-		Interval:           time.Duration(setting.ProbeIntervalSeconds) * time.Second,
-		WorkerCount:        setting.ProbeWorkerCount,
-		Timeout:            time.Duration(setting.ProbeTimeoutSeconds) * time.Second,
-		MaxPerTick:         setting.ProbeMaxPerTick,
-		MinChannelInterval: time.Duration(setting.ProbeMinChannelIntervalSeconds) * time.Second,
+		Enabled:                         setting.ProbeEnabled,
+		Interval:                        time.Duration(setting.ProbeIntervalSeconds) * time.Second,
+		WorkerCount:                     setting.ProbeWorkerCount,
+		Timeout:                         time.Duration(setting.ProbeTimeoutSeconds) * time.Second,
+		MaxPerTick:                      setting.ProbeMaxPerTick,
+		MinChannelInterval:              time.Duration(setting.ProbeMinChannelIntervalSeconds) * time.Second,
+		LowScoreThreshold:               setting.ProbeLowScoreThreshold,
+		MissingSampleThreshold:          setting.ProbeMissingSampleThreshold,
+		LongNoSuccessThreshold:          time.Duration(setting.ProbeLongNoSuccessSeconds) * time.Second,
+		RecoverySuccessesRequired:       setting.ProbeRecoverySuccessesRequired,
+		FailureAvoidancePriorityEnabled: setting.ProbeFailureAvoidancePriorityEnabled,
 	}
 	if !config.Enabled {
 		return nil

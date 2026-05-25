@@ -651,6 +651,11 @@ type ModelGatewayCandidateExplanation struct {
 	ExperienceScore            float64                `json:"experience_score,omitempty"`
 	EmptyOutputRate            float64                `json:"empty_output_rate,omitempty"`
 	ExperienceIssueRate        float64                `json:"experience_issue_rate,omitempty"`
+	HealthScoreAverage         float64                `json:"health_score_average,omitempty"`
+	ProbeRecoveryPending       bool                   `json:"probe_recovery_pending,omitempty"`
+	ProbeRecoverySuccessCount  int                    `json:"probe_recovery_success_count,omitempty"`
+	ProbeRecoveryRequired      int                    `json:"probe_recovery_required,omitempty"`
+	ProbeTriggerReason         string                 `json:"probe_trigger_reason,omitempty"`
 	ConfigErrorIsolated        bool                   `json:"config_error_isolated,omitempty"`
 	IsolationReason            string                 `json:"isolation_reason,omitempty"`
 	IsolationUntil             int64                  `json:"isolation_until,omitempty"`
@@ -3665,6 +3670,11 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			ExperienceScore:            roundModelGatewayObservabilityFloat(candidate.ExperienceScore),
 			EmptyOutputRate:            roundModelGatewayObservabilityFloat(candidate.EmptyOutputRate),
 			ExperienceIssueRate:        roundModelGatewayObservabilityFloat(candidate.ExperienceIssueRate),
+			HealthScoreAverage:         roundModelGatewayObservabilityFloat(candidate.HealthScoreAverage),
+			ProbeRecoveryPending:       candidate.ProbeRecoveryPending,
+			ProbeRecoverySuccessCount:  candidate.ProbeRecoverySuccessCount,
+			ProbeRecoveryRequired:      candidate.ProbeRecoveryRequired,
+			ProbeTriggerReason:         strings.TrimSpace(candidate.ProbeTriggerReason),
 			ConfigErrorIsolated:        candidate.ConfigErrorIsolated,
 			IsolationReason:            strings.TrimSpace(candidate.IsolationReason),
 			IsolationUntil:             candidate.IsolationUntil,

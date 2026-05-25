@@ -739,6 +739,62 @@ func TestSelectorRecordsCandidateExplanations(t *testing.T) {
 	require.Equal(t, selectedKey, selected.RuntimeKey)
 }
 
+func TestSelectorRecordsDispatchRequirements(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{
+		RequestedModel:        "gpt-5.5",
+		UpstreamModel:         "gpt-5.5",
+		ChannelID:             10,
+		Group:                 "default",
+		EndpointType:          constant.EndpointTypeOpenAIResponse,
+		CapabilityFingerprint: "openai_responses_image",
+	}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SuccessRate:        0.99,
+		TTFTMs:             300,
+		TokensPerSecond:    80,
+		ActiveConcurrency:  0,
+		MaxConcurrency:     4,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        10,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{
+				Channel:         &model.Channel{Id: 10, Name: "image-capable"},
+				Group:           "default",
+				UpstreamModel:   "gpt-5.5",
+				ProviderProfile: "openai_responses",
+				ProxyMode:       "native",
+				RuntimeKey:      key,
+			},
+		}),
+		store,
+		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+	)
+
+	plan, handled, apiErr := selector.Select(nil, &service.RetryParam{
+		TokenGroup:             "default",
+		ModelName:              "gpt-5.5",
+		EndpointType:           constant.EndpointTypeOpenAIResponse,
+		RequiresCodexImageTool: true,
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.True(t, plan.RequiresCodexImageTool)
+	require.Equal(t, []string{core.DispatchRequiredToolCodexImageGeneration}, plan.RequiredTools)
+	require.Equal(t, []string{core.DispatchFilterConditionCodexImageGenerationTool}, plan.CandidateFilterConditions)
+}
+
 func TestSelectorReadsSnapshotStoredUnderEnrichedRuntimeKey(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	baseKey := core.RuntimeKey{
