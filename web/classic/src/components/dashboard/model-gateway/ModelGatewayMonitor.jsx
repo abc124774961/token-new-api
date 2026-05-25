@@ -7464,7 +7464,12 @@ function DetailInfoGrid({ items = [] }) {
 
 function buildTimingBreakdown(record) {
   const timing = record?.request_meta?.timing || {};
-  const queueWaitMs = Number(timing.queue_wait_ms || 0);
+  const queueWaitMs = Number(
+    timing.queue_wait_ms ||
+      record?.request_meta?.queue_wait_ms ||
+      record?.queue_wait_ms ||
+      0,
+  );
   const relayToFirstByteMs = Number(timing.relay_to_first_byte_ms || 0);
   const relayTotalMs = Number(timing.relay_total_ms || 0);
   const ttftMs = Number(record?.ttft_ms || 0);

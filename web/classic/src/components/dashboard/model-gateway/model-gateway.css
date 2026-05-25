@@ -4528,6 +4528,10 @@
   .ct-model-gateway-detail-info-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .ct-model-gateway-timing-bars {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -4542,6 +4546,20 @@
 
   .ct-model-gateway-detail-hero-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ct-model-gateway-timing-summary {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .ct-model-gateway-timing-summary > span {
+    flex-basis: calc(100% - 24px);
+    white-space: normal;
+  }
+
+  .ct-model-gateway-timing-bars {
+    grid-template-columns: 1fr;
   }
 }
 

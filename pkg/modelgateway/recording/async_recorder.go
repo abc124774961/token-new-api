@@ -320,10 +320,10 @@ func attemptTimingMetaFromResult(result core.AttemptResult) *attemptTimingMeta {
 		RelayTotalMs:       positiveDurationMs(result.RelayTotal),
 	}
 	if timing.RelayToFirstByteMs <= 0 {
-		timing.RelayToFirstByteMs = positiveDurationMs(result.TTFT)
+		timing.RelayToFirstByteMs = subtractTimingSegment(positiveDurationMs(result.TTFT), timing.QueueWaitMs)
 	}
 	if timing.RelayTotalMs <= 0 {
-		timing.RelayTotalMs = positiveDurationMs(result.Duration)
+		timing.RelayTotalMs = subtractTimingSegment(positiveDurationMs(result.Duration), timing.QueueWaitMs)
 	}
 	if timing.QueueWaitMs > 0 || timing.RelayToFirstByteMs > 0 {
 		timing.PreFirstByteMs = timing.QueueWaitMs + timing.RelayToFirstByteMs
@@ -339,6 +339,19 @@ func attemptTimingMetaFromResult(result core.AttemptResult) *attemptTimingMeta {
 		return nil
 	}
 	return timing
+}
+
+func subtractTimingSegment(totalMs, segmentMs int64) int64 {
+	if totalMs <= 0 {
+		return 0
+	}
+	if segmentMs <= 0 {
+		return totalMs
+	}
+	if totalMs <= segmentMs {
+		return 0
+	}
+	return totalMs - segmentMs
 }
 
 func positiveDurationMs(value time.Duration) int64 {
