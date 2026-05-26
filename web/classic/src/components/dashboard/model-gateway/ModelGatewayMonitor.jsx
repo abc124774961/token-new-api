@@ -1608,6 +1608,69 @@ function ScoreItemsMiniList({ items = [], t, limit = 6 }) {
   );
 }
 
+function routingScoreItemsForDisplay(items = []) {
+  return normalizeScoreItemsForDisplay(items)
+    .filter((item) => Number(item.weight) > 0 && !item.missing_reason)
+    .sort((left, right) => {
+      if (right.weight !== left.weight) return right.weight - left.weight;
+      return right.weighted_score - left.weighted_score;
+    });
+}
+
+function RoutingScoreItemsPanel({ items = [], total, t }) {
+  const entries = routingScoreItemsForDisplay(items);
+  const hasTotal = Number.isFinite(Number(total)) && Number(total) > 0;
+  if (!entries.length && !hasTotal) return null;
+  return (
+    <div className='ct-model-gateway-routing-score-panel'>
+      <div className='ct-model-gateway-routing-score-panel-head'>
+        <div>
+          <span>{t('本次调度评分构成')}</span>
+          <strong>{hasTotal ? formatScore(total) : '--'}</strong>
+        </div>
+        <Typography.Text type='tertiary' size='small'>
+          {t('按本次调度权重计算')}
+        </Typography.Text>
+      </div>
+      {entries.length ? (
+        <div className='ct-model-gateway-routing-score-grid'>
+          {entries.map((item) => (
+            <Tooltip
+              key={item.key}
+              content={`${scoreItemLabel(item, t)} · ${t('原始数据')}: ${formatScoreItemRawValue(item, t)} · ${t('权重')}: ${formatPercent(item.weight)} · ${t('贡献')}: ${formatScore(item.weighted_score)}`}
+            >
+              <div
+                className={`ct-model-gateway-routing-score-item ct-model-gateway-routing-score-item-${item.key}`}
+              >
+                <div className='ct-model-gateway-routing-score-item-top'>
+                  <span>{scoreItemLabel(item, t)}</span>
+                  <strong>{formatScore(item.score)}</strong>
+                </div>
+                <div className='ct-model-gateway-routing-score-item-meta'>
+                  <span>{formatScoreItemRawValue(item, t)}</span>
+                  <span>
+                    {t('权重')} {formatPercent(item.weight)}
+                  </span>
+                </div>
+                <div className='ct-model-gateway-routing-score-bar'>
+                  <i style={{ width: `${Math.max(2, Math.min(100, item.score * 100))}%` }} />
+                </div>
+                <div className='ct-model-gateway-routing-score-item-foot'>
+                  {t('贡献')} {formatScore(item.weighted_score)}
+                </div>
+              </div>
+            </Tooltip>
+          ))}
+        </div>
+      ) : (
+        <Typography.Text type='tertiary' size='small'>
+          {t('暂无评分拆解')}
+        </Typography.Text>
+      )}
+    </div>
+  );
+}
+
 function QueueStickyTags({
   record,
   t,
@@ -9686,15 +9749,6 @@ function CandidateExplanationCard({
     ([key, score]) =>
       Number.isFinite(Number(score)) && scoreEntryIsVisible(key, sampleCount),
   );
-  const routingEntries = allRoutingScoreItems.filter(
-    (item) =>
-      ['concurrency_load', 'queue_pressure', 'first_byte_backlog'].includes(
-        item.key,
-      ) &&
-      Number.isFinite(Number(item.score)) &&
-      item.weight > 0 &&
-      !item.missing_reason,
-  );
   const scoreMetricEntries = [
     ...allScoreItems
       .filter((item) => item.weight > 0 && !item.missing_reason)
@@ -9702,6 +9756,9 @@ function CandidateExplanationCard({
       .map((item) => [item.key, scoreItemLabel(item, t), item.score]),
   ].filter(([, , value]) => Number(value) > 0);
   const routingScore = Number(candidate?.routing_score_total || 0);
+  const routingScoreItems = allRoutingScoreItems.length
+    ? allRoutingScoreItems
+    : allScoreItems;
   const available = candidate?.available === true;
   const unavailable = candidate?.available === false;
   const selected = candidate?.selected === true;
@@ -9857,6 +9914,12 @@ function CandidateExplanationCard({
         ))}
       </div>
 
+      <RoutingScoreItemsPanel
+        items={routingScoreItems}
+        total={routingScore || candidate?.score_total}
+        t={t}
+      />
+
       {!available && (
         <Typography.Text
           type={candidate?.reject_reason ? 'danger' : 'tertiary'}
@@ -10000,18 +10063,6 @@ function CandidateExplanationCard({
             )}
           </div>
         </div>
-        {routingEntries.length ? (
-          <div className='ct-model-gateway-candidate-routing-row'>
-            <Typography.Text type='tertiary' size='small'>
-              {t('调度因子')}
-            </Typography.Text>
-            {routingEntries.map((item) => (
-              <Tag key={item.key} color='grey' type='light' size='small'>
-                {scoreItemLabel(item, t)}: {formatScore(item.score)}
-              </Tag>
-            ))}
-          </div>
-        ) : null}
       </DetailAccordion>
       {(emptyOutputRate > 0 || issueRate > 0) && (
         <div className='ct-model-gateway-candidate-warning-line'>
