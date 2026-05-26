@@ -51,6 +51,13 @@ const (
 	modelGatewayObservabilitySummaryMaxCache    = 128
 	modelGatewayObservabilityViewUserRequests   = "user_requests"
 	modelGatewayDynamicBillingDisplayModel      = "gpt-5.4"
+	modelGatewayHealthCheckQueueTypeAll         = "all"
+	modelGatewayHealthCheckQueueTypeLowScore    = "low_score"
+	modelGatewayHealthCheckQueueTypeLowTraffic  = "low_traffic"
+	modelGatewayHealthCheckQueueTypeRecovery    = "recovery"
+	modelGatewayHealthCheckQueueTypeIsolated    = "isolated"
+	modelGatewayHealthCheckSuccessRateThreshold = 0.80
+	modelGatewayHealthCheckOutputRateThreshold  = 0.02
 )
 
 type ModelGatewayObservabilityResponse struct {
@@ -130,6 +137,58 @@ type ModelGatewayStickyClearResponse struct {
 	ChannelID int    `json:"channel_id,omitempty"`
 	Cleared   bool   `json:"cleared"`
 	Deleted   int    `json:"deleted"`
+}
+
+type ModelGatewayHealthCheckQueueResponse struct {
+	Summary        ModelGatewayHealthCheckQueueSummary            `json:"summary"`
+	Thresholds     ModelGatewayHealthCheckQueueThresholds         `json:"thresholds"`
+	RuntimeSummary modelgatewayobservability.RuntimeStatusSummary `json:"runtime_summary"`
+	Items          []ModelGatewayHealthCheckQueueItem             `json:"items"`
+	ReasonCounts   []ModelGatewayHealthCheckQueueReasonCount      `json:"reason_counts,omitempty"`
+	GeneratedAt    int64                                          `json:"generated_at"`
+	QueueSnapshot  *modelgatewaycore.RuntimeQueueSnapshot         `json:"queue_snapshot,omitempty"`
+}
+
+type ModelGatewayHealthCheckQueueSummary struct {
+	UpdatedAt         int64  `json:"updated_at"`
+	PendingCount      int    `json:"pending_count"`
+	ReturnedCount     int    `json:"returned_count"`
+	LowScoreCount     int    `json:"low_score_count"`
+	LowTrafficCount   int    `json:"low_traffic_count"`
+	RecoveryCount     int    `json:"recovery_count"`
+	IsolatedCount     int    `json:"isolated_count"`
+	RuntimeKeys       int    `json:"runtime_keys"`
+	Channels          int    `json:"channels"`
+	ActiveConcurrency int    `json:"active_concurrency"`
+	QueuedRequests    int    `json:"queued_requests"`
+	FilteredQueueType string `json:"filtered_queue_type,omitempty"`
+}
+
+type ModelGatewayHealthCheckQueueThresholds struct {
+	LowScore            float64 `json:"low_score"`
+	MissingSamples      int     `json:"missing_samples"`
+	SuccessRate         float64 `json:"success_rate"`
+	EmptyOutputRate     float64 `json:"empty_output_rate"`
+	ExperienceIssueRate float64 `json:"experience_issue_rate"`
+}
+
+type ModelGatewayHealthCheckQueueReason struct {
+	Key      string `json:"key"`
+	Severity string `json:"severity"`
+	Priority int    `json:"priority"`
+}
+
+type ModelGatewayHealthCheckQueueReasonCount struct {
+	Key   string `json:"key"`
+	Count int    `json:"count"`
+}
+
+type ModelGatewayHealthCheckQueueItem struct {
+	modelgatewayobservability.RuntimeStatusItem
+	Reasons   []ModelGatewayHealthCheckQueueReason `json:"reasons"`
+	Priority  int                                  `json:"priority"`
+	QueueType string                               `json:"queue_type"`
+	RowKey    string                               `json:"row_key"`
 }
 
 type ModelGatewayScoreHistoryResponse struct {
@@ -705,6 +764,9 @@ type ModelGatewayObservabilityOptions struct {
 	ChannelID          int
 	RequestID          string
 	IncludeTotal       bool
+	HealthProbeOnly    bool
+	Lite               bool
+	IncludeDispatch    bool
 }
 
 type modelGatewayObservabilityAccumulator struct {
@@ -821,6 +883,27 @@ func GetModelGatewayRuntimeStatus(c *gin.Context) {
 	common.ApiSuccess(c, defaultModelGatewayRuntimeStatusService().Build(query))
 }
 
+func GetModelGatewayHealthCheckQueue(c *gin.Context) {
+	query, err := parseModelGatewayRuntimeStatusQuery(c)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	if strings.TrimSpace(c.Query("limit")) == "" {
+		query.Limit = modelGatewayRuntimeStatusMaxLimit
+	}
+	queueType, err := parseModelGatewayHealthCheckQueueType(c.Query("queue_type"))
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	response := BuildModelGatewayHealthCheckQueue(query, queueType)
+	if !parseModelGatewayObservabilityBool(c.Query("include_queue_snapshot")) {
+		response.QueueSnapshot = nil
+	}
+	common.ApiSuccess(c, response)
+}
+
 func GetModelGatewayScoreHistory(c *gin.Context) {
 	options, err := parseModelGatewayScoreHistoryOptions(c)
 	if err != nil {
@@ -919,6 +1002,9 @@ func parseModelGatewayObservabilityOptions(c *gin.Context) (ModelGatewayObservab
 		ChannelID:          channelID,
 		RequestID:          strings.TrimSpace(c.Query("request_id")),
 		IncludeTotal:       parseModelGatewayObservabilityBool(c.Query("include_total")),
+		HealthProbeOnly:    parseModelGatewayObservabilityBool(c.Query("health_probe_only")),
+		Lite:               parseModelGatewayObservabilityBool(c.Query("lite")),
+		IncludeDispatch:    parseModelGatewayObservabilityBool(c.Query("include_dispatch")),
 	}, nil
 }
 
@@ -937,6 +1023,23 @@ func parseModelGatewayRuntimeStatusQuery(c *gin.Context) (modelgatewayobservabil
 		ChannelID: channelID,
 		Limit:     normalizeModelGatewayObservabilityInt(c.Query("limit"), modelGatewayRuntimeStatusDefaultLimit, 1, modelGatewayRuntimeStatusMaxLimit),
 	}, nil
+}
+
+func parseModelGatewayHealthCheckQueueType(raw string) (string, error) {
+	queueType := strings.ToLower(strings.TrimSpace(raw))
+	if queueType == "" {
+		queueType = modelGatewayHealthCheckQueueTypeAll
+	}
+	switch queueType {
+	case modelGatewayHealthCheckQueueTypeAll,
+		modelGatewayHealthCheckQueueTypeLowScore,
+		modelGatewayHealthCheckQueueTypeLowTraffic,
+		modelGatewayHealthCheckQueueTypeRecovery,
+		modelGatewayHealthCheckQueueTypeIsolated:
+		return queueType, nil
+	default:
+		return "", errors.New("invalid queue_type")
+	}
 }
 
 func parseModelGatewayScoreHistoryOptions(c *gin.Context) (modelGatewayScoreHistoryOptions, error) {
@@ -1146,6 +1249,9 @@ func modelGatewayObservabilitySummaryCacheKey(options ModelGatewayObservabilityO
 	values.Set("channel_id", strconv.Itoa(options.ChannelID))
 	values.Set("request_id", options.RequestID)
 	values.Set("include_total", strconv.FormatBool(options.IncludeTotal))
+	values.Set("probe_only", strconv.FormatBool(options.HealthProbeOnly))
+	values.Set("lite", strconv.FormatBool(options.Lite))
+	values.Set("include_dispatch", strconv.FormatBool(options.IncludeDispatch))
 	return values.Encode()
 }
 
@@ -2054,6 +2160,237 @@ func defaultModelGatewayRuntimeStatusService() *modelgatewayobservability.Runtim
 	return modelgatewayobservability.NewRuntimeStatusService(deps)
 }
 
+func BuildModelGatewayHealthCheckQueue(query modelgatewayobservability.RuntimeStatusQuery, queueType string) ModelGatewayHealthCheckQueueResponse {
+	queueType, err := parseModelGatewayHealthCheckQueueType(queueType)
+	if err != nil {
+		queueType = modelGatewayHealthCheckQueueTypeAll
+	}
+	runtimeStatus := defaultModelGatewayRuntimeStatusService().Build(query)
+	thresholds := modelGatewayHealthCheckQueueThresholds()
+	items := make([]ModelGatewayHealthCheckQueueItem, 0)
+	reasonCounts := map[string]int{}
+	summary := ModelGatewayHealthCheckQueueSummary{
+		UpdatedAt:         runtimeStatus.Summary.UpdatedAt,
+		RuntimeKeys:       runtimeStatus.Summary.RuntimeKeys,
+		Channels:          runtimeStatus.Summary.Channels,
+		ActiveConcurrency: runtimeStatus.Summary.ActiveConcurrency,
+		QueuedRequests:    runtimeStatus.Summary.QueuedRequests,
+		FilteredQueueType: queueType,
+	}
+	for _, runtimeItem := range runtimeStatus.Items {
+		reasons := modelGatewayHealthCheckQueueReasons(runtimeItem, thresholds)
+		if len(reasons) == 0 {
+			continue
+		}
+		summary.PendingCount++
+		modelGatewayHealthCheckQueueAccumulateSummary(&summary, runtimeItem, reasons)
+		for _, reason := range reasons {
+			reasonCounts[reason.Key]++
+		}
+		itemQueueType := modelGatewayHealthCheckQueueItemType(runtimeItem, reasons)
+		if !modelGatewayHealthCheckQueueItemMatchesType(itemQueueType, runtimeItem, reasons, queueType) {
+			continue
+		}
+		items = append(items, ModelGatewayHealthCheckQueueItem{
+			RuntimeStatusItem: runtimeItem,
+			Reasons:           reasons,
+			Priority:          reasons[0].Priority,
+			QueueType:         itemQueueType,
+			RowKey:            modelGatewayHealthCheckRuntimeRowKey(runtimeItem),
+		})
+	}
+	sort.Slice(items, func(i int, j int) bool {
+		if items[i].Priority != items[j].Priority {
+			return items[i].Priority > items[j].Priority
+		}
+		leftScore := items[i].HealthScoreAverage
+		rightScore := items[j].HealthScoreAverage
+		if leftScore != rightScore {
+			return leftScore < rightScore
+		}
+		return items[i].RowKey < items[j].RowKey
+	})
+	summary.ReturnedCount = len(items)
+	return ModelGatewayHealthCheckQueueResponse{
+		Summary:        summary,
+		Thresholds:     thresholds,
+		RuntimeSummary: runtimeStatus.Summary,
+		Items:          items,
+		ReasonCounts:   modelGatewayHealthCheckQueueReasonCounts(reasonCounts),
+		GeneratedAt:    common.GetTimestamp(),
+		QueueSnapshot:  runtimeStatus.QueueSnapshot,
+	}
+}
+
+func modelGatewayHealthCheckQueueThresholds() ModelGatewayHealthCheckQueueThresholds {
+	setting := scheduler_setting.GetSetting()
+	lowScore := setting.ProbeLowScoreThreshold
+	if lowScore <= 0 {
+		lowScore = 0.62
+	}
+	missingSamples := setting.ProbeMissingSampleThreshold
+	if missingSamples <= 0 {
+		missingSamples = 3
+	}
+	return ModelGatewayHealthCheckQueueThresholds{
+		LowScore:            lowScore,
+		MissingSamples:      missingSamples,
+		SuccessRate:         modelGatewayHealthCheckSuccessRateThreshold,
+		EmptyOutputRate:     modelGatewayHealthCheckOutputRateThreshold,
+		ExperienceIssueRate: modelGatewayHealthCheckOutputRateThreshold,
+	}
+}
+
+func modelGatewayHealthCheckQueueReasons(item modelgatewayobservability.RuntimeStatusItem, thresholds ModelGatewayHealthCheckQueueThresholds) []ModelGatewayHealthCheckQueueReason {
+	reasons := make([]ModelGatewayHealthCheckQueueReason, 0, 8)
+	addReason := func(key string, priority int, severity string) {
+		reasons = append(reasons, ModelGatewayHealthCheckQueueReason{
+			Key:      key,
+			Priority: priority,
+			Severity: severity,
+		})
+	}
+	if item.ConfigErrorIsolated || item.AuthConfigErrorCount > 0 {
+		addReason("config_error", 100, "critical")
+	}
+	if item.CircuitOpen {
+		addReason("circuit_open", 96, "critical")
+	}
+	if item.Cooldown {
+		addReason("cooldown", 90, "warning")
+	}
+	if item.FailureAvoidance {
+		addReason("failure_avoidance", 88, "warning")
+	}
+	if item.ProbeRecoveryPending {
+		addReason("probe_recovery_pending", 78, "info")
+	}
+	if item.HealthScoreAverage > 0 && item.HealthScoreAverage < thresholds.LowScore {
+		addReason("low_score", 72, "warning")
+	}
+	if item.RealSampleCount30m <= 0 {
+		addReason("low_traffic", 58, "info")
+	}
+	if item.SampleCount < thresholds.MissingSamples {
+		addReason("missing_samples", 48, "neutral")
+	}
+	if item.SuccessRate > 0 && item.SuccessRate < thresholds.SuccessRate {
+		addReason("success_rate", 66, "warning")
+	}
+	if item.EmptyOutputRate > thresholds.EmptyOutputRate {
+		addReason("empty_output", 62, "warning")
+	}
+	if item.ExperienceIssueRate > thresholds.ExperienceIssueRate {
+		addReason("experience_issue", 62, "warning")
+	}
+	sort.SliceStable(reasons, func(i int, j int) bool {
+		return reasons[i].Priority > reasons[j].Priority
+	})
+	return reasons
+}
+
+func modelGatewayHealthCheckQueueAccumulateSummary(summary *ModelGatewayHealthCheckQueueSummary, item modelgatewayobservability.RuntimeStatusItem, reasons []ModelGatewayHealthCheckQueueReason) {
+	if summary == nil {
+		return
+	}
+	if modelGatewayHealthCheckReasonsContain(reasons, "low_score") {
+		summary.LowScoreCount++
+	}
+	if modelGatewayHealthCheckReasonsContain(reasons, "low_traffic") {
+		summary.LowTrafficCount++
+	}
+	if item.ProbeRecoveryPending || item.FailureAvoidance || modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") || modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") {
+		summary.RecoveryCount++
+	}
+	if item.CircuitOpen || item.Cooldown || item.ConfigErrorIsolated || modelGatewayHealthCheckReasonsContain(reasons, "circuit_open") || modelGatewayHealthCheckReasonsContain(reasons, "cooldown") || modelGatewayHealthCheckReasonsContain(reasons, "config_error") {
+		summary.IsolatedCount++
+	}
+}
+
+func modelGatewayHealthCheckQueueItemType(item modelgatewayobservability.RuntimeStatusItem, reasons []ModelGatewayHealthCheckQueueReason) string {
+	if item.CircuitOpen || item.Cooldown || item.ConfigErrorIsolated ||
+		modelGatewayHealthCheckReasonsContain(reasons, "circuit_open") ||
+		modelGatewayHealthCheckReasonsContain(reasons, "cooldown") ||
+		modelGatewayHealthCheckReasonsContain(reasons, "config_error") {
+		return modelGatewayHealthCheckQueueTypeIsolated
+	}
+	if item.ProbeRecoveryPending || item.FailureAvoidance ||
+		modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") ||
+		modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") {
+		return modelGatewayHealthCheckQueueTypeRecovery
+	}
+	if modelGatewayHealthCheckReasonsContain(reasons, "low_score") {
+		return modelGatewayHealthCheckQueueTypeLowScore
+	}
+	if modelGatewayHealthCheckReasonsContain(reasons, "low_traffic") {
+		return modelGatewayHealthCheckQueueTypeLowTraffic
+	}
+	if len(reasons) > 0 {
+		return reasons[0].Key
+	}
+	return ""
+}
+
+func modelGatewayHealthCheckQueueItemMatchesType(itemQueueType string, item modelgatewayobservability.RuntimeStatusItem, reasons []ModelGatewayHealthCheckQueueReason, queueType string) bool {
+	switch queueType {
+	case "", modelGatewayHealthCheckQueueTypeAll:
+		return true
+	case modelGatewayHealthCheckQueueTypeLowScore:
+		return modelGatewayHealthCheckReasonsContain(reasons, "low_score")
+	case modelGatewayHealthCheckQueueTypeLowTraffic:
+		return modelGatewayHealthCheckReasonsContain(reasons, "low_traffic")
+	case modelGatewayHealthCheckQueueTypeRecovery:
+		return itemQueueType == modelGatewayHealthCheckQueueTypeRecovery || item.ProbeRecoveryPending || item.FailureAvoidance
+	case modelGatewayHealthCheckQueueTypeIsolated:
+		return itemQueueType == modelGatewayHealthCheckQueueTypeIsolated || item.CircuitOpen || item.Cooldown || item.ConfigErrorIsolated
+	default:
+		return true
+	}
+}
+
+func modelGatewayHealthCheckReasonsContain(reasons []ModelGatewayHealthCheckQueueReason, key string) bool {
+	for _, reason := range reasons {
+		if reason.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func modelGatewayHealthCheckQueueReasonCounts(counts map[string]int) []ModelGatewayHealthCheckQueueReasonCount {
+	items := make([]ModelGatewayHealthCheckQueueReasonCount, 0, len(counts))
+	for key, count := range counts {
+		items = append(items, ModelGatewayHealthCheckQueueReasonCount{Key: key, Count: count})
+	}
+	sort.Slice(items, func(i int, j int) bool {
+		if items[i].Count != items[j].Count {
+			return items[i].Count > items[j].Count
+		}
+		return items[i].Key < items[j].Key
+	})
+	return items
+}
+
+func modelGatewayHealthCheckRuntimeRowKey(item modelgatewayobservability.RuntimeStatusItem) string {
+	parts := []string{
+		nonEmptyTrimmed(item.RequestedModel, "model"),
+		nonEmptyTrimmed(item.UpstreamModel, "upstream"),
+		strconv.Itoa(item.ChannelID),
+		nonEmptyTrimmed(item.Group, "group"),
+		nonEmptyTrimmed(item.EndpointType, "endpoint"),
+		nonEmptyTrimmed(item.CapabilityFingerprint, "capability"),
+	}
+	return strings.Join(parts, ":")
+}
+
+func nonEmptyTrimmed(value string, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed != "" {
+		return trimmed
+	}
+	return fallback
+}
+
 func applyModelGatewayObservabilityFilters(tx *gorm.DB, options ModelGatewayObservabilityOptions) *gorm.DB {
 	if options.Model != "" {
 		tx = tx.Where("requested_model = ?", options.Model)
@@ -2066,6 +2403,9 @@ func applyModelGatewayObservabilityFilters(tx *gorm.DB, options ModelGatewayObse
 	}
 	if options.RequestID != "" {
 		tx = tx.Where("request_id = ?", options.RequestID)
+	}
+	if options.HealthProbeOnly {
+		tx = tx.Where("is_health_probe = ?", true)
 	}
 	return tx
 }
@@ -2082,6 +2422,9 @@ func applyModelGatewayUserRequestObservabilityFilters(tx *gorm.DB, options Model
 	}
 	if options.RequestID != "" {
 		tx = tx.Where("request_id = ?", options.RequestID)
+	}
+	if options.HealthProbeOnly {
+		tx = tx.Where("is_health_probe = ?", true)
 	}
 	return tx
 }
@@ -2173,17 +2516,23 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 			response.RecentRequests = append(response.RecentRequests, modelGatewayUserRequestRecord(userRequest))
 		}
 	}
-	attachModelGatewayUserRequestBilling(response.RecentRequests)
-	attachModelGatewayUserRequestCosts(response.RecentRequests)
+	if !options.Lite {
+		attachModelGatewayUserRequestBilling(response.RecentRequests)
+		attachModelGatewayUserRequestCosts(response.RecentRequests)
+	}
 
 	response.Summary = modelGatewayUserRequestSummaryFromAccumulator(response.Summary, totalAccumulator)
 	response.ByModel = finalizeModelGatewayUserRequestAggregates(modelAccumulators, options.TopN)
 	response.ByGroup = finalizeModelGatewayUserRequestAggregates(groupAccumulators, options.TopN)
 	response.Trends = finalizeModelGatewayUserRequestTrends(trendAccumulators, startTime, endTime, options.TrendBucketSeconds)
-	attachModelGatewayUserRequestDispatchRecords(response.RecentRequests)
+	if !options.Lite || options.IncludeDispatch {
+		attachModelGatewayUserRequestDispatchRecords(response.RecentRequests)
+	}
 	normalizeModelGatewayUserRequestHealthProbeRecords(response.RecentRequests)
-	attachModelGatewayUserRequestExecutionUsers(response.RecentRequests)
-	attachModelGatewayUserRequestUsernames(response.RecentRequests)
+	if !options.Lite {
+		attachModelGatewayUserRequestExecutionUsers(response.RecentRequests)
+		attachModelGatewayUserRequestUsernames(response.RecentRequests)
+	}
 	return response
 }
 

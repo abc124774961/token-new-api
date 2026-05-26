@@ -82,6 +82,7 @@ import {
   CalendarClock,
   RadioTower,
   GitBranch,
+  Stethoscope,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -150,6 +151,8 @@ export function getLucideIcon(key, selected = false) {
       return <CalendarClock {...commonProps} color={iconColor} />;
     case 'channel':
       return <Layers {...commonProps} color={iconColor} />;
+    case 'channel_health_check':
+      return <Stethoscope {...commonProps} color={iconColor} />;
     case 'redemption':
       return <Gift {...commonProps} color={iconColor} />;
     case 'user':

@@ -89,6 +89,7 @@ const NotificationSettings = ({
     admin: {
       enabled: true,
       channel: true,
+      channel_health_check: true,
       models: true,
       deployment: true,
       subscription: true,
@@ -181,6 +182,7 @@ const NotificationSettings = ({
       admin: {
         enabled: true,
         channel: true,
+        channel_health_check: true,
         models: true,
         deployment: true,
         subscription: true,
@@ -329,6 +331,11 @@ const NotificationSettings = ({
       description: t('系统管理功能'),
       modules: [
         { key: 'channel', title: t('渠道管理'), description: t('API渠道配置') },
+        {
+          key: 'channel_health_check',
+          title: t('渠道健康检测'),
+          description: t('待检查队列和探活历史'),
+        },
         { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
         {
           key: 'deployment',

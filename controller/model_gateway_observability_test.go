@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,12 +10,14 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -1067,6 +1070,68 @@ func TestBuildModelGatewayObservabilitySummaryIncludesHealthProbeUserRequestsByD
 	require.Equal(t, int64(0), trend.FinalFailures)
 }
 
+func TestBuildModelGatewayObservabilitySummaryFiltersHealthProbeUserRequests(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+
+	require.NoError(t, db.Create(&[]model.ModelGatewayUserRequestSummary{
+		{
+			CreatedAt:        now - 20,
+			UpdatedAt:        now - 18,
+			CompletedAt:      now - 15,
+			RequestId:        "req-user-normal",
+			RequestedGroup:   "auto",
+			SelectedGroup:    "vip",
+			RequestedModel:   "gpt-5.5",
+			FinalChannelID:   31,
+			FinalChannelName: "normal-channel",
+			Attempts:         1,
+			LastAttemptIndex: 0,
+			FinalSuccess:     true,
+			DurationMs:       800,
+			TTFTMs:           120,
+		},
+		{
+			CreatedAt:        now - 10,
+			UpdatedAt:        now - 8,
+			CompletedAt:      now - 5,
+			RequestId:        "req-user-probe-only",
+			RequestedGroup:   "auto",
+			SelectedGroup:    "vip",
+			RequestedModel:   "gpt-5.5",
+			FinalChannelID:   32,
+			FinalChannelName: "probe-channel",
+			Attempts:         1,
+			LastAttemptIndex: 0,
+			FinalSuccess:     true,
+			IsHealthProbe:    true,
+			ProbeReason:      "low_traffic",
+			DurationMs:       900,
+			TTFTMs:           140,
+		},
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:           1,
+		RecentLimit:     5,
+		TopN:            5,
+		ScanLimit:       10,
+		ViewMode:        "user_requests",
+		HealthProbeOnly: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	require.Equal(t, "req-user-probe-only", response.UserRequests.RecentRequests[0].RequestID)
+	require.True(t, response.UserRequests.RecentRequests[0].IsHealthProbe)
+	require.Equal(t, "low_traffic", response.UserRequests.RecentRequests[0].ProbeReason)
+	require.Equal(t, "health_probe", response.UserRequests.RecentRequests[0].Status)
+	require.Equal(t, int64(1), response.UserRequests.Summary.TotalRequests)
+	require.Equal(t, int64(1), response.UserRequests.Summary.HealthProbes)
+	require.Equal(t, int64(0), response.UserRequests.Summary.UserRequests)
+	require.Equal(t, int64(0), response.UserRequests.Summary.Successes)
+	require.Empty(t, response.RecentRecords)
+}
+
 func TestBuildModelGatewayObservabilitySummaryUsesSelectedGroupRatioWhenBillingGroupIsRequestedGroup(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
@@ -1809,6 +1874,59 @@ func TestBuildModelGatewayObservabilitySummaryUserRequestUsesDispatchUserFallbac
 	require.Equal(t, 2001, record.UserID)
 	require.Equal(t, "dispatch_user", record.Username)
 	require.NotNil(t, record.DispatchRecord)
+}
+
+func TestBuildModelGatewayObservabilitySummaryLiteUserRequestSkipsHeavyAttachments(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.User{
+		Id:       2002,
+		Username: "lite_dispatch_user",
+		Password: "password",
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		CreatedAt:      now - 10,
+		UpdatedAt:      now - 9,
+		CompletedAt:    now - 8,
+		RequestId:      "req-lite-dispatch",
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		RequestedModel: "gpt-5.5",
+		Attempts:       1,
+		FinalSuccess:   true,
+		DurationMs:     900,
+		TTFTMs:         120,
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelExecutionRecord{
+		CreatedAt:      now - 9,
+		RequestId:      "req-lite-dispatch",
+		UserId:         2002,
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		RequestedModel: "gpt-5.5",
+		ChannelId:      8,
+		PolicyMode:     "active",
+		SmartHandled:   true,
+		ScoreTotal:     0.92,
+		RequestMeta:    `{"candidate_explanations":[{"channel_id":8,"channel_name":"lite-channel","available":true,"score_total":0.92}]}`,
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+		Lite:        true,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	record := response.UserRequests.RecentRequests[0]
+	require.Equal(t, "req-lite-dispatch", record.RequestID)
+	require.Zero(t, record.UserID)
+	require.Empty(t, record.Username)
+	require.Nil(t, record.DispatchRecord)
+	require.Nil(t, record.Billing)
+	require.Empty(t, record.UpstreamCostBreakdown)
 }
 
 func TestBuildModelGatewayObservabilitySummaryUsesDefaultScanLimit(t *testing.T) {
@@ -2626,6 +2744,257 @@ func TestGetModelGatewayRuntimeStatusRejectsInvalidChannelID(t *testing.T) {
 	require.Contains(t, resp.Body.String(), "invalid channel_id")
 }
 
+func TestGetModelGatewayHealthCheckQueueReturnsPendingReasons(t *testing.T) {
+	now := time.Unix(1710000000, 0)
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		ProbeLowScoreThreshold:      0.62,
+		ProbeMissingSampleThreshold: 3,
+	})
+	t.Cleanup(restoreSetting)
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	require.NotNil(t, runtimeDeps)
+	require.NotNil(t, runtimeDeps.LocalSnapshotStore)
+
+	runtimeDeps.LocalSnapshotStore.Put(core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			RequestedModel: "gpt-5.5",
+			UpstreamModel:  "gpt-5.5",
+			ChannelID:      801,
+			Group:          "vip",
+			EndpointType:   constant.EndpointTypeOpenAI,
+		},
+		SuccessRate:           0.91,
+		SuccessScore:          0.91,
+		SpeedScore:            0.9,
+		CostRatio:             1,
+		GroupPriorityRatio:    1,
+		ExperienceScore:       0.9,
+		HealthScoreAverage:    0.41,
+		SampleCount:           8,
+		RealSampleCount30m:    2,
+		ProbeRecoveryPending:  true,
+		ProbeTriggerReason:    "low_score",
+		LastRealSuccessAt:     now.Add(-5 * time.Minute).Unix(),
+		LastProbeAt:           now.Add(-2 * time.Minute).Unix(),
+		LastProbeSuccessAt:    now.Add(-2 * time.Minute).Unix(),
+		ProbeRecoveryRequired: 2,
+	})
+	runtimeDeps.LocalSnapshotStore.Put(core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			RequestedModel: "gpt-5.5",
+			UpstreamModel:  "gpt-5.5",
+			ChannelID:      802,
+			Group:          "vip",
+			EndpointType:   constant.EndpointTypeOpenAI,
+		},
+		SuccessRate:        0.99,
+		SuccessScore:       0.99,
+		SpeedScore:         0.9,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		ExperienceScore:    0.9,
+		HealthScoreAverage: 0.88,
+		SampleCount:        1,
+		RealSampleCount30m: 0,
+		ProbeTriggerReason: "low_traffic",
+	})
+	runtimeDeps.LocalSnapshotStore.Put(core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			RequestedModel: "gpt-5.5",
+			UpstreamModel:  "gpt-5.5",
+			ChannelID:      803,
+			Group:          "vip",
+			EndpointType:   constant.EndpointTypeOpenAI,
+		},
+		SuccessRate:        0.99,
+		SuccessScore:       0.99,
+		SpeedScore:         0.9,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		ExperienceScore:    0.9,
+		HealthScoreAverage: 0.9,
+		SampleCount:        6,
+		RealSampleCount30m: 3,
+	})
+
+	router := gin.New()
+	router.GET("/api/model_gateway/observability/health-check/queue", GetModelGatewayHealthCheckQueue)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/observability/health-check/queue?model=gpt-5.5&group=vip", nil)
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayHealthCheckQueueResponse(t, resp)
+	require.True(t, payload.Success)
+	require.Equal(t, 2, payload.Data.Summary.PendingCount)
+	require.Equal(t, 2, payload.Data.Summary.ReturnedCount)
+	require.Equal(t, 1, payload.Data.Summary.LowScoreCount)
+	require.Equal(t, 1, payload.Data.Summary.LowTrafficCount)
+	require.Equal(t, 1, payload.Data.Summary.RecoveryCount)
+	require.Equal(t, 0.62, payload.Data.Thresholds.LowScore)
+	require.Len(t, payload.Data.Items, 2)
+	require.Equal(t, 801, payload.Data.Items[0].ChannelID)
+	require.Equal(t, "recovery", payload.Data.Items[0].QueueType)
+	require.Equal(t, "probe_recovery_pending", payload.Data.Items[0].Reasons[0].Key)
+	require.True(t, modelGatewayHealthCheckTestReasonsContain(payload.Data.Items[0].Reasons, "low_score"))
+	require.Equal(t, 802, payload.Data.Items[1].ChannelID)
+	require.Equal(t, "low_traffic", payload.Data.Items[1].QueueType)
+	require.True(t, modelGatewayHealthCheckTestReasonsContain(payload.Data.Items[1].Reasons, "low_traffic"))
+	require.NotEmpty(t, payload.Data.Items[1].RowKey)
+	require.Nil(t, payload.Data.QueueSnapshot)
+}
+
+func TestGetModelGatewayHealthCheckQueueCanIncludeQueueSnapshot(t *testing.T) {
+	relayQueueManagerMu.Lock()
+	previousQueueManager := relayQueueManager
+	relayQueueManager = scheduler.NewQueueManager(500*time.Millisecond, 4)
+	relayQueueManagerMu.Unlock()
+	t.Cleanup(func() {
+		relayQueueManagerMu.Lock()
+		relayQueueManager = previousQueueManager
+		relayQueueManagerMu.Unlock()
+	})
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	require.NotNil(t, runtimeDeps)
+
+	runtimeDeps.LocalSnapshotStore.Put(core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			RequestedModel: "gpt-5.5",
+			UpstreamModel:  "gpt-5.5",
+			ChannelID:      809,
+			Group:          "vip",
+			EndpointType:   constant.EndpointTypeOpenAI,
+		},
+		SuccessRate:        0.99,
+		SuccessScore:       0.99,
+		SpeedScore:         0.9,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		ExperienceScore:    0.9,
+		HealthScoreAverage: 0.88,
+		SampleCount:        1,
+		RealSampleCount30m: 0,
+	})
+	lease := service.TrackChannelConcurrency(809, dto.ChannelSettings{MaxConcurrency: 1})
+	defer lease.Release()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	queued := make(chan scheduler.QueueAcquireResult, 1)
+	go func() {
+		queued <- currentRelayQueueManager().AcquireWithOptions(ctx, &core.DispatchPlan{
+			QueueEnabled: true,
+			QueueWaitMs:  400,
+		}, 809, dto.ChannelSettings{MaxConcurrency: 1}, scheduler.QueueAcquireOptions{
+			Group: "vip",
+			RuntimeKey: core.RuntimeKey{
+				RequestedModel: "gpt-5.5",
+				UpstreamModel:  "gpt-5.5",
+				ChannelID:      809,
+				Group:          "vip",
+				EndpointType:   constant.EndpointTypeOpenAI,
+			},
+		})
+	}()
+	require.Eventually(t, func() bool {
+		return currentRelayQueueManager().Depth(809) > 0
+	}, time.Second, 10*time.Millisecond)
+
+	router := gin.New()
+	router.GET("/api/model_gateway/observability/health-check/queue", GetModelGatewayHealthCheckQueue)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/observability/health-check/queue?include_queue_snapshot=true", nil)
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayHealthCheckQueueResponse(t, resp)
+	require.True(t, payload.Success)
+	require.NotNil(t, payload.Data.QueueSnapshot)
+	require.Equal(t, 809, payload.Data.QueueSnapshot.Channels[0].ChannelID)
+	cancel()
+	<-queued
+}
+
+func TestGetModelGatewayHealthCheckQueueFiltersQueueType(t *testing.T) {
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		ProbeLowScoreThreshold:      0.62,
+		ProbeMissingSampleThreshold: 3,
+	})
+	t.Cleanup(restoreSetting)
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	require.NotNil(t, runtimeDeps)
+
+	runtimeDeps.LocalSnapshotStore.Put(core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			RequestedModel: "gpt-5.5",
+			UpstreamModel:  "gpt-5.5",
+			ChannelID:      811,
+			Group:          "vip",
+			EndpointType:   constant.EndpointTypeOpenAI,
+		},
+		SuccessRate:        0.99,
+		SuccessScore:       0.99,
+		SpeedScore:         0.9,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		ExperienceScore:    0.9,
+		HealthScoreAverage: 0.88,
+		SampleCount:        1,
+		RealSampleCount30m: 0,
+	})
+	runtimeDeps.LocalSnapshotStore.Put(core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			RequestedModel: "gpt-5.5",
+			UpstreamModel:  "gpt-5.5",
+			ChannelID:      812,
+			Group:          "vip",
+			EndpointType:   constant.EndpointTypeOpenAI,
+		},
+		SuccessRate:        0.99,
+		SuccessScore:       0.99,
+		SpeedScore:         0.9,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		ExperienceScore:    0.9,
+		HealthScoreAverage: 0.4,
+		SampleCount:        6,
+		RealSampleCount30m: 4,
+	})
+
+	router := gin.New()
+	router.GET("/api/model_gateway/observability/health-check/queue", GetModelGatewayHealthCheckQueue)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/observability/health-check/queue?queue_type=low_traffic", nil)
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayHealthCheckQueueResponse(t, resp)
+	require.True(t, payload.Success)
+	require.Equal(t, 2, payload.Data.Summary.PendingCount)
+	require.Equal(t, 1, payload.Data.Summary.ReturnedCount)
+	require.Equal(t, "low_traffic", payload.Data.Summary.FilteredQueueType)
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, 811, payload.Data.Items[0].ChannelID)
+}
+
+func TestGetModelGatewayHealthCheckQueueRejectsInvalidQueueType(t *testing.T) {
+	router := gin.New()
+	router.GET("/api/model_gateway/observability/health-check/queue", GetModelGatewayHealthCheckQueue)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/observability/health-check/queue?queue_type=bad", nil)
+	router.ServeHTTP(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	require.Contains(t, resp.Body.String(), `"success":false`)
+	require.Contains(t, resp.Body.String(), "invalid queue_type")
+}
+
 func TestGetModelGatewayScoreHistoryReturnsCandidateChanges(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
@@ -2809,11 +3178,33 @@ type modelGatewayRuntimeStatusAPIResponse struct {
 	Data    modelgatewayobservability.RuntimeStatusResponse `json:"data"`
 }
 
+type modelGatewayHealthCheckQueueAPIResponse struct {
+	Success bool                                 `json:"success"`
+	Message string                               `json:"message"`
+	Data    ModelGatewayHealthCheckQueueResponse `json:"data"`
+}
+
 func decodeModelGatewayRuntimeStatusResponse(t *testing.T, recorder *httptest.ResponseRecorder) modelGatewayRuntimeStatusAPIResponse {
 	t.Helper()
 	var payload modelGatewayRuntimeStatusAPIResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload), recorder.Body.String())
 	return payload
+}
+
+func decodeModelGatewayHealthCheckQueueResponse(t *testing.T, recorder *httptest.ResponseRecorder) modelGatewayHealthCheckQueueAPIResponse {
+	t.Helper()
+	var payload modelGatewayHealthCheckQueueAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload), recorder.Body.String())
+	return payload
+}
+
+func modelGatewayHealthCheckTestReasonsContain(reasons []ModelGatewayHealthCheckQueueReason, key string) bool {
+	for _, reason := range reasons {
+		if reason.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 func requireAggregate(t *testing.T, items []ModelGatewayObservabilityAggregate, key string, attempts int64, successes int64, failures int64) ModelGatewayObservabilityAggregate {

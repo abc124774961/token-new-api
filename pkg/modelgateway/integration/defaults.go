@@ -28,6 +28,7 @@ type DefaultRuntimeObservability struct {
 	CircuitBreaker        *scheduler.SyncedCircuitBreaker
 	LocalCircuitBreaker   *scheduler.CircuitBreaker
 	StickyRouter          *scheduler.MemoryStickyRouter
+	RuntimeEnricher       *scheduler.RuntimeSnapshotEnricher
 	CostBaselineCache     *scheduler.CostBaselineCache
 	RuntimeSyncStore      scheduler.RuntimeSyncStore
 	RuntimeSyncEventStore *scheduler.RuntimeSyncEventStore
@@ -157,6 +158,7 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 			CircuitBreaker:        circuitBreaker,
 			LocalCircuitBreaker:   localCircuitBreaker,
 			StickyRouter:          stickyRouter,
+			RuntimeEnricher:       runtimeEnricher,
 			CostBaselineCache:     costBaselineCache,
 			RuntimeSyncStore:      runtimeSyncStore,
 			RuntimeSyncEventStore: runtimeSyncEventStore,

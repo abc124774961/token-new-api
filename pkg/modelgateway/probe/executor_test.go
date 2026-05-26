@@ -327,8 +327,11 @@ func TestProbeSchedulerDispatchRecordIncludesScoreAndCandidateExplanation(t *tes
 		GroupPriorityRatio: 1,
 	})
 	recorder := recording.NewAsyncExecutionRecorder(16)
+	enricher := scheduler.NewRuntimeSnapshotEnricher(nil, 1500, 8, 2).
+		WithCostProfileProvider(fakeProbeCostProfileProvider{ratio: 0.4, ok: true})
 	s := NewProbeScheduler(ProbeConfig{Enabled: true}, nil, nil, recorder).
-		WithSnapshotStore(store)
+		WithSnapshotStore(store).
+		WithRuntimeSnapshotEnricher(enricher)
 	plan := s.buildDispatchPlan(ProbeCandidate{
 		Channel: channel,
 		Model:   "gpt-4.1",
@@ -340,6 +343,20 @@ func TestProbeSchedulerDispatchRecordIncludesScoreAndCandidateExplanation(t *tes
 	require.Greater(t, plan.ScoreTotal, 0.0)
 	require.Len(t, plan.Candidates, 1)
 	require.True(t, plan.Candidates[0].Selected)
+	selector := scheduler.NewDefaultSmartChannelSelector(nil, store, scheduler.NewScoreCalculatorFactory(modelgatewayintegration.RuntimePolicySetting().ScoreWeights)).
+		WithRuntimeSnapshotEnricher(enricher)
+	expected := selector.ScoreCandidate(core.Candidate{
+		Channel:         channel,
+		Group:           plan.SelectedGroup,
+		UpstreamModel:   plan.RuntimeKey.UpstreamModel,
+		ProviderProfile: plan.ProviderProfile,
+		ProxyMode:       plan.ProxyMode,
+		RuntimeKey:      plan.RuntimeKey,
+	}, probeDispatchPolicy("default"))
+	require.InDelta(t, expected.Score.Total, plan.ScoreTotal, 0.0001)
+	require.InDelta(t, expected.Score.Breakdown["cost"], plan.Candidates[0].CostScore, 0.0001)
+	require.Equal(t, 1.0, plan.Candidates[0].CostScore)
+	require.Equal(t, expected.Explanation.ScoreBreakdown, plan.Candidates[0].ScoreBreakdown)
 	require.Equal(t, reasonLowScore, plan.ProbeReason)
 
 	result := ProbeRunResult{
@@ -381,6 +398,15 @@ func TestProbeSchedulerDispatchRecordIncludesScoreAndCandidateExplanation(t *tes
 	var summary model.ModelGatewayUserRequestSummary
 	require.NoError(t, db.Where("request_id = ?", result.ProbeID).First(&summary).Error)
 	require.True(t, summary.FinalSuccess)
+}
+
+type fakeProbeCostProfileProvider struct {
+	ratio float64
+	ok    bool
+}
+
+func (p fakeProbeCostProfileProvider) CostRatio(channelID int, upstreamModel string) (float64, bool) {
+	return p.ratio, p.ok
 }
 
 func setupProbeExecutorTestDB(t *testing.T) *gorm.DB {

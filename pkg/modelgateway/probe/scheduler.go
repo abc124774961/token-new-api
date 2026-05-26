@@ -14,7 +14,6 @@ import (
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/recording"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 )
 
@@ -24,6 +23,8 @@ type ProbeScheduler struct {
 	executor      *ProbeExecutor
 	recorder      *recording.AsyncExecutionRecorder
 	snapshotStore core.RuntimeSnapshotStore
+	enricher      core.RuntimeSnapshotEnricher
+	costBaseline  core.CostBaselineProvider
 	scorerFactory core.ScoreCalculatorFactory
 	stop          chan struct{}
 	once          sync.Once
@@ -54,6 +55,22 @@ func (s *ProbeScheduler) WithSnapshotStore(store core.RuntimeSnapshotStore) *Pro
 		return nil
 	}
 	s.snapshotStore = store
+	return s
+}
+
+func (s *ProbeScheduler) WithRuntimeSnapshotEnricher(enricher core.RuntimeSnapshotEnricher) *ProbeScheduler {
+	if s == nil {
+		return nil
+	}
+	s.enricher = enricher
+	return s
+}
+
+func (s *ProbeScheduler) WithCostBaselineProvider(provider core.CostBaselineProvider) *ProbeScheduler {
+	if s == nil {
+		return nil
+	}
+	s.costBaseline = provider
 	return s
 }
 
@@ -202,7 +219,9 @@ func SyncDefaultProbeSchedulerLifecycle() *ProbeScheduler {
 	selector := NewProbeSelector(deps.SnapshotStore, deps.CircuitBreaker)
 	executor := NewProbeExecutor(config.Timeout, NewProbeBillingRecorder())
 	s := NewProbeScheduler(config, selector, executor, recorder).
-		WithSnapshotStore(deps.SnapshotStore)
+		WithSnapshotStore(deps.SnapshotStore).
+		WithRuntimeSnapshotEnricher(deps.RuntimeEnricher).
+		WithCostBaselineProvider(deps.CostBaselineCache)
 	s.Start(context.Background())
 	defaultProbeScheduler = s
 	return s
@@ -286,29 +305,25 @@ func (s *ProbeScheduler) applyProbeScore(plan *core.DispatchPlan, candidate Prob
 	if plan == nil || candidate.Channel == nil {
 		return
 	}
-	snapshot := core.RuntimeSnapshot{
-		Key:                plan.RuntimeKey,
-		CostRatio:          0,
-		GroupPriorityRatio: 1,
-		SampleSource:       "none",
+	probeCandidate := core.Candidate{
+		Channel:                candidate.Channel,
+		Group:                  plan.SelectedGroup,
+		UpstreamModel:          plan.RuntimeKey.UpstreamModel,
+		ProviderProfile:        plan.ProviderProfile,
+		ProxyMode:              plan.ProxyMode,
+		RequiresCodexImageTool: plan.RequiresCodexImageTool,
+		RuntimeKey:             plan.RuntimeKey,
 	}
-	if s != nil && s.snapshotStore != nil {
-		if stored, ok := s.snapshotStore.Get(plan.RuntimeKey); ok {
-			snapshot = stored
-			snapshot.SampleSource = "exact"
-			snapshot.MatchedRuntimeKey = stored.Key
-		} else if candidate.Key.ChannelID > 0 {
-			if stored, ok := s.snapshotStore.Get(candidate.Key); ok {
-				snapshot = stored
-				snapshot.SampleSource = "legacy_exact"
-				snapshot.MatchedRuntimeKey = stored.Key
-			}
-		}
+	scorerFactory := s.scorerFactory
+	if scorerFactory == nil {
+		scorerFactory = scheduler.NewScoreCalculatorFactory(modelgatewayintegration.RuntimePolicySetting().ScoreWeights)
 	}
+	scoreSelector := scheduler.NewDefaultSmartChannelSelector(nil, s.snapshotStore, scorerFactory).
+		WithRuntimeSnapshotEnricher(s.enricher).
+		WithCostBaselineProvider(s.costBaseline)
+	scored := scoreSelector.ScoreCandidate(probeCandidate, policy)
+	snapshot := scored.Snapshot
 	snapshot.Key = plan.RuntimeKey
-	if snapshot.GroupPriorityRatio <= 0 {
-		snapshot.GroupPriorityRatio = 1
-	}
 	if snapshot.HealthScoreAverage <= 0 {
 		snapshot.HealthScoreAverage = scheduler.HealthScoreAverage(snapshot)
 	}
@@ -319,27 +334,20 @@ func (s *ProbeScheduler) applyProbeScore(plan *core.DispatchPlan, candidate Prob
 	if candidate.Reason == reasonLowScore || candidate.Reason == reasonFailureAvoidance || snapshot.FailureAvoidance {
 		snapshot.ProbeRecoveryPending = true
 	}
-
-	probeCandidate := core.Candidate{
-		Channel:         candidate.Channel,
-		Group:           plan.SelectedGroup,
-		UpstreamModel:   plan.RuntimeKey.UpstreamModel,
-		ProviderProfile: plan.ProviderProfile,
-		ProxyMode:       plan.ProxyMode,
-		RuntimeKey:      plan.RuntimeKey,
-	}
-	scorerFactory := s.scorerFactory
-	if scorerFactory == nil {
-		scorerFactory = scheduler.NewScoreCalculatorFactory(modelgatewayintegration.RuntimePolicySetting().ScoreWeights)
-	}
-	score := scorerFactory.ForStrategy(policy.Strategy).Score(probeCandidate, snapshot, policy)
+	score := scored.Score
+	explanation := scored.Explanation
+	explanation.Available = true
+	explanation.Selected = true
+	explanation.HealthScoreAverage = snapshot.HealthScoreAverage
+	explanation.ProbeRecoveryPending = snapshot.ProbeRecoveryPending
+	explanation.ProbeRecoveryRequired = snapshot.ProbeRecoveryRequired
+	explanation.ProbeRecoverySuccessCount = snapshot.ProbeRecoverySuccessCount
+	explanation.ProbeTriggerReason = snapshot.ProbeTriggerReason
 	plan.ScoreTotal = score.Total
 	plan.ScoreBreakdown = score.Breakdown
 	plan.RoutingScoreTotal = score.RoutingTotal
 	plan.RoutingScoreBreakdown = score.RoutingBreakdown
-	plan.Candidates = []core.CandidateExplanation{
-		probeCandidateExplanation(probeCandidate, snapshot, score, candidate.Reason),
-	}
+	plan.Candidates = []core.CandidateExplanation{explanation}
 }
 
 func probeDispatchPolicy(group string) core.GroupSmartPolicy {
@@ -392,104 +400,6 @@ func copyProbeGroupPriorityRatio(values map[string]float64) map[string]float64 {
 		}
 	}
 	return out
-}
-
-func probeCandidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapshot, score core.ScoreResult, reason string) core.CandidateExplanation {
-	explanation := core.CandidateExplanation{
-		ChannelID:                  snapshot.Key.ChannelID,
-		Group:                      firstProbeString(candidate.Group, snapshot.Key.Group),
-		UpstreamModel:              firstProbeString(candidate.UpstreamModel, snapshot.Key.UpstreamModel),
-		ProviderProfile:            candidate.ProviderProfile,
-		ProxyMode:                  candidate.ProxyMode,
-		RuntimeKey:                 snapshot.Key,
-		Available:                  true,
-		Selected:                   true,
-		ScoreTotal:                 score.Total,
-		ScoreBreakdown:             copyProbeScoreMap(score.Breakdown),
-		RoutingScoreTotal:          score.RoutingTotal,
-		RoutingScoreBreakdown:      copyProbeScoreMap(score.RoutingBreakdown),
-		SuccessRate:                snapshot.SuccessRate,
-		TTFTMs:                     snapshot.TTFTMs,
-		DurationMs:                 snapshot.DurationMs,
-		TokensPerSecond:            snapshot.TokensPerSecond,
-		SampleCount:                snapshot.SampleCount,
-		ActiveConcurrency:          snapshot.ActiveConcurrency,
-		MaxConcurrency:             snapshot.MaxConcurrency,
-		ConfiguredConcurrencyLimit: snapshot.ConfiguredConcurrencyLimit,
-		LearnedConcurrencyLimit:    snapshot.LearnedConcurrencyLimit,
-		EffectiveConcurrencyLimit:  snapshot.EffectiveConcurrencyLimit,
-		QueueDepth:                 snapshot.QueueDepth,
-		QueueCapacity:              snapshot.QueueCapacity,
-		EstimatedQueueWaitMs:       snapshot.EstimatedQueueWaitMs,
-		FirstBytePending:           snapshot.FirstBytePending,
-		SlowFirstBytePending:       snapshot.SlowFirstBytePending,
-		OldestFirstByteWaitMs:      snapshot.OldestFirstByteWaitMs,
-		CostRatio:                  snapshot.CostRatio,
-		CostReferenceRatio:         snapshot.CostReferenceRatio,
-		CostPricingMode:            snapshot.CostPricingMode,
-		GroupPriorityRatio:         snapshot.GroupPriorityRatio,
-		HealthScoreAverage:         snapshot.HealthScoreAverage,
-		ProbeRecoveryPending:       snapshot.ProbeRecoveryPending,
-		ProbeRecoverySuccessCount:  snapshot.ProbeRecoverySuccessCount,
-		ProbeRecoveryRequired:      snapshot.ProbeRecoveryRequired,
-		ProbeTriggerReason:         firstProbeString(reason, snapshot.ProbeTriggerReason),
-		ScoreSampleSource:          snapshot.SampleSource,
-		MatchedRuntimeKey:          snapshot.MatchedRuntimeKey,
-	}
-	if candidate.Channel != nil {
-		explanation.ChannelID = candidate.Channel.Id
-		explanation.ChannelName = candidate.Channel.Name
-		explanation.ChannelStatus = candidate.Channel.Status
-		explanation.StatusReason = service.ChannelStatusReason(candidate.Channel)
-		explanation.BalanceInsufficient = service.IsKnownBalanceInsufficientChannel(candidate.Channel)
-	}
-	if explanation.ChannelID == 0 {
-		explanation.ChannelID = candidate.RuntimeKey.ChannelID
-	}
-	explanation.SuccessScore = probeScoreValue(score.Breakdown, "success", snapshot.SuccessScore)
-	explanation.ScoreSpeedFactor = probeScoreValue(score.Breakdown, "speed", snapshot.SpeedScore)
-	explanation.SpeedScore = firstPositiveFloat(snapshot.SpeedScore, explanation.ScoreSpeedFactor)
-	explanation.LoadScore = probeScoreValue(score.Breakdown, "load", 0)
-	explanation.CostScore = probeScoreValue(score.Breakdown, "cost", 0)
-	explanation.GroupScore = probeScoreValue(score.Breakdown, "group", 0)
-	explanation.ExperienceScore = probeScoreValue(score.Breakdown, "experience", snapshot.ExperienceScore)
-	return explanation
-}
-
-func copyProbeScoreMap(values map[string]float64) map[string]float64 {
-	if len(values) == 0 {
-		return nil
-	}
-	out := make(map[string]float64, len(values))
-	for key, value := range values {
-		out[key] = value
-	}
-	return out
-}
-
-func probeScoreValue(values map[string]float64, key string, fallback float64) float64 {
-	if value, ok := values[key]; ok {
-		return value
-	}
-	return fallback
-}
-
-func firstProbeString(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
-}
-
-func firstPositiveFloat(values ...float64) float64 {
-	for _, value := range values {
-		if value > 0 {
-			return value
-		}
-	}
-	return 0
 }
 
 func (r ProbeRunResult) DispatchRecord() core.DispatchRecord {

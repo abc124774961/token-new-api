@@ -1,0 +1,1218 @@
+/*
+Copyright (C) 2025 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import {
+  Banner,
+  Button,
+  Empty,
+  Input,
+  Select,
+  Spin,
+  Table,
+  Tabs,
+  Tag,
+  Tooltip,
+  Typography,
+} from '@douyinfe/semi-ui';
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Clock3,
+  History,
+  ListChecks,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Stethoscope,
+} from 'lucide-react';
+import { API, timestamp2string } from '../../helpers';
+import './channel-health-check.css';
+
+const { TabPane } = Tabs;
+
+const HISTORY_HOUR_OPTIONS = [1, 6, 24, 72, 168];
+const ALL_STATUSES = 'all';
+
+function unwrapApiData(response) {
+  return response?.data?.data || response?.data || {};
+}
+
+function buildRequestErrorDetail(err, label, t) {
+  const status = err?.response?.status;
+  const responseMessage =
+    err?.response?.data?.message ||
+    err?.response?.data?.error ||
+    err?.response?.data?.detail;
+  const message =
+    responseMessage ||
+    err?.message ||
+    (err?.request ? t('网络连接失败或服务器无响应') : t('请求异常'));
+  const url = [err?.config?.baseURL || '', err?.config?.url || '']
+    .filter(Boolean)
+    .join('');
+  const detailParts = [];
+  if (status) detailParts.push(`${t('状态码')}: ${status}`);
+  if (err?.code) detailParts.push(`${t('错误码')}: ${err.code}`);
+  if (url) detailParts.push(url);
+  return {
+    label,
+    message,
+    detail: detailParts.join(' · '),
+  };
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat().format(Number(value) || 0);
+}
+
+function formatPercent(value, digits = 1) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '--';
+  return `${(numeric * 100).toFixed(digits)}%`;
+}
+
+function formatScore(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '--';
+  return numeric.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function formatScoreDelta(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || Math.abs(numeric) < 0.0001) return '0';
+  const formatted = Math.abs(numeric)
+    .toFixed(3)
+    .replace(/0+$/, '')
+    .replace(/\.$/, '');
+  return `${numeric > 0 ? '+' : '-'}${formatted}`;
+}
+
+function scoreDeltaTone(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || Math.abs(numeric) < 0.0001) {
+    return 'flat';
+  }
+  return numeric > 0 ? 'up' : 'down';
+}
+
+function formatLatency(value) {
+  const latency = Number(value || 0);
+  if (latency <= 0) return '--';
+  if (latency >= 1000) return `${(latency / 1000).toFixed(2)}s`;
+  return `${Math.round(latency)}ms`;
+}
+
+function formatTimestamp(timestamp) {
+  return Number(timestamp || 0) > 0 ? timestamp2string(Number(timestamp)) : '--';
+}
+
+function formatRelativeTime(timestamp, t) {
+  const normalized = Number(timestamp || 0);
+  if (normalized <= 0) return '--';
+  const diffSeconds = Math.max(0, Math.floor(Date.now() / 1000) - normalized);
+  if (diffSeconds < 30) return t('刚刚');
+  if (diffSeconds < 3600) {
+    return t('{{count}}分钟前', {
+      count: Math.max(1, Math.floor(diffSeconds / 60)),
+    });
+  }
+  if (diffSeconds < 86400) {
+    return t('{{count}}小时前', {
+      count: Math.max(1, Math.floor(diffSeconds / 3600)),
+    });
+  }
+  return t('{{count}}天前', {
+    count: Math.max(1, Math.floor(diffSeconds / 86400)),
+  });
+}
+
+function getRuntimeHealthMeta(status, t) {
+  switch (status) {
+    case 'circuit_open':
+      return { color: 'red', label: t('熔断打开') };
+    case 'cooldown':
+      return { color: 'orange', label: t('冷却') };
+    case 'failure_avoidance':
+      return { color: 'orange', label: t('恢复中') };
+    case 'queued':
+      return { color: 'cyan', label: t('队列中') };
+    case 'high_pressure':
+    case 'saturated':
+      return { color: 'orange', label: t('并发压力') };
+    case 'degraded':
+      return { color: 'orange', label: t('降级') };
+    case 'healthy':
+      return { color: 'green', label: t('健康') };
+    default:
+      return { color: 'grey', label: status || t('未知') };
+  }
+}
+
+function getPriorityMeta(priority, t) {
+  if (priority >= 90) return { color: 'red', label: t('高优先级') };
+  if (priority >= 65) return { color: 'orange', label: t('中优先级') };
+  return { color: 'cyan', label: t('低优先级') };
+}
+
+function getReasonMeta(reason, t) {
+  const key = typeof reason === 'string' ? reason : reason?.key;
+  const severity = typeof reason === 'object' ? reason?.severity : '';
+  const severityColorMap = {
+    critical: 'red',
+    warning: 'orange',
+    info: 'cyan',
+    neutral: 'grey',
+  };
+  const color =
+    severityColorMap[severity] ||
+    {
+      config_error: 'red',
+      circuit_open: 'red',
+      cooldown: 'orange',
+      failure_avoidance: 'orange',
+      probe_recovery_pending: 'cyan',
+      low_score: 'orange',
+      low_traffic: 'blue',
+      missing_samples: 'grey',
+      success_rate: 'orange',
+      empty_output: 'orange',
+      experience_issue: 'orange',
+    }[key] ||
+    'grey';
+  const label =
+    {
+      config_error: t('配置异常隔离'),
+      circuit_open: t('熔断打开'),
+      cooldown: t('冷却恢复探测'),
+      failure_avoidance: t('近期失败恢复中'),
+      probe_recovery_pending: t('恢复确认中'),
+      low_score: t('低健康分'),
+      low_traffic: t('近30分钟无真实样本'),
+      missing_samples: t('历史样本不足'),
+      success_rate: t('成功率偏低'),
+      empty_output: t('空输出偏高'),
+      experience_issue: t('体验异常偏高'),
+    }[key] || key || t('待检查');
+  return { key, label, color };
+}
+
+function getProbeStatusMeta(record, t) {
+  if (record?.final_success || record?.success) {
+    return { color: 'green', label: t('成功') };
+  }
+  if (record?.client_aborted || record?.status === 'client_aborted') {
+    return { color: 'grey', label: t('客户端中断') };
+  }
+  if (record?.status === 'processing') {
+    return { color: 'blue', label: t('处理中') };
+  }
+  return { color: 'orange', label: t('探活异常') };
+}
+
+function formatProbeReason(value, t) {
+  switch (String(value || '').trim()) {
+    case 'missing_samples':
+      return t('缺少样本');
+    case 'low_score':
+      return t('低分恢复探测');
+    case 'low_traffic':
+      return t('低访问激活探测');
+    case 'failure_avoidance':
+      return t('近期失败恢复中');
+    case 'cooldown':
+      return t('冷却恢复探测');
+    case 'long_no_success':
+      return t('长期未成功');
+    case 'circuit_half_open':
+      return t('熔断半开');
+    case 'sampling':
+      return t('常规抽样');
+    default:
+      return value || t('健康探活');
+  }
+}
+
+function recordMatchesSearch(record, keyword) {
+  const normalized = keyword.trim().toLowerCase();
+  if (!normalized) return true;
+  return [
+    record.requested_model,
+    record.upstream_model,
+    record.group,
+    record.endpoint_type,
+    record.channel_id ? `#${record.channel_id}` : '',
+    record.final_channel_id ? `#${record.final_channel_id}` : '',
+    record.final_channel_name,
+    record.request_id,
+    record.probe_reason,
+    record.final_error_category,
+  ]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(normalized));
+}
+
+function historyRecordKey(record) {
+  const requestID = String(record?.request_id || '').trim();
+  if (requestID) return requestID;
+  return `${record?.id || 0}:${record?.completed_at || record?.created_at || 0}`;
+}
+
+function getRecordDispatch(record) {
+  return record?.dispatch_record || record?.dispatchRecord || null;
+}
+
+function getRecordCandidates(record) {
+  const dispatch = getRecordDispatch(record);
+  const candidates =
+    dispatch?.candidate_explanations ||
+    dispatch?.request_meta?.candidate_explanations ||
+    record?.candidate_explanations ||
+    [];
+  return Array.isArray(candidates) ? candidates : [];
+}
+
+function getSelectedScoreCandidate(record) {
+  const candidates = getRecordCandidates(record);
+  if (!candidates.length) return null;
+  const selected = candidates.find((candidate) => candidate?.selected === true);
+  if (selected) return selected;
+  const channelID = Number(
+    record?.final_channel_id ||
+      getRecordDispatch(record)?.actual_channel_id ||
+      getRecordDispatch(record)?.channel_id ||
+      0,
+  );
+  if (channelID > 0) {
+    return (
+      candidates.find(
+        (candidate) => Number(candidate?.channel_id || 0) === channelID,
+      ) || null
+    );
+  }
+  return null;
+}
+
+function numericScore(value) {
+  const score = Number(value);
+  return Number.isFinite(score) && score > 0 ? score : null;
+}
+
+function getHistoryScore(record) {
+  const candidate = getSelectedScoreCandidate(record);
+  return (
+    numericScore(candidate?.score_total) ??
+    numericScore(getRecordDispatch(record)?.score_total) ??
+    numericScore(record?.score_total)
+  );
+}
+
+function getHistoryScoreBreakdown(record) {
+  const candidate = getSelectedScoreCandidate(record);
+  const breakdown =
+    candidate?.score_breakdown ||
+    getRecordDispatch(record)?.score_breakdown ||
+    record?.score_breakdown ||
+    {};
+  return breakdown && typeof breakdown === 'object' ? breakdown : {};
+}
+
+function historyScoreScope(record) {
+  const candidate = getSelectedScoreCandidate(record);
+  const dispatch = getRecordDispatch(record);
+  const runtimeKey = candidate?.runtime_key || {};
+  const group =
+    candidate?.group ||
+    runtimeKey.group ||
+    record?.actual_group ||
+    dispatch?.actual_group ||
+    dispatch?.selected_group ||
+    record?.selected_group ||
+    record?.requested_group ||
+    dispatch?.requested_group ||
+    '';
+  const channelID = Number(
+    candidate?.channel_id ||
+      record?.final_channel_id ||
+      dispatch?.actual_channel_id ||
+      dispatch?.channel_id ||
+      record?.channel_id ||
+      0,
+  );
+  return [
+    channelID,
+    record?.requested_model || dispatch?.requested_model || runtimeKey.requested_model || '',
+    candidate?.upstream_model ||
+      runtimeKey.upstream_model ||
+      record?.upstream_model ||
+      dispatch?.upstream_model ||
+      '',
+    group,
+    record?.endpoint_type || dispatch?.endpoint_type || runtimeKey.endpoint_type || '',
+  ]
+    .map((value) => String(value || '').trim())
+    .join('|');
+}
+
+function buildHistoryScoreChanges(records) {
+  const changes = new Map();
+  const previousByScope = new Map();
+  const sorted = [...(records || [])].sort((left, right) => {
+    const leftTime = Number(left?.completed_at || left?.created_at || 0);
+    const rightTime = Number(right?.completed_at || right?.created_at || 0);
+    if (leftTime !== rightTime) return leftTime - rightTime;
+    return Number(left?.id || 0) - Number(right?.id || 0);
+  });
+
+  sorted.forEach((record) => {
+    const score = getHistoryScore(record);
+    const key = historyRecordKey(record);
+    const scope = historyScoreScope(record);
+    if (score === null || !scope) {
+      changes.set(key, { score: null, delta: 0, hasPrevious: false, metricDeltas: {} });
+      return;
+    }
+    const breakdown = getHistoryScoreBreakdown(record);
+    const previous = previousByScope.get(scope);
+    const metricDeltas = {};
+    if (previous) {
+      Object.keys({ ...breakdown, ...previous.breakdown }).forEach((metric) => {
+        const value = Number(breakdown?.[metric]);
+        const previousValue = Number(previous.breakdown?.[metric]);
+        if (Number.isFinite(value) && Number.isFinite(previousValue)) {
+          metricDeltas[metric] = value - previousValue;
+        }
+      });
+    }
+    changes.set(key, {
+      score,
+      delta: previous ? score - previous.score : 0,
+      hasPrevious: Boolean(previous),
+      metricDeltas,
+    });
+    previousByScope.set(scope, { score, breakdown });
+  });
+
+  return changes;
+}
+
+function scoreMetricLabel(key, t) {
+  switch (String(key || '').trim()) {
+    case 'success':
+    case 'success_score':
+      return t('成功');
+    case 'speed':
+    case 'score_speed_factor':
+      return t('速度');
+    case 'load':
+    case 'load_score':
+      return t('负载');
+    case 'cost':
+    case 'cost_score':
+      return t('成本');
+    case 'group':
+    case 'group_score':
+      return t('分组');
+    case 'experience':
+    case 'experience_score':
+      return t('体验');
+    default:
+      return String(key || '').trim() || t('未知');
+  }
+}
+
+function importantScoreDeltaEntries(delta, t) {
+  return Object.entries(delta || {})
+    .map(([key, value]) => ({ key, value: Number(value) }))
+    .filter((entry) => Number.isFinite(entry.value) && Math.abs(entry.value) >= 0.0001)
+    .sort((left, right) => Math.abs(right.value) - Math.abs(left.value))
+    .slice(0, 3)
+    .map((entry) => ({
+      ...entry,
+      label: scoreMetricLabel(entry.key, t),
+      tone: scoreDeltaTone(entry.value),
+    }));
+}
+
+function ScoreChangeCell({ scoreChange, t }) {
+  if (!scoreChange || scoreChange.score === null) {
+    return (
+      <div className='ct-channel-health-score-change ct-channel-health-score-change-empty'>
+        <strong>--</strong>
+        <span>{t('暂无评分')}</span>
+      </div>
+    );
+  }
+  const tone = scoreDeltaTone(scoreChange.delta);
+  const metricEntries = importantScoreDeltaEntries(scoreChange.metricDeltas, t);
+  return (
+    <div className='ct-channel-health-score-change'>
+      <div className='ct-channel-health-score-change-main'>
+        <strong>{formatScore(scoreChange.score)}</strong>
+        <span className={`ct-channel-health-score-delta-${tone}`}>
+          {scoreChange.hasPrevious ? formatScoreDelta(scoreChange.delta) : t('首次')}
+        </span>
+      </div>
+      {scoreChange.hasPrevious ? (
+        metricEntries.length ? (
+          <div className='ct-channel-health-score-change-metrics'>
+            {metricEntries.map((entry) => (
+              <span key={entry.key}>
+                {entry.label}
+                <em className={`ct-channel-health-score-delta-${entry.tone}`}>
+                  {formatScoreDelta(entry.value)}
+                </em>
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span className='ct-channel-health-score-change-note'>
+            {t('评分基本稳定')}
+          </span>
+        )
+      ) : (
+        <span className='ct-channel-health-score-change-note'>
+          {t('暂无上一条对比')}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function MetricCard({ label, value, detail, icon, tone = 'default' }) {
+  return (
+    <div className={`ct-channel-health-metric ct-channel-health-metric-${tone}`}>
+      <div className='ct-channel-health-metric-main'>
+        <span>{label}</span>
+        <strong>{value}</strong>
+        <small>{detail}</small>
+      </div>
+      <div className='ct-channel-health-metric-icon'>{icon}</div>
+    </div>
+  );
+}
+
+function ReasonTags({ reasons, t }) {
+  if (!reasons?.length) {
+    return <Typography.Text type='tertiary'>--</Typography.Text>;
+  }
+  return (
+    <div className='ct-channel-health-tags'>
+      {reasons.slice(0, 4).map((reason) => {
+        const meta = getReasonMeta(reason, t);
+        return (
+          <Tag key={meta.key} color={meta.color} size='small' type='light'>
+            {meta.label}
+          </Tag>
+        );
+      })}
+      {reasons.length > 4 && (
+        <Tag color='grey' size='small' type='light'>
+          +{reasons.length - 4}
+        </Tag>
+      )}
+    </div>
+  );
+}
+
+function ChannelHealthCheck() {
+  const { t } = useTranslation();
+  const [queueData, setQueueData] = useState(null);
+  const [historyData, setHistoryData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const [historyHours, setHistoryHours] = useState(24);
+  const [statusFilter, setStatusFilter] = useState(ALL_STATUSES);
+  const [keyword, setKeyword] = useState('');
+  const [filters, setFilters] = useState({
+    model: '',
+    group: '',
+    channel_id: '',
+  });
+  const [appliedFilters, setAppliedFilters] = useState(filters);
+
+  const loadData = useCallback(
+    async (silent = false) => {
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      setError('');
+      const commonParams = {
+        model: appliedFilters.model || undefined,
+        group: appliedFilters.group || undefined,
+        channel_id: appliedFilters.channel_id || undefined,
+      };
+      const requests = [
+        {
+          key: 'queue',
+          label: t('待检查队列'),
+          request: API.get('/api/model_gateway/observability/health-check/queue', {
+            params: {
+              ...commonParams,
+              limit: 1000,
+              queue_type: statusFilter,
+              _t: Date.now(),
+            },
+            disableDuplicate: true,
+            skipErrorHandler: true,
+          }),
+        },
+        {
+          key: 'history',
+          label: t('检测历史'),
+          request: API.get('/api/model_gateway/observability/summary', {
+            params: {
+              ...commonParams,
+              hours: historyHours,
+              recent_limit: 200,
+              scan_limit: 5000,
+              view_mode: 'user_requests',
+              health_probe_only: true,
+              lite: true,
+              include_dispatch: true,
+            },
+            disableDuplicate: true,
+            skipErrorHandler: true,
+          }),
+        },
+      ];
+
+      try {
+        const results = await Promise.allSettled(requests.map((item) => item.request));
+        const failures = [];
+
+        results.forEach((result, index) => {
+          const requestMeta = requests[index];
+          if (result.status === 'fulfilled') {
+            const data = unwrapApiData(result.value);
+            if (requestMeta.key === 'queue') {
+              setQueueData(data);
+            } else {
+              setHistoryData(data);
+            }
+            return;
+          }
+          failures.push(buildRequestErrorDetail(result.reason, requestMeta.label, t));
+        });
+
+        if (failures.length > 0) {
+          const message = failures
+            .map((failure) =>
+              [failure.label, failure.message, failure.detail]
+                .filter(Boolean)
+                .join(': '),
+            )
+            .join('\n');
+          setError(`${t('部分健康检测数据加载失败')}\n${message}`);
+          console.error('[ChannelHealthCheck] load failed', failures);
+        }
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [appliedFilters, historyHours, statusFilter, t],
+  );
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const pendingRows = queueData?.items || [];
+  const visiblePendingRows = useMemo(
+    () =>
+      pendingRows.filter((record) => recordMatchesSearch(record, keyword)),
+    [keyword, pendingRows],
+  );
+  const rawHistoryRecords = useMemo(
+    () => historyData?.user_requests?.recent_requests || [],
+    [historyData],
+  );
+  const historyRecords = useMemo(
+    () =>
+      rawHistoryRecords.filter((record) =>
+        recordMatchesSearch(record, keyword),
+      ),
+    [keyword, rawHistoryRecords],
+  );
+  const historyScoreChanges = useMemo(
+    () => buildHistoryScoreChanges(rawHistoryRecords),
+    [rawHistoryRecords],
+  );
+  const historySuccessCount = historyRecords.filter(
+    (record) => record.final_success || record.success,
+  ).length;
+  const lowScoreCount = queueData?.summary?.low_score_count || 0;
+  const lowTrafficCount = queueData?.summary?.low_traffic_count || 0;
+  const recoveryCount = queueData?.summary?.recovery_count || 0;
+  const isolatedCount = queueData?.summary?.isolated_count || 0;
+  const activeFilterCount = Object.values(appliedFilters).filter(Boolean).length;
+  const lastUpdated = formatTimestamp(queueData?.summary?.updated_at);
+
+  const applyFilters = () => {
+    setAppliedFilters({
+      model: filters.model.trim(),
+      group: filters.group.trim(),
+      channel_id: filters.channel_id.trim(),
+    });
+  };
+
+  const resetFilters = () => {
+    const next = { model: '', group: '', channel_id: '' };
+    setFilters(next);
+    setAppliedFilters(next);
+    setKeyword('');
+    setStatusFilter(ALL_STATUSES);
+  };
+
+  const pendingColumns = useMemo(
+    () => [
+      {
+        title: t('优先级'),
+        dataIndex: 'priority',
+        width: 120,
+        render: (value) => {
+          const meta = getPriorityMeta(value, t);
+          return (
+            <Tag color={meta.color} type='light' shape='circle'>
+              {meta.label}
+            </Tag>
+          );
+        },
+      },
+      {
+        title: t('模型 / 分组'),
+        dataIndex: 'requested_model',
+        width: 260,
+        render: (_, record) => (
+          <div className='ct-channel-health-main-cell'>
+            <Typography.Text strong ellipsis={{ showTooltip: true }}>
+              {record.requested_model || '--'}
+            </Typography.Text>
+            <Typography.Text type='secondary' size='small'>
+              {t('分组')} {record.group || '--'}
+              {record.upstream_model ? ` · ${record.upstream_model}` : ''}
+            </Typography.Text>
+            {record.endpoint_type && (
+              <Typography.Text type='tertiary' size='small'>
+                {record.endpoint_type}
+              </Typography.Text>
+            )}
+          </div>
+        ),
+      },
+      {
+        title: t('渠道'),
+        dataIndex: 'channel_id',
+        width: 110,
+        render: (value) => (
+          <Typography.Text strong>{value ? `#${value}` : '--'}</Typography.Text>
+        ),
+      },
+      {
+        title: t('状态'),
+        dataIndex: 'health_status',
+        width: 130,
+        render: (value) => {
+          const meta = getRuntimeHealthMeta(value, t);
+          return (
+            <Tag color={meta.color} size='small' type='light'>
+              {meta.label}
+            </Tag>
+          );
+        },
+      },
+      {
+        title: t('检查原因'),
+        dataIndex: 'reasons',
+        width: 260,
+        render: (reasons, record) => (
+          <Tooltip
+            content={
+              <div className='ct-channel-health-tooltip'>
+                <div>{t('后端根据当前运行态和探活配置生成待检查项')}</div>
+                <div>
+                  {t('当前探活原因')}: {formatProbeReason(record.probe_trigger_reason, t)}
+                </div>
+              </div>
+            }
+          >
+            <span>
+              <ReasonTags reasons={reasons} t={t} />
+            </span>
+          </Tooltip>
+        ),
+      },
+      {
+        title: t('当前评分'),
+        dataIndex: 'health_score_average',
+        width: 220,
+        render: (_, record) => (
+          <div className='ct-channel-health-score-stack'>
+            <strong>{formatScore(record.health_score_average)}</strong>
+            <span>
+              {t('调度分')} {formatScore(record.routing_score_total)} ·{' '}
+              {t('成功分')} {formatScore(record.success_score)}
+            </span>
+            <span>
+              {t('空输出率')} {formatPercent(record.empty_output_rate)} ·{' '}
+              {t('体验异常率')} {formatPercent(record.experience_issue_rate)}
+            </span>
+          </div>
+        ),
+      },
+      {
+        title: t('真实样本'),
+        dataIndex: 'real_sample_count_30m',
+        width: 240,
+        render: (_, record) => (
+          <div className='ct-channel-health-stack'>
+            <Typography.Text strong>
+              {t('近30分钟')} {formatNumber(record.real_sample_count_30m)}
+            </Typography.Text>
+            <Typography.Text type='secondary' size='small'>
+              {t('历史样本')} {formatNumber(record.sample_count)}
+            </Typography.Text>
+            <Typography.Text type='tertiary' size='small'>
+              {t('最后真实成功')} {formatRelativeTime(record.last_real_success_at, t)}
+            </Typography.Text>
+          </div>
+        ),
+      },
+      {
+        title: t('探活状态'),
+        dataIndex: 'last_probe_at',
+        width: 240,
+        render: (_, record) => (
+          <div className='ct-channel-health-stack'>
+            <Typography.Text>
+              {t('上次探活')} {formatRelativeTime(record.last_probe_at, t)}
+            </Typography.Text>
+            <Typography.Text type='secondary' size='small'>
+              {t('上次成功')} {formatRelativeTime(record.last_probe_success_at, t)}
+            </Typography.Text>
+            {record.probe_recovery_pending && (
+              <Tag color='cyan' size='small' type='light'>
+                {t('恢复')} {formatNumber(record.probe_recovery_success_count)}/
+                {formatNumber(record.probe_recovery_required)}
+              </Tag>
+            )}
+          </div>
+        ),
+      },
+      {
+        title: t('性能'),
+        dataIndex: 'success_rate',
+        width: 210,
+        render: (_, record) => (
+          <div className='ct-channel-health-stack'>
+            <Typography.Text strong>
+              {record.sample_count > 0 ? formatPercent(record.success_rate) : '--'}
+            </Typography.Text>
+            <Typography.Text type='secondary' size='small'>
+              {t('首包')} {formatLatency(record.ttft_ms)} · {t('耗时')}{' '}
+              {formatLatency(record.duration_ms)}
+            </Typography.Text>
+            <Typography.Text type='tertiary' size='small'>
+              {t('并发')} {formatNumber(record.active_concurrency)}
+              {record.max_concurrency > 0
+                ? ` / ${formatNumber(record.max_concurrency)}`
+                : ''}
+            </Typography.Text>
+          </div>
+        ),
+      },
+    ],
+    [t],
+  );
+
+  const historyColumns = useMemo(
+    () => [
+      {
+        title: t('结果'),
+        dataIndex: 'status',
+        width: 120,
+        render: (_, record) => {
+          const meta = getProbeStatusMeta(record, t);
+          return (
+            <Tag color={meta.color} type='light' shape='circle'>
+              {meta.label}
+            </Tag>
+          );
+        },
+      },
+      {
+        title: t('完成时间'),
+        dataIndex: 'completed_at',
+        width: 180,
+        render: (value) => (
+          <div className='ct-channel-health-stack'>
+            <Typography.Text>{formatTimestamp(value)}</Typography.Text>
+            <Typography.Text type='tertiary' size='small'>
+              {formatRelativeTime(value, t)}
+            </Typography.Text>
+          </div>
+        ),
+      },
+      {
+        title: t('检测范围'),
+        dataIndex: 'requested_model',
+        width: 260,
+        render: (_, record) => (
+          <div className='ct-channel-health-main-cell'>
+            <Typography.Text strong ellipsis={{ showTooltip: true }}>
+              {record.requested_model || '--'}
+            </Typography.Text>
+            <Typography.Text type='secondary' size='small'>
+              {record.actual_group || record.selected_group || record.requested_group || '--'}
+            </Typography.Text>
+          </div>
+        ),
+      },
+      {
+        title: t('渠道'),
+        dataIndex: 'final_channel_id',
+        width: 200,
+        render: (_, record) => (
+          <div className='ct-channel-health-main-cell'>
+            <Typography.Text strong>
+              {record.final_channel_id ? `#${record.final_channel_id}` : '--'}
+            </Typography.Text>
+            <Typography.Text type='secondary' size='small' ellipsis={{ showTooltip: true }}>
+              {record.final_channel_name || '--'}
+            </Typography.Text>
+          </div>
+        ),
+      },
+      {
+        title: t('检测原因'),
+        dataIndex: 'probe_reason',
+        width: 170,
+        render: (value) => (
+          <Tag color='cyan' size='small' type='light'>
+            {formatProbeReason(value, t)}
+          </Tag>
+        ),
+      },
+      {
+        title: t('耗时 / 首包'),
+        dataIndex: 'duration_ms',
+        width: 170,
+        render: (_, record) => (
+          <div className='ct-channel-health-stack'>
+            <Typography.Text strong>{formatLatency(record.duration_ms)}</Typography.Text>
+            <Typography.Text type='secondary' size='small'>
+              {t('首包')} {formatLatency(record.ttft_ms)}
+            </Typography.Text>
+          </div>
+        ),
+      },
+      {
+        title: t('评分变化'),
+        dataIndex: 'score_change',
+        width: 230,
+        render: (_, record) => (
+          <ScoreChangeCell
+            scoreChange={historyScoreChanges.get(historyRecordKey(record))}
+            t={t}
+          />
+        ),
+      },
+      {
+        title: t('异常信息'),
+        dataIndex: 'final_error_category',
+        width: 220,
+        render: (_, record) => {
+          const tags = [];
+          if (record.final_error_category) {
+            tags.push(
+              <Tag key='error' color='orange' size='small' type='light'>
+                {record.final_error_category}
+              </Tag>,
+            );
+          }
+          if (record.empty_output) {
+            tags.push(
+              <Tag key='empty' color='red' size='small' type='light'>
+                {t('空输出')}
+              </Tag>,
+            );
+          }
+          if (record.experience_issue) {
+            tags.push(
+              <Tag key='experience' color='orange' size='small' type='light'>
+                {record.experience_issue}
+              </Tag>,
+            );
+          }
+          return tags.length ? (
+            <div className='ct-channel-health-tags'>{tags}</div>
+          ) : (
+            <Typography.Text type='tertiary'>--</Typography.Text>
+          );
+        },
+      },
+      {
+        title: t('请求ID'),
+        dataIndex: 'request_id',
+        width: 240,
+        render: (value) => (
+          <Typography.Text code ellipsis={{ showTooltip: true }}>
+            {value || '--'}
+          </Typography.Text>
+        ),
+      },
+    ],
+    [historyScoreChanges, t],
+  );
+
+  return (
+    <div className='ct-console-content-wrap'>
+      <div className='ct-channel-health-page'>
+        <div className='ct-channel-health-hero'>
+          <div className='ct-channel-health-title-block'>
+            <div className='ct-channel-health-title-icon'>
+              <Stethoscope size={24} />
+            </div>
+            <div>
+              <div className='ct-channel-health-eyebrow'>{t('管理员')}</div>
+              <h2>{t('渠道健康检测')}</h2>
+              <p>
+                {t('最近更新时间')}: {lastUpdated}
+              </p>
+            </div>
+          </div>
+          <div className='ct-channel-health-actions'>
+            <Select
+            value={historyHours}
+            onChange={(value) => setHistoryHours(Number(value) || 24)}
+              className='ct-channel-health-window-select'
+              prefix={t('历史窗口')}
+            >
+              {HISTORY_HOUR_OPTIONS.map((option) => (
+                <Select.Option key={option} value={option}>
+                  {option >= 24
+                    ? `${Math.round(option / 24)} ${t('天')}`
+                    : `${option} ${t('小时')}`}
+                </Select.Option>
+              ))}
+            </Select>
+            <Button
+              theme='solid'
+              type='primary'
+              icon={<RefreshCw size={15} />}
+              loading={refreshing}
+              onClick={() => loadData(true)}
+            >
+              {t('刷新')}
+            </Button>
+          </div>
+        </div>
+
+        {error && (
+          <Banner
+            type='danger'
+            className='ct-channel-health-banner'
+            description={
+              <span className='ct-channel-health-error-text'>{error}</span>
+            }
+            closeIcon={null}
+          />
+        )}
+
+        <Banner
+          type='info'
+          className='ct-channel-health-banner'
+          description={t(
+            '待检查队列由后端根据当前运行态和探活配置生成，检测历史来自实际健康探活请求记录。',
+          )}
+          closeIcon={null}
+        />
+
+        <div className='ct-channel-health-metric-grid'>
+          <MetricCard
+            label={t('待检查队列')}
+            value={formatNumber(queueData?.summary?.pending_count)}
+            detail={`${formatNumber(lowScoreCount)} ${t('低健康分')} · ${formatNumber(
+              lowTrafficCount,
+            )} ${t('低访问')}`}
+            icon={<ListChecks size={18} />}
+            tone={Number(queueData?.summary?.pending_count || 0) > 0 ? 'warning' : 'success'}
+          />
+          <MetricCard
+            label={t('恢复确认中')}
+            value={formatNumber(recoveryCount)}
+            detail={`${formatNumber(isolatedCount)} ${t('隔离或冷却')}`}
+            icon={<ShieldCheck size={18} />}
+            tone={recoveryCount > 0 ? 'info' : 'success'}
+          />
+          <MetricCard
+            label={t('检测历史')}
+            value={formatNumber(historyRecords.length)}
+            detail={`${formatNumber(historySuccessCount)} ${t('成功')} · ${formatPercent(
+              historyRecords.length ? historySuccessCount / historyRecords.length : 0,
+            )}`}
+            icon={<History size={18} />}
+            tone='default'
+          />
+          <MetricCard
+            label={t('运行键')}
+            value={formatNumber(queueData?.summary?.runtime_keys)}
+            detail={`${formatNumber(queueData?.summary?.channels)} ${t('渠道')} · ${formatNumber(
+              queueData?.summary?.active_concurrency,
+            )} ${t('活跃并发')}`}
+            icon={<Activity size={18} />}
+            tone='default'
+          />
+        </div>
+
+        <div className='ct-channel-health-filter-panel'>
+          <Input
+            value={keyword}
+            onChange={setKeyword}
+            prefix={<Search size={14} />}
+            placeholder={t('搜索模型、分组、渠道或请求ID')}
+            className='ct-channel-health-search'
+          />
+          <Input
+            value={filters.model}
+            onChange={(value) => setFilters((prev) => ({ ...prev, model: value }))}
+            placeholder={t('按模型筛选')}
+            prefix={t('模型')}
+          />
+          <Input
+            value={filters.group}
+            onChange={(value) => setFilters((prev) => ({ ...prev, group: value }))}
+            placeholder={t('按分组筛选')}
+            prefix={t('分组')}
+          />
+          <Input
+            value={filters.channel_id}
+            onChange={(value) =>
+              setFilters((prev) => ({ ...prev, channel_id: value }))
+            }
+            placeholder={t('按渠道ID筛选')}
+            prefix={t('渠道 ID')}
+          />
+          <Select
+            value={statusFilter}
+            onChange={setStatusFilter}
+            className='ct-channel-health-status-select'
+            prefix={t('队列类型')}
+          >
+            <Select.Option value={ALL_STATUSES}>{t('全部')}</Select.Option>
+            <Select.Option value='low_score'>{t('低健康分')}</Select.Option>
+            <Select.Option value='low_traffic'>{t('低访问')}</Select.Option>
+            <Select.Option value='recovery'>{t('恢复中')}</Select.Option>
+            <Select.Option value='isolated'>{t('隔离或冷却')}</Select.Option>
+          </Select>
+          <div className='ct-channel-health-filter-actions'>
+            <Button type='primary' onClick={applyFilters}>
+              {activeFilterCount > 0 ? t('筛选中') : t('筛选')}
+            </Button>
+            <Button type='tertiary' onClick={resetFilters}>
+              {t('重置')}
+            </Button>
+          </div>
+        </div>
+
+        <Spin spinning={loading}>
+          <div className='ct-channel-health-panel'>
+            <Tabs type='button' keepDOM={false}>
+              <TabPane
+                itemKey='queue'
+                tab={
+                  <span className='ct-channel-health-tab'>
+                    <ListChecks size={15} />
+                    {t('待检查队列')}
+                    <Tag color='orange' size='small' type='light'>
+                      {formatNumber(visiblePendingRows.length)}
+                    </Tag>
+                  </span>
+                }
+              >
+                <Table
+                  size='small'
+                  columns={pendingColumns}
+                  dataSource={visiblePendingRows}
+                  rowKey='row_key'
+                  pagination={{
+                    pageSize: 12,
+                    showSizeChanger: true,
+                    pageSizeOpts: [12, 24, 48],
+                  }}
+                  empty={<Empty description={t('暂无待检查渠道')} />}
+                  scroll={{ x: 1610 }}
+                />
+              </TabPane>
+              <TabPane
+                itemKey='history'
+                tab={
+                  <span className='ct-channel-health-tab'>
+                    <Clock3 size={15} />
+                    {t('检测历史')}
+                    <Tag color='cyan' size='small' type='light'>
+                      {formatNumber(historyRecords.length)}
+                    </Tag>
+                  </span>
+                }
+              >
+                <Table
+                  size='small'
+                  columns={historyColumns}
+                  dataSource={historyRecords}
+                  rowKey={(record) =>
+                    record.request_id || `${record.id}-${record.completed_at}`
+                  }
+                  pagination={{
+                    pageSize: 12,
+                    showSizeChanger: true,
+                    pageSizeOpts: [12, 24, 48],
+                  }}
+                  empty={<Empty description={t('暂无健康检测历史')} />}
+                  scroll={{ x: 1790 }}
+                />
+              </TabPane>
+            </Tabs>
+          </div>
+        </Spin>
+
+        <div className='ct-channel-health-footnote'>
+          <AlertTriangle size={14} />
+          <span>
+            {t(
+              '系统探活只在近30分钟存在真实客户端请求时运行，且范围限定在相关模型和分组。',
+            )}
+          </span>
+          <CheckCircle2 size={14} />
+          <span>
+            {t('探活结果会更新健康分，但不会增加真实访问样本计数。')}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default ChannelHealthCheck;

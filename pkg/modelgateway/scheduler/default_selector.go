@@ -42,6 +42,12 @@ type candidateEvaluation struct {
 	rejectReason  string
 }
 
+type CandidateScoreEvaluation struct {
+	Snapshot    core.RuntimeSnapshot
+	Score       core.ScoreResult
+	Explanation core.CandidateExplanation
+}
+
 func NewDefaultSmartChannelSelector(candidateBuilder core.CandidatePoolBuilder, snapshotStore core.RuntimeSnapshotStore, scorerFactory core.ScoreCalculatorFactory) *DefaultSmartChannelSelector {
 	if scorerFactory == nil {
 		scorerFactory = NewScoreCalculatorFactory(DefaultScoreWeights())
@@ -99,7 +105,6 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	if len(candidates) == 0 {
 		return nil, false, nil
 	}
-	scorer := s.scorerFactory.ForStrategy(policy.Strategy)
 	stickyRoute, hasSticky := s.stickyRoute(c, &req, policy)
 	var bestAvailableCandidate core.Candidate
 	var bestAvailableSnapshot core.RuntimeSnapshot
@@ -148,13 +153,9 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		if reference, ok := s.costReferenceForCandidate(candidate, snapshot, policy, costReferenceRatio); ok {
 			snapshot.CostReferenceRatio = reference
 		}
-		explanation := candidateExplanation(candidate, snapshot, evaluation.stickyMatched)
-		score := scorer.Score(candidate, snapshot, policy)
-		explanation.ScoreTotal = score.Total
-		explanation.ScoreBreakdown = score.Breakdown
-		explanation.RoutingScoreTotal = score.RoutingTotal
-		explanation.RoutingScoreBreakdown = score.RoutingBreakdown
-		applyScoredMetricsToCandidateExplanation(&explanation, score)
+		scored := s.scorePreparedCandidate(candidate, snapshot, policy, evaluation.stickyMatched)
+		explanation := scored.Explanation
+		score := scored.Score
 		if evaluation.rejectReason != "" {
 			explanation.RejectReason = evaluation.rejectReason
 			appendCandidateExplanation(&explanations, explanation)
@@ -282,6 +283,46 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		plan.SelectedReason = "weighted_score_sticky_broken"
 	}
 	return plan, true, nil
+}
+
+func (s *DefaultSmartChannelSelector) ScoreCandidate(candidate core.Candidate, policy core.GroupSmartPolicy) CandidateScoreEvaluation {
+	snapshot := defaultSnapshot(candidate)
+	if s != nil {
+		snapshot = s.snapshotForCandidate(candidate, policy)
+		if s.snapshotEnricher != nil {
+			snapshot = s.snapshotEnricher.Enrich(candidate, snapshot, policy)
+		}
+		fallbackReference := snapshot.CostReferenceRatio
+		if fallbackReference <= 0 {
+			fallbackReference = snapshot.CostRatio
+		}
+		if reference, ok := s.costReferenceForCandidate(candidate, snapshot, policy, fallbackReference); ok {
+			snapshot.CostReferenceRatio = reference
+		}
+	}
+	return s.scorePreparedCandidate(candidate, snapshot, policy, false)
+}
+
+func (s *DefaultSmartChannelSelector) scorePreparedCandidate(candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy, stickyMatched bool) CandidateScoreEvaluation {
+	explanation := candidateExplanation(candidate, snapshot, stickyMatched)
+	score := scoreCalculatorFactory(s).ForStrategy(policy.Strategy).Score(candidate, snapshot, policy)
+	explanation.ScoreTotal = score.Total
+	explanation.ScoreBreakdown = score.Breakdown
+	explanation.RoutingScoreTotal = score.RoutingTotal
+	explanation.RoutingScoreBreakdown = score.RoutingBreakdown
+	applyScoredMetricsToCandidateExplanation(&explanation, score)
+	return CandidateScoreEvaluation{
+		Snapshot:    snapshot,
+		Score:       score,
+		Explanation: explanation,
+	}
+}
+
+func scoreCalculatorFactory(selector *DefaultSmartChannelSelector) core.ScoreCalculatorFactory {
+	if selector != nil && selector.scorerFactory != nil {
+		return selector.scorerFactory
+	}
+	return NewScoreCalculatorFactory(DefaultScoreWeights())
 }
 
 func requiredToolsForDispatchRequest(req core.DispatchRequest) []string {

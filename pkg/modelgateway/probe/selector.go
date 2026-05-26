@@ -706,6 +706,15 @@ func normalizeProbeRuntimeKey(key core.RuntimeKey) core.RuntimeKey {
 	return key
 }
 
+func firstProbeString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func probeRuntimeKeyForChannel(channel *model.Channel, requestedModel string, group string, endpointType constant.EndpointType, seed core.RuntimeKey) core.RuntimeKey {
 	key := seed
 	requestedModel = firstProbeString(key.RequestedModel, requestedModel, key.UpstreamModel)

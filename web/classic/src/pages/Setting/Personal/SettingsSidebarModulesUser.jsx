@@ -110,6 +110,10 @@ export default function SettingsSidebarModulesUser() {
       defaultConfig.admin = {
         enabled: true,
         channel: isSidebarModuleAllowed('admin', 'channel'),
+        channel_health_check: isSidebarModuleAllowed(
+          'admin',
+          'channel_health_check',
+        ),
         models: isSidebarModuleAllowed('admin', 'models'),
         deployment: isSidebarModuleAllowed('admin', 'deployment'),
         redemption: isSidebarModuleAllowed('admin', 'redemption'),
@@ -369,6 +373,11 @@ export default function SettingsSidebarModulesUser() {
       description: t('系统管理功能'),
       modules: [
         { key: 'channel', title: t('渠道管理'), description: t('API渠道配置') },
+        {
+          key: 'channel_health_check',
+          title: t('渠道健康检测'),
+          description: t('待检查队列和探活历史'),
+        },
         { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
         {
           key: 'deployment',
