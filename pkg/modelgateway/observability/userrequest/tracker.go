@@ -353,8 +353,8 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 		ClientAborted:      clientAborted,
 		IsHealthProbe:      result.IsHealthProbe,
 		ProbeReason:        strings.TrimSpace(result.ProbeReason),
-		DurationMs:         result.Duration.Milliseconds(),
-		TTFTMs:             result.TTFT.Milliseconds(),
+		DurationMs:         userRequestResultDuration(result).Milliseconds(),
+		TTFTMs:             userRequestResultTTFT(result).Milliseconds(),
 		Status:             userRequestStatus(success, clientAborted, result.IsHealthProbe),
 	}
 	if record.CreatedAt == 0 {
@@ -391,6 +391,20 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 		record.FinalChannelName = pending.FinalChannelName
 	}
 	return record
+}
+
+func userRequestResultDuration(result core.AttemptResult) time.Duration {
+	if result.RequestDuration > 0 {
+		return result.RequestDuration
+	}
+	return result.Duration
+}
+
+func userRequestResultTTFT(result core.AttemptResult) time.Duration {
+	if result.RequestTTFT > 0 {
+		return result.RequestTTFT
+	}
+	return result.TTFT
 }
 
 func modelGatewayAttemptFinalized(result core.AttemptResult) bool {

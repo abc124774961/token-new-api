@@ -132,7 +132,7 @@ const GatewayFlowCanvas = ({
     let height = 0;
 
     const baseWidth = 1480;
-    const baseHeight = 640;
+    const baseHeight = 660;
     const color = {
       ink: '#0b1b33',
       muted: '#64748b',
@@ -418,8 +418,46 @@ const GatewayFlowCanvas = ({
       ctx.restore();
     };
 
+    const drawIncidentPill = (x, y, time) => {
+      const pulse = prefersReducedMotion ? 0.5 : (Math.sin(time * 3.2) + 1) / 2;
+      drawRoundRect(ctx, x, y, 264, 44, 14);
+      ctx.fillStyle = `rgba(254,242,242,${0.76 + pulse * 0.12})`;
+      ctx.fill();
+      ctx.strokeStyle = `rgba(239,68,68,${0.14 + pulse * 0.08})`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.fillStyle = `rgba(239,68,68,${0.14 + pulse * 0.12})`;
+      ctx.beginPath();
+      ctx.arc(x + 22, y + 22, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = color.red;
+      ctx.beginPath();
+      ctx.arc(x + 22, y + 22, 4.8, 0, Math.PI * 2);
+      ctx.fill();
+
+      fillText(t('故障接管场景'), x + 42, y + 18, {
+        size: 10,
+        weight: 950,
+        fill: color.red,
+      });
+      fillText(t('上游 502 已检测'), x + 42, y + 36, {
+        size: 12,
+        weight: 930,
+        fill: color.ink,
+      });
+      drawPill(x + 154, y + 9, t('用户无感知恢复'), {
+        fill: 'rgba(255,255,255,0.78)',
+        stroke: 'rgba(239,68,68,0.12)',
+        textColor: color.green,
+        width: 98,
+        height: 26,
+        size: 9,
+      });
+    };
+
     const drawTopBar = (time) => {
-      drawCard(44, 34, 1392, 72, {
+      drawCard(38, 30, 1404, 84, {
         radius: 18,
         fill: 'rgba(255,255,255,0.82)',
         border: 'rgba(13,156,165,0.12)',
@@ -428,51 +466,52 @@ const GatewayFlowCanvas = ({
       const pulse = prefersReducedMotion ? 0.55 : (Math.sin(time * 3) + 1) / 2;
       ctx.fillStyle = `rgba(22,163,74,${0.16 + pulse * 0.18})`;
       ctx.beginPath();
-      ctx.arc(74, 70, 13, 0, Math.PI * 2);
+      ctx.arc(72, 72, 13, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = color.green;
       ctx.beginPath();
-      ctx.arc(74, 70, 5, 0, Math.PI * 2);
+      ctx.arc(72, 72, 5, 0, Math.PI * 2);
       ctx.fill();
 
-      fillText(t('LIVE ROUTING'), 96, 63, {
+      fillText(t('LIVE ROUTING'), 96, 64, {
         size: 11,
         weight: 950,
         fill: color.tealDark,
         family: 'mono',
       });
-      fillText(t('实时路由'), 96, 86, {
+      fillText(t('实时路由'), 96, 88, {
         size: 17,
         weight: 950,
       });
 
-      fillText(t('请求编号'), 244, 63, {
+      fillText(t('请求编号'), 244, 64, {
         size: 10,
         weight: 900,
         fill: color.faint,
       });
-      fillText('#RQ-82A7', 244, 86, {
+      fillText('#RQ-82A7', 244, 88, {
         size: 15,
         weight: 950,
         fill: color.ink,
         family: 'mono',
       });
 
-      fillText(t('当前链路'), 374, 63, {
+      fillText(t('当前链路'), 374, 64, {
         size: 10,
         weight: 900,
         fill: color.faint,
       });
-      fillText('Codex -> Gateway -> Channel #7 -> Stream', 374, 86, {
+      fillText('Codex -> Gateway -> #7 -> Stream', 374, 88, {
         size: 14,
         weight: 900,
         fill: '#334155',
         family: 'mono',
       });
 
-      drawHeaderMetric(982, 47, t('成功率'), successRate, color.green);
-      drawHeaderMetric(1120, 47, t('平均延迟'), avgLatency, color.blue);
-      drawHeaderMetric(1258, 47, t('健康渠道'), channelText, color.teal);
+      drawIncidentPill(686, 50, time);
+      drawHeaderMetric(986, 49, t('成功率'), successRate, color.green);
+      drawHeaderMetric(1124, 49, t('平均延迟'), avgLatency, color.blue);
+      drawHeaderMetric(1262, 49, t('健康渠道'), channelText, color.teal);
     };
 
     const drawGatewayCore = (x, y, time) => {
@@ -604,7 +643,29 @@ const GatewayFlowCanvas = ({
             ? color.amber
             : color.green;
       const isSelected = Boolean(channel.selected);
+      const isPrimary = isSelected || channel.tone === 'failed';
       const pulse = prefersReducedMotion ? 0.4 : (Math.sin(time * 2.8 + index) + 1) / 2;
+
+      ctx.save();
+      ctx.globalAlpha = isPrimary ? 1 : 0.58;
+
+      if (isSelected || channel.tone === 'failed') {
+        ctx.save();
+        const halo = ctx.createLinearGradient(x - 10, y, x + 340, y + 88);
+        if (isSelected) {
+          halo.addColorStop(0, 'rgba(13,156,165,0.18)');
+          halo.addColorStop(0.54, 'rgba(34,197,94,0.12)');
+          halo.addColorStop(1, 'rgba(34,197,94,0)');
+        } else {
+          halo.addColorStop(0, 'rgba(239,68,68,0)');
+          halo.addColorStop(0.52, `rgba(239,68,68,${0.1 + pulse * 0.08})`);
+          halo.addColorStop(1, 'rgba(239,68,68,0)');
+        }
+        drawRoundRect(ctx, x - 10, y - 10, 350, 108, 18);
+        ctx.fillStyle = halo;
+        ctx.fill();
+        ctx.restore();
+      }
 
       drawCard(x, y, 330, 88, {
         radius: 12,
@@ -620,6 +681,18 @@ const GatewayFlowCanvas = ({
             ? 'rgba(239,68,68,0.26)'
             : 'rgba(15,23,42,0.08)',
       });
+
+      if (isSelected) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(x + 4, y + 8);
+        ctx.lineTo(x + 4, y + 80);
+        ctx.strokeStyle = color.teal;
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.restore();
+      }
 
       if (channel.tone === 'failed') {
         ctx.save();
@@ -648,6 +721,14 @@ const GatewayFlowCanvas = ({
           size: 11,
           weight: 850,
           fill: color.muted,
+        });
+      }
+      if (channel.meta) {
+        fillText(channel.meta, x + 150, y + 47, {
+          size: 10,
+          weight: 850,
+          fill: channel.tone === 'failed' ? color.red : color.faint,
+          family: channel.tone === 'failed' ? 'mono' : undefined,
         });
       }
       drawPill(x + 228, y + 12, channel.badge || channel.status, {
@@ -689,10 +770,114 @@ const GatewayFlowCanvas = ({
         ctx.fillStyle = tone;
         ctx.fill();
       });
+      ctx.restore();
+    };
+
+    const drawSwitchBadge = (x, y, time) => {
+      const pulse = prefersReducedMotion ? 0.52 : (Math.sin(time * 3.4) + 1) / 2;
+      ctx.save();
+      drawRoundRect(ctx, x, y, 216, 64, 18);
+      ctx.fillStyle = 'rgba(255,255,255,0.94)';
+      ctx.fill();
+      ctx.strokeStyle = `rgba(239,68,68,${0.2 + pulse * 0.16})`;
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(x + 24, y + 23, 7, 0, Math.PI * 2);
+      ctx.fillStyle = color.red;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(x + 42, y + 23);
+      ctx.lineTo(x + 78, y + 23);
+      ctx.lineTo(x + 69, y + 16);
+      ctx.moveTo(x + 78, y + 23);
+      ctx.lineTo(x + 69, y + 30);
+      ctx.strokeStyle = `rgba(13,156,165,${0.66 + pulse * 0.22})`;
+      ctx.lineWidth = 2.4;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x + 98, y + 23, 7, 0, Math.PI * 2);
+      ctx.fillStyle = color.green;
+      ctx.fill();
+
+      fillText(t('502 旁路'), x + 142, y + 22, {
+        size: 11,
+        weight: 950,
+        fill: color.red,
+        align: 'center',
+      });
+      fillText(`-> ${t('#7 接管')}`, x + 142, y + 40, {
+        size: 11,
+        weight: 950,
+        fill: color.green,
+        align: 'center',
+        family: 'mono',
+      });
+      fillText(`${t('切换耗时')} 186ms`, x + 108, y + 58, {
+        size: 10,
+        weight: 900,
+        fill: color.muted,
+        align: 'center',
+        family: 'mono',
+      });
+      ctx.restore();
+    };
+
+    const drawHandoffBeam = (time) => {
+      const phase = prefersReducedMotion ? 0.6 : (time * 0.42) % 1;
+      ctx.save();
+      const start = { x: 1266, y: 414 };
+      const cp1 = { x: 1274, y: 398 };
+      const cp2 = { x: 1282, y: 374 };
+      const end = { x: 1296, y: 364 };
+      ctx.beginPath();
+      ctx.moveTo(start.x, start.y);
+      ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
+      ctx.strokeStyle = 'rgba(22,163,74,0.28)';
+      ctx.lineWidth = 7;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(start.x, start.y);
+      ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
+      ctx.strokeStyle = 'rgba(22,163,74,0.72)';
+      ctx.lineWidth = 2.6;
+      ctx.stroke();
+
+      const point = cubicPoint(start, cp1, cp2, end, phase);
+      const halo = ctx.createRadialGradient(point.x, point.y, 1, point.x, point.y, 22);
+      halo.addColorStop(0, 'rgba(22,163,74,0.8)');
+      halo.addColorStop(1, 'rgba(22,163,74,0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 22, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = color.green;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 4.4, 0, Math.PI * 2);
+      ctx.fill();
+
+      drawRoundRect(ctx, 1202, 394, 62, 28, 10);
+      ctx.fillStyle = 'rgba(22,163,74,0.09)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(22,163,74,0.16)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      fillText('#7 OK', 1233, 413, {
+        size: 11,
+        weight: 950,
+        fill: color.green,
+        align: 'center',
+        family: 'mono',
+      });
+      ctx.restore();
     };
 
     const drawDecisionTrace = (x, y, time) => {
-      drawCard(x, y, 186, 374, {
+      drawCard(x, y, 206, 384, {
         radius: 14,
         fill: 'rgba(255,255,255,0.9)',
         border: 'rgba(13,156,165,0.12)',
@@ -711,8 +896,8 @@ const GatewayFlowCanvas = ({
         { label: t('能力匹配'), code: 'PASS', tone: color.teal },
         { label: t('健康评分'), code: '98.7', tone: color.blue },
         { label: t('规避 502'), code: 'BYPASS', tone: color.red },
-        { label: t('切换成功'), code: '#7', tone: color.green },
-        { label: t('流式返回'), code: 'STREAM', tone: color.green },
+        { label: t('接管 #7'), code: 'TAKEOVER', tone: color.green },
+        { label: t('SSE 保持'), code: 'ALIVE', tone: color.green },
       ];
 
       ctx.beginPath();
@@ -745,7 +930,7 @@ const GatewayFlowCanvas = ({
           fill: color.ink,
         });
         fillText(step.code, x + 156, stepY + 6, {
-          size: 10,
+          size: step.code.length > 6 ? 8 : 10,
           weight: 950,
           fill: step.tone,
           align: 'center',
@@ -754,10 +939,69 @@ const GatewayFlowCanvas = ({
       });
     };
 
+    const drawOperationMetrics = (time) => {
+      const items = [
+        {
+          label: t('切换耗时'),
+          value: '186ms',
+          tone: color.green,
+          soft: 'rgba(22,163,74,',
+        },
+        {
+          label: t('失败旁路次数'),
+          value: '12',
+          tone: color.red,
+          soft: 'rgba(239,68,68,',
+        },
+        {
+          label: t('可用渠道池'),
+          value: channelText,
+          tone: color.teal,
+          soft: 'rgba(13,156,165,',
+        },
+      ];
+
+      items.forEach((item, index) => {
+        const x = 48 + index * 156;
+        drawCard(x, 128, 138, 78, {
+          radius: 12,
+          fill: 'rgba(255,255,255,0.9)',
+          shadow: index === 0,
+        });
+        const pulse = prefersReducedMotion ? 0.42 : (Math.sin(time * 2.5 + index) + 1) / 2;
+        ctx.fillStyle = `${item.soft}${0.1 + pulse * 0.05})`;
+        ctx.beginPath();
+        ctx.arc(x + 112, 154, 13, 0, Math.PI * 2);
+        ctx.fill();
+        fillText(item.label, x + 18, 156, {
+          size: 11,
+          weight: 900,
+          fill: color.faint,
+        });
+        fillText(item.value, x + 18, 185, {
+          size: 21,
+          weight: 950,
+          fill: item.tone,
+          family: 'mono',
+        });
+      });
+    };
+
     const drawEndpointCard = ({ x, y, title, subtitle, kind }) => {
-      drawCard(x, y, 146, 162, {
+      if (kind === 'output') {
+        ctx.save();
+        const halo = ctx.createRadialGradient(x + 72, y + 78, 8, x + 72, y + 78, 118);
+        halo.addColorStop(0, 'rgba(22,163,74,0.14)');
+        halo.addColorStop(1, 'rgba(22,163,74,0)');
+        ctx.fillStyle = halo;
+        ctx.fillRect(x - 34, y - 34, 214, 230);
+        ctx.restore();
+      }
+      const cardHeight = kind === 'output' ? 178 : 162;
+      drawCard(x, y, 146, cardHeight, {
         radius: 14,
-        fill: 'rgba(255,255,255,0.92)',
+        fill: kind === 'output' ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.92)',
+        border: kind === 'output' ? 'rgba(22,163,74,0.16)' : color.border,
       });
       if (kind === 'client') drawPulseIcon(x + 73, y + 54);
       else drawMessageIcon(x + 73, y + 50);
@@ -773,6 +1017,14 @@ const GatewayFlowCanvas = ({
         fill: color.muted,
         align: 'center',
       });
+      if (kind === 'output') {
+        fillText(t('用户无感知'), x + 73, y + 151, {
+          size: 11,
+          weight: 950,
+          fill: color.green,
+          align: 'center',
+        });
+      }
     };
 
     const drawPolicyRail = (time) => {
@@ -783,15 +1035,23 @@ const GatewayFlowCanvas = ({
         t('失败率降权'),
         t('熔断冷却'),
       ];
-      fillText(t('策略参与'), 250, 566, {
+      fillText(t('策略参与'), 250, 594, {
         size: 11,
         weight: 900,
         fill: color.faint,
       });
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(250, 623);
+      ctx.lineTo(768, 623);
+      ctx.strokeStyle = 'rgba(13,156,165,0.12)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
       items.forEach((item, index) => {
         const x = 250 + index * 108;
         const active = prefersReducedMotion ? index === 2 : Math.floor(time * 1.4) % items.length === index;
-        drawPill(x, 578, item, {
+        drawPill(x, 606, item, {
           fill: active ? 'rgba(13,156,165,0.11)' : 'rgba(255,255,255,0.82)',
           stroke: active ? 'rgba(13,156,165,0.24)' : 'rgba(15,23,42,0.08)',
           textColor: active ? color.tealDark : '#5c6d83',
@@ -801,7 +1061,7 @@ const GatewayFlowCanvas = ({
         });
         ctx.fillStyle = active ? color.teal : 'rgba(100,116,139,0.26)';
         ctx.beginPath();
-        ctx.arc(x + 13, 595, 3.2, 0, Math.PI * 2);
+        ctx.arc(x + 13, 623, 3.2, 0, Math.PI * 2);
         ctx.fill();
       });
     };
@@ -835,19 +1095,19 @@ const GatewayFlowCanvas = ({
         ctx.stroke();
       }
 
-      const glow = ctx.createRadialGradient(470, 350, 40, 470, 350, 360);
+      const glow = ctx.createRadialGradient(500, 360, 40, 500, 360, 390);
       glow.addColorStop(0, 'rgba(35, 199, 207, 0.26)');
       glow.addColorStop(0.34, 'rgba(35, 199, 207, 0.08)');
       glow.addColorStop(1, 'rgba(35, 199, 207, 0)');
       ctx.fillStyle = glow;
-      ctx.fillRect(100, 70, 820, 540);
+      ctx.fillRect(100, 74, 850, 552);
 
       const phase = prefersReducedMotion ? 0.58 : (time * 0.22) % 1;
       drawBezierLane({
-        start: { x: 200, y: 360 },
-        cp1: { x: 268, y: 342 },
-        cp2: { x: 330, y: 342 },
-        end: { x: 372, y: 350 },
+        start: { x: 200, y: 372 },
+        cp1: { x: 278, y: 354 },
+        cp2: { x: 350, y: 354 },
+        end: { x: 400, y: 360 },
         progress: phase,
         stroke: 'rgba(59,130,246,0.42)',
         glow: 'rgba(59,130,246,0.95)',
@@ -855,38 +1115,44 @@ const GatewayFlowCanvas = ({
         packets: 2,
       });
 
-      const channelY = channels.map((_, index) => 122 + index * 90 + 44);
+      const channelY = channels.map((_, index) => 132 + index * 90 + 44);
       channelY.forEach((targetY, index) => {
         const tone = channels[index]?.tone;
+        const selected = Boolean(channels[index]?.selected);
         drawBezierLane({
-          start: { x: 560, y: 350 },
-          cp1: { x: 600, y: 290 + index * 8 },
-          cp2: { x: 628, y: targetY },
-          end: { x: 686, y: targetY },
+          start: { x: 590, y: 360 },
+          cp1: { x: 632, y: 300 + index * 8 },
+          cp2: { x: 654, y: targetY },
+          end: { x: 706, y: targetY },
           progress: (phase + index * 0.16) % 1,
           stroke:
             tone === 'failed'
               ? 'rgba(239,68,68,0.3)'
               : tone === 'cooling'
                 ? 'rgba(245,158,11,0.28)'
-                : 'rgba(13,156,165,0.36)',
+                : selected
+                  ? 'rgba(22,163,74,0.5)'
+                  : 'rgba(13,156,165,0.18)',
           glow:
             tone === 'failed'
               ? 'rgba(239,68,68,0.88)'
               : tone === 'cooling'
                 ? 'rgba(245,158,11,0.82)'
-                : 'rgba(35,199,207,0.9)',
-          width: tone === 'failed' ? 2 : 2.5,
+                : selected
+                  ? 'rgba(22,163,74,0.9)'
+                  : 'rgba(35,199,207,0.66)',
+          width: selected ? 3.2 : tone === 'failed' ? 2 : 2.2,
           dash: tone === 'failed' ? [8, 8] : [],
-          packets: tone === 'failed' ? 1 : 2,
+          packets: selected ? 3 : tone === 'failed' ? 1 : 1,
+          active: selected || tone === 'failed' || index === 0,
         });
       });
 
       drawBezierLane({
-        start: { x: 674, y: channelY[2] || 350 },
-        cp1: { x: 625, y: 352 },
-        cp2: { x: 625, y: 426 },
-        end: { x: 674, y: channelY[3] || 436 },
+        start: { x: 702, y: channelY[2] || 360 },
+        cp1: { x: 650, y: 366 },
+        cp2: { x: 650, y: 446 },
+        end: { x: 702, y: channelY[3] || 446 },
         progress: (phase + 0.34) % 1,
         stroke: 'rgba(239,68,68,0.34)',
         glow: 'rgba(239,68,68,0.9)',
@@ -901,10 +1167,10 @@ const GatewayFlowCanvas = ({
       );
       const selectedY = channelY[selectedIndex] || 432;
       drawBezierLane({
-        start: { x: 1022, y: selectedY },
-        cp1: { x: 1086, y: selectedY + 18 },
-        cp2: { x: 1212, y: 354 },
-        end: { x: 1284, y: 354 },
+        start: { x: 1042, y: selectedY },
+        cp1: { x: 1056, y: selectedY + 8 },
+        cp2: { x: 1074, y: 414 },
+        end: { x: 1088, y: 414 },
         progress: (phase + 0.48) % 1,
         stroke: 'rgba(22,163,74,0.42)',
         glow: 'rgba(22,163,74,0.9)',
@@ -914,51 +1180,38 @@ const GatewayFlowCanvas = ({
 
       drawTopBar(time);
 
-      drawMetric(48, 126, t('成功率'), successRate);
-      drawMetric(204, 126, t('平均延迟'), avgLatency);
-      drawMetric(360, 126, t('健康渠道'), channelText, 'bars');
+      drawOperationMetrics(time);
 
       drawEndpointCard({
         x: 54,
-        y: 278,
+        y: 290,
         title: t('客户端'),
         subtitle: t('请求接入'),
         kind: 'client',
       });
 
-      drawGatewayCore(470, 350, time);
+      drawGatewayCore(500, 360, time);
 
       channels.forEach((channel, index) => {
-        drawChannel(channel, 690, 122 + index * 90, index, time);
+        drawChannel(channel, 710, 132 + index * 90, index, time);
       });
 
-      drawDecisionTrace(1054, 142, time);
-
-      drawPill(1072, 532, t('自动切换'), {
-        fill: 'rgba(255,255,255,0.95)',
-        stroke: 'rgba(239,68,68,0.24)',
-        textColor: color.red,
-        width: 102,
-        height: 34,
-      });
-      fillText('↻', 1090, 554, {
-        size: 13,
-        weight: 900,
-        fill: color.red,
-      });
+      drawSwitchBadge(536, 432, time);
+      drawDecisionTrace(1088, 150, time);
+      drawHandoffBeam(time);
 
       drawEndpointCard({
         x: 1292,
-        y: 278,
+        y: 286,
         title: t('稳定输出'),
         subtitle: t('流式返回'),
         kind: 'output',
       });
-      drawPill(1328, 420, `${t('流式保持')} ✓`, {
+      drawPill(1322, 456, t('SSE 保持'), {
         fill: 'rgba(34,197,94,0.1)',
         stroke: 'rgba(34,197,94,0.12)',
         textColor: color.green,
-        width: 82,
+        width: 86,
         height: 30,
         size: 11,
       });
@@ -1064,11 +1317,11 @@ const Home = () => {
     },
   ];
 
-  const flowChannels = [
-    {
-      name: 'Channel #1',
-      provider: 'OpenAI',
-      meta: t('延迟 312ms'),
+    const flowChannels = [
+      {
+        name: 'Channel #1',
+        provider: 'OpenAI',
+        meta: t('候选备用'),
       status: t('健康'),
       tone: 'healthy',
       badge: t('READY'),
@@ -1076,10 +1329,10 @@ const Home = () => {
       latency: '312ms',
       cost: '1.0x',
     },
-    {
-      name: 'Channel #2',
-      provider: 'Anthropic',
-      meta: t('延迟 421ms'),
+      {
+        name: 'Channel #2',
+        provider: 'Anthropic',
+        meta: t('候选备用'),
       status: t('健康'),
       tone: 'healthy',
       badge: t('READY'),
@@ -1087,10 +1340,10 @@ const Home = () => {
       latency: '421ms',
       cost: '0.8x',
     },
-    {
-      name: 'Channel #4',
-      provider: '',
-      meta: 'HTTP 502 / 熔断',
+      {
+        name: 'Channel #4',
+        provider: '',
+        meta: 'HTTP 502',
       status: t('失败'),
       tone: 'failed',
       badge: t('502 BYPASS'),
@@ -1098,10 +1351,10 @@ const Home = () => {
       latency: '502',
       cost: '--',
     },
-    {
-      name: 'Channel #7',
-      provider: 'Google Gemini',
-      meta: t('延迟 289ms'),
+      {
+        name: 'Channel #7',
+        provider: 'Google Gemini',
+        meta: t('接管中'),
       status: t('健康'),
       tone: 'healthy',
       badge: t('SELECTED'),
@@ -1110,10 +1363,10 @@ const Home = () => {
       cost: '0.9x',
       selected: true,
     },
-    {
-      name: 'Channel #9',
-      provider: 'DeepSeek',
-      meta: t('冷却中 60s'),
+      {
+        name: 'Channel #9',
+        provider: 'DeepSeek',
+        meta: t('熔断冷却 60s'),
       status: t('冷却中'),
       tone: 'cooling',
       badge: t('COOLING'),
@@ -1380,8 +1633,12 @@ const Home = () => {
           <section className='ct-lite-flow-section'>
             <div className='ct-lite-shell'>
               <div className='ct-lite-section-title'>
-                <h2>{t('智能调度与失败切换流程')}</h2>
-                <p>{t('实时评估、智能路由、自动切换，保障请求稳定、快速、可靠')}</p>
+                <h2>{t('请求失败自动旁路，流式响应稳定返回')}</h2>
+                <p>
+                  {t(
+                    '上游 502、配额异常、超时抖动时，网关自动完成评分、熔断、切换与恢复。',
+                  )}
+                </p>
               </div>
 
               <div className='ct-lite-flow-panel'>
@@ -1394,6 +1651,9 @@ const Home = () => {
                   t={t}
                 />
               </div>
+              <p className='ct-lite-flow-note'>
+                {t('适合 Codex、Claude Code、OpenAI SDK 等高频长上下文请求。')}
+              </p>
             </div>
           </section>
 

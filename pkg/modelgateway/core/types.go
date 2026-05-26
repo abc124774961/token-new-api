@@ -479,6 +479,8 @@ type AttemptResult struct {
 	ObservedAt                     time.Time
 	Duration                       time.Duration
 	TTFT                           time.Duration
+	RequestDuration                time.Duration
+	RequestTTFT                    time.Duration
 	QueueWait                      time.Duration
 	RelayToFirstByte               time.Duration
 	RelayTotal                     time.Duration

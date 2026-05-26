@@ -1727,10 +1727,10 @@ function SmartDispatchAttemptTimeline({ record, t }) {
                   <div className='ct-model-gateway-smart-dispatch-meta'>
                     <span>{formatTimestamp(attempt?.created_at)}</span>
                     <span>
-                      {t('耗时')} {formatLatency(attempt?.duration_ms)}
+                      {t('尝试耗时')} {formatLatency(attempt?.duration_ms)}
                     </span>
                     <span>
-                      {t('首包')} {formatLatency(attempt?.ttft_ms)}
+                      {t('尝试首包')} {formatLatency(attempt?.ttft_ms)}
                     </span>
                     {attempt?.status_code ? (
                       <span>HTTP {attempt.status_code}</span>

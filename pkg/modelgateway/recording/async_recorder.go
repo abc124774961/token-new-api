@@ -281,8 +281,8 @@ func modelGatewayUserRequestAttemptFromResult(result core.AttemptResult) model.M
 		ErrorCode:         result.ErrorCode,
 		ErrorType:         result.ErrorType,
 		ErrorCategory:     result.ErrorCategory,
-		DurationMs:        result.Duration.Milliseconds(),
-		TTFTMs:            result.TTFT.Milliseconds(),
+		DurationMs:        requestDuration(result).Milliseconds(),
+		TTFTMs:            requestTTFT(result).Milliseconds(),
 		StreamInterrupted: result.StreamInterrupted,
 		WillRetry:         result.WillRetry,
 		ClientAborted:     result.ClientAborted,
@@ -291,6 +291,20 @@ func modelGatewayUserRequestAttemptFromResult(result core.AttemptResult) model.M
 		EmptyOutput:       result.EmptyOutput,
 		ExperienceIssue:   result.ExperienceIssue,
 	}
+}
+
+func requestDuration(result core.AttemptResult) time.Duration {
+	if result.RequestDuration > 0 {
+		return result.RequestDuration
+	}
+	return result.Duration
+}
+
+func requestTTFT(result core.AttemptResult) time.Duration {
+	if result.RequestTTFT > 0 {
+		return result.RequestTTFT
+	}
+	return result.TTFT
 }
 
 func attemptRequestMetaFromResult(result core.AttemptResult) attemptRequestMeta {

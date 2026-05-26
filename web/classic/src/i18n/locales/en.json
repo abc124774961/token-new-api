@@ -1999,6 +1999,8 @@
     "尝试": "attempts",
     "尝试失败": "Attempt failed",
     "尝试次数": "Attempts",
+    "尝试耗时": "Attempt duration",
+    "尝试首包": "Attempt first token",
     "就近选择低延迟渠道，流式输出保持顺滑，减少等待和重试时间。": "Select nearby low-latency channels, keep streaming smooth, and reduce waiting and retry time.",
     "局部重绘-提交": "Vary Region",
     "屏蔽词列表": "Sensitive word list",

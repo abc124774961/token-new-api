@@ -188,16 +188,18 @@ func TestAsyncExecutionRecorderRecordsFirstByteTimeoutRetryReason(t *testing.T) 
 		Duration:      20 * time.Second,
 	})
 	recorder.Report(context.Background(), core.AttemptResult{
-		RequestID:     "req-first-byte-timeout",
-		AttemptIndex:  1,
-		ChannelID:     12,
-		ChannelName:   "healthy-channel",
-		SelectedGroup: "default",
-		ModelName:     "gpt-5.5",
-		Success:       true,
-		RetryAction:   "complete",
-		Duration:      900 * time.Millisecond,
-		TTFT:          180 * time.Millisecond,
+		RequestID:       "req-first-byte-timeout",
+		AttemptIndex:    1,
+		ChannelID:       12,
+		ChannelName:     "healthy-channel",
+		SelectedGroup:   "default",
+		ModelName:       "gpt-5.5",
+		Success:         true,
+		RetryAction:     "complete",
+		Duration:        900 * time.Millisecond,
+		TTFT:            180 * time.Millisecond,
+		RequestDuration: 21 * time.Second,
+		RequestTTFT:     20*time.Second + 180*time.Millisecond,
 	})
 
 	require.Eventually(t, func() bool {
@@ -206,10 +208,15 @@ func TestAsyncExecutionRecorderRecordsFirstByteTimeoutRetryReason(t *testing.T) 
 		return err == nil && summary.Attempts == 2 && summary.FinalSuccess && summary.Recovered
 	}, time.Second, 10*time.Millisecond)
 
-	var record model.ModelExecutionRecord
-	require.NoError(t, db.Where("request_id = ? AND attempt_index = ?", "req-first-byte-timeout", 0).First(&record).Error)
-	require.Contains(t, record.RequestMeta, `"retry_reason":"first_byte_timeout"`)
-	require.Contains(t, record.RequestMeta, `"retry_action":"switch_channel"`)
+	var firstAttemptRecord model.ModelExecutionRecord
+	require.NoError(t, db.Where("request_id = ? AND attempt_index = ?", "req-first-byte-timeout", 0).First(&firstAttemptRecord).Error)
+	require.Equal(t, int64(20000), firstAttemptRecord.DurationMs)
+	require.Contains(t, firstAttemptRecord.RequestMeta, `"retry_reason":"first_byte_timeout"`)
+	require.Contains(t, firstAttemptRecord.RequestMeta, `"retry_action":"switch_channel"`)
+	var finalAttemptRecord model.ModelExecutionRecord
+	require.NoError(t, db.Where("request_id = ? AND attempt_index = ?", "req-first-byte-timeout", 1).First(&finalAttemptRecord).Error)
+	require.Equal(t, int64(900), finalAttemptRecord.DurationMs)
+	require.Equal(t, int64(180), finalAttemptRecord.TTFTMs)
 
 	var summary model.ModelGatewayUserRequestSummary
 	require.NoError(t, db.Where("request_id = ?", "req-first-byte-timeout").First(&summary).Error)
@@ -217,6 +224,8 @@ func TestAsyncExecutionRecorderRecordsFirstByteTimeoutRetryReason(t *testing.T) 
 	require.True(t, summary.Recovered)
 	require.False(t, summary.ClientAborted)
 	require.Equal(t, 12, summary.FinalChannelID)
+	require.Equal(t, int64(21000), summary.DurationMs)
+	require.Equal(t, int64(20180), summary.TTFTMs)
 }
 
 func TestAsyncExecutionRecorderRecordsAttemptTimingMeta(t *testing.T) {

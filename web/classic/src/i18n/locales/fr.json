@@ -1980,6 +1980,8 @@
     "尝试": "tentatives",
     "尝试失败": "Tentative échouée",
     "尝试次数": "Tentatives",
+    "尝试耗时": "Durée de la tentative",
+    "尝试首包": "Premier jeton de la tentative",
     "就近选择低延迟渠道，流式输出保持顺滑，减少等待和重试时间。": "Sélectionne des canaux proches à faible latence, garde le streaming fluide et réduit attentes et reprises.",
     "局部重绘-提交": "Varier la région",
     "屏蔽词列表": "Mots sensibles",

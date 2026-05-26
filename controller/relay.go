@@ -489,7 +489,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				}
 				traceChannelFailure(c, *newChannelErrorFromSelectedChannel(c, channel), newAPIError, !willRetry)
 			}
-			reportModelGatewayAttempt(c, relayInfo, retryParam, channel, newAPIError, time.Since(relayInfo.StartTime), modelGatewayAttemptFlow{
+			reportModelGatewayAttempt(c, relayInfo, retryParam, channel, newAPIError, modelGatewayAttemptFlow{
 				ErrorCategory:              lo.Ternary(clientAbort, modelgatewaycore.ErrorCategoryClientAborted, modelgatewaycore.ErrorCategoryLocalConcurrencyLimit),
 				RetryAction:                lo.Ternary(clientAbort, "client_aborted", lo.Ternary(willRetry, "switch_channel", "stop")),
 				WillRetry:                  willRetry,
@@ -499,7 +499,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				ActiveConcurrency:          active,
 				UsedChannels:               append([]string(nil), c.GetStringSlice("use_channel")...),
 				QueueWait:                  queueWait,
-				RelayTotal:                 time.Since(relayInfo.StartTime),
 			})
 			if clientAbort || !willRetry {
 				finalAttemptReported = true
@@ -565,7 +564,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 					types.ErrorCodeDoRequestFailed,
 					relayStatusClientClosedRequest,
 					types.ErrOptionWithSkipRetry(),
-				), time.Since(relayInfo.StartTime), modelGatewayAttemptFlow{
+				), modelGatewayAttemptFlow{
 					ErrorCategory:          modelgatewaycore.ErrorCategoryClientAborted,
 					RetryAction:            "client_aborted",
 					ClientAborted:          true,
@@ -585,7 +584,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			service.ClearChannelFailureAvoidance(channel.Id)
 			recordRelayChannelConfigSuccess(c, channel.Id, relayInfo, retryParam)
 			service.RecordChannelConcurrencySuccess(channel.Id)
-			reportModelGatewayAttempt(c, relayInfo, retryParam, channel, nil, time.Since(relayInfo.StartTime), modelGatewayAttemptFlow{
+			reportModelGatewayAttempt(c, relayInfo, retryParam, channel, nil, modelGatewayAttemptFlow{
 				RetryAction:            "complete",
 				QueueWait:              queueWait,
 				RelayToFirstByte:       relayToFirstByte,
@@ -652,7 +651,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		flow.RequestBodyPrepare = requestBodyPrepare
 		flow.RequestBodyBytes = requestBodyBytes
 		flow.RequestBodyStorage = requestBodyStorage
-		reportModelGatewayAttempt(c, relayInfo, retryParam, channel, newAPIError, time.Since(relayInfo.StartTime), flow)
+		reportModelGatewayAttempt(c, relayInfo, retryParam, channel, newAPIError, flow)
 		if !willRetry {
 			finalAttemptReported = true
 		}
@@ -676,7 +675,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 			addUsedChannel(c, lastConcurrencyLimitChannel.Id)
 			traceChannelFailure(c, *newChannelErrorFromSelectedChannel(c, lastConcurrencyLimitChannel), newAPIError, true)
-			reportModelGatewayAttempt(c, relayInfo, retryParam, lastConcurrencyLimitChannel, newAPIError, time.Since(relayInfo.StartTime), modelGatewayAttemptFlow{
+			reportModelGatewayAttempt(c, relayInfo, retryParam, lastConcurrencyLimitChannel, newAPIError, modelGatewayAttemptFlow{
 				ErrorCategory:              modelgatewaycore.ErrorCategoryLocalConcurrencyLimit,
 				RetryAction:                "stop",
 				ConcurrencyLimited:         true,
@@ -880,7 +879,7 @@ type modelGatewayAttemptFlow struct {
 	RequestBodyStorage             string
 }
 
-func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, channel *model.Channel, apiErr *types.NewAPIError, duration time.Duration, flow modelGatewayAttemptFlow) {
+func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, channel *model.Channel, apiErr *types.NewAPIError, flow modelGatewayAttemptFlow) {
 	if c == nil || info == nil || channel == nil {
 		return
 	}
@@ -915,8 +914,10 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 		ModelName:              modelName,
 		EndpointType:           requiredEndpointTypeForRelay(info),
 		Success:                apiErr == nil,
-		Duration:               duration,
-		TTFT:                   relayTTFT(info),
+		Duration:               modelGatewayAttemptDuration(flow),
+		TTFT:                   modelGatewayAttemptTTFT(flow),
+		RequestDuration:        modelGatewayRequestDuration(info),
+		RequestTTFT:            modelGatewayRequestTTFT(info),
 		QueueWait:              flow.QueueWait,
 		RelayToFirstByte:       flow.RelayToFirstByte,
 		RelayTotal:             flow.RelayTotal,
@@ -1030,7 +1031,30 @@ func retryActionForAttempt(c *gin.Context, apiErr *types.NewAPIError, willRetry 
 	return "retry"
 }
 
-func relayTTFT(info *relaycommon.RelayInfo) time.Duration {
+func modelGatewayAttemptDuration(flow modelGatewayAttemptFlow) time.Duration {
+	duration := flow.QueueWait + flow.RelayTotal
+	if duration > 0 {
+		return duration
+	}
+	return flow.QueueWait
+}
+
+func modelGatewayAttemptTTFT(flow modelGatewayAttemptFlow) time.Duration {
+	ttft := flow.QueueWait + flow.RelayToFirstByte
+	if ttft > 0 {
+		return ttft
+	}
+	return 0
+}
+
+func modelGatewayRequestDuration(info *relaycommon.RelayInfo) time.Duration {
+	if info == nil || info.StartTime.IsZero() {
+		return 0
+	}
+	return time.Since(info.StartTime)
+}
+
+func modelGatewayRequestTTFT(info *relaycommon.RelayInfo) time.Duration {
 	if info == nil || !info.HasSendResponse() {
 		return 0
 	}
@@ -1289,7 +1313,7 @@ func reportModelGatewayClientAbortIfNeeded(c *gin.Context, info *relaycommon.Rel
 		types.ErrorCodeDoRequestFailed,
 		relayStatusClientClosedRequest,
 		types.ErrOptionWithSkipRetry(),
-	), time.Since(info.StartTime), modelGatewayAttemptFlow{
+	), modelGatewayAttemptFlow{
 		ErrorCategory: modelgatewaycore.ErrorCategoryClientAborted,
 		RetryAction:   "client_aborted",
 		ClientAborted: true,

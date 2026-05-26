@@ -141,6 +141,28 @@ func TestRuntimeHealthMonitorSuccessImprovesSnapshot(t *testing.T) {
 	require.Equal(t, 120.0, snapshot.TTFTMs)
 }
 
+func TestRuntimeHealthMonitorUsesAttemptLatencyNotRequestLatency(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	key := core.RuntimeKey{RequestedModel: "standard-openai", ChannelID: 79, Group: "default"}
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:             key,
+		ChannelID:       79,
+		Success:         true,
+		Duration:        2 * time.Second,
+		TTFT:            500 * time.Millisecond,
+		RequestDuration: 22 * time.Second,
+		RequestTTFT:     20*time.Second + 500*time.Millisecond,
+	})
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.Equal(t, 1, snapshot.SampleCount)
+	require.Equal(t, 2000.0, snapshot.DurationMs)
+	require.Equal(t, 500.0, snapshot.TTFTMs)
+}
+
 func TestRuntimeHealthMonitorClearsLongNoSuccessReasonOnRealSuccess(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	key := core.RuntimeKey{RequestedModel: "gpt-5.4", ChannelID: 78, Group: "default"}

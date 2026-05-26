@@ -1958,6 +1958,8 @@
     "尝试": "lần thử",
     "尝试失败": "Lần thử thất bại",
     "尝试次数": "Số lần thử",
+    "尝试耗时": "Thời gian lần thử",
+    "尝试首包": "Token đầu tiên của lần thử",
     "就近选择低延迟渠道，流式输出保持顺滑，减少等待和重试时间。": "Chọn kênh gần, độ trễ thấp, giữ streaming mượt và giảm thời gian chờ cũng như retry.",
     "局部重绘-提交": "Vary Region",
     "屏蔽词列表": "Danh sách từ bị chặn",
