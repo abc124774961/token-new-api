@@ -97,6 +97,7 @@ const TOP_N = 10;
 const STICKY_STORE_LIMIT = 100;
 const WINDOW_OPTIONS = [1, 6, 24, 72, 168];
 const DEFAULT_TREND_BUCKET = 'auto';
+const RETRY_REASON_FIRST_BYTE_TIMEOUT = 'first_byte_timeout';
 const TREND_BUCKET_OPTIONS = [
   { value: 'auto', labelKey: '自动粒度' },
   { value: '300', labelKey: '5 分钟' },
@@ -231,34 +232,32 @@ function scoreDeltaColor(value) {
 function scoreMetricLabel(key, t) {
   const normalized = String(key || '').trim();
   switch (normalized) {
-    case 'explore_baseline':
-      return t('探索基线');
-    case 'success':
-    case 'success_score':
-      return t('成功分');
-    case 'score_speed_factor':
-    case 'speed':
-      return t('速度分');
-    case 'speed_score':
-      return t('动态速度分');
-    case 'load':
-    case 'load_score':
-      return t('路由负载分');
+    case 'completion_rate':
+      return t('完成率分');
+    case 'upstream_error_rate':
+      return t('上游错误率分');
+    case 'ttft_latency':
+      return t('首包速度分');
+    case 'duration_latency':
+      return t('完整耗时分');
+    case 'throughput':
+      return t('吞吐速度分');
+    case 'empty_output_rate':
+      return t('空输出率分');
+    case 'stream_interrupted_rate':
+      return t('流中断率分');
+    case 'concurrency_load':
+      return t('并发负载分');
+    case 'queue_pressure':
+      return t('队列压力分');
+    case 'first_byte_backlog':
+      return t('首包积压分');
+    case 'group_priority':
+      return t('分组优先级分');
     case 'routing_total':
-      return t('调度分');
-    case 'ttft_pending':
-      return t('首包等待');
+      return t('本次调度评分');
     case 'cost':
-    case 'cost_score':
       return t('成本分');
-    case 'group':
-    case 'group_score':
-      return t('分组分');
-    case 'experience':
-    case 'experience_score':
-      return t('体验分');
-    case 'confidence_samples':
-      return t('样本置信');
     default:
       return normalized || t('未知指标');
   }
@@ -267,34 +266,32 @@ function scoreMetricLabel(key, t) {
 function scoreMetricDescription(key, t) {
   const normalized = String(key || '').trim();
   switch (normalized) {
-    case 'explore_baseline':
-      return t('暂无真实样本时仅用于调度探索，不代表渠道真实速度或成功率');
-    case 'success':
-    case 'success_score':
-      return t('近期成功率越高，这项越高');
-    case 'score_speed_factor':
-    case 'speed':
-      return t('计入本次评分的速度分，已结合样本置信和首包惩罚');
-    case 'speed_score':
-      return t('近期成功样本的首包或总耗时去头去尾均值换算分');
-    case 'load':
-    case 'load_score':
-      return t('当前并发远低于上限时影响很小，接近满载才会明显降分');
+    case 'completion_rate':
+      return t('完成请求占比越高，这项越高');
+    case 'upstream_error_rate':
+      return t('可归因上游错误越少，这项越高');
+    case 'ttft_latency':
+      return t('首包越快，这项越高');
+    case 'duration_latency':
+      return t('完整响应耗时越短，这项越高');
+    case 'throughput':
+      return t('输出吞吐越高，这项越高');
+    case 'empty_output_rate':
+      return t('空输出越少，这项越高');
+    case 'stream_interrupted_rate':
+      return t('流式中断越少，这项越高');
+    case 'concurrency_load':
+      return t('当前并发越接近上限，这项越低');
+    case 'queue_pressure':
+      return t('队列越深、等待越久，这项越低');
+    case 'first_byte_backlog':
+      return t('首包等待积压越多，这项越低');
+    case 'group_priority':
+      return t('按分组优先级换算的固定公式项');
     case 'routing_total':
       return t('用于调度选择，会叠加当前压力和排队状态');
-    case 'ttft_pending':
-      return t('仅影响调度避让，不计入渠道健康评分');
     case 'cost':
-    case 'cost_score':
       return t('由参考单位成本换算，成本越低这项越高');
-    case 'group':
-    case 'group_score':
-      return t('分组权重越高，这项越高');
-    case 'experience':
-    case 'experience_score':
-      return t('空输出或体验异常越多，这项越低');
-    case 'confidence_samples':
-      return t('历史样本越多，动态评分越可信');
     default:
       return '';
   }
@@ -319,6 +316,48 @@ function scoreMetricEntries(value = {}, delta = {}, t) {
       if (leftDelta !== rightDelta) return rightDelta - leftDelta;
       return left.label.localeCompare(right.label);
     });
+}
+
+function normalizeScoreItemsForDisplay(items = []) {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => ({
+      ...item,
+      score: Number(item?.score || 0),
+      weight: Number(item?.weight || 0),
+      weighted_score: Number(item?.weighted_score || 0),
+      delta: Number(item?.delta || 0),
+      weighted_delta: Number(item?.weighted_delta || 0),
+      sample_count: Number(item?.sample_count || 0),
+    }))
+    .filter((item) => item.key);
+}
+
+function scoreItemDeltaByKey(deltas = []) {
+  const out = {};
+  for (const item of Array.isArray(deltas) ? deltas : []) {
+    const key = item?.key;
+    if (!key) continue;
+    out[key] = item;
+  }
+  return out;
+}
+
+function scoreItemDisplayRows(items = [], deltas = [], t) {
+  const normalized = normalizeScoreItemsForDisplay(items);
+  const deltaByKey = scoreItemDeltaByKey(deltas);
+  return normalized.map((item) => {
+    const delta = deltaByKey[item.key];
+    return {
+      ...item,
+      name: scoreItemLabel(item, t),
+      delta: Number(delta?.delta ?? item.delta ?? 0),
+      weighted_delta: Number(delta?.weighted_delta ?? item.weighted_delta ?? 0),
+      before_score: Number(delta?.before_score ?? item.previous_score ?? 0),
+      after_score: Number(delta?.after_score ?? item.score ?? 0),
+      before_raw_value: delta?.before_raw_value || '',
+      after_raw_value: delta?.after_raw_value || item.raw_value || '',
+    };
+  });
 }
 
 function importantScoreDeltas(delta = {}, totalDelta = 0, t) {
@@ -975,6 +1014,13 @@ function buildUserRequestDetailRecord(userRequest, records) {
     status_code: userRequest?.final_status_code || attempt?.status_code || 0,
     error_category:
       userRequest?.final_error_category || attempt?.error_category || '',
+    retry_action: attempt?.retry_action || '',
+    retry_reason:
+      attempt?.retry_reason ||
+      attempt?.request_meta?.retry_reason ||
+      base?.retry_reason ||
+      base?.request_meta?.retry_reason ||
+      '',
     duration_ms: userRequest?.duration_ms || attempt?.duration_ms || 0,
     ttft_ms: userRequest?.ttft_ms || attempt?.ttft_ms || 0,
     client_aborted:
@@ -1009,6 +1055,7 @@ function buildUserRequestDetailRecord(userRequest, records) {
     request_meta: {
       ...(dispatch?.request_meta || {}),
       ...(attempt?.request_meta || {}),
+      ...(attempt?.retry_reason ? { retry_reason: attempt.retry_reason } : {}),
       ...(userRequest?.is_health_probe ? { is_health_probe: true } : {}),
       ...(userRequest?.probe_reason
         ? { probe_reason: userRequest.probe_reason }
@@ -1252,6 +1299,41 @@ function ScoreBreakdown({ value }) {
   );
 }
 
+function scoreItemLabel(item, t) {
+  const key = item?.key || '';
+  const name = item?.name || '';
+  if (name) return t(name);
+  return scoreMetricLabel(key, t);
+}
+
+function ScoreItemsMiniList({ items = [], t, limit = 6 }) {
+  const entries = (Array.isArray(items) ? items : [])
+    .filter(
+      (item) =>
+        Number.isFinite(Number(item?.score)) && Number(item?.weight) > 0,
+    )
+    .slice(0, limit);
+  if (!entries.length) return null;
+  return (
+    <>
+      <div className='ct-model-gateway-cost-tooltip-divider' />
+      {entries.map((item) => (
+        <div className='ct-model-gateway-cost-tooltip-row' key={item.key}>
+          <span title={item.raw_value || item.formula || ''}>
+            {scoreItemLabel(item, t)}
+          </span>
+          <strong>
+            {formatScore(item.score)}
+            <small style={{ marginLeft: 6, fontWeight: 500 }}>
+              {formatPercent(Number(item.weight || 0))}
+            </small>
+          </strong>
+        </div>
+      ))}
+    </>
+  );
+}
+
 function QueueStickyTags({
   record,
   t,
@@ -1371,6 +1453,25 @@ function formatAttemptFlowAction(action, t) {
   }
 }
 
+function getAttemptRetryReason(record) {
+  return String(record?.retry_reason || record?.request_meta?.retry_reason || '')
+    .trim()
+    .toLowerCase();
+}
+
+function isFirstByteTimeoutAttempt(record) {
+  return getAttemptRetryReason(record) === RETRY_REASON_FIRST_BYTE_TIMEOUT;
+}
+
+function formatAttemptRetryReason(reason, t) {
+  switch (String(reason || '').trim().toLowerCase()) {
+    case RETRY_REASON_FIRST_BYTE_TIMEOUT:
+      return t('首字超时');
+    default:
+      return reason || '';
+  }
+}
+
 function formatAttemptChannelLabel(record, t) {
   const id = Number(
     record?.actual_channel_id || record?.channel_id || record?.final_channel_id || 0,
@@ -1401,6 +1502,8 @@ function formatAttemptErrorCategory(category, t) {
       return t('能力不匹配');
     case 'balance_or_quota':
       return t('余额或额度');
+    case 'timeout':
+      return t('超时');
     case 'server_error':
       return t('服务端错误');
     case 'upstream_error':
@@ -1441,6 +1544,7 @@ function DispatchFlowTags({ record, t, compact = false }) {
   const tags = [];
   const action = record?.retry_action || (record?.will_retry ? 'retry' : '');
   const category = record?.error_category;
+  const retryReason = getAttemptRetryReason(record);
   const balanceInsufficient = isBalanceInsufficientStatus(record);
   const activeConcurrency = Number(record?.active_concurrency || 0);
   const configuredLimit = Number(record?.configured_concurrency_limit || 0);
@@ -1463,6 +1567,18 @@ function DispatchFlowTags({ record, t, compact = false }) {
     tags.push(
       <Tag key='category' color='grey' type='light' {...tagProps}>
         {t('失败分类')}: {formatAttemptErrorCategory(category, t)}
+      </Tag>,
+    );
+  }
+  if (retryReason) {
+    tags.push(
+      <Tag
+        key='retry-reason'
+        color={isFirstByteTimeoutAttempt(record) ? 'red' : 'grey'}
+        type='light'
+        {...tagProps}
+      >
+        {formatAttemptRetryReason(retryReason, t)}
       </Tag>,
     );
   }
@@ -1522,6 +1638,13 @@ function attemptRecordStatusMeta(record, t) {
       detail: t('最终成功渠道'),
     };
   }
+  if (isFirstByteTimeoutAttempt(record)) {
+    return {
+      color: 'red',
+      label: t('首字超时'),
+      detail: t('内部切换渠道'),
+    };
+  }
   if (record?.client_aborted || Number(record?.status_code || 0) === 499) {
     return {
       color: 'grey',
@@ -1578,6 +1701,7 @@ function SmartDispatchAttemptTimeline({ record, t }) {
             const errorReason = category
               ? formatAttemptErrorCategory(category, t)
               : formatChannelStatusReason(attempt?.status_reason, t);
+            const retryReason = getAttemptRetryReason(attempt);
             const flowTags = (
               <DispatchFlowTags record={attempt} t={t} compact />
             );
@@ -1628,6 +1752,17 @@ function SmartDispatchAttemptTimeline({ record, t }) {
                     {errorReason && errorReason !== '--' ? (
                       <Tag color='grey' size='small' type='light'>
                         {errorReason}
+                      </Tag>
+                    ) : null}
+                    {retryReason ? (
+                      <Tag
+                        color={
+                          isFirstByteTimeoutAttempt(attempt) ? 'red' : 'grey'
+                        }
+                        size='small'
+                        type='light'
+                      >
+                        {formatAttemptRetryReason(retryReason, t)}
                       </Tag>
                     ) : null}
                     {flowTags}
@@ -2581,6 +2716,11 @@ function HoverCard({ content, children, className = '' }) {
 
 function UserRequestEventTooltip({ record, meta, processing, durationMs, t }) {
   const attempts = Math.max(1, Number(record?.attempts || 0));
+  const firstByteTimeoutAttempts = Array.isArray(record?.attempt_records)
+    ? record.attempt_records.filter((attempt) =>
+        isFirstByteTimeoutAttempt(attempt),
+      ).length
+    : 0;
   const rows = [
     [t('状态'), meta?.label || '--'],
     [
@@ -2604,6 +2744,15 @@ function UserRequestEventTooltip({ record, meta, processing, durationMs, t }) {
     [t('总耗时'), formatLatency(durationMs)],
     [t('首包延迟'), processing ? '--' : formatLatency(record?.ttft_ms)],
   ];
+
+  if (firstByteTimeoutAttempts > 0 && !processing) {
+    rows.push([
+      t('渠道切换'),
+      t('首字超时内部切换 {{count}} 次', {
+        count: formatNumber(firstByteTimeoutAttempts),
+      }),
+    ]);
+  }
 
   if (
     !record?.final_success &&
@@ -3113,18 +3262,14 @@ function UserRequestCostSummaryCell({ record, t }) {
 
 function UserRequestScoreSummaryTooltip({ candidate, scoreRecord, t }) {
   const sampleCount = Number(candidate?.sample_count || 0);
-  const metricRows = [
-    ['success_score', t('成功分'), candidate?.success_score],
-    ['score_speed_factor', t('速度分'), getCandidateScoreSpeedFactor(candidate)],
-    ['cost_score', t('成本分'), candidate?.cost_score],
-    ['group_score', t('分组分'), candidate?.group_score],
-    ['experience_score', t('体验分'), candidate?.experience_score],
-  ].filter(([, , value]) => Number(value) > 0);
+  const scoreItems = normalizeScoreItemsForDisplay(candidate?.score_items).filter(
+    (item) => item.weight > 0 && !item.missing_reason,
+  );
   const routingScore = getCandidateRoutingScore(candidate);
   return (
     <div className='ct-model-gateway-user-request-score-tooltip'>
       <div className='ct-model-gateway-cost-tooltip-title'>
-        {t('当前模型评分')}
+        {t('当前模型稳定评分')}
       </div>
       <div className='ct-model-gateway-cost-tooltip-row'>
         <span>{t('本次选中模型')}</span>
@@ -3133,12 +3278,12 @@ function UserRequestScoreSummaryTooltip({ candidate, scoreRecord, t }) {
         </strong>
       </div>
       <div className='ct-model-gateway-cost-tooltip-row'>
-        <span>{t('评分')}</span>
+        <span>{t('稳定评分')}</span>
         <strong>{formatScore(candidate?.score_total || scoreRecord?.score_total)}</strong>
       </div>
       {routingScore !== null && (
         <div className='ct-model-gateway-cost-tooltip-row'>
-          <span>{t('调度分')}</span>
+          <span>{t('本次调度评分')}</span>
           <strong>{formatScore(routingScore)}</strong>
         </div>
       )}
@@ -3146,15 +3291,10 @@ function UserRequestScoreSummaryTooltip({ candidate, scoreRecord, t }) {
         <span>{t('样本数')}</span>
         <strong>{sampleCount > 0 ? formatNumber(sampleCount) : t('暂无真实样本')}</strong>
       </div>
-      {metricRows.length > 0 && (
+      {scoreItems.length > 0 && (
         <div className='ct-model-gateway-cost-tooltip-divider' />
       )}
-      {metricRows.map(([key, label, value]) => (
-        <div className='ct-model-gateway-cost-tooltip-row' key={key}>
-          <span>{label}</span>
-          <strong>{formatScore(value)}</strong>
-        </div>
-      ))}
+      <ScoreItemsMiniList items={scoreItems} t={t} />
     </div>
   );
 }
@@ -3165,11 +3305,10 @@ function UserRequestScoreSummaryCell({ record, t, onOpenScoreHistory }) {
   const score = getCandidateScore(candidate) ?? Number(scoreRecord?.score_total || 0);
   const routingScore = getCandidateRoutingScore(candidate);
   const hasScore = Number.isFinite(score) && score > 0;
-  const metricEntries = [
-    ['success_score', t('成功'), candidate?.success_score],
-    ['score_speed_factor', t('速度'), getCandidateScoreSpeedFactor(candidate)],
-    ['cost_score', t('成本'), candidate?.cost_score],
-  ].filter(([, , value]) => Number(value) > 0);
+  const metricEntries = normalizeScoreItemsForDisplay(candidate?.score_items)
+    .filter((item) => item.weight > 0 && !item.missing_reason)
+    .slice(0, 3)
+    .map((item) => [item.key, scoreItemLabel(item, t), item.score]);
   const canOpenHistory =
     typeof onOpenScoreHistory === 'function' &&
     Boolean(candidate || scoreHistoryCandidateFromRecord(scoreRecord));
@@ -3206,15 +3345,15 @@ function UserRequestScoreSummaryCell({ record, t, onOpenScoreHistory }) {
           disabled={!canOpenHistory}
           onClick={handleOpenHistory}
           className='ct-model-gateway-user-request-score-main'
-          title={canOpenHistory ? t('查看评分变更') : t('当前模型评分')}
+          title={canOpenHistory ? t('查看评分变更') : t('当前模型稳定评分')}
         >
-          <span>{t('评分')}</span>
+          <span>{t('稳定评分')}</span>
           <strong>{formatScore(score)}</strong>
         </button>
         <div className='ct-model-gateway-user-request-score-meta'>
           {routingScore !== null && (
             <em>
-              {t('调度分')} {formatScore(routingScore)}
+              {t('本次调度评分')} {formatScore(routingScore)}
             </em>
           )}
           {metricEntries.map(([key, label, value]) => (
@@ -3470,7 +3609,7 @@ function HealthOverviewCard({ health, summary, trends, t }) {
         <div className='ct-model-gateway-health-head-copy'>
           <div className='ct-model-gateway-health-status'>{statusLabel}</div>
           <div className='ct-model-gateway-health-score-row'>
-            <span>{t('健康分')}</span>
+            <span>{t('综合状态')}</span>
             <strong>{formatNumber(health.score)}</strong>
           </div>
         </div>
@@ -3888,7 +4027,7 @@ function UserRequestRecentTable({
               { key: 'status', label: t('状态') },
               { key: 'user', label: t('请求用户') },
               { key: 'request', label: t('请求模型') },
-              { key: 'score', label: t('当前模型评分'), hint: true },
+              { key: 'score', label: t('当前模型稳定评分'), hint: true },
               { key: 'cost', label: t('成本'), hint: true },
               { key: 'duration', label: t('总耗时'), hint: true },
               { key: 'ttft', label: t('首包'), hint: true },
@@ -3918,11 +4057,20 @@ function UserRequestRecentTable({
                 const channelIdLabel = formatUserRequestChannelId(record);
                 const groupFlowLabel = formatUserRequestGroupFlow(record);
                 const groupRatioLabel = formatUserRequestGroupRatio(record);
+                const firstByteTimeoutAttempts = Array.isArray(
+                  record.attempt_records,
+                )
+                  ? record.attempt_records.filter((attempt) =>
+                      isFirstByteTimeoutAttempt(attempt),
+                    ).length
+                  : 0;
                 const issueLabel =
-                  !record.final_success &&
-                  record.final_error_category &&
-                  meta.tone !== 'aborted' &&
-                  !processing
+                  firstByteTimeoutAttempts > 0
+                    ? t('首字超时切换')
+                    : !record.final_success &&
+                        record.final_error_category &&
+                        meta.tone !== 'aborted' &&
+                        !processing
                     ? formatUserRequestErrorCategory(
                         record.final_error_category,
                         t,
@@ -7854,7 +8002,7 @@ function RuntimeStatusPanel({ runtimeStatus, t, circuitErrorType = '' }) {
               {t('成本倍率')} {formatScore(record.cost_ratio)}
             </Typography.Text>
             <Typography.Text type='secondary' size='small'>
-              {t('健康均分')} {formatScore(record.health_score_average)} ·{' '}
+              {t('稳定评分')} {formatScore(record.score_total)} ·{' '}
               <Tooltip
                 content={t('探活原因按当前模型/分组运行键统计，不代表整个渠道')}
               >
@@ -8019,7 +8167,78 @@ function DetailMetricTile({
   return <div className={className}>{content}</div>;
 }
 
-function ScoreBreakdownPanel({ entries = [], onOpenScoreHistory, t }) {
+function ScoreItemsTable({ items = [], deltas = [], t, compact = false }) {
+  const rows = scoreItemDisplayRows(items, deltas, t);
+  if (!rows.length) {
+    return <Typography.Text type='tertiary'>--</Typography.Text>;
+  }
+  return (
+    <div
+      className={`ct-model-gateway-score-items-table${
+        compact ? ' ct-model-gateway-score-items-table-compact' : ''
+      }`}
+    >
+      <div className='ct-model-gateway-score-items-head'>
+        <span>{t('评分项')}</span>
+        <span>{t('原始数据')}</span>
+        <span>{t('窗口')}</span>
+        <span>{t('得分')}</span>
+        <span>{t('权重')}</span>
+        <span>{t('贡献')}</span>
+        <span>{t('变化')}</span>
+        <span>{t('公式 / 原因')}</span>
+      </div>
+      {rows.map((item) => {
+        const deltaTone = scoreDeltaTone(item.weighted_delta || item.delta);
+        return (
+          <div className='ct-model-gateway-score-items-row' key={item.key}>
+            <span
+              className='ct-model-gateway-score-item-name'
+              title={item.formula || scoreMetricDescription(item.key, t)}
+            >
+              <strong>{item.name}</strong>
+              {item.category ? <small>{t(item.category)}</small> : null}
+              {item.missing_reason ? (
+                <em>{t(item.missing_reason)}</em>
+              ) : null}
+            </span>
+            <span className='ct-model-gateway-score-item-raw'>
+              {item.raw_value || '--'}
+            </span>
+            <span>{item.window || '--'}</span>
+            <strong className='ct-model-gateway-score-item-number'>
+              {formatScore(item.score)}
+            </strong>
+            <span className='ct-model-gateway-score-item-number'>
+              {item.weight > 0 ? formatPercent(item.weight) : '--'}
+            </span>
+            <strong className='ct-model-gateway-score-item-number'>
+              {formatScore(item.weighted_score)}
+            </strong>
+            <em className={`ct-model-gateway-score-delta-${deltaTone}`}>
+              {formatScoreDelta(item.weighted_delta || item.delta)}
+            </em>
+            <span
+              className='ct-model-gateway-score-item-formula'
+              title={[item.formula, item.reason].filter(Boolean).join(' / ')}
+            >
+              {item.formula || scoreMetricDescription(item.key, t) || '--'}
+              {item.reason ? <small>{item.reason}</small> : null}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ScoreBreakdownPanel({
+  entries = [],
+  items = [],
+  deltas = [],
+  onOpenScoreHistory,
+  t,
+}) {
   return (
     <div className='ct-model-gateway-score-breakdown-panel'>
       <div className='ct-model-gateway-score-breakdown-head'>
@@ -8039,19 +8258,23 @@ function ScoreBreakdownPanel({ entries = [], onOpenScoreHistory, t }) {
           {t('查看变更')}
         </Button>
       </div>
-      <div className='ct-model-gateway-score-list'>
-        {entries.length ? (
-          entries.map(([key, value]) => (
-            <Tooltip key={key} content={scoreMetricDescription(key, t)}>
-              <Tag color='cyan' type='light' shape='circle'>
-                {scoreMetricLabel(key, t)}: {formatScore(value)}
-              </Tag>
-            </Tooltip>
-          ))
-        ) : (
-          <Typography.Text type='tertiary'>--</Typography.Text>
-        )}
-      </div>
+      {Array.isArray(items) && items.length ? (
+        <ScoreItemsTable items={items} deltas={deltas} t={t} />
+      ) : (
+        <div className='ct-model-gateway-score-list'>
+          {entries.length ? (
+            entries.map(([key, value]) => (
+              <Tooltip key={key} content={scoreMetricDescription(key, t)}>
+                <Tag color='cyan' type='light' shape='circle'>
+                  {scoreMetricLabel(key, t)}: {formatScore(value)}
+                </Tag>
+              </Tooltip>
+            ))
+          ) : (
+            <Typography.Text type='tertiary'>--</Typography.Text>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -8429,7 +8652,7 @@ function buildScoreHistorySummary(history, current, previous, t) {
   const delta = Number(history?.score_delta || current?.score_delta || 0);
   const previousScore = Number(previous?.score_total || 0);
   if (!previous || previousScore <= 0) {
-    return t('当前分数 {{score}}，暂无上一条可对比记录', {
+    return t('当前稳定评分 {{score}}，暂无上一条可对比记录', {
       score: formatScore(current.score_total),
     });
   }
@@ -8439,7 +8662,7 @@ function buildScoreHistorySummary(history, current, previous, t) {
     t,
   );
   if (scoreDeltaTone(delta) === 'neutral') {
-    return t('当前分数 {{score}}，相比上一条基本未变化', {
+    return t('当前稳定评分 {{score}}，相比上一条基本未变化', {
       score: formatScore(current.score_total),
     });
   }
@@ -8450,7 +8673,7 @@ function buildScoreHistorySummary(history, current, previous, t) {
     : t('综合指标变化');
   if (delta > 0) {
     return t(
-      '当前分数 {{score}}，比上一条提高 {{delta}}，主要因为 {{reason}}',
+      '当前稳定评分 {{score}}，比上一条提高 {{delta}}，主要因为 {{reason}}',
       {
         score: formatScore(current.score_total),
         delta: formatScoreDeltaMagnitude(delta),
@@ -8458,11 +8681,14 @@ function buildScoreHistorySummary(history, current, previous, t) {
       },
     );
   }
-  return t('当前分数 {{score}}，比上一条下降 {{delta}}，主要因为 {{reason}}', {
-    score: formatScore(current.score_total),
-    delta: formatScoreDeltaMagnitude(delta),
-    reason,
-  });
+  return t(
+    '当前稳定评分 {{score}}，比上一条下降 {{delta}}，主要因为 {{reason}}',
+    {
+      score: formatScore(current.score_total),
+      delta: formatScoreDeltaMagnitude(delta),
+      reason,
+    },
+  );
 }
 
 function buildScoreHistoryItemReasons(item, t) {
@@ -8553,13 +8779,6 @@ function getRecordRoutingScore(record) {
 
 function getCandidateSelectionScore(candidate) {
   return getCandidateRoutingScore(candidate) ?? getCandidateScore(candidate);
-}
-
-function getCandidateScoreSpeedFactor(candidate) {
-  const score = Number(
-    candidate?.score_speed_factor ?? candidate?.score_breakdown?.speed,
-  );
-  return Number.isFinite(score) && score > 0 ? score : null;
 }
 
 function candidateSortIndex(candidate, candidates) {
@@ -8795,7 +9014,6 @@ function buildSelectionInsight(record, candidates, t) {
     getCandidateSelectionScore(selectedCandidate) ??
     getRecordRoutingScore(record) ??
     getCandidateScore(record);
-  const selectedHealthScore = getCandidateScore(selectedCandidate);
   const scoredCandidates = availableCandidates.filter(
     (candidate) => getCandidateSelectionScore(candidate) !== null,
   );
@@ -8836,11 +9054,9 @@ function buildSelectionInsight(record, candidates, t) {
   const selectedDurationMs = Number(selectedCandidate?.duration_ms || 0);
   const selectedSamples = Number(selectedCandidate?.sample_count || 0);
   const selectedHasRealSamples = selectedSamples > 0;
-  const selectedScoreSpeedFactor =
-    getCandidateScoreSpeedFactor(selectedCandidate);
-  const selectedExperienceScore = Number(
-    selectedCandidate?.experience_score || 0,
-  );
+  const selectedScoreItems = normalizeScoreItemsForDisplay(
+    selectedCandidate?.score_items,
+  ).filter((item) => item.weight > 0 && !item.missing_reason);
   const activeConcurrency = Number(
     selectedCandidate?.active_concurrency || record?.active_concurrency || 0,
   );
@@ -8878,7 +9094,7 @@ function buildSelectionInsight(record, candidates, t) {
 
   const primaryMetricKeys = new Set([
     'score',
-    'health_score',
+    'routing_score',
     'latency',
     'duration',
     'rank',
@@ -8887,26 +9103,17 @@ function buildSelectionInsight(record, candidates, t) {
   const metrics = [
     {
       key: 'score',
-      label: selectedHasRealSamples ? t('本次调度分') : t('探索参考'),
+      label: selectedHasRealSamples ? t('稳定评分') : t('探索参考'),
       value: selectedHasRealSamples
         ? formatScore(selectedScore)
         : t('暂无真实样本'),
     },
     {
-      key: 'health_score',
-      label: t('健康评分'),
-      value:
-        selectedHasRealSamples && selectedHealthScore !== null
-          ? formatScore(selectedHealthScore)
-          : '--',
-    },
-    {
-      key: 'score_speed_factor',
-      label: t('速度分'),
-      value:
-        selectedHasRealSamples && selectedScoreSpeedFactor !== null
-          ? formatScore(selectedScoreSpeedFactor)
-          : '--',
+      key: 'routing_score',
+      label: t('本次调度评分'),
+      value: selectedHasRealSamples
+        ? formatScore(getCandidateRoutingScore(selectedCandidate))
+        : '--',
     },
     {
       key: 'latency',
@@ -8979,14 +9186,6 @@ function buildSelectionInsight(record, candidates, t) {
       value:
         selectedSamples > 0 ? formatNumber(selectedSamples) : t('暂无真实样本'),
     },
-    {
-      key: 'experience',
-      label: t('体验分'),
-      value:
-        selectedHasRealSamples && selectedExperienceScore > 0
-          ? formatScore(selectedExperienceScore)
-          : '--',
-    },
   ];
 
   return {
@@ -9017,6 +9216,7 @@ function buildSelectionInsight(record, candidates, t) {
         Number.isFinite(Number(score)) &&
         scoreEntryIsVisible(key, selectedSamples),
     ),
+    scoreItems: selectedScoreItems,
     rejectReasons: buildRejectReasonSummary(candidates, t),
   };
 }
@@ -9096,12 +9296,15 @@ function SelectionInsightPanel({ record, candidates, t }) {
             </div>
           </div>
         ) : null}
-        {insight.secondaryMetrics.length || insight.scoreEntries.length ? (
+        {insight.secondaryMetrics.length ||
+        insight.scoreItems.length ||
+        insight.scoreEntries.length ? (
           <DetailAccordion
             title={t('选择补充指标')}
             meta={t('指标 {{count}} 项', {
               count:
-                insight.secondaryMetrics.length + insight.scoreEntries.length,
+                insight.secondaryMetrics.length +
+                (insight.scoreItems.length || insight.scoreEntries.length),
             })}
             className='ct-model-gateway-inline-accordion'
           >
@@ -9116,7 +9319,9 @@ function SelectionInsightPanel({ record, candidates, t }) {
                 </div>
               ))}
             </div>
-            {insight.scoreEntries.length ? (
+            {insight.scoreItems.length ? (
+              <ScoreItemsTable items={insight.scoreItems} t={t} compact />
+            ) : insight.scoreEntries.length ? (
               <div className='ct-model-gateway-score-list'>
                 {insight.scoreEntries.map(([key, value]) => (
                   <Tag key={key} color='cyan' type='light' size='small'>
@@ -9142,21 +9347,11 @@ function formatScoreSampleSource(source, t) {
 
 function scoreEntryIsVisible(key, sampleCount) {
   const normalized = String(key || '').trim();
-  if (scoreMetricIsHidden(normalized)) {
-    return false;
-  }
-  if (
-    Number(sampleCount || 0) <= 0 &&
-    ['success', 'speed', 'success_score'].includes(normalized)
-  ) {
-    return false;
-  }
-  return normalized !== 'explore_baseline';
+  return normalized !== '';
 }
 
 function scoreMetricIsHidden(key) {
-  const normalized = String(key || '').trim();
-  return normalized === 'speed_score';
+  return String(key || '').trim() === '';
 }
 
 function CandidateExplanationCard({
@@ -9180,19 +9375,10 @@ function CandidateExplanationCard({
       Number.isFinite(Number(score)) && scoreEntryIsVisible(key, sampleCount),
   );
   const scoreMetricEntries = [
-    ['success_score', t('成功'), hasRealSamples ? candidate?.success_score : 0],
-    [
-      'score_speed_factor',
-      t('速度分'),
-      hasRealSamples ? getCandidateScoreSpeedFactor(candidate) : 0,
-    ],
-    ['cost_score', t('成本分'), candidate?.cost_score],
-    ['group_score', t('分组'), candidate?.group_score],
-    [
-      'experience_score',
-      t('体验'),
-      hasRealSamples ? candidate?.experience_score : 0,
-    ],
+    ...normalizeScoreItemsForDisplay(candidate?.score_items)
+      .filter((item) => item.weight > 0 && !item.missing_reason)
+      .slice(0, 5)
+      .map((item) => [item.key, scoreItemLabel(item, t), item.score]),
   ].filter(([, , value]) => Number(value) > 0);
   const routingScore = Number(candidate?.routing_score_total || 0);
   const available = candidate?.available === true;
@@ -9262,7 +9448,7 @@ function CandidateExplanationCard({
     },
     {
       key: 'routing_score',
-      label: t('调度分'),
+      label: t('本次调度评分'),
       value: routingScore > 0 ? formatScore(routingScore) : '--',
     },
   ];
@@ -9454,7 +9640,7 @@ function CandidateExplanationCard({
               shape='circle'
               onClick={() => onOpenScoreHistory?.(candidate)}
             >
-              {hasRealSamples ? t('总评分') : t('探索参考')}:{' '}
+              {hasRealSamples ? t('稳定评分') : t('探索参考')}:{' '}
               {hasRealSamples
                 ? formatScore(candidate?.score_total)
                 : t('暂无真实样本')}
@@ -9463,11 +9649,11 @@ function CandidateExplanationCard({
           {routingScore > 0 ? (
             <Tooltip
               content={t(
-                '调度分会叠加当前并发、排队和首包等待，只用于本次选路',
+                '本次调度评分会叠加当前并发、排队和首包等待，只用于本次选路',
               )}
             >
               <Tag color='grey' type='light' size='small' shape='circle'>
-                {t('调度分')}: {formatScore(routingScore)}
+                {t('本次调度评分')}: {formatScore(routingScore)}
               </Tag>
             </Tooltip>
           ) : null}
@@ -9579,6 +9765,9 @@ function RecordDetailDrawer({
   const selectedCandidate = findSelectedCandidate(
     record,
     candidateExplanations,
+  );
+  const selectedScoreItems = normalizeScoreItemsForDisplay(
+    selectedCandidate?.score_items,
   );
   const selectedChannelLabel = selectedCandidate
     ? getCandidateChannelLabel(selectedCandidate, t)
@@ -9713,9 +9902,9 @@ function RecordDetailDrawer({
             </div>
             <div className='ct-model-gateway-detail-hero-metrics'>
               <DetailMetricTile
-                label={t('评分')}
+                label={t('稳定评分')}
                 value={formatScore(record.score_total)}
-                detail={t('本次综合评分')}
+                detail={t('请求前后运行态评分')}
                 tone='score'
                 onClick={canOpenScoreHistory ? handleOpenScoreHistory : null}
                 actionLabel={scoreChangeLabel}
@@ -9923,6 +10112,7 @@ function RecordDetailDrawer({
               <DetailPanel title={t('评分拆解')}>
                 <ScoreBreakdownPanel
                   entries={scoreEntries}
+                  items={selectedScoreItems}
                   onOpenScoreHistory={
                     canOpenScoreHistory ? handleOpenScoreHistory : undefined
                   }
@@ -10104,11 +10294,11 @@ function ScoreHistoryModal({ history, loading, visible, onCancel, t }) {
         {current ? (
           <div className='ct-model-gateway-score-history-summary'>
             <div>
-              <span>{t('当前分数')}</span>
+              <span>{t('当前稳定评分')}</span>
               <strong>{formatScore(current.score_total)}</strong>
             </div>
             <div>
-              <span>{t('上次分数')}</span>
+              <span>{t('上次稳定评分')}</span>
               <strong>{formatScore(previous?.score_total)}</strong>
             </div>
             <div>
@@ -10187,6 +10377,11 @@ function ScoreHistoryRecordItem({ item, t }) {
     t,
   );
   const routingScore = Number(item?.routing_score_total || 0);
+  const scoreItemRows = scoreItemDisplayRows(
+    item?.score_items,
+    item?.score_item_deltas,
+    t,
+  );
   const routingEntries = Object.entries(
     item?.routing_score_breakdown || {},
   ).filter(
@@ -10220,7 +10415,7 @@ function ScoreHistoryRecordItem({ item, t }) {
           ) : null}
           {routingScore > 0 ? (
             <Tag color='grey' type='light' size='small'>
-              {t('调度分')}: {formatScore(routingScore)}
+              {t('本次调度评分')}: {formatScore(routingScore)}
             </Tag>
           ) : null}
           <Tag
@@ -10287,6 +10482,14 @@ function ScoreHistoryRecordItem({ item, t }) {
             </div>
           ))}
         </div>
+      ) : null}
+      {scoreItemRows.length ? (
+        <ScoreItemsTable
+          items={item.score_items}
+          deltas={item.score_item_deltas}
+          t={t}
+          compact
+        />
       ) : null}
       {routingEntries.length ? (
         <div className='ct-model-gateway-candidate-routing-row'>
@@ -10904,7 +11107,7 @@ export default function ModelGatewayMonitor() {
       },
       {
         key: `${type}-avg-score`,
-        title: t('平均评分'),
+        title: t('平均稳定评分'),
         dataIndex: 'avg_score_total',
         width: 110,
         render: (value) => formatScore(value),
@@ -11052,15 +11255,20 @@ export default function ModelGatewayMonitor() {
                   HTTP {record.status_code}
                 </div>
               )}
-              {(record.is_health_probe ||
-                record.request_meta?.is_health_probe) && (
-                <div className='text-xs text-semi-color-text-2'>
-                  {formatProbeReasonWithScope(record, t)}
-                </div>
-              )}
-            </div>
-          );
-        },
+                    {(record.is_health_probe ||
+                      record.request_meta?.is_health_probe) && (
+                      <div className='text-xs text-semi-color-text-2'>
+                        {formatProbeReasonWithScope(record, t)}
+                      </div>
+                    )}
+                    {isFirstByteTimeoutAttempt(record) && (
+                      <div className='text-xs text-semi-color-text-2'>
+                        {t('首字超时内部切换')}
+                      </div>
+                    )}
+                  </div>
+                );
+              },
       },
       {
         key: 'recent-duration',
@@ -11080,7 +11288,7 @@ export default function ModelGatewayMonitor() {
       },
       {
         key: 'recent-score',
-        title: t('评分'),
+        title: t('稳定评分'),
         dataIndex: 'score_total',
         width: 120,
         render: (value) => formatScore(value),

@@ -168,8 +168,7 @@ type ChannelStatusMonitorRuntimeStats struct {
 	AvgSuccessRate              float64 `json:"avg_success_rate"`
 	AvgTTFTMs                   float64 `json:"avg_ttft_ms"`
 	AvgDurationMs               float64 `json:"avg_duration_ms"`
-	AvgCostScore                float64 `json:"avg_cost_score"`
-	AvgExperienceScore          float64 `json:"avg_experience_score"`
+	AvgCostItemScore            float64 `json:"avg_cost_item_score"`
 	AvgCostRatio                float64 `json:"avg_cost_ratio"`
 	CostPricingMode             string  `json:"cost_pricing_mode,omitempty"`
 	AvgGroupPriorityRatio       float64 `json:"avg_group_priority_ratio"`
@@ -547,10 +546,8 @@ type channelStatusRuntimeAgg struct {
 	ttftCount                     int
 	durationSum                   float64
 	durationCount                 int
-	costScoreSum                  float64
-	costScoreCount                int
-	experienceScoreSum            float64
-	experienceScoreCount          int
+	costItemScoreSum              float64
+	costItemScoreCount            int
 	costRatioSum                  float64
 	costRatioCount                int
 	groupPriorityRatioSum         float64
@@ -698,11 +695,7 @@ func (a *channelStatusRuntimeAgg) add(item modelgatewayobservability.RuntimeStat
 	}
 	addPositiveAverage(&a.ttftSum, &a.ttftCount, item.TTFTMs)
 	addPositiveAverage(&a.durationSum, &a.durationCount, item.DurationMs)
-	addPositiveAverage(&a.costScoreSum, &a.costScoreCount, item.CostScore)
-	if item.SampleCount > 0 || item.ExperienceScore > 0 {
-		a.experienceScoreSum += item.ExperienceScore
-		a.experienceScoreCount++
-	}
+	addPositiveAverage(&a.costItemScoreSum, &a.costItemScoreCount, item.ScoreBreakdown["cost"])
 	addPositiveAverage(&a.costRatioSum, &a.costRatioCount, item.CostRatio)
 	addPositiveAverage(&a.groupPriorityRatioSum, &a.groupPriorityRatioCount, item.GroupPriorityRatio)
 	if item.SampleCount > 0 || item.EmptyOutputRate > 0 {
@@ -741,8 +734,7 @@ func (a *channelStatusRuntimeAgg) finalize() *ChannelStatusMonitorRuntimeStats {
 	stats.AvgSuccessRate = averageRuntimeMonitorValue(a.successRateSum, a.successRateCount)
 	stats.AvgTTFTMs = averageRuntimeMonitorValue(a.ttftSum, a.ttftCount)
 	stats.AvgDurationMs = averageRuntimeMonitorValue(a.durationSum, a.durationCount)
-	stats.AvgCostScore = averageRuntimeMonitorValue(a.costScoreSum, a.costScoreCount)
-	stats.AvgExperienceScore = averageRuntimeMonitorValue(a.experienceScoreSum, a.experienceScoreCount)
+	stats.AvgCostItemScore = averageRuntimeMonitorValue(a.costItemScoreSum, a.costItemScoreCount)
 	stats.AvgCostRatio = averageRuntimeMonitorValue(a.costRatioSum, a.costRatioCount)
 	stats.AvgGroupPriorityRatio = averageRuntimeMonitorValue(a.groupPriorityRatioSum, a.groupPriorityRatioCount)
 	stats.AvgEmptyOutputRate = averageRuntimeMonitorValue(a.emptyOutputRateSum, a.emptyOutputRateCount)

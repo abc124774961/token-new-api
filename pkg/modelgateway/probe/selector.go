@@ -19,12 +19,15 @@ import (
 const probeActivationWindow = 30 * time.Minute
 
 type ProbeSelector struct {
-	store     core.RuntimeSnapshotStore
-	breaker   core.CircuitBreaker
-	mu        sync.Mutex
-	lastProbe map[core.RuntimeKey]time.Time
-	lastOK    map[core.RuntimeKey]time.Time
-	now       func() time.Time
+	store                core.RuntimeSnapshotStore
+	breaker              core.CircuitBreaker
+	costBaselineProvider core.CostBaselineProvider
+	scoreWeights         core.ScoreWeights
+	policyForGroup       func(group string) core.GroupSmartPolicy
+	mu                   sync.Mutex
+	lastProbe            map[core.RuntimeKey]time.Time
+	lastOK               map[core.RuntimeKey]time.Time
+	now                  func() time.Time
 }
 
 type probeRecentScopes struct {
@@ -32,6 +35,30 @@ type probeRecentScopes struct {
 	groups                 map[string]struct{}
 	latestSuccessByKey     map[string]int64
 	latestSuccessByChannel map[int]int64
+}
+
+func (s *ProbeSelector) WithCostBaselineProvider(provider core.CostBaselineProvider) *ProbeSelector {
+	if s == nil {
+		return nil
+	}
+	s.costBaselineProvider = provider
+	return s
+}
+
+func (s *ProbeSelector) WithScoreWeights(weights core.ScoreWeights) *ProbeSelector {
+	if s == nil {
+		return nil
+	}
+	s.scoreWeights = weights
+	return s
+}
+
+func (s *ProbeSelector) WithPolicyForGroup(resolver func(group string) core.GroupSmartPolicy) *ProbeSelector {
+	if s == nil {
+		return nil
+	}
+	s.policyForGroup = resolver
+	return s
 }
 
 type probeRecentRequestScopeRow struct {
@@ -301,7 +328,7 @@ func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapsh
 		if snapshot.Cooldown {
 			return reasonCooldown
 		}
-		reason = probeReason(snapshot, true, now, s.lastOKTimeLocked(key, snapshot), config)
+		reason = s.probeReason(snapshot, true, now, s.lastOKTimeLocked(key, snapshot), config)
 		if reason == reasonLongNoSuccess && recent.RealSuccessWithin(key, now, config.LongNoSuccessThreshold) {
 			return ""
 		}
@@ -371,20 +398,111 @@ func (s *ProbeSelector) lastOKTimeLocked(key core.RuntimeKey, snapshot core.Runt
 	return time.Time{}
 }
 
-func probeReason(snapshot core.RuntimeSnapshot, ok bool, now time.Time, lastOK time.Time, config ProbeConfig) string {
+func (s *ProbeSelector) probeReason(snapshot core.RuntimeSnapshot, ok bool, now time.Time, lastOK time.Time, config ProbeConfig) string {
 	if !ok || snapshot.SampleCount <= 0 {
 		return reasonNoSamples
 	}
-	healthScore := scheduler.HealthScoreAverage(snapshot)
-	if healthScore > 0 && healthScore < config.LowScoreThreshold {
+	score := s.probeSnapshotScore(snapshot)
+	if probeScoreNeedsRecovery(score, config.LowScoreThreshold) {
 		return reasonLowScore
 	}
 	if lastOK.IsZero() || now.Sub(lastOK) >= config.LongNoSuccessThreshold {
-		if snapshot.SuccessRate < 0.99 || snapshot.SuccessScore < 0.99 {
+		if snapshot.SuccessRate < 0.99 {
 			return reasonLongNoSuccess
 		}
 	}
 	return ""
+}
+
+func (s *ProbeSelector) probeSnapshotScore(snapshot core.RuntimeSnapshot) core.ScoreResult {
+	key := normalizeProbeRuntimeKey(snapshot.Key)
+	if key.EndpointType == "" {
+		key.EndpointType = constant.EndpointTypeOpenAI
+	}
+	snapshot.Key = key
+	policy := probePolicyForGroup(key.Group, snapshot.GroupPriorityRatio, s.policyForGroup)
+	return scheduler.NewCandidateScoringService().
+		WithCostBaselineProvider(s.costBaselineProvider).
+		EvaluatePreparedCandidate(core.Candidate{
+			Group:         key.Group,
+			UpstreamModel: key.UpstreamModel,
+			RuntimeKey:    key,
+		}, snapshot, policy, scheduler.ScoringContext{
+			RequestedModel:  key.RequestedModel,
+			EndpointType:    key.EndpointType,
+			CandidateGroups: append([]string(nil), policy.CandidateGroups...),
+			Strategy:        policy.Strategy,
+			AutoMode:        policy.AutoMode,
+			ScoreWeights:    s.scoreWeights,
+		}, false).Score
+}
+
+func probeScoreNeedsRecovery(score core.ScoreResult, threshold float64) bool {
+	if threshold <= 0 {
+		return false
+	}
+	for _, item := range score.Items {
+		if item.MissingReason != "" || item.Weight <= 0 {
+			continue
+		}
+		if !probeScoreItemCanRecover(item.Key) {
+			continue
+		}
+		if item.Score > 0 && item.Score < threshold {
+			return true
+		}
+	}
+	return false
+}
+
+func probeScoreItemCanRecover(key string) bool {
+	switch strings.TrimSpace(key) {
+	case "completion_rate",
+		"upstream_error_rate",
+		"ttft_latency",
+		"duration_latency",
+		"throughput",
+		"empty_output_rate",
+		"stream_interrupted_rate":
+		return true
+	default:
+		return false
+	}
+}
+
+func probePolicyForGroup(group string, priorityRatio float64, resolver func(group string) core.GroupSmartPolicy) core.GroupSmartPolicy {
+	group = strings.TrimSpace(group)
+	var policy core.GroupSmartPolicy
+	if resolver != nil {
+		policy = resolver(group)
+	} else {
+		policy = probeDispatchPolicy(group)
+	}
+	if strings.TrimSpace(policy.RequestedGroup) == "" {
+		policy.RequestedGroup = group
+	}
+	if strings.TrimSpace(policy.UserGroup) == "" {
+		policy.UserGroup = group
+	}
+	if strings.TrimSpace(policy.Strategy) == "" {
+		policy.Strategy = core.StrategyBalanced
+	}
+	if strings.TrimSpace(policy.AutoMode) == "" {
+		policy.AutoMode = core.AutoModeSequential
+	}
+	if len(policy.CandidateGroups) == 0 && group != "" {
+		policy.CandidateGroups = []string{group}
+	}
+	if policy.GroupPriorityRatio == nil {
+		policy.GroupPriorityRatio = map[string]float64{}
+	}
+	if group != "" && policy.GroupPriorityRatio[group] <= 0 {
+		if priorityRatio <= 0 {
+			priorityRatio = 1
+		}
+		policy.GroupPriorityRatio[group] = priorityRatio
+	}
+	return policy
 }
 
 func probeReasonPriority(reason string) int {

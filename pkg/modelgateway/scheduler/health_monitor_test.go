@@ -42,7 +42,7 @@ func TestRuntimeHealthMonitorUpdatesSnapshotAndCircuit(t *testing.T) {
 	require.Equal(t, 2, snapshot.SampleCount)
 	require.Equal(t, 0.0, snapshot.SuccessRate)
 	require.Greater(t, snapshot.DurationMs, 0.0)
-	require.Zero(t, snapshot.SpeedScore)
+	require.Zero(t, snapshot.TTFTMs)
 	require.Zero(t, snapshot.TTFTMs)
 	require.Equal(t, core.CircuitStateOpen, snapshot.CircuitState)
 	require.True(t, snapshot.CircuitOpen)
@@ -148,7 +148,6 @@ func TestRuntimeHealthMonitorClearsLongNoSuccessReasonOnRealSuccess(t *testing.T
 		Key:                key,
 		SampleCount:        4,
 		SuccessRate:        0.5,
-		SuccessScore:       0.5,
 		ProbeTriggerReason: "long_no_success",
 	})
 	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
@@ -175,11 +174,8 @@ func TestRuntimeHealthMonitorContinuesRestoredSnapshotSamples(t *testing.T) {
 		Key:                 key,
 		SampleCount:         20,
 		SuccessRate:         0.90,
-		SuccessScore:        0.88,
-		SpeedScore:          0.70,
 		DurationMs:          900,
 		TTFTMs:              300,
-		ExperienceScore:     1,
 		EmptyOutputRate:     0,
 		ExperienceIssueRate: 0,
 	})
@@ -197,7 +193,7 @@ func TestRuntimeHealthMonitorContinuesRestoredSnapshotSamples(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, 21, snapshot.SampleCount)
 	require.InEpsilon(t, float64(19)/float64(21), snapshot.SuccessRate, 0.001)
-	require.Greater(t, snapshot.SpeedScore, 0.70)
+	require.Greater(t, snapshot.TTFTMs, 0.70)
 }
 
 func TestRuntimeHealthMonitorIgnoresClientAbort(t *testing.T) {
@@ -246,9 +242,50 @@ func TestRuntimeHealthMonitorTracksExperiencePenalty(t *testing.T) {
 	require.Equal(t, 1, snapshot.SampleCount)
 	require.InEpsilon(t, 0.2, snapshot.EmptyOutputRate, 0.000001)
 	require.Zero(t, snapshot.ExperienceIssueRate)
-	require.True(t, snapshot.ExperienceScore < 1)
-	require.True(t, snapshot.ExperienceScore > 0.8)
-	require.True(t, snapshot.SuccessScore < 1)
+	require.True(t, snapshot.EmptyOutputRate > 0)
+	require.True(t, snapshot.EmptyOutputRate < 1)
+	require.Equal(t, 1.0, snapshot.SuccessRate)
+
+	stats := scoreStatsForHealthMonitorTest(t, snapshot)
+	require.Equal(t, 1, stats.Rates["empty_output"].Count)
+	require.Equal(t, 1, stats.Rates["upstream_error"].Success)
+	require.Equal(t, 1, stats.Rates["stream_interrupted"].Success)
+}
+
+func TestRuntimeHealthMonitorScoreStatsKeepFlatErrorDimensionsSeparate(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 108, Group: "default"}
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:               key,
+		ChannelID:         108,
+		Success:           true,
+		StreamInterrupted: true,
+		ErrorCategory:     core.ErrorCategoryStreamInterrupted,
+		Duration:          2 * time.Second,
+		TTFT:              400 * time.Millisecond,
+	})
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:           key,
+		ChannelID:     108,
+		Success:       false,
+		ErrorCategory: core.ErrorCategoryUpstreamError,
+		Duration:      1200 * time.Millisecond,
+	})
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	stats := scoreStatsForHealthMonitorTest(t, snapshot)
+	require.Equal(t, 2, stats.Rates["completion"].Total)
+	require.Equal(t, 0, stats.Rates["completion"].Success)
+	require.Equal(t, 2, stats.Rates["completion"].Count)
+	require.Equal(t, 2, stats.Rates["upstream_error"].Total)
+	require.Equal(t, 1, stats.Rates["upstream_error"].Count)
+	require.Equal(t, 1, stats.Rates["upstream_error"].Success)
+	require.Equal(t, 2, stats.Rates["stream_interrupted"].Total)
+	require.Equal(t, 1, stats.Rates["stream_interrupted"].Count)
+	require.Equal(t, 1, stats.Rates["stream_interrupted"].Success)
 }
 
 func TestRuntimeHealthMonitorTracksNonEmptyExperienceIssueSeparately(t *testing.T) {
@@ -270,8 +307,24 @@ func TestRuntimeHealthMonitorTracksNonEmptyExperienceIssueSeparately(t *testing.
 	require.Equal(t, 1, snapshot.SampleCount)
 	require.Zero(t, snapshot.EmptyOutputRate)
 	require.InEpsilon(t, 0.2, snapshot.ExperienceIssueRate, 0.000001)
-	require.True(t, snapshot.ExperienceScore < 1)
-	require.True(t, snapshot.ExperienceScore > 0.85)
+	require.True(t, snapshot.ExperienceIssueRate > 0)
+	require.True(t, snapshot.ExperienceIssueRate < 1)
+}
+
+type scoreStatsForHealthMonitor struct {
+	Rates map[string]struct {
+		Success int `json:"success,omitempty"`
+		Count   int `json:"count,omitempty"`
+		Total   int `json:"total,omitempty"`
+	} `json:"rates,omitempty"`
+}
+
+func scoreStatsForHealthMonitorTest(t *testing.T, snapshot core.RuntimeSnapshot) scoreStatsForHealthMonitor {
+	t.Helper()
+	var stats scoreStatsForHealthMonitor
+	require.NoError(t, common.UnmarshalJsonStr(snapshot.ScoreStatsJSON, &stats))
+	require.NotNil(t, stats.Rates)
+	return stats
 }
 
 func TestRuntimeHealthMonitorExperienceRatesRecoverAfterNormalSamples(t *testing.T) {
@@ -306,7 +359,7 @@ func TestRuntimeHealthMonitorExperienceRatesRecoverAfterNormalSamples(t *testing
 	snapshot, ok = store.Get(key)
 	require.True(t, ok)
 	require.Less(t, snapshot.ExperienceIssueRate, raisedIssueRate)
-	require.Greater(t, snapshot.ExperienceScore, 0.89)
+	require.Greater(t, snapshot.ExperienceIssueRate, 0.10)
 }
 
 func TestRuntimeHealthMonitorFastTracksSlowTTFTRegression(t *testing.T) {
@@ -337,7 +390,7 @@ func TestRuntimeHealthMonitorFastTracksSlowTTFTRegression(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, 21, snapshot.SampleCount)
 	require.InEpsilon(t, 500.0, snapshot.TTFTMs, 0.001)
-	require.Greater(t, snapshot.SpeedScore, 0.95)
+	require.Greater(t, snapshot.TTFTMs, 0.95)
 }
 
 func TestRuntimeHealthMonitorSmallLatencyWindowIgnoresSingleOutlier(t *testing.T) {
@@ -361,7 +414,7 @@ func TestRuntimeHealthMonitorSmallLatencyWindowIgnoresSingleOutlier(t *testing.T
 	require.Equal(t, 3, snapshot.SampleCount)
 	require.Len(t, snapshot.RecentLatencySamples, 3)
 	require.InEpsilon(t, 920.0, snapshot.TTFTMs, 0.001)
-	require.Greater(t, snapshot.SpeedScore, 0.98)
+	require.Greater(t, snapshot.TTFTMs, 0.98)
 }
 
 func TestRuntimeHealthMonitorSlowSuccessfulTTFTDoesNotCreateFailureAvoidance(t *testing.T) {
@@ -396,7 +449,7 @@ func TestRuntimeHealthMonitorSlowSuccessfulTTFTDoesNotCreateFailureAvoidance(t *
 	require.True(t, ok)
 	require.Equal(t, 1, snapshot.SampleCount)
 	require.GreaterOrEqual(t, snapshot.TTFTMs, 45000.0)
-	require.Less(t, snapshot.SpeedScore, 0.10)
+	require.Equal(t, 1.0, snapshot.SuccessRate)
 }
 
 func TestRuntimeHealthMonitorUsesTrimmedLatencyWindow(t *testing.T) {
@@ -436,7 +489,7 @@ func TestRuntimeHealthMonitorUsesTrimmedLatencyWindow(t *testing.T) {
 	require.Equal(t, 20, snapshot.SampleCount)
 	require.Len(t, snapshot.RecentLatencySamples, 20)
 	require.InEpsilon(t, 900.0, snapshot.TTFTMs, 0.001)
-	require.Greater(t, snapshot.SpeedScore, 0.98)
+	require.Greater(t, snapshot.TTFTMs, 0.98)
 }
 
 func TestRuntimeHealthMonitorClearsAvoidanceAfterTwoFastProbeSuccesses(t *testing.T) {

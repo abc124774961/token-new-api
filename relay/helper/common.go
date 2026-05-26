@@ -22,16 +22,18 @@ import (
 const RelayAttemptCancelReasonFirstByteTimeout = "first_byte_timeout"
 
 type RelayAttemptControl struct {
-	ctx context.Context
-	mu sync.RWMutex
+	ctx          context.Context
+	mu           sync.RWMutex
 	cancelReason string
+	reasonReady  chan struct{}
+	reasonOnce   sync.Once
 }
 
 func NewRelayAttemptControl(ctx context.Context) *RelayAttemptControl {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return &RelayAttemptControl{ctx: ctx}
+	return &RelayAttemptControl{ctx: ctx, reasonReady: make(chan struct{})}
 }
 
 func FlushWriter(c *gin.Context) (err error) {
@@ -124,13 +126,27 @@ func RelayAttemptContext(c *gin.Context) (context.Context, bool) {
 	return control.ctx, true
 }
 
+func RelayAttemptCancelReasonReady(c *gin.Context) <-chan struct{} {
+	control, ok := RelayAttemptControlFromContext(c)
+	if !ok || control == nil {
+		return nil
+	}
+	return control.CancelReasonReady()
+}
+
 func (control *RelayAttemptControl) SetCancelReason(reason string) {
 	if control == nil {
 		return
 	}
+	reason = strings.TrimSpace(reason)
 	control.mu.Lock()
-	control.cancelReason = strings.TrimSpace(reason)
+	control.cancelReason = reason
 	control.mu.Unlock()
+	if reason != "" {
+		control.reasonOnce.Do(func() {
+			close(control.reasonReady)
+		})
+	}
 }
 
 func (control *RelayAttemptControl) CancelReason() string {
@@ -140,6 +156,13 @@ func (control *RelayAttemptControl) CancelReason() string {
 	control.mu.RLock()
 	defer control.mu.RUnlock()
 	return control.cancelReason
+}
+
+func (control *RelayAttemptControl) CancelReasonReady() <-chan struct{} {
+	if control == nil {
+		return nil
+	}
+	return control.reasonReady
 }
 
 func RelayAttemptCancelReason(c *gin.Context) string {
@@ -212,11 +235,22 @@ func PingData(c *gin.Context) error {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
+	if ShouldSuppressPreFirstBytePing(c) {
+		return nil
+	}
 	if _, err := c.Writer.Write([]byte(": PING\n\n")); err != nil {
 		return fmt.Errorf("write ping data failed: %w", err)
 	}
 	MarkRelayDownstreamStarted(c)
 	return FlushWriter(c)
+}
+
+func ShouldSuppressPreFirstBytePing(c *gin.Context) bool {
+	if c == nil || RelayDownstreamStarted(c) || common.GetContextKeyBool(c, constant.ContextKeyRelayResponseStarted) {
+		return false
+	}
+	_, ok := RelayAttemptControlFromContext(c)
+	return ok
 }
 
 func ObjectData(c *gin.Context, object interface{}) error {

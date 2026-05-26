@@ -260,6 +260,9 @@ func migrateDB() error {
 	if err := ensureRuntimeSnapshotLatencySamplesColumn(); err != nil {
 		return err
 	}
+	if err := ensureRuntimeSnapshotScoreStatsColumn(); err != nil {
+		return err
+	}
 	if err := ensureRuntimeSnapshotProbeColumns(); err != nil {
 		return err
 	}
@@ -276,6 +279,7 @@ func migrateDB() error {
 		&ModelGatewayRequestCostSummary{},
 		&ModelGatewayDynamicBillingBaseline{},
 		&ModelGatewayRuntimeSnapshot{},
+		&ModelGatewayScoreEvent{},
 		&Token{},
 		&User{},
 		&PasskeyCredential{},
@@ -338,6 +342,7 @@ func migrateDBFast() error {
 		{&ModelGatewayRequestCostSummary{}, "ModelGatewayRequestCostSummary"},
 		{&ModelGatewayDynamicBillingBaseline{}, "ModelGatewayDynamicBillingBaseline"},
 		{&ModelGatewayRuntimeSnapshot{}, "ModelGatewayRuntimeSnapshot"},
+		{&ModelGatewayScoreEvent{}, "ModelGatewayScoreEvent"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
 		{&PasskeyCredential{}, "PasskeyCredential"},
@@ -563,6 +568,16 @@ func ensureRuntimeSnapshotLatencySamplesColumn() error {
 	return DB.Migrator().AddColumn(&ModelGatewayRuntimeSnapshot{}, "LatencySamples")
 }
 
+func ensureRuntimeSnapshotScoreStatsColumn() error {
+	if DB == nil || !DB.Migrator().HasTable(&ModelGatewayRuntimeSnapshot{}) {
+		return nil
+	}
+	if DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, "score_stats_json") {
+		return nil
+	}
+	return DB.Migrator().AddColumn(&ModelGatewayRuntimeSnapshot{}, "ScoreStatsJSON")
+}
+
 func ensureRuntimeSnapshotProbeColumns() error {
 	if DB == nil || !DB.Migrator().HasTable(&ModelGatewayRuntimeSnapshot{}) {
 		return nil
@@ -602,7 +617,6 @@ func ensureRuntimeSnapshotRecoveryColumns() error {
 		dbName    string
 		fieldName string
 	}{
-		{"health_score_average", "HealthScoreAverage"},
 		{"probe_recovery_pending", "ProbeRecoveryPending"},
 		{"probe_recovery_success_count", "ProbeRecoverySuccessCount"},
 		{"probe_recovery_required", "ProbeRecoveryRequired"},

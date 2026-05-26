@@ -205,7 +205,7 @@ function getReasonMeta(reason, t) {
       cooldown: t('冷却恢复探测'),
       failure_avoidance: t('近期失败恢复中'),
       probe_recovery_pending: t('恢复确认中'),
-      low_score: t('低健康分'),
+      low_score: t('低评分'),
       low_traffic: t('近30分钟无真实样本'),
       missing_samples: t('历史样本不足'),
       success_rate: t('成功率偏低'),
@@ -416,24 +416,30 @@ function buildHistoryScoreChanges(records) {
 
 function scoreMetricLabel(key, t) {
   switch (String(key || '').trim()) {
-    case 'success':
-    case 'success_score':
-      return t('成功');
-    case 'speed':
-    case 'score_speed_factor':
-      return t('速度');
-    case 'load':
-    case 'load_score':
-      return t('负载');
+    case 'completion_rate':
+      return t('完成率');
+    case 'upstream_error_rate':
+      return t('上游错误');
+    case 'ttft_latency':
+      return t('首包');
+    case 'duration_latency':
+      return t('完整耗时');
+    case 'throughput':
+      return t('吞吐');
+    case 'empty_output_rate':
+      return t('空输出');
+    case 'stream_interrupted_rate':
+      return t('流中断');
+    case 'concurrency_load':
+      return t('并发');
+    case 'queue_pressure':
+      return t('队列');
+    case 'first_byte_backlog':
+      return t('首包积压');
     case 'cost':
-    case 'cost_score':
       return t('成本');
-    case 'group':
-    case 'group_score':
+    case 'group_priority':
       return t('分组');
-    case 'experience':
-    case 'experience_score':
-      return t('体验');
     default:
       return String(key || '').trim() || t('未知');
   }
@@ -765,15 +771,15 @@ function ChannelHealthCheck() {
         ),
       },
       {
-        title: t('当前评分'),
-        dataIndex: 'health_score_average',
+        title: t('当前稳定评分'),
+        dataIndex: 'score_total',
         width: 220,
         render: (_, record) => (
           <div className='ct-channel-health-score-stack'>
-            <strong>{formatScore(record.health_score_average)}</strong>
+            <strong>{formatScore(record.score_total)}</strong>
             <span>
-              {t('调度分')} {formatScore(record.routing_score_total)} ·{' '}
-              {t('成功分')} {formatScore(record.success_score)}
+              {t('本次调度评分')} {formatScore(record.routing_score_total)} ·{' '}
+              {t('完成率')} {formatScore(record.score_breakdown?.completion_rate)}
             </span>
             <span>
               {t('空输出率')} {formatPercent(record.empty_output_rate)} ·{' '}
@@ -1054,7 +1060,7 @@ function ChannelHealthCheck() {
           <MetricCard
             label={t('待检查队列')}
             value={formatNumber(queueData?.summary?.pending_count)}
-            detail={`${formatNumber(lowScoreCount)} ${t('低健康分')} · ${formatNumber(
+            detail={`${formatNumber(lowScoreCount)} ${t('低评分')} · ${formatNumber(
               lowTrafficCount,
             )} ${t('低访问')}`}
             icon={<ListChecks size={18} />}
@@ -1122,7 +1128,7 @@ function ChannelHealthCheck() {
             prefix={t('队列类型')}
           >
             <Select.Option value={ALL_STATUSES}>{t('全部')}</Select.Option>
-            <Select.Option value='low_score'>{t('低健康分')}</Select.Option>
+            <Select.Option value='low_score'>{t('低评分')}</Select.Option>
             <Select.Option value='low_traffic'>{t('低访问')}</Select.Option>
             <Select.Option value='recovery'>{t('恢复中')}</Select.Option>
             <Select.Option value='isolated'>{t('隔离或冷却')}</Select.Option>
@@ -1207,7 +1213,7 @@ function ChannelHealthCheck() {
           </span>
           <CheckCircle2 size={14} />
           <span>
-            {t('探活结果会更新健康分，但不会增加真实访问样本计数。')}
+            {t('探活结果会更新评分，但不会增加真实访问样本计数。')}
           </span>
         </div>
       </div>

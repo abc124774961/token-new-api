@@ -13,11 +13,8 @@ import (
 )
 
 const (
-	defaultHealthDurationMs  = 1000
 	defaultHealthSuccessRate = 0.80
-	defaultHealthScore       = 0.55
 	healthEWMAAlpha          = 0.20
-	healthSlowTTFTAlpha      = 0.45
 	realSampleWindow         = 30 * time.Minute
 	probeReasonLongNoSuccess = "long_no_success"
 	probeReasonLowScore      = "low_score"
@@ -25,10 +22,13 @@ const (
 )
 
 type RuntimeHealthMonitor struct {
-	store   core.RuntimeSnapshotStore
-	breaker core.CircuitBreaker
-	mu      sync.Mutex
-	stats   map[core.RuntimeKey]*healthStats
+	store          core.RuntimeSnapshotStore
+	breaker        core.CircuitBreaker
+	scoringService *CandidateScoringService
+	scoreEvents    *ScoreEventRecorder
+	scoreWeights   core.ScoreWeights
+	mu             sync.Mutex
+	stats          map[core.RuntimeKey]*healthStats
 }
 
 type healthStats struct {
@@ -36,9 +36,6 @@ type healthStats struct {
 	sampleCount    int
 	durationMs     float64
 	ttftMs         float64
-	speedSamples   int
-	successScore   float64
-	speedScore     float64
 	emptyRate      float64
 	issueRate      float64
 	latencySamples []core.RuntimeLatencySample
@@ -47,10 +44,30 @@ type healthStats struct {
 
 func NewRuntimeHealthMonitor(store core.RuntimeSnapshotStore, breaker core.CircuitBreaker) *RuntimeHealthMonitor {
 	return &RuntimeHealthMonitor{
-		store:   store,
-		breaker: breaker,
-		stats:   map[core.RuntimeKey]*healthStats{},
+		store:          store,
+		breaker:        breaker,
+		scoringService: NewCandidateScoringService(),
+		scoreEvents:    NewScoreEventRecorder(1024),
+		stats:          map[core.RuntimeKey]*healthStats{},
 	}
+}
+
+func (m *RuntimeHealthMonitor) WithScoringService(service *CandidateScoringService) *RuntimeHealthMonitor {
+	if m == nil {
+		return nil
+	}
+	if service != nil {
+		m.scoringService = service
+	}
+	return m
+}
+
+func (m *RuntimeHealthMonitor) WithScoreWeights(weights core.ScoreWeights) *RuntimeHealthMonitor {
+	if m == nil {
+		return nil
+	}
+	m.scoreWeights = weights
+	return m
 }
 
 func (m *RuntimeHealthMonitor) Record(ctx context.Context, record core.DispatchRecord) {}
@@ -71,7 +88,8 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	if isCircuitOverloadSkipResult(result) {
 		return
 	}
-	if m.breaker != nil {
+	decision := scoreSampleDecision(result)
+	if m.breaker != nil && decision.CircuitSample {
 		m.breaker.Report(result)
 	}
 	if result.ConcurrencyLimited {
@@ -96,23 +114,6 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 		observedAt = time.Now()
 	}
 	observedAtUnix := observedAt.Unix()
-	stats.sampleCount++
-	if result.Success {
-		stats.successCount++
-	}
-	resultSuccess := result.Success && !result.EmptyOutput && strings.TrimSpace(result.ExperienceIssue) == ""
-	stats.successScore = ewma(stats.successScore, boolScore(resultSuccess, 0.05))
-	if result.Success {
-		if sample, valid := runtimeLatencySampleFromAttempt(result, observedAt); valid {
-			stats.latencySamples = appendRuntimeLatencySample(stats.latencySamples, sample)
-			stats.durationMs, stats.ttftMs, stats.speedScore = runtimeLatencyStats(stats.latencySamples)
-			stats.speedSamples = len(stats.latencySamples)
-		}
-	} else if stats.durationMs <= 0 {
-		stats.durationMs = durationMs(result.Duration, 0)
-	}
-	stats.emptyRate = rateEWMA(stats.emptyRate, result.EmptyOutput)
-	stats.issueRate = rateEWMA(stats.issueRate, nonEmptyOutputExperienceIssue(result))
 	if !ok {
 		snapshot = core.RuntimeSnapshot{
 			Key:                key,
@@ -120,20 +121,38 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 			GroupPriorityRatio: 1,
 		}
 	}
+	beforeScore := m.scoreSnapshot(result, snapshot)
+	scoreStats := scoreStatsFromSnapshot(snapshot)
+	if decision.ScoreSample {
+		stats.sampleCount++
+		if result.Success {
+			stats.successCount++
+		}
+		resultSuccess := result.Success && !result.EmptyOutput && strings.TrimSpace(result.ExperienceIssue) == ""
+		_ = resultSuccess
+		if result.Success {
+			if sample, valid := runtimeLatencySampleFromAttempt(result, observedAt); valid {
+				stats.latencySamples = appendRuntimeLatencySample(stats.latencySamples, sample)
+				stats.durationMs, stats.ttftMs, _ = runtimeLatencyStats(stats.latencySamples)
+			}
+		} else if stats.durationMs <= 0 {
+			stats.durationMs = durationMs(result.Duration, 0)
+		}
+		stats.emptyRate = rateEWMA(stats.emptyRate, result.EmptyOutput)
+		stats.issueRate = rateEWMA(stats.issueRate, nonEmptyOutputExperienceIssue(result))
+		scoreStats = updateScoreStats(scoreStats, result, decision)
+	}
 	snapshot.Key = key
+	snapshot.ScoreStatsJSON = scoreStats.Marshal()
 	snapshot.SampleCount = stats.sampleCount
 	snapshot.RecentLatencySamples = append([]core.RuntimeLatencySample(nil), stats.latencySamples...)
 	snapshot.SuccessRate = successRate(stats)
-	snapshot.SuccessScore = stats.successScore
-	snapshot.SpeedScore = stats.speedScore
 	snapshot.DurationMs = stats.durationMs
 	if stats.ttftMs > 0 {
 		snapshot.TTFTMs = stats.ttftMs
 	}
 	snapshot.EmptyOutputRate = stats.emptyRate
 	snapshot.ExperienceIssueRate = stats.issueRate
-	snapshot.ExperienceScore = experienceScoreFromRates(stats.emptyRate, stats.issueRate)
-	snapshot.HealthScoreAverage = HealthScoreAverage(snapshot)
 	m.applyProbeRecovery(&snapshot, result)
 	if result.IsHealthProbe {
 		snapshot.LastProbeAt = observedAtUnix
@@ -158,8 +177,48 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 		snapshot.CircuitState = circuit.State
 		snapshot.CircuitOpen = circuit.State == core.CircuitStateOpen
 	}
+	afterScore := m.scoreSnapshot(result, snapshot)
+	if m.scoreEvents != nil {
+		m.scoreEvents.ReportAdjustment(result, snapshot, decision, beforeScore, afterScore)
+	}
 	m.store.Put(snapshot)
 	m.mu.Unlock()
+}
+
+func (m *RuntimeHealthMonitor) scoreSnapshot(result core.AttemptResult, snapshot core.RuntimeSnapshot) core.ScoreResult {
+	service := m.scoringService
+	if service == nil {
+		service = NewCandidateScoringService()
+	}
+	policy := core.GroupSmartPolicy{
+		Strategy:        scoreStrategyFromAttempt(result),
+		AutoMode:        strings.TrimSpace(result.AutoMode),
+		CandidateGroups: []string{snapshot.Key.Group},
+		GroupPriorityRatio: map[string]float64{
+			snapshot.Key.Group: snapshot.GroupPriorityRatio,
+		},
+	}
+	candidate := core.Candidate{
+		Group:         snapshot.Key.Group,
+		UpstreamModel: snapshot.Key.UpstreamModel,
+		RuntimeKey:    snapshot.Key,
+	}
+	return service.EvaluatePreparedCandidate(candidate, snapshot, policy, ScoringContext{
+		RequestedModel:  snapshot.Key.RequestedModel,
+		EndpointType:    snapshot.Key.EndpointType,
+		CandidateGroups: []string{snapshot.Key.Group},
+		Strategy:        scoreStrategyFromAttempt(result),
+		AutoMode:        strings.TrimSpace(result.AutoMode),
+		ScoreWeights:    m.scoreWeights,
+		ExplainEnabled:  true,
+	}, false).Score
+}
+
+func scoreStrategyFromAttempt(result core.AttemptResult) string {
+	if strategy := strings.TrimSpace(result.Strategy); strategy != "" {
+		return strategy
+	}
+	return core.StrategyBalanced
 }
 
 func healthStatsFromSnapshot(snapshot core.RuntimeSnapshot, ok bool) *healthStats {
@@ -179,15 +238,10 @@ func healthStatsFromSnapshot(snapshot core.RuntimeSnapshot, ok bool) *healthStat
 	stats.ttftMs = snapshot.TTFTMs
 	stats.latencySamples = normalizeRuntimeLatencySamples(snapshot.RecentLatencySamples)
 	if len(stats.latencySamples) > 0 {
-		stats.durationMs, stats.ttftMs, stats.speedScore = runtimeLatencyStats(stats.latencySamples)
-		stats.speedSamples = len(stats.latencySamples)
+		stats.durationMs, stats.ttftMs, _ = runtimeLatencyStats(stats.latencySamples)
 	} else {
 		stats.durationMs = 0
 		stats.ttftMs = 0
-	}
-	stats.successScore = snapshot.SuccessScore
-	if len(stats.latencySamples) == 0 {
-		stats.speedScore = 0
 	}
 	stats.emptyRate = snapshot.EmptyOutputRate
 	stats.issueRate = snapshot.ExperienceIssueRate
@@ -229,34 +283,14 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 		snapshot.FailureAvoidance = snapshot.FailureAvoidance || service.GetChannelFailureAvoidanceStatus(result.ChannelID) != nil
 	}
 	snapshot.FailureAvoidance = snapshot.FailureAvoidance || service.GetChannelFailureAvoidanceStatus(result.ChannelID) != nil
-	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || (snapshot.HealthScoreAverage > 0 && snapshot.HealthScoreAverage < lowScoreThreshold)
+	score := m.scoreSnapshot(result, *snapshot)
+	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || (score.Total > 0 && score.Total < lowScoreThreshold)
 	if !snapshot.ProbeRecoveryPending && probeTriggerReasonClearedOnRecovery(snapshot.ProbeTriggerReason) {
 		snapshot.ProbeTriggerReason = ""
 	}
 	if !snapshot.ProbeRecoveryPending && snapshot.ProbeRecoverySuccessCount > 0 {
 		snapshot.ProbeRecoverySuccessCount = 0
 	}
-}
-
-func HealthScoreAverage(snapshot core.RuntimeSnapshot) float64 {
-	scores := []float64{}
-	if snapshot.SuccessScore > 0 {
-		scores = append(scores, snapshot.SuccessScore)
-	}
-	if snapshot.SpeedScore > 0 {
-		scores = append(scores, snapshot.SpeedScore)
-	}
-	if snapshot.ExperienceScore > 0 {
-		scores = append(scores, snapshot.ExperienceScore)
-	}
-	if len(scores) == 0 {
-		return clampHealthScore(snapshot.HealthScoreAverage)
-	}
-	total := 0.0
-	for _, score := range scores {
-		total += score
-	}
-	return total / float64(len(scores))
 }
 
 func probeTriggerReasonClearedOnRecovery(reason string) bool {
@@ -309,10 +343,6 @@ func isBalanceInsufficientAttempt(result core.AttemptResult) bool {
 	return service.IsBalanceInsufficientMessage(label)
 }
 
-func experienceScoreFromRates(emptyRate float64, issueRate float64) float64 {
-	return clampHealthScore(1 - clamp01(emptyRate)*0.85 - clamp01(issueRate)*0.65)
-}
-
 func appendRecentRealSample(samples []int64, observedAtUnix int64, now time.Time) []int64 {
 	cutoff := now.Add(-realSampleWindow).Unix()
 	out := samples[:0]
@@ -348,13 +378,6 @@ func realSamplesFromSnapshot(snapshot core.RuntimeSnapshot, now time.Time) []int
 	return samples
 }
 
-func ttftEWMAAlpha(current float64, next float64) float64 {
-	if next >= ttftPenaltyPoorMs || (current > 0 && next > current*1.8 && next >= ttftPenaltySlowMs) {
-		return healthSlowTTFTAlpha
-	}
-	return healthEWMAAlpha
-}
-
 func durationMs(duration time.Duration, fallback float64) float64 {
 	if duration <= 0 {
 		return fallback
@@ -367,41 +390,6 @@ func successRate(stats *healthStats) float64 {
 		return defaultHealthSuccessRate
 	}
 	return float64(stats.successCount) / float64(stats.sampleCount)
-}
-
-func boolScore(value bool, falseScore float64) float64 {
-	if value {
-		return 1
-	}
-	return falseScore
-}
-
-func attemptSpeedScore(result core.AttemptResult) float64 {
-	if sample, ok := runtimeLatencySampleFromAttempt(result, time.Time{}); ok {
-		_, _, speedScore := runtimeLatencyStats([]core.RuntimeLatencySample{sample})
-		if speedScore > 0 {
-			return speedScore
-		}
-	}
-	if result.TTFT > 0 {
-		ttftMs := durationMs(result.TTFT, 0)
-		return inverseLatencyScore(ttftMs, 800, 20000)
-	}
-	if result.Duration > 0 {
-		durationMs := durationMs(result.Duration, defaultHealthDurationMs)
-		return inverseLatencyScore(durationMs, 3000, 90000)
-	}
-	return defaultHealthScore
-}
-
-func clampHealthScore(value float64) float64 {
-	if value < 0 {
-		return 0
-	}
-	if value > 1 {
-		return 1
-	}
-	return value
 }
 
 var _ core.ExecutionRecorder = (*RuntimeHealthMonitor)(nil)

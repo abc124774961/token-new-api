@@ -317,10 +317,6 @@ func TestProbeSchedulerDispatchRecordIncludesScoreAndCandidateExplanation(t *tes
 	store.Put(core.RuntimeSnapshot{
 		Key:                key,
 		SuccessRate:        0.5,
-		SuccessScore:       0.52,
-		SpeedScore:         0.48,
-		ExperienceScore:    0.7,
-		HealthScoreAverage: 0.5667,
 		SampleCount:        8,
 		CostRatio:          0.4,
 		CostReferenceRatio: 0.2,
@@ -343,7 +339,7 @@ func TestProbeSchedulerDispatchRecordIncludesScoreAndCandidateExplanation(t *tes
 	require.Greater(t, plan.ScoreTotal, 0.0)
 	require.Len(t, plan.Candidates, 1)
 	require.True(t, plan.Candidates[0].Selected)
-	selector := scheduler.NewDefaultSmartChannelSelector(nil, store, scheduler.NewScoreCalculatorFactory(modelgatewayintegration.RuntimePolicySetting().ScoreWeights)).
+	selector := scheduler.NewDefaultSmartChannelSelector(nil, store, modelgatewayintegration.RuntimePolicySetting().ScoreWeights).
 		WithRuntimeSnapshotEnricher(enricher)
 	expected := selector.ScoreCandidate(core.Candidate{
 		Channel:         channel,
@@ -354,8 +350,8 @@ func TestProbeSchedulerDispatchRecordIncludesScoreAndCandidateExplanation(t *tes
 		RuntimeKey:      plan.RuntimeKey,
 	}, probeDispatchPolicy("default"))
 	require.InDelta(t, expected.Score.Total, plan.ScoreTotal, 0.0001)
-	require.InDelta(t, expected.Score.Breakdown["cost"], plan.Candidates[0].CostScore, 0.0001)
-	require.Equal(t, 1.0, plan.Candidates[0].CostScore)
+	require.InDelta(t, expected.Score.Breakdown["cost"], plan.Candidates[0].ScoreBreakdown["cost"], 0.0001)
+	require.Equal(t, 1.0, plan.Candidates[0].ScoreBreakdown["cost"])
 	require.Equal(t, expected.Explanation.ScoreBreakdown, plan.Candidates[0].ScoreBreakdown)
 	require.Equal(t, reasonLowScore, plan.ProbeReason)
 
@@ -390,7 +386,7 @@ func TestProbeSchedulerDispatchRecordIncludesScoreAndCandidateExplanation(t *tes
 	var dispatch model.ModelExecutionRecord
 	require.NoError(t, db.Where("request_id = ? AND smart_handled = ?", result.ProbeID, true).First(&dispatch).Error)
 	require.Greater(t, dispatch.ScoreTotal, 0.0)
-	require.Contains(t, dispatch.ScoreBreakdown, "success")
+	require.Contains(t, dispatch.ScoreBreakdown, "completion_rate")
 	require.Contains(t, dispatch.RequestMeta, "candidate_explanations")
 	require.Contains(t, dispatch.RequestMeta, `"is_health_probe":true`)
 	require.Contains(t, dispatch.RequestMeta, `"probe_reason":"low_score"`)

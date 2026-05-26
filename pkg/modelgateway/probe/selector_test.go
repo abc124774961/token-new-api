@@ -26,7 +26,6 @@ func TestProbeSelectorSkipsWhenNoRecentRealTraffic(t *testing.T) {
 		Key:               key,
 		SampleCount:       5,
 		SuccessRate:       0.2,
-		SuccessScore:      0.2,
 		LastRealAttemptAt: time.Now().Unix(),
 	})
 	seedProbeSelectorChannel(t, db, 1, "low-score", "default", "gpt-4.1", 1)
@@ -51,9 +50,6 @@ func TestProbeSelectorSelectsLowScoreRuntimeWithRecentTraffic(t *testing.T) {
 		Key:                key,
 		SampleCount:        8,
 		SuccessRate:        0.4,
-		SuccessScore:       0.3,
-		SpeedScore:         0.5,
-		ExperienceScore:    0.6,
 		LastRealAttemptAt:  now.Unix(),
 		RealSampleCount30m: 2,
 	})
@@ -86,8 +82,6 @@ func TestProbeSelectorDoesNotSelectLowScoreWhenUnifiedHealthAboveThreshold(t *te
 		Key:                key,
 		SampleCount:        10,
 		SuccessRate:        0.8,
-		SuccessScore:       0.694,
-		HealthScoreAverage: 0.20,
 		ProbeTriggerReason: reasonLowScore,
 		LastRealAttemptAt:  now.Unix(),
 		LastRealSuccessAt:  now.Unix(),
@@ -106,7 +100,46 @@ func TestProbeSelectorDoesNotSelectLowScoreWhenUnifiedHealthAboveThreshold(t *te
 
 	snapshot, ok := store.Get(key)
 	require.True(t, ok)
-	require.Equal(t, 0.20, snapshot.HealthScoreAverage)
+	require.Equal(t, 0.8, snapshot.SuccessRate)
+}
+
+func TestProbeSelectorLowScoreIgnoresNonRecoverableCostOnlyPenalty(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-cost-policy", "gpt-5.5", "cost-plus", "cost-plus", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "cost-policy", "cost-plus", "gpt-5.5", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: channel.Id, Group: "cost-plus", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SampleCount:        10,
+		SuccessRate:        1,
+		TTFTMs:             400,
+		DurationMs:         1600,
+		TokensPerSecond:    70,
+		CostRatio:          0.40,
+		CostReferenceRatio: 0.10,
+		GroupPriorityRatio: 1,
+		LastRealAttemptAt:  now.Unix(),
+		RealSampleCount30m: 1,
+	})
+
+	selector := NewProbeSelector(store, nil).WithPolicyForGroup(func(group string) core.GroupSmartPolicy {
+		require.Equal(t, "cost-plus", group)
+		return core.GroupSmartPolicy{
+			Strategy:        core.StrategyCostFirst,
+			AutoMode:        core.AutoModeSequential,
+			CandidateGroups: []string{"cost-plus"},
+			GroupPriorityRatio: map[string]float64{
+				"cost-plus": 1,
+			},
+		}
+	})
+	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: time.Second, LowScoreThreshold: 0.82})
+	require.NoError(t, err)
+	require.Empty(t, candidates)
 }
 
 func TestProbeSelectorDoesNotUseLongNoSuccessWhenChannelRecentlySucceeded(t *testing.T) {
@@ -122,9 +155,6 @@ func TestProbeSelectorDoesNotUseLongNoSuccessWhenChannelRecentlySucceeded(t *tes
 		Key:                key,
 		SampleCount:        8,
 		SuccessRate:        0.75,
-		SuccessScore:       0.75,
-		SpeedScore:         0.9,
-		ExperienceScore:    0.95,
 		LastRealAttemptAt:  now.Add(-2 * time.Hour).Unix(),
 		LastRealFailureAt:  now.Add(-2 * time.Hour).Unix(),
 		RealSampleCount30m: 0,
@@ -153,9 +183,6 @@ func TestProbeSelectorDoesNotUseLongNoSuccessWhenSameRuntimeRecentlySucceededInS
 		Key:                key,
 		SampleCount:        5,
 		SuccessRate:        0.8,
-		SuccessScore:       0.8,
-		SpeedScore:         0.9,
-		ExperienceScore:    0.95,
 		LastRealAttemptAt:  now.Add(-2 * time.Hour).Unix(),
 		RealSampleCount30m: 0,
 	})
@@ -241,7 +268,6 @@ func TestProbeSelectorSkipsConfigErrorIsolatedSnapshot(t *testing.T) {
 		Key:                 key,
 		SampleCount:         8,
 		SuccessRate:         0.4,
-		SuccessScore:        0.3,
 		ConfigErrorIsolated: true,
 		IsolationReason:     core.ErrorCategoryAuthConfigError,
 		LastRealAttemptAt:   now.Unix(),
@@ -304,7 +330,6 @@ func TestProbeSelectorRateLimitsByRuntimeKey(t *testing.T) {
 		Key:                key,
 		SampleCount:        5,
 		SuccessRate:        0.3,
-		SuccessScore:       0.3,
 		LastRealAttemptAt:  now.Unix(),
 		RealSampleCount30m: 1,
 		LastProbeAt:        now.Add(-time.Minute).Unix(),
@@ -329,9 +354,6 @@ func TestProbeSelectorRateLimitsLegacySnapshotAfterCapabilityKeyEnrichment(t *te
 		Key:                legacyKey,
 		SampleCount:        5,
 		SuccessRate:        0.3,
-		SuccessScore:       0.3,
-		SpeedScore:         0.4,
-		ExperienceScore:    0.6,
 		LastRealAttemptAt:  now.Unix(),
 		RealSampleCount30m: 1,
 	})

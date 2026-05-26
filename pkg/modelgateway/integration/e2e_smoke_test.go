@@ -298,7 +298,7 @@ func newE2ESmokeFacade(settings core.SchedulerSettings, groupService *testkit.Fa
 	selector := scheduler.NewDefaultSmartChannelSelector(
 		scheduler.NewStaticCandidatePoolBuilder(candidates),
 		snapshots,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 	if sticky != nil {
 		selector = selector.WithStickyRouter(sticky)

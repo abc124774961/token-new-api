@@ -14,6 +14,44 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testScorer struct {
+	weights core.ScoreWeights
+}
+
+func newTestScorer(weights core.ScoreWeights) testScorer {
+	return testScorer{weights: weights}
+}
+
+func (s testScorer) Score(candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) core.ScoreResult {
+	if snapshot.Key.ChannelID == 0 && candidate.Channel != nil {
+		snapshot.Key.ChannelID = candidate.Channel.Id
+	}
+	if snapshot.Key.Group == "" {
+		snapshot.Key.Group = candidate.Group
+	}
+	if snapshot.Key.UpstreamModel == "" {
+		snapshot.Key.UpstreamModel = candidate.UpstreamModel
+	}
+	if snapshot.Key.RequestedModel == "" {
+		snapshot.Key.RequestedModel = candidate.RuntimeKey.RequestedModel
+	}
+	if snapshot.Key.EndpointType == "" {
+		snapshot.Key.EndpointType = candidate.RuntimeKey.EndpointType
+	}
+	if len(policy.CandidateGroups) == 0 && snapshot.Key.Group != "" {
+		policy.CandidateGroups = []string{snapshot.Key.Group}
+	}
+	return scheduler.NewCandidateScoringService().EvaluatePreparedCandidate(candidate, snapshot, policy, scheduler.ScoringContext{
+		RequestedModel:  snapshot.Key.RequestedModel,
+		EndpointType:    snapshot.Key.EndpointType,
+		CandidateGroups: append([]string(nil), policy.CandidateGroups...),
+		Strategy:        policy.Strategy,
+		AutoMode:        policy.AutoMode,
+		ScoreWeights:    s.weights,
+		ExplainEnabled:  true,
+	}, false).Score
+}
+
 func TestRuntimeSnapshotStorePutGetAndList(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	key := core.RuntimeKey{
@@ -35,7 +73,7 @@ func TestRuntimeSnapshotStorePutGetAndList(t *testing.T) {
 }
 
 func TestBalancedScorerPrefersHealthyFastCandidate(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	good := scorer.Score(core.Candidate{
 		Channel: &model.Channel{Id: 1},
 		Group:   "default",
@@ -65,18 +103,16 @@ func TestBalancedScorerPrefersHealthyFastCandidate(t *testing.T) {
 
 	require.Greater(t, good.Total, bad.Total)
 	require.Greater(t, good.RoutingTotal, bad.RoutingTotal)
-	require.Greater(t, good.Breakdown["success"], bad.Breakdown["success"])
-	require.Greater(t, good.Breakdown["speed"], bad.Breakdown["speed"])
-	require.Equal(t, good.Breakdown["load"], bad.Breakdown["load"])
-	require.Greater(t, good.RoutingBreakdown["load"], bad.RoutingBreakdown["load"])
+	require.Greater(t, good.Breakdown["completion_rate"], bad.Breakdown["completion_rate"])
+	require.Greater(t, good.Breakdown["ttft_latency"], bad.Breakdown["ttft_latency"])
+	require.Equal(t, good.Breakdown["concurrency_load"], bad.Breakdown["concurrency_load"])
+	require.Greater(t, good.RoutingBreakdown["concurrency_load"], bad.RoutingBreakdown["concurrency_load"])
 }
 
-func TestLowSuccessCapsSpeedContribution(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+func TestLowSuccessIsVisibleAsCompletionRateWithoutMutatingLatencyScore(t *testing.T) {
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	score := scorer.Score(core.Candidate{Channel: &model.Channel{Id: 10}}, core.RuntimeSnapshot{
 		SuccessRate:        0.08,
-		SuccessScore:       0.05,
-		SpeedScore:         1.0,
 		TTFTMs:             1200,
 		DurationMs:         600,
 		CostRatio:          0.12,
@@ -84,17 +120,18 @@ func TestLowSuccessCapsSpeedContribution(t *testing.T) {
 		SampleCount:        100,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 
-	require.LessOrEqual(t, score.Breakdown["speed"], 0.13)
-	require.Less(t, score.Total, 0.50)
-	require.Less(t, score.RoutingTotal, 0.50)
+	require.LessOrEqual(t, score.Breakdown["completion_rate"], 0.13)
+	require.Greater(t, score.Breakdown["ttft_latency"], 0.90)
+	require.Equal(t, 1.0, score.Breakdown["upstream_error_rate"])
+	require.Equal(t, 1.0, score.Breakdown["stream_interrupted_rate"])
+	require.Less(t, score.Total, 0.85)
+	require.Less(t, score.RoutingTotal, 0.85)
 }
 
-func TestExperienceAnomalyOnlyAppearsInBreakdown(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+func TestExperienceAnomalyIsSplitIntoFlatOutputRateItems(t *testing.T) {
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	snapshot := core.RuntimeSnapshot{
 		SuccessRate:         0.90,
-		SuccessScore:        0.90,
-		SpeedScore:          0.80,
 		TTFTMs:              1200,
 		DurationMs:          1800,
 		CostRatio:           0.25,
@@ -106,39 +143,34 @@ func TestExperienceAnomalyOnlyAppearsInBreakdown(t *testing.T) {
 
 	score := scorer.Score(core.Candidate{Channel: &model.Channel{Id: 11}}, snapshot, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 
-	require.InEpsilon(t, 0.125, score.Breakdown["experience"], 0.000001)
-	require.Equal(t, score.Breakdown["load"], score.RoutingBreakdown["load"])
-	expected := score.Breakdown["success"]*0.35 +
-		score.Breakdown["speed"]*0.35 +
-		score.Breakdown["load"]*0.15 +
-		score.Breakdown["cost"]*0.08 +
-		score.Breakdown["group"]*0.07
-	require.InEpsilon(t, expected, score.Total, 0.0002)
-	require.InEpsilon(t, expected, score.RoutingTotal, 0.0002)
+	require.InEpsilon(t, 0.20, score.Breakdown["empty_output_rate"], 0.000001)
+	require.Equal(t, score.Breakdown["concurrency_load"], score.RoutingBreakdown["concurrency_load"])
+	require.Contains(t, score.Breakdown, "stream_interrupted_rate")
+	require.NotContains(t, score.Breakdown, "experience")
+	requireFlatScoreTotal(t, score)
 }
 
 func TestLongTermLowSuccessCapsRecentRecoveryScore(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	score := scorer.Score(core.Candidate{Channel: &model.Channel{Id: 8}}, core.RuntimeSnapshot{
 		SuccessRate:        0.52,
-		SuccessScore:       1.0,
-		SpeedScore:         0.86,
 		TTFTMs:             3600,
 		DurationMs:         3900,
 		CostRatio:          0.13,
 		GroupPriorityRatio: 1,
 		SampleCount:        626,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 
-	require.Less(t, score.Breakdown["success"], 0.65)
-	require.Greater(t, score.Breakdown["success"], 0.50)
-	require.Less(t, score.Total, 0.80)
-	require.Less(t, score.RoutingTotal, 0.80)
+	require.Less(t, score.Breakdown["completion_rate"], 0.65)
+	require.Greater(t, score.Breakdown["completion_rate"], 0.50)
+	require.Equal(t, 1.0, score.Breakdown["upstream_error_rate"])
+	require.Equal(t, 1.0, score.Breakdown["stream_interrupted_rate"])
+	require.Less(t, score.Total, 0.90)
+	require.Less(t, score.RoutingTotal, 0.90)
 }
 
 func TestScoreFactoryStrategiesShiftWeights(t *testing.T) {
-	factory := scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights())
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "default"}
 	fastExpensive := core.RuntimeSnapshot{
 		SuccessRate:        0.95,
@@ -163,41 +195,35 @@ func TestScoreFactoryStrategiesShiftWeights(t *testing.T) {
 		SampleCount:        30,
 	}
 
-	speedFast := factory.ForStrategy(core.StrategySpeedFirst).Score(candidate, fastExpensive, core.GroupSmartPolicy{})
-	speedCheap := factory.ForStrategy(core.StrategySpeedFirst).Score(candidate, slowCheap, core.GroupSmartPolicy{})
+	speedFast := scorer.Score(candidate, fastExpensive, core.GroupSmartPolicy{Strategy: core.StrategySpeedFirst})
+	speedCheap := scorer.Score(candidate, slowCheap, core.GroupSmartPolicy{Strategy: core.StrategySpeedFirst})
 	require.Greater(t, speedFast.Total, speedCheap.Total)
 
-	costFast := factory.ForStrategy(core.StrategyCostFirst).Score(candidate, fastExpensive, core.GroupSmartPolicy{})
-	costCheap := factory.ForStrategy(core.StrategyCostFirst).Score(candidate, slowCheap, core.GroupSmartPolicy{})
+	costFast := scorer.Score(candidate, fastExpensive, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
+	costCheap := scorer.Score(candidate, slowCheap, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
 	require.Greater(t, costCheap.Total, costFast.Total)
 }
 
 func TestCostFirstPrefersCheapCandidateOverFasterExpensiveCandidate(t *testing.T) {
-	scorer := scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()).ForStrategy(core.StrategyCostFirst)
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "auto"}
 	cheapPlus := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:        1,
-		SuccessScore:       1,
-		SpeedScore:         0.66,
 		TTFTMs:             7200,
 		DurationMs:         5800,
 		CostRatio:          0.13,
 		CostReferenceRatio: 0.13,
 		GroupPriorityRatio: 1,
 		SampleCount:        100,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
 	fastPro := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:        1,
-		SuccessScore:       1,
-		SpeedScore:         0.87,
 		TTFTMs:             3200,
 		DurationMs:         3600,
 		CostRatio:          0.30,
 		CostReferenceRatio: 0.13,
 		GroupPriorityRatio: 1,
 		SampleCount:        100,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
 
 	require.Greater(t, cheapPlus.Breakdown["cost"], fastPro.Breakdown["cost"])
@@ -205,28 +231,22 @@ func TestCostFirstPrefersCheapCandidateOverFasterExpensiveCandidate(t *testing.T
 	require.Greater(t, cheapPlus.RoutingTotal, fastPro.RoutingTotal)
 }
 
-func TestCostScoreUsesCandidateMinimumCostReference(t *testing.T) {
-	scorer := scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()).ForStrategy(core.StrategyCostFirst)
+func TestCostItemUsesCandidateMinimumCostReference(t *testing.T) {
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "auto"}
 	lowest := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:        1,
-		SuccessScore:       1,
-		SpeedScore:         0.70,
 		CostRatio:          8,
 		CostReferenceRatio: 8,
 		GroupPriorityRatio: 1,
 		SampleCount:        100,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
 	expensive := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:        1,
-		SuccessScore:       1,
-		SpeedScore:         0.70,
 		CostRatio:          20,
 		CostReferenceRatio: 8,
 		GroupPriorityRatio: 1,
 		SampleCount:        100,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
 
 	require.Equal(t, 1.0, lowest.Breakdown["cost"])
@@ -236,27 +256,21 @@ func TestCostScoreUsesCandidateMinimumCostReference(t *testing.T) {
 }
 
 func TestCostFirstAmplifiesLargeRelativeCostGap(t *testing.T) {
-	scorer := scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()).ForStrategy(core.StrategyCostFirst)
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "auto"}
 	cheap := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:        0.96,
-		SuccessScore:       0.96,
-		SpeedScore:         0.70,
 		CostRatio:          0.4091,
 		CostReferenceRatio: 0.4091,
 		GroupPriorityRatio: 0.1,
 		SampleCount:        84,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
 	expensive := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:        0.96,
-		SuccessScore:       0.96,
-		SpeedScore:         0.94,
 		CostRatio:          0.8838,
 		CostReferenceRatio: 0.4091,
 		GroupPriorityRatio: 0.1,
 		SampleCount:        83,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
 
 	require.Equal(t, 1.0, cheap.Breakdown["cost"])
@@ -265,42 +279,37 @@ func TestCostFirstAmplifiesLargeRelativeCostGap(t *testing.T) {
 	require.Greater(t, cheap.RoutingTotal, expensive.RoutingTotal)
 }
 
-func TestCostScoreUsesNeutralValueWithoutReference(t *testing.T) {
-	scorer := scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()).ForStrategy(core.StrategyCostFirst)
+func TestCostItemSkipsMissingReference(t *testing.T) {
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "auto"}
 	score := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:        1,
-		SuccessScore:       1,
-		SpeedScore:         0.70,
 		CostRatio:          0.13,
 		GroupPriorityRatio: 1,
 		SampleCount:        100,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
 
-	require.Equal(t, 0.5, score.Breakdown["cost"])
+	require.NotContains(t, score.Breakdown, "cost")
+	require.True(t, score.CostReferenceMissing)
 }
 
 func TestCostFirstUsesConfiguredGroupWeightAndLowerGroupRatio(t *testing.T) {
-	scorer := scheduler.NewScoreCalculatorFactory(core.ScoreWeights{
+	scorer := newTestScorer(core.ScoreWeights{
 		Success: 0.32,
 		Speed:   0.28,
 		Load:    0.10,
 		Cost:    0.15,
 		Group:   0.30,
-	}).ForStrategy(core.StrategyCostFirst)
+	})
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "auto"}
 	cheapPreferredGroup := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:        0.99,
-		SuccessScore:       0.99,
-		SpeedScore:         0.64,
 		TTFTMs:             6800,
 		DurationMs:         7200,
 		CostRatio:          0.12,
 		CostReferenceRatio: 0.12,
 		GroupPriorityRatio: 0.1,
 		SampleCount:        120,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{
 		Strategy:        core.StrategyCostFirst,
 		CandidateGroups: []string{"codex-plus", "codex-pro"},
@@ -312,15 +321,12 @@ func TestCostFirstUsesConfiguredGroupWeightAndLowerGroupRatio(t *testing.T) {
 	})
 	fastLowPriorityGroup := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:        0.99,
-		SuccessScore:       0.99,
-		SpeedScore:         0.91,
 		TTFTMs:             1600,
 		DurationMs:         2600,
 		CostRatio:          0.24,
 		CostReferenceRatio: 0.12,
 		GroupPriorityRatio: 0.2,
 		SampleCount:        120,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{
 		Strategy:        core.StrategyCostFirst,
 		CandidateGroups: []string{"codex-plus", "codex-pro"},
@@ -332,7 +338,7 @@ func TestCostFirstUsesConfiguredGroupWeightAndLowerGroupRatio(t *testing.T) {
 	})
 
 	require.Greater(t, cheapPreferredGroup.Breakdown["cost"], fastLowPriorityGroup.Breakdown["cost"])
-	require.Greater(t, cheapPreferredGroup.Breakdown["group"], fastLowPriorityGroup.Breakdown["group"])
+	require.Greater(t, cheapPreferredGroup.Breakdown["group_priority"], fastLowPriorityGroup.Breakdown["group_priority"])
 	require.Greater(t, cheapPreferredGroup.Total, fastLowPriorityGroup.Total)
 	require.Greater(t, cheapPreferredGroup.RoutingTotal, fastLowPriorityGroup.RoutingTotal)
 }
@@ -344,8 +350,6 @@ func TestCostFirstDoesNotRouteToHigherCostGroupOnlyBecauseCheapGroupIsBusy(t *te
 	store.Put(core.RuntimeSnapshot{
 		Key:                       cheapPlusKey,
 		SuccessRate:               0.99,
-		SuccessScore:              0.99,
-		SpeedScore:                0.50,
 		TTFTMs:                    3200,
 		DurationMs:                5000,
 		ActiveConcurrency:         10,
@@ -353,20 +357,16 @@ func TestCostFirstDoesNotRouteToHigherCostGroupOnlyBecauseCheapGroupIsBusy(t *te
 		CostRatio:                 0.05,
 		GroupPriorityRatio:        0.1,
 		SampleCount:               120,
-		ExperienceScore:           1,
 	})
 	store.Put(core.RuntimeSnapshot{
 		Key:                fastProKey,
 		SuccessRate:        1,
-		SuccessScore:       1,
-		SpeedScore:         0.95,
 		TTFTMs:             1200,
 		DurationMs:         2600,
 		ActiveConcurrency:  0,
 		CostRatio:          0.12,
 		GroupPriorityRatio: 0.2,
 		SampleCount:        120,
-		ExperienceScore:    1,
 	})
 	selector := scheduler.NewDefaultSmartChannelSelector(
 		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
@@ -374,7 +374,7 @@ func TestCostFirstDoesNotRouteToHigherCostGroupOnlyBecauseCheapGroupIsBusy(t *te
 			{Channel: &model.Channel{Id: 9, Name: "maxtopai-pro"}, Group: "codex-pro", UpstreamModel: "gpt-5.5", RuntimeKey: fastProKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithRuntimeSnapshotEnricher(
 		scheduler.NewRuntimeSnapshotEnricher(nil, 1500, 8, 2).WithCostProfileProvider(fakeCostProfileProvider{
 			ratiosByChannel: map[int]float64{
@@ -408,12 +408,12 @@ func TestCostFirstDoesNotRouteToHigherCostGroupOnlyBecauseCheapGroupIsBusy(t *te
 	require.Equal(t, 1.0, cheapPlus.ScoreBreakdown["cost"])
 	require.InEpsilon(t, 0.3067, fastPro.ScoreBreakdown["cost"], 0.0001)
 	require.Greater(t, cheapPlus.RoutingScoreTotal, fastPro.RoutingScoreTotal)
-	require.Equal(t, cheapPlus.ScoreBreakdown["load"], cheapPlus.RoutingScoreBreakdown["load"])
-	require.NotContains(t, cheapPlus.RoutingScoreBreakdown, "routing_pressure")
+	require.Equal(t, cheapPlus.ScoreBreakdown["concurrency_load"], cheapPlus.RoutingScoreBreakdown["concurrency_load"])
+	require.Contains(t, cheapPlus.RoutingScoreBreakdown, "first_byte_backlog")
 }
 
-func TestLoadScoreHardDropsCircuitOpenSnapshot(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+func TestConcurrencyLoadItemHardDropsCircuitOpenSnapshot(t *testing.T) {
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	score := scorer.Score(core.Candidate{Channel: &model.Channel{Id: 1}}, core.RuntimeSnapshot{
 		SuccessRate:        0.99,
 		TTFTMs:             500,
@@ -426,12 +426,12 @@ func TestLoadScoreHardDropsCircuitOpenSnapshot(t *testing.T) {
 		SampleCount:        20,
 	}, core.GroupSmartPolicy{})
 
-	require.Zero(t, score.Breakdown["load"])
-	require.Zero(t, score.RoutingBreakdown["load"])
+	require.Zero(t, score.Breakdown["concurrency_load"])
+	require.Zero(t, score.RoutingBreakdown["concurrency_load"])
 }
 
-func TestHealthScoreIgnoresTransientConcurrency(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+func TestStableScoreIgnoresTransientConcurrency(t *testing.T) {
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "default"}
 	base := core.RuntimeSnapshot{
 		SuccessRate:        0.99,
@@ -443,9 +443,6 @@ func TestHealthScoreIgnoresTransientConcurrency(t *testing.T) {
 		CostRatio:          1,
 		GroupPriorityRatio: 1,
 		SampleCount:        20,
-		SuccessScore:       0.99,
-		SpeedScore:         0.90,
-		ExperienceScore:    1,
 	}
 	normal := scorer.Score(candidate, base, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 	busy := base
@@ -458,20 +455,18 @@ func TestHealthScoreIgnoresTransientConcurrency(t *testing.T) {
 	busyScore := scorer.Score(candidate, busy, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 
 	require.Equal(t, normal.Total, busyScore.Total)
-	require.Equal(t, normal.Breakdown["load"], busyScore.Breakdown["load"])
+	require.Equal(t, normal.Breakdown["concurrency_load"], busyScore.Breakdown["concurrency_load"])
 	require.Greater(t, normal.RoutingTotal, busyScore.RoutingTotal)
-	require.Less(t, busyScore.RoutingBreakdown["load"], normal.RoutingBreakdown["load"])
-	require.Contains(t, busyScore.RoutingBreakdown, "ttft_pending")
-	require.NotContains(t, busyScore.Breakdown, "ttft_pending")
+	require.Less(t, busyScore.RoutingBreakdown["concurrency_load"], normal.RoutingBreakdown["concurrency_load"])
+	require.Contains(t, busyScore.RoutingBreakdown, "first_byte_backlog")
+	require.Contains(t, busyScore.Breakdown, "first_byte_backlog")
 }
 
-func TestRoutingLoadScoreTreatsLowConfiguredConcurrencyUsageAsHealthy(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+func TestRoutingConcurrencyLoadItemTreatsLowConfiguredUsageAsHealthy(t *testing.T) {
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 8}, Group: "codex-plus"}
 	score := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:                0.99,
-		SuccessScore:               0.99,
-		SpeedScore:                 0.70,
 		TTFTMs:                     3330,
 		DurationMs:                 3770,
 		ActiveConcurrency:          3,
@@ -479,20 +474,17 @@ func TestRoutingLoadScoreTreatsLowConfiguredConcurrencyUsageAsHealthy(t *testing
 		CostRatio:                  0.06,
 		GroupPriorityRatio:         1,
 		SampleCount:                120,
-		ExperienceScore:            1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 
-	require.GreaterOrEqual(t, score.RoutingBreakdown["load"], 0.99)
-	require.NotContains(t, score.RoutingBreakdown, "routing_pressure")
+	require.GreaterOrEqual(t, score.RoutingBreakdown["concurrency_load"], 0.99)
+	require.Contains(t, score.RoutingBreakdown, "first_byte_backlog")
 }
 
-func TestRoutingLoadScoreDropsNearConcurrencyLimit(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+func TestRoutingConcurrencyLoadItemDropsNearConcurrencyLimit(t *testing.T) {
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 8}, Group: "codex-plus"}
 	score := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:                0.99,
-		SuccessScore:               0.99,
-		SpeedScore:                 0.70,
 		TTFTMs:                     3330,
 		DurationMs:                 3770,
 		ActiveConcurrency:          46,
@@ -500,20 +492,17 @@ func TestRoutingLoadScoreDropsNearConcurrencyLimit(t *testing.T) {
 		CostRatio:                  0.06,
 		GroupPriorityRatio:         1,
 		SampleCount:                120,
-		ExperienceScore:            1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 
-	require.Less(t, score.RoutingBreakdown["load"], 0.50)
-	require.Contains(t, score.RoutingBreakdown, "routing_pressure")
+	require.Less(t, score.RoutingBreakdown["concurrency_load"], 0.50)
+	require.Contains(t, score.RoutingBreakdown, "first_byte_backlog")
 }
 
 func TestCostFirstRoutingLoadOnlyPenalizesExceededConcurrencyLimit(t *testing.T) {
-	scorer := scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()).ForStrategy(core.StrategyCostFirst)
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 4}, Group: "codex-plus"}
 	base := core.RuntimeSnapshot{
 		SuccessRate:                0.99,
-		SuccessScore:               0.99,
-		SpeedScore:                 0.86,
 		TTFTMs:                     3500,
 		DurationMs:                 4600,
 		ActiveConcurrency:          3,
@@ -522,19 +511,18 @@ func TestCostFirstRoutingLoadOnlyPenalizesExceededConcurrencyLimit(t *testing.T)
 		CostRatio:                  0.05,
 		GroupPriorityRatio:         0.1,
 		SampleCount:                200,
-		ExperienceScore:            1,
 	}
 	normal := scorer.Score(candidate, base, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
-	require.Equal(t, 1.0, normal.RoutingBreakdown["load"])
-	require.NotContains(t, normal.RoutingBreakdown, "routing_pressure")
+	require.Equal(t, 1.0, normal.RoutingBreakdown["concurrency_load"])
+	require.Contains(t, normal.RoutingBreakdown, "first_byte_backlog")
 
 	overLimit := base
 	overLimit.ActiveConcurrency = 90
 	busy := scorer.Score(candidate, overLimit, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
-	require.Less(t, busy.RoutingBreakdown["load"], normal.RoutingBreakdown["load"])
-	require.Contains(t, busy.RoutingBreakdown, "routing_pressure")
+	require.Less(t, busy.RoutingBreakdown["concurrency_load"], normal.RoutingBreakdown["concurrency_load"])
+	require.Contains(t, busy.RoutingBreakdown, "first_byte_backlog")
 	require.Less(t, busy.RoutingTotal, normal.RoutingTotal)
-	require.Equal(t, normal.Breakdown["load"], busy.Breakdown["load"])
+	require.Equal(t, normal.Breakdown["concurrency_load"], busy.Breakdown["concurrency_load"])
 }
 
 func TestSelectorDoesNotSkipFullConcurrencyCandidateWhenQueueDisabled(t *testing.T) {
@@ -565,7 +553,7 @@ func TestSelectorDoesNotSkipFullConcurrencyCandidateWhenQueueDisabled(t *testing
 			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: secondKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -599,7 +587,7 @@ func TestSelectorSkipsRequestBalanceMarkedCandidate(t *testing.T) {
 			{Channel: &model.Channel{Id: 2, Name: "healthy", Status: 1}, Group: "default", RuntimeKey: secondKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(ctx, nil, core.GroupSmartPolicy{
@@ -649,7 +637,7 @@ func TestSelectorDoesNotLimitColdStartProbeConcurrency(t *testing.T) {
 			{Channel: &model.Channel{Id: 2, Name: "cold-peer"}, Group: "default", RuntimeKey: secondKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -667,8 +655,8 @@ func TestSelectorDoesNotLimitColdStartProbeConcurrency(t *testing.T) {
 	first := candidateExplanationByChannel(t, plan.Candidates, 1)
 	require.True(t, first.Available)
 	require.Empty(t, first.RejectReason)
-	require.Zero(t, first.SuccessScore)
-	require.Zero(t, first.SpeedScore)
+	require.NotContains(t, first.ScoreBreakdown, "completion_rate")
+	require.NotContains(t, first.ScoreBreakdown, "ttft_latency")
 }
 
 func TestSelectorRecordsCandidateExplanations(t *testing.T) {
@@ -704,7 +692,7 @@ func TestSelectorRecordsCandidateExplanations(t *testing.T) {
 			{Channel: &model.Channel{Id: 2, Name: "mimo"}, Group: "default", UpstreamModel: "mimo-v1", ProviderProfile: "mimo_codex_chat", ProxyMode: "responses_via_chat", RuntimeKey: selectedKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -735,7 +723,7 @@ func TestSelectorRecordsCandidateExplanations(t *testing.T) {
 	require.Equal(t, "mimo_codex_chat", selected.ProviderProfile)
 	require.Equal(t, "responses_via_chat", selected.ProxyMode)
 	require.Greater(t, selected.ScoreTotal, 0.0)
-	require.Contains(t, selected.ScoreBreakdown, "success")
+	require.Contains(t, selected.ScoreBreakdown, "completion_rate")
 	require.Equal(t, selectedKey, selected.RuntimeKey)
 }
 
@@ -772,7 +760,7 @@ func TestSelectorRecordsDispatchRequirements(t *testing.T) {
 			},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, &service.RetryParam{
@@ -809,8 +797,6 @@ func TestSelectorReadsSnapshotStoredUnderEnrichedRuntimeKey(t *testing.T) {
 	store.Put(core.RuntimeSnapshot{
 		Key:                enrichedKey,
 		SuccessRate:        1,
-		SuccessScore:       1,
-		SpeedScore:         0.03,
 		TTFTMs:             45000,
 		DurationMs:         46000,
 		CostRatio:          0.05,
@@ -829,7 +815,7 @@ func TestSelectorReadsSnapshotStoredUnderEnrichedRuntimeKey(t *testing.T) {
 			},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithRuntimeSnapshotEnricher(scheduler.NewRuntimeSnapshotEnricher(nil, 1500, 8, 2))
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -843,16 +829,14 @@ func TestSelectorReadsSnapshotStoredUnderEnrichedRuntimeKey(t *testing.T) {
 	require.True(t, handled)
 	require.NotNil(t, plan)
 	require.Equal(t, enrichedKey, plan.RuntimeKey)
-	require.Less(t, plan.ScoreTotal, 0.35)
+	require.Less(t, plan.ScoreTotal, 0.80)
 	require.Len(t, plan.Candidates, 1)
 	candidate := plan.Candidates[0]
 	require.Equal(t, 3, candidate.SampleCount)
 	require.Equal(t, 45000.0, candidate.TTFTMs)
-	require.Less(t, candidate.ScoreTotal, 0.35)
-	require.Greater(t, candidate.SpeedScore, 0.20)
-	require.Less(t, candidate.SpeedScore, 0.30)
-	require.Equal(t, candidate.ScoreBreakdown["speed"], candidate.ScoreSpeedFactor)
-	require.Equal(t, 0.78, candidate.ScoreBreakdown["ttft_penalty"])
+	require.Less(t, candidate.ScoreTotal, 0.80)
+	require.Contains(t, candidate.ScoreBreakdown, "ttft_latency")
+	require.Zero(t, candidate.ScoreBreakdown["ttft_latency"])
 }
 
 func TestSelectorPrefersEnrichedSnapshotOverLegacyRuntimeKey(t *testing.T) {
@@ -872,8 +856,6 @@ func TestSelectorPrefersEnrichedSnapshotOverLegacyRuntimeKey(t *testing.T) {
 	store.Put(core.RuntimeSnapshot{
 		Key:                legacyKey,
 		SuccessRate:        1,
-		SuccessScore:       1,
-		SpeedScore:         0.96,
 		TTFTMs:             900,
 		DurationMs:         1500,
 		CostRatio:          0.05,
@@ -883,8 +865,6 @@ func TestSelectorPrefersEnrichedSnapshotOverLegacyRuntimeKey(t *testing.T) {
 	store.Put(core.RuntimeSnapshot{
 		Key:                enrichedKey,
 		SuccessRate:        0.998,
-		SuccessScore:       1,
-		SpeedScore:         0.50,
 		TTFTMs:             12500,
 		DurationMs:         9400,
 		CostRatio:          0.05,
@@ -903,7 +883,7 @@ func TestSelectorPrefersEnrichedSnapshotOverLegacyRuntimeKey(t *testing.T) {
 			},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithRuntimeSnapshotEnricher(scheduler.NewRuntimeSnapshotEnricher(nil, 1500, 8, 2))
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -922,11 +902,10 @@ func TestSelectorPrefersEnrichedSnapshotOverLegacyRuntimeKey(t *testing.T) {
 	require.Equal(t, enrichedKey, candidate.MatchedRuntimeKey)
 	require.Equal(t, 1705, candidate.SampleCount)
 	require.Equal(t, 12500.0, candidate.TTFTMs)
-	require.Equal(t, candidate.ScoreBreakdown["speed"], candidate.ScoreSpeedFactor)
-	require.Equal(t, 0.50, candidate.SpeedScore)
+	require.InEpsilon(t, 0.3906, candidate.ScoreBreakdown["ttft_latency"], 0.0001)
 }
 
-func TestSelectorUsesRoutingScoreButReportsHealthScore(t *testing.T) {
+func TestSelectorUsesRoutingScoreButReportsStableScore(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	busyKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 1, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
 	freeKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 2, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
@@ -941,9 +920,6 @@ func TestSelectorUsesRoutingScoreButReportsHealthScore(t *testing.T) {
 		CostRatio:          1,
 		GroupPriorityRatio: 1,
 		SampleCount:        20,
-		SuccessScore:       0.99,
-		SpeedScore:         0.90,
-		ExperienceScore:    1,
 	})
 	store.Put(core.RuntimeSnapshot{
 		Key:                freeKey,
@@ -955,9 +931,6 @@ func TestSelectorUsesRoutingScoreButReportsHealthScore(t *testing.T) {
 		CostRatio:          1,
 		GroupPriorityRatio: 1,
 		SampleCount:        20,
-		SuccessScore:       0.96,
-		SpeedScore:         0.84,
-		ExperienceScore:    1,
 	})
 	selector := scheduler.NewDefaultSmartChannelSelector(
 		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
@@ -965,7 +938,7 @@ func TestSelectorUsesRoutingScoreButReportsHealthScore(t *testing.T) {
 			{Channel: &model.Channel{Id: 2, Name: "free-good"}, Group: "default", RuntimeKey: freeKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -984,8 +957,8 @@ func TestSelectorUsesRoutingScoreButReportsHealthScore(t *testing.T) {
 	free := candidateExplanationByChannel(t, plan.Candidates, 2)
 	require.Greater(t, busy.ScoreTotal, free.ScoreTotal)
 	require.Less(t, busy.RoutingScoreTotal, free.RoutingScoreTotal)
-	require.Equal(t, 1.0, busy.ScoreBreakdown["load"])
-	require.Less(t, busy.RoutingScoreBreakdown["load"], free.RoutingScoreBreakdown["load"])
+	require.Equal(t, 1.0, busy.ScoreBreakdown["concurrency_load"])
+	require.Less(t, busy.RoutingScoreBreakdown["concurrency_load"], free.RoutingScoreBreakdown["concurrency_load"])
 }
 
 func TestSelectorMarksBalanceInsufficientCandidateUnavailable(t *testing.T) {
@@ -1000,7 +973,7 @@ func TestSelectorMarksBalanceInsufficientCandidateUnavailable(t *testing.T) {
 			{Channel: &model.Channel{Id: 2, Name: "healthy", Status: 1}, Group: "default", RuntimeKey: selectedKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -1032,7 +1005,7 @@ func TestSelectorMarksConfirmedZeroBalanceCandidateUnavailable(t *testing.T) {
 			{Channel: &model.Channel{Id: 2, Name: "healthy", Status: 1}, Group: "default", RuntimeKey: selectedKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -1089,7 +1062,7 @@ func TestSelectorAllowsShortQueueWhenQueueEnabled(t *testing.T) {
 			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: secondKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -1125,9 +1098,6 @@ func TestSelectorSkipsSaturatedCandidateWhenPeerHasCapacity(t *testing.T) {
 		CostRatio:                 0.05,
 		GroupPriorityRatio:        1,
 		SampleCount:               100,
-		SuccessScore:              0.99,
-		SpeedScore:                0.96,
-		ExperienceScore:           1,
 	})
 	store.Put(core.RuntimeSnapshot{
 		Key:                       availableKey,
@@ -1140,9 +1110,6 @@ func TestSelectorSkipsSaturatedCandidateWhenPeerHasCapacity(t *testing.T) {
 		CostRatio:                 0.18,
 		GroupPriorityRatio:        0.7,
 		SampleCount:               30,
-		SuccessScore:              0.92,
-		SpeedScore:                0.54,
-		ExperienceScore:           1,
 	})
 	selector := scheduler.NewDefaultSmartChannelSelector(
 		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
@@ -1150,7 +1117,7 @@ func TestSelectorSkipsSaturatedCandidateWhenPeerHasCapacity(t *testing.T) {
 			{Channel: &model.Channel{Id: 2, Name: "backup"}, Group: "plus", RuntimeKey: availableKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -1172,7 +1139,7 @@ func TestSelectorSkipsSaturatedCandidateWhenPeerHasCapacity(t *testing.T) {
 	require.False(t, saturated.Selected)
 	require.Equal(t, "concurrency_saturated", saturated.SelectionSkipReason)
 	require.Greater(t, saturated.RoutingScoreTotal, 0.0)
-	require.Contains(t, saturated.RoutingScoreBreakdown, "routing_pressure")
+	require.Contains(t, saturated.RoutingScoreBreakdown, "first_byte_backlog")
 }
 
 func TestSelectorTreatsLearnedEffectiveLimitAsRoutingCeiling(t *testing.T) {
@@ -1192,9 +1159,6 @@ func TestSelectorTreatsLearnedEffectiveLimitAsRoutingCeiling(t *testing.T) {
 		CostRatio:                  0.06,
 		GroupPriorityRatio:         1,
 		SampleCount:                120,
-		SuccessScore:               1,
-		SpeedScore:                 0.94,
-		ExperienceScore:            1,
 	})
 	store.Put(core.RuntimeSnapshot{
 		Key:                       backupKey,
@@ -1207,9 +1171,6 @@ func TestSelectorTreatsLearnedEffectiveLimitAsRoutingCeiling(t *testing.T) {
 		CostRatio:                 0.15,
 		GroupPriorityRatio:        0.8,
 		SampleCount:               120,
-		SuccessScore:              1,
-		SpeedScore:                0.78,
-		ExperienceScore:           1,
 	})
 	selector := scheduler.NewDefaultSmartChannelSelector(
 		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
@@ -1217,7 +1178,7 @@ func TestSelectorTreatsLearnedEffectiveLimitAsRoutingCeiling(t *testing.T) {
 			{Channel: &model.Channel{Id: 6, Name: "b886"}, Group: "codex-pro", RuntimeKey: backupKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -1254,9 +1215,6 @@ func TestSelectorQueuesOnlyWhenAllCandidatesSaturated(t *testing.T) {
 		CostRatio:                 1,
 		GroupPriorityRatio:        1,
 		SampleCount:               20,
-		SuccessScore:              1,
-		SpeedScore:                0.95,
-		ExperienceScore:           1,
 	})
 	store.Put(core.RuntimeSnapshot{
 		Key:                       secondKey,
@@ -1272,9 +1230,6 @@ func TestSelectorQueuesOnlyWhenAllCandidatesSaturated(t *testing.T) {
 		CostRatio:                 2,
 		GroupPriorityRatio:        1,
 		SampleCount:               20,
-		SuccessScore:              0.80,
-		SpeedScore:                0.28,
-		ExperienceScore:           1,
 	})
 	selector := scheduler.NewDefaultSmartChannelSelector(
 		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
@@ -1282,7 +1237,7 @@ func TestSelectorQueuesOnlyWhenAllCandidatesSaturated(t *testing.T) {
 			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: secondKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -1301,7 +1256,7 @@ func TestSelectorQueuesOnlyWhenAllCandidatesSaturated(t *testing.T) {
 }
 
 func TestSlowCandidateCannotOutscoreFastCandidateWithRealLatencySamples(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "default"}
 
 	fast := scorer.Score(candidate, core.RuntimeSnapshot{
@@ -1314,9 +1269,6 @@ func TestSlowCandidateCannotOutscoreFastCandidateWithRealLatencySamples(t *testi
 		CostRatio:          1.1,
 		GroupPriorityRatio: 1,
 		SampleCount:        18,
-		SuccessScore:       0.96,
-		SpeedScore:         0.91,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 	slowCheap := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:        0.99,
@@ -1328,18 +1280,15 @@ func TestSlowCandidateCannotOutscoreFastCandidateWithRealLatencySamples(t *testi
 		CostRatio:          0.2,
 		GroupPriorityRatio: 1,
 		SampleCount:        16,
-		SuccessScore:       0.99,
-		SpeedScore:         0.08,
-		ExperienceScore:    0.95,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 
 	require.Greater(t, fast.Total, slowCheap.Total)
-	require.Greater(t, fast.Breakdown["speed"], slowCheap.Breakdown["speed"])
-	require.Less(t, slowCheap.Total, 0.45)
+	require.Greater(t, fast.Breakdown["ttft_latency"], slowCheap.Breakdown["ttft_latency"])
+	require.Less(t, slowCheap.Total, 0.65)
 }
 
-func TestHighTTFTAppliesExplicitPenaltyEvenWithHealthySpeedScore(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+func TestHighTTFTDirectlyLowersTTFTLatencyItem(t *testing.T) {
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "default"}
 
 	normal := scorer.Score(candidate, core.RuntimeSnapshot{
@@ -1352,9 +1301,6 @@ func TestHighTTFTAppliesExplicitPenaltyEvenWithHealthySpeedScore(t *testing.T) {
 		CostRatio:          1,
 		GroupPriorityRatio: 1,
 		SampleCount:        20,
-		SuccessScore:       0.99,
-		SpeedScore:         0.92,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 	slowFirstByte := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:        0.99,
@@ -1366,20 +1312,14 @@ func TestHighTTFTAppliesExplicitPenaltyEvenWithHealthySpeedScore(t *testing.T) {
 		CostRatio:          0.2,
 		GroupPriorityRatio: 1,
 		SampleCount:        20,
-		SuccessScore:       0.99,
-		SpeedScore:         0.92,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 
 	require.Greater(t, normal.Total, slowFirstByte.Total)
-	require.Contains(t, slowFirstByte.Breakdown, "ttft_penalty")
-	require.GreaterOrEqual(t, slowFirstByte.Breakdown["ttft_penalty"], 0.72)
-	require.Less(t, slowFirstByte.Breakdown["speed"], 0.28)
-	require.LessOrEqual(t, slowFirstByte.Total, 0.32)
+	require.Less(t, slowFirstByte.Breakdown["ttft_latency"], 0.28)
 }
 
 func TestFirstBytePendingAppliesDynamicPenalty(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "default"}
 	base := core.RuntimeSnapshot{
 		SuccessRate:        0.99,
@@ -1391,9 +1331,6 @@ func TestFirstBytePendingAppliesDynamicPenalty(t *testing.T) {
 		CostRatio:          1,
 		GroupPriorityRatio: 1,
 		SampleCount:        20,
-		SuccessScore:       0.99,
-		SpeedScore:         0.90,
-		ExperienceScore:    1,
 	}
 	normal := scorer.Score(candidate, base, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 	pending := base
@@ -1403,14 +1340,14 @@ func TestFirstBytePendingAppliesDynamicPenalty(t *testing.T) {
 	pendingScore := scorer.Score(candidate, pending, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 
 	require.Equal(t, normal.Total, pendingScore.Total)
-	require.Contains(t, pendingScore.RoutingBreakdown, "ttft_pending")
-	require.NotContains(t, pendingScore.Breakdown, "ttft_pending")
-	require.Less(t, pendingScore.RoutingBreakdown["load"], normal.RoutingBreakdown["load"])
-	require.Less(t, pendingScore.RoutingTotal, 0.70)
+	require.Contains(t, pendingScore.RoutingBreakdown, "first_byte_backlog")
+	require.Contains(t, pendingScore.Breakdown, "first_byte_backlog")
+	require.Less(t, pendingScore.RoutingBreakdown["concurrency_load"], normal.RoutingBreakdown["concurrency_load"])
+	require.Less(t, pendingScore.RoutingTotal, normal.RoutingTotal)
 }
 
 func TestUnknownLimitActiveConcurrencyDoesNotAffectRoutingScore(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "default"}
 	base := core.RuntimeSnapshot{
 		SuccessRate:        0.99,
@@ -1421,9 +1358,6 @@ func TestUnknownLimitActiveConcurrencyDoesNotAffectRoutingScore(t *testing.T) {
 		CostRatio:          0.2,
 		GroupPriorityRatio: 1,
 		SampleCount:        20,
-		SuccessScore:       0.99,
-		SpeedScore:         0.88,
-		ExperienceScore:    1,
 	}
 	normal := scorer.Score(candidate, base, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 	busy := base
@@ -1431,14 +1365,14 @@ func TestUnknownLimitActiveConcurrencyDoesNotAffectRoutingScore(t *testing.T) {
 	busyScore := scorer.Score(candidate, busy, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 
 	require.Equal(t, normal.Total, busyScore.Total)
-	require.NotContains(t, busyScore.Breakdown, "routing_pressure")
-	require.NotContains(t, busyScore.RoutingBreakdown, "routing_pressure")
-	require.Equal(t, normal.RoutingBreakdown["load"], busyScore.RoutingBreakdown["load"])
+	require.Contains(t, busyScore.Breakdown, "first_byte_backlog")
+	require.Contains(t, busyScore.RoutingBreakdown, "first_byte_backlog")
+	require.Equal(t, normal.RoutingBreakdown["concurrency_load"], busyScore.RoutingBreakdown["concurrency_load"])
 	require.Equal(t, normal.RoutingTotal, busyScore.RoutingTotal)
 }
 
-func TestSpeedScoreWithoutSamplesIsConservative(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+func TestTTFTLatencyWithoutSamplesIsMissing(t *testing.T) {
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	score := scorer.Score(core.Candidate{Channel: &model.Channel{Id: 9}}, core.RuntimeSnapshot{
 		SuccessRate:        0.80,
 		CostRatio:          0.1,
@@ -1446,37 +1380,33 @@ func TestSpeedScoreWithoutSamplesIsConservative(t *testing.T) {
 		SampleCount:        0,
 	}, core.GroupSmartPolicy{})
 
-	require.LessOrEqual(t, score.Breakdown["speed"], 0.45)
-	require.Less(t, score.Total, 0.70)
-	require.NotContains(t, score.Breakdown, "success")
+	require.NotContains(t, score.Breakdown, "ttft_latency")
+	require.NotContains(t, score.Breakdown, "completion_rate")
 	require.NotContains(t, score.Breakdown, "speed")
-	require.Equal(t, 1.0, score.Breakdown["explore_baseline"])
+	require.NotContains(t, score.Breakdown, "explore_baseline")
+	require.False(t, scoreHasMissingReason(score.Items, "ttft_latency", ""))
+	require.True(t, scoreHasMissingReason(score.Items, "ttft_latency", "sample_missing"))
 }
 
-func TestSingleSlowSampleDoesNotCrushSpeedScore(t *testing.T) {
-	scorer := scheduler.NewWeightedScoreCalculator(scheduler.DefaultScoreWeights())
+func TestSingleSlowSampleKeepsFlatLatencyPenaltyBounded(t *testing.T) {
+	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 9}, Group: "default"}
 
 	score := scorer.Score(candidate, core.RuntimeSnapshot{
 		SuccessRate:        1,
-		SuccessScore:       1,
-		SpeedScore:         0.038,
 		TTFTMs:             19260,
 		DurationMs:         26410,
 		CostRatio:          0.1,
 		CostReferenceRatio: 0.1,
 		GroupPriorityRatio: 1,
 		SampleCount:        1,
-		ExperienceScore:    1,
 	}, core.GroupSmartPolicy{Strategy: core.StrategyBalanced})
 
-	require.Greater(t, score.Breakdown["speed"], 0.40)
-	require.Less(t, score.Breakdown["speed"], 0.45)
-	require.InEpsilon(t, 0.1067, score.Breakdown["ttft_penalty"], 0.001)
-	require.Greater(t, score.Total, 0.70)
+	require.Less(t, score.Breakdown["ttft_latency"], 0.05)
+	require.Greater(t, score.Total, 0.45)
 }
 
-func TestSpeedFactorDoesNotOverwriteDisplayedSpeedScore(t *testing.T) {
+func TestMissingLatencyDoesNotCreateTTFTScoreItem(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	key := core.RuntimeKey{
 		RequestedModel: "gpt-5.5",
@@ -1487,8 +1417,6 @@ func TestSpeedFactorDoesNotOverwriteDisplayedSpeedScore(t *testing.T) {
 	store.Put(core.RuntimeSnapshot{
 		Key:                key,
 		SuccessRate:        1,
-		SuccessScore:       0.2,
-		SpeedScore:         0.83,
 		CostRatio:          0.1,
 		GroupPriorityRatio: 1,
 		SampleCount:        12,
@@ -1503,7 +1431,7 @@ func TestSpeedFactorDoesNotOverwriteDisplayedSpeedScore(t *testing.T) {
 			},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -1518,9 +1446,8 @@ func TestSpeedFactorDoesNotOverwriteDisplayedSpeedScore(t *testing.T) {
 	require.NotNil(t, plan)
 	require.Len(t, plan.Candidates, 1)
 	candidate := plan.Candidates[0]
-	require.InEpsilon(t, 0.83, candidate.SpeedScore, 0.0001)
-	require.Less(t, candidate.ScoreSpeedFactor, candidate.SpeedScore)
-	require.InEpsilon(t, 0.264, candidate.ScoreSpeedFactor, 0.0001)
+	require.NotContains(t, candidate.ScoreBreakdown, "ttft_latency")
+	require.NotContains(t, candidate.ScoreBreakdown, "speed")
 }
 
 func TestSelectorReusesSimilarRuntimeSnapshotForRealSamples(t *testing.T) {
@@ -1538,8 +1465,6 @@ func TestSelectorReusesSimilarRuntimeSnapshotForRealSamples(t *testing.T) {
 	store.Put(core.RuntimeSnapshot{
 		Key:                exactKey,
 		SuccessRate:        0.97,
-		SuccessScore:       0.97,
-		SpeedScore:         0.81,
 		TTFTMs:             1600,
 		DurationMs:         3600,
 		CostRatio:          0.2,
@@ -1551,7 +1476,7 @@ func TestSelectorReusesSimilarRuntimeSnapshotForRealSamples(t *testing.T) {
 			{Channel: &model.Channel{Id: 7, Name: "hist"}, Group: "codex-plus", RuntimeKey: candidateKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -1568,8 +1493,8 @@ func TestSelectorReusesSimilarRuntimeSnapshotForRealSamples(t *testing.T) {
 	require.Equal(t, "similar", candidate.ScoreSampleSource)
 	require.Equal(t, exactKey, candidate.MatchedRuntimeKey)
 	require.Equal(t, candidateKey, candidate.RuntimeKey)
-	require.Equal(t, 0.97, candidate.SuccessScore)
-	require.Equal(t, 0.81, candidate.SpeedScore)
+	require.Equal(t, 0.97, candidate.ScoreBreakdown["completion_rate"])
+	require.InEpsilon(t, 0.9583, candidate.ScoreBreakdown["ttft_latency"], 0.0001)
 }
 
 func TestSelectorSimilarSnapshotPrefersCapabilityOverGroupOnlyMatch(t *testing.T) {
@@ -1593,8 +1518,6 @@ func TestSelectorSimilarSnapshotPrefersCapabilityOverGroupOnlyMatch(t *testing.T
 	store.Put(core.RuntimeSnapshot{
 		Key:                sameGroupLegacy,
 		SuccessRate:        1,
-		SuccessScore:       1,
-		SpeedScore:         0.80,
 		TTFTMs:             4600,
 		DurationMs:         5600,
 		CostRatio:          0.08,
@@ -1604,8 +1527,6 @@ func TestSelectorSimilarSnapshotPrefersCapabilityOverGroupOnlyMatch(t *testing.T
 	store.Put(core.RuntimeSnapshot{
 		Key:                sameCapability,
 		SuccessRate:        0.84,
-		SuccessScore:       0.20,
-		SpeedScore:         0.47,
 		TTFTMs:             29300,
 		DurationMs:         21600,
 		CostRatio:          0.08,
@@ -1624,7 +1545,7 @@ func TestSelectorSimilarSnapshotPrefersCapabilityOverGroupOnlyMatch(t *testing.T
 			},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -1641,8 +1562,7 @@ func TestSelectorSimilarSnapshotPrefersCapabilityOverGroupOnlyMatch(t *testing.T
 	require.Equal(t, sameCapability, candidate.MatchedRuntimeKey)
 	require.Equal(t, 188, candidate.SampleCount)
 	require.Equal(t, 29300.0, candidate.TTFTMs)
-	require.Equal(t, candidate.ScoreBreakdown["speed"], candidate.ScoreSpeedFactor)
-	require.Equal(t, 0.47, candidate.SpeedScore)
+	require.Less(t, candidate.ScoreBreakdown["ttft_latency"], 0.05)
 }
 
 func TestSelectorDoesNotRejectUnsampledCandidateBelowConcurrencyLimit(t *testing.T) {
@@ -1668,7 +1588,7 @@ func TestSelectorDoesNotRejectUnsampledCandidateBelowConcurrencyLimit(t *testing
 			{Channel: &model.Channel{Id: 4, Name: "toioto"}, Group: "codex-plus", RuntimeKey: key},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 
 	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
@@ -1696,4 +1616,33 @@ func candidateExplanationByChannel(t *testing.T, candidates []core.CandidateExpl
 	}
 	require.Failf(t, "candidate explanation not found", "channel_id=%d", channelID)
 	return core.CandidateExplanation{}
+}
+
+func requireFlatScoreTotal(t *testing.T, score core.ScoreResult) {
+	t.Helper()
+	expected := 0.0
+	for _, item := range score.Items {
+		if item.MissingReason != "" || item.Weight <= 0 {
+			continue
+		}
+		expected += item.Score * item.Weight
+	}
+	require.InEpsilon(t, round4ForScorerTest(expected), score.Total, 0.0002)
+}
+
+func scoreHasMissingReason(items []core.ScoreItem, key string, reason string) bool {
+	for _, item := range items {
+		if item.Key != key {
+			continue
+		}
+		return item.MissingReason == reason
+	}
+	return false
+}
+
+func round4ForScorerTest(value float64) float64 {
+	if value < 0 {
+		return -round4ForScorerTest(-value)
+	}
+	return float64(int(value*10000+0.5)) / 10000
 }

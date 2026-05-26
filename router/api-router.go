@@ -347,6 +347,8 @@ func SetApiRouter(router *gin.Engine) {
 			modelGatewayRoute.GET("/observability/runtime", controller.GetModelGatewayRuntimeStatus)
 			modelGatewayRoute.GET("/observability/health-check/queue", controller.GetModelGatewayHealthCheckQueue)
 			modelGatewayRoute.GET("/observability/score-history", controller.GetModelGatewayScoreHistory)
+			modelGatewayRoute.GET("/observability/score-events", controller.GetModelGatewayScoreEvents)
+			modelGatewayRoute.GET("/score-events", controller.GetModelGatewayScoreEvents)
 			modelGatewayRoute.GET("/observability/sticky", controller.GetModelGatewayStickyStore)
 			modelGatewayRoute.DELETE("/observability/sticky", controller.ClearModelGatewayStickyStore)
 			modelGatewayRoute.DELETE("/observability/sticky/:key_id", controller.ClearModelGatewayStickyStoreEntry)

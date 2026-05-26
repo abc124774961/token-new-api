@@ -208,39 +208,35 @@ type ModelGatewayScoreHistoryResponse struct {
 }
 
 type ModelGatewayScoreHistoryItem struct {
-	ID                    int                    `json:"id"`
-	Source                string                 `json:"source,omitempty"`
-	CreatedAt             int64                  `json:"created_at"`
-	RequestID             string                 `json:"request_id"`
-	RequestedModel        string                 `json:"requested_model,omitempty"`
-	RequestedGroup        string                 `json:"requested_group,omitempty"`
-	SelectedGroup         string                 `json:"selected_group,omitempty"`
-	ChannelID             int                    `json:"channel_id"`
-	ChannelName           string                 `json:"channel_name,omitempty"`
-	RuntimeKey            ModelGatewayRuntimeKey `json:"runtime_key,omitempty"`
-	Selected              bool                   `json:"selected,omitempty"`
-	SelectedReason        string                 `json:"selected_reason,omitempty"`
-	Available             bool                   `json:"available"`
-	RejectReason          string                 `json:"reject_reason,omitempty"`
-	StatusReason          string                 `json:"status_reason,omitempty"`
-	ScoreTotal            float64                `json:"score_total,omitempty"`
-	ScoreDelta            float64                `json:"score_delta,omitempty"`
-	ScoreBreakdown        map[string]float64     `json:"score_breakdown,omitempty"`
-	ScoreBreakdownDelta   map[string]float64     `json:"score_breakdown_delta,omitempty"`
-	RoutingScoreTotal     float64                `json:"routing_score_total,omitempty"`
-	RoutingScoreBreakdown map[string]float64     `json:"routing_score_breakdown,omitempty"`
-	SuccessScore          float64                `json:"success_score,omitempty"`
-	SpeedScore            float64                `json:"speed_score,omitempty"`
-	ScoreSpeedFactor      float64                `json:"score_speed_factor,omitempty"`
-	LoadScore             float64                `json:"load_score,omitempty"`
-	CostScore             float64                `json:"cost_score,omitempty"`
-	GroupScore            float64                `json:"group_score,omitempty"`
-	ExperienceScore       float64                `json:"experience_score,omitempty"`
-	SampleCount           int                    `json:"sample_count,omitempty"`
-	TTFTMs                float64                `json:"ttft_ms,omitempty"`
-	DurationMs            float64                `json:"duration_ms,omitempty"`
-	ActiveConcurrency     int                    `json:"active_concurrency,omitempty"`
-	EffectiveConcurrency  int                    `json:"effective_concurrency_limit,omitempty"`
+	ID                    int                                    `json:"id"`
+	Source                string                                 `json:"source,omitempty"`
+	CreatedAt             int64                                  `json:"created_at"`
+	RequestID             string                                 `json:"request_id"`
+	RequestedModel        string                                 `json:"requested_model,omitempty"`
+	RequestedGroup        string                                 `json:"requested_group,omitempty"`
+	SelectedGroup         string                                 `json:"selected_group,omitempty"`
+	ChannelID             int                                    `json:"channel_id"`
+	ChannelName           string                                 `json:"channel_name,omitempty"`
+	RuntimeKey            ModelGatewayRuntimeKey                 `json:"runtime_key,omitempty"`
+	Selected              bool                                   `json:"selected,omitempty"`
+	SelectedReason        string                                 `json:"selected_reason,omitempty"`
+	Available             bool                                   `json:"available"`
+	RejectReason          string                                 `json:"reject_reason,omitempty"`
+	StatusReason          string                                 `json:"status_reason,omitempty"`
+	ScoreTotal            float64                                `json:"score_total,omitempty"`
+	ScoreDelta            float64                                `json:"score_delta,omitempty"`
+	ScoreBreakdown        map[string]float64                     `json:"score_breakdown,omitempty"`
+	ScoreItems            []modelgatewaycore.ScoreItem           `json:"score_items,omitempty"`
+	ScoreItemDeltas       []modelgatewaycore.ScoreAdjustmentItem `json:"score_item_deltas,omitempty"`
+	ScoreBreakdownDelta   map[string]float64                     `json:"score_breakdown_delta,omitempty"`
+	RoutingScoreTotal     float64                                `json:"routing_score_total,omitempty"`
+	RoutingScoreBreakdown map[string]float64                     `json:"routing_score_breakdown,omitempty"`
+	CostReferenceMissing  bool                                   `json:"cost_reference_missing,omitempty"`
+	SampleCount           int                                    `json:"sample_count,omitempty"`
+	TTFTMs                float64                                `json:"ttft_ms,omitempty"`
+	DurationMs            float64                                `json:"duration_ms,omitempty"`
+	ActiveConcurrency     int                                    `json:"active_concurrency,omitempty"`
+	EffectiveConcurrency  int                                    `json:"effective_concurrency_limit,omitempty"`
 }
 
 type modelGatewayScoreHistoryOptions struct {
@@ -248,6 +244,12 @@ type modelGatewayScoreHistoryOptions struct {
 	Limit      int
 	ChannelID  int
 	RuntimeKey ModelGatewayRuntimeKey
+}
+
+type ModelGatewayScoreEventsResponse struct {
+	Items     []model.ModelGatewayScoreEvent `json:"items"`
+	Limit     int                            `json:"limit"`
+	Generated int64                          `json:"generated_at"`
 }
 
 type ModelGatewayTrendExport struct {
@@ -658,6 +660,7 @@ type ModelGatewayObservabilityRecord struct {
 	ErrorMessage                   string                             `json:"error_message,omitempty"`
 	ErrorCategory                  string                             `json:"error_category,omitempty"`
 	RetryAction                    string                             `json:"retry_action,omitempty"`
+	RetryReason                    string                             `json:"retry_reason,omitempty"`
 	WillRetry                      bool                               `json:"will_retry,omitempty"`
 	ClientAborted                  bool                               `json:"client_aborted,omitempty"`
 	ConcurrencyLimited             bool                               `json:"concurrency_limited,omitempty"`
@@ -678,69 +681,64 @@ type ModelGatewayObservabilityRecord struct {
 }
 
 type ModelGatewayCandidateExplanation struct {
-	ChannelID                    int                    `json:"channel_id"`
-	ChannelName                  string                 `json:"channel_name,omitempty"`
-	Group                        string                 `json:"group,omitempty"`
-	UpstreamModel                string                 `json:"upstream_model,omitempty"`
-	ProviderProfile              string                 `json:"provider_profile,omitempty"`
-	ProxyMode                    string                 `json:"proxy_mode,omitempty"`
-	RuntimeKey                   ModelGatewayRuntimeKey `json:"runtime_key"`
-	Available                    bool                   `json:"available"`
-	RejectReason                 string                 `json:"reject_reason,omitempty"`
-	SelectionSkipReason          string                 `json:"selection_skip_reason,omitempty"`
-	ChannelStatus                int                    `json:"channel_status,omitempty"`
-	StatusReason                 string                 `json:"status_reason,omitempty"`
-	BalanceInsufficient          bool                   `json:"balance_insufficient,omitempty"`
-	ScoreTotal                   float64                `json:"score_total,omitempty"`
-	ScoreBreakdown               map[string]float64     `json:"score_breakdown,omitempty"`
-	RoutingScoreTotal            float64                `json:"routing_score_total,omitempty"`
-	RoutingScoreBreakdown        map[string]float64     `json:"routing_score_breakdown,omitempty"`
-	SuccessRate                  float64                `json:"success_rate,omitempty"`
-	TTFTMs                       float64                `json:"ttft_ms,omitempty"`
-	DurationMs                   float64                `json:"duration_ms,omitempty"`
-	TokensPerSecond              float64                `json:"tokens_per_second,omitempty"`
-	SampleCount                  int                    `json:"sample_count,omitempty"`
-	ActiveConcurrency            int                    `json:"active_concurrency,omitempty"`
-	MaxConcurrency               int                    `json:"max_concurrency,omitempty"`
-	ConfiguredConcurrencyLimit   int                    `json:"configured_concurrency_limit,omitempty"`
-	LearnedConcurrencyLimit      int                    `json:"learned_concurrency_limit,omitempty"`
-	EffectiveConcurrencyLimit    int                    `json:"effective_concurrency_limit,omitempty"`
-	QueueDepth                   int                    `json:"queue_depth,omitempty"`
-	QueueCapacity                int                    `json:"queue_capacity,omitempty"`
-	EstimatedQueueWaitMs         float64                `json:"estimated_queue_wait_ms,omitempty"`
-	CostRatio                    float64                `json:"cost_ratio,omitempty"`
-	CostReferenceRatio           float64                `json:"cost_reference_ratio,omitempty"`
-	CostPricingMode              string                 `json:"cost_pricing_mode,omitempty"`
-	GroupPriorityRatio           float64                `json:"group_priority_ratio,omitempty"`
-	SuccessScore                 float64                `json:"success_score,omitempty"`
-	SpeedScore                   float64                `json:"speed_score,omitempty"`
-	ScoreSpeedFactor             float64                `json:"score_speed_factor,omitempty"`
-	LoadScore                    float64                `json:"load_score,omitempty"`
-	CostScore                    float64                `json:"cost_score,omitempty"`
-	GroupScore                   float64                `json:"group_score,omitempty"`
-	ExperienceScore              float64                `json:"experience_score,omitempty"`
-	EmptyOutputRate              float64                `json:"empty_output_rate,omitempty"`
-	ExperienceIssueRate          float64                `json:"experience_issue_rate,omitempty"`
-	HealthScoreAverage           float64                `json:"health_score_average,omitempty"`
-	ProbeRecoveryPending         bool                   `json:"probe_recovery_pending,omitempty"`
-	ProbeRecoverySuccessCount    int                    `json:"probe_recovery_success_count,omitempty"`
-	ProbeRecoveryRequired        int                    `json:"probe_recovery_required,omitempty"`
-	ProbeTriggerReason           string                 `json:"probe_trigger_reason,omitempty"`
-	ConfigErrorIsolated          bool                   `json:"config_error_isolated,omitempty"`
-	IsolationReason              string                 `json:"isolation_reason,omitempty"`
-	IsolationUntil               int64                  `json:"isolation_until,omitempty"`
-	AuthConfigErrorCount         int                    `json:"auth_config_error_count,omitempty"`
-	LastAuthConfigErrorAt        int64                  `json:"last_auth_config_error_at,omitempty"`
-	StickyMatched                bool                   `json:"sticky_matched,omitempty"`
-	Selected                     bool                   `json:"selected,omitempty"`
-	ScoreSampleSource            string                 `json:"score_sample_source,omitempty"`
-	MatchedRuntimeKey            ModelGatewayRuntimeKey `json:"matched_runtime_key,omitempty"`
-	RequestBodyBytes             int64                  `json:"request_body_bytes,omitempty"`
-	RequestBodyStorage           string                 `json:"request_body_storage,omitempty"`
-	RequestBodySizeLikelyLatency bool                   `json:"request_body_size_likely_latency,omitempty"`
-	RequestBodyPrepareMs         int64                  `json:"request_body_prepare_ms,omitempty"`
-	UpstreamResponseHeaderMs     int64                  `json:"upstream_response_header_ms,omitempty"`
-	UpstreamFirstEventWaitMs     int64                  `json:"upstream_first_event_wait_ms,omitempty"`
+	ChannelID                    int                          `json:"channel_id"`
+	ChannelName                  string                       `json:"channel_name,omitempty"`
+	Group                        string                       `json:"group,omitempty"`
+	UpstreamModel                string                       `json:"upstream_model,omitempty"`
+	ProviderProfile              string                       `json:"provider_profile,omitempty"`
+	ProxyMode                    string                       `json:"proxy_mode,omitempty"`
+	RuntimeKey                   ModelGatewayRuntimeKey       `json:"runtime_key"`
+	Available                    bool                         `json:"available"`
+	RejectReason                 string                       `json:"reject_reason,omitempty"`
+	SelectionSkipReason          string                       `json:"selection_skip_reason,omitempty"`
+	ChannelStatus                int                          `json:"channel_status,omitempty"`
+	StatusReason                 string                       `json:"status_reason,omitempty"`
+	BalanceInsufficient          bool                         `json:"balance_insufficient,omitempty"`
+	ScoreTotal                   float64                      `json:"score_total,omitempty"`
+	ScoreBreakdown               map[string]float64           `json:"score_breakdown,omitempty"`
+	ScoreItems                   []modelgatewaycore.ScoreItem `json:"score_items,omitempty"`
+	RoutingScoreTotal            float64                      `json:"routing_score_total,omitempty"`
+	RoutingScoreBreakdown        map[string]float64           `json:"routing_score_breakdown,omitempty"`
+	StateTags                    []string                     `json:"state_tags,omitempty"`
+	CostReferenceMissing         bool                         `json:"cost_reference_missing,omitempty"`
+	SuccessRate                  float64                      `json:"success_rate,omitempty"`
+	TTFTMs                       float64                      `json:"ttft_ms,omitempty"`
+	DurationMs                   float64                      `json:"duration_ms,omitempty"`
+	TokensPerSecond              float64                      `json:"tokens_per_second,omitempty"`
+	SampleCount                  int                          `json:"sample_count,omitempty"`
+	ActiveConcurrency            int                          `json:"active_concurrency,omitempty"`
+	MaxConcurrency               int                          `json:"max_concurrency,omitempty"`
+	ConfiguredConcurrencyLimit   int                          `json:"configured_concurrency_limit,omitempty"`
+	LearnedConcurrencyLimit      int                          `json:"learned_concurrency_limit,omitempty"`
+	EffectiveConcurrencyLimit    int                          `json:"effective_concurrency_limit,omitempty"`
+	QueueDepth                   int                          `json:"queue_depth,omitempty"`
+	QueueCapacity                int                          `json:"queue_capacity,omitempty"`
+	EstimatedQueueWaitMs         float64                      `json:"estimated_queue_wait_ms,omitempty"`
+	CostRatio                    float64                      `json:"cost_ratio,omitempty"`
+	CostReferenceRatio           float64                      `json:"cost_reference_ratio,omitempty"`
+	CostPricingMode              string                       `json:"cost_pricing_mode,omitempty"`
+	GroupPriorityRatio           float64                      `json:"group_priority_ratio,omitempty"`
+	EmptyOutputRate              float64                      `json:"empty_output_rate,omitempty"`
+	ExperienceIssueRate          float64                      `json:"experience_issue_rate,omitempty"`
+	ProbeRecoveryPending         bool                         `json:"probe_recovery_pending,omitempty"`
+	ProbeRecoverySuccessCount    int                          `json:"probe_recovery_success_count,omitempty"`
+	ProbeRecoveryRequired        int                          `json:"probe_recovery_required,omitempty"`
+	ProbeTriggerReason           string                       `json:"probe_trigger_reason,omitempty"`
+	ConfigErrorIsolated          bool                         `json:"config_error_isolated,omitempty"`
+	IsolationReason              string                       `json:"isolation_reason,omitempty"`
+	IsolationUntil               int64                        `json:"isolation_until,omitempty"`
+	AuthConfigErrorCount         int                          `json:"auth_config_error_count,omitempty"`
+	LastAuthConfigErrorAt        int64                        `json:"last_auth_config_error_at,omitempty"`
+	StickyMatched                bool                         `json:"sticky_matched,omitempty"`
+	Selected                     bool                         `json:"selected,omitempty"`
+	ScoreSampleSource            string                       `json:"score_sample_source,omitempty"`
+	MatchedRuntimeKey            ModelGatewayRuntimeKey       `json:"matched_runtime_key,omitempty"`
+	RequestBodyBytes             int64                        `json:"request_body_bytes,omitempty"`
+	RequestBodyStorage           string                       `json:"request_body_storage,omitempty"`
+	RequestBodySizeLikelyLatency bool                         `json:"request_body_size_likely_latency,omitempty"`
+	RequestBodyPrepareMs         int64                        `json:"request_body_prepare_ms,omitempty"`
+	UpstreamResponseHeaderMs     int64                        `json:"upstream_response_header_ms,omitempty"`
+	UpstreamFirstEventWaitMs     int64                        `json:"upstream_first_event_wait_ms,omitempty"`
 }
 
 type ModelGatewayRuntimeKey struct {
@@ -916,6 +914,51 @@ func GetModelGatewayScoreHistory(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, response)
+}
+
+func GetModelGatewayScoreEvents(c *gin.Context) {
+	if model.DB == nil {
+		common.ApiError(c, errors.New("database is not initialized"))
+		return
+	}
+	limit := normalizeModelGatewayObservabilityInt(c.Query("limit"), 50, 1, 200)
+	query := model.DB.Model(&model.ModelGatewayScoreEvent{})
+	if raw := strings.TrimSpace(c.Query("channel_id")); raw != "" {
+		channelID, err := strconv.Atoi(raw)
+		if err != nil || channelID <= 0 {
+			common.ApiErrorMsg(c, "invalid channel_id")
+			return
+		}
+		query = query.Where("channel_id = ?", channelID)
+	}
+	if value := strings.TrimSpace(c.Query("requested_model")); value != "" {
+		query = query.Where("requested_model = ?", value)
+	}
+	if value := strings.TrimSpace(c.Query("group")); value != "" {
+		query = query.Where(&model.ModelGatewayScoreEvent{Group: value})
+	}
+	if value := strings.TrimSpace(c.Query("request_id")); value != "" {
+		query = query.Where("request_id = ?", value)
+	}
+	if value := strings.TrimSpace(c.Query("is_health_probe")); value != "" {
+		query = query.Where("is_health_probe = ?", value == "true" || value == "1")
+	}
+	if from := normalizeModelGatewayObservabilityInt(c.Query("from"), 0, 0, math.MaxInt32); from > 0 {
+		query = query.Where("created_at >= ?", from)
+	}
+	if to := normalizeModelGatewayObservabilityInt(c.Query("to"), 0, 0, math.MaxInt32); to > 0 {
+		query = query.Where("created_at <= ?", to)
+	}
+	var rows []model.ModelGatewayScoreEvent
+	if err := query.Order("created_at desc, id desc").Limit(limit).Find(&rows).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, ModelGatewayScoreEventsResponse{
+		Items:     rows,
+		Limit:     limit,
+		Generated: common.GetTimestamp(),
+	})
 }
 
 func GetModelGatewayStickyStore(c *gin.Context) {
@@ -2155,9 +2198,75 @@ func defaultModelGatewayRuntimeStatusService() *modelgatewayobservability.Runtim
 	if runtimeDeps != nil {
 		deps.SnapshotStore = runtimeDeps.SnapshotStore
 		deps.Circuit = runtimeDeps.CircuitBreaker
+		deps.CostBaselineProvider = runtimeDeps.CostBaselineCache
 	}
 	deps.ScoreWeights = modelgatewayintegration.RuntimePolicySetting().ScoreWeights
+	deps.PolicyForGroup = modelGatewayRuntimePolicyForGroup
 	return modelgatewayobservability.NewRuntimeStatusService(deps)
+}
+
+func modelGatewayRuntimePolicyForGroup(group string) modelgatewaycore.GroupSmartPolicy {
+	setting := scheduler_setting.GetSetting()
+	group = strings.TrimSpace(group)
+	strategy := strings.TrimSpace(setting.DefaultStrategy)
+	if strategy == "" {
+		strategy = modelgatewaycore.StrategyBalanced
+	}
+	policy := modelgatewaycore.GroupSmartPolicy{
+		RequestedGroup:        group,
+		UserGroup:             group,
+		Mode:                  modelgatewaycore.ModeActive,
+		Strategy:              strategy,
+		AutoMode:              modelgatewaycore.AutoModeSequential,
+		CandidateGroups:       []string{group},
+		QueueEnabled:          setting.QueueEnabled,
+		CircuitBreakerEnabled: setting.CircuitBreakerEnabled,
+		GroupPriorityRatio:    copyModelGatewayGroupPriorityRatio(setting.GroupPriorityRatio),
+	}
+	if groupPolicy, ok := setting.GroupPolicies[group]; ok {
+		if strings.TrimSpace(groupPolicy.Mode) != "" {
+			policy.Mode = strings.TrimSpace(groupPolicy.Mode)
+		}
+		if strings.TrimSpace(groupPolicy.Strategy) != "" {
+			policy.Strategy = strings.TrimSpace(groupPolicy.Strategy)
+		}
+		if strings.TrimSpace(groupPolicy.AutoMode) != "" {
+			policy.AutoMode = strings.TrimSpace(groupPolicy.AutoMode)
+		}
+		if len(groupPolicy.CandidateGroups) > 0 {
+			policy.CandidateGroups = append([]string(nil), groupPolicy.CandidateGroups...)
+		}
+		policy.CrossGroupFusion = groupPolicy.CrossGroupFusion
+		policy.BillingRatioMode = groupPolicy.BillingRatioMode
+		policy.CacheAffinityEnabled = groupPolicy.CacheAffinityEnabled
+		policy.QueueEnabled = groupPolicy.QueueEnabled
+		policy.QueueHighPriority = groupPolicy.QueueHighPriority
+		policy.CircuitBreakerEnabled = groupPolicy.CircuitBreakerEnabled
+	}
+	if len(policy.CandidateGroups) == 0 && group != "" {
+		policy.CandidateGroups = []string{group}
+	}
+	if strings.TrimSpace(policy.Strategy) == "" {
+		policy.Strategy = modelgatewaycore.StrategyBalanced
+	}
+	if strings.TrimSpace(policy.AutoMode) == "" {
+		policy.AutoMode = modelgatewaycore.AutoModeSequential
+	}
+	return policy
+}
+
+func copyModelGatewayGroupPriorityRatio(values map[string]float64) map[string]float64 {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(values))
+	for group, ratio := range values {
+		group = strings.TrimSpace(group)
+		if group != "" && ratio > 0 {
+			out[group] = ratio
+		}
+	}
+	return out
 }
 
 func BuildModelGatewayHealthCheckQueue(query modelgatewayobservability.RuntimeStatusQuery, queueType string) ModelGatewayHealthCheckQueueResponse {
@@ -2203,8 +2312,8 @@ func BuildModelGatewayHealthCheckQueue(query modelgatewayobservability.RuntimeSt
 		if items[i].Priority != items[j].Priority {
 			return items[i].Priority > items[j].Priority
 		}
-		leftScore := items[i].HealthScoreAverage
-		rightScore := items[j].HealthScoreAverage
+		leftScore := items[i].ScoreTotal
+		rightScore := items[j].ScoreTotal
 		if leftScore != rightScore {
 			return leftScore < rightScore
 		}
@@ -2265,7 +2374,7 @@ func modelGatewayHealthCheckQueueReasons(item modelgatewayobservability.RuntimeS
 	if item.ProbeRecoveryPending {
 		addReason("probe_recovery_pending", 78, "info")
 	}
-	if item.HealthScoreAverage > 0 && item.HealthScoreAverage < thresholds.LowScore {
+	if item.ScoreTotal > 0 && item.ScoreTotal < thresholds.LowScore {
 		addReason("low_score", 72, "warning")
 	}
 	if item.RealSampleCount30m <= 0 {
@@ -3455,6 +3564,7 @@ func modelGatewayObservabilityRecentRecord(record model.ModelExecutionRecord, sc
 		ErrorMessage:                   attemptMeta.ErrorMessage,
 		ErrorCategory:                  attemptMeta.ErrorCategory,
 		RetryAction:                    attemptMeta.RetryAction,
+		RetryReason:                    attemptMeta.RetryReason,
 		WillRetry:                      attemptMeta.WillRetry,
 		ClientAborted:                  attemptMeta.ClientAborted,
 		ConcurrencyLimited:             attemptMeta.ConcurrencyLimited,
@@ -3651,6 +3761,7 @@ type modelGatewayObservabilityAttemptMeta struct {
 	ErrorMessage                   string
 	ErrorCategory                  string
 	RetryAction                    string
+	RetryReason                    string
 	WillRetry                      bool
 	ClientAborted                  bool
 	ConcurrencyLimited             bool
@@ -3754,6 +3865,38 @@ func modelGatewayObservabilityMetaFromRequestMeta(requestMeta map[string]any) mo
 		StickyBreak:    strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["sticky_break"])),
 		CacheAffinity:  modelGatewayObservabilityMetaBool(requestMeta["cache_affinity"]),
 	}
+}
+
+func modelGatewayScoreItemsDelta(current []modelgatewaycore.ScoreItem, previous []modelgatewaycore.ScoreItem) []modelgatewaycore.ScoreAdjustmentItem {
+	if len(current) == 0 && len(previous) == 0 {
+		return nil
+	}
+	previousByKey := make(map[string]modelgatewaycore.ScoreItem, len(previous))
+	for _, item := range previous {
+		previousByKey[item.Key] = item
+	}
+	out := make([]modelgatewaycore.ScoreAdjustmentItem, 0, len(current))
+	for _, item := range current {
+		previousItem := previousByKey[item.Key]
+		delta := roundModelGatewayObservabilityFloat(item.Score - previousItem.Score)
+		weightedDelta := roundModelGatewayObservabilityFloat(item.WeightedScore - previousItem.WeightedScore)
+		if delta == 0 && weightedDelta == 0 {
+			continue
+		}
+		out = append(out, modelgatewaycore.ScoreAdjustmentItem{
+			Key:            item.Key,
+			Name:           item.Name,
+			BeforeScore:    previousItem.Score,
+			AfterScore:     item.Score,
+			Delta:          delta,
+			Weight:         item.Weight,
+			WeightedDelta:  weightedDelta,
+			BeforeRawValue: previousItem.RawValue,
+			AfterRawValue:  item.RawValue,
+			Reason:         item.Reason,
+		})
+	}
+	return out
 }
 
 type modelGatewayCurrentChannelStatus struct {
@@ -3930,15 +4073,10 @@ func modelGatewayScoreHistoryItemFromRuntime(item modelgatewayobservability.Runt
 		RejectReason:          modelGatewayRuntimeStatusRejectReason(item),
 		ScoreTotal:            roundModelGatewayObservabilityFloat(item.ScoreTotal),
 		ScoreBreakdown:        roundModelGatewayScoreMap(item.ScoreBreakdown),
+		ScoreItems:            item.ScoreItems,
 		RoutingScoreTotal:     roundModelGatewayObservabilityFloat(item.RoutingScoreTotal),
 		RoutingScoreBreakdown: roundModelGatewayScoreMap(item.RoutingScoreBreakdown),
-		SuccessScore:          roundModelGatewayObservabilityFloat(item.SuccessScore),
-		SpeedScore:            roundModelGatewayObservabilityFloat(item.SpeedScore),
-		ScoreSpeedFactor:      roundModelGatewayObservabilityFloat(item.ScoreSpeedFactor),
-		LoadScore:             roundModelGatewayObservabilityFloat(item.LoadScore),
-		CostScore:             roundModelGatewayObservabilityFloat(item.CostScore),
-		GroupScore:            roundModelGatewayObservabilityFloat(item.GroupScore),
-		ExperienceScore:       roundModelGatewayObservabilityFloat(item.ExperienceScore),
+		CostReferenceMissing:  item.CostReferenceMissing,
 		SampleCount:           item.SampleCount,
 		TTFTMs:                roundModelGatewayObservabilityFloat(item.TTFTMs),
 		DurationMs:            roundModelGatewayObservabilityFloat(item.DurationMs),
@@ -4030,15 +4168,10 @@ func modelGatewayScoreHistoryItem(record model.ModelExecutionRecord, candidate M
 		StatusReason:          candidate.StatusReason,
 		ScoreTotal:            candidate.ScoreTotal,
 		ScoreBreakdown:        candidate.ScoreBreakdown,
+		ScoreItems:            candidate.ScoreItems,
 		RoutingScoreTotal:     candidate.RoutingScoreTotal,
 		RoutingScoreBreakdown: candidate.RoutingScoreBreakdown,
-		SuccessScore:          candidate.SuccessScore,
-		SpeedScore:            candidate.SpeedScore,
-		ScoreSpeedFactor:      candidate.ScoreSpeedFactor,
-		LoadScore:             candidate.LoadScore,
-		CostScore:             candidate.CostScore,
-		GroupScore:            candidate.GroupScore,
-		ExperienceScore:       candidate.ExperienceScore,
+		CostReferenceMissing:  candidate.CostReferenceMissing,
 		SampleCount:           candidate.SampleCount,
 		TTFTMs:                candidate.TTFTMs,
 		DurationMs:            candidate.DurationMs,
@@ -4059,6 +4192,7 @@ func applyModelGatewayScoreHistoryDeltas(response *ModelGatewayScoreHistoryRespo
 		previous := response.Items[idx+1]
 		current.ScoreDelta = roundModelGatewayObservabilityFloat(current.ScoreTotal - previous.ScoreTotal)
 		current.ScoreBreakdownDelta = modelGatewayScoreMapDelta(current.ScoreBreakdown, previous.ScoreBreakdown)
+		current.ScoreItemDeltas = modelGatewayScoreItemsDelta(current.ScoreItems, previous.ScoreItems)
 	}
 	response.Current = &response.Items[0]
 	if len(response.Items) > 1 {
@@ -4111,6 +4245,7 @@ func modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta map[string]
 		ErrorMessage:                   strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["error_message"])),
 		ErrorCategory:                  strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["error_category"])),
 		RetryAction:                    strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["retry_action"])),
+		RetryReason:                    strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["retry_reason"])),
 		WillRetry:                      modelGatewayObservabilityMetaBool(requestMeta["will_retry"]),
 		ClientAborted:                  modelGatewayObservabilityMetaBool(requestMeta["client_aborted"]),
 		ConcurrencyLimited:             modelGatewayObservabilityMetaBool(requestMeta["concurrency_limited"]),
@@ -4188,8 +4323,11 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			BalanceInsufficient:        candidate.BalanceInsufficient,
 			ScoreTotal:                 roundModelGatewayObservabilityFloat(candidate.ScoreTotal),
 			ScoreBreakdown:             roundModelGatewayScoreMap(candidate.ScoreBreakdown),
+			ScoreItems:                 candidate.ScoreItems,
 			RoutingScoreTotal:          roundModelGatewayObservabilityFloat(candidate.RoutingScoreTotal),
 			RoutingScoreBreakdown:      roundModelGatewayScoreMap(candidate.RoutingScoreBreakdown),
+			StateTags:                  append([]string(nil), candidate.StateTags...),
+			CostReferenceMissing:       candidate.CostReferenceMissing,
 			SuccessRate:                roundModelGatewayObservabilityFloat(candidate.SuccessRate),
 			TTFTMs:                     roundModelGatewayObservabilityFloat(candidate.TTFTMs),
 			DurationMs:                 roundModelGatewayObservabilityFloat(candidate.DurationMs),
@@ -4207,16 +4345,8 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			CostReferenceRatio:         roundModelGatewayObservabilityFloat(candidate.CostReferenceRatio),
 			CostPricingMode:            strings.TrimSpace(candidate.CostPricingMode),
 			GroupPriorityRatio:         roundModelGatewayObservabilityFloat(candidate.GroupPriorityRatio),
-			SuccessScore:               roundModelGatewayObservabilityFloat(candidate.SuccessScore),
-			SpeedScore:                 roundModelGatewayObservabilityFloat(candidate.SpeedScore),
-			ScoreSpeedFactor:           roundModelGatewayObservabilityFloat(candidate.ScoreSpeedFactor),
-			LoadScore:                  roundModelGatewayObservabilityFloat(candidate.LoadScore),
-			CostScore:                  roundModelGatewayObservabilityFloat(candidate.CostScore),
-			GroupScore:                 roundModelGatewayObservabilityFloat(candidate.GroupScore),
-			ExperienceScore:            roundModelGatewayObservabilityFloat(candidate.ExperienceScore),
 			EmptyOutputRate:            roundModelGatewayObservabilityFloat(candidate.EmptyOutputRate),
 			ExperienceIssueRate:        roundModelGatewayObservabilityFloat(candidate.ExperienceIssueRate),
-			HealthScoreAverage:         roundModelGatewayObservabilityFloat(candidate.HealthScoreAverage),
 			ProbeRecoveryPending:       candidate.ProbeRecoveryPending,
 			ProbeRecoverySuccessCount:  candidate.ProbeRecoverySuccessCount,
 			ProbeRecoveryRequired:      candidate.ProbeRecoveryRequired,
@@ -4231,140 +4361,9 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			ScoreSampleSource:          candidate.ScoreSampleSource,
 			MatchedRuntimeKey:          modelGatewayRuntimeKeyFromCore(candidate.MatchedRuntimeKey),
 		}
-		normalizeModelGatewayCandidateExplanation(&item)
 		out = append(out, item)
 	}
 	return out
-}
-
-func normalizeModelGatewayCandidateExplanation(candidate *ModelGatewayCandidateExplanation) {
-	if candidate == nil {
-		return
-	}
-	normalizeModelGatewayCandidateSpeedScores(candidate)
-	if candidate.SampleCount > 0 || !modelGatewayCandidateUsesSyntheticScores(candidate) {
-		return
-	}
-	candidate.SuccessRate = 0
-	candidate.SuccessScore = 0
-	candidate.SpeedScore = 0
-	candidate.ScoreBreakdown = removeModelGatewaySyntheticScores(candidate.ScoreBreakdown)
-	candidate.RoutingScoreBreakdown = removeModelGatewaySyntheticScores(candidate.RoutingScoreBreakdown)
-}
-
-func normalizeModelGatewayCandidateSpeedScores(candidate *ModelGatewayCandidateExplanation) {
-	if candidate == nil || candidate.SampleCount <= 0 {
-		return
-	}
-	rawSpeed := candidate.SpeedScore
-	if rawSpeed <= 0 {
-		rawSpeed = candidate.ScoreBreakdown["speed"]
-	}
-	if rawSpeed <= 0 {
-		return
-	}
-	adjustedSpeed := modelGatewaySampleAdjustedSpeedScore(rawSpeed, candidate.SampleCount)
-	if adjustedSpeed > candidate.SpeedScore {
-		candidate.SpeedScore = roundModelGatewayObservabilityFloat(adjustedSpeed)
-	}
-	if len(candidate.ScoreBreakdown) == 0 {
-		return
-	}
-	speedFactor, ok := candidate.ScoreBreakdown["speed"]
-	if !ok || speedFactor <= 0 {
-		return
-	}
-	penalty := modelGatewaySampleAdjustedTTFTPenalty(candidate.TTFTMs, candidate.SampleCount)
-	if penalty > 0 {
-		speedFactor = modelGatewayApplyTTFTPenaltyToSpeed(adjustedSpeed, penalty)
-	} else if speedFactor < adjustedSpeed && rawSpeed > 0 {
-		ratio := speedFactor / rawSpeed
-		if ratio > 0 && ratio < 1 {
-			speedFactor = adjustedSpeed * ratio
-		} else {
-			speedFactor = adjustedSpeed
-		}
-	} else if speedFactor < adjustedSpeed {
-		speedFactor = adjustedSpeed
-	}
-	speedFactor = roundModelGatewayObservabilityFloat(speedFactor)
-	if speedFactor > candidate.ScoreBreakdown["speed"] {
-		candidate.ScoreBreakdown["speed"] = speedFactor
-		candidate.ScoreSpeedFactor = speedFactor
-		if len(candidate.RoutingScoreBreakdown) > 0 && candidate.RoutingScoreBreakdown["speed"] > 0 && speedFactor > candidate.RoutingScoreBreakdown["speed"] {
-			candidate.RoutingScoreBreakdown["speed"] = speedFactor
-		}
-	}
-}
-
-func modelGatewaySampleAdjustedSpeedScore(score float64, sampleCount int) float64 {
-	score = clampModelGatewayObservabilityFloat(score, 0, 1)
-	if sampleCount <= 0 || sampleCount >= modelgatewayscheduler.LowSampleSpeedStableSamples {
-		return score
-	}
-	confidence := float64(sampleCount) / float64(modelgatewayscheduler.LowSampleSpeedStableSamples)
-	return clampModelGatewayObservabilityFloat(modelgatewayscheduler.LowSampleSpeedBaseline*(1-confidence)+score*confidence, 0, 1)
-}
-
-func modelGatewaySampleAdjustedTTFTPenalty(ttftMs float64, sampleCount int) float64 {
-	if sampleCount <= 0 || ttftMs <= 8000 {
-		return 0
-	}
-	penalty := 0.0
-	switch {
-	case ttftMs >= 120000:
-		penalty = 0.94
-	case ttftMs >= 60000:
-		penalty = 0.86
-	case ttftMs >= 30000:
-		penalty = 0.78
-	case ttftMs >= 20000:
-		penalty = 0.55
-	case ttftMs >= 12000:
-		penalty = 0.32
-	default:
-		penalty = 0.18
-	}
-	if sampleCount >= modelgatewayscheduler.LatencyGateStableSamples {
-		return penalty
-	}
-	return clampModelGatewayObservabilityFloat(penalty*float64(sampleCount)/float64(modelgatewayscheduler.LatencyGateStableSamples), 0, 1)
-}
-
-func modelGatewayApplyTTFTPenaltyToSpeed(score float64, penalty float64) float64 {
-	score = clampModelGatewayObservabilityFloat(score, 0, 1)
-	penalty = clampModelGatewayObservabilityFloat(penalty, 0, 1)
-	if penalty <= 0 {
-		return score
-	}
-	capValue := clampModelGatewayObservabilityFloat(1-penalty, 0, 1)
-	weighted := score * (1 - penalty*0.65)
-	return math.Min(weighted, capValue)
-}
-
-func modelGatewayCandidateUsesSyntheticScores(candidate *ModelGatewayCandidateExplanation) bool {
-	if candidate == nil {
-		return false
-	}
-	if strings.EqualFold(strings.TrimSpace(candidate.ScoreSampleSource), "none") {
-		return true
-	}
-	if _, ok := candidate.ScoreBreakdown["explore_baseline"]; ok {
-		return true
-	}
-	if _, ok := candidate.RoutingScoreBreakdown["explore_baseline"]; ok {
-		return true
-	}
-	return false
-}
-
-func removeModelGatewaySyntheticScores(scores map[string]float64) map[string]float64 {
-	if len(scores) == 0 {
-		return scores
-	}
-	delete(scores, "success")
-	delete(scores, "speed")
-	return scores
 }
 
 func modelGatewayRejectReasonsFromRequestMeta(requestMeta map[string]any) []string {

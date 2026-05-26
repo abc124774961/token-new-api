@@ -29022,7 +29022,7 @@ html.dark body.ct-home-route .ct-header-actions .ct-register-button {
 
 .ct-lite-flow-panel {
   position: relative;
-  min-height: 560px;
+  min-height: 640px;
   padding: 0;
   border: 1px solid var(--lite-border);
   border-radius: 22px;
@@ -29039,7 +29039,7 @@ html.dark body.ct-home-route .ct-header-actions .ct-register-button {
 .ct-lite-flow-canvas {
   display: block;
   width: 100%;
-  height: 560px;
+  height: 640px;
 }
 
 .ct-lite-feature-grid {
@@ -29443,7 +29443,7 @@ html.dark body.ct-home-route .ct-header-actions .ct-register-button {
   }
 
   .ct-lite-flow-canvas {
-    height: 430px;
+    height: 500px;
   }
 }
 
@@ -29529,7 +29529,7 @@ html.dark body.ct-home-route .ct-header-actions .ct-register-button {
   }
 
   .ct-lite-flow-canvas {
-    height: 320px;
+    height: 360px;
   }
 
   .ct-lite-trust-row div,

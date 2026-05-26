@@ -89,7 +89,7 @@ func runtimeLatencySampleValid(sample core.RuntimeLatencySample) bool {
 	return finitePositive(sample.DurationMs) || finitePositive(sample.TTFTMs)
 }
 
-func runtimeLatencyStats(samples []core.RuntimeLatencySample) (durationMs float64, ttftMs float64, speedScore float64) {
+func runtimeLatencyStats(samples []core.RuntimeLatencySample) (durationMs float64, ttftMs float64, latencyScore float64) {
 	samples = normalizeRuntimeLatencySamples(samples)
 	if len(samples) == 0 {
 		return 0, 0, 0
@@ -108,13 +108,13 @@ func runtimeLatencyStats(samples []core.RuntimeLatencySample) (durationMs float6
 	ttftMs = trimmedMeanFloat64(ttfts)
 	switch {
 	case ttftMs > 0:
-		speedScore = inverseLatencyScore(ttftMs, 800, 20000)
+		latencyScore = inverseLatencyScore(ttftMs, 800, 20000)
 	case durationMs > 0:
-		speedScore = inverseLatencyScore(durationMs, 3000, 90000)
+		latencyScore = inverseLatencyScore(durationMs, 3000, 90000)
 	default:
-		speedScore = 0
+		latencyScore = 0
 	}
-	return durationMs, ttftMs, speedScore
+	return durationMs, ttftMs, latencyScore
 }
 
 func trimmedMeanFloat64(values []float64) float64 {
@@ -157,6 +157,6 @@ func runtimeLatencySamplesDebugValue(samples []core.RuntimeLatencySample) string
 	if len(samples) == 0 {
 		return ""
 	}
-	durationMs, ttftMs, speedScore := runtimeLatencyStats(samples)
-	return fmt.Sprintf("samples=%d duration=%.0f ttft=%.0f speed=%.4f", len(samples), durationMs, ttftMs, speedScore)
+	durationMs, ttftMs, latencyScore := runtimeLatencyStats(samples)
+	return fmt.Sprintf("samples=%d duration=%.0f ttft=%.0f latency=%.4f", len(samples), durationMs, ttftMs, latencyScore)
 }

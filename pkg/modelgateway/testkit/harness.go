@@ -92,7 +92,7 @@ func NewScenarioHarnessWithContext(scenario *DispatchScenario, ctx *gin.Context)
 	realSelector := scheduler.NewDefaultSmartChannelSelector(
 		scheduler.NewStaticCandidatePoolBuilderFromChannels(channels, groups),
 		h.SnapshotStore,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	)
 	if scenario.StickyState != nil || scenario.CacheAffinity != nil {
 		realSelector = realSelector.WithStickyRouter(stickyRouterFromScenario(scenario, ctx))

@@ -3,6 +3,7 @@ package helper
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -128,6 +129,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	defer cancel()
 
 	ctx = context.WithValue(ctx, "stop_chan", stopChan)
+	attemptDone := relayAttemptDone(c)
 
 	// Handle ping data sending with improved error handling
 	if pingEnabled && pingTicker != nil {
@@ -191,9 +193,10 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				case <-c.Request.Context().Done():
 					// 监听客户端断开连接
 					return
-				case <-relayAttemptDone(c):
-					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonInternalFirstByteTimeout, fmt.Errorf(RelayAttemptCancelReason(c)))
-					common.SafeSendBool(stopChan, true)
+				case <-attemptDone:
+					if setInternalRelayAttemptEnd(c, info) {
+						common.SafeSendBool(stopChan, true)
+					}
 					return
 				case <-pingTimeout.C:
 					logger.LogError(c, "ping goroutine max duration reached")
@@ -253,8 +256,8 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			case <-c.Request.Context().Done():
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
 				return
-			case <-relayAttemptDone(c):
-				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonInternalFirstByteTimeout, fmt.Errorf(RelayAttemptCancelReason(c)))
+			case <-attemptDone:
+				setInternalRelayAttemptEnd(c, info)
 				return
 			default:
 			}
@@ -287,8 +290,8 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 					return
 				case <-stopChan:
 					return
-				case <-relayAttemptDone(c):
-					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonInternalFirstByteTimeout, fmt.Errorf(RelayAttemptCancelReason(c)))
+				case <-attemptDone:
+					setInternalRelayAttemptEnd(c, info)
 					return
 				}
 			} else {
@@ -319,9 +322,10 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	case <-c.Request.Context().Done():
 		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
 		closeBodyOnce.Do(closeBody)
-	case <-relayAttemptDone(c):
-		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonInternalFirstByteTimeout, fmt.Errorf(RelayAttemptCancelReason(c)))
-		closeBodyOnce.Do(closeBody)
+	case <-attemptDone:
+		if setInternalRelayAttemptEnd(c, info) {
+			closeBodyOnce.Do(closeBody)
+		}
 	}
 
 	if info.StreamStatus.IsNormalEnd() && !info.StreamStatus.HasErrors() {
@@ -332,12 +336,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 }
 
 func relayAttemptDone(c *gin.Context) <-chan struct{} {
-	ctx, ok := RelayAttemptContext(c)
-	if !ok || ctx == nil {
-		return nil
+	return RelayAttemptCancelReasonReady(c)
+}
+
+func setInternalRelayAttemptEnd(c *gin.Context, info *relaycommon.RelayInfo) bool {
+	reason := RelayAttemptCancelReason(c)
+	if reason == "" || info == nil || info.StreamStatus == nil {
+		return false
 	}
-	if RelayAttemptCancelReason(c) == "" {
-		return nil
-	}
-	return ctx.Done()
+	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonInternalFirstByteTimeout, errors.New(reason))
+	return true
 }

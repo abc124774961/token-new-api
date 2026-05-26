@@ -82,7 +82,6 @@ func TestRuntimeStatusServiceMergesSnapshotCircuitQueueAndLiveState(t *testing.T
 		GroupPriorityRatio:        1.1,
 		CircuitState:              core.CircuitStateClosed,
 		SampleCount:               6,
-		HealthScoreAverage:        0.41,
 		ProbeRecoveryPending:      true,
 		ProbeRecoverySuccessCount: 1,
 		ProbeRecoveryRequired:     2,
@@ -293,9 +292,14 @@ func TestRuntimeStatusServiceMergesSnapshotCircuitQueueAndLiveState(t *testing.T
 	require.Equal(t, 1, openItem.ProbeRecoverySuccessCount)
 	require.Equal(t, 2, openItem.ProbeRecoveryRequired)
 	require.Equal(t, "failure_avoidance", openItem.ProbeTriggerReason)
-	require.Equal(t, 0.41, openItem.HealthScoreAverage)
+	require.Greater(t, openItem.ScoreTotal, 0.70)
+	require.Less(t, openItem.RoutingScoreTotal, openItem.ScoreTotal)
+	require.Equal(t, 0.2, openItem.ScoreBreakdown["completion_rate"])
+	require.Equal(t, 1.0, openItem.ScoreBreakdown["upstream_error_rate"])
+	require.Equal(t, 1.0, openItem.ScoreBreakdown["stream_interrupted_rate"])
 	require.Equal(t, "circuit_open", openItem.HealthStatus)
-	require.Equal(t, 0.5, openItem.ScoreBreakdown["cost"])
+	require.True(t, openItem.CostReferenceMissing)
+	require.Zero(t, openItem.ScoreBreakdown["cost"])
 
 	healthyItem := response.Items[1]
 	require.Equal(t, 101, healthyItem.ChannelID)
@@ -303,7 +307,8 @@ func TestRuntimeStatusServiceMergesSnapshotCircuitQueueAndLiveState(t *testing.T
 	require.Equal(t, 2, healthyItem.QueueDepth)
 	require.True(t, healthyItem.Cooldown)
 	require.Equal(t, "cooldown", healthyItem.HealthStatus)
-	require.Equal(t, 0.5, healthyItem.ScoreBreakdown["cost"])
+	require.True(t, healthyItem.CostReferenceMissing)
+	require.Zero(t, healthyItem.ScoreBreakdown["cost"])
 }
 
 func TestRuntimeStatusServiceFiltersAndHandlesMissingDeps(t *testing.T) {
@@ -325,6 +330,51 @@ func TestRuntimeStatusServiceFiltersAndHandlesMissingDeps(t *testing.T) {
 	empty := observability.NewRuntimeStatusService(observability.RuntimeStatusDeps{}).Build(observability.RuntimeStatusQuery{})
 	require.Empty(t, empty.Items)
 	require.Zero(t, empty.Summary.RuntimeKeys)
+}
+
+func TestRuntimeStatusServiceUsesInjectedGroupPolicyForScore(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{
+		RequestedModel: "gpt-5.5",
+		UpstreamModel:  "gpt-5.5",
+		ChannelID:      707,
+		Group:          "cost-plus",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SuccessRate:        1,
+		TTFTMs:             400,
+		DurationMs:         1600,
+		TokensPerSecond:    70,
+		CostRatio:          0.40,
+		CostReferenceRatio: 0.10,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+
+	service := observability.NewRuntimeStatusService(observability.RuntimeStatusDeps{
+		SnapshotStore: store,
+		PolicyForGroup: func(group string) core.GroupSmartPolicy {
+			require.Equal(t, "cost-plus", group)
+			return core.GroupSmartPolicy{
+				Strategy:        core.StrategyCostFirst,
+				AutoMode:        core.AutoModeFusion,
+				CandidateGroups: []string{"cost-plus", "backup"},
+				GroupPriorityRatio: map[string]float64{
+					"cost-plus": 1,
+					"backup":    1,
+				},
+			}
+		},
+		Now: func() time.Time { return time.Unix(200, 0) },
+	})
+
+	response := service.Build(observability.RuntimeStatusQuery{Group: "cost-plus"})
+	require.Len(t, response.Items, 1)
+	item := response.Items[0]
+	require.Contains(t, item.ScoreBreakdown, "cost")
+	require.InEpsilon(t, 0.1539, item.ScoreBreakdown["cost"], 0.0001)
 }
 
 func TestRuntimeStatusServiceFiltersMultiNodeQueueSnapshotByChannel(t *testing.T) {

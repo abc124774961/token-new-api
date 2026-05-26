@@ -35,11 +35,9 @@ func TestRuntimeSnapshotPersistenceFlushAndRestore(t *testing.T) {
 		SuccessRate:           0.96,
 		TTFTMs:                680,
 		DurationMs:            2400,
-		SuccessScore:          0.92,
-		SpeedScore:            0.84,
-		ExperienceScore:       0.98,
 		EmptyOutputRate:       0.01,
 		ExperienceIssueRate:   0.02,
+		ScoreStatsJSON:        runtimeSnapshotPersistenceMustMarshal(t, map[string]any{"version": 1, "samples": 37, "rates": map[string]any{"completion": map[string]any{"success": 36, "total": 37, "ewma": 0.97}}}),
 		ConfigErrorIsolated:   true,
 		IsolationReason:       core.ErrorCategoryAuthConfigError,
 		IsolationUntil:        1770000000,
@@ -64,10 +62,12 @@ func TestRuntimeSnapshotPersistenceFlushAndRestore(t *testing.T) {
 	require.Equal(t, 37, snapshot.SampleCount)
 	require.Equal(t, 0.96, snapshot.SuccessRate)
 	require.Equal(t, 700.0, snapshot.TTFTMs)
-	require.Greater(t, snapshot.SpeedScore, 0.99)
+	require.Greater(t, snapshot.TTFTMs, 0.99)
 	require.Len(t, snapshot.RecentLatencySamples, 3)
 	require.True(t, snapshot.ConfigErrorIsolated)
 	require.Equal(t, core.ErrorCategoryAuthConfigError, snapshot.IsolationReason)
+	require.Contains(t, snapshot.ScoreStatsJSON, `"samples":37`)
+	require.Contains(t, snapshot.ScoreStatsJSON, `"completion"`)
 	require.EqualValues(t, 1770000000, snapshot.IsolationUntil)
 	require.Equal(t, 2, snapshot.AuthConfigErrorCount)
 	require.EqualValues(t, 1769999900, snapshot.LastAuthConfigErrorAt)
@@ -106,9 +106,6 @@ func TestRuntimeSnapshotPersistenceNormalizesAndCoalescesLegacyEndpointRows(t *t
 			SuccessRate:           1,
 			TTFTMs:                3000,
 			DurationMs:            4200,
-			SuccessScore:          1,
-			SpeedScore:            0.90,
-			ExperienceScore:       1,
 		},
 		{
 			RuntimeKeyHash:        runtimeSnapshotPersistenceTestHash("current"),
@@ -124,9 +121,6 @@ func TestRuntimeSnapshotPersistenceNormalizesAndCoalescesLegacyEndpointRows(t *t
 			SuccessRate:           0.90,
 			TTFTMs:                9000,
 			DurationMs:            12000,
-			SuccessScore:          0.80,
-			SpeedScore:            0.40,
-			ExperienceScore:       0.95,
 		},
 	}).Error)
 
@@ -142,7 +136,7 @@ func TestRuntimeSnapshotPersistenceNormalizesAndCoalescesLegacyEndpointRows(t *t
 	require.InEpsilon(t, 0.925, snapshot.SuccessRate, 0.001)
 	require.Zero(t, snapshot.TTFTMs)
 	require.Zero(t, snapshot.DurationMs)
-	require.Zero(t, snapshot.SpeedScore)
+	require.Zero(t, snapshot.TTFTMs)
 }
 
 func TestRuntimeSnapshotPersistenceCoalescesLatencySamplesWithTrimmedStats(t *testing.T) {
@@ -188,9 +182,6 @@ func TestRuntimeSnapshotPersistenceCoalescesLatencySamplesWithTrimmedStats(t *te
 			SampleCount:           10,
 			SuccessRate:           1,
 			TTFTMs:                45000,
-			SpeedScore:            0.002,
-			SuccessScore:          1,
-			ExperienceScore:       1,
 		},
 		{
 			RuntimeKeyHash:        "sample-right",
@@ -206,9 +197,6 @@ func TestRuntimeSnapshotPersistenceCoalescesLatencySamplesWithTrimmedStats(t *te
 			SampleCount:           2,
 			SuccessRate:           1,
 			TTFTMs:                900,
-			SpeedScore:            0.995,
-			SuccessScore:          1,
-			ExperienceScore:       1,
 		},
 	}).Error)
 
@@ -221,7 +209,7 @@ func TestRuntimeSnapshotPersistenceCoalescesLatencySamplesWithTrimmedStats(t *te
 	require.Equal(t, 12, snapshot.SampleCount)
 	require.Len(t, snapshot.RecentLatencySamples, 12)
 	require.InEpsilon(t, 900.0, snapshot.TTFTMs, 0.001)
-	require.Greater(t, snapshot.SpeedScore, 0.98)
+	require.Greater(t, snapshot.TTFTMs, 0.98)
 }
 
 func setupRuntimeSnapshotPersistenceDB(t *testing.T) *gorm.DB {

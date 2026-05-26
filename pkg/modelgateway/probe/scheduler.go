@@ -25,7 +25,7 @@ type ProbeScheduler struct {
 	snapshotStore core.RuntimeSnapshotStore
 	enricher      core.RuntimeSnapshotEnricher
 	costBaseline  core.CostBaselineProvider
-	scorerFactory core.ScoreCalculatorFactory
+	scoreWeights  core.ScoreWeights
 	stop          chan struct{}
 	once          sync.Once
 }
@@ -41,12 +41,12 @@ func NewProbeScheduler(config ProbeConfig, selector *ProbeSelector, executor *Pr
 		executor = NewProbeExecutor(config.Timeout, NewProbeBillingRecorder())
 	}
 	return &ProbeScheduler{
-		config:        config,
-		selector:      selector,
-		executor:      executor,
-		recorder:      recorder,
-		scorerFactory: scheduler.NewScoreCalculatorFactory(modelgatewayintegration.RuntimePolicySetting().ScoreWeights),
-		stop:          make(chan struct{}),
+		config:       config,
+		selector:     selector,
+		executor:     executor,
+		recorder:     recorder,
+		scoreWeights: modelgatewayintegration.RuntimePolicySetting().ScoreWeights,
+		stop:         make(chan struct{}),
 	}
 }
 
@@ -74,11 +74,11 @@ func (s *ProbeScheduler) WithCostBaselineProvider(provider core.CostBaselineProv
 	return s
 }
 
-func (s *ProbeScheduler) WithScoreCalculatorFactory(factory core.ScoreCalculatorFactory) *ProbeScheduler {
+func (s *ProbeScheduler) WithScoreWeights(weights core.ScoreWeights) *ProbeScheduler {
 	if s == nil {
 		return nil
 	}
-	s.scorerFactory = factory
+	s.scoreWeights = weights
 	return s
 }
 
@@ -214,14 +214,21 @@ func SyncDefaultProbeSchedulerLifecycle() *ProbeScheduler {
 	if deps == nil {
 		return nil
 	}
-	healthMonitor := scheduler.NewRuntimeHealthMonitor(deps.SnapshotStore, deps.CircuitBreaker)
+	healthMonitor := scheduler.NewRuntimeHealthMonitor(deps.SnapshotStore, deps.CircuitBreaker).
+		WithScoringService(scheduler.NewCandidateScoringService().WithCostBaselineProvider(deps.CostBaselineCache)).
+		WithScoreWeights(modelgatewayintegration.RuntimePolicySetting().ScoreWeights)
 	recorder := recording.NewAsyncExecutionRecorder(256).WithPostProcessors(healthMonitor)
-	selector := NewProbeSelector(deps.SnapshotStore, deps.CircuitBreaker)
+	runtimePolicy := modelgatewayintegration.RuntimePolicySetting()
+	selector := NewProbeSelector(deps.SnapshotStore, deps.CircuitBreaker).
+		WithCostBaselineProvider(deps.CostBaselineCache).
+		WithScoreWeights(runtimePolicy.ScoreWeights).
+		WithPolicyForGroup(probeDispatchPolicy)
 	executor := NewProbeExecutor(config.Timeout, NewProbeBillingRecorder())
 	s := NewProbeScheduler(config, selector, executor, recorder).
 		WithSnapshotStore(deps.SnapshotStore).
 		WithRuntimeSnapshotEnricher(deps.RuntimeEnricher).
-		WithCostBaselineProvider(deps.CostBaselineCache)
+		WithCostBaselineProvider(deps.CostBaselineCache).
+		WithScoreWeights(runtimePolicy.ScoreWeights)
 	s.Start(context.Background())
 	defaultProbeScheduler = s
 	return s
@@ -294,6 +301,7 @@ func (s *ProbeScheduler) buildDispatchPlan(candidate ProbeCandidate) *core.Dispa
 	policy := probeDispatchPolicy(candidate.Group)
 	plan.PolicyMode = policy.Mode
 	plan.AutoMode = policy.AutoMode
+	plan.Strategy = policy.Strategy
 	plan.SelectedReason = "health_probe_" + strings.TrimSpace(candidate.Reason)
 	plan.IsHealthProbe = true
 	plan.ProbeReason = strings.TrimSpace(candidate.Reason)
@@ -314,19 +322,16 @@ func (s *ProbeScheduler) applyProbeScore(plan *core.DispatchPlan, candidate Prob
 		RequiresCodexImageTool: plan.RequiresCodexImageTool,
 		RuntimeKey:             plan.RuntimeKey,
 	}
-	scorerFactory := s.scorerFactory
-	if scorerFactory == nil {
-		scorerFactory = scheduler.NewScoreCalculatorFactory(modelgatewayintegration.RuntimePolicySetting().ScoreWeights)
+	weights := s.scoreWeights
+	if weights.Success == 0 && weights.Speed == 0 && weights.Load == 0 && weights.Cost == 0 && weights.Group == 0 {
+		weights = modelgatewayintegration.RuntimePolicySetting().ScoreWeights
 	}
-	scoreSelector := scheduler.NewDefaultSmartChannelSelector(nil, s.snapshotStore, scorerFactory).
+	scoreSelector := scheduler.NewDefaultSmartChannelSelector(nil, s.snapshotStore, weights).
 		WithRuntimeSnapshotEnricher(s.enricher).
 		WithCostBaselineProvider(s.costBaseline)
 	scored := scoreSelector.ScoreCandidate(probeCandidate, policy)
 	snapshot := scored.Snapshot
 	snapshot.Key = plan.RuntimeKey
-	if snapshot.HealthScoreAverage <= 0 {
-		snapshot.HealthScoreAverage = scheduler.HealthScoreAverage(snapshot)
-	}
 	snapshot.ProbeTriggerReason = strings.TrimSpace(candidate.Reason)
 	if snapshot.ProbeRecoveryRequired <= 0 {
 		snapshot.ProbeRecoveryRequired = normalizeProbeConfig(s.config).RecoverySuccessesRequired
@@ -338,7 +343,6 @@ func (s *ProbeScheduler) applyProbeScore(plan *core.DispatchPlan, candidate Prob
 	explanation := scored.Explanation
 	explanation.Available = true
 	explanation.Selected = true
-	explanation.HealthScoreAverage = snapshot.HealthScoreAverage
 	explanation.ProbeRecoveryPending = snapshot.ProbeRecoveryPending
 	explanation.ProbeRecoveryRequired = snapshot.ProbeRecoveryRequired
 	explanation.ProbeRecoverySuccessCount = snapshot.ProbeRecoverySuccessCount

@@ -138,9 +138,11 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 		smartSelector := scheduler.NewDefaultSmartChannelSelector(
 			NewModelCandidatePoolBuilder(),
 			snapshotStore,
-			scheduler.NewScoreCalculatorFactory(runtimePolicy.ScoreWeights),
+			runtimePolicy.ScoreWeights,
 		).WithRuntimeSnapshotEnricher(runtimeEnricher).WithCostBaselineProvider(costBaselineCache).WithStickyRouter(stickyRouter)
-		healthMonitor := scheduler.NewRuntimeHealthMonitor(snapshotStore, circuitBreaker)
+		healthMonitor := scheduler.NewRuntimeHealthMonitor(snapshotStore, circuitBreaker).
+			WithScoringService(scheduler.NewCandidateScoringService().WithCostBaselineProvider(costBaselineCache)).
+			WithScoreWeights(runtimePolicy.ScoreWeights)
 		recorder := modelgateway.NewExecutionRecorderChain(
 			recording.NewAsyncExecutionRecorder(1024).WithPostProcessors(healthMonitor),
 		)

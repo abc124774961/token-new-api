@@ -31,11 +31,11 @@ func TestModelExecutionObservationRecordsCoverSummaryDimensions(t *testing.T) {
 	require.Equal(t, 5, summary.ActiveRecords)
 	require.Equal(t, 1, summary.ShadowRecords)
 
-	require.InDelta(t, 0.7066, summary.ScoreBreakdown["success"], 0.0001)
-	require.InDelta(t, 0.675, summary.ScoreBreakdown["speed"], 0.0001)
-	require.InDelta(t, 0.6833, summary.ScoreBreakdown["load"], 0.0001)
+	require.InDelta(t, 0.7066, summary.ScoreBreakdown["completion_rate"], 0.0001)
+	require.InDelta(t, 0.675, summary.ScoreBreakdown["ttft_latency"], 0.0001)
+	require.InDelta(t, 0.6833, summary.ScoreBreakdown["concurrency_load"], 0.0001)
 	require.InDelta(t, 0.7416, summary.ScoreBreakdown["cost"], 0.0001)
-	require.InDelta(t, 0.925, summary.ScoreBreakdown["group"], 0.0001)
+	require.InDelta(t, 0.925, summary.ScoreBreakdown["group_priority"], 0.0001)
 
 	require.Contains(t, summary.Models, "gpt-4.1")
 	require.Contains(t, summary.Models, "claude-3.7-sonnet")

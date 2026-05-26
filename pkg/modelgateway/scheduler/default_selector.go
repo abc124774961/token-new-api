@@ -25,10 +25,11 @@ const (
 type DefaultSmartChannelSelector struct {
 	candidateBuilder     core.CandidatePoolBuilder
 	snapshotStore        core.RuntimeSnapshotStore
-	scorerFactory        core.ScoreCalculatorFactory
+	scoreWeights         core.ScoreWeights
 	snapshotEnricher     core.RuntimeSnapshotEnricher
 	stickyRouter         core.StickyRouter
 	costBaselineProvider core.CostBaselineProvider
+	scoringService       *CandidateScoringService
 }
 
 type stickySaveOnSelectRouter interface {
@@ -48,14 +49,11 @@ type CandidateScoreEvaluation struct {
 	Explanation core.CandidateExplanation
 }
 
-func NewDefaultSmartChannelSelector(candidateBuilder core.CandidatePoolBuilder, snapshotStore core.RuntimeSnapshotStore, scorerFactory core.ScoreCalculatorFactory) *DefaultSmartChannelSelector {
-	if scorerFactory == nil {
-		scorerFactory = NewScoreCalculatorFactory(DefaultScoreWeights())
-	}
+func NewDefaultSmartChannelSelector(candidateBuilder core.CandidatePoolBuilder, snapshotStore core.RuntimeSnapshotStore, weights core.ScoreWeights) *DefaultSmartChannelSelector {
 	return &DefaultSmartChannelSelector{
 		candidateBuilder: candidateBuilder,
 		snapshotStore:    snapshotStore,
-		scorerFactory:    scorerFactory,
+		scoreWeights:     weights,
 	}
 }
 
@@ -64,6 +62,7 @@ func (s *DefaultSmartChannelSelector) WithRuntimeSnapshotEnricher(enricher core.
 		return nil
 	}
 	s.snapshotEnricher = enricher
+	s.scoringService = nil
 	return s
 }
 
@@ -80,6 +79,7 @@ func (s *DefaultSmartChannelSelector) WithCostBaselineProvider(provider core.Cos
 		return nil
 	}
 	s.costBaselineProvider = provider
+	s.scoringService = nil
 	return s
 }
 
@@ -271,6 +271,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		CacheAffinity:             hasSticky && stickyRoute.CacheAware,
 		PolicyMode:                policy.Mode,
 		AutoMode:                  policy.AutoMode,
+		Strategy:                  policy.Strategy,
 		RequiresCodexImageTool:    req.RequiresCodexImageTool,
 		RequiredTools:             requiredToolsForDispatchRequest(req),
 		CandidateFilterConditions: candidateFilterConditionsForDispatchRequest(req),
@@ -279,8 +280,8 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	if s.shouldSaveStickyOnSelect() {
 		s.stickyRouter.Save(c, &req, plan)
 	}
-	if plan.StickySource != "" && plan.SelectedReason == "weighted_score" && plan.StickyBreak != "" {
-		plan.SelectedReason = "weighted_score_sticky_broken"
+	if plan.StickySource != "" && plan.SelectedReason == "score_items" && plan.StickyBreak != "" {
+		plan.SelectedReason = "score_items_sticky_broken"
 	}
 	return plan, true, nil
 }
@@ -304,25 +305,49 @@ func (s *DefaultSmartChannelSelector) ScoreCandidate(candidate core.Candidate, p
 }
 
 func (s *DefaultSmartChannelSelector) scorePreparedCandidate(candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy, stickyMatched bool) CandidateScoreEvaluation {
-	explanation := candidateExplanation(candidate, snapshot, stickyMatched)
-	score := scoreCalculatorFactory(s).ForStrategy(policy.Strategy).Score(candidate, snapshot, policy)
-	explanation.ScoreTotal = score.Total
-	explanation.ScoreBreakdown = score.Breakdown
-	explanation.RoutingScoreTotal = score.RoutingTotal
-	explanation.RoutingScoreBreakdown = score.RoutingBreakdown
-	applyScoredMetricsToCandidateExplanation(&explanation, score)
-	return CandidateScoreEvaluation{
-		Snapshot:    snapshot,
-		Score:       score,
-		Explanation: explanation,
-	}
+	return scoringServiceForSelector(s).EvaluatePreparedCandidate(candidate, snapshot, policy, scoringContextForPolicy(s, policy, candidate), stickyMatched)
 }
 
-func scoreCalculatorFactory(selector *DefaultSmartChannelSelector) core.ScoreCalculatorFactory {
-	if selector != nil && selector.scorerFactory != nil {
-		return selector.scorerFactory
+func scoringServiceForSelector(selector *DefaultSmartChannelSelector) *CandidateScoringService {
+	if selector == nil {
+		return NewCandidateScoringService()
 	}
-	return NewScoreCalculatorFactory(DefaultScoreWeights())
+	if selector.scoringService != nil {
+		return selector.scoringService
+	}
+	selector.scoringService = NewCandidateScoringService().WithCostBaselineProvider(selector.costBaselineProvider)
+	return selector.scoringService
+}
+
+func scoringContextForPolicy(selector *DefaultSmartChannelSelector, policy core.GroupSmartPolicy, candidate core.Candidate) ScoringContext {
+	ctx := ScoringContext{
+		RequestedModel:         strings.TrimSpace(candidate.RuntimeKey.RequestedModel),
+		EndpointType:           candidate.RuntimeKey.EndpointType,
+		CandidateGroups:        append([]string(nil), policy.CandidateGroups...),
+		AutoMode:               policy.AutoMode,
+		Strategy:               policy.Strategy,
+		RequiresCodexImageTool: candidate.RequiresCodexImageTool,
+		ScoreWeights:           scoreWeightsForSelector(selector),
+		ExplainEnabled:         true,
+	}
+	if ctx.RequestedModel == "" {
+		ctx.RequestedModel = strings.TrimSpace(candidate.RuntimeKey.UpstreamModel)
+	}
+	return ctx
+}
+
+func scoreWeightsForSelector(selector *DefaultSmartChannelSelector) core.ScoreWeights {
+	if selector == nil {
+		return DefaultScoreWeights()
+	}
+	if selector.scoreWeights.Success != 0 ||
+		selector.scoreWeights.Speed != 0 ||
+		selector.scoreWeights.Load != 0 ||
+		selector.scoreWeights.Cost != 0 ||
+		selector.scoreWeights.Group != 0 {
+		return selector.scoreWeights
+	}
+	return DefaultScoreWeights()
 }
 
 func requiredToolsForDispatchRequest(req core.DispatchRequest) []string {
@@ -432,12 +457,8 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 		CostReferenceRatio:         snapshot.CostReferenceRatio,
 		CostPricingMode:            snapshot.CostPricingMode,
 		GroupPriorityRatio:         snapshot.GroupPriorityRatio,
-		SuccessScore:               snapshot.SuccessScore,
-		SpeedScore:                 snapshot.SpeedScore,
-		ExperienceScore:            snapshot.ExperienceScore,
 		EmptyOutputRate:            snapshot.EmptyOutputRate,
 		ExperienceIssueRate:        snapshot.ExperienceIssueRate,
-		HealthScoreAverage:         snapshot.HealthScoreAverage,
 		ProbeRecoveryPending:       snapshot.ProbeRecoveryPending,
 		ProbeRecoverySuccessCount:  snapshot.ProbeRecoverySuccessCount,
 		ProbeRecoveryRequired:      snapshot.ProbeRecoveryRequired,
@@ -467,48 +488,7 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 	if explanation.UpstreamModel == "" {
 		explanation.UpstreamModel = explanation.RuntimeKey.UpstreamModel
 	}
-	explanation.LoadScore = healthLoadScore(snapshot)
-	explanation.CostScore = costScore(snapshot)
-	explanation.GroupScore = groupScore(snapshot)
-	if snapshot.SampleCount > 0 && explanation.SuccessScore <= 0 {
-		explanation.SuccessScore = successScore(snapshot)
-	}
-	if snapshot.SampleCount > 0 {
-		if speedScore := displayedSpeedScore(snapshot); speedScore > 0 {
-			explanation.SpeedScore = speedScore
-		}
-	}
-	if explanation.ExperienceScore <= 0 {
-		explanation.ExperienceScore = experienceScore(snapshot)
-	}
 	return explanation
-}
-
-func applyScoredMetricsToCandidateExplanation(explanation *core.CandidateExplanation, score core.ScoreResult) {
-	if explanation == nil || len(score.Breakdown) == 0 {
-		return
-	}
-	if value, ok := score.Breakdown[breakdownSuccess]; ok {
-		explanation.SuccessScore = value
-	}
-	if value, ok := score.Breakdown[breakdownSpeed]; ok {
-		explanation.ScoreSpeedFactor = value
-	} else if explanation.SampleCount <= 0 {
-		explanation.SpeedScore = 0
-		explanation.ScoreSpeedFactor = 0
-	}
-	if value, ok := score.Breakdown[breakdownLoad]; ok {
-		explanation.LoadScore = value
-	}
-	if value, ok := score.Breakdown[breakdownCost]; ok {
-		explanation.CostScore = value
-	}
-	if value, ok := score.Breakdown[breakdownGroup]; ok {
-		explanation.GroupScore = value
-	}
-	if value, ok := score.Breakdown["experience"]; ok {
-		explanation.ExperienceScore = value
-	}
 }
 
 func candidateExplanationRuntimeKey(candidate core.Candidate, snapshot core.RuntimeSnapshot) core.RuntimeKey {
@@ -689,7 +669,6 @@ func mergeRuntimeSnapshotDynamicFields(snapshot core.RuntimeSnapshot, dynamic co
 	snapshot.CircuitOpen = dynamic.CircuitOpen
 	snapshot.Cooldown = dynamic.Cooldown
 	snapshot.FailureAvoidance = dynamic.FailureAvoidance
-	snapshot.HealthScoreAverage = dynamic.HealthScoreAverage
 	snapshot.ProbeRecoveryPending = dynamic.ProbeRecoveryPending
 	snapshot.ProbeRecoverySuccessCount = dynamic.ProbeRecoverySuccessCount
 	snapshot.ProbeRecoveryRequired = dynamic.ProbeRecoveryRequired

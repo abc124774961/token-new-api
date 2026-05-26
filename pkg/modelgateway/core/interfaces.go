@@ -108,14 +108,6 @@ type RuntimeSnapshotEnricher interface {
 	ReserveCircuitProbe(key RuntimeKey) bool
 }
 
-type ScoreCalculator interface {
-	Score(candidate Candidate, snapshot RuntimeSnapshot, policy GroupSmartPolicy) ScoreResult
-}
-
-type ScoreCalculatorFactory interface {
-	ForStrategy(strategy string) ScoreCalculator
-}
-
 type CandidatePoolBuilder interface {
 	Build(req *DispatchRequest, policy GroupSmartPolicy) []Candidate
 }

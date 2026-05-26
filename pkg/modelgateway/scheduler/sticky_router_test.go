@@ -67,7 +67,7 @@ func TestSelectorRetainsHealthyStickyRoute(t *testing.T) {
 			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: secondKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithStickyRouter(sticky)
 
 	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
@@ -134,7 +134,7 @@ func TestSelectorBreaksStickyRouteOnCooldown(t *testing.T) {
 			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: secondKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithStickyRouter(sticky)
 
 	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
@@ -154,7 +154,7 @@ func TestSelectorBreaksStickyRouteOnCooldown(t *testing.T) {
 	require.Equal(t, 2, plan.Channel.Id)
 	require.False(t, plan.StickyRetained)
 	require.Equal(t, "cooldown", plan.StickyBreak)
-	require.Equal(t, "weighted_score_sticky_broken", plan.SelectedReason)
+	require.Equal(t, "score_items_sticky_broken", plan.SelectedReason)
 }
 
 func TestSelectorRejectsConfigIsolatedStickyCandidateAndUsesAlternative(t *testing.T) {
@@ -204,7 +204,7 @@ func TestSelectorRejectsConfigIsolatedStickyCandidateAndUsesAlternative(t *testi
 			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: peerKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithStickyRouter(sticky)
 
 	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
@@ -224,7 +224,7 @@ func TestSelectorRejectsConfigIsolatedStickyCandidateAndUsesAlternative(t *testi
 	require.Equal(t, 2, plan.Channel.Id)
 	require.False(t, plan.StickyRetained)
 	require.Equal(t, "config_error_isolated", plan.StickyBreak)
-	require.Equal(t, "weighted_score_sticky_broken", plan.SelectedReason)
+	require.Equal(t, "score_items_sticky_broken", plan.SelectedReason)
 
 	isolated := candidateExplanationByChannel(t, plan.Candidates, 1)
 	require.False(t, isolated.Available)
@@ -282,7 +282,7 @@ func TestSelectorDoesNotBreakStickyRouteBelowConcurrencyLimit(t *testing.T) {
 			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: secondKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithStickyRouter(sticky)
 
 	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
@@ -351,7 +351,7 @@ func TestSelectorBreaksSaturatedStickyRouteWhenPeerHasCapacity(t *testing.T) {
 			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: peerKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithStickyRouter(sticky)
 
 	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
@@ -372,7 +372,7 @@ func TestSelectorBreaksSaturatedStickyRouteWhenPeerHasCapacity(t *testing.T) {
 	require.Equal(t, 2, plan.Channel.Id)
 	require.False(t, plan.StickyRetained)
 	require.Equal(t, "concurrency_saturated", plan.StickyBreak)
-	require.Equal(t, "weighted_score_sticky_broken", plan.SelectedReason)
+	require.Equal(t, "score_items_sticky_broken", plan.SelectedReason)
 }
 
 func TestSelectorBreaksStickyRouteForCostFirstCheaperHigherScore(t *testing.T) {
@@ -421,7 +421,7 @@ func TestSelectorBreaksStickyRouteForCostFirstCheaperHigherScore(t *testing.T) {
 			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: cheapKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithStickyRouter(sticky)
 
 	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
@@ -441,7 +441,7 @@ func TestSelectorBreaksStickyRouteForCostFirstCheaperHigherScore(t *testing.T) {
 	require.Equal(t, 2, plan.Channel.Id)
 	require.False(t, plan.StickyRetained)
 	require.Equal(t, "cost_first_cheaper_higher_score", plan.StickyBreak)
-	require.Equal(t, "weighted_score_sticky_broken", plan.SelectedReason)
+	require.Equal(t, "score_items_sticky_broken", plan.SelectedReason)
 }
 
 func TestSelectorRetainsStickyRouteForCostFirstSmallCostGap(t *testing.T) {
@@ -490,7 +490,7 @@ func TestSelectorRetainsStickyRouteForCostFirstSmallCostGap(t *testing.T) {
 			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: cheapKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithStickyRouter(sticky)
 
 	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
@@ -557,7 +557,7 @@ func TestSelectorRetainsCacheAffinityForCostFirstUnlessCostGapIsLarge(t *testing
 			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: cheapKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithStickyRouter(sticky)
 
 	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
@@ -986,7 +986,7 @@ func TestSelectorRetainsCacheAffinityRoute(t *testing.T) {
 			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: secondKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithStickyRouter(sticky)
 
 	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
@@ -1084,7 +1084,7 @@ func TestServiceCacheAffinityAdapterUsesPreviousResponseID(t *testing.T) {
 			{Channel: &model.Channel{Id: 22}, Group: "default", RuntimeKey: secondKey},
 		}),
 		store,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithStickyRouter(sticky)
 
 	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{

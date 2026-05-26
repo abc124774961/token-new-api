@@ -29,13 +29,15 @@ type RuntimeStateProvider interface {
 }
 
 type RuntimeStatusDeps struct {
-	SnapshotStore       core.RuntimeSnapshotStore
-	Circuit             CircuitSnapshotProvider
-	QueueSnapshot       func() map[int]int
-	QueueDetailSnapshot func() core.RuntimeQueueSnapshot
-	StateProvider       RuntimeStateProvider
-	ScoreWeights        core.ScoreWeights
-	Now                 func() time.Time
+	SnapshotStore        core.RuntimeSnapshotStore
+	Circuit              CircuitSnapshotProvider
+	QueueSnapshot        func() map[int]int
+	QueueDetailSnapshot  func() core.RuntimeQueueSnapshot
+	StateProvider        RuntimeStateProvider
+	ScoreWeights         core.ScoreWeights
+	CostBaselineProvider core.CostBaselineProvider
+	PolicyForGroup       func(group string) core.GroupSmartPolicy
+	Now                  func() time.Time
 }
 
 type RuntimeStatusService struct {
@@ -121,18 +123,13 @@ type RuntimeStatusItem struct {
 	FailureAvoidanceCount            int                         `json:"failure_avoidance_count,omitempty"`
 	ScoreTotal                       float64                     `json:"score_total,omitempty"`
 	ScoreBreakdown                   map[string]float64          `json:"score_breakdown,omitempty"`
+	ScoreItems                       []core.ScoreItem            `json:"score_items,omitempty"`
 	RoutingScoreTotal                float64                     `json:"routing_score_total,omitempty"`
 	RoutingScoreBreakdown            map[string]float64          `json:"routing_score_breakdown,omitempty"`
-	SuccessScore                     float64                     `json:"success_score,omitempty"`
-	SpeedScore                       float64                     `json:"speed_score,omitempty"`
-	ScoreSpeedFactor                 float64                     `json:"score_speed_factor,omitempty"`
-	LoadScore                        float64                     `json:"load_score,omitempty"`
-	CostScore                        float64                     `json:"cost_score,omitempty"`
-	GroupScore                       float64                     `json:"group_score,omitempty"`
-	ExperienceScore                  float64                     `json:"experience_score,omitempty"`
+	StateTags                        []string                    `json:"state_tags,omitempty"`
+	CostReferenceMissing             bool                        `json:"cost_reference_missing,omitempty"`
 	EmptyOutputRate                  float64                     `json:"empty_output_rate,omitempty"`
 	ExperienceIssueRate              float64                     `json:"experience_issue_rate,omitempty"`
-	HealthScoreAverage               float64                     `json:"health_score_average,omitempty"`
 	ProbeRecoveryPending             bool                        `json:"probe_recovery_pending,omitempty"`
 	ProbeRecoverySuccessCount        int                         `json:"probe_recovery_success_count,omitempty"`
 	ProbeRecoveryRequired            int                         `json:"probe_recovery_required,omitempty"`
@@ -354,15 +351,11 @@ func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem) {
 		CostReferenceRatio:         item.CostReferenceRatio,
 		CostPricingMode:            item.CostPricingMode,
 		GroupPriorityRatio:         item.GroupPriorityRatio,
-		SuccessScore:               item.SuccessScore,
-		SpeedScore:                 item.SpeedScore,
-		ExperienceScore:            item.ExperienceScore,
 		EmptyOutputRate:            item.EmptyOutputRate,
 		ExperienceIssueRate:        item.ExperienceIssueRate,
 		CircuitOpen:                item.CircuitOpen,
 		Cooldown:                   item.Cooldown,
 		FailureAvoidance:           item.FailureAvoidance,
-		HealthScoreAverage:         item.HealthScoreAverage,
 		ProbeRecoveryPending:       item.ProbeRecoveryPending,
 		ProbeRecoverySuccessCount:  item.ProbeRecoverySuccessCount,
 		ProbeRecoveryRequired:      item.ProbeRecoveryRequired,
@@ -384,24 +377,79 @@ func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem) {
 	if item.CircuitState != "" {
 		snapshot.CircuitState = core.CircuitState(item.CircuitState)
 	}
-	score := scheduler.NewWeightedScoreCalculator(s.deps.ScoreWeights).Score(core.Candidate{}, snapshot, core.GroupSmartPolicy{})
+	candidate := core.Candidate{
+		Channel:       nil,
+		Group:         item.Group,
+		UpstreamModel: item.UpstreamModel,
+		RuntimeKey:    snapshot.Key,
+	}
+	policy := s.policyForRuntimeStatusItem(item)
+	service := scheduler.NewCandidateScoringService().
+		WithCostBaselineProvider(s.deps.CostBaselineProvider)
+	score := service.EvaluateCandidate(candidate, snapshot, policy, scheduler.ScoringContext{
+		RequestedModel:  item.RequestedModel,
+		EndpointType:    constant.EndpointType(item.EndpointType),
+		CandidateGroups: append([]string(nil), policy.CandidateGroups...),
+		Strategy:        policy.Strategy,
+		AutoMode:        policy.AutoMode,
+		ScoreWeights:    s.deps.ScoreWeights,
+		ExplainEnabled:  true,
+	}).Score
 	item.ScoreTotal = roundRuntimeStatusFloat(score.Total)
 	item.ScoreBreakdown = roundRuntimeStatusScoreMap(score.Breakdown)
+	item.ScoreItems = roundRuntimeStatusScoreItems(score.Items)
 	item.RoutingScoreTotal = roundRuntimeStatusFloat(score.RoutingTotal)
 	item.RoutingScoreBreakdown = roundRuntimeStatusScoreMap(score.RoutingBreakdown)
-	item.SuccessScore = scoreBreakdownValue(item.ScoreBreakdown, "success")
-	item.ScoreSpeedFactor = scoreBreakdownValue(item.ScoreBreakdown, "speed")
-	item.LoadScore = scoreBreakdownValue(item.ScoreBreakdown, "load")
-	item.CostScore = scoreBreakdownValue(item.ScoreBreakdown, "cost")
-	item.GroupScore = scoreBreakdownValue(item.ScoreBreakdown, "group")
-	item.ExperienceScore = scoreBreakdownValue(item.ScoreBreakdown, "experience")
+	item.StateTags = append([]string(nil), score.StateTags...)
+	item.CostReferenceMissing = score.CostReferenceMissing
 }
 
-func scoreBreakdownValue(values map[string]float64, key string) float64 {
-	if len(values) == 0 {
-		return 0
+func (s *RuntimeStatusService) policyForRuntimeStatusItem(item *RuntimeStatusItem) core.GroupSmartPolicy {
+	group := strings.TrimSpace(item.Group)
+	if s != nil && s.deps.PolicyForGroup != nil {
+		policy := s.deps.PolicyForGroup(group)
+		policy = completeRuntimeStatusPolicy(policy, item)
+		return policy
 	}
-	return values[key]
+	return completeRuntimeStatusPolicy(core.GroupSmartPolicy{}, item)
+}
+
+func completeRuntimeStatusPolicy(policy core.GroupSmartPolicy, item *RuntimeStatusItem) core.GroupSmartPolicy {
+	group := ""
+	if item != nil {
+		group = strings.TrimSpace(item.Group)
+	}
+	if strings.TrimSpace(policy.RequestedGroup) == "" {
+		policy.RequestedGroup = group
+	}
+	if strings.TrimSpace(policy.UserGroup) == "" {
+		policy.UserGroup = group
+	}
+	if strings.TrimSpace(policy.Strategy) == "" {
+		policy.Strategy = core.StrategyBalanced
+	}
+	if strings.TrimSpace(policy.AutoMode) == "" {
+		policy.AutoMode = core.AutoModeSequential
+	}
+	if len(policy.CandidateGroups) == 0 && group != "" {
+		policy.CandidateGroups = []string{group}
+	}
+	if policy.GroupPriorityRatio == nil {
+		policy.GroupPriorityRatio = map[string]float64{}
+	}
+	if group != "" {
+		ratio := 0.0
+		if item != nil {
+			ratio = item.GroupPriorityRatio
+		}
+		if ratio <= 0 {
+			ratio = 1
+		}
+		if policy.GroupPriorityRatio[group] <= 0 {
+			policy.GroupPriorityRatio[group] = ratio
+		}
+	}
+	return policy
 }
 
 func roundRuntimeStatusScoreMap(values map[string]float64) map[string]float64 {
@@ -411,6 +459,22 @@ func roundRuntimeStatusScoreMap(values map[string]float64) map[string]float64 {
 	out := make(map[string]float64, len(values))
 	for key, value := range values {
 		out[key] = roundRuntimeStatusFloat(value)
+	}
+	return out
+}
+
+func roundRuntimeStatusScoreItems(values []core.ScoreItem) []core.ScoreItem {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]core.ScoreItem, 0, len(values))
+	for _, item := range values {
+		item.Score = roundRuntimeStatusFloat(item.Score)
+		item.Weight = roundRuntimeStatusFloat(item.Weight)
+		item.WeightedScore = roundRuntimeStatusFloat(item.WeightedScore)
+		item.PreviousScore = roundRuntimeStatusFloat(item.PreviousScore)
+		item.Delta = roundRuntimeStatusFloat(item.Delta)
+		out = append(out, item)
 	}
 	return out
 }
@@ -470,12 +534,8 @@ func applyRuntimeSnapshot(item *RuntimeStatusItem, snapshot core.RuntimeSnapshot
 	item.CircuitOpen = snapshot.CircuitOpen || snapshot.CircuitState == core.CircuitStateOpen
 	item.Cooldown = snapshot.Cooldown
 	item.FailureAvoidance = snapshot.FailureAvoidance
-	item.SuccessScore = snapshot.SuccessScore
-	item.SpeedScore = snapshot.SpeedScore
-	item.ExperienceScore = snapshot.ExperienceScore
 	item.EmptyOutputRate = snapshot.EmptyOutputRate
 	item.ExperienceIssueRate = snapshot.ExperienceIssueRate
-	item.HealthScoreAverage = snapshot.HealthScoreAverage
 	item.ProbeRecoveryPending = snapshot.ProbeRecoveryPending
 	item.ProbeRecoverySuccessCount = snapshot.ProbeRecoverySuccessCount
 	item.ProbeRecoveryRequired = snapshot.ProbeRecoveryRequired

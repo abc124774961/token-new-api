@@ -106,6 +106,7 @@ type DispatchPlan struct {
 	FallbackUsed              bool
 	PolicyMode                string
 	AutoMode                  string
+	Strategy                  string
 	RequiresCodexImageTool    bool
 	RequiredTools             []string
 	CandidateFilterConditions []string
@@ -127,14 +128,12 @@ type RuntimeSnapshot struct {
 	Key                        RuntimeKey
 	MatchedRuntimeKey          RuntimeKey
 	SampleSource               string
+	ScoreStatsJSON             string
 	RecentLatencySamples       []RuntimeLatencySample
 	SuccessRate                float64
 	TTFTMs                     float64
 	DurationMs                 float64
 	TokensPerSecond            float64
-	SuccessScore               float64
-	SpeedScore                 float64
-	ExperienceScore            float64
 	EmptyOutputRate            float64
 	ExperienceIssueRate        float64
 	ActiveConcurrency          int
@@ -157,7 +156,6 @@ type RuntimeSnapshot struct {
 	CircuitOpen                bool
 	Cooldown                   bool
 	FailureAvoidance           bool
-	HealthScoreAverage         float64
 	ProbeRecoveryPending       bool
 	ProbeRecoverySuccessCount  int
 	ProbeRecoveryRequired      int
@@ -328,8 +326,11 @@ type CandidateExplanation struct {
 	BalanceInsufficient        bool               `json:"balance_insufficient,omitempty"`
 	ScoreTotal                 float64            `json:"score_total,omitempty"`
 	ScoreBreakdown             map[string]float64 `json:"score_breakdown,omitempty"`
+	ScoreItems                 []ScoreItem        `json:"score_items,omitempty"`
 	RoutingScoreTotal          float64            `json:"routing_score_total,omitempty"`
 	RoutingScoreBreakdown      map[string]float64 `json:"routing_score_breakdown,omitempty"`
+	StateTags                  []string           `json:"state_tags,omitempty"`
+	CostReferenceMissing       bool               `json:"cost_reference_missing,omitempty"`
 	SuccessRate                float64            `json:"success_rate,omitempty"`
 	TTFTMs                     float64            `json:"ttft_ms,omitempty"`
 	DurationMs                 float64            `json:"duration_ms,omitempty"`
@@ -350,16 +351,8 @@ type CandidateExplanation struct {
 	CostReferenceRatio         float64            `json:"cost_reference_ratio,omitempty"`
 	CostPricingMode            string             `json:"cost_pricing_mode,omitempty"`
 	GroupPriorityRatio         float64            `json:"group_priority_ratio,omitempty"`
-	SuccessScore               float64            `json:"success_score,omitempty"`
-	SpeedScore                 float64            `json:"speed_score,omitempty"`
-	ScoreSpeedFactor           float64            `json:"score_speed_factor,omitempty"`
-	LoadScore                  float64            `json:"load_score,omitempty"`
-	CostScore                  float64            `json:"cost_score,omitempty"`
-	GroupScore                 float64            `json:"group_score,omitempty"`
-	ExperienceScore            float64            `json:"experience_score,omitempty"`
 	EmptyOutputRate            float64            `json:"empty_output_rate,omitempty"`
 	ExperienceIssueRate        float64            `json:"experience_issue_rate,omitempty"`
-	HealthScoreAverage         float64            `json:"health_score_average,omitempty"`
 	ProbeRecoveryPending       bool               `json:"probe_recovery_pending,omitempty"`
 	ProbeRecoverySuccessCount  int                `json:"probe_recovery_success_count,omitempty"`
 	ProbeRecoveryRequired      int                `json:"probe_recovery_required,omitempty"`
@@ -383,12 +376,65 @@ type ScoreWeights struct {
 	Group   float64
 }
 
+type ScoreItem struct {
+	Key           string  `json:"key"`
+	Name          string  `json:"name,omitempty"`
+	Category      string  `json:"category,omitempty"`
+	RawValue      string  `json:"raw_value,omitempty"`
+	Window        string  `json:"window,omitempty"`
+	Score         float64 `json:"score"`
+	Weight        float64 `json:"weight"`
+	WeightedScore float64 `json:"weighted_score"`
+	PreviousScore float64 `json:"previous_score,omitempty"`
+	Delta         float64 `json:"delta,omitempty"`
+	SampleCount   int     `json:"sample_count,omitempty"`
+	MissingReason string  `json:"missing_reason,omitempty"`
+	Formula       string  `json:"formula,omitempty"`
+	Reason        string  `json:"reason,omitempty"`
+}
+
 type ScoreResult struct {
-	Total            float64
-	Breakdown        map[string]float64
-	RoutingTotal     float64
-	RoutingBreakdown map[string]float64
-	Reason           string
+	Total                float64
+	Breakdown            map[string]float64
+	Items                []ScoreItem
+	RoutingTotal         float64
+	RoutingBreakdown     map[string]float64
+	RoutingItems         []ScoreItem
+	StateTags            []string
+	CostReferenceMissing bool
+	Reason               string
+}
+
+type ScoreSampleDecision struct {
+	ScoreSample         bool   `json:"score_sample"`
+	RealUserMetric      bool   `json:"real_user_metric"`
+	DynamicPriceSample  bool   `json:"dynamic_price_sample"`
+	CircuitSample       bool   `json:"circuit_sample"`
+	ProbeRecoverySample bool   `json:"probe_recovery_sample"`
+	Reason              string `json:"reason,omitempty"`
+	SkipReason          string `json:"skip_reason,omitempty"`
+}
+
+type ScoreAdjustmentItem struct {
+	Key            string  `json:"key"`
+	Name           string  `json:"name,omitempty"`
+	BeforeScore    float64 `json:"before_score"`
+	AfterScore     float64 `json:"after_score"`
+	Delta          float64 `json:"delta"`
+	Weight         float64 `json:"weight"`
+	WeightedDelta  float64 `json:"weighted_delta"`
+	BeforeRawValue string  `json:"before_raw_value,omitempty"`
+	AfterRawValue  string  `json:"after_raw_value,omitempty"`
+	Reason         string  `json:"reason,omitempty"`
+}
+
+type ScoreAdjustment struct {
+	TraceID        string                `json:"trace_id,omitempty"`
+	BeforeTotal    float64               `json:"before_total"`
+	AfterTotal     float64               `json:"after_total"`
+	Delta          float64               `json:"delta"`
+	SampleDecision ScoreSampleDecision   `json:"sample_decision"`
+	Items          []ScoreAdjustmentItem `json:"items,omitempty"`
 }
 
 type CacheAffinitySignal struct {
@@ -422,6 +468,8 @@ type AttemptResult struct {
 	SelectedGroup                  string
 	ModelName                      string
 	EndpointType                   constant.EndpointType
+	Strategy                       string
+	AutoMode                       string
 	Success                        bool
 	StatusCode                     int
 	ErrorCode                      string

@@ -186,23 +186,30 @@ func (p *RuntimeSnapshotPersistence) Flush(ctx context.Context) error {
 			"group",
 			"endpoint_type",
 			"capability_fingerprint",
+			"score_stats_json",
 			"latency_samples",
 			"sample_count",
 			"success_rate",
 			"ttft_ms",
 			"duration_ms",
 			"tokens_per_second",
-			"success_score",
-			"speed_score",
-			"experience_score",
 			"empty_output_rate",
 			"experience_issue_rate",
+			"probe_recovery_pending",
+			"probe_recovery_success_count",
+			"probe_recovery_required",
+			"probe_trigger_reason",
 			"last_real_attempt_at",
 			"last_real_success_at",
 			"last_real_failure_at",
 			"real_sample_count_30m",
 			"last_probe_at",
 			"last_probe_success_at",
+			"config_error_isolated",
+			"isolation_reason",
+			"isolation_until",
+			"auth_config_error_count",
+			"last_auth_config_error_at",
 		}),
 	}).CreateInBatches(rows, p.batch).Error; err != nil {
 		return err
@@ -275,14 +282,13 @@ func runtimeSnapshotToDB(snapshot core.RuntimeSnapshot, updatedAt int64) (model.
 	latencySamples := ""
 	snapshot.RecentLatencySamples = normalizeRuntimeLatencySamples(snapshot.RecentLatencySamples)
 	if len(snapshot.RecentLatencySamples) > 0 {
-		snapshot.DurationMs, snapshot.TTFTMs, snapshot.SpeedScore = runtimeLatencyStats(snapshot.RecentLatencySamples)
+		snapshot.DurationMs, snapshot.TTFTMs, _ = runtimeLatencyStats(snapshot.RecentLatencySamples)
 		if samplesJSON, err := common.Marshal(snapshot.RecentLatencySamples); err == nil {
 			latencySamples = string(samplesJSON)
 		}
 	} else {
 		snapshot.DurationMs = 0
 		snapshot.TTFTMs = 0
-		snapshot.SpeedScore = 0
 	}
 	return model.ModelGatewayRuntimeSnapshot{
 		RuntimeKeyHash:            runtimeSnapshotKeyHash(snapshot.Key),
@@ -294,18 +300,15 @@ func runtimeSnapshotToDB(snapshot core.RuntimeSnapshot, updatedAt int64) (model.
 		Group:                     snapshot.Key.Group,
 		EndpointType:              string(snapshot.Key.EndpointType),
 		CapabilityFingerprint:     snapshot.Key.CapabilityFingerprint,
+		ScoreStatsJSON:            snapshot.ScoreStatsJSON,
 		LatencySamples:            latencySamples,
 		SampleCount:               snapshot.SampleCount,
 		SuccessRate:               snapshot.SuccessRate,
 		TTFTMs:                    snapshot.TTFTMs,
 		DurationMs:                snapshot.DurationMs,
 		TokensPerSecond:           snapshot.TokensPerSecond,
-		SuccessScore:              snapshot.SuccessScore,
-		SpeedScore:                snapshot.SpeedScore,
-		ExperienceScore:           snapshot.ExperienceScore,
 		EmptyOutputRate:           snapshot.EmptyOutputRate,
 		ExperienceIssueRate:       snapshot.ExperienceIssueRate,
-		HealthScoreAverage:        snapshot.HealthScoreAverage,
 		ProbeRecoveryPending:      snapshot.ProbeRecoveryPending,
 		ProbeRecoverySuccessCount: snapshot.ProbeRecoverySuccessCount,
 		ProbeRecoveryRequired:     snapshot.ProbeRecoveryRequired,
@@ -350,23 +353,19 @@ func runtimeSnapshotFromDB(row model.ModelGatewayRuntimeSnapshot) (core.RuntimeS
 	latencySamples = normalizeRuntimeLatencySamples(latencySamples)
 	ttftMs := 0.0
 	durationMs := 0.0
-	speedScore := 0.0
 	if len(latencySamples) > 0 {
-		durationMs, ttftMs, speedScore = runtimeLatencyStats(latencySamples)
+		durationMs, ttftMs, _ = runtimeLatencyStats(latencySamples)
 	}
 	return core.RuntimeSnapshot{
 		Key:                       key,
+		ScoreStatsJSON:            row.ScoreStatsJSON,
 		RecentLatencySamples:      latencySamples,
 		SuccessRate:               row.SuccessRate,
 		TTFTMs:                    ttftMs,
 		DurationMs:                durationMs,
 		TokensPerSecond:           row.TokensPerSecond,
-		SuccessScore:              row.SuccessScore,
-		SpeedScore:                speedScore,
-		ExperienceScore:           row.ExperienceScore,
 		EmptyOutputRate:           row.EmptyOutputRate,
 		ExperienceIssueRate:       row.ExperienceIssueRate,
-		HealthScoreAverage:        row.HealthScoreAverage,
 		ProbeRecoveryPending:      row.ProbeRecoveryPending,
 		ProbeRecoverySuccessCount: row.ProbeRecoverySuccessCount,
 		ProbeRecoveryRequired:     row.ProbeRecoveryRequired,
@@ -465,18 +464,15 @@ func mergeRuntimeSnapshotRows(left, right model.ModelGatewayRuntimeSnapshot) mod
 		if samplesJSON, err := common.Marshal(latencySamples); err == nil {
 			left.LatencySamples = string(samplesJSON)
 		}
-		left.DurationMs, left.TTFTMs, left.SpeedScore = runtimeLatencyStats(latencySamples)
+		left.DurationMs, left.TTFTMs, _ = runtimeLatencyStats(latencySamples)
 	} else {
 		left.TTFTMs = 0
 		left.DurationMs = 0
-		left.SpeedScore = 0
 	}
 	left.TokensPerSecond = weightedRuntimeSnapshotAverage(left.TokensPerSecond, left.SampleCount, right.TokensPerSecond, right.SampleCount)
-	left.SuccessScore = weightedRuntimeSnapshotAverage(left.SuccessScore, left.SampleCount, right.SuccessScore, right.SampleCount)
-	left.ExperienceScore = weightedRuntimeSnapshotAverage(left.ExperienceScore, left.SampleCount, right.ExperienceScore, right.SampleCount)
 	left.EmptyOutputRate = weightedRuntimeSnapshotAverage(left.EmptyOutputRate, left.SampleCount, right.EmptyOutputRate, right.SampleCount)
 	left.ExperienceIssueRate = weightedRuntimeSnapshotAverage(left.ExperienceIssueRate, left.SampleCount, right.ExperienceIssueRate, right.SampleCount)
-	left.HealthScoreAverage = weightedRuntimeSnapshotAverage(left.HealthScoreAverage, left.SampleCount, right.HealthScoreAverage, right.SampleCount)
+	left.ScoreStatsJSON = mergeRuntimeSnapshotScoreStats(left.ScoreStatsJSON, right.ScoreStatsJSON)
 	left.LastRealAttemptAt = maxInt64(left.LastRealAttemptAt, right.LastRealAttemptAt)
 	left.LastRealSuccessAt = maxInt64(left.LastRealSuccessAt, right.LastRealSuccessAt)
 	left.LastRealFailureAt = maxInt64(left.LastRealFailureAt, right.LastRealFailureAt)

@@ -155,6 +155,8 @@ type dispatchRequestMeta struct {
 	QueueDepth                int                         `json:"queue_depth,omitempty"`
 	QueueCapacity             int                         `json:"queue_capacity,omitempty"`
 	BillingRatioMode          string                      `json:"billing_ratio_mode,omitempty"`
+	Strategy                  string                      `json:"strategy,omitempty"`
+	AutoMode                  string                      `json:"auto_mode,omitempty"`
 	StickySource              string                      `json:"sticky_source,omitempty"`
 	StickyKeyFP               string                      `json:"sticky_key_fp,omitempty"`
 	StickyRetained            bool                        `json:"sticky_retained,omitempty"`
@@ -215,6 +217,8 @@ func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
 		QueueDepth:             plan.QueueDepth,
 		QueueCapacity:          plan.QueueCapacity,
 		BillingRatioMode:       plan.BillingRatioMode,
+		Strategy:               plan.Strategy,
+		AutoMode:               plan.AutoMode,
 		StickySource:           plan.StickySource,
 		StickyKeyFP:            plan.StickyKeyFP,
 		StickyRetained:         plan.StickyRetained,
@@ -244,6 +248,8 @@ func modelExecutionRecordFromAttempt(result core.AttemptResult) *model.ModelExec
 		SelectedGroup:     result.SelectedGroup,
 		RequestedModel:    result.ModelName,
 		EndpointType:      string(result.EndpointType),
+		AutoMode:          result.AutoMode,
+		Strategy:          result.Strategy,
 		Success:           result.Success,
 		StatusCode:        result.StatusCode,
 		ErrorCode:         result.ErrorCode,

@@ -581,6 +581,100 @@ func TestStreamScannerHandler_ClientGoneClosesUpstreamBodyPromptly(t *testing.T)
 	assert.Less(t, time.Since(start), 500*time.Millisecond)
 }
 
+func TestStreamScannerHandler_ClientGoneWithAttemptControlIsNotInternalTimeout(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	control := NewRelayAttemptControl(ctx)
+	SetRelayAttemptControl(c, control)
+	t.Cleanup(func() { ClearRelayAttemptControl(c) })
+
+	pr, _ := io.Pipe()
+	resp := &http.Response{Body: pr}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+
+	done := make(chan struct{})
+	go func() {
+		StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {})
+		close(done)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("StreamScannerHandler did not return promptly after client cancellation")
+	}
+
+	require.NotNil(t, info.StreamStatus)
+	assert.Equal(t, relaycommon.StreamEndReasonClientGone, info.StreamStatus.EndReason)
+}
+
+func TestStreamScannerHandler_InternalFirstByteTimeoutStopsBeforeDelivery(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	baseCtx, cancel := context.WithCancel(context.Background())
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	control := NewRelayAttemptControl(baseCtx)
+	SetRelayAttemptControl(c, control)
+	t.Cleanup(func() { ClearRelayAttemptControl(c) })
+
+	pr, _ := io.Pipe()
+	resp := &http.Response{Body: pr}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+
+	var called atomic.Bool
+	done := make(chan struct{})
+	go func() {
+		StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
+			called.Store(true)
+		})
+		close(done)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	control.SetCancelReason(RelayAttemptCancelReasonFirstByteTimeout)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("StreamScannerHandler did not return promptly after internal first byte timeout")
+	}
+
+	require.NotNil(t, info.StreamStatus)
+	assert.Equal(t, relaycommon.StreamEndReasonInternalFirstByteTimeout, info.StreamStatus.EndReason)
+	assert.False(t, called.Load())
+	assert.Empty(t, recorder.Body.String())
+}
+
+func TestPingDataSuppressesPreFirstByteDuringAttemptWatchdog(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	SetRelayAttemptControl(c, NewRelayAttemptControl(context.Background()))
+	t.Cleanup(func() { ClearRelayAttemptControl(c) })
+
+	require.NoError(t, PingData(c))
+	assert.Empty(t, recorder.Body.String())
+	assert.False(t, RelayDownstreamStarted(c))
+
+	MarkRelayResponseStarted(c)
+	require.NoError(t, PingData(c))
+	assert.Contains(t, recorder.Body.String(), ": PING")
+}
+
 func TestStreamScannerHandler_StreamStatus_SoftErrors(t *testing.T) {
 	t.Parallel()
 

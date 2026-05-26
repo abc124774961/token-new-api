@@ -15,8 +15,10 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/types"
@@ -470,6 +472,111 @@ func TestRelayClientAbortIgnoresCanceledContextAfterNormalStreamEnd(t *testing.T
 	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
 
 	require.False(t, relayClientAborted(ctx, info, nil))
+}
+
+func TestShouldRetryAllowsFirstByteTimeoutFailoverWithAlternativePeerChannel(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 621, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 622, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Set("use_channel", []string{"621"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	err := newRelayFirstByteTimeoutError(relayFirstByteTimeout)
+
+	require.Equal(t, modelgatewaycore.ErrorCategoryTimeout, classifyRelayAttemptError(ctx, err))
+	require.True(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
+	require.False(t, relayClientAborted(ctx, nil, err))
+}
+
+func TestShouldRetryRejectsFirstByteTimeoutWithoutAlternativeOrBudget(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 623, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Set("use_channel", []string{"623"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	err := newRelayFirstByteTimeoutError(relayFirstByteTimeout)
+
+	require.Equal(t, modelgatewaycore.ErrorCategoryTimeout, classifyRelayAttemptError(ctx, err))
+	require.False(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, 0, param.GetExtraRetries())
+	require.Equal(t, "stop", retryActionForAttempt(ctx, err, false))
+}
+
+func TestRelayFirstByteWatchdogAppliesOnlySafeStreamingSmartRequests(t *testing.T) {
+	ctx := newRelayRetryContext()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	plan := &modelgatewaycore.DispatchPlan{PolicyMode: modelgatewaycore.ModeActive}
+	info := &relaycommon.RelayInfo{
+		IsStream:    true,
+		RelayMode:   relayconstant.RelayModeChatCompletions,
+		StartTime:   time.Now(),
+		RelayFormat: types.RelayFormatOpenAI,
+	}
+
+	require.True(t, relayFirstByteWatchdogApplies(ctx, info, plan))
+
+	info.RelayMode = relayconstant.RelayModeAudioSpeech
+	require.False(t, relayFirstByteWatchdogApplies(ctx, info, plan))
+
+	info.RelayMode = relayconstant.RelayModeChatCompletions
+	info.IsStream = false
+	require.False(t, relayFirstByteWatchdogApplies(ctx, info, plan))
+
+	info.IsStream = true
+	info.IsChannelTest = true
+	require.False(t, relayFirstByteWatchdogApplies(ctx, info, plan))
+
+	info.IsChannelTest = false
+	plan.IsHealthProbe = true
+	require.False(t, relayFirstByteWatchdogApplies(ctx, info, plan))
+
+	plan.IsHealthProbe = false
+	plan.PolicyMode = modelgatewaycore.ModeShadow
+	require.False(t, relayFirstByteWatchdogApplies(ctx, info, plan))
+
+	plan.PolicyMode = modelgatewaycore.ModeActive
+	helper.MarkRelayDownstreamStarted(ctx)
+	require.False(t, relayFirstByteWatchdogApplies(ctx, info, plan))
+}
+
+func TestRelayFirstByteWatchdogCanCancelRequiresNoDownstreamWrite(t *testing.T) {
+	ctx := newRelayRetryContext()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	start := time.Now()
+	info := &relaycommon.RelayInfo{
+		StartTime:         start,
+		FirstResponseTime: start.Add(-time.Second),
+	}
+
+	require.True(t, relayFirstByteWatchdogCanCancel(ctx, info))
+
+	helper.MarkRelayResponseStarted(ctx)
+	require.False(t, relayFirstByteWatchdogCanCancel(ctx, info))
+
+	ctx = newRelayRetryContext()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Status(http.StatusOK)
+	ctx.Writer.WriteHeaderNow()
+	require.False(t, relayFirstByteWatchdogCanCancel(ctx, info))
 }
 
 func TestRelayRequestContextCanceledDetectsQueueWaitAbort(t *testing.T) {

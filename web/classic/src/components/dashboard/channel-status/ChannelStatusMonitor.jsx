@@ -722,7 +722,7 @@ function GroupPanel({ group, windowDays }) {
         },
       },
       {
-        title: t('调度分'),
+        title: t('本次调度评分'),
         dataIndex: 'runtime',
         width: 130,
         sorter: (a, b) =>
@@ -737,7 +737,7 @@ function GroupPanel({ group, windowDays }) {
                 )}
               </div>
               <div className='text-xs text-semi-color-text-2'>
-                {t('健康分')} {formatScore(record.runtime.avg_score)}
+                {t('稳定评分')} {formatScore(record.runtime.avg_score)}
               </div>
             </div>
           ) : (
@@ -821,15 +821,15 @@ function GroupPanel({ group, windowDays }) {
         ),
       },
       {
-        title: t('成本 / 体验'),
+        title: t('成本 / 异常'),
         dataIndex: 'runtime',
         width: 140,
         render: (_, record) =>
           record.runtime ? (
             <div>
               <div className='font-mono font-semibold'>
-                {formatScore(record.runtime.avg_cost_score)} /{' '}
-                {formatScore(record.runtime.avg_experience_score)}
+                {formatScore(record.runtime.avg_cost_item_score)} /{' '}
+                {formatPercent(record.runtime.avg_experience_issue_rate)}
               </div>
               <div className='text-xs text-semi-color-text-2'>
                 {formatReferenceCost(record.runtime, t) || t('暂无参考成本')}
@@ -973,7 +973,7 @@ function GroupPanel({ group, windowDays }) {
             <div className='ct-channel-monitor-metric-box'>
               <div className='ct-channel-monitor-metric-label'>
                 <Network size={16} />
-                <span>{hasSmartRuntime ? t('调度分') : t('端点 PING')}</span>
+                <span>{hasSmartRuntime ? t('本次调度评分') : t('端点 PING')}</span>
               </div>
               <div className='ct-channel-monitor-metric-value'>
                 {hasSmartRuntime

@@ -249,6 +249,8 @@ func (r ProbeRunResult) AttemptResult() core.AttemptResult {
 		SelectedGroup:                  r.Group,
 		ModelName:                      r.Model,
 		EndpointType:                   key.EndpointType,
+		Strategy:                       probePlanStrategy(r.Plan),
+		AutoMode:                       probePlanAutoMode(r.Plan),
 		Success:                        r.Success,
 		StatusCode:                     statusCode,
 		ErrorCode:                      errCode,
@@ -266,6 +268,20 @@ func (r ProbeRunResult) AttemptResult() core.AttemptResult {
 		IsHealthProbe:                  true,
 		ProbeReason:                    r.Reason,
 	}
+}
+
+func probePlanStrategy(plan *core.DispatchPlan) string {
+	if plan == nil {
+		return ""
+	}
+	return strings.TrimSpace(plan.Strategy)
+}
+
+func probePlanAutoMode(plan *core.DispatchPlan) string {
+	if plan == nil {
+		return ""
+	}
+	return strings.TrimSpace(plan.AutoMode)
 }
 
 func (r ProbeRunResult) AttemptRuntimeKey() core.RuntimeKey {

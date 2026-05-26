@@ -383,7 +383,7 @@ func TestSmartStickySuccessRenewsAndFailureClearsLifecycle(t *testing.T) {
 			{Channel: &model.Channel{Id: 31, Name: "sticky"}, Group: "default", RuntimeKey: key},
 		}),
 		snapshots,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithStickyRouter(sticky)
 	recorder := &testkit.FakeExecutionRecorder{}
 	facade := modelgateway.NewSmartDispatchFacade(modelgateway.SmartDispatchDeps{
@@ -473,7 +473,7 @@ func TestSmartStickyFallbackAndShadowDoNotPolluteStore(t *testing.T) {
 			{Channel: &model.Channel{Id: 41, Name: "shadow-suggestion"}, Group: "default", RuntimeKey: key},
 		}),
 		snapshots,
-		scheduler.NewScoreCalculatorFactory(scheduler.DefaultScoreWeights()),
+		scheduler.DefaultScoreWeights(),
 	).WithStickyRouter(sticky)
 	facade := modelgateway.NewSmartDispatchFacade(modelgateway.SmartDispatchDeps{
 		PolicyResolver: policy.NewDefaultGroupPolicyResolver(testkit.StaticSettingsProvider{Settings: settings}),

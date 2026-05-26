@@ -641,9 +641,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		willRetry := shouldRetry(c, newAPIError, retryParam, common.RetryTimes-retryParam.GetRetry()) && !clientAbort
 		flow.WillRetry = willRetry
 		flow.RetryAction = retryActionForAttempt(c, newAPIError, willRetry)
-			if !clientAbort && !firstByteTimeoutHit {
-				processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, !willRetry)
-			}
+		if !clientAbort && !firstByteTimeoutHit {
+			processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, !willRetry)
+		}
 		flow.UsedChannels = append([]string(nil), c.GetStringSlice("use_channel")...)
 		flow.QueueWait = queueWait
 		flow.RelayToFirstByte = relayToFirstByte
@@ -928,6 +928,8 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 	}
 	if plan != nil {
 		result.Key = plan.RuntimeKey
+		result.Strategy = plan.Strategy
+		result.AutoMode = plan.AutoMode
 		if result.RequestedGroup == "" {
 			result.RequestedGroup = plan.RequestedGroup
 		}
@@ -981,6 +983,9 @@ func classifyRelayAttemptError(c *gin.Context, apiErr *types.NewAPIError) string
 	}
 	if apiErr.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
 		return modelgatewaycore.ErrorCategoryLocalConcurrencyLimit
+	}
+	if apiErr.GetErrorCode() == types.ErrorCodeChannelResponseTimeExceeded {
+		return modelgatewaycore.ErrorCategoryTimeout
 	}
 	if service.IsBalanceInsufficientError(apiErr) {
 		return modelgatewaycore.ErrorCategoryBalanceOrQuota
@@ -1098,20 +1103,40 @@ func relayFirstByteWatchdogApplies(c *gin.Context, info *relaycommon.RelayInfo, 
 	if plan.PolicyMode != modelgatewaycore.ModeActive || plan.IsHealthProbe {
 		return false
 	}
-	if !info.IsStream || info.RelayMode == relayconstant.RelayModeRealtime {
+	if !info.IsStream || !relayFirstByteWatchdogSupportedMode(info) {
 		return false
 	}
-	if info.IsChannelTest || relayResponseAlreadyStarted(c) || helper.RelayDownstreamStarted(c) {
+	if info.IsChannelTest || relayDownstreamAlreadyStarted(c) {
 		return false
 	}
 	return !relayRequestContextCanceled(c)
+}
+
+func relayFirstByteWatchdogSupportedMode(info *relaycommon.RelayInfo) bool {
+	if info == nil {
+		return false
+	}
+	switch info.RelayMode {
+	case relayconstant.RelayModeChatCompletions,
+		relayconstant.RelayModeCompletions,
+		relayconstant.RelayModeResponses,
+		relayconstant.RelayModeResponsesCompact,
+		relayconstant.RelayModeGemini:
+		return true
+	}
+	switch info.GetFinalRequestRelayFormat() {
+	case types.RelayFormatClaude, types.RelayFormatGemini:
+		return true
+	default:
+		return false
+	}
 }
 
 func relayFirstByteWatchdogCanCancel(c *gin.Context, info *relaycommon.RelayInfo) bool {
 	if c == nil || info == nil {
 		return false
 	}
-	if relayRequestContextCanceled(c) || relayResponseAlreadyStarted(c) || helper.RelayDownstreamStarted(c) {
+	if relayRequestContextCanceled(c) || relayDownstreamAlreadyStarted(c) {
 		return false
 	}
 	return !info.HasSendResponse()
@@ -1170,14 +1195,11 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *servi
 	if openaiErr == nil {
 		return false
 	}
-	if relayResponseAlreadyStarted(c) {
+	if relayDownstreamAlreadyStarted(c) {
 		return false
 	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
-	}
-	if types.IsChannelError(openaiErr) {
-		return true
 	}
 	if types.IsSkipRetryError(openaiErr) {
 		return false
@@ -1195,6 +1217,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *servi
 	}
 	if retryTimes <= 0 {
 		return false
+	}
+	if types.IsChannelError(openaiErr) {
+		return true
 	}
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
@@ -1214,6 +1239,16 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *servi
 
 func relayResponseAlreadyStarted(c *gin.Context) bool {
 	return common.GetContextKeyBool(c, constant.ContextKeyRelayResponseStarted)
+}
+
+func relayDownstreamAlreadyStarted(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	if relayResponseAlreadyStarted(c) || helper.RelayDownstreamStarted(c) {
+		return true
+	}
+	return c.Writer != nil && c.Writer.Written()
 }
 
 func relayStreamInterrupted(c *gin.Context) bool {
@@ -1290,6 +1325,7 @@ func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIE
 	}
 	switch openaiErr.GetErrorCode() {
 	case types.ErrorCodeDoRequestFailed,
+		types.ErrorCodeChannelResponseTimeExceeded,
 		types.ErrorCodeReadResponseBodyFailed,
 		types.ErrorCodeBadResponse,
 		types.ErrorCodeBadResponseBody:
@@ -1356,6 +1392,7 @@ func isUpstreamFailoverCandidate(openaiErr *types.NewAPIError) bool {
 	}
 	switch openaiErr.GetErrorCode() {
 	case types.ErrorCodeDoRequestFailed,
+		types.ErrorCodeChannelResponseTimeExceeded,
 		types.ErrorCodeReadResponseBodyFailed,
 		types.ErrorCodeBadResponseStatusCode,
 		types.ErrorCodeBadResponse,

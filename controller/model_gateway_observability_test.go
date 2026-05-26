@@ -58,9 +58,9 @@ type modelGatewayScoreHistoryAPIResponse struct {
 func TestGetModelGatewayObservabilitySummaryAggregatesRecentRecords(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()
-	scoreA, err := common.Marshal(map[string]float64{"success": 0.9, "speed": 0.8})
+	scoreA, err := common.Marshal(map[string]float64{"completion_rate": 0.9, "ttft_latency": 0.8})
 	require.NoError(t, err)
-	scoreB, err := common.Marshal(map[string]float64{"success": 0.3, "speed": 0.4})
+	scoreB, err := common.Marshal(map[string]float64{"completion_rate": 0.3, "ttft_latency": 0.4})
 	require.NoError(t, err)
 	candidates, err := common.Marshal([]string{"default", "vip"})
 	require.NoError(t, err)
@@ -111,7 +111,7 @@ func TestGetModelGatewayObservabilitySummaryAggregatesRecentRecords(t *testing.T
 				},
 				Available:      true,
 				ScoreTotal:     0.81234,
-				ScoreBreakdown: map[string]float64{"success": 0.9, "speed": 0.8},
+				ScoreBreakdown: map[string]float64{"completion_rate": 0.9, "ttft_latency": 0.8},
 				Selected:       true,
 			},
 		},
@@ -246,8 +246,8 @@ func TestGetModelGatewayObservabilitySummaryAggregatesRecentRecords(t *testing.T
 	require.Equal(t, int64(370), payload.Data.Summary.AvgTTFTMs)
 	require.Equal(t, 0.6, payload.Data.Summary.AvgScoreTotal)
 	require.Equal(t, int64(2), payload.Data.ScoreBreakdown.Samples)
-	require.Equal(t, 0.6, payload.Data.ScoreBreakdown.Average["success"])
-	require.Equal(t, 0.6, payload.Data.ScoreBreakdown.Average["speed"])
+	require.Equal(t, 0.6, payload.Data.ScoreBreakdown.Average["completion_rate"])
+	require.Equal(t, 0.6, payload.Data.ScoreBreakdown.Average["ttft_latency"])
 	require.Len(t, payload.Data.RecentRecords, 4)
 	require.Equal(t, "dispatch", payload.Data.RecentRecords[0].Kind)
 	require.Equal(t, "attempt", payload.Data.RecentRecords[1].Kind)
@@ -275,7 +275,7 @@ func TestGetModelGatewayObservabilitySummaryAggregatesRecentRecords(t *testing.T
 	require.Equal(t, "mimo_codex_chat", payload.Data.RecentRecords[3].CandidateExplanations[1].ProviderProfile)
 	require.Equal(t, "mimo-v1", payload.Data.RecentRecords[3].CandidateExplanations[1].RuntimeKey.UpstreamModel)
 	require.Equal(t, 0.8123, payload.Data.RecentRecords[3].CandidateExplanations[1].ScoreTotal)
-	require.Equal(t, 0.9, payload.Data.RecentRecords[3].CandidateExplanations[1].ScoreBreakdown["success"])
+	require.Equal(t, 0.9, payload.Data.RecentRecords[3].CandidateExplanations[1].ScoreBreakdown["completion_rate"])
 	require.Equal(t, "score_below_threshold", payload.Data.RecentRecords[0].StickyBreak)
 	require.Len(t, payload.Data.Trends, 4)
 	trend := requireModelGatewayTrendWithRecords(t, payload.Data.Trends, 4)
@@ -332,7 +332,7 @@ func TestGetModelGatewayObservabilitySummaryAggregatesRecentRecords(t *testing.T
 	requireObservabilityMetaAggregate(t, payload.Data.ByProxyMode, "responses_via_chat", 1, 1, 640, 1, 1, 0, 1)
 }
 
-func TestModelGatewayObservabilityNormalizesLowSampleLegacySpeedScores(t *testing.T) {
+func TestModelGatewayObservabilityPreservesFlatScoreItems(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()
 	requestMeta, err := common.Marshal(map[string]any{
@@ -350,9 +350,7 @@ func TestModelGatewayObservabilityNormalizesLowSampleLegacySpeedScores(t *testin
 				},
 				Available:      true,
 				ScoreTotal:     0.52,
-				ScoreBreakdown: map[string]float64{"success": 1, "speed": 0.03, "cost": 0.782, "group": 0.9},
-				SuccessScore:   1,
-				SpeedScore:     0.038,
+				ScoreBreakdown: map[string]float64{"completion_rate": 1, "ttft_latency": 0.03, "cost": 0.782, "group_priority": 0.9},
 				TTFTMs:         19260,
 				DurationMs:     26410,
 				SampleCount:    1,
@@ -388,9 +386,46 @@ func TestModelGatewayObservabilityNormalizesLowSampleLegacySpeedScores(t *testin
 	candidate := payload.Data.RecentRecords[0].CandidateExplanations[0]
 	require.Equal(t, 1, candidate.SampleCount)
 	require.Equal(t, 19260.0, candidate.TTFTMs)
-	require.InEpsilon(t, 0.4476, candidate.SpeedScore, 0.0002)
-	require.InEpsilon(t, 0.4166, candidate.ScoreSpeedFactor, 0.0002)
-	require.Equal(t, candidate.ScoreSpeedFactor, candidate.ScoreBreakdown["speed"])
+	require.Equal(t, 0.03, candidate.ScoreBreakdown["ttft_latency"])
+	require.NotContains(t, candidate.ScoreBreakdown, "speed")
+}
+
+func TestModelGatewayObservabilityExposesRetryReason(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.ModelExecutionRecord{
+		CreatedAt:      now - 10,
+		RequestId:      "req-first-byte-timeout",
+		AttemptIndex:   0,
+		RequestedGroup: "default",
+		SelectedGroup:  "default",
+		RequestedModel: "gpt-5.5",
+		ChannelId:      31,
+		ChannelName:    "slow-first-byte",
+		StatusCode:     http.StatusGatewayTimeout,
+		ErrorCode:      string(types.ErrorCodeChannelResponseTimeExceeded),
+		ErrorType:      string(types.ErrorTypeNewAPIError),
+		RequestMeta: `{
+			"error_category":"timeout",
+			"retry_action":"switch_channel",
+			"retry_reason":"first_byte_timeout",
+			"will_retry":true
+		}`,
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 1,
+		TopN:        1,
+		ScanLimit:   10,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.RecentRecords, 1)
+	record := response.RecentRecords[0]
+	require.Equal(t, "timeout", record.ErrorCategory)
+	require.Equal(t, "switch_channel", record.RetryAction)
+	require.Equal(t, "first_byte_timeout", record.RetryReason)
+	require.Equal(t, "first_byte_timeout", record.RequestMeta["retry_reason"])
 }
 
 func TestGetModelGatewayObservabilitySummaryTreatsPending429AsConcurrencyFlow(t *testing.T) {
@@ -2765,13 +2800,11 @@ func TestGetModelGatewayHealthCheckQueueReturnsPendingReasons(t *testing.T) {
 			Group:          "vip",
 			EndpointType:   constant.EndpointTypeOpenAI,
 		},
-		SuccessRate:           0.91,
-		SuccessScore:          0.91,
-		SpeedScore:            0.9,
+		SuccessRate:           0.2,
+		TTFTMs:                25000,
+		DurationMs:            45000,
 		CostRatio:             1,
 		GroupPriorityRatio:    1,
-		ExperienceScore:       0.9,
-		HealthScoreAverage:    0.41,
 		SampleCount:           8,
 		RealSampleCount30m:    2,
 		ProbeRecoveryPending:  true,
@@ -2790,12 +2823,8 @@ func TestGetModelGatewayHealthCheckQueueReturnsPendingReasons(t *testing.T) {
 			EndpointType:   constant.EndpointTypeOpenAI,
 		},
 		SuccessRate:        0.99,
-		SuccessScore:       0.99,
-		SpeedScore:         0.9,
 		CostRatio:          1,
 		GroupPriorityRatio: 1,
-		ExperienceScore:    0.9,
-		HealthScoreAverage: 0.88,
 		SampleCount:        1,
 		RealSampleCount30m: 0,
 		ProbeTriggerReason: "low_traffic",
@@ -2809,12 +2838,8 @@ func TestGetModelGatewayHealthCheckQueueReturnsPendingReasons(t *testing.T) {
 			EndpointType:   constant.EndpointTypeOpenAI,
 		},
 		SuccessRate:        0.99,
-		SuccessScore:       0.99,
-		SpeedScore:         0.9,
 		CostRatio:          1,
 		GroupPriorityRatio: 1,
-		ExperienceScore:    0.9,
-		HealthScoreAverage: 0.9,
 		SampleCount:        6,
 		RealSampleCount30m: 3,
 	})
@@ -2869,13 +2894,11 @@ func TestGetModelGatewayHealthCheckQueueCanIncludeQueueSnapshot(t *testing.T) {
 			Group:          "vip",
 			EndpointType:   constant.EndpointTypeOpenAI,
 		},
-		SuccessRate:        0.99,
-		SuccessScore:       0.99,
-		SpeedScore:         0.9,
+		SuccessRate:        0.2,
+		TTFTMs:             25000,
+		DurationMs:         45000,
 		CostRatio:          1,
 		GroupPriorityRatio: 1,
-		ExperienceScore:    0.9,
-		HealthScoreAverage: 0.88,
 		SampleCount:        1,
 		RealSampleCount30m: 0,
 	})
@@ -2938,12 +2961,8 @@ func TestGetModelGatewayHealthCheckQueueFiltersQueueType(t *testing.T) {
 			EndpointType:   constant.EndpointTypeOpenAI,
 		},
 		SuccessRate:        0.99,
-		SuccessScore:       0.99,
-		SpeedScore:         0.9,
 		CostRatio:          1,
 		GroupPriorityRatio: 1,
-		ExperienceScore:    0.9,
-		HealthScoreAverage: 0.88,
 		SampleCount:        1,
 		RealSampleCount30m: 0,
 	})
@@ -2956,12 +2975,8 @@ func TestGetModelGatewayHealthCheckQueueFiltersQueueType(t *testing.T) {
 			EndpointType:   constant.EndpointTypeOpenAI,
 		},
 		SuccessRate:        0.99,
-		SuccessScore:       0.99,
-		SpeedScore:         0.9,
 		CostRatio:          1,
 		GroupPriorityRatio: 1,
-		ExperienceScore:    0.9,
-		HealthScoreAverage: 0.4,
 		SampleCount:        6,
 		RealSampleCount30m: 4,
 	})
@@ -2975,7 +2990,7 @@ func TestGetModelGatewayHealthCheckQueueFiltersQueueType(t *testing.T) {
 
 	payload := decodeModelGatewayHealthCheckQueueResponse(t, resp)
 	require.True(t, payload.Success)
-	require.Equal(t, 2, payload.Data.Summary.PendingCount)
+	require.Equal(t, 1, payload.Data.Summary.PendingCount)
 	require.Equal(t, 1, payload.Data.Summary.ReturnedCount)
 	require.Equal(t, "low_traffic", payload.Data.Summary.FilteredQueueType)
 	require.Len(t, payload.Data.Items, 1)
@@ -3020,9 +3035,7 @@ func TestGetModelGatewayScoreHistoryReturnsCandidateChanges(t *testing.T) {
 					Available:      true,
 					Selected:       selected,
 					ScoreTotal:     score,
-					ScoreBreakdown: map[string]float64{"success": score, "speed": score - 0.1},
-					SuccessScore:   score,
-					SpeedScore:     score - 0.1,
+					ScoreBreakdown: map[string]float64{"completion_rate": score, "ttft_latency": score - 0.1},
 					SampleCount:    6,
 				},
 				{
@@ -3076,7 +3089,7 @@ func TestGetModelGatewayScoreHistoryReturnsCandidateChanges(t *testing.T) {
 	require.Equal(t, "score-new", payload.Data.Items[0].RequestID)
 	require.Equal(t, 0.72, payload.Data.Items[0].ScoreTotal)
 	require.Equal(t, 0.11, payload.Data.Items[0].ScoreDelta)
-	require.Equal(t, 0.11, payload.Data.Items[0].ScoreBreakdownDelta["success"])
+	require.Equal(t, 0.11, payload.Data.Items[0].ScoreBreakdownDelta["completion_rate"])
 	require.True(t, payload.Data.Items[0].Selected)
 	require.Equal(t, "weighted_score", payload.Data.Items[0].SelectedReason)
 	require.NotNil(t, payload.Data.Current)
@@ -3101,8 +3114,6 @@ func TestGetModelGatewayScoreHistoryPrependsRuntimeCurrentScore(t *testing.T) {
 	runtimeDeps.SnapshotStore.Put(core.RuntimeSnapshot{
 		Key:                key,
 		SuccessRate:        1,
-		SuccessScore:       1,
-		SpeedScore:         0.03,
 		TTFTMs:             45000,
 		DurationMs:         46000,
 		CostRatio:          0.05,
@@ -3125,9 +3136,7 @@ func TestGetModelGatewayScoreHistoryPrependsRuntimeCurrentScore(t *testing.T) {
 				},
 				Available:      true,
 				ScoreTotal:     0.709,
-				ScoreBreakdown: map[string]float64{"success": 0.8, "speed": 0.45},
-				SuccessScore:   0.8,
-				SpeedScore:     0.45,
+				ScoreBreakdown: map[string]float64{"completion_rate": 0.8, "ttft_latency": 0.45},
 				SampleCount:    0,
 			},
 		},
@@ -3159,8 +3168,9 @@ func TestGetModelGatewayScoreHistoryPrependsRuntimeCurrentScore(t *testing.T) {
 	require.Equal(t, "runtime-current", payload.Data.Items[0].RequestID)
 	require.Equal(t, 4, payload.Data.Items[0].SampleCount)
 	require.Equal(t, 45000.0, payload.Data.Items[0].TTFTMs)
-	require.Less(t, payload.Data.Items[0].ScoreTotal, 0.35)
-	require.Equal(t, 0.78, payload.Data.Items[0].ScoreBreakdown["ttft_penalty"])
+	require.InEpsilon(t, 0.7875, payload.Data.Items[0].ScoreTotal, 0.0002)
+	require.Contains(t, payload.Data.Items[0].ScoreBreakdown, "ttft_latency")
+	require.Less(t, payload.Data.Items[0].ScoreBreakdown["ttft_latency"], 0.05)
 	require.Equal(t, "score-cold", payload.Data.Items[1].RequestID)
 	require.NotZero(t, payload.Data.ScoreDelta)
 }

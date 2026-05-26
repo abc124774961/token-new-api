@@ -44,7 +44,7 @@ func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 			ProviderProfile:        "mimo_codex_chat",
 			ProxyMode:              "responses_via_chat",
 			ScoreTotal:             0.88,
-			ScoreBreakdown:         map[string]float64{"success": 0.9},
+			ScoreBreakdown:         map[string]float64{"completion_rate": 0.9},
 			QueueEnabled:           true,
 			QueueDepth:             1,
 			QueueCapacity:          8,
@@ -71,7 +71,7 @@ func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 					RuntimeKey:      core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "mimo-v1", ChannelID: 2, Group: "default", EndpointType: constant.EndpointTypeOpenAI},
 					Available:       true,
 					ScoreTotal:      0.88,
-					ScoreBreakdown:  map[string]float64{"success": 0.9},
+					ScoreBreakdown:  map[string]float64{"completion_rate": 0.9},
 					Selected:        true,
 				},
 			},
@@ -95,7 +95,7 @@ func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 	require.Equal(t, 2, record.ChannelId)
 	require.Equal(t, 1, record.ActualChannelId)
 	require.Equal(t, "default", record.SelectedGroup)
-	require.Contains(t, record.ScoreBreakdown, "success")
+	require.Contains(t, record.ScoreBreakdown, "completion_rate")
 	require.Contains(t, record.RequestMeta, "mimo_codex_chat")
 	require.Contains(t, record.RequestMeta, "responses_via_chat")
 	require.Contains(t, record.RequestMeta, "prompt_cache_key")
@@ -159,6 +159,64 @@ func TestAsyncExecutionRecorderRecordsAttemptFlowMeta(t *testing.T) {
 	var summaries int64
 	require.NoError(t, db.Model(&model.ModelGatewayUserRequestSummary{}).Where("request_id = ?", "req-flow").Count(&summaries).Error)
 	require.Equal(t, int64(0), summaries)
+}
+
+func TestAsyncExecutionRecorderRecordsFirstByteTimeoutRetryReason(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:     "req-first-byte-timeout",
+		AttemptIndex:  0,
+		ChannelID:     11,
+		ChannelName:   "slow-first-byte",
+		SelectedGroup: "default",
+		ModelName:     "gpt-5.5",
+		StatusCode:    504,
+		ErrorCode:     "channel:response_time_exceeded",
+		ErrorCategory: "timeout",
+		RetryAction:   "switch_channel",
+		RetryReason:   "first_byte_timeout",
+		WillRetry:     true,
+		Duration:      20 * time.Second,
+	})
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:     "req-first-byte-timeout",
+		AttemptIndex:  1,
+		ChannelID:     12,
+		ChannelName:   "healthy-channel",
+		SelectedGroup: "default",
+		ModelName:     "gpt-5.5",
+		Success:       true,
+		RetryAction:   "complete",
+		Duration:      900 * time.Millisecond,
+		TTFT:          180 * time.Millisecond,
+	})
+
+	require.Eventually(t, func() bool {
+		var summary model.ModelGatewayUserRequestSummary
+		err := db.Where("request_id = ?", "req-first-byte-timeout").First(&summary).Error
+		return err == nil && summary.Attempts == 2 && summary.FinalSuccess && summary.Recovered
+	}, time.Second, 10*time.Millisecond)
+
+	var record model.ModelExecutionRecord
+	require.NoError(t, db.Where("request_id = ? AND attempt_index = ?", "req-first-byte-timeout", 0).First(&record).Error)
+	require.Contains(t, record.RequestMeta, `"retry_reason":"first_byte_timeout"`)
+	require.Contains(t, record.RequestMeta, `"retry_action":"switch_channel"`)
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-first-byte-timeout").First(&summary).Error)
+	require.True(t, summary.FinalSuccess)
+	require.True(t, summary.Recovered)
+	require.False(t, summary.ClientAborted)
+	require.Equal(t, 12, summary.FinalChannelID)
 }
 
 func TestAsyncExecutionRecorderRecordsAttemptTimingMeta(t *testing.T) {

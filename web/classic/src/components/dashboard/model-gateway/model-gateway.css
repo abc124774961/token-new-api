@@ -3798,6 +3798,179 @@ button.ct-model-gateway-detail-metric {
   gap: 2px;
 }
 
+.ct-model-gateway-score-items-table {
+  display: grid;
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid rgba(203, 213, 225, 0.8);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.035);
+}
+
+.dark .ct-model-gateway-score-items-table {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.ct-model-gateway-score-items-head,
+.ct-model-gateway-score-items-row {
+  display: grid;
+  min-width: 920px;
+  align-items: stretch;
+  grid-template-columns:
+    minmax(150px, 1.25fr) minmax(118px, 0.95fr) 78px 66px 70px 72px 72px
+    minmax(190px, 1.35fr);
+}
+
+.ct-model-gateway-score-items-table-compact
+  .ct-model-gateway-score-items-head,
+.ct-model-gateway-score-items-table-compact
+  .ct-model-gateway-score-items-row {
+  min-width: 780px;
+  grid-template-columns:
+    minmax(132px, 1.2fr) minmax(100px, 0.9fr) 66px 58px 62px 64px 64px
+    minmax(150px, 1.1fr);
+}
+
+.ct-model-gateway-score-items-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: #64748b;
+  background: linear-gradient(180deg, #f8fafc, #eef6f7);
+  font-size: 11px;
+  font-weight: 860;
+}
+
+.dark .ct-model-gateway-score-items-head {
+  background: rgba(15, 23, 42, 0.76);
+}
+
+.ct-model-gateway-score-items-head span,
+.ct-model-gateway-score-items-row > span,
+.ct-model-gateway-score-items-row > strong,
+.ct-model-gateway-score-items-row > em {
+  min-width: 0;
+  overflow: hidden;
+  border-right: 1px solid rgba(226, 232, 240, 0.92);
+  padding: 8px 9px;
+  text-overflow: ellipsis;
+}
+
+.dark .ct-model-gateway-score-items-head span,
+.dark .ct-model-gateway-score-items-row > span,
+.dark .ct-model-gateway-score-items-row > strong,
+.dark .ct-model-gateway-score-items-row > em {
+  border-right-color: rgba(255, 255, 255, 0.08);
+}
+
+.ct-model-gateway-score-items-head span:last-child,
+.ct-model-gateway-score-items-row > span:last-child,
+.ct-model-gateway-score-items-row > strong:last-child,
+.ct-model-gateway-score-items-row > em:last-child {
+  border-right: 0;
+}
+
+.ct-model-gateway-score-items-row {
+  border-top: 1px solid rgba(226, 232, 240, 0.92);
+  color: #334155;
+  background: #fff;
+  font-size: 12px;
+}
+
+.ct-model-gateway-score-items-row:nth-child(odd) {
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.dark .ct-model-gateway-score-items-row {
+  border-top-color: rgba(255, 255, 255, 0.08);
+  color: rgba(226, 232, 240, 0.88);
+  background: rgba(15, 23, 42, 0.22);
+}
+
+.ct-model-gateway-score-item-name {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ct-model-gateway-score-item-name strong {
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 820;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dark .ct-model-gateway-score-item-name strong {
+  color: rgba(248, 250, 252, 0.94);
+}
+
+.ct-model-gateway-score-item-name small,
+.ct-model-gateway-score-item-name em,
+.ct-model-gateway-score-item-formula small {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 760;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-model-gateway-score-item-name small {
+  color: #0369a1;
+  background: rgba(224, 242, 254, 0.9);
+}
+
+.ct-model-gateway-score-item-name em {
+  color: #b45309;
+  background: rgba(254, 243, 199, 0.9);
+}
+
+.ct-model-gateway-score-item-raw,
+.ct-model-gateway-score-item-formula {
+  color: #64748b;
+  line-height: 1.32;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.ct-model-gateway-score-item-formula {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ct-model-gateway-score-item-formula small {
+  color: #0f766e;
+  background: rgba(204, 251, 241, 0.75);
+}
+
+.ct-model-gateway-score-item-number,
+.ct-model-gateway-score-items-row > em {
+  color: #0f172a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 820;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dark .ct-model-gateway-score-item-number,
+.dark .ct-model-gateway-score-items-row > em {
+  color: rgba(248, 250, 252, 0.94);
+}
+
 .ct-model-gateway-detail-panel {
   border-top: 1px solid rgba(15, 23, 42, 0.08);
   padding-top: 14px;
@@ -4605,6 +4778,10 @@ button.ct-model-gateway-detail-metric {
 
 .ct-model-gateway-score-delta-negative {
   color: #ea580c !important;
+}
+
+.ct-model-gateway-score-delta-neutral {
+  color: #64748b !important;
 }
 
 .ct-model-gateway-score-history-list {

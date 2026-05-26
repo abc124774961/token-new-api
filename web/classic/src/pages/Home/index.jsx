@@ -132,7 +132,7 @@ const GatewayFlowCanvas = ({
     let height = 0;
 
     const baseWidth = 1480;
-    const baseHeight = 560;
+    const baseHeight = 640;
     const color = {
       ink: '#0b1b33',
       muted: '#64748b',
@@ -144,6 +144,7 @@ const GatewayFlowCanvas = ({
       red: '#ef4444',
       amber: '#f59e0b',
       blue: '#3b82f6',
+      violet: '#6366f1',
       border: 'rgba(15, 23, 42, 0.08)',
     };
 
@@ -164,6 +165,25 @@ const GatewayFlowCanvas = ({
           : '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       ctx.font = `${weight} ${size}px ${stack}`;
       ctx.textBaseline = 'alphabetic';
+    };
+
+    const lerp = (start, end, amount) => start + (end - start) * amount;
+
+    const cubicPoint = (start, cp1, cp2, end, progress) => {
+      const t = Math.min(Math.max(progress, 0), 1);
+      const mt = 1 - t;
+      return {
+        x:
+          mt * mt * mt * start.x +
+          3 * mt * mt * t * cp1.x +
+          3 * mt * t * t * cp2.x +
+          t * t * t * end.x,
+        y:
+          mt * mt * mt * start.y +
+          3 * mt * mt * t * cp1.y +
+          3 * mt * t * t * cp2.y +
+          t * t * t * end.y,
+      };
     };
 
     const fillText = (text, x, y, options = {}) => {
@@ -206,14 +226,17 @@ const GatewayFlowCanvas = ({
     };
 
     const drawMetric = (x, y, label, value, type = 'line') => {
-      drawCard(x, y, 126, 124);
-      fillText(label, x + 18, y + 32, {
+      drawCard(x, y, 138, 94, {
+        radius: 12,
+        fill: 'rgba(255,255,255,0.9)',
+      });
+      fillText(label, x + 18, y + 28, {
         size: 12,
         weight: 850,
         fill: '#718197',
       });
-      fillText(value, x + 18, y + 68, {
-        size: 24,
+      fillText(value, x + 18, y + 61, {
+        size: 22,
         weight: 950,
         fill: color.teal,
         family: 'mono',
@@ -223,7 +246,7 @@ const GatewayFlowCanvas = ({
         const bars = [15, 22, 27, 18, 31, 24, 34, 28, 36];
         bars.forEach((bar, index) => {
           const bx = x + 20 + index * 8;
-          const by = y + 98 - bar;
+          const by = y + 82 - bar;
           drawRoundRect(ctx, bx, by, 5, bar, 3);
           ctx.fillStyle = color.teal;
           ctx.fill();
@@ -234,14 +257,14 @@ const GatewayFlowCanvas = ({
       ctx.save();
       ctx.beginPath();
       const points = [
-        [20, 94],
-        [33, 91],
-        [45, 95],
-        [58, 86],
-        [70, 93],
-        [84, 84],
-        [96, 91],
-        [111, 84],
+        [20, 78],
+        [33, 75],
+        [45, 79],
+        [58, 70],
+        [70, 77],
+        [84, 68],
+        [101, 75],
+        [119, 68],
       ];
       points.forEach(([px, py], index) => {
         if (index === 0) ctx.moveTo(x + px, y + py);
@@ -253,6 +276,26 @@ const GatewayFlowCanvas = ({
       ctx.lineJoin = 'round';
       ctx.stroke();
       ctx.restore();
+    };
+
+    const drawHeaderMetric = (x, y, label, value, tone = color.teal) => {
+      drawRoundRect(ctx, x, y, 124, 46, 12);
+      ctx.fillStyle = 'rgba(255,255,255,0.78)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(15,23,42,0.07)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      fillText(label, x + 14, y + 17, {
+        size: 10,
+        weight: 900,
+        fill: color.faint,
+      });
+      fillText(value, x + 14, y + 37, {
+        size: 15,
+        weight: 950,
+        fill: tone,
+        family: 'mono',
+      });
     };
 
     const drawPulseIcon = (x, y) => {
@@ -293,86 +336,473 @@ const GatewayFlowCanvas = ({
         stroke = color.border,
         textColor = color.ink,
         width: pillWidth,
+        height: pillHeight = 36,
+        size = 12,
       } = options;
-      setFont(12, 900);
+      setFont(size, 900);
       const w = pillWidth || Math.max(82, ctx.measureText(text).width + 28);
-      const h = 36;
+      const h = pillHeight;
       drawRoundRect(ctx, x, y, w, h, 9);
       ctx.fillStyle = fill;
       ctx.fill();
       ctx.strokeStyle = stroke;
       ctx.lineWidth = 1;
       ctx.stroke();
-      fillText(text, x + w / 2, y + 23, {
-        size: 12,
+      fillText(text, x + w / 2, y + h / 2 + size * 0.36, {
+        size,
         weight: 900,
         fill: textColor,
         align: 'center',
       });
     };
 
-    const drawFlowLine = (x1, y1, x2, y2, progress, stroke, glow) => {
+    const drawBezierLane = ({
+      start,
+      cp1,
+      cp2,
+      end,
+      progress,
+      stroke,
+      glow,
+      width: lineWidth = 2,
+      dash = [],
+      packets = 1,
+      active = true,
+    }) => {
       ctx.save();
       ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
+      ctx.moveTo(start.x, start.y);
+      ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
       ctx.strokeStyle = stroke;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = lineWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.setLineDash(dash);
       ctx.stroke();
+      ctx.setLineDash([]);
 
-      const px = x1 + (x2 - x1) * progress;
-      const py = y1 + (y2 - y1) * progress;
-      const gradient = ctx.createRadialGradient(px, py, 1, px, py, 16);
-      gradient.addColorStop(0, glow);
-      gradient.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(px, py, 16, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(px, py, 4, 0, Math.PI * 2);
-      ctx.fill();
+      if (active) {
+        Array.from({ length: packets }).forEach((_, index) => {
+          const packetProgress = (progress + index * 0.36) % 1;
+          const point = cubicPoint(start, cp1, cp2, end, packetProgress);
+          const tail = cubicPoint(
+            start,
+            cp1,
+            cp2,
+            end,
+            Math.max(0, packetProgress - 0.055),
+          );
+          const tailGradient = ctx.createLinearGradient(tail.x, tail.y, point.x, point.y);
+          tailGradient.addColorStop(0, 'rgba(255,255,255,0)');
+          tailGradient.addColorStop(1, glow);
+          ctx.beginPath();
+          ctx.moveTo(tail.x, tail.y);
+          ctx.lineTo(point.x, point.y);
+          ctx.strokeStyle = tailGradient;
+          ctx.lineWidth = lineWidth + 5;
+          ctx.stroke();
+
+          const halo = ctx.createRadialGradient(point.x, point.y, 1, point.x, point.y, 18);
+          halo.addColorStop(0, glow);
+          halo.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = halo;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 18, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 4.2, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
       ctx.restore();
     };
 
-    const drawChannel = (channel, x, y) => {
+    const drawTopBar = (time) => {
+      drawCard(44, 34, 1392, 72, {
+        radius: 18,
+        fill: 'rgba(255,255,255,0.82)',
+        border: 'rgba(13,156,165,0.12)',
+      });
+
+      const pulse = prefersReducedMotion ? 0.55 : (Math.sin(time * 3) + 1) / 2;
+      ctx.fillStyle = `rgba(22,163,74,${0.16 + pulse * 0.18})`;
+      ctx.beginPath();
+      ctx.arc(74, 70, 13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = color.green;
+      ctx.beginPath();
+      ctx.arc(74, 70, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+      fillText(t('LIVE ROUTING'), 96, 63, {
+        size: 11,
+        weight: 950,
+        fill: color.tealDark,
+        family: 'mono',
+      });
+      fillText(t('实时路由'), 96, 86, {
+        size: 17,
+        weight: 950,
+      });
+
+      fillText(t('请求编号'), 244, 63, {
+        size: 10,
+        weight: 900,
+        fill: color.faint,
+      });
+      fillText('#RQ-82A7', 244, 86, {
+        size: 15,
+        weight: 950,
+        fill: color.ink,
+        family: 'mono',
+      });
+
+      fillText(t('当前链路'), 374, 63, {
+        size: 10,
+        weight: 900,
+        fill: color.faint,
+      });
+      fillText('Codex -> Gateway -> Channel #7 -> Stream', 374, 86, {
+        size: 14,
+        weight: 900,
+        fill: '#334155',
+        family: 'mono',
+      });
+
+      drawHeaderMetric(982, 47, t('成功率'), successRate, color.green);
+      drawHeaderMetric(1120, 47, t('平均延迟'), avgLatency, color.blue);
+      drawHeaderMetric(1258, 47, t('健康渠道'), channelText, color.teal);
+    };
+
+    const drawGatewayCore = (x, y, time) => {
+      const pulse = prefersReducedMotion ? 0.5 : (Math.sin(time * 2.2) + 1) / 2;
+      const sweep = prefersReducedMotion ? 0.75 : time * 1.2;
+
+      ctx.save();
+      const glow = ctx.createRadialGradient(x, y, 20, x, y, 150);
+      glow.addColorStop(0, 'rgba(35,199,207,0.28)');
+      glow.addColorStop(0.45, 'rgba(35,199,207,0.09)');
+      glow.addColorStop(1, 'rgba(35,199,207,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(x, y, 150, 0, Math.PI * 2);
+      ctx.fill();
+
+      for (let index = 0; index < 28; index += 1) {
+        const angle = (Math.PI * 2 * index) / 28;
+        const inner = 108 + (index % 3 === 0 ? 0 : 5);
+        const outer = 118;
+        ctx.beginPath();
+        ctx.moveTo(x + Math.cos(angle) * inner, y + Math.sin(angle) * inner);
+        ctx.lineTo(x + Math.cos(angle) * outer, y + Math.sin(angle) * outer);
+        ctx.strokeStyle = index % 4 === 0 ? 'rgba(13,156,165,0.28)' : 'rgba(100,116,139,0.14)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      const rings = [
+        { radius: 102, color: 'rgba(13,156,165,0.18)', width: 1.5 },
+        { radius: 78, color: 'rgba(59,130,246,0.18)', width: 1.5 },
+        { radius: 54, color: 'rgba(22,163,74,0.18)', width: 1.5 },
+      ];
+      rings.forEach((ring) => {
+        ctx.beginPath();
+        ctx.arc(x, y, ring.radius, 0, Math.PI * 2);
+        ctx.strokeStyle = ring.color;
+        ctx.lineWidth = ring.width;
+        ctx.stroke();
+      });
+
+      [
+        { radius: 92, start: 0.16, size: 0.44, tone: color.teal },
+        { radius: 70, start: 0.56, size: 0.36, tone: color.blue },
+        { radius: 46, start: 0.88, size: 0.42, tone: color.green },
+      ].forEach((arc, index) => {
+        const startAngle = sweep * (index % 2 === 0 ? 1 : -1) + Math.PI * 2 * arc.start;
+        ctx.beginPath();
+        ctx.arc(x, y, arc.radius, startAngle, startAngle + Math.PI * arc.size);
+        ctx.strokeStyle = arc.tone;
+        ctx.lineWidth = index === 0 ? 6 : 4;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      });
+
+      const scanAngle = sweep + 0.8;
+      const scanGradient = ctx.createLinearGradient(
+        x,
+        y,
+        x + Math.cos(scanAngle) * 112,
+        y + Math.sin(scanAngle) * 112,
+      );
+      scanGradient.addColorStop(0, 'rgba(35,199,207,0.34)');
+      scanGradient.addColorStop(1, 'rgba(35,199,207,0)');
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(scanAngle - 0.24) * 112, y + Math.sin(scanAngle - 0.24) * 112);
+      ctx.arc(x, y, 112, scanAngle - 0.24, scanAngle + 0.08);
+      ctx.closePath();
+      ctx.fillStyle = scanGradient;
+      ctx.fill();
+
+      const coreGradient = ctx.createRadialGradient(x - 18, y - 24, 8, x, y, 62);
+      coreGradient.addColorStop(0, '#ffffff');
+      coreGradient.addColorStop(0.46, '#ffffff');
+      coreGradient.addColorStop(0.48, '#d7fbff');
+      coreGradient.addColorStop(1, color.teal);
+      ctx.fillStyle = coreGradient;
+      ctx.beginPath();
+      ctx.arc(x, y, 54 + pulse * 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.84)';
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.arc(x, y, 30, 0, Math.PI * 2);
+      ctx.stroke();
+
+      fillText('Gateway', x, y - 8, {
+        size: 15,
+        weight: 950,
+        fill: color.ink,
+        align: 'center',
+        family: 'mono',
+      });
+      fillText(`${t('评分')} 98.7`, x, y + 17, {
+        size: 11,
+        weight: 900,
+        fill: color.tealDark,
+        align: 'center',
+        family: 'mono',
+      });
+      fillText(`${t('链路')} OK`, x, y + 38, {
+        size: 10,
+        weight: 900,
+        fill: color.green,
+        align: 'center',
+        family: 'mono',
+      });
+
+      fillText(t('智能网关'), x, y + 126, {
+        size: 15,
+        weight: 950,
+        align: 'center',
+      });
+      fillText(t('通道评分'), x, y + 149, {
+        size: 12,
+        weight: 840,
+        fill: color.muted,
+        align: 'center',
+      });
+      ctx.restore();
+    };
+
+    const drawChannel = (channel, x, y, index, time) => {
       const statusColor =
         channel.tone === 'failed'
           ? color.red
           : channel.tone === 'cooling'
             ? color.amber
             : color.green;
-      drawCard(x, y, 320, 70, {
-        radius: 8,
-        fill: 'rgba(255,255,255,0.93)',
+      const isSelected = Boolean(channel.selected);
+      const pulse = prefersReducedMotion ? 0.4 : (Math.sin(time * 2.8 + index) + 1) / 2;
+
+      drawCard(x, y, 330, 88, {
+        radius: 12,
+        fill:
+          channel.tone === 'failed'
+            ? 'rgba(255,247,247,0.95)'
+            : isSelected
+              ? 'rgba(240,253,250,0.98)'
+              : 'rgba(255,255,255,0.93)',
+        border: isSelected
+          ? 'rgba(13,156,165,0.42)'
+          : channel.tone === 'failed'
+            ? 'rgba(239,68,68,0.26)'
+            : 'rgba(15,23,42,0.08)',
       });
+
+      if (channel.tone === 'failed') {
+        ctx.save();
+        ctx.strokeStyle = `rgba(239,68,68,${0.2 + pulse * 0.22})`;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 7]);
+        drawRoundRect(ctx, x + 4, y + 4, 322, 80, 10);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x + 242, y + 17);
+        ctx.lineTo(x + 308, y + 68);
+        ctx.stroke();
+        ctx.restore();
+      }
+
       ctx.fillStyle = statusColor;
       ctx.beginPath();
-      ctx.arc(x + 22, y + 35, 5, 0, Math.PI * 2);
+      ctx.arc(x + 22, y + 24, 5.5, 0, Math.PI * 2);
       ctx.fill();
-      fillText(channel.name, x + 46, y + 29, {
+      fillText(channel.name, x + 40, y + 25, {
         size: 14,
         weight: 950,
       });
-      fillText(channel.meta, x + 46, y + 50, {
-        size: 12,
-        weight: 800,
-        fill: color.muted,
-      });
       if (channel.provider) {
-        fillText(channel.provider, x + 262, y + 38, {
-          size: 12,
+        fillText(channel.provider, x + 40, y + 47, {
+          size: 11,
           weight: 850,
-          fill: '#5f7190',
-          align: 'right',
+          fill: color.muted,
         });
       }
-      fillText(channel.status, x + 304, y + 38, {
-        size: 12,
+      drawPill(x + 228, y + 12, channel.badge || channel.status, {
+        fill:
+          channel.tone === 'failed'
+            ? 'rgba(239,68,68,0.09)'
+            : channel.tone === 'cooling'
+              ? 'rgba(245,158,11,0.11)'
+              : 'rgba(22,163,74,0.09)',
+        stroke: 'rgba(15,23,42,0.06)',
+        textColor: statusColor,
+        width: 86,
+        height: 26,
+        size: 10,
+      });
+
+      const metricY = y + 80;
+      [
+        [t('评分'), channel.score, color.teal],
+        [t('延迟'), channel.latency, color.blue],
+        [t('成本'), channel.cost, color.green],
+      ].forEach(([label, value, tone], metricIndex) => {
+        const mx = x + 40 + metricIndex * 88;
+        fillText(label, mx, metricY - 14, {
+          size: 9,
+          weight: 900,
+          fill: color.faint,
+        });
+        fillText(value, mx + 36, metricY - 14, {
+          size: 10,
+          weight: 950,
+          fill: tone,
+          family: 'mono',
+        });
+        drawRoundRect(ctx, mx, metricY - 3, 64, 4, 3);
+        ctx.fillStyle = 'rgba(15,23,42,0.06)';
+        ctx.fill();
+        drawRoundRect(ctx, mx, metricY - 3, lerp(22, 64, metricIndex === 0 ? 0.82 : 0.58), 4, 3);
+        ctx.fillStyle = tone;
+        ctx.fill();
+      });
+    };
+
+    const drawDecisionTrace = (x, y, time) => {
+      drawCard(x, y, 186, 374, {
+        radius: 14,
+        fill: 'rgba(255,255,255,0.9)',
+        border: 'rgba(13,156,165,0.12)',
+      });
+      fillText(t('决策轨迹'), x + 18, y + 32, {
+        size: 14,
         weight: 950,
-        fill: statusColor,
-        align: 'right',
+      });
+      fillText(t('实时评估'), x + 18, y + 53, {
+        size: 11,
+        weight: 850,
+        fill: color.muted,
+      });
+
+      const steps = [
+        { label: t('能力匹配'), code: 'PASS', tone: color.teal },
+        { label: t('健康评分'), code: '98.7', tone: color.blue },
+        { label: t('规避 502'), code: 'BYPASS', tone: color.red },
+        { label: t('切换成功'), code: '#7', tone: color.green },
+        { label: t('流式返回'), code: 'STREAM', tone: color.green },
+      ];
+
+      ctx.beginPath();
+      ctx.moveTo(x + 31, y + 84);
+      ctx.lineTo(x + 31, y + 324);
+      ctx.strokeStyle = 'rgba(13,156,165,0.13)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      steps.forEach((step, index) => {
+        const stepY = y + 88 + index * 56;
+        const pulse = prefersReducedMotion ? 0.45 : (Math.sin(time * 2.6 + index * 0.8) + 1) / 2;
+        ctx.fillStyle = `rgba(13,156,165,${0.08 + pulse * 0.08})`;
+        ctx.beginPath();
+        ctx.arc(x + 31, stepY, 13, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = step.tone;
+        ctx.beginPath();
+        ctx.arc(x + 31, stepY, 5.2, 0, Math.PI * 2);
+        ctx.fill();
+        fillText(`0${index + 1}`, x + 54, stepY - 5, {
+          size: 10,
+          weight: 950,
+          fill: color.faint,
+          family: 'mono',
+        });
+        fillText(step.label, x + 54, stepY + 14, {
+          size: 12,
+          weight: 930,
+          fill: color.ink,
+        });
+        fillText(step.code, x + 156, stepY + 6, {
+          size: 10,
+          weight: 950,
+          fill: step.tone,
+          align: 'center',
+          family: 'mono',
+        });
+      });
+    };
+
+    const drawEndpointCard = ({ x, y, title, subtitle, kind }) => {
+      drawCard(x, y, 146, 162, {
+        radius: 14,
+        fill: 'rgba(255,255,255,0.92)',
+      });
+      if (kind === 'client') drawPulseIcon(x + 73, y + 54);
+      else drawMessageIcon(x + 73, y + 50);
+
+      fillText(title, x + 73, y + 104, {
+        size: 14,
+        weight: 950,
+        align: 'center',
+      });
+      fillText(subtitle, x + 73, y + 127, {
+        size: 12,
+        weight: 820,
+        fill: color.muted,
+        align: 'center',
+      });
+    };
+
+    const drawPolicyRail = (time) => {
+      const items = [
+        t('能力匹配'),
+        t('成本权重'),
+        t('健康评分'),
+        t('失败率降权'),
+        t('熔断冷却'),
+      ];
+      fillText(t('策略参与'), 250, 566, {
+        size: 11,
+        weight: 900,
+        fill: color.faint,
+      });
+      items.forEach((item, index) => {
+        const x = 250 + index * 108;
+        const active = prefersReducedMotion ? index === 2 : Math.floor(time * 1.4) % items.length === index;
+        drawPill(x, 578, item, {
+          fill: active ? 'rgba(13,156,165,0.11)' : 'rgba(255,255,255,0.82)',
+          stroke: active ? 'rgba(13,156,165,0.24)' : 'rgba(15,23,42,0.08)',
+          textColor: active ? color.tealDark : '#5c6d83',
+          width: 96,
+          height: 34,
+          size: 11,
+        });
+        ctx.fillStyle = active ? color.teal : 'rgba(100,116,139,0.26)';
+        ctx.beginPath();
+        ctx.arc(x + 13, 595, 3.2, 0, Math.PI * 2);
+        ctx.fill();
       });
     };
 
@@ -388,7 +818,7 @@ const GatewayFlowCanvas = ({
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, baseWidth, baseHeight);
 
-      for (let x = 0; x <= baseWidth; x += 42) {
+      for (let x = 0; x <= baseWidth; x += 40) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
         ctx.lineTo(x, baseHeight);
@@ -396,7 +826,7 @@ const GatewayFlowCanvas = ({
         ctx.lineWidth = 1;
         ctx.stroke();
       }
-      for (let y = 0; y <= baseHeight; y += 42) {
+      for (let y = 0; y <= baseHeight; y += 40) {
         ctx.beginPath();
         ctx.moveTo(0, y);
         ctx.lineTo(baseWidth, y);
@@ -405,125 +835,135 @@ const GatewayFlowCanvas = ({
         ctx.stroke();
       }
 
-      const glow = ctx.createRadialGradient(470, 320, 40, 470, 320, 310);
+      const glow = ctx.createRadialGradient(470, 350, 40, 470, 350, 360);
       glow.addColorStop(0, 'rgba(35, 199, 207, 0.26)');
       glow.addColorStop(0.34, 'rgba(35, 199, 207, 0.08)');
       glow.addColorStop(1, 'rgba(35, 199, 207, 0)');
       ctx.fillStyle = glow;
-      ctx.fillRect(120, 40, 760, 500);
+      ctx.fillRect(100, 70, 820, 540);
 
-      const lineGradient = ctx.createLinearGradient(190, 305, 1280, 305);
-      lineGradient.addColorStop(0, 'rgba(59, 130, 246, 0.72)');
-      lineGradient.addColorStop(0.35, 'rgba(13, 156, 165, 0.88)');
-      lineGradient.addColorStop(0.56, 'rgba(239, 68, 68, 0.62)');
-      lineGradient.addColorStop(1, 'rgba(34, 197, 94, 0.7)');
-
-      const phase = prefersReducedMotion ? 0.48 : (time * 0.18) % 1;
-      drawFlowLine(190, 305, 465, 305, phase, lineGradient, 'rgba(35, 199, 207, 0.95)');
-      drawFlowLine(530, 305, 740, 135, (phase + 0.2) % 1, 'rgba(13,156,165,0.45)', 'rgba(34,197,94,0.9)');
-      drawFlowLine(530, 305, 740, 215, (phase + 0.38) % 1, 'rgba(13,156,165,0.45)', 'rgba(34,197,94,0.9)');
-      drawFlowLine(530, 305, 740, 295, (phase + 0.55) % 1, 'rgba(239,68,68,0.34)', 'rgba(239,68,68,0.85)');
-      drawFlowLine(530, 305, 740, 375, (phase + 0.7) % 1, 'rgba(13,156,165,0.45)', 'rgba(34,197,94,0.9)');
-      drawFlowLine(530, 305, 1280, 305, (phase + 0.45) % 1, lineGradient, 'rgba(34,197,94,0.88)');
-
-      drawMetric(48, 48, t('成功率'), successRate);
-      drawMetric(200, 48, t('平均延迟'), avgLatency);
-      drawMetric(352, 48, t('健康渠道'), channelText, 'bars');
-
-      drawCard(50, 278, 118, 154, { radius: 8 });
-      drawPulseIcon(109, 326);
-      fillText(t('客户端'), 109, 376, {
-        size: 14,
-        weight: 950,
-        align: 'center',
-      });
-      fillText(t('请求'), 109, 407, {
-        size: 12,
-        weight: 820,
-        fill: color.muted,
-        align: 'center',
+      const phase = prefersReducedMotion ? 0.58 : (time * 0.22) % 1;
+      drawBezierLane({
+        start: { x: 200, y: 360 },
+        cp1: { x: 268, y: 342 },
+        cp2: { x: 330, y: 342 },
+        end: { x: 372, y: 350 },
+        progress: phase,
+        stroke: 'rgba(59,130,246,0.42)',
+        glow: 'rgba(59,130,246,0.95)',
+        width: 3,
+        packets: 2,
       });
 
-      ctx.save();
-      const pulse = prefersReducedMotion ? 0.5 : (Math.sin(time * 2) + 1) / 2;
-      const coreGradient = ctx.createRadialGradient(470, 305, 12, 470, 305, 84);
-      coreGradient.addColorStop(0, '#ffffff');
-      coreGradient.addColorStop(0.32, '#ffffff');
-      coreGradient.addColorStop(0.33, color.teal);
-      coreGradient.addColorStop(0.72, color.cyan);
-      coreGradient.addColorStop(1, color.tealDark);
-      ctx.fillStyle = `rgba(13,156,165,${0.1 + pulse * 0.06})`;
-      ctx.beginPath();
-      ctx.arc(470, 305, 76 + pulse * 8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = coreGradient;
-      ctx.beginPath();
-      ctx.arc(470, 305, 58, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.78)';
-      ctx.lineWidth = 8;
-      ctx.beginPath();
-      ctx.arc(470, 305, 34, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-      fillText(t('智能网关'), 470, 392, {
-        size: 14,
-        weight: 950,
-        align: 'center',
-      });
-      fillText(t('智能评分'), 470, 415, {
-        size: 12,
-        weight: 820,
-        fill: color.muted,
-        align: 'center',
+      const channelY = channels.map((_, index) => 122 + index * 90 + 44);
+      channelY.forEach((targetY, index) => {
+        const tone = channels[index]?.tone;
+        drawBezierLane({
+          start: { x: 560, y: 350 },
+          cp1: { x: 600, y: 290 + index * 8 },
+          cp2: { x: 628, y: targetY },
+          end: { x: 686, y: targetY },
+          progress: (phase + index * 0.16) % 1,
+          stroke:
+            tone === 'failed'
+              ? 'rgba(239,68,68,0.3)'
+              : tone === 'cooling'
+                ? 'rgba(245,158,11,0.28)'
+                : 'rgba(13,156,165,0.36)',
+          glow:
+            tone === 'failed'
+              ? 'rgba(239,68,68,0.88)'
+              : tone === 'cooling'
+                ? 'rgba(245,158,11,0.82)'
+                : 'rgba(35,199,207,0.9)',
+          width: tone === 'failed' ? 2 : 2.5,
+          dash: tone === 'failed' ? [8, 8] : [],
+          packets: tone === 'failed' ? 1 : 2,
+        });
       });
 
-      [t('能力匹配'), t('成本权重'), t('健康评分'), t('失败率降权')].forEach(
-        (item, index) => {
-          drawPill(250 + index * 96, 458, item, {
-            fill: 'rgba(255,255,255,0.88)',
-            stroke: 'rgba(15,23,42,0.08)',
-            textColor: '#5c6d83',
-            width: 82,
-          });
-        },
+      drawBezierLane({
+        start: { x: 674, y: channelY[2] || 350 },
+        cp1: { x: 625, y: 352 },
+        cp2: { x: 625, y: 426 },
+        end: { x: 674, y: channelY[3] || 436 },
+        progress: (phase + 0.34) % 1,
+        stroke: 'rgba(239,68,68,0.34)',
+        glow: 'rgba(239,68,68,0.9)',
+        width: 2,
+        dash: [8, 7],
+        packets: 1,
+      });
+
+      const selectedIndex = Math.max(
+        channels.findIndex((channel) => channel.selected),
+        0,
       );
+      const selectedY = channelY[selectedIndex] || 432;
+      drawBezierLane({
+        start: { x: 1022, y: selectedY },
+        cp1: { x: 1086, y: selectedY + 18 },
+        cp2: { x: 1212, y: 354 },
+        end: { x: 1284, y: 354 },
+        progress: (phase + 0.48) % 1,
+        stroke: 'rgba(22,163,74,0.42)',
+        glow: 'rgba(22,163,74,0.9)',
+        width: 3,
+        packets: 2,
+      });
+
+      drawTopBar(time);
+
+      drawMetric(48, 126, t('成功率'), successRate);
+      drawMetric(204, 126, t('平均延迟'), avgLatency);
+      drawMetric(360, 126, t('健康渠道'), channelText, 'bars');
+
+      drawEndpointCard({
+        x: 54,
+        y: 278,
+        title: t('客户端'),
+        subtitle: t('请求接入'),
+        kind: 'client',
+      });
+
+      drawGatewayCore(470, 350, time);
 
       channels.forEach((channel, index) => {
-        drawChannel(channel, 740, 100 + index * 82);
+        drawChannel(channel, 690, 122 + index * 90, index, time);
       });
 
-      drawPill(1160, 344, t('自动切换'), {
+      drawDecisionTrace(1054, 142, time);
+
+      drawPill(1072, 532, t('自动切换'), {
         fill: 'rgba(255,255,255,0.95)',
         stroke: 'rgba(239,68,68,0.24)',
         textColor: color.red,
-        width: 98,
+        width: 102,
+        height: 34,
       });
-      fillText('↻', 1176, 367, {
+      fillText('↻', 1090, 554, {
         size: 13,
         weight: 900,
         fill: color.red,
       });
 
-      drawCard(1290, 278, 130, 154, { radius: 8 });
-      drawMessageIcon(1355, 322);
-      fillText(t('流式响应输出'), 1355, 376, {
-        size: 14,
-        weight: 950,
-        align: 'center',
+      drawEndpointCard({
+        x: 1292,
+        y: 278,
+        title: t('稳定输出'),
+        subtitle: t('流式返回'),
+        kind: 'output',
       });
-      fillText(t('流式保持稳定'), 1355, 399, {
-        size: 12,
-        weight: 820,
-        fill: color.muted,
-        align: 'center',
-      });
-      drawPill(1318, 414, `${t('流式保持')} ✓`, {
+      drawPill(1328, 420, `${t('流式保持')} ✓`, {
         fill: 'rgba(34,197,94,0.1)',
         stroke: 'rgba(34,197,94,0.12)',
         textColor: color.green,
-        width: 74,
+        width: 82,
+        height: 30,
+        size: 11,
       });
+
+      drawPolicyRail(time);
 
       ctx.restore();
     };
@@ -631,6 +1071,10 @@ const Home = () => {
       meta: t('延迟 312ms'),
       status: t('健康'),
       tone: 'healthy',
+      badge: t('READY'),
+      score: '94.8',
+      latency: '312ms',
+      cost: '1.0x',
     },
     {
       name: 'Channel #2',
@@ -638,6 +1082,10 @@ const Home = () => {
       meta: t('延迟 421ms'),
       status: t('健康'),
       tone: 'healthy',
+      badge: t('READY'),
+      score: '92.3',
+      latency: '421ms',
+      cost: '0.8x',
     },
     {
       name: 'Channel #4',
@@ -645,6 +1093,10 @@ const Home = () => {
       meta: 'HTTP 502 / 熔断',
       status: t('失败'),
       tone: 'failed',
+      badge: t('502 BYPASS'),
+      score: '41.2',
+      latency: '502',
+      cost: '--',
     },
     {
       name: 'Channel #7',
@@ -652,6 +1104,11 @@ const Home = () => {
       meta: t('延迟 289ms'),
       status: t('健康'),
       tone: 'healthy',
+      badge: t('SELECTED'),
+      score: '98.7',
+      latency: '289ms',
+      cost: '0.9x',
+      selected: true,
     },
     {
       name: 'Channel #9',
@@ -659,6 +1116,10 @@ const Home = () => {
       meta: t('冷却中 60s'),
       status: t('冷却中'),
       tone: 'cooling',
+      badge: t('COOLING'),
+      score: '66.4',
+      latency: '60s',
+      cost: '0.6x',
     },
   ];
   const flowChannelKey = flowChannels
