@@ -308,6 +308,9 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
+		return err
+	}
 	if common.UsingSQLite {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
@@ -391,6 +394,9 @@ func migrateDBFast() error {
 			return err
 		}
 	}
+	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
+		return err
+	}
 	if common.UsingSQLite {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
@@ -407,6 +413,34 @@ func migrateDBFast() error {
 		return err
 	}
 	common.SysLog("database migrated")
+	return nil
+}
+
+func ensureModelExecutionRecordRequestMetaCapacity() error {
+	if DB == nil || !common.UsingMySQL || !DB.Migrator().HasTable(&ModelExecutionRecord{}) {
+		return nil
+	}
+	const tableName = "model_execution_records"
+	const columnName = "request_meta"
+	if !DB.Migrator().HasColumn(&ModelExecutionRecord{}, columnName) {
+		return nil
+	}
+
+	var columnType string
+	if err := DB.Raw(`SELECT COLUMN_TYPE FROM information_schema.columns
+			WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+		tableName, columnName).Scan(&columnType).Error; err != nil {
+		common.SysLog(fmt.Sprintf("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
+		return nil
+	}
+	normalizedType := strings.ToLower(strings.TrimSpace(columnType))
+	if normalizedType == "mediumtext" || normalizedType == "longtext" {
+		return nil
+	}
+	if err := DB.Exec("ALTER TABLE `model_execution_records` MODIFY COLUMN `request_meta` MEDIUMTEXT").Error; err != nil {
+		return fmt.Errorf("failed to migrate %s.%s to MEDIUMTEXT: %w", tableName, columnName, err)
+	}
+	common.SysLog(fmt.Sprintf("Successfully migrated %s.%s to MEDIUMTEXT", tableName, columnName))
 	return nil
 }
 

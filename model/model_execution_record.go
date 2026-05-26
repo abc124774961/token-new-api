@@ -68,7 +68,13 @@ func RecordModelExecution(record *ModelExecutionRecord) {
 		record.CreatedAt = common.GetTimestamp()
 	}
 	if err := DB.Create(record).Error; err != nil {
-		common.SysLog(fmt.Sprintf("failed to record model execution: request_id=%s channel_id=%d error=%v", record.RequestId, record.ChannelId, err))
+		common.SysLog(fmt.Sprintf(
+			"failed to record model execution: request_id=%s channel_id=%d request_meta_bytes=%d error=%v",
+			record.RequestId,
+			record.ChannelId,
+			len(record.RequestMeta),
+			err,
+		))
 		return
 	}
 	notifyModelExecutionObservers(*record)
