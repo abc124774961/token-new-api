@@ -928,6 +928,7 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 		StreamInterrupted:      flow.ClientAborted || relayStreamInterrupted(c) || (apiErr != nil && relayResponseAlreadyStarted(c)),
 	}
 	if plan != nil {
+		result.Plan = plan
 		result.Key = plan.RuntimeKey
 		result.Strategy = plan.Strategy
 		result.AutoMode = plan.AutoMode

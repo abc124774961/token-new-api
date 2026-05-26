@@ -1,14 +1,21 @@
 package realtime
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/observability/userrequest"
 	"github.com/QuantumNous/new-api/pkg/realtime"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 type captureSubscriber struct {
@@ -18,6 +25,27 @@ type captureSubscriber struct {
 func (s *captureSubscriber) Send(message realtime.ServerMessage) bool {
 	s.messages = append(s.messages, message)
 	return true
+}
+
+func setupRealtimeTopicTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	common.UsingSQLite = true
+	common.UsingMySQL = false
+	common.UsingPostgreSQL = false
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	oldDB := model.DB
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	return db
 }
 
 func TestMergeUserRequestRealtimeRecordsPrefersPendingAndLimits(t *testing.T) {
@@ -199,6 +227,96 @@ func TestTopicPublishesHealthProbeUserRequestDeltaByDefault(t *testing.T) {
 	require.Equal(t, "low_score", delta.UserRequestsRecent[0].ProbeReason)
 }
 
+func TestTopicFinishedUserRequestDeltaCarriesDispatchCandidates(t *testing.T) {
+	db := setupRealtimeTopicTestDB(t)
+	now := time.Now().Unix()
+	requestMeta, err := common.Marshal(map[string]any{
+		"candidate_explanations": []core.CandidateExplanation{
+			{
+				ChannelID:     12,
+				ChannelName:   "score-channel",
+				Group:         "codex-plus",
+				UpstreamModel: "gpt-5.5",
+				RuntimeKey: core.RuntimeKey{
+					RequestedModel: "gpt-5.5",
+					UpstreamModel:  "gpt-5.5",
+					ChannelID:      12,
+					Group:          "codex-plus",
+					EndpointType:   constant.EndpointTypeOpenAI,
+				},
+				Available:      true,
+				Selected:       true,
+				ScoreTotal:     0.94,
+				ScoreBreakdown: map[string]float64{"completion_rate": 1, "ttft_latency": 0.82},
+				ScoreItems:     []core.ScoreItem{{Key: "completion_rate", Score: 1, Weight: 0.4, WeightedScore: 0.4}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ModelExecutionRecord{
+		CreatedAt:      now,
+		RequestId:      "req-ws-finished-score",
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		RequestedModel: "gpt-5.5",
+		ChannelId:      12,
+		ChannelName:    "score-channel",
+		PolicyMode:     "active",
+		SmartHandled:   true,
+		ScoreTotal:     0.94,
+		ScoreBreakdown: `{"completion_rate":1,"ttft_latency":0.82}`,
+		RequestMeta:    string(requestMeta),
+	}).Error)
+
+	topic := NewTopic()
+	defer topic.Close()
+	subscriber := &captureSubscriber{}
+	topic.Subscribe(subscriber, realtime.Subscription{
+		ID:    "sub-user",
+		Topic: TopicName,
+		Params: map[string]any{
+			"view_mode":    "user_requests",
+			"hours":        1,
+			"recent_limit": 10,
+		},
+	})
+	require.Eventually(t, func() bool {
+		return len(subscriber.messages) > 0
+	}, time.Second, 10*time.Millisecond)
+	subscriber.messages = nil
+
+	topic.PublishUserRequest(userrequest.Event{
+		Kind: userrequest.EventFinished,
+		Record: userrequest.Record{
+			CreatedAt:        now,
+			CompletedAt:      now,
+			RequestID:        "req-ws-finished-score",
+			RequestedModel:   "gpt-5.5",
+			RequestedGroup:   "auto",
+			SelectedGroup:    "codex-plus",
+			FinalChannelID:   12,
+			FinalChannelName: "score-channel",
+			Attempts:         1,
+			FinalSuccess:     true,
+			Status:           userrequest.StatusSuccess,
+		},
+	})
+
+	require.Eventually(t, func() bool {
+		return len(subscriber.messages) == 1
+	}, time.Second, 10*time.Millisecond)
+	message := subscriber.messages[0]
+	require.Equal(t, realtime.MessageTypeDelta, message.Type)
+	delta, ok := message.Data.(Delta)
+	require.True(t, ok)
+	require.Len(t, delta.UserRequestsRecent, 1)
+	record := delta.UserRequestsRecent[0]
+	require.NotNil(t, record.DispatchRecord)
+	require.Len(t, record.DispatchRecord.CandidateExplanations, 1)
+	require.Equal(t, 0.94, record.DispatchRecord.CandidateExplanations[0].ScoreTotal)
+	require.Len(t, record.DispatchRecord.CandidateExplanations[0].ScoreItems, 1)
+}
+
 func TestProcessingUserRequestDeltaDoesNotMarkSnapshotPending(t *testing.T) {
 	topic := NewTopic()
 	defer topic.Close()
@@ -233,7 +351,7 @@ func TestProcessingUserRequestDeltaDoesNotMarkSnapshotPending(t *testing.T) {
 	require.Empty(t, topic.pending)
 }
 
-func TestUserRequestViewIgnoresExecutionRecordRealtime(t *testing.T) {
+func TestUserRequestViewExecutionRecordMarksSnapshotPending(t *testing.T) {
 	topic := NewTopic()
 	defer topic.Close()
 	subscriber := &captureSubscriber{}
@@ -261,5 +379,9 @@ func TestUserRequestViewIgnoresExecutionRecordRealtime(t *testing.T) {
 	require.Never(t, func() bool {
 		return len(subscriber.messages) > 0
 	}, 50*time.Millisecond, 10*time.Millisecond)
-	require.Empty(t, topic.pending)
+	require.Eventually(t, func() bool {
+		topic.mu.Lock()
+		defer topic.mu.Unlock()
+		return len(topic.pending) > 0
+	}, time.Second, 10*time.Millisecond)
 }

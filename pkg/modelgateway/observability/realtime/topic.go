@@ -138,6 +138,9 @@ func (t *Topic) PublishUserRequest(event userrequest.Event) {
 		return
 	}
 	record := userRequestRecordFromRealtimeRecord(event.Record)
+	if event.Kind == userrequest.EventFinished {
+		controller.InvalidateModelGatewayObservabilitySummaryCacheForUserRequest(record)
+	}
 	t.mu.Lock()
 	deliveries := make(map[string][]*subscriptionState)
 	for groupKey, groupSubscriptions := range t.groups {
@@ -163,6 +166,11 @@ func (t *Topic) PublishUserRequest(event userrequest.Event) {
 	t.mu.Unlock()
 	if len(deliveries) == 0 {
 		return
+	}
+	if event.Kind == userrequest.EventFinished {
+		records := []controller.ModelGatewayUserRequestRecord{record}
+		controller.AttachModelGatewayUserRequestDispatchRecords(records)
+		record = records[0]
 	}
 	for _, subscriptions := range deliveries {
 		for _, subscription := range subscriptions {
@@ -212,11 +220,14 @@ func (t *Topic) handleRecord(record model.ModelExecutionRecord) {
 			sample = subscription
 			break
 		}
-		if sample == nil || sample.params.ViewMode == "user_requests" || !sample.params.matches(record) {
+		if sample == nil || !sample.params.matches(record) {
 			continue
 		}
 		t.pending[groupKey] = true
 		delete(t.cache, groupKey)
+		if sample.params.ViewMode == "user_requests" {
+			continue
+		}
 		for _, subscription := range groupSubscriptions {
 			deliveries[groupKey] = append(deliveries[groupKey], subscription)
 		}

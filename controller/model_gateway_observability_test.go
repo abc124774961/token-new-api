@@ -390,6 +390,94 @@ func TestModelGatewayObservabilityPreservesFlatScoreItems(t *testing.T) {
 	require.NotContains(t, candidate.ScoreBreakdown, "speed")
 }
 
+func TestModelGatewayUserRequestDispatchRecordPrefersCandidateExplanationSnapshot(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	requestMeta, err := common.Marshal(map[string]any{
+		"candidate_explanations": []core.CandidateExplanation{
+			{
+				ChannelID:   12,
+				ChannelName: "score-channel",
+				Group:       "codex-plus",
+				RuntimeKey: core.RuntimeKey{
+					RequestedModel: "gpt-5.5",
+					UpstreamModel:  "gpt-5.5",
+					ChannelID:      12,
+					Group:          "codex-plus",
+					EndpointType:   constant.EndpointTypeOpenAI,
+				},
+				Available:      true,
+				Selected:       true,
+				ScoreTotal:     0.952,
+				ScoreBreakdown: map[string]float64{"completion_rate": 1, "ttft_latency": 0.84},
+				ScoreItems: []core.ScoreItem{
+					{Key: "completion_rate", Score: 1, Weight: 0.4, WeightedScore: 0.4},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		CreatedAt:        now - 10,
+		UpdatedAt:        now - 8,
+		CompletedAt:      now - 8,
+		RequestId:        "req-candidate-snapshot",
+		RequestedGroup:   "auto",
+		SelectedGroup:    "codex-plus",
+		RequestedModel:   "gpt-5.5",
+		FinalChannelID:   12,
+		FinalChannelName: "score-channel",
+		Attempts:         1,
+		FinalSuccess:     true,
+		DurationMs:       900,
+		TTFTMs:           120,
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ModelExecutionRecord{
+		{
+			CreatedAt:      now - 10,
+			RequestId:      "req-candidate-snapshot",
+			RequestedGroup: "auto",
+			SelectedGroup:  "codex-plus",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      12,
+			ChannelName:    "score-channel",
+			PolicyMode:     "active",
+			SmartHandled:   true,
+			ScoreTotal:     0.952,
+			ScoreBreakdown: `{"completion_rate":1,"ttft_latency":0.84}`,
+			RequestMeta:    string(requestMeta),
+		},
+		{
+			CreatedAt:      now - 9,
+			RequestId:      "req-candidate-snapshot",
+			RequestedGroup: "auto",
+			SelectedGroup:  "codex-plus",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      12,
+			ChannelName:    "score-channel",
+			Success:        true,
+			DurationMs:     900,
+			TTFTMs:         120,
+			RequestMeta:    `{"retry_action":"complete"}`,
+		},
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	record := response.UserRequests.RecentRequests[0]
+	require.NotNil(t, record.DispatchRecord)
+	require.Len(t, record.DispatchRecord.CandidateExplanations, 1)
+	candidate := record.DispatchRecord.CandidateExplanations[0]
+	require.Equal(t, 0.952, candidate.ScoreTotal)
+	require.Len(t, candidate.ScoreItems, 1)
+}
+
 func TestModelGatewayObservabilityExposesRetryReason(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()

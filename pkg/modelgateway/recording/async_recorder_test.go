@@ -161,6 +161,84 @@ func TestAsyncExecutionRecorderRecordsAttemptFlowMeta(t *testing.T) {
 	require.Equal(t, int64(0), summaries)
 }
 
+func TestAsyncExecutionRecorderAttemptPreservesDispatchScoreExplanation(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	plan := &core.DispatchPlan{
+		Channel:            &model.Channel{Id: 12, Name: "score-channel"},
+		RequestedGroup:     "auto",
+		SelectedGroup:      "codex-plus",
+		RuntimeKey:         core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 12, Group: "codex-plus", EndpointType: constant.EndpointTypeOpenAI},
+		ProviderProfile:    "mimo_codex_chat",
+		ProxyMode:          "responses_via_chat",
+		ScoreTotal:         0.952,
+		ScoreBreakdown:     map[string]float64{"completion_rate": 1, "ttft_latency": 0.84},
+		RoutingScoreTotal:  0.951,
+		SelectedReason:     "score_items",
+		PolicyMode:         "active",
+		AutoMode:           core.AutoModeSequential,
+		Strategy:           core.StrategyBalanced,
+		QueueEnabled:       true,
+		QueueDepth:         1,
+		QueueCapacity:      10,
+		Candidates: []core.CandidateExplanation{
+			{
+				ChannelID:      12,
+				ChannelName:    "score-channel",
+				Group:          "codex-plus",
+				UpstreamModel:  "gpt-5.5",
+				RuntimeKey:     core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 12, Group: "codex-plus", EndpointType: constant.EndpointTypeOpenAI},
+				Available:     true,
+				Selected:      true,
+				ScoreTotal:    0.952,
+				ScoreBreakdown: map[string]float64{"completion_rate": 1, "ttft_latency": 0.84},
+				ScoreItems: []core.ScoreItem{
+					{Key: "completion_rate", Score: 1, Weight: 0.4, WeightedScore: 0.4},
+				},
+			},
+		},
+	}
+	recorder.Report(context.Background(), core.AttemptResult{
+		Plan:           plan,
+		RequestID:      "req-score-explanation",
+		AttemptIndex:   0,
+		ChannelID:      12,
+		ChannelName:    "score-channel",
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		ModelName:      "gpt-5.5",
+		EndpointType:   constant.EndpointTypeOpenAI,
+		Success:        true,
+		Duration:       1200 * time.Millisecond,
+		TTFT:           240 * time.Millisecond,
+		RetryAction:    "complete",
+	})
+
+	require.Eventually(t, func() bool {
+		var count int64
+		require.NoError(t, db.Model(&model.ModelExecutionRecord{}).Where("request_id = ?", "req-score-explanation").Count(&count).Error)
+		return count == 1
+	}, time.Second, 10*time.Millisecond)
+
+	var record model.ModelExecutionRecord
+	require.NoError(t, db.Where("request_id = ?", "req-score-explanation").First(&record).Error)
+	require.True(t, record.SmartHandled)
+	require.Equal(t, "active", record.PolicyMode)
+	require.Equal(t, 0.952, record.ScoreTotal)
+	require.Contains(t, record.ScoreBreakdown, "completion_rate")
+	require.Contains(t, record.RequestMeta, "candidate_explanations")
+	require.Contains(t, record.RequestMeta, "score_items")
+	require.Contains(t, record.RequestMeta, "retry_action")
+}
+
 func TestAsyncExecutionRecorderRecordsFirstByteTimeoutRetryReason(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)

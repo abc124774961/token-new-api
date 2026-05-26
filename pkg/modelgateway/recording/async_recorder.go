@@ -259,10 +259,41 @@ func modelExecutionRecordFromAttempt(result core.AttemptResult) *model.ModelExec
 		TTFTMs:            result.TTFT.Milliseconds(),
 		StreamInterrupted: result.StreamInterrupted,
 	}
-	if meta := attemptRequestMetaFromResult(result); !emptyAttemptRequestMeta(meta) {
-		record.RequestMeta = marshalToString(meta)
+	if result.Plan != nil {
+		record.PolicyMode = result.Plan.PolicyMode
+		record.AutoMode = result.Plan.AutoMode
+		record.Strategy = result.Plan.Strategy
+		record.SmartHandled = true
+		record.FallbackUsed = result.Plan.FallbackUsed
+		record.ScoreTotal = result.Plan.ScoreTotal
+		record.ScoreBreakdown = marshalToString(result.Plan.ScoreBreakdown)
+		record.SelectedReason = result.Plan.SelectedReason
+		record.CandidateGroups = marshalToString([]string{result.Plan.SelectedGroup})
+	}
+	if meta := attemptRequestMetaFromResult(result); result.Plan != nil || !emptyAttemptRequestMeta(meta) {
+		record.RequestMeta = marshalToString(requestMetaFromAttemptResult(result, meta))
 	}
 	return record
+}
+
+func requestMetaFromAttemptResult(result core.AttemptResult, attemptMeta attemptRequestMeta) map[string]any {
+	out := make(map[string]any)
+	if result.Plan != nil {
+		dispatchBytes, err := common.Marshal(dispatchRequestMetaFromPlan(result.Plan))
+		if err == nil {
+			_ = common.Unmarshal(dispatchBytes, &out)
+		}
+	}
+	attemptBytes, err := common.Marshal(attemptMeta)
+	if err == nil {
+		attemptMap := make(map[string]any)
+		if err := common.Unmarshal(attemptBytes, &attemptMap); err == nil {
+			for key, value := range attemptMap {
+				out[key] = value
+			}
+		}
+	}
+	return out
 }
 
 func modelGatewayUserRequestAttemptFromResult(result core.AttemptResult) model.ModelGatewayUserRequestAttempt {

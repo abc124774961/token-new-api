@@ -468,6 +468,7 @@ type StickyRoute struct {
 
 type AttemptResult struct {
 	Key                            RuntimeKey
+	Plan                           *DispatchPlan
 	RequestID                      string
 	UserID                         int
 	TokenID                        int

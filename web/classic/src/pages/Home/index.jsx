@@ -33,11 +33,15 @@ import {
 import { Link } from 'react-router-dom';
 import { marked } from 'marked';
 import { useTranslation } from 'react-i18next';
-import { API } from '../../helpers';
+import { API, getCurrencyConfig, renderQuota } from '../../helpers';
 import { StatusContext } from '../../context/Status';
 import { useActualTheme } from '../../context/Theme';
 import { useIsMobile } from '../../hooks/common/useIsMobile';
 import NoticeModal from '../../components/layout/NoticeModal';
+import {
+  formatSubscriptionDuration,
+  formatSubscriptionResetPeriod,
+} from '../../helpers/subscriptionFormat';
 
 const fallbackStatus = {
   summary: {
@@ -74,6 +78,13 @@ const formatLatency = (value) => {
   if (number <= 0) return '428ms';
   if (number >= 1000) return `${(number / 1000).toFixed(2)}s`;
   return `${Math.round(number)}ms`;
+};
+
+const formatPlanPrice = (amount) => {
+  const { symbol, rate } = getCurrencyConfig();
+  const number = Number(amount || 0) * rate;
+  const digits = Number.isInteger(number) ? 0 : 2;
+  return `${symbol} ${number.toFixed(digits)}`;
 };
 
 const Sparkline = () => (
@@ -776,7 +787,7 @@ const GatewayFlowCanvas = ({
     const drawSwitchBadge = (x, y, time) => {
       const pulse = prefersReducedMotion ? 0.52 : (Math.sin(time * 3.4) + 1) / 2;
       ctx.save();
-      drawRoundRect(ctx, x, y, 178, 56, 16);
+      drawRoundRect(ctx, x, y, 154, 50, 15);
       ctx.fillStyle = 'rgba(255,255,255,0.94)';
       ctx.fill();
       ctx.strokeStyle = `rgba(239,68,68,${0.2 + pulse * 0.16})`;
@@ -784,40 +795,40 @@ const GatewayFlowCanvas = ({
       ctx.stroke();
 
       ctx.beginPath();
-      ctx.arc(x + 22, y + 22, 6, 0, Math.PI * 2);
+      ctx.arc(x + 18, y + 19, 5.6, 0, Math.PI * 2);
       ctx.fillStyle = color.red;
       ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(x + 38, y + 22);
-      ctx.lineTo(x + 68, y + 22);
-      ctx.lineTo(x + 60, y + 16);
-      ctx.moveTo(x + 68, y + 22);
-      ctx.lineTo(x + 60, y + 28);
+      ctx.moveTo(x + 32, y + 19);
+      ctx.lineTo(x + 58, y + 19);
+      ctx.lineTo(x + 51, y + 14);
+      ctx.moveTo(x + 58, y + 19);
+      ctx.lineTo(x + 51, y + 24);
       ctx.strokeStyle = `rgba(13,156,165,${0.66 + pulse * 0.22})`;
-      ctx.lineWidth = 2.4;
+      ctx.lineWidth = 2.2;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(x + 88, y + 22, 6, 0, Math.PI * 2);
+      ctx.arc(x + 75, y + 19, 5.6, 0, Math.PI * 2);
       ctx.fillStyle = color.green;
       ctx.fill();
 
-      fillText(t('502 旁路'), x + 132, y + 22, {
-        size: 10,
+      fillText(t('502 旁路'), x + 116, y + 18, {
+        size: 9,
         weight: 950,
         fill: color.red,
         align: 'center',
       });
-      fillText(`-> ${t('#7 接管')}`, x + 132, y + 38, {
+      fillText(t('#7 接管'), x + 116, y + 33, {
         size: 10,
         weight: 950,
         fill: color.green,
         align: 'center',
         family: 'mono',
       });
-      fillText(`${t('切换耗时')} 186ms`, x + 90, y + 52, {
-        size: 9,
+      fillText(`${t('切换耗时')} 186ms`, x + 77, y + 47, {
+        size: 8,
         weight: 900,
         fill: color.muted,
         align: 'center',
@@ -829,42 +840,42 @@ const GatewayFlowCanvas = ({
     const drawHandoffBeam = (time) => {
       const phase = prefersReducedMotion ? 0.6 : (time * 0.42) % 1;
       ctx.save();
-      const start = { x: 1258, y: 404 };
-      const cp1 = { x: 1288, y: 398 };
-      const cp2 = { x: 1306, y: 382 };
-      const end = { x: 1322, y: 366 };
+      const start = { x: 1308, y: 424 };
+      const cp1 = { x: 1318, y: 424 };
+      const cp2 = { x: 1320, y: 378 };
+      const end = { x: 1332, y: 372 };
       ctx.beginPath();
       ctx.moveTo(start.x, start.y);
       ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
-      ctx.strokeStyle = 'rgba(22,163,74,0.2)';
-      ctx.lineWidth = 5;
+      ctx.strokeStyle = 'rgba(22,163,74,0.14)';
+      ctx.lineWidth = 3.4;
       ctx.lineCap = 'round';
       ctx.stroke();
       ctx.beginPath();
       ctx.moveTo(start.x, start.y);
       ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
-      ctx.strokeStyle = 'rgba(22,163,74,0.72)';
-      ctx.lineWidth = 2.1;
+      ctx.strokeStyle = 'rgba(22,163,74,0.66)';
+      ctx.lineWidth = 1.6;
       ctx.stroke();
 
       const point = cubicPoint(start, cp1, cp2, end, phase);
-      const halo = ctx.createRadialGradient(point.x, point.y, 1, point.x, point.y, 18);
-      halo.addColorStop(0, 'rgba(22,163,74,0.72)');
+      const halo = ctx.createRadialGradient(point.x, point.y, 1, point.x, point.y, 14);
+      halo.addColorStop(0, 'rgba(22,163,74,0.66)');
       halo.addColorStop(1, 'rgba(22,163,74,0)');
       ctx.fillStyle = halo;
       ctx.beginPath();
-      ctx.arc(point.x, point.y, 18, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, 14, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = color.green;
       ctx.beginPath();
-      ctx.arc(point.x, point.y, 3.8, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, 3.2, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.restore();
     };
 
     const drawDecisionTrace = (x, y, time) => {
-      drawCard(x, y, 188, 370, {
+      drawCard(x, y, 176, 370, {
         radius: 14,
         fill: 'rgba(255,255,255,0.88)',
         border: 'rgba(13,156,165,0.12)',
@@ -916,7 +927,7 @@ const GatewayFlowCanvas = ({
           weight: 930,
           fill: color.ink,
         });
-        fillText(step.code, x + 146, stepY + 6, {
+        fillText(step.code, x + 138, stepY + 6, {
           size: step.code.length > 6 ? 8 : 10,
           weight: 950,
           fill: step.tone,
@@ -994,41 +1005,45 @@ const GatewayFlowCanvas = ({
     };
 
     const drawEndpointCard = ({ x, y, title, subtitle, kind }) => {
+      const cardWidth = kind === 'output' ? 138 : 146;
+      const cardCenter = x + cardWidth / 2;
       if (kind === 'output') {
         ctx.save();
-        const halo = ctx.createRadialGradient(x + 72, y + 78, 8, x + 72, y + 78, 118);
+        const halo = ctx.createRadialGradient(cardCenter, y + 78, 8, cardCenter, y + 78, 118);
         halo.addColorStop(0, 'rgba(22,163,74,0.14)');
         halo.addColorStop(1, 'rgba(22,163,74,0)');
         ctx.fillStyle = halo;
-        ctx.fillRect(x - 34, y - 34, 214, 230);
+        ctx.fillRect(x - 34, y - 34, 206, 230);
         ctx.restore();
       }
       const cardHeight = kind === 'output' ? 178 : 162;
-      drawCard(x, y, 146, cardHeight, {
+      drawCard(x, y, cardWidth, cardHeight, {
         radius: 14,
         fill: kind === 'output' ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.92)',
         border: kind === 'output' ? 'rgba(22,163,74,0.16)' : color.border,
       });
-      if (kind === 'client') drawPulseIcon(x + 73, y + 54);
-      else drawMessageIcon(x + 73, y + 50);
+      if (kind === 'client') drawPulseIcon(cardCenter, y + 54);
+      else drawMessageIcon(cardCenter, y + 50);
 
-      fillText(title, x + 73, y + 104, {
+      fillText(title, cardCenter, y + 104, {
         size: 14,
         weight: 950,
         align: 'center',
       });
-      fillText(subtitle, x + 73, y + 127, {
+      fillText(subtitle, cardCenter, y + 127, {
         size: 12,
         weight: 820,
         fill: color.muted,
         align: 'center',
       });
       if (kind === 'output') {
-        fillText(t('用户无感知'), x + 73, y + 151, {
-          size: 11,
-          weight: 950,
-          fill: color.green,
-          align: 'center',
+        drawPill(x + 26, y + 140, t('SSE 保持'), {
+          fill: 'rgba(34,197,94,0.1)',
+          stroke: 'rgba(34,197,94,0.12)',
+          textColor: color.green,
+          width: 86,
+          height: 28,
+          size: 10,
         });
       }
     };
@@ -1175,8 +1190,8 @@ const GatewayFlowCanvas = ({
       drawBezierLane({
         start: { x: 1030, y: selectedY },
         cp1: { x: 1074, y: selectedY + 4 },
-        cp2: { x: 1094, y: 404 },
-        end: { x: 1112, y: 404 },
+        cp2: { x: 1090, y: 422 },
+        end: { x: 1108, y: 422 },
         progress: (phase + 0.48) % 1,
         stroke: 'rgba(22,163,74,0.42)',
         glow: 'rgba(22,163,74,0.9)',
@@ -1202,24 +1217,16 @@ const GatewayFlowCanvas = ({
         drawChannel(channel, 734, 132 + index * 88, index, time);
       });
 
-      drawSwitchBadge(612, 438, time);
-      drawDecisionTrace(1116, 150, time);
+      drawSwitchBadge(574, 482, time);
+      drawDecisionTrace(1128, 150, time);
       drawHandoffBeam(time);
 
       drawEndpointCard({
-        x: 1320,
+        x: 1330,
         y: 286,
         title: t('稳定输出'),
         subtitle: t('流式返回'),
         kind: 'output',
-      });
-      drawPill(1352, 424, t('SSE 保持'), {
-        fill: 'rgba(34,197,94,0.1)',
-        stroke: 'rgba(34,197,94,0.12)',
-        textColor: color.green,
-        width: 82,
-        height: 30,
-        size: 11,
       });
 
       drawPolicyRail(time);
@@ -1266,6 +1273,7 @@ const Home = () => {
   const [homePageContent, setHomePageContent] = useState('');
   const [noticeVisible, setNoticeVisible] = useState(false);
   const [homeStatus, setHomeStatus] = useState(fallbackStatus);
+  const [subscriptionPlans, setSubscriptionPlans] = useState([]);
 
   const summary = homeStatus.summary || fallbackStatus.summary;
   const hasRealData = Number(summary.enabled_channels || summary.healthy_channels) > 0;
@@ -1415,45 +1423,36 @@ const Home = () => {
     t('用量明细可追溯'),
   ];
 
-  const planCards = [
-    {
-      name: t('入门版'),
-      subtitle: t('适合个人开发者与轻量项目'),
-      price: '¥ 29',
-      perks: [
-        '10,000 次请求 / 月',
-        t('支持主流模型接入'),
-        t('基础自动切换'),
-        t('7 天账单与用量追踪'),
-        t('社区支持'),
-      ],
-    },
-    {
-      name: t('专业版'),
-      subtitle: t('适合成长型团队与生产环境'),
-      price: '¥ 99',
-      featured: true,
-      perks: [
-        '100,000 次请求 / 月',
-        t('高级智能调度与健康检测'),
-        t('熔断限流与旁路保护'),
-        t('30 天账单与用量追踪'),
-        t('优先工单支持'),
-      ],
-    },
-    {
-      name: t('团队版'),
-      subtitle: t('适合中大型团队与企业级需求'),
-      price: '¥ 299',
-      perks: [
-        '500,000 次请求 / 月',
-        t('自定义分组与倍率计费'),
-        t('专属通道与更高配额'),
-        t('90 天账单与用量追踪'),
-        t('专属技术支持'),
-      ],
-    },
-  ];
+  const realPlanCards = subscriptionPlans
+    .map((item) => item?.plan)
+    .filter((plan) => plan?.id)
+    .slice(0, 3)
+    .map((plan, index, list) => {
+      const totalAmount = Number(plan?.total_amount || 0);
+      const resetLabel = formatSubscriptionResetPeriod(plan, t);
+      const durationLabel = formatSubscriptionDuration(plan, t);
+      const limit = Number(plan?.max_purchase_per_user || 0);
+      const isResetting = resetLabel && resetLabel !== t('不重置');
+      const perks = [
+        totalAmount > 0
+          ? `${renderQuota(totalAmount)} / ${isResetting ? resetLabel : durationLabel}`
+          : t('不限额度'),
+        `${t('有效期')} ${durationLabel}`,
+        isResetting ? `${t('额度重置')} ${resetLabel}` : null,
+        plan.upgrade_group ? `${t('升级分组')} ${plan.upgrade_group}` : t('API 全模型调用'),
+        limit > 0 ? `${t('限购')} ${limit}` : t('购买套餐后即可享受模型权益'),
+      ].filter(Boolean);
+
+      return {
+        name: plan.title || t('订阅套餐'),
+        subtitle: plan.subtitle || t('购买套餐后即可享受模型权益'),
+        price: formatPlanPrice(plan.price_amount),
+        period: durationLabel,
+        featured: list.length > 1 ? index === 1 : index === 0,
+        perks,
+      };
+    });
+  const planCards = realPlanCards;
 
   const bottomTrust = [
     {
@@ -1537,6 +1536,25 @@ const Home = () => {
     }
   };
 
+  const loadSubscriptionPlans = async () => {
+    const endpoints = ['/api/public/subscription/plans', '/api/subscription/plans'];
+    for (const endpoint of endpoints) {
+      try {
+        const res = await API.get(endpoint, {
+          skipErrorHandler: true,
+        });
+        const { success, data } = res.data || {};
+        if (success && Array.isArray(data)) {
+          setSubscriptionPlans(data);
+          return;
+        }
+      } catch (error) {
+        // Keep trying the next compatible endpoint so old dev backends still work.
+      }
+    }
+    setSubscriptionPlans([]);
+  };
+
   useEffect(() => {
     const checkNoticeAndShow = async () => {
       const lastCloseDate = localStorage.getItem('notice_close_date');
@@ -1562,6 +1580,7 @@ const Home = () => {
   useEffect(() => {
     displayHomePageContent().then();
     loadHomeStatus().then();
+    loadSubscriptionPlans().then();
   }, []);
 
   useEffect(() => {
@@ -1740,40 +1759,48 @@ const Home = () => {
                 <p>{t('所有套餐均按量计费，可随时升级或取消')}</p>
               </div>
 
-              <div className='ct-lite-plan-grid'>
-                {planCards.map((plan) => (
-                  <article
-                    className={`ct-lite-plan-card${plan.featured ? ' featured' : ''}`}
-                    key={plan.name}
-                  >
-                    {plan.featured && <div className='ct-lite-plan-badge'>{t('最受欢迎')}</div>}
-                    <h3>{plan.name}</h3>
-                    <p>{plan.subtitle}</p>
-                    <div className='ct-lite-price'>
-                      <strong>{plan.price}</strong>
-                      <span>/ {t('月')}</span>
-                    </div>
-                    <ul>
-                      {plan.perks.map((perk) => (
-                        <li key={perk}>
-                          <Check size={14} />
-                          {perk}
-                        </li>
-                      ))}
-                    </ul>
-                    <Link to='/console/subscription-plans'>
-                      <Button
-                        theme={plan.featured ? 'solid' : 'outline'}
-                        type='primary'
-                        className={plan.featured ? 'ct-lite-primary' : 'ct-lite-secondary'}
-                        block
-                      >
-                        {t('购买套餐')}
-                      </Button>
-                    </Link>
-                  </article>
-                ))}
-              </div>
+              {planCards.length > 0 ? (
+                <div className={`ct-lite-plan-grid ct-lite-plan-grid-count-${planCards.length}`}>
+                  {planCards.map((plan) => (
+                    <article
+                      className={`ct-lite-plan-card${plan.featured ? ' featured' : ''}`}
+                      key={plan.name}
+                    >
+                      {plan.featured && <div className='ct-lite-plan-badge'>{t('最受欢迎')}</div>}
+                      <h3>{plan.name}</h3>
+                      <p>{plan.subtitle}</p>
+                      <div className='ct-lite-price'>
+                        <strong>{plan.price}</strong>
+                        <span>/ {plan.period || t('月')}</span>
+                      </div>
+                      <ul>
+                        {plan.perks.map((perk) => (
+                          <li key={perk}>
+                            <Check size={14} />
+                            {perk}
+                          </li>
+                        ))}
+                      </ul>
+                      <Link to='/console/subscription-plans'>
+                        <Button
+                          theme={plan.featured ? 'solid' : 'outline'}
+                          type='primary'
+                          className={plan.featured ? 'ct-lite-primary' : 'ct-lite-secondary'}
+                          block
+                        >
+                          {t('购买套餐')}
+                        </Button>
+                      </Link>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className='ct-lite-plan-empty'>
+                  <strong>{t('暂无可购买套餐')}</strong>
+                  <span>{t('请联系管理员配置套餐')}</span>
+                  <Link to='/console/subscription-plans'>{t('查看套餐')}</Link>
+                </div>
+              )}
 
               <div className='ct-lite-trust-row'>
                 {bottomTrust.map((item) => (

@@ -1390,6 +1390,13 @@ func InvalidateModelGatewayObservabilitySummaryCacheForRecord(record model.Model
 	modelGatewayObservabilitySummaryCache.invalidateForRecord(record)
 }
 
+func InvalidateModelGatewayObservabilitySummaryCacheForUserRequest(record ModelGatewayUserRequestRecord) {
+	if modelGatewayObservabilitySummaryCache == nil {
+		return
+	}
+	modelGatewayObservabilitySummaryCache.invalidateForUserRequest(record)
+}
+
 func (store *modelGatewayObservabilitySummaryCacheStore) invalidateForRecord(record model.ModelExecutionRecord) {
 	if store == nil {
 		return
@@ -1398,6 +1405,19 @@ func (store *modelGatewayObservabilitySummaryCacheStore) invalidateForRecord(rec
 	defer store.mu.Unlock()
 	for key, entry := range store.entries {
 		if entry.options.matchesRecord(record) {
+			delete(store.entries, key)
+		}
+	}
+}
+
+func (store *modelGatewayObservabilitySummaryCacheStore) invalidateForUserRequest(record ModelGatewayUserRequestRecord) {
+	if store == nil {
+		return
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for key, entry := range store.entries {
+		if entry.options.matchesUserRequestRecord(record) {
 			delete(store.entries, key)
 		}
 	}
@@ -1420,6 +1440,34 @@ func (options ModelGatewayObservabilityOptions) matchesRecord(record model.Model
 	if options.Hours > 0 {
 		cutoff := time.Now().Add(-time.Duration(options.Hours) * time.Hour).Unix()
 		return record.CreatedAt >= cutoff
+	}
+	return true
+}
+
+func (options ModelGatewayObservabilityOptions) matchesUserRequestRecord(record ModelGatewayUserRequestRecord) bool {
+	options = normalizeModelGatewayObservabilityOptions(options)
+	if options.Model != "" && options.Model != record.RequestedModel {
+		return false
+	}
+	if options.Group != "" && options.Group != record.RequestedGroup && options.Group != record.SelectedGroup && options.Group != record.ActualGroup {
+		return false
+	}
+	if options.ChannelID > 0 && options.ChannelID != record.FinalChannelID {
+		return false
+	}
+	if options.RequestID != "" && options.RequestID != record.RequestID {
+		return false
+	}
+	if options.HealthProbeOnly && !record.IsHealthProbe {
+		return false
+	}
+	if options.Hours > 0 {
+		recordTime := record.CompletedAt
+		if recordTime <= 0 {
+			recordTime = record.CreatedAt
+		}
+		cutoff := time.Now().Add(-time.Duration(options.Hours) * time.Hour).Unix()
+		return recordTime >= cutoff
 	}
 	return true
 }
@@ -2750,11 +2798,13 @@ func attachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequ
 		if requestID == "" {
 			continue
 		}
-		if _, exists := dispatchByRequestID[requestID]; exists {
+		next := ModelGatewayObservabilityRecordFromModelRecord(record)
+		current, exists := dispatchByRequestID[requestID]
+		if exists && !modelGatewayDispatchRecordBetterForUserRequest(next, current.record) {
 			continue
 		}
 		dispatchByRequestID[requestID] = dispatchRecordWithUser{
-			record: ModelGatewayObservabilityRecordFromModelRecord(record),
+			record: next,
 			userID: record.UserId,
 		}
 	}
@@ -2774,6 +2824,25 @@ func attachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequ
 			records[idx].UserID = dispatch.userID
 		}
 	}
+}
+
+func AttachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequestRecord) {
+	attachModelGatewayUserRequestDispatchRecords(records)
+}
+
+func modelGatewayDispatchRecordBetterForUserRequest(left ModelGatewayObservabilityRecord, right ModelGatewayObservabilityRecord) bool {
+	leftCandidates := len(left.CandidateExplanations)
+	rightCandidates := len(right.CandidateExplanations)
+	if leftCandidates != rightCandidates {
+		return leftCandidates > rightCandidates
+	}
+	if left.Kind != right.Kind {
+		return left.Kind == "dispatch"
+	}
+	if left.ScoreTotal != right.ScoreTotal {
+		return left.ScoreTotal > right.ScoreTotal
+	}
+	return left.CreatedAt > right.CreatedAt
 }
 
 func normalizeModelGatewayUserRequestHealthProbeRecords(records []ModelGatewayUserRequestRecord) {
@@ -5537,6 +5606,9 @@ func modelGatewayObservabilityRecordKind(record model.ModelExecutionRecord) stri
 }
 
 func isModelGatewayDispatchRecord(record model.ModelExecutionRecord) bool {
+	if isModelGatewayAttemptRecord(record) {
+		return false
+	}
 	return record.SmartHandled ||
 		record.PolicyMode != "" ||
 		record.AutoMode != "" ||

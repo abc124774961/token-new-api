@@ -1163,14 +1163,15 @@ function isDispatch(record) {
 
 function pickDispatchDetailRecord(records) {
   if (!Array.isArray(records) || records.length === 0) return null;
+  const withCandidates = records.find(
+    (record) =>
+      Array.isArray(getCandidateExplanations(record)) &&
+      getCandidateExplanations(record).length > 0,
+  );
   return (
+    withCandidates ||
     records.find((record) => isDispatch(record) && record?.smart_handled) ||
     records.find((record) => isDispatch(record)) ||
-    records.find(
-      (record) =>
-        Array.isArray(getCandidateExplanations(record)) &&
-        getCandidateExplanations(record).length > 0,
-    ) ||
     records[0]
   );
 }
@@ -1200,6 +1201,17 @@ function buildUserRequestDetailRecord(userRequest, records) {
   const attempt = pickAttemptDetailRecord(records);
   const attemptRecords = userRequestAttemptRecords(records);
   const base = dispatch || attempt || {};
+  const dispatchCandidates =
+    dispatch?.candidate_explanations ||
+    dispatch?.request_meta?.candidate_explanations ||
+    [];
+  const baseCandidates =
+    base?.candidate_explanations ||
+    base?.request_meta?.candidate_explanations ||
+    [];
+  const candidateExplanations = dispatchCandidates.length
+    ? dispatchCandidates
+    : baseCandidates;
   const finalChannelId = Number(
     userRequest?.final_channel_id ||
       attempt?.channel_id ||
@@ -1304,10 +1316,7 @@ function buildUserRequestDetailRecord(userRequest, records) {
     score_total: dispatch?.score_total || base?.score_total || 0,
     score_breakdown: dispatch?.score_breakdown || base?.score_breakdown,
     candidate_groups: dispatch?.candidate_groups || base?.candidate_groups,
-    candidate_explanations:
-      dispatch?.candidate_explanations ||
-      dispatch?.request_meta?.candidate_explanations ||
-      base?.candidate_explanations,
+    candidate_explanations: candidateExplanations,
     selected_reason: dispatch?.selected_reason || base?.selected_reason,
     queue_enabled: dispatch?.queue_enabled || base?.queue_enabled,
     queue_wait_ms: dispatch?.queue_wait_ms || base?.queue_wait_ms,
@@ -1326,10 +1335,7 @@ function buildUserRequestDetailRecord(userRequest, records) {
       ...(userRequest?.probe_reason
         ? { probe_reason: userRequest.probe_reason }
         : {}),
-      candidate_explanations:
-        dispatch?.candidate_explanations ||
-        dispatch?.request_meta?.candidate_explanations ||
-        [],
+      candidate_explanations: candidateExplanations,
     },
   };
 }

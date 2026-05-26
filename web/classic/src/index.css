@@ -29285,6 +29285,16 @@ html.dark body.ct-home-route .ct-header-actions .ct-register-button {
   margin: 0 auto;
 }
 
+.ct-lite-plan-grid-count-1 {
+  grid-template-columns: minmax(0, 390px);
+  justify-content: center;
+}
+
+.ct-lite-plan-grid-count-2 {
+  grid-template-columns: repeat(2, minmax(0, 390px));
+  justify-content: center;
+}
+
 .ct-lite-plan-card {
   position: relative;
   min-height: 400px;
@@ -29366,6 +29376,38 @@ html.dark body.ct-home-route .ct-header-actions .ct-register-button {
 .ct-lite-plan-card li svg {
   flex: 0 0 auto;
   color: var(--lite-teal);
+}
+
+.ct-lite-plan-empty {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: min(520px, 100%);
+  margin: 0 auto;
+  padding: 46px 28px;
+  border: 1px dashed rgba(13, 156, 165, 0.26);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  text-align: center;
+}
+
+.ct-lite-plan-empty strong {
+  color: var(--lite-ink);
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.ct-lite-plan-empty span {
+  color: #72839a;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.ct-lite-plan-empty a {
+  margin-top: 8px;
+  color: var(--lite-teal);
+  font-size: 13px;
+  font-weight: 950;
 }
 
 .ct-lite-trust-row {
