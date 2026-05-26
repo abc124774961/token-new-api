@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 )
 
@@ -578,6 +579,10 @@ func handleConfigUpdate(key, value string) bool {
 	if cfg == nil {
 		return false // 未注册的配置
 	}
+	var schedulerBefore scheduler_setting.SchedulerSetting
+	if configName == "scheduler_setting" {
+		schedulerBefore = scheduler_setting.GetSetting()
+	}
 
 	// 更新配置
 	configMap := map[string]string{
@@ -593,6 +598,8 @@ func handleConfigUpdate(key, value string) bool {
 	} else if configName == "billing_setting" {
 		InvalidatePricingCache()
 		ratio_setting.InvalidateExposedDataCache()
+	} else if configName == "scheduler_setting" {
+		scheduler_setting.NotifyChange(schedulerBefore)
 	} else if configName == "theme" {
 		system_setting.UpdateAndSyncTheme()
 		common.OptionMap[key] = system_setting.GetThemeSettings().Frontend

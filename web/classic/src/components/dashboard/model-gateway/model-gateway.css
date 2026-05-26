@@ -4688,6 +4688,126 @@ button.ct-model-gateway-detail-metric {
   font-weight: 760;
 }
 
+.ct-model-gateway-score-history-contrib-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ct-model-gateway-score-history-contrib,
+.ct-model-gateway-score-history-section,
+.ct-model-gateway-score-history-debug {
+  min-width: 0;
+  border: 1px solid rgba(15, 23, 42, 0.07);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.03);
+}
+
+.dark .ct-model-gateway-score-history-contrib,
+.dark .ct-model-gateway-score-history-section,
+.dark .ct-model-gateway-score-history-debug {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.3);
+}
+
+.ct-model-gateway-score-history-contrib {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.ct-model-gateway-score-history-contrib-positive {
+  border-color: rgba(16, 185, 129, 0.18);
+  background: linear-gradient(180deg, rgba(236, 253, 245, 0.84), #fff);
+}
+
+.ct-model-gateway-score-history-contrib-negative {
+  border-color: rgba(249, 115, 22, 0.2);
+  background: linear-gradient(180deg, rgba(255, 247, 237, 0.84), #fff);
+}
+
+.dark .ct-model-gateway-score-history-contrib-positive {
+  background: rgba(6, 78, 59, 0.22);
+}
+
+.dark .ct-model-gateway-score-history-contrib-negative {
+  background: rgba(124, 45, 18, 0.22);
+}
+
+.ct-model-gateway-score-history-contrib > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 10px;
+  border-radius: 9px;
+  padding: 8px 9px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.dark .ct-model-gateway-score-history-contrib > div {
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.ct-model-gateway-score-history-contrib span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--semi-color-text-0);
+  font-size: 12px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-model-gateway-score-history-contrib strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ct-model-gateway-score-history-contrib-positive strong {
+  color: #059669;
+}
+
+.ct-model-gateway-score-history-contrib-negative strong {
+  color: #ea580c;
+}
+
+.ct-model-gateway-score-history-contrib em {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--semi-color-text-2);
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-model-gateway-score-history-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.ct-model-gateway-score-history-section-head {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ct-model-gateway-score-history-section-head > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .ct-model-gateway-score-history-reasons {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -4772,6 +4892,11 @@ button.ct-model-gateway-detail-metric {
   font-size: 16px;
 }
 
+.ct-model-gateway-score-history-summary small {
+  display: flex;
+  margin-top: 2px;
+}
+
 .ct-model-gateway-score-delta-positive {
   color: #059669 !important;
 }
@@ -4786,7 +4911,7 @@ button.ct-model-gateway-detail-metric {
 
 .ct-model-gateway-score-history-list {
   display: flex;
-  max-height: min(58vh, 560px);
+  max-height: min(44vh, 420px);
   min-width: 0;
   flex-direction: column;
   gap: 8px;
@@ -4878,6 +5003,41 @@ button.ct-model-gateway-detail-metric {
 
 .dark .ct-model-gateway-score-history-metrics > div {
   background: rgba(8, 47, 73, 0.32);
+}
+
+.ct-model-gateway-score-history-debug {
+  padding: 10px 12px;
+}
+
+.ct-model-gateway-score-history-debug summary {
+  cursor: pointer;
+  color: var(--semi-color-text-1);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.ct-model-gateway-score-history-debug > div {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 9px;
+  color: var(--semi-color-text-2);
+  font-size: 12px;
+}
+
+.ct-model-gateway-score-history-debug code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--semi-color-text-0);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .ct-model-gateway-score-history-contrib-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .ct-model-gateway-candidate-list {

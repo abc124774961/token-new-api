@@ -237,6 +237,8 @@ type ModelGatewayScoreHistoryItem struct {
 	DurationMs            float64                                `json:"duration_ms,omitempty"`
 	ActiveConcurrency     int                                    `json:"active_concurrency,omitempty"`
 	EffectiveConcurrency  int                                    `json:"effective_concurrency_limit,omitempty"`
+	IsHealthProbe         bool                                   `json:"is_health_probe,omitempty"`
+	ScoreSampleSource     string                                 `json:"score_sample_source,omitempty"`
 }
 
 type modelGatewayScoreHistoryOptions struct {
@@ -4151,6 +4153,8 @@ func modelGatewayRuntimeKeyIsEmpty(key ModelGatewayRuntimeKey) bool {
 }
 
 func modelGatewayScoreHistoryItem(record model.ModelExecutionRecord, candidate ModelGatewayCandidateExplanation) ModelGatewayScoreHistoryItem {
+	requestMeta, _ := parseModelGatewayRequestMeta(record.RequestMeta)
+	attemptMeta := modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta)
 	return ModelGatewayScoreHistoryItem{
 		ID:                    record.Id,
 		CreatedAt:             record.CreatedAt,
@@ -4177,6 +4181,8 @@ func modelGatewayScoreHistoryItem(record model.ModelExecutionRecord, candidate M
 		DurationMs:            candidate.DurationMs,
 		ActiveConcurrency:     candidate.ActiveConcurrency,
 		EffectiveConcurrency:  candidate.EffectiveConcurrencyLimit,
+		IsHealthProbe:         attemptMeta.IsHealthProbe,
+		ScoreSampleSource:     candidate.ScoreSampleSource,
 	}
 }
 

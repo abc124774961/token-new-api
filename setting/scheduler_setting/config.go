@@ -1,6 +1,10 @@
 package scheduler_setting
 
-import "github.com/QuantumNous/new-api/setting/config"
+import (
+	"sync"
+
+	"github.com/QuantumNous/new-api/setting/config"
+)
 
 const (
 	ModeOff    = "off"
@@ -181,6 +185,11 @@ var schedulerSetting = SchedulerSetting{
 	FailureFallbackWindowSeconds:         1800,
 }
 
+var (
+	changeHooksMu sync.RWMutex
+	changeHooks   []func(before SchedulerSetting, after SchedulerSetting)
+)
+
 func init() {
 	config.GlobalConfig.Register("scheduler_setting", &schedulerSetting)
 }
@@ -194,7 +203,9 @@ func GetSetting() SchedulerSetting {
 }
 
 func SetSetting(setting SchedulerSetting) {
+	old := schedulerSetting
 	schedulerSetting = setting
+	notifyChangeHooks(old, schedulerSetting)
 }
 
 func SetSettingForTest(setting SchedulerSetting) func() {
@@ -202,6 +213,28 @@ func SetSettingForTest(setting SchedulerSetting) func() {
 	schedulerSetting = setting
 	return func() {
 		schedulerSetting = old
+	}
+}
+
+func AddChangeHook(hook func(before SchedulerSetting, after SchedulerSetting)) {
+	if hook == nil {
+		return
+	}
+	changeHooksMu.Lock()
+	changeHooks = append(changeHooks, hook)
+	changeHooksMu.Unlock()
+}
+
+func NotifyChange(before SchedulerSetting) {
+	notifyChangeHooks(before, schedulerSetting)
+}
+
+func notifyChangeHooks(before SchedulerSetting, after SchedulerSetting) {
+	changeHooksMu.RLock()
+	hooks := append([]func(before SchedulerSetting, after SchedulerSetting){}, changeHooks...)
+	changeHooksMu.RUnlock()
+	for _, hook := range hooks {
+		hook(before, after)
 	}
 }
 

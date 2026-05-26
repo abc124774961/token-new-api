@@ -27,6 +27,7 @@ type ProbeScheduler struct {
 	costBaseline  core.CostBaselineProvider
 	scoreWeights  core.ScoreWeights
 	stop          chan struct{}
+	cancel        context.CancelFunc
 	once          sync.Once
 }
 
@@ -91,13 +92,18 @@ func (s *ProbeScheduler) Start(ctx context.Context) {
 		return
 	}
 	s.once.Do(func() {
-		go s.run(ctx)
+		runCtx, cancel := context.WithCancel(ctx)
+		s.cancel = cancel
+		go s.run(runCtx)
 	})
 }
 
 func (s *ProbeScheduler) Stop() {
 	if s == nil || s.stop == nil {
 		return
+	}
+	if s.cancel != nil {
+		s.cancel()
 	}
 	select {
 	case <-s.stop:
@@ -242,6 +248,12 @@ func StopDefaultProbeScheduler() {
 	defaultProbeSchedulerMu.Lock()
 	defer defaultProbeSchedulerMu.Unlock()
 	stopDefaultProbeSchedulerLocked()
+}
+
+func DefaultProbeSchedulerRunning() bool {
+	defaultProbeSchedulerMu.Lock()
+	defer defaultProbeSchedulerMu.Unlock()
+	return defaultProbeScheduler != nil
 }
 
 func stopDefaultProbeSchedulerLocked() {

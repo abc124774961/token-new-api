@@ -30,6 +30,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-contrib/sessions"
@@ -103,6 +104,22 @@ func main() {
 	go model.UpdateQuotaData()
 
 	modelgatewayprobe.RegisterRelayInvoker(controller.Relay)
+	scheduler_setting.AddChangeHook(func(before scheduler_setting.SchedulerSetting, after scheduler_setting.SchedulerSetting) {
+		if before.ProbeEnabled == after.ProbeEnabled &&
+			before.ProbeIntervalSeconds == after.ProbeIntervalSeconds &&
+			before.ProbeWorkerCount == after.ProbeWorkerCount &&
+			before.ProbeTimeoutSeconds == after.ProbeTimeoutSeconds &&
+			before.ProbeMaxPerTick == after.ProbeMaxPerTick &&
+			before.ProbeMinChannelIntervalSeconds == after.ProbeMinChannelIntervalSeconds &&
+			before.ProbeLowScoreThreshold == after.ProbeLowScoreThreshold &&
+			before.ProbeMissingSampleThreshold == after.ProbeMissingSampleThreshold &&
+			before.ProbeLongNoSuccessSeconds == after.ProbeLongNoSuccessSeconds &&
+			before.ProbeRecoverySuccessesRequired == after.ProbeRecoverySuccessesRequired &&
+			before.ProbeFailureAvoidancePriorityEnabled == after.ProbeFailureAvoidancePriorityEnabled {
+			return
+		}
+		modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()
+	})
 
 	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
 		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_UPDATE_FREQUENCY"))

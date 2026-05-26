@@ -389,6 +389,145 @@ function scoreHistorySampleLabel(value, t) {
   return count > 0 ? formatNumber(count) : t('暂无真实样本');
 }
 
+function scoreHistorySampleConfidence(item, t) {
+  const count = Number(item?.sample_count || 0);
+  if (count >= 100) return { label: t('样本充足'), color: 'green' };
+  if (count >= 10) return { label: t('样本一般'), color: 'cyan' };
+  if (count > 0) return { label: t('样本偏少'), color: 'orange' };
+  return { label: t('样本不足'), color: 'grey' };
+}
+
+function scoreHistorySourceMeta(item, t) {
+  if (item?.source === 'runtime_current') {
+    return { label: t('当前运行态'), color: 'cyan' };
+  }
+  if (item?.is_health_probe) {
+    return { label: t('探活请求'), color: 'blue' };
+  }
+  if (item?.score_sample_source) {
+    return {
+      label: formatScoreSampleSource(item.score_sample_source, t),
+      color: 'blue',
+    };
+  }
+  if (item?.request_id) {
+    return { label: t('真实请求'), color: 'green' };
+  }
+  return { label: t('评分样本'), color: 'grey' };
+}
+
+function scoreHistoryStatusMeta(item, t) {
+  if (!item) return { label: t('暂无数据'), color: 'grey' };
+  if (item.cost_reference_missing) {
+    return { label: t('成本参考缺失'), color: 'orange' };
+  }
+  if (!item.available) {
+    return { label: t('不可调度'), color: 'red' };
+  }
+  if (item.reject_reason) {
+    return {
+      label: formatChannelStatusReason(item.reject_reason, t),
+      color: 'orange',
+    };
+  }
+  return { label: t('可调度'), color: 'green' };
+}
+
+function scoreHistoryContributionEntries(current, history, direction, t) {
+  const sign = direction === 'negative' ? -1 : 1;
+  const rows = [];
+  for (const item of Array.isArray(current?.score_item_deltas)
+    ? current.score_item_deltas
+    : []) {
+    const weightedDelta = Number(item?.weighted_delta);
+    const rawDelta = Number(item?.delta);
+    const value = Number.isFinite(weightedDelta) ? weightedDelta : rawDelta;
+    if (!Number.isFinite(value) || Math.abs(value) < 0.0001) continue;
+    if (sign > 0 && value <= 0) continue;
+    if (sign < 0 && value >= 0) continue;
+    rows.push({
+      key: item.key,
+      label: item.name ? t(item.name) : scoreMetricLabel(item.key, t),
+      value,
+      description:
+        item.reason ||
+        scoreMetricDescription(item.key, t) ||
+        [item.before_raw_value, item.after_raw_value].filter(Boolean).join(' → '),
+    });
+  }
+  if (!rows.length) {
+    const sourceDelta = current?.score_breakdown_delta || history?.metric_deltas || {};
+    for (const [key, rawValue] of Object.entries(sourceDelta)) {
+      const value = Number(rawValue || 0);
+      if (!Number.isFinite(value) || Math.abs(value) < 0.0001) continue;
+      if (sign > 0 && value <= 0) continue;
+      if (sign < 0 && value >= 0) continue;
+      rows.push({
+        key,
+        label: scoreMetricLabel(key, t),
+        value,
+        description: scoreMetricDescription(key, t),
+      });
+    }
+  }
+  return rows
+    .sort((left, right) => Math.abs(right.value) - Math.abs(left.value))
+    .slice(0, 3);
+}
+
+function scoreHistoryRecommendation(current, negativeEntries, t) {
+  if (!current) return t('暂无评分记录，暂不判断');
+  if (Number(current.sample_count || 0) <= 0) {
+    return t('样本不足，暂不判断');
+  }
+  if (current.cost_reference_missing) {
+    return t('建议检查成本配置');
+  }
+  if (!current.available) {
+    return t('建议排查不可调度原因');
+  }
+  const mainNegative = negativeEntries?.[0]?.key || '';
+  if (['upstream_error_rate', 'stream_interrupted_rate'].includes(mainNegative)) {
+    return t('建议排查上游错误');
+  }
+  if (['ttft_latency', 'duration_latency', 'throughput'].includes(mainNegative)) {
+    return t('建议关注速度变化');
+  }
+  if (['concurrency_load', 'queue_pressure', 'first_byte_backlog'].includes(mainNegative)) {
+    return t('建议观察负载与排队');
+  }
+  if (mainNegative === 'cost') {
+    return t('建议检查成本配置');
+  }
+  return t('可继续观察');
+}
+
+function scoreHistorySummaryTitle(delta, t) {
+  const numeric = Number(delta || 0);
+  if (!Number.isFinite(numeric) || Math.abs(numeric) < 0.0001) {
+    return t('本次评分基本稳定');
+  }
+  return numeric > 0 ? t('本次评分上升') : t('本次评分下降');
+}
+
+function scoreHistoryObjectTitle(history, current, t) {
+  const channel =
+    history?.channel_name ||
+    current?.channel_name ||
+    (history?.channel_id ? `#${history.channel_id}` : t('未知渠道'));
+  const model =
+    current?.requested_model ||
+    history?.runtime_key?.requested_model ||
+    history?.runtime_key?.upstream_model ||
+    '--';
+  const group =
+    current?.selected_group ||
+    current?.requested_group ||
+    history?.runtime_key?.group ||
+    '--';
+  return { channel, model, group };
+}
+
 function formatTimestamp(timestamp) {
   return timestamp ? timestamp2string(timestamp) : '--';
 }
@@ -8167,8 +8306,16 @@ function DetailMetricTile({
   return <div className={className}>{content}</div>;
 }
 
-function ScoreItemsTable({ items = [], deltas = [], t, compact = false }) {
-  const rows = scoreItemDisplayRows(items, deltas, t);
+function ScoreItemsTable({
+  items = [],
+  deltas = [],
+  t,
+  compact = false,
+  preparedRows = null,
+}) {
+  const rows = Array.isArray(preparedRows)
+    ? preparedRows
+    : scoreItemDisplayRows(items, deltas, t);
   if (!rows.length) {
     return <Typography.Text type='tertiary'>--</Typography.Text>;
   }
@@ -10234,16 +10381,38 @@ function ScoreHistoryModal({ history, loading, visible, onCancel, t }) {
   const items = Array.isArray(history?.items) ? history.items : [];
   const current = history?.current || items[0] || null;
   const previous = history?.previous || items[1] || null;
-  const metricEntries = importantScoreDeltas(
-    history?.metric_deltas,
-    history?.score_delta,
+  const scoreDelta = Number(history?.score_delta || current?.score_delta || 0);
+  const positiveEntries = scoreHistoryContributionEntries(
+    current,
+    history,
+    'positive',
+    t,
+  );
+  const negativeEntries = scoreHistoryContributionEntries(
+    current,
+    history,
+    'negative',
     t,
   );
   const summaryText = buildScoreHistorySummary(history, current, previous, t);
+  const objectTitle = scoreHistoryObjectTitle(history, current, t);
+  const statusMeta = scoreHistoryStatusMeta(current, t);
+  const sourceMeta = scoreHistorySourceMeta(current, t);
+  const confidenceMeta = scoreHistorySampleConfidence(current, t);
+  const recommendation = scoreHistoryRecommendation(current, negativeEntries, t);
+  const currentRows = scoreItemDisplayRows(
+    current?.score_items,
+    current?.score_item_deltas,
+    t,
+  );
+  const [showAllScoreItems, setShowAllScoreItems] = useState(false);
+  const visibleCurrentItems = showAllScoreItems
+    ? currentRows
+    : currentRows.slice(0, 8);
 
   return (
     <Modal
-      title={t('评分变更记录')}
+      title={t('评分解释')}
       visible={visible}
       onCancel={onCancel}
       footer={
@@ -10256,24 +10425,27 @@ function ScoreHistoryModal({ history, loading, visible, onCancel, t }) {
       <div className='ct-model-gateway-score-history'>
         <div className='ct-model-gateway-score-history-head'>
           <div>
-            <Typography.Text strong>
-              {history?.channel_name ||
-                (history?.channel_id ? `#${history.channel_id}` : '--')}
-            </Typography.Text>
+            <Typography.Text strong>{objectTitle.channel}</Typography.Text>
             <Typography.Text type='secondary' size='small'>
-              {formatRuntimeKey(history?.runtime_key)}
+              {objectTitle.model} / {objectTitle.group}
             </Typography.Text>
           </div>
           <div className='ct-model-gateway-record-tags'>
+            <Tag color={statusMeta.color} type='light' shape='circle'>
+              {statusMeta.label}
+            </Tag>
+            <Tag color={sourceMeta.color} type='light' shape='circle'>
+              {sourceMeta.label}
+            </Tag>
             <Tag color='cyan' type='light' shape='circle'>
               {t('记录数')} {formatNumber(history?.total_matched)}
             </Tag>
             <Tag
-              color={scoreDeltaColor(history?.score_delta)}
+              color={scoreDeltaColor(scoreDelta)}
               type='light'
               shape='circle'
             >
-              {t('变化')} {formatScoreDelta(history?.score_delta)}
+              {t('变化')} {formatScoreDelta(scoreDelta)}
             </Tag>
             {history?.truncated ? (
               <Tag color='orange' type='light' shape='circle'>
@@ -10286,9 +10458,12 @@ function ScoreHistoryModal({ history, loading, visible, onCancel, t }) {
         <div className='ct-model-gateway-score-history-explain'>
           <div>
             <Info size={16} />
-            <span>{t('当前情况')}</span>
+            <span>{scoreHistorySummaryTitle(scoreDelta, t)}</span>
           </div>
           <Typography.Text>{summaryText}</Typography.Text>
+          <Typography.Text type='secondary' size='small'>
+            {recommendation}
+          </Typography.Text>
         </div>
 
         {current ? (
@@ -10302,46 +10477,74 @@ function ScoreHistoryModal({ history, loading, visible, onCancel, t }) {
               <strong>{formatScore(previous?.score_total)}</strong>
             </div>
             <div>
-              <span>{t('评分变化')}</span>
+              <span>{t('稳定评分变化')}</span>
               <strong
                 className={
-                  Number(history?.score_delta) >= 0
+                  scoreDelta >= 0
                     ? 'ct-model-gateway-score-delta-positive'
                     : 'ct-model-gateway-score-delta-negative'
                 }
               >
-                {formatScoreDelta(history?.score_delta)}
+                {formatScoreDelta(scoreDelta)}
               </strong>
             </div>
             <div>
-              <span>{t('样本数')}</span>
+              <span>{t('样本可信度')}</span>
               <strong>
                 {scoreHistorySampleLabel(current.sample_count, t)}
               </strong>
+              <small>
+                <Tag color={confidenceMeta.color} size='small' type='light'>
+                  {confidenceMeta.label}
+                </Tag>
+              </small>
+            </div>
+            <div>
+              <span>{t('运营建议')}</span>
+              <strong>{recommendation}</strong>
             </div>
           </div>
         ) : null}
 
-        {metricEntries.length ? (
-          <div className='ct-model-gateway-score-history-reasons'>
-            <Typography.Text type='secondary' size='small'>
-              {t('主要变更原因')}
-            </Typography.Text>
-            {metricEntries.map((entry) => (
-              <div key={entry.key}>
-                <span>{entry.label}</span>
-                <strong
-                  className={
-                    Number(entry.value) >= 0
-                      ? 'ct-model-gateway-score-delta-positive'
-                      : 'ct-model-gateway-score-delta-negative'
-                  }
-                >
-                  {formatScoreDelta(entry.value)}
-                </strong>
-                {entry.description ? <em>{entry.description}</em> : null}
+        <div className='ct-model-gateway-score-history-contrib-grid'>
+          <ScoreHistoryContributionCard
+            title={t('主要加分项')}
+            emptyText={t('暂无明显加分项')}
+            entries={positiveEntries}
+            tone='positive'
+          />
+          <ScoreHistoryContributionCard
+            title={t('主要扣分项')}
+            emptyText={t('暂无明显扣分项')}
+            entries={negativeEntries}
+            tone='negative'
+          />
+        </div>
+
+        {currentRows.length ? (
+          <div className='ct-model-gateway-score-history-section'>
+            <div className='ct-model-gateway-score-history-section-head'>
+              <div>
+                <Typography.Text strong>{t('评分明细')}</Typography.Text>
+                <Typography.Text type='secondary' size='small'>
+                  {t('一级评分项来自新版评分引擎')}
+                </Typography.Text>
               </div>
-            ))}
+              {currentRows.length > 8 ? (
+                <Button
+                  size='small'
+                  type='tertiary'
+                  onClick={() => setShowAllScoreItems((value) => !value)}
+                >
+                  {showAllScoreItems ? t('收起评分项') : t('查看全部评分项')}
+                </Button>
+              ) : null}
+            </div>
+            <ScoreItemsTable
+              preparedRows={visibleCurrentItems}
+              t={t}
+              compact
+            />
           </div>
         ) : null}
 
@@ -10352,20 +10555,71 @@ function ScoreHistoryModal({ history, loading, visible, onCancel, t }) {
             placeholder={<Skeleton.Paragraph rows={7} />}
           />
         ) : items.length ? (
-          <div className='ct-model-gateway-score-history-list'>
-            {items.map((item) => (
-              <ScoreHistoryRecordItem
-                key={`${item.id}-${item.request_id}`}
-                item={item}
-                t={t}
-              />
-            ))}
+          <div className='ct-model-gateway-score-history-section'>
+            <div className='ct-model-gateway-score-history-section-head'>
+              <div>
+                <Typography.Text strong>
+                  {t('评分事件时间线')}
+                </Typography.Text>
+                <Typography.Text type='secondary' size='small'>
+                  {t('最近评分变化')}
+                </Typography.Text>
+              </div>
+            </div>
+            <div className='ct-model-gateway-score-history-list'>
+              {items.map((item) => (
+                <ScoreHistoryRecordItem
+                  key={`${item.id}-${item.request_id}`}
+                  item={item}
+                  t={t}
+                />
+              ))}
+            </div>
           </div>
         ) : (
           <Empty description={t('未找到评分变更记录')} />
         )}
+
+        <details className='ct-model-gateway-score-history-debug'>
+          <summary>{t('技术详情')}</summary>
+          <div>
+            <span>{t('Runtime Key')}</span>
+            <code>{formatRuntimeKey(history?.runtime_key)}</code>
+          </div>
+          <div>
+            <span>{t('渠道 ID')}</span>
+            <code>{history?.channel_id || current?.channel_id || '--'}</code>
+          </div>
+          <div>
+            <span>{t('生成时间')}</span>
+            <code>{formatTimestamp(history?.generated_at)}</code>
+          </div>
+        </details>
       </div>
     </Modal>
+  );
+}
+
+function ScoreHistoryContributionCard({ title, emptyText, entries = [], tone }) {
+  return (
+    <div
+      className={`ct-model-gateway-score-history-contrib ct-model-gateway-score-history-contrib-${tone}`}
+    >
+      <Typography.Text strong>{title}</Typography.Text>
+      {entries.length ? (
+        entries.map((entry) => (
+          <div key={entry.key}>
+            <span>{entry.label}</span>
+            <strong>{formatScoreDelta(entry.value)}</strong>
+            {entry.description ? <em>{entry.description}</em> : null}
+          </div>
+        ))
+      ) : (
+        <Typography.Text type='tertiary' size='small'>
+          {emptyText}
+        </Typography.Text>
+      )}
+    </div>
   );
 }
 
