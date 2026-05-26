@@ -421,6 +421,10 @@ function getStatusLabel(status, t) {
       return t('流中断');
     case 'client_aborted':
       return t('客户端中断');
+    case 'health_probe':
+      return t('健康探活');
+    case 'health_probe_failed':
+      return t('探活异常');
     default:
       return t('错误');
   }

@@ -11,9 +11,11 @@ import (
 )
 
 const (
-	StatusProcessing = "processing"
-	StatusSuccess    = "success"
-	StatusFailed     = "failed"
+	StatusProcessing  = "processing"
+	StatusSuccess     = "success"
+	StatusProbe       = "health_probe"
+	StatusFailed      = "failed"
+	StatusProbeFailed = "health_probe_failed"
 
 	defaultMaxPending = 200
 	defaultTTL        = 10 * time.Minute
@@ -138,7 +140,11 @@ func (t *Tracker) Start(record core.DispatchRecord) {
 		FinalChannelID:   finalChannelID,
 		FinalChannelName: finalChannelName,
 		Attempts:         0,
+		IsHealthProbe:    record.Plan != nil && record.Plan.IsHealthProbe,
 		Status:           StatusProcessing,
+	}
+	if record.Plan != nil {
+		item.ProbeReason = strings.TrimSpace(record.Plan.ProbeReason)
 	}
 
 	t.mu.Lock()
@@ -318,11 +324,11 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 			EmptyOutput:        summary.EmptyOutput,
 			ExperienceIssue:    summary.ExperienceIssue,
 			ClientAborted:      clientAborted,
-			IsHealthProbe:      result.IsHealthProbe,
-			ProbeReason:        strings.TrimSpace(result.ProbeReason),
+			IsHealthProbe:      result.IsHealthProbe || summary.IsHealthProbe,
+			ProbeReason:        firstNonEmpty(result.ProbeReason, summary.ProbeReason),
 			DurationMs:         summary.DurationMs,
 			TTFTMs:             summary.TTFTMs,
-			Status:             userRequestStatus(summary.FinalSuccess, clientAborted),
+			Status:             userRequestStatus(summary.FinalSuccess, clientAborted, result.IsHealthProbe || summary.IsHealthProbe),
 		}
 	}
 	clientAborted := userRequestResultClientAborted(result)
@@ -349,7 +355,7 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 		ProbeReason:        strings.TrimSpace(result.ProbeReason),
 		DurationMs:         result.Duration.Milliseconds(),
 		TTFTMs:             result.TTFT.Milliseconds(),
-		Status:             userRequestStatus(success, clientAborted),
+		Status:             userRequestStatus(success, clientAborted, result.IsHealthProbe),
 	}
 	if record.CreatedAt == 0 {
 		record.CreatedAt = completedAt
@@ -391,9 +397,15 @@ func modelGatewayAttemptFinalized(result core.AttemptResult) bool {
 	return !result.WillRetry || result.Success || result.StreamInterrupted
 }
 
-func userRequestStatus(success bool, clientAborted bool) string {
+func userRequestStatus(success bool, clientAborted bool, healthProbe bool) string {
 	if clientAborted {
 		return "client_aborted"
+	}
+	if healthProbe {
+		if success {
+			return StatusProbe
+		}
+		return StatusProbeFailed
 	}
 	if success {
 		return StatusSuccess
@@ -426,4 +438,13 @@ func maxInt(left int, right int) int {
 		return left
 	}
 	return right
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

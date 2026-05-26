@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewayprovider "github.com/QuantumNous/new-api/pkg/modelgateway/provider"
 	"github.com/QuantumNous/new-api/service"
 )
 
@@ -235,14 +236,7 @@ func (s *ProbeSelector) lowTrafficCandidatesLocked(channelByID map[int]*model.Ch
 				if !recent.Contains(modelName, group) || !probeModelSupported(modelName) {
 					continue
 				}
-				key := core.RuntimeKey{
-					RequestedModel: modelName,
-					UpstreamModel:  channel.ResolveMappedModelName(modelName),
-					ChannelID:      channel.Id,
-					Group:          group,
-					EndpointType:   endpointTypeForProbe(channel, modelName),
-				}
-				key = normalizeProbeRuntimeKey(key)
+				key := probeRuntimeKeyForChannel(channel, modelName, group, endpointTypeForProbe(channel, modelName), core.RuntimeKey{})
 				if !probeChannelSupportsKey(channel, key) {
 					continue
 				}
@@ -278,7 +272,16 @@ func (s *ProbeSelector) snapshotForKey(key core.RuntimeKey) (core.RuntimeSnapsho
 	if s.store == nil {
 		return core.RuntimeSnapshot{}, false
 	}
-	return s.store.Get(key)
+	key = normalizeProbeRuntimeKey(key)
+	if snapshot, ok := s.store.Get(key); ok {
+		return snapshot, true
+	}
+	if key.CapabilityFingerprint == "" {
+		return core.RuntimeSnapshot{}, false
+	}
+	legacyKey := key
+	legacyKey.CapabilityFingerprint = ""
+	return s.store.Get(legacyKey)
 }
 
 func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapshot, now time.Time, config ProbeConfig) (string, float64) {
@@ -398,6 +401,7 @@ func probeCandidateFromSnapshot(channel *model.Channel, snapshot core.RuntimeSna
 	if modelName == "" {
 		modelName = strings.TrimSpace(key.UpstreamModel)
 	}
+	key = probeRuntimeKeyForChannel(channel, modelName, key.Group, key.EndpointType, key)
 	return ProbeCandidate{
 		Channel: channel,
 		Model:   modelName,
@@ -444,7 +448,7 @@ func recentProbeScopes(now time.Time) (probeRecentScopes, error) {
 	rows := make([]probeRecentRequestScopeRow, 0)
 	err := model.DB.Model(&model.ModelGatewayUserRequestSummary{}).
 		Select("requested_model, requested_group, selected_group").
-		Where("completed_at >= ?", cutoff).
+		Where("completed_at >= ? AND is_health_probe = ?", cutoff, false).
 		Find(&rows).Error
 	if err != nil {
 		return scopes, err
@@ -669,4 +673,68 @@ func normalizeProbeRuntimeKey(key core.RuntimeKey) core.RuntimeKey {
 	key.CapabilityFingerprint = strings.TrimSpace(key.CapabilityFingerprint)
 	key.EndpointType = runtimeKeyEndpointType(key)
 	return key
+}
+
+func probeRuntimeKeyForChannel(channel *model.Channel, requestedModel string, group string, endpointType constant.EndpointType, seed core.RuntimeKey) core.RuntimeKey {
+	key := seed
+	requestedModel = firstProbeString(key.RequestedModel, requestedModel, key.UpstreamModel)
+	if channel != nil && key.ChannelID <= 0 {
+		key.ChannelID = channel.Id
+	}
+	if strings.TrimSpace(key.RequestedModel) == "" {
+		key.RequestedModel = requestedModel
+	}
+	if strings.TrimSpace(key.UpstreamModel) == "" {
+		if channel != nil && requestedModel != "" {
+			key.UpstreamModel = channel.ResolveMappedModelName(requestedModel)
+		} else {
+			key.UpstreamModel = strings.TrimSpace(seed.UpstreamModel)
+		}
+	}
+	if strings.TrimSpace(key.Group) == "" {
+		key.Group = strings.TrimSpace(group)
+	}
+	if key.EndpointType == "" {
+		key.EndpointType = endpointType
+	}
+	if key.EndpointType == "" && channel != nil {
+		key.EndpointType = endpointTypeForProbe(channel, requestedModel)
+	}
+	if channel != nil {
+		profile := probeProviderProfile(channel, requestedModel)
+		capability := profile.Capabilities(channel, requestedModel)
+		if strings.TrimSpace(key.CapabilityFingerprint) == "" {
+			key.CapabilityFingerprint = capability.CapabilityFingerprint
+		}
+		key.CapabilityFingerprint = appendProbeCapabilityPart(key.CapabilityFingerprint, profile.Name())
+		key.CapabilityFingerprint = appendProbeCapabilityPart(key.CapabilityFingerprint, profile.ProxyMode(channel, requestedModel))
+	}
+	return normalizeProbeRuntimeKey(key)
+}
+
+func probeProviderProfile(channel *model.Channel, modelName string) modelgatewayprovider.ProviderProfile {
+	registry := modelgatewayprovider.NewStandardProviderRegistry()
+	if profile := registry.Best(channel, modelName); profile != nil {
+		return profile
+	}
+	return modelgatewayprovider.NewStandardOpenAICompatibleProfile()
+}
+
+func appendProbeCapabilityPart(fingerprint string, part string) string {
+	part = strings.TrimSpace(part)
+	if part == "" {
+		return strings.TrimSpace(fingerprint)
+	}
+	fingerprint = strings.TrimSpace(fingerprint)
+	if fingerprint == "" {
+		return part
+	}
+	parts := strings.Split(fingerprint, "|")
+	for _, existing := range parts {
+		if strings.TrimSpace(existing) == part {
+			return fingerprint
+		}
+	}
+	parts = append(parts, part)
+	return strings.Join(parts, "|")
 }

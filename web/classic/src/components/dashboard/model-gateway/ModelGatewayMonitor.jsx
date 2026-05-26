@@ -907,6 +907,17 @@ function buildUserRequestDetailRecord(userRequest, records) {
       userRequest?.upstream_cost_accuracy ||
       attempt?.upstream_cost_accuracy ||
       dispatch?.upstream_cost_accuracy,
+    is_health_probe:
+      userRequest?.is_health_probe === true ||
+      attempt?.is_health_probe === true ||
+      dispatch?.is_health_probe === true ||
+      dispatch?.request_meta?.is_health_probe === true,
+    probe_reason:
+      userRequest?.probe_reason ||
+      attempt?.probe_reason ||
+      dispatch?.probe_reason ||
+      dispatch?.request_meta?.probe_reason ||
+      '',
     success: userRequest?.final_success === true || attempt?.success === true,
     final_success: userRequest?.final_success === true,
     status_code: userRequest?.final_status_code || attempt?.status_code || 0,
@@ -945,6 +956,10 @@ function buildUserRequestDetailRecord(userRequest, records) {
     request_meta: {
       ...(dispatch?.request_meta || {}),
       ...(attempt?.request_meta || {}),
+      ...(userRequest?.is_health_probe ? { is_health_probe: true } : {}),
+      ...(userRequest?.probe_reason
+        ? { probe_reason: userRequest.probe_reason }
+        : {}),
       candidate_explanations:
         dispatch?.candidate_explanations ||
         dispatch?.request_meta?.candidate_explanations ||
@@ -1615,6 +1630,11 @@ function getUserRequestStatusLabel(status, t) {
 }
 
 function getUserRequestStatusMeta(record, t) {
+  if (record?.is_health_probe || record?.request_meta?.is_health_probe) {
+    return record?.final_success || record?.success
+      ? { color: 'cyan', label: t('健康探活'), tone: 'probe' }
+      : { color: 'orange', label: t('探活异常'), tone: 'probe-warning' };
+  }
   if (record?.status === 'processing') {
     return { color: 'blue', label: t('处理中'), tone: 'processing' };
   }
@@ -3084,6 +3104,11 @@ function UserRequestHealthCard({ health, summary, trends, t }) {
           <span>{formatPercent(summary.user_success_rate)}</span>
         </div>
         <div>
+          <small>{t('探活请求')}</small>
+          <strong>{formatNumber(summary.health_probes)}</strong>
+          <span>{t('不计入最终失败')}</span>
+        </div>
+        <div>
           <small>{t('最终失败')}</small>
           <strong>{formatNumber(summary.final_failures)}</strong>
           <span>
@@ -3469,7 +3494,8 @@ function UserRequestRecentTable({
                     ? RadioTower
                     : meta.tone === 'aborted'
                       ? Ban
-                      : meta.tone === 'failed'
+                      : meta.tone === 'failed' ||
+                          meta.tone === 'probe-warning'
                         ? Info
                         : CheckCircle2;
                 const durationTone = getThresholdTone(
@@ -3564,7 +3590,9 @@ function UserRequestRecentTable({
                         )}
                         {(record.is_health_probe ||
                           record.request_meta?.is_health_probe) && (
-                          <small title={formatProbeReason(getProbeReason(record), t)}>
+                          <small
+                            title={formatProbeReason(getProbeReason(record), t)}
+                          >
                             {formatProbeReason(getProbeReason(record), t)}
                           </small>
                         )}
@@ -3614,9 +3642,12 @@ function UserRequestRecentTable({
                           ? t('进行中')
                           : meta.tone === 'aborted'
                             ? t('用户已取消')
-                            : record.final_success
-                              ? t('请求完成')
-                              : t('请求失败')}
+                            : meta.tone === 'probe' ||
+                                meta.tone === 'probe-warning'
+                              ? t('探活请求')
+                              : record.final_success
+                                ? t('请求完成')
+                                : t('请求失败')}
                       </span>
                     </div>
 
@@ -3779,19 +3810,19 @@ function UserRequestDashboard({
             t={t}
           />
           {hasDynamicBilling7dOverview ? (
-          <DynamicBillingMiniPanel
-            overview={dynamicBilling7dOverview}
-            t={t}
-            title={t('7天动态均价')}
-            countdownEnabled={false}
-            averageMode
-          />
-        ) : null}
+            <DynamicBillingMiniPanel
+              overview={dynamicBilling7dOverview}
+              t={t}
+              title={t('7天动态均价')}
+              countdownEnabled={false}
+              averageMode
+            />
+          ) : null}
           <OperationKpiCard
             icon={ListTree}
             label={t('客户端请求数')}
             value={formatNumber(summary.total_requests)}
-            detail={`${formatNumber(summary.scanned_requests)} ${t('已扫描')}`}
+            detail={`${formatNumber(summary.scanned_requests)} ${t('已扫描')} · ${formatNumber(summary.health_probes)} ${t('探活')}`}
             tone='default'
             sparkValues={buildUserRequestSparkValues(trends, 'requests')}
           />

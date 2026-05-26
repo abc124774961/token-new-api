@@ -43,6 +43,8 @@ type ModelGatewayUserRequestSummary struct {
 	ExperienceIssue    string `json:"experience_issue" gorm:"type:varchar(64);index;default:''"`
 	StreamInterrupted  bool   `json:"stream_interrupted" gorm:"default:false;index"`
 	ClientAborted      bool   `json:"client_aborted" gorm:"default:false;index"`
+	IsHealthProbe      bool   `json:"is_health_probe" gorm:"default:false;index"`
+	ProbeReason        string `json:"probe_reason" gorm:"type:varchar(64);index;default:''"`
 	DurationMs         int64  `json:"duration_ms" gorm:"default:0"`
 	TTFTMs             int64  `json:"ttft_ms" gorm:"default:0"`
 }
@@ -70,6 +72,8 @@ type ModelGatewayUserRequestAttempt struct {
 	StreamInterrupted bool
 	WillRetry         bool
 	ClientAborted     bool
+	IsHealthProbe     bool
+	ProbeReason       string
 	EmptyOutput       bool
 	ExperienceIssue   string
 }
@@ -182,13 +186,15 @@ func modelGatewayUserRequestSummaryFromAttempt(attempt ModelGatewayUserRequestAt
 		Attempts:           attempt.AttemptIndex + 1,
 		LastAttemptIndex:   attempt.AttemptIndex,
 		FinalSuccess:       success,
-		Recovered:          success && attempt.AttemptIndex > 0,
+		Recovered:          !attempt.IsHealthProbe && success && attempt.AttemptIndex > 0,
 		FinalStatusCode:    modelGatewayUserRequestFinalStatusCode(attempt, finalized, success),
 		FinalErrorCategory: errorCategory,
 		EmptyOutput:        finalized && attempt.EmptyOutput,
 		ExperienceIssue:    modelGatewayUserRequestExperienceIssue(attempt, finalized),
 		StreamInterrupted:  finalized && attempt.StreamInterrupted,
 		ClientAborted:      clientAborted,
+		IsHealthProbe:      attempt.IsHealthProbe,
+		ProbeReason:        strings.TrimSpace(attempt.ProbeReason),
 		DurationMs:         modelGatewayUserRequestFinalDuration(attempt, finalized),
 		TTFTMs:             modelGatewayUserRequestFinalTTFT(attempt, finalized),
 	}
@@ -212,9 +218,10 @@ func modelGatewayUserRequestSummaryUpdates(existing ModelGatewayUserRequestSumma
 	if clientAborted {
 		errorCategory = ModelGatewayUserRequestErrorClientAborted
 	}
-	recovered := existing.Recovered || (success && (existing.Attempts > 0 && !existing.FinalSuccess || hadFinalFailure))
+	isHealthProbe := existing.IsHealthProbe || attempt.IsHealthProbe
+	recovered := existing.Recovered || (!isHealthProbe && success && (existing.Attempts > 0 && !existing.FinalSuccess || hadFinalFailure))
 	finalSuccess := existing.FinalSuccess || success
-	if !finalSuccess || !finalized {
+	if !finalSuccess || !finalized || isHealthProbe {
 		recovered = false
 	}
 
@@ -224,6 +231,10 @@ func modelGatewayUserRequestSummaryUpdates(existing ModelGatewayUserRequestSumma
 		"last_attempt_index": attempt.AttemptIndex,
 		"final_success":      finalSuccess,
 		"recovered":          recovered,
+		"is_health_probe":    isHealthProbe,
+	}
+	if reason := strings.TrimSpace(attempt.ProbeReason); reason != "" {
+		updates["probe_reason"] = reason
 	}
 	shouldUpdateFinalMetrics := finalized && (success || !existing.FinalSuccess)
 	if shouldUpdateFinalMetrics {

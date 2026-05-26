@@ -72,6 +72,7 @@ type ChannelStatusMonitorItem struct {
 	RecentRequests         int64                                         `json:"recent_requests"`
 	RecentSuccesses        int64                                         `json:"recent_successes"`
 	RecentFailures         int64                                         `json:"recent_failures"`
+	RecentHealthProbes     int64                                         `json:"recent_health_probes"`
 	RecentError429         int64                                         `json:"recent_error_429"`
 	RecentError5xx         int64                                         `json:"recent_error_5xx"`
 	RecentErrorTimeout     int64                                         `json:"recent_error_timeout"`
@@ -106,6 +107,7 @@ type ChannelStatusMonitorGroup struct {
 	RecentRequests         int64                             `json:"recent_requests"`
 	RecentSuccesses        int64                             `json:"recent_successes"`
 	RecentFailures         int64                             `json:"recent_failures"`
+	RecentHealthProbes     int64                             `json:"recent_health_probes"`
 	RecentError429         int64                             `json:"recent_error_429"`
 	RecentError5xx         int64                             `json:"recent_error_5xx"`
 	RecentErrorTimeout     int64                             `json:"recent_error_timeout"`
@@ -135,6 +137,7 @@ type ChannelStatusMonitorSummary struct {
 	RecentRequests         int64                             `json:"recent_requests"`
 	RecentSuccesses        int64                             `json:"recent_successes"`
 	RecentFailures         int64                             `json:"recent_failures"`
+	RecentHealthProbes     int64                             `json:"recent_health_probes"`
 	RecentError429         int64                             `json:"recent_error_429"`
 	RecentError5xx         int64                             `json:"recent_error_5xx"`
 	RecentErrorTimeout     int64                             `json:"recent_error_timeout"`
@@ -452,6 +455,7 @@ func buildChannelStatusMonitorFromRowsWithChannelsAndUserRequests(windowHours in
 			group.RecentRequests = groupStat.requests
 			group.RecentSuccesses = groupStat.successes
 			group.RecentFailures = groupStat.failures
+			group.RecentHealthProbes = groupStat.healthProbes
 			group.RecentError429 = groupStat.error429
 			group.RecentError5xx = groupStat.error5xx
 			group.RecentErrorTimeout = groupStat.errorTimeout
@@ -463,7 +467,7 @@ func buildChannelStatusMonitorFromRowsWithChannelsAndUserRequests(windowHours in
 			group.AvgTTFTMs = avgInt64(groupStat.firstRespSum, groupStat.firstRespCount)
 		}
 		if group.RecentRequests > 0 {
-			group.SuccessRate = channelMonitorUserSuccessRate(group.RecentSuccesses, group.RecentRequests, group.RecentClientAborted)
+			group.SuccessRate = channelMonitorUserSuccessRate(group.RecentSuccesses, group.RecentRequests, group.RecentClientAborted, group.RecentHealthProbes)
 		}
 		if len(group.Channels) > 0 {
 			sort.Slice(group.Channels, func(i, j int) bool {
@@ -491,6 +495,7 @@ func buildChannelStatusMonitorFromRowsWithChannelsAndUserRequests(windowHours in
 		summary.RecentRequests = overallStat.requests
 		summary.RecentSuccesses = overallStat.successes
 		summary.RecentFailures = overallStat.failures
+		summary.RecentHealthProbes = overallStat.healthProbes
 		summary.RecentError429 = overallStat.error429
 		summary.RecentError5xx = overallStat.error5xx
 		summary.RecentErrorTimeout = overallStat.errorTimeout
@@ -502,7 +507,7 @@ func buildChannelStatusMonitorFromRowsWithChannelsAndUserRequests(windowHours in
 		summary.AvgTTFTMs = avgInt64(overallStat.firstRespSum, overallStat.firstRespCount)
 	}
 	if summary.RecentRequests > 0 {
-		summary.SuccessRate = channelMonitorUserSuccessRate(summary.RecentSuccesses, summary.RecentRequests, summary.RecentClientAborted)
+		summary.SuccessRate = channelMonitorUserSuccessRate(summary.RecentSuccesses, summary.RecentRequests, summary.RecentClientAborted, summary.RecentHealthProbes)
 	}
 
 	return ChannelStatusMonitorResponse{
@@ -887,6 +892,7 @@ type channelMonitorLogStats struct {
 	requests         int64
 	successes        int64
 	failures         int64
+	healthProbes     int64
 	error429         int64
 	error5xx         int64
 	errorTimeout     int64
@@ -1111,14 +1117,17 @@ func applyChannelMonitorUserRequestRow(stats *channelMonitorLogStats, row model.
 	}
 	status := channelMonitorUserRequestStatus(row)
 	stats.requests++
+	if row.IsHealthProbe {
+		stats.healthProbes++
+	}
 	stats.lastRequestAt = maxInt64(stats.lastRequestAt, row.CompletedAt)
-	if row.Recovered {
+	if row.Recovered && !row.IsHealthProbe {
 		stats.recovered++
 	}
-	if row.EmptyOutput {
+	if row.EmptyOutput && !row.IsHealthProbe {
 		stats.emptyOutputs++
 	}
-	if strings.TrimSpace(row.ExperienceIssue) != "" && !row.EmptyOutput {
+	if strings.TrimSpace(row.ExperienceIssue) != "" && !row.EmptyOutput && !row.IsHealthProbe {
 		stats.experienceIssues++
 	}
 	if row.TTFTMs > 0 {
@@ -1134,8 +1143,13 @@ func applyChannelMonitorUserRequestRow(stats *channelMonitorLogStats, row model.
 		return
 	}
 	if row.FinalSuccess {
-		stats.successes++
-		stats.lastSuccessAt = maxInt64(stats.lastSuccessAt, row.CompletedAt)
+		if !row.IsHealthProbe {
+			stats.successes++
+			stats.lastSuccessAt = maxInt64(stats.lastSuccessAt, row.CompletedAt)
+		}
+		return
+	}
+	if row.IsHealthProbe {
 		return
 	}
 	stats.failures++
@@ -1161,6 +1175,12 @@ func channelMonitorUserRequestGroup(row model.ModelGatewayUserRequestSummary) st
 func channelMonitorUserRequestStatus(row model.ModelGatewayUserRequestSummary) string {
 	if row.ClientAborted || strings.TrimSpace(row.FinalErrorCategory) == model.ModelGatewayUserRequestErrorClientAborted || row.FinalStatusCode == relayStatusClientClosedRequest {
 		return "client_aborted"
+	}
+	if row.IsHealthProbe {
+		if row.FinalSuccess {
+			return "health_probe"
+		}
+		return "health_probe_failed"
 	}
 	if row.FinalSuccess {
 		if row.EmptyOutput {
@@ -1551,6 +1571,7 @@ func buildChannelStatusMonitorItem(channel *model.Channel, logStat *channelMonit
 		item.RecentRequests = logStat.requests
 		item.RecentSuccesses = logStat.successes
 		item.RecentFailures = logStat.failures
+		item.RecentHealthProbes = logStat.healthProbes
 		item.RecentError429 = logStat.error429
 		item.RecentError5xx = logStat.error5xx
 		item.RecentErrorTimeout = logStat.errorTimeout
@@ -1649,8 +1670,8 @@ func channelMonitorPreferredStats(primary, fallback *channelMonitorLogStats) *ch
 	return fallback
 }
 
-func channelMonitorUserSuccessRate(successes, requests, clientAborted int64) float64 {
-	return successRate(successes, requests-clientAborted)
+func channelMonitorUserSuccessRate(successes, requests, clientAborted, healthProbes int64) float64 {
+	return successRate(successes, requests-clientAborted-healthProbes)
 }
 
 func successRate(successes, requests int64) float64 {

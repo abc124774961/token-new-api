@@ -253,7 +253,7 @@ func recentRealUserTrafficActive() (bool, error) {
 	cutoff := time.Now().Add(-probeActivationWindow).Unix()
 	var count int64
 	err := model.DB.Model(&model.ModelGatewayUserRequestSummary{}).
-		Where("completed_at >= ?", cutoff).
+		Where("completed_at >= ? AND is_health_probe = ?", cutoff, false).
 		Count(&count).Error
 	return count > 0, err
 }

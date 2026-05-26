@@ -273,6 +273,8 @@ func modelGatewayUserRequestAttemptFromResult(result core.AttemptResult) model.M
 		StreamInterrupted: result.StreamInterrupted,
 		WillRetry:         result.WillRetry,
 		ClientAborted:     result.ClientAborted,
+		IsHealthProbe:     result.IsHealthProbe,
+		ProbeReason:       result.ProbeReason,
 		EmptyOutput:       result.EmptyOutput,
 		ExperienceIssue:   result.ExperienceIssue,
 	}

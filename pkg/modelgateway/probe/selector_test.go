@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewayprovider "github.com/QuantumNous/new-api/pkg/modelgateway/provider"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/glebarez/sqlite"
@@ -62,7 +63,13 @@ func TestProbeSelectorSelectsLowScoreRuntimeWithRecentTraffic(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	require.Equal(t, reasonLowScore, candidates[0].Reason)
-	require.Equal(t, key, candidates[0].Key)
+	require.Equal(t, key.RequestedModel, candidates[0].Key.RequestedModel)
+	require.Equal(t, key.UpstreamModel, candidates[0].Key.UpstreamModel)
+	require.Equal(t, key.ChannelID, candidates[0].Key.ChannelID)
+	require.Equal(t, key.Group, candidates[0].Key.Group)
+	require.Equal(t, key.EndpointType, candidates[0].Key.EndpointType)
+	require.Contains(t, candidates[0].Key.CapabilityFingerprint, modelgatewayprovider.ProfileStandardOpenAICompatible)
+	require.Contains(t, candidates[0].Key.CapabilityFingerprint, modelgatewayprovider.ProxyModeNative)
 	require.Equal(t, "default", candidates[0].Group)
 }
 
@@ -83,6 +90,24 @@ func TestProbeSelectorSelectsLowTrafficOnlyForRecentScopes(t *testing.T) {
 	require.Equal(t, target.Id, candidates[0].Channel.Id)
 	require.Equal(t, "gpt-4.1", candidates[0].Model)
 	require.Equal(t, "codex-pro", candidates[0].Group)
+}
+
+func TestProbeSelectorLowTrafficUsesSchedulingRuntimeKey(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-codex-runtime-key", "gpt-5.4", "codex-plus", "codex-plus", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 4, "toioto", "codex-plus", "gpt-5.4", 1)
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", channel.Id).Update("type", constant.ChannelTypeCodex).Error)
+	model.InitChannelCache()
+
+	selector := NewProbeSelector(scheduler.NewMemoryRuntimeSnapshotStore(), nil)
+	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: time.Second})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, reasonLowTraffic, candidates[0].Reason)
+	require.Equal(t, constant.EndpointTypeOpenAIResponse, candidates[0].Key.EndpointType)
+	require.Contains(t, candidates[0].Key.CapabilityFingerprint, modelgatewayprovider.ProfileOpenAICodex)
+	require.Contains(t, candidates[0].Key.CapabilityFingerprint, modelgatewayprovider.ProxyModeNativeResponses)
 }
 
 func TestProbeSelectorCollapsesCandidatesToSingleModelPerChannel(t *testing.T) {

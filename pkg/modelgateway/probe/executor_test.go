@@ -252,6 +252,38 @@ func TestProbeExecutorInjectsSelectedPlanForResponsesViaChatProbe(t *testing.T) 
 	require.Equal(t, constant.EndpointTypeOpenAIResponse, result.RuntimeKey.EndpointType)
 }
 
+func TestProbeAttemptResultUsesDispatchPlanRuntimeKey(t *testing.T) {
+	legacyKey := core.RuntimeKey{
+		RequestedModel: "gpt-5.4",
+		UpstreamModel:  "gpt-5.4",
+		ChannelID:      4,
+		Group:          "codex-plus",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	planKey := legacyKey
+	planKey.EndpointType = constant.EndpointTypeOpenAIResponse
+	planKey.CapabilityFingerprint = modelgatewayprovider.ProfileOpenAICodex + "|" + modelgatewayprovider.ProxyModeNativeResponses
+
+	result := ProbeRunResult{
+		ProbeID:    "mg_probe_plan_key",
+		Reason:     reasonLowScore,
+		Channel:    &model.Channel{Id: 4, Name: "toioto"},
+		Model:      "gpt-5.4",
+		Group:      "codex-plus",
+		RuntimeKey: legacyKey,
+		TargetKey:  legacyKey,
+		Success:    true,
+		StatusCode: http.StatusOK,
+		Plan: &core.DispatchPlan{
+			RuntimeKey: planKey,
+		},
+	}
+
+	attempt := result.AttemptResult()
+	require.Equal(t, planKey, attempt.Key)
+	require.Equal(t, constant.EndpointTypeOpenAIResponse, attempt.RuntimeKey().EndpointType)
+}
+
 func TestProbeSchedulerDispatchRecordIncludesScoreAndCandidateExplanation(t *testing.T) {
 	db := setupProbeExecutorTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))

@@ -5571,6 +5571,14 @@ html.dark
   background: #94a3b8;
 }
 
+.ct-channel-monitor-bar-health_probe {
+  background: #06b6d4;
+}
+
+.ct-channel-monitor-bar-health_probe_failed {
+  background: #f59e0b;
+}
+
 .ct-channel-monitor-no-history {
   margin-top: 10px;
   padding: 12px;

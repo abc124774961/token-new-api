@@ -345,7 +345,7 @@ func TestChannelMonitorUserRequestStatsUseUserPerspective(t *testing.T) {
 	require.EqualValues(t, 1, proStats.error429)
 	require.EqualValues(t, 1200, avgInt64(proStats.latencySum, proStats.latencyCount))
 	require.EqualValues(t, 250, avgInt64(proStats.firstRespSum, proStats.firstRespCount))
-	require.Equal(t, float64(50), channelMonitorUserSuccessRate(proStats.successes, proStats.requests, proStats.clientAborted))
+	require.Equal(t, float64(50), channelMonitorUserSuccessRate(proStats.successes, proStats.requests, proStats.clientAborted, proStats.healthProbes))
 
 	plusStats := stats.byGroup["codex-plus"]
 	require.NotNil(t, plusStats)

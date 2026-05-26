@@ -976,31 +976,55 @@ func TestBuildModelGatewayObservabilitySummaryIncludesUserRequests(t *testing.T)
 	require.Equal(t, int64(520), trend.P95TTFTMs)
 }
 
-func TestBuildModelGatewayObservabilitySummaryIncludesHealthProbeUserRequest(t *testing.T) {
+func TestBuildModelGatewayObservabilitySummaryIncludesHealthProbeUserRequestsByDefault(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()
 
-	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
-		CreatedAt:        now - 10,
-		UpdatedAt:        now - 8,
-		CompletedAt:      now - 5,
-		RequestId:        "req-user-probe",
-		RequestedGroup:   "auto",
-		SelectedGroup:    "vip",
-		RequestedModel:   "gpt-5.5",
-		FinalChannelID:   31,
-		FinalChannelName: "probe-channel",
-		Attempts:         1,
-		LastAttemptIndex: 0,
-		FinalSuccess:     true,
-		DurationMs:       900,
-		TTFTMs:           140,
+	require.NoError(t, db.Create(&[]model.ModelGatewayUserRequestSummary{
+		{
+			CreatedAt:        now - 10,
+			UpdatedAt:        now - 8,
+			CompletedAt:      now - 5,
+			RequestId:        "req-user-probe-success",
+			RequestedGroup:   "auto",
+			SelectedGroup:    "vip",
+			RequestedModel:   "gpt-5.5",
+			FinalChannelID:   31,
+			FinalChannelName: "probe-channel",
+			Attempts:         1,
+			LastAttemptIndex: 0,
+			FinalSuccess:     true,
+			IsHealthProbe:    true,
+			ProbeReason:      "low_score",
+			DurationMs:       900,
+			TTFTMs:           140,
+		},
+		{
+			CreatedAt:          now - 9,
+			UpdatedAt:          now - 7,
+			CompletedAt:        now - 4,
+			RequestId:          "req-user-probe-failed",
+			RequestedGroup:     "auto",
+			SelectedGroup:      "vip",
+			RequestedModel:     "gpt-5.5",
+			FinalChannelID:     31,
+			FinalChannelName:   "probe-channel",
+			Attempts:           1,
+			LastAttemptIndex:   0,
+			FinalSuccess:       false,
+			FinalStatusCode:    http.StatusBadGateway,
+			FinalErrorCategory: model.ModelGatewayUserRequestErrorUpstream,
+			IsHealthProbe:      true,
+			ProbeReason:        "failure_avoidance",
+			DurationMs:         1100,
+			TTFTMs:             180,
+		},
 	}).Error)
 
 	require.NoError(t, db.Create(&model.Log{
 		CreatedAt:        now - 5,
 		Type:             model.LogTypeConsume,
-		RequestId:        "req-user-probe",
+		RequestId:        "req-user-probe-success",
 		UserId:           1,
 		Username:         "root",
 		Quota:            10,
@@ -1021,9 +1045,23 @@ func TestBuildModelGatewayObservabilitySummaryIncludesHealthProbeUserRequest(t *
 		ViewMode:    "user_requests",
 	})
 	require.NoError(t, err)
-	require.Len(t, response.UserRequests.RecentRequests, 1)
+	require.Len(t, response.UserRequests.RecentRequests, 2)
+	require.Equal(t, "req-user-probe-failed", response.UserRequests.RecentRequests[0].RequestID)
 	require.True(t, response.UserRequests.RecentRequests[0].IsHealthProbe)
-	require.Equal(t, "low_score", response.UserRequests.RecentRequests[0].ProbeReason)
+	require.Equal(t, "failure_avoidance", response.UserRequests.RecentRequests[0].ProbeReason)
+	require.Equal(t, "health_probe_failed", response.UserRequests.RecentRequests[0].Status)
+	require.Equal(t, "req-user-probe-success", response.UserRequests.RecentRequests[1].RequestID)
+	require.True(t, response.UserRequests.RecentRequests[1].IsHealthProbe)
+	require.Equal(t, "low_score", response.UserRequests.RecentRequests[1].ProbeReason)
+	require.Equal(t, "health_probe", response.UserRequests.RecentRequests[1].Status)
+	require.Equal(t, int64(2), response.UserRequests.Summary.HealthProbes)
+	require.Equal(t, int64(0), response.UserRequests.Summary.Successes)
+	require.Equal(t, int64(0), response.UserRequests.Summary.FinalFailures)
+	require.Equal(t, 0.0, response.UserRequests.Summary.UserSuccessRate)
+	trend := requireModelGatewayUserRequestTrendWithRequests(t, response.UserRequests.Trends, 2)
+	require.Equal(t, int64(2), trend.HealthProbes)
+	require.Equal(t, int64(0), trend.Successes)
+	require.Equal(t, int64(0), trend.FinalFailures)
 }
 
 func TestBuildModelGatewayObservabilitySummaryUsesSelectedGroupRatioWhenBillingGroupIsRequestedGroup(t *testing.T) {
@@ -1902,6 +1940,8 @@ func TestModelGatewayObservabilitySummaryCacheKeyNormalizesAndEscapes(t *testing
 	require.Equal(t, right, left)
 	require.Contains(t, left, "model=gpt%3D5%265")
 	require.Contains(t, left, "request_id=req%3Da%26b")
+	require.Contains(t, left, "include_total=false")
+	require.NotContains(t, left, "health")
 }
 
 func TestBuildModelGatewayObservabilitySummaryCacheUsesFreshResultByQuery(t *testing.T) {

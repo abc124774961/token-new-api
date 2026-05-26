@@ -107,11 +107,18 @@ func (e *ProbeExecutor) execute(ctx context.Context, result ProbeRunResult) Prob
 
 	common.SetContextKey(c, constant.ContextKeyHealthProbe, true)
 	common.SetContextKey(c, constant.ContextKeyHealthProbeReason, result.Reason)
-	common.SetContextKey(c, constant.ContextKeyHealthProbeRuntimeKey, result.TargetKey)
-	common.SetContextKey(c, constant.ContextKeyTokenSpecificChannelId, strconv.Itoa(result.TargetKey.ChannelID))
 	selectedPlan := result.Plan
 	if selectedPlan == nil {
 		selectedPlan = buildProbeDispatchPlan(result, probeEndpointType)
+	}
+	if selectedPlan != nil {
+		result.Plan = selectedPlan
+		result.TargetKey = selectedPlan.RuntimeKey
+		common.SetContextKey(c, constant.ContextKeyHealthProbeRuntimeKey, selectedPlan.RuntimeKey)
+		common.SetContextKey(c, constant.ContextKeyTokenSpecificChannelId, strconv.Itoa(selectedPlan.RuntimeKey.ChannelID))
+	} else {
+		common.SetContextKey(c, constant.ContextKeyHealthProbeRuntimeKey, result.TargetKey)
+		common.SetContextKey(c, constant.ContextKeyTokenSpecificChannelId, strconv.Itoa(result.TargetKey.ChannelID))
 	}
 	modelgatewayintegration.SetSelectedPlan(c, selectedPlan)
 	body, err := common.Marshal(request)
@@ -262,14 +269,34 @@ func (r ProbeRunResult) AttemptResult() core.AttemptResult {
 }
 
 func (r ProbeRunResult) AttemptRuntimeKey() core.RuntimeKey {
+	if r.Plan != nil && r.Plan.RuntimeKey.ChannelID > 0 {
+		key := r.Plan.RuntimeKey
+		if key.EndpointType == "" {
+			key.EndpointType = r.RuntimeKey.EndpointType
+		}
+		if key.EndpointType == "" {
+			key.EndpointType = r.TargetKey.EndpointType
+		}
+		if key.EndpointType == "" {
+			key.EndpointType = constant.EndpointTypeOpenAI
+		}
+		return key
+	}
 	if r.TargetKey.ChannelID > 0 {
 		key := r.TargetKey
 		if key.EndpointType == "" {
 			key.EndpointType = r.RuntimeKey.EndpointType
 		}
+		if key.EndpointType == "" {
+			key.EndpointType = constant.EndpointTypeOpenAI
+		}
 		return key
 	}
-	return r.RuntimeKey
+	key := r.RuntimeKey
+	if key.EndpointType == "" {
+		key.EndpointType = constant.EndpointTypeOpenAI
+	}
+	return key
 }
 
 func writeRootContext(c *gin.Context, probeID string, group string) error {
@@ -408,6 +435,8 @@ func buildProbeDispatchPlan(result ProbeRunResult, endpointType constant.Endpoin
 	if strings.TrimSpace(runtimeKey.CapabilityFingerprint) == "" {
 		runtimeKey.CapabilityFingerprint = capability.CapabilityFingerprint
 	}
+	runtimeKey.CapabilityFingerprint = appendProbeCapabilityPart(runtimeKey.CapabilityFingerprint, profile.Name())
+	runtimeKey.CapabilityFingerprint = appendProbeCapabilityPart(runtimeKey.CapabilityFingerprint, profile.ProxyMode(result.Channel, result.Model))
 	group := strings.TrimSpace(result.Group)
 	if group == "" {
 		group = strings.TrimSpace(runtimeKey.Group)

@@ -97,6 +97,15 @@ func TestParamsMatchesUserRequest(t *testing.T) {
 		FinalChannelID: 13,
 		Status:         "processing",
 	}))
+	require.True(t, params.matchesUserRequest(controller.ModelGatewayUserRequestRecord{
+		CreatedAt:      now,
+		RequestID:      "req-live",
+		RequestedModel: "gpt-5.5",
+		SelectedGroup:  "codex-plus",
+		FinalChannelID: 12,
+		IsHealthProbe:  true,
+		Status:         "processing",
+	}))
 }
 
 func TestTopicPublishesProcessingUserRequestDelta(t *testing.T) {
@@ -143,6 +152,49 @@ func TestTopicPublishesProcessingUserRequestDelta(t *testing.T) {
 	require.Equal(t, "processing", delta.UserRequestsRecent[0].Status)
 	require.Equal(t, "codex-plus", delta.UserRequestsRecent[0].ActualGroup)
 	require.Zero(t, delta.UserRequestsRecent[0].ActualGroupRatio)
+	require.True(t, delta.UserRequestsRecent[0].IsHealthProbe)
+	require.Equal(t, "low_score", delta.UserRequestsRecent[0].ProbeReason)
+}
+
+func TestTopicPublishesHealthProbeUserRequestDeltaByDefault(t *testing.T) {
+	topic := NewTopic()
+	defer topic.Close()
+	subscriber := &captureSubscriber{}
+	topic.Subscribe(subscriber, realtime.Subscription{
+		ID:    "sub-user",
+		Topic: TopicName,
+		Params: map[string]any{
+			"view_mode":    "user_requests",
+			"hours":        1,
+			"recent_limit": 10,
+		},
+	})
+	require.Eventually(t, func() bool {
+		return len(subscriber.messages) > 0
+	}, time.Second, 10*time.Millisecond)
+	subscriber.messages = nil
+
+	topic.PublishUserRequest(userrequest.Event{
+		Kind: userrequest.EventStarted,
+		Record: userrequest.Record{
+			CreatedAt:      time.Now().Unix(),
+			RequestID:      "req-ws-probe-visible",
+			RequestedModel: "gpt-5.5",
+			IsHealthProbe:  true,
+			ProbeReason:    "low_score",
+			Status:         userrequest.StatusProcessing,
+		},
+	})
+
+	require.Eventually(t, func() bool {
+		return len(subscriber.messages) == 1
+	}, time.Second, 10*time.Millisecond)
+	message := subscriber.messages[0]
+	require.Equal(t, realtime.MessageTypeDelta, message.Type)
+	delta, ok := message.Data.(Delta)
+	require.True(t, ok)
+	require.Len(t, delta.UserRequestsRecent, 1)
+	require.Equal(t, "req-ws-probe-visible", delta.UserRequestsRecent[0].RequestID)
 	require.True(t, delta.UserRequestsRecent[0].IsHealthProbe)
 	require.Equal(t, "low_score", delta.UserRequestsRecent[0].ProbeReason)
 }

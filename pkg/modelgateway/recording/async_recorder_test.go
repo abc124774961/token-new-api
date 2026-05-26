@@ -401,6 +401,8 @@ func TestAsyncExecutionRecorderRecordsHealthProbeUserRequestSummary(t *testing.T
 	var summary model.ModelGatewayUserRequestSummary
 	require.NoError(t, db.Where("request_id = ?", "probe-1").First(&summary).Error)
 	require.True(t, summary.FinalSuccess)
+	require.True(t, summary.IsHealthProbe)
+	require.Equal(t, "low_score", summary.ProbeReason)
 	require.Equal(t, "probe-channel", summary.FinalChannelName)
 	require.Equal(t, "gpt-4.1", summary.RequestedModel)
 
@@ -408,6 +410,48 @@ func TestAsyncExecutionRecorderRecordsHealthProbeUserRequestSummary(t *testing.T
 	require.NoError(t, db.Where("request_id = ?", "probe-1").First(&record).Error)
 	require.Contains(t, record.RequestMeta, "is_health_probe")
 	require.Contains(t, record.RequestMeta, "low_score")
+}
+
+func TestAsyncExecutionRecorderHealthProbeFailureIsProbeSummary(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:     "probe-failed-1",
+		AttemptIndex:  0,
+		ChannelID:     8,
+		ChannelName:   "probe-channel",
+		SelectedGroup: "default",
+		ModelName:     "gpt-4.1",
+		StatusCode:    502,
+		ErrorCategory: "upstream_error",
+		Duration:      250 * time.Millisecond,
+		TTFT:          70 * time.Millisecond,
+		IsHealthProbe: true,
+		ProbeReason:   "failure_avoidance",
+	})
+
+	require.Eventually(t, func() bool {
+		var summary model.ModelGatewayUserRequestSummary
+		err := db.Where("request_id = ?", "probe-failed-1").First(&summary).Error
+		return err == nil
+	}, time.Second, 10*time.Millisecond)
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "probe-failed-1").First(&summary).Error)
+	require.False(t, summary.FinalSuccess)
+	require.True(t, summary.IsHealthProbe)
+	require.Equal(t, "failure_avoidance", summary.ProbeReason)
+	require.Equal(t, 502, summary.FinalStatusCode)
+	require.Equal(t, model.ModelGatewayUserRequestErrorStreamInterrupted, summary.FinalErrorCategory)
+	require.False(t, summary.Recovered)
 }
 
 func TestAsyncExecutionRecorderPersistsBalanceInsufficientMeta(t *testing.T) {

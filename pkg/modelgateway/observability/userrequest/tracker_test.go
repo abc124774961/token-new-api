@@ -261,4 +261,41 @@ func TestTrackerCarriesHealthProbeMarker(t *testing.T) {
 
 	require.True(t, finished.Record.IsHealthProbe)
 	require.Equal(t, "low_score", finished.Record.ProbeReason)
+	require.Equal(t, StatusProbe, finished.Record.Status)
+}
+
+func TestTrackerStartCarriesHealthProbeMarker(t *testing.T) {
+	tracker := NewTracker(10, time.Minute)
+	now := time.Now()
+	tracker.Start(core.DispatchRecord{
+		Request: core.DispatchRequest{
+			RequestID:      "req-probe-live",
+			RequestedGroup: "auto",
+			ModelName:      "gpt-5.5",
+		},
+		Plan: &core.DispatchPlan{
+			SelectedGroup: "codex-plus",
+			IsHealthProbe: true,
+			ProbeReason:   "low_score",
+		},
+		RecordedAt: now,
+	})
+
+	items := tracker.Snapshot(5, Filters{Model: "gpt-5.5", Group: "codex-plus"})
+	require.Len(t, items, 1)
+	require.Equal(t, "req-probe-live", items[0].RequestID)
+	require.True(t, items[0].IsHealthProbe)
+	require.Equal(t, "low_score", items[0].ProbeReason)
+	require.Equal(t, StatusProcessing, items[0].Status)
+}
+
+func TestFiltersMatchHealthProbeRecordsByDefault(t *testing.T) {
+	record := Record{
+		RequestID:      "req-probe",
+		RequestedModel: "gpt-5.5",
+		IsHealthProbe:  true,
+		Status:         StatusProcessing,
+	}
+
+	require.True(t, Filters{}.Match(record))
 }

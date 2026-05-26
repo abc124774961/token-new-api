@@ -372,7 +372,7 @@
   display: grid;
   overflow: hidden;
   border-top: 1px solid rgba(148, 163, 184, 0.22);
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .ct-model-gateway-user-health-metrics div {
@@ -837,6 +837,14 @@
   background: #f59e0b;
 }
 
+.ct-model-gateway-user-request-row-probe::before {
+  background: #06b6d4;
+}
+
+.ct-model-gateway-user-request-row-probe-warning::before {
+  background: #f59e0b;
+}
+
 .ct-model-gateway-user-request-row-processing
   .ct-model-gateway-user-request-dot {
   background: #3b82f6;
@@ -857,6 +865,17 @@
 .ct-model-gateway-user-request-row-aborted .ct-model-gateway-user-request-dot {
   background: #94a3b8;
   box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12);
+}
+
+.ct-model-gateway-user-request-row-probe .ct-model-gateway-user-request-dot {
+  background: #06b6d4;
+  box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.12);
+}
+
+.ct-model-gateway-user-request-row-probe-warning
+  .ct-model-gateway-user-request-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12);
 }
 
 .ct-model-gateway-user-request-row > div {
@@ -1026,6 +1045,30 @@
 }
 
 .ct-model-gateway-user-request-status-pill-warning svg {
+  color: #f59e0b;
+  fill: none;
+  stroke: #f59e0b;
+  stroke-width: 2.3;
+}
+
+.ct-model-gateway-user-request-status-pill-probe {
+  color: #0e7490;
+  background: #d7f4fb;
+}
+
+.ct-model-gateway-user-request-status-pill-probe svg {
+  color: #06b6d4;
+  fill: none;
+  stroke: #06b6d4;
+  stroke-width: 2.3;
+}
+
+.ct-model-gateway-user-request-status-pill-probe-warning {
+  color: #9a5a00;
+  background: #fff0cf;
+}
+
+.ct-model-gateway-user-request-status-pill-probe-warning svg {
   color: #f59e0b;
   fill: none;
   stroke: #f59e0b;
@@ -1777,6 +1820,10 @@
   .ct-model-gateway-user-request-list-actions,
   .ct-model-gateway-user-request-search {
     width: 100%;
+  }
+
+  .ct-model-gateway-user-request-list-actions {
+    flex-wrap: wrap;
   }
 
   .ct-model-gateway-user-request-pagination {

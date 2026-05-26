@@ -152,7 +152,7 @@ func GetChannelStatusMonitorUserRequests(startTs int64, groupNames []string, lim
 	defer cancel()
 	tx := DB.Model(&ModelGatewayUserRequestSummary{}).
 		WithContext(ctx).
-		Select("id, request_id, completed_at, requested_group, selected_group, final_channel_id, final_channel_name, final_success, recovered, final_status_code, final_error_category, empty_output, experience_issue, stream_interrupted, client_aborted, duration_ms, ttft_ms").
+		Select("id, request_id, completed_at, requested_group, selected_group, final_channel_id, final_channel_name, final_success, recovered, final_status_code, final_error_category, empty_output, experience_issue, stream_interrupted, client_aborted, is_health_probe, probe_reason, duration_ms, ttft_ms").
 		Where("completed_at >= ? AND completed_at > 0", startTs).
 		Order("completed_at desc, id desc")
 	tx = applyChannelStatusMonitorUserRequestGroupsFilter(tx, groupNames)
@@ -178,7 +178,7 @@ func GetChannelStatusMonitorRecentUserRequestsByGroups(groupNames []string, perG
 		groupRows := make([]ModelGatewayUserRequestSummary, 0, perGroupLimit)
 		tx := DB.Model(&ModelGatewayUserRequestSummary{}).
 			WithContext(ctx).
-			Select("id, request_id, completed_at, requested_group, selected_group, final_success, final_status_code, final_error_category, empty_output, experience_issue, stream_interrupted, client_aborted").
+			Select("id, request_id, completed_at, requested_group, selected_group, final_success, final_status_code, final_error_category, empty_output, experience_issue, stream_interrupted, client_aborted, is_health_probe, probe_reason").
 			Where("completed_at > 0").
 			Order("completed_at desc, id desc").
 			Limit(perGroupLimit)

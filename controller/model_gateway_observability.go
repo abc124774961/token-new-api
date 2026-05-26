@@ -282,6 +282,7 @@ type ModelGatewayUserRequestSummary struct {
 	Successes          int64   `json:"successes"`
 	FinalFailures      int64   `json:"final_failures"`
 	ClientAborted      int64   `json:"client_aborted"`
+	HealthProbes       int64   `json:"health_probes"`
 	Recovered          int64   `json:"recovered"`
 	EmptyOutputs       int64   `json:"empty_outputs"`
 	ExperienceIssues   int64   `json:"experience_issues"`
@@ -299,6 +300,7 @@ type ModelGatewayUserRequestTrendPoint struct {
 	Successes        int64   `json:"successes"`
 	FinalFailures    int64   `json:"final_failures"`
 	ClientAborted    int64   `json:"client_aborted"`
+	HealthProbes     int64   `json:"health_probes"`
 	Recovered        int64   `json:"recovered"`
 	EmptyOutputs     int64   `json:"empty_outputs"`
 	ExperienceIssues int64   `json:"experience_issues"`
@@ -315,6 +317,7 @@ type ModelGatewayUserRequestAggregate struct {
 	Successes        int64   `json:"successes"`
 	FinalFailures    int64   `json:"final_failures"`
 	ClientAborted    int64   `json:"client_aborted"`
+	HealthProbes     int64   `json:"health_probes"`
 	Recovered        int64   `json:"recovered"`
 	EmptyOutputs     int64   `json:"empty_outputs"`
 	ExperienceIssues int64   `json:"experience_issues"`
@@ -2107,19 +2110,23 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 	trendAccumulators := make(map[int64]*modelGatewayUserRequestTrendAccumulator)
 
 	for idx, userRequest := range userRequests {
-		applyModelGatewayUserRequestAccumulator(totalAccumulator, userRequest)
+		isHealthProbe := userRequest.IsHealthProbe
+		applyModelGatewayUserRequestAccumulator(totalAccumulator, userRequest, isHealthProbe)
 		applyModelGatewayUserRequestAccumulator(
 			modelGatewayUserRequestAccumulatorFor(modelAccumulators, modelGatewayUserRequestModelKey(userRequest)),
 			userRequest,
+			isHealthProbe,
 		)
 		applyModelGatewayUserRequestAccumulator(
 			modelGatewayUserRequestAccumulatorFor(groupAccumulators, modelGatewayUserRequestGroupKey(userRequest)),
 			userRequest,
+			isHealthProbe,
 		)
 		if bucketStart, ok := modelGatewayObservabilityTrendBucketStart(userRequest.CompletedAt, startTime, endTime, options.TrendBucketSeconds); ok {
 			applyModelGatewayUserRequestAccumulator(
 				&modelGatewayUserRequestTrendAccumulatorFor(trendAccumulators, bucketStart).modelGatewayUserRequestAccumulator,
 				userRequest,
+				isHealthProbe,
 			)
 		}
 		if idx < options.RecentLimit {
@@ -2134,6 +2141,7 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 	response.ByGroup = finalizeModelGatewayUserRequestAggregates(groupAccumulators, options.TopN)
 	response.Trends = finalizeModelGatewayUserRequestTrends(trendAccumulators, startTime, endTime, options.TrendBucketSeconds)
 	attachModelGatewayUserRequestDispatchRecords(response.RecentRequests)
+	normalizeModelGatewayUserRequestHealthProbeRecords(response.RecentRequests)
 	attachModelGatewayUserRequestExecutionUsers(response.RecentRequests)
 	attachModelGatewayUserRequestUsernames(response.RecentRequests)
 	return response
@@ -2263,6 +2271,18 @@ func attachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequ
 		if records[idx].UserID == 0 && dispatch.userID > 0 {
 			records[idx].UserID = dispatch.userID
 		}
+	}
+}
+
+func normalizeModelGatewayUserRequestHealthProbeRecords(records []ModelGatewayUserRequestRecord) {
+	for idx := range records {
+		if !records[idx].IsHealthProbe {
+			continue
+		}
+		if records[idx].ProbeReason == "" && records[idx].DispatchRecord != nil {
+			records[idx].ProbeReason = strings.TrimSpace(records[idx].DispatchRecord.ProbeReason)
+		}
+		records[idx].Status = modelGatewayUserRequestStatus(records[idx].FinalSuccess, records[idx].ClientAborted, true)
 	}
 }
 
@@ -2631,26 +2651,28 @@ func modelGatewayUserRequestTrendAccumulatorFor(accumulators map[int64]*modelGat
 	return accumulator
 }
 
-func applyModelGatewayUserRequestAccumulator(accumulator *modelGatewayUserRequestAccumulator, userRequest model.ModelGatewayUserRequestSummary) {
+func applyModelGatewayUserRequestAccumulator(accumulator *modelGatewayUserRequestAccumulator, userRequest model.ModelGatewayUserRequestSummary, isHealthProbe bool) {
 	if accumulator == nil {
 		return
 	}
 	accumulator.Requests++
+	if isHealthProbe {
+		accumulator.HealthProbes++
+	} else if userRequest.Recovered {
+		accumulator.Recovered++
+	}
 	clientAborted := modelGatewayUserRequestClientAborted(userRequest)
 	if clientAborted {
 		accumulator.ClientAborted++
-	} else if userRequest.FinalSuccess {
+	} else if userRequest.FinalSuccess && !isHealthProbe {
 		accumulator.Successes++
-	} else {
+	} else if !isHealthProbe {
 		accumulator.FinalFailures++
 	}
-	if userRequest.Recovered && !clientAborted {
-		accumulator.Recovered++
-	}
-	if userRequest.EmptyOutput && !clientAborted {
+	if userRequest.EmptyOutput && !clientAborted && !isHealthProbe {
 		accumulator.EmptyOutputs++
 	}
-	if strings.TrimSpace(userRequest.ExperienceIssue) != "" && !clientAborted {
+	if strings.TrimSpace(userRequest.ExperienceIssue) != "" && !clientAborted && !isHealthProbe {
 		accumulator.ExperienceIssues++
 	}
 	if userRequest.DurationMs > 0 && !clientAborted {
@@ -2675,10 +2697,11 @@ func modelGatewayUserRequestSummaryFromAccumulator(summary ModelGatewayUserReque
 	summary.Successes = accumulator.Successes
 	summary.FinalFailures = accumulator.FinalFailures
 	summary.ClientAborted = accumulator.ClientAborted
+	summary.HealthProbes = accumulator.HealthProbes
 	summary.Recovered = accumulator.Recovered
 	summary.EmptyOutputs = accumulator.EmptyOutputs
 	summary.ExperienceIssues = accumulator.ExperienceIssues
-	summary.UserSuccessRate = successRateModelGatewayObservability(accumulator.Successes, accumulator.Requests-accumulator.ClientAborted)
+	summary.UserSuccessRate = successRateModelGatewayObservability(accumulator.Successes, accumulator.Requests-accumulator.ClientAborted-accumulator.HealthProbes)
 	summary.AvgDurationMs = averageInt64(accumulator.durationSum, accumulator.durationSamples)
 	summary.P95DurationMs = percentileModelGatewayObservabilityInt64(accumulator.durationValues, 0.95)
 	summary.AvgTTFTMs = averageInt64(accumulator.ttftSum, accumulator.ttftSamples)
@@ -2690,7 +2713,7 @@ func finalizeModelGatewayUserRequestAggregates(accumulators map[string]*modelGat
 	items := make([]ModelGatewayUserRequestAggregate, 0, len(accumulators))
 	for _, accumulator := range accumulators {
 		item := accumulator.ModelGatewayUserRequestAggregate
-		item.UserSuccessRate = successRateModelGatewayObservability(item.Successes, item.Requests-item.ClientAborted)
+		item.UserSuccessRate = successRateModelGatewayObservability(item.Successes, item.Requests-item.ClientAborted-item.HealthProbes)
 		item.AvgDurationMs = averageInt64(accumulator.durationSum, accumulator.durationSamples)
 		item.P95DurationMs = percentileModelGatewayObservabilityInt64(accumulator.durationValues, 0.95)
 		item.AvgTTFTMs = averageInt64(accumulator.ttftSum, accumulator.ttftSamples)
@@ -2747,10 +2770,11 @@ func modelGatewayUserRequestTrendPointFromAccumulator(bucketStart int64, bucketE
 	point.Successes = accumulator.Successes
 	point.FinalFailures = accumulator.FinalFailures
 	point.ClientAborted = accumulator.ClientAborted
+	point.HealthProbes = accumulator.HealthProbes
 	point.Recovered = accumulator.Recovered
 	point.EmptyOutputs = accumulator.EmptyOutputs
 	point.ExperienceIssues = accumulator.ExperienceIssues
-	point.UserSuccessRate = successRateModelGatewayObservability(accumulator.Successes, accumulator.Requests-accumulator.ClientAborted)
+	point.UserSuccessRate = successRateModelGatewayObservability(accumulator.Successes, accumulator.Requests-accumulator.ClientAborted-accumulator.HealthProbes)
 	point.AvgDurationMs = averageInt64(accumulator.durationSum, accumulator.durationSamples)
 	point.P95DurationMs = percentileModelGatewayObservabilityInt64(accumulator.durationValues, 0.95)
 	point.AvgTTFTMs = averageInt64(accumulator.ttftSum, accumulator.ttftSamples)
@@ -2785,11 +2809,11 @@ func ModelGatewayUserRequestRecordFromSummary(userRequest model.ModelGatewayUser
 		EmptyOutput:        userRequest.EmptyOutput,
 		ExperienceIssue:    userRequest.ExperienceIssue,
 		ClientAborted:      clientAborted,
-		IsHealthProbe:      false,
-		ProbeReason:        "",
+		IsHealthProbe:      userRequest.IsHealthProbe,
+		ProbeReason:        strings.TrimSpace(userRequest.ProbeReason),
 		DurationMs:         userRequest.DurationMs,
 		TTFTMs:             userRequest.TTFTMs,
-		Status:             modelGatewayUserRequestStatus(userRequest.FinalSuccess, clientAborted),
+		Status:             modelGatewayUserRequestStatus(userRequest.FinalSuccess, clientAborted, userRequest.IsHealthProbe),
 	}
 }
 
@@ -2807,9 +2831,15 @@ func modelGatewayUserRequestRecord(userRequest model.ModelGatewayUserRequestSumm
 	return ModelGatewayUserRequestRecordFromSummary(userRequest)
 }
 
-func modelGatewayUserRequestStatus(success bool, clientAborted bool) string {
+func modelGatewayUserRequestStatus(success bool, clientAborted bool, healthProbe bool) string {
 	if clientAborted {
 		return "client_aborted"
+	}
+	if healthProbe {
+		if success {
+			return "health_probe"
+		}
+		return "health_probe_failed"
 	}
 	if success {
 		return "success"
