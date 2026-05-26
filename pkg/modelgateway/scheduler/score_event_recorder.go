@@ -83,16 +83,19 @@ func changedScoreItems(before []core.ScoreItem, after []core.ScoreItem) []core.S
 			continue
 		}
 		out = append(out, core.ScoreAdjustmentItem{
-			Key:            afterItem.Key,
-			Name:           afterItem.Name,
-			BeforeScore:    beforeItem.Score,
-			AfterScore:     afterItem.Score,
-			Delta:          delta,
-			Weight:         afterItem.Weight,
-			WeightedDelta:  weightedDelta,
-			BeforeRawValue: beforeItem.RawValue,
-			AfterRawValue:  afterItem.RawValue,
-			Reason:         afterItem.Reason,
+			Key:             afterItem.Key,
+			Name:            afterItem.Name,
+			BeforeScore:     beforeItem.Score,
+			AfterScore:      afterItem.Score,
+			Delta:           delta,
+			Weight:          afterItem.Weight,
+			WeightedDelta:   weightedDelta,
+			BeforeRawValue:  beforeItem.RawValue,
+			AfterRawValue:   afterItem.RawValue,
+			BeforeRawNumber: beforeItem.RawNumber,
+			AfterRawNumber:  afterItem.RawNumber,
+			RawUnit:         afterItem.RawUnit,
+			Reason:          afterItem.Reason,
 		})
 	}
 	return out

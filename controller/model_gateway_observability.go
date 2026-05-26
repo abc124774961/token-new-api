@@ -231,6 +231,7 @@ type ModelGatewayScoreHistoryItem struct {
 	ScoreBreakdownDelta   map[string]float64                     `json:"score_breakdown_delta,omitempty"`
 	RoutingScoreTotal     float64                                `json:"routing_score_total,omitempty"`
 	RoutingScoreBreakdown map[string]float64                     `json:"routing_score_breakdown,omitempty"`
+	RoutingScoreItems     []modelgatewaycore.ScoreItem           `json:"routing_score_items,omitempty"`
 	CostReferenceMissing  bool                                   `json:"cost_reference_missing,omitempty"`
 	SampleCount           int                                    `json:"sample_count,omitempty"`
 	TTFTMs                float64                                `json:"ttft_ms,omitempty"`
@@ -701,6 +702,7 @@ type ModelGatewayCandidateExplanation struct {
 	ScoreItems                   []modelgatewaycore.ScoreItem `json:"score_items,omitempty"`
 	RoutingScoreTotal            float64                      `json:"routing_score_total,omitempty"`
 	RoutingScoreBreakdown        map[string]float64           `json:"routing_score_breakdown,omitempty"`
+	RoutingScoreItems            []modelgatewaycore.ScoreItem `json:"routing_score_items,omitempty"`
 	StateTags                    []string                     `json:"state_tags,omitempty"`
 	CostReferenceMissing         bool                         `json:"cost_reference_missing,omitempty"`
 	SuccessRate                  float64                      `json:"success_rate,omitempty"`
@@ -3886,16 +3888,19 @@ func modelGatewayScoreItemsDelta(current []modelgatewaycore.ScoreItem, previous 
 			continue
 		}
 		out = append(out, modelgatewaycore.ScoreAdjustmentItem{
-			Key:            item.Key,
-			Name:           item.Name,
-			BeforeScore:    previousItem.Score,
-			AfterScore:     item.Score,
-			Delta:          delta,
-			Weight:         item.Weight,
-			WeightedDelta:  weightedDelta,
-			BeforeRawValue: previousItem.RawValue,
-			AfterRawValue:  item.RawValue,
-			Reason:         item.Reason,
+			Key:             item.Key,
+			Name:            item.Name,
+			BeforeScore:     previousItem.Score,
+			AfterScore:      item.Score,
+			Delta:           delta,
+			Weight:          item.Weight,
+			WeightedDelta:   weightedDelta,
+			BeforeRawValue:  previousItem.RawValue,
+			AfterRawValue:   item.RawValue,
+			BeforeRawNumber: previousItem.RawNumber,
+			AfterRawNumber:  item.RawNumber,
+			RawUnit:         item.RawUnit,
+			Reason:          item.Reason,
 		})
 	}
 	return out
@@ -4016,7 +4021,7 @@ func applyModelGatewayScoreHistoryRuntimeCurrent(response *ModelGatewayScoreHist
 		if !modelGatewayRuntimeStatusItemMatchesScoreHistory(item, options.RuntimeKey) {
 			continue
 		}
-		if best == nil || modelGatewayRuntimeStatusItemBetterForScoreHistory(item, *best) {
+		if best == nil || modelGatewayRuntimeStatusItemBetterForScoreHistory(item, *best, options.RuntimeKey) {
 			best = &item
 		}
 	}
@@ -4050,14 +4055,54 @@ func modelGatewayRuntimeStatusItemMatchesScoreHistory(item modelgatewayobservabi
 	return true
 }
 
-func modelGatewayRuntimeStatusItemBetterForScoreHistory(left modelgatewayobservability.RuntimeStatusItem, right modelgatewayobservability.RuntimeStatusItem) bool {
+func modelGatewayRuntimeStatusItemBetterForScoreHistory(left modelgatewayobservability.RuntimeStatusItem, right modelgatewayobservability.RuntimeStatusItem, filter ModelGatewayRuntimeKey) bool {
+	leftExact := modelGatewayRuntimeStatusItemExactForScoreHistory(left, filter)
+	rightExact := modelGatewayRuntimeStatusItemExactForScoreHistory(right, filter)
+	if leftExact != rightExact {
+		return leftExact
+	}
 	if left.SampleCount != right.SampleCount {
 		return left.SampleCount > right.SampleCount
 	}
-	if left.TTFTMs != right.TTFTMs {
-		return left.TTFTMs > right.TTFTMs
+	leftUpdated := modelGatewayRuntimeStatusItemUpdatedAt(left)
+	rightUpdated := modelGatewayRuntimeStatusItemUpdatedAt(right)
+	if leftUpdated != rightUpdated {
+		return leftUpdated > rightUpdated
 	}
-	return left.ScoreTotal < right.ScoreTotal
+	return left.ScoreTotal > right.ScoreTotal
+}
+
+func modelGatewayRuntimeStatusItemExactForScoreHistory(item modelgatewayobservability.RuntimeStatusItem, filter ModelGatewayRuntimeKey) bool {
+	if filter.RequestedModel != "" && item.RequestedModel != filter.RequestedModel {
+		return false
+	}
+	if filter.UpstreamModel != "" && item.UpstreamModel != filter.UpstreamModel {
+		return false
+	}
+	if filter.Group != "" && item.Group != filter.Group {
+		return false
+	}
+	if filter.EndpointType != "" && item.EndpointType != filter.EndpointType {
+		return false
+	}
+	if filter.CapabilityFingerprint != "" && item.CapabilityFingerprint != filter.CapabilityFingerprint {
+		return false
+	}
+	return true
+}
+
+func modelGatewayRuntimeStatusItemUpdatedAt(item modelgatewayobservability.RuntimeStatusItem) int64 {
+	updatedAt := item.LastRealAttemptAt
+	if item.LastProbeAt > updatedAt {
+		updatedAt = item.LastProbeAt
+	}
+	if item.LastRealSuccessAt > updatedAt {
+		updatedAt = item.LastRealSuccessAt
+	}
+	if item.LastRealFailureAt > updatedAt {
+		updatedAt = item.LastRealFailureAt
+	}
+	return updatedAt
 }
 
 func modelGatewayScoreHistoryItemFromRuntime(item modelgatewayobservability.RuntimeStatusItem, generatedAt int64) ModelGatewayScoreHistoryItem {
@@ -4078,6 +4123,7 @@ func modelGatewayScoreHistoryItemFromRuntime(item modelgatewayobservability.Runt
 		ScoreItems:            item.ScoreItems,
 		RoutingScoreTotal:     roundModelGatewayObservabilityFloat(item.RoutingScoreTotal),
 		RoutingScoreBreakdown: roundModelGatewayScoreMap(item.RoutingScoreBreakdown),
+		RoutingScoreItems:     item.RoutingScoreItems,
 		CostReferenceMissing:  item.CostReferenceMissing,
 		SampleCount:           item.SampleCount,
 		TTFTMs:                roundModelGatewayObservabilityFloat(item.TTFTMs),
@@ -4175,6 +4221,7 @@ func modelGatewayScoreHistoryItem(record model.ModelExecutionRecord, candidate M
 		ScoreItems:            candidate.ScoreItems,
 		RoutingScoreTotal:     candidate.RoutingScoreTotal,
 		RoutingScoreBreakdown: candidate.RoutingScoreBreakdown,
+		RoutingScoreItems:     candidate.RoutingScoreItems,
 		CostReferenceMissing:  candidate.CostReferenceMissing,
 		SampleCount:           candidate.SampleCount,
 		TTFTMs:                candidate.TTFTMs,
@@ -4332,6 +4379,7 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			ScoreItems:                 candidate.ScoreItems,
 			RoutingScoreTotal:          roundModelGatewayObservabilityFloat(candidate.RoutingScoreTotal),
 			RoutingScoreBreakdown:      roundModelGatewayScoreMap(candidate.RoutingScoreBreakdown),
+			RoutingScoreItems:          candidate.RoutingScoreItems,
 			StateTags:                  append([]string(nil), candidate.StateTags...),
 			CostReferenceMissing:       candidate.CostReferenceMissing,
 			SuccessRate:                roundModelGatewayObservabilityFloat(candidate.SuccessRate),

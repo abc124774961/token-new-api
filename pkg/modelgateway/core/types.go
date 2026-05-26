@@ -329,6 +329,7 @@ type CandidateExplanation struct {
 	ScoreItems                 []ScoreItem        `json:"score_items,omitempty"`
 	RoutingScoreTotal          float64            `json:"routing_score_total,omitempty"`
 	RoutingScoreBreakdown      map[string]float64 `json:"routing_score_breakdown,omitempty"`
+	RoutingScoreItems          []ScoreItem        `json:"routing_score_items,omitempty"`
 	StateTags                  []string           `json:"state_tags,omitempty"`
 	CostReferenceMissing       bool               `json:"cost_reference_missing,omitempty"`
 	SuccessRate                float64            `json:"success_rate,omitempty"`
@@ -377,20 +378,26 @@ type ScoreWeights struct {
 }
 
 type ScoreItem struct {
-	Key           string  `json:"key"`
-	Name          string  `json:"name,omitempty"`
-	Category      string  `json:"category,omitempty"`
-	RawValue      string  `json:"raw_value,omitempty"`
-	Window        string  `json:"window,omitempty"`
-	Score         float64 `json:"score"`
-	Weight        float64 `json:"weight"`
-	WeightedScore float64 `json:"weighted_score"`
-	PreviousScore float64 `json:"previous_score,omitempty"`
-	Delta         float64 `json:"delta,omitempty"`
-	SampleCount   int     `json:"sample_count,omitempty"`
-	MissingReason string  `json:"missing_reason,omitempty"`
-	Formula       string  `json:"formula,omitempty"`
-	Reason        string  `json:"reason,omitempty"`
+	Key               string             `json:"key"`
+	Name              string             `json:"name,omitempty"`
+	Category          string             `json:"category,omitempty"`
+	RawValue          string             `json:"raw_value,omitempty"`
+	RawNumber         *float64           `json:"raw_number,omitempty"`
+	RawUnit           string             `json:"raw_unit,omitempty"`
+	Source            string             `json:"source,omitempty"`
+	ReferenceNumber   *float64           `json:"reference_number,omitempty"`
+	ReferenceUnit     string             `json:"reference_unit,omitempty"`
+	FormulaParameters map[string]float64 `json:"formula_parameters,omitempty"`
+	Window            string             `json:"window,omitempty"`
+	Score             float64            `json:"score"`
+	Weight            float64            `json:"weight"`
+	WeightedScore     float64            `json:"weighted_score"`
+	PreviousScore     float64            `json:"previous_score,omitempty"`
+	Delta             float64            `json:"delta,omitempty"`
+	SampleCount       int                `json:"sample_count,omitempty"`
+	MissingReason     string             `json:"missing_reason,omitempty"`
+	Formula           string             `json:"formula,omitempty"`
+	Reason            string             `json:"reason,omitempty"`
 }
 
 type ScoreResult struct {
@@ -416,16 +423,19 @@ type ScoreSampleDecision struct {
 }
 
 type ScoreAdjustmentItem struct {
-	Key            string  `json:"key"`
-	Name           string  `json:"name,omitempty"`
-	BeforeScore    float64 `json:"before_score"`
-	AfterScore     float64 `json:"after_score"`
-	Delta          float64 `json:"delta"`
-	Weight         float64 `json:"weight"`
-	WeightedDelta  float64 `json:"weighted_delta"`
-	BeforeRawValue string  `json:"before_raw_value,omitempty"`
-	AfterRawValue  string  `json:"after_raw_value,omitempty"`
-	Reason         string  `json:"reason,omitempty"`
+	Key             string   `json:"key"`
+	Name            string   `json:"name,omitempty"`
+	BeforeScore     float64  `json:"before_score"`
+	AfterScore      float64  `json:"after_score"`
+	Delta           float64  `json:"delta"`
+	Weight          float64  `json:"weight"`
+	WeightedDelta   float64  `json:"weighted_delta"`
+	BeforeRawValue  string   `json:"before_raw_value,omitempty"`
+	AfterRawValue   string   `json:"after_raw_value,omitempty"`
+	BeforeRawNumber *float64 `json:"before_raw_number,omitempty"`
+	AfterRawNumber  *float64 `json:"after_raw_number,omitempty"`
+	RawUnit         string   `json:"raw_unit,omitempty"`
+	Reason          string   `json:"reason,omitempty"`
 }
 
 type ScoreAdjustment struct {

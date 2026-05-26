@@ -126,6 +126,7 @@ type RuntimeStatusItem struct {
 	ScoreItems                       []core.ScoreItem            `json:"score_items,omitempty"`
 	RoutingScoreTotal                float64                     `json:"routing_score_total,omitempty"`
 	RoutingScoreBreakdown            map[string]float64          `json:"routing_score_breakdown,omitempty"`
+	RoutingScoreItems                []core.ScoreItem            `json:"routing_score_items,omitempty"`
 	StateTags                        []string                    `json:"state_tags,omitempty"`
 	CostReferenceMissing             bool                        `json:"cost_reference_missing,omitempty"`
 	EmptyOutputRate                  float64                     `json:"empty_output_rate,omitempty"`
@@ -400,6 +401,7 @@ func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem) {
 	item.ScoreItems = roundRuntimeStatusScoreItems(score.Items)
 	item.RoutingScoreTotal = roundRuntimeStatusFloat(score.RoutingTotal)
 	item.RoutingScoreBreakdown = roundRuntimeStatusScoreMap(score.RoutingBreakdown)
+	item.RoutingScoreItems = roundRuntimeStatusScoreItems(score.RoutingItems)
 	item.StateTags = append([]string(nil), score.StateTags...)
 	item.CostReferenceMissing = score.CostReferenceMissing
 }
@@ -474,6 +476,17 @@ func roundRuntimeStatusScoreItems(values []core.ScoreItem) []core.ScoreItem {
 		item.WeightedScore = roundRuntimeStatusFloat(item.WeightedScore)
 		item.PreviousScore = roundRuntimeStatusFloat(item.PreviousScore)
 		item.Delta = roundRuntimeStatusFloat(item.Delta)
+		if item.RawNumber != nil {
+			value := roundRuntimeStatusFloat(*item.RawNumber)
+			item.RawNumber = &value
+		}
+		if item.ReferenceNumber != nil {
+			value := roundRuntimeStatusFloat(*item.ReferenceNumber)
+			item.ReferenceNumber = &value
+		}
+		for key, value := range item.FormulaParameters {
+			item.FormulaParameters[key] = roundRuntimeStatusFloat(value)
+		}
 		out = append(out, item)
 	}
 	return out

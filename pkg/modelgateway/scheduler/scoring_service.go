@@ -35,6 +35,9 @@ type scoreLatencyView struct {
 	ThroughputSamples      int
 	UsesScoreStatsLatency  bool
 	UsesRuntimeLatencyView bool
+	TTFTSource             string
+	DurationSource         string
+	ThroughputSource       string
 }
 
 func NewCandidateScoringService() *CandidateScoringService {
@@ -75,6 +78,8 @@ func (s *CandidateScoringService) EvaluateCandidate(candidate core.Candidate, sn
 	explanation.ScoreItems = score.Items
 	explanation.RoutingScoreTotal = score.RoutingTotal
 	explanation.RoutingScoreBreakdown = score.RoutingBreakdown
+	explanation.RoutingScoreItems = score.RoutingItems
+	applyScoreItemDisplayMetricsToExplanation(&explanation, score.Items)
 	explanation.StateTags = score.StateTags
 	explanation.CostReferenceMissing = score.CostReferenceMissing
 	return CandidateScoreEvaluation{Snapshot: snapshot, Score: score, Explanation: explanation}
@@ -91,6 +96,8 @@ func (s *CandidateScoringService) EvaluatePreparedCandidate(candidate core.Candi
 	explanation.ScoreItems = score.Items
 	explanation.RoutingScoreTotal = score.RoutingTotal
 	explanation.RoutingScoreBreakdown = score.RoutingBreakdown
+	explanation.RoutingScoreItems = score.RoutingItems
+	applyScoreItemDisplayMetricsToExplanation(&explanation, score.Items)
 	explanation.StateTags = score.StateTags
 	explanation.CostReferenceMissing = score.CostReferenceMissing
 	return CandidateScoreEvaluation{Snapshot: snapshot, Score: score, Explanation: explanation}
@@ -113,19 +120,20 @@ func (s *CandidateScoringService) BuildScoreItems(snapshot core.RuntimeSnapshot,
 		firstByteScore = firstByteBacklogScore(snapshot, strategy)
 	}
 	values := []core.ScoreItem{
-		scoreItem(scoreItemCompletionRate, "完成率分", scoreCategorySample, scoreRateRawValue(stats.Rates["completion"], "completion_rate"), "评分窗口", scoreRateValue(stats.Rates["completion"], completionRateScore(snapshot)), profile.Weights[scoreItemCompletionRate], scoreRateSampleCount(stats.Rates["completion"], snapshot.SampleCount), "completed / total", ""),
-		scoreItem(scoreItemUpstreamErrorRate, "上游错误率分", scoreCategorySample, scoreRateRawValue(stats.Rates["upstream_error"], "upstream_error_rate"), "评分窗口", scoreRateValue(stats.Rates["upstream_error"], 1), profile.Weights[scoreItemUpstreamErrorRate], scoreRateSampleCount(stats.Rates["upstream_error"], snapshot.SampleCount), "1 - upstream_error_rate", ""),
+		scoreItem(scoreItemCompletionRate, "完成率分", scoreCategorySample, scoreRateSuccessRawValue(stats.Rates["completion"], "completion_rate"), "评分窗口", scoreRateValue(stats.Rates["completion"], completionRateScore(snapshot)), profile.Weights[scoreItemCompletionRate], scoreRateSampleCount(stats.Rates["completion"], snapshot.SampleCount), "completed / total", ""),
+		scoreItem(scoreItemUpstreamErrorRate, "上游错误率分", scoreCategorySample, scoreRateEventRawValue(stats.Rates["upstream_error"], "upstream_error_rate"), "评分窗口", scoreRateValue(stats.Rates["upstream_error"], 1), profile.Weights[scoreItemUpstreamErrorRate], scoreRateSampleCount(stats.Rates["upstream_error"], snapshot.SampleCount), "1 - upstream_error_rate", ""),
 		scoreItem(scoreItemTTFTLatency, "首包速度分", scoreCategorySample, rawTTFTRawValue(latency), "评分窗口", ttftScoreItemValue(latency), profile.Weights[scoreItemTTFTLatency], latency.SampleCount(snapshot.SampleCount), "inverse_latency_score(ttft, 800ms, 20000ms)", ""),
 		scoreItem(scoreItemDurationLatency, "完整耗时分", scoreCategorySample, rawDurationRawValue(latency), "评分窗口", durationScoreItemValue(latency), profile.Weights[scoreItemDurationLatency], latency.SampleCount(snapshot.SampleCount), "inverse_latency_score(duration, 3000ms, 90000ms)", ""),
 		scoreItem(scoreItemThroughput, "吞吐速度分", scoreCategorySample, rawThroughputRawValue(latency), "评分窗口", throughputScoreItemValue(latency), profile.Weights[scoreItemThroughput], latency.ThroughputSampleCount(snapshot.SampleCount), "throughput_score(tps, 5, 80)", ""),
-		scoreItem(scoreItemEmptyOutputRate, "空输出率分", scoreCategorySample, scoreRateRawValue(stats.Rates["empty_output"], "empty_output_rate"), "评分窗口", scoreRateValue(stats.Rates["empty_output"], clamp01(1-clamp01(snapshot.EmptyOutputRate))), profile.Weights[scoreItemEmptyOutputRate], scoreRateSampleCount(stats.Rates["empty_output"], snapshot.SampleCount), "1 - empty_output_rate", ""),
-		scoreItem(scoreItemStreamInterruptedRate, "流中断率分", scoreCategorySample, scoreRateRawValue(stats.Rates["stream_interrupted"], "stream_interrupted_rate"), "评分窗口", scoreRateValue(stats.Rates["stream_interrupted"], 1), profile.Weights[scoreItemStreamInterruptedRate], scoreRateSampleCount(stats.Rates["stream_interrupted"], snapshot.SampleCount), "1 - stream_interrupted_rate", ""),
+		scoreItem(scoreItemEmptyOutputRate, "空输出率分", scoreCategorySample, scoreRateEventRawValue(stats.Rates["empty_output"], "empty_output_rate"), "评分窗口", scoreRateValue(stats.Rates["empty_output"], clamp01(1-clamp01(snapshot.EmptyOutputRate))), profile.Weights[scoreItemEmptyOutputRate], scoreRateSampleCount(stats.Rates["empty_output"], snapshot.SampleCount), "1 - empty_output_rate", ""),
+		scoreItem(scoreItemStreamInterruptedRate, "流中断率分", scoreCategorySample, scoreRateEventRawValue(stats.Rates["stream_interrupted"], "stream_interrupted_rate"), "评分窗口", scoreRateValue(stats.Rates["stream_interrupted"], 1), profile.Weights[scoreItemStreamInterruptedRate], scoreRateSampleCount(stats.Rates["stream_interrupted"], snapshot.SampleCount), "1 - stream_interrupted_rate", ""),
 		scoreItem(scoreItemConcurrencyLoad, "并发负载分", scoreCategoryPressure, concurrencyRawValue(snapshot), "实时", loadScore, profile.Weights[scoreItemConcurrencyLoad], snapshot.SampleCount, "1 - load_penalty(active/effective_limit)", ""),
 		scoreItem(scoreItemQueuePressure, "队列压力分", scoreCategoryPressure, queueRawValue(snapshot), "实时", queueScore, profile.Weights[scoreItemQueuePressure], snapshot.SampleCount, "1 - queue_penalty(depth, wait)", ""),
 		scoreItem(scoreItemFirstByteBacklog, "首包积压分", scoreCategoryPressure, firstByteBacklogRawValue(snapshot), "实时", firstByteScore, profile.Weights[scoreItemFirstByteBacklog], snapshot.SampleCount, "1 - first_byte_pending_penalty", ""),
 		scoreItem(scoreItemCost, "成本分", scoreCategoryFormula, costRawValue(snapshot), "配置", costScoreItemValue(snapshot, profile), profile.Weights[scoreItemCost], snapshot.SampleCount, "min_cost / current_cost", ""),
 		scoreItem(scoreItemGroupPriority, "分组分", scoreCategoryFormula, groupRawValue(snapshot), "配置", groupPriorityItemScoreForStrategy(snapshot, policy, strategy), profile.Weights[scoreItemGroupPriority], snapshot.SampleCount, "group priority formula", ""),
 	}
+	annotateScoreItems(values, stats, snapshot, latency, profile)
 	markSampleMissingScoreItems(values, stats, snapshot, latency)
 	if snapshot.CostRatio <= 0 || snapshot.CostReferenceRatio <= 0 {
 		for idx := range values {
@@ -141,32 +149,40 @@ func (s *CandidateScoringService) BuildScoreItems(snapshot core.RuntimeSnapshot,
 
 func scoreLatencyViewFromSnapshot(snapshot core.RuntimeSnapshot, stats ScoreStats) scoreLatencyView {
 	view := scoreLatencyView{
-		TTFTMs:          snapshot.TTFTMs,
-		DurationMs:      snapshot.DurationMs,
-		TokensPerSecond: snapshot.TokensPerSecond,
+		TTFTMs:           snapshot.TTFTMs,
+		DurationMs:       snapshot.DurationMs,
+		TokensPerSecond:  snapshot.TokensPerSecond,
+		TTFTSource:       scoreItemSourceForSnapshotValue(snapshot.TTFTMs),
+		DurationSource:   scoreItemSourceForSnapshotValue(snapshot.DurationMs),
+		ThroughputSource: scoreItemSourceForSnapshotValue(snapshot.TokensPerSecond),
 	}
 	if len(stats.Latency.TTFTMs) > 0 {
 		view.TTFTMs = trimmedMeanFloat64(stats.Latency.TTFTMs)
 		view.LatencySamples = maxIntValue(view.LatencySamples, len(stats.Latency.TTFTMs))
 		view.UsesScoreStatsLatency = true
+		view.TTFTSource = scoreItemSourceScoreStatsLatency
 	}
 	if len(stats.Latency.DurationMs) > 0 {
 		view.DurationMs = trimmedMeanFloat64(stats.Latency.DurationMs)
 		view.LatencySamples = maxIntValue(view.LatencySamples, len(stats.Latency.DurationMs))
 		view.UsesScoreStatsLatency = true
+		view.DurationSource = scoreItemSourceScoreStatsLatency
 	}
 	if len(stats.Latency.TokensPerSecond) > 0 {
 		view.TokensPerSecond = trimmedMeanFloat64(stats.Latency.TokensPerSecond)
 		view.ThroughputSamples = len(stats.Latency.TokensPerSecond)
 		view.UsesScoreStatsLatency = true
+		view.ThroughputSource = scoreItemSourceScoreStatsLatency
 	}
 	if !view.UsesScoreStatsLatency && len(snapshot.RecentLatencySamples) > 0 {
 		durationMs, ttftMs, _ := runtimeLatencyStats(snapshot.RecentLatencySamples)
 		if ttftMs > 0 {
 			view.TTFTMs = ttftMs
+			view.TTFTSource = scoreItemSourceRuntimeLatencySamples
 		}
 		if durationMs > 0 {
 			view.DurationMs = durationMs
+			view.DurationSource = scoreItemSourceRuntimeLatencySamples
 		}
 		view.LatencySamples = len(snapshot.RecentLatencySamples)
 		view.UsesRuntimeLatencyView = true
@@ -290,6 +306,140 @@ func scoreItem(key, name, category, raw, window string, score, weight float64, s
 		Formula:       formula,
 		Reason:        reason,
 	}
+}
+
+const (
+	scoreItemSourceScoreStatsLatency     = "score_stats_latency"
+	scoreItemSourceRuntimeLatencySamples = "runtime_latency_samples"
+	scoreItemSourceSnapshotFallback      = "snapshot_fallback"
+	scoreItemSourceSampleMissing         = "sample_missing"
+	scoreItemSourceScoreStatsRate        = "score_stats_rate"
+	scoreItemSourceConfig                = "config"
+	scoreItemSourceRealtime              = "realtime"
+)
+
+func annotateScoreItems(items []core.ScoreItem, stats ScoreStats, snapshot core.RuntimeSnapshot, latency scoreLatencyView, profile StrategyProfile) {
+	for idx := range items {
+		item := &items[idx]
+		switch item.Key {
+		case scoreItemCompletionRate:
+			scoreItemSetRaw(item, scoreRateRawNumber(stats.Rates["completion"], completionRateScore(snapshot)), "ratio", scoreRateSource(stats.Rates["completion"], snapshot.SampleCount))
+		case scoreItemUpstreamErrorRate:
+			scoreItemSetRaw(item, 1-scoreRateRawNumber(stats.Rates["upstream_error"], 1), "ratio", scoreRateSource(stats.Rates["upstream_error"], snapshot.SampleCount))
+		case scoreItemTTFTLatency:
+			scoreItemSetRaw(item, latency.TTFTMs, "ms", scoreItemSourceForValue(latency.TTFTMs, latency.TTFTSource))
+		case scoreItemDurationLatency:
+			scoreItemSetRaw(item, latency.DurationMs, "ms", scoreItemSourceForValue(latency.DurationMs, latency.DurationSource))
+		case scoreItemThroughput:
+			scoreItemSetRaw(item, latency.TokensPerSecond, "tps", scoreItemSourceForValue(latency.TokensPerSecond, latency.ThroughputSource))
+		case scoreItemEmptyOutputRate:
+			scoreItemSetRaw(item, 1-scoreRateRawNumber(stats.Rates["empty_output"], clamp01(1-clamp01(snapshot.EmptyOutputRate))), "ratio", scoreRateSource(stats.Rates["empty_output"], snapshot.SampleCount))
+		case scoreItemStreamInterruptedRate:
+			scoreItemSetRaw(item, 1-scoreRateRawNumber(stats.Rates["stream_interrupted"], 1), "ratio", scoreRateSource(stats.Rates["stream_interrupted"], snapshot.SampleCount))
+		case scoreItemConcurrencyLoad:
+			scoreItemSetRaw(item, float64(snapshot.ActiveConcurrency), "concurrency", scoreItemSourceRealtime)
+		case scoreItemQueuePressure:
+			scoreItemSetRaw(item, float64(snapshot.QueueDepth), "queue_depth", scoreItemSourceRealtime)
+		case scoreItemFirstByteBacklog:
+			scoreItemSetRaw(item, float64(snapshot.FirstBytePending), "pending", scoreItemSourceRealtime)
+		case scoreItemCost:
+			scoreItemSetRaw(item, snapshot.CostRatio, costScoreItemUnit(snapshot), scoreItemSourceConfig)
+			if snapshot.CostReferenceRatio > 0 {
+				item.ReferenceNumber = scoreItemFloat(snapshot.CostReferenceRatio)
+				item.ReferenceUnit = costScoreItemUnit(snapshot)
+			}
+			if profile.CostPower > 0 {
+				item.FormulaParameters = map[string]float64{"cost_power": profile.CostPower}
+			}
+		case scoreItemGroupPriority:
+			scoreItemSetRaw(item, snapshot.GroupPriorityRatio, "ratio", scoreItemSourceConfig)
+		}
+	}
+}
+
+func scoreItemSetRaw(item *core.ScoreItem, value float64, unit string, source string) {
+	if item == nil {
+		return
+	}
+	if source != scoreItemSourceSampleMissing && value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+		item.RawNumber = scoreItemFloat(value)
+	}
+	item.RawUnit = unit
+	item.Source = source
+}
+
+func scoreItemFloat(value float64) *float64 {
+	raw := value
+	return &raw
+}
+
+func scoreItemSourceForSnapshotValue(value float64) string {
+	if value > 0 {
+		return scoreItemSourceSnapshotFallback
+	}
+	return scoreItemSourceSampleMissing
+}
+
+func scoreItemSourceForValue(value float64, source string) string {
+	if value <= 0 {
+		return scoreItemSourceSampleMissing
+	}
+	if strings.TrimSpace(source) != "" {
+		return source
+	}
+	return scoreItemSourceSnapshotFallback
+}
+
+func scoreRateSource(stats ScoreRateStats, fallbackSamples int) string {
+	if stats.Total > 0 {
+		return scoreItemSourceScoreStatsRate
+	}
+	if fallbackSamples > 0 {
+		return scoreItemSourceSnapshotFallback
+	}
+	return scoreItemSourceSampleMissing
+}
+
+func scoreRateRawNumber(stats ScoreRateStats, fallback float64) float64 {
+	if stats.Total <= 0 {
+		return clamp01(fallback)
+	}
+	if stats.EWMA > 0 {
+		return clamp01(stats.EWMA)
+	}
+	return clamp01(float64(stats.Success) / float64(stats.Total))
+}
+
+func costScoreItemUnit(snapshot core.RuntimeSnapshot) string {
+	if strings.TrimSpace(snapshot.CostPricingMode) == "request" {
+		return "request"
+	}
+	return "per_million_tokens"
+}
+
+func applyScoreItemDisplayMetricsToExplanation(explanation *core.CandidateExplanation, items []core.ScoreItem) {
+	if explanation == nil {
+		return
+	}
+	if value, ok := scoreItemRawNumberByKey(items, scoreItemTTFTLatency); ok {
+		explanation.TTFTMs = value
+	}
+	if value, ok := scoreItemRawNumberByKey(items, scoreItemDurationLatency); ok {
+		explanation.DurationMs = value
+	}
+	if value, ok := scoreItemRawNumberByKey(items, scoreItemThroughput); ok {
+		explanation.TokensPerSecond = value
+	}
+}
+
+func scoreItemRawNumberByKey(items []core.ScoreItem, key string) (float64, bool) {
+	for _, item := range items {
+		if item.Key != key || item.RawNumber == nil || *item.RawNumber <= 0 {
+			continue
+		}
+		return *item.RawNumber, true
+	}
+	return 0, false
 }
 
 func normalizeScoreItems(items []core.ScoreItem) []core.ScoreItem {
@@ -565,9 +715,16 @@ func scoreRateSampleCount(stats ScoreRateStats, fallback int) int {
 	return fallback
 }
 
-func scoreRateRawValue(stats ScoreRateStats, label string) string {
+func scoreRateSuccessRawValue(stats ScoreRateStats, label string) string {
 	if stats.Total <= 0 {
 		return label
 	}
 	return fmt.Sprintf("%d/%d", stats.Success, stats.Total)
+}
+
+func scoreRateEventRawValue(stats ScoreRateStats, label string) string {
+	if stats.Total <= 0 {
+		return label
+	}
+	return fmt.Sprintf("%d/%d", stats.Count, stats.Total)
 }

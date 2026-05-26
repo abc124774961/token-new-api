@@ -3120,6 +3120,18 @@ func TestGetModelGatewayScoreHistoryPrependsRuntimeCurrentScore(t *testing.T) {
 		GroupPriorityRatio: 1,
 		SampleCount:        4,
 	})
+	worseSimilarKey := key
+	worseSimilarKey.UpstreamModel = "mimo-v2"
+	worseSimilarKey.CapabilityFingerprint = "mimo_codex_chat|legacy"
+	runtimeDeps.SnapshotStore.Put(core.RuntimeSnapshot{
+		Key:                worseSimilarKey,
+		SuccessRate:        1,
+		TTFTMs:             62000,
+		DurationMs:         76000,
+		CostRatio:          0.05,
+		GroupPriorityRatio: 1,
+		SampleCount:        4,
+	})
 	require.NoError(t, db.Create(&model.Channel{Id: 88, Name: "dora", Status: 1}).Error)
 
 	oldMeta, err := common.Marshal(map[string]any{
@@ -3167,6 +3179,7 @@ func TestGetModelGatewayScoreHistoryPrependsRuntimeCurrentScore(t *testing.T) {
 	require.Equal(t, "runtime_current", payload.Data.Items[0].Source)
 	require.Equal(t, "runtime-current", payload.Data.Items[0].RequestID)
 	require.Equal(t, 4, payload.Data.Items[0].SampleCount)
+	require.Equal(t, "mimo-v1", payload.Data.Items[0].RuntimeKey.UpstreamModel)
 	require.Equal(t, 45000.0, payload.Data.Items[0].TTFTMs)
 	require.InEpsilon(t, 0.7875, payload.Data.Items[0].ScoreTotal, 0.0002)
 	require.Contains(t, payload.Data.Items[0].ScoreBreakdown, "ttft_latency")

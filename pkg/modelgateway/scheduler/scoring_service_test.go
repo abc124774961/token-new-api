@@ -103,6 +103,46 @@ func TestCandidateScoringServiceDoesNotDuplicateCompletionPenaltyIntoSeparateRat
 	require.Equal(t, 1.0, scoreItemByKey(t, evaluation.Score.Items, "stream_interrupted_rate").Score)
 }
 
+func TestCandidateScoringServiceExplanationUsesScoreItemLatencyWindow(t *testing.T) {
+	service := scheduler.NewCandidateScoringService()
+	fastSnapshot := core.RuntimeSnapshot{
+		Key:                core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 4, Group: "codex-plus", EndpointType: constant.EndpointTypeOpenAI},
+		SuccessRate:        1,
+		TTFTMs:             13990,
+		DurationMs:         42000,
+		CostRatio:          0.1,
+		CostReferenceRatio: 0.1,
+		GroupPriorityRatio: 1,
+		SampleCount:        8,
+		ScoreStatsJSON:     `{"version":1,"samples":8,"rates":{},"latency":{"ttft_ms":[3160],"duration_ms":[11450]}}`,
+	}
+	slowSnapshot := core.RuntimeSnapshot{
+		Key:                core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 12, Group: "codex-plus", EndpointType: constant.EndpointTypeOpenAI},
+		SuccessRate:        1,
+		TTFTMs:             4410,
+		DurationMs:         8000,
+		CostRatio:          0.1,
+		CostReferenceRatio: 0.1,
+		GroupPriorityRatio: 1,
+		SampleCount:        8,
+		ScoreStatsJSON:     `{"version":1,"samples":8,"rates":{},"latency":{"ttft_ms":[10550],"duration_ms":[23350]}}`,
+	}
+
+	fast := service.EvaluatePreparedCandidate(core.Candidate{RuntimeKey: fastSnapshot.Key, Group: "codex-plus"}, fastSnapshot, core.GroupSmartPolicy{Strategy: core.StrategyBalanced}, scheduler.ScoringContext{Strategy: core.StrategyBalanced}, false)
+	slow := service.EvaluatePreparedCandidate(core.Candidate{RuntimeKey: slowSnapshot.Key, Group: "codex-plus"}, slowSnapshot, core.GroupSmartPolicy{Strategy: core.StrategyBalanced}, scheduler.ScoringContext{Strategy: core.StrategyBalanced}, false)
+
+	fastTTFT := scoreItemByKey(t, fast.Score.Items, "ttft_latency")
+	slowTTFT := scoreItemByKey(t, slow.Score.Items, "ttft_latency")
+	require.NotNil(t, fastTTFT.RawNumber)
+	require.NotNil(t, slowTTFT.RawNumber)
+	require.Equal(t, 3160.0, *fastTTFT.RawNumber)
+	require.Equal(t, 10550.0, *slowTTFT.RawNumber)
+	require.Equal(t, "score_stats_latency", fastTTFT.Source)
+	require.Equal(t, fast.Explanation.TTFTMs, *fastTTFT.RawNumber)
+	require.Equal(t, slow.Explanation.TTFTMs, *slowTTFT.RawNumber)
+	require.Greater(t, fastTTFT.Score, slowTTFT.Score)
+}
+
 func scoreItemByKey(t *testing.T, items []core.ScoreItem, key string) core.ScoreItem {
 	t.Helper()
 	for _, item := range items {

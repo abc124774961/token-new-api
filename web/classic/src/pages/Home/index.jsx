@@ -647,11 +647,11 @@ const GatewayFlowCanvas = ({
       const pulse = prefersReducedMotion ? 0.4 : (Math.sin(time * 2.8 + index) + 1) / 2;
 
       ctx.save();
-      ctx.globalAlpha = isPrimary ? 1 : 0.58;
+      ctx.globalAlpha = isPrimary ? 1 : 0.44;
 
       if (isSelected || channel.tone === 'failed') {
         ctx.save();
-        const halo = ctx.createLinearGradient(x - 10, y, x + 340, y + 88);
+        const halo = ctx.createLinearGradient(x - 10, y, x + 318, y + 88);
         if (isSelected) {
           halo.addColorStop(0, 'rgba(13,156,165,0.18)');
           halo.addColorStop(0.54, 'rgba(34,197,94,0.12)');
@@ -661,13 +661,13 @@ const GatewayFlowCanvas = ({
           halo.addColorStop(0.52, `rgba(239,68,68,${0.1 + pulse * 0.08})`);
           halo.addColorStop(1, 'rgba(239,68,68,0)');
         }
-        drawRoundRect(ctx, x - 10, y - 10, 350, 108, 18);
+        drawRoundRect(ctx, x - 10, y - 10, 320, 108, 18);
         ctx.fillStyle = halo;
         ctx.fill();
         ctx.restore();
       }
 
-      drawCard(x, y, 330, 88, {
+      drawCard(x, y, 300, 88, {
         radius: 12,
         fill:
           channel.tone === 'failed'
@@ -699,7 +699,7 @@ const GatewayFlowCanvas = ({
         ctx.strokeStyle = `rgba(239,68,68,${0.2 + pulse * 0.22})`;
         ctx.lineWidth = 2;
         ctx.setLineDash([8, 7]);
-        drawRoundRect(ctx, x + 4, y + 4, 322, 80, 10);
+        drawRoundRect(ctx, x + 4, y + 4, 292, 80, 10);
         ctx.stroke();
         ctx.beginPath();
         ctx.moveTo(x + 242, y + 17);
@@ -731,7 +731,7 @@ const GatewayFlowCanvas = ({
           family: channel.tone === 'failed' ? 'mono' : undefined,
         });
       }
-      drawPill(x + 228, y + 12, channel.badge || channel.status, {
+      drawPill(x + 214, y + 12, channel.badge || channel.status, {
         fill:
           channel.tone === 'failed'
             ? 'rgba(239,68,68,0.09)'
@@ -740,7 +740,7 @@ const GatewayFlowCanvas = ({
               : 'rgba(22,163,74,0.09)',
         stroke: 'rgba(15,23,42,0.06)',
         textColor: statusColor,
-        width: 86,
+        width: 76,
         height: 26,
         size: 10,
       });
@@ -751,7 +751,7 @@ const GatewayFlowCanvas = ({
         [t('延迟'), channel.latency, color.blue],
         [t('成本'), channel.cost, color.green],
       ].forEach(([label, value, tone], metricIndex) => {
-        const mx = x + 40 + metricIndex * 88;
+        const mx = x + 40 + metricIndex * 80;
         fillText(label, mx, metricY - 14, {
           size: 9,
           weight: 900,
@@ -776,7 +776,7 @@ const GatewayFlowCanvas = ({
     const drawSwitchBadge = (x, y, time) => {
       const pulse = prefersReducedMotion ? 0.52 : (Math.sin(time * 3.4) + 1) / 2;
       ctx.save();
-      drawRoundRect(ctx, x, y, 216, 64, 18);
+      drawRoundRect(ctx, x, y, 178, 56, 16);
       ctx.fillStyle = 'rgba(255,255,255,0.94)';
       ctx.fill();
       ctx.strokeStyle = `rgba(239,68,68,${0.2 + pulse * 0.16})`;
@@ -784,40 +784,40 @@ const GatewayFlowCanvas = ({
       ctx.stroke();
 
       ctx.beginPath();
-      ctx.arc(x + 24, y + 23, 7, 0, Math.PI * 2);
+      ctx.arc(x + 22, y + 22, 6, 0, Math.PI * 2);
       ctx.fillStyle = color.red;
       ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(x + 42, y + 23);
-      ctx.lineTo(x + 78, y + 23);
-      ctx.lineTo(x + 69, y + 16);
-      ctx.moveTo(x + 78, y + 23);
-      ctx.lineTo(x + 69, y + 30);
+      ctx.moveTo(x + 38, y + 22);
+      ctx.lineTo(x + 68, y + 22);
+      ctx.lineTo(x + 60, y + 16);
+      ctx.moveTo(x + 68, y + 22);
+      ctx.lineTo(x + 60, y + 28);
       ctx.strokeStyle = `rgba(13,156,165,${0.66 + pulse * 0.22})`;
       ctx.lineWidth = 2.4;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(x + 98, y + 23, 7, 0, Math.PI * 2);
+      ctx.arc(x + 88, y + 22, 6, 0, Math.PI * 2);
       ctx.fillStyle = color.green;
       ctx.fill();
 
-      fillText(t('502 旁路'), x + 142, y + 22, {
-        size: 11,
+      fillText(t('502 旁路'), x + 132, y + 22, {
+        size: 10,
         weight: 950,
         fill: color.red,
         align: 'center',
       });
-      fillText(`-> ${t('#7 接管')}`, x + 142, y + 40, {
-        size: 11,
+      fillText(`-> ${t('#7 接管')}`, x + 132, y + 38, {
+        size: 10,
         weight: 950,
         fill: color.green,
         align: 'center',
         family: 'mono',
       });
-      fillText(`${t('切换耗时')} 186ms`, x + 108, y + 58, {
-        size: 10,
+      fillText(`${t('切换耗时')} 186ms`, x + 90, y + 52, {
+        size: 9,
         weight: 900,
         fill: color.muted,
         align: 'center',
@@ -829,57 +829,44 @@ const GatewayFlowCanvas = ({
     const drawHandoffBeam = (time) => {
       const phase = prefersReducedMotion ? 0.6 : (time * 0.42) % 1;
       ctx.save();
-      const start = { x: 1266, y: 414 };
-      const cp1 = { x: 1274, y: 398 };
-      const cp2 = { x: 1282, y: 374 };
-      const end = { x: 1296, y: 364 };
+      const start = { x: 1258, y: 404 };
+      const cp1 = { x: 1288, y: 398 };
+      const cp2 = { x: 1306, y: 382 };
+      const end = { x: 1322, y: 366 };
       ctx.beginPath();
       ctx.moveTo(start.x, start.y);
       ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
-      ctx.strokeStyle = 'rgba(22,163,74,0.28)';
-      ctx.lineWidth = 7;
+      ctx.strokeStyle = 'rgba(22,163,74,0.2)';
+      ctx.lineWidth = 5;
       ctx.lineCap = 'round';
       ctx.stroke();
       ctx.beginPath();
       ctx.moveTo(start.x, start.y);
       ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
       ctx.strokeStyle = 'rgba(22,163,74,0.72)';
-      ctx.lineWidth = 2.6;
+      ctx.lineWidth = 2.1;
       ctx.stroke();
 
       const point = cubicPoint(start, cp1, cp2, end, phase);
-      const halo = ctx.createRadialGradient(point.x, point.y, 1, point.x, point.y, 22);
-      halo.addColorStop(0, 'rgba(22,163,74,0.8)');
+      const halo = ctx.createRadialGradient(point.x, point.y, 1, point.x, point.y, 18);
+      halo.addColorStop(0, 'rgba(22,163,74,0.72)');
       halo.addColorStop(1, 'rgba(22,163,74,0)');
       ctx.fillStyle = halo;
       ctx.beginPath();
-      ctx.arc(point.x, point.y, 22, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, 18, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = color.green;
       ctx.beginPath();
-      ctx.arc(point.x, point.y, 4.4, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, 3.8, 0, Math.PI * 2);
       ctx.fill();
 
-      drawRoundRect(ctx, 1202, 394, 62, 28, 10);
-      ctx.fillStyle = 'rgba(22,163,74,0.09)';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(22,163,74,0.16)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      fillText('#7 OK', 1233, 413, {
-        size: 11,
-        weight: 950,
-        fill: color.green,
-        align: 'center',
-        family: 'mono',
-      });
       ctx.restore();
     };
 
     const drawDecisionTrace = (x, y, time) => {
-      drawCard(x, y, 206, 384, {
+      drawCard(x, y, 188, 370, {
         radius: 14,
-        fill: 'rgba(255,255,255,0.9)',
+        fill: 'rgba(255,255,255,0.88)',
         border: 'rgba(13,156,165,0.12)',
       });
       fillText(t('决策轨迹'), x + 18, y + 32, {
@@ -896,19 +883,19 @@ const GatewayFlowCanvas = ({
         { label: t('能力匹配'), code: 'PASS', tone: color.teal },
         { label: t('健康评分'), code: '98.7', tone: color.blue },
         { label: t('规避 502'), code: 'BYPASS', tone: color.red },
-        { label: t('接管 #7'), code: 'TAKEOVER', tone: color.green },
+        { label: t('接管 #7'), code: '#7', tone: color.green },
         { label: t('SSE 保持'), code: 'ALIVE', tone: color.green },
       ];
 
       ctx.beginPath();
       ctx.moveTo(x + 31, y + 84);
-      ctx.lineTo(x + 31, y + 324);
+      ctx.lineTo(x + 31, y + 314);
       ctx.strokeStyle = 'rgba(13,156,165,0.13)';
       ctx.lineWidth = 2;
       ctx.stroke();
 
       steps.forEach((step, index) => {
-        const stepY = y + 88 + index * 56;
+        const stepY = y + 88 + index * 54;
         const pulse = prefersReducedMotion ? 0.45 : (Math.sin(time * 2.6 + index * 0.8) + 1) / 2;
         ctx.fillStyle = `rgba(13,156,165,${0.08 + pulse * 0.08})`;
         ctx.beginPath();
@@ -929,7 +916,7 @@ const GatewayFlowCanvas = ({
           weight: 930,
           fill: color.ink,
         });
-        fillText(step.code, x + 156, stepY + 6, {
+        fillText(step.code, x + 146, stepY + 6, {
           size: step.code.length > 6 ? 8 : 10,
           weight: 950,
           fill: step.tone,
@@ -940,46 +927,65 @@ const GatewayFlowCanvas = ({
     };
 
     const drawOperationMetrics = (time) => {
+      drawCard(48, 128, 468, 72, {
+        radius: 14,
+        fill: 'rgba(255,255,255,0.84)',
+        shadow: false,
+      });
+      fillText(t('实时摘要'), 66, 152, {
+        size: 10,
+        weight: 950,
+        fill: color.tealDark,
+        family: 'mono',
+      });
+      fillText(t('故障接管与用量概览'), 66, 172, {
+        size: 12,
+        weight: 930,
+        fill: color.ink,
+      });
+
       const items = [
         {
           label: t('切换耗时'),
           value: '186ms',
           tone: color.green,
-          soft: 'rgba(22,163,74,',
+          soft: 'rgba(22,163,74,0.12)',
         },
         {
           label: t('失败旁路次数'),
           value: '12',
           tone: color.red,
-          soft: 'rgba(239,68,68,',
+          soft: 'rgba(239,68,68,0.12)',
         },
         {
           label: t('可用渠道池'),
           value: channelText,
           tone: color.teal,
-          soft: 'rgba(13,156,165,',
+          soft: 'rgba(13,156,165,0.12)',
         },
       ];
 
       items.forEach((item, index) => {
-        const x = 48 + index * 156;
-        drawCard(x, 128, 138, 78, {
-          radius: 12,
-          fill: 'rgba(255,255,255,0.9)',
-          shadow: index === 0,
-        });
-        const pulse = prefersReducedMotion ? 0.42 : (Math.sin(time * 2.5 + index) + 1) / 2;
-        ctx.fillStyle = `${item.soft}${0.1 + pulse * 0.05})`;
+        const x = 250 + index * 104;
+        if (index > 0) {
+          ctx.beginPath();
+          ctx.moveTo(x - 16, 142);
+          ctx.lineTo(x - 16, 184);
+          ctx.strokeStyle = 'rgba(15,23,42,0.06)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+        ctx.fillStyle = item.soft;
         ctx.beginPath();
-        ctx.arc(x + 112, 154, 13, 0, Math.PI * 2);
+        ctx.arc(x + 30, 150, 11, 0, Math.PI * 2);
         ctx.fill();
-        fillText(item.label, x + 18, 156, {
-          size: 11,
+        fillText(item.label, x, 158, {
+          size: 9,
           weight: 900,
           fill: color.faint,
         });
-        fillText(item.value, x + 18, 185, {
-          size: 21,
+        fillText(item.value, x, 183, {
+          size: 20,
           weight: 950,
           fill: item.tone,
           family: 'mono',
@@ -1095,19 +1101,19 @@ const GatewayFlowCanvas = ({
         ctx.stroke();
       }
 
-      const glow = ctx.createRadialGradient(500, 360, 40, 500, 360, 390);
+      const glow = ctx.createRadialGradient(476, 374, 40, 476, 374, 360);
       glow.addColorStop(0, 'rgba(35, 199, 207, 0.26)');
       glow.addColorStop(0.34, 'rgba(35, 199, 207, 0.08)');
       glow.addColorStop(1, 'rgba(35, 199, 207, 0)');
       ctx.fillStyle = glow;
-      ctx.fillRect(100, 74, 850, 552);
+      ctx.fillRect(96, 92, 804, 530);
 
       const phase = prefersReducedMotion ? 0.58 : (time * 0.22) % 1;
       drawBezierLane({
-        start: { x: 200, y: 372 },
-        cp1: { x: 278, y: 354 },
-        cp2: { x: 350, y: 354 },
-        end: { x: 400, y: 360 },
+        start: { x: 186, y: 388 },
+        cp1: { x: 264, y: 366 },
+        cp2: { x: 334, y: 368 },
+        end: { x: 378, y: 374 },
         progress: phase,
         stroke: 'rgba(59,130,246,0.42)',
         glow: 'rgba(59,130,246,0.95)',
@@ -1115,15 +1121,15 @@ const GatewayFlowCanvas = ({
         packets: 2,
       });
 
-      const channelY = channels.map((_, index) => 132 + index * 90 + 44);
+      const channelY = channels.map((_, index) => 132 + index * 88 + 44);
       channelY.forEach((targetY, index) => {
         const tone = channels[index]?.tone;
         const selected = Boolean(channels[index]?.selected);
         drawBezierLane({
-          start: { x: 590, y: 360 },
-          cp1: { x: 632, y: 300 + index * 8 },
-          cp2: { x: 654, y: targetY },
-          end: { x: 706, y: targetY },
+          start: { x: 558, y: 374 },
+          cp1: { x: 620, y: 304 + index * 8 },
+          cp2: { x: 664, y: targetY },
+          end: { x: 730, y: targetY },
           progress: (phase + index * 0.16) % 1,
           stroke:
             tone === 'failed'
@@ -1149,10 +1155,10 @@ const GatewayFlowCanvas = ({
       });
 
       drawBezierLane({
-        start: { x: 702, y: channelY[2] || 360 },
-        cp1: { x: 650, y: 366 },
-        cp2: { x: 650, y: 446 },
-        end: { x: 702, y: channelY[3] || 446 },
+        start: { x: 724, y: channelY[2] || 360 },
+        cp1: { x: 656, y: 376 },
+        cp2: { x: 662, y: 450 },
+        end: { x: 724, y: channelY[3] || 446 },
         progress: (phase + 0.34) % 1,
         stroke: 'rgba(239,68,68,0.34)',
         glow: 'rgba(239,68,68,0.9)',
@@ -1167,10 +1173,10 @@ const GatewayFlowCanvas = ({
       );
       const selectedY = channelY[selectedIndex] || 432;
       drawBezierLane({
-        start: { x: 1042, y: selectedY },
-        cp1: { x: 1056, y: selectedY + 8 },
-        cp2: { x: 1074, y: 414 },
-        end: { x: 1088, y: 414 },
+        start: { x: 1030, y: selectedY },
+        cp1: { x: 1074, y: selectedY + 4 },
+        cp2: { x: 1094, y: 404 },
+        end: { x: 1112, y: 404 },
         progress: (phase + 0.48) % 1,
         stroke: 'rgba(22,163,74,0.42)',
         glow: 'rgba(22,163,74,0.9)',
@@ -1183,35 +1189,35 @@ const GatewayFlowCanvas = ({
       drawOperationMetrics(time);
 
       drawEndpointCard({
-        x: 54,
-        y: 290,
+        x: 52,
+        y: 314,
         title: t('客户端'),
         subtitle: t('请求接入'),
         kind: 'client',
       });
 
-      drawGatewayCore(500, 360, time);
+      drawGatewayCore(476, 374, time);
 
       channels.forEach((channel, index) => {
-        drawChannel(channel, 710, 132 + index * 90, index, time);
+        drawChannel(channel, 734, 132 + index * 88, index, time);
       });
 
-      drawSwitchBadge(536, 432, time);
-      drawDecisionTrace(1088, 150, time);
+      drawSwitchBadge(612, 438, time);
+      drawDecisionTrace(1116, 150, time);
       drawHandoffBeam(time);
 
       drawEndpointCard({
-        x: 1292,
+        x: 1320,
         y: 286,
         title: t('稳定输出'),
         subtitle: t('流式返回'),
         kind: 'output',
       });
-      drawPill(1322, 456, t('SSE 保持'), {
+      drawPill(1352, 424, t('SSE 保持'), {
         fill: 'rgba(34,197,94,0.1)',
         stroke: 'rgba(34,197,94,0.12)',
         textColor: color.green,
-        width: 86,
+        width: 82,
         height: 30,
         size: 11,
       });
