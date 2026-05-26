@@ -7,6 +7,7 @@
 #   3. docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
 #   4. cd web/classic && DEV_PROXY_TARGET=http://localhost:${APP_PORT:-3001} bun run dev -- --host 0.0.0.0 --port ${FRONTEND_PORT:-3000}
 #   5. Open http://localhost:${FRONTEND_PORT:-3000}
+#   6. Optional local SMTP inbox: http://localhost:${MAILPIT_WEB_PORT:-8025}
 #
 # Stop:
 #   docker compose --env-file .env.dev -f docker-compose.dev.yml down
@@ -29,6 +30,24 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+
+  mailpit:
+    build:
+      context: .
+      dockerfile: Dockerfile.mailpit
+    image: token-new-api-dev-mailpit:latest
+    container_name: token-new-api-dev-mailpit
+    restart: unless-stopped
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_WEB_PORT:-8025}:8025"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      MP_DATABASE: /data/mailpit.db
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    volumes:
+      - mailpit-data:/data
 
   new-api:
     build:
@@ -78,3 +97,4 @@ services:
 
 volumes:
   redis-data:
+  mailpit-data:

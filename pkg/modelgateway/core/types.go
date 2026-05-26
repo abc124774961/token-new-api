@@ -434,6 +434,10 @@ type AttemptResult struct {
 	QueueWait                      time.Duration
 	RelayToFirstByte               time.Duration
 	RelayTotal                     time.Duration
+	UpstreamResponseHeader         time.Duration
+	RequestBodyPrepare             time.Duration
+	RequestBodyBytes               int64
+	RequestBodyStorage             string
 	StreamInterrupted              bool
 	ClientAborted                  bool
 	WillRetry                      bool

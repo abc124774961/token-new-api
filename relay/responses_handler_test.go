@@ -813,7 +813,7 @@ func TestProxyBridgeStreamSenderUsageFallbackTextAggregatesDeliveredEvents(t *te
 	require.NotContains(t, recorder.Body.String(), "response.completed")
 }
 
-func TestHandleProxyBridgeStreamResponseMarksUpstreamErrorEventFailed(t *testing.T) {
+func TestHandleProxyBridgeStreamResponseReturnsRetryableErrorBeforeDelivery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	disableStreamPingForResponsesTest(t)
 
@@ -839,7 +839,74 @@ func TestHandleProxyBridgeStreamResponseMarksUpstreamErrorEventFailed(t *testing
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader("data: " + string(errorChunk) + "\n")),
+	}
+	info := &relaycommon.RelayInfo{
+		RelayMode:        relayconstant.RelayModeResponses,
+		RequestModelName: "mimo-v1",
+		OriginModelName:  "mimo-v1",
+		ChannelMeta:      &relaycommon.ChannelMeta{UpstreamModelName: "mimo-v1"},
+		IsStream:         true,
+		StartTime:        time.Now(),
+	}
+
+	usage, apiErr := handleProxyBridgeResponse(ctx, info, resp, integration.NewProxyBridge(nil), integration.ProxyBridgeDecision{
+		Enabled:         true,
+		ProviderProfile: provider.ProfileMiMoCodexChat,
+		ProxyMode:       provider.ProxyModeResponsesViaChat,
+	})
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
+	require.Contains(t, apiErr.Error(), "upstream overloaded")
+	require.False(t, types.IsSkipRetryError(apiErr))
+	require.Empty(t, recorder.Body.String())
+	require.False(t, common.GetContextKeyBool(ctx, constant.ContextKeyRelayResponseStarted))
+	require.False(t, common.GetContextKeyBool(ctx, constant.ContextKeyRelayStreamInterrupted))
+}
+
+func TestHandleProxyBridgeStreamResponseMarksDeliveredUpstreamErrorInterrupted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	disableStreamPingForResponsesTest(t)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	integration.SetSelectedPlan(ctx, &core.DispatchPlan{
+		ProviderProfile: provider.ProfileMiMoCodexChat,
+		ProxyMode:       provider.ProxyModeResponsesViaChat,
+	})
+	textChunk, err := common.Marshal(map[string]any{
+		"id":      "chatcmpl_stream_text_then_error",
+		"object":  "chat.completion.chunk",
+		"created": 1710000300,
+		"model":   "mimo-v1",
+		"choices": []map[string]any{
+			{
+				"index": 0,
+				"delta": map[string]any{"content": "partial"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	errorChunk, err := common.Marshal(map[string]any{
+		"id":      "chatcmpl_stream_text_then_error",
+		"object":  "chat.completion.chunk",
+		"created": 1710000301,
+		"model":   "mimo-v1",
+		"error": map[string]any{
+			"message": "upstream overloaded after text",
+			"type":    "server_error",
+			"code":    "overloaded",
+		},
+	})
+	require.NoError(t, err)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"data: " + string(textChunk),
 			"data: " + string(errorChunk),
 			"data: [DONE]",
 		}, "\n"))),
@@ -862,9 +929,9 @@ func TestHandleProxyBridgeStreamResponseMarksUpstreamErrorEventFailed(t *testing
 	require.Nil(t, apiErr)
 	require.NotNil(t, usage)
 	body := recorder.Body.String()
+	require.Contains(t, body, "response.output_text.delta")
 	require.Contains(t, body, "response.failed")
-	require.Contains(t, body, "upstream overloaded")
-	require.NotContains(t, body, "response.completed")
+	require.Contains(t, body, "upstream overloaded after text")
 	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyRelayResponseStarted))
 	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyRelayStreamInterrupted))
 	require.Equal(t, relaycommon.StreamEndReasonDone, info.StreamStatus.EndReason)

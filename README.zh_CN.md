@@ -118,6 +118,8 @@ cd new-api
 cp .env.dev.example .env.dev
 mkdir -p data logs
 docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
+# 开发态邮件收件箱（可选）
+# 打开 http://localhost:8025 查看验证码邮件
 
 # 服务器 / 生产部署
 cp .env.pro.example .env.pro

@@ -38,6 +38,7 @@ const (
 	ContextKeyChannelMultiKeyIndex      ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey                ContextKey = "channel_key"
 	ContextKeyUpstreamRequestInfo       ContextKey = "upstream_request_info"
+	ContextKeyUpstreamResponseHeaderMs  ContextKey = "upstream_response_header_ms"
 	ContextKeyChannelFailureTrace       ContextKey = "channel_failure_trace"
 	ContextKeyChannelBalanceSkipped     ContextKey = "channel_balance_skipped"
 	ContextKeyChannelSelectionReserved  ContextKey = "channel_selection_reserved"

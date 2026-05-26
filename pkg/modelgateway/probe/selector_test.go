@@ -73,6 +73,42 @@ func TestProbeSelectorSelectsLowScoreRuntimeWithRecentTraffic(t *testing.T) {
 	require.Equal(t, "default", candidates[0].Group)
 }
 
+func TestProbeSelectorDoesNotSelectLowScoreWhenUnifiedHealthAboveThreshold(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-healthy-score", "gpt-5.4", "codex-plus", "codex-plus", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "healthy-score", "codex-plus", "gpt-5.4", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-5.4", UpstreamModel: "gpt-5.4", ChannelID: channel.Id, Group: "codex-plus", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SampleCount:        10,
+		SuccessRate:        0.8,
+		SuccessScore:       0.694,
+		HealthScoreAverage: 0.20,
+		ProbeTriggerReason: reasonLowScore,
+		LastRealAttemptAt:  now.Unix(),
+		LastRealSuccessAt:  now.Unix(),
+		RealSampleCount30m: 2,
+		LastProbeSuccessAt: now.Unix(),
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:     time.Second,
+		LowScoreThreshold:      0.62,
+		LongNoSuccessThreshold: 30 * time.Minute,
+	})
+	require.NoError(t, err)
+	require.Empty(t, candidates)
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.Equal(t, 0.20, snapshot.HealthScoreAverage)
+}
+
 func TestProbeSelectorDoesNotUseLongNoSuccessWhenChannelRecentlySucceeded(t *testing.T) {
 	db := setupProbeSelectorTestDB(t)
 	now := time.Now()
@@ -278,6 +314,44 @@ func TestProbeSelectorRateLimitsByRuntimeKey(t *testing.T) {
 	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: 5 * time.Minute, LowScoreThreshold: 0.7})
 	require.NoError(t, err)
 	require.Empty(t, candidates)
+}
+
+func TestProbeSelectorRateLimitsLegacySnapshotAfterCapabilityKeyEnrichment(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-legacy-key-rate-limit", "gpt-4.1", "default", "default", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "legacy-key", "default", "gpt-4.1", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	legacyKey := core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "gpt-4.1", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                legacyKey,
+		SampleCount:        5,
+		SuccessRate:        0.3,
+		SuccessScore:       0.3,
+		SpeedScore:         0.4,
+		ExperienceScore:    0.6,
+		LastRealAttemptAt:  now.Unix(),
+		RealSampleCount30m: 1,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	selector.now = func() time.Time { return now }
+	config := ProbeConfig{MinChannelInterval: 5 * time.Minute, LowScoreThreshold: 0.62}
+	first, err := selector.Select(config)
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+	require.NotEmpty(t, first[0].Key.CapabilityFingerprint)
+
+	second, err := selector.Select(config)
+	require.NoError(t, err)
+	require.Empty(t, second)
+
+	enriched, ok := store.Get(first[0].Key)
+	require.True(t, ok)
+	require.Equal(t, now.Unix(), enriched.LastProbeAt)
+	require.Equal(t, reasonLowScore, enriched.ProbeTriggerReason)
 }
 
 func TestRuntimeHealthMonitorDoesNotUpdateRealAccessForProbe(t *testing.T) {

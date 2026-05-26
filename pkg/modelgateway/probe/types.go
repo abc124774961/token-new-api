@@ -47,7 +47,6 @@ type ProbeCandidate struct {
 	Group   string
 	Key     core.RuntimeKey
 	Reason  string
-	Score   float64
 	Plan    *core.DispatchPlan
 }
 

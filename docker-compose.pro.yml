@@ -1,4 +1,25 @@
+name: token-new-api-pro
+
 services:
+
+  mailpit:
+    build:
+      context: .
+      dockerfile: Dockerfile.mailpit
+    image: token-new-api-pro-mailpit:latest
+    container_name: token-new-api-pro-mailpit
+    restart: unless-stopped
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1026}:1025"
+      - "${MAILPIT_WEB_PORT:-8026}:8025"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      MP_DATABASE: /data/mailpit.db
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    volumes:
+      - mailpit-data:/data
+
   new-api:
     build:
       context: .
@@ -37,3 +58,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+volumes:
+  mailpit-data:

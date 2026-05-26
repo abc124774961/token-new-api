@@ -20,6 +20,8 @@ const (
 	healthSlowTTFTAlpha      = 0.45
 	realSampleWindow         = 30 * time.Minute
 	probeReasonLongNoSuccess = "long_no_success"
+	probeReasonLowScore      = "low_score"
+	probeReasonLowTraffic    = "low_traffic"
 )
 
 type RuntimeHealthMonitor struct {
@@ -131,7 +133,7 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	snapshot.EmptyOutputRate = stats.emptyRate
 	snapshot.ExperienceIssueRate = stats.issueRate
 	snapshot.ExperienceScore = experienceScoreFromRates(stats.emptyRate, stats.issueRate)
-	snapshot.HealthScoreAverage = healthScoreAverage(snapshot)
+	snapshot.HealthScoreAverage = HealthScoreAverage(snapshot)
 	m.applyProbeRecovery(&snapshot, result)
 	if result.IsHealthProbe {
 		snapshot.LastProbeAt = observedAtUnix
@@ -228,12 +230,15 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 	}
 	snapshot.FailureAvoidance = snapshot.FailureAvoidance || service.GetChannelFailureAvoidanceStatus(result.ChannelID) != nil
 	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || (snapshot.HealthScoreAverage > 0 && snapshot.HealthScoreAverage < lowScoreThreshold)
+	if !snapshot.ProbeRecoveryPending && probeTriggerReasonClearedOnRecovery(snapshot.ProbeTriggerReason) {
+		snapshot.ProbeTriggerReason = ""
+	}
 	if !snapshot.ProbeRecoveryPending && snapshot.ProbeRecoverySuccessCount > 0 {
 		snapshot.ProbeRecoverySuccessCount = 0
 	}
 }
 
-func healthScoreAverage(snapshot core.RuntimeSnapshot) float64 {
+func HealthScoreAverage(snapshot core.RuntimeSnapshot) float64 {
 	scores := []float64{}
 	if snapshot.SuccessScore > 0 {
 		scores = append(scores, snapshot.SuccessScore)
@@ -245,13 +250,22 @@ func healthScoreAverage(snapshot core.RuntimeSnapshot) float64 {
 		scores = append(scores, snapshot.ExperienceScore)
 	}
 	if len(scores) == 0 {
-		return 0
+		return clampHealthScore(snapshot.HealthScoreAverage)
 	}
 	total := 0.0
 	for _, score := range scores {
 		total += score
 	}
 	return total / float64(len(scores))
+}
+
+func probeTriggerReasonClearedOnRecovery(reason string) bool {
+	switch strings.TrimSpace(reason) {
+	case probeReasonLongNoSuccess, probeReasonLowScore, probeReasonLowTraffic:
+		return true
+	default:
+		return false
+	}
 }
 
 func ewma(current float64, next float64) float64 {

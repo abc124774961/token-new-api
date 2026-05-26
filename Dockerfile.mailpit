@@ -1,0 +1,23 @@
+FROM docker.m.daocloud.io/library/golang:1.26.1-alpine AS builder
+
+ENV GO111MODULE=on \
+    CGO_ENABLED=0 \
+    GOPROXY=https://goproxy.cn,direct \
+    GOSUMDB=sum.golang.google.cn
+
+WORKDIR /build
+
+RUN go install github.com/axllent/mailpit@latest
+
+FROM docker.m.daocloud.io/library/alpine:3.22
+
+RUN apk add --no-cache ca-certificates tzdata \
+    && update-ca-certificates
+
+COPY --from=builder /go/bin/mailpit /usr/local/bin/mailpit
+
+EXPOSE 1025 8025
+WORKDIR /data
+
+ENTRYPOINT ["mailpit"]
+CMD ["--listen", "0.0.0.0:8025", "--smtp", "0.0.0.0:1025"]

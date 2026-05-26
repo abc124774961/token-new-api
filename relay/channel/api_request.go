@@ -576,6 +576,8 @@ func upstreamRequestInfo(req *http.Request, info *common.RelayInfo, duration tim
 			result["query_keys"] = requestQueryKeys(req.URL)
 		}
 	}
+	result["duration_ms"] = duration.Milliseconds()
+	result["response_header_ms"] = duration.Milliseconds()
 	if info != nil {
 		result["origin_model"] = info.OriginModelName
 		result["relay_mode"] = info.RelayMode
@@ -589,7 +591,6 @@ func upstreamRequestInfo(req *http.Request, info *common.RelayInfo, duration tim
 			result["upstream_model"] = info.UpstreamModelName
 		}
 	}
-	result["duration_ms"] = duration.Milliseconds()
 	if err != nil {
 		result["error"] = common2.MaskSensitiveInfo(err.Error())
 		result["error_kind"] = upstreamRequestErrorKind(err)
@@ -672,12 +673,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 
 	startTime := time.Now()
 	resp, err := client.Do(req)
+	responseHeaderDuration := time.Since(startTime)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamResponseHeaderMs, responseHeaderDuration.Milliseconds())
+	requestInfo := upstreamRequestInfo(req, info, responseHeaderDuration, err)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestInfo, requestInfo)
 	if err != nil {
 		if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
 			common2.SetContextKey(c, appconstant.ContextKeyRelayStreamInterrupted, true)
 		}
-		requestInfo := upstreamRequestInfo(req, info, time.Since(startTime), err)
-		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestInfo, requestInfo)
 		logger.LogError(c, fmt.Sprintf("do request failed: %s, upstream=%v", common2.MaskSensitiveInfo(err.Error()), requestInfo))
 		return nil, types.NewError(
 			err,
@@ -688,7 +691,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 	if resp == nil {
 		err := errors.New("upstream response is nil")
-		requestInfo := upstreamRequestInfo(req, info, time.Since(startTime), err)
+		requestInfo = upstreamRequestInfo(req, info, responseHeaderDuration, err)
 		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestInfo, requestInfo)
 		logger.LogError(c, fmt.Sprintf("do request failed: %s, upstream=%v", err.Error(), requestInfo))
 		return nil, types.NewError(

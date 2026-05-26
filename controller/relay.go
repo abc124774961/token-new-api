@@ -509,7 +509,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		firstByteLease := service.BeginChannelFirstByteWait(c, channel.Id, relayInfo.RequestId, relayInfo.RetryIndex)
 
 		addUsedChannel(c, channel.Id)
+		requestBodyPrepareStart := time.Now()
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
+		requestBodyPrepare := time.Since(requestBodyPrepareStart)
 		if bodyErr != nil {
 			firstByteLease.Release()
 			concurrencyLease.Release()
@@ -522,6 +524,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
+		requestBodyBytes := bodyStorage.Size()
+		requestBodyStorage := relayBodyStorageKind(bodyStorage)
+		resetRelayUpstreamTiming(c)
 
 		relayStart := time.Now()
 		switch relayFormat {
@@ -539,6 +544,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if relayInfo.HasSendResponse() && relayInfo.FirstResponseTime.After(relayStart) {
 			relayToFirstByte = relayInfo.FirstResponseTime.Sub(relayStart)
 		}
+		upstreamResponseHeader := relayUpstreamResponseHeaderDuration(c)
 		firstByteLease.Release()
 
 		if newAPIError == nil {
@@ -550,13 +556,17 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 					relayStatusClientClosedRequest,
 					types.ErrOptionWithSkipRetry(),
 				), time.Since(relayInfo.StartTime), modelGatewayAttemptFlow{
-					ErrorCategory:    modelgatewaycore.ErrorCategoryClientAborted,
-					RetryAction:      "client_aborted",
-					ClientAborted:    true,
-					UsedChannels:     append([]string(nil), c.GetStringSlice("use_channel")...),
-					QueueWait:        queueWait,
-					RelayToFirstByte: relayToFirstByte,
-					RelayTotal:       relayTotal,
+					ErrorCategory:          modelgatewaycore.ErrorCategoryClientAborted,
+					RetryAction:            "client_aborted",
+					ClientAborted:          true,
+					UsedChannels:           append([]string(nil), c.GetStringSlice("use_channel")...),
+					QueueWait:              queueWait,
+					RelayToFirstByte:       relayToFirstByte,
+					RelayTotal:             relayTotal,
+					UpstreamResponseHeader: upstreamResponseHeader,
+					RequestBodyPrepare:     requestBodyPrepare,
+					RequestBodyBytes:       requestBodyBytes,
+					RequestBodyStorage:     requestBodyStorage,
 				})
 				finalAttemptReported = true
 				return
@@ -566,10 +576,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			recordRelayChannelConfigSuccess(c, channel.Id, relayInfo, retryParam)
 			service.RecordChannelConcurrencySuccess(channel.Id)
 			reportModelGatewayAttempt(c, relayInfo, retryParam, channel, nil, time.Since(relayInfo.StartTime), modelGatewayAttemptFlow{
-				RetryAction:      "complete",
-				QueueWait:        queueWait,
-				RelayToFirstByte: relayToFirstByte,
-				RelayTotal:       relayTotal,
+				RetryAction:            "complete",
+				QueueWait:              queueWait,
+				RelayToFirstByte:       relayToFirstByte,
+				RelayTotal:             relayTotal,
+				UpstreamResponseHeader: upstreamResponseHeader,
+				RequestBodyPrepare:     requestBodyPrepare,
+				RequestBodyBytes:       requestBodyBytes,
+				RequestBodyStorage:     requestBodyStorage,
 			})
 			finalAttemptReported = true
 			return
@@ -617,6 +631,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		flow.QueueWait = queueWait
 		flow.RelayToFirstByte = relayToFirstByte
 		flow.RelayTotal = relayTotal
+		flow.UpstreamResponseHeader = upstreamResponseHeader
+		flow.RequestBodyPrepare = requestBodyPrepare
+		flow.RequestBodyBytes = requestBodyBytes
+		flow.RequestBodyStorage = requestBodyStorage
 		reportModelGatewayAttempt(c, relayInfo, retryParam, channel, newAPIError, time.Since(relayInfo.StartTime), flow)
 		if !willRetry {
 			finalAttemptReported = true
@@ -838,6 +856,10 @@ type modelGatewayAttemptFlow struct {
 	QueueWait                      time.Duration
 	RelayToFirstByte               time.Duration
 	RelayTotal                     time.Duration
+	UpstreamResponseHeader         time.Duration
+	RequestBodyPrepare             time.Duration
+	RequestBodyBytes               int64
+	RequestBodyStorage             string
 }
 
 func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, channel *model.Channel, apiErr *types.NewAPIError, duration time.Duration, flow modelGatewayAttemptFlow) {
@@ -864,23 +886,27 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 		modelName = retryParam.ModelName
 	}
 	result := &modelgatewaycore.AttemptResult{
-		RequestID:         info.RequestId,
-		UserID:            info.UserId,
-		TokenID:           info.TokenId,
-		AttemptIndex:      info.RetryIndex,
-		ChannelID:         channel.Id,
-		ChannelName:       channel.Name,
-		RequestedGroup:    info.TokenGroup,
-		SelectedGroup:     selectedGroup,
-		ModelName:         modelName,
-		EndpointType:      requiredEndpointTypeForRelay(info),
-		Success:           apiErr == nil,
-		Duration:          duration,
-		TTFT:              relayTTFT(info),
-		QueueWait:         flow.QueueWait,
-		RelayToFirstByte:  flow.RelayToFirstByte,
-		RelayTotal:        flow.RelayTotal,
-		StreamInterrupted: flow.ClientAborted || relayStreamInterrupted(c) || (apiErr != nil && relayResponseAlreadyStarted(c)),
+		RequestID:              info.RequestId,
+		UserID:                 info.UserId,
+		TokenID:                info.TokenId,
+		AttemptIndex:           info.RetryIndex,
+		ChannelID:              channel.Id,
+		ChannelName:            channel.Name,
+		RequestedGroup:         info.TokenGroup,
+		SelectedGroup:          selectedGroup,
+		ModelName:              modelName,
+		EndpointType:           requiredEndpointTypeForRelay(info),
+		Success:                apiErr == nil,
+		Duration:               duration,
+		TTFT:                   relayTTFT(info),
+		QueueWait:              flow.QueueWait,
+		RelayToFirstByte:       flow.RelayToFirstByte,
+		RelayTotal:             flow.RelayTotal,
+		UpstreamResponseHeader: flow.UpstreamResponseHeader,
+		RequestBodyPrepare:     flow.RequestBodyPrepare,
+		RequestBodyBytes:       flow.RequestBodyBytes,
+		RequestBodyStorage:     flow.RequestBodyStorage,
+		StreamInterrupted:      flow.ClientAborted || relayStreamInterrupted(c) || (apiErr != nil && relayResponseAlreadyStarted(c)),
 	}
 	if plan != nil {
 		result.Key = plan.RuntimeKey
@@ -985,6 +1011,34 @@ func relayTTFT(info *relaycommon.RelayInfo) time.Duration {
 		return 0
 	}
 	return info.FirstResponseTime.Sub(info.StartTime)
+}
+
+func relayUpstreamResponseHeaderDuration(c *gin.Context) time.Duration {
+	ms := int64(0)
+	if value, ok := common.GetContextKeyType[int64](c, constant.ContextKeyUpstreamResponseHeaderMs); ok {
+		ms = value
+	} else if value := common.GetContextKeyInt(c, constant.ContextKeyUpstreamResponseHeaderMs); value > 0 {
+		ms = int64(value)
+	}
+	if ms <= 0 {
+		return 0
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+func resetRelayUpstreamTiming(c *gin.Context) {
+	common.SetContextKey(c, constant.ContextKeyUpstreamResponseHeaderMs, int64(0))
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestInfo, nil)
+}
+
+func relayBodyStorageKind(storage common.BodyStorage) string {
+	if storage == nil {
+		return ""
+	}
+	if storage.IsDisk() {
+		return "disk"
+	}
+	return "memory"
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *service.RetryParam, retryTimes int) bool {

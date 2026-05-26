@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -163,14 +164,12 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				}
 			}
 		case "response.error", "response.failed":
-			if streamResponse.Response != nil {
-				if oaiErr := streamResponse.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
-					streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
-					sr.Stop(streamErr)
-					return
-				}
+			streamErr = newAPIErrorFromResponsesStreamFailure(streamResponse)
+			if deliveredEventCount > 0 {
+				common.SetContextKey(c, appconstant.ContextKeyRelayStreamInterrupted, true)
+				sendResponsesStreamData(c, streamResponse, data)
+				deliveredEventCount++
 			}
-			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResponse.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 			sr.Stop(streamErr)
 			return
 		default:
@@ -210,4 +209,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 type bufferedResponsesStreamEvent struct {
 	response dto.ResponsesStreamResponse
 	data     string
+}
+
+func newAPIErrorFromResponsesStreamFailure(streamResponse dto.ResponsesStreamResponse) *types.NewAPIError {
+	if streamResponse.Response != nil {
+		if oaiErr := streamResponse.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
+			return types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+		}
+	}
+	return types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResponse.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 }

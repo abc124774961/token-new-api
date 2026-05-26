@@ -155,6 +155,14 @@ func handleProxyBridgeStreamResponse(c *gin.Context, info *relaycommon.RelayInfo
 			sr.Stop(streamErr)
 			return
 		}
+		if streamSender.FailedBeforeDelivery() {
+			streamErr = streamSender.FailedError()
+			if streamErr == nil {
+				streamErr = types.NewOpenAIError(fmt.Errorf("proxy bridge stream failed before any usable event was delivered"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			}
+			sr.Stop(streamErr)
+			return
+		}
 	})
 
 	if streamErr != nil {
@@ -215,6 +223,7 @@ type proxyBridgeStreamSender struct {
 	usage                *dto.Usage
 	sawResponseCompleted bool
 	sawResponseFailed    bool
+	failedError          *types.NewAPIError
 	deliveredEventCount  int
 	bufferedEvents       []proxyBridgeBufferedStreamEvent
 	outputText           strings.Builder
@@ -257,11 +266,15 @@ func (s *proxyBridgeStreamSender) Send(c *gin.Context, result *modelgatewayproxy
 		}
 		if streamResponse.Type == "response.failed" {
 			s.sawResponseFailed = true
+			s.failedError = newAPIErrorFromResponsesStreamFailure(streamResponse, "proxy bridge stream error: response.failed")
 			if streamResponse.Response != nil && streamResponse.Response.Usage != nil {
 				mergeResponsesStreamUsage(s.usage, streamResponse.Response.Usage)
 			}
 		}
 		s.captureUsageText(streamResponse)
+		if s.FailedBeforeDelivery() {
+			continue
+		}
 		if s.shouldBuffer(streamResponse) {
 			s.bufferedEvents = append(s.bufferedEvents, proxyBridgeBufferedStreamEvent{
 				response: streamResponse,
@@ -287,6 +300,17 @@ func (s *proxyBridgeStreamSender) DeliveredEventCount() int {
 
 func (s *proxyBridgeStreamSender) Failed() bool {
 	return s != nil && s.sawResponseFailed
+}
+
+func (s *proxyBridgeStreamSender) FailedBeforeDelivery() bool {
+	return s != nil && s.sawResponseFailed && s.deliveredEventCount == 0
+}
+
+func (s *proxyBridgeStreamSender) FailedError() *types.NewAPIError {
+	if s == nil {
+		return nil
+	}
+	return s.failedError
 }
 
 func (s *proxyBridgeStreamSender) Usage() *dto.Usage {
@@ -398,6 +422,18 @@ func appendProxyBridgeUsageTextPart(builder *strings.Builder, text string) {
 		builder.WriteByte('\n')
 	}
 	builder.WriteString(text)
+}
+
+func newAPIErrorFromResponsesStreamFailure(streamResponse dto.ResponsesStreamResponse, fallbackMessage string) *types.NewAPIError {
+	if streamResponse.Response != nil {
+		if oaiErr := streamResponse.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
+			return types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+		}
+	}
+	if fallbackMessage == "" {
+		fallbackMessage = fmt.Sprintf("responses stream error: %s", streamResponse.Type)
+	}
+	return types.NewOpenAIError(fmt.Errorf("%s", fallbackMessage), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 }
 
 func (s *proxyBridgeStreamSender) shouldBuffer(streamResponse dto.ResponsesStreamResponse) bool {

@@ -189,11 +189,17 @@ type attemptRequestMeta struct {
 }
 
 type attemptTimingMeta struct {
-	QueueWaitMs        int64 `json:"queue_wait_ms,omitempty"`
-	RelayToFirstByteMs int64 `json:"relay_to_first_byte_ms,omitempty"`
-	RelayTotalMs       int64 `json:"relay_total_ms,omitempty"`
-	PreFirstByteMs     int64 `json:"pre_first_byte_ms,omitempty"`
-	PostFirstByteMs    int64 `json:"post_first_byte_ms,omitempty"`
+	QueueWaitMs                  int64  `json:"queue_wait_ms,omitempty"`
+	RelayToFirstByteMs           int64  `json:"relay_to_first_byte_ms,omitempty"`
+	RelayTotalMs                 int64  `json:"relay_total_ms,omitempty"`
+	UpstreamResponseHeaderMs     int64  `json:"upstream_response_header_ms,omitempty"`
+	UpstreamFirstEventWaitMs     int64  `json:"upstream_first_event_wait_ms,omitempty"`
+	PreFirstByteMs               int64  `json:"pre_first_byte_ms,omitempty"`
+	PostFirstByteMs              int64  `json:"post_first_byte_ms,omitempty"`
+	RequestBodyPrepareMs         int64  `json:"request_body_prepare_ms,omitempty"`
+	RequestBodyBytes             int64  `json:"request_body_bytes,omitempty"`
+	RequestBodyStorage           string `json:"request_body_storage,omitempty"`
+	RequestBodySizeLikelyLatency bool   `json:"request_body_size_likely_latency,omitempty"`
 }
 
 func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
@@ -324,9 +330,13 @@ func emptyAttemptRequestMeta(meta attemptRequestMeta) bool {
 
 func attemptTimingMetaFromResult(result core.AttemptResult) *attemptTimingMeta {
 	timing := &attemptTimingMeta{
-		QueueWaitMs:        positiveDurationMs(result.QueueWait),
-		RelayToFirstByteMs: positiveDurationMs(result.RelayToFirstByte),
-		RelayTotalMs:       positiveDurationMs(result.RelayTotal),
+		QueueWaitMs:              positiveDurationMs(result.QueueWait),
+		RelayToFirstByteMs:       positiveDurationMs(result.RelayToFirstByte),
+		RelayTotalMs:             positiveDurationMs(result.RelayTotal),
+		UpstreamResponseHeaderMs: positiveDurationMs(result.UpstreamResponseHeader),
+		RequestBodyPrepareMs:     positiveDurationMs(result.RequestBodyPrepare),
+		RequestBodyBytes:         result.RequestBodyBytes,
+		RequestBodyStorage:       result.RequestBodyStorage,
 	}
 	if timing.RelayToFirstByteMs <= 0 {
 		timing.RelayToFirstByteMs = subtractTimingSegment(positiveDurationMs(result.TTFT), timing.QueueWaitMs)
@@ -334,17 +344,28 @@ func attemptTimingMetaFromResult(result core.AttemptResult) *attemptTimingMeta {
 	if timing.RelayTotalMs <= 0 {
 		timing.RelayTotalMs = subtractTimingSegment(positiveDurationMs(result.Duration), timing.QueueWaitMs)
 	}
+	if timing.UpstreamResponseHeaderMs > 0 && timing.RelayToFirstByteMs > timing.UpstreamResponseHeaderMs {
+		timing.UpstreamFirstEventWaitMs = timing.RelayToFirstByteMs - timing.UpstreamResponseHeaderMs
+	}
 	if timing.QueueWaitMs > 0 || timing.RelayToFirstByteMs > 0 {
 		timing.PreFirstByteMs = timing.QueueWaitMs + timing.RelayToFirstByteMs
 	}
 	if timing.RelayTotalMs > 0 && timing.RelayToFirstByteMs > 0 && timing.RelayTotalMs > timing.RelayToFirstByteMs {
 		timing.PostFirstByteMs = timing.RelayTotalMs - timing.RelayToFirstByteMs
 	}
+	if timing.RequestBodyBytes >= 1<<20 {
+		timing.RequestBodySizeLikelyLatency = true
+	}
 	if timing.QueueWaitMs <= 0 &&
 		timing.RelayToFirstByteMs <= 0 &&
 		timing.RelayTotalMs <= 0 &&
+		timing.UpstreamResponseHeaderMs <= 0 &&
+		timing.UpstreamFirstEventWaitMs <= 0 &&
 		timing.PreFirstByteMs <= 0 &&
-		timing.PostFirstByteMs <= 0 {
+		timing.PostFirstByteMs <= 0 &&
+		timing.RequestBodyPrepareMs <= 0 &&
+		timing.RequestBodyBytes <= 0 &&
+		timing.RequestBodyStorage == "" {
 		return nil
 	}
 	return timing

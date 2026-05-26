@@ -173,20 +173,24 @@ func TestAsyncExecutionRecorderRecordsAttemptTimingMeta(t *testing.T) {
 
 	recorder := NewAsyncExecutionRecorder(8)
 	recorder.Report(context.Background(), core.AttemptResult{
-		RequestID:        "req-timing",
-		AttemptIndex:     0,
-		ChannelID:        4,
-		ChannelName:      "timing-channel",
-		RequestedGroup:   "codex-plus",
-		SelectedGroup:    "codex-plus",
-		ModelName:        "gpt-5.4",
-		Success:          true,
-		RetryAction:      "complete",
-		Duration:         24 * time.Second,
-		TTFT:             12 * time.Second,
-		QueueWait:        9 * time.Second,
-		RelayToFirstByte: 2 * time.Second,
-		RelayTotal:       13 * time.Second,
+		RequestID:              "req-timing",
+		AttemptIndex:           0,
+		ChannelID:              4,
+		ChannelName:            "timing-channel",
+		RequestedGroup:         "codex-plus",
+		SelectedGroup:          "codex-plus",
+		ModelName:              "gpt-5.4",
+		Success:                true,
+		RetryAction:            "complete",
+		Duration:               24 * time.Second,
+		TTFT:                   12 * time.Second,
+		QueueWait:              9 * time.Second,
+		RelayToFirstByte:       2 * time.Second,
+		RelayTotal:             13 * time.Second,
+		UpstreamResponseHeader: 1500 * time.Millisecond,
+		RequestBodyPrepare:     320 * time.Millisecond,
+		RequestBodyBytes:       2 << 20,
+		RequestBodyStorage:     "disk",
 	})
 
 	require.Eventually(t, func() bool {
@@ -203,8 +207,14 @@ func TestAsyncExecutionRecorderRecordsAttemptTimingMeta(t *testing.T) {
 	require.Contains(t, record.RequestMeta, `"queue_wait_ms":9000`)
 	require.Contains(t, record.RequestMeta, `"relay_to_first_byte_ms":2000`)
 	require.Contains(t, record.RequestMeta, `"relay_total_ms":13000`)
+	require.Contains(t, record.RequestMeta, `"upstream_response_header_ms":1500`)
+	require.Contains(t, record.RequestMeta, `"upstream_first_event_wait_ms":500`)
+	require.Contains(t, record.RequestMeta, `"request_body_prepare_ms":320`)
 	require.Contains(t, record.RequestMeta, `"pre_first_byte_ms":11000`)
 	require.Contains(t, record.RequestMeta, `"post_first_byte_ms":11000`)
+	require.Contains(t, record.RequestMeta, `"request_body_bytes":2097152`)
+	require.Contains(t, record.RequestMeta, `"request_body_storage":"disk"`)
+	require.Contains(t, record.RequestMeta, `"request_body_size_likely_latency":true`)
 }
 
 func TestAsyncExecutionRecorderTimingMetaFallbackDoesNotDoubleCountQueueWait(t *testing.T) {

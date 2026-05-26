@@ -179,6 +179,18 @@ function formatLatency(value) {
   return `${Math.round(latency)}ms`;
 }
 
+function formatBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return '--';
+  const units = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const index = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+    units.length - 1,
+  );
+  const size = bytes / Math.pow(1024, index);
+  return `${size.toFixed(index === 0 ? 0 : 2)} ${units[index]}`;
+}
+
 function formatScore(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return '--';
@@ -867,9 +879,21 @@ function pickAttemptDetailRecord(records) {
   );
 }
 
+function userRequestAttemptRecords(records) {
+  if (!Array.isArray(records) || records.length === 0) return [];
+  return records
+    .filter((record) => !isDispatch(record))
+    .sort(
+      (left, right) =>
+        Number(left?.attempt_index || 0) - Number(right?.attempt_index || 0) ||
+        Number(left?.created_at || 0) - Number(right?.created_at || 0),
+    );
+}
+
 function buildUserRequestDetailRecord(userRequest, records) {
   const dispatch = pickDispatchDetailRecord(records);
   const attempt = pickAttemptDetailRecord(records);
+  const attemptRecords = userRequestAttemptRecords(records);
   const base = dispatch || attempt || {};
   const finalChannelId = Number(
     userRequest?.final_channel_id ||
@@ -964,6 +988,7 @@ function buildUserRequestDetailRecord(userRequest, records) {
       userRequest?.experience_issue || attempt?.experience_issue || '',
     recovered: userRequest?.recovered === true,
     attempts: userRequest?.attempts || records?.length || 0,
+    attempt_records: attemptRecords,
     score_total: dispatch?.score_total || base?.score_total || 0,
     score_breakdown: dispatch?.score_breakdown || base?.score_breakdown,
     candidate_groups: dispatch?.candidate_groups || base?.candidate_groups,
@@ -994,6 +1019,97 @@ function buildUserRequestDetailRecord(userRequest, records) {
         [],
     },
   };
+}
+
+function userRequestDispatchRecord(record) {
+  const dispatch = record?.dispatch_record || record?.dispatchRecord || null;
+  if (dispatch && typeof dispatch === 'object') return dispatch;
+  return null;
+}
+
+function userRequestScoreRecord(record) {
+  const dispatch = userRequestDispatchRecord(record);
+  if (!dispatch) return null;
+  const detail = buildUserRequestDetailRecord(record, [dispatch]);
+  return {
+    ...detail,
+    candidate_explanations:
+      dispatch?.candidate_explanations ||
+      dispatch?.request_meta?.candidate_explanations ||
+      detail?.candidate_explanations ||
+      [],
+  };
+}
+
+function selectedUserRequestScoreCandidate(record) {
+  const scoreRecord = userRequestScoreRecord(record);
+  if (!scoreRecord) return null;
+  return findSelectedCandidate(scoreRecord, getCandidateExplanations(scoreRecord));
+}
+
+function scoreHistoryCandidateFromRecord(record) {
+  if (!record) return null;
+  const selectedCandidate = findSelectedCandidate(
+    record,
+    getCandidateExplanations(record),
+  );
+  if (selectedCandidate) {
+    return selectedCandidate;
+  }
+  const channelId = Number(record.actual_channel_id || record.channel_id || 0);
+  if (!channelId) return null;
+  const requestMetaRuntimeKey =
+    record.runtime_key || record.request_meta?.runtime_key || {};
+  return {
+    channel_id: channelId,
+    channel_name: record.actual_channel_name || record.channel_name || '',
+    runtime_key: {
+      requested_model:
+        requestMetaRuntimeKey.requested_model || record.requested_model || '',
+      upstream_model:
+        requestMetaRuntimeKey.upstream_model ||
+        record.upstream_model ||
+        record.requested_model ||
+        '',
+      channel_id: channelId,
+      group:
+        requestMetaRuntimeKey.group ||
+        record.actual_group ||
+        record.selected_group ||
+        record.requested_group ||
+        '',
+      endpoint_type:
+        requestMetaRuntimeKey.endpoint_type || record.endpoint_type || '',
+      capability_fingerprint:
+        requestMetaRuntimeKey.capability_fingerprint ||
+        record.provider_profile ||
+        '',
+    },
+  };
+}
+
+function scoreHistoryChangeForRecord(history, record) {
+  const items = Array.isArray(history?.items) ? history.items : [];
+  const requestId = String(record?.request_id || '').trim();
+  if (requestId) {
+    const matchedIndex = items.findIndex(
+      (item) => String(item?.request_id || '').trim() === requestId,
+    );
+    if (matchedIndex >= 0) {
+      const item = items[matchedIndex];
+      return {
+        delta: Number(item?.score_delta || 0),
+        hasComparison: matchedIndex + 1 < items.length,
+      };
+    }
+  }
+  if (history?.current) {
+    return {
+      delta: Number(history?.score_delta || history.current?.score_delta || 0),
+      hasComparison: Boolean(history?.previous),
+    };
+  }
+  return { delta: 0, hasComparison: false };
 }
 
 function SummaryMetric({ icon: Icon, label, value, detail, tone = 'default' }) {
@@ -1255,6 +1371,22 @@ function formatAttemptFlowAction(action, t) {
   }
 }
 
+function formatAttemptChannelLabel(record, t) {
+  const id = Number(
+    record?.actual_channel_id || record?.channel_id || record?.final_channel_id || 0,
+  );
+  const name = stripChannelRatioSuffix(
+    record?.actual_channel_name ||
+      record?.channel_name ||
+      record?.final_channel_name ||
+      '',
+  );
+  if (name && id > 0) return `${name} #${id}`;
+  if (name) return name;
+  if (id > 0) return `#${id}`;
+  return t('未知渠道');
+}
+
 function formatAttemptErrorCategory(category, t) {
   switch (category) {
     case 'upstream_concurrency_limit':
@@ -1380,6 +1512,134 @@ function DispatchFlowTags({ record, t, compact = false }) {
     return <Typography.Text type='tertiary'>--</Typography.Text>;
 
   return <div className='ct-model-gateway-flow-tags'>{tags}</div>;
+}
+
+function attemptRecordStatusMeta(record, t) {
+  if (record?.success) {
+    return {
+      color: 'green',
+      label: t('成功'),
+      detail: t('最终成功渠道'),
+    };
+  }
+  if (record?.client_aborted || Number(record?.status_code || 0) === 499) {
+    return {
+      color: 'grey',
+      label: t('客户端中断'),
+      detail: t('客户端中断'),
+    };
+  }
+  if (record?.will_retry || record?.retry_action === 'switch_channel') {
+    return {
+      color: 'orange',
+      label: t('智能调度'),
+      detail: t('将切换到下一候选'),
+    };
+  }
+  return {
+    color: 'red',
+    label: t('失败'),
+    detail: t('尝试失败'),
+  };
+}
+
+function SmartDispatchAttemptTimeline({ record, t }) {
+  const attempts = Array.isArray(record?.attempt_records)
+    ? record.attempt_records
+    : [];
+  if (!record?.recovered && attempts.length <= 1) return null;
+  const displayAttempts = attempts.length
+    ? attempts
+    : [
+        {
+          attempt_index: Math.max(0, Number(record?.attempts || 1) - 1),
+          channel_id: record?.channel_id,
+          channel_name: record?.channel_name,
+          success: record?.final_success || record?.success,
+          duration_ms: record?.duration_ms,
+          ttft_ms: record?.ttft_ms,
+        },
+      ];
+
+  return (
+    <DetailPanel title={t('智能调度记录')}>
+      <div className='ct-model-gateway-smart-dispatch'>
+        <div className='ct-model-gateway-smart-dispatch-summary'>
+          <Info size={15} />
+          <span>
+            {t('本次请求通过智能调度完成，下面按实际尝试顺序展示渠道记录')}
+          </span>
+        </div>
+        <div className='ct-model-gateway-smart-dispatch-list'>
+          {displayAttempts.map((attempt, index) => {
+            const meta = attemptRecordStatusMeta(attempt, t);
+            const category =
+              attempt?.error_category || attempt?.request_meta?.error_category;
+            const errorReason = category
+              ? formatAttemptErrorCategory(category, t)
+              : formatChannelStatusReason(attempt?.status_reason, t);
+            const flowTags = (
+              <DispatchFlowTags record={attempt} t={t} compact />
+            );
+            return (
+              <div
+                className='ct-model-gateway-smart-dispatch-item'
+                key={`${attempt?.id || attempt?.attempt_index || index}-${
+                  attempt?.channel_id || attempt?.actual_channel_id || 'channel'
+                }`}
+              >
+                <div className='ct-model-gateway-smart-dispatch-index'>
+                  {formatNumber(Number(attempt?.attempt_index ?? index) + 1)}
+                </div>
+                <div className='ct-model-gateway-smart-dispatch-main'>
+                  <div className='ct-model-gateway-smart-dispatch-head'>
+                    <Typography.Text strong>
+                      {formatAttemptChannelLabel(attempt, t)}
+                    </Typography.Text>
+                    <Tag color={meta.color} size='small' type='light'>
+                      {meta.label}
+                    </Tag>
+                  </div>
+                  <div className='ct-model-gateway-smart-dispatch-meta'>
+                    <span>{formatTimestamp(attempt?.created_at)}</span>
+                    <span>
+                      {t('耗时')} {formatLatency(attempt?.duration_ms)}
+                    </span>
+                    <span>
+                      {t('首包')} {formatLatency(attempt?.ttft_ms)}
+                    </span>
+                    {attempt?.status_code ? (
+                      <span>HTTP {attempt.status_code}</span>
+                    ) : null}
+                  </div>
+                  <div className='ct-model-gateway-smart-dispatch-tags'>
+                    <Tag color={meta.color} size='small' type='light'>
+                      {meta.detail}
+                    </Tag>
+                    {attempt?.retry_action ? (
+                      <Tag
+                        color={flowActionTone(attempt.retry_action, attempt)}
+                        size='small'
+                        type='light'
+                      >
+                        {formatAttemptFlowAction(attempt.retry_action, t)}
+                      </Tag>
+                    ) : null}
+                    {errorReason && errorReason !== '--' ? (
+                      <Tag color='grey' size='small' type='light'>
+                        {errorReason}
+                      </Tag>
+                    ) : null}
+                    {flowTags}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </DetailPanel>
+  );
 }
 
 function getRuntimeHealthMeta(status, t) {
@@ -1687,9 +1947,7 @@ function getUserRequestStatusMeta(record, t) {
     if (record?.empty_output || record?.experience_issue) {
       return { color: 'orange', label: t('体验异常'), tone: 'warning' };
     }
-    return record?.recovered
-      ? { color: 'cyan', label: t('已恢复成功'), tone: 'recovered' }
-      : { color: 'green', label: t('成功'), tone: 'success' };
+    return { color: 'green', label: t('成功'), tone: 'success' };
   }
   return { color: 'red', label: t('最终失败'), tone: 'failed' };
 }
@@ -2332,7 +2590,7 @@ function UserRequestEventTooltip({ record, meta, processing, durationMs, t }) {
         : record?.client_aborted
           ? t('用户主动终止')
           : record?.recovered
-            ? t('内部失败后最终成功')
+            ? t('智能调度后成功')
             : record?.final_success
               ? t('请求完成')
               : t('请求失败'),
@@ -2853,6 +3111,123 @@ function UserRequestCostSummaryCell({ record, t }) {
   );
 }
 
+function UserRequestScoreSummaryTooltip({ candidate, scoreRecord, t }) {
+  const sampleCount = Number(candidate?.sample_count || 0);
+  const metricRows = [
+    ['success_score', t('成功分'), candidate?.success_score],
+    ['score_speed_factor', t('速度分'), getCandidateScoreSpeedFactor(candidate)],
+    ['cost_score', t('成本分'), candidate?.cost_score],
+    ['group_score', t('分组分'), candidate?.group_score],
+    ['experience_score', t('体验分'), candidate?.experience_score],
+  ].filter(([, , value]) => Number(value) > 0);
+  const routingScore = getCandidateRoutingScore(candidate);
+  return (
+    <div className='ct-model-gateway-user-request-score-tooltip'>
+      <div className='ct-model-gateway-cost-tooltip-title'>
+        {t('当前模型评分')}
+      </div>
+      <div className='ct-model-gateway-cost-tooltip-row'>
+        <span>{t('本次选中模型')}</span>
+        <strong title={candidate?.upstream_model || scoreRecord?.requested_model}>
+          {candidate?.upstream_model || scoreRecord?.requested_model || '--'}
+        </strong>
+      </div>
+      <div className='ct-model-gateway-cost-tooltip-row'>
+        <span>{t('评分')}</span>
+        <strong>{formatScore(candidate?.score_total || scoreRecord?.score_total)}</strong>
+      </div>
+      {routingScore !== null && (
+        <div className='ct-model-gateway-cost-tooltip-row'>
+          <span>{t('调度分')}</span>
+          <strong>{formatScore(routingScore)}</strong>
+        </div>
+      )}
+      <div className='ct-model-gateway-cost-tooltip-row'>
+        <span>{t('样本数')}</span>
+        <strong>{sampleCount > 0 ? formatNumber(sampleCount) : t('暂无真实样本')}</strong>
+      </div>
+      {metricRows.length > 0 && (
+        <div className='ct-model-gateway-cost-tooltip-divider' />
+      )}
+      {metricRows.map(([key, label, value]) => (
+        <div className='ct-model-gateway-cost-tooltip-row' key={key}>
+          <span>{label}</span>
+          <strong>{formatScore(value)}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function UserRequestScoreSummaryCell({ record, t, onOpenScoreHistory }) {
+  const scoreRecord = userRequestScoreRecord(record);
+  const candidate = selectedUserRequestScoreCandidate(record);
+  const score = getCandidateScore(candidate) ?? Number(scoreRecord?.score_total || 0);
+  const routingScore = getCandidateRoutingScore(candidate);
+  const hasScore = Number.isFinite(score) && score > 0;
+  const metricEntries = [
+    ['success_score', t('成功'), candidate?.success_score],
+    ['score_speed_factor', t('速度'), getCandidateScoreSpeedFactor(candidate)],
+    ['cost_score', t('成本'), candidate?.cost_score],
+  ].filter(([, , value]) => Number(value) > 0);
+  const canOpenHistory =
+    typeof onOpenScoreHistory === 'function' &&
+    Boolean(candidate || scoreHistoryCandidateFromRecord(scoreRecord));
+  const handleOpenHistory = () => {
+    if (!canOpenHistory) return;
+    onOpenScoreHistory(candidate || scoreHistoryCandidateFromRecord(scoreRecord));
+  };
+
+  if (!hasScore) {
+    return (
+      <div className='ct-model-gateway-user-request-score-col ct-model-gateway-user-request-score-empty'>
+        <strong>--</strong>
+        <span>{t('暂无评分数据')}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className='ct-model-gateway-user-request-score-col'>
+      <HoverCard
+        content={
+          <UserRequestScoreSummaryTooltip
+            candidate={candidate}
+            scoreRecord={scoreRecord}
+            t={t}
+          />
+        }
+        className={`ct-model-gateway-user-request-score-trigger${
+          canOpenHistory ? ' ct-model-gateway-user-request-score-clickable' : ''
+        }`}
+      >
+        <button
+          type='button'
+          disabled={!canOpenHistory}
+          onClick={handleOpenHistory}
+          className='ct-model-gateway-user-request-score-main'
+          title={canOpenHistory ? t('查看评分变更') : t('当前模型评分')}
+        >
+          <span>{t('评分')}</span>
+          <strong>{formatScore(score)}</strong>
+        </button>
+        <div className='ct-model-gateway-user-request-score-meta'>
+          {routingScore !== null && (
+            <em>
+              {t('调度分')} {formatScore(routingScore)}
+            </em>
+          )}
+          {metricEntries.map(([key, label, value]) => (
+            <small key={key}>
+              {label} {formatScore(value)}
+            </small>
+          ))}
+        </div>
+      </HoverCard>
+    </div>
+  );
+}
+
 function userRequestSortTimestamp(record) {
   return (
     normalizeTimestamp(record?.created_at) ||
@@ -3180,9 +3555,9 @@ function UserRequestHealthCard({ health, summary, trends, t }) {
           </span>
         </div>
         <div>
-          <small>{t('自动恢复')}</small>
+          <small>{t('智能调度')}</small>
           <strong>{formatNumber(summary.recovered)}</strong>
-          <span>{t('内部重试后成功')}</span>
+          <span>{t('智能调度后成功')}</span>
         </div>
       </div>
     </DashboardCard>
@@ -3339,7 +3714,7 @@ function UserRequestRankPanel({ title, icon: Icon, rows, type, t }) {
         <span>{type === 'model' ? t('模型') : t('分组')}</span>
         <span>{t('用户成功率')}</span>
         <span>{t('P95 首包')}</span>
-        <span>{t('自动恢复')}</span>
+        <span>{t('智能调度')}</span>
         <span>{t('请求量')}</span>
       </div>
       {items.length ? (
@@ -3399,6 +3774,7 @@ function UserRequestRecentTable({
   refreshing,
   onRefresh,
   onOpenDispatchDetail,
+  onOpenScoreHistory,
   dispatchDetailLoading,
 }) {
   const [nowSeconds, setNowSeconds] = useState(() =>
@@ -3512,6 +3888,7 @@ function UserRequestRecentTable({
               { key: 'status', label: t('状态') },
               { key: 'user', label: t('请求用户') },
               { key: 'request', label: t('请求模型') },
+              { key: 'score', label: t('当前模型评分'), hint: true },
               { key: 'cost', label: t('成本'), hint: true },
               { key: 'duration', label: t('总耗时'), hint: true },
               { key: 'ttft', label: t('首包'), hint: true },
@@ -3596,7 +3973,7 @@ function UserRequestRecentTable({
                             : 'ct-model-gateway-user-request-hidden-line'
                         }
                       >
-                        {t('自动恢复')}
+                        {t('智能调度')}
                       </small>
                     </div>
 
@@ -3667,6 +4044,12 @@ function UserRequestRecentTable({
                       </div>
                     </div>
 
+                    <UserRequestScoreSummaryCell
+                      record={record}
+                      t={t}
+                      onOpenScoreHistory={onOpenScoreHistory}
+                    />
+
                     <UserRequestCostSummaryCell record={record} t={t} />
 
                     <div
@@ -3709,7 +4092,7 @@ function UserRequestRecentTable({
                         {processing
                           ? t('进行中')
                           : meta.tone === 'aborted'
-                            ? t('用户已取消')
+                            ? t('客户端中断')
                             : meta.tone === 'probe' ||
                                 meta.tone === 'probe-warning'
                               ? t('探活请求')
@@ -3815,6 +4198,7 @@ function UserRequestDashboard({
   refreshing,
   onRefresh,
   onOpenDispatchDetail,
+  onOpenScoreHistory,
   dispatchDetailLoading,
   dynamicRefreshCountdown,
 }) {
@@ -3900,9 +4284,9 @@ function UserRequestDashboard({
           />
           <OperationKpiCard
             icon={GitBranch}
-            label={t('自动恢复')}
+            label={t('智能调度')}
             value={formatNumber(summary.recovered)}
-            detail={t('内部失败后最终成功')}
+            detail={t('智能调度后成功')}
             tone={Number(summary.recovered || 0) > 0 ? 'warning' : 'success'}
             sparkValues={buildUserRequestSparkValues(trends, 'recovered')}
           />
@@ -3966,6 +4350,7 @@ function UserRequestDashboard({
         refreshing={refreshing}
         onRefresh={onRefresh}
         onOpenDispatchDetail={onOpenDispatchDetail}
+        onOpenScoreHistory={onOpenScoreHistory}
         dispatchDetailLoading={dispatchDetailLoading}
       />
     </div>
@@ -7597,14 +7982,76 @@ function isDisplayEmpty(value) {
   return value === undefined || value === null || value === '';
 }
 
-function DetailMetricTile({ label, value, detail, tone = 'default' }) {
-  return (
-    <div
-      className={`ct-model-gateway-detail-metric ct-model-gateway-detail-metric-${tone}`}
-    >
+function DetailMetricTile({
+  label,
+  value,
+  detail,
+  tone = 'default',
+  onClick,
+  actionLabel,
+  actionTone = 'default',
+}) {
+  const clickable = typeof onClick === 'function';
+  const content = (
+    <>
       <span>{label}</span>
       <strong>{isDisplayEmpty(value) ? '--' : value}</strong>
       {detail ? <small>{detail}</small> : null}
+      {actionLabel ? (
+        <em
+          className={`ct-model-gateway-detail-metric-action ct-model-gateway-detail-metric-action-${actionTone}`}
+        >
+          {actionLabel}
+        </em>
+      ) : null}
+    </>
+  );
+  const className = `ct-model-gateway-detail-metric ct-model-gateway-detail-metric-${tone}${
+    clickable ? ' ct-model-gateway-detail-metric-clickable' : ''
+  }`;
+  if (clickable) {
+    return (
+      <button type='button' className={className} onClick={onClick}>
+        {content}
+      </button>
+    );
+  }
+  return <div className={className}>{content}</div>;
+}
+
+function ScoreBreakdownPanel({ entries = [], onOpenScoreHistory, t }) {
+  return (
+    <div className='ct-model-gateway-score-breakdown-panel'>
+      <div className='ct-model-gateway-score-breakdown-head'>
+        <div>
+          <Typography.Text strong>{t('本次评分拆解')}</Typography.Text>
+          <Typography.Text type='secondary' size='small'>
+            {t('点击评分查看历史变化和主要变更原因')}
+          </Typography.Text>
+        </div>
+        <Button
+          size='small'
+          type='tertiary'
+          icon={<Activity size={14} />}
+          disabled={!onOpenScoreHistory}
+          onClick={onOpenScoreHistory}
+        >
+          {t('查看变更')}
+        </Button>
+      </div>
+      <div className='ct-model-gateway-score-list'>
+        {entries.length ? (
+          entries.map(([key, value]) => (
+            <Tooltip key={key} content={scoreMetricDescription(key, t)}>
+              <Tag color='cyan' type='light' shape='circle'>
+                {scoreMetricLabel(key, t)}: {formatScore(value)}
+              </Tag>
+            </Tooltip>
+          ))
+        ) : (
+          <Typography.Text type='tertiary'>--</Typography.Text>
+        )}
+      </div>
     </div>
   );
 }
@@ -7632,6 +8079,18 @@ function buildTimingBreakdown(record) {
   );
   const relayToFirstByteMs = Number(timing.relay_to_first_byte_ms || 0);
   const relayTotalMs = Number(timing.relay_total_ms || 0);
+  const upstreamResponseHeaderMs = Number(
+    timing.upstream_response_header_ms || 0,
+  );
+  const upstreamFirstEventWaitMs = Number(
+    timing.upstream_first_event_wait_ms || 0,
+  );
+  const requestBodyPrepareMs = Number(timing.request_body_prepare_ms || 0);
+  const requestBodyBytes = Number(timing.request_body_bytes || 0);
+  const requestBodyStorage = String(timing.request_body_storage || '');
+  const requestBodySizeLikelyLatency = Boolean(
+    timing.request_body_size_likely_latency,
+  );
   const ttftMs = Number(record?.ttft_ms || 0);
   const durationMs = Number(record?.duration_ms || 0);
   const effectiveRelayFirstByteMs =
@@ -7663,7 +8122,11 @@ function buildTimingBreakdown(record) {
     queueWaitMs <= 0 &&
     effectiveRelayFirstByteMs <= 0 &&
     effectiveRelayTotalMs <= 0 &&
-    postFirstByteMs <= 0
+    postFirstByteMs <= 0 &&
+    upstreamResponseHeaderMs <= 0 &&
+    upstreamFirstEventWaitMs <= 0 &&
+    requestBodyPrepareMs <= 0 &&
+    requestBodyBytes <= 0
   ) {
     return null;
   }
@@ -7675,6 +8138,12 @@ function buildTimingBreakdown(record) {
     preFirstByteMs,
     postFirstByteMs,
     totalKnownMs,
+    upstreamResponseHeaderMs,
+    upstreamFirstEventWaitMs,
+    requestBodyPrepareMs,
+    requestBodyBytes,
+    requestBodyStorage,
+    requestBodySizeLikelyLatency,
   };
 }
 
@@ -7748,6 +8217,49 @@ function TimingBreakdownPanel({ record, t }) {
             );
           })}
         </div>
+        {timing.upstreamResponseHeaderMs > 0 ||
+        timing.upstreamFirstEventWaitMs > 0 ||
+        timing.requestBodyPrepareMs > 0 ||
+        timing.requestBodyBytes > 0 ? (
+          <div className='ct-model-gateway-timing-detail-grid'>
+            {timing.requestBodyPrepareMs > 0 ? (
+              <div>
+                <span>{t('请求体准备')}</span>
+                <strong>{formatLatency(timing.requestBodyPrepareMs)}</strong>
+              </div>
+            ) : null}
+            {timing.upstreamResponseHeaderMs > 0 ? (
+              <div>
+                <span>{t('上游响应头')}</span>
+                <strong>{formatLatency(timing.upstreamResponseHeaderMs)}</strong>
+              </div>
+            ) : null}
+            {timing.upstreamFirstEventWaitMs > 0 ? (
+              <div>
+                <span>{t('首个流事件等待')}</span>
+                <strong>
+                  {formatLatency(timing.upstreamFirstEventWaitMs)}
+                </strong>
+              </div>
+            ) : null}
+            {timing.requestBodyBytes > 0 ? (
+              <div>
+                <span>{t('上游请求体')}</span>
+                <strong>{formatBytes(timing.requestBodyBytes)}</strong>
+                <small>
+                  {timing.requestBodyStorage === 'disk'
+                    ? t('磁盘缓存')
+                    : timing.requestBodyStorage === 'memory'
+                      ? t('内存缓存')
+                      : ''}
+                  {timing.requestBodySizeLikelyLatency
+                    ? ` · ${t('大请求体可能影响首包')}`
+                    : ''}
+                </small>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </DetailPanel>
   );
@@ -9027,6 +9539,8 @@ function RecordDetailDrawer({
   onClose,
   onExportReplay,
   onOpenScoreHistory,
+  scoreHistory,
+  scoreHistoryLoading = false,
   t,
 }) {
   const requestMeta = record?.request_meta || {};
@@ -9115,6 +9629,25 @@ function RecordDetailDrawer({
     t,
   );
   const selectionSummary = buildSelectionSummaryText(selectionInsight, t);
+  const scoreHistoryCandidate = scoreHistoryCandidateFromRecord(record);
+  const canOpenScoreHistory =
+    typeof onOpenScoreHistory === 'function' && !!scoreHistoryCandidate;
+  const handleOpenScoreHistory = useCallback(() => {
+    if (!canOpenScoreHistory) return;
+    onOpenScoreHistory(scoreHistoryCandidate);
+  }, [canOpenScoreHistory, onOpenScoreHistory, scoreHistoryCandidate]);
+  const scoreChange = scoreHistoryChangeForRecord(scoreHistory, record);
+  const scoreChangeTone =
+    scoreHistoryLoading || !scoreChange.hasComparison
+      ? 'neutral'
+      : scoreDeltaTone(scoreChange.delta);
+  const scoreChangeLabel = scoreHistoryLoading
+    ? t('变更计算中')
+    : scoreChange.hasComparison
+      ? `${t('本次变化')} ${formatScoreDelta(scoreChange.delta)}`
+      : canOpenScoreHistory
+        ? t('暂无对比')
+        : undefined;
   const hasErrorDetail = Boolean(
     record?.error_code || record?.error_type || record?.status_code,
   );
@@ -9184,6 +9717,9 @@ function RecordDetailDrawer({
                 value={formatScore(record.score_total)}
                 detail={t('本次综合评分')}
                 tone='score'
+                onClick={canOpenScoreHistory ? handleOpenScoreHistory : null}
+                actionLabel={scoreChangeLabel}
+                actionTone={scoreChangeTone}
               />
               <DetailMetricTile
                 label={t('总耗时')}
@@ -9352,6 +9888,8 @@ function RecordDetailDrawer({
             t={t}
           />
 
+          <SmartDispatchAttemptTimeline record={record} t={t} />
+
           <DetailPanel title={t('上游成本明细')}>
             <UpstreamCostDetailPanel record={record} t={t} />
           </DetailPanel>
@@ -9383,17 +9921,13 @@ function RecordDetailDrawer({
           <DetailAccordion title={t('技术明细')} meta={technicalMeta}>
             <div className='ct-model-gateway-technical-grid'>
               <DetailPanel title={t('评分拆解')}>
-                <div className='ct-model-gateway-score-list'>
-                  {scoreEntries.length ? (
-                    scoreEntries.map(([key, value]) => (
-                      <Tag key={key} color='cyan' type='light' shape='circle'>
-                        {scoreMetricLabel(key, t)}: {formatScore(value)}
-                      </Tag>
-                    ))
-                  ) : (
-                    <Typography.Text type='tertiary'>--</Typography.Text>
-                  )}
-                </div>
+                <ScoreBreakdownPanel
+                  entries={scoreEntries}
+                  onOpenScoreHistory={
+                    canOpenScoreHistory ? handleOpenScoreHistory : undefined
+                  }
+                  t={t}
+                />
               </DetailPanel>
 
               <DetailPanel title={t('调度元数据')}>
@@ -9948,6 +10482,9 @@ export default function ModelGatewayMonitor() {
   const [scoreHistoryVisible, setScoreHistoryVisible] = useState(false);
   const [scoreHistoryLoading, setScoreHistoryLoading] = useState(false);
   const [scoreHistory, setScoreHistory] = useState(null);
+  const [detailScoreHistory, setDetailScoreHistory] = useState(null);
+  const [detailScoreHistoryLoading, setDetailScoreHistoryLoading] =
+    useState(false);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS);
   const [detailRecord, setDetailRecord] = useState(null);
@@ -10053,6 +10590,32 @@ export default function ModelGatewayMonitor() {
     );
   }, [replayBatchFilters]);
 
+  const fetchScoreHistory = useCallback(
+    async (candidate) => {
+      const channelId = Number(
+        candidate?.channel_id || candidate?.runtime_key?.channel_id || 0,
+      );
+      if (!channelId) {
+        throw new Error('missing_channel_id');
+      }
+      const response = await API.get(
+        '/api/model_gateway/observability/score-history',
+        {
+          params: {
+            hours,
+            limit: SCORE_HISTORY_LIMIT,
+            channel_id: channelId,
+            ...buildRuntimeKeyParams(candidate?.runtime_key),
+          },
+          disableDuplicate: true,
+          skipErrorHandler: true,
+        },
+      );
+      return unwrapApiData(response);
+    },
+    [hours],
+  );
+
   const openScoreHistory = useCallback(
     async (candidate) => {
       const channelId = Number(
@@ -10066,20 +10629,7 @@ export default function ModelGatewayMonitor() {
       setScoreHistoryVisible(true);
       setScoreHistoryLoading(true);
       try {
-        const response = await API.get(
-          '/api/model_gateway/observability/score-history',
-          {
-            params: {
-              hours,
-              limit: SCORE_HISTORY_LIMIT,
-              channel_id: channelId,
-              ...buildRuntimeKeyParams(candidate?.runtime_key),
-            },
-            disableDuplicate: true,
-            skipErrorHandler: true,
-          },
-        );
-        const payload = unwrapApiData(response);
+        const payload = await fetchScoreHistory(candidate);
         setScoreHistory(payload);
         if (!Array.isArray(payload?.items) || payload.items.length === 0) {
           Toast.warning(t('未找到评分变更记录'));
@@ -10094,8 +10644,39 @@ export default function ModelGatewayMonitor() {
         setScoreHistoryLoading(false);
       }
     },
-    [hours, t],
+    [fetchScoreHistory, t],
   );
+
+  useEffect(() => {
+    const candidate = scoreHistoryCandidateFromRecord(detailRecord);
+    if (!candidate) {
+      setDetailScoreHistory(null);
+      setDetailScoreHistoryLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setDetailScoreHistory(null);
+    setDetailScoreHistoryLoading(true);
+    fetchScoreHistory(candidate)
+      .then((payload) => {
+        if (!cancelled) {
+          setDetailScoreHistory(payload);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDetailScoreHistory(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDetailScoreHistoryLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detailRecord, fetchScoreHistory]);
 
   const openUserRequestDispatchDetail = useCallback(
     async (record) => {
@@ -10104,12 +10685,9 @@ export default function ModelGatewayMonitor() {
         Toast.warning(t('缺少请求 ID'));
         return;
       }
-      if (record?.dispatch_record) {
-        setDetailRecord(
-          buildUserRequestDetailRecord(record, [record.dispatch_record]),
-        );
-        return;
-      }
+      const fallbackRecords = record?.dispatch_record
+        ? [record.dispatch_record]
+        : [];
       setDispatchDetailLoading(requestId);
       try {
         const response = await API.get(
@@ -10127,7 +10705,9 @@ export default function ModelGatewayMonitor() {
           },
         );
         const payload = unwrapApiData(response);
-        const recentRecords = payload?.recent_records || [];
+        const recentRecords = payload?.recent_records?.length
+          ? payload.recent_records
+          : fallbackRecords;
         const detail = buildUserRequestDetailRecord(record, recentRecords);
         if (!detail) {
           Toast.warning(t('暂无调度详情'));
@@ -10135,6 +10715,10 @@ export default function ModelGatewayMonitor() {
         }
         setDetailRecord(detail);
       } catch (err) {
+        if (fallbackRecords.length) {
+          setDetailRecord(buildUserRequestDetailRecord(record, fallbackRecords));
+          return;
+        }
         const message =
           err?.response?.data?.message || err?.message || t('加载调度详情失败');
         showError(message);
@@ -10692,6 +11276,7 @@ export default function ModelGatewayMonitor() {
           refreshing={refreshing}
           onRefresh={refreshDashboard}
           onOpenDispatchDetail={openUserRequestDispatchDetail}
+          onOpenScoreHistory={openScoreHistory}
           dispatchDetailLoading={dispatchDetailLoading}
           dynamicRefreshCountdown={dynamicRefreshCountdown}
         />
@@ -10950,6 +11535,8 @@ export default function ModelGatewayMonitor() {
         onClose={() => setDetailRecord(null)}
         onExportReplay={exportReplay}
         onOpenScoreHistory={openScoreHistory}
+        scoreHistory={detailScoreHistory}
+        scoreHistoryLoading={detailScoreHistoryLoading}
         t={t}
       />
     </div>

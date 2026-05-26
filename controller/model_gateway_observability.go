@@ -619,63 +619,69 @@ type ModelGatewayObservabilityRecord struct {
 }
 
 type ModelGatewayCandidateExplanation struct {
-	ChannelID                  int                    `json:"channel_id"`
-	ChannelName                string                 `json:"channel_name,omitempty"`
-	Group                      string                 `json:"group,omitempty"`
-	UpstreamModel              string                 `json:"upstream_model,omitempty"`
-	ProviderProfile            string                 `json:"provider_profile,omitempty"`
-	ProxyMode                  string                 `json:"proxy_mode,omitempty"`
-	RuntimeKey                 ModelGatewayRuntimeKey `json:"runtime_key"`
-	Available                  bool                   `json:"available"`
-	RejectReason               string                 `json:"reject_reason,omitempty"`
-	SelectionSkipReason        string                 `json:"selection_skip_reason,omitempty"`
-	ChannelStatus              int                    `json:"channel_status,omitempty"`
-	StatusReason               string                 `json:"status_reason,omitempty"`
-	BalanceInsufficient        bool                   `json:"balance_insufficient,omitempty"`
-	ScoreTotal                 float64                `json:"score_total,omitempty"`
-	ScoreBreakdown             map[string]float64     `json:"score_breakdown,omitempty"`
-	RoutingScoreTotal          float64                `json:"routing_score_total,omitempty"`
-	RoutingScoreBreakdown      map[string]float64     `json:"routing_score_breakdown,omitempty"`
-	SuccessRate                float64                `json:"success_rate,omitempty"`
-	TTFTMs                     float64                `json:"ttft_ms,omitempty"`
-	DurationMs                 float64                `json:"duration_ms,omitempty"`
-	TokensPerSecond            float64                `json:"tokens_per_second,omitempty"`
-	SampleCount                int                    `json:"sample_count,omitempty"`
-	ActiveConcurrency          int                    `json:"active_concurrency,omitempty"`
-	MaxConcurrency             int                    `json:"max_concurrency,omitempty"`
-	ConfiguredConcurrencyLimit int                    `json:"configured_concurrency_limit,omitempty"`
-	LearnedConcurrencyLimit    int                    `json:"learned_concurrency_limit,omitempty"`
-	EffectiveConcurrencyLimit  int                    `json:"effective_concurrency_limit,omitempty"`
-	QueueDepth                 int                    `json:"queue_depth,omitempty"`
-	QueueCapacity              int                    `json:"queue_capacity,omitempty"`
-	EstimatedQueueWaitMs       float64                `json:"estimated_queue_wait_ms,omitempty"`
-	CostRatio                  float64                `json:"cost_ratio,omitempty"`
-	CostReferenceRatio         float64                `json:"cost_reference_ratio,omitempty"`
-	CostPricingMode            string                 `json:"cost_pricing_mode,omitempty"`
-	GroupPriorityRatio         float64                `json:"group_priority_ratio,omitempty"`
-	SuccessScore               float64                `json:"success_score,omitempty"`
-	SpeedScore                 float64                `json:"speed_score,omitempty"`
-	ScoreSpeedFactor           float64                `json:"score_speed_factor,omitempty"`
-	LoadScore                  float64                `json:"load_score,omitempty"`
-	CostScore                  float64                `json:"cost_score,omitempty"`
-	GroupScore                 float64                `json:"group_score,omitempty"`
-	ExperienceScore            float64                `json:"experience_score,omitempty"`
-	EmptyOutputRate            float64                `json:"empty_output_rate,omitempty"`
-	ExperienceIssueRate        float64                `json:"experience_issue_rate,omitempty"`
-	HealthScoreAverage         float64                `json:"health_score_average,omitempty"`
-	ProbeRecoveryPending       bool                   `json:"probe_recovery_pending,omitempty"`
-	ProbeRecoverySuccessCount  int                    `json:"probe_recovery_success_count,omitempty"`
-	ProbeRecoveryRequired      int                    `json:"probe_recovery_required,omitempty"`
-	ProbeTriggerReason         string                 `json:"probe_trigger_reason,omitempty"`
-	ConfigErrorIsolated        bool                   `json:"config_error_isolated,omitempty"`
-	IsolationReason            string                 `json:"isolation_reason,omitempty"`
-	IsolationUntil             int64                  `json:"isolation_until,omitempty"`
-	AuthConfigErrorCount       int                    `json:"auth_config_error_count,omitempty"`
-	LastAuthConfigErrorAt      int64                  `json:"last_auth_config_error_at,omitempty"`
-	StickyMatched              bool                   `json:"sticky_matched,omitempty"`
-	Selected                   bool                   `json:"selected,omitempty"`
-	ScoreSampleSource          string                 `json:"score_sample_source,omitempty"`
-	MatchedRuntimeKey          ModelGatewayRuntimeKey `json:"matched_runtime_key,omitempty"`
+	ChannelID                    int                    `json:"channel_id"`
+	ChannelName                  string                 `json:"channel_name,omitempty"`
+	Group                        string                 `json:"group,omitempty"`
+	UpstreamModel                string                 `json:"upstream_model,omitempty"`
+	ProviderProfile              string                 `json:"provider_profile,omitempty"`
+	ProxyMode                    string                 `json:"proxy_mode,omitempty"`
+	RuntimeKey                   ModelGatewayRuntimeKey `json:"runtime_key"`
+	Available                    bool                   `json:"available"`
+	RejectReason                 string                 `json:"reject_reason,omitempty"`
+	SelectionSkipReason          string                 `json:"selection_skip_reason,omitempty"`
+	ChannelStatus                int                    `json:"channel_status,omitempty"`
+	StatusReason                 string                 `json:"status_reason,omitempty"`
+	BalanceInsufficient          bool                   `json:"balance_insufficient,omitempty"`
+	ScoreTotal                   float64                `json:"score_total,omitempty"`
+	ScoreBreakdown               map[string]float64     `json:"score_breakdown,omitempty"`
+	RoutingScoreTotal            float64                `json:"routing_score_total,omitempty"`
+	RoutingScoreBreakdown        map[string]float64     `json:"routing_score_breakdown,omitempty"`
+	SuccessRate                  float64                `json:"success_rate,omitempty"`
+	TTFTMs                       float64                `json:"ttft_ms,omitempty"`
+	DurationMs                   float64                `json:"duration_ms,omitempty"`
+	TokensPerSecond              float64                `json:"tokens_per_second,omitempty"`
+	SampleCount                  int                    `json:"sample_count,omitempty"`
+	ActiveConcurrency            int                    `json:"active_concurrency,omitempty"`
+	MaxConcurrency               int                    `json:"max_concurrency,omitempty"`
+	ConfiguredConcurrencyLimit   int                    `json:"configured_concurrency_limit,omitempty"`
+	LearnedConcurrencyLimit      int                    `json:"learned_concurrency_limit,omitempty"`
+	EffectiveConcurrencyLimit    int                    `json:"effective_concurrency_limit,omitempty"`
+	QueueDepth                   int                    `json:"queue_depth,omitempty"`
+	QueueCapacity                int                    `json:"queue_capacity,omitempty"`
+	EstimatedQueueWaitMs         float64                `json:"estimated_queue_wait_ms,omitempty"`
+	CostRatio                    float64                `json:"cost_ratio,omitempty"`
+	CostReferenceRatio           float64                `json:"cost_reference_ratio,omitempty"`
+	CostPricingMode              string                 `json:"cost_pricing_mode,omitempty"`
+	GroupPriorityRatio           float64                `json:"group_priority_ratio,omitempty"`
+	SuccessScore                 float64                `json:"success_score,omitempty"`
+	SpeedScore                   float64                `json:"speed_score,omitempty"`
+	ScoreSpeedFactor             float64                `json:"score_speed_factor,omitempty"`
+	LoadScore                    float64                `json:"load_score,omitempty"`
+	CostScore                    float64                `json:"cost_score,omitempty"`
+	GroupScore                   float64                `json:"group_score,omitempty"`
+	ExperienceScore              float64                `json:"experience_score,omitempty"`
+	EmptyOutputRate              float64                `json:"empty_output_rate,omitempty"`
+	ExperienceIssueRate          float64                `json:"experience_issue_rate,omitempty"`
+	HealthScoreAverage           float64                `json:"health_score_average,omitempty"`
+	ProbeRecoveryPending         bool                   `json:"probe_recovery_pending,omitempty"`
+	ProbeRecoverySuccessCount    int                    `json:"probe_recovery_success_count,omitempty"`
+	ProbeRecoveryRequired        int                    `json:"probe_recovery_required,omitempty"`
+	ProbeTriggerReason           string                 `json:"probe_trigger_reason,omitempty"`
+	ConfigErrorIsolated          bool                   `json:"config_error_isolated,omitempty"`
+	IsolationReason              string                 `json:"isolation_reason,omitempty"`
+	IsolationUntil               int64                  `json:"isolation_until,omitempty"`
+	AuthConfigErrorCount         int                    `json:"auth_config_error_count,omitempty"`
+	LastAuthConfigErrorAt        int64                  `json:"last_auth_config_error_at,omitempty"`
+	StickyMatched                bool                   `json:"sticky_matched,omitempty"`
+	Selected                     bool                   `json:"selected,omitempty"`
+	ScoreSampleSource            string                 `json:"score_sample_source,omitempty"`
+	MatchedRuntimeKey            ModelGatewayRuntimeKey `json:"matched_runtime_key,omitempty"`
+	RequestBodyBytes             int64                  `json:"request_body_bytes,omitempty"`
+	RequestBodyStorage           string                 `json:"request_body_storage,omitempty"`
+	RequestBodySizeLikelyLatency bool                   `json:"request_body_size_likely_latency,omitempty"`
+	RequestBodyPrepareMs         int64                  `json:"request_body_prepare_ms,omitempty"`
+	UpstreamResponseHeaderMs     int64                  `json:"upstream_response_header_ms,omitempty"`
+	UpstreamFirstEventWaitMs     int64                  `json:"upstream_first_event_wait_ms,omitempty"`
 }
 
 type ModelGatewayRuntimeKey struct {
@@ -2992,6 +2998,7 @@ func buildModelGatewayObservabilityFromRecords(records []model.ModelExecutionRec
 
 		if idx < options.RecentLimit {
 			recent := modelGatewayObservabilityRecentRecord(record, scoreBreakdown, candidateGroups, requestMeta)
+			enrichModelGatewayRecentTimingMeta(&recent)
 			recent.ScoreBreakdownError = scoreErr != nil
 			recent.CandidateGroupsError = candidateErr != nil
 			recent.RequestMetaError = requestMetaErr != nil
@@ -3116,11 +3123,38 @@ func modelGatewayObservabilityRecentRecord(record model.ModelExecutionRecord, sc
 	}
 }
 
+func enrichModelGatewayRecentTimingMeta(record *ModelGatewayObservabilityRecord) {
+	if record == nil || len(record.RequestMeta) == 0 {
+		return
+	}
+	timing := modelGatewayObservabilityTimingMetaFromRequestMeta(record.RequestMeta)
+	if timing.RequestBodyBytes <= 0 &&
+		timing.UpstreamResponseHeaderMs <= 0 &&
+		timing.UpstreamFirstEventWaitMs <= 0 &&
+		timing.RequestBodyPrepareMs <= 0 {
+		return
+	}
+	for idx := range record.CandidateExplanations {
+		candidate := &record.CandidateExplanations[idx]
+		if !candidate.Selected {
+			continue
+		}
+		candidate.RequestBodyBytes = timing.RequestBodyBytes
+		candidate.RequestBodyStorage = timing.RequestBodyStorage
+		candidate.RequestBodySizeLikelyLatency = timing.RequestBodySizeLikelyLatency
+		candidate.RequestBodyPrepareMs = timing.RequestBodyPrepareMs
+		candidate.UpstreamResponseHeaderMs = timing.UpstreamResponseHeaderMs
+		candidate.UpstreamFirstEventWaitMs = timing.UpstreamFirstEventWaitMs
+		return
+	}
+}
+
 func ModelGatewayObservabilityRecordFromModelRecord(record model.ModelExecutionRecord) ModelGatewayObservabilityRecord {
 	scoreBreakdown, scoreErr := parseModelGatewayScoreBreakdown(record.ScoreBreakdown)
 	candidateGroups, candidateErr := parseModelGatewayCandidateGroups(record.CandidateGroups)
 	requestMeta, requestMetaErr := parseModelGatewayRequestMeta(record.RequestMeta)
 	recent := modelGatewayObservabilityRecentRecord(record, scoreBreakdown, candidateGroups, requestMeta)
+	enrichModelGatewayRecentTimingMeta(&recent)
 	recent.ScoreBreakdownError = scoreErr != nil
 	recent.CandidateGroupsError = candidateErr != nil
 	recent.RequestMetaError = requestMetaErr != nil
@@ -3281,6 +3315,20 @@ type modelGatewayObservabilityAttemptMeta struct {
 	UsedChannels                   []string
 	IsHealthProbe                  bool
 	ProbeReason                    string
+}
+
+type modelGatewayObservabilityTimingMeta struct {
+	QueueWaitMs                  int64
+	RelayToFirstByteMs           int64
+	RelayTotalMs                 int64
+	UpstreamResponseHeaderMs     int64
+	UpstreamFirstEventWaitMs     int64
+	PreFirstByteMs               int64
+	PostFirstByteMs              int64
+	RequestBodyPrepareMs         int64
+	RequestBodyBytes             int64
+	RequestBodyStorage           string
+	RequestBodySizeLikelyLatency bool
 }
 
 type modelGatewayProfileProxyMeta struct {
@@ -3727,6 +3775,30 @@ func modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta map[string]
 		UsedChannels:                   modelGatewayObservabilityStringSlice(requestMeta["used_channels"]),
 		IsHealthProbe:                  modelGatewayObservabilityMetaBool(requestMeta["is_health_probe"]),
 		ProbeReason:                    strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["probe_reason"])),
+	}
+}
+
+func modelGatewayObservabilityTimingMetaFromRequestMeta(requestMeta map[string]any) modelGatewayObservabilityTimingMeta {
+	timingRaw, ok := requestMeta["timing"]
+	if !ok || timingRaw == nil {
+		return modelGatewayObservabilityTimingMeta{}
+	}
+	timing, ok := timingRaw.(map[string]any)
+	if !ok {
+		return modelGatewayObservabilityTimingMeta{}
+	}
+	return modelGatewayObservabilityTimingMeta{
+		QueueWaitMs:                  modelGatewayObservabilityMetaInt64(timing["queue_wait_ms"]),
+		RelayToFirstByteMs:           modelGatewayObservabilityMetaInt64(timing["relay_to_first_byte_ms"]),
+		RelayTotalMs:                 modelGatewayObservabilityMetaInt64(timing["relay_total_ms"]),
+		UpstreamResponseHeaderMs:     modelGatewayObservabilityMetaInt64(timing["upstream_response_header_ms"]),
+		UpstreamFirstEventWaitMs:     modelGatewayObservabilityMetaInt64(timing["upstream_first_event_wait_ms"]),
+		PreFirstByteMs:               modelGatewayObservabilityMetaInt64(timing["pre_first_byte_ms"]),
+		PostFirstByteMs:              modelGatewayObservabilityMetaInt64(timing["post_first_byte_ms"]),
+		RequestBodyPrepareMs:         modelGatewayObservabilityMetaInt64(timing["request_body_prepare_ms"]),
+		RequestBodyBytes:             modelGatewayObservabilityMetaInt64(timing["request_body_bytes"]),
+		RequestBodyStorage:           strings.TrimSpace(modelGatewayObservabilityMetaString(timing["request_body_storage"])),
+		RequestBodySizeLikelyLatency: modelGatewayObservabilityMetaBool(timing["request_body_size_likely_latency"]),
 	}
 }
 

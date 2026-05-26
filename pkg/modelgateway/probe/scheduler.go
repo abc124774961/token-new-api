@@ -310,11 +310,9 @@ func (s *ProbeScheduler) applyProbeScore(plan *core.DispatchPlan, candidate Prob
 		snapshot.GroupPriorityRatio = 1
 	}
 	if snapshot.HealthScoreAverage <= 0 {
-		snapshot.HealthScoreAverage = probeHealthAverageForDispatch(snapshot)
+		snapshot.HealthScoreAverage = scheduler.HealthScoreAverage(snapshot)
 	}
-	if snapshot.ProbeTriggerReason == "" {
-		snapshot.ProbeTriggerReason = strings.TrimSpace(candidate.Reason)
-	}
+	snapshot.ProbeTriggerReason = strings.TrimSpace(candidate.Reason)
 	if snapshot.ProbeRecoveryRequired <= 0 {
 		snapshot.ProbeRecoveryRequired = normalizeProbeConfig(s.config).RecoverySuccessesRequired
 	}
@@ -434,7 +432,7 @@ func probeCandidateExplanation(candidate core.Candidate, snapshot core.RuntimeSn
 		ProbeRecoveryPending:       snapshot.ProbeRecoveryPending,
 		ProbeRecoverySuccessCount:  snapshot.ProbeRecoverySuccessCount,
 		ProbeRecoveryRequired:      snapshot.ProbeRecoveryRequired,
-		ProbeTriggerReason:         firstProbeString(snapshot.ProbeTriggerReason, reason),
+		ProbeTriggerReason:         firstProbeString(reason, snapshot.ProbeTriggerReason),
 		ScoreSampleSource:          snapshot.SampleSource,
 		MatchedRuntimeKey:          snapshot.MatchedRuntimeKey,
 	}
@@ -456,27 +454,6 @@ func probeCandidateExplanation(candidate core.Candidate, snapshot core.RuntimeSn
 	explanation.GroupScore = probeScoreValue(score.Breakdown, "group", 0)
 	explanation.ExperienceScore = probeScoreValue(score.Breakdown, "experience", snapshot.ExperienceScore)
 	return explanation
-}
-
-func probeHealthAverageForDispatch(snapshot core.RuntimeSnapshot) float64 {
-	scores := make([]float64, 0, 3)
-	if snapshot.SuccessScore > 0 {
-		scores = append(scores, snapshot.SuccessScore)
-	}
-	if snapshot.SpeedScore > 0 {
-		scores = append(scores, snapshot.SpeedScore)
-	}
-	if snapshot.ExperienceScore > 0 {
-		scores = append(scores, snapshot.ExperienceScore)
-	}
-	if len(scores) == 0 {
-		return 0
-	}
-	sum := 0.0
-	for _, score := range scores {
-		sum += score
-	}
-	return sum / float64(len(scores))
 }
 
 func copyProbeScoreMap(values map[string]float64) map[string]float64 {
