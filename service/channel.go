@@ -78,6 +78,45 @@ func EnableChannel(channelId int, usingKey string, channelName string) {
 	}
 }
 
+func ClearChannelBalanceInsufficientAfterSuccess(channelID int, usingKey string, channelName string) (int, bool) {
+	if channelID <= 0 {
+		return 0, false
+	}
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		ClearChannelBalanceInsufficient(channelID)
+		return 0, false
+	}
+
+	wasBalancePaused := IsBalanceInsufficientPausedChannel(channel)
+	wasConfirmedBalanceInsufficient := IsConfirmedBalanceInsufficientChannel(channel)
+	rawReason := rawChannelStatusReason(channel)
+	hasBalanceReason := IsBalanceInsufficientStatusReason(rawReason)
+	wasRuntimeBalanceInsufficient := IsRuntimeBalanceInsufficientChannel(channel)
+	if !wasBalancePaused && !wasConfirmedBalanceInsufficient && !hasBalanceReason && !wasRuntimeBalanceInsufficient {
+		return channel.Status, false
+	}
+
+	ClearChannelBalanceInsufficient(channelID)
+	cleared := wasRuntimeBalanceInsufficient
+	if wasConfirmedBalanceInsufficient && model.ClearChannelBalanceInsufficientMarker(channelID) {
+		channel.BalanceUpdatedTime = 0
+		cleared = true
+	}
+
+	nextStatus := channel.Status
+	if wasBalancePaused {
+		EnableChannel(channelID, usingKey, channelName)
+		nextStatus = common.ChannelStatusEnabled
+		cleared = true
+	} else if hasBalanceReason {
+		if model.UpdateChannelStatusWholeChannelWithInfo(channelID, channel.Status, "", nil) {
+			cleared = true
+		}
+	}
+	return nextStatus, cleared
+}
+
 func MarkChannelBalanceInsufficient(channelID int) {
 	if channelID <= 0 {
 		return
@@ -214,9 +253,7 @@ func ChannelStatusReason(channel *model.Channel) string {
 	if channel == nil {
 		return ""
 	}
-	info := channel.GetOtherInfo()
-	reason, _ := info["status_reason"].(string)
-	reason = strings.TrimSpace(reason)
+	reason := rawChannelStatusReason(channel)
 	if reason == "" && IsConfirmedBalanceInsufficientChannel(channel) {
 		return ChannelStatusReasonBalanceInsufficient
 	}
@@ -224,6 +261,15 @@ func ChannelStatusReason(channel *model.Channel) string {
 		return ChannelStatusReasonBalanceInsufficient
 	}
 	return reason
+}
+
+func rawChannelStatusReason(channel *model.Channel) string {
+	if channel == nil {
+		return ""
+	}
+	info := channel.GetOtherInfo()
+	reason, _ := info["status_reason"].(string)
+	return strings.TrimSpace(reason)
 }
 
 func IsErrorPausedStatusReason(reason string) bool {

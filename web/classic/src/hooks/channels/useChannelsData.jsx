@@ -645,6 +645,46 @@ export const useChannelsData = () => {
     }
   };
 
+  const parseChannelOtherInfo = (otherInfo) => {
+    if (!otherInfo) return {};
+    if (typeof otherInfo === 'object') return { ...otherInfo };
+    try {
+      const parsed = JSON.parse(otherInfo);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (error) {
+      return {};
+    }
+  };
+
+  const isBalanceInsufficientReason = (reason) => {
+    const normalized = String(reason || '')
+      .trim()
+      .toLowerCase();
+    return (
+      normalized === 'balance_insufficient' || normalized.includes('余额不足')
+    );
+  };
+
+  const clearChannelBalanceInsufficientMark = (channel) => {
+    channel.balance_insufficient = false;
+    channel.balance_updated_time = 0;
+    if (isBalanceInsufficientReason(channel.status_reason)) {
+      channel.status_reason = '';
+    }
+
+    const otherInfo = parseChannelOtherInfo(channel.other_info);
+    if (isBalanceInsufficientReason(otherInfo.status_reason)) {
+      delete otherInfo.status_reason;
+      delete otherInfo.status_time;
+    }
+    if (otherInfo.pause_type === 'balance_insufficient') {
+      delete otherInfo.pause_type;
+      delete otherInfo.pause_reason;
+      delete otherInfo.pause_until;
+    }
+    channel.other_info = JSON.stringify(otherInfo);
+  };
+
   // Tag edit
   const submitTagEdit = async (type, data) => {
     switch (type) {
@@ -920,8 +960,14 @@ export const useChannelsData = () => {
         return Promise.resolve();
       }
 
-      const { success, message, time, error_code, balance_insufficient } =
-        res.data;
+      const {
+        success,
+        message,
+        time,
+        error_code,
+        balance_insufficient,
+        status,
+      } = res.data;
 
       // 更新测试结果
       setModelTestResults((prev) => ({
@@ -940,6 +986,11 @@ export const useChannelsData = () => {
         updateChannelProperty(record.id, (channel) => {
           channel.response_time = time * 1000;
           channel.test_time = Date.now() / 1000;
+          const nextStatus = Number(status);
+          if (Number.isFinite(nextStatus) && nextStatus > 0) {
+            channel.status = nextStatus;
+          }
+          clearChannelBalanceInsufficientMark(channel);
         });
 
         if (!model || model === '') {

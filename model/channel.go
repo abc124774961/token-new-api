@@ -675,6 +675,25 @@ func (channel *Channel) UpdateBalance(balance float64) {
 	}
 }
 
+func ClearChannelBalanceInsufficientMarker(channelId int) bool {
+	if channelId <= 0 {
+		return false
+	}
+	err := DB.Model(&Channel{}).Where("id = ?", channelId).Update("balance_updated_time", 0).Error
+	if err != nil {
+		common.SysLog(fmt.Sprintf("failed to clear channel balance marker: channel_id=%d, error=%v", channelId, err))
+		return false
+	}
+	if common.MemoryCacheEnabled {
+		channelSyncLock.Lock()
+		if channel, ok := channelsIDM[channelId]; ok && channel != nil {
+			channel.BalanceUpdatedTime = 0
+		}
+		channelSyncLock.Unlock()
+	}
+	return true
+}
+
 func (channel *Channel) Delete() error {
 	var err error
 	err = DB.Delete(channel).Error

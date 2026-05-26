@@ -6013,6 +6013,26 @@
     "建议排查不可调度原因": "Kiểm tra lý do không thể điều phối",
     "建议关注速度变化": "Theo dõi thay đổi độ trễ",
     "建议观察负载与排队": "Theo dõi tải và hàng đợi",
-    "Runtime Key": "Runtime Key"
+    "Runtime Key": "Runtime Key",
+    "样本可信度分": "Điểm tin cậy mẫu",
+    "成功率分": "Điểm tỷ lệ thành công",
+    "体验异常分": "Điểm bất thường trải nghiệm",
+    "加权贡献": "Đóng góp có trọng số",
+    "贡献变化": "Thay đổi đóng góp",
+    "较上一条稳定评分变化": "Thay đổi so với điểm ổn định trước",
+    "评分明细优先展示加权贡献，贡献变化才会影响稳定评分": "Chi tiết điểm ưu tiên hiển thị đóng góp có trọng số; chỉ thay đổi đóng góp mới ảnh hưởng điểm ổn định",
+    "加权贡献变化，才会影响稳定评分总分": "Thay đổi đóng góp có trọng số; đây là phần ảnh hưởng tổng điểm ổn định",
+    "原始子项变化，不等于总分直接加减": "Thay đổi mục con thô; không phải cộng/trừ trực tiếp vào tổng điểm",
+    "原始子项变化": "Thay đổi mục con thô",
+    "历史字段：原始子项变化，不等于总分直接加减": "Trường lịch sử: thay đổi mục con thô, không phải cộng/trừ trực tiếp vào tổng điểm",
+    "实时调度因子": "Yếu tố định tuyến thời gian thực",
+    "只影响本次调度评分": "Chỉ ảnh hưởng điểm định tuyến lần này",
+    "首包等待越少，本次调度评分越高": "Chờ byte đầu càng ít thì điểm định tuyến lần này càng cao",
+    "样本越充足、来源越精确，这项越高": "Mẫu càng đầy đủ và nguồn càng chính xác thì điểm này càng cao",
+    "成功率越高，这项越高": "Tỷ lệ thành công càng cao thì điểm này càng cao",
+    "速度综合表现越好，这项越高": "Hiệu năng tốc độ tổng thể càng tốt thì điểm này càng cao",
+    "空输出和体验异常越少，这项越高": "Đầu ra rỗng và bất thường trải nghiệm càng ít thì điểm này càng cao",
+    "实时负载越低，这项越高": "Tải thời gian thực càng thấp thì điểm này càng cao",
+    "较上一条": "so với trước"
   }
 }

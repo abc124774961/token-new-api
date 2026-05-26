@@ -870,9 +870,9 @@ func TestChannel(c *gin.Context) {
 	}
 	tok := time.Now()
 	milliseconds := tok.Sub(tik).Milliseconds()
-	go channel.UpdateResponseTime(milliseconds)
 	consumedTime := float64(milliseconds) / 1000.0
 	if result.newAPIError != nil {
+		go channel.UpdateResponseTime(milliseconds)
 		shouldMarkBalanceInsufficient := markChannelBalanceInsufficientFromTest(channel, result)
 		c.JSON(http.StatusOK, gin.H{
 			"success":              false,
@@ -884,10 +884,15 @@ func TestChannel(c *gin.Context) {
 		})
 		return
 	}
+	status, balanceInsufficientCleared := clearChannelBalanceInsufficientFromSuccessfulTest(channel, result)
+	go channel.UpdateResponseTime(milliseconds)
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"time":    consumedTime,
+		"success":                      true,
+		"message":                      "",
+		"time":                         consumedTime,
+		"status":                       status,
+		"balance_insufficient":         false,
+		"balance_insufficient_cleared": balanceInsufficientCleared,
 	})
 }
 
@@ -911,6 +916,17 @@ func markChannelBalanceInsufficientFromTest(channel *model.Channel, result testR
 		channel.GetAutoBan(),
 	))
 	return true
+}
+
+func clearChannelBalanceInsufficientFromSuccessfulTest(channel *model.Channel, result testResult) (int, bool) {
+	if channel == nil {
+		return 0, false
+	}
+	usingKey := ""
+	if result.context != nil {
+		usingKey = common.GetContextKeyString(result.context, constant.ContextKeyChannelKey)
+	}
+	return service.ClearChannelBalanceInsufficientAfterSuccess(channel.Id, usingKey, channel.Name)
 }
 
 var testAllChannelsLock sync.Mutex

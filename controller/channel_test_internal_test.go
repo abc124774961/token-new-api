@@ -5,9 +5,12 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -68,4 +71,62 @@ func TestBuildTestLogOtherInjectsTieredInfo(t *testing.T) {
 	require.Equal(t, "tiered_expr", other["billing_mode"])
 	require.Equal(t, "base", other["matched_tier"])
 	require.NotEmpty(t, other["expr_b64"])
+}
+
+func TestClearChannelBalanceInsufficientFromSuccessfulTestClearsMarkers(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	autoBan := 1
+	channel := model.Channel{
+		Id:                 701,
+		Name:               "balance-ok-after-test",
+		Type:               constant.ChannelTypeOpenAI,
+		Status:             common.ChannelStatusEnabled,
+		AutoBan:            &autoBan,
+		Balance:            0,
+		BalanceUpdatedTime: common.GetTimestamp(),
+	}
+	channel.SetOtherInfo(map[string]interface{}{
+		"status_reason": service.ChannelStatusReasonBalanceInsufficient,
+	})
+	require.NoError(t, db.Create(&channel).Error)
+	service.MarkChannelBalanceInsufficient(channel.Id)
+
+	status, cleared := clearChannelBalanceInsufficientFromSuccessfulTest(&channel, testResult{})
+
+	require.True(t, cleared)
+	require.Equal(t, common.ChannelStatusEnabled, status)
+	require.False(t, service.IsRuntimeBalanceInsufficientChannelID(channel.Id))
+
+	updated, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	require.False(t, service.IsKnownBalanceInsufficientChannel(updated))
+	require.Equal(t, "", service.ChannelStatusReason(updated))
+	require.Equal(t, int64(0), updated.BalanceUpdatedTime)
+}
+
+func TestClearChannelBalanceInsufficientFromSuccessfulTestResumesBalancePausedChannel(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	autoBan := 1
+	channel := model.Channel{
+		Id:      702,
+		Name:    "balance-paused-ok-after-test",
+		Type:    constant.ChannelTypeOpenAI,
+		Status:  common.ChannelStatusAutoDisabled,
+		AutoBan: &autoBan,
+	}
+	channel.SetOtherInfo(map[string]interface{}{
+		"status_reason": service.ChannelStatusReasonBalanceInsufficient,
+	})
+	require.NoError(t, db.Create(&channel).Error)
+
+	status, cleared := clearChannelBalanceInsufficientFromSuccessfulTest(&channel, testResult{})
+
+	require.True(t, cleared)
+	require.Equal(t, common.ChannelStatusEnabled, status)
+
+	updated, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	require.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	require.False(t, service.IsKnownBalanceInsufficientChannel(updated))
+	require.Equal(t, "", service.ChannelStatusReason(updated))
 }

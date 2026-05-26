@@ -5615,6 +5615,26 @@
     "建议排查不可调度原因": "Check why routing is blocked",
     "建议关注速度变化": "Watch latency changes",
     "建议观察负载与排队": "Watch load and queueing",
-    "Runtime Key": "Runtime key"
+    "Runtime Key": "Runtime key",
+    "样本可信度分": "Sample confidence score",
+    "成功率分": "Success rate score",
+    "体验异常分": "Experience anomaly score",
+    "加权贡献": "Weighted contribution",
+    "贡献变化": "Contribution change",
+    "较上一条稳定评分变化": "Change vs previous stable score",
+    "评分明细优先展示加权贡献，贡献变化才会影响稳定评分": "Score details prioritize weighted contribution; only contribution changes affect the stable score",
+    "加权贡献变化，才会影响稳定评分总分": "Weighted contribution change; this is what affects the stable score total",
+    "原始子项变化，不等于总分直接加减": "Raw item change; not a direct add/subtract on the total score",
+    "原始子项变化": "Raw item change",
+    "历史字段：原始子项变化，不等于总分直接加减": "Legacy field: raw item change, not a direct add/subtract on the total score",
+    "实时调度因子": "Realtime routing factors",
+    "只影响本次调度评分": "Only affects this-route score",
+    "首包等待越少，本次调度评分越高": "Less first-byte waiting raises this-route score",
+    "样本越充足、来源越精确，这项越高": "More samples and more exact sources raise this score",
+    "成功率越高，这项越高": "Higher success rate raises this score",
+    "速度综合表现越好，这项越高": "Better overall speed raises this score",
+    "空输出和体验异常越少，这项越高": "Fewer empty outputs and experience anomalies raise this score",
+    "实时负载越低，这项越高": "Lower realtime load raises this score",
+    "较上一条": "vs previous"
   }
 }

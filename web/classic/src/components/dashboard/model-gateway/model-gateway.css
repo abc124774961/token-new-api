@@ -4739,7 +4739,7 @@ button.ct-model-gateway-detail-metric {
 .ct-model-gateway-score-history-contrib > div {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 3px 10px;
   border-radius: 9px;
   padding: 8px 9px;
@@ -4763,6 +4763,17 @@ button.ct-model-gateway-detail-metric {
 .ct-model-gateway-score-history-contrib strong {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
+  white-space: nowrap;
+}
+
+.ct-model-gateway-score-history-contrib small {
+  align-self: center;
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--semi-color-text-2);
+  font-size: 10px;
+  font-weight: 760;
   white-space: nowrap;
 }
 
@@ -4999,6 +5010,16 @@ button.ct-model-gateway-detail-metric {
   border-radius: 8px;
   padding: 6px 8px;
   background: rgba(236, 254, 255, 0.68);
+}
+
+.ct-model-gateway-score-history-metrics small {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--semi-color-text-2);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dark .ct-model-gateway-score-history-metrics > div {

@@ -5509,6 +5509,26 @@
     "建议排查不可调度原因": "Vérifier pourquoi le routage est bloqué",
     "建议关注速度变化": "Surveiller les changements de latence",
     "建议观察负载与排队": "Surveiller la charge et la file",
-    "Runtime Key": "Clé runtime"
+    "Runtime Key": "Clé runtime",
+    "样本可信度分": "Score de fiabilité des échantillons",
+    "成功率分": "Score de taux de réussite",
+    "体验异常分": "Score d'anomalies d'expérience",
+    "加权贡献": "Contribution pondérée",
+    "贡献变化": "Variation de contribution",
+    "较上一条稳定评分变化": "Variation vs score stable précédent",
+    "评分明细优先展示加权贡献，贡献变化才会影响稳定评分": "Les détails privilégient la contribution pondérée ; seules ses variations affectent le score stable",
+    "加权贡献变化，才会影响稳定评分总分": "Variation de contribution pondérée ; c’est ce qui affecte le score stable total",
+    "原始子项变化，不等于总分直接加减": "Variation brute du sous-score ; ce n’est pas un ajout/retrait direct au total",
+    "原始子项变化": "Variation brute du sous-score",
+    "历史字段：原始子项变化，不等于总分直接加减": "Champ historique : variation brute du sous-score, pas un ajout/retrait direct au total",
+    "实时调度因子": "Facteurs de routage temps réel",
+    "只影响本次调度评分": "N’affecte que le score de routage actuel",
+    "首包等待越少，本次调度评分越高": "Moins d’attente du premier octet augmente le score de routage actuel",
+    "样本越充足、来源越精确，这项越高": "Plus les échantillons sont nombreux et précis, plus ce score est élevé",
+    "成功率越高，这项越高": "Plus le taux de réussite est élevé, plus ce score est élevé",
+    "速度综合表现越好，这项越高": "De meilleures performances de vitesse augmentent ce score",
+    "空输出和体验异常越少，这项越高": "Moins de sorties vides et d’anomalies d’expérience augmentent ce score",
+    "实时负载越低，这项越高": "Une charge temps réel plus faible augmente ce score",
+    "较上一条": "vs précédent"
   }
 }

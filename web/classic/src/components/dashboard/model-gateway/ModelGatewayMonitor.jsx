@@ -232,6 +232,18 @@ function scoreDeltaColor(value) {
 function scoreMetricLabel(key, t) {
   const normalized = String(key || '').trim();
   switch (normalized) {
+    case 'confidence_samples':
+      return t('样本可信度分');
+    case 'success':
+      return t('成功率分');
+    case 'speed':
+      return t('速度分');
+    case 'experience':
+      return t('体验异常分');
+    case 'load':
+      return t('负载分');
+    case 'group':
+      return t('分组优先级分');
     case 'completion_rate':
       return t('完成率分');
     case 'upstream_error_rate':
@@ -256,6 +268,8 @@ function scoreMetricLabel(key, t) {
       return t('分组优先级分');
     case 'routing_total':
       return t('本次调度评分');
+    case 'ttft_pending':
+      return t('首包等待降权');
     case 'cost':
       return t('成本分');
     default:
@@ -266,6 +280,18 @@ function scoreMetricLabel(key, t) {
 function scoreMetricDescription(key, t) {
   const normalized = String(key || '').trim();
   switch (normalized) {
+    case 'confidence_samples':
+      return t('样本越充足、来源越精确，这项越高');
+    case 'success':
+      return t('成功率越高，这项越高');
+    case 'speed':
+      return t('速度综合表现越好，这项越高');
+    case 'experience':
+      return t('空输出和体验异常越少，这项越高');
+    case 'load':
+      return t('实时负载越低，这项越高');
+    case 'group':
+      return t('按分组优先级换算的固定公式项');
     case 'completion_rate':
       return t('完成请求占比越高，这项越高');
     case 'upstream_error_rate':
@@ -290,6 +316,8 @@ function scoreMetricDescription(key, t) {
       return t('按分组优先级换算的固定公式项');
     case 'routing_total':
       return t('用于调度选择，会叠加当前压力和排队状态');
+    case 'ttft_pending':
+      return t('首包等待越少，本次调度评分越高');
     case 'cost':
       return t('由参考单位成本换算，成本越低这项越高');
     default:
@@ -320,15 +348,21 @@ function scoreMetricEntries(value = {}, delta = {}, t) {
 
 function normalizeScoreItemsForDisplay(items = []) {
   return (Array.isArray(items) ? items : [])
-    .map((item) => ({
-      ...item,
-      score: Number(item?.score || 0),
-      weight: Number(item?.weight || 0),
-      weighted_score: Number(item?.weighted_score || 0),
-      delta: Number(item?.delta || 0),
-      weighted_delta: Number(item?.weighted_delta || 0),
-      sample_count: Number(item?.sample_count || 0),
-    }))
+    .map((item) => {
+      const deltaAvailable = hasOwnFiniteNumber(item, 'delta');
+      const weightedDeltaAvailable = hasOwnFiniteNumber(item, 'weighted_delta');
+      return {
+        ...item,
+        score: Number(item?.score || 0),
+        weight: Number(item?.weight || 0),
+        weighted_score: Number(item?.weighted_score || 0),
+        delta: Number(item?.delta || 0),
+        weighted_delta: Number(item?.weighted_delta || 0),
+        delta_available: deltaAvailable,
+        weighted_delta_available: weightedDeltaAvailable,
+        sample_count: Number(item?.sample_count || 0),
+      };
+    })
     .filter((item) => item.key);
 }
 
@@ -342,46 +376,61 @@ function scoreItemDeltaByKey(deltas = []) {
   return out;
 }
 
+function hasOwnFiniteNumber(value, key) {
+  if (!value || !Object.prototype.hasOwnProperty.call(value, key)) return false;
+  return Number.isFinite(Number(value[key]));
+}
+
+function scoreItemChangeMeta(delta, item) {
+  if (hasOwnFiniteNumber(delta, 'weighted_delta')) {
+    return {
+      value: Number(delta.weighted_delta),
+      kind: 'weighted',
+    };
+  }
+  if (hasOwnFiniteNumber(delta, 'delta')) {
+    return {
+      value: Number(delta.delta),
+      kind: 'raw',
+    };
+  }
+  if (item?.weighted_delta_available) {
+    return {
+      value: Number(item.weighted_delta),
+      kind: 'weighted',
+    };
+  }
+  if (item?.delta_available) {
+    return {
+      value: Number(item.delta),
+      kind: 'raw',
+    };
+  }
+  return {
+    value: Number(item?.delta || 0),
+    kind: 'raw',
+  };
+}
+
 function scoreItemDisplayRows(items = [], deltas = [], t) {
   const normalized = normalizeScoreItemsForDisplay(items);
   const deltaByKey = scoreItemDeltaByKey(deltas);
   return normalized.map((item) => {
     const delta = deltaByKey[item.key];
+    const change = scoreItemChangeMeta(delta, item);
     return {
       ...item,
       name: scoreItemLabel(item, t),
       delta: Number(delta?.delta ?? item.delta ?? 0),
       weighted_delta: Number(delta?.weighted_delta ?? item.weighted_delta ?? 0),
+      change_value: change.value,
+      change_kind: change.kind,
       before_score: Number(delta?.before_score ?? item.previous_score ?? 0),
       after_score: Number(delta?.after_score ?? item.score ?? 0),
       before_raw_value: delta?.before_raw_value || '',
       after_raw_value: delta?.after_raw_value || item.raw_value || '',
     };
   });
-}
-
-function importantScoreDeltas(delta = {}, totalDelta = 0, t) {
-  const direction = scoreDeltaTone(totalDelta);
-  const entries = Object.entries(delta || {})
-    .filter(
-      ([key, value]) =>
-        Number.isFinite(Number(value)) && !scoreMetricIsHidden(key),
-    )
-    .map(([key, value]) => ({ key, value: Number(value) }))
-    .filter((entry) => Math.abs(entry.value) >= 0.0001);
-  const directional = entries.filter((entry) => {
-    const tone = scoreDeltaTone(entry.value);
-    return direction === 'neutral' || tone === direction;
-  });
-  const candidates = directional.length ? directional : entries;
-  return candidates
-    .sort((left, right) => Math.abs(right.value) - Math.abs(left.value))
-    .slice(0, 3)
-    .map((entry) => ({
-      ...entry,
-      label: scoreMetricLabel(entry.key, t),
-      description: scoreMetricDescription(entry.key, t),
-    }));
 }
 
 function scoreHistorySampleLabel(value, t) {
@@ -436,26 +485,35 @@ function scoreHistoryStatusMeta(item, t) {
 function scoreHistoryContributionEntries(current, history, direction, t) {
   const sign = direction === 'negative' ? -1 : 1;
   const rows = [];
-  for (const item of Array.isArray(current?.score_item_deltas)
+  const scoreItemDeltas = Array.isArray(current?.score_item_deltas)
     ? current.score_item_deltas
-    : []) {
+    : [];
+  for (const item of scoreItemDeltas) {
+    const hasWeightedDelta = hasOwnFiniteNumber(item, 'weighted_delta');
     const weightedDelta = Number(item?.weighted_delta);
     const rawDelta = Number(item?.delta);
-    const value = Number.isFinite(weightedDelta) ? weightedDelta : rawDelta;
+    const value = hasWeightedDelta ? weightedDelta : rawDelta;
     if (!Number.isFinite(value) || Math.abs(value) < 0.0001) continue;
     if (sign > 0 && value <= 0) continue;
     if (sign < 0 && value >= 0) continue;
+    const detail = [
+      hasWeightedDelta
+        ? t('加权贡献变化，才会影响稳定评分总分')
+        : t('原始子项变化，不等于总分直接加减'),
+      item.reason ||
+        scoreMetricDescription(item.key, t) ||
+        [item.before_raw_value, item.after_raw_value].filter(Boolean).join(' → '),
+    ].filter(Boolean);
     rows.push({
       key: item.key,
       label: item.name ? t(item.name) : scoreMetricLabel(item.key, t),
       value,
-      description:
-        item.reason ||
-        scoreMetricDescription(item.key, t) ||
-        [item.before_raw_value, item.after_raw_value].filter(Boolean).join(' → '),
+      valueKind: hasWeightedDelta ? 'weighted' : 'raw',
+      badge: hasWeightedDelta ? t('贡献变化') : t('原始子项变化'),
+      description: detail.join(' · '),
     });
   }
-  if (!rows.length) {
+  if (!rows.length && !scoreItemDeltas.length) {
     const sourceDelta = current?.score_breakdown_delta || history?.metric_deltas || {};
     for (const [key, rawValue] of Object.entries(sourceDelta)) {
       const value = Number(rawValue || 0);
@@ -466,13 +524,30 @@ function scoreHistoryContributionEntries(current, history, direction, t) {
         key,
         label: scoreMetricLabel(key, t),
         value,
-        description: scoreMetricDescription(key, t),
+        valueKind: 'raw',
+        badge: t('原始子项变化'),
+        description: [
+          t('历史字段：原始子项变化，不等于总分直接加减'),
+          scoreMetricDescription(key, t),
+        ]
+          .filter(Boolean)
+          .join(' · '),
       });
     }
   }
   return rows
     .sort((left, right) => Math.abs(right.value) - Math.abs(left.value))
     .slice(0, 3);
+}
+
+function scoreHistoryContributionReasonText(entries = [], t) {
+  return entries
+    .map((entry) => {
+      const suffix =
+        entry.valueKind === 'raw' ? `（${t('原始子项变化')}）` : '';
+      return `${entry.label}${formatScoreDelta(entry.value)}${suffix}`;
+    })
+    .join(t('、'));
 }
 
 function scoreHistoryRecommendation(current, negativeEntries, t) {
@@ -8331,12 +8406,17 @@ function ScoreItemsTable({
         <span>{t('窗口')}</span>
         <span>{t('得分')}</span>
         <span>{t('权重')}</span>
-        <span>{t('贡献')}</span>
-        <span>{t('变化')}</span>
+        <span>{t('加权贡献')}</span>
+        <span>{t('贡献变化')}</span>
         <span>{t('公式 / 原因')}</span>
       </div>
       {rows.map((item) => {
-        const deltaTone = scoreDeltaTone(item.weighted_delta || item.delta);
+        const changeValue = Number(item.change_value || 0);
+        const deltaTone = scoreDeltaTone(changeValue);
+        const changeTitle =
+          item.change_kind === 'weighted'
+            ? t('加权贡献变化，才会影响稳定评分总分')
+            : t('原始子项变化，不等于总分直接加减');
         return (
           <div className='ct-model-gateway-score-items-row' key={item.key}>
             <span
@@ -8362,8 +8442,11 @@ function ScoreItemsTable({
             <strong className='ct-model-gateway-score-item-number'>
               {formatScore(item.weighted_score)}
             </strong>
-            <em className={`ct-model-gateway-score-delta-${deltaTone}`}>
-              {formatScoreDelta(item.weighted_delta || item.delta)}
+            <em
+              className={`ct-model-gateway-score-delta-${deltaTone}`}
+              title={changeTitle}
+            >
+              {formatScoreDelta(changeValue)}
             </em>
             <span
               className='ct-model-gateway-score-item-formula'
@@ -8803,9 +8886,10 @@ function buildScoreHistorySummary(history, current, previous, t) {
       score: formatScore(current.score_total),
     });
   }
-  const important = importantScoreDeltas(
-    history?.metric_deltas || current?.score_breakdown_delta,
-    delta,
+  const important = scoreHistoryContributionEntries(
+    current,
+    history,
+    delta > 0 ? 'positive' : 'negative',
     t,
   );
   if (scoreDeltaTone(delta) === 'neutral') {
@@ -8814,9 +8898,7 @@ function buildScoreHistorySummary(history, current, previous, t) {
     });
   }
   const reason = important.length
-    ? important
-        .map((item) => `${item.label}${formatScoreDelta(item.value)}`)
-        .join(t('、'))
+    ? scoreHistoryContributionReasonText(important, t)
     : t('综合指标变化');
   if (delta > 0) {
     return t(
@@ -8843,9 +8925,10 @@ function buildScoreHistoryItemReasons(item, t) {
   const sampleCount = Number(item?.sample_count || 0);
   const scoreDelta = Number(item?.score_delta || 0);
   const selectionReason = formatSelectionReason(item?.selected_reason, t);
-  const important = importantScoreDeltas(
-    item?.score_breakdown_delta,
-    scoreDelta,
+  const important = scoreHistoryContributionEntries(
+    item,
+    {},
+    scoreDelta > 0 ? 'positive' : 'negative',
     t,
   );
   if (item?.source === 'runtime_current') {
@@ -8886,9 +8969,7 @@ function buildScoreHistoryItemReasons(item, t) {
     reasons.push(t('当前缺少真实历史样本，评分仅作为探索参考'));
   }
   if (important.length) {
-    const reason = important
-      .map((entry) => `${entry.label}${formatScoreDelta(entry.value)}`)
-      .join(t('、'));
+    const reason = scoreHistoryContributionReasonText(important, t);
     if (scoreDelta > 0) {
       reasons.push(t('分数提高主要来自 {{reason}}', { reason }));
     } else if (scoreDelta < 0) {
@@ -10445,7 +10526,7 @@ function ScoreHistoryModal({ history, loading, visible, onCancel, t }) {
               type='light'
               shape='circle'
             >
-              {t('变化')} {formatScoreDelta(scoreDelta)}
+              {t('较上一条')} {formatScoreDelta(scoreDelta)}
             </Tag>
             {history?.truncated ? (
               <Tag color='orange' type='light' shape='circle'>
@@ -10477,7 +10558,7 @@ function ScoreHistoryModal({ history, loading, visible, onCancel, t }) {
               <strong>{formatScore(previous?.score_total)}</strong>
             </div>
             <div>
-              <span>{t('稳定评分变化')}</span>
+              <span>{t('较上一条稳定评分变化')}</span>
               <strong
                 className={
                   scoreDelta >= 0
@@ -10527,7 +10608,7 @@ function ScoreHistoryModal({ history, loading, visible, onCancel, t }) {
               <div>
                 <Typography.Text strong>{t('评分明细')}</Typography.Text>
                 <Typography.Text type='secondary' size='small'>
-                  {t('一级评分项来自新版评分引擎')}
+                  {t('评分明细优先展示加权贡献，贡献变化才会影响稳定评分')}
                 </Typography.Text>
               </div>
               {currentRows.length > 8 ? (
@@ -10611,6 +10692,7 @@ function ScoreHistoryContributionCard({ title, emptyText, entries = [], tone }) 
           <div key={entry.key}>
             <span>{entry.label}</span>
             <strong>{formatScoreDelta(entry.value)}</strong>
+            {entry.badge ? <small>{entry.badge}</small> : null}
             {entry.description ? <em>{entry.description}</em> : null}
           </div>
         ))
@@ -10636,26 +10718,29 @@ function ScoreHistoryRecordItem({ item, t }) {
     item?.score_item_deltas,
     t,
   );
+  const showLegacyMetricEntries = metricEntries.length && !scoreItemRows.length;
   const routingEntries = Object.entries(
     item?.routing_score_breakdown || {},
   ).filter(
     ([key, value]) =>
       ['load', 'ttft_pending'].includes(key) && Number.isFinite(Number(value)),
   );
+  const hasRoutingScore =
+    routingScore > 0 && Math.abs(routingScore - Number(item?.score_total || 0)) >= 0.0001;
 
   return (
     <div className='ct-model-gateway-score-history-item'>
       <div className='ct-model-gateway-score-history-main'>
         <div>
           <Typography.Text strong>
-            {formatScore(item.score_total)}
+            {t('稳定评分')}: {formatScore(item.score_total)}
           </Typography.Text>
           <Tag
             color={scoreDeltaColor(item.score_delta)}
             type='light'
             size='small'
           >
-            {formatScoreDelta(item.score_delta)}
+            {t('较上一条')} {formatScoreDelta(item.score_delta)}
           </Tag>
           {item.selected ? (
             <Tag color='green' type='solid' size='small'>
@@ -10667,7 +10752,7 @@ function ScoreHistoryRecordItem({ item, t }) {
               {t('当前动态')}
             </Tag>
           ) : null}
-          {routingScore > 0 ? (
+          {hasRoutingScore ? (
             <Tag color='grey' type='light' size='small'>
               {t('本次调度评分')}: {formatScore(routingScore)}
             </Tag>
@@ -10718,10 +10803,13 @@ function ScoreHistoryRecordItem({ item, t }) {
         </span>
       </div>
 
-      {metricEntries.length ? (
+      {showLegacyMetricEntries ? (
         <div className='ct-model-gateway-score-history-metrics'>
           {metricEntries.slice(0, 8).map((entry) => (
-            <div key={entry.key}>
+            <div
+              key={entry.key}
+              title={t('历史字段：原始子项变化，不等于总分直接加减')}
+            >
               <span>{entry.label}</span>
               <strong>{formatScore(entry.score)}</strong>
               <em
@@ -10733,6 +10821,7 @@ function ScoreHistoryRecordItem({ item, t }) {
               >
                 {formatScoreDelta(entry.delta)}
               </em>
+              <small>{t('原始子项变化')}</small>
             </div>
           ))}
         </div>
@@ -10748,7 +10837,10 @@ function ScoreHistoryRecordItem({ item, t }) {
       {routingEntries.length ? (
         <div className='ct-model-gateway-candidate-routing-row'>
           <Typography.Text type='tertiary' size='small'>
-            {t('调度因子')}
+            {t('实时调度因子')}
+          </Typography.Text>
+          <Typography.Text type='tertiary' size='small'>
+            {t('只影响本次调度评分')}
           </Typography.Text>
           {routingEntries.map(([key, value]) => (
             <Tag key={key} color='grey' type='light' size='small'>
