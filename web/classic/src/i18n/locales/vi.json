@@ -2434,6 +2434,8 @@
     "探活": "Thăm dò",
     "探活 Worker 数": "Số worker probe",
     "探活原因": "Lý do probe",
+    "探活原因按当前模型/分组运行键统计，不代表整个渠道": "Lý do probe được thống kê theo runtime key của mô hình/nhóm hiện tại, không đại diện cho toàn bộ kênh",
+    "探活对象：{{scope}}": "Đối tượng probe: {{scope}}",
     "探活异常": "Probe bất thường",
     "探活扫描间隔": "Khoảng quét probe",
     "探活检查记录": "Bản ghi kiểm tra probe",

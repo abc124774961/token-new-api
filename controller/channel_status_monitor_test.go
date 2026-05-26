@@ -291,6 +291,38 @@ func TestChannelMonitorRecentUserRequestStatusPrefersSelectedGroup(t *testing.T)
 	require.Equal(t, []string{"success"}, statuses["codex-pro"])
 }
 
+func TestChannelMonitorRecentUserRequestStatusSkipsHealthProbes(t *testing.T) {
+	rows := []model.ModelGatewayUserRequestSummary{
+		{
+			Id:             1,
+			CompletedAt:    100,
+			RequestedGroup: "codex-pro",
+			FinalSuccess:   true,
+			IsHealthProbe:  true,
+			ProbeReason:    "low_score",
+		},
+		{
+			Id:                 2,
+			CompletedAt:        101,
+			RequestedGroup:     "codex-pro",
+			FinalStatusCode:    502,
+			FinalErrorCategory: model.ModelGatewayUserRequestErrorUpstream,
+			IsHealthProbe:      true,
+			ProbeReason:        "failure_avoidance",
+		},
+		{
+			Id:             3,
+			CompletedAt:    102,
+			RequestedGroup: "codex-pro",
+			FinalSuccess:   true,
+		},
+	}
+
+	statuses := buildChannelMonitorRecentUserRequestStatus(rows, 60)
+
+	require.Equal(t, []string{"success"}, statuses["codex-pro"])
+}
+
 func TestChannelMonitorUserRequestStatsUseUserPerspective(t *testing.T) {
 	rows := []model.ModelGatewayUserRequestSummary{
 		{

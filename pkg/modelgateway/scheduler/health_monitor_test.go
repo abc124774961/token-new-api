@@ -141,6 +141,33 @@ func TestRuntimeHealthMonitorSuccessImprovesSnapshot(t *testing.T) {
 	require.Equal(t, 120.0, snapshot.TTFTMs)
 }
 
+func TestRuntimeHealthMonitorClearsLongNoSuccessReasonOnRealSuccess(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-5.4", ChannelID: 78, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SampleCount:        4,
+		SuccessRate:        0.5,
+		SuccessScore:       0.5,
+		ProbeTriggerReason: "long_no_success",
+	})
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:        key,
+		ChannelID:  78,
+		Success:    true,
+		ObservedAt: time.Unix(1710000100, 0),
+		Duration:   300 * time.Millisecond,
+		TTFT:       120 * time.Millisecond,
+	})
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.Empty(t, snapshot.ProbeTriggerReason)
+	require.Equal(t, int64(1710000100), snapshot.LastRealSuccessAt)
+}
+
 func TestRuntimeHealthMonitorContinuesRestoredSnapshotSamples(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	key := core.RuntimeKey{RequestedModel: "standard-openai", ChannelID: 82, Group: "default"}

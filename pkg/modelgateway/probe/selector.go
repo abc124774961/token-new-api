@@ -2,6 +2,7 @@ package probe
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,14 +27,19 @@ type ProbeSelector struct {
 }
 
 type probeRecentScopes struct {
-	pairs  map[string]struct{}
-	groups map[string]struct{}
+	pairs                  map[string]struct{}
+	groups                 map[string]struct{}
+	latestSuccessByKey     map[string]int64
+	latestSuccessByChannel map[int]int64
 }
 
 type probeRecentRequestScopeRow struct {
 	RequestedModel string
 	RequestedGroup string
 	SelectedGroup  string
+	FinalChannelID int
+	FinalSuccess   bool
+	CompletedAt    int64
 }
 
 func NewProbeSelector(store core.RuntimeSnapshotStore, breaker core.CircuitBreaker) *ProbeSelector {
@@ -211,7 +217,7 @@ func (s *ProbeSelector) lowHealthCandidatesLocked(channelByID map[int]*model.Cha
 		if channel == nil || !probeRuntimeKeyModelSupported(key) || !probeChannelSupportsKey(channel, key) {
 			continue
 		}
-		reason, score := s.probeReasonForSnapshotLocked(snapshot, now, config)
+		reason, score := s.probeReasonForSnapshotLocked(snapshot, recent, now, config)
 		if reason == "" {
 			continue
 		}
@@ -284,7 +290,7 @@ func (s *ProbeSelector) snapshotForKey(key core.RuntimeKey) (core.RuntimeSnapsho
 	return s.store.Get(legacyKey)
 }
 
-func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapshot, now time.Time, config ProbeConfig) (string, float64) {
+func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapshot, recent probeRecentScopes, now time.Time, config ProbeConfig) (string, float64) {
 	key := normalizeProbeRuntimeKey(snapshot.Key)
 	reason := ""
 	score := 0.0
@@ -307,6 +313,9 @@ func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapsh
 			return reasonCooldown, 92
 		}
 		reason, score = probeReason(snapshot, true, now, s.lastOKTimeLocked(key, snapshot), config)
+		if reason == reasonLongNoSuccess && recent.RealSuccessWithin(key, now, config.LongNoSuccessThreshold) {
+			return "", 0
+		}
 	}
 	return reason, score
 }
@@ -438,8 +447,10 @@ func eligibleProbeChannels(channels []*model.Channel) map[int]*model.Channel {
 
 func recentProbeScopes(now time.Time) (probeRecentScopes, error) {
 	scopes := probeRecentScopes{
-		pairs:  map[string]struct{}{},
-		groups: map[string]struct{}{},
+		pairs:                  map[string]struct{}{},
+		groups:                 map[string]struct{}{},
+		latestSuccessByKey:     map[string]int64{},
+		latestSuccessByChannel: map[int]int64{},
 	}
 	if model.DB == nil {
 		return scopes, nil
@@ -447,7 +458,7 @@ func recentProbeScopes(now time.Time) (probeRecentScopes, error) {
 	cutoff := now.Add(-probeActivationWindow).Unix()
 	rows := make([]probeRecentRequestScopeRow, 0)
 	err := model.DB.Model(&model.ModelGatewayUserRequestSummary{}).
-		Select("requested_model, requested_group, selected_group").
+		Select("requested_model, requested_group, selected_group, final_channel_id, final_success, completed_at").
 		Where("completed_at >= ? AND is_health_probe = ?", cutoff, false).
 		Find(&rows).Error
 	if err != nil {
@@ -465,6 +476,18 @@ func recentProbeScopes(now time.Time) (probeRecentScopes, error) {
 			}
 			scopes.groups[group] = struct{}{}
 			scopes.pairs[probeScopeKey(modelName, group)] = struct{}{}
+			if row.FinalSuccess && row.CompletedAt > 0 {
+				scopes.latestSuccessByKey[probeSuccessKey(modelName, group, row.FinalChannelID)] = maxInt64(
+					scopes.latestSuccessByKey[probeSuccessKey(modelName, group, row.FinalChannelID)],
+					row.CompletedAt,
+				)
+			}
+		}
+		if row.FinalSuccess && row.FinalChannelID > 0 && row.CompletedAt > 0 {
+			scopes.latestSuccessByChannel[row.FinalChannelID] = maxInt64(
+				scopes.latestSuccessByChannel[row.FinalChannelID],
+				row.CompletedAt,
+			)
 		}
 	}
 	return scopes, nil
@@ -484,8 +507,32 @@ func (s probeRecentScopes) HasGroup(group string) bool {
 	return ok
 }
 
+func (s probeRecentScopes) RealSuccessWithin(key core.RuntimeKey, now time.Time, threshold time.Duration) bool {
+	if threshold <= 0 {
+		threshold = 30 * time.Minute
+	}
+	latest := int64(0)
+	if key.ChannelID > 0 {
+		latest = maxInt64(latest, s.latestSuccessByChannel[key.ChannelID])
+	}
+	if key.RequestedModel != "" && key.Group != "" && key.ChannelID > 0 {
+		latest = maxInt64(latest, s.latestSuccessByKey[probeSuccessKey(key.RequestedModel, key.Group, key.ChannelID)])
+	}
+	if latest <= 0 {
+		return false
+	}
+	return now.Unix()-latest < int64(threshold.Seconds())
+}
+
 func probeScopeKey(modelName string, group string) string {
 	return strings.TrimSpace(modelName) + "\x00" + strings.TrimSpace(group)
+}
+
+func probeSuccessKey(modelName string, group string, channelID int) string {
+	if channelID <= 0 {
+		return ""
+	}
+	return probeScopeKey(modelName, group) + "\x00" + strconv.Itoa(channelID)
 }
 
 func probeChannelEligible(channel *model.Channel) bool {
@@ -737,4 +784,11 @@ func appendProbeCapabilityPart(fingerprint string, part string) string {
 	}
 	parts = append(parts, part)
 	return strings.Join(parts, "|")
+}
+
+func maxInt64(left int64, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
 }

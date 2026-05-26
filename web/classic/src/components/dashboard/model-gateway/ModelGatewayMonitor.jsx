@@ -812,6 +812,34 @@ function getProbeReason(record) {
   return record?.probe_reason || record?.request_meta?.probe_reason || '';
 }
 
+function formatProbeScope(record, t) {
+  if (!record) return '';
+  const runtimeKey =
+    record.runtime_key || record.request_meta?.runtime_key || {};
+  const model =
+    record.requested_model ||
+    runtimeKey.requested_model ||
+    runtimeKey.upstream_model ||
+    '';
+  const group =
+    record.selected_group ||
+    record.group ||
+    runtimeKey.group ||
+    record.requested_group ||
+    '';
+  const parts = [model, group].filter(Boolean);
+  if (!parts.length) return '';
+  return t('探活对象：{{scope}}', { scope: parts.join(' / ') });
+}
+
+function formatProbeReasonWithScope(record, t) {
+  const reason = formatProbeReason(getProbeReason(record), t);
+  const scope = formatProbeScope(record, t);
+  if (!reason) return scope;
+  if (!scope) return reason;
+  return `${reason} · ${scope}`;
+}
+
 function isDispatch(record) {
   return record?.kind === 'dispatch';
 }
@@ -1575,26 +1603,35 @@ function userRequestHealthTone(status) {
 
 function getUserRequestHealth(data) {
   const summary = userRequestSummaryFromData(data);
-  const requests = Number(summary.total_requests || 0);
-  const successRate = requests > 0 ? Number(summary.user_success_rate || 0) : 1;
+  const requests = Number(summary.user_requests || 0);
+  const completedRequests = Math.max(
+    0,
+    requests - Number(summary.client_aborted || 0),
+  );
+  const successRate =
+    completedRequests > 0 ? Number(summary.user_success_rate || 0) : 1;
   const finalFailures = Number(summary.final_failures || 0);
   const recovered = Number(summary.recovered || 0);
   const emptyOutputs = Number(summary.empty_outputs || 0);
   const experienceIssues = Number(summary.experience_issues || 0);
   const p95TtftMs = Number(summary.p95_ttft_ms || 0);
-  let score = requests > 0 ? 100 : 0;
-  if (requests > 0) {
+  let score = completedRequests > 0 ? 100 : 0;
+  if (completedRequests > 0) {
     score -= Math.min(46, Math.max(0, 0.995 - successRate) * 560);
-    score -= Math.min(16, (finalFailures / Math.max(1, requests)) * 160);
+    score -= Math.min(
+      16,
+      (finalFailures / Math.max(1, completedRequests)) * 160,
+    );
     score -= Math.min(
       18,
-      ((emptyOutputs + experienceIssues) / Math.max(1, requests)) * 120,
+      ((emptyOutputs + experienceIssues) / Math.max(1, completedRequests)) *
+        120,
     );
   }
   if (p95TtftMs >= LATENCY_THRESHOLDS.p95TtftMs.danger) score -= 16;
   else if (p95TtftMs >= LATENCY_THRESHOLDS.p95TtftMs.warning) score -= 8;
   if (recovered > 0)
-    score -= Math.min(8, (recovered / Math.max(1, requests)) * 22);
+    score -= Math.min(8, (recovered / Math.max(1, completedRequests)) * 22);
   score = Math.max(0, Math.min(100, Math.round(score)));
 
   let status = 'operational';
@@ -1873,7 +1910,10 @@ function dynamicBillingOverviewFromData(data) {
   if (!overview || !Array.isArray(overview.groups)) {
     return { enabled: false, groups: [] };
   }
-  return overview;
+  return {
+    ...overview,
+    groups: overview.groups.filter((item) => dynamicBillingDisplayGroup(item)),
+  };
 }
 
 function dynamicBilling7dOverviewFromData(data) {
@@ -1881,7 +1921,26 @@ function dynamicBilling7dOverviewFromData(data) {
   if (!overview || !Array.isArray(overview.groups)) {
     return { enabled: false, groups: [] };
   }
-  return overview;
+  return {
+    ...overview,
+    groups: overview.groups.filter((item) => dynamicBillingDisplayGroup(item)),
+  };
+}
+
+function dynamicBillingDisplayGroup(item) {
+  if (!item) return '';
+  const candidates = [
+    item.display_group,
+    item.current_target_group,
+    ...(Array.isArray(item.target_groups) ? item.target_groups : []),
+    item.policy_group,
+  ];
+  for (const candidate of candidates) {
+    const group = String(candidate || '').trim();
+    if (!group || group.toLowerCase() === 'auto') continue;
+    return group;
+  }
+  return '';
 }
 
 function formatDynamicBillingOverviewStatus(status, t) {
@@ -2821,7 +2880,11 @@ function compactUserRequestId(requestId) {
 function buildUserRequestSparkValues(trends, key) {
   if (!Array.isArray(trends)) return [];
   return trends
-    .filter((item) => Number(item?.requests) > 0)
+    .filter((item) =>
+      key === 'requests'
+        ? Number(item?.requests) > 0
+        : Number(item?.user_requests || 0) > 0,
+    )
     .slice(-16)
     .map((item) => Number(item?.[key]) || 0);
 }
@@ -3072,6 +3135,7 @@ function HealthOverviewCard({ health, summary, trends, t }) {
 }
 
 function UserRequestHealthCard({ health, summary, trends, t }) {
+  const userRequests = Number(summary.user_requests || 0);
   return (
     <DashboardCard
       className={`ct-model-gateway-user-health ct-model-gateway-user-health-${health.tone}`}
@@ -3112,7 +3176,7 @@ function UserRequestHealthCard({ health, summary, trends, t }) {
           <small>{t('最终失败')}</small>
           <strong>{formatNumber(summary.final_failures)}</strong>
           <span>
-            {formatNumber(summary.total_requests)} {t('客户端请求')}
+            {formatNumber(userRequests)} {t('客户端请求')}
           </span>
         </div>
         <div>
@@ -3173,9 +3237,7 @@ function DynamicBillingMiniPanel({
     costPriceValue !== '--' || costRatioValue !== '--'
       ? [costPriceValue, costRatioValue].filter((item) => item && item !== '--').join(' · ')
       : '--';
-  const groupValue = averageMode
-    ? primary?.policy_group || '--'
-    : primary?.current_target_group || primary?.policy_group || '--';
+  const groupValue = dynamicBillingDisplayGroup(primary);
   const referenceModelValue = String(
     primary?.reference_model || primary?.current_model || '',
   ).trim();
@@ -3197,9 +3259,11 @@ function DynamicBillingMiniPanel({
           <span>{title || t('当前动态倍率')}</span>
         </div>
         <div className='ct-model-gateway-dynamic-mini-head-meta'>
-          <span className='ct-model-gateway-dynamic-mini-chip is-group'>
-            {groupValue}
-          </span>
+          {groupValue ? (
+            <span className='ct-model-gateway-dynamic-mini-chip is-group'>
+              {groupValue}
+            </span>
+          ) : null}
           {referenceModelValue ? (
             <span className='ct-model-gateway-dynamic-mini-chip is-model'>
               {referenceModelValue}
@@ -3259,7 +3323,7 @@ function UserRequestTrendPanel({ trends, t }) {
 
 function UserRequestRankPanel({ title, icon: Icon, rows, type, t }) {
   const items = [...(rows || [])]
-    .filter((item) => Number(item?.requests || 0) > 0)
+    .filter((item) => Number(item?.user_requests || 0) > 0)
     .slice(0, 6);
   return (
     <DashboardCard
@@ -3281,7 +3345,10 @@ function UserRequestRankPanel({ title, icon: Icon, rows, type, t }) {
       {items.length ? (
         items.map((item) => {
           const rate = clampRate(item.user_success_rate);
-          const tone = getSuccessTone(item.user_success_rate, item.requests);
+          const tone = getSuccessTone(
+            item.user_success_rate,
+            item.user_requests,
+          );
           return (
             <div
               className='ct-model-gateway-user-rank-row'
@@ -3302,7 +3369,10 @@ function UserRequestRankPanel({ title, icon: Icon, rows, type, t }) {
                 <span
                   className={`ct-model-gateway-leaderboard-rate ct-model-gateway-leaderboard-rate-${tone}`}
                 >
-                  {formatAttemptRate(item.user_success_rate, item.requests)}
+                  {formatAttemptRate(
+                    item.user_success_rate,
+                    item.user_requests,
+                  )}
                 </span>
                 <div className='ct-model-gateway-leaderboard-meter'>
                   <span style={{ width: `${Math.round(rate * 100)}%` }} />
@@ -3310,7 +3380,7 @@ function UserRequestRankPanel({ title, icon: Icon, rows, type, t }) {
               </div>
               <span>{formatLatency(item.p95_ttft_ms)}</span>
               <span>{formatNumber(item.recovered)}</span>
-              <span>{formatNumber(item.requests)}</span>
+              <span>{formatNumber(item.user_requests || item.requests)}</span>
             </div>
           );
         })
@@ -3590,10 +3660,8 @@ function UserRequestRecentTable({
                         )}
                         {(record.is_health_probe ||
                           record.request_meta?.is_health_probe) && (
-                          <small
-                            title={formatProbeReason(getProbeReason(record), t)}
-                          >
-                            {formatProbeReason(getProbeReason(record), t)}
+                          <small title={formatProbeReasonWithScope(record, t)}>
+                            {formatProbeReasonWithScope(record, t)}
                           </small>
                         )}
                       </div>
@@ -3791,14 +3859,18 @@ function UserRequestDashboard({
             label={t('用户成功率')}
             value={formatAttemptRate(
               summary.user_success_rate,
-              summary.total_requests,
+              summary.user_requests,
             )}
             detail={`${formatNumber(summary.successes)} / ${formatNumber(
-              summary.total_requests,
+              Math.max(
+                0,
+                Number(summary.user_requests || 0) -
+                  Number(summary.client_aborted || 0),
+              ),
             )}`}
             tone={getSuccessTone(
               summary.user_success_rate,
-              summary.total_requests,
+              summary.user_requests,
             )}
             sparkValues={buildUserRequestSparkValues(
               trends,
@@ -7398,7 +7470,14 @@ function RuntimeStatusPanel({ runtimeStatus, t, circuitErrorType = '' }) {
             </Typography.Text>
             <Typography.Text type='secondary' size='small'>
               {t('健康均分')} {formatScore(record.health_score_average)} ·{' '}
-              {formatProbeReason(record.probe_trigger_reason, t) || t('无探测')}
+              <Tooltip
+                content={t('探活原因按当前模型/分组运行键统计，不代表整个渠道')}
+              >
+                <span>
+                  {formatProbeReason(record.probe_trigger_reason, t) ||
+                    t('无探测')}
+                </span>
+              </Tooltip>
             </Typography.Text>
           </div>
         ),
@@ -9212,7 +9291,7 @@ function RecordDetailDrawer({
                           label: t('探活原因'),
                           value: (
                             <DetailValue>
-                              {formatProbeReason(probeReason, t)}
+                              {formatProbeReasonWithScope(record, t)}
                             </DetailValue>
                           ),
                         },
@@ -10392,7 +10471,7 @@ export default function ModelGatewayMonitor() {
               {(record.is_health_probe ||
                 record.request_meta?.is_health_probe) && (
                 <div className='text-xs text-semi-color-text-2'>
-                  {formatProbeReason(getProbeReason(record), t)}
+                  {formatProbeReasonWithScope(record, t)}
                 </div>
               )}
             </div>

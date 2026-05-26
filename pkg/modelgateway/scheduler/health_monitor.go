@@ -19,6 +19,7 @@ const (
 	healthEWMAAlpha          = 0.20
 	healthSlowTTFTAlpha      = 0.45
 	realSampleWindow         = 30 * time.Minute
+	probeReasonLongNoSuccess = "long_no_success"
 )
 
 type RuntimeHealthMonitor struct {
@@ -142,6 +143,9 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 		snapshot.LastRealAttemptAt = observedAtUnix
 		if result.Success {
 			snapshot.LastRealSuccessAt = observedAtUnix
+			if strings.TrimSpace(snapshot.ProbeTriggerReason) == probeReasonLongNoSuccess {
+				snapshot.ProbeTriggerReason = ""
+			}
 		} else {
 			snapshot.LastRealFailureAt = observedAtUnix
 		}

@@ -2470,6 +2470,8 @@
     "探活": "Sonde",
     "探活 Worker 数": "Workers de sonde",
     "探活原因": "Raison de la sonde",
+    "探活原因按当前模型/分组运行键统计，不代表整个渠道": "La raison de sonde est suivie pour la clé runtime modèle/groupe actuelle, pas pour tout le canal",
+    "探活对象：{{scope}}": "Cible de sonde : {{scope}}",
     "探活异常": "Anomalie de sonde",
     "探活扫描间隔": "Intervalle de scan des sondes",
     "探活检查记录": "Enregistrements des sondes de santé",

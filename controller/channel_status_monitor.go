@@ -1044,6 +1044,9 @@ func buildChannelMonitorRecentUserRequestStatus(rows []model.ModelGatewayUserReq
 	result := make(map[string][]string)
 	grouped := make(map[string][]model.ModelGatewayUserRequestSummary)
 	for _, row := range channelMonitorUniqueUserRequestRows(rows) {
+		if row.IsHealthProbe {
+			continue
+		}
 		groupName := channelMonitorUserRequestGroup(row)
 		if groupName == "" {
 			continue

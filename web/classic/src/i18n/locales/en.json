@@ -2488,6 +2488,8 @@
     "探活": "Probe",
     "探活 Worker 数": "Probe workers",
     "探活原因": "Probe reason",
+    "探活原因按当前模型/分组运行键统计，不代表整个渠道": "Probe reason is tracked for the current model/group runtime key, not the entire channel",
+    "探活对象：{{scope}}": "Probe target: {{scope}}",
     "探活异常": "Probe issue",
     "探活扫描间隔": "Probe scan interval",
     "探活检查记录": "Probe check records",

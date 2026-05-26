@@ -88,6 +88,7 @@ type ModelGatewayDynamicBillingOverview struct {
 
 type ModelGatewayDynamicBillingGroupOverview struct {
 	PolicyGroup        string   `json:"policy_group"`
+	DisplayGroup       string   `json:"display_group,omitempty"`
 	TargetGroups       []string `json:"target_groups,omitempty"`
 	Status             string   `json:"status"`
 	CurrentRatio       float64  `json:"current_ratio,omitempty"`
@@ -277,6 +278,7 @@ type ModelGatewayUserRequestSummary struct {
 	StartTime          int64   `json:"start_time"`
 	EndTime            int64   `json:"end_time"`
 	TotalRequests      int64   `json:"total_requests"`
+	UserRequests       int64   `json:"user_requests"`
 	ScannedRequests    int     `json:"scanned_requests"`
 	Truncated          bool    `json:"truncated"`
 	Successes          int64   `json:"successes"`
@@ -297,6 +299,7 @@ type ModelGatewayUserRequestTrendPoint struct {
 	BucketStart      int64   `json:"bucket_start"`
 	BucketEnd        int64   `json:"bucket_end"`
 	Requests         int64   `json:"requests"`
+	UserRequests     int64   `json:"user_requests"`
 	Successes        int64   `json:"successes"`
 	FinalFailures    int64   `json:"final_failures"`
 	ClientAborted    int64   `json:"client_aborted"`
@@ -314,6 +317,7 @@ type ModelGatewayUserRequestTrendPoint struct {
 type ModelGatewayUserRequestAggregate struct {
 	Key              string  `json:"key"`
 	Requests         int64   `json:"requests"`
+	UserRequests     int64   `json:"user_requests"`
 	Successes        int64   `json:"successes"`
 	FinalFailures    int64   `json:"final_failures"`
 	ClientAborted    int64   `json:"client_aborted"`
@@ -1610,6 +1614,9 @@ func normalizeModelGatewayDynamicBillingOverviewDisplay(overview *ModelGatewayDy
 	if overview == nil {
 		return
 	}
+	for idx := range overview.Groups {
+		overview.Groups[idx].DisplayGroup = resolveModelGatewayDynamicBillingDisplayGroup(overview.Groups[idx])
+	}
 	referenceModel = strings.TrimSpace(referenceModel)
 	if referenceModel == "" {
 		return
@@ -1629,6 +1636,28 @@ func normalizeModelGatewayDynamicBillingGroupDisplay(group *ModelGatewayDynamicB
 	group.BlendedPricePerM = modelGatewayDynamicBillingPricePerMillion(referenceModel, group.BlendedRatio)
 	group.MinPricePerM = modelGatewayDynamicBillingPricePerMillion(referenceModel, group.MinRatio)
 	group.MaxPricePerM = modelGatewayDynamicBillingPricePerMillion(referenceModel, group.MaxRatio)
+}
+
+func resolveModelGatewayDynamicBillingDisplayGroup(group ModelGatewayDynamicBillingGroupOverview) string {
+	currentGroup := strings.TrimSpace(group.CurrentTargetGroup)
+	if currentGroup != "" && !strings.EqualFold(currentGroup, "auto") {
+		return currentGroup
+	}
+	for _, targetGroup := range group.TargetGroups {
+		targetGroup = strings.TrimSpace(targetGroup)
+		if targetGroup == "" || strings.EqualFold(targetGroup, "auto") {
+			continue
+		}
+		return targetGroup
+	}
+	policyGroup := strings.TrimSpace(group.PolicyGroup)
+	if policyGroup != "" && !strings.EqualFold(policyGroup, "auto") {
+		return policyGroup
+	}
+	if currentGroup != "" {
+		return currentGroup
+	}
+	return policyGroup
 }
 
 func modelGatewayDynamicBillingPricePerMillion(modelName string, ratio float64) float64 {
@@ -1949,13 +1978,11 @@ func firstNonEmptyTrimmed(values ...string) string {
 }
 
 func resolveModelGatewayDynamicPolicyGroup(requestedGroup string, targetGroup string, policyTargets map[string]map[string]struct{}) string {
-	requestedGroup = strings.TrimSpace(requestedGroup)
-	if _, ok := policyTargets[requestedGroup]; ok {
-		return requestedGroup
-	}
 	targetGroup = strings.TrimSpace(targetGroup)
-	if targetGroup == "" {
-		return ""
+	if targetGroup != "" {
+		if _, ok := policyTargets[targetGroup]; ok {
+			return targetGroup
+		}
 	}
 	resolved := ""
 	for policyGroup, targets := range policyTargets {
@@ -1967,7 +1994,14 @@ func resolveModelGatewayDynamicPolicyGroup(requestedGroup string, targetGroup st
 		}
 		resolved = policyGroup
 	}
-	return resolved
+	if resolved != "" {
+		return resolved
+	}
+	requestedGroup = strings.TrimSpace(requestedGroup)
+	if _, ok := policyTargets[requestedGroup]; ok {
+		return requestedGroup
+	}
+	return ""
 }
 
 func normalizeModelGatewayDynamicTargetGroups(policyGroup string, candidateGroups []string) []string {
@@ -2694,14 +2728,23 @@ func modelGatewayUserRequestSummaryFromAccumulator(summary ModelGatewayUserReque
 	if accumulator == nil {
 		return summary
 	}
+	userRequests := accumulator.Requests - accumulator.HealthProbes
+	if userRequests < 0 {
+		userRequests = 0
+	}
+	userCompletedRequests := userRequests - accumulator.ClientAborted
+	if userCompletedRequests < 0 {
+		userCompletedRequests = 0
+	}
 	summary.Successes = accumulator.Successes
 	summary.FinalFailures = accumulator.FinalFailures
 	summary.ClientAborted = accumulator.ClientAborted
 	summary.HealthProbes = accumulator.HealthProbes
+	summary.UserRequests = userRequests
 	summary.Recovered = accumulator.Recovered
 	summary.EmptyOutputs = accumulator.EmptyOutputs
 	summary.ExperienceIssues = accumulator.ExperienceIssues
-	summary.UserSuccessRate = successRateModelGatewayObservability(accumulator.Successes, accumulator.Requests-accumulator.ClientAborted-accumulator.HealthProbes)
+	summary.UserSuccessRate = successRateModelGatewayObservability(accumulator.Successes, userCompletedRequests)
 	summary.AvgDurationMs = averageInt64(accumulator.durationSum, accumulator.durationSamples)
 	summary.P95DurationMs = percentileModelGatewayObservabilityInt64(accumulator.durationValues, 0.95)
 	summary.AvgTTFTMs = averageInt64(accumulator.ttftSum, accumulator.ttftSamples)
@@ -2713,7 +2756,15 @@ func finalizeModelGatewayUserRequestAggregates(accumulators map[string]*modelGat
 	items := make([]ModelGatewayUserRequestAggregate, 0, len(accumulators))
 	for _, accumulator := range accumulators {
 		item := accumulator.ModelGatewayUserRequestAggregate
-		item.UserSuccessRate = successRateModelGatewayObservability(item.Successes, item.Requests-item.ClientAborted-item.HealthProbes)
+		item.UserRequests = item.Requests - item.HealthProbes
+		if item.UserRequests < 0 {
+			item.UserRequests = 0
+		}
+		userCompletedRequests := item.UserRequests - item.ClientAborted
+		if userCompletedRequests < 0 {
+			userCompletedRequests = 0
+		}
+		item.UserSuccessRate = successRateModelGatewayObservability(item.Successes, userCompletedRequests)
 		item.AvgDurationMs = averageInt64(accumulator.durationSum, accumulator.durationSamples)
 		item.P95DurationMs = percentileModelGatewayObservabilityInt64(accumulator.durationValues, 0.95)
 		item.AvgTTFTMs = averageInt64(accumulator.ttftSum, accumulator.ttftSamples)
@@ -2767,6 +2818,10 @@ func modelGatewayUserRequestTrendPointFromAccumulator(bucketStart int64, bucketE
 		return point
 	}
 	point.Requests = accumulator.Requests
+	point.UserRequests = accumulator.Requests - accumulator.HealthProbes
+	if point.UserRequests < 0 {
+		point.UserRequests = 0
+	}
 	point.Successes = accumulator.Successes
 	point.FinalFailures = accumulator.FinalFailures
 	point.ClientAborted = accumulator.ClientAborted
@@ -2774,7 +2829,11 @@ func modelGatewayUserRequestTrendPointFromAccumulator(bucketStart int64, bucketE
 	point.Recovered = accumulator.Recovered
 	point.EmptyOutputs = accumulator.EmptyOutputs
 	point.ExperienceIssues = accumulator.ExperienceIssues
-	point.UserSuccessRate = successRateModelGatewayObservability(accumulator.Successes, accumulator.Requests-accumulator.ClientAborted-accumulator.HealthProbes)
+	userCompletedRequests := point.UserRequests - point.ClientAborted
+	if userCompletedRequests < 0 {
+		userCompletedRequests = 0
+	}
+	point.UserSuccessRate = successRateModelGatewayObservability(accumulator.Successes, userCompletedRequests)
 	point.AvgDurationMs = averageInt64(accumulator.durationSum, accumulator.durationSamples)
 	point.P95DurationMs = percentileModelGatewayObservabilityInt64(accumulator.durationValues, 0.95)
 	point.AvgTTFTMs = averageInt64(accumulator.ttftSum, accumulator.ttftSamples)

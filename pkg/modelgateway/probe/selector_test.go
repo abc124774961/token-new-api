@@ -73,6 +73,67 @@ func TestProbeSelectorSelectsLowScoreRuntimeWithRecentTraffic(t *testing.T) {
 	require.Equal(t, "default", candidates[0].Group)
 }
 
+func TestProbeSelectorDoesNotUseLongNoSuccessWhenChannelRecentlySucceeded(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	channel := seedProbeSelectorChannel(t, db, 1, "recent-success", "default", "gpt-4.1,gpt-5.4", 1)
+	seedProbeSelectorRecentRequestForChannel(t, db, "req-succeeded", "gpt-4.1", "default", "default", channel.Id, now.Add(-time.Minute).Unix(), true)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-5.4", UpstreamModel: "gpt-5.4", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SampleCount:        8,
+		SuccessRate:        0.75,
+		SuccessScore:       0.75,
+		SpeedScore:         0.9,
+		ExperienceScore:    0.95,
+		LastRealAttemptAt:  now.Add(-2 * time.Hour).Unix(),
+		LastRealFailureAt:  now.Add(-2 * time.Hour).Unix(),
+		RealSampleCount30m: 0,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:     time.Second,
+		LowScoreThreshold:      0.62,
+		LongNoSuccessThreshold: 30 * time.Minute,
+	})
+	require.NoError(t, err)
+	require.NotContains(t, probeCandidateReasons(candidates), reasonLongNoSuccess)
+}
+
+func TestProbeSelectorDoesNotUseLongNoSuccessWhenSameRuntimeRecentlySucceededInSummary(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	channel := seedProbeSelectorChannel(t, db, 1, "summary-success", "default", "gpt-5.4", 1)
+	seedProbeSelectorRecentRequestForChannel(t, db, "req-same-key-succeeded", "gpt-5.4", "default", "default", channel.Id, now.Add(-time.Minute).Unix(), true)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-5.4", UpstreamModel: "gpt-5.4", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SampleCount:        5,
+		SuccessRate:        0.8,
+		SuccessScore:       0.8,
+		SpeedScore:         0.9,
+		ExperienceScore:    0.95,
+		LastRealAttemptAt:  now.Add(-2 * time.Hour).Unix(),
+		RealSampleCount30m: 0,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:     time.Second,
+		LowScoreThreshold:      0.62,
+		LongNoSuccessThreshold: 30 * time.Minute,
+	})
+	require.NoError(t, err)
+	require.NotContains(t, probeCandidateReasons(candidates), reasonLongNoSuccess)
+}
+
 func TestProbeSelectorSelectsLowTrafficOnlyForRecentScopes(t *testing.T) {
 	db := setupProbeSelectorTestDB(t)
 	now := time.Now()
@@ -314,6 +375,11 @@ func seedProbeSelectorChannel(t *testing.T, db *gorm.DB, id int, name string, gr
 
 func seedProbeSelectorRecentRequest(t *testing.T, db *gorm.DB, requestID string, modelName string, requestedGroup string, selectedGroup string, completedAt int64) {
 	t.Helper()
+	seedProbeSelectorRecentRequestForChannel(t, db, requestID, modelName, requestedGroup, selectedGroup, 1, completedAt, true)
+}
+
+func seedProbeSelectorRecentRequestForChannel(t *testing.T, db *gorm.DB, requestID string, modelName string, requestedGroup string, selectedGroup string, channelID int, completedAt int64, success bool) {
+	t.Helper()
 	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
 		RequestId:      requestID,
 		CreatedAt:      completedAt,
@@ -322,7 +388,15 @@ func seedProbeSelectorRecentRequest(t *testing.T, db *gorm.DB, requestID string,
 		RequestedModel: modelName,
 		RequestedGroup: requestedGroup,
 		SelectedGroup:  selectedGroup,
-		FinalChannelID: 1,
-		FinalSuccess:   true,
+		FinalChannelID: channelID,
+		FinalSuccess:   success,
 	}).Error)
+}
+
+func probeCandidateReasons(candidates []ProbeCandidate) []string {
+	reasons := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		reasons = append(reasons, candidate.Reason)
+	}
+	return reasons
 }
