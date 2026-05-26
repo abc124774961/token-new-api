@@ -883,6 +883,9 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 			sr.Stop(err)
 		}
 	})
+	if attemptErr := helper.InternalRelayAttemptError(c); attemptErr != nil {
+		return nil, types.NewOpenAIError(attemptErr, types.ErrorCodeChannelResponseTimeExceeded, http.StatusGatewayTimeout)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -129,6 +129,7 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
             isSelfUseMode={isSelfUseMode}
             logout={logout}
             navigate={navigate}
+            currentPath={location.pathname}
             t={t}
           />
         </div>

@@ -36,6 +36,33 @@ func TestBuildResponsesRequestToolTraceForLogDetectsImageGeneration(t *testing.T
 	require.Equal(t, true, trace["has_image_generation_tool"])
 	require.Equal(t, []string{"image_generation"}, trace["tool_types"])
 	require.Contains(t, trace["tools_raw"], "image_generation")
+	require.Empty(t, trace["imagegen_keyword_hits"])
+	require.Equal(t, map[string][]string{
+		"tools":       {"image_generation"},
+		"tool_choice": {"image_generation"},
+	}, trace["imagegen_keyword_sources"])
+}
+
+func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresDeclaredImageGenerationTool(t *testing.T) {
+	req := &dto.OpenAIResponsesRequest{
+		Model:      "gpt-5.5",
+		Tools:      []byte(`[{"type":"image_generation"}]`),
+		ToolChoice: []byte(`{"type":"image_generation"}`),
+		Input: []byte(`[
+			{"role":"user","content":[
+				{"type":"input_text","text":"你的模型版本"}
+			]}
+		]`),
+	}
+
+	trace := BuildResponsesRequestToolTraceForLog(req)
+
+	require.True(t, trace["has_image_generation_tool"].(bool))
+	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
+	require.Empty(t, ResponsesRequestImageGenerationKeywordHits(req))
+	require.Empty(t, trace["imagegen_keyword_hits"])
+	require.Contains(t, trace["imagegen_keyword_sources"], "tools")
+	require.Contains(t, trace["imagegen_keyword_sources"], "tool_choice")
 }
 
 func TestResponsesRequestRequiresCodexImageGenerationToolDetectsCodexSkillIntent(t *testing.T) {
@@ -44,9 +71,6 @@ func TestResponsesRequestRequiresCodexImageGenerationToolDetectsCodexSkillIntent
 		Input: []byte(`[
 			{"role":"user","content":[
 				{"type":"input_text","text":"[$imagegen](/Users/frode.luo/.codex/skills/.system/imagegen/SKILL.md) 风景"}
-			]},
-			{"role":"user","content":[
-				{"type":"input_text","text":"<skill><name>imagegen</name><path>/Users/frode.luo/.codex/skills/.system/imagegen/SKILL.md</path></skill>"}
 			]}
 		]`),
 		ToolChoice: []byte(`"auto"`),
@@ -55,6 +79,30 @@ func TestResponsesRequestRequiresCodexImageGenerationToolDetectsCodexSkillIntent
 	require.True(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
 	require.True(t, ResponsesRequestHasImageGenerationKeywordHits(req))
 	require.Contains(t, ResponsesRequestImageGenerationKeywordHits(req), "$imagegen")
+	require.Equal(t, map[string][]string{
+		"input_text": {"$imagegen", "imagegen"},
+	}, ResponsesRequestRecentInputImageGenerationKeywordSources(req))
+}
+
+func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresInlineSkillDefinitionBlock(t *testing.T) {
+	req := &dto.OpenAIResponsesRequest{
+		Model: "gpt-5.5",
+		Input: []byte(`[
+			{"role":"user","content":[
+				{"type":"input_text","text":"PLEASE IMPLEMENT THIS PLAN"}
+			]},
+			{"role":"user","content":[
+				{"type":"input_text","text":"<skill><name>imagegen</name><path>/Users/frode.luo/.codex/skills/.system/imagegen/SKILL.md</path></skill>"}
+			]}
+		]`),
+		Tools: []byte(`[{"type":"image_generation"}]`),
+	}
+
+	trace := BuildResponsesRequestToolTraceForLog(req)
+
+	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
+	require.Empty(t, trace["imagegen_keyword_hits"])
+	require.Contains(t, trace["imagegen_keyword_sources"], "tools")
 }
 
 func TestResponsesRequestRequiresCodexImageGenerationToolDetectsSkillCatalogKeywordHit(t *testing.T) {

@@ -37,6 +37,7 @@ const UserArea = ({
   isSelfUseMode,
   logout,
   navigate,
+  currentPath,
   t,
 }) => {
   const dropdownRef = useRef(null);
@@ -142,7 +143,8 @@ const UserArea = ({
       </div>
     );
   } else {
-    const showRegisterButton = !isSelfUseMode;
+    const isHomeRoute = currentPath === '/';
+    const showRegisterButton = isHomeRoute || !isSelfUseMode;
 
     const loginButtonClasses = 'ct-login-button flex items-center justify-center';
     const registerButtonClasses =
@@ -164,13 +166,15 @@ const UserArea = ({
         </Link>
         {showRegisterButton && (
           <div className='hidden md:block'>
-            <Link to='/register' className='flex'>
+            <Link to={isHomeRoute ? '/console' : '/register'} className='flex'>
               <Button
                 theme='solid'
                 type='primary'
                 className={registerButtonClasses}
               >
-                <span className={registerButtonTextSpanClass}>{t('注册')}</span>
+                <span className={registerButtonTextSpanClass}>
+                  {isHomeRoute ? t('控制台') : t('注册')}
+                </span>
               </Button>
             </Link>
           </div>

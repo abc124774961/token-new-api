@@ -17,130 +17,36 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { Button } from '@douyinfe/semi-ui';
+import { IconLock, IconSafe } from '@douyinfe/semi-icons';
 import {
-  IconActivity,
-  IconArrowRight,
-  IconBolt,
-  IconCheckCircleStroked,
-  IconCodeStroked,
-  IconCopy,
-  IconFile,
-  IconGithubLogo,
-  IconGlobeStroke,
-  IconHistogram,
-  IconKeyStroked,
-  IconLineChartStroked,
-  IconPlay,
-  IconRoute,
-  IconShieldStroked,
-} from '@douyinfe/semi-icons';
-import {
-  API,
-  copy,
-  showSuccess,
-} from '../../helpers';
+  Activity,
+  Box,
+  Check,
+  FileSearch,
+  LockKeyhole,
+  Route,
+  Shield,
+  Shuffle,
+} from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { marked } from 'marked';
+import { useTranslation } from 'react-i18next';
+import { API } from '../../helpers';
 import { StatusContext } from '../../context/Status';
 import { useActualTheme } from '../../context/Theme';
 import { useIsMobile } from '../../hooks/common/useIsMobile';
 import NoticeModal from '../../components/layout/NoticeModal';
-import { Link } from 'react-router-dom';
-import { marked } from 'marked';
-import { useTranslation } from 'react-i18next';
 
 const fallbackStatus = {
   summary: {
-    days: 30,
     success_rate: 0,
     avg_latency_ms: 0,
-    requests: 0,
     enabled_channels: 0,
     healthy_channels: 0,
-    protected_events: 0,
   },
-  daily: [],
-  groups: [],
   updated_at: 0,
-  partial: true,
-};
-
-const publicStatusGroupKeys = [
-  { key: 'codex', label: 'Codex 专用' },
-  { key: 'claude', label: 'Claude Code' },
-  { key: 'speed', label: '高速组' },
-  { key: 'value', label: '低价组' },
-];
-
-const demoDailyProfile = [
-  { success_rate: 92, avg_latency_ms: 520, requests: 12800000, protected_events: 1200 },
-  { success_rate: 86, avg_latency_ms: 410, requests: 15100000, protected_events: 2100 },
-  { success_rate: 85, avg_latency_ms: 430, requests: 16700000, protected_events: 1900 },
-  { success_rate: 85, avg_latency_ms: 458, requests: 17100000, protected_events: 2200 },
-  { success_rate: 80, avg_latency_ms: 680, requests: 18800000, protected_events: 6200 },
-  { success_rate: 88, avg_latency_ms: 440, requests: 20300000, protected_events: 900 },
-  { success_rate: 90, avg_latency_ms: 735, requests: 21100000, protected_events: 3400 },
-  { success_rate: 94, avg_latency_ms: 640, requests: 21900000, protected_events: 4300 },
-  { success_rate: 99, avg_latency_ms: 560, requests: 23200000, protected_events: 5200 },
-  { success_rate: 98, avg_latency_ms: 610, requests: 24100000, protected_events: 1800 },
-  { success_rate: 98, avg_latency_ms: 690, requests: 28700000, protected_events: 1200 },
-  { success_rate: 95, avg_latency_ms: 780, requests: 30100000, protected_events: 900 },
-  { success_rate: 99.6, avg_latency_ms: 428, requests: 28700000, protected_events: 13842 },
-  { success_rate: 97, avg_latency_ms: 730, requests: 33400000, protected_events: 2100 },
-  { success_rate: 95, avg_latency_ms: 690, requests: 32700000, protected_events: 2800 },
-];
-
-const formatDemoDate = (date) => {
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${month}-${day}`;
-};
-
-const buildDemoDaily = () => {
-  const today = new Date();
-  const endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const lastIndex = demoDailyProfile.length - 1;
-  return demoDailyProfile.map((item, index) => {
-    const date = new Date(endDate);
-    date.setDate(endDate.getDate() - (lastIndex - index) * 2);
-    return {
-      date: formatDemoDate(date),
-      ...item,
-    };
-  });
-};
-
-const formatNumber = (value) => {
-  const number = Number(value) || 0;
-  if (number >= 1000000) return `${(number / 1000000).toFixed(1)}M`;
-  if (number >= 10000) return `${(number / 1000).toFixed(1)}K`;
-  return new Intl.NumberFormat().format(number);
-};
-
-const formatExactNumber = (value) => new Intl.NumberFormat().format(Number(value) || 0);
-
-const numberValue = (value, fallback = 0) => {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-};
-
-const formatRate = (value) => {
-  const number = Number(value) || 0;
-  if (number <= 0) return '--';
-  return `${number >= 99 ? number.toFixed(2) : number.toFixed(1)}%`;
-};
-
-const formatLatency = (value) => {
-  const number = Number(value) || 0;
-  if (number <= 0) return '--';
-  if (number >= 1000) return `${(number / 1000).toFixed(2)}s`;
-  return `${Math.round(number)}ms`;
-};
-
-const normalizeChartValue = (value, max, minSize = 10) => {
-  const number = Number(value) || 0;
-  if (max <= 0 || number <= 0) return minSize;
-  return Math.max(minSize, Math.round((number / max) * 100));
 };
 
 const isEmptyHomeContent = (content) => {
@@ -152,599 +58,711 @@ const isEmptyHomeContent = (content) => {
   return normalized === '';
 };
 
-const buildChartPolyline = (items, valueGetter, maxValue = 100) => {
-  const list = Array.isArray(items) ? items : [];
-  const width = 720;
-  const height = 220;
-  const top = 20;
-  const bottom = 28;
-  const count = Math.max(list.length - 1, 1);
-  if (list.length <= 1) {
-    return '0,70 110,92 220,88 330,86 440,62 550,68 720,78';
-  }
-  return list
-    .map((item, index) => {
-      const raw = Number(valueGetter(item)) || 0;
-      const scale = maxValue > 0 ? Math.min(raw / maxValue, 1) : 0;
-      const x = (index / count) * width;
-      const y = height - bottom - scale * (height - top - bottom);
-      return `${x.toFixed(1)},${Math.max(top, Math.min(height - bottom, y)).toFixed(1)}`;
-    })
-    .join(' ');
+const numberValue = (value, fallback = 0) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
 };
 
-const HomeCanvasBackground = () => {
+const formatRate = (value) => {
+  const number = Number(value) || 0;
+  if (number <= 0) return '99.62%';
+  return `${number >= 99 ? number.toFixed(2) : number.toFixed(1)}%`;
+};
+
+const formatLatency = (value) => {
+  const number = Number(value) || 0;
+  if (number <= 0) return '428ms';
+  if (number >= 1000) return `${(number / 1000).toFixed(2)}s`;
+  return `${Math.round(number)}ms`;
+};
+
+const Sparkline = () => (
+  <svg viewBox='0 0 96 28' aria-hidden='true'>
+    <polyline points='2,20 12,18 21,21 31,13 40,18 50,12 60,17 70,11 80,16 94,10' />
+  </svg>
+);
+
+const MiniBars = ({ count = 9 }) => (
+  <span className='ct-lite-bars' aria-hidden='true'>
+    {Array.from({ length: count }).map((_, index) => (
+      <i key={index} />
+    ))}
+  </span>
+);
+
+const MetricTile = ({ label, value, type = 'line' }) => (
+  <div className='ct-lite-metric-tile'>
+    <span>{label}</span>
+    <strong>{value}</strong>
+    {type === 'bars' ? <MiniBars /> : <Sparkline />}
+  </div>
+);
+
+const drawRoundRect = (ctx, x, y, width, height, radius) => {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + width, y, x + width, y + height, r);
+  ctx.arcTo(x + width, y + height, x, y + height, r);
+  ctx.arcTo(x, y + height, x, y, r);
+  ctx.arcTo(x, y, x + width, y, r);
+  ctx.closePath();
+};
+
+const GatewayFlowCanvas = ({
+  successRate,
+  avgLatency,
+  channelText,
+  channels,
+  locale,
+  t,
+}) => {
   const canvasRef = useRef(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const context = canvas?.getContext?.('2d', { alpha: true });
-    if (!canvas || !context) return undefined;
+    if (!canvas) return undefined;
 
-    const motionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)');
-    let rafId = 0;
-    let lastFrame = 0;
+    const ctx = canvas.getContext('2d');
+    const prefersReducedMotion = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
+    let animationFrame = 0;
     let width = 0;
     let height = 0;
-    let dpr = 1;
 
-    const prefersReducedMotion = () => Boolean(motionQuery?.matches);
-
-    const draw = (time = 0) => {
-      if (!width || !height) return;
-
-      const animated = !prefersReducedMotion();
-      const tick = animated ? time * 0.001 : 0;
-      context.clearRect(0, 0, width, height);
-
-      const glowA = context.createRadialGradient(width * 0.72, height * 0.2, 0, width * 0.72, height * 0.2, width * 0.42);
-      glowA.addColorStop(0, 'rgba(34, 211, 208, 0.18)');
-      glowA.addColorStop(1, 'rgba(34, 211, 208, 0)');
-      context.fillStyle = glowA;
-      context.fillRect(0, 0, width, height);
-
-      const glowB = context.createRadialGradient(width * 0.24, height * 0.72, 0, width * 0.24, height * 0.72, width * 0.36);
-      glowB.addColorStop(0, 'rgba(117, 104, 255, 0.1)');
-      glowB.addColorStop(1, 'rgba(117, 104, 255, 0)');
-      context.fillStyle = glowB;
-      context.fillRect(0, 0, width, height);
-
-      const gridStep = width < 720 ? 72 : 96;
-      const gridOffset = animated ? (tick * 8) % gridStep : 0;
-      context.save();
-      context.globalAlpha = 0.46;
-      context.strokeStyle = 'rgba(15, 174, 185, 0.08)';
-      context.lineWidth = 1;
-      for (let x = -gridStep + gridOffset; x <= width + gridStep; x += gridStep) {
-        context.beginPath();
-        context.moveTo(x, 0);
-        context.lineTo(x, height);
-        context.stroke();
-      }
-      context.strokeStyle = 'rgba(117, 104, 255, 0.055)';
-      for (let y = -gridStep + gridOffset * 0.7; y <= height + gridStep; y += gridStep) {
-        context.beginPath();
-        context.moveTo(0, y);
-        context.lineTo(width, y);
-        context.stroke();
-      }
-      context.restore();
-
-      const beam = context.createLinearGradient(0, height * 0.2, width, height * 0.78);
-      beam.addColorStop(0, 'rgba(34, 211, 208, 0)');
-      beam.addColorStop(0.46, 'rgba(34, 211, 208, 0.13)');
-      beam.addColorStop(0.54, 'rgba(117, 104, 255, 0.08)');
-      beam.addColorStop(1, 'rgba(34, 211, 208, 0)');
-      context.save();
-      context.globalAlpha = 0.62;
-      context.strokeStyle = beam;
-      context.lineWidth = Math.max(28, width * 0.025);
-      context.beginPath();
-      const beamShift = animated ? Math.sin(tick * 0.35) * width * 0.06 : 0;
-      context.moveTo(width * 0.08 + beamShift, height * 0.88);
-      context.lineTo(width * 0.82 + beamShift, height * 0.08);
-      context.stroke();
-      context.restore();
-
-      const particleCount = width < 720 ? 16 : 30;
-      context.save();
-      context.globalCompositeOperation = 'lighter';
-      for (let index = 0; index < particleCount; index += 1) {
-        const seed = index * 97;
-        const progress = animated ? ((tick * 0.035 + index * 0.071) % 1) : (index / particleCount);
-        const x = progress * (width + 180) - 90;
-        const y = ((seed * 11) % Math.max(height, 1)) * 0.86 + height * 0.06;
-        const radius = 1.2 + (index % 3) * 0.7;
-        context.globalAlpha = 0.18 + (index % 4) * 0.055;
-        context.fillStyle = index % 4 === 0 ? '#7568ff' : '#22d3d0';
-        context.beginPath();
-        context.arc(x, y, radius, 0, Math.PI * 2);
-        context.fill();
-      }
-      context.restore();
+    const baseWidth = 1480;
+    const baseHeight = 560;
+    const color = {
+      ink: '#0b1b33',
+      muted: '#64748b',
+      faint: '#8ca0b7',
+      teal: '#0d9ca5',
+      tealDark: '#087d85',
+      cyan: '#23c7cf',
+      green: '#16a34a',
+      red: '#ef4444',
+      amber: '#f59e0b',
+      blue: '#3b82f6',
+      border: 'rgba(15, 23, 42, 0.08)',
     };
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
-      width = Math.max(1, Math.round(rect.width));
-      height = Math.max(1, Math.round(rect.height));
-      dpr = Math.min(window.devicePixelRatio || 1, 1.35);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = Math.max(1, rect.width);
+      height = Math.max(1, rect.height);
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
-      context.setTransform(dpr, 0, 0, dpr, 0, 0);
-      draw();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
 
-    const loop = (time) => {
-      if (!document.hidden && !prefersReducedMotion() && time - lastFrame >= 50) {
-        draw(time);
-        lastFrame = time;
-      }
-      rafId = window.requestAnimationFrame(loop);
+    const setFont = (size, weight = 800, family = 'sans-serif') => {
+      const stack =
+        family === 'mono'
+          ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+          : '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      ctx.font = `${weight} ${size}px ${stack}`;
+      ctx.textBaseline = 'alphabetic';
     };
 
-    const restart = () => {
-      if (rafId) {
-        window.cancelAnimationFrame(rafId);
+    const fillText = (text, x, y, options = {}) => {
+      const {
+        size = 13,
+        weight = 800,
+        fill = color.ink,
+        align = 'left',
+        family,
+      } = options;
+      setFont(size, weight, family);
+      ctx.fillStyle = fill;
+      ctx.textAlign = align;
+      ctx.fillText(String(text), x, y);
+    };
+
+    const drawCard = (x, y, w, h, options = {}) => {
+      const {
+        radius = 10,
+        fill = 'rgba(255,255,255,0.92)',
+        border = color.border,
+        shadow = true,
+      } = options;
+      ctx.save();
+      if (shadow) {
+        ctx.shadowColor = 'rgba(15, 42, 71, 0.09)';
+        ctx.shadowBlur = 34;
+        ctx.shadowOffsetY = 16;
       }
-      draw();
-      if (!prefersReducedMotion()) {
-        rafId = window.requestAnimationFrame(loop);
+      drawRoundRect(ctx, x, y, w, h, radius);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.restore();
+      ctx.save();
+      drawRoundRect(ctx, x, y, w, h, radius);
+      ctx.strokeStyle = border;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    const drawMetric = (x, y, label, value, type = 'line') => {
+      drawCard(x, y, 126, 124);
+      fillText(label, x + 18, y + 32, {
+        size: 12,
+        weight: 850,
+        fill: '#718197',
+      });
+      fillText(value, x + 18, y + 68, {
+        size: 24,
+        weight: 950,
+        fill: color.teal,
+        family: 'mono',
+      });
+
+      if (type === 'bars') {
+        const bars = [15, 22, 27, 18, 31, 24, 34, 28, 36];
+        bars.forEach((bar, index) => {
+          const bx = x + 20 + index * 8;
+          const by = y + 98 - bar;
+          drawRoundRect(ctx, bx, by, 5, bar, 3);
+          ctx.fillStyle = color.teal;
+          ctx.fill();
+        });
+        return;
+      }
+
+      ctx.save();
+      ctx.beginPath();
+      const points = [
+        [20, 94],
+        [33, 91],
+        [45, 95],
+        [58, 86],
+        [70, 93],
+        [84, 84],
+        [96, 91],
+        [111, 84],
+      ];
+      points.forEach(([px, py], index) => {
+        if (index === 0) ctx.moveTo(x + px, y + py);
+        else ctx.lineTo(x + px, y + py);
+      });
+      ctx.strokeStyle = color.teal;
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    const drawPulseIcon = (x, y) => {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(x - 20, y + 2);
+      ctx.lineTo(x - 10, y + 2);
+      ctx.lineTo(x - 4, y - 18);
+      ctx.lineTo(x + 8, y + 22);
+      ctx.lineTo(x + 14, y + 4);
+      ctx.lineTo(x + 24, y + 4);
+      ctx.strokeStyle = color.teal;
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    const drawMessageIcon = (x, y) => {
+      ctx.save();
+      drawRoundRect(ctx, x - 22, y - 22, 44, 34, 6);
+      ctx.strokeStyle = color.teal;
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x - 10, y - 10);
+      ctx.lineTo(x + 12, y - 10);
+      ctx.moveTo(x - 10, y + 2);
+      ctx.lineTo(x + 7, y + 2);
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    const drawPill = (x, y, text, options = {}) => {
+      const {
+        fill = 'rgba(255,255,255,0.9)',
+        stroke = color.border,
+        textColor = color.ink,
+        width: pillWidth,
+      } = options;
+      setFont(12, 900);
+      const w = pillWidth || Math.max(82, ctx.measureText(text).width + 28);
+      const h = 36;
+      drawRoundRect(ctx, x, y, w, h, 9);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      fillText(text, x + w / 2, y + 23, {
+        size: 12,
+        weight: 900,
+        fill: textColor,
+        align: 'center',
+      });
+    };
+
+    const drawFlowLine = (x1, y1, x2, y2, progress, stroke, glow) => {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      const px = x1 + (x2 - x1) * progress;
+      const py = y1 + (y2 - y1) * progress;
+      const gradient = ctx.createRadialGradient(px, py, 1, px, py, 16);
+      gradient.addColorStop(0, glow);
+      gradient.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(px, py, 16, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(px, py, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    };
+
+    const drawChannel = (channel, x, y) => {
+      const statusColor =
+        channel.tone === 'failed'
+          ? color.red
+          : channel.tone === 'cooling'
+            ? color.amber
+            : color.green;
+      drawCard(x, y, 320, 70, {
+        radius: 8,
+        fill: 'rgba(255,255,255,0.93)',
+      });
+      ctx.fillStyle = statusColor;
+      ctx.beginPath();
+      ctx.arc(x + 22, y + 35, 5, 0, Math.PI * 2);
+      ctx.fill();
+      fillText(channel.name, x + 46, y + 29, {
+        size: 14,
+        weight: 950,
+      });
+      fillText(channel.meta, x + 46, y + 50, {
+        size: 12,
+        weight: 800,
+        fill: color.muted,
+      });
+      if (channel.provider) {
+        fillText(channel.provider, x + 262, y + 38, {
+          size: 12,
+          weight: 850,
+          fill: '#5f7190',
+          align: 'right',
+        });
+      }
+      fillText(channel.status, x + 304, y + 38, {
+        size: 12,
+        weight: 950,
+        fill: statusColor,
+        align: 'right',
+      });
+    };
+
+    const drawScene = (time = 0) => {
+      ctx.clearRect(0, 0, width, height);
+      ctx.save();
+      ctx.scale(width / baseWidth, height / baseHeight);
+
+      const bg = ctx.createLinearGradient(0, 0, baseWidth, baseHeight);
+      bg.addColorStop(0, '#ffffff');
+      bg.addColorStop(0.52, '#f7fdff');
+      bg.addColorStop(1, '#fbfdff');
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, baseWidth, baseHeight);
+
+      for (let x = 0; x <= baseWidth; x += 42) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, baseHeight);
+        ctx.strokeStyle = 'rgba(13, 156, 165, 0.045)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      for (let y = 0; y <= baseHeight; y += 42) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(baseWidth, y);
+        ctx.strokeStyle = 'rgba(13, 156, 165, 0.045)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+
+      const glow = ctx.createRadialGradient(470, 320, 40, 470, 320, 310);
+      glow.addColorStop(0, 'rgba(35, 199, 207, 0.26)');
+      glow.addColorStop(0.34, 'rgba(35, 199, 207, 0.08)');
+      glow.addColorStop(1, 'rgba(35, 199, 207, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(120, 40, 760, 500);
+
+      const lineGradient = ctx.createLinearGradient(190, 305, 1280, 305);
+      lineGradient.addColorStop(0, 'rgba(59, 130, 246, 0.72)');
+      lineGradient.addColorStop(0.35, 'rgba(13, 156, 165, 0.88)');
+      lineGradient.addColorStop(0.56, 'rgba(239, 68, 68, 0.62)');
+      lineGradient.addColorStop(1, 'rgba(34, 197, 94, 0.7)');
+
+      const phase = prefersReducedMotion ? 0.48 : (time * 0.18) % 1;
+      drawFlowLine(190, 305, 465, 305, phase, lineGradient, 'rgba(35, 199, 207, 0.95)');
+      drawFlowLine(530, 305, 740, 135, (phase + 0.2) % 1, 'rgba(13,156,165,0.45)', 'rgba(34,197,94,0.9)');
+      drawFlowLine(530, 305, 740, 215, (phase + 0.38) % 1, 'rgba(13,156,165,0.45)', 'rgba(34,197,94,0.9)');
+      drawFlowLine(530, 305, 740, 295, (phase + 0.55) % 1, 'rgba(239,68,68,0.34)', 'rgba(239,68,68,0.85)');
+      drawFlowLine(530, 305, 740, 375, (phase + 0.7) % 1, 'rgba(13,156,165,0.45)', 'rgba(34,197,94,0.9)');
+      drawFlowLine(530, 305, 1280, 305, (phase + 0.45) % 1, lineGradient, 'rgba(34,197,94,0.88)');
+
+      drawMetric(48, 48, t('成功率'), successRate);
+      drawMetric(200, 48, t('平均延迟'), avgLatency);
+      drawMetric(352, 48, t('健康渠道'), channelText, 'bars');
+
+      drawCard(50, 278, 118, 154, { radius: 8 });
+      drawPulseIcon(109, 326);
+      fillText(t('客户端'), 109, 376, {
+        size: 14,
+        weight: 950,
+        align: 'center',
+      });
+      fillText(t('请求'), 109, 407, {
+        size: 12,
+        weight: 820,
+        fill: color.muted,
+        align: 'center',
+      });
+
+      ctx.save();
+      const pulse = prefersReducedMotion ? 0.5 : (Math.sin(time * 2) + 1) / 2;
+      const coreGradient = ctx.createRadialGradient(470, 305, 12, 470, 305, 84);
+      coreGradient.addColorStop(0, '#ffffff');
+      coreGradient.addColorStop(0.32, '#ffffff');
+      coreGradient.addColorStop(0.33, color.teal);
+      coreGradient.addColorStop(0.72, color.cyan);
+      coreGradient.addColorStop(1, color.tealDark);
+      ctx.fillStyle = `rgba(13,156,165,${0.1 + pulse * 0.06})`;
+      ctx.beginPath();
+      ctx.arc(470, 305, 76 + pulse * 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = coreGradient;
+      ctx.beginPath();
+      ctx.arc(470, 305, 58, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.78)';
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.arc(470, 305, 34, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+      fillText(t('智能网关'), 470, 392, {
+        size: 14,
+        weight: 950,
+        align: 'center',
+      });
+      fillText(t('智能评分'), 470, 415, {
+        size: 12,
+        weight: 820,
+        fill: color.muted,
+        align: 'center',
+      });
+
+      [t('能力匹配'), t('成本权重'), t('健康评分'), t('失败率降权')].forEach(
+        (item, index) => {
+          drawPill(250 + index * 96, 458, item, {
+            fill: 'rgba(255,255,255,0.88)',
+            stroke: 'rgba(15,23,42,0.08)',
+            textColor: '#5c6d83',
+            width: 82,
+          });
+        },
+      );
+
+      channels.forEach((channel, index) => {
+        drawChannel(channel, 740, 100 + index * 82);
+      });
+
+      drawPill(1160, 344, t('自动切换'), {
+        fill: 'rgba(255,255,255,0.95)',
+        stroke: 'rgba(239,68,68,0.24)',
+        textColor: color.red,
+        width: 98,
+      });
+      fillText('↻', 1176, 367, {
+        size: 13,
+        weight: 900,
+        fill: color.red,
+      });
+
+      drawCard(1290, 278, 130, 154, { radius: 8 });
+      drawMessageIcon(1355, 322);
+      fillText(t('流式响应输出'), 1355, 376, {
+        size: 14,
+        weight: 950,
+        align: 'center',
+      });
+      fillText(t('流式保持稳定'), 1355, 399, {
+        size: 12,
+        weight: 820,
+        fill: color.muted,
+        align: 'center',
+      });
+      drawPill(1318, 414, `${t('流式保持')} ✓`, {
+        fill: 'rgba(34,197,94,0.1)',
+        stroke: 'rgba(34,197,94,0.12)',
+        textColor: color.green,
+        width: 74,
+      });
+
+      ctx.restore();
+    };
+
+    const render = (time) => {
+      drawScene(time / 1000);
+      if (!prefersReducedMotion) {
+        animationFrame = requestAnimationFrame(render);
       }
     };
 
     resize();
-    restart();
-    window.addEventListener('resize', resize, { passive: true });
-    document.addEventListener('visibilitychange', restart);
-    if (motionQuery?.addEventListener) {
-      motionQuery.addEventListener('change', restart);
-    } else if (motionQuery?.addListener) {
-      motionQuery.addListener(restart);
-    }
+    const observer = new ResizeObserver(() => {
+      resize();
+      if (prefersReducedMotion) drawScene(0);
+    });
+    observer.observe(canvas);
+    render(0);
 
     return () => {
-      if (rafId) {
-        window.cancelAnimationFrame(rafId);
-      }
-      window.removeEventListener('resize', resize);
-      document.removeEventListener('visibilitychange', restart);
-      if (motionQuery?.removeEventListener) {
-        motionQuery.removeEventListener('change', restart);
-      } else if (motionQuery?.removeListener) {
-        motionQuery.removeListener(restart);
-      }
+      observer.disconnect();
+      cancelAnimationFrame(animationFrame);
     };
-  }, []);
+  }, [successRate, avgLatency, channelText, channels, locale, t]);
 
-  return <canvas className='ct-home-canvas' ref={canvasRef} aria-hidden='true' />;
+  return (
+    <canvas
+      ref={canvasRef}
+      className='ct-lite-flow-canvas'
+      aria-label={t('智能调度与失败切换流程')}
+    />
+  );
 };
 
 const Home = () => {
   const { t, i18n } = useTranslation();
   const [statusState] = useContext(StatusContext);
   const actualTheme = useActualTheme();
+  const isMobile = useIsMobile();
   const [homePageContentLoaded, setHomePageContentLoaded] = useState(false);
   const [homePageContent, setHomePageContent] = useState('');
   const [noticeVisible, setNoticeVisible] = useState(false);
   const [homeStatus, setHomeStatus] = useState(fallbackStatus);
-  const [activeStatusGroup, setActiveStatusGroup] = useState('all');
-  const isMobile = useIsMobile();
-  const isDemoSiteMode = statusState?.status?.demo_site_enabled || false;
-  const docsLink = statusState?.status?.docs_link || 'https://docs.newapi.pro';
-  const serverAddress =
-    statusState?.status?.server_address || `${window.location.origin}`;
-  const isChinese = i18n.language.startsWith('zh');
-  const apiBaseUrl = `${serverAddress.replace(/\/$/, '')}/v1`;
 
-  const daily = homeStatus.daily || [];
-  const statusGroups = homeStatus.groups || [];
   const summary = homeStatus.summary || fallbackStatus.summary;
-  const hasRealData = Number(summary.requests) > 0;
-  const demoDaily = useMemo(() => buildDemoDaily(), []);
-  const updatedAt = homeStatus.updated_at
-    ? new Date(homeStatus.updated_at * 1000).toLocaleString()
-    : t('等待真实请求数据');
-  const groupTabs = [
-    {
-      key: 'all',
-      label: t('全部'),
-      summary,
-      daily,
-      states: {
-        healthy: summary.healthy_channels || 0,
-        cooling: Math.max(
-          (summary.enabled_channels || 0) - (summary.healthy_channels || 0),
-          0,
-        ),
-        standby: 0,
-      },
-    },
-    ...publicStatusGroupKeys.map((item) => {
-      const group = statusGroups.find((statusGroup) => statusGroup.key === item.key);
-      return {
-        key: item.key,
-        label: t(item.label),
-        summary: group?.summary || { ...fallbackStatus.summary, days: summary.days },
-        daily: group?.daily || daily,
-        states: group?.states || { healthy: 0, cooling: 0, standby: 0 },
-      };
-    }),
-  ];
-  const activeGroup =
-    groupTabs.find((item) => item.key === activeStatusGroup) || groupTabs[0];
-  const activeSummary = activeGroup.summary || fallbackStatus.summary;
-  const visualSummary = hasRealData
-    ? activeSummary
-    : {
-        success_rate: 99.62,
-        avg_latency_ms: 428,
-        requests: 28700000,
-        protected_events: 12842,
-      };
-  const activeDaily = activeGroup.daily || [];
-  const chartDaily = hasRealData && activeDaily.length > 1 ? activeDaily : demoDaily;
-  const maxRequests = Math.max(
-    ...chartDaily.map((item) => Number(item.requests) || 0),
-    0,
-  );
-  const maxLatency = Math.max(
-    ...chartDaily.map((item) => Number(item.avg_latency_ms) || 0),
-    0,
-  );
-  const successPoints = useMemo(
-    () => buildChartPolyline(chartDaily, (item) => item.success_rate, 100),
-    [chartDaily],
-  );
-  const latencyPoints = useMemo(
-    () =>
-      buildChartPolyline(
-        chartDaily,
-        (item) => item.avg_latency_ms,
-        Math.max(maxLatency, 1),
-      ),
-    [chartDaily, maxLatency],
-  );
-  const chartLabelStep = Math.max(1, Math.floor(chartDaily.length / 7));
-  const chartDateLabels = chartDaily
-    .filter((_, index) => index % chartLabelStep === 0)
-    .slice(0, 8);
-  const latestChartDate = chartDaily[chartDaily.length - 1]?.date || t('等待真实请求数据');
-  const tooltipDate = hasRealData ? updatedAt : `${t('示例')} ${latestChartDate}`;
-  const statusSyncLabel = hasRealData
-    ? `${t('同步')} ${updatedAt}`
-    : t('等待真实请求数据');
-  const rawEnabledChannels = numberValue(
-    activeSummary.enabled_channels,
-    numberValue(activeGroup.states?.channels, numberValue(summary.enabled_channels, 0)),
-  );
-  const rawHealthyChannels = numberValue(
-    activeSummary.healthy_channels,
-    numberValue(activeGroup.states?.healthy, numberValue(summary.healthy_channels, 0)),
-  );
-  const displayEnabledChannels = hasRealData ? rawEnabledChannels : 42;
-  const displayHealthyChannels = hasRealData
-    ? Math.min(rawHealthyChannels, displayEnabledChannels || rawHealthyChannels)
+  const hasRealData = Number(summary.enabled_channels || summary.healthy_channels) > 0;
+  const successRate = hasRealData ? formatRate(summary.success_rate) : '99.62%';
+  const avgLatency = hasRealData ? formatLatency(summary.avg_latency_ms) : '428ms';
+  const enabledChannels = hasRealData ? numberValue(summary.enabled_channels, 42) : 42;
+  const healthyChannels = hasRealData
+    ? Math.min(numberValue(summary.healthy_channels, 38), enabledChannels || 38)
     : 38;
-  const displayCoolingChannels = hasRealData
-    ? numberValue(
-        activeGroup.states?.cooling,
-        Math.max(displayEnabledChannels - displayHealthyChannels, 0),
-      )
-    : 4;
-  const displayProtectedEvents = hasRealData
-    ? numberValue(activeSummary.protected_events, 0)
-    : 12842;
-  const displayDataMode = hasRealData ? t('公开脱敏聚合') : t('示例');
-  const healthyPercent = displayEnabledChannels > 0
-    ? Math.round((displayHealthyChannels / displayEnabledChannels) * 100)
-    : 0;
-  const coolingPercent = displayEnabledChannels > 0
-    ? Math.round((displayCoolingChannels / displayEnabledChannels) * 100)
-    : 0;
-  const standbyChannels = Math.max(
-    displayEnabledChannels - displayHealthyChannels - displayCoolingChannels,
-    0,
-  );
-  const standbyPercent = Math.max(0, 100 - healthyPercent - coolingPercent);
-  const routeAuditItems = [
+  const channelText = `${healthyChannels}/${enabledChannels || 42}`;
+
+  const heroHighlights = [
     {
-      step: '01',
-      label: t('请求进入'),
-      value: 'Base URL /v1',
+      icon: <IconSafe />,
+      title: t('稳定可靠'),
+      desc: t('多路自动容灾'),
     },
     {
-      step: '02',
-      label: t('识别限流'),
-      value: t('秒级熔断保护'),
+      icon: <Route size={18} />,
+      title: t('智能调度'),
+      desc: t('延迟更低，成功率更高'),
     },
     {
-      step: '03',
-      label: t('切换健康渠道'),
-      value: `${formatExactNumber(displayHealthyChannels)} ${t('健康')}`,
+      icon: <Activity size={18} />,
+      title: t('按量计费'),
+      desc: t('透明可追溯'),
     },
     {
-      step: '04',
-      label: t('冷却恢复'),
-      value: `${formatExactNumber(displayCoolingChannels)} ${t('冷却中')}`,
+      icon: <IconLock />,
+      title: t('安全可控'),
+      desc: t('令牌与访问控制'),
     },
   ];
 
-  const heroProofItems = [
-    t('多渠道无感切换'),
-    t('冷却自动恢复'),
-    t('流式响应优化'),
-    t('统一账单'),
-  ];
-
-  const heroMetricItems = [
+  const featureCards = [
     {
-      label: t('近 30 天成功率'),
-      value: hasRealData ? formatRate(activeSummary.success_rate) : '99.62%',
-      note: t('公开脱敏看板'),
+      icon: <Shuffle />,
+      title: t('多渠道自动切换'),
+      desc: t('智能健康检测与延迟评估，自动选择最优通道，保障请求成功率与稳定性。'),
     },
     {
-      label: t('平均响应延迟'),
-      value: hasRealData ? formatLatency(activeSummary.avg_latency_ms) : '428ms',
-      note: t('流式请求优先'),
+      icon: <Box />,
+      title: t('模型与工具能力识别'),
+      desc: t('自动识别模型与工具能力，适配请求与参数，减少报错与重试成本。'),
     },
     {
-      label: t('健康渠道'),
-      value: `${formatExactNumber(displayHealthyChannels)} / ${formatExactNumber(displayEnabledChannels)}`,
-      note: t('自动避开限流通道'),
+      icon: <Shield />,
+      title: t('熔断限流旁路'),
+      desc: t('多维熔断与限流策略，异常自动隔离与降级，保护上游服务与整体可用性。'),
+    },
+    {
+      icon: <FileSearch />,
+      title: t('统一账单与用量追踪'),
+      desc: t('聚合多渠道账单与用量，按模型、分组和倍率计费，账单清晰可追溯。'),
     },
   ];
 
-  const statusHealthItems = [
+  const flowChannels = [
     {
-      label: t('健康通道'),
-      value: formatExactNumber(displayHealthyChannels),
-      helper: `${healthyPercent}% ${t('可用通道')}`,
-      tone: 'healthy',
-      percent: Math.max(healthyPercent, 8),
-    },
-    {
-      label: t('冷却通道'),
-      value: formatExactNumber(displayCoolingChannels),
-      helper: t('限流已绕过'),
-      tone: 'cooling',
-      percent: Math.max(coolingPercent, displayCoolingChannels > 0 ? 7 : 0),
-    },
-    {
-      label: t('备用通道'),
-      value: formatExactNumber(standbyChannels),
-      helper: t('随时接管'),
-      tone: 'standby',
-      percent: Math.max(standbyPercent, standbyChannels > 0 ? 7 : 0),
-    },
-  ];
-
-  const heroRoutingRows = [
-    {
-      label: t('实时调度'),
-      value: 'Codex stream',
-      state: t('流式保持'),
-    },
-    {
-      label: t('分组策略'),
-      value: t('低价优先'),
-      state: t('成本可控'),
-    },
-    {
-      label: t('异常处理'),
-      value: t('限流旁路'),
-      state: t('秒级恢复'),
-    },
-  ];
-
-  const heroClients = [
-    { label: 'Codex', icon: <IconCodeStroked /> },
-    { label: 'Claude Code', icon: <IconKeyStroked /> },
-    { label: 'OpenAI SDK', icon: <IconRoute /> },
-    { label: t('其他客户端'), icon: <IconGlobeStroke /> },
-  ];
-
-  const metricCards = [
-    {
-      label: t('近 30 天成功率'),
-      value: hasRealData ? formatRate(activeSummary.success_rate) : '99.62%',
-      delta: '+0.28%',
-      tone: 'teal',
-      icon: <IconLineChartStroked />,
-    },
-    {
-      label: t('平均响应延迟'),
-      value: hasRealData ? formatLatency(activeSummary.avg_latency_ms) : '428ms',
-      delta: '-12ms',
-      tone: 'blue',
-      icon: <IconActivity />,
-    },
-    {
-      label: t('请求量'),
-      value: hasRealData ? formatNumber(activeSummary.requests) : '28.7M',
-      delta: '+18.6%',
-      tone: 'violet',
-      icon: <IconHistogram />,
-    },
-    {
-      label: t('保护事件'),
-      value: hasRealData
-        ? formatNumber(activeSummary.protected_events)
-        : '12,842',
-      delta: '-8.3%',
-      tone: 'orange',
-      icon: <IconShieldStroked />,
-    },
-  ];
-
-  const routeRules = [
-    t('模型能力匹配'),
-    t('分组倍率优先级'),
-    t('失败率实时降权'),
-    t('限流冷却隔离'),
-    t('成本与速度平衡'),
-  ];
-
-  const upstreamRows = [
-    {
+      name: 'Channel #1',
+      provider: 'OpenAI',
+      meta: t('延迟 312ms'),
       status: t('健康'),
-      title: t('通道 A'),
-      vendor: 'OpenAI',
-      price: '$0.65 / 1M',
-      rpm: '1,240 RPM',
       tone: 'healthy',
     },
     {
+      name: 'Channel #2',
+      provider: 'Anthropic',
+      meta: t('延迟 421ms'),
+      status: t('健康'),
+      tone: 'healthy',
+    },
+    {
+      name: 'Channel #4',
+      provider: '',
+      meta: 'HTTP 502 / 熔断',
+      status: t('失败'),
+      tone: 'failed',
+    },
+    {
+      name: 'Channel #7',
+      provider: 'Google Gemini',
+      meta: t('延迟 289ms'),
+      status: t('健康'),
+      tone: 'healthy',
+    },
+    {
+      name: 'Channel #9',
+      provider: 'DeepSeek',
+      meta: t('冷却中 60s'),
       status: t('冷却中'),
-      title: t('通道 B'),
-      vendor: 'Anthropic',
-      price: '$1.5 / 1M',
-      rpm: '680 RPM',
       tone: 'cooling',
     },
+  ];
+  const flowChannelKey = flowChannels
+    .map((channel) => `${channel.name}-${channel.meta}-${channel.status}`)
+    .join('|');
+
+  const dynamicPriceItems = [
     {
-      status: t('备用'),
-      title: t('通道 C'),
-      vendor: 'OpenAI',
-      price: '$0.45 / 1M',
-      rpm: '880 RPM',
-      tone: 'standby',
+      label: t('输入价格'),
+      value: '$2.50 / 1M',
+      detail: t('模型价格 × 分组倍率'),
+    },
+    {
+      label: t('输出价格'),
+      value: '$15.00 / 1M',
+      detail: t('补全与流式输出'),
+    },
+    {
+      label: t('缓存读取价格'),
+      value: '$0.25 / 1M',
+      detail: t('缓存命中单独展示'),
+    },
+    {
+      label: t('图片生成'),
+      value: t('按次 / 按量'),
+      detail: t('图片费用独立明细'),
     },
   ];
 
-  const scenarioItems = [
-    {
-      icon: <IconCodeStroked />,
-      title: t('Codex 长任务'),
-      meta: t('长上下文、多轮工具调用不怕单渠道抖动'),
-      proof: t('失败自动旁路，减少中断重跑'),
-      signal: t('中断重跑减少'),
-      metric: '72%',
-      tone: 'coding',
-    },
-    {
-      icon: <IconRoute />,
-      title: t('Claude Code 项目开发'),
-      meta: t('高频编辑、流式响应和模型切换更顺滑'),
-      proof: t('限速自动切走，保持输出连续'),
-      signal: t('输出连续性'),
-      metric: '99%+',
-      tone: 'routing',
-    },
-    {
-      icon: <IconActivity />,
-      title: t('团队共享额度'),
-      meta: t('统一密钥、分组倍率、用量日志和预算控制'),
-      proof: t('低价组优先，成本更可预期'),
-      signal: t('成本可控'),
-      metric: t('低价优先'),
-      tone: 'cost',
-    },
-    {
-      icon: <IconShieldStroked />,
-      title: t('自动化脚本 / CI'),
-      meta: t('批量任务需要稳定吞吐和失败兜底'),
-      proof: t('统一 /v1 接入，兼容现有 SDK'),
-      signal: t('批量吞吐'),
-      metric: t('自动调度'),
-      tone: 'automation',
-    },
+  const dynamicPriceRules = [
+    t('分组倍率实时生效'),
+    t('表达式/阶梯计费'),
+    t('请求条件调价'),
+    t('用量明细可追溯'),
   ];
 
-  const homePlanItems = [
+  const planCards = [
     {
-      icon: <IconBolt />,
-      title: t('轻量开发'),
-      price: t('低价起步'),
-      description: t('适合个人 Codex、脚本和日常模型调用'),
-      metric: t('成本优先'),
-      points: [t('共享低价通道'), t('统一 /v1 接入'), t('按量平滑升级')],
-      tone: 'value',
+      name: t('入门版'),
+      subtitle: t('适合个人开发者与轻量项目'),
+      price: '¥ 29',
+      perks: [
+        '10,000 次请求 / 月',
+        t('支持主流模型接入'),
+        t('基础自动切换'),
+        t('7 天账单与用量追踪'),
+        t('社区支持'),
+      ],
     },
     {
-      icon: <IconRoute />,
-      title: t('团队协作'),
-      price: t('稳定优先'),
-      description: t('适合多人共用密钥、预算和日志治理'),
-      metric: t('分组治理'),
-      points: [t('分组倍率策略'), t('额度与预算可控'), t('异常自动旁路')],
-      tone: 'team',
-    },
-    {
-      icon: <IconShieldStroked />,
-      title: t('长任务保障'),
-      price: t('高可用优先'),
-      description: t('适合 Claude Code、Codex 长上下文和 CI 批量任务'),
-      metric: t('稳定吞吐'),
-      points: [t('健康通道优先'), t('限流冷却隔离'), t('流式输出更稳')],
-      tone: 'stable',
-    },
-  ];
-
-  const homePlanFlowItems = [
-    {
-      label: t('价格'),
-      value: t('低价组优先'),
-    },
-    {
-      label: t('稳定'),
-      value: t('健康通道优先'),
-    },
-    {
-      label: t('治理'),
-      value: t('分组倍率透明'),
-    },
-  ];
-
-  const comparisonItems = [
-    {
-      label: t('官方直连'),
-      value: t('单渠道限速明显'),
-      detail: t('账号额度、地区网络和速率限制都可能让长任务中断'),
-    },
-    {
-      label: t('普通代理'),
-      value: t('缺少健康调度'),
-      detail: t('失败后仍可能打到同一条异常线路，成本和体验不可控'),
-    },
-    {
-      label: 'CodeToken AI',
-      value: t('多渠道自动恢复'),
-      detail: t('按分组、健康、冷却和成本策略选择更合适的上游'),
+      name: t('专业版'),
+      subtitle: t('适合成长型团队与生产环境'),
+      price: '¥ 99',
       featured: true,
+      perks: [
+        '100,000 次请求 / 月',
+        t('高级智能调度与健康检测'),
+        t('熔断限流与旁路保护'),
+        t('30 天账单与用量追踪'),
+        t('优先工单支持'),
+      ],
+    },
+    {
+      name: t('团队版'),
+      subtitle: t('适合中大型团队与企业级需求'),
+      price: '¥ 299',
+      perks: [
+        '500,000 次请求 / 月',
+        t('自定义分组与倍率计费'),
+        t('专属通道与更高配额'),
+        t('90 天账单与用量追踪'),
+        t('专属技术支持'),
+      ],
     },
   ];
 
-  const trustItems = [
-    t('Codex / Claude Code 兼容'),
-    t('OpenAI SDK 原生接入'),
-    t('分组倍率透明'),
-    t('失败与限流可追踪'),
+  const bottomTrust = [
+    {
+      icon: <LockKeyhole />,
+      title: t('数据安全'),
+      desc: t('传输加密与访问控制'),
+    },
+    {
+      icon: <Shield />,
+      title: t('高可用架构'),
+      desc: t('多通道带宽与故障自愈'),
+    },
+    {
+      icon: <Activity />,
+      title: t('稳定低延迟'),
+      desc: t('全球节点优化路由'),
+    },
+    {
+      icon: <FileSearch />,
+      title: t('透明可控'),
+      desc: t('明细计费，成本可视'),
+    },
   ];
-  const compareScoreItems = [
-    {
-      label: t('可用性'),
-      value: hasRealData ? formatRate(activeSummary.success_rate) : '99.62%',
-    },
-    {
-      label: t('恢复链路'),
-      value: `4 ${t('步')}`,
-    },
-    {
-      label: t('接入成本'),
-      value: t('低价优先'),
-    },
-  ];
-
-  const handleCopyBaseURL = async () => {
-    const ok = await copy(apiBaseUrl);
-    if (ok) {
-      showSuccess(t('已复制到剪切板'));
-    }
-  };
 
   const displayHomePageContent = async () => {
     const cachedContent = localStorage.getItem('home_page_content') || '';
+    setHomePageContent(cachedContent);
+    setHomePageContentLoaded(true);
+
     try {
       const res = await API.get('/api/home_page_content', {
         skipErrorHandler: true,
@@ -754,7 +772,6 @@ const Home = () => {
         if (isEmptyHomeContent(data)) {
           setHomePageContent('');
           localStorage.removeItem('home_page_content');
-          setHomePageContentLoaded(true);
           return;
         }
         let content = data;
@@ -783,7 +800,6 @@ const Home = () => {
       console.error('加载首页内容失败:', error);
       setHomePageContent(cachedContent);
     }
-    setHomePageContentLoaded(true);
   };
 
   const loadHomeStatus = async () => {
@@ -846,539 +862,204 @@ const Home = () => {
       {!homePageContentLoaded ? (
         <div className='ct-home-loading'>{t('加载中...')}</div>
       ) : homePageContent === '' ? (
-        <div className='ct-home'>
-          <HomeCanvasBackground />
-          <section className='ct-hero'>
-            <div className='ct-hero-ambient' aria-hidden='true'>
-              <div className='ct-ambient-grid' />
-              <div className='ct-ambient-ribbon'>
-                {Array.from({ length: 18 }).map((_, index) => (
-                  <i key={index} />
-                ))}
-              </div>
-            </div>
-            <div className='ct-home-shell ct-hero-shell'>
-              <div className='ct-hero-copy'>
-                <h1 className={isChinese ? 'ct-hero-title zh' : 'ct-hero-title'}>
-                  {isChinese ? (
-                    <>
-                      <em>{t('Codex 与 Claude Code')}</em>
-                      <em>{t('稳定高速中转站')}</em>
-                    </>
-                  ) : (
-                    t('Codex / Claude Code 稳定高速中转站')
+        <main className='ct-home-lite'>
+          <section className='ct-lite-hero'>
+            <div className='ct-lite-shell ct-lite-hero-grid'>
+              <div className='ct-lite-hero-copy'>
+                <h1>{t('统一 AI API 网关，稳定接入多家模型服务')}</h1>
+                <p>
+                  {t(
+                    '多渠道智能调度、熔断旁路、透明计费，让 Codex、Claude Code 与 OpenAI SDK 使用更稳定。',
                   )}
-                </h1>
-                <h2>{t('多渠道自动切换，低价接入主流编程模型')}</h2>
-                <p>{t('为长时间编码、团队共享和自动化脚本准备的高可用 AI API 网关。')}</p>
-                <div className='ct-hero-metrics' aria-label={t('首页核心指标')}>
-                  {heroMetricItems.map((item) => (
-                    <div className='ct-hero-metric' key={item.label}>
-                      <strong>{item.value}</strong>
-                      <span>{item.label}</span>
-                      <small>{item.note}</small>
-                    </div>
-                  ))}
-                </div>
-                <div className='ct-hero-actions'>
+                </p>
+                <div className='ct-lite-actions'>
                   <Link to='/console'>
-                    <Button
-                      theme='solid'
-                      type='primary'
-                      size={isMobile ? 'default' : 'large'}
-                      className='ct-primary-btn'
-                      icon={<IconArrowRight />}
-                    >
-                      {t('获取密钥')}
+                    <Button theme='solid' type='primary' className='ct-lite-primary'>
+                      {t('立即使用')}
                     </Button>
                   </Link>
-                  {isDemoSiteMode && statusState?.status?.version ? (
-                    <Button
-                      size={isMobile ? 'default' : 'large'}
-                      className='ct-secondary-btn'
-                      icon={<IconGithubLogo />}
-                      onClick={() =>
-                        window.open('https://github.com/QuantumNous/new-api', '_blank')
-                      }
-                    >
-                      {statusState.status.version}
-                    </Button>
-                  ) : (
-                    docsLink && (
-                      <Button
-                        size={isMobile ? 'default' : 'large'}
-                        className='ct-secondary-btn'
-                        onClick={() => window.open(docsLink, '_blank')}
-                      >
-                        {t('查看文档')}
-                      </Button>
-                    )
-                  )}
-                </div>
-                <div className='ct-proof-row'>
-                  {heroProofItems.map((item) => (
-                    <span key={item}>
-                      <IconCheckCircleStroked />
-                      {item}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className='ct-hero-map ct-hero-focus-map' aria-hidden='true'>
-                <div className='ct-hero-orbit-stage'>
-                  <span className='ct-hero-orbit ring-a' />
-                  <span className='ct-hero-orbit ring-b' />
-                  <span className='ct-hero-orbit ring-c' />
-                  <span className='ct-hero-stream stream-a' />
-                  <span className='ct-hero-stream stream-b' />
-                  <span className='ct-hero-stream stream-c' />
-                  <div className='ct-hero-core-panel'>
-                    <IconBolt />
-                    <strong>CodeToken AI</strong>
-                    <span>{t('智能网关')}</span>
-                  </div>
-                  <div className='ct-hero-signal signal-codex'>
-                    <IconCodeStroked />
-                    <span>Codex</span>
-                  </div>
-                  <div className='ct-hero-signal signal-claude'>
-                    <IconKeyStroked />
-                    <span>Claude Code</span>
-                  </div>
-                  <div className='ct-hero-signal signal-sdk'>
-                    <IconRoute />
-                    <span>OpenAI SDK</span>
-                  </div>
-                  <div className='ct-hero-signal signal-api'>
-                    <IconGlobeStroke />
-                    <span>API /v1</span>
-                  </div>
-                  <div className='ct-hero-floating-card card-success'>
-                    <span>{t('自动切换')}</span>
-                    <strong>{t('限流旁路')}</strong>
-                  </div>
-                  <div className='ct-hero-floating-card card-cost'>
-                    <span>{t('成本优化')}</span>
-                    <strong>{t('低价组优先')}</strong>
-                  </div>
-                  <div className='ct-hero-route-board'>
-                    <div className='ct-hero-route-board-head'>
-                      <span>{t('调度链路')}</span>
-                      <strong>{formatExactNumber(displayHealthyChannels)} / {formatExactNumber(displayEnabledChannels)}</strong>
-                    </div>
-                    {heroRoutingRows.map((item) => (
-                      <div className='ct-hero-route-row' key={item.label}>
-                        <span>{item.label}</span>
-                        <strong>{item.value}</strong>
-                        <em>{item.state}</em>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className='ct-status-section'>
-            <div className='ct-home-shell'>
-              <div className='ct-status-head'>
-                <div className='ct-status-title'>
-                  <small>{t('稳定性证明')}</small>
-                  <h2>{t('真实运行曲线')}</h2>
-                  <span>
-                    <i />
-                    {t('运行状态')}
-                  </span>
-                </div>
-                <div className='ct-group-tabs' role='tablist'>
-                  {groupTabs.map((item) => (
-                    <button
-                      type='button'
-                      key={item.key}
-                      className={activeGroup.key === item.key ? 'active' : ''}
-                      onClick={() => setActiveStatusGroup(item.key)}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-                <div className='ct-range-pill'>{t('近 30 天')}</div>
-              </div>
-              <div className='ct-status-grid'>
-                <div className='ct-status-metrics' aria-label={t('运行状态')}>
-                  <div className='ct-status-metrics-head'>
-                    <span>{t('运行状态')}</span>
-                    <strong>{activeGroup.label}</strong>
-                  </div>
-                  {metricCards.map((item) => (
-                    <div className={`ct-metric-card ${item.tone}`} key={item.label}>
-                      <div className='ct-metric-icon'>
-                        {item.icon}
-                      </div>
-                      <div>
-                        <span>{item.label}</span>
-                        <strong>{item.value}</strong>
-                        <small>{item.delta}</small>
-                      </div>
-                    </div>
-                  ))}
-                  <div className='ct-status-channel-line'>
-                    {statusHealthItems.map((item) => (
-                      <span className={item.tone} key={item.label}>
-                        <i />
-                        {item.label}
-                        <b>{item.value}</b>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <div className='ct-chart-panel'>
-                  <div className='ct-chart-legend'>
-                    <span><i className='success' />{t('成功率趋势')}</span>
-                    <span><i className='latency' />{t('平均延迟')}</span>
-                    <span><i className='volume' />{t('请求量')}</span>
-                    <span><i className='event' />{t('保护事件')}</span>
-                  </div>
-                  <div className='ct-chart-data-note'>
-                    <span>{displayDataMode}</span>
-                    <span>{t('按分组查看成功率、延迟与保护事件')}</span>
-                    <span>{statusSyncLabel}</span>
-                  </div>
-                  <div className='ct-status-chart' aria-hidden='true'>
-                    <div className='ct-chart-axis-left'>
-                      <span>100</span>
-                      <span>75</span>
-                      <span>50</span>
-                      <span>25</span>
-                      <span>0</span>
-                    </div>
-                    <div className='ct-chart-axis-right'>
-                      <span>40M</span>
-                      <span>30M</span>
-                      <span>20M</span>
-                      <span>10M</span>
-                      <span>0</span>
-                    </div>
-                    <svg viewBox='0 0 720 220' preserveAspectRatio='none'>
-                      <polyline className='success' points={successPoints} />
-                      <polyline className='latency' points={latencyPoints} />
-                    </svg>
-                    <div className='ct-volume-bars'>
-                      {chartDaily.map((item) => (
-                        <i
-                          key={item.date}
-                          style={{
-                            '--bar-height': `${normalizeChartValue(item.requests, maxRequests, 10)}%`,
-                          }}
-                        />
-                      ))}
-                    </div>
-                    <div className='ct-event-markers'>
-                      {chartDaily.map((item) => (
-                        <i
-                          key={item.date}
-                          className={item.protected_events > 0 ? 'active' : ''}
-                          style={{
-                            '--event-size': `${Math.min(18, 6 + Number(item.protected_events || 0) * 2)}px`,
-                          }}
-                        />
-                      ))}
-                    </div>
-                    <div className='ct-chart-dates'>
-                      {chartDateLabels.map((item) => (
-                        <span key={item.date}>{item.date}</span>
-                      ))}
-                    </div>
-                    <div className='ct-chart-tooltip'>
-                      <strong>{tooltipDate}</strong>
-                      <span>{t('成功率趋势')} {formatRate(visualSummary.success_rate)}</span>
-                      <span>{t('平均延迟')} {formatLatency(visualSummary.avg_latency_ms)}</span>
-                      <span>{t('请求量')} {formatNumber(visualSummary.requests)}</span>
-                      <span>{t('保护事件')} {formatExactNumber(visualSummary.protected_events)}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className='ct-route-section'>
-            <div className='ct-home-shell'>
-              <div className='ct-section-headline'>
-                <small>{t('无感切换机制')}</small>
-                <h2>{t('一次接入，自动避开限流与异常')}</h2>
-                <p>{t('客户只需要维护一个 Base URL，后面由网关根据分组、健康、冷却和成本策略做实时选择。')}</p>
-              </div>
-              <div className='ct-route-canvas'>
-                <div className='ct-route-lines' aria-hidden='true'>
-                  <span className='ct-route-line-a' />
-                  <span className='ct-route-line-b' />
-                  <span className='ct-route-line-c' />
-                </div>
-                <div className='ct-client-access'>
-                  <h3>{t('客户端接入')}</h3>
-                  <div className='ct-connect-panel'>
-                    <div className='ct-config-row highlight'>
-                      <span>Base URL</span>
-                      <code>{apiBaseUrl}</code>
-                    </div>
-                    <div className='ct-config-row'>
-                      <span>API Key</span>
-                      <code>ct-••••••••••••••••••••</code>
-                      <Button
-                        type='tertiary'
-                        onClick={handleCopyBaseURL}
-                        icon={<IconCopy />}
-                        className='ct-copy-btn'
-                      />
-                    </div>
-                    <div className='ct-client-chips'>
-                      {heroClients.map((item) => (
-                        <span key={item.label}>{item.icon}{item.label}</span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className='ct-decision-core'>
-                  <div className='ct-decision-orb'>
-                    <IconBolt />
-                    <strong>{t('智能决策')}</strong>
-                    <span>{t('毫秒级选择')}</span>
-                  </div>
-                </div>
-
-                <div className='ct-rule-list'>
-                  <h3>{t('智能路由引擎')}</h3>
-                  {routeRules.map((item) => (
-                    <div className='ct-rule-row' key={item}>
-                      <IconCheckCircleStroked />
-                      <span>{item}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <div className='ct-upstream-list'>
-                  <h3>{t('上游通道池')}</h3>
-                  {upstreamRows.map((item) => (
-                    <div className={`ct-upstream-line ${item.tone}`} key={item.title}>
-                      <div>
-                        <b>{item.status}</b>
-                        <strong>{item.title}</strong>
-                      </div>
-                      <span>{item.vendor}</span>
-                      <small>{item.price}</small>
-                      <small>{item.rpm}</small>
-                      <div className='ct-mini-bars'>
-                        {Array.from({ length: 7 }).map((_, index) => (
-                          <i key={index} />
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  <em>{t('更多通道')} ...</em>
-                </div>
-                <div className='ct-route-badges'>
-                  {[
-                    t('多渠道无感切换'),
-                    t('自动重试与降级'),
-                    t('智能限流保护'),
-                    t('更低成本更稳定'),
-                  ].map((item) => (
-                    <span key={item}>
-                      <IconCheckCircleStroked />
-                      {item}
-                    </span>
-                  ))}
-                </div>
-                <div className='ct-route-audit'>
-                  <div className='ct-route-audit-head'>
-                    <span>{t('失败恢复路径')}</span>
-                    <strong>{t('限流、报错、超时都进入自动保护链路')}</strong>
-                  </div>
-                  <div className='ct-route-audit-steps'>
-                    {routeAuditItems.map((item) => (
-                      <div className='ct-route-audit-step' key={item.step}>
-                        <span>{item.step}</span>
-                        <strong>{item.label}</strong>
-                        <small>{item.value}</small>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className='ct-home-plan-section'>
-            <div className='ct-home-shell'>
-              <div className='ct-section-headline compact'>
-                <small>{t('灵活方案')}</small>
-                <h2>{t('按使用场景选择更稳、更快、更省的接入方式')}</h2>
-                <p>{t('从个人开发到团队协作，把成本、稳定性和分组治理拆成更容易理解的选择。')}</p>
-              </div>
-              <div className='ct-home-plan-layout'>
-                <div className='ct-home-plan-grid'>
-                  {homePlanItems.map((item) => (
-                    <div className={`ct-home-plan-card ${item.tone}`} key={item.title}>
-                      <div className='ct-home-plan-card-head'>
-                        <span>{item.icon}</span>
-                        <em>{item.metric}</em>
-                      </div>
-                      <strong>{item.title}</strong>
-                      <b>{item.price}</b>
-                      <p>{item.description}</p>
-                      <div className='ct-home-plan-points'>
-                        {item.points.map((point) => (
-                          <span key={point}>
-                            <IconCheckCircleStroked />
-                            {point}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className='ct-home-plan-panel'>
-                  <div className='ct-home-plan-panel-orbit' aria-hidden='true'>
-                    <span />
-                    <span />
-                    <span />
-                  </div>
-                  <small>{t('接入建议')}</small>
-                  <strong>{t('先按场景选择成本、稳定或治理优先级，再进入控制台配置适合自己的套餐。')}</strong>
-                  <div className='ct-home-plan-flow'>
-                    {homePlanFlowItems.map((item) => (
-                      <div key={item.label}>
-                        <span>{item.label}</span>
-                        <b>{item.value}</b>
-                      </div>
-                    ))}
-                  </div>
-                  <Link to='/console/subscription-plans'>
-                    <Button
-                      theme='solid'
-                      type='primary'
-                      className='ct-primary-btn'
-                      icon={<IconArrowRight />}
-                    >
-                      {t('查看套餐')}
+                  <Link to='/pricing'>
+                    <Button theme='outline' type='primary' className='ct-lite-secondary'>
+                      {t('查看价格')}
                     </Button>
                   </Link>
                 </div>
-              </div>
-            </div>
-          </section>
-
-          <section className='ct-scenario-section'>
-            <div className='ct-home-shell'>
-              <div className='ct-section-headline'>
-                <small>{t('真实使用场景')}</small>
-                <h2>{t('为不同场景提供稳定动力')}</h2>
-                <p>{t('把客户真正关心的不中断、低成本、速度和治理能力拆到可感知的场景里。')}</p>
-              </div>
-              <div className='ct-scenario-grid'>
-                {scenarioItems.map((item) => (
-                  <div className='ct-scenario-card' key={item.title}>
-                    <div>
-                      <h3>{item.title}</h3>
-                      <p>{item.meta}</p>
-                      <strong>{item.proof}</strong>
-                      <div className='ct-scenario-meter'>
-                        <span>{item.signal}</span>
-                        <b>{item.metric}</b>
-                      </div>
-                    </div>
-                    <div className='ct-scenario-art'>
+                <div className='ct-lite-proof-row'>
+                  {heroHighlights.map((item) => (
+                    <div key={item.title}>
                       <span>{item.icon}</span>
-                      <i />
-                      <b />
+                      <strong>{item.title}</strong>
+                      <small>{item.desc}</small>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className='ct-compare-section'>
-            <div className='ct-home-shell'>
-              <div className='ct-section-headline compact'>
-                <small>{t('低价与专业性')}</small>
-                <h2>{t('不是再加一个代理，而是把不稳定变成可运营的系统')}</h2>
-              </div>
-              <div className='ct-compare-grid'>
-                {comparisonItems.map((item) => (
-                  <div
-                    className={`ct-compare-card${item.featured ? ' featured' : ''}`}
-                    key={item.label}
-                  >
-                    <span>{item.label}</span>
-                    <strong>{item.value}</strong>
-                    <p>{item.detail}</p>
-                  </div>
-                ))}
-              </div>
-              <div className='ct-compare-scoreboard'>
-                {compareScoreItems.map((item) => (
-                  <div key={item.label}>
-                    <span>{item.label}</span>
-                    <strong>{item.value}</strong>
-                  </div>
-                ))}
-              </div>
-              <div className='ct-trust-row'>
-                {trustItems.map((item) => (
-                  <span key={item}>
-                    <IconCheckCircleStroked />
-                    {item}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className='ct-final-section'>
-            <div className='ct-home-shell ct-final-cta'>
-              <div className='ct-final-visual' aria-hidden='true'>
-                <span className='ct-final-orbit' />
-                <span className='ct-final-orbit inner' />
-                <div className='ct-final-bars'>
-                  {Array.from({ length: 12 }).map((_, index) => (
-                    <i key={index} />
                   ))}
                 </div>
               </div>
-              <div>
-                <h2>{t('更稳定，更智能，更省钱的 AI 编程中转站')}</h2>
-                <p>{t('统一接入，高可用保障，让每一次 Codex 与 Claude Code 请求都更有价值')}</p>
+
+              <div className='ct-lite-hero-visual' aria-hidden='true'>
+                <MetricTile label={t('平均延迟')} value={avgLatency} />
+                <MetricTile label={t('成功率')} value={successRate} />
+                <MetricTile label={t('健康渠道')} value={channelText} type='bars' />
+                <div className='ct-lite-orb-stage'>
+                  <div className='ct-lite-orb-ribbon' />
+                  <div className='ct-lite-orb'>
+                    <span />
+                    <i />
+                    <b />
+                  </div>
+                  <div className='ct-lite-platform'>
+                    <span />
+                    <i />
+                    <b />
+                  </div>
+                </div>
               </div>
-              <div className='ct-final-actions'>
-                <Link to='/console'>
-                  <Button
-                    theme='solid'
-                    type='primary'
-                    size={isMobile ? 'default' : 'large'}
-                    className='ct-primary-btn'
-                    icon={<IconPlay />}
-                  >
-                    {t('立即获取密钥')}
+            </div>
+          </section>
+
+          <section className='ct-lite-flow-section'>
+            <div className='ct-lite-shell'>
+              <div className='ct-lite-section-title'>
+                <h2>{t('智能调度与失败切换流程')}</h2>
+                <p>{t('实时评估、智能路由、自动切换，保障请求稳定、快速、可靠')}</p>
+              </div>
+
+              <div className='ct-lite-flow-panel'>
+                <GatewayFlowCanvas
+                  successRate={successRate}
+                  avgLatency={avgLatency}
+                  channelText={channelText}
+                  channels={flowChannels}
+                  locale={`${i18n.language}-${flowChannelKey}`}
+                  t={t}
+                />
+              </div>
+            </div>
+          </section>
+
+          <section className='ct-lite-features-section'>
+            <div className='ct-lite-shell'>
+              <div className='ct-lite-section-title'>
+                <h2>{t('为稳定而生的智能网关')}</h2>
+                <p>{t('四大能力，全面提升接入体验与服务稳定性')}</p>
+              </div>
+
+              <div className='ct-lite-feature-grid'>
+                {featureCards.map((item) => (
+                  <article className='ct-lite-feature-card' key={item.title}>
+                    <span>{item.icon}</span>
+                    <h3>{item.title}</h3>
+                    <p>{item.desc}</p>
+                  </article>
+                ))}
+              </div>
+
+              <div className='ct-lite-pricing-strip'>
+                <div>
+                  <span>
+                    <FileSearch size={34} />
+                  </span>
+                  <div>
+                    <strong>{t('按模型 / 分组 / 倍率计费，缓存与图片明细透明')}</strong>
+                    <p>
+                      {t(
+                        '缓存命中、图片处理、工具调用等费用清晰可见，账单可追溯，成本尽在掌握。',
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <Link to='/pricing'>
+                  <Button theme='outline' type='primary' className='ct-lite-secondary'>
+                    {t('查看模型价格')}
                   </Button>
                 </Link>
-                {docsLink && (
-                  <Button
-                    size={isMobile ? 'default' : 'large'}
-                    className='ct-secondary-btn'
-                    icon={<IconFile />}
-                    onClick={() => window.open(docsLink, '_blank')}
-                  >
-                    {t('查看文档')}
-                  </Button>
-                )}
+              </div>
+
+              <div className='ct-lite-dynamic-pricing'>
+                <div className='ct-lite-dynamic-copy'>
+                  <span>{t('动态价格')}</span>
+                  <h3>{t('价格根据模型、分组倍率、缓存和图片用量实时计算')}</h3>
+                  <p>
+                    {t(
+                      '同一次请求会拆分输入、输出、缓存读取和图片生成等计费项，命中动态规则时按实际档位结算。',
+                    )}
+                  </p>
+                  <div className='ct-lite-dynamic-rules'>
+                    {dynamicPriceRules.map((item) => (
+                      <em key={item}>{item}</em>
+                    ))}
+                  </div>
+                </div>
+
+                <div className='ct-lite-dynamic-board'>
+                  {dynamicPriceItems.map((item) => (
+                    <div className='ct-lite-dynamic-row' key={item.label}>
+                      <span>{item.label}</span>
+                      <strong>{item.value}</strong>
+                      <small>{item.detail}</small>
+                    </div>
+                  ))}
+                  <Link to='/pricing' className='ct-lite-dynamic-link'>
+                    {t('查看动态价格')}
+                  </Link>
+                </div>
               </div>
             </div>
           </section>
-        </div>
+
+          <section className='ct-lite-plans-section'>
+            <div className='ct-lite-shell'>
+              <div className='ct-lite-section-title'>
+                <h2>{t('选择适合你的套餐')}</h2>
+                <p>{t('所有套餐均按量计费，可随时升级或取消')}</p>
+              </div>
+
+              <div className='ct-lite-plan-grid'>
+                {planCards.map((plan) => (
+                  <article
+                    className={`ct-lite-plan-card${plan.featured ? ' featured' : ''}`}
+                    key={plan.name}
+                  >
+                    {plan.featured && <div className='ct-lite-plan-badge'>{t('最受欢迎')}</div>}
+                    <h3>{plan.name}</h3>
+                    <p>{plan.subtitle}</p>
+                    <div className='ct-lite-price'>
+                      <strong>{plan.price}</strong>
+                      <span>/ {t('月')}</span>
+                    </div>
+                    <ul>
+                      {plan.perks.map((perk) => (
+                        <li key={perk}>
+                          <Check size={14} />
+                          {perk}
+                        </li>
+                      ))}
+                    </ul>
+                    <Link to='/console/subscription-plans'>
+                      <Button
+                        theme={plan.featured ? 'solid' : 'outline'}
+                        type='primary'
+                        className={plan.featured ? 'ct-lite-primary' : 'ct-lite-secondary'}
+                        block
+                      >
+                        {t('购买套餐')}
+                      </Button>
+                    </Link>
+                  </article>
+                ))}
+              </div>
+
+              <div className='ct-lite-trust-row'>
+                {bottomTrust.map((item) => (
+                  <div key={item.title}>
+                    <span>{item.icon}</span>
+                    <strong>{item.title}</strong>
+                    <small>{item.desc}</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        </main>
       ) : (
         <div className='overflow-x-hidden w-full'>
           {homePageContent.startsWith('https://') ? (

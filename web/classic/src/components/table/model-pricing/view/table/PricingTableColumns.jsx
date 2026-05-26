@@ -24,6 +24,7 @@ import {
   renderModelTag,
   stringToColor,
   calculateModelPrice,
+  formatDynamicPriceSummary,
   getModelPriceItems,
   getLobeHubIcon,
 } from '../../../../../helpers';
@@ -33,7 +34,15 @@ import {
 } from '../../../../common/ui/RenderUtils';
 import { useIsMobile } from '../../../../../hooks/common/useIsMobile';
 
-function renderQuotaType(type, t) {
+function renderQuotaType(type, t, record) {
+  if (record?.billing_mode === 'tiered_expr') {
+    return (
+      <Tag color='amber' shape='circle'>
+        {t('动态计费')}
+      </Tag>
+    );
+  }
+
   switch (type) {
     case 1:
       return (
@@ -162,7 +171,7 @@ export const getPricingTableColumns = ({
     title: t('计费类型'),
     dataIndex: 'quota_type',
     render: (text, record, index) => {
-      return renderQuotaType(parseInt(text), t);
+      return renderQuotaType(parseInt(text), t, record);
     },
     sorter: (a, b) => a.quota_type - b.quota_type,
   };
@@ -236,6 +245,29 @@ export const getPricingTableColumns = ({
     ...(isMobile ? {} : { fixed: 'right' }),
     render: (text, record, index) => {
       const priceData = getPriceData(record);
+
+      if (priceData.isDynamicPricing) {
+        return (
+          <div className='space-y-1 min-w-[220px] max-w-[340px]'>
+            <div className='flex items-center gap-2 flex-wrap'>
+              <Tag color='amber' size='small' shape='circle'>
+                {t('动态计费')}
+              </Tag>
+              <span className='text-xs text-gray-500'>
+                {priceData.usedGroup} · {priceData.usedGroupRatio ?? 1}x
+              </span>
+            </div>
+            <div className='flex flex-col gap-1 text-xs'>
+              {formatDynamicPriceSummary(
+                priceData.billingExpr,
+                t,
+                priceData.usedGroupRatio,
+              )}
+            </div>
+          </div>
+        );
+      }
+
       const priceItems = getModelPriceItems(priceData, t, siteDisplayType);
 
       return (

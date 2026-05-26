@@ -357,6 +357,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
+	req = requestWithRelayAttemptContext(c, req)
 	headers := req.Header
 	err = a.SetupRequestHeader(c, &headers, info)
 	if err != nil {
@@ -389,6 +390,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
+	req = requestWithRelayAttemptContext(c, req)
 	// set form data
 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	headers := req.Header
@@ -678,6 +680,9 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	requestInfo := upstreamRequestInfo(req, info, responseHeaderDuration, err)
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestInfo, requestInfo)
 	if err != nil {
+		if attemptErr := helper.InternalRelayAttemptError(c); attemptErr != nil {
+			err = attemptErr
+		}
 		if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
 			common2.SetContextKey(c, appconstant.ContextKeyRelayStreamInterrupted, true)
 		}
@@ -716,6 +721,7 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
+	req = requestWithRelayAttemptContext(c, req)
 	req.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(requestBody), nil
 	}
@@ -729,4 +735,14 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
 	return resp, nil
+}
+
+func requestWithRelayAttemptContext(c *gin.Context, req *http.Request) *http.Request {
+	if req == nil {
+		return nil
+	}
+	if ctx, ok := helper.RelayAttemptContext(c); ok && ctx != nil {
+		return req.WithContext(ctx)
+	}
+	return req
 }

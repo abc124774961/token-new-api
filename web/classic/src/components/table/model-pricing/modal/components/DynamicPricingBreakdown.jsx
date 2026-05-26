@@ -86,7 +86,12 @@ function describeGroup(group, t) {
   return parts.join(' && ');
 }
 
-export default function DynamicPricingBreakdown({ billingExpr, t }) {
+export default function DynamicPricingBreakdown({
+  billingExpr,
+  group,
+  groupRatio = 1,
+  t,
+}) {
   const { symbol, rate } = getCurrencyConfig();
   const { billingExpr: baseExpr, requestRuleExpr: ruleExpr } =
     splitBillingExprAndRequestRules(billingExpr || '');
@@ -113,6 +118,10 @@ export default function DynamicPricingBreakdown({ billingExpr, t }) {
     );
   }
 
+  const effectiveGroupRatio =
+    Number.isFinite(Number(groupRatio)) && Number(groupRatio) > 0
+      ? Number(groupRatio)
+      : 1;
   const priceFields = BILLING_PRICING_VARS.map((v) => [v.field, v.shortLabel]);
 
   const tierColumns = [
@@ -133,7 +142,19 @@ export default function DynamicPricingBreakdown({ billingExpr, t }) {
       .map(([field, label]) => ({
         title: `${t(label)} (${symbol}/1M tokens)`,
         dataIndex: field,
-        render: (v) => v > 0 ? <Text strong>{`${symbol}${(v * rate).toFixed(4)}`}</Text> : '-',
+        render: (v) =>
+          v > 0 ? (
+            <div>
+              <Text strong>{`${symbol}${(v * effectiveGroupRatio * rate).toFixed(4)}`}</Text>
+              {effectiveGroupRatio !== 1 && (
+                <div className='text-xs text-gray-500'>
+                  {t('基础价格')} {`${symbol}${(v * rate).toFixed(4)}`}
+                </div>
+              )}
+            </div>
+          ) : (
+            '-'
+          ),
       })),
   ];
 
@@ -156,6 +177,16 @@ export default function DynamicPricingBreakdown({ billingExpr, t }) {
           <Text className='text-lg font-medium'>{t('动态计费')}</Text>
           <div className='text-xs text-gray-600'>
             {t('价格根据用量档位和请求条件动态调整')}
+          </div>
+          <div className='flex flex-wrap gap-2 mt-2'>
+            {group && (
+              <Tag color='white' size='small' shape='circle'>
+                {t('当前分组')}: {group}
+              </Tag>
+            )}
+            <Tag color='blue' size='small' shape='circle'>
+              {t('分组倍率')}: {effectiveGroupRatio}x
+            </Tag>
           </div>
         </div>
       </div>

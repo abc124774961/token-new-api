@@ -191,6 +191,10 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				case <-c.Request.Context().Done():
 					// 监听客户端断开连接
 					return
+				case <-relayAttemptDone(c):
+					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonInternalFirstByteTimeout, fmt.Errorf(RelayAttemptCancelReason(c)))
+					common.SafeSendBool(stopChan, true)
+					return
 				case <-pingTimeout.C:
 					logger.LogError(c, "ping goroutine max duration reached")
 					return
@@ -249,6 +253,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			case <-c.Request.Context().Done():
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
 				return
+			case <-relayAttemptDone(c):
+				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonInternalFirstByteTimeout, fmt.Errorf(RelayAttemptCancelReason(c)))
+				return
 			default:
 			}
 
@@ -280,6 +287,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 					return
 				case <-stopChan:
 					return
+				case <-relayAttemptDone(c):
+					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonInternalFirstByteTimeout, fmt.Errorf(RelayAttemptCancelReason(c)))
+					return
 				}
 			} else {
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
@@ -309,6 +319,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	case <-c.Request.Context().Done():
 		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
 		closeBodyOnce.Do(closeBody)
+	case <-relayAttemptDone(c):
+		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonInternalFirstByteTimeout, fmt.Errorf(RelayAttemptCancelReason(c)))
+		closeBodyOnce.Do(closeBody)
 	}
 
 	if info.StreamStatus.IsNormalEnd() && !info.StreamStatus.HasErrors() {
@@ -316,4 +329,15 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	} else {
 		logger.LogError(c, fmt.Sprintf("stream ended: %s, received=%d", info.StreamStatus.Summary(), info.ReceivedResponseCount))
 	}
+}
+
+func relayAttemptDone(c *gin.Context) <-chan struct{} {
+	ctx, ok := RelayAttemptContext(c)
+	if !ok || ctx == nil {
+		return nil
+	}
+	if RelayAttemptCancelReason(c) == "" {
+		return nil
+	}
+	return ctx.Done()
 }

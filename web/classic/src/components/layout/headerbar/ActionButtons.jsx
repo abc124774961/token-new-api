@@ -38,6 +38,7 @@ const ActionButtons = ({
   isSelfUseMode,
   logout,
   navigate,
+  currentPath,
   t,
 }) => {
   return (
@@ -65,6 +66,7 @@ const ActionButtons = ({
         isSelfUseMode={isSelfUseMode}
         logout={logout}
         navigate={navigate}
+        currentPath={currentPath}
         t={t}
       />
     </div>

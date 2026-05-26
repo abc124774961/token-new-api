@@ -47,7 +47,7 @@ const Navigation = ({
       }
 
       const isActive = getIsActive(link, targetPath);
-      const linkClassName = `ct-nav-item ${isActive ? 'ct-nav-item-active' : ''}`;
+      const linkClassName = `ct-nav-item ct-nav-item-${link.itemKey} ${isActive ? 'ct-nav-item-active' : ''}`;
       const linkContent = (
         <>
           <span>{link.text}</span>

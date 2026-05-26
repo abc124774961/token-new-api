@@ -16,6 +16,13 @@ import (
 const clientRequestTraceMaxValueLen = 4096
 const responsesInputTextProbeWindow = 5
 
+const (
+	responsesImageGenerationKeywordSourceInputText    = "input_text"
+	responsesImageGenerationKeywordSourceInstructions = "instructions"
+	responsesImageGenerationKeywordSourceTools        = "tools"
+	responsesImageGenerationKeywordSourceToolChoice   = "tool_choice"
+)
+
 var codexImageGenerationFeatureKeywords = []string{
 	"$imagegen",
 	"imagegen",
@@ -26,6 +33,7 @@ var codexImageGenerationFeatureKeywords = []string{
 var codexImageGenerationKeywordIgnoredBlocks = []*regexp.Regexp{
 	regexp.MustCompile(`(?is)<skills_instructions\b[^>]*>.*?</skills_instructions>`),
 	regexp.MustCompile(`(?is)<plugins_instructions\b[^>]*>.*?</plugins_instructions>`),
+	regexp.MustCompile(`(?is)<skill\b[^>]*>.*?</skill>`),
 }
 
 // ShouldLogClientRequestTrace returns true for Codex-like requests and Responses
@@ -130,6 +138,7 @@ func BuildResponsesRequestToolTraceForLog(req *dto.OpenAIResponsesRequest) map[s
 	trace["tool_choice_bytes"] = len(req.ToolChoice)
 	trace["has_image_generation_tool"] = req.HasTool(dto.BuildInToolImageGeneration)
 	trace["imagegen_keyword_hits"] = ResponsesRequestImageGenerationKeywordHits(req)
+	trace["imagegen_keyword_sources"] = ResponsesRequestImageGenerationKeywordSources(req)
 	if len(req.Tools) > 0 {
 		trace["tool_types"] = toolTypesFromRawForTrace(req.Tools)
 		trace["tools_raw"] = truncateTraceValue(string(req.Tools), clientRequestTraceMaxValueLen)
@@ -173,6 +182,7 @@ func BuildResponsesInputTextProbeForLog(req *dto.OpenAIResponsesRequest) map[str
 	}
 	probe["last_text_snippets"] = snippets
 	probe["imagegen_keyword_hits"] = ResponsesRequestImageGenerationKeywordHits(req)
+	probe["imagegen_keyword_sources"] = ResponsesRequestRecentInputImageGenerationKeywordSources(req)
 	return probe
 }
 
@@ -202,16 +212,79 @@ func ResponsesRequestImageGenerationKeywordHits(req *dto.OpenAIResponsesRequest)
 			hits = append(hits, keyword)
 		}
 	}
-	for _, text := range recentResponsesRequestInputTexts(req) {
-		addText(text)
-	}
-	if len(req.Tools) > 0 {
-		addText(string(req.Tools))
-	}
-	if len(req.ToolChoice) > 0 {
-		addText(string(req.ToolChoice))
+	for _, part := range recentResponsesRequestInputTextParts(req) {
+		addText(part.Text)
 	}
 	return hits
+}
+
+func ResponsesRequestImageGenerationKeywordSources(req *dto.OpenAIResponsesRequest) map[string][]string {
+	if req == nil {
+		return nil
+	}
+	sources := map[string][]string{}
+	addSourceText := func(source string, text string) {
+		hits := imageGenerationKeywordHitsFromText(text)
+		if len(hits) == 0 {
+			return
+		}
+		existing := sources[source]
+		seen := make(map[string]struct{}, len(existing)+len(hits))
+		for _, keyword := range existing {
+			seen[keyword] = struct{}{}
+		}
+		for _, keyword := range hits {
+			if _, ok := seen[keyword]; ok {
+				continue
+			}
+			seen[keyword] = struct{}{}
+			existing = append(existing, keyword)
+		}
+		sources[source] = existing
+	}
+	for _, part := range recentResponsesRequestInputTextParts(req) {
+		addSourceText(part.Source, part.Text)
+	}
+	if len(req.Tools) > 0 {
+		addSourceText(responsesImageGenerationKeywordSourceTools, string(req.Tools))
+	}
+	if len(req.ToolChoice) > 0 {
+		addSourceText(responsesImageGenerationKeywordSourceToolChoice, string(req.ToolChoice))
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+	return sources
+}
+
+func ResponsesRequestRecentInputImageGenerationKeywordSources(req *dto.OpenAIResponsesRequest) map[string][]string {
+	if req == nil {
+		return nil
+	}
+	sources := map[string][]string{}
+	for _, part := range recentResponsesRequestInputTextParts(req) {
+		hits := imageGenerationKeywordHitsFromText(part.Text)
+		if len(hits) == 0 {
+			continue
+		}
+		existing := sources[part.Source]
+		seen := make(map[string]struct{}, len(existing)+len(hits))
+		for _, keyword := range existing {
+			seen[keyword] = struct{}{}
+		}
+		for _, keyword := range hits {
+			if _, ok := seen[keyword]; ok {
+				continue
+			}
+			seen[keyword] = struct{}{}
+			existing = append(existing, keyword)
+		}
+		sources[part.Source] = existing
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+	return sources
 }
 
 func imageGenerationKeywordHitsFromText(text string) []string {
@@ -227,30 +300,65 @@ func imageGenerationKeywordHitsFromText(text string) []string {
 }
 
 func responsesRequestInputTexts(req *dto.OpenAIResponsesRequest) []string {
-	if req == nil {
+	parts := responsesRequestInputTextParts(req)
+	if len(parts) == 0 {
 		return nil
 	}
-	texts := make([]string, 0)
-	for _, input := range req.ParseInput() {
-		text := strings.TrimSpace(input.Text)
-		if text != "" {
-			texts = append(texts, text)
-		}
-	}
-	if len(req.Instructions) > 0 {
-		if instructions := strings.TrimSpace(string(req.Instructions)); instructions != "" {
-			texts = append(texts, instructions)
-		}
+	texts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		texts = append(texts, part.Text)
 	}
 	return texts
 }
 
-func recentResponsesRequestInputTexts(req *dto.OpenAIResponsesRequest) []string {
-	texts := responsesRequestInputTexts(req)
-	if len(texts) <= responsesInputTextProbeWindow {
-		return texts
+type responsesRequestInputTextPart struct {
+	Text   string
+	Source string
+}
+
+func responsesRequestInputTextParts(req *dto.OpenAIResponsesRequest) []responsesRequestInputTextPart {
+	if req == nil {
+		return nil
 	}
-	return texts[len(texts)-responsesInputTextProbeWindow:]
+	parts := make([]responsesRequestInputTextPart, 0)
+	for _, input := range req.ParseInput() {
+		text := strings.TrimSpace(input.Text)
+		if text != "" {
+			parts = append(parts, responsesRequestInputTextPart{
+				Text:   text,
+				Source: responsesImageGenerationKeywordSourceInputText,
+			})
+		}
+	}
+	if len(req.Instructions) > 0 {
+		if instructions := strings.TrimSpace(string(req.Instructions)); instructions != "" {
+			parts = append(parts, responsesRequestInputTextPart{
+				Text:   instructions,
+				Source: responsesImageGenerationKeywordSourceInstructions,
+			})
+		}
+	}
+	return parts
+}
+
+func recentResponsesRequestInputTexts(req *dto.OpenAIResponsesRequest) []string {
+	parts := recentResponsesRequestInputTextParts(req)
+	if len(parts) == 0 {
+		return nil
+	}
+	texts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		texts = append(texts, part.Text)
+	}
+	return texts
+}
+
+func recentResponsesRequestInputTextParts(req *dto.OpenAIResponsesRequest) []responsesRequestInputTextPart {
+	parts := responsesRequestInputTextParts(req)
+	if len(parts) <= responsesInputTextProbeWindow {
+		return parts
+	}
+	return parts[len(parts)-responsesInputTextProbeWindow:]
 }
 
 func stripImageGenerationKeywordIgnoredBlocks(text string) string {

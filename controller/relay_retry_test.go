@@ -133,7 +133,7 @@ func serviceSeedRelayRetryChannel(t *testing.T, db *gorm.DB, id int, group strin
 	require.NoError(t, channel.AddAbilities(nil))
 }
 
-func TestRequiresCodexImageToolForRelayDetectsToolChoice(t *testing.T) {
+func TestRequiresCodexImageToolForRelayIgnoresToolChoiceDeclaration(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		RelayMode: relayconstant.RelayModeResponses,
 		Request: &dto.OpenAIResponsesRequest{
@@ -142,7 +142,7 @@ func TestRequiresCodexImageToolForRelayDetectsToolChoice(t *testing.T) {
 		},
 	}
 
-	require.True(t, requiresCodexImageToolForRelay(info))
+	require.False(t, requiresCodexImageToolForRelay(info))
 }
 
 func TestRequiresCodexImageToolForRelayDetectsCodexSkillIntent(t *testing.T) {

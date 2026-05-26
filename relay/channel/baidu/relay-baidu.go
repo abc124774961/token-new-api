@@ -134,6 +134,10 @@ func baiduStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 			sr.Error(err)
 		}
 	})
+	if err := helper.InternalRelayAttemptError(c); err != nil {
+		service.CloseResponseBodyGracefully(resp)
+		return types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusGatewayTimeout), nil
+	}
 	service.CloseResponseBodyGracefully(resp)
 	return nil, usage
 }

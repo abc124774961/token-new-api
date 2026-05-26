@@ -1,9 +1,12 @@
 package helper
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -15,6 +18,21 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
+
+const RelayAttemptCancelReasonFirstByteTimeout = "first_byte_timeout"
+
+type RelayAttemptControl struct {
+	ctx context.Context
+	mu sync.RWMutex
+	cancelReason string
+}
+
+func NewRelayAttemptControl(ctx context.Context) *RelayAttemptControl {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return &RelayAttemptControl{ctx: ctx}
+}
 
 func FlushWriter(c *gin.Context) (err error) {
 	defer func() {
@@ -60,8 +78,88 @@ func MarkRelayResponseStarted(c *gin.Context) {
 	if c == nil {
 		return
 	}
+	MarkRelayDownstreamStarted(c)
 	service.MarkChannelFirstByteObserved(c)
 	common.SetContextKey(c, constant.ContextKeyRelayResponseStarted, true)
+}
+
+func MarkRelayDownstreamStarted(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyRelayDownstreamStarted, true)
+}
+
+func RelayDownstreamStarted(c *gin.Context) bool {
+	return common.GetContextKeyBool(c, constant.ContextKeyRelayDownstreamStarted)
+}
+
+func SetRelayAttemptControl(c *gin.Context, control *RelayAttemptControl) {
+	if c == nil {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyRelayAttemptControl, control)
+}
+
+func ClearRelayAttemptControl(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyRelayAttemptControl, nil)
+}
+
+func RelayAttemptControlFromContext(c *gin.Context) (*RelayAttemptControl, bool) {
+	if c == nil {
+		return nil, false
+	}
+	control, ok := common.GetContextKeyType[*RelayAttemptControl](c, constant.ContextKeyRelayAttemptControl)
+	return control, ok && control != nil
+}
+
+func RelayAttemptContext(c *gin.Context) (context.Context, bool) {
+	control, ok := RelayAttemptControlFromContext(c)
+	if !ok || control == nil || control.ctx == nil {
+		return nil, false
+	}
+	return control.ctx, true
+}
+
+func (control *RelayAttemptControl) SetCancelReason(reason string) {
+	if control == nil {
+		return
+	}
+	control.mu.Lock()
+	control.cancelReason = strings.TrimSpace(reason)
+	control.mu.Unlock()
+}
+
+func (control *RelayAttemptControl) CancelReason() string {
+	if control == nil {
+		return ""
+	}
+	control.mu.RLock()
+	defer control.mu.RUnlock()
+	return control.cancelReason
+}
+
+func RelayAttemptCancelReason(c *gin.Context) string {
+	control, ok := RelayAttemptControlFromContext(c)
+	if !ok {
+		return ""
+	}
+	return control.CancelReason()
+}
+
+func RelayAttemptCanceledFor(c *gin.Context, reason string) bool {
+	return RelayAttemptCancelReason(c) == strings.TrimSpace(reason)
+}
+
+func InternalRelayAttemptError(c *gin.Context) error {
+	reason := RelayAttemptCancelReason(c)
+	if reason == "" {
+		return nil
+	}
+	return fmt.Errorf("relay attempt canceled: %s", reason)
 }
 
 func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
@@ -117,6 +215,7 @@ func PingData(c *gin.Context) error {
 	if _, err := c.Writer.Write([]byte(": PING\n\n")); err != nil {
 		return fmt.Errorf("write ping data failed: %w", err)
 	}
+	MarkRelayDownstreamStarted(c)
 	return FlushWriter(c)
 }
 

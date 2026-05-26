@@ -176,6 +176,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sendOrBufferEvent(streamResponse, data, true)
 		}
 	})
+	if err := helper.InternalRelayAttemptError(c); err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusGatewayTimeout)
+	}
 
 	if streamErr != nil {
 		return nil, streamErr

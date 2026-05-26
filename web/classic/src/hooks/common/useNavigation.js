@@ -26,6 +26,7 @@ export const useNavigation = (t, docsLink, headerNavModules) => {
       home: true,
       console: true,
       pricing: true,
+      subscriptionPlans: true,
       docs: true,
       about: true,
     };
@@ -45,9 +46,14 @@ export const useNavigation = (t, docsLink, headerNavModules) => {
         to: '/console',
       },
       {
-        text: t('模型广场'),
+        text: t('价格'),
         itemKey: 'pricing',
         to: '/pricing',
+      },
+      {
+        text: t('套餐'),
+        itemKey: 'subscriptionPlans',
+        to: '/console/subscription-plans',
       },
       ...(docsLink
         ? [
@@ -76,6 +82,9 @@ export const useNavigation = (t, docsLink, headerNavModules) => {
         return typeof modules.pricing === 'object'
           ? modules.pricing.enabled
           : modules.pricing;
+      }
+      if (link.itemKey === 'subscriptionPlans') {
+        return modules.subscriptionPlans !== false && modules.subscription_plans !== false;
       }
       return modules[link.itemKey] === true;
     });

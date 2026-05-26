@@ -846,6 +846,11 @@ func (info *RelayInfo) ForceSetFirstResponseTime() {
 }
 
 func (info *RelayInfo) HasSendResponse() bool {
+	if info == nil {
+		return false
+	}
+	info.firstResponseMu.Lock()
+	defer info.firstResponseMu.Unlock()
 	return info.FirstResponseTime.After(info.StartTime)
 }
 

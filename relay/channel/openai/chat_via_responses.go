@@ -515,6 +515,9 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		default:
 		}
 	})
+	if err := helper.InternalRelayAttemptError(c); err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusGatewayTimeout)
+	}
 
 	if streamErr != nil {
 		return nil, streamErr

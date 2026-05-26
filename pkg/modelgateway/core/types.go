@@ -442,6 +442,7 @@ type AttemptResult struct {
 	ClientAborted                  bool
 	WillRetry                      bool
 	RetryAction                    string
+	RetryReason                    string
 	ConcurrencyLimited             bool
 	BalanceInsufficient            bool
 	EmptyOutput                    bool

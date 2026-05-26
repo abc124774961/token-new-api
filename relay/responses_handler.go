@@ -164,6 +164,9 @@ func handleProxyBridgeStreamResponse(c *gin.Context, info *relaycommon.RelayInfo
 			return
 		}
 	})
+	if err := helper.InternalRelayAttemptError(c); err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusGatewayTimeout)
+	}
 
 	if streamErr != nil {
 		return nil, streamErr

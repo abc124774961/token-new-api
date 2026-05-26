@@ -66,7 +66,14 @@ export const usePricingFilterCounts = ({
 
     // 计费类型
     if (!ignore.includes('quota') && filterQuotaType !== 'all') {
-      if (model.quota_type !== filterQuotaType) return false;
+      if (filterQuotaType === 'dynamic') {
+        if (model.billing_mode !== 'tiered_expr') return false;
+      } else if (
+        model.billing_mode === 'tiered_expr' ||
+        model.quota_type !== filterQuotaType
+      ) {
+        return false;
+      }
     }
 
     // 端点类型

@@ -66,6 +66,10 @@ func xAIStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			sr.Error(err)
 		}
 	})
+	if err := helper.InternalRelayAttemptError(c); err != nil {
+		service.CloseResponseBodyGracefully(resp)
+		return nil, types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusGatewayTimeout)
+	}
 
 	if !containStreamUsage {
 		usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())

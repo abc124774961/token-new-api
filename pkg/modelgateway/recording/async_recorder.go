@@ -172,6 +172,7 @@ type attemptRequestMeta struct {
 	ErrorMessage                   string             `json:"error_message,omitempty"`
 	ErrorCategory                  string             `json:"error_category,omitempty"`
 	RetryAction                    string             `json:"retry_action,omitempty"`
+	RetryReason                    string             `json:"retry_reason,omitempty"`
 	WillRetry                      bool               `json:"will_retry,omitempty"`
 	ClientAborted                  bool               `json:"client_aborted,omitempty"`
 	ConcurrencyLimited             bool               `json:"concurrency_limited,omitempty"`
@@ -291,6 +292,7 @@ func attemptRequestMetaFromResult(result core.AttemptResult) attemptRequestMeta 
 		ErrorMessage:                   result.ErrorMessage,
 		ErrorCategory:                  result.ErrorCategory,
 		RetryAction:                    result.RetryAction,
+		RetryReason:                    result.RetryReason,
 		WillRetry:                      result.WillRetry,
 		ClientAborted:                  result.ClientAborted,
 		ConcurrencyLimited:             result.ConcurrencyLimited,
@@ -312,6 +314,7 @@ func emptyAttemptRequestMeta(meta attemptRequestMeta) bool {
 	return meta.ErrorMessage == "" &&
 		meta.ErrorCategory == "" &&
 		meta.RetryAction == "" &&
+		meta.RetryReason == "" &&
 		!meta.WillRetry &&
 		!meta.ClientAborted &&
 		!meta.ConcurrencyLimited &&
