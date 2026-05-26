@@ -18,6 +18,7 @@ func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {
@@ -112,6 +113,7 @@ func TestAsyncExecutionRecorderRecordsAttemptFlowMeta(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {
@@ -165,6 +167,7 @@ func TestAsyncExecutionRecorderAttemptPreservesDispatchScoreExplanation(t *testi
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {
@@ -173,22 +176,22 @@ func TestAsyncExecutionRecorderAttemptPreservesDispatchScoreExplanation(t *testi
 
 	recorder := NewAsyncExecutionRecorder(8)
 	plan := &core.DispatchPlan{
-		Channel:            &model.Channel{Id: 12, Name: "score-channel"},
-		RequestedGroup:     "auto",
-		SelectedGroup:      "codex-plus",
-		RuntimeKey:         core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 12, Group: "codex-plus", EndpointType: constant.EndpointTypeOpenAI},
-		ProviderProfile:    "mimo_codex_chat",
-		ProxyMode:          "responses_via_chat",
-		ScoreTotal:         0.952,
-		ScoreBreakdown:     map[string]float64{"completion_rate": 1, "ttft_latency": 0.84},
-		RoutingScoreTotal:  0.951,
-		SelectedReason:     "score_items",
-		PolicyMode:         "active",
-		AutoMode:           core.AutoModeSequential,
-		Strategy:           core.StrategyBalanced,
-		QueueEnabled:       true,
-		QueueDepth:         1,
-		QueueCapacity:      10,
+		Channel:           &model.Channel{Id: 12, Name: "score-channel"},
+		RequestedGroup:    "auto",
+		SelectedGroup:     "codex-plus",
+		RuntimeKey:        core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 12, Group: "codex-plus", EndpointType: constant.EndpointTypeOpenAI},
+		ProviderProfile:   "mimo_codex_chat",
+		ProxyMode:         "responses_via_chat",
+		ScoreTotal:        0.952,
+		ScoreBreakdown:    map[string]float64{"completion_rate": 1, "ttft_latency": 0.84},
+		RoutingScoreTotal: 0.951,
+		SelectedReason:    "score_items",
+		PolicyMode:        "active",
+		AutoMode:          core.AutoModeSequential,
+		Strategy:          core.StrategyBalanced,
+		QueueEnabled:      true,
+		QueueDepth:        1,
+		QueueCapacity:     10,
 		Candidates: []core.CandidateExplanation{
 			{
 				ChannelID:      12,
@@ -196,9 +199,9 @@ func TestAsyncExecutionRecorderAttemptPreservesDispatchScoreExplanation(t *testi
 				Group:          "codex-plus",
 				UpstreamModel:  "gpt-5.5",
 				RuntimeKey:     core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 12, Group: "codex-plus", EndpointType: constant.EndpointTypeOpenAI},
-				Available:     true,
-				Selected:      true,
-				ScoreTotal:    0.952,
+				Available:      true,
+				Selected:       true,
+				ScoreTotal:     0.952,
 				ScoreBreakdown: map[string]float64{"completion_rate": 1, "ttft_latency": 0.84},
 				ScoreItems: []core.ScoreItem{
 					{Key: "completion_rate", Score: 1, Weight: 0.4, WeightedScore: 0.4},
@@ -243,6 +246,7 @@ func TestAsyncExecutionRecorderRecordsFirstByteTimeoutRetryReason(t *testing.T) 
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {
@@ -310,6 +314,7 @@ func TestAsyncExecutionRecorderRecordsAttemptTimingMeta(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {
@@ -366,6 +371,7 @@ func TestAsyncExecutionRecorderTimingMetaFallbackDoesNotDoubleCountQueueWait(t *
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {
@@ -409,6 +415,7 @@ func TestAsyncExecutionRecorderSummarizesRecoveredUserRequest(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {
@@ -468,6 +475,7 @@ func TestAsyncExecutionRecorderSameAttemptIndexCannotMarkRecoveredUserRequest(t 
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {
@@ -518,6 +526,7 @@ func TestAsyncExecutionRecorderRecordsHealthProbeUserRequestSummary(t *testing.T
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {
@@ -571,6 +580,7 @@ func TestAsyncExecutionRecorderHealthProbeFailureIsProbeSummary(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {
@@ -613,6 +623,7 @@ func TestAsyncExecutionRecorderPersistsBalanceInsufficientMeta(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {
@@ -656,6 +667,7 @@ func TestAsyncExecutionRecorderSummarizesClientAbortAsUserCanceled(t *testing.T)
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {
@@ -703,6 +715,7 @@ func TestAsyncExecutionRecorderClientAbortOverridesStreamInterruptedCategory(t *
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	oldDB := model.DB
 	model.DB = db
 	defer func() {

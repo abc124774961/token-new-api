@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
@@ -41,7 +42,7 @@ type ModelExecutionRecord struct {
 	ScoreBreakdown    string  `json:"score_breakdown" gorm:"type:text"`
 	CandidateGroups   string  `json:"candidate_groups" gorm:"type:text"`
 	SelectedReason    string  `json:"selected_reason" gorm:"type:varchar(191);default:''"`
-	RequestMeta       string  `json:"request_meta" gorm:"type:text"`
+	RequestMeta       string  `json:"request_meta" gorm:"-:migration"`
 }
 
 type ModelExecutionObserver func(record ModelExecutionRecord)
@@ -68,6 +69,16 @@ func RecordModelExecution(record *ModelExecutionRecord) {
 		record.CreatedAt = common.GetTimestamp()
 	}
 	if err := DB.Create(record).Error; err != nil {
+		if isMissingModelExecutionRequestMetaColumnError(err) {
+			if migrateErr := EnsureModelExecutionRecordRequestMetaCapacity(DB); migrateErr != nil {
+				err = fmt.Errorf("%w; failed to ensure request_meta capacity: %v", err, migrateErr)
+			} else if retryErr := DB.Create(record).Error; retryErr == nil {
+				notifyModelExecutionObservers(*record)
+				return
+			} else {
+				err = retryErr
+			}
+		}
 		common.SysLog(fmt.Sprintf(
 			"failed to record model execution: request_id=%s channel_id=%d request_meta_bytes=%d error=%v",
 			record.RequestId,
@@ -78,6 +89,17 @@ func RecordModelExecution(record *ModelExecutionRecord) {
 		return
 	}
 	notifyModelExecutionObservers(*record)
+}
+
+func isMissingModelExecutionRequestMetaColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "request_meta") &&
+		(strings.Contains(message, "no column") ||
+			strings.Contains(message, "unknown column") ||
+			strings.Contains(message, "does not exist"))
 }
 
 func notifyModelExecutionObservers(record ModelExecutionRecord) {

@@ -30,6 +30,7 @@ func setupModelGatewayReplayControllerTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}, &model.ModelGatewayChannelCostProfile{}, &model.ModelGatewayRequestCostSummary{}, &model.Log{}, &model.User{}, &model.Channel{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 
 	oldDB := model.DB
 	oldLogDB := model.LOG_DB

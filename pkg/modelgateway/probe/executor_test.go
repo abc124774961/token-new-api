@@ -287,6 +287,7 @@ func TestProbeAttemptResultUsesDispatchPlanRuntimeKey(t *testing.T) {
 func TestProbeSchedulerDispatchRecordIncludesScoreAndCandidateExplanation(t *testing.T) {
 	db := setupProbeExecutorTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	restoreSchedulerSetting := scheduler_setting.SetSettingForTest(scheduler_setting.DefaultSetting())
 	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
 	t.Cleanup(func() {

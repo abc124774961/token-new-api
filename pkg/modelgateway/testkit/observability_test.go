@@ -105,6 +105,7 @@ func setupObservationFixtureDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
 		if err == nil {

@@ -435,6 +435,7 @@ func TestReplayExporterAggregatesByRequestID(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 
 	scoreBreakdown, err := common.Marshal(map[string]float64{"success": 0.92, "speed": 0.7})
 	require.NoError(t, err)
@@ -557,6 +558,7 @@ func TestReplayExporterWritesGoldenArtifact(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 	require.NoError(t, db.Create(&model.ModelExecutionRecord{
 		CreatedAt:       10,
 		RequestId:       "req-golden",

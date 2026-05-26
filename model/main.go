@@ -269,6 +269,9 @@ func migrateDB() error {
 	if err := ensureRuntimeSnapshotRecoveryColumns(); err != nil {
 		return err
 	}
+	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -330,6 +333,9 @@ func migrateDB() error {
 }
 
 func migrateDBFast() error {
+	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
+		return err
+	}
 
 	var wg sync.WaitGroup
 
@@ -417,31 +423,117 @@ func migrateDBFast() error {
 }
 
 func ensureModelExecutionRecordRequestMetaCapacity() error {
-	if DB == nil || !common.UsingMySQL || !DB.Migrator().HasTable(&ModelExecutionRecord{}) {
+	return EnsureModelExecutionRecordRequestMetaCapacity(DB)
+}
+
+func EnsureModelExecutionRecordRequestMetaCapacity(db *gorm.DB) error {
+	if db == nil || !db.Migrator().HasTable(&ModelExecutionRecord{}) {
 		return nil
 	}
 	const tableName = "model_execution_records"
 	const columnName = "request_meta"
-	if !DB.Migrator().HasColumn(&ModelExecutionRecord{}, columnName) {
+	hasColumn, err := hasModelExecutionRecordRequestMetaColumn(db)
+	if err != nil {
+		return err
+	}
+	if !hasColumn {
+		return addModelExecutionRecordRequestMetaColumn(db)
+	}
+	if modelExecutionRecordRequestMetaDialect(db) != "mysql" {
 		return nil
 	}
 
 	var columnType string
-	if err := DB.Raw(`SELECT COLUMN_TYPE FROM information_schema.columns
+	if err := db.Raw(`SELECT COLUMN_TYPE FROM information_schema.columns
 			WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
 		tableName, columnName).Scan(&columnType).Error; err != nil {
 		common.SysLog(fmt.Sprintf("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
 		return nil
 	}
 	normalizedType := strings.ToLower(strings.TrimSpace(columnType))
-	if normalizedType == "mediumtext" || normalizedType == "longtext" {
+	if normalizedType == "longtext" {
 		return nil
 	}
-	if err := DB.Exec("ALTER TABLE `model_execution_records` MODIFY COLUMN `request_meta` MEDIUMTEXT").Error; err != nil {
-		return fmt.Errorf("failed to migrate %s.%s to MEDIUMTEXT: %w", tableName, columnName, err)
+	if err := db.Exec("ALTER TABLE `model_execution_records` MODIFY COLUMN `request_meta` LONGTEXT").Error; err != nil {
+		return fmt.Errorf("failed to migrate %s.%s to LONGTEXT: %w", tableName, columnName, err)
 	}
-	common.SysLog(fmt.Sprintf("Successfully migrated %s.%s to MEDIUMTEXT", tableName, columnName))
+	common.SysLog(fmt.Sprintf("Successfully migrated %s.%s to LONGTEXT", tableName, columnName))
 	return nil
+}
+
+func hasModelExecutionRecordRequestMetaColumn(db *gorm.DB) (bool, error) {
+	const tableName = "model_execution_records"
+	const columnName = "request_meta"
+	switch modelExecutionRecordRequestMetaDialect(db) {
+	case "postgres":
+		var count int64
+		if err := db.Raw(`SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
+			tableName, columnName).Scan(&count).Error; err != nil {
+			return false, fmt.Errorf("failed to check model_execution_records.request_meta column: %w", err)
+		}
+		return count > 0, nil
+	case "sqlite":
+		var cols []struct {
+			Name string `gorm:"column:name"`
+		}
+		if err := db.Raw("PRAGMA table_info(`" + tableName + "`)").Scan(&cols).Error; err != nil {
+			return false, fmt.Errorf("failed to check model_execution_records.request_meta column: %w", err)
+		}
+		for _, col := range cols {
+			if col.Name == columnName {
+				return true, nil
+			}
+		}
+		return false, nil
+	default:
+		var count int64
+		if err := db.Raw(`SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+			tableName, columnName).Scan(&count).Error; err != nil {
+			return false, fmt.Errorf("failed to check model_execution_records.request_meta column: %w", err)
+		}
+		return count > 0, nil
+	}
+}
+
+func addModelExecutionRecordRequestMetaColumn(db *gorm.DB) error {
+	switch modelExecutionRecordRequestMetaDialect(db) {
+	case "mysql":
+		if err := db.Exec("ALTER TABLE `model_execution_records` ADD COLUMN `request_meta` LONGTEXT").Error; err != nil {
+			return fmt.Errorf("failed to add model_execution_records.request_meta: %w", err)
+		}
+	case "postgres":
+		if err := db.Exec(`ALTER TABLE "model_execution_records" ADD COLUMN "request_meta" TEXT`).Error; err != nil {
+			return fmt.Errorf("failed to add model_execution_records.request_meta: %w", err)
+		}
+	default:
+		if err := db.Exec("ALTER TABLE `model_execution_records` ADD COLUMN `request_meta` TEXT").Error; err != nil {
+			return fmt.Errorf("failed to add model_execution_records.request_meta: %w", err)
+		}
+	}
+	common.SysLog("Successfully added model_execution_records.request_meta")
+	return nil
+}
+
+func modelExecutionRecordRequestMetaDialect(db *gorm.DB) string {
+	if db != nil && db.Dialector != nil {
+		switch db.Dialector.Name() {
+		case "mysql":
+			return "mysql"
+		case "postgres":
+			return "postgres"
+		case "sqlite", "sqlite3":
+			return "sqlite"
+		}
+	}
+	if common.UsingMySQL {
+		return "mysql"
+	}
+	if common.UsingPostgreSQL {
+		return "postgres"
+	}
+	return "sqlite"
 }
 
 func migrateLOGDB() error {

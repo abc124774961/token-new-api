@@ -36,7 +36,7 @@ type Channel struct {
 	Other              string   `json:"other"`
 	Balance            float64  `json:"balance"` // in USD
 	BalanceUpdatedTime int64    `json:"balance_updated_time" gorm:"bigint"`
-	CostPerMillion     *float64 `json:"cost_per_million" gorm:"type:decimal(12,6);default:0"`
+	CostPerMillion     *float64 `json:"cost_per_million" gorm:"-"`
 	Models             string   `json:"models"`
 	Group              string   `json:"group" gorm:"type:varchar(64);default:'default'"`
 	UsedQuota          int64    `json:"used_quota" gorm:"bigint;default:0"`
