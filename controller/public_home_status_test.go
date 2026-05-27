@@ -247,7 +247,7 @@ func TestPublicHomeModelGatewayStatsAggregatesFromDB(t *testing.T) {
 		},
 		{
 			RequestId:     "req-too-old",
-			CompletedAt:   now.AddDate(0, 0, -40).Unix(),
+			CompletedAt:   now.Add(-25 * time.Hour).Unix(),
 			SelectedGroup: "codex-plus",
 			FinalSuccess:  true,
 			DurationMs:    100,
@@ -255,7 +255,7 @@ func TestPublicHomeModelGatewayStatsAggregatesFromDB(t *testing.T) {
 		},
 	}).Error)
 
-	stats := buildPublicHomeModelGatewayStats(30)
+	stats := buildPublicHomeModelGatewayStats()
 
 	require.EqualValues(t, 4, stats.Requests)
 	require.EqualValues(t, 3, stats.Successes)

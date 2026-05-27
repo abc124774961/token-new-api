@@ -27,6 +27,7 @@ const (
 	publicHomeGatewayEmptyStale = 30 * time.Second
 	publicHomeGatewayQueryTTL   = 1800 * time.Millisecond
 	publicHomeGatewayFirstWait  = 500 * time.Millisecond
+	publicHomeGatewayStatsHours = 24
 	publicHomeStatusLogQueryTTL = 900 * time.Millisecond
 )
 
@@ -164,7 +165,7 @@ func GetPublicHomeStatus(c *gin.Context) {
 	}()
 	go func() {
 		defer wg.Done()
-		gatewayStats = getCachedPublicHomeModelGatewayStats(days)
+		gatewayStats = getCachedPublicHomeModelGatewayStats()
 	}()
 	wg.Wait()
 
@@ -429,26 +430,25 @@ func publicHomeDynamicBillingStatusRank(status string) int {
 	}
 }
 
-func getCachedPublicHomeModelGatewayStats(days int) publicHomeModelGatewayStats {
-	days = normalizePublicHomeStatusDays(days)
+func getCachedPublicHomeModelGatewayStats() publicHomeModelGatewayStats {
 	now := time.Now()
 	publicHomeModelGatewayStatsCache.Lock()
-	if cached, ok := publicHomeModelGatewayStatsCache.items[days]; ok && now.Before(cached.expiresAt) {
+	if cached, ok := publicHomeModelGatewayStatsCache.items[publicHomeGatewayStatsHours]; ok && now.Before(cached.expiresAt) {
 		result := cached.result
 		publicHomeModelGatewayStatsCache.Unlock()
 		return result
 	}
-	if cached, ok := publicHomeModelGatewayStatsCache.items[days]; ok && now.Before(cached.staleUntil) {
+	if cached, ok := publicHomeModelGatewayStatsCache.items[publicHomeGatewayStatsHours]; ok && now.Before(cached.staleUntil) {
 		result := cached.result
-		if _, refreshing := publicHomeModelGatewayStatsCache.inFlight[days]; !refreshing {
+		if _, refreshing := publicHomeModelGatewayStatsCache.inFlight[publicHomeGatewayStatsHours]; !refreshing {
 			done := make(chan struct{})
-			publicHomeModelGatewayStatsCache.inFlight[days] = done
-			go refreshPublicHomeModelGatewayStats(days, done)
+			publicHomeModelGatewayStatsCache.inFlight[publicHomeGatewayStatsHours] = done
+			go refreshPublicHomeModelGatewayStats(done)
 		}
 		publicHomeModelGatewayStatsCache.Unlock()
 		return result
 	}
-	if done, ok := publicHomeModelGatewayStatsCache.inFlight[days]; ok {
+	if done, ok := publicHomeModelGatewayStatsCache.inFlight[publicHomeGatewayStatsHours]; ok {
 		publicHomeModelGatewayStatsCache.Unlock()
 		// Do not make the public homepage wait on a cold expensive stats scan.
 		// The request will render with channel-level status and the background
@@ -456,7 +456,7 @@ func getCachedPublicHomeModelGatewayStats(days int) publicHomeModelGatewayStats 
 		select {
 		case <-done:
 			publicHomeModelGatewayStatsCache.Lock()
-			cached, hasResult := publicHomeModelGatewayStatsCache.items[days]
+			cached, hasResult := publicHomeModelGatewayStatsCache.items[publicHomeGatewayStatsHours]
 			publicHomeModelGatewayStatsCache.Unlock()
 			if hasResult {
 				return cached.result
@@ -466,14 +466,14 @@ func getCachedPublicHomeModelGatewayStats(days int) publicHomeModelGatewayStats 
 		return publicHomeModelGatewayStats{}
 	}
 	done := make(chan struct{})
-	publicHomeModelGatewayStatsCache.inFlight[days] = done
+	publicHomeModelGatewayStatsCache.inFlight[publicHomeGatewayStatsHours] = done
 	publicHomeModelGatewayStatsCache.Unlock()
 
-	go refreshPublicHomeModelGatewayStats(days, done)
+	go refreshPublicHomeModelGatewayStats(done)
 	select {
 	case <-done:
 		publicHomeModelGatewayStatsCache.Lock()
-		cached, hasResult := publicHomeModelGatewayStatsCache.items[days]
+		cached, hasResult := publicHomeModelGatewayStatsCache.items[publicHomeGatewayStatsHours]
 		publicHomeModelGatewayStatsCache.Unlock()
 		if hasResult {
 			return cached.result
@@ -483,8 +483,8 @@ func getCachedPublicHomeModelGatewayStats(days int) publicHomeModelGatewayStats 
 	return publicHomeModelGatewayStats{}
 }
 
-func refreshPublicHomeModelGatewayStats(days int, done chan struct{}) publicHomeModelGatewayStats {
-	result := buildPublicHomeModelGatewayStats(days)
+func refreshPublicHomeModelGatewayStats(done chan struct{}) publicHomeModelGatewayStats {
+	result := buildPublicHomeModelGatewayStats()
 	now := time.Now()
 	cacheTTL := publicHomeGatewayStatsTTL
 	staleTTL := publicHomeGatewayStatsStale
@@ -493,12 +493,12 @@ func refreshPublicHomeModelGatewayStats(days int, done chan struct{}) publicHome
 		staleTTL = publicHomeGatewayEmptyStale
 	}
 	publicHomeModelGatewayStatsCache.Lock()
-	publicHomeModelGatewayStatsCache.items[days] = publicHomeModelGatewayStatsCacheItem{
+	publicHomeModelGatewayStatsCache.items[publicHomeGatewayStatsHours] = publicHomeModelGatewayStatsCacheItem{
 		result:     result,
 		expiresAt:  now.Add(cacheTTL),
 		staleUntil: now.Add(staleTTL),
 	}
-	delete(publicHomeModelGatewayStatsCache.inFlight, days)
+	delete(publicHomeModelGatewayStatsCache.inFlight, publicHomeGatewayStatsHours)
 	publicHomeModelGatewayStatsCache.Unlock()
 	if done != nil {
 		close(done)
@@ -506,14 +506,14 @@ func refreshPublicHomeModelGatewayStats(days int, done chan struct{}) publicHome
 	return result
 }
 
-func buildPublicHomeModelGatewayStats(days int) publicHomeModelGatewayStats {
+func buildPublicHomeModelGatewayStats() publicHomeModelGatewayStats {
 	if model.DB == nil {
 		return publicHomeModelGatewayStats{}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), publicHomeGatewayQueryTTL)
 	defer cancel()
 
-	startTime := startOfPublicHomeStatusWindow(days).Unix()
+	startTime := time.Now().Add(-time.Duration(publicHomeGatewayStatsHours) * time.Hour).Unix()
 	var row publicHomeModelGatewayStatsAggRow
 	tx := model.DB.WithContext(ctx).
 		Model(&model.ModelGatewayUserRequestSummary{}).

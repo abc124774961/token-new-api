@@ -57,7 +57,7 @@ const fallbackStatus = {
   updated_at: 0,
 };
 
-const homeStatusCacheKey = 'home_public_status_v2';
+const homeStatusCacheKey = 'home_public_status_v3';
 const homeStatusCacheTTL = 2 * 60 * 1000;
 const homeDynamicPricingGroupLabel = '本站plus动态';
 const homeStatusCacheStaleTTL = 30 * 60 * 1000;
@@ -135,7 +135,7 @@ const hasHeroDynamicBillingData = (status) =>
 
 const hasHomeStatusRequestMetrics = (status) =>
   Number(status?.summary?.requests || 0) > 0 &&
-  Number(status?.summary?.avg_latency_ms || 0) > 0 &&
+  Number(status?.summary?.avg_ttft_ms || 0) > 0 &&
   Number(status?.summary?.success_rate || 0) > 0;
 
 const isCacheableHomeStatus = (status) =>
@@ -192,7 +192,7 @@ const writeCachedHomeStatus = (status) => {
 const requestHomeStatus = async () => {
   try {
     const res = await API.get('/api/public/home/status', {
-      params: { days: 30 },
+      params: { days: 7 },
       skipErrorHandler: true,
       disableDuplicate: true,
     });
@@ -287,7 +287,7 @@ const HeroOrbitVisual = ({
   const cards = [
     {
       key: 'first-byte',
-      label: t('平均响应延迟'),
+      label: t('平均首包'),
       value: hasResponseLatencyData ? avgResponseLatency : '--',
       note: hasResponseLatencyData ? t('真实请求首包') : t('等待真实请求样本'),
       badge: t('流式响应'),
