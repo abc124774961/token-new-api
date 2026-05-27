@@ -115,15 +115,15 @@ func StrategyProfileFor(strategy string) StrategyProfile {
 		profile.Weights = map[string]float64{
 			scoreItemCompletionRate:        0.14,
 			scoreItemUpstreamErrorRate:     0.10,
-			scoreItemTTFTLatency:           0.05,
-			scoreItemDurationLatency:       0.04,
+			scoreItemTTFTLatency:           0.15,
+			scoreItemDurationLatency:       0.05,
 			scoreItemThroughput:            0.03,
 			scoreItemEmptyOutputRate:       0.04,
 			scoreItemStreamInterruptedRate: 0.05,
 			scoreItemConcurrencyLoad:       0.03,
 			scoreItemQueuePressure:         0.03,
-			scoreItemFirstByteBacklog:      0.02,
-			scoreItemCost:                  0.42,
+			scoreItemFirstByteBacklog:      0.08,
+			scoreItemCost:                  0.25,
 			scoreItemGroupPriority:         0.05,
 		}
 		profile.CostPower = costFirstRelativeCostPower
