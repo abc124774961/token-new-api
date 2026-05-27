@@ -20,11 +20,17 @@ For commercial licensing, please contact support@quantumnous.com
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { API, isAdmin, showError, timestamp2string } from '../../helpers';
-import { getDefaultTime, getInitialTimestamp } from '../../helpers/dashboard';
-import { TIME_OPTIONS } from '../../constants/dashboard.constants';
+import { API, isAdmin, showError } from '../../helpers';
+import { getDashboardDateRangeInputs } from '../../helpers/dashboard';
+import {
+  DASHBOARD_DATE_RANGE_PRESETS,
+  TIME_OPTIONS,
+} from '../../constants/dashboard.constants';
 import { useIsMobile } from '../common/useIsMobile';
 import { useMinimumLoadingTime } from '../common/useMinimumLoadingTime';
+
+const getDefaultTimeForDateRange = (rangeValue) =>
+  rangeValue === '7d' || rangeValue === '30d' ? 'day' : 'hour';
 
 export const useDashboardData = (userState, userDispatch, statusState) => {
   const { t } = useTranslation();
@@ -35,22 +41,23 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
   // ========== 基础状态 ==========
   const [loading, setLoading] = useState(false);
   const [greetingVisible, setGreetingVisible] = useState(false);
-  const [searchModalVisible, setSearchModalVisible] = useState(false);
   const showLoading = useMinimumLoadingTime(loading);
 
   // ========== 输入状态 ==========
+  const defaultDateRange = 'today';
+  const [activeDateRange, setActiveDateRange] = useState(defaultDateRange);
   const [inputs, setInputs] = useState({
     username: '',
     token_name: '',
     model_name: '',
-    start_timestamp: getInitialTimestamp(),
-    end_timestamp: timestamp2string(new Date().getTime() / 1000 + 3600),
+    ...getDashboardDateRangeInputs(defaultDateRange),
     channel: '',
     data_export_default_time: '',
   });
 
-  const [dataExportDefaultTime, setDataExportDefaultTime] =
-    useState(getDefaultTime());
+  const [dataExportDefaultTime, setDataExportDefaultTime] = useState(
+    getDefaultTimeForDateRange(defaultDateRange),
+  );
 
   // ========== 数据状态 ==========
   const [quotaData, setQuotaData] = useState([]);
@@ -82,7 +89,6 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
   const [activeUptimeTab, setActiveUptimeTab] = useState('');
 
   // ========== 常量 ==========
-  const now = new Date();
   const isAdminUser = isAdmin();
 
   // ========== Panel enable flags ==========
@@ -99,6 +105,15 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
   const timeOptions = useMemo(
     () =>
       TIME_OPTIONS.map((option) => ({
+        ...option,
+        label: t(option.label),
+      })),
+    [t],
+  );
+
+  const dateRangePresets = useMemo(
+    () =>
+      DASHBOARD_DATE_RANGE_PRESETS.map((option) => ({
         ...option,
         label: t(option.label),
       })),
@@ -138,60 +153,85 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
   }, [t, userState?.user?.username]);
 
   // ========== 回调函数 ==========
-  const handleInputChange = useCallback((value, name) => {
-    if (name === 'data_export_default_time') {
-      setDataExportDefaultTime(value);
-      localStorage.setItem('data_export_default_time', value);
-      return;
-    }
-    setInputs((inputs) => ({ ...inputs, [name]: value }));
-  }, []);
+  const handleInputChange = useCallback(
+    (value, name) => {
+      if (name === 'data_export_default_time') {
+        setDataExportDefaultTime(value);
+        localStorage.setItem('data_export_default_time', value);
+        return inputs;
+      }
 
-  const showSearchModal = useCallback(() => {
-    setSearchModalVisible(true);
-  }, []);
+      const nextInputs = { ...inputs, [name]: value ?? '' };
+      setInputs(nextInputs);
+      if (name === 'start_timestamp' || name === 'end_timestamp') {
+        setActiveDateRange('custom');
+      }
+      return nextInputs;
+    },
+    [inputs],
+  );
 
-  const handleCloseModal = useCallback(() => {
-    setSearchModalVisible(false);
-  }, []);
+  const handleDateRangeChange = useCallback(
+    (rangeValue) => {
+      const nextDefaultTime = getDefaultTimeForDateRange(rangeValue);
+      const nextInputs = {
+        ...inputs,
+        ...getDashboardDateRangeInputs(rangeValue),
+      };
+      setInputs(nextInputs);
+      setActiveDateRange(rangeValue);
+      setDataExportDefaultTime(nextDefaultTime);
+      return {
+        dataExportDefaultTime: nextDefaultTime,
+        inputs: nextInputs,
+      };
+    },
+    [inputs],
+  );
 
   // ========== API 调用函数 ==========
-  const loadQuotaData = useCallback(async () => {
-    setLoading(true);
-    try {
-      let url = '';
-      const { start_timestamp, end_timestamp, username } = inputs;
-      let localStartTimestamp = Date.parse(start_timestamp) / 1000;
-      let localEndTimestamp = Date.parse(end_timestamp) / 1000;
+  const loadQuotaData = useCallback(
+    async (overrideInputs, overrideDefaultTime) => {
+      setLoading(true);
+      try {
+        let url = '';
+        const currentInputs = overrideInputs || inputs;
+        const { start_timestamp, end_timestamp, username } = currentInputs;
+        let localStartTimestamp = Date.parse(start_timestamp) / 1000;
+        let localEndTimestamp = Date.parse(end_timestamp) / 1000;
+        const encodedUsername = encodeURIComponent(username || '');
+        const currentDefaultTime = overrideDefaultTime || dataExportDefaultTime;
 
-      if (isAdminUser) {
-        url = `/api/data/?username=${username}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
-      } else {
-        url = `/api/data/self/?start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
-      }
-
-      const res = await API.get(url);
-      const { success, message, data } = res.data;
-      if (success) {
-        setQuotaData(data);
-        if (data.length === 0) {
-          data.push({
-            count: 0,
-            model_name: '无数据',
-            quota: 0,
-            created_at: now.getTime() / 1000,
-          });
+        if (isAdminUser) {
+          url = `/api/data/?username=${encodedUsername}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${currentDefaultTime}`;
+        } else {
+          url = `/api/data/self/?start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${currentDefaultTime}`;
         }
-        data.sort((a, b) => a.created_at - b.created_at);
-        return data;
-      } else {
-        showError(message);
-        return [];
+
+        const res = await API.get(url);
+        const { success, message, data } = res.data;
+        if (success) {
+          setQuotaData(data);
+          if (data.length === 0) {
+            data.push({
+              count: 0,
+              model_name: '无数据',
+              quota: 0,
+              created_at: Date.now() / 1000,
+            });
+          }
+          data.sort((a, b) => a.created_at - b.created_at);
+          return data;
+        } else {
+          showError(message);
+          return [];
+        }
+      } finally {
+        setLoading(false);
       }
-    } finally {
-      setLoading(false);
-    }
-  }, [inputs, dataExportDefaultTime, isAdminUser, now]);
+    },
+    [inputs, dataExportDefaultTime, isAdminUser],
+  );
 
   const loadUptimeData = useCallback(async () => {
     setUptimeLoading(true);
@@ -213,26 +253,30 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     }
   }, [activeUptimeTab]);
 
-  const loadUserQuotaData = useCallback(async () => {
-    if (!isAdminUser) return [];
-    try {
-      const { start_timestamp, end_timestamp } = inputs;
-      const localStartTimestamp = Date.parse(start_timestamp) / 1000;
-      const localEndTimestamp = Date.parse(end_timestamp) / 1000;
-      const url = `/api/data/users?start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
-      const res = await API.get(url);
-      const { success, message, data } = res.data;
-      if (success) {
-        return data || [];
-      } else {
-        showError(message);
+  const loadUserQuotaData = useCallback(
+    async (overrideInputs) => {
+      if (!isAdminUser) return [];
+      try {
+        const currentInputs = overrideInputs || inputs;
+        const { start_timestamp, end_timestamp } = currentInputs;
+        const localStartTimestamp = Date.parse(start_timestamp) / 1000;
+        const localEndTimestamp = Date.parse(end_timestamp) / 1000;
+        const url = `/api/data/users?start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
+        const res = await API.get(url);
+        const { success, message, data } = res.data;
+        if (success) {
+          return data || [];
+        } else {
+          showError(message);
+          return [];
+        }
+      } catch (err) {
+        console.error(err);
         return [];
       }
-    } catch (err) {
-      console.error(err);
-      return [];
-    }
-  }, [inputs, isAdminUser]);
+    },
+    [inputs, isAdminUser],
+  );
 
   const getUserData = useCallback(async () => {
     let res = await API.get(`/api/user/self`);
@@ -244,21 +288,13 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     }
   }, [userDispatch]);
 
-  const refresh = useCallback(async () => {
-    const data = await loadQuotaData();
-    await loadUptimeData();
-    return data;
-  }, [loadQuotaData, loadUptimeData]);
-
-  const handleSearchConfirm = useCallback(
-    async (updateChartDataCallback) => {
-      const data = await refresh();
-      if (data && data.length > 0 && updateChartDataCallback) {
-        updateChartDataCallback(data);
-      }
-      setSearchModalVisible(false);
+  const refresh = useCallback(
+    async (overrideInputs, overrideDefaultTime) => {
+      const data = await loadQuotaData(overrideInputs, overrideDefaultTime);
+      await loadUptimeData();
+      return data;
     },
-    [refresh],
+    [loadQuotaData, loadUptimeData],
   );
 
   // ========== Effects ==========
@@ -280,11 +316,11 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     // 基础状态
     loading: showLoading,
     greetingVisible,
-    searchModalVisible,
 
     // 输入状态
     inputs,
     dataExportDefaultTime,
+    activeDateRange,
 
     // 数据状态
     quotaData,
@@ -317,6 +353,7 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
 
     // 计算值
     timeOptions,
+    dateRangePresets,
     performanceMetrics,
     getGreeting,
     isAdminUser,
@@ -329,14 +366,12 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
 
     // 函数
     handleInputChange,
-    showSearchModal,
-    handleCloseModal,
+    handleDateRangeChange,
     loadQuotaData,
     loadUserQuotaData,
     loadUptimeData,
     getUserData,
     refresh,
-    handleSearchConfirm,
 
     // 导航和翻译
     navigate,

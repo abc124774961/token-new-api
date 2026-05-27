@@ -42,6 +42,13 @@ export const TIME_OPTIONS = [
   { label: '周', value: 'week' },
 ];
 
+export const DASHBOARD_DATE_RANGE_PRESETS = [
+  { label: '今天', value: 'today' },
+  { label: '昨天', value: 'yesterday' },
+  { label: '7天', value: '7d' },
+  { label: '一个月', value: '30d' },
+];
+
 export const DEFAULT_TIME_INTERVALS = {
   hour: { seconds: 3600, minutes: 60 },
   day: { seconds: 86400, minutes: 1440 },

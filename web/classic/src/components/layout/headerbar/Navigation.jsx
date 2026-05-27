@@ -29,12 +29,23 @@ const Navigation = ({
   userState,
   pricingRequireAuth,
   currentPath,
+  currentHash,
 }) => {
   const renderNavLinks = () => {
     const getIsActive = (link, targetPath) => {
       if (link.isExternal) return false;
-      if (targetPath === '/') return currentPath === '/';
-      return currentPath === targetPath || currentPath.startsWith(`${targetPath}/`);
+      const [path, hash] = targetPath.split('#');
+      const normalizedPath = path || '/';
+      const normalizedHash = hash ? `#${hash}` : '';
+
+      if (link.itemKey === 'home') {
+        return currentPath === '/' && !currentHash;
+      }
+      if (normalizedHash) {
+        return currentPath === normalizedPath && currentHash === normalizedHash;
+      }
+      if (normalizedPath === '/') return currentPath === '/';
+      return currentPath === normalizedPath || currentPath.startsWith(`${normalizedPath}/`);
     };
 
     return mainNavLinks.map((link) => {

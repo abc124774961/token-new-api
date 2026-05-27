@@ -32,10 +32,7 @@ services:
       retries: 5
 
   mailpit:
-    build:
-      context: .
-      dockerfile: Dockerfile.mailpit
-    image: token-new-api-dev-mailpit:latest
+    image: axllent/mailpit:latest
     container_name: token-new-api-dev-mailpit
     restart: unless-stopped
     ports:

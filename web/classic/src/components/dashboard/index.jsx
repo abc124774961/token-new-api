@@ -29,7 +29,6 @@ import ApiInfoPanel from './ApiInfoPanel';
 import AnnouncementsPanel from './AnnouncementsPanel';
 import FaqPanel from './FaqPanel';
 import UptimePanel from './UptimePanel';
-import SearchModal from './modals/SearchModal';
 
 import { useDashboardData } from '../../hooks/dashboard/useDashboardData';
 import { useDashboardStats } from '../../hooks/dashboard/useDashboardStats';
@@ -86,11 +85,11 @@ const Dashboard = () => {
   );
 
   // ========== 数据处理 ==========
-  const loadUserData = async () => {
+  const loadUserData = async (overrideInputs, overrideDefaultTime) => {
     if (dashboardData.isAdminUser) {
-      const userData = await dashboardData.loadUserQuotaData();
+      const userData = await dashboardData.loadUserQuotaData(overrideInputs);
       if (userData && userData.length > 0) {
-        dashboardCharts.updateUserChartData(userData);
+        dashboardCharts.updateUserChartData(userData, overrideDefaultTime);
       }
     }
   };
@@ -105,17 +104,34 @@ const Dashboard = () => {
     await dashboardData.loadUptimeData();
   };
 
-  const handleRefresh = async () => {
-    const data = await dashboardData.refresh();
+  const handleRefresh = async (overrideInputs, overrideDefaultTime) => {
+    const data = await dashboardData.refresh(
+      overrideInputs,
+      overrideDefaultTime,
+    );
     if (data && data.length > 0) {
-      dashboardCharts.updateChartData(data);
+      dashboardCharts.updateChartData(data, overrideDefaultTime);
     }
-    await loadUserData();
+    await loadUserData(overrideInputs, overrideDefaultTime);
   };
 
-  const handleSearchConfirm = async () => {
-    await dashboardData.handleSearchConfirm(dashboardCharts.updateChartData);
-    await loadUserData();
+  const handleDateRangeChange = async (rangeValue) => {
+    const { inputs: nextInputs, dataExportDefaultTime } =
+      dashboardData.handleDateRangeChange(rangeValue);
+    await handleRefresh(nextInputs, dataExportDefaultTime);
+  };
+
+  const handleUsernameChange = (value) => {
+    dashboardData.handleInputChange(value, 'username');
+  };
+
+  const handleUsernameClear = async () => {
+    const nextInputs = dashboardData.handleInputChange('', 'username');
+    await handleRefresh(nextInputs);
+  };
+
+  const handleUsernameCommit = async () => {
+    await handleRefresh();
   };
 
   // ========== 数据准备 ==========
@@ -155,26 +171,19 @@ const Dashboard = () => {
       <DashboardHeader
         getGreeting={dashboardData.getGreeting}
         greetingVisible={dashboardData.greetingVisible}
-        showSearchModal={dashboardData.showSearchModal}
         refresh={handleRefresh}
         loading={dashboardData.loading}
-        dataExportDefaultTime={dashboardData.dataExportDefaultTime}
-        timeOptions={dashboardData.timeOptions}
-        isAdminUser={dashboardData.isAdminUser}
-        performanceMetrics={dashboardData.performanceMetrics}
-        t={dashboardData.t}
-      />
-
-      <SearchModal
-        searchModalVisible={dashboardData.searchModalVisible}
-        handleSearchConfirm={handleSearchConfirm}
-        handleCloseModal={dashboardData.handleCloseModal}
-        isMobile={dashboardData.isMobile}
-        isAdminUser={dashboardData.isAdminUser}
         inputs={dashboardData.inputs}
         dataExportDefaultTime={dashboardData.dataExportDefaultTime}
         timeOptions={dashboardData.timeOptions}
-        handleInputChange={dashboardData.handleInputChange}
+        dateRangePresets={dashboardData.dateRangePresets}
+        activeDateRange={dashboardData.activeDateRange}
+        onDateRangeChange={handleDateRangeChange}
+        onUsernameChange={handleUsernameChange}
+        onUsernameCommit={handleUsernameCommit}
+        onUsernameClear={handleUsernameClear}
+        isAdminUser={dashboardData.isAdminUser}
+        performanceMetrics={dashboardData.performanceMetrics}
         t={dashboardData.t}
       />
 

@@ -62,6 +62,40 @@ export const getInitialTimestamp = () => {
   }
 };
 
+export const getDashboardDateRangeInputs = (rangeValue = 'today') => {
+  const start = new Date();
+  const end = new Date();
+
+  switch (rangeValue) {
+    case 'yesterday':
+      start.setDate(start.getDate() - 1);
+      start.setHours(0, 0, 0, 0);
+      end.setDate(end.getDate() - 1);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case '7d':
+      start.setDate(start.getDate() - 6);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case '30d':
+      start.setDate(start.getDate() - 29);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      break;
+    case 'today':
+    default:
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      break;
+  }
+
+  return {
+    start_timestamp: timestamp2string(start.getTime() / 1000),
+    end_timestamp: timestamp2string(end.getTime() / 1000),
+  };
+};
+
 // ========== 数据处理工具函数 ==========
 export const updateMapValue = (map, key, value) => {
   if (!map.has(key)) {

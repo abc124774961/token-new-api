@@ -242,14 +242,21 @@ func uniqueNormalizedMonitorGroups(groupNames []string) []string {
 }
 
 func GetPublicHomeStatusLogs(startTs int64, channelIds []int) ([]ChannelStatusMonitorLogRow, error) {
+	return GetPublicHomeStatusLogsWithTimeout(startTs, channelIds, channelStatusMonitorQueryTimeout)
+}
+
+func GetPublicHomeStatusLogsWithTimeout(startTs int64, channelIds []int, timeout time.Duration) ([]ChannelStatusMonitorLogRow, error) {
 	if startTs <= 0 {
 		startTs = time.Now().Add(-30 * 24 * time.Hour).Unix()
 	}
 	if len(channelIds) == 0 {
 		return []ChannelStatusMonitorLogRow{}, nil
 	}
+	if timeout <= 0 {
+		timeout = channelStatusMonitorQueryTimeout
+	}
 	rows := make([]ChannelStatusMonitorLogRow, 0)
-	ctx, cancel := context.WithTimeout(context.Background(), channelStatusMonitorQueryTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	groupSelectCol := logGroupCol
 	if strings.Contains(groupSelectCol, "`") {

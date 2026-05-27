@@ -925,6 +925,7 @@ type channelMonitorRequestLog struct {
 	reason       string
 	successful   bool
 	latencyMs    int64
+	firstRespMs  int64
 }
 
 type channelMonitorRequestAgg struct {
@@ -938,6 +939,7 @@ type channelMonitorRequestAgg struct {
 	worstReason       string
 	success           bool
 	latencyMs         int64
+	firstRespMs       int64
 }
 
 func buildChannelMonitorLogStats(rows []model.ChannelStatusMonitorLogRow) channelMonitorLogStatsIndex {
@@ -1216,8 +1218,12 @@ func buildChannelMonitorRequestLog(row model.ChannelStatusMonitorLogRow, groupNa
 	_, reason := parseMonitorStatusCodeAndReason(other, row.Content)
 	status := monitorLogStatus(row.Type, row.Other, row.Content)
 	latencyMs := int64(row.UseTime) * 1000
-	if latency, ok := parseMonitorInt64(other, "frt"); ok && latency > 0 && (latencyMs <= 0 || latency < latencyMs) {
-		latencyMs = latency
+	firstRespMs := int64(0)
+	if latency, ok := parseMonitorInt64(other, "frt"); ok && latency > 0 {
+		firstRespMs = latency
+		if latencyMs <= 0 || latency < latencyMs {
+			latencyMs = latency
+		}
 	}
 	return channelMonitorRequestLog{
 		id:           row.Id,
@@ -1231,6 +1237,7 @@ func buildChannelMonitorRequestLog(row model.ChannelStatusMonitorLogRow, groupNa
 		reason:       reason,
 		successful:   monitorLogIsSuccessful(row.Type, status),
 		latencyMs:    latencyMs,
+		firstRespMs:  firstRespMs,
 	}
 }
 
@@ -1328,6 +1335,9 @@ func buildChannelMonitorRequestAggregatesWithKey(logs []channelMonitorRequestLog
 			agg.success = true
 			if log.latencyMs > 0 && (agg.latencyMs == 0 || log.createdAt > agg.lastRequestAt || log.id >= agg.lastId) {
 				agg.latencyMs = log.latencyMs
+			}
+			if log.firstRespMs > 0 && (agg.firstRespMs == 0 || log.createdAt > agg.lastRequestAt || log.id >= agg.lastId) {
+				agg.firstRespMs = log.firstRespMs
 			}
 		}
 	}

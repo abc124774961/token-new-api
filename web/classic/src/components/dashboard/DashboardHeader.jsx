@@ -18,22 +18,23 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Button, Tag } from '@douyinfe/semi-ui';
-import {
-  Clock3,
-  RefreshCw,
-  ShieldCheck,
-  SlidersHorizontal,
-} from 'lucide-react';
+import { Button, Input, Tag } from '@douyinfe/semi-ui';
+import { Clock3, RefreshCw, ShieldCheck, UserRound } from 'lucide-react';
 
 const DashboardHeader = ({
   getGreeting,
   greetingVisible,
-  showSearchModal,
   refresh,
   loading,
+  inputs,
   dataExportDefaultTime,
   timeOptions = [],
+  dateRangePresets = [],
+  activeDateRange,
+  onDateRangeChange,
+  onUsernameChange,
+  onUsernameCommit,
+  onUsernameClear,
   isAdminUser,
   performanceMetrics,
   t,
@@ -80,19 +81,45 @@ const DashboardHeader = ({
           </Tag>
         </div>
       </div>
-      <div className='ct-dashboard-hero-actions'>
-        <Button
-          type='tertiary'
-          icon={<SlidersHorizontal size={16} />}
-          onClick={showSearchModal}
-          className='ct-dashboard-icon-button ct-dashboard-icon-button-search'
-        >
-          {t('筛选')}
-        </Button>
+      <div className='ct-dashboard-filter-toolbar'>
+        <div className='ct-dashboard-range-control' aria-label={t('时间范围')}>
+          {dateRangePresets.map((option) => {
+            const active = option.value === activeDateRange;
+            return (
+              <Button
+                key={option.value}
+                type='tertiary'
+                onClick={() => onDateRangeChange?.(option.value)}
+                disabled={loading}
+                className={`ct-dashboard-range-button ${
+                  active ? 'ct-dashboard-range-button-active' : ''
+                }`}
+              >
+                {option.label}
+              </Button>
+            );
+          })}
+        </div>
+        {isAdminUser && (
+          <div className='ct-dashboard-username-filter'>
+            <span className='ct-dashboard-filter-label'>{t('用户名')}:</span>
+            <Input
+              value={inputs?.username || ''}
+              onChange={onUsernameChange}
+              onEnterPress={onUsernameCommit}
+              onBlur={onUsernameCommit}
+              onClear={onUsernameClear}
+              showClear
+              prefix={<UserRound size={14} />}
+              placeholder={t('用户名')}
+              className='ct-dashboard-username-input'
+            />
+          </div>
+        )}
         <Button
           type='tertiary'
           icon={<RefreshCw size={16} />}
-          onClick={refresh}
+          onClick={() => refresh?.()}
           loading={loading}
           className='ct-dashboard-icon-button ct-dashboard-icon-button-refresh'
         >

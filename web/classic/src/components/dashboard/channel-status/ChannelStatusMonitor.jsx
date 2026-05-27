@@ -198,6 +198,24 @@ function hasRuntime(group) {
   return Number(group?.runtime?.runtime_keys || 0) > 0;
 }
 
+function hasRuntimeRealSamples(group) {
+  return Number(group?.runtime?.real_sample_count_30m || 0) > 0;
+}
+
+function shouldShowGroupHealthTag(group, health) {
+  if (health !== 'warning') {
+    return true;
+  }
+  if (hasRuntime(group)) {
+    return hasRuntimeRealSamples(group);
+  }
+  const realRequests =
+    (Number(group?.recent_requests) || 0) -
+    (Number(group?.recent_client_aborted) || 0) -
+    (Number(group?.recent_health_probes) || 0);
+  return realRequests > 0;
+}
+
 function getGroupHealth(group) {
   if (!group || group.enabled_channels === 0) {
     return 'critical';
@@ -655,6 +673,7 @@ function GroupPanel({ group, windowDays }) {
   const { t } = useTranslation();
   const [detailsVisible, setDetailsVisible] = useState(false);
   const health = getGroupHealth(group);
+  const showHealthTag = shouldShowGroupHealthTag(group, health);
   const visibleChannels = useMemo(() => getVisibleChannels(group), [group]);
   const modelPreview = useMemo(() => getGroupModelPreview(group), [group]);
   const dominantType = getDominantChannelType(visibleChannels);
@@ -794,33 +813,6 @@ function GroupPanel({ group, windowDays }) {
         ),
       },
       {
-        title: t('并发 / 队列'),
-        dataIndex: 'active_concurrency',
-        width: 110,
-        render: (_, record) => (
-          <div>
-            <div className='font-mono font-semibold'>
-              {record.runtime
-                ? record.runtime.max_concurrency > 0
-                  ? `${record.runtime.active_concurrency}/${record.runtime.max_concurrency}`
-                  : formatNumber(record.runtime.active_concurrency)
-                : record.max_concurrency > 0
-                  ? `${record.active_concurrency}/${record.max_concurrency}`
-                  : formatNumber(record.active_concurrency)}
-            </div>
-            {record.runtime ? (
-              <div className='text-xs text-semi-color-text-2'>
-                {t('队列')} {formatNumber(record.runtime.queue_depth)}
-              </div>
-            ) : record.concurrency_ceiling > 0 ? (
-              <div className='text-xs text-semi-color-text-2'>
-                {t('上限')} {record.concurrency_ceiling}
-              </div>
-            ) : null}
-          </div>
-        ),
-      },
-      {
         title: t('成本 / 异常'),
         dataIndex: 'runtime',
         width: 140,
@@ -890,8 +882,12 @@ function GroupPanel({ group, windowDays }) {
   return (
     <>
       <DashboardCard
-        className={`ct-channel-monitor-card ct-channel-monitor-card-${health}`}
-        tone={health === 'healthy' ? 'uptime' : 'notice'}
+        className={`ct-channel-monitor-card ct-channel-monitor-card-${
+          showHealthTag ? health : 'unknown'
+        }`}
+        tone={
+          showHealthTag ? (health === 'healthy' ? 'uptime' : 'notice') : 'default'
+        }
         bodyStyle={{ padding: 0 }}
       >
         {canViewChannelDetails && (
@@ -923,6 +919,15 @@ function GroupPanel({ group, windowDays }) {
                   <h3 title={group.group}>
                     {String(group.group).toUpperCase()}
                   </h3>
+                  {showHealthTag && (
+                    <Tag
+                      color={healthMeta.color}
+                      shape='circle'
+                      className={`ct-channel-monitor-health-tag ct-channel-monitor-health-tag-${health}`}
+                    >
+                      {healthMeta.label}
+                    </Tag>
+                  )}
                 </div>
                 <div className='ct-channel-monitor-tags'>
                   <span className='ct-channel-monitor-pill-primary'>
@@ -944,15 +949,6 @@ function GroupPanel({ group, windowDays }) {
                   )}
                 </div>
               </div>
-            </div>
-            <div className='ct-channel-monitor-actions'>
-              <Tag
-                color={healthMeta.color}
-                shape='circle'
-                className='ct-channel-monitor-health-tag'
-              >
-                {healthMeta.label}
-              </Tag>
             </div>
           </div>
 
@@ -1008,23 +1004,23 @@ function GroupPanel({ group, windowDays }) {
             </div>
           </div>
 
-          <div className='ct-channel-monitor-quick-grid'>
+          <div
+            className={`ct-channel-monitor-quick-grid ${
+              hasSmartRuntime ? 'ct-channel-monitor-quick-grid-runtime' : ''
+            }`}
+          >
             <div>
               <span>{hasSmartRuntime ? t('客户端请求') : t('请求数')}</span>
               <strong>{formatNumber(group.recent_requests)}</strong>
             </div>
-            <div>
-              <span>
-                {hasSmartRuntime
-                  ? t('并发 / 队列')
-                  : `429 / 5xx / ${t('超时')}`}
-              </span>
-              <strong>
-                {hasSmartRuntime
-                  ? `${formatNumber(runtime.active_concurrency)} / ${formatNumber(runtime.queue_depth)}`
-                  : `${formatNumber(group.recent_error_429)} / ${formatNumber(group.recent_error_5xx)} / ${formatNumber(group.recent_error_timeout)}`}
-              </strong>
-            </div>
+            {!hasSmartRuntime && (
+              <div>
+                <span>{`429 / 5xx / ${t('超时')}`}</span>
+                <strong>
+                  {`${formatNumber(group.recent_error_429)} / ${formatNumber(group.recent_error_5xx)} / ${formatNumber(group.recent_error_timeout)}`}
+                </strong>
+              </div>
+            )}
             <div>
               <span>
                 {hasSmartRuntime
@@ -1090,9 +1086,11 @@ function GroupPanel({ group, windowDays }) {
         }
       >
         <div className='ct-channel-monitor-modal-summary'>
-          <Tag color={healthMeta.color} shape='circle'>
-            {healthMeta.label}
-          </Tag>
+          {showHealthTag && (
+            <Tag color={healthMeta.color} shape='circle'>
+              {healthMeta.label}
+            </Tag>
+          )}
           <Tag shape='circle'>
             {t('渠道数')} {group.total_channels}
           </Tag>
@@ -1145,7 +1143,11 @@ function ChannelStatusContent({ data, windowDays }) {
 
   return (
     <>
-      <div className='ct-channel-monitor-summary-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-4'>
+      <div
+        className={`ct-channel-monitor-summary-grid grid grid-cols-1 md:grid-cols-2 ${
+          hasSmartRuntime ? 'xl:grid-cols-3' : 'xl:grid-cols-4'
+        } gap-4 mb-4`}
+      >
         <SummaryMetric
           icon={HeartPulse}
           label={hasSmartRuntime ? t('智能运行态') : t('分组可用')}
@@ -1207,29 +1209,15 @@ function ChannelStatusContent({ data, windowDays }) {
                 : 'success'
           }
         />
-        <SummaryMetric
-          icon={Gauge}
-          label={hasSmartRuntime ? t('活跃队列') : t('活跃负载')}
-          value={
-            hasSmartRuntime
-              ? `${formatNumber(runtime.active_concurrency)} / ${formatNumber(runtime.queue_depth)}`
-              : formatNumber(summary.busy_channels)
-          }
-          detail={
-            hasSmartRuntime
-              ? `${t('并发')} ${formatNumber(runtime.active_concurrency)} / ${t('排队')} ${formatNumber(runtime.queue_depth)}`
-              : `${formatLatency(summary.avg_latency_ms)} ${t('平均延迟')} / ${formatNumber(summary.cooldown_channels)} ${t('错误冷却')}`
-          }
-          tone={
-            hasSmartRuntime
-              ? runtime.queue_depth > 0
-                ? 'warning'
-                : 'default'
-              : summary.cooldown_channels > 0
-                ? 'warning'
-                : 'default'
-          }
-        />
+        {!hasSmartRuntime && (
+          <SummaryMetric
+            icon={Gauge}
+            label={t('活跃负载')}
+            value={formatNumber(summary.busy_channels)}
+            detail={`${formatLatency(summary.avg_latency_ms)} ${t('平均延迟')} / ${formatNumber(summary.cooldown_channels)} ${t('错误冷却')}`}
+            tone={summary.cooldown_channels > 0 ? 'warning' : 'default'}
+          />
+        )}
       </div>
 
       {groups.length > 0 ? (

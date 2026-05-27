@@ -40,7 +40,6 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
     logo,
     isNewYear,
     isSelfUseMode,
-    docsLink,
     isDemoSiteMode,
     isConsoleRoute,
     location,
@@ -63,13 +62,16 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
     getUnreadKeys,
   } = useNotifications(statusState);
 
-  const { mainNavLinks } = useNavigation(t, docsLink, headerNavModules);
+  const { mainNavLinks } = useNavigation(t, headerNavModules);
 
   const headerClassName = [
     'ct-header',
     isConsoleRoute ? 'ct-header-console' : 'ct-header-portal',
+    !isConsoleRoute ? 'ct-header-home-style' : '',
     'text-semi-color-text-0 sticky top-0 z-50',
-  ].join(' ');
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
     <header className={headerClassName}>
@@ -113,6 +115,7 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
             userState={userState}
             pricingRequireAuth={pricingRequireAuth}
             currentPath={location.pathname}
+            currentHash={location.hash}
           />
 
           <ActionButtons

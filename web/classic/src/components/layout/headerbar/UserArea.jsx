@@ -52,9 +52,31 @@ const UserArea = ({
     );
   }
 
+  const isConsoleRoute = currentPath.startsWith('/console');
+  const usePortalActions = !isConsoleRoute;
+
   if (userState.user) {
     return (
-      <div className='relative' ref={dropdownRef}>
+      <div
+        className='ct-user-area relative flex items-center gap-2'
+        ref={dropdownRef}
+      >
+        {usePortalActions && (
+          <Link
+            to='/console'
+            className='ct-console-shortcut-link hidden md:flex'
+          >
+            <Button
+              theme='solid'
+              type='primary'
+              className='ct-register-button ct-console-shortcut-button flex items-center justify-center'
+            >
+              <span className='!text-xs !font-semibold !px-1'>
+                {t('控制台')}
+              </span>
+            </Button>
+          </Link>
+        )}
         <Dropdown
           position='bottomRight'
           getPopupContainer={() => dropdownRef.current}
@@ -143,10 +165,10 @@ const UserArea = ({
       </div>
     );
   } else {
-    const isHomeRoute = currentPath === '/';
-    const showRegisterButton = isHomeRoute || !isSelfUseMode;
+    const showRegisterButton = usePortalActions || !isSelfUseMode;
 
-    const loginButtonClasses = 'ct-login-button flex items-center justify-center';
+    const loginButtonClasses =
+      'ct-login-button flex items-center justify-center';
     const registerButtonClasses =
       'ct-register-button flex items-center justify-center';
 
@@ -166,14 +188,17 @@ const UserArea = ({
         </Link>
         {showRegisterButton && (
           <div className='hidden md:block'>
-            <Link to={isHomeRoute ? '/console' : '/register'} className='flex'>
+            <Link
+              to={usePortalActions ? '/console' : '/register'}
+              className='flex'
+            >
               <Button
                 theme='solid'
                 type='primary'
                 className={registerButtonClasses}
               >
                 <span className={registerButtonTextSpanClass}>
-                  {isHomeRoute ? t('控制台') : t('注册')}
+                  {usePortalActions ? t('控制台') : t('注册')}
                 </span>
               </Button>
             </Link>

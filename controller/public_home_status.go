@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"sort"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const (
@@ -17,6 +19,15 @@ const (
 	publicHomeStatusMaxDays     = 30
 	publicHomeStatusCacheTTL    = 2 * time.Minute
 	publicHomeStatusErrorTTL    = 30 * time.Second
+	publicHomeStatusStaleTTL    = 10 * time.Minute
+	publicHomeDynamicBillingTTL = 30 * time.Second
+	publicHomeGatewayStatsTTL   = 2 * time.Minute
+	publicHomeGatewayStatsStale = 30 * time.Minute
+	publicHomeGatewayEmptyTTL   = 5 * time.Second
+	publicHomeGatewayEmptyStale = 30 * time.Second
+	publicHomeGatewayQueryTTL   = 1800 * time.Millisecond
+	publicHomeGatewayFirstWait  = 500 * time.Millisecond
+	publicHomeStatusLogQueryTTL = 900 * time.Millisecond
 )
 
 var publicHomeStatusCache = struct {
@@ -28,15 +39,38 @@ var publicHomeStatusCache = struct {
 	inFlight: make(map[int]chan struct{}),
 }
 
-type publicHomeStatusCacheItem struct {
-	result    PublicHomeStatusResponse
+var publicHomeDynamicBillingCache = struct {
+	sync.Mutex
+	result    *PublicHomeDynamicBilling
 	expiresAt time.Time
+}{}
+
+var publicHomeModelGatewayStatsCache = struct {
+	sync.Mutex
+	items    map[int]publicHomeModelGatewayStatsCacheItem
+	inFlight map[int]chan struct{}
+}{
+	items:    make(map[int]publicHomeModelGatewayStatsCacheItem),
+	inFlight: make(map[int]chan struct{}),
+}
+
+type publicHomeStatusCacheItem struct {
+	result     PublicHomeStatusResponse
+	expiresAt  time.Time
+	staleUntil time.Time
+}
+
+type publicHomeModelGatewayStatsCacheItem struct {
+	result     publicHomeModelGatewayStats
+	expiresAt  time.Time
+	staleUntil time.Time
 }
 
 type PublicHomeStatusSummary struct {
 	Days            int     `json:"days"`
 	SuccessRate     float64 `json:"success_rate"`
 	AvgLatencyMs    int64   `json:"avg_latency_ms"`
+	AvgTTFTMs       int64   `json:"avg_ttft_ms"`
 	Requests        int64   `json:"requests"`
 	EnabledChannels int     `json:"enabled_channels"`
 	HealthyChannels int     `json:"healthy_channels"`
@@ -48,15 +82,17 @@ type PublicHomeStatusDaily struct {
 	Requests        int64   `json:"requests"`
 	SuccessRate     float64 `json:"success_rate"`
 	AvgLatencyMs    int64   `json:"avg_latency_ms"`
+	AvgTTFTMs       int64   `json:"avg_ttft_ms"`
 	ProtectedEvents int64   `json:"protected_events"`
 }
 
 type PublicHomeStatusResponse struct {
-	Summary   PublicHomeStatusSummary `json:"summary"`
-	Daily     []PublicHomeStatusDaily `json:"daily"`
-	Groups    []PublicHomeStatusGroup `json:"groups"`
-	UpdatedAt int64                   `json:"updated_at"`
-	Partial   bool                    `json:"partial,omitempty"`
+	Summary        PublicHomeStatusSummary   `json:"summary"`
+	Daily          []PublicHomeStatusDaily   `json:"daily"`
+	Groups         []PublicHomeStatusGroup   `json:"groups"`
+	DynamicBilling *PublicHomeDynamicBilling `json:"dynamic_billing,omitempty"`
+	UpdatedAt      int64                     `json:"updated_at"`
+	Partial        bool                      `json:"partial,omitempty"`
 }
 
 type PublicHomeStatusGroup struct {
@@ -74,7 +110,35 @@ type PublicHomeStatusGroupMeta struct {
 	Channels int `json:"channels"`
 }
 
+type PublicHomeDynamicBilling struct {
+	Enabled           bool    `json:"enabled"`
+	Status            string  `json:"status,omitempty"`
+	Group             string  `json:"group,omitempty"`
+	Model             string  `json:"model,omitempty"`
+	CurrentRatio      float64 `json:"current_ratio,omitempty"`
+	DisplayPricePerM  float64 `json:"display_price_per_m,omitempty"`
+	UpdatedSecondsAgo int64   `json:"updated_seconds_ago,omitempty"`
+	RefreshSeconds    int     `json:"refresh_seconds,omitempty"`
+}
+
+type publicHomeModelGatewayStats struct {
+	Requests     int64
+	Successes    int64
+	SuccessRate  float64
+	AvgLatencyMs int64
+	AvgTTFTMs    int64
+}
+
+type publicHomeModelGatewayStatsAggRow struct {
+	Requests     int64   `gorm:"column:requests"`
+	Successes    int64   `gorm:"column:successes"`
+	AvgLatencyMs float64 `gorm:"column:avg_latency_ms"`
+	AvgTTFTMs    float64 `gorm:"column:avg_ttft_ms"`
+}
+
 func GetPublicHomeStatus(c *gin.Context) {
+	c.Header("Cache-Control", "public, max-age=30, stale-while-revalidate=300")
+
 	days := publicHomeStatusDefaultDays
 	if raw := c.Query("days"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil {
@@ -82,11 +146,34 @@ func GetPublicHomeStatus(c *gin.Context) {
 		}
 	}
 
-	result, err := buildPublicHomeStatusCached(normalizePublicHomeStatusDays(days))
+	days = normalizePublicHomeStatusDays(days)
+
+	var result PublicHomeStatusResponse
+	var err error
+	var dynamicBilling *PublicHomeDynamicBilling
+	var gatewayStats publicHomeModelGatewayStats
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		result, err = buildPublicHomeStatusCached(days)
+	}()
+	go func() {
+		defer wg.Done()
+		dynamicBilling = getCachedPublicHomeDynamicBilling()
+	}()
+	go func() {
+		defer wg.Done()
+		gatewayStats = getCachedPublicHomeModelGatewayStats(days)
+	}()
+	wg.Wait()
+
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	result.DynamicBilling = dynamicBilling
+	applyPublicHomeModelGatewayStats(&result, gatewayStats)
 	common.ApiSuccess(c, result)
 }
 
@@ -110,6 +197,16 @@ func buildPublicHomeStatusCached(days int) (PublicHomeStatusResponse, error) {
 		publicHomeStatusCache.Unlock()
 		return result, nil
 	}
+	if cached, ok := publicHomeStatusCache.items[days]; ok && now.Before(cached.staleUntil) {
+		result := cached.result
+		if _, refreshing := publicHomeStatusCache.inFlight[days]; !refreshing {
+			done := make(chan struct{})
+			publicHomeStatusCache.inFlight[days] = done
+			go refreshPublicHomeStatusCache(days, done)
+		}
+		publicHomeStatusCache.Unlock()
+		return result, nil
+	}
 	if done, ok := publicHomeStatusCache.inFlight[days]; ok {
 		publicHomeStatusCache.Unlock()
 		<-done
@@ -126,6 +223,10 @@ func buildPublicHomeStatusCached(days int) (PublicHomeStatusResponse, error) {
 	publicHomeStatusCache.inFlight[days] = done
 	publicHomeStatusCache.Unlock()
 
+	return refreshPublicHomeStatusCache(days, done)
+}
+
+func refreshPublicHomeStatusCache(days int, done chan struct{}) (PublicHomeStatusResponse, error) {
 	result, err := buildPublicHomeStatus(days)
 	cacheTTL := publicHomeStatusCacheTTL
 	if err != nil {
@@ -140,12 +241,16 @@ func buildPublicHomeStatusCached(days int) (PublicHomeStatusResponse, error) {
 		}
 		publicHomeStatusCache.Unlock()
 		cacheTTL = publicHomeStatusErrorTTL
+	} else if result.Partial {
+		cacheTTL = publicHomeStatusErrorTTL
 	}
 
 	publicHomeStatusCache.Lock()
+	now := time.Now()
 	publicHomeStatusCache.items[days] = publicHomeStatusCacheItem{
-		result:    result,
-		expiresAt: time.Now().Add(cacheTTL),
+		result:     result,
+		expiresAt:  now.Add(cacheTTL),
+		staleUntil: now.Add(publicHomeStatusStaleTTL),
 	}
 	delete(publicHomeStatusCache.inFlight, days)
 	close(done)
@@ -191,9 +296,10 @@ func buildPublicHomeStatus(days int) (PublicHomeStatusResponse, error) {
 	}
 
 	startTs := startOfPublicHomeStatusWindow(days).Unix()
-	rows, err := model.GetPublicHomeStatusLogs(startTs, channelIds)
+	rows, err := model.GetPublicHomeStatusLogsWithTimeout(startTs, channelIds, publicHomeStatusLogQueryTTL)
 	if err != nil {
-		return PublicHomeStatusResponse{}, err
+		common.SysLog("failed to build public home status logs: " + err.Error())
+		rows = nil
 	}
 
 	result := buildPublicHomeStatusFromRows(days, rows)
@@ -201,7 +307,336 @@ func buildPublicHomeStatus(days int) (PublicHomeStatusResponse, error) {
 	result.Summary.HealthyChannels = healthyChannels
 	applyPublicHomeStatusGroupChannelSummaries(&result, channelGroups, groupStates)
 	result.UpdatedAt = time.Now().Unix()
+	result.Partial = err != nil
 	return result, nil
+}
+
+func getCachedPublicHomeDynamicBilling() *PublicHomeDynamicBilling {
+	now := time.Now()
+	publicHomeDynamicBillingCache.Lock()
+	if publicHomeDynamicBillingCache.result != nil && now.Before(publicHomeDynamicBillingCache.expiresAt) {
+		result := *publicHomeDynamicBillingCache.result
+		publicHomeDynamicBillingCache.Unlock()
+		return &result
+	}
+	publicHomeDynamicBillingCache.Unlock()
+
+	result := buildPublicHomeDynamicBilling(now.Unix())
+	ttl := publicHomeDynamicBillingTTL
+	if result != nil && result.RefreshSeconds > 0 {
+		refreshTTL := time.Duration(result.RefreshSeconds) * time.Second
+		if refreshTTL > 0 && refreshTTL < ttl {
+			ttl = refreshTTL
+		}
+	}
+
+	publicHomeDynamicBillingCache.Lock()
+	if result == nil {
+		publicHomeDynamicBillingCache.result = nil
+	} else {
+		cached := *result
+		publicHomeDynamicBillingCache.result = &cached
+	}
+	publicHomeDynamicBillingCache.expiresAt = time.Now().Add(ttl)
+	publicHomeDynamicBillingCache.Unlock()
+
+	return result
+}
+
+func buildPublicHomeDynamicBilling(now int64) *PublicHomeDynamicBilling {
+	overview := buildModelGatewayDynamicBillingOverviewForDisplay(now, 0)
+	refreshSeconds := overview.RefreshSeconds
+	if refreshSeconds <= 0 {
+		refreshSeconds = int(publicHomeDynamicBillingTTL.Seconds())
+	}
+	if !overview.Enabled || len(overview.Groups) == 0 {
+		return &PublicHomeDynamicBilling{
+			Enabled:        overview.Enabled,
+			Status:         "waiting_samples",
+			Model:          modelGatewayDynamicBillingDisplayModel,
+			RefreshSeconds: refreshSeconds,
+		}
+	}
+
+	groups := append([]ModelGatewayDynamicBillingGroupOverview(nil), overview.Groups...)
+	sort.Slice(groups, func(i, j int) bool {
+		statusDiff := publicHomeDynamicBillingStatusRank(groups[i].Status) - publicHomeDynamicBillingStatusRank(groups[j].Status)
+		if statusDiff != 0 {
+			return statusDiff < 0
+		}
+		if groups[i].LatestCalculatedAt != groups[j].LatestCalculatedAt {
+			return groups[i].LatestCalculatedAt > groups[j].LatestCalculatedAt
+		}
+		return groups[i].PolicyGroup < groups[j].PolicyGroup
+	})
+
+	primary := groups[0]
+	ratio := firstPositiveDynamicBillingValue(
+		primary.CurrentRatio,
+		primary.BlendedRatio,
+		primary.AverageRatio,
+		primary.MaxRatio,
+		primary.MinRatio,
+	)
+	modelName := firstNonEmptyTrimmed(
+		primary.ReferenceModel,
+		primary.CurrentModel,
+		modelGatewayDynamicBillingDisplayModel,
+	)
+	displayPrice := firstPositiveDynamicBillingValue(
+		primary.CurrentPricePerM,
+		primary.BlendedPricePerM,
+		primary.AveragePricePerM,
+		primary.MaxPricePerM,
+		primary.MinPricePerM,
+	)
+	if displayPrice <= 0 && ratio > 0 {
+		displayPrice = modelGatewayDynamicBillingPricePerMillion(modelName, ratio)
+	}
+
+	updatedSecondsAgo := int64(0)
+	if primary.LatestCalculatedAt > 0 && now > 0 {
+		updatedSecondsAgo = now - primary.LatestCalculatedAt
+		if updatedSecondsAgo < 0 {
+			updatedSecondsAgo = 0
+		}
+	}
+
+	return &PublicHomeDynamicBilling{
+		Enabled:           overview.Enabled,
+		Status:            primary.Status,
+		Group:             firstNonEmptyTrimmed(primary.DisplayGroup, primary.CurrentTargetGroup, primary.PolicyGroup),
+		Model:             modelName,
+		CurrentRatio:      ratio,
+		DisplayPricePerM:  displayPrice,
+		UpdatedSecondsAgo: updatedSecondsAgo,
+		RefreshSeconds:    refreshSeconds,
+	}
+}
+
+func publicHomeDynamicBillingStatusRank(status string) int {
+	switch strings.TrimSpace(status) {
+	case "active":
+		return 0
+	case "waiting_samples":
+		return 1
+	case "expired":
+		return 2
+	case "global_disabled":
+		return 3
+	default:
+		return 4
+	}
+}
+
+func getCachedPublicHomeModelGatewayStats(days int) publicHomeModelGatewayStats {
+	days = normalizePublicHomeStatusDays(days)
+	now := time.Now()
+	publicHomeModelGatewayStatsCache.Lock()
+	if cached, ok := publicHomeModelGatewayStatsCache.items[days]; ok && now.Before(cached.expiresAt) {
+		result := cached.result
+		publicHomeModelGatewayStatsCache.Unlock()
+		return result
+	}
+	if cached, ok := publicHomeModelGatewayStatsCache.items[days]; ok && now.Before(cached.staleUntil) {
+		result := cached.result
+		if _, refreshing := publicHomeModelGatewayStatsCache.inFlight[days]; !refreshing {
+			done := make(chan struct{})
+			publicHomeModelGatewayStatsCache.inFlight[days] = done
+			go refreshPublicHomeModelGatewayStats(days, done)
+		}
+		publicHomeModelGatewayStatsCache.Unlock()
+		return result
+	}
+	if done, ok := publicHomeModelGatewayStatsCache.inFlight[days]; ok {
+		publicHomeModelGatewayStatsCache.Unlock()
+		// Do not make the public homepage wait on a cold expensive stats scan.
+		// The request will render with channel-level status and the background
+		// refresh will fill the cache for the next visitor.
+		select {
+		case <-done:
+			publicHomeModelGatewayStatsCache.Lock()
+			cached, hasResult := publicHomeModelGatewayStatsCache.items[days]
+			publicHomeModelGatewayStatsCache.Unlock()
+			if hasResult {
+				return cached.result
+			}
+		case <-time.After(publicHomeGatewayFirstWait):
+		}
+		return publicHomeModelGatewayStats{}
+	}
+	done := make(chan struct{})
+	publicHomeModelGatewayStatsCache.inFlight[days] = done
+	publicHomeModelGatewayStatsCache.Unlock()
+
+	go refreshPublicHomeModelGatewayStats(days, done)
+	select {
+	case <-done:
+		publicHomeModelGatewayStatsCache.Lock()
+		cached, hasResult := publicHomeModelGatewayStatsCache.items[days]
+		publicHomeModelGatewayStatsCache.Unlock()
+		if hasResult {
+			return cached.result
+		}
+	case <-time.After(publicHomeGatewayFirstWait):
+	}
+	return publicHomeModelGatewayStats{}
+}
+
+func refreshPublicHomeModelGatewayStats(days int, done chan struct{}) publicHomeModelGatewayStats {
+	result := buildPublicHomeModelGatewayStats(days)
+	now := time.Now()
+	cacheTTL := publicHomeGatewayStatsTTL
+	staleTTL := publicHomeGatewayStatsStale
+	if result.Requests <= 0 {
+		cacheTTL = publicHomeGatewayEmptyTTL
+		staleTTL = publicHomeGatewayEmptyStale
+	}
+	publicHomeModelGatewayStatsCache.Lock()
+	publicHomeModelGatewayStatsCache.items[days] = publicHomeModelGatewayStatsCacheItem{
+		result:     result,
+		expiresAt:  now.Add(cacheTTL),
+		staleUntil: now.Add(staleTTL),
+	}
+	delete(publicHomeModelGatewayStatsCache.inFlight, days)
+	publicHomeModelGatewayStatsCache.Unlock()
+	if done != nil {
+		close(done)
+	}
+	return result
+}
+
+func buildPublicHomeModelGatewayStats(days int) publicHomeModelGatewayStats {
+	if model.DB == nil {
+		return publicHomeModelGatewayStats{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), publicHomeGatewayQueryTTL)
+	defer cancel()
+
+	startTime := startOfPublicHomeStatusWindow(days).Unix()
+	var row publicHomeModelGatewayStatsAggRow
+	tx := model.DB.WithContext(ctx).
+		Model(&model.ModelGatewayUserRequestSummary{}).
+		Select(
+			"COUNT(*) AS requests, "+
+				"COALESCE(SUM(CASE WHEN final_success = ? THEN 1 ELSE 0 END), 0) AS successes, "+
+				"COALESCE(AVG(CASE WHEN duration_ms > 0 THEN duration_ms ELSE NULL END), 0) AS avg_latency_ms, "+
+				"COALESCE(AVG(CASE WHEN ttft_ms > 0 THEN ttft_ms ELSE NULL END), 0) AS avg_ttft_ms",
+			true,
+		).
+		Where("completed_at >= ? AND completed_at > 0", startTime).
+		Where("is_health_probe = ? AND client_aborted = ?", false, false)
+	tx = applyPublicHomeModelGatewayStatsGroupFilter(tx, publicHomeCodexUserRequestGroups())
+	err := tx.Scan(&row).Error
+	if err != nil {
+		common.SysLog("failed to build public home model gateway stats: " + err.Error())
+		return publicHomeModelGatewayStats{}
+	}
+	if row.Requests <= 0 {
+		return publicHomeModelGatewayStats{}
+	}
+	return publicHomeModelGatewayStats{
+		Requests:     row.Requests,
+		Successes:    row.Successes,
+		SuccessRate:  successRate(row.Successes, row.Requests),
+		AvgLatencyMs: int64(row.AvgLatencyMs + 0.5),
+		AvgTTFTMs:    int64(row.AvgTTFTMs + 0.5),
+	}
+}
+
+func publicHomeCodexUserRequestGroups() []string {
+	groupNames := []string{"codex", "codex-plus", "codex-pro", "codex-subscription"}
+	channels, err := model.GetAllChannels(0, 0, true, true)
+	if err != nil {
+		common.SysLog("failed to load public home codex groups: " + err.Error())
+		return uniquePublicHomeModelGatewayGroups(groupNames)
+	}
+	for _, channel := range channels {
+		if !shouldIncludeChannelInStatusMonitor(channel) {
+			continue
+		}
+		for _, groupName := range channel.GetGroups() {
+			if publicHomeStatusGroupKeyFromName(groupName) != "codex" {
+				continue
+			}
+			groupNames = append(groupNames, groupName, strings.ToLower(strings.TrimSpace(groupName)))
+		}
+	}
+	return uniquePublicHomeModelGatewayGroups(groupNames)
+}
+
+func applyPublicHomeModelGatewayStatsGroupFilter(tx *gorm.DB, groupNames []string) *gorm.DB {
+	groupNames = uniquePublicHomeModelGatewayGroups(groupNames)
+	if len(groupNames) == 0 {
+		return tx
+	}
+	return tx.Where("(selected_group IN ? OR (selected_group = ? AND requested_group IN ?))", groupNames, "", groupNames)
+}
+
+func uniquePublicHomeModelGatewayGroups(groupNames []string) []string {
+	seen := make(map[string]struct{}, len(groupNames))
+	result := make([]string, 0, len(groupNames))
+	for _, groupName := range groupNames {
+		groupName = strings.TrimSpace(groupName)
+		if groupName == "" {
+			continue
+		}
+		if _, ok := seen[groupName]; ok {
+			continue
+		}
+		seen[groupName] = struct{}{}
+		result = append(result, groupName)
+	}
+	return result
+}
+
+func publicHomeModelGatewayStatsFromUserRequests(rows []model.ModelGatewayUserRequestSummary) publicHomeModelGatewayStats {
+	result := publicHomeModelGatewayStats{}
+	var latencySum, latencyCount int64
+	var ttftSum, ttftCount int64
+	for _, row := range channelMonitorUniqueUserRequestRows(rows) {
+		if row.IsHealthProbe || channelMonitorUserRequestStatus(row) == "client_aborted" {
+			continue
+		}
+		result.Requests++
+		if row.FinalSuccess {
+			result.Successes++
+		}
+		if row.DurationMs > 0 {
+			latencySum += row.DurationMs
+			latencyCount++
+		}
+		if row.TTFTMs > 0 {
+			ttftSum += row.TTFTMs
+			ttftCount++
+		}
+	}
+	if result.Requests <= 0 {
+		return publicHomeModelGatewayStats{}
+	}
+	result.SuccessRate = successRate(result.Successes, result.Requests)
+	result.AvgLatencyMs = avgInt64(latencySum, latencyCount)
+	result.AvgTTFTMs = avgInt64(ttftSum, ttftCount)
+	if result.AvgLatencyMs <= 0 && result.AvgTTFTMs > 0 {
+		result.AvgLatencyMs = result.AvgTTFTMs
+	}
+	return result
+}
+
+func applyPublicHomeModelGatewayStats(result *PublicHomeStatusResponse, stats publicHomeModelGatewayStats) {
+	if result == nil {
+		return
+	}
+	if stats.Requests > 0 {
+		result.Summary.Requests = stats.Requests
+		result.Summary.SuccessRate = stats.SuccessRate
+	}
+	if stats.AvgLatencyMs > 0 {
+		result.Summary.AvgLatencyMs = stats.AvgLatencyMs
+	}
+	if stats.AvgTTFTMs > 0 {
+		result.Summary.AvgTTFTMs = stats.AvgTTFTMs
+	}
 }
 
 func startOfPublicHomeStatusWindow(days int) time.Time {
@@ -252,6 +687,7 @@ func buildPublicHomeStatusFromRows(days int, rows []model.ChannelStatusMonitorLo
 			Requests:        bucket.requests,
 			SuccessRate:     successRate(bucket.successes, bucket.requests),
 			AvgLatencyMs:    avgInt64(bucket.latencySum, bucket.latencyCount),
+			AvgTTFTMs:       avgInt64(bucket.firstRespSum, bucket.firstRespCount),
 			ProtectedEvents: bucket.protectedEvents,
 		})
 	}
@@ -261,6 +697,7 @@ func buildPublicHomeStatusFromRows(days int, rows []model.ChannelStatusMonitorLo
 			Days:            days,
 			SuccessRate:     successRate(overall.successes, overall.requests),
 			AvgLatencyMs:    avgInt64(overall.latencySum, overall.latencyCount),
+			AvgTTFTMs:       avgInt64(overall.firstRespSum, overall.firstRespCount),
 			Requests:        overall.requests,
 			ProtectedEvents: overall.protectedEvents,
 		},
@@ -276,6 +713,8 @@ type publicHomeStatusBucket struct {
 	successes       int64
 	latencySum      int64
 	latencyCount    int64
+	firstRespSum    int64
+	firstRespCount  int64
 	protectedEvents int64
 }
 
@@ -302,6 +741,10 @@ func applyPublicHomeStatusRequest(bucket *publicHomeStatusBucket, request *chann
 	if request.latencyMs > 0 {
 		bucket.latencySum += request.latencyMs
 		bucket.latencyCount++
+	}
+	if request.firstRespMs > 0 {
+		bucket.firstRespSum += request.firstRespMs
+		bucket.firstRespCount++
 	}
 	if request.worstStatus != "" && request.worstStatus != "success" {
 		bucket.protectedEvents++
@@ -351,6 +794,7 @@ func buildPublicHomeStatusGroups(days int, start time.Time, requests []*channelM
 				Requests:        bucket.requests,
 				SuccessRate:     successRate(bucket.successes, bucket.requests),
 				AvgLatencyMs:    avgInt64(bucket.latencySum, bucket.latencyCount),
+				AvgTTFTMs:       avgInt64(bucket.firstRespSum, bucket.firstRespCount),
 				ProtectedEvents: bucket.protectedEvents,
 			})
 		}
@@ -362,6 +806,7 @@ func buildPublicHomeStatusGroups(days int, start time.Time, requests []*channelM
 				Days:            days,
 				SuccessRate:     successRate(overall.successes, overall.requests),
 				AvgLatencyMs:    avgInt64(overall.latencySum, overall.latencyCount),
+				AvgTTFTMs:       avgInt64(overall.firstRespSum, overall.firstRespCount),
 				Requests:        overall.requests,
 				ProtectedEvents: overall.protectedEvents,
 			},

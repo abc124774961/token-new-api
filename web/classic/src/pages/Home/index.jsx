@@ -17,20 +17,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useContext, useEffect, useRef, useState } from 'react';
-import { Button } from '@douyinfe/semi-ui';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Button, InputNumber, Select } from '@douyinfe/semi-ui';
 import { IconLock, IconSafe } from '@douyinfe/semi-icons';
 import {
   Activity,
+  ArrowRight,
   Box,
   Check,
+  CreditCard,
   FileSearch,
   LockKeyhole,
   Route,
   Shield,
   Shuffle,
+  Wallet,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { marked } from 'marked';
 import { useTranslation } from 'react-i18next';
 import { API, getCurrencyConfig, renderQuota } from '../../helpers';
@@ -47,11 +50,17 @@ const fallbackStatus = {
   summary: {
     success_rate: 0,
     avg_latency_ms: 0,
+    avg_ttft_ms: 0,
     enabled_channels: 0,
     healthy_channels: 0,
   },
   updated_at: 0,
 };
+
+const homeStatusCacheKey = 'home_public_status_v2';
+const homeStatusCacheTTL = 2 * 60 * 1000;
+const homeDynamicPricingGroupLabel = '本站plus动态';
+const homeStatusCacheStaleTTL = 30 * 60 * 1000;
 
 const isEmptyHomeContent = (content) => {
   const normalized = String(content || '')
@@ -69,13 +78,13 @@ const numberValue = (value, fallback = 0) => {
 
 const formatRate = (value) => {
   const number = Number(value) || 0;
-  if (number <= 0) return '99.62%';
+  if (number <= 0) return '--';
   return `${number >= 99 ? number.toFixed(2) : number.toFixed(1)}%`;
 };
 
 const formatLatency = (value) => {
   const number = Number(value) || 0;
-  if (number <= 0) return '428ms';
+  if (number <= 0) return '--';
   if (number >= 1000) return `${(number / 1000).toFixed(2)}s`;
   return `${Math.round(number)}ms`;
 };
@@ -85,6 +94,128 @@ const formatPlanPrice = (amount) => {
   const number = Number(amount || 0) * rate;
   const digits = Number.isInteger(number) ? 0 : 2;
   return `${symbol} ${number.toFixed(digits)}`;
+};
+
+const formatHeroDynamicRatio = (value) => {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return '--';
+  const digits = number < 0.1 ? 4 : number < 1 ? 3 : 2;
+  return `${number.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}x`;
+};
+
+const formatHeroDynamicPrice = (value) => {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return '--';
+  const digits = number < 0.01 ? 4 : number < 1 ? 3 : 2;
+  return `$${number.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
+};
+
+const formatCompactNumber = (value, fallback = '--') => {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  const digits = Math.abs(number) < 0.01 ? 4 : Math.abs(number) < 1 ? 3 : 2;
+  return number.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
+};
+
+const formatHomeMoney = (value, symbol = '$') => {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return '--';
+  const digits = number < 0.01 ? 4 : number < 1 ? 3 : 2;
+  return `${symbol}${number.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}`;
+};
+
+const hasFinitePositiveValue = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0;
+};
+
+const hasHeroDynamicBillingData = (status) =>
+  Boolean(status?.dynamic_billing?.enabled) &&
+  Number(status?.dynamic_billing?.current_ratio || 0) > 0;
+
+const hasHomeStatusRequestMetrics = (status) =>
+  Number(status?.summary?.requests || 0) > 0 &&
+  Number(status?.summary?.avg_latency_ms || 0) > 0 &&
+  Number(status?.summary?.success_rate || 0) > 0;
+
+const isCacheableHomeStatus = (status) =>
+  hasHomeStatusRequestMetrics(status);
+
+const getCachedHomeStatus = () => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const cached = JSON.parse(
+      localStorage.getItem(homeStatusCacheKey) || 'null',
+    );
+    const cachedAt = Number(cached?.cached_at || 0);
+    const cacheAge = Date.now() - cachedAt;
+    if (
+      cached?.data &&
+      isCacheableHomeStatus(cached.data) &&
+      cacheAge >= 0 &&
+      cacheAge < homeStatusCacheStaleTTL
+    ) {
+      return {
+        data: cached.data,
+        age: cacheAge,
+      };
+    }
+    if (cached?.data) {
+      localStorage.removeItem(homeStatusCacheKey);
+    }
+  } catch (error) {
+    localStorage.removeItem(homeStatusCacheKey);
+  }
+  return null;
+};
+
+const writeCachedHomeStatus = (status) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (!isCacheableHomeStatus(status)) {
+    localStorage.removeItem(homeStatusCacheKey);
+    return;
+  }
+  try {
+    localStorage.setItem(
+      homeStatusCacheKey,
+      JSON.stringify({ cached_at: Date.now(), data: status }),
+    );
+  } catch (error) {
+    localStorage.removeItem(homeStatusCacheKey);
+  }
+};
+
+const requestHomeStatus = async () => {
+  try {
+    const res = await API.get('/api/public/home/status', {
+      params: { days: 30 },
+      skipErrorHandler: true,
+      disableDuplicate: true,
+    });
+    const { success, data } = res.data || {};
+    if (success && data) {
+      return data;
+    }
+  } catch (error) {
+    // Use fetch as a narrow fallback so homepage metrics are not coupled to the
+    // shared axios instance if it is intercepted, stale, or mid-refresh.
+  }
+
+  const response = await fetch('/api/public/home/status?days=30', {
+    cache: 'no-store',
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+  const payload = await response.json();
+  if (payload?.success && payload?.data) {
+    return payload.data;
+  }
+  return null;
 };
 
 const Sparkline = () => (
@@ -101,13 +232,145 @@ const MiniBars = ({ count = 9 }) => (
   </span>
 );
 
-const MetricTile = ({ label, value, type = 'line' }) => (
-  <div className='ct-lite-metric-tile'>
-    <span>{label}</span>
-    <strong>{value}</strong>
-    {type === 'bars' ? <MiniBars /> : <Sparkline />}
-  </div>
-);
+const HeroOrbitCard = ({ item, slot }) => {
+  const expanded = slot === 0;
+
+  return (
+    <div
+      className={[
+        'ct-lite-orbit-card',
+        `ct-lite-orbit-slot-${slot}`,
+        `is-${item.tone || 'teal'}`,
+        expanded ? 'is-expanded' : 'is-compact',
+      ].join(' ')}
+    >
+      <div className='ct-lite-orbit-card-head'>
+        <span>{item.label}</span>
+        {item.badge ? <em>{item.badge}</em> : null}
+      </div>
+      <strong>{item.value}</strong>
+      <small>{item.note}</small>
+      <div className='ct-lite-orbit-card-detail'>
+        {item.detail ? <p>{item.detail}</p> : null}
+        {item.chips?.length ? (
+          <div className='ct-lite-orbit-card-chips'>
+            {item.chips.map((chip) => (
+              <em key={chip}>{chip}</em>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <div className='ct-lite-orbit-card-visual'>
+        {item.type === 'bars' ? <MiniBars /> : <Sparkline />}
+      </div>
+    </div>
+  );
+};
+
+const HeroOrbitVisual = ({
+  avgResponseLatency,
+  hasResponseLatencyData,
+  avgCompletionDuration,
+  successRate,
+  channelText,
+  dynamicBilling,
+  t,
+}) => {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const ratioValue = Number(dynamicBilling?.current_ratio || 0);
+  const priceValue = Number(dynamicBilling?.display_price_per_m || 0);
+  const isBillingReady = Boolean(dynamicBilling?.enabled) && ratioValue > 0;
+  const group = String(dynamicBilling?.group || '').trim();
+  const model = String(dynamicBilling?.model || '').trim();
+  const billingChips = [group, model].filter(Boolean);
+  const cards = [
+    {
+      key: 'first-byte',
+      label: t('平均响应延迟'),
+      value: hasResponseLatencyData ? avgResponseLatency : '--',
+      note: hasResponseLatencyData ? t('真实请求首包') : t('等待真实请求样本'),
+      badge: t('流式响应'),
+      detail: hasResponseLatencyData
+        ? t('首包返回口径')
+        : t('等待真实请求样本'),
+      tone: 'teal',
+    },
+    {
+      key: 'latency',
+      label: t('平均完成耗时'),
+      value: avgCompletionDuration,
+      note: t('完整流式请求'),
+      detail: t('包含模型生成'),
+      tone: 'blue',
+    },
+    {
+      key: 'success',
+      label: t('成功率'),
+      value: successRate,
+      note: t('高可用架构'),
+      detail: t('多通道带宽与故障自愈'),
+      tone: 'green',
+    },
+    {
+      key: 'channels',
+      label: t('健康渠道'),
+      value: channelText,
+      note: t('多渠道自动切换'),
+      detail: t('熔断限流旁路'),
+      type: 'bars',
+      tone: 'cyan',
+    },
+    {
+      key: 'billing',
+      label: isBillingReady ? t('当前动态倍率') : t('动态倍率计算中'),
+      value: isBillingReady ? formatHeroDynamicRatio(ratioValue) : '--',
+      note:
+        isBillingReady && priceValue > 0
+          ? formatHeroDynamicPrice(priceValue)
+          : t('等待真实请求样本'),
+      detail: isBillingReady
+        ? `${model ? `${t('参考计费')} ${model}` : t('参考计费')} · ${t(
+            'RMB recharge billing hint',
+          )}`
+        : t('等待真实请求样本'),
+      chips: billingChips,
+      tone: isBillingReady ? 'amber' : 'muted',
+    },
+  ];
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || paused) {
+      return undefined;
+    }
+
+    const prefersReducedMotion = window.matchMedia?.(
+      '(prefers-reduced-motion: reduce)',
+    )?.matches;
+    if (prefersReducedMotion) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      setActiveIndex((current) => (current + 1) % cards.length);
+    }, 3200);
+
+    return () => window.clearInterval(timer);
+  }, [cards.length, paused]);
+
+  return (
+    <div
+      className='ct-lite-orbit-layer'
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+    >
+      {cards.map((item, index) => {
+        const slot = (activeIndex - index + cards.length) % cards.length;
+        return <HeroOrbitCard key={item.key} item={item} slot={slot} />;
+      })}
+    </div>
+  );
+};
 
 const drawRoundRect = (ctx, x, y, width, height, radius) => {
   const r = Math.min(radius, width / 2, height / 2);
@@ -403,7 +666,12 @@ const GatewayFlowCanvas = ({
             end,
             Math.max(0, packetProgress - 0.055),
           );
-          const tailGradient = ctx.createLinearGradient(tail.x, tail.y, point.x, point.y);
+          const tailGradient = ctx.createLinearGradient(
+            tail.x,
+            tail.y,
+            point.x,
+            point.y,
+          );
           tailGradient.addColorStop(0, 'rgba(255,255,255,0)');
           tailGradient.addColorStop(1, glow);
           ctx.beginPath();
@@ -413,7 +681,14 @@ const GatewayFlowCanvas = ({
           ctx.lineWidth = lineWidth + 5;
           ctx.stroke();
 
-          const halo = ctx.createRadialGradient(point.x, point.y, 1, point.x, point.y, 18);
+          const halo = ctx.createRadialGradient(
+            point.x,
+            point.y,
+            1,
+            point.x,
+            point.y,
+            18,
+          );
           halo.addColorStop(0, glow);
           halo.addColorStop(1, 'rgba(255,255,255,0)');
           ctx.fillStyle = halo;
@@ -521,7 +796,7 @@ const GatewayFlowCanvas = ({
 
       drawIncidentPill(686, 50, time);
       drawHeaderMetric(986, 49, t('成功率'), successRate, color.green);
-      drawHeaderMetric(1124, 49, t('平均延迟'), avgLatency, color.blue);
+      drawHeaderMetric(1124, 49, t('平均响应延迟'), avgLatency, color.blue);
       drawHeaderMetric(1262, 49, t('健康渠道'), channelText, color.teal);
     };
 
@@ -546,7 +821,8 @@ const GatewayFlowCanvas = ({
         ctx.beginPath();
         ctx.moveTo(x + Math.cos(angle) * inner, y + Math.sin(angle) * inner);
         ctx.lineTo(x + Math.cos(angle) * outer, y + Math.sin(angle) * outer);
-        ctx.strokeStyle = index % 4 === 0 ? 'rgba(13,156,165,0.28)' : 'rgba(100,116,139,0.14)';
+        ctx.strokeStyle =
+          index % 4 === 0 ? 'rgba(13,156,165,0.28)' : 'rgba(100,116,139,0.14)';
         ctx.lineWidth = 2;
         ctx.stroke();
       }
@@ -569,7 +845,8 @@ const GatewayFlowCanvas = ({
         { radius: 70, start: 0.56, size: 0.36, tone: color.blue },
         { radius: 46, start: 0.88, size: 0.42, tone: color.green },
       ].forEach((arc, index) => {
-        const startAngle = sweep * (index % 2 === 0 ? 1 : -1) + Math.PI * 2 * arc.start;
+        const startAngle =
+          sweep * (index % 2 === 0 ? 1 : -1) + Math.PI * 2 * arc.start;
         ctx.beginPath();
         ctx.arc(x, y, arc.radius, startAngle, startAngle + Math.PI * arc.size);
         ctx.strokeStyle = arc.tone;
@@ -589,13 +866,23 @@ const GatewayFlowCanvas = ({
       scanGradient.addColorStop(1, 'rgba(35,199,207,0)');
       ctx.beginPath();
       ctx.moveTo(x, y);
-      ctx.lineTo(x + Math.cos(scanAngle - 0.24) * 112, y + Math.sin(scanAngle - 0.24) * 112);
+      ctx.lineTo(
+        x + Math.cos(scanAngle - 0.24) * 112,
+        y + Math.sin(scanAngle - 0.24) * 112,
+      );
       ctx.arc(x, y, 112, scanAngle - 0.24, scanAngle + 0.08);
       ctx.closePath();
       ctx.fillStyle = scanGradient;
       ctx.fill();
 
-      const coreGradient = ctx.createRadialGradient(x - 18, y - 24, 8, x, y, 62);
+      const coreGradient = ctx.createRadialGradient(
+        x - 18,
+        y - 24,
+        8,
+        x,
+        y,
+        62,
+      );
       coreGradient.addColorStop(0, '#ffffff');
       coreGradient.addColorStop(0.46, '#ffffff');
       coreGradient.addColorStop(0.48, '#d7fbff');
@@ -655,7 +942,9 @@ const GatewayFlowCanvas = ({
             : color.green;
       const isSelected = Boolean(channel.selected);
       const isPrimary = isSelected || channel.tone === 'failed';
-      const pulse = prefersReducedMotion ? 0.4 : (Math.sin(time * 2.8 + index) + 1) / 2;
+      const pulse = prefersReducedMotion
+        ? 0.4
+        : (Math.sin(time * 2.8 + index) + 1) / 2;
 
       ctx.save();
       ctx.globalAlpha = isPrimary ? 1 : 0.44;
@@ -777,7 +1066,14 @@ const GatewayFlowCanvas = ({
         drawRoundRect(ctx, mx, metricY - 3, 64, 4, 3);
         ctx.fillStyle = 'rgba(15,23,42,0.06)';
         ctx.fill();
-        drawRoundRect(ctx, mx, metricY - 3, lerp(22, 64, metricIndex === 0 ? 0.82 : 0.58), 4, 3);
+        drawRoundRect(
+          ctx,
+          mx,
+          metricY - 3,
+          lerp(22, 64, metricIndex === 0 ? 0.82 : 0.58),
+          4,
+          3,
+        );
         ctx.fillStyle = tone;
         ctx.fill();
       });
@@ -785,7 +1081,9 @@ const GatewayFlowCanvas = ({
     };
 
     const drawSwitchBadge = (x, y, time) => {
-      const pulse = prefersReducedMotion ? 0.52 : (Math.sin(time * 3.4) + 1) / 2;
+      const pulse = prefersReducedMotion
+        ? 0.52
+        : (Math.sin(time * 3.4) + 1) / 2;
       ctx.save();
       drawRoundRect(ctx, x, y, 154, 50, 15);
       ctx.fillStyle = 'rgba(255,255,255,0.94)';
@@ -859,7 +1157,14 @@ const GatewayFlowCanvas = ({
       ctx.stroke();
 
       const point = cubicPoint(start, cp1, cp2, end, phase);
-      const halo = ctx.createRadialGradient(point.x, point.y, 1, point.x, point.y, 14);
+      const halo = ctx.createRadialGradient(
+        point.x,
+        point.y,
+        1,
+        point.x,
+        point.y,
+        14,
+      );
       halo.addColorStop(0, 'rgba(22,163,74,0.66)');
       halo.addColorStop(1, 'rgba(22,163,74,0)');
       ctx.fillStyle = halo;
@@ -907,7 +1212,9 @@ const GatewayFlowCanvas = ({
 
       steps.forEach((step, index) => {
         const stepY = y + 88 + index * 54;
-        const pulse = prefersReducedMotion ? 0.45 : (Math.sin(time * 2.6 + index * 0.8) + 1) / 2;
+        const pulse = prefersReducedMotion
+          ? 0.45
+          : (Math.sin(time * 2.6 + index * 0.8) + 1) / 2;
         ctx.fillStyle = `rgba(13,156,165,${0.08 + pulse * 0.08})`;
         ctx.beginPath();
         ctx.arc(x + 31, stepY, 13, 0, Math.PI * 2);
@@ -1009,7 +1316,14 @@ const GatewayFlowCanvas = ({
       const cardCenter = x + cardWidth / 2;
       if (kind === 'output') {
         ctx.save();
-        const halo = ctx.createRadialGradient(cardCenter, y + 78, 8, cardCenter, y + 78, 118);
+        const halo = ctx.createRadialGradient(
+          cardCenter,
+          y + 78,
+          8,
+          cardCenter,
+          y + 78,
+          118,
+        );
         halo.addColorStop(0, 'rgba(22,163,74,0.14)');
         halo.addColorStop(1, 'rgba(22,163,74,0)');
         ctx.fillStyle = halo;
@@ -1019,7 +1333,10 @@ const GatewayFlowCanvas = ({
       const cardHeight = kind === 'output' ? 178 : 162;
       drawCard(x, y, cardWidth, cardHeight, {
         radius: 14,
-        fill: kind === 'output' ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.92)',
+        fill:
+          kind === 'output'
+            ? 'rgba(255,255,255,0.95)'
+            : 'rgba(255,255,255,0.92)',
         border: kind === 'output' ? 'rgba(22,163,74,0.16)' : color.border,
       });
       if (kind === 'client') drawPulseIcon(cardCenter, y + 54);
@@ -1071,7 +1388,9 @@ const GatewayFlowCanvas = ({
       ctx.restore();
       items.forEach((item, index) => {
         const x = 250 + index * 108;
-        const active = prefersReducedMotion ? index === 2 : Math.floor(time * 1.4) % items.length === index;
+        const active = prefersReducedMotion
+          ? index === 2
+          : Math.floor(time * 1.4) % items.length === index;
         drawPill(x, 606, item, {
           fill: active ? 'rgba(13,156,165,0.11)' : 'rgba(255,255,255,0.82)',
           stroke: active ? 'rgba(13,156,165,0.24)' : 'rgba(15,23,42,0.08)',
@@ -1264,26 +1583,190 @@ const GatewayFlowCanvas = ({
   );
 };
 
+const PricingEstimator = ({
+  t,
+  models,
+  loading,
+  selectedModelName,
+  selectedGroup,
+  selectedRechargeRatio,
+  groupOptions,
+  dynamicBillingRatio,
+  hasDynamicBillingRatio,
+  effectiveBillingRatio,
+  customDynamicRatio,
+  onModelChange,
+  onGroupChange,
+  onRechargeRatioChange,
+  onDynamicRatioChange,
+  onDynamicRatioBlur,
+}) => (
+  <div className='ct-lite-pricing-estimator'>
+    <div className='ct-lite-pricing-controls'>
+      <label>
+        <span>{t('选择模型')}</span>
+        <Select
+          value={selectedModelName}
+          loading={loading}
+          placeholder={loading ? t('加载中') : t('暂无可用模型')}
+          filter
+          showClear={false}
+          onChange={onModelChange}
+          size='large'
+          className='ct-lite-pricing-select'
+        >
+          {models.map((model) => (
+            <Select.Option key={model.model_name} value={model.model_name}>
+              {model.model_name}
+            </Select.Option>
+          ))}
+        </Select>
+      </label>
+
+      <label>
+        <span>{t('当前分组')}</span>
+        <Select
+          value={selectedGroup}
+          placeholder={t('当前分组')}
+          filter
+          allowCreate
+          showClear={false}
+          onChange={onGroupChange}
+          size='large'
+          className='ct-lite-pricing-select'
+          position='bottomLeft'
+          renderSelectedItem={(optionNode) =>
+            groupOptions.find((group) => group.value === optionNode?.value)
+              ?.label ||
+            optionNode?.label ||
+            optionNode?.value ||
+            ''
+          }
+        >
+          {groupOptions.map((group) => (
+            <Select.Option key={group.value} value={group.value}>
+              {group.label}
+            </Select.Option>
+          ))}
+        </Select>
+      </label>
+
+      <label>
+        <span>{t('充值比例')}</span>
+        <InputNumber
+          value={selectedRechargeRatio}
+          min={0.01}
+          step={0.1}
+          precision={2}
+          suffix={t('RMB / $1额度')}
+          onNumberChange={(value) => onRechargeRatioChange(value || 1)}
+          size='large'
+          className='ct-lite-pricing-input'
+        />
+      </label>
+    </div>
+
+    <div className='ct-lite-pricing-result'>
+      <div className='ct-lite-pricing-factor'>
+        <span>{t('动态倍率')}</span>
+        <InputNumber
+          value={customDynamicRatio}
+          min={0.0001}
+          step={0.01}
+          precision={4}
+          placeholder={
+            hasDynamicBillingRatio
+              ? formatCompactNumber(dynamicBillingRatio, '1')
+              : t('自定义')
+          }
+          suffix='x'
+          onNumberChange={onDynamicRatioChange}
+          onBlur={onDynamicRatioBlur}
+          size='large'
+          className='ct-lite-dynamic-ratio-input'
+        />
+        <small>
+          {t('计费系数 {{billingRatio}}x · 充值 {{rechargeRatio}}', {
+            billingRatio: Number.isFinite(Number(effectiveBillingRatio))
+              ? formatCompactNumber(effectiveBillingRatio, '1')
+              : '--',
+            rechargeRatio: formatCompactNumber(selectedRechargeRatio, '1'),
+          })}
+        </small>
+      </div>
+    </div>
+
+  </div>
+);
+
 const Home = () => {
   const { t, i18n } = useTranslation();
+  const location = useLocation();
   const [statusState] = useContext(StatusContext);
   const actualTheme = useActualTheme();
   const isMobile = useIsMobile();
   const [homePageContentLoaded, setHomePageContentLoaded] = useState(false);
   const [homePageContent, setHomePageContent] = useState('');
   const [noticeVisible, setNoticeVisible] = useState(false);
-  const [homeStatus, setHomeStatus] = useState(fallbackStatus);
+  const [homeStatus, setHomeStatus] = useState(
+    () => getCachedHomeStatus()?.data || fallbackStatus,
+  );
+  const homeStatusRef = useRef(homeStatus);
   const [subscriptionPlans, setSubscriptionPlans] = useState([]);
+  const [pricingModels, setPricingModels] = useState([]);
+  const [pricingGroupRatio, setPricingGroupRatio] = useState({});
+  const [pricingUsableGroup, setPricingUsableGroup] = useState({});
+  const [pricingLoading, setPricingLoading] = useState(false);
+  const [selectedPricingModel, setSelectedPricingModel] = useState('');
+  const [selectedPricingGroup, setSelectedPricingGroup] = useState('');
+  const [selectedRechargeRatio, setSelectedRechargeRatio] = useState(1);
+  const [customDynamicRatio, setCustomDynamicRatio] = useState(undefined);
+  const plansSectionRef = useRef(null);
+  const [plansVisible, setPlansVisible] = useState(false);
+  const [plansMotionSettled, setPlansMotionSettled] = useState(false);
 
   const summary = homeStatus.summary || fallbackStatus.summary;
-  const hasRealData = Number(summary.enabled_channels || summary.healthy_channels) > 0;
-  const successRate = hasRealData ? formatRate(summary.success_rate) : '99.62%';
-  const avgLatency = hasRealData ? formatLatency(summary.avg_latency_ms) : '428ms';
-  const enabledChannels = hasRealData ? numberValue(summary.enabled_channels, 42) : 42;
-  const healthyChannels = hasRealData
-    ? Math.min(numberValue(summary.healthy_channels, 38), enabledChannels || 38)
-    : 38;
-  const channelText = `${healthyChannels}/${enabledChannels || 42}`;
+  const hasRequestMetricData = Number(summary.requests || 0) > 0;
+  const hasChannelData =
+    Number(summary.enabled_channels || summary.healthy_channels) > 0;
+  const successRate = hasRequestMetricData
+    ? formatRate(summary.success_rate)
+    : '--';
+  const avgCompletionDuration = hasRequestMetricData
+    ? formatLatency(summary.avg_latency_ms)
+    : '--';
+  const hasFirstByteData = Number(summary.avg_ttft_ms || 0) > 0;
+  const avgResponseLatency = hasFirstByteData
+    ? formatLatency(summary.avg_ttft_ms)
+    : '--';
+  const enabledChannels = hasChannelData
+    ? numberValue(summary.enabled_channels, 0)
+    : 0;
+  const healthyChannels = hasChannelData
+    ? Math.min(numberValue(summary.healthy_channels, 0), enabledChannels)
+    : 0;
+  const channelText = hasChannelData
+    ? `${healthyChannels}/${enabledChannels}`
+    : '--';
+  const statusConfig = statusState?.status || {};
+  const configuredRechargeRatio = Number(statusConfig.price || 1);
+  const configuredMinRecharge = Math.max(
+    Number(statusConfig.min_topup || 0),
+    10,
+  );
+  const rechargeRatioLabel =
+    Number.isFinite(configuredRechargeRatio) && configuredRechargeRatio > 0
+      ? configuredRechargeRatio.toFixed(
+          Number.isInteger(configuredRechargeRatio) ? 0 : 2,
+        )
+      : t('站点配置');
+  const minRechargeLabel =
+    Number.isFinite(configuredMinRecharge) && configuredMinRecharge > 0
+      ? configuredMinRecharge.toFixed(
+          Number.isInteger(configuredMinRecharge) ? 0 : 2,
+        )
+      : '10';
+  const siteRechargeRatio = 1;
 
   const heroHighlights = [
     {
@@ -1312,7 +1795,9 @@ const Home = () => {
     {
       icon: <Shuffle />,
       title: t('多渠道自动切换'),
-      desc: t('智能健康检测与延迟评估，自动选择最优通道，保障请求成功率与稳定性。'),
+      desc: t(
+        '智能健康检测与延迟评估，自动选择最优通道，保障请求成功率与稳定性。',
+      ),
     },
     {
       icon: <Box />,
@@ -1322,7 +1807,9 @@ const Home = () => {
     {
       icon: <Shield />,
       title: t('熔断限流旁路'),
-      desc: t('多维熔断与限流策略，异常自动隔离与降级，保护上游服务与整体可用性。'),
+      desc: t(
+        '多维熔断与限流策略，异常自动隔离与降级，保护上游服务与整体可用性。',
+      ),
     },
     {
       icon: <FileSearch />,
@@ -1331,11 +1818,11 @@ const Home = () => {
     },
   ];
 
-    const flowChannels = [
-      {
-        name: 'Channel #1',
-        provider: 'OpenAI',
-        meta: t('候选备用'),
+  const flowChannels = [
+    {
+      name: 'Channel #1',
+      provider: 'OpenAI',
+      meta: t('候选备用'),
       status: t('健康'),
       tone: 'healthy',
       badge: t('READY'),
@@ -1343,10 +1830,10 @@ const Home = () => {
       latency: '312ms',
       cost: '1.0x',
     },
-      {
-        name: 'Channel #2',
-        provider: 'Anthropic',
-        meta: t('候选备用'),
+    {
+      name: 'Channel #2',
+      provider: 'Anthropic',
+      meta: t('候选备用'),
       status: t('健康'),
       tone: 'healthy',
       badge: t('READY'),
@@ -1354,10 +1841,10 @@ const Home = () => {
       latency: '421ms',
       cost: '0.8x',
     },
-      {
-        name: 'Channel #4',
-        provider: '',
-        meta: 'HTTP 502',
+    {
+      name: 'Channel #4',
+      provider: '',
+      meta: 'HTTP 502',
       status: t('失败'),
       tone: 'failed',
       badge: t('502 BYPASS'),
@@ -1365,10 +1852,10 @@ const Home = () => {
       latency: '502',
       cost: '--',
     },
-      {
-        name: 'Channel #7',
-        provider: 'Google Gemini',
-        meta: t('接管中'),
+    {
+      name: 'Channel #7',
+      provider: 'Google Gemini',
+      meta: t('接管中'),
       status: t('健康'),
       tone: 'healthy',
       badge: t('SELECTED'),
@@ -1377,10 +1864,10 @@ const Home = () => {
       cost: '0.9x',
       selected: true,
     },
-      {
-        name: 'Channel #9',
-        provider: 'DeepSeek',
-        meta: t('熔断冷却 60s'),
+    {
+      name: 'Channel #9',
+      provider: 'DeepSeek',
+      meta: t('熔断冷却 60s'),
       status: t('冷却中'),
       tone: 'cooling',
       badge: t('COOLING'),
@@ -1393,28 +1880,210 @@ const Home = () => {
     .map((channel) => `${channel.name}-${channel.meta}-${channel.status}`)
     .join('|');
 
-  const dynamicPriceItems = [
-    {
+  const pricingModelOptions = useMemo(
+    () =>
+      pricingModels
+        .filter(
+          (model) =>
+            model?.model_name &&
+            Array.isArray(model.enable_groups) &&
+            model.enable_groups.length > 0,
+        )
+        .slice(0, 80),
+    [pricingModels],
+  );
+
+  const selectedPricingModelData = useMemo(
+    () =>
+      pricingModelOptions.find(
+        (model) => model.model_name === selectedPricingModel,
+      ) ||
+      pricingModelOptions[0] ||
+      null,
+    [pricingModelOptions, selectedPricingModel],
+  );
+
+  const dynamicBillingRatio = Number(
+    homeStatus?.dynamic_billing?.current_ratio || 0,
+  );
+  const dynamicBillingEnabled = Boolean(homeStatus?.dynamic_billing?.enabled);
+  const hasDynamicBillingRatio =
+    dynamicBillingEnabled &&
+    Number.isFinite(dynamicBillingRatio) &&
+    dynamicBillingRatio > 0;
+
+  const pricingGroupOptions = useMemo(() => {
+    if (!selectedPricingModelData) return [];
+    const dynamicOption = {
+      value: t(homeDynamicPricingGroupLabel),
+      label: t(homeDynamicPricingGroupLabel),
+    };
+    const staticOptions = (selectedPricingModelData.enable_groups || [])
+      .filter((group) => pricingGroupRatio[group] !== undefined)
+      .map((group) => {
+        const ratioLabel = dynamicBillingEnabled
+          ? hasDynamicBillingRatio
+            ? `${t('动态倍率')} ${formatHeroDynamicRatio(dynamicBillingRatio)}`
+            : t('动态倍率')
+          : `${formatCompactNumber(pricingGroupRatio[group], '1')}x`;
+        return {
+          value: group,
+          label: `${pricingUsableGroup[group] || group} · ${ratioLabel}`,
+        };
+      });
+    return [dynamicOption, ...staticOptions];
+  }, [
+    dynamicBillingEnabled,
+    dynamicBillingRatio,
+    hasDynamicBillingRatio,
+    pricingGroupRatio,
+    pricingUsableGroup,
+    selectedPricingModelData,
+    t,
+  ]);
+
+  const fallbackPricingGroup =
+    pricingGroupOptions.find(
+      (group) => group.value !== t(homeDynamicPricingGroupLabel),
+    )?.value ||
+    selectedPricingModelData?.enable_groups?.find(
+      (group) => pricingGroupRatio[group] !== undefined,
+    ) ||
+    selectedPricingModelData?.enable_groups?.[0] ||
+    '';
+  const effectivePricingGroup =
+    selectedPricingGroup ||
+    pricingGroupOptions[0]?.value ||
+    fallbackPricingGroup ||
+    '';
+  const effectivePricingRatioGroup =
+    effectivePricingGroup === t(homeDynamicPricingGroupLabel) ||
+    pricingGroupRatio[effectivePricingGroup] === undefined
+      ? fallbackPricingGroup
+      : effectivePricingGroup;
+  const effectiveGroupRatio = Number(
+    pricingGroupRatio[effectivePricingRatioGroup] ?? 1,
+  );
+  const effectiveRechargeRatio =
+    Number.isFinite(Number(selectedRechargeRatio)) &&
+    Number(selectedRechargeRatio) > 0
+      ? Number(selectedRechargeRatio)
+      : siteRechargeRatio;
+  const customDynamicRatioValue = Number(customDynamicRatio);
+  const hasCustomDynamicRatio =
+    Number.isFinite(customDynamicRatioValue) && customDynamicRatioValue > 0;
+  const effectivePriceRatio = hasCustomDynamicRatio
+    ? customDynamicRatioValue
+    : hasDynamicBillingRatio
+      ? dynamicBillingRatio
+      : effectiveGroupRatio;
+  const effectiveBillingRatio = effectivePriceRatio * effectiveRechargeRatio;
+
+  const pricingRows = useMemo(() => {
+    if (!selectedPricingModelData) {
+      return [
+        {
+          key: 'empty',
+          label: t('实际收费价格'),
+          value: '--',
+          detail: t('暂无可用模型'),
+        },
+      ];
+    }
+
+    const model = selectedPricingModelData;
+    const perMillionSuffix = ` / 1M ${t('Tokens')}`;
+    const priceRatio = effectivePriceRatio;
+    const rechargeRatio = effectiveRechargeRatio;
+    const formatPerMillionPrice = (amount) => {
+      const formatted = formatHomeMoney(amount, '¥');
+      return formatted === '--' ? formatted : `${formatted}${perMillionSuffix}`;
+    };
+    const calcRawTokenPrice = (ratio) =>
+      Number(model.model_ratio || 0) * 2 * Number(ratio || 0);
+    const calcTokenPrice = (ratio) =>
+      formatPerMillionPrice(calcRawTokenPrice(ratio) * priceRatio * rechargeRatio);
+    const formatRawTokenPrice = (ratio) =>
+      `${t('原始')} ${formatPerMillionPrice(calcRawTokenPrice(ratio))}`;
+    const formatRawRatio = (ratio) =>
+      `${t('原始')} ${formatCompactNumber(ratio, '1')}x`;
+    const rows = [
+      {
+        key: 'dynamic-ratio',
+        label: hasDynamicBillingRatio ? t('当前动态倍率') : t('分组倍率'),
+        value: `${formatCompactNumber(priceRatio, '1')}x`,
+        detail: formatRawRatio(hasDynamicBillingRatio ? 1 : effectiveGroupRatio),
+      },
+    ];
+
+    if (model.billing_mode === 'tiered_expr' && model.billing_expr) {
+      rows.push({
+        key: 'dynamic',
+        label: t('动态规则计费'),
+        value: `${formatCompactNumber(effectiveBillingRatio, '1')}x`,
+        detail: formatRawRatio(priceRatio),
+      });
+      return rows;
+    }
+
+    if (Number(model.quota_type) === 1) {
+      const rawFixedPrice = Number(model.model_price || 0);
+      rows.push({
+        key: 'fixed',
+        label: t('按次收费'),
+        value: formatHomeMoney(rawFixedPrice * priceRatio * rechargeRatio, '¥'),
+        detail: `${t('原始')} ${formatHomeMoney(rawFixedPrice, '¥')}`,
+      });
+      return rows;
+    }
+
+    rows.push({
+      key: 'input',
       label: t('输入价格'),
-      value: '$2.50 / 1M',
-      detail: t('模型价格 × 分组倍率'),
-    },
-    {
+      value: calcTokenPrice(1),
+      detail: formatRawTokenPrice(1),
+    });
+    rows.push({
+      key: 'completion',
       label: t('输出价格'),
-      value: '$15.00 / 1M',
-      detail: t('补全与流式输出'),
-    },
-    {
-      label: t('缓存读取价格'),
-      value: '$0.25 / 1M',
-      detail: t('缓存命中单独展示'),
-    },
-    {
-      label: t('图片生成'),
-      value: t('按次 / 按量'),
-      detail: t('图片费用独立明细'),
-    },
-  ];
+      value: calcTokenPrice(model.completion_ratio || 0),
+      detail: formatRawTokenPrice(model.completion_ratio || 0),
+    });
+    if (hasFinitePositiveValue(model.cache_ratio)) {
+      rows.push({
+        key: 'cache',
+        label: t('缓存读取价格'),
+        value: calcTokenPrice(model.cache_ratio),
+        detail: formatRawTokenPrice(model.cache_ratio),
+      });
+    }
+    if (hasFinitePositiveValue(model.create_cache_ratio)) {
+      rows.push({
+        key: 'create-cache',
+        label: t('缓存创建价格'),
+        value: calcTokenPrice(model.create_cache_ratio),
+        detail: formatRawTokenPrice(model.create_cache_ratio),
+      });
+    }
+    if (hasFinitePositiveValue(model.image_ratio)) {
+      rows.push({
+        key: 'image',
+        label: t('图片输入价格'),
+        value: calcTokenPrice(model.image_ratio),
+        detail: formatRawTokenPrice(model.image_ratio),
+      });
+    }
+    return rows.slice(0, 5);
+  }, [
+    effectiveBillingRatio,
+    effectiveGroupRatio,
+    effectivePriceRatio,
+    effectiveRechargeRatio,
+    hasCustomDynamicRatio,
+    hasDynamicBillingRatio,
+    selectedPricingModelData,
+    t,
+  ]);
 
   const dynamicPriceRules = [
     t('分组倍率实时生效'),
@@ -1435,11 +2104,13 @@ const Home = () => {
       const isResetting = resetLabel && resetLabel !== t('不重置');
       const perks = [
         totalAmount > 0
-          ? `${renderQuota(totalAmount)} / ${isResetting ? resetLabel : durationLabel}`
+          ? `${t('额度')} ${renderQuota(totalAmount)} / ${isResetting ? resetLabel : durationLabel}`
           : t('不限额度'),
         `${t('有效期')} ${durationLabel}`,
         isResetting ? `${t('额度重置')} ${resetLabel}` : null,
-        plan.upgrade_group ? `${t('升级分组')} ${plan.upgrade_group}` : t('API 全模型调用'),
+        plan.upgrade_group
+          ? `${t('升级分组')} ${plan.upgrade_group}`
+          : t('API 全模型调用'),
         limit > 0 ? `${t('限购')} ${limit}` : t('购买套餐后即可享受模型权益'),
       ].filter(Boolean);
 
@@ -1474,6 +2145,27 @@ const Home = () => {
       icon: <FileSearch />,
       title: t('透明可控'),
       desc: t('明细计费，成本可视'),
+    },
+  ];
+  const rechargeUsageItems = [
+    {
+      icon: <Wallet size={18} />,
+      label: t('充值比例'),
+      value: t('1 USD 额度按 {{ratio}} 计价', {
+        ratio: rechargeRatioLabel,
+      }),
+    },
+    {
+      icon: <CreditCard size={18} />,
+      label: t('最低充值'),
+      value: t('最低 {{amount}} USD 起充', {
+        amount: minRechargeLabel,
+      }),
+    },
+    {
+      icon: <Activity size={18} />,
+      label: t('实时扣费'),
+      value: t('模型调用自动抵扣'),
     },
   ];
 
@@ -1522,14 +2214,21 @@ const Home = () => {
   };
 
   const loadHomeStatus = async () => {
+    const cached = getCachedHomeStatus();
+    if (cached?.data) {
+      homeStatusRef.current = cached.data;
+      setHomeStatus(cached.data);
+      if (cached.age < homeStatusCacheTTL) {
+        return;
+      }
+    }
+
     try {
-      const res = await API.get('/api/public/home/status', {
-        params: { days: 30 },
-        skipErrorHandler: true,
-      });
-      const { success, data } = res.data;
-      if (success && data) {
+      const data = await requestHomeStatus();
+      if (data) {
+        homeStatusRef.current = data;
         setHomeStatus(data);
+        writeCachedHomeStatus(data);
       }
     } catch (error) {
       console.error('加载首页运行状态失败:', error);
@@ -1537,7 +2236,10 @@ const Home = () => {
   };
 
   const loadSubscriptionPlans = async () => {
-    const endpoints = ['/api/public/subscription/plans', '/api/subscription/plans'];
+    const endpoints = [
+      '/api/public/subscription/plans',
+      '/api/subscription/plans',
+    ];
     for (const endpoint of endpoints) {
       try {
         const res = await API.get(endpoint, {
@@ -1553,6 +2255,25 @@ const Home = () => {
       }
     }
     setSubscriptionPlans([]);
+  };
+
+  const loadPricingPreview = async () => {
+    setPricingLoading(true);
+    try {
+      const res = await API.get('/api/pricing', {
+        skipErrorHandler: true,
+      });
+      const { success, data, group_ratio, usable_group } = res.data || {};
+      if (success) {
+        setPricingModels(Array.isArray(data) ? data : []);
+        setPricingGroupRatio(group_ratio || {});
+        setPricingUsableGroup(usable_group || {});
+      }
+    } catch (error) {
+      // 首页价格预估失败时静默降级，不影响首屏和套餐展示。
+    } finally {
+      setPricingLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -1581,7 +2302,113 @@ const Home = () => {
     displayHomePageContent().then();
     loadHomeStatus().then();
     loadSubscriptionPlans().then();
+    loadPricingPreview().then();
+
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      const currentStatus = homeStatusRef.current;
+      const billing = currentStatus?.dynamic_billing;
+      const hasFirstByte = Number(currentStatus?.summary?.avg_ttft_ms || 0) > 0;
+      const hasRequestMetrics =
+        Number(currentStatus?.summary?.requests || 0) > 0 &&
+        Number(currentStatus?.summary?.avg_latency_ms || 0) > 0 &&
+        Number(currentStatus?.summary?.success_rate || 0) > 0;
+      if (
+        hasRequestMetrics &&
+        hasFirstByte &&
+        (hasHeroDynamicBillingData(currentStatus) || billing?.enabled === false)
+      ) {
+        window.clearInterval(timer);
+        return;
+      }
+
+      attempts += 1;
+      if (attempts > 24) {
+        window.clearInterval(timer);
+        return;
+      }
+
+      loadHomeStatus().then();
+    }, 5000);
+
+    return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    homeStatusRef.current = homeStatus;
+  }, [homeStatus]);
+
+  useEffect(() => {
+    if (hasHomeStatusRequestMetrics(homeStatusRef.current)) {
+      return undefined;
+    }
+
+    let canceled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const data = await requestHomeStatus();
+        if (!canceled && data) {
+          homeStatusRef.current = data;
+          setHomeStatus(data);
+          writeCachedHomeStatus(data);
+        }
+      } catch (error) {
+        console.error('补拉首页运行状态失败:', error);
+      }
+    }, 250);
+
+    return () => {
+      canceled = true;
+      window.clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    setSelectedRechargeRatio(siteRechargeRatio);
+  }, [siteRechargeRatio]);
+
+  useEffect(() => {
+    if (customDynamicRatio === undefined && hasDynamicBillingRatio) {
+      setCustomDynamicRatio(dynamicBillingRatio);
+    }
+  }, [customDynamicRatio, dynamicBillingRatio, hasDynamicBillingRatio]);
+
+  useEffect(() => {
+    if (!selectedPricingModel && pricingModelOptions[0]?.model_name) {
+      const preferredModel =
+        pricingModelOptions.find((model) => model.model_name === 'gpt-5.5') ||
+        pricingModelOptions.find((model) =>
+          model.model_name?.includes('gpt-5.5'),
+        ) ||
+        pricingModelOptions[0];
+      setSelectedPricingModel(preferredModel.model_name);
+    }
+  }, [pricingModelOptions, selectedPricingModel]);
+
+  useEffect(() => {
+    if (!selectedPricingModelData) {
+      return;
+    }
+    if (selectedPricingGroup === '__home_plus_dynamic__') {
+      setSelectedPricingGroup(t(homeDynamicPricingGroupLabel));
+      return;
+    }
+    if (
+      selectedPricingGroup === t(homeDynamicPricingGroupLabel) ||
+      (selectedPricingGroup &&
+        pricingGroupRatio[selectedPricingGroup] === undefined)
+    ) {
+      return;
+    }
+    const availableGroups = selectedPricingModelData.enable_groups || [];
+    if (!availableGroups.includes(selectedPricingGroup)) {
+      setSelectedPricingGroup(t(homeDynamicPricingGroupLabel));
+    }
+  }, [pricingGroupRatio, selectedPricingGroup, selectedPricingModelData, t]);
 
   useEffect(() => {
     document.body.classList.add('ct-home-route');
@@ -1590,6 +2417,81 @@ const Home = () => {
       document.body.classList.remove('ct-home-route');
     };
   }, []);
+
+  useEffect(() => {
+    if (!homePageContentLoaded || homePageContent !== '') {
+      return undefined;
+    }
+
+    const section = plansSectionRef.current;
+    if (!section || typeof window === 'undefined') {
+      setPlansVisible(true);
+      return undefined;
+    }
+
+    const prefersReducedMotion = window.matchMedia?.(
+      '(prefers-reduced-motion: reduce)',
+    )?.matches;
+    if (prefersReducedMotion || !('IntersectionObserver' in window)) {
+      setPlansVisible(true);
+      return undefined;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setPlansVisible(true);
+          observer.disconnect();
+        }
+      },
+      {
+        rootMargin: '0px 0px -12% 0px',
+        threshold: 0.18,
+      },
+    );
+
+    observer.observe(section);
+
+    return () => observer.disconnect();
+  }, [homePageContent, homePageContentLoaded]);
+
+  useEffect(() => {
+    if (
+      !homePageContentLoaded ||
+      !location.hash ||
+      typeof window === 'undefined'
+    ) {
+      return undefined;
+    }
+
+    const targetId = decodeURIComponent(location.hash.slice(1));
+    if (!targetId) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      const target = document.getElementById(targetId);
+      target?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [homePageContentLoaded, location.hash]);
+
+  useEffect(() => {
+    if (!plansVisible || typeof window === 'undefined') {
+      setPlansMotionSettled(false);
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setPlansMotionSettled(true);
+    }, 900);
+
+    return () => window.clearTimeout(timer);
+  }, [plansVisible]);
 
   return (
     <div className='w-full overflow-x-hidden'>
@@ -1608,17 +2510,25 @@ const Home = () => {
                 <h1>{t('统一 AI API 网关，稳定接入多家模型服务')}</h1>
                 <p>
                   {t(
-                    '多渠道智能调度、熔断旁路、透明计费，让 Codex、Claude Code 与 OpenAI SDK 使用更稳定。',
+                    '多渠道智能调度、熔断旁路、透明计费，让 Codex 使用更稳定。',
                   )}
                 </p>
                 <div className='ct-lite-actions'>
                   <Link to='/console'>
-                    <Button theme='solid' type='primary' className='ct-lite-primary'>
+                    <Button
+                      theme='solid'
+                      type='primary'
+                      className='ct-lite-primary'
+                    >
                       {t('立即使用')}
                     </Button>
                   </Link>
-                  <Link to='/pricing'>
-                    <Button theme='outline' type='primary' className='ct-lite-secondary'>
+                  <Link to='/#pricing'>
+                    <Button
+                      theme='outline'
+                      type='primary'
+                      className='ct-lite-secondary'
+                    >
                       {t('查看价格')}
                     </Button>
                   </Link>
@@ -1635,9 +2545,15 @@ const Home = () => {
               </div>
 
               <div className='ct-lite-hero-visual' aria-hidden='true'>
-                <MetricTile label={t('平均延迟')} value={avgLatency} />
-                <MetricTile label={t('成功率')} value={successRate} />
-                <MetricTile label={t('健康渠道')} value={channelText} type='bars' />
+                <HeroOrbitVisual
+                  avgResponseLatency={avgResponseLatency}
+                  hasResponseLatencyData={hasFirstByteData}
+                  avgCompletionDuration={avgCompletionDuration}
+                  successRate={successRate}
+                  channelText={channelText}
+                  dynamicBilling={homeStatus.dynamic_billing}
+                  t={t}
+                />
                 <div className='ct-lite-orb-stage'>
                   <div className='ct-lite-orb-ribbon' />
                   <div className='ct-lite-orb'>
@@ -1669,7 +2585,7 @@ const Home = () => {
               <div className='ct-lite-flow-panel'>
                 <GatewayFlowCanvas
                   successRate={successRate}
-                  avgLatency={avgLatency}
+                  avgLatency={avgResponseLatency}
                   channelText={channelText}
                   channels={flowChannels}
                   locale={`${i18n.language}-${flowChannelKey}`}
@@ -1699,13 +2615,15 @@ const Home = () => {
                 ))}
               </div>
 
-              <div className='ct-lite-pricing-strip'>
+              <div id='pricing' className='ct-lite-pricing-strip'>
                 <div>
                   <span>
                     <FileSearch size={34} />
                   </span>
                   <div>
-                    <strong>{t('按模型 / 分组 / 倍率计费，缓存与图片明细透明')}</strong>
+                    <strong>
+                      {t('按模型 / 分组 / 倍率计费，缓存与图片明细透明')}
+                    </strong>
                     <p>
                       {t(
                         '缓存命中、图片处理、工具调用等费用清晰可见，账单可追溯，成本尽在掌握。',
@@ -1713,11 +2631,41 @@ const Home = () => {
                     </p>
                   </div>
                 </div>
-                <Link to='/pricing'>
-                  <Button theme='outline' type='primary' className='ct-lite-secondary'>
-                    {t('查看模型价格')}
-                  </Button>
-                </Link>
+                <PricingEstimator
+                  t={t}
+                  models={pricingModelOptions}
+                  loading={pricingLoading}
+                  selectedModelName={selectedPricingModelData?.model_name || ''}
+                  selectedGroup={effectivePricingGroup}
+                  selectedRechargeRatio={effectiveRechargeRatio}
+                  groupOptions={pricingGroupOptions}
+                  dynamicBillingRatio={dynamicBillingRatio}
+                  hasDynamicBillingRatio={hasDynamicBillingRatio}
+                  effectiveBillingRatio={effectiveBillingRatio}
+                  customDynamicRatio={
+                    customDynamicRatio === undefined ? undefined : customDynamicRatio
+                  }
+                  onModelChange={(value) => setSelectedPricingModel(value)}
+                  onGroupChange={(value) => setSelectedPricingGroup(value)}
+                  onRechargeRatioChange={(value) => setSelectedRechargeRatio(value)}
+                  onDynamicRatioChange={(value) => {
+                    const nextValue = Number(value);
+                    if (Number.isFinite(nextValue) && nextValue > 0) {
+                      setCustomDynamicRatio(nextValue);
+                      return;
+                    }
+                    setCustomDynamicRatio(null);
+                  }}
+                  onDynamicRatioBlur={() => {
+                    const currentValue = Number(customDynamicRatio);
+                    if (Number.isFinite(currentValue) && currentValue > 0) {
+                      return;
+                    }
+                    setCustomDynamicRatio(
+                      hasDynamicBillingRatio ? dynamicBillingRatio : undefined,
+                    );
+                  }}
+                />
               </div>
 
               <div className='ct-lite-dynamic-pricing'>
@@ -1737,36 +2685,79 @@ const Home = () => {
                 </div>
 
                 <div className='ct-lite-dynamic-board'>
-                  {dynamicPriceItems.map((item) => (
+                  {pricingRows.map((item) => (
                     <div className='ct-lite-dynamic-row' key={item.label}>
                       <span>{item.label}</span>
                       <strong>{item.value}</strong>
                       <small>{item.detail}</small>
                     </div>
                   ))}
-                  <Link to='/pricing' className='ct-lite-dynamic-link'>
-                    {t('查看动态价格')}
-                  </Link>
                 </div>
               </div>
             </div>
           </section>
 
-          <section className='ct-lite-plans-section'>
+          <section
+            ref={plansSectionRef}
+            className={`ct-lite-plans-section${plansVisible ? ' is-visible' : ''}${
+              plansMotionSettled ? ' is-settled' : ''
+            }`}
+          >
+            <span id='subscription-plans' className='ct-lite-anchor-target' />
             <div className='ct-lite-shell'>
+              <div className='ct-lite-recharge-band'>
+                <div className='ct-lite-recharge-copy'>
+                  <span>{t('充值用量')}</span>
+                  <h3>{t('余额按量抵扣，套餐之外也能灵活使用')}</h3>
+                  <p>
+                    {t(
+                      '充值余额会按模型价格、分组倍率和动态计费规则实时扣减，适合临时扩容、补足套餐额度或按需使用。',
+                    )}
+                  </p>
+                </div>
+
+                <div className='ct-lite-recharge-metrics'>
+                  {rechargeUsageItems.map((item) => (
+                    <div className='ct-lite-recharge-metric' key={item.label}>
+                      <span>{item.icon}</span>
+                      <div>
+                        <em>{item.label}</em>
+                        <strong>{item.value}</strong>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <Link
+                  to='/console/recharge'
+                  className='ct-lite-recharge-button'
+                >
+                  <CreditCard size={18} />
+                  <span>{t('立即充值')}</span>
+                  <ArrowRight size={16} />
+                </Link>
+              </div>
+
               <div className='ct-lite-section-title'>
-                <h2>{t('选择适合你的套餐')}</h2>
+                <h2>{t('选择适合你的 Codex 套餐')}</h2>
                 <p>{t('所有套餐均按量计费，可随时升级或取消')}</p>
               </div>
 
               {planCards.length > 0 ? (
-                <div className={`ct-lite-plan-grid ct-lite-plan-grid-count-${planCards.length}`}>
-                  {planCards.map((plan) => (
+                <div
+                  className={`ct-lite-plan-grid ct-lite-plan-grid-count-${planCards.length}`}
+                >
+                  {planCards.map((plan, index) => (
                     <article
                       className={`ct-lite-plan-card${plan.featured ? ' featured' : ''}`}
                       key={plan.name}
+                      style={{ '--plan-index': index }}
                     >
-                      {plan.featured && <div className='ct-lite-plan-badge'>{t('最受欢迎')}</div>}
+                      {plan.featured && (
+                        <div className='ct-lite-plan-badge'>
+                          {t('最受欢迎')}
+                        </div>
+                      )}
                       <h3>{plan.name}</h3>
                       <p>{plan.subtitle}</p>
                       <div className='ct-lite-price'>
@@ -1783,9 +2774,9 @@ const Home = () => {
                       </ul>
                       <Link to='/console/subscription-plans'>
                         <Button
-                          theme={plan.featured ? 'solid' : 'outline'}
+                          theme='outline'
                           type='primary'
-                          className={plan.featured ? 'ct-lite-primary' : 'ct-lite-secondary'}
+                          className='ct-lite-plan-action'
                           block
                         >
                           {t('购买套餐')}
@@ -1817,7 +2808,10 @@ const Home = () => {
       ) : (
         <div className='overflow-x-hidden w-full'>
           {homePageContent.startsWith('https://') ? (
-            <iframe src={homePageContent} className='w-full h-screen border-none' />
+            <iframe
+              src={homePageContent}
+              className='w-full h-screen border-none'
+            />
           ) : (
             <div
               className='mt-[60px]'

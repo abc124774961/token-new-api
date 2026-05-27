@@ -88,10 +88,78 @@ const renderStatus = (text, record, t) => {
 };
 
 // Render group column
-const renderGroupColumn = (text, record, t, groupRatios = {}) => {
-  const normalizedGroup = text || 'auto';
-  if (normalizedGroup === 'auto') {
+const formatGroupRatioValue = (ratio) => {
+  const numericRatio = Number(ratio);
+  if (!Number.isFinite(numericRatio) || numericRatio <= 0) {
+    return null;
+  }
+  return `${numericRatio.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}x`;
+};
+
+const getGroupBillingInfo = (groupRatioValue) => {
+  if (
+    groupRatioValue &&
+    typeof groupRatioValue === 'object' &&
+    !Array.isArray(groupRatioValue)
+  ) {
+    return {
+      ratio: groupRatioValue.ratio,
+      dynamicBilling: groupRatioValue.dynamic_billing || null,
+    };
+  }
+  return {
+    ratio: groupRatioValue,
+    dynamicBilling: null,
+  };
+};
+
+const getDynamicBillingRatio = (dynamicBilling) => {
+  if (!dynamicBilling) {
+    return null;
+  }
+  return formatGroupRatioValue(
+    dynamicBilling.current_ratio ||
+      dynamicBilling.average_ratio_7d ||
+      dynamicBilling.max_ratio_7d ||
+      dynamicBilling.min_ratio_7d,
+  );
+};
+
+const renderGroupRatioTag = (groupInfo, t) => {
+  const dynamicRatio = getDynamicBillingRatio(groupInfo.dynamicBilling);
+  if (dynamicRatio) {
     return (
+      <Tag size='small' color='cyan' shape='circle' type='light'>
+        {t('动态倍率')} {dynamicRatio}
+      </Tag>
+    );
+  }
+
+  if (groupInfo.dynamicBilling) {
+    return (
+      <Tag size='small' color='cyan' shape='circle' type='light'>
+        {t('动态倍率计算中')}
+      </Tag>
+    );
+  }
+
+  const staticRatio = formatGroupRatioValue(groupInfo.ratio);
+  if (!staticRatio) {
+    return null;
+  }
+  return (
+    <Tag size='small' color='green' shape='circle'>
+      {staticRatio}
+    </Tag>
+  );
+};
+
+const renderGroupColumn = (text, record, t, groupRatios = {}) => {
+  const normalizedGroup = text || record?.group || 'auto';
+  const groupInfo = getGroupBillingInfo(groupRatios[normalizedGroup]);
+  const ratioTag = renderGroupRatioTag(groupInfo, t);
+  const groupTag =
+    normalizedGroup === 'auto' ? (
       <Tooltip
         content={t(
           '当前分组为 auto，会自动选择最优分组，当一个组不可用时自动降级到下一个组（熔断机制）',
@@ -103,17 +171,14 @@ const renderGroupColumn = (text, record, t, groupRatios = {}) => {
           {record && record.cross_group_retry ? `(${t('跨分组')})` : ''}
         </Tag>
       </Tooltip>
+    ) : (
+      renderGroup(normalizedGroup)
     );
-  }
-  const ratio = groupRatios[normalizedGroup];
+
   return (
-    <span className='flex items-center gap-1'>
-      {renderGroup(normalizedGroup)}
-      {ratio !== undefined && (
-        <Tag size='small' color='green' shape='circle'>
-          {ratio}x
-        </Tag>
-      )}
+    <span className='flex items-center gap-1 flex-wrap'>
+      {groupTag}
+      {ratioTag}
     </span>
   );
 };

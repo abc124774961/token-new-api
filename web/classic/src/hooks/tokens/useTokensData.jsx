@@ -448,12 +448,15 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
       .catch((reason) => {
         showError(reason);
       });
-    API.get('/api/user/self/groups')
+    API.get('/api/user/self/groups?include_dynamic_billing=true')
       .then((res) => {
         if (res.data.success && res.data.data) {
           const ratios = {};
           for (const [name, info] of Object.entries(res.data.data)) {
-            ratios[name] = info.ratio;
+            ratios[name] = {
+              ratio: info.ratio,
+              dynamic_billing: info.dynamic_billing || null,
+            };
           }
           setGroupRatios(ratios);
         }

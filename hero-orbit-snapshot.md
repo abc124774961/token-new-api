@@ -1,0 +1,36 @@
+- generic [ref=e3] [box=0,0,2056,1075]:
+  - generic [ref=e5] [box=0,0,2056,64]:
+    - link "CodeToken AI" [ref=e81] [cursor=pointer] [box=288,14,181,36]:
+      - /url: /
+      - heading "CodeToken AI" [level=4] [ref=e12] [box=288,18,173,28]
+    - navigation [ref=e14] [box=874,0,307,64]:
+      - link "首页" [ref=e15] [cursor=pointer] [box=874,0,41,64]:
+        - /url: /
+        - generic [ref=e16] [box=880,22,29,20]: 首页
+      - link "价格" [ref=e19] [cursor=pointer] [box=957,0,41,64]:
+        - /url: /pricing
+        - generic [ref=e20] [box=963,22,29,20]: 价格
+      - link "套餐" [ref=e21] [cursor=pointer] [box=1039,0,41,64]:
+        - /url: /console/subscription-plans
+        - generic [ref=e22] [box=1045,22,29,20]: 套餐
+      - link "文档" [ref=e23] [cursor=pointer] [box=1122,0,60,64]:
+        - /url: https://docs.newapi.pro
+        - generic [ref=e24] [box=1128,22,29,20]: 文档
+        - img [ref=e25] [box=1163,26,13,13]
+    - generic [ref=e31] [box=1621,15,147,34]:
+      - text: 运行中 运行中
+      - button "A abc124774961" [ref=e53] [cursor=pointer] [box=1621,15,147,34]:
+        - generic [ref=e54] [box=1627,20,131,24]
+  - generic [ref=e62] [box=0,0,2056,3965]:
+    - main [ref=e63] [box=0,0,2056,3817]:
+      - main [ref=e83] [box=0,0,2056,3817]:
+        - generic [ref=e85] [box=288,72,1480,688]
+        - generic [ref=e195] [box=288,856,1480,824]
+        - generic [ref=e203] [box=288,1844,1480,1063]
+        - generic [ref=e283] [box=288,3037,1480,696]
+    - generic [ref=e75] [box=473,3881,1110,20]:
+      - generic [ref=e77] [box=473,3881,207,20]: © 2026 CodeToken AI. 版权所有
+      - generic [ref=e78] [box=1438,3881,145,20]:
+        - generic [ref=e79] [box=1438,3882,90,17]: 设计与开发由
+        - link "New API" [ref=e80] [cursor=pointer] [box=1528,3882,55,17]:
+          - /url: https://github.com/QuantumNous/new-api

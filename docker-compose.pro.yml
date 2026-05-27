@@ -3,10 +3,7 @@ name: token-new-api-pro
 services:
 
   mailpit:
-    build:
-      context: .
-      dockerfile: Dockerfile.mailpit
-    image: token-new-api-pro-mailpit:latest
+    image: axllent/mailpit:latest
     container_name: token-new-api-pro-mailpit
     restart: unless-stopped
     ports:

@@ -1,10 +1,15 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,6 +54,7 @@ func TestPublicHomeStatusUsesFinalRequestOutcome(t *testing.T) {
 	require.EqualValues(t, 2, response.Summary.Requests)
 	require.InDelta(t, 50, response.Summary.SuccessRate, 0.001)
 	require.EqualValues(t, 180, response.Summary.AvgLatencyMs)
+	require.EqualValues(t, 180, response.Summary.AvgTTFTMs)
 	require.EqualValues(t, 2, response.Summary.ProtectedEvents)
 	require.Len(t, response.Daily, 7)
 
@@ -60,12 +66,14 @@ func TestPublicHomeStatusUsesFinalRequestOutcome(t *testing.T) {
 	}
 	require.EqualValues(t, 2, today.Requests)
 	require.InDelta(t, 50, today.SuccessRate, 0.001)
+	require.EqualValues(t, 180, today.AvgTTFTMs)
 	require.EqualValues(t, 2, today.ProtectedEvents)
 	require.Len(t, response.Groups, 4)
 	require.Equal(t, "codex", response.Groups[0].Key)
 	require.Equal(t, "Codex 专用", response.Groups[0].Name)
 	require.EqualValues(t, 1, response.Groups[0].Summary.Requests)
 	require.InDelta(t, 100, response.Groups[0].Summary.SuccessRate, 0.001)
+	require.EqualValues(t, 180, response.Groups[0].Summary.AvgTTFTMs)
 	require.Equal(t, "value", response.Groups[3].Key)
 	require.EqualValues(t, 1, response.Groups[3].Summary.Requests)
 	require.InDelta(t, 0, response.Groups[3].Summary.SuccessRate, 0.001)
@@ -80,4 +88,225 @@ func TestPublicHomeStatusEmptyKeepsDailyWindow(t *testing.T) {
 	require.Len(t, response.Daily, 30)
 	require.Len(t, response.Groups, 4)
 	require.Len(t, response.Groups[0].Daily, 30)
+}
+
+func TestPublicHomeModelGatewayStatsOverrideFirstByteLatency(t *testing.T) {
+	response := PublicHomeStatusResponse{
+		Summary: PublicHomeStatusSummary{
+			Requests:     2,
+			SuccessRate:  50,
+			AvgLatencyMs: 428,
+			AvgTTFTMs:    180,
+		},
+	}
+
+	applyPublicHomeModelGatewayStats(&response, publicHomeModelGatewayStats{
+		Requests:     4676,
+		Successes:    3914,
+		SuccessRate:  83.70402053036784,
+		AvgLatencyMs: 6120,
+		AvgTTFTMs:    5490,
+	})
+
+	require.EqualValues(t, 4676, response.Summary.Requests)
+	require.InDelta(t, 83.704, response.Summary.SuccessRate, 0.001)
+	require.EqualValues(t, 6120, response.Summary.AvgLatencyMs)
+	require.EqualValues(t, 5490, response.Summary.AvgTTFTMs)
+}
+
+func TestPublicHomeModelGatewayStatsKeepsExistingWhenEmpty(t *testing.T) {
+	response := PublicHomeStatusResponse{
+		Summary: PublicHomeStatusSummary{
+			Requests:     2,
+			SuccessRate:  50,
+			AvgLatencyMs: 428,
+			AvgTTFTMs:    180,
+		},
+	}
+
+	applyPublicHomeModelGatewayStats(&response, publicHomeModelGatewayStats{
+		AvgTTFTMs: 5490,
+	})
+
+	require.EqualValues(t, 2, response.Summary.Requests)
+	require.InDelta(t, 50, response.Summary.SuccessRate, 0.001)
+	require.EqualValues(t, 428, response.Summary.AvgLatencyMs)
+	require.EqualValues(t, 5490, response.Summary.AvgTTFTMs)
+}
+
+func TestPublicHomeModelGatewayStatsFromUserRequestsUsesEffectiveRequests(t *testing.T) {
+	stats := publicHomeModelGatewayStatsFromUserRequests([]model.ModelGatewayUserRequestSummary{
+		{
+			RequestId:     "req-success",
+			FinalSuccess:  true,
+			DurationMs:    6000,
+			TTFTMs:        5320,
+			SelectedGroup: "codex-plus",
+		},
+		{
+			RequestId:          "req-failure",
+			FinalStatusCode:    502,
+			FinalErrorCategory: model.ModelGatewayUserRequestErrorUpstream,
+			DurationMs:         9000,
+			TTFTMs:             7000,
+			SelectedGroup:      "codex-plus",
+		},
+		{
+			RequestId:      "req-aborted",
+			ClientAborted:  true,
+			DurationMs:     12000,
+			TTFTMs:         9000,
+			RequestedGroup: "codex-plus",
+		},
+		{
+			RequestId:     "req-probe",
+			FinalSuccess:  true,
+			IsHealthProbe: true,
+			DurationMs:    100,
+			TTFTMs:        80,
+			SelectedGroup: "codex-plus",
+		},
+	})
+
+	require.EqualValues(t, 2, stats.Requests)
+	require.EqualValues(t, 1, stats.Successes)
+	require.InDelta(t, 50, stats.SuccessRate, 0.001)
+	require.EqualValues(t, 7500, stats.AvgLatencyMs)
+	require.EqualValues(t, 6160, stats.AvgTTFTMs)
+}
+
+func TestPublicHomeModelGatewayStatsAggregatesFromDB(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := time.Now()
+
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     301,
+		Type:   1,
+		Key:    "sk-test",
+		Status: common.ChannelStatusEnabled,
+		Name:   "codex-enterprise",
+		Group:  "codex-enterprise",
+		Models: "gpt-5.5",
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ModelGatewayUserRequestSummary{
+		{
+			RequestId:     "req-codex-plus-success",
+			CompletedAt:   now.Unix(),
+			SelectedGroup: "codex-plus",
+			FinalSuccess:  true,
+			DurationMs:    1000,
+			TTFTMs:        300,
+		},
+		{
+			RequestId:     "req-codex-plus-failure",
+			CompletedAt:   now.Unix(),
+			SelectedGroup: "codex-plus",
+			DurationMs:    3000,
+			TTFTMs:        900,
+		},
+		{
+			RequestId:      "req-requested-group-fallback",
+			CompletedAt:    now.Unix(),
+			RequestedGroup: "codex-pro",
+			FinalSuccess:   true,
+			DurationMs:     5000,
+			TTFTMs:         1500,
+		},
+		{
+			RequestId:     "req-channel-derived-codex-group",
+			CompletedAt:   now.Unix(),
+			SelectedGroup: "codex-enterprise",
+			FinalSuccess:  true,
+			DurationMs:    7000,
+			TTFTMs:        2100,
+		},
+		{
+			RequestId:     "req-other-group",
+			CompletedAt:   now.Unix(),
+			SelectedGroup: "value",
+			FinalSuccess:  true,
+			DurationMs:    9000,
+			TTFTMs:        2700,
+		},
+		{
+			RequestId:     "req-health-probe",
+			CompletedAt:   now.Unix(),
+			SelectedGroup: "codex-plus",
+			FinalSuccess:  true,
+			IsHealthProbe: true,
+			DurationMs:    100,
+			TTFTMs:        80,
+		},
+		{
+			RequestId:     "req-client-aborted",
+			CompletedAt:   now.Unix(),
+			SelectedGroup: "codex-plus",
+			ClientAborted: true,
+			DurationMs:    100,
+			TTFTMs:        80,
+		},
+		{
+			RequestId:     "req-too-old",
+			CompletedAt:   now.AddDate(0, 0, -40).Unix(),
+			SelectedGroup: "codex-plus",
+			FinalSuccess:  true,
+			DurationMs:    100,
+			TTFTMs:        80,
+		},
+	}).Error)
+
+	stats := buildPublicHomeModelGatewayStats(30)
+
+	require.EqualValues(t, 4, stats.Requests)
+	require.EqualValues(t, 3, stats.Successes)
+	require.InDelta(t, 75, stats.SuccessRate, 0.001)
+	require.EqualValues(t, 4000, stats.AvgLatencyMs)
+	require.EqualValues(t, 1200, stats.AvgTTFTMs)
+}
+
+func TestPublicHomeDynamicBillingOnlyExposesDisplayPrice(t *testing.T) {
+	ratio_setting.InitRatioSettings()
+	now := time.Now().Unix()
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		DynamicBillingEnabled:        true,
+		DynamicBillingMinSamples:     1,
+		DynamicBillingRefreshSeconds: 30,
+		DynamicBillingMaxAgeSeconds:  300,
+		GroupPolicies: map[string]scheduler_setting.GroupPolicySetting{
+			"auto": {
+				BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+				CandidateGroups:  []string{"codex-plus"},
+			},
+		},
+	})
+	defer restoreSetting()
+
+	restoreBaselines := modelgatewaydynamicbilling.StoreDefaultBaselinesForTest(map[string]modelgatewaydynamicbilling.RatioBaseline{
+		"gpt-5.4:codex-plus": {
+			RequestedModel: "gpt-5.4",
+			Group:          "codex-plus",
+			Ratio:          0.0693,
+			PricePerM:      0.128,
+			SampleCount:    8,
+			CalculatedAt:   now - 24,
+		},
+	})
+	defer restoreBaselines()
+
+	result := buildPublicHomeDynamicBilling(now)
+
+	require.NotNil(t, result)
+	require.True(t, result.Enabled)
+	require.Equal(t, "codex-plus", result.Group)
+	require.Equal(t, "gpt-5.4", result.Model)
+	require.InEpsilon(t, 0.0693, result.CurrentRatio, 0.000001)
+	require.Equal(t, modelGatewayDynamicBillingPricePerMillion("gpt-5.4", 0.0693), result.DisplayPricePerM)
+	require.EqualValues(t, 24, result.UpdatedSecondsAgo)
+
+	payload, err := common.Marshal(result)
+	require.NoError(t, err)
+	payloadText := strings.ToLower(string(payload))
+	require.NotContains(t, payloadText, "cost")
+	require.NotContains(t, payloadText, "profit")
+	require.NotContains(t, payloadText, "channel")
 }
