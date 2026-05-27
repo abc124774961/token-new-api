@@ -70,6 +70,9 @@ func updateScoreStats(stats ScoreStats, result core.AttemptResult, decision core
 	if !decision.ScoreSample {
 		return stats
 	}
+	if internalFirstByteTimeoutRetry(result) {
+		return stats
+	}
 	stats.Samples++
 	completed := result.Success && !result.StreamInterrupted
 	stats.Rates["completion"] = updateRateStats(stats.Rates["completion"], completed, true)
@@ -230,6 +233,8 @@ func scoreSampleDecision(result core.AttemptResult) core.ScoreSampleDecision {
 		return skippedScoreSample("concurrency_limited")
 	case isCircuitOverloadSkipResult(result):
 		return skippedScoreSample("circuit_overload_skip")
+	case internalFirstByteTimeoutRetry(result):
+		return skippedScoreSample(core.RelayAttemptCancelReasonFirstByteTimeout)
 	case result.StreamInterrupted:
 		decision.Reason = "stream_interrupted"
 	case result.EmptyOutput:
@@ -244,6 +249,10 @@ func scoreSampleDecision(result core.AttemptResult) core.ScoreSampleDecision {
 
 func skippedScoreSample(reason string) core.ScoreSampleDecision {
 	return core.ScoreSampleDecision{SkipReason: reason, Reason: reason}
+}
+
+func internalFirstByteTimeoutRetry(result core.AttemptResult) bool {
+	return strings.TrimSpace(result.RetryReason) == core.RelayAttemptCancelReasonFirstByteTimeout
 }
 
 func newScoreTraceID(result core.AttemptResult, observedAt time.Time) string {

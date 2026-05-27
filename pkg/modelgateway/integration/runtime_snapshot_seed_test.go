@@ -29,6 +29,12 @@ func TestSeedRuntimeSnapshotsFromExecutionRecords(t *testing.T) {
 	require.NoError(t, db.Create(&channel).Error)
 	concurrencyMeta, err := common.Marshal(map[string]any{"concurrency_limited": true})
 	require.NoError(t, err)
+	firstByteTimeoutMeta, err := common.Marshal(map[string]any{
+		"retry_reason":   "first_byte_timeout",
+		"retry_action":   "switch_channel",
+		"error_category": "timeout",
+	})
+	require.NoError(t, err)
 	require.NoError(t, db.Create(&[]model.ModelExecutionRecord{
 		{
 			CreatedAt:      100,
@@ -54,6 +60,19 @@ func TestSeedRuntimeSnapshotsFromExecutionRecords(t *testing.T) {
 			EndpointType:   string(constant.EndpointTypeOpenAI),
 			StatusCode:     429,
 			RequestMeta:    string(concurrencyMeta),
+		},
+		{
+			CreatedAt:      120,
+			RequestId:      "seed-first-byte-timeout",
+			AttemptIndex:   2,
+			ChannelId:      42,
+			RequestedGroup: "auto",
+			SelectedGroup:  "vip",
+			RequestedModel: "gpt-5.4",
+			EndpointType:   string(constant.EndpointTypeOpenAI),
+			StatusCode:     504,
+			DurationMs:     20000,
+			RequestMeta:    string(firstByteTimeoutMeta),
 		},
 	}).Error)
 

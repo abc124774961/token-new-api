@@ -21,6 +21,7 @@ type runtimeSnapshotSeedAttemptMeta struct {
 	BalanceInsufficient bool   `json:"balance_insufficient,omitempty"`
 	EmptyOutput         bool   `json:"empty_output,omitempty"`
 	ExperienceIssue     string `json:"experience_issue,omitempty"`
+	RetryReason         string `json:"retry_reason,omitempty"`
 }
 
 func SeedRuntimeSnapshotsFromExecutionRecords(ctx context.Context, store core.RuntimeSnapshotStore, limit int) (int, error) {
@@ -95,7 +96,8 @@ func runtimeSnapshotSeedChannels(ctx context.Context, records []model.ModelExecu
 
 func runtimeSnapshotSeedAttempt(record model.ModelExecutionRecord, channel *model.Channel, registry provider.ProviderRegistry) (core.AttemptResult, bool) {
 	meta := runtimeSnapshotSeedMeta(record.RequestMeta)
-	if meta.ClientAborted || meta.ConcurrencyLimited || meta.BalanceInsufficient {
+	if meta.ClientAborted || meta.ConcurrencyLimited || meta.BalanceInsufficient ||
+		strings.TrimSpace(meta.RetryReason) == core.RelayAttemptCancelReasonFirstByteTimeout {
 		return core.AttemptResult{}, false
 	}
 	key := runtimeSnapshotSeedKey(record, channel, registry)

@@ -120,6 +120,52 @@ func TestRuntimeHealthMonitorSkipsBalanceInsufficientForSuccessRate(t *testing.T
 	service.ClearChannelBalanceInsufficient(84)
 }
 
+func TestRuntimeHealthMonitorFirstByteTimeoutRetryIsNeutralForScore(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 85, Group: "default"}
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:        key,
+		ChannelID:  85,
+		Success:    true,
+		ObservedAt: time.Unix(1710000100, 0),
+		Duration:   900 * time.Millisecond,
+		TTFT:       160 * time.Millisecond,
+	})
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:           key,
+		ChannelID:     85,
+		StatusCode:    http.StatusGatewayTimeout,
+		ErrorCategory: core.ErrorCategoryTimeout,
+		RetryAction:   "switch_channel",
+		RetryReason:   core.RelayAttemptCancelReasonFirstByteTimeout,
+		WillRetry:     true,
+		ObservedAt:    time.Unix(1710000120, 0),
+		Duration:      20 * time.Second,
+	})
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.Equal(t, 1, snapshot.SampleCount)
+	require.Equal(t, 1.0, snapshot.SuccessRate)
+	require.Equal(t, 900.0, snapshot.DurationMs)
+	require.Equal(t, 160.0, snapshot.TTFTMs)
+	require.Equal(t, int64(1710000100), snapshot.LastRealAttemptAt)
+	require.Equal(t, int64(1710000100), snapshot.LastRealSuccessAt)
+	require.Zero(t, snapshot.LastRealFailureAt)
+
+	stats := scoreStatsForHealthMonitorTest(t, snapshot)
+	require.Equal(t, 1, stats.Samples)
+	require.Equal(t, 1, stats.Rates["completion"].Total)
+	require.Equal(t, 1, stats.Rates["completion"].Success)
+	require.Equal(t, 0, stats.Rates["completion"].Count)
+	require.Equal(t, 1, stats.Rates["upstream_error"].Total)
+	require.Equal(t, 1, stats.Rates["upstream_error"].Success)
+	require.Equal(t, 0, stats.Rates["upstream_error"].Count)
+}
+
 func TestRuntimeHealthMonitorSuccessImprovesSnapshot(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
@@ -334,7 +380,8 @@ func TestRuntimeHealthMonitorTracksNonEmptyExperienceIssueSeparately(t *testing.
 }
 
 type scoreStatsForHealthMonitor struct {
-	Rates map[string]struct {
+	Samples int `json:"samples,omitempty"`
+	Rates   map[string]struct {
 		Success int `json:"success,omitempty"`
 		Count   int `json:"count,omitempty"`
 		Total   int `json:"total,omitempty"`

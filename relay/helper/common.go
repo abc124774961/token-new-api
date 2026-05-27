@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
+	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
@@ -19,7 +20,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const RelayAttemptCancelReasonFirstByteTimeout = "first_byte_timeout"
+const RelayAttemptCancelReasonFirstByteTimeout = modelgatewaycore.RelayAttemptCancelReasonFirstByteTimeout
 
 type RelayAttemptControl struct {
 	ctx          context.Context

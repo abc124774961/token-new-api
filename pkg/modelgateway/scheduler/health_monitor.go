@@ -95,6 +95,9 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	if result.ConcurrencyLimited {
 		return
 	}
+	if !decision.ScoreSample {
+		return
+	}
 	if m.store == nil {
 		return
 	}

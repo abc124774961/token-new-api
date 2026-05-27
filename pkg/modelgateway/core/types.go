@@ -26,6 +26,8 @@ const (
 	DispatchFilterConditionCodexImageGenerationTool = "codex_image_generation_tool"
 )
 
+const RelayAttemptCancelReasonFirstByteTimeout = "first_byte_timeout"
+
 type DispatchRequest struct {
 	RequestID                string
 	UserID                   int
