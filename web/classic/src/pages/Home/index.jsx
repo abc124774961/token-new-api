@@ -1680,7 +1680,7 @@ const PricingEstimator = ({
               : t('自定义')
           }
           suffix='x'
-          onNumberChange={onDynamicRatioChange}
+          onChange={onDynamicRatioChange}
           onBlur={onDynamicRatioBlur}
           size='large'
           className='ct-lite-dynamic-ratio-input'
@@ -1721,6 +1721,7 @@ const Home = () => {
   const [selectedPricingGroup, setSelectedPricingGroup] = useState('');
   const [selectedRechargeRatio, setSelectedRechargeRatio] = useState(1);
   const [customDynamicRatio, setCustomDynamicRatio] = useState(undefined);
+  const dynamicRatioClearedRef = useRef(false);
   const plansSectionRef = useRef(null);
   const [plansVisible, setPlansVisible] = useState(false);
   const [plansMotionSettled, setPlansMotionSettled] = useState(false);
@@ -2651,12 +2652,21 @@ const Home = () => {
                   onDynamicRatioChange={(value) => {
                     const nextValue = Number(value);
                     if (Number.isFinite(nextValue) && nextValue > 0) {
+                      dynamicRatioClearedRef.current = false;
                       setCustomDynamicRatio(nextValue);
                       return;
                     }
-                    setCustomDynamicRatio(null);
+                    dynamicRatioClearedRef.current = true;
+                    setCustomDynamicRatio('');
                   }}
                   onDynamicRatioBlur={() => {
+                    if (dynamicRatioClearedRef.current) {
+                      dynamicRatioClearedRef.current = false;
+                      setCustomDynamicRatio(
+                        hasDynamicBillingRatio ? dynamicBillingRatio : undefined,
+                      );
+                      return;
+                    }
                     const currentValue = Number(customDynamicRatio);
                     if (Number.isFinite(currentValue) && currentValue > 0) {
                       return;

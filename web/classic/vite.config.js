@@ -39,6 +39,8 @@ const serverUrl =
   process.env.DEV_PROXY_TARGET ||
   process.env.VITE_REACT_APP_SERVER_URL ||
   defaultServerUrl;
+const isQuietBuild = process.env.VITE_QUIET_BUILD === '1';
+const shouldReportCompressedSize = process.env.VITE_BUILD_STATS === '1';
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -81,7 +83,19 @@ export default defineConfig({
     },
   },
   build: {
+    minify: 'esbuild',
+    reportCompressedSize: shouldReportCompressedSize,
+    chunkSizeWarningLimit: isQuietBuild ? 100000 : 500,
     rollupOptions: {
+      onwarn(warning, warn) {
+        if (
+          warning.code === 'EVAL' &&
+          warning.id?.includes('node_modules/lottie-web/')
+        ) {
+          return;
+        }
+        warn(warning);
+      },
       output: {
         manualChunks: {
           'react-core': ['react', 'react-dom', 'react-router-dom'],
