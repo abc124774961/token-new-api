@@ -114,17 +114,17 @@ func StrategyProfileFor(strategy string) StrategyProfile {
 		}
 	case core.StrategyCostFirst:
 		profile.Weights = map[string]float64{
-			scoreItemCompletionRate:        0.14,
-			scoreItemUpstreamErrorRate:     0.10,
-			scoreItemTTFTLatency:           0.15,
+			scoreItemCompletionRate:        0.112,
+			scoreItemUpstreamErrorRate:     0.08,
+			scoreItemTTFTLatency:           0.12,
 			scoreItemDurationLatency:       0.05,
 			scoreItemThroughput:            0.03,
 			scoreItemEmptyOutputRate:       0.04,
 			scoreItemStreamInterruptedRate: 0.05,
 			scoreItemConcurrencyLoad:       0.03,
 			scoreItemQueuePressure:         0.03,
-			scoreItemFirstByteBacklog:      0.08,
-			scoreItemCost:                  0.25,
+			scoreItemFirstByteBacklog:      0.064,
+			scoreItemCost:                  0.344,
 			scoreItemGroupPriority:         0.05,
 		}
 		profile.CostPower = costFirstRelativeCostPower

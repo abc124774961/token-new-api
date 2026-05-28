@@ -209,6 +209,9 @@ func validateModelGatewayProxyAddress(protocol string, address string) error {
 	if parsed.Scheme == "" || parsed.Host == "" {
 		return fmt.Errorf("代理地址无效")
 	}
+	if strings.TrimSpace(parsed.Port()) == "" {
+		return fmt.Errorf("代理地址无效：请填写端口，例如 127.0.0.1:1080")
+	}
 	switch strings.ToLower(strings.TrimSpace(parsed.Scheme)) {
 	case model.ModelGatewayProxyProtocolHTTP, model.ModelGatewayProxyProtocolHTTPS, model.ModelGatewayProxyProtocolSOCKS5, model.ModelGatewayProxyProtocolSOCKS5H:
 		return nil

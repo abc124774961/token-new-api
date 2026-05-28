@@ -95,6 +95,12 @@ type UpdateChannelAccountProxyRequest struct {
 	AllowReuseRisk bool `json:"allow_reuse_risk,omitempty"`
 }
 
+type UpdateChannelAccountsProxyRequest struct {
+	CredentialIndexes []int `json:"credential_indexes"`
+	ProxyID           *int  `json:"proxy_id"`
+	AllowReuseRisk    bool  `json:"allow_reuse_risk,omitempty"`
+}
+
 type ChannelAccountOperation struct {
 	Type             string `json:"type,omitempty"`
 	Action           string `json:"action,omitempty"`
@@ -347,6 +353,36 @@ func UpdateChannelAccountProxy(c *gin.Context) {
 		proxyID = *request.ProxyID
 	}
 	operation, err := updateChannelAccountProxy(channelID, credentialIndex, proxyID, request.AllowReuseRisk)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		common.ApiErrorMsg(c, "渠道不存在")
+		return
+	}
+	common.ApiSuccess(c, buildChannelAccountsResponseWithOperation(channel, operation))
+}
+
+func UpdateChannelAccountsProxy(c *gin.Context) {
+	channelID, ok := parseChannelIDParam(c)
+	if !ok {
+		return
+	}
+	var request UpdateChannelAccountsProxyRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	proxyID := 0
+	if request.ProxyID != nil {
+		proxyID = *request.ProxyID
+	}
+	operation, err := updateChannelAccountsProxy(channelID, request.CredentialIndexes, proxyID, request.AllowReuseRisk)
 	if err != nil {
 		common.ApiErrorMsg(c, err.Error())
 		return
@@ -853,7 +889,7 @@ func updateChannelAccountCredential(channelID int, credentialIndex int, credenti
 		}
 	}
 	cleanupChannelAccountStatusMaps(channel, len(keys))
-	if err := channel.Update(); err != nil {
+	if err := saveChannelAccountsAfterDelete(channel); err != nil {
 		return nil, err
 	}
 	return &ChannelAccountOperation{
@@ -927,6 +963,10 @@ func normalizeChannelAccountIndexes(credentialIndexes []int, keyCount int) ([]in
 }
 
 func updateChannelAccountProxy(channelID int, credentialIndex int, proxyID int, allowReuseRisk bool) (*ChannelAccountOperation, error) {
+	return updateChannelAccountsProxy(channelID, []int{credentialIndex}, proxyID, allowReuseRisk)
+}
+
+func updateChannelAccountsProxy(channelID int, credentialIndexes []int, proxyID int, allowReuseRisk bool) (*ChannelAccountOperation, error) {
 	if channelID <= 0 {
 		return nil, fmt.Errorf("渠道不存在")
 	}
@@ -947,17 +987,21 @@ func updateChannelAccountProxy(channelID int, credentialIndex int, proxyID int, 
 	if len(keys) == 0 {
 		return nil, fmt.Errorf("渠道没有可管理的账号")
 	}
-	indexes, err := normalizeChannelAccountIndexes([]int{credentialIndex}, len(keys))
+	indexes, err := normalizeChannelAccountIndexes(credentialIndexes, len(keys))
 	if err != nil {
 		return nil, err
 	}
 	if proxyID > 0 {
 		accounts := modelgatewayaccount.NewRegistry().AccountsForChannel(channel)
-		account, ok := channelAccountByCredentialIndex(accounts, indexes[0])
-		if !ok {
-			return nil, fmt.Errorf("账号不存在")
+		targetAccounts := make([]modelgatewayaccount.ChannelAccount, 0, len(indexes))
+		for _, credentialIndex := range indexes {
+			account, ok := channelAccountByCredentialIndex(accounts, credentialIndex)
+			if !ok {
+				return nil, fmt.Errorf("账号不存在")
+			}
+			targetAccounts = append(targetAccounts, account)
 		}
-		if err := enforceChannelAccountProxyReusePolicy(proxyID, account, allowReuseRisk); err != nil {
+		if err := enforceChannelAccountsProxyReusePolicy(proxyID, targetAccounts, allowReuseRisk); err != nil {
 			return nil, err
 		}
 	}
@@ -966,9 +1010,13 @@ func updateChannelAccountProxy(channelID int, credentialIndex int, proxyID int, 
 		if channel.ChannelInfo.MultiKeyProxyIDs == nil {
 			channel.ChannelInfo.MultiKeyProxyIDs = make(map[int]int)
 		}
-		channel.ChannelInfo.MultiKeyProxyIDs[indexes[0]] = proxyID
+		for _, credentialIndex := range indexes {
+			channel.ChannelInfo.MultiKeyProxyIDs[credentialIndex] = proxyID
+		}
 	} else if channel.ChannelInfo.MultiKeyProxyIDs != nil {
-		delete(channel.ChannelInfo.MultiKeyProxyIDs, indexes[0])
+		for _, credentialIndex := range indexes {
+			delete(channel.ChannelInfo.MultiKeyProxyIDs, credentialIndex)
+		}
 		if len(channel.ChannelInfo.MultiKeyProxyIDs) == 0 {
 			channel.ChannelInfo.MultiKeyProxyIDs = nil
 		}
@@ -977,13 +1025,15 @@ func updateChannelAccountProxy(channelID int, credentialIndex int, proxyID int, 
 		return nil, err
 	}
 	if proxyID > 0 {
-		recordChannelAccountProxyBinding(channel, indexes[0], proxyID)
+		for _, credentialIndex := range indexes {
+			recordChannelAccountProxyBinding(channel, credentialIndex, proxyID)
+		}
 	}
 	return &ChannelAccountOperation{
 		Type:      "proxy",
 		Action:    channelAccountProxyAction(proxyID),
-		Requested: 1,
-		Affected:  1,
+		Requested: len(indexes),
+		Affected:  len(indexes),
 	}, nil
 }
 
@@ -997,6 +1047,10 @@ func channelAccountByCredentialIndex(accounts []modelgatewayaccount.ChannelAccou
 }
 
 func enforceChannelAccountProxyReusePolicy(proxyID int, account modelgatewayaccount.ChannelAccount, allowReuseRisk bool) error {
+	return enforceChannelAccountsProxyReusePolicy(proxyID, []modelgatewayaccount.ChannelAccount{account}, allowReuseRisk)
+}
+
+func enforceChannelAccountsProxyReusePolicy(proxyID int, accounts []modelgatewayaccount.ChannelAccount, allowReuseRisk bool) error {
 	policy := scheduler_setting.GetSetting().ProxySameBrandReusePolicy
 	if policy == "" {
 		policy = scheduler_setting.ProxyReusePolicyWarn
@@ -1004,7 +1058,7 @@ func enforceChannelAccountProxyReusePolicy(proxyID int, account modelgatewayacco
 	if policy == scheduler_setting.ProxyReusePolicyWarn {
 		return nil
 	}
-	risk, err := detectChannelAccountProxyReuseRisk(proxyID, account)
+	risk, err := detectChannelAccountsProxyReuseRisk(proxyID, accounts)
 	if err != nil {
 		return err
 	}
@@ -1025,42 +1079,64 @@ func enforceChannelAccountProxyReusePolicy(proxyID int, account modelgatewayacco
 }
 
 func detectChannelAccountProxyReuseRisk(proxyID int, account modelgatewayaccount.ChannelAccount) (*ModelGatewayProxyReuseRisk, error) {
-	brand := strings.ToLower(strings.TrimSpace(account.AccountIdentity.Brand))
-	if brand == "" {
-		brand = strings.ToLower(strings.TrimSpace(account.AccountIdentity.Provider))
+	return detectChannelAccountsProxyReuseRisk(proxyID, []modelgatewayaccount.ChannelAccount{account})
+}
+
+func detectChannelAccountsProxyReuseRisk(proxyID int, accounts []modelgatewayaccount.ChannelAccount) (*ModelGatewayProxyReuseRisk, error) {
+	if proxyID <= 0 || len(accounts) == 0 {
+		return nil, nil
 	}
-	if proxyID <= 0 || brand == "" {
+	targetUsages := make([]model.ModelGatewayProxyUsage, 0, len(accounts))
+	for _, account := range accounts {
+		accountUsage, ok := channelAccountProxyRiskUsage(proxyID, account)
+		if !ok {
+			continue
+		}
+		targetUsages = append(targetUsages, accountUsage)
+	}
+	if len(targetUsages) == 0 {
 		return nil, nil
 	}
 	usages, err := model.ListModelGatewayProxyUsages([]int{proxyID})
 	if err != nil {
 		return nil, err
 	}
-	relevant := make([]model.ModelGatewayProxyUsage, 0, len(usages)+1)
-	subject := strings.TrimSpace(account.AccountIdentity.CredentialSubjectFingerprint)
-	credential := strings.TrimSpace(account.AccountIdentity.CredentialFingerprint)
+	relevant := make([]model.ModelGatewayProxyUsage, 0, len(usages)+len(targetUsages))
 	for _, usage := range usages {
-		usageBrand := strings.ToLower(strings.TrimSpace(usage.Brand))
-		if usageBrand == "" {
-			usageBrand = strings.ToLower(strings.TrimSpace(usage.Provider))
+		for _, target := range targetUsages {
+			if sameProxyRiskBrand(usage, target) && !sameProxyRiskCredentialScope(usage, target) {
+				relevant = append(relevant, usage)
+				break
+			}
 		}
-		if usageBrand != brand {
-			continue
-		}
-		usageSubject := strings.TrimSpace(usage.CredentialSubjectFingerprint)
-		usageCredential := strings.TrimSpace(usage.CredentialFingerprint)
-		if subject != "" && usageSubject == subject {
-			continue
-		}
-		if subject == "" && credential != "" && usageCredential == credential {
-			continue
-		}
-		relevant = append(relevant, usage)
 	}
-	if len(relevant) == 0 {
+	seenTargets := make(map[string]struct{}, len(targetUsages))
+	for _, target := range targetUsages {
+		scopeKey := proxyRiskCredentialScopeKey(target)
+		if scopeKey != "" {
+			if _, ok := seenTargets[scopeKey]; ok {
+				continue
+			}
+			seenTargets[scopeKey] = struct{}{}
+		}
+		relevant = append(relevant, target)
+	}
+	risks := buildModelGatewayProxyReuseRisks(relevant)
+	if len(risks) == 0 {
 		return nil, nil
 	}
-	relevant = append(relevant, model.ModelGatewayProxyUsage{
+	return &risks[0], nil
+}
+
+func channelAccountProxyRiskUsage(proxyID int, account modelgatewayaccount.ChannelAccount) (model.ModelGatewayProxyUsage, bool) {
+	brand := strings.ToLower(strings.TrimSpace(account.AccountIdentity.Brand))
+	if brand == "" {
+		brand = strings.ToLower(strings.TrimSpace(account.AccountIdentity.Provider))
+	}
+	if proxyID <= 0 || brand == "" {
+		return model.ModelGatewayProxyUsage{}, false
+	}
+	return model.ModelGatewayProxyUsage{
 		ProxyID:                      proxyID,
 		ChannelID:                    account.ChannelID,
 		ResourceID:                   account.ResourceRef.ResourceID,
@@ -1073,12 +1149,47 @@ func detectChannelAccountProxyReuseRisk(proxyID int, account modelgatewayaccount
 		CredentialSubjectFingerprint: account.AccountIdentity.CredentialSubjectFingerprint,
 		CredentialFingerprint:        account.AccountIdentity.CredentialFingerprint,
 		LastStatus:                   model.ModelGatewayProxyUsageStatusBound,
-	})
-	risks := buildModelGatewayProxyReuseRisks(relevant)
-	if len(risks) == 0 {
-		return nil, nil
+	}, true
+}
+
+func sameProxyRiskBrand(left model.ModelGatewayProxyUsage, right model.ModelGatewayProxyUsage) bool {
+	return proxyRiskBrandKey(left) != "" && proxyRiskBrandKey(left) == proxyRiskBrandKey(right)
+}
+
+func proxyRiskBrandKey(usage model.ModelGatewayProxyUsage) string {
+	brand := strings.ToLower(strings.TrimSpace(usage.Brand))
+	if brand == "" {
+		brand = strings.ToLower(strings.TrimSpace(usage.Provider))
 	}
-	return &risks[0], nil
+	return brand
+}
+
+func sameProxyRiskCredentialScope(left model.ModelGatewayProxyUsage, right model.ModelGatewayProxyUsage) bool {
+	leftSubject := strings.TrimSpace(left.CredentialSubjectFingerprint)
+	rightSubject := strings.TrimSpace(right.CredentialSubjectFingerprint)
+	if leftSubject != "" && rightSubject != "" {
+		return leftSubject == rightSubject
+	}
+	leftCredential := strings.TrimSpace(left.CredentialFingerprint)
+	rightCredential := strings.TrimSpace(right.CredentialFingerprint)
+	if leftCredential != "" && rightCredential != "" {
+		return leftCredential == rightCredential
+	}
+	return false
+}
+
+func proxyRiskCredentialScopeKey(usage model.ModelGatewayProxyUsage) string {
+	brand := proxyRiskBrandKey(usage)
+	if brand == "" {
+		return ""
+	}
+	if subject := strings.TrimSpace(usage.CredentialSubjectFingerprint); subject != "" {
+		return brand + "|subject|" + subject
+	}
+	if credential := strings.TrimSpace(usage.CredentialFingerprint); credential != "" {
+		return brand + "|credential|" + credential
+	}
+	return ""
 }
 
 func recordChannelAccountProxyBinding(channel *model.Channel, credentialIndex int, proxyID int) {
@@ -1369,9 +1480,6 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 	if err != nil {
 		return nil, err
 	}
-	if len(indexes) >= len(keys) {
-		return nil, fmt.Errorf("不能删除最后一个账号")
-	}
 
 	deleteSet := make(map[int]struct{}, len(indexes))
 	for _, index := range indexes {
@@ -1385,6 +1493,7 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 	newDisabledReason := make(map[int]string)
 	newProxyIDs := make(map[int]int)
 	newAccountTypes := make(map[int]string)
+	newCapabilities := make(map[int]model.ChannelAccountCapability)
 	newIndex := 0
 	for oldIndex, key := range keys {
 		if _, shouldDelete := deleteSet[oldIndex]; shouldDelete {
@@ -1416,7 +1525,16 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 				newAccountTypes[newIndex] = strings.ToLower(strings.TrimSpace(accountType))
 			}
 		}
+		if channel.ChannelInfo.MultiKeyCapabilities != nil {
+			if capability, exists := channel.ChannelInfo.MultiKeyCapabilities[oldIndex]; exists {
+				newCapabilities[newIndex] = capability
+			}
+		}
 		newIndex++
+	}
+
+	if err := deleteChannelAccountBoundProxyUsages(channel.Id, indexes); err != nil {
+		return nil, err
 	}
 
 	channel.Key = strings.Join(remainingKeys, "\n")
@@ -1427,6 +1545,7 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 	channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
 	channel.ChannelInfo.MultiKeyProxyIDs = newProxyIDs
 	channel.ChannelInfo.MultiKeyAccountTypes = newAccountTypes
+	channel.ChannelInfo.MultiKeyCapabilities = newCapabilities
 	if !channel.ChannelInfo.IsMultiKey {
 		channel.ChannelInfo.MultiKeyStatusList = nil
 		channel.ChannelInfo.MultiKeyDisabledTime = nil
@@ -1438,7 +1557,13 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 	if len(channel.ChannelInfo.MultiKeyAccountTypes) == 0 {
 		channel.ChannelInfo.MultiKeyAccountTypes = nil
 	}
+	if len(channel.ChannelInfo.MultiKeyCapabilities) == 0 {
+		channel.ChannelInfo.MultiKeyCapabilities = nil
+	}
 	if channel.ChannelInfo.MultiKeyPollingIndex >= len(remainingKeys) {
+		channel.ChannelInfo.MultiKeyPollingIndex = 0
+	}
+	if len(remainingKeys) == 0 {
 		channel.ChannelInfo.MultiKeyPollingIndex = 0
 	}
 
@@ -1451,7 +1576,7 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 		clearChannelAccountStatusReason(channel)
 	}
 
-	if err := channel.Update(); err != nil {
+	if err := saveChannelAccountsAfterDelete(channel); err != nil {
 		return nil, err
 	}
 	if err := model.UpdateAbilityStatus(channel.Id, channel.Status == common.ChannelStatusEnabled); err != nil {
@@ -1465,6 +1590,28 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 		ChannelRestored: beforeAllKeysDisabled && channel.Status == common.ChannelStatusEnabled,
 		ChannelDisabled: beforeStatus == common.ChannelStatusEnabled && channel.Status == common.ChannelStatusAutoDisabled,
 	}, nil
+}
+
+func saveChannelAccountsAfterDelete(channel *model.Channel) error {
+	if channel == nil {
+		return fmt.Errorf("渠道不存在")
+	}
+	if strings.TrimSpace(channel.Key) != "" {
+		return channel.Update()
+	}
+	return model.DB.Model(&model.Channel{}).
+		Where("id = ?", channel.Id).
+		Select("key", "status", "channel_info", "other_info").
+		Updates(channel).Error
+}
+
+func deleteChannelAccountBoundProxyUsages(channelID int, credentialIndexes []int) error {
+	if len(credentialIndexes) == 0 {
+		return nil
+	}
+	return model.DB.
+		Where("channel_id = ? AND credential_index IN ? AND last_status = ?", channelID, credentialIndexes, model.ModelGatewayProxyUsageStatusBound).
+		Delete(&model.ModelGatewayProxyUsage{}).Error
 }
 
 func channelAccountStatusAction(enabled bool) string {
@@ -1598,6 +1745,16 @@ func cleanupChannelAccountStatusMaps(channel *model.Channel, keyCount int) {
 		}
 		if len(channel.ChannelInfo.MultiKeyAccountTypes) == 0 {
 			channel.ChannelInfo.MultiKeyAccountTypes = nil
+		}
+	}
+	if channel.ChannelInfo.MultiKeyCapabilities != nil {
+		for index := range channel.ChannelInfo.MultiKeyCapabilities {
+			if index < 0 || index >= keyCount {
+				delete(channel.ChannelInfo.MultiKeyCapabilities, index)
+			}
+		}
+		if len(channel.ChannelInfo.MultiKeyCapabilities) == 0 {
+			channel.ChannelInfo.MultiKeyCapabilities = nil
 		}
 	}
 }

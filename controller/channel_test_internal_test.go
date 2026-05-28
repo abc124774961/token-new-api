@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http/httptest"
 	"testing"
 
@@ -98,6 +99,142 @@ func TestBuildChannelTestSelectionLocksCredentialIndex(t *testing.T) {
 	modelgatewaycredential.ApplyResolvedCredentialToContext(ctx, resolved)
 	require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyChannelMultiKeyIndex))
 	require.Equal(t, "sk-two", common.GetContextKeyString(ctx, constant.ContextKeyChannelKey))
+}
+
+func TestResolveChannelTestEndpointUsesResponsesForOpenAIOAuthJSON(t *testing.T) {
+	index := 1
+	channel := &model.Channel{
+		Type: constant.ChannelTypeOpenAI,
+		Key:  `sk-normal` + "\n" + `{"access_token":"access-token","refresh_token":"refresh-token","account_id":"account-id"}`,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+
+	endpointType := resolveChannelTestEndpoint(channel, "gpt-5.4", "", channelTestOptions{CredentialIndex: &index})
+
+	require.Equal(t, string(constant.EndpointTypeOpenAIResponse), endpointType)
+}
+
+func TestIsMissingResponsesScopeTestResult(t *testing.T) {
+	require.True(t, isMissingResponsesScopeTestResult(testResult{
+		newAPIError: types.NewOpenAIError(
+			errors.New("Missing scopes: api.responses.write"),
+			types.ErrorCodeBadResponseStatusCode,
+			401,
+		),
+	}))
+	require.False(t, isMissingResponsesScopeTestResult(testResult{
+		newAPIError: types.NewOpenAIError(
+			errors.New("model does not exist"),
+			types.ErrorCodeBadResponseStatusCode,
+			404,
+		),
+	}))
+}
+
+func TestChannelCapabilityValueFromProbe(t *testing.T) {
+	require.True(t, *channelCapabilityValueFromProbe(testResult{}))
+
+	denied := channelCapabilityValueFromProbe(testResult{
+		newAPIError: types.NewOpenAIError(
+			errors.New("Missing scopes: api.responses.write"),
+			types.ErrorCodeBadResponseStatusCode,
+			401,
+		),
+	})
+	require.NotNil(t, denied)
+	require.False(t, *denied)
+
+	unknown := channelCapabilityValueFromProbe(testResult{
+		newAPIError: types.NewOpenAIError(
+			errors.New("context deadline exceeded"),
+			types.ErrorCodeDoRequestFailed,
+			500,
+		),
+	})
+	require.Nil(t, unknown)
+}
+
+func TestResolveChannelTestEndpointDoesNotGuessMultiKeyOAuthJSONWithoutSelection(t *testing.T) {
+	channel := &model.Channel{
+		Type: constant.ChannelTypeOpenAI,
+		Key:  `{"access_token":"access-token","refresh_token":"refresh-token","account_id":"account-id"}` + "\n" + `sk-normal`,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+
+	endpointType := resolveChannelTestEndpoint(channel, "gpt-5.4", "", channelTestOptions{})
+
+	require.Empty(t, endpointType)
+}
+
+func TestShouldRefreshOAuthJSONAccountAfterChannelTest(t *testing.T) {
+	require.True(t, shouldRefreshOAuthJSONAccountAfterChannelTest(testResult{
+		newAPIError: types.WithOpenAIError(types.OpenAIError{
+			Message: "Your authentication token has been invalidated. Please try signing in again.",
+			Type:    "invalid_request_error",
+			Code:    "token_invalidated",
+		}, 401),
+	}))
+	require.True(t, shouldRefreshOAuthJSONAccountAfterChannelTest(testResult{
+		newAPIError: types.NewOpenAIError(errors.New("bad response status code 401, message: token_invalidated"), types.ErrorCodeBadResponseStatusCode, 401),
+	}))
+	require.False(t, shouldRefreshOAuthJSONAccountAfterChannelTest(testResult{
+		newAPIError: types.NewOpenAIError(errors.New("invalid api key"), types.ErrorCodeChannelInvalidKey, 401),
+	}))
+}
+
+func TestFriendlyChannelTestErrorMessageForOAuthRefreshFailure(t *testing.T) {
+	message := friendlyChannelTestErrorMessage(testResult{
+		newAPIError: types.WithOpenAIError(types.OpenAIError{
+			Message: "Your authentication token has been invalidated. Please try signing in again.",
+			Type:    "invalid_request_error",
+			Code:    "token_invalidated",
+		}, 401),
+		refreshErr: errors.New("codex oauth refresh failed: status=401"),
+	})
+
+	require.Contains(t, message, "账号授权已失效")
+	require.Contains(t, message, "重新从 xauto 下载账号数据")
+}
+
+func TestFriendlyChannelTestErrorMessageForMissingResponsesScope(t *testing.T) {
+	message := friendlyChannelTestErrorMessage(testResult{
+		newAPIError: types.NewOpenAIError(
+			errors.New("You have insufficient permissions for this operation. Missing scopes: api.responses.write."),
+			types.ErrorCodeBadResponseStatusCode,
+			401,
+		),
+	})
+
+	require.Contains(t, message, "账号权限不足")
+	require.Contains(t, message, "api.responses.write")
+}
+
+func TestFriendlyChannelTestErrorMessageForProxyConnectionRefused(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamRequestInfo, map[string]interface{}{
+		"error":      "socks connect tcp 206.123.156.217:10722->api.openai.com:443: dial tcp 206.123.156.217:10722: connect: connection refused",
+		"error_kind": "url_Post",
+		"host":       "api.openai.com",
+		"path":       "/v1/responses",
+	})
+
+	message := friendlyChannelTestErrorMessage(testResult{
+		context: ctx,
+		newAPIError: types.NewError(
+			errors.New("upstream error: do request failed"),
+			types.ErrorCodeDoRequestFailed,
+		),
+	})
+
+	require.Contains(t, message, "代理连接被拒绝")
+	require.Contains(t, message, "更换/取消代理")
 }
 
 func TestClearChannelBalanceInsufficientFromSuccessfulTestClearsMarkers(t *testing.T) {

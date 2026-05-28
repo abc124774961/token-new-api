@@ -43,10 +43,18 @@ type testResult struct {
 	context     *gin.Context
 	localErr    error
 	newAPIError *types.NewAPIError
+	refreshed   bool
+	refreshErr  error
 }
 
 type channelTestOptions struct {
 	CredentialIndex *int
+}
+
+type accountCapabilityProbeResult struct {
+	Index        int                            `json:"index"`
+	Capabilities model.ChannelAccountCapability `json:"capabilities"`
+	OAuthJSON    bool                           `json:"oauth_json"`
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
@@ -67,6 +75,224 @@ func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointTyp
 		}
 	}
 	return normalized
+}
+
+func resolveChannelTestEndpoint(channel *model.Channel, modelName, endpointType string, options channelTestOptions) string {
+	if channelTestUsesOAuthJSONCredential(channel, options) && strings.TrimSpace(endpointType) == "" {
+		if capability, ok := channelTestAccountCapability(channel, options); ok &&
+			capability.HasResponsesWriteDenied() &&
+			capability.HasChatCompletionsWriteAllowed() {
+			return string(constant.EndpointTypeOpenAI)
+		}
+		endpointType = string(constant.EndpointTypeOpenAIResponse)
+	}
+	return normalizeChannelTestEndpoint(channel, modelName, endpointType)
+}
+
+func channelTestAccountCapability(channel *model.Channel, options channelTestOptions) (model.ChannelAccountCapability, bool) {
+	index, ok := channelTestOAuthJSONCredentialIndex(channel, options)
+	if !ok {
+		return model.ChannelAccountCapability{}, false
+	}
+	return channel.ChannelInfo.AccountCapability(index)
+}
+
+func channelTestUsesOAuthJSONCredential(channel *model.Channel, options channelTestOptions) bool {
+	_, ok := channelTestOAuthJSONCredentialIndex(channel, options)
+	return ok
+}
+
+func channelTestOAuthJSONCredentialIndex(channel *model.Channel, options channelTestOptions) (int, bool) {
+	if channel == nil || (channel.Type != constant.ChannelTypeOpenAI && channel.Type != constant.ChannelTypeCodex) {
+		return 0, false
+	}
+	keys := channel.GetKeys()
+	if len(keys) == 0 {
+		return 0, false
+	}
+	if options.CredentialIndex != nil {
+		index := *options.CredentialIndex
+		if index < 0 || index >= len(keys) {
+			return 0, false
+		}
+		return index, isOAuthJSONAccountKey(keys[index])
+	}
+
+	if channel.ChannelInfo.IsMultiKey && len(keys) > 1 {
+		return 0, false
+	}
+	return 0, isOAuthJSONAccountKey(keys[0])
+}
+
+func isOAuthJSONAccountKey(raw string) bool {
+	oauthKey, err := service.ParseCodexOAuthKey(strings.TrimSpace(raw))
+	if err != nil || oauthKey == nil {
+		return false
+	}
+	if strings.TrimSpace(oauthKey.AccountID) == "" {
+		return false
+	}
+	return strings.TrimSpace(oauthKey.AccessToken) != "" || strings.TrimSpace(oauthKey.RefreshToken) != ""
+}
+
+func probeChannelAccountCapabilities(c *gin.Context, channel *model.Channel, credentialIndex int, testModel string) (accountCapabilityProbeResult, error) {
+	if channel == nil {
+		return accountCapabilityProbeResult{}, errors.New("渠道不存在")
+	}
+	keys := channel.GetKeys()
+	if credentialIndex < 0 || credentialIndex >= len(keys) {
+		return accountCapabilityProbeResult{}, errors.New("账号索引超出范围")
+	}
+	if channel.Type != constant.ChannelTypeOpenAI && channel.Type != constant.ChannelTypeCodex {
+		return accountCapabilityProbeResult{}, errors.New("该渠道暂不支持账号权限检测")
+	}
+
+	options := channelTestOptions{CredentialIndex: &credentialIndex}
+	capability := model.ChannelAccountCapability{
+		CheckedTime: common.GetTimestamp(),
+	}
+	if existing, ok := channel.ChannelInfo.AccountCapability(credentialIndex); ok {
+		capability = existing
+		capability.CheckedTime = common.GetTimestamp()
+	}
+
+	messages := make([]string, 0, 3)
+	lastEndpoint := ""
+
+	channel, responsesResult := runChannelCapabilityProbeTest(c, channel, testModel, string(constant.EndpointTypeOpenAIResponse), false, options)
+	capability.ResponsesWrite = channelCapabilityValueFromProbe(responsesResult)
+	if probeMessage := channelCapabilityProbeMessage("Responses", responsesResult); probeMessage != "" {
+		messages = append(messages, probeMessage)
+		lastEndpoint = string(constant.EndpointTypeOpenAIResponse)
+	}
+
+	if capability.ResponsesWrite != nil && *capability.ResponsesWrite {
+		channel, compactResult := runChannelCapabilityProbeTest(c, channel, testModel, string(constant.EndpointTypeOpenAIResponseCompact), false, options)
+		capability.ResponsesCompactWrite = channelCapabilityValueFromProbe(compactResult)
+		if probeMessage := channelCapabilityProbeMessage("Compact", compactResult); probeMessage != "" {
+			messages = append(messages, probeMessage)
+			lastEndpoint = string(constant.EndpointTypeOpenAIResponseCompact)
+		}
+	} else if capability.ResponsesWrite != nil && !*capability.ResponsesWrite {
+		capability.ResponsesCompactWrite = lo.ToPtr(false)
+	}
+
+	if channel.Type == constant.ChannelTypeOpenAI {
+		_, chatResult := runChannelCapabilityProbeTest(c, channel, testModel, string(constant.EndpointTypeOpenAI), false, options)
+		capability.ChatCompletionsWrite = channelCapabilityValueFromProbe(chatResult)
+		if probeMessage := channelCapabilityProbeMessage("Chat", chatResult); probeMessage != "" {
+			messages = append(messages, probeMessage)
+			lastEndpoint = string(constant.EndpointTypeOpenAI)
+		}
+	} else {
+		capability.ChatCompletionsWrite = lo.ToPtr(false)
+	}
+
+	if len(messages) == 0 {
+		capability.LastMessage = "权限检测完成"
+		capability.LastEndpoint = ""
+	} else {
+		capability.LastMessage = strings.Join(messages, "；")
+		capability.LastEndpoint = lastEndpoint
+	}
+
+	if err := saveChannelAccountCapability(channel.Id, credentialIndex, capability); err != nil {
+		return accountCapabilityProbeResult{}, err
+	}
+	return accountCapabilityProbeResult{
+		Index:        credentialIndex,
+		Capabilities: capability,
+		OAuthJSON:    isOAuthJSONAccountKey(keys[credentialIndex]),
+	}, nil
+}
+
+func runChannelCapabilityProbeTest(c *gin.Context, channel *model.Channel, testModel string, endpointType string, isStream bool, options channelTestOptions) (*model.Channel, testResult) {
+	result := testChannel(channel, testModel, endpointType, isStream, options)
+	if result.newAPIError == nil || !channelTestUsesOAuthJSONCredential(channel, options) || !shouldRefreshOAuthJSONAccountAfterChannelTest(result) {
+		return channel, result
+	}
+	refreshedChannel, refreshErr := refreshOAuthJSONAccountAfterChannelTest(c, channel, options)
+	if refreshErr != nil {
+		result.refreshErr = refreshErr
+		return channel, result
+	}
+	refreshedResult := testChannel(refreshedChannel, testModel, endpointType, isStream, options)
+	refreshedResult.refreshed = true
+	return refreshedChannel, refreshedResult
+}
+
+func channelCapabilityValueFromProbe(result testResult) *bool {
+	if result.localErr == nil && result.newAPIError == nil {
+		return lo.ToPtr(true)
+	}
+	if isCapabilityDeniedOrUnsupportedTestResult(result) {
+		return lo.ToPtr(false)
+	}
+	return nil
+}
+
+func channelCapabilityProbeMessage(label string, result testResult) string {
+	if result.localErr == nil && result.newAPIError == nil {
+		return ""
+	}
+	message := friendlyChannelTestErrorMessage(result)
+	if strings.TrimSpace(message) == "" {
+		message = "检测失败"
+	}
+	return label + ": " + message
+}
+
+func isMissingResponsesScopeTestResult(result testResult) bool {
+	lower := strings.ToLower(channelTestErrorRawText(result))
+	return strings.Contains(lower, "api.responses.write") ||
+		strings.Contains(lower, "missing scopes") ||
+		strings.Contains(lower, "insufficient permissions")
+}
+
+func isCapabilityDeniedOrUnsupportedTestResult(result testResult) bool {
+	if isMissingResponsesScopeTestResult(result) {
+		return true
+	}
+	lower := strings.ToLower(channelTestErrorRawText(result))
+	for _, needle := range []string{
+		"unsupported",
+		"not supported",
+		"404",
+		"not found",
+		"model_not_found",
+		"does not exist",
+		"invalid endpoint",
+		"unknown url",
+	} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func saveChannelAccountCapability(channelID int, credentialIndex int, capability model.ChannelAccountCapability) error {
+	lock := model.GetChannelPollingLock(channelID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		return err
+	}
+	keys := channel.GetKeys()
+	if credentialIndex < 0 || credentialIndex >= len(keys) {
+		return errors.New("账号索引超出范围")
+	}
+	if channel.ChannelInfo.MultiKeyCapabilities == nil {
+		channel.ChannelInfo.MultiKeyCapabilities = make(map[int]model.ChannelAccountCapability)
+	}
+	channel.ChannelInfo.MultiKeyCapabilities[credentialIndex] = capability
+	if err := channel.SaveChannelInfo(); err != nil {
+		return err
+	}
+	model.InitChannelCache()
+	return nil
 }
 
 func testChannel(channel *model.Channel, testModel string, endpointType string, isStream bool, options ...channelTestOptions) testResult {
@@ -104,7 +330,8 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		}
 	}
 
-	endpointType = normalizeChannelTestEndpoint(channel, testModel, endpointType)
+	testOptions := firstChannelTestOptions(options)
+	endpointType = resolveChannelTestEndpoint(channel, testModel, endpointType, testOptions)
 
 	requestPath := "/v1/chat/completions"
 
@@ -172,7 +399,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 	group, _ := model.GetUserGroup(1, false)
 	c.Set("group", group)
 
-	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel, buildChannelTestSelection(channel, firstChannelTestOptions(options)))
+	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel, buildChannelTestSelection(channel, testOptions))
 	if newAPIError != nil {
 		return testResult{
 			context:     c,
@@ -888,12 +1115,33 @@ func TestChannel(c *gin.Context) {
 	}
 	tik := time.Now()
 	result := testChannel(channel, testModel, endpointType, isStream, testOptions)
+	if result.newAPIError != nil &&
+		channelTestUsesOAuthJSONCredential(channel, testOptions) &&
+		shouldRefreshOAuthJSONAccountAfterChannelTest(result) {
+		refreshedChannel, refreshErr := refreshOAuthJSONAccountAfterChannelTest(c, channel, testOptions)
+		if refreshErr != nil {
+			result.refreshErr = refreshErr
+			common.SysError(fmt.Sprintf(
+				"channel test oauth json refresh failed: channel_id=%d name=%s err=%v",
+				channel.Id,
+				channel.Name,
+				refreshErr,
+			))
+		} else {
+			channel = refreshedChannel
+			result = testChannel(channel, testModel, endpointType, isStream, testOptions)
+			result.refreshed = true
+		}
+	}
 	if result.localErr != nil {
 		shouldMarkBalanceInsufficient := markChannelBalanceInsufficientFromTest(channel, result)
 		resp := gin.H{
 			"success": false,
-			"message": result.localErr.Error(),
+			"message": friendlyChannelTestErrorMessage(result),
 			"time":    0.0,
+		}
+		if result.refreshed {
+			resp["oauth_refreshed"] = true
 		}
 		if result.newAPIError != nil {
 			resp["error_code"] = result.newAPIError.GetErrorCode()
@@ -911,26 +1159,160 @@ func TestChannel(c *gin.Context) {
 	if result.newAPIError != nil {
 		go channel.UpdateResponseTime(milliseconds)
 		shouldMarkBalanceInsufficient := markChannelBalanceInsufficientFromTest(channel, result)
-		c.JSON(http.StatusOK, gin.H{
+		resp := gin.H{
 			"success":              false,
-			"message":              result.newAPIError.Error(),
+			"message":              friendlyChannelTestErrorMessage(result),
 			"time":                 consumedTime,
 			"error_code":           result.newAPIError.GetErrorCode(),
 			"balance_insufficient": shouldMarkBalanceInsufficient,
 			"status_reason":        service.ChannelStatusReasonBalanceInsufficient,
-		})
+		}
+		if result.refreshed {
+			resp["oauth_refreshed"] = true
+		}
+		c.JSON(http.StatusOK, resp)
 		return
 	}
 	status, balanceInsufficientCleared := clearChannelBalanceInsufficientFromSuccessfulTest(channel, result)
 	go channel.UpdateResponseTime(milliseconds)
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"success":                      true,
 		"message":                      "",
 		"time":                         consumedTime,
 		"status":                       status,
 		"balance_insufficient":         false,
 		"balance_insufficient_cleared": balanceInsufficientCleared,
+	}
+	if result.refreshed {
+		resp["oauth_refreshed"] = true
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func friendlyChannelTestErrorMessage(result testResult) string {
+	raw := channelTestErrorRawText(result)
+	lower := strings.ToLower(raw)
+
+	if result.refreshErr != nil {
+		refreshText := strings.ToLower(result.refreshErr.Error())
+		if strings.Contains(refreshText, "status=401") || strings.Contains(refreshText, "unauthorized") {
+			return "账号授权已失效，自动刷新也失败了。refresh_token 可能已失效，请重新从 xauto 下载账号数据后导入。"
+		}
+		return "账号授权已失效，自动刷新失败。请检查账号代理是否可用，或重新从 xauto 下载账号数据后导入。"
+	}
+
+	if strings.Contains(lower, "api.responses.write") || strings.Contains(lower, "missing scopes") || strings.Contains(lower, "insufficient permissions") {
+		return "账号权限不足，缺少 Responses API 写入权限（api.responses.write）。请重新授权/导入带该权限的账号，或检查 OpenAI 组织和项目角色。"
+	}
+	if strings.Contains(lower, "token_invalidated") || strings.Contains(lower, "authentication token has been invalidated") {
+		if result.refreshed {
+			return "账号授权已失效，自动刷新后仍不可用。请重新从 xauto 下载账号数据后导入。"
+		}
+		return "账号授权已失效，请重新从 xauto 下载账号数据后导入。"
+	}
+	if strings.Contains(lower, "connection refused") {
+		return "账号绑定的代理连接被拒绝，代理服务可能没启动、端口未开放或安全组未放行。请更换/取消代理，或检查代理地址和端口。"
+	}
+	if strings.Contains(lower, "i/o timeout") || strings.Contains(lower, "context deadline exceeded") || strings.Contains(lower, "client.timeout") || strings.Contains(lower, "timeout") {
+		return "请求上游超时，通常是账号代理网络不通或太慢。请检查代理连通性，或更换更稳定的代理。"
+	}
+	if strings.Contains(lower, "no such host") || strings.Contains(lower, "server misbehaving") {
+		return "域名解析失败，通常是代理或服务器 DNS 异常。请检查代理服务器的 DNS 和网络出口。"
+	}
+	if strings.Contains(lower, "socks connect") || strings.Contains(lower, "proxyconnect") || strings.Contains(lower, "proxy") {
+		return "账号代理连接失败。请检查代理协议、地址、端口、账号密码和服务器防火墙，或更换代理后再测试。"
+	}
+	if strings.Contains(lower, "do request failed") {
+		return "请求上游失败，通常是网络或代理问题。请检查该账号绑定的代理是否可用，再重新测试。"
+	}
+
+	if strings.TrimSpace(raw) != "" {
+		return raw
+	}
+	return "测试失败，请检查账号凭证、代理和渠道配置后重试。"
+}
+
+func channelTestErrorRawText(result testResult) string {
+	parts := make([]string, 0, 4)
+	if result.localErr != nil {
+		parts = append(parts, result.localErr.Error())
+	}
+	if result.newAPIError != nil {
+		parts = append(parts, result.newAPIError.Error(), string(result.newAPIError.GetErrorCode()))
+	}
+	if result.refreshErr != nil {
+		parts = append(parts, result.refreshErr.Error())
+	}
+	if result.context != nil {
+		if upstreamRequest, ok := common.GetContextKeyType[map[string]interface{}](result.context, constant.ContextKeyUpstreamRequestInfo); ok {
+			for _, key := range []string{"error", "error_kind", "host", "path"} {
+				if value, ok := upstreamRequest[key]; ok {
+					parts = append(parts, fmt.Sprintf("%v", value))
+				}
+			}
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func shouldRefreshOAuthJSONAccountAfterChannelTest(result testResult) bool {
+	if result.newAPIError == nil {
+		return false
+	}
+	if strings.EqualFold(string(result.newAPIError.GetErrorCode()), "token_invalidated") {
+		return true
+	}
+	message := strings.ToLower(result.newAPIError.Error())
+	return strings.Contains(message, "token_invalidated") ||
+		strings.Contains(message, "authentication token has been invalidated")
+}
+
+func refreshOAuthJSONAccountAfterChannelTest(c *gin.Context, channel *model.Channel, options channelTestOptions) (*model.Channel, error) {
+	if c == nil || c.Request == nil {
+		return nil, errors.New("missing request context")
+	}
+	credentialIndex, ok := channelTestOAuthJSONCredentialIndex(channel, options)
+	if !ok {
+		return nil, errors.New("selected credential is not oauth json")
+	}
+	proxyURL, err := channelTestCredentialProxyURL(channel, credentialIndex)
+	if err != nil {
+		return nil, err
+	}
+	_, refreshedChannel, err := service.RefreshCodexAccountCredential(c.Request.Context(), channel.Id, service.CodexAccountCredentialRefreshOptions{
+		CredentialIndex: credentialIndex,
+		ProxyURL:        proxyURL,
+		ResetCaches:     true,
 	})
+	if err != nil {
+		return nil, err
+	}
+	if refreshedChannel == nil {
+		return nil, errors.New("refreshed channel is empty")
+	}
+	return refreshedChannel, nil
+}
+
+func channelTestCredentialProxyURL(channel *model.Channel, credentialIndex int) (string, error) {
+	if channel == nil || channel.ChannelInfo.MultiKeyProxyIDs == nil || credentialIndex < 0 {
+		return "", nil
+	}
+	proxyID := channel.ChannelInfo.MultiKeyProxyIDs[credentialIndex]
+	if proxyID <= 0 {
+		return "", nil
+	}
+	proxyConfig, err := model.GetModelGatewayProxyByID(proxyID)
+	if err != nil {
+		return "", fmt.Errorf("credential proxy not found: proxy_id=%d: %w", proxyID, err)
+	}
+	if proxyConfig == nil || !proxyConfig.Enabled {
+		return "", fmt.Errorf("credential proxy disabled: proxy_id=%d", proxyID)
+	}
+	proxyURL, err := proxyConfig.ProxyURL()
+	if err != nil {
+		return "", fmt.Errorf("credential proxy invalid: proxy_id=%d: %w", proxyID, err)
+	}
+	return proxyURL, nil
 }
 
 func parseChannelTestOptions(c *gin.Context) (channelTestOptions, bool) {

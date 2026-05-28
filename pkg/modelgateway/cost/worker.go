@@ -286,7 +286,7 @@ func filterPendingConsumeLogs(rows []model.Log, limit int) ([]model.Log, error) 
 	}
 	existing := make([]model.ModelGatewayRequestCostSummary, 0, len(requestIDs))
 	if err := model.DB.
-		Select("request_id, upstream_cost_total, cost_source, cost_accuracy").
+		Select("request_id, upstream_cost_total, breakdown_json, cost_source, cost_accuracy").
 		Where("request_id IN ?", requestIDs).
 		Find(&existing).Error; err != nil {
 		return nil, err
@@ -322,10 +322,30 @@ func shouldSkipExistingCostSummary(summary model.ModelGatewayRequestCostSummary)
 	if accuracy == AccuracyMissing || accuracy == AccuracyPending {
 		return false
 	}
+	if isDefaultSystemRatioCostSummary(summary) {
+		return false
+	}
 	if summary.UpstreamCostTotal > 0 {
 		return true
 	}
 	return source == SourceSystemRatio && accuracy == "estimated"
+}
+
+func isDefaultSystemRatioCostSummary(summary model.ModelGatewayRequestCostSummary) bool {
+	if strings.TrimSpace(summary.CostSource) != SourceSystemRatio || strings.TrimSpace(summary.CostAccuracy) != "estimated" {
+		return false
+	}
+	if summary.UpstreamCostTotal <= 0 || strings.TrimSpace(summary.BreakdownJSON) == "" {
+		return false
+	}
+	breakdown := map[string]interface{}{}
+	if err := common.UnmarshalJsonStr(summary.BreakdownJSON, &breakdown); err != nil {
+		return false
+	}
+	return mapFloatNearOne(breakdown, "cost_coefficient") &&
+		mapFloatNearOne(breakdown, "fee_multiplier") &&
+		mapFloatNearOne(breakdown, "token_multiplier") &&
+		mapFloatNearOne(breakdown, "recharge_multiplier")
 }
 
 func (w *Worker) isCursorInitialized() bool {
@@ -437,7 +457,6 @@ func (c *ProfileCache) Store(profile model.ModelGatewayChannelCostProfile) {
 		c.profiles = make(map[string]model.ModelGatewayChannelCostProfile)
 	}
 	c.profiles[profileKey(profile.ChannelID, profile.UpstreamModel)] = profile
-	c.loadedAt = time.Now()
 	c.mu.Unlock()
 }
 
@@ -452,7 +471,6 @@ func (c *ProfileCache) DeleteChannel(channelID int) {
 			delete(c.profiles, key)
 		}
 	}
-	c.loadedAt = time.Now()
 	c.mu.Unlock()
 }
 
@@ -740,4 +758,28 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func mapFloatNearOne(values map[string]interface{}, key string) bool {
+	value, ok := values[key]
+	if !ok || value == nil {
+		return false
+	}
+	var number float64
+	switch typed := value.(type) {
+	case float64:
+		number = typed
+	case float32:
+		number = float64(typed)
+	case int:
+		number = float64(typed)
+	case int64:
+		number = float64(typed)
+	default:
+		return false
+	}
+	if number > 1 {
+		return number-1 < 0.0000001
+	}
+	return 1-number < 0.0000001
 }

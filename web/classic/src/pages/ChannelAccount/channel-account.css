@@ -246,6 +246,21 @@
   gap: 5px;
 }
 
+.ct-channel-account-proxy-edit-trigger {
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.ct-channel-account-proxy-edit-trigger:hover .semi-tag {
+  box-shadow: 0 0 0 1px rgba(20, 184, 166, 0.28);
+}
+
 .ct-channel-account-proxy-main .semi-tag {
   max-width: 170px;
 }
@@ -488,7 +503,9 @@
 }
 
 .ct-channel-account-edit-modal,
-.ct-channel-account-edit-form {
+.ct-channel-account-edit-form,
+.ct-channel-account-edit-section,
+.ct-channel-account-proxy-editor {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -513,6 +530,28 @@
   color: var(--ca-text);
   font-size: 12px;
   font-weight: 700;
+}
+
+.ct-channel-account-edit-section {
+  border: 1px solid var(--ca-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.ct-channel-account-edit-section-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--ca-text);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.ct-channel-account-edit-section-title svg {
+  flex: 0 0 auto;
+  color: var(--ca-teal);
 }
 
 .ct-channel-account-proxy-modal,

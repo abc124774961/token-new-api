@@ -218,6 +218,38 @@ func TestSetupContextForSelectedChannelLegacyAppliesAccountProxy(t *testing.T) {
 	require.Equal(t, "socks5://127.0.0.1:1080", common.GetContextKeyString(ctx, constant.ContextKeyChannelAccountProxyURL))
 }
 
+func TestSetupContextForSelectedChannelAppliesAccountCapability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	denied := false
+	allowed := true
+	channel := &model.Channel{
+		Id:     45,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-a\nsk-b",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "gpt-4o",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true,
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					ResponsesWrite:       &denied,
+					ChatCompletionsWrite: &allowed,
+				},
+			},
+		},
+	}
+
+	apiErr := SetupContextForSelectedChannel(ctx, channel, "gpt-4o")
+	capability, ok := common.GetContextKeyType[model.ChannelAccountCapability](ctx, constant.ContextKeyChannelAccountCapability)
+
+	require.Nil(t, apiErr)
+	require.True(t, ok)
+	require.True(t, capability.HasResponsesWriteDenied())
+	require.True(t, capability.HasChatCompletionsWriteAllowed())
+}
+
 func setupDistributorProxyTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	common.UsingSQLite = true

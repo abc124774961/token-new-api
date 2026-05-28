@@ -651,9 +651,11 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		}
 		// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
 		common.SetContextKey(c, constant.ContextKeyChannelKey, key)
+		applySelectedAccountCapability(c, channel, index)
 		applyLegacySelectedKeyProxy(c, channel, index)
 	} else {
 		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, channel.ChannelInfo.IsMultiKey)
+		applySelectedAccountCapability(c, channel, common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex))
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
 
@@ -702,6 +704,15 @@ func applySelectedPlanCredential(c *gin.Context, channel *model.Channel, selecti
 	}
 	modelgatewaycredential.ApplyResolvedCredentialToContext(c, resolved)
 	return true, nil
+}
+
+func applySelectedAccountCapability(c *gin.Context, channel *model.Channel, credentialIndex int) {
+	if c == nil || channel == nil || credentialIndex < 0 {
+		return
+	}
+	if capability, ok := channel.ChannelInfo.AccountCapability(credentialIndex); ok {
+		common.SetContextKey(c, constant.ContextKeyChannelAccountCapability, capability)
+	}
 }
 
 func applyLegacySelectedKeyProxy(c *gin.Context, channel *model.Channel, credentialIndex int) {

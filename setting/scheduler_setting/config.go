@@ -63,6 +63,13 @@ type SchedulerSetting struct {
 	StickyFailurePolicy                  string                               `json:"sticky_failure_policy"`
 	CacheAffinityEnabled                 bool                                 `json:"cache_affinity_enabled"`
 	CacheAffinityKeepScoreRatio          float64                              `json:"cache_affinity_keep_score_ratio"`
+	CostFirstStickyEscapeEnabled         bool                                 `json:"cost_first_sticky_escape_enabled"`
+	CostFirstStickyEscapeCostRatio       float64                              `json:"cost_first_sticky_escape_cost_ratio"`
+	CostFirstStickyEscapeCacheCostRatio  float64                              `json:"cost_first_sticky_escape_cache_cost_ratio"`
+	CostFirstStickyEscapeMaxSpeedDrop    float64                              `json:"cost_first_sticky_escape_max_speed_score_drop"`
+	CostFirstStickyEscapeCacheSpeedDrop  float64                              `json:"cost_first_sticky_escape_cache_max_speed_score_drop"`
+	CostFirstStickyEscapeMinSamples      int                                  `json:"cost_first_sticky_escape_min_samples"`
+	CostFirstStickyEscapeSuccessSlack    float64                              `json:"cost_first_sticky_escape_success_slack"`
 	QueueEnabled                         bool                                 `json:"queue_enabled"`
 	QueueDefaultTimeoutMs                int                                  `json:"queue_default_timeout_ms"`
 	QueueMaxDepthPerChannel              int                                  `json:"queue_max_depth_per_channel"`
@@ -134,6 +141,13 @@ var schedulerSetting = SchedulerSetting{
 	StickyFailurePolicy:                  StickyFailurePolicyClear,
 	CacheAffinityEnabled:                 true,
 	CacheAffinityKeepScoreRatio:          0.75,
+	CostFirstStickyEscapeEnabled:         true,
+	CostFirstStickyEscapeCostRatio:       0.75,
+	CostFirstStickyEscapeCacheCostRatio:  0.55,
+	CostFirstStickyEscapeMaxSpeedDrop:    0.06,
+	CostFirstStickyEscapeCacheSpeedDrop:  0.03,
+	CostFirstStickyEscapeMinSamples:      5,
+	CostFirstStickyEscapeSuccessSlack:    0.02,
 	QueueEnabled:                         true,
 	QueueDefaultTimeoutMs:                2000,
 	QueueMaxDepthPerChannel:              64,
@@ -258,6 +272,13 @@ func defaultSchedulerSetting() SchedulerSetting {
 	setting.StickyFailurePolicy = StickyFailurePolicyClear
 	setting.CacheAffinityEnabled = true
 	setting.CacheAffinityKeepScoreRatio = 0.75
+	setting.CostFirstStickyEscapeEnabled = true
+	setting.CostFirstStickyEscapeCostRatio = 0.75
+	setting.CostFirstStickyEscapeCacheCostRatio = 0.55
+	setting.CostFirstStickyEscapeMaxSpeedDrop = 0.06
+	setting.CostFirstStickyEscapeCacheSpeedDrop = 0.03
+	setting.CostFirstStickyEscapeMinSamples = 5
+	setting.CostFirstStickyEscapeSuccessSlack = 0.02
 	setting.QueueEnabled = true
 	setting.QueueDefaultTimeoutMs = 2000
 	setting.QueueMaxDepthPerChannel = 64

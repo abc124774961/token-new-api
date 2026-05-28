@@ -416,6 +416,51 @@ func TestProfileCacheUsesDefaultRuleAndLatestEffectiveVersion(t *testing.T) {
 	require.Equal(t, 1.0, defaultRule.InputPerMillion)
 }
 
+func TestProfileCacheStoreDoesNotSuppressFullRefresh(t *testing.T) {
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelGatewayChannelCostProfile{}))
+
+	oldDB := model.DB
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.ModelGatewayChannelCostProfile{
+		ChannelID:       18,
+		UpstreamModel:   "*",
+		Source:          SourceSystemRatio,
+		CostCoefficient: 0.0549,
+		TokenMultiplier: 1,
+		EffectiveTime:   now - 60,
+		Version:         1,
+	}).Error)
+
+	cache := &ProfileCache{}
+	cache.Store(model.ModelGatewayChannelCostProfile{
+		ChannelID:       12,
+		UpstreamModel:   "*",
+		Source:          SourceSystemRatio,
+		CostCoefficient: 0.08,
+		TokenMultiplier: 1,
+	})
+
+	require.False(t, cache.loaded())
+	require.Nil(t, cache.Lookup(18, "gpt-5.5"))
+	require.NoError(t, cache.Refresh(context.Background()))
+
+	profile := cache.Lookup(18, "gpt-5.5")
+	require.NotNil(t, profile)
+	require.InEpsilon(t, 0.0549, profile.CostCoefficient, 0.000001)
+}
+
 func TestWorkerLoadsPendingConsumeLogsIncrementally(t *testing.T) {
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -544,4 +589,77 @@ func TestWorkerReprocessesLowQualityCostSummaries(t *testing.T) {
 	require.Len(t, pending, 2)
 	require.Equal(t, "req-missing", pending[0].RequestId)
 	require.Equal(t, "req-manual-zero", pending[1].RequestId)
+}
+
+func TestWorkerReprocessesDefaultSystemRatioOneXCostSummaries(t *testing.T) {
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.Log{},
+		&model.ModelGatewayChannelCostProfile{},
+		&model.ModelGatewayRequestCostSummary{},
+	))
+
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	staleBreakdown, err := common.Marshal(Breakdown{
+		Currency:           "USD",
+		CostCoefficient:    1,
+		FeeMultiplier:      1,
+		TokenMultiplier:    1,
+		RechargeMultiplier: 1,
+		Input:              BreakdownComponent{Tokens: 1000, PricePerMillion: 2, Amount: 0.002},
+	})
+	require.NoError(t, err)
+	goodBreakdown, err := common.Marshal(Breakdown{
+		Currency:           "USD",
+		CostCoefficient:    0.0549,
+		FeeMultiplier:      1,
+		TokenMultiplier:    0.0549,
+		RechargeMultiplier: 1,
+		Input:              BreakdownComponent{Tokens: 1000, PricePerMillion: 0.1098, Amount: 0.0001098},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, db.Create(&[]model.Log{
+		{Type: model.LogTypeConsume, RequestId: "req-stale-default"},
+		{Type: model.LogTypeConsume, RequestId: "req-good-cost"},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ModelGatewayRequestCostSummary{
+		{
+			RequestId:         "req-stale-default",
+			UpstreamCostTotal: 0.002,
+			BreakdownJSON:     string(staleBreakdown),
+			CostSource:        SourceSystemRatio,
+			CostAccuracy:      "estimated",
+			CalculatedAt:      common.GetTimestamp(),
+		},
+		{
+			RequestId:         "req-good-cost",
+			UpstreamCostTotal: 0.0001098,
+			BreakdownJSON:     string(goodBreakdown),
+			CostSource:        SourceSystemRatio,
+			CostAccuracy:      "estimated",
+			CalculatedAt:      common.GetTimestamp(),
+		},
+	}).Error)
+
+	worker := NewWorker(WorkerConfig{Enabled: true, Batch: 10})
+	pending, scannedThroughID, err := worker.loadPendingConsumeLogs(10)
+	require.NoError(t, err)
+	require.Equal(t, 2, scannedThroughID)
+	require.Len(t, pending, 1)
+	require.Equal(t, "req-stale-default", pending[0].RequestId)
 }

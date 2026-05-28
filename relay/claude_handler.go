@@ -130,6 +130,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled &&
 		!info.ChannelSetting.PassThroughBodyEnabled &&
+		!accountCapabilityPrefersChatCompletions(info) &&
 		service.ShouldChatCompletionsUseResponsesForEndpointGlobal(
 			info.ChannelOtherSettings.UsesResponsesWireAPI(),
 			info.ChannelId,

@@ -28,6 +28,13 @@ func TestStandardProviderRegistryMatchesFirstBatchProfiles(t *testing.T) {
 	require.NotNil(t, deepseek)
 	require.Equal(t, provider.ProfileDeepSeekV4ProCodexChat, deepseek.Name())
 	require.Equal(t, provider.ProxyModeResponsesViaChat, deepseek.ProxyMode(nil, "deepseek-v4-pro"))
+
+	standard, ok := registry.Get(provider.ProfileStandardOpenAICompatible)
+	require.True(t, ok)
+	standardCapability := standard.Capabilities(nil, "gpt-4o")
+	require.True(t, standardCapability.ChatCompletions)
+	require.True(t, standardCapability.ResponsesViaChat)
+	require.Contains(t, standardCapability.SupportedProxyModes, provider.ProxyModeResponsesViaChat)
 }
 
 func TestProviderProfileExplicitSettingOverridesInference(t *testing.T) {

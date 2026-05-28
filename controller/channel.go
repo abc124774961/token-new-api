@@ -1189,6 +1189,7 @@ func prepareEmptyCodexAccountPoolChannel(channel *model.Channel) {
 	channel.ChannelInfo.MultiKeyDisabledTime = nil
 	channel.ChannelInfo.MultiKeyProxyIDs = nil
 	channel.ChannelInfo.MultiKeyAccountTypes = nil
+	channel.ChannelInfo.MultiKeyCapabilities = nil
 	setChannelAccountStatusReason(channel, channelAccountEmptyCodexReason)
 }
 
@@ -1205,6 +1206,7 @@ func prepareEmptyKeyChannel(channel *model.Channel) {
 	channel.ChannelInfo.MultiKeyDisabledTime = nil
 	channel.ChannelInfo.MultiKeyProxyIDs = nil
 	channel.ChannelInfo.MultiKeyAccountTypes = nil
+	channel.ChannelInfo.MultiKeyCapabilities = nil
 	setChannelAccountStatusReason(channel, channelAccountAllKeysDisabledReason)
 }
 
@@ -1987,6 +1989,7 @@ type MultiKeyManageRequest struct {
 	ChannelId int    `json:"channel_id"`
 	Action    string `json:"action"`              // "disable_key", "enable_key", "delete_key", "delete_disabled_keys", "get_key_status"
 	KeyIndex  *int   `json:"key_index,omitempty"` // for disable_key, enable_key, and delete_key actions
+	Model     string `json:"model,omitempty"`     // for capability probe actions
 	Page      int    `json:"page,omitempty"`      // for get_key_status pagination
 	PageSize  int    `json:"page_size,omitempty"` // for get_key_status pagination
 	Status    *int   `json:"status,omitempty"`    // for get_key_status filtering: 1=enabled, 2=manual_disabled, 3=auto_disabled, nil=all
@@ -2006,11 +2009,23 @@ type MultiKeyStatusResponse struct {
 }
 
 type KeyStatus struct {
-	Index        int    `json:"index"`
-	Status       int    `json:"status"` // 1: enabled, 2: disabled
-	DisabledTime int64  `json:"disabled_time,omitempty"`
-	Reason       string `json:"reason,omitempty"`
-	KeyPreview   string `json:"key_preview"` // first 10 chars of key for identification
+	Index        int                              `json:"index"`
+	Status       int                              `json:"status"` // 1: enabled, 2: disabled
+	DisabledTime int64                            `json:"disabled_time,omitempty"`
+	Reason       string                           `json:"reason,omitempty"`
+	KeyPreview   string                           `json:"key_preview"` // first 10 chars of key for identification
+	Capabilities *model.ChannelAccountCapability `json:"capabilities,omitempty"`
+}
+
+func keyStatusCapabilities(channel *model.Channel, index int) *model.ChannelAccountCapability {
+	if channel == nil {
+		return nil
+	}
+	capability, ok := channel.ChannelInfo.AccountCapability(index)
+	if !ok {
+		return nil
+	}
+	return &capability
 }
 
 // ManageMultiKeys handles multi-key management operations
@@ -2035,6 +2050,54 @@ func ManageMultiKeys(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "该渠道不是多密钥模式",
+		})
+		return
+	}
+
+	switch request.Action {
+	case "probe_key_capabilities":
+		if request.KeyIndex == nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "未指定要检测的账号索引",
+			})
+			return
+		}
+		result, err := probeChannelAccountCapabilities(c, channel, *request.KeyIndex, request.Model)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "账号权限检测完成",
+			"data":    result,
+		})
+		return
+	case "probe_all_key_capabilities":
+		keys := channel.GetKeys()
+		results := make([]accountCapabilityProbeResult, 0, len(keys))
+		for index := range keys {
+			result, err := probeChannelAccountCapabilities(c, channel, index, request.Model)
+			if err != nil {
+				result = accountCapabilityProbeResult{
+					Index: index,
+					Capabilities: model.ChannelAccountCapability{
+						CheckedTime:  common.GetTimestamp(),
+						LastEndpoint: "",
+						LastMessage:  err.Error(),
+					},
+				}
+			}
+			results = append(results, result)
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "账号权限检测完成",
+			"data":    results,
 		})
 		return
 	}
@@ -2104,6 +2167,7 @@ func ManageMultiKeys(c *gin.Context) {
 				DisabledTime: disabledTime,
 				Reason:       reason,
 				KeyPreview:   keyPreview,
+				Capabilities: keyStatusCapabilities(channel, i),
 			})
 		}
 

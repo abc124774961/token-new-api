@@ -10,7 +10,10 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/provider"
 	modelgatewayproxy "github.com/QuantumNous/new-api/pkg/modelgateway/proxy"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -427,6 +430,48 @@ func appendProxyBridgeUsageTextPart(builder *strings.Builder, text string) {
 	builder.WriteString(text)
 }
 
+func accountCapabilityPrefersChatCompletions(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.ChannelAccountCapability == nil {
+		return false
+	}
+	return info.ChannelAccountCapability.HasResponsesWriteDenied() &&
+		info.ChannelAccountCapability.HasChatCompletionsWriteAllowed()
+}
+
+func ensureAccountCapabilityResponsesViaChatPlan(c *gin.Context, info *relaycommon.RelayInfo) func() {
+	if !accountCapabilityPrefersChatCompletions(info) {
+		return func() {}
+	}
+	if _, ok := modelgatewayintegration.GetSelectedPlan(c); ok {
+		return func() {}
+	}
+	plan := &core.DispatchPlan{
+		SelectedGroup:   firstNonEmptyString(info.UsingGroup, info.TokenGroup),
+		ProviderProfile: provider.ProfileStandardOpenAICompatible,
+		ProxyMode:       provider.ProxyModeResponsesViaChat,
+	}
+	if info.ChannelMeta != nil {
+		plan.Channel = &model.Channel{
+			Id:   info.ChannelId,
+			Type: info.ChannelType,
+			Name: common.GetContextKeyString(c, appconstant.ContextKeyChannelName),
+		}
+	}
+	modelgatewayintegration.SetSelectedPlan(c, plan)
+	return func() {
+		modelgatewayintegration.ClearSelectedPlan(c)
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func newAPIErrorFromResponsesStreamFailure(streamResponse dto.ResponsesStreamResponse, fallbackMessage string) *types.NewAPIError {
 	if streamResponse.Response != nil {
 		if oaiErr := streamResponse.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
@@ -593,7 +638,13 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	adaptor.Init(info)
 	var requestBody io.Reader
 	proxyBridge := modelgatewayintegration.NewProxyBridge(nil)
+	restoreCapabilityBridgePlan := ensureAccountCapabilityResponsesViaChatPlan(c, info)
 	proxyDecision := proxyBridge.Resolve(c, info)
+	if !proxyDecision.Enabled {
+		restoreCapabilityBridgePlan()
+		restoreCapabilityBridgePlan = func() {}
+	}
+	defer restoreCapabilityBridgePlan()
 	restoreProxyMode := func() {}
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)

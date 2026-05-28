@@ -234,10 +234,11 @@ func NewStandardOpenAICompatibleProfile() *StandardOpenAICompatibleProfile {
 		"openai_compatible",
 		nil,
 		CapabilitySet{
+			ResponsesViaChat:    true,
 			ChatCompletions:     true,
 			Streaming:           true,
 			ToolCall:            true,
-			SupportedProxyModes: []string{ProxyModeNative},
+			SupportedProxyModes: []string{ProxyModeNative, ProxyModeResponsesViaChat},
 		},
 		ProxyModeNative,
 		func(channel *model.Channel, modelName string) bool {

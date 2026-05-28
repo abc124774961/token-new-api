@@ -94,6 +94,13 @@ const DEFAULT_SETTING = {
   sticky_failure_policy: 'clear',
   cache_affinity_enabled: true,
   cache_affinity_keep_score_ratio: 0.75,
+  cost_first_sticky_escape_enabled: true,
+  cost_first_sticky_escape_cost_ratio: 0.75,
+  cost_first_sticky_escape_cache_cost_ratio: 0.55,
+  cost_first_sticky_escape_max_speed_score_drop: 0.06,
+  cost_first_sticky_escape_cache_max_speed_score_drop: 0.03,
+  cost_first_sticky_escape_min_samples: 5,
+  cost_first_sticky_escape_success_slack: 0.02,
   queue_enabled: true,
   queue_default_timeout_ms: 2000,
   queue_max_depth_per_channel: 64,
@@ -798,6 +805,32 @@ export default function SettingsModelGatewayScheduler() {
         setting.cache_affinity_keep_score_ratio,
         0.75,
       ),
+      cost_first_sticky_escape_enabled:
+        setting.cost_first_sticky_escape_enabled !== false,
+      cost_first_sticky_escape_cost_ratio: numberOrDefault(
+        setting.cost_first_sticky_escape_cost_ratio,
+        0.75,
+      ),
+      cost_first_sticky_escape_cache_cost_ratio: numberOrDefault(
+        setting.cost_first_sticky_escape_cache_cost_ratio,
+        0.55,
+      ),
+      cost_first_sticky_escape_max_speed_score_drop: numberOrDefault(
+        setting.cost_first_sticky_escape_max_speed_score_drop,
+        0.06,
+      ),
+      cost_first_sticky_escape_cache_max_speed_score_drop: numberOrDefault(
+        setting.cost_first_sticky_escape_cache_max_speed_score_drop,
+        0.03,
+      ),
+      cost_first_sticky_escape_min_samples: numberOrDefault(
+        setting.cost_first_sticky_escape_min_samples,
+        5,
+      ),
+      cost_first_sticky_escape_success_slack: numberOrDefault(
+        setting.cost_first_sticky_escape_success_slack,
+        0.02,
+      ),
       queue_default_timeout_ms: numberOrDefault(
         setting.queue_default_timeout_ms,
         2000,
@@ -1475,6 +1508,121 @@ export default function SettingsModelGatewayScheduler() {
                 optionList={stickyFailurePolicyOptions}
                 onChange={(value) =>
                   updateSetting('sticky_failure_policy', value)
+                }
+              />
+            </Col>
+          </Row>
+          <Banner
+            type='info'
+            fullMode={false}
+            closeIcon={null}
+            title={t('成本优先低成本切换')}
+            description={t(
+              '仅在成本优先策略下，明显更低成本且速度评分影响可接受的候选才会打破粘滞。',
+            )}
+            style={{ marginTop: 8, marginBottom: 16 }}
+          />
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={6}>
+              <Form.Switch
+                field='cost_first_sticky_escape_enabled'
+                label={t('启用低成本切换')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting('cost_first_sticky_escape_enabled', value)
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Form.InputNumber
+                field='cost_first_sticky_escape_cost_ratio'
+                label={t('成本切换阈值')}
+                min={0.01}
+                max={1}
+                step={0.01}
+                suffix='x'
+                onChange={(value) =>
+                  updateSetting(
+                    'cost_first_sticky_escape_cost_ratio',
+                    numberOrDefault(value, 0.75),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Form.InputNumber
+                field='cost_first_sticky_escape_max_speed_score_drop'
+                label={t('最大速度分下降')}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={(value) =>
+                  updateSetting(
+                    'cost_first_sticky_escape_max_speed_score_drop',
+                    numberOrDefault(value, 0.06),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Form.InputNumber
+                field='cost_first_sticky_escape_min_samples'
+                label={t('切换最小样本')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting(
+                    'cost_first_sticky_escape_min_samples',
+                    numberOrDefault(value, 5),
+                  )
+                }
+              />
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={6}>
+              <Form.InputNumber
+                field='cost_first_sticky_escape_cache_cost_ratio'
+                label={t('缓存亲和成本阈值')}
+                min={0.01}
+                max={1}
+                step={0.01}
+                suffix='x'
+                onChange={(value) =>
+                  updateSetting(
+                    'cost_first_sticky_escape_cache_cost_ratio',
+                    numberOrDefault(value, 0.55),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Form.InputNumber
+                field='cost_first_sticky_escape_cache_max_speed_score_drop'
+                label={t('缓存亲和速度分下降')}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={(value) =>
+                  updateSetting(
+                    'cost_first_sticky_escape_cache_max_speed_score_drop',
+                    numberOrDefault(value, 0.03),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Form.InputNumber
+                field='cost_first_sticky_escape_success_slack'
+                label={t('成功率保护差值')}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={(value) =>
+                  updateSetting(
+                    'cost_first_sticky_escape_success_slack',
+                    numberOrDefault(value, 0.02),
+                  )
                 }
               />
             </Col>

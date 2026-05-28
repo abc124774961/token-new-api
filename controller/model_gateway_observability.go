@@ -662,6 +662,7 @@ type ModelGatewayObservabilityRecord struct {
 	StickySource                   string                             `json:"sticky_source,omitempty"`
 	StickyRetained                 bool                               `json:"sticky_retained,omitempty"`
 	StickyBreak                    string                             `json:"sticky_break,omitempty"`
+	StickyDecision                 *modelgatewaycore.StickyDecision   `json:"sticky_decision,omitempty"`
 	CacheAffinity                  bool                               `json:"cache_affinity,omitempty"`
 	ErrorMessage                   string                             `json:"error_message,omitempty"`
 	ErrorCategory                  string                             `json:"error_category,omitempty"`
@@ -3851,6 +3852,7 @@ func modelGatewayObservabilityRecentRecord(record model.ModelExecutionRecord, sc
 		StickySource:                   meta.StickySource,
 		StickyRetained:                 meta.StickyRetained,
 		StickyBreak:                    meta.StickyBreak,
+		StickyDecision:                 meta.StickyDecision,
 		CacheAffinity:                  meta.CacheAffinity,
 		ErrorMessage:                   attemptMeta.ErrorMessage,
 		ErrorCategory:                  attemptMeta.ErrorCategory,
@@ -4081,6 +4083,7 @@ type modelGatewayObservabilityDispatchMeta struct {
 	StickySource   string
 	StickyRetained bool
 	StickyBreak    string
+	StickyDecision *modelgatewaycore.StickyDecision
 	CacheAffinity  bool
 }
 
@@ -4190,8 +4193,27 @@ func modelGatewayObservabilityMetaFromRequestMeta(requestMeta map[string]any) mo
 		StickySource:   strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["sticky_source"])),
 		StickyRetained: modelGatewayObservabilityMetaBool(requestMeta["sticky_retained"]),
 		StickyBreak:    strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["sticky_break"])),
+		StickyDecision: modelGatewayStickyDecisionFromRequestMeta(requestMeta),
 		CacheAffinity:  modelGatewayObservabilityMetaBool(requestMeta["cache_affinity"]),
 	}
+}
+
+func modelGatewayStickyDecisionFromRequestMeta(requestMeta map[string]any) *modelgatewaycore.StickyDecision {
+	if len(requestMeta) == 0 || requestMeta["sticky_decision"] == nil {
+		return nil
+	}
+	bytes, err := common.Marshal(requestMeta["sticky_decision"])
+	if err != nil {
+		return nil
+	}
+	var decision modelgatewaycore.StickyDecision
+	if err := common.Unmarshal(bytes, &decision); err != nil {
+		return nil
+	}
+	if decision.Reason == "" && decision.Decision == "" {
+		return nil
+	}
+	return &decision
 }
 
 func modelGatewayScoreItemsDelta(current []modelgatewaycore.ScoreItem, previous []modelgatewaycore.ScoreItem) []modelgatewaycore.ScoreAdjustmentItem {

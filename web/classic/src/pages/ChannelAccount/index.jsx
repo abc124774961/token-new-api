@@ -67,6 +67,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { API, showError, showInfo, showSuccess, timestamp2string } from '../../helpers';
+import ProxyEditorModal from '../../components/model-gateway/ProxyEditorModal';
 import './channel-account.css';
 
 const { Text } = Typography;
@@ -468,7 +469,28 @@ function operationMessage(operation, t, fallback) {
     }
     return parts.join(t('、'));
   }
+  if (operation.type === 'proxy') {
+    const changed = pluralCount(operation.affected);
+    return operation.action === 'bind'
+      ? t('已设置 {{total}} 个账号代理', { total: changed })
+      : t('已解绑 {{total}} 个账号代理', { total: changed });
+  }
   return fallback;
+}
+
+function findAccountItem(payload, fallbackRecord) {
+  const index = Number(fallbackRecord?.credential_index);
+  const channelID = Number(fallbackRecord?.channel_id);
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  return (
+    items.find(
+      (item) =>
+        Number(item?.credential_index) === index &&
+        (!channelID || Number(item?.channel_id) === channelID),
+    ) ||
+    items.find((item) => Number(item?.credential_index) === index) ||
+    fallbackRecord
+  );
 }
 
 function runtimeKeyLabel(runtimeKey, t) {
@@ -607,7 +629,7 @@ function isProxyReuseConfirmRequiredMessage(message) {
   return String(message || '').includes('请确认后继续绑定');
 }
 
-function ProxyCell({ record, t, onOpenProxy }) {
+function ProxyCell({ record, t, onOpenProxy, onOpenProxyEdit }) {
   const proxy = record?.proxy;
   if (!proxy) {
     return (
@@ -628,7 +650,12 @@ function ProxyCell({ record, t, onOpenProxy }) {
   }
   return (
     <div className='ct-channel-account-proxy-cell'>
-      <div className='ct-channel-account-proxy-main'>
+      <button
+        type='button'
+        className='ct-channel-account-proxy-main ct-channel-account-proxy-edit-trigger'
+        onClick={() => onOpenProxyEdit?.(proxy, record)}
+        aria-label={t('编辑代理')}
+      >
         <Tooltip
           content={
             <div className='ct-channel-account-proxy-tip'>
@@ -661,7 +688,7 @@ function ProxyCell({ record, t, onOpenProxy }) {
         <Text type='tertiary' ellipsis={{ showTooltip: true }}>
           {proxyAddress(proxy) || '--'}
         </Text>
-      </div>
+      </button>
       <Button
         size='small'
         type='tertiary'
@@ -759,16 +786,174 @@ function RuntimeKeysCell({ record, t }) {
   );
 }
 
+function ProxyBindingEditor({
+  t,
+  currentProxy,
+  proxyReusePolicy,
+  createProxyInline,
+  setCreateProxyInline,
+  selectedProxyID,
+  setSelectedProxyID,
+  proxiesLoading,
+  proxies,
+  loadProxies,
+  selectedProxyRisk,
+  proxyForm,
+  setProxyForm,
+}) {
+  const proxyExistingChecked = !createProxyInline;
+  const proxyOptions = useMemo(() => {
+    const options = [];
+    const seen = new Set();
+    if (currentProxy?.id) {
+      options.push(currentProxy);
+      seen.add(Number(currentProxy.id));
+    }
+    (proxies || []).forEach((proxy) => {
+      const proxyID = Number(proxy?.id || 0);
+      if (proxyID > 0 && !seen.has(proxyID)) {
+        options.push(proxy);
+        seen.add(proxyID);
+      }
+    });
+    return options;
+  }, [currentProxy, proxies]);
+
+  return (
+    <div className='ct-channel-account-proxy-editor'>
+      <Banner
+        type={proxyReusePolicy === 'block' ? 'warning' : 'info'}
+        closeIcon={null}
+        fullMode={false}
+        description={`${proxyReusePolicyLabel(proxyReusePolicy, t)} · ${t('同品牌不同账号共用同一代理时按该策略处理')}`}
+      />
+
+      <div className='ct-channel-account-proxy-mode'>
+        <Checkbox
+          checked={proxyExistingChecked}
+          onChange={(event) => {
+            const checked = event.target.checked;
+            setCreateProxyInline(!checked);
+          }}
+        >
+          {t('选择已有代理')}
+        </Checkbox>
+        <Checkbox
+          checked={createProxyInline}
+          onChange={(event) => setCreateProxyInline(event.target.checked)}
+        >
+          {t('新增 SOCKS5 代理')}
+        </Checkbox>
+      </div>
+
+      {!createProxyInline ? (
+        <div className='ct-channel-account-proxy-existing'>
+          <Select
+            value={selectedProxyID}
+            onChange={(value) => setSelectedProxyID(Number(value || 0))}
+            loading={proxiesLoading}
+            filter
+            style={{ width: '100%' }}
+            placeholder={t('选择代理，可留空解绑')}
+          >
+            <Select.Option value={0}>{t('不使用代理')}</Select.Option>
+            {proxyOptions.map((proxy) => (
+              <Select.Option key={proxy.id} value={proxy.id}>
+                {proxyLabel(proxy, t)} · {proxyAddress(proxy) || '--'}
+              </Select.Option>
+            ))}
+          </Select>
+          <Button
+            type='tertiary'
+            theme='borderless'
+            icon={<RefreshCw size={14} />}
+            loading={proxiesLoading}
+            onClick={loadProxies}
+          >
+            {t('刷新代理')}
+          </Button>
+          {selectedProxyRisk ? (
+            <Banner
+              type='warning'
+              closeIcon={null}
+              fullMode={false}
+              description={reuseRiskText(selectedProxyRisk, t)}
+            />
+          ) : null}
+        </div>
+      ) : (
+        <div className='ct-channel-account-proxy-form'>
+          <Input
+            value={proxyForm.name}
+            onChange={(value) =>
+              setProxyForm((prev) => ({ ...prev, name: value }))
+            }
+            placeholder={t('代理名称（可选）')}
+          />
+          <div className='ct-channel-account-proxy-row'>
+            <Select
+              value={proxyForm.protocol}
+              onChange={(value) =>
+                setProxyForm((prev) => ({ ...prev, protocol: value }))
+              }
+              className='ct-channel-account-proxy-protocol'
+            >
+              <Select.Option value='socks5'>SOCKS5</Select.Option>
+              <Select.Option value='socks5h'>SOCKS5H</Select.Option>
+              <Select.Option value='http'>HTTP</Select.Option>
+              <Select.Option value='https'>HTTPS</Select.Option>
+            </Select>
+            <Input
+              value={proxyForm.address}
+              onChange={(value) =>
+                setProxyForm((prev) => ({ ...prev, address: value }))
+              }
+              placeholder='127.0.0.1:1080'
+            />
+          </div>
+          <div className='ct-channel-account-proxy-row'>
+            <Input
+              value={proxyForm.username}
+              onChange={(value) =>
+                setProxyForm((prev) => ({ ...prev, username: value }))
+              }
+              placeholder={t('代理用户名（可选）')}
+            />
+            <Input
+              type='password'
+              value={proxyForm.password}
+              onChange={(value) =>
+                setProxyForm((prev) => ({ ...prev, password: value }))
+              }
+              placeholder={t('代理密码（可选）')}
+            />
+          </div>
+          <Input
+            value={proxyForm.remark}
+            onChange={(value) =>
+              setProxyForm((prev) => ({ ...prev, remark: value }))
+            }
+            placeholder={t('备注（可选）')}
+          />
+        </div>
+      )}
+      <Text type='tertiary' size='small'>
+        {t('代理会作为独立资源记录使用品牌和账号，后续可用于避免同品牌重复使用同一出口')}
+      </Text>
+    </div>
+  );
+}
+
 function buildColumns(
   t,
   onToggleStatus,
   onDeleteAccount,
   onOpenEdit,
   onOpenProxy,
+  onOpenProxyEdit,
   onTestAccount,
   statusLoadingKey,
   testingAccountKey,
-  totalAccounts,
 ) {
   return [
     {
@@ -833,7 +1018,12 @@ function buildColumns(
       dataIndex: 'proxy',
       width: 250,
       render: (_, record) => (
-        <ProxyCell record={record} t={t} onOpenProxy={onOpenProxy} />
+        <ProxyCell
+          record={record}
+          t={t}
+          onOpenProxy={onOpenProxy}
+          onOpenProxyEdit={onOpenProxyEdit}
+        />
       ),
     },
     {
@@ -879,7 +1069,6 @@ function buildColumns(
         const loadingKey = `${record.channel_id}-${record.credential_index}`;
         const loading = statusLoadingKey === loadingKey;
         const testing = testingAccountKey === loadingKey;
-        const deleteDisabled = Number(totalAccounts || 0) <= 1;
         return (
           <Space className='ct-channel-account-operation' spacing={6}>
             <Tooltip content={t('测试账号')}>
@@ -938,13 +1127,8 @@ function buildColumns(
             </Popconfirm>
             <Popconfirm
               title={t('确定删除该账号？')}
-              content={
-                deleteDisabled
-                  ? t('至少需要保留一个账号')
-                  : t('删除后该凭证将从渠道中移除，此操作不可撤销')
-              }
+              content={t('删除后该凭证将从渠道中移除，此操作不可撤销')}
               onConfirm={() => onDeleteAccount(record)}
-              disabled={deleteDisabled}
             >
               <Button
                 size='small'
@@ -952,7 +1136,6 @@ function buildColumns(
                 theme='borderless'
                 icon={<Trash2 size={14} />}
                 loading={loading}
-                disabled={deleteDisabled}
                 aria-label={t('删除账号')}
               />
             </Popconfirm>
@@ -1020,7 +1203,10 @@ function ChannelAccount() {
   const [editCredential, setEditCredential] = useState('');
   const [editLoading, setEditLoading] = useState(false);
   const [proxyVisible, setProxyVisible] = useState(false);
+  const [batchProxyVisible, setBatchProxyVisible] = useState(false);
   const [proxyRecord, setProxyRecord] = useState(null);
+  const [editingProxy, setEditingProxy] = useState(null);
+  const [proxyEditorVisible, setProxyEditorVisible] = useState(false);
   const [proxies, setProxies] = useState([]);
   const [proxyReusePolicy, setProxyReusePolicy] = useState('warn');
   const [proxiesLoading, setProxiesLoading] = useState(false);
@@ -1039,7 +1225,26 @@ function ChannelAccount() {
     password: '',
     remark: '',
   });
-  const proxyExistingChecked = !createProxyInline;
+  const selectedIndexes = useMemo(
+    () =>
+      selectedRowKeys
+        .map((key) => Number(String(key).split('-')[1]))
+        .filter((value) => Number.isInteger(value) && value >= 0),
+    [selectedRowKeys],
+  );
+
+  const resetProxyEditorState = useCallback((record = null) => {
+    setSelectedProxyID(Number(record?.proxy?.id || 0));
+    setCreateProxyInline(false);
+    setProxyForm({
+      name: '',
+      protocol: 'socks5',
+      address: '',
+      username: '',
+      password: '',
+      remark: '',
+    });
+  }, []);
 
   const loadAccounts = useCallback(async () => {
     setLoading(true);
@@ -1146,9 +1351,6 @@ function ChannelAccount() {
 
   const batchUpdateAccountStatus = useCallback(
     async (enabled) => {
-      const selectedIndexes = selectedRowKeys
-        .map((key) => Number(String(key).split('-')[1]))
-        .filter((value) => Number.isInteger(value) && value >= 0);
       if (selectedIndexes.length === 0) {
         showError(t('请先选择账号'));
         return;
@@ -1187,7 +1389,7 @@ function ChannelAccount() {
         setBatchLoading(false);
       }
     },
-    [id, selectedRowKeys, t],
+    [id, selectedIndexes, t],
   );
 
   const testAccount = useCallback(
@@ -1235,10 +1437,6 @@ function ChannelAccount() {
         showError(t('请先选择账号'));
         return;
       }
-      if (normalizedIndexes.length >= Number(data?.total || 0)) {
-        showError(t('至少需要保留一个账号'));
-        return;
-      }
       setDeleteLoading(true);
       try {
         const response = await API.delete(`/api/channel/${id}/accounts`, {
@@ -1267,7 +1465,7 @@ function ChannelAccount() {
         setDeleteLoading(false);
       }
     },
-    [data?.total, id, t],
+    [id, t],
   );
 
   const deleteSingleAccount = useCallback(
@@ -1276,11 +1474,8 @@ function ChannelAccount() {
   );
 
   const batchDeleteAccounts = useCallback(() => {
-    const selectedIndexes = selectedRowKeys
-      .map((key) => Number(String(key).split('-')[1]))
-      .filter((value) => Number.isInteger(value) && value >= 0);
     return deleteAccounts(selectedIndexes);
-  }, [deleteAccounts, selectedRowKeys]);
+  }, [deleteAccounts, selectedIndexes]);
 
   const resetImportModal = useCallback(() => {
     setImportVisible(false);
@@ -1387,85 +1582,86 @@ function ChannelAccount() {
     t,
   ]);
 
-  const openEditModal = useCallback((record) => {
-    setEditRecord(record);
-    setEditCredentialType(record?.account_identity?.account_type || 'auto');
-    setEditCredential('');
-    setEditVisible(true);
-  }, []);
+  const openEditModal = useCallback(
+    (record) => {
+      setEditRecord(record);
+      setProxyRecord(record);
+      setEditCredentialType(record?.account_identity?.account_type || 'auto');
+      setEditCredential('');
+      resetProxyEditorState(record);
+      setEditVisible(true);
+      loadProxies();
+      loadSchedulerConfig();
+    },
+    [loadProxies, loadSchedulerConfig, resetProxyEditorState],
+  );
 
   const closeEditModal = useCallback(() => {
     setEditVisible(false);
     setEditRecord(null);
+    setProxyRecord(null);
     setEditCredentialType('auto');
     setEditCredential('');
-  }, []);
-
-  const saveAccountCredential = useCallback(async () => {
-    const credential = editCredential.trim();
-    if (!editRecord) return;
-    if (!credential) {
-      showError(t('请填写账号凭证'));
-      return;
-    }
-    setEditLoading(true);
-    try {
-      const response = await API.put(
-        `/api/channel/${id}/accounts/${editRecord.credential_index}`,
-        {
-          credential,
-          credential_type: editCredentialType,
-        },
-      );
-      if (response?.data?.success === false) {
-        throw new Error(response?.data?.message || t('保存失败'));
-      }
-      const payload = unwrapApiData(response);
-      setData(payload);
-      closeEditModal();
-      showSuccess(operationMessage(payload.operation, t, t('账号凭证已更新')));
-    } catch (err) {
-      const message =
-        err?.response?.data?.message || err?.message || t('保存失败');
-      showError(message);
-    } finally {
-      setEditLoading(false);
-    }
-  }, [
-    closeEditModal,
-    editCredential,
-    editCredentialType,
-    editRecord,
-    id,
-    t,
-  ]);
+    resetProxyEditorState();
+  }, [resetProxyEditorState]);
 
   const openProxyModal = useCallback(
     (record) => {
       setProxyRecord(record);
-      setSelectedProxyID(Number(record?.proxy?.id || 0));
-      setCreateProxyInline(false);
-      setProxyForm({
-        name: '',
-        protocol: 'socks5',
-        address: '',
-        username: '',
-        password: '',
-        remark: '',
-      });
+      resetProxyEditorState(record);
       setProxyVisible(true);
       loadProxies();
       loadSchedulerConfig();
     },
-    [loadProxies, loadSchedulerConfig],
+    [loadProxies, loadSchedulerConfig, resetProxyEditorState],
   );
+
+  const openBatchProxyModal = useCallback(() => {
+    if (selectedIndexes.length === 0) {
+      showError(t('请先选择账号'));
+      return;
+    }
+    setProxyRecord(null);
+    resetProxyEditorState();
+    setBatchProxyVisible(true);
+    loadProxies();
+    loadSchedulerConfig();
+  }, [
+    loadProxies,
+    loadSchedulerConfig,
+    resetProxyEditorState,
+    selectedIndexes.length,
+    t,
+  ]);
 
   const closeProxyModal = useCallback(() => {
     setProxyVisible(false);
     setProxyRecord(null);
-    setSelectedProxyID(0);
-    setCreateProxyInline(false);
+    resetProxyEditorState();
+  }, [resetProxyEditorState]);
+
+  const closeBatchProxyModal = useCallback(() => {
+    setBatchProxyVisible(false);
+    resetProxyEditorState();
+  }, [resetProxyEditorState]);
+
+  const openProxyEditModal = useCallback(
+    (proxy) => {
+      if (!proxy?.id) return;
+      setEditingProxy(proxy);
+      setProxyEditorVisible(true);
+    },
+    [],
+  );
+
+  const closeProxyEditModal = useCallback(() => {
+    setProxyEditorVisible(false);
+    setEditingProxy(null);
   }, []);
+
+  const handleProxyEdited = useCallback(async () => {
+    await Promise.all([loadAccounts(), loadProxies()]);
+  }, [loadAccounts, loadProxies]);
 
   const selectedProxy = useMemo(
     () => proxies.find((proxy) => Number(proxy.id) === Number(selectedProxyID)),
@@ -1479,47 +1675,183 @@ function ChannelAccount() {
     [createProxyInline, proxyRecord, selectedProxy, selectedProxyID],
   );
 
+  const proxyBindingChanged = useCallback(
+    (record = proxyRecord) =>
+      Boolean(record) &&
+      (createProxyInline ||
+        Number(selectedProxyID || 0) !== Number(record?.proxy?.id || 0)),
+    [createProxyInline, proxyRecord, selectedProxyID],
+  );
+
+  const createOrResolveProxyID = useCallback(async () => {
+    let proxyID = Number(selectedProxyID || 0);
+    if (createProxyInline) {
+      const address = proxyForm.address.trim();
+      if (!address) {
+        throw new Error(t('请填写代理地址'));
+      }
+      const createResponse = await API.post('/api/model_gateway/proxies', {
+        ...proxyForm,
+        enabled: true,
+      });
+      if (createResponse?.data?.success === false) {
+        throw new Error(createResponse?.data?.message || t('创建代理失败'));
+      }
+      const created = unwrapApiData(createResponse);
+      proxyID = Number(created?.id || 0);
+    }
+    return proxyID;
+  }, [createProxyInline, proxyForm, selectedProxyID, t]);
+
+  const submitProxyBinding = useCallback(async (record, allowReuseRisk = false) => {
+    if (!record) return null;
+    const proxyID = await createOrResolveProxyID();
+    const response = await API.post(
+      `/api/channel/${id}/accounts/${record.credential_index}/proxy`,
+      {
+        proxy_id: proxyID,
+        allow_reuse_risk: allowReuseRisk,
+      },
+    );
+    if (response?.data?.success === false) {
+      throw new Error(response?.data?.message || t('操作失败'));
+    }
+    return {
+      payload: unwrapApiData(response),
+      proxyID,
+    };
+  }, [createOrResolveProxyID, id, t]);
+
+  const submitBatchProxyBinding = useCallback(async (allowReuseRisk = false) => {
+    const proxyID = await createOrResolveProxyID();
+    const response = await API.post(`/api/channel/${id}/account-proxies`, {
+      proxy_id: proxyID,
+      credential_indexes: selectedIndexes,
+      allow_reuse_risk: allowReuseRisk,
+    });
+    if (response?.data?.success === false) {
+      throw new Error(response?.data?.message || t('操作失败'));
+    }
+    return {
+      payload: unwrapApiData(response),
+      proxyID,
+    };
+  }, [createOrResolveProxyID, id, selectedIndexes, t]);
+
+  const saveAccountCredential = useCallback(async (allowReuseRisk = false) => {
+    if (!editRecord) return;
+    const confirmedReuse = allowReuseRisk === true;
+    const credential = editCredential.trim();
+    const shouldUpdateCredential = credential.length > 0;
+    const shouldUpdateProxy = proxyBindingChanged(editRecord);
+    if (!shouldUpdateCredential && !shouldUpdateProxy) {
+      closeEditModal();
+      return;
+    }
+    if (
+      shouldUpdateProxy &&
+      !confirmedReuse &&
+      !createProxyInline &&
+      proxyReusePolicy === 'confirm' &&
+      selectedProxyRisk
+    ) {
+      Modal.confirm({
+        title: t('确认同品牌代理复用'),
+        content: reuseRiskText(selectedProxyRisk, t),
+        okText: t('确认绑定'),
+        cancelText: t('取消'),
+        onOk: () => saveAccountCredential(true),
+      });
+      return;
+    }
+    setEditLoading(true);
+    try {
+      let payload = null;
+      const messages = [];
+      if (shouldUpdateCredential) {
+        const response = await API.put(
+          `/api/channel/${id}/accounts/${editRecord.credential_index}`,
+          {
+            credential,
+            credential_type: editCredentialType,
+          },
+        );
+        if (response?.data?.success === false) {
+          throw new Error(response?.data?.message || t('保存失败'));
+        }
+        payload = unwrapApiData(response);
+        messages.push(operationMessage(payload.operation, t, t('账号凭证已更新')));
+      }
+      if (shouldUpdateProxy) {
+        const bindingRecord = findAccountItem(payload, editRecord);
+        const result = await submitProxyBinding(bindingRecord, confirmedReuse);
+        payload = result?.payload || payload;
+        messages.push(
+          operationMessage(
+            result?.payload?.operation,
+            t,
+            Number(result?.proxyID || 0) > 0
+              ? t('账号代理已绑定')
+              : t('账号代理已解绑'),
+          ),
+        );
+      }
+      if (payload) setData(payload);
+      closeEditModal();
+      showSuccess(messages.filter(Boolean).join(t('、')) || t('保存成功'));
+    } catch (err) {
+      const message =
+        err?.response?.data?.message || err?.message || t('保存失败');
+      if (
+        !confirmedReuse &&
+        shouldUpdateProxy &&
+        !createProxyInline &&
+        isProxyReuseConfirmRequiredMessage(message)
+      ) {
+        Modal.confirm({
+          title: t('确认同品牌代理复用'),
+          content: selectedProxyRisk
+            ? reuseRiskText(selectedProxyRisk, t)
+            : message,
+          okText: t('确认绑定'),
+          cancelText: t('取消'),
+          onOk: () => saveAccountCredential(true),
+        });
+        return;
+      }
+      showError(message);
+    } finally {
+      setEditLoading(false);
+    }
+  }, [
+    closeEditModal,
+    createProxyInline,
+    editCredential,
+    editCredentialType,
+    editRecord,
+    id,
+    proxyBindingChanged,
+    proxyReusePolicy,
+    selectedProxyRisk,
+    submitProxyBinding,
+    t,
+  ]);
+
   const saveProxyBindingRequest = useCallback(async (allowReuseRisk = false) => {
     if (!proxyRecord) return;
     setProxySaving(true);
     try {
-      let proxyID = Number(selectedProxyID || 0);
-      if (createProxyInline) {
-        const address = proxyForm.address.trim();
-        if (!address) {
-          showError(t('请填写代理地址'));
-          setProxySaving(false);
-          return;
-        }
-        const createResponse = await API.post('/api/model_gateway/proxies', {
-          ...proxyForm,
-          enabled: true,
-        });
-        if (createResponse?.data?.success === false) {
-          throw new Error(createResponse?.data?.message || t('创建代理失败'));
-        }
-        const created = unwrapApiData(createResponse);
-        proxyID = Number(created?.id || 0);
-        allowReuseRisk = false;
-      }
-      const response = await API.post(
-        `/api/channel/${id}/accounts/${proxyRecord.credential_index}/proxy`,
-        {
-          proxy_id: proxyID,
-          allow_reuse_risk: allowReuseRisk,
-        },
-      );
-      if (response?.data?.success === false) {
-        throw new Error(response?.data?.message || t('操作失败'));
-      }
-      const payload = unwrapApiData(response);
+      const result = await submitProxyBinding(proxyRecord, allowReuseRisk);
+      const payload = result?.payload;
       setData(payload);
       closeProxyModal();
       showSuccess(
         operationMessage(
-          payload.operation,
+          payload?.operation,
           t,
-          proxyID > 0 ? t('账号代理已绑定') : t('账号代理已解绑'),
+          Number(result?.proxyID || 0) > 0
+            ? t('账号代理已绑定')
+            : t('账号代理已解绑'),
         ),
       );
     } catch (err) {
@@ -1548,11 +1880,9 @@ function ChannelAccount() {
   }, [
     closeProxyModal,
     createProxyInline,
-    id,
-    proxyForm,
     proxyRecord,
-    selectedProxyID,
     selectedProxyRisk,
+    submitProxyBinding,
     t,
   ]);
 
@@ -1580,6 +1910,64 @@ function ChannelAccount() {
     t,
   ]);
 
+  const saveBatchProxyBindingRequest = useCallback(async (allowReuseRisk = false) => {
+    if (selectedIndexes.length === 0) {
+      showError(t('请先选择账号'));
+      return;
+    }
+    setProxySaving(true);
+    try {
+      const result = await submitBatchProxyBinding(allowReuseRisk);
+      const payload = result?.payload;
+      setData(payload);
+      setSelectedRowKeys([]);
+      closeBatchProxyModal();
+      showSuccess(
+        operationMessage(
+          payload?.operation,
+          t,
+          Number(result?.proxyID || 0) > 0
+            ? t('已设置 {{total}} 个账号代理', {
+                total: selectedIndexes.length,
+              })
+            : t('已解绑 {{total}} 个账号代理', {
+                total: selectedIndexes.length,
+              }),
+        ),
+      );
+    } catch (err) {
+      const message =
+        err?.response?.data?.message || err?.message || t('操作失败');
+      if (
+        !allowReuseRisk &&
+        !createProxyInline &&
+        isProxyReuseConfirmRequiredMessage(message)
+      ) {
+        Modal.confirm({
+          title: t('确认同品牌代理复用'),
+          content: message,
+          okText: t('确认绑定'),
+          cancelText: t('取消'),
+          onOk: () => saveBatchProxyBindingRequest(true),
+        });
+        return;
+      }
+      showError(message);
+    } finally {
+      setProxySaving(false);
+    }
+  }, [
+    closeBatchProxyModal,
+    createProxyInline,
+    selectedIndexes,
+    submitBatchProxyBinding,
+    t,
+  ]);
+
+  const saveBatchProxyBinding = useCallback(async () => {
+    await saveBatchProxyBindingRequest(false);
+  }, [saveBatchProxyBindingRequest]);
+
   const columns = useMemo(
     () =>
       buildColumns(
@@ -1588,10 +1976,10 @@ function ChannelAccount() {
         deleteSingleAccount,
         openEditModal,
         openProxyModal,
+        openProxyEditModal,
         testAccount,
         statusLoadingKey,
         testingAccountKey,
-        data?.total,
       ),
     [
       t,
@@ -1599,10 +1987,10 @@ function ChannelAccount() {
       deleteSingleAccount,
       openEditModal,
       openProxyModal,
+      openProxyEditModal,
       testAccount,
       statusLoadingKey,
       testingAccountKey,
-      data?.total,
     ],
   );
   const items = data?.items || [];
@@ -1774,18 +2162,20 @@ function ChannelAccount() {
                   {t('批量禁用')}
                 </Button>
               </Popconfirm>
+              <Button
+                size='small'
+                icon={<PlugZap size={14} />}
+                loading={proxySaving && batchProxyVisible}
+                disabled={selectedCount === 0}
+                onClick={openBatchProxyModal}
+              >
+                {t('批量设置代理')}
+              </Button>
               <Popconfirm
                 title={t('确定删除所选账号？')}
-                content={
-                  selectedCount >= Number(data?.total || 0)
-                    ? t('至少需要保留一个账号')
-                    : t('删除后这些凭证将从渠道中移除，此操作不可撤销')
-                }
+                content={t('删除后这些凭证将从渠道中移除，此操作不可撤销')}
                 onConfirm={batchDeleteAccounts}
-                disabled={
-                  selectedCount === 0 ||
-                  selectedCount >= Number(data?.total || 0)
-                }
+                disabled={selectedCount === 0}
               >
                 <Button
                   size='small'
@@ -1793,10 +2183,7 @@ function ChannelAccount() {
                   theme='light'
                   icon={<Trash2 size={14} />}
                   loading={deleteLoading}
-                  disabled={
-                    selectedCount === 0 ||
-                    selectedCount >= Number(data?.total || 0)
-                  }
+                  disabled={selectedCount === 0}
                 >
                   {t('批量删除')}
                 </Button>
@@ -1864,7 +2251,7 @@ function ChannelAccount() {
               closeIcon={null}
               fullMode={false}
               description={t(
-                '为保护密钥安全，列表不会回显完整凭证；编辑时请粘贴新的完整凭证，保存后替换当前账号。',
+                '为保护密钥安全，列表不会回显完整凭证；凭证留空时只保存代理设置，填写新凭证后会替换当前账号。',
               )}
             />
             <div className='ct-channel-account-edit-form'>
@@ -1888,13 +2275,43 @@ function ChannelAccount() {
                   value={editCredential}
                   onChange={setEditCredential}
                   autosize={{ minRows: 7, maxRows: 14 }}
-                  placeholder={t('粘贴新的账号凭证；保存后会替换当前凭证')}
+                  placeholder={t('留空则不修改凭证；粘贴新凭证后会替换当前凭证')}
                   showClear
                 />
               </label>
               <Text type='tertiary' size='small'>
                 {t('JSON 类型会在保存前压缩为单行，并只在列表展示账号类型和短指纹。')}
               </Text>
+            </div>
+            <div className='ct-channel-account-edit-section'>
+              <div className='ct-channel-account-edit-section-title'>
+                <PlugZap size={15} />
+                <span>{t('账号代理')}</span>
+                {editRecord?.proxy ? (
+                  <Tag color='cyan' type='light' shape='circle'>
+                    {proxyLabel(editRecord.proxy, t)}
+                  </Tag>
+                ) : (
+                  <Tag color='grey' type='light' shape='circle'>
+                    {t('未绑定代理')}
+                  </Tag>
+                )}
+              </div>
+              <ProxyBindingEditor
+                t={t}
+                currentProxy={editRecord?.proxy}
+                proxyReusePolicy={proxyReusePolicy}
+                createProxyInline={createProxyInline}
+                setCreateProxyInline={setCreateProxyInline}
+                selectedProxyID={selectedProxyID}
+                setSelectedProxyID={setSelectedProxyID}
+                proxiesLoading={proxiesLoading}
+                proxies={proxies}
+                loadProxies={loadProxies}
+                selectedProxyRisk={selectedProxyRisk}
+                proxyForm={proxyForm}
+                setProxyForm={setProxyForm}
+              />
             </div>
           </div>
         </Modal>
@@ -1931,125 +2348,64 @@ function ChannelAccount() {
                 </Tag>
               )}
             </div>
-            <Banner
-              type={proxyReusePolicy === 'block' ? 'warning' : 'info'}
-              closeIcon={null}
-              fullMode={false}
-              description={`${proxyReusePolicyLabel(proxyReusePolicy, t)} · ${t('同品牌不同账号共用同一代理时按该策略处理')}`}
+            <ProxyBindingEditor
+              t={t}
+              currentProxy={proxyRecord?.proxy}
+              proxyReusePolicy={proxyReusePolicy}
+              createProxyInline={createProxyInline}
+              setCreateProxyInline={setCreateProxyInline}
+              selectedProxyID={selectedProxyID}
+              setSelectedProxyID={setSelectedProxyID}
+              proxiesLoading={proxiesLoading}
+              proxies={proxies}
+              loadProxies={loadProxies}
+              selectedProxyRisk={selectedProxyRisk}
+              proxyForm={proxyForm}
+              setProxyForm={setProxyForm}
             />
-
-            <div className='ct-channel-account-proxy-mode'>
-              <Checkbox
-                checked={proxyExistingChecked}
-                onChange={(event) => {
-                  const checked = event.target.checked;
-                  setCreateProxyInline(!checked);
-                }}
-              >
-                {t('选择已有代理')}
-              </Checkbox>
-              <Checkbox
-                checked={createProxyInline}
-                onChange={(event) => setCreateProxyInline(event.target.checked)}
-              >
-                {t('新增 SOCKS5 代理')}
-              </Checkbox>
+          </div>
+        </Modal>
+        <Modal
+          title={t('批量设置代理')}
+          visible={batchProxyVisible}
+          width={720}
+          okText={t('保存')}
+          cancelText={t('取消')}
+          confirmLoading={proxySaving}
+          onOk={saveBatchProxyBinding}
+          onCancel={closeBatchProxyModal}
+        >
+          <div className='ct-channel-account-proxy-modal'>
+            <div className='ct-channel-account-proxy-target'>
+              <div>
+                <Text strong>
+                  {t('已选 {{total}} 个账号', { total: selectedCount })}
+                </Text>
+                <div>
+                  <Text type='tertiary'>
+                    {t('保存后会将同一个代理应用到这些账号')}
+                  </Text>
+                </div>
+              </div>
+              <Tag color='cyan' type='light' shape='circle'>
+                {t('批量操作')}
+              </Tag>
             </div>
-
-            {!createProxyInline ? (
-              <div className='ct-channel-account-proxy-existing'>
-                <Select
-                  value={selectedProxyID}
-                  onChange={(value) => setSelectedProxyID(Number(value || 0))}
-                  loading={proxiesLoading}
-                  filter
-                  style={{ width: '100%' }}
-                  placeholder={t('选择代理，可留空解绑')}
-                >
-                  <Select.Option value={0}>{t('不使用代理')}</Select.Option>
-                  {proxies.map((proxy) => (
-                    <Select.Option key={proxy.id} value={proxy.id}>
-                      {proxyLabel(proxy, t)} · {proxyAddress(proxy) || '--'}
-                    </Select.Option>
-                  ))}
-                </Select>
-                <Button
-                  type='tertiary'
-                  theme='borderless'
-                  icon={<RefreshCw size={14} />}
-                  loading={proxiesLoading}
-                  onClick={loadProxies}
-                >
-                  {t('刷新代理')}
-                </Button>
-                {selectedProxyRisk ? (
-                  <Banner
-                    type='warning'
-                    closeIcon={null}
-                    fullMode={false}
-                    description={reuseRiskText(selectedProxyRisk, t)}
-                  />
-                ) : null}
-              </div>
-            ) : (
-              <div className='ct-channel-account-proxy-form'>
-                <Input
-                  value={proxyForm.name}
-                  onChange={(value) =>
-                    setProxyForm((prev) => ({ ...prev, name: value }))
-                  }
-                  placeholder={t('代理名称（可选）')}
-                />
-                <div className='ct-channel-account-proxy-row'>
-                  <Select
-                    value={proxyForm.protocol}
-                    onChange={(value) =>
-                      setProxyForm((prev) => ({ ...prev, protocol: value }))
-                    }
-                    className='ct-channel-account-proxy-protocol'
-                  >
-                    <Select.Option value='socks5'>SOCKS5</Select.Option>
-                    <Select.Option value='socks5h'>SOCKS5H</Select.Option>
-                    <Select.Option value='http'>HTTP</Select.Option>
-                    <Select.Option value='https'>HTTPS</Select.Option>
-                  </Select>
-                  <Input
-                    value={proxyForm.address}
-                    onChange={(value) =>
-                      setProxyForm((prev) => ({ ...prev, address: value }))
-                    }
-                    placeholder='127.0.0.1:1080'
-                  />
-                </div>
-                <div className='ct-channel-account-proxy-row'>
-                  <Input
-                    value={proxyForm.username}
-                    onChange={(value) =>
-                      setProxyForm((prev) => ({ ...prev, username: value }))
-                    }
-                    placeholder={t('代理用户名（可选）')}
-                  />
-                  <Input
-                    type='password'
-                    value={proxyForm.password}
-                    onChange={(value) =>
-                      setProxyForm((prev) => ({ ...prev, password: value }))
-                    }
-                    placeholder={t('代理密码（可选）')}
-                  />
-                </div>
-                <Input
-                  value={proxyForm.remark}
-                  onChange={(value) =>
-                    setProxyForm((prev) => ({ ...prev, remark: value }))
-                  }
-                  placeholder={t('备注（可选）')}
-                />
-              </div>
-            )}
-            <Text type='tertiary' size='small'>
-              {t('代理会作为独立资源记录使用品牌和账号，后续可用于避免同品牌重复使用同一出口')}
-            </Text>
+            <ProxyBindingEditor
+              t={t}
+              currentProxy={null}
+              proxyReusePolicy={proxyReusePolicy}
+              createProxyInline={createProxyInline}
+              setCreateProxyInline={setCreateProxyInline}
+              selectedProxyID={selectedProxyID}
+              setSelectedProxyID={setSelectedProxyID}
+              proxiesLoading={proxiesLoading}
+              proxies={proxies}
+              loadProxies={loadProxies}
+              selectedProxyRisk={null}
+              proxyForm={proxyForm}
+              setProxyForm={setProxyForm}
+            />
           </div>
         </Modal>
         <Modal
@@ -2193,6 +2549,12 @@ function ChannelAccount() {
             </Text>
           </div>
         </Modal>
+        <ProxyEditorModal
+          visible={proxyEditorVisible}
+          proxy={editingProxy}
+          onCancel={closeProxyEditModal}
+          onSaved={handleProxyEdited}
+        />
       </div>
     </div>
   );

@@ -1131,6 +1131,9 @@ function formatStickyBreakReason(reason, t) {
   if (normalized === 'cost_first_cheaper_higher_score') {
     return t('成本优先发现明显更低成本且调度分更高的候选');
   }
+  if (normalized === 'cost_first_cheaper_speed_acceptable') {
+    return t('成本优先发现明显更低成本且速度影响可接受的候选');
+  }
   return formatChannelStatusReason(reason, t);
 }
 
@@ -9298,6 +9301,9 @@ function formatSelectionReason(reason, t) {
   if (normalized === 'cost_first_cheaper_higher_score') {
     return t('成本优先发现明显更低成本且调度分更高的候选');
   }
+  if (normalized === 'cost_first_cheaper_speed_acceptable') {
+    return t('成本优先发现明显更低成本且速度影响可接受的候选');
+  }
   if (normalized === 'weighted_score_sticky_broken') {
     return t('粘滞候选未达保留阈值，改选调度分更高候选');
   }
@@ -9318,6 +9324,54 @@ function buildStickyBreakText(reason, t) {
   return t('原粘滞候选未被保留，原因是 {{reason}}。', {
     reason: label,
   });
+}
+
+function buildStickyDecisionMetrics(decision, t) {
+  if (!decision || typeof decision !== 'object') return [];
+  const costRatio = Number(decision.cost_ratio);
+  const speedDelta = Number(decision.speed_score_delta);
+  const successDelta =
+    Number(decision.candidate_success_rate) -
+    Number(decision.sticky_success_rate);
+  return [
+    {
+      key: 'sticky_escape_cost',
+      label: t('成本差'),
+      value: Number.isFinite(costRatio)
+        ? t('低 {{percent}}', {
+            percent: formatPercent(Math.max(0, 1 - costRatio), 1),
+          })
+        : '--',
+    },
+    {
+      key: 'sticky_escape_speed',
+      label: t('速度影响'),
+      value: Number.isFinite(speedDelta)
+        ? `${speedDelta >= 0 ? '+' : ''}${speedDelta.toFixed(3)}`
+        : '--',
+    },
+    {
+      key: 'sticky_escape_success',
+      label: t('成功率差'),
+      value: Number.isFinite(successDelta)
+        ? `${successDelta >= 0 ? '+' : ''}${formatPercent(successDelta, 1)}`
+        : '--',
+    },
+    {
+      key: 'sticky_escape_samples',
+      label: t('样本数'),
+      value: `${formatNumber(decision.candidate_sample_count)} / ${formatNumber(
+        decision.min_samples,
+      )}`,
+    },
+    {
+      key: 'sticky_escape_threshold',
+      label: t('切换阈值'),
+      value: `${formatRatioValue(decision.cost_threshold)} · ${t('速度')} ${formatScore(
+        decision.max_speed_score_drop,
+      )}`,
+    },
+  ];
 }
 
 function buildSelectionSummaryText(insight, t) {
@@ -9569,6 +9623,10 @@ function buildSelectionInsight(record, candidates, t) {
   const stickyBreakText = stickyBroken
     ? buildStickyBreakText(record?.sticky_break, t)
     : '';
+  const stickyDecisionMetrics = buildStickyDecisionMetrics(
+    record?.sticky_decision || record?.request_meta?.sticky_decision,
+    t,
+  );
   let explanation = t('根据当前策略从可用候选中完成选择');
 
   if (selectedTopTie && topTieCount > 1 && rawReason === 'weighted_score') {
@@ -9579,6 +9637,9 @@ function buildSelectionInsight(record, candidates, t) {
     explanation = t('命中粘滞路由并满足保留阈值，优先复用该渠道');
   } else if (stickyBroken) {
     explanation = t('原粘滞候选未满足保留条件，改选当前调度分更优候选');
+    if (record?.sticky_break === 'cost_first_cheaper_speed_acceptable') {
+      explanation = t('成本优先下命中低成本候选，且速度评分影响在阈值内');
+    }
   }
 
   const primaryMetricKeys = new Set([
@@ -9675,6 +9736,7 @@ function buildSelectionInsight(record, candidates, t) {
       value:
         selectedSamples > 0 ? formatNumber(selectedSamples) : t('暂无评分样本'),
     },
+    ...stickyDecisionMetrics,
   ];
 
   return {

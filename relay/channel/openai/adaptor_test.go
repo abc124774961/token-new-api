@@ -1,12 +1,15 @@
 package openai
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -89,6 +92,33 @@ func TestGetRequestURLUsesCustomWireAPIPath(t *testing.T) {
 	if got != want {
 		t.Fatalf("GetRequestURL() = %q, want %q", got, want)
 	}
+}
+
+func TestSetupRequestHeaderUsesOAuthJSONCredentialForOpenAIChannel(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	adaptor := &Adaptor{}
+	header := http.Header{}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeOpenAI,
+			ApiKey:      `{"access_token":"access-token","account_id":"account-id","refresh_token":"refresh-token"}`,
+		},
+	}
+
+	err := adaptor.SetupRequestHeader(ctx, &header, info)
+
+	require.NoError(t, err)
+	require.Equal(t, "Bearer access-token", header.Get("Authorization"))
+	require.Equal(t, "account-id", header.Get("chatgpt-account-id"))
+	require.Equal(t, "responses=experimental", header.Get("OpenAI-Beta"))
+	require.Equal(t, "codex_cli_rs", header.Get("originator"))
 }
 
 func TestConvertOpenAIResponsesRequestTracksUpstreamSuffixEffort(t *testing.T) {

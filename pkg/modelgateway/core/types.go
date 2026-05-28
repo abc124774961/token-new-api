@@ -179,6 +179,7 @@ type DispatchPlan struct {
 	StickyKeyFP               string
 	StickyRetained            bool
 	StickyBreak               string
+	StickyDecision            *StickyDecision
 	CacheAffinity             bool
 	FallbackUsed              bool
 	PolicyMode                string
@@ -620,6 +621,28 @@ type StickyRoute struct {
 	KeyFingerprint string
 	CacheAware     bool
 	KeepScoreRatio float64
+}
+
+type StickyDecision struct {
+	Reason               string  `json:"reason,omitempty"`
+	CandidateChannelID   int     `json:"candidate_channel_id,omitempty"`
+	CandidateChannelName string  `json:"candidate_channel_name,omitempty"`
+	StickyCost           float64 `json:"sticky_cost,omitempty"`
+	CandidateCost        float64 `json:"candidate_cost,omitempty"`
+	CostRatio            float64 `json:"cost_ratio,omitempty"`
+	CostThreshold        float64 `json:"cost_threshold,omitempty"`
+	StickySpeedScore     float64 `json:"sticky_speed_score,omitempty"`
+	CandidateSpeedScore  float64 `json:"candidate_speed_score,omitempty"`
+	SpeedScoreDelta      float64 `json:"speed_score_delta,omitempty"`
+	MaxSpeedScoreDrop    float64 `json:"max_speed_score_drop,omitempty"`
+	StickySuccessRate    float64 `json:"sticky_success_rate,omitempty"`
+	CandidateSuccessRate float64 `json:"candidate_success_rate,omitempty"`
+	SuccessSlack         float64 `json:"success_slack,omitempty"`
+	StickySampleCount    int     `json:"sticky_sample_count,omitempty"`
+	CandidateSampleCount int     `json:"candidate_sample_count,omitempty"`
+	MinSamples           int     `json:"min_samples,omitempty"`
+	CacheAware           bool    `json:"cache_aware,omitempty"`
+	Decision             string  `json:"decision,omitempty"`
 }
 
 type AttemptResult struct {

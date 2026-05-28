@@ -76,7 +76,7 @@ func TestCandidateScoringServiceTotalComesFromFlatScoreItems(t *testing.T) {
 	require.Equal(t, scoreItemByKey(t, evaluation.Score.Items, "completion_rate").Score, evaluation.Explanation.ScoreBreakdown["completion_rate"])
 }
 
-func TestCostFirstWeightsKeepFirstByteRelevant(t *testing.T) {
+func TestCostFirstWeightsShiftRequestedSignalsToCost(t *testing.T) {
 	service := scheduler.NewCandidateScoringService()
 	snapshot := core.RuntimeSnapshot{
 		Key:                core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 12, Group: "codex-plus", EndpointType: constant.EndpointTypeOpenAI},
@@ -99,12 +99,22 @@ func TestCostFirstWeightsKeepFirstByteRelevant(t *testing.T) {
 	}, scheduler.ScoringContext{Strategy: core.StrategyCostFirst}, false)
 
 	costItem := scoreItemByKey(t, evaluation.Score.Items, "cost")
+	completionItem := scoreItemByKey(t, evaluation.Score.Items, "completion_rate")
+	upstreamErrorItem := scoreItemByKey(t, evaluation.Score.Items, "upstream_error_rate")
 	ttftItem := scoreItemByKey(t, evaluation.Score.Items, "ttft_latency")
 	firstByteBacklogItem := scoreItemByKey(t, evaluation.Score.Items, "first_byte_backlog")
-	require.InEpsilon(t, 0.25, costItem.Weight, 0.0001)
-	require.InEpsilon(t, 0.15, ttftItem.Weight, 0.0001)
-	require.InEpsilon(t, 0.08, firstByteBacklogItem.Weight, 0.0001)
-	require.Greater(t, ttftItem.Weight, costItem.Weight*0.50)
+	require.InEpsilon(t, 0.344, costItem.Weight, 0.0001)
+	require.InEpsilon(t, 0.112, completionItem.Weight, 0.0001)
+	require.InEpsilon(t, 0.08, upstreamErrorItem.Weight, 0.0001)
+	require.InEpsilon(t, 0.12, ttftItem.Weight, 0.0001)
+	require.InEpsilon(t, 0.064, firstByteBacklogItem.Weight, 0.0001)
+	totalWeight := 0.0
+	for _, item := range evaluation.Score.Items {
+		if item.MissingReason == "" {
+			totalWeight += item.Weight
+		}
+	}
+	require.InEpsilon(t, 1.0, totalWeight, 0.0001)
 }
 
 func TestCandidateScoringServiceDoesNotDuplicateCompletionPenaltyIntoSeparateRateItems(t *testing.T) {

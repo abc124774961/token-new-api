@@ -30,6 +30,7 @@ type RuntimePolicySettings struct {
 	StickyFailurePolicy              string
 	CacheAffinityKeepScoreRatio      float64
 	CacheAffinityEnabled             bool
+	CostFirstStickyEscape            scheduler.CostFirstStickyEscapeConfig
 	RuntimeSyncEnabled               bool
 	RuntimeSyncRedisEnabled          bool
 	RuntimeSyncNodeID                string
@@ -61,18 +62,27 @@ func RuntimePolicySetting() RuntimePolicySettings {
 			HighPriorityReservedDepth: setting.QueueHighPriorityReservedDepth,
 			AbsoluteMaxDepth:          setting.QueueAbsoluteMaxDepth,
 		},
-		CircuitFailureThreshold:          setting.CircuitFailureThreshold,
-		CircuitMinSamples:                setting.CircuitMinSamples,
-		CircuitOpenSeconds:               setting.CircuitOpenSeconds,
-		CircuitHalfOpenProbeCount:        setting.CircuitHalfOpenProbeCount,
-		CircuitErrorPolicies:             circuitErrorPolicies(setting.CircuitErrorPolicies),
-		StickyTTLSeconds:                 setting.StickyTTLSeconds,
-		StickyKeepScoreRatio:             setting.StickyKeepScoreRatio,
-		StickySaveOnSelect:               setting.StickySaveOnSelect,
-		StickyRenewOnSuccess:             setting.StickyRenewOnSuccess,
-		StickyFailurePolicy:              setting.StickyFailurePolicy,
-		CacheAffinityKeepScoreRatio:      setting.CacheAffinityKeepScoreRatio,
-		CacheAffinityEnabled:             setting.CacheAffinityEnabled,
+		CircuitFailureThreshold:     setting.CircuitFailureThreshold,
+		CircuitMinSamples:           setting.CircuitMinSamples,
+		CircuitOpenSeconds:          setting.CircuitOpenSeconds,
+		CircuitHalfOpenProbeCount:   setting.CircuitHalfOpenProbeCount,
+		CircuitErrorPolicies:        circuitErrorPolicies(setting.CircuitErrorPolicies),
+		StickyTTLSeconds:            setting.StickyTTLSeconds,
+		StickyKeepScoreRatio:        setting.StickyKeepScoreRatio,
+		StickySaveOnSelect:          setting.StickySaveOnSelect,
+		StickyRenewOnSuccess:        setting.StickyRenewOnSuccess,
+		StickyFailurePolicy:         setting.StickyFailurePolicy,
+		CacheAffinityKeepScoreRatio: setting.CacheAffinityKeepScoreRatio,
+		CacheAffinityEnabled:        setting.CacheAffinityEnabled,
+		CostFirstStickyEscape: scheduler.CostFirstStickyEscapeConfig{
+			Enabled:        setting.CostFirstStickyEscapeEnabled,
+			CostRatio:      setting.CostFirstStickyEscapeCostRatio,
+			CacheCostRatio: setting.CostFirstStickyEscapeCacheCostRatio,
+			MaxSpeedDrop:   setting.CostFirstStickyEscapeMaxSpeedDrop,
+			CacheSpeedDrop: setting.CostFirstStickyEscapeCacheSpeedDrop,
+			MinSamples:     setting.CostFirstStickyEscapeMinSamples,
+			SuccessSlack:   setting.CostFirstStickyEscapeSuccessSlack,
+		},
 		RuntimeSyncEnabled:               setting.RuntimeSyncEnabled,
 		RuntimeSyncRedisEnabled:          setting.RuntimeSyncRedisEnabled,
 		RuntimeSyncNodeID:                setting.RuntimeSyncNodeID,

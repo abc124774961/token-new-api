@@ -162,6 +162,7 @@ type dispatchRequestMeta struct {
 	StickyKeyFP               string                      `json:"sticky_key_fp,omitempty"`
 	StickyRetained            bool                        `json:"sticky_retained,omitempty"`
 	StickyBreak               string                      `json:"sticky_break,omitempty"`
+	StickyDecision            *core.StickyDecision        `json:"sticky_decision,omitempty"`
 	CacheAffinity             bool                        `json:"cache_affinity,omitempty"`
 	RequiresCodexImageTool    bool                        `json:"requires_codex_image_tool,omitempty"`
 	RequiredTools             []string                    `json:"required_tools,omitempty"`
@@ -228,6 +229,7 @@ func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
 		StickyKeyFP:            plan.StickyKeyFP,
 		StickyRetained:         plan.StickyRetained,
 		StickyBreak:            plan.StickyBreak,
+		StickyDecision:         plan.StickyDecision,
 		CacheAffinity:          plan.CacheAffinity,
 		RequiresCodexImageTool: plan.RequiresCodexImageTool,
 		RequiredTools:          append([]string(nil), plan.RequiredTools...),

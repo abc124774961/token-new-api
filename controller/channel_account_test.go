@@ -1105,6 +1105,125 @@ func TestUpdateChannelAccountProxyBindsAndClearsProxy(t *testing.T) {
 	require.Nil(t, updated.ChannelInfo.MultiKeyProxyIDs)
 }
 
+func TestUpdateChannelAccountsProxyBindsAndClearsSelectedAccounts(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     23,
+		Name:   "proxy batch bind",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-one\nsk-two\nsk-three",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 3,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayProxy{
+		ID:       502,
+		Name:     "batch socks exit",
+		Protocol: "socks5",
+		Address:  "127.0.0.1:1080",
+		Enabled:  true,
+	}).Error)
+
+	router := gin.New()
+	router.POST("/api/channel/:id/account-proxies", UpdateChannelAccountsProxy)
+	bindRecorder := httptest.NewRecorder()
+	bindReq := httptest.NewRequest(http.MethodPost, "/api/channel/23/account-proxies", bytes.NewBufferString(`{"proxy_id":502,"credential_indexes":[2,0,2]}`))
+	router.ServeHTTP(bindRecorder, bindReq)
+
+	bindPayload := decodeChannelAccountsResponse(t, bindRecorder)
+	require.True(t, bindPayload.Success, bindRecorder.Body.String())
+	require.NotNil(t, bindPayload.Data.Operation)
+	require.Equal(t, "proxy", bindPayload.Data.Operation.Type)
+	require.Equal(t, "bind", bindPayload.Data.Operation.Action)
+	require.Equal(t, 2, bindPayload.Data.Operation.Requested)
+	require.Equal(t, 2, bindPayload.Data.Operation.Affected)
+	require.NotNil(t, bindPayload.Data.Items[0].Proxy)
+	require.Nil(t, bindPayload.Data.Items[1].Proxy)
+	require.NotNil(t, bindPayload.Data.Items[2].Proxy)
+	require.Equal(t, 502, bindPayload.Data.Items[0].Proxy.ID)
+	require.Equal(t, 502, bindPayload.Data.Items[2].Proxy.ID)
+
+	updated, err := model.GetChannelById(23, true)
+	require.NoError(t, err)
+	require.Equal(t, map[int]int{0: 502, 2: 502}, updated.ChannelInfo.MultiKeyProxyIDs)
+
+	var usageCount int64
+	require.NoError(t, db.Model(&model.ModelGatewayProxyUsage{}).Where("proxy_id = ? AND channel_id = ?", 502, 23).Count(&usageCount).Error)
+	require.Equal(t, int64(2), usageCount)
+
+	clearRecorder := httptest.NewRecorder()
+	clearReq := httptest.NewRequest(http.MethodPost, "/api/channel/23/account-proxies", bytes.NewBufferString(`{"proxy_id":0,"credential_indexes":[0,2]}`))
+	router.ServeHTTP(clearRecorder, clearReq)
+	clearPayload := decodeChannelAccountsResponse(t, clearRecorder)
+	require.True(t, clearPayload.Success, clearRecorder.Body.String())
+	require.Equal(t, "clear", clearPayload.Data.Operation.Action)
+	require.Equal(t, 2, clearPayload.Data.Operation.Affected)
+	require.Nil(t, clearPayload.Data.Items[0].Proxy)
+	require.Nil(t, clearPayload.Data.Items[2].Proxy)
+
+	updated, err = model.GetChannelById(23, true)
+	require.NoError(t, err)
+	require.Nil(t, updated.ChannelInfo.MultiKeyProxyIDs)
+}
+
+func TestUpdateChannelAccountsProxyConfirmPolicyRequiresAllowReuseRisk(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     24,
+		Name:   "proxy batch confirm",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-one\nsk-two",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayProxy{
+		ID:       503,
+		Name:     "batch confirm socks",
+		Protocol: "socks5",
+		Address:  "127.0.0.1:1080",
+		Enabled:  true,
+	}).Error)
+	setting := scheduler_setting.DefaultSetting()
+	setting.ProxySameBrandReusePolicy = scheduler_setting.ProxyReusePolicyConfirm
+	restoreSetting := scheduler_setting.SetSettingForTest(setting)
+	defer restoreSetting()
+
+	router := gin.New()
+	router.POST("/api/channel/:id/account-proxies", UpdateChannelAccountsProxy)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/channel/24/account-proxies", bytes.NewBufferString(`{"proxy_id":503,"credential_indexes":[0,1]}`))
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.False(t, payload.Success, recorder.Body.String())
+	require.Contains(t, payload.Message, "请确认后继续绑定")
+	updated, err := model.GetChannelById(24, true)
+	require.NoError(t, err)
+	require.Nil(t, updated.ChannelInfo.MultiKeyProxyIDs)
+
+	confirmedRecorder := httptest.NewRecorder()
+	confirmedReq := httptest.NewRequest(http.MethodPost, "/api/channel/24/account-proxies", bytes.NewBufferString(`{"proxy_id":503,"credential_indexes":[0,1],"allow_reuse_risk":true}`))
+	router.ServeHTTP(confirmedRecorder, confirmedReq)
+	confirmedPayload := decodeChannelAccountsResponse(t, confirmedRecorder)
+	require.True(t, confirmedPayload.Success, confirmedRecorder.Body.String())
+	require.Equal(t, "bind", confirmedPayload.Data.Operation.Action)
+
+	updated, err = model.GetChannelById(24, true)
+	require.NoError(t, err)
+	require.Equal(t, map[int]int{0: 503, 1: 503}, updated.ChannelInfo.MultiKeyProxyIDs)
+}
+
 func TestListChannelAccountsIncludesProxyReuseRisk(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	channel := model.Channel{
@@ -1314,29 +1433,88 @@ func TestUpdateChannelAccountProxyPolicyAllowsSameSubjectAndDifferentBrand(t *te
 	require.Equal(t, 602, updated.ChannelInfo.MultiKeyProxyIDs[0])
 }
 
-func TestDeleteChannelAccountsRejectsDeletingAllAccounts(t *testing.T) {
+func TestDeleteChannelAccountsAllowsDeletingAllAccountsAndAutoDisablesChannel(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	channel := model.Channel{
 		Id:     17,
 		Name:   "delete all",
 		Type:   constant.ChannelTypeOpenAI,
-		Key:    "sk-one",
+		Key:    "sk-one\nsk-two",
 		Status: common.ChannelStatusEnabled,
 		Models: "gpt-5.4",
 		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:           true,
+			MultiKeySize:         2,
+			MultiKeyProxyIDs:     map[int]int{0: 701, 1: 702},
+			MultiKeyAccountTypes: map[int]string{0: modelgatewaycore.AccountTypeAPIKey, 1: modelgatewaycore.AccountTypeOAuthAccount},
+		},
 	}
 	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5.4",
+		ChannelId: 17,
+		Enabled:   true,
+	}).Error)
+	require.NoError(t, model.RecordModelGatewayProxyUsage(model.ModelGatewayProxyUsage{
+		ProxyID:         701,
+		ChannelID:       17,
+		ResourceID:      "openai",
+		ResourceType:    "channel",
+		AccountID:       "sk-one",
+		AccountType:     modelgatewaycore.AccountTypeAPIKey,
+		Brand:           "openai",
+		Provider:        "openai",
+		CredentialIndex: 0,
+		LastStatus:      model.ModelGatewayProxyUsageStatusBound,
+	}))
+	require.NoError(t, model.RecordModelGatewayProxyUsage(model.ModelGatewayProxyUsage{
+		ProxyID:         702,
+		ChannelID:       17,
+		ResourceID:      "openai",
+		ResourceType:    "channel",
+		AccountID:       "sk-two",
+		AccountType:     modelgatewaycore.AccountTypeOAuthAccount,
+		Brand:           "openai",
+		Provider:        "openai",
+		CredentialIndex: 1,
+		LastStatus:      model.ModelGatewayProxyUsageStatusBound,
+	}))
 
 	router := gin.New()
 	router.DELETE("/api/channel/:id/accounts", DeleteChannelAccounts)
 	recorder := httptest.NewRecorder()
-	body := bytes.NewBufferString(`{"credential_indexes":[0]}`)
+	body := bytes.NewBufferString(`{"credential_indexes":[0,1]}`)
 	req := httptest.NewRequest(http.MethodDelete, "/api/channel/17/accounts", body)
 	router.ServeHTTP(recorder, req)
 
 	payload := decodeChannelAccountsResponse(t, recorder)
-	require.False(t, payload.Success, recorder.Body.String())
-	require.Contains(t, payload.Message, "不能删除最后一个账号")
+	require.True(t, payload.Success, recorder.Body.String())
+	require.NotNil(t, payload.Data.Operation)
+	require.Equal(t, "delete", payload.Data.Operation.Type)
+	require.Equal(t, 2, payload.Data.Operation.Deleted)
+	require.True(t, payload.Data.Operation.ChannelDisabled)
+	require.Equal(t, 0, payload.Data.Total)
+	require.Empty(t, payload.Data.Items)
+
+	updated, err := model.GetChannelById(17, true)
+	require.NoError(t, err)
+	require.Empty(t, updated.Key)
+	require.Equal(t, common.ChannelStatusAutoDisabled, updated.Status)
+	require.Equal(t, channelAccountAllKeysDisabledReason, updated.GetOtherInfo()["status_reason"])
+	require.False(t, updated.ChannelInfo.IsMultiKey)
+	require.Equal(t, 0, updated.ChannelInfo.MultiKeySize)
+	require.Nil(t, updated.ChannelInfo.MultiKeyStatusList)
+	require.Nil(t, updated.ChannelInfo.MultiKeyProxyIDs)
+	require.Nil(t, updated.ChannelInfo.MultiKeyAccountTypes)
+
+	var ability model.Ability
+	require.NoError(t, db.First(&ability, "channel_id = ?", 17).Error)
+	require.False(t, ability.Enabled)
+	var usageCount int64
+	require.NoError(t, db.Model(&model.ModelGatewayProxyUsage{}).Where("channel_id = ?", 17).Count(&usageCount).Error)
+	require.Equal(t, int64(0), usageCount)
 }
 
 func createProxyReusePolicyFixture(t *testing.T, db *gorm.DB) {

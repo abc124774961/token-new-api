@@ -634,6 +634,82 @@ func TestRelayProxyBridgeWithoutSelectedPlanDoesNotHandleResponse(t *testing.T) 
 	require.Empty(t, recorder.Body.String())
 }
 
+func TestAccountCapabilityPrefersChatCompletions(t *testing.T) {
+	denied := false
+	allowed := true
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelAccountCapability: &model.ChannelAccountCapability{
+				ResponsesWrite:       &denied,
+				ChatCompletionsWrite: &allowed,
+			},
+		},
+	}
+
+	require.True(t, accountCapabilityPrefersChatCompletions(info))
+}
+
+func TestEnsureAccountCapabilityResponsesViaChatPlanUsesStandardProfile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	denied := false
+	allowed := true
+	info := &relaycommon.RelayInfo{
+		RelayMode:        relayconstant.RelayModeResponses,
+		RequestModelName: "gpt-4o",
+		OriginModelName:  "gpt-4o",
+		UsingGroup:       "default",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:             99,
+			ChannelType:           constant.ChannelTypeOpenAI,
+			UpstreamModelName:     "gpt-4o",
+			ChannelAccountCapability: &model.ChannelAccountCapability{
+				ResponsesWrite:       &denied,
+				ChatCompletionsWrite: &allowed,
+			},
+		},
+	}
+
+	restore := ensureAccountCapabilityResponsesViaChatPlan(ctx, info)
+	bridge := integration.NewProxyBridge(nil)
+	decision := bridge.Resolve(ctx, info)
+	restore()
+	_, exists := integration.GetSelectedPlan(ctx)
+
+	require.True(t, decision.Enabled)
+	require.Equal(t, provider.ProfileStandardOpenAICompatible, decision.ProviderProfile)
+	require.Equal(t, provider.ProxyModeResponsesViaChat, decision.ProxyMode)
+	require.False(t, exists)
+}
+
+func TestTextHelperDoesNotForceResponsesWhenAccountCapabilityPrefersChat(t *testing.T) {
+	denied := false
+	allowed := true
+	info := &relaycommon.RelayInfo{
+		RelayMode:       relayconstant.RelayModeChatCompletions,
+		OriginModelName: "gpt-4o",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:             100,
+			ChannelType:           constant.ChannelTypeOpenAI,
+			ChannelOtherSettings:  dto.ChannelOtherSettings{WireAPI: "responses"},
+			ChannelAccountCapability: &model.ChannelAccountCapability{
+				ResponsesWrite:       &denied,
+				ChatCompletionsWrite: &allowed,
+			},
+		},
+	}
+
+	require.True(t, info.ChannelOtherSettings.UsesResponsesWireAPI())
+	require.True(t, accountCapabilityPrefersChatCompletions(info))
+	require.False(t, !accountCapabilityPrefersChatCompletions(info) &&
+		service.ShouldChatCompletionsUseResponsesForEndpointGlobal(
+			info.ChannelOtherSettings.UsesResponsesWireAPI(),
+			info.ChannelId,
+			info.ChannelType,
+			info.OriginModelName,
+		))
+}
+
 func TestHandleProxyBridgeStreamResponseConvertsChatSSEToResponsesSSE(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	disableStreamPingForResponsesTest(t)

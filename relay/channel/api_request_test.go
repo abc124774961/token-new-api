@@ -140,6 +140,37 @@ func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
 	require.False(t, hasAcceptEncoding)
 }
 
+func TestProcessHeaderOverride_OAuthJSONSkipsManagedAuthOverrides(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: false,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeOpenAI,
+			ApiKey:      `{"access_token":"access-token","account_id":"account-id","refresh_token":"refresh-token"}`,
+			HeadersOverride: map[string]any{
+				"Authorization":      "Bearer {api_key}",
+				"chatgpt-account-id": "wrong-account-id",
+				"User-Agent":         "Codex CLI",
+			},
+		},
+	}
+
+	headers, err := processHeaderOverride(info, ctx)
+
+	require.NoError(t, err)
+	require.Equal(t, "Codex CLI", headers["user-agent"])
+	_, hasAuthorization := headers["authorization"]
+	require.False(t, hasAuthorization)
+	_, hasAccountID := headers["chatgpt-account-id"]
+	require.False(t, hasAccountID)
+}
+
 func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.T) {
 	t.Parallel()
 

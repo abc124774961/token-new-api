@@ -245,6 +245,7 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.POST("/:id/accounts", controller.UpdateChannelAccountsStatus)
 			channelRoute.PUT("/:id/accounts", controller.ImportChannelAccounts)
 			channelRoute.DELETE("/:id/accounts", controller.DeleteChannelAccounts)
+			channelRoute.POST("/:id/account-proxies", controller.UpdateChannelAccountsProxy)
 			channelRoute.PUT("/:id/accounts/:credential_index", controller.UpdateChannelAccountCredential)
 			channelRoute.POST("/:id/accounts/:credential_index/status", controller.UpdateChannelAccountStatus)
 			channelRoute.POST("/:id/accounts/:credential_index/proxy", controller.UpdateChannelAccountProxy)

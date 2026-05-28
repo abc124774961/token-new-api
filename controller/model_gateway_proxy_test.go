@@ -157,6 +157,21 @@ func TestCreateModelGatewayProxyWithSchemeAndAuthBuildsAuthenticatedURL(t *testi
 	require.Equal(t, "socks5://user:pass@127.0.0.1:1080", mustProxyURL(t, created))
 }
 
+func TestCreateModelGatewayProxyRejectsAddressWithoutPort(t *testing.T) {
+	setupModelGatewayProxyControllerTestDB(t)
+
+	router := gin.New()
+	router.POST("/api/model_gateway/proxies", CreateModelGatewayProxy)
+	recorder := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"name":"proxy no port","protocol":"socks5","address":"206.123.156.217","enabled":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/model_gateway/proxies", body)
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeModelGatewayProxyResponse(t, recorder)
+	require.False(t, payload.Success, recorder.Body.String())
+	require.Contains(t, payload.Message, "请填写端口")
+}
+
 func TestModelGatewayProxyListReportsSameBrandReuseRisk(t *testing.T) {
 	db := setupModelGatewayProxyControllerTestDB(t)
 	require.NoError(t, db.Create(&model.ModelGatewayProxy{

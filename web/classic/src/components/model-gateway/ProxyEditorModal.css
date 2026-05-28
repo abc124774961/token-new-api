@@ -1,0 +1,63 @@
+.ct-proxy-editor-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ct-proxy-editor-form-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 150px minmax(0, 1fr);
+}
+
+.ct-proxy-editor-form-row + .ct-proxy-editor-form-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ct-proxy-editor-quick-fill {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--semi-color-border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--semi-color-fill-0);
+}
+
+.ct-proxy-editor-quick-fill-status {
+  color: var(--semi-color-text-2);
+  line-height: 18px;
+}
+
+.ct-proxy-editor-quick-fill-status.is-success {
+  color: var(--semi-color-success);
+}
+
+.ct-proxy-editor-quick-fill-status.is-warning {
+  color: var(--semi-color-warning);
+}
+
+.ct-proxy-editor-protocol-select {
+  width: 150px;
+}
+
+.ct-proxy-editor-form-enabled {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--semi-color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--semi-color-bg-0);
+}
+
+@media (max-width: 640px) {
+  .ct-proxy-editor-form-row,
+  .ct-proxy-editor-form-row + .ct-proxy-editor-form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .ct-proxy-editor-protocol-select {
+    width: 100%;
+  }
+}

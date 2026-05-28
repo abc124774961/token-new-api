@@ -99,6 +99,13 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	setting.StickySaveOnSelect = true
 	setting.StickyRenewOnSuccess = false
 	setting.StickyFailurePolicy = scheduler_setting.StickyFailurePolicyKeep
+	setting.CostFirstStickyEscapeEnabled = true
+	setting.CostFirstStickyEscapeCostRatio = 0.72
+	setting.CostFirstStickyEscapeCacheCostRatio = 0.50
+	setting.CostFirstStickyEscapeMaxSpeedDrop = 0.07
+	setting.CostFirstStickyEscapeCacheSpeedDrop = 0.04
+	setting.CostFirstStickyEscapeMinSamples = 8
+	setting.CostFirstStickyEscapeSuccessSlack = 0.03
 	setting.CircuitErrorPolicies = map[string]scheduler_setting.CircuitErrorPolicySetting{
 		"unknown": {
 			FailureThreshold:   0.9,
@@ -174,6 +181,13 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.True(t, payload.Data.Setting.StickySaveOnSelect)
 	require.False(t, payload.Data.Setting.StickyRenewOnSuccess)
 	require.Equal(t, scheduler_setting.StickyFailurePolicyKeep, payload.Data.Setting.StickyFailurePolicy)
+	require.True(t, payload.Data.Setting.CostFirstStickyEscapeEnabled)
+	require.Equal(t, 0.72, payload.Data.Setting.CostFirstStickyEscapeCostRatio)
+	require.Equal(t, 0.50, payload.Data.Setting.CostFirstStickyEscapeCacheCostRatio)
+	require.Equal(t, 0.07, payload.Data.Setting.CostFirstStickyEscapeMaxSpeedDrop)
+	require.Equal(t, 0.04, payload.Data.Setting.CostFirstStickyEscapeCacheSpeedDrop)
+	require.Equal(t, 8, payload.Data.Setting.CostFirstStickyEscapeMinSamples)
+	require.Equal(t, 0.03, payload.Data.Setting.CostFirstStickyEscapeSuccessSlack)
 	require.Len(t, payload.Data.Setting.CircuitErrorPolicies, 2)
 	require.Equal(t, 0.25, payload.Data.Setting.CircuitErrorPolicies["rate_limit"].FailureThreshold)
 	require.Equal(t, 2, payload.Data.Setting.CircuitErrorPolicies["rate_limit"].MinSamples)
@@ -242,6 +256,12 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	var stickyFailurePolicyOption model.Option
 	require.NoError(t, db.First(&stickyFailurePolicyOption, "key = ?", "scheduler_setting.sticky_failure_policy").Error)
 	require.Equal(t, scheduler_setting.StickyFailurePolicyKeep, stickyFailurePolicyOption.Value)
+	var stickyEscapeCostOption model.Option
+	require.NoError(t, db.First(&stickyEscapeCostOption, "key = ?", "scheduler_setting.cost_first_sticky_escape_cost_ratio").Error)
+	require.Equal(t, "0.72", stickyEscapeCostOption.Value)
+	var stickyEscapeSpeedOption model.Option
+	require.NoError(t, db.First(&stickyEscapeSpeedOption, "key = ?", "scheduler_setting.cost_first_sticky_escape_max_speed_score_drop").Error)
+	require.Equal(t, "0.07", stickyEscapeSpeedOption.Value)
 	require.Equal(t, "35", common.OptionMap["scheduler_setting.rollout_percent"])
 }
 

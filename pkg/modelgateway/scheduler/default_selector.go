@@ -14,12 +14,12 @@ import (
 const maxCandidateExplanations = 32
 
 const (
-	costFirstStickyEscapeCostRatio       = 0.75
-	costFirstStickyEscapeScoreDelta      = 0.03
-	costFirstStickyEscapeCacheCostRatio  = 0.55
-	costFirstStickyEscapeCacheScoreDelta = 0.08
-	costFirstStickyEscapeMinSamples      = 5
-	costFirstStickyEscapeSuccessSlack    = 0.02
+	costFirstStickyEscapeCostRatio      = 0.75
+	costFirstStickyEscapeCacheCostRatio = 0.55
+	costFirstStickyEscapeMaxSpeedDrop   = 0.06
+	costFirstStickyEscapeCacheSpeedDrop = 0.03
+	costFirstStickyEscapeMinSamples     = 5
+	costFirstStickyEscapeSuccessSlack   = 0.02
 )
 
 type DefaultSmartChannelSelector struct {
@@ -30,6 +30,17 @@ type DefaultSmartChannelSelector struct {
 	stickyRouter         core.StickyRouter
 	costBaselineProvider core.CostBaselineProvider
 	scoringService       *CandidateScoringService
+	stickyEscapeConfig   CostFirstStickyEscapeConfig
+}
+
+type CostFirstStickyEscapeConfig struct {
+	Enabled        bool
+	CostRatio      float64
+	CacheCostRatio float64
+	MaxSpeedDrop   float64
+	CacheSpeedDrop float64
+	MinSamples     int
+	SuccessSlack   float64
 }
 
 type stickySaveOnSelectRouter interface {
@@ -39,6 +50,7 @@ type stickySaveOnSelectRouter interface {
 type candidateEvaluation struct {
 	candidate     core.Candidate
 	snapshot      core.RuntimeSnapshot
+	score         core.ScoreResult
 	stickyMatched bool
 	rejectReason  string
 }
@@ -51,10 +63,53 @@ type CandidateScoreEvaluation struct {
 
 func NewDefaultSmartChannelSelector(candidateBuilder core.CandidatePoolBuilder, snapshotStore core.RuntimeSnapshotStore, weights core.ScoreWeights) *DefaultSmartChannelSelector {
 	return &DefaultSmartChannelSelector{
-		candidateBuilder: candidateBuilder,
-		snapshotStore:    snapshotStore,
-		scoreWeights:     weights,
+		candidateBuilder:   candidateBuilder,
+		snapshotStore:      snapshotStore,
+		scoreWeights:       weights,
+		stickyEscapeConfig: DefaultCostFirstStickyEscapeConfig(),
 	}
+}
+
+func DefaultCostFirstStickyEscapeConfig() CostFirstStickyEscapeConfig {
+	return CostFirstStickyEscapeConfig{
+		Enabled:        true,
+		CostRatio:      costFirstStickyEscapeCostRatio,
+		CacheCostRatio: costFirstStickyEscapeCacheCostRatio,
+		MaxSpeedDrop:   costFirstStickyEscapeMaxSpeedDrop,
+		CacheSpeedDrop: costFirstStickyEscapeCacheSpeedDrop,
+		MinSamples:     costFirstStickyEscapeMinSamples,
+		SuccessSlack:   costFirstStickyEscapeSuccessSlack,
+	}
+}
+
+func (c CostFirstStickyEscapeConfig) normalized() CostFirstStickyEscapeConfig {
+	if c.CostRatio <= 0 {
+		c.CostRatio = costFirstStickyEscapeCostRatio
+	}
+	if c.CacheCostRatio <= 0 {
+		c.CacheCostRatio = costFirstStickyEscapeCacheCostRatio
+	}
+	if c.MaxSpeedDrop < 0 {
+		c.MaxSpeedDrop = 0
+	}
+	if c.CacheSpeedDrop < 0 {
+		c.CacheSpeedDrop = 0
+	}
+	if c.MinSamples <= 0 {
+		c.MinSamples = costFirstStickyEscapeMinSamples
+	}
+	if c.SuccessSlack < 0 {
+		c.SuccessSlack = 0
+	}
+	return c
+}
+
+func (s *DefaultSmartChannelSelector) WithCostFirstStickyEscapeConfig(config CostFirstStickyEscapeConfig) *DefaultSmartChannelSelector {
+	if s == nil {
+		return nil
+	}
+	s.stickyEscapeConfig = config.normalized()
+	return s
 }
 
 func (s *DefaultSmartChannelSelector) WithRuntimeSnapshotEnricher(enricher core.RuntimeSnapshotEnricher) *DefaultSmartChannelSelector {
@@ -118,12 +173,14 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	var stickyScore core.ScoreResult
 	stickySaturated := false
 	var stickyBreak string
+	var stickyDecision *core.StickyDecision
 	stickyFound := false
 	availableFound := false
 	saturatedFound := false
 	costReferenceRatio := 0.0
 	explanations := make([]core.CandidateExplanation, 0, minInt(len(candidates), maxCandidateExplanations))
 	evaluations := make([]candidateEvaluation, 0, len(candidates))
+	availableEvaluations := make([]candidateEvaluation, 0, len(candidates))
 	for _, candidate := range candidates {
 		snapshot := s.snapshotForCandidate(candidate, policy)
 		if s.snapshotEnricher != nil {
@@ -183,6 +240,9 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			}
 			continue
 		}
+		evaluation.snapshot = snapshot
+		evaluation.score = score
+		availableEvaluations = append(availableEvaluations, evaluation)
 		if !availableFound || score.RoutingTotal > bestAvailableScore.RoutingTotal {
 			bestAvailableCandidate = candidate
 			bestAvailableSnapshot = snapshot
@@ -217,17 +277,20 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			}
 			if stickySaturated && availableFound {
 				stickyBreak = "concurrency_saturated"
-			} else if shouldBreakStickyForCostFirst(
+			} else if escape, decision, ok := s.costFirstStickyEscapeCandidate(
 				policy,
 				stickyRoute,
 				stickyCandidate,
 				stickySnapshot,
 				stickyScore,
-				bestCandidate,
-				bestSnapshot,
-				bestScore,
-			) {
-				stickyBreak = "cost_first_cheaper_higher_score"
+				availableEvaluations,
+			); ok {
+				bestCandidate = escape.candidate
+				bestSnapshot = escape.snapshot
+				bestScore = escape.score
+				selectedSaturated = false
+				stickyBreak = "cost_first_cheaper_speed_acceptable"
+				stickyDecision = decision
 			} else if stickyScore.Total >= bestScore.Total*keepRatio {
 				bestCandidate = stickyCandidate
 				bestSnapshot = stickySnapshot
@@ -273,6 +336,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		StickyKeyFP:               stickyRoute.KeyFingerprint,
 		StickyRetained:            hasSticky && stickyBreak == "",
 		StickyBreak:               stickyBreak,
+		StickyDecision:            stickyDecision,
 		CacheAffinity:             hasSticky && stickyRoute.CacheAware,
 		PolicyMode:                policy.Mode,
 		AutoMode:                  policy.AutoMode,
@@ -846,40 +910,142 @@ func isStickyCandidate(candidate core.Candidate, route core.StickyRoute) bool {
 	return true
 }
 
-func shouldBreakStickyForCostFirst(policy core.GroupSmartPolicy, route core.StickyRoute, stickyCandidate core.Candidate, stickySnapshot core.RuntimeSnapshot, stickyScore core.ScoreResult, bestCandidate core.Candidate, bestSnapshot core.RuntimeSnapshot, bestScore core.ScoreResult) bool {
+func (s *DefaultSmartChannelSelector) costFirstStickyEscapeCandidate(policy core.GroupSmartPolicy, route core.StickyRoute, stickyCandidate core.Candidate, stickySnapshot core.RuntimeSnapshot, stickyScore core.ScoreResult, candidates []candidateEvaluation) (candidateEvaluation, *core.StickyDecision, bool) {
 	if policy.Strategy != core.StrategyCostFirst {
-		return false
+		return candidateEvaluation{}, nil, false
 	}
-	if sameRoutingCandidate(stickyCandidate, bestCandidate) {
-		return false
+	config := DefaultCostFirstStickyEscapeConfig()
+	if s != nil {
+		config = s.stickyEscapeConfig.normalized()
+	}
+	if !config.Enabled {
+		return candidateEvaluation{}, nil, false
 	}
 	stickyCost := stickyEscapeCost(stickySnapshot)
-	bestCost := stickyEscapeCost(bestSnapshot)
-	if stickyCost <= 0 || bestCost <= 0 {
-		return false
+	if stickyCost <= 0 {
+		return candidateEvaluation{}, nil, false
 	}
-	if stickySnapshot.SampleCount < costFirstStickyEscapeMinSamples || bestSnapshot.SampleCount < costFirstStickyEscapeMinSamples {
-		return false
+	if stickySnapshot.SampleCount < config.MinSamples {
+		return candidateEvaluation{}, nil, false
 	}
-	costRatio := costFirstStickyEscapeCostRatio
-	scoreDelta := costFirstStickyEscapeScoreDelta
+	costRatio := config.CostRatio
+	speedDrop := config.MaxSpeedDrop
 	if route.CacheAware {
-		costRatio = costFirstStickyEscapeCacheCostRatio
-		scoreDelta = costFirstStickyEscapeCacheScoreDelta
+		costRatio = config.CacheCostRatio
+		speedDrop = config.CacheSpeedDrop
 	}
-	if bestCost > stickyCost*costRatio {
-		return false
+	stickySpeed, ok := stickySpeedScore(stickyScore)
+	if !ok {
+		return candidateEvaluation{}, nil, false
 	}
-	if bestScore.RoutingTotal < stickyScore.RoutingTotal+scoreDelta {
-		return false
+	var best candidateEvaluation
+	bestCost := 0.0
+	var bestDecision *core.StickyDecision
+	found := false
+	for _, candidate := range candidates {
+		if sameRoutingCandidate(stickyCandidate, candidate.candidate) {
+			continue
+		}
+		candidateCost := stickyEscapeCost(candidate.snapshot)
+		if candidateCost <= 0 || candidateCost > stickyCost*costRatio {
+			continue
+		}
+		if candidate.snapshot.SampleCount < config.MinSamples {
+			continue
+		}
+		if candidate.snapshot.SuccessRate+config.SuccessSlack < stickySnapshot.SuccessRate {
+			continue
+		}
+		candidateSpeed, ok := stickySpeedScore(candidate.score)
+		if !ok {
+			continue
+		}
+		if candidateSpeed+speedDrop < stickySpeed {
+			continue
+		}
+		if !found || candidateCost < bestCost {
+			best = candidate
+			bestCost = candidateCost
+			bestDecision = stickyEscapeDecision(
+				"cost_first_cheaper_speed_acceptable",
+				"switch",
+				route,
+				config,
+				stickySnapshot,
+				stickyCost,
+				stickySpeed,
+				candidate,
+				candidateCost,
+				candidateSpeed,
+				costRatio,
+				speedDrop,
+			)
+			found = true
+		}
 	}
-	if bestScore.Total < stickyScore.Total+scoreDelta/2 {
-		return false
+	return best, bestDecision, found
+}
+
+func stickyEscapeDecision(reason, decision string, route core.StickyRoute, config CostFirstStickyEscapeConfig, stickySnapshot core.RuntimeSnapshot, stickyCost float64, stickySpeed float64, candidate candidateEvaluation, candidateCost float64, candidateSpeed float64, costThreshold float64, maxSpeedDrop float64) *core.StickyDecision {
+	channelID := 0
+	channelName := ""
+	if candidate.candidate.Channel != nil {
+		channelID = candidate.candidate.Channel.Id
+		channelName = candidate.candidate.Channel.Name
 	}
-	if bestSnapshot.SuccessRate+costFirstStickyEscapeSuccessSlack < stickySnapshot.SuccessRate {
-		return false
+	if channelID == 0 {
+		channelID = candidate.snapshot.Key.ChannelID
 	}
-	return true
+	costRatio := 0.0
+	if stickyCost > 0 {
+		costRatio = candidateCost / stickyCost
+	}
+	return &core.StickyDecision{
+		Reason:               reason,
+		CandidateChannelID:   channelID,
+		CandidateChannelName: channelName,
+		StickyCost:           stickyCost,
+		CandidateCost:        candidateCost,
+		CostRatio:            costRatio,
+		CostThreshold:        costThreshold,
+		StickySpeedScore:     stickySpeed,
+		CandidateSpeedScore:  candidateSpeed,
+		SpeedScoreDelta:      candidateSpeed - stickySpeed,
+		MaxSpeedScoreDrop:    maxSpeedDrop,
+		StickySuccessRate:    stickySnapshot.SuccessRate,
+		CandidateSuccessRate: candidate.snapshot.SuccessRate,
+		SuccessSlack:         config.SuccessSlack,
+		StickySampleCount:    stickySnapshot.SampleCount,
+		CandidateSampleCount: candidate.snapshot.SampleCount,
+		MinSamples:           config.MinSamples,
+		CacheAware:           route.CacheAware,
+		Decision:             decision,
+	}
+}
+
+func stickySpeedScore(score core.ScoreResult) (float64, bool) {
+	total := 0.0
+	count := 0.0
+	for _, item := range score.Items {
+		switch item.Key {
+		case scoreItemTTFTLatency, scoreItemDurationLatency:
+			if item.MissingReason != "" || item.SampleCount <= 0 {
+				continue
+			}
+			total += item.Score
+			count++
+		case scoreItemThroughput:
+			if item.MissingReason != "" || item.SampleCount <= 0 {
+				continue
+			}
+			total += item.Score
+			count++
+		}
+	}
+	if count <= 0 {
+		return 0, false
+	}
+	return total / count, true
 }
 
 func stickyEscapeCost(snapshot core.RuntimeSnapshot) float64 {

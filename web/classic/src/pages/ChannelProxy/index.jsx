@@ -51,19 +51,10 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { API, showError, showSuccess, timestamp2string } from '../../helpers';
+import ProxyEditorModal from '../../components/model-gateway/ProxyEditorModal';
 import './channel-proxy.css';
 
 const { Text } = Typography;
-
-const emptyProxyForm = {
-  name: '',
-  protocol: 'socks5',
-  address: '',
-  username: '',
-  password: '',
-  enabled: true,
-  remark: '',
-};
 
 function unwrapApiData(response) {
   return response?.data?.data || response?.data || {};
@@ -166,7 +157,6 @@ function ChannelProxy() {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingProxy, setEditingProxy] = useState(null);
   const [usageProxy, setUsageProxy] = useState(null);
-  const [form, setForm] = useState(emptyProxyForm);
 
   const loadProxies = useCallback(async () => {
     setLoading(true);
@@ -196,62 +186,18 @@ function ChannelProxy() {
 
   const openCreateModal = useCallback(() => {
     setEditingProxy(null);
-    setForm(emptyProxyForm);
     setModalVisible(true);
   }, []);
 
   const openEditModal = useCallback((proxy) => {
     setEditingProxy(proxy);
-    setForm({
-      name: proxy?.name || '',
-      protocol: proxy?.protocol || 'socks5',
-      address: '',
-      username: proxy?.username || '',
-      password: '',
-      enabled: proxy?.enabled !== false,
-      remark: proxy?.remark || '',
-    });
     setModalVisible(true);
   }, []);
 
   const closeModal = useCallback(() => {
     setModalVisible(false);
     setEditingProxy(null);
-    setForm(emptyProxyForm);
   }, []);
-
-  const saveProxy = useCallback(async () => {
-    const isEditing = Boolean(editingProxy?.id);
-    if (!isEditing && !form.address.trim()) {
-      showError(t('请填写代理地址'));
-      return;
-    }
-    setSaving(true);
-    try {
-      const payload = {
-        ...form,
-        name: form.name.trim(),
-        address: form.address.trim(),
-        username: form.username.trim(),
-        remark: form.remark.trim(),
-      };
-      const response = isEditing
-        ? await API.put(`/api/model_gateway/proxies/${editingProxy.id}`, payload)
-        : await API.post('/api/model_gateway/proxies', payload);
-      if (response?.data?.success === false) {
-        throw new Error(response?.data?.message || t('保存失败'));
-      }
-      closeModal();
-      showSuccess(isEditing ? t('代理已更新') : t('代理已创建'));
-      await loadProxies();
-    } catch (err) {
-      const message =
-        err?.response?.data?.message || err?.message || t('保存失败');
-      showError(message);
-    } finally {
-      setSaving(false);
-    }
-  }, [closeModal, editingProxy, form, loadProxies, t]);
 
   const toggleProxyEnabled = useCallback(
     async (proxy) => {
@@ -681,101 +627,20 @@ function ChannelProxy() {
           />
         </div>
 
-        <Modal
-          title={editingProxy ? t('编辑代理') : t('新增代理')}
+        <ProxyEditorModal
           visible={modalVisible}
-          width={680}
-          okText={t('保存')}
-          cancelText={t('取消')}
-          confirmLoading={saving}
-          onOk={saveProxy}
+          proxy={editingProxy}
           onCancel={closeModal}
-        >
-          <div className='ct-channel-proxy-form'>
-            {editingProxy ? (
-              <Banner
-                type='info'
-                closeIcon={null}
-                description={t('编辑时代理地址和密码留空会保留原值，列表不会展示完整密码')}
-              />
-            ) : null}
-            <Input
-              value={form.name}
-              onChange={(value) => setForm((prev) => ({ ...prev, name: value }))}
-              placeholder={t('代理名称（可选）')}
-            />
-            <div className='ct-channel-proxy-form-row'>
-              <Select
-                value={form.protocol}
-                onChange={(value) =>
-                  setForm((prev) => ({ ...prev, protocol: value }))
-                }
-                className='ct-channel-proxy-protocol-select'
-              >
-                <Select.Option value='socks5'>SOCKS5</Select.Option>
-                <Select.Option value='socks5h'>SOCKS5H</Select.Option>
-                <Select.Option value='http'>HTTP</Select.Option>
-                <Select.Option value='https'>HTTPS</Select.Option>
-              </Select>
-              <Input
-                value={form.address}
-                onChange={(value) =>
-                  setForm((prev) => ({ ...prev, address: value }))
-                }
-                placeholder={
-                  editingProxy
-                    ? t('留空保持原地址，当前：{{address}}', {
-                        address: proxyAddress(editingProxy) || '--',
-                      })
-                    : '127.0.0.1:1080'
-                }
-              />
-            </div>
-            <div className='ct-channel-proxy-form-row'>
-              <Input
-                value={form.username}
-                onChange={(value) =>
-                  setForm((prev) => ({ ...prev, username: value }))
-                }
-                placeholder={t('代理用户名（可选）')}
-              />
-              <Input
-                type='password'
-                value={form.password}
-                onChange={(value) =>
-                  setForm((prev) => ({ ...prev, password: value }))
-                }
-                placeholder={
-                  editingProxy?.password_set
-                    ? t('留空保持原密码')
-                    : t('代理密码（可选）')
-                }
-              />
-            </div>
-            <Input
-              value={form.remark}
-              onChange={(value) =>
-                setForm((prev) => ({ ...prev, remark: value }))
-              }
-              placeholder={t('备注（可选）')}
-            />
-            <div className='ct-channel-proxy-form-enabled'>
-              <Text>{t('启用代理')}</Text>
-              <Switch
-                checked={form.enabled}
-                onChange={(checked) =>
-                  setForm((prev) => ({ ...prev, enabled: checked }))
-                }
-              />
-            </div>
-          </div>
-        </Modal>
+          onSaved={loadProxies}
+        />
 
         <Modal
           title={t('代理使用记录')}
           visible={Boolean(usageProxy)}
-          width={860}
+          width='80vw'
+          height='70vh'
           footer={null}
+          bodyStyle={{ overflow: 'hidden' }}
           onCancel={() => setUsageProxy(null)}
         >
           <div className='ct-channel-proxy-usage-modal'>
@@ -798,16 +663,19 @@ function ChannelProxy() {
                 </Tag>
               )}
             </div>
-            <Table
-              size='small'
-              columns={usageColumns}
-              dataSource={usageProxy?.brand_usage || []}
-              rowKey={(record, index) =>
-                `${record.channel_id}-${record.credential_index}-${index}`
-              }
-              pagination={{ pageSize: 8 }}
-              empty={<Empty description={t('暂无代理使用记录')} />}
-            />
+            <div className='ct-channel-proxy-usage-table'>
+              <Table
+                size='small'
+                columns={usageColumns}
+                dataSource={usageProxy?.brand_usage || []}
+                rowKey={(record, index) =>
+                  `${record.channel_id}-${record.credential_index}-${index}`
+                }
+                pagination={{ pageSize: 8 }}
+                scroll={{ x: 940, y: 'calc(70vh - 220px)' }}
+                empty={<Empty description={t('暂无代理使用记录')} />}
+              />
+            </div>
             <div className='ct-channel-proxy-usage-foot'>
               <Clock3 size={14} />
               <span>

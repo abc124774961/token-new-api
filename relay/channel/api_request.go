@@ -78,7 +78,55 @@ var passthroughSkipHeaderNamesLower = map[string]struct{}{
 	"sec-websocket-extensions": {},
 }
 
+type OAuthJSONCredential struct {
+	AccessToken string `json:"access_token,omitempty"`
+	AccountID   string `json:"account_id,omitempty"`
+}
+
+var oauthJSONManagedHeaderNamesLower = map[string]struct{}{
+	"authorization":      {},
+	"chatgpt-account-id": {},
+}
+
 var headerPassthroughRegexCache sync.Map // map[string]*regexp.Regexp
+
+func ParseOAuthJSONCredential(raw string) (OAuthJSONCredential, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "{") {
+		return OAuthJSONCredential{}, false
+	}
+	var credential OAuthJSONCredential
+	if err := common2.Unmarshal([]byte(raw), &credential); err != nil {
+		return OAuthJSONCredential{}, false
+	}
+	credential.AccessToken = strings.TrimSpace(credential.AccessToken)
+	credential.AccountID = strings.TrimSpace(credential.AccountID)
+	if credential.AccessToken == "" || credential.AccountID == "" {
+		return OAuthJSONCredential{}, false
+	}
+	return credential, true
+}
+
+func usesOAuthJSONCredential(info *common.RelayInfo) bool {
+	if info == nil || info.ChannelMeta == nil {
+		return false
+	}
+	switch info.ChannelMeta.ChannelType {
+	case appconstant.ChannelTypeOpenAI, appconstant.ChannelTypeCodex:
+	default:
+		return false
+	}
+	_, ok := ParseOAuthJSONCredential(info.ChannelMeta.ApiKey)
+	return ok
+}
+
+func shouldSkipOAuthJSONManagedHeaderOverride(info *common.RelayInfo, name string) bool {
+	if !usesOAuthJSONCredential(info) {
+		return false
+	}
+	_, managed := oauthJSONManagedHeaderNamesLower[strings.ToLower(strings.TrimSpace(name))]
+	return managed
+}
 
 func getHeaderPassthroughRegex(pattern string) (*regexp.Regexp, error) {
 	pattern = strings.TrimSpace(pattern)
@@ -248,6 +296,9 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
 		}
 		key := strings.TrimSpace(strings.ToLower(k))
 		if key == "" {
+			continue
+		}
+		if shouldSkipOAuthJSONManagedHeaderOverride(info, key) {
 			continue
 		}
 

@@ -214,6 +214,17 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, header)
+	if oauthCredential, ok := channel.ParseOAuthJSONCredential(info.ApiKey); ok {
+		header.Set("Authorization", "Bearer "+oauthCredential.AccessToken)
+		header.Set("chatgpt-account-id", oauthCredential.AccountID)
+		if header.Get("OpenAI-Beta") == "" {
+			header.Set("OpenAI-Beta", "responses=experimental")
+		}
+		if header.Get("originator") == "" {
+			header.Set("originator", "codex_cli_rs")
+		}
+		return nil
+	}
 	if info.ChannelType == constant.ChannelTypeAzure {
 		header.Set("api-key", info.ApiKey)
 		return nil

@@ -41,6 +41,7 @@ import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
+import { IconRefresh, IconSearch } from '@douyinfe/semi-icons';
 import {
   API,
   showError,
@@ -273,6 +274,54 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
     }
   };
 
+  const handleProbeKeyCapabilities = async (keyIndex) => {
+    const operationId = `probe_${keyIndex}`;
+    setOperationLoading((prev) => ({ ...prev, [operationId]: true }));
+
+    try {
+      const res = await API.post('/api/channel/multi_key/manage', {
+        channel_id: channel.id,
+        action: 'probe_key_capabilities',
+        key_index: keyIndex,
+      });
+
+      if (res.data.success) {
+        showSuccess(t('账号权限检测完成'));
+        await loadKeyStatus(currentPage, pageSize);
+        onRefresh && onRefresh();
+      } else {
+        showError(res.data.message);
+      }
+    } catch (error) {
+      showError(t('账号权限检测失败'));
+    } finally {
+      setOperationLoading((prev) => ({ ...prev, [operationId]: false }));
+    }
+  };
+
+  const handleProbeAllCapabilities = async () => {
+    setOperationLoading((prev) => ({ ...prev, probe_all: true }));
+
+    try {
+      const res = await API.post('/api/channel/multi_key/manage', {
+        channel_id: channel.id,
+        action: 'probe_all_key_capabilities',
+      });
+
+      if (res.data.success) {
+        showSuccess(t('账号权限检测完成'));
+        await loadKeyStatus(currentPage, pageSize);
+        onRefresh && onRefresh();
+      } else {
+        showError(res.data.message);
+      }
+    } catch (error) {
+      showError(t('账号权限检测失败'));
+    } finally {
+      setOperationLoading((prev) => ({ ...prev, probe_all: false }));
+    }
+  };
+
   // Handle page change
   const handlePageChange = (page) => {
     setCurrentPage(page);
@@ -355,6 +404,60 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
     }
   };
 
+  const renderCapabilityTag = (label, value) => {
+    if (value === true) {
+      return (
+        <Tag color='green' shape='circle' size='small'>
+          {label}
+        </Tag>
+      );
+    }
+    if (value === false) {
+      return (
+        <Tag color='red' shape='circle' size='small'>
+          {label}
+        </Tag>
+      );
+    }
+    return (
+      <Tag color='grey' shape='circle' size='small'>
+        {label}
+      </Tag>
+    );
+  };
+
+  const renderCapabilities = (capabilities) => {
+    if (!capabilities || !capabilities.checked_time) {
+      return <Text type='quaternary'>{t('未检测')}</Text>;
+    }
+
+    const content = (
+      <div className='flex flex-col gap-2 max-w-xs'>
+        <div>
+          {t('检测时间')}: {timestamp2string(capabilities.checked_time)}
+        </div>
+        {capabilities.last_endpoint && (
+          <div>
+            {t('最后检测端点')}: {capabilities.last_endpoint}
+          </div>
+        )}
+        {capabilities.last_message && (
+          <div className='break-all'>{capabilities.last_message}</div>
+        )}
+      </div>
+    );
+
+    return (
+      <Tooltip content={content}>
+        <Space spacing={4} wrap>
+          {renderCapabilityTag('Responses', capabilities.responses_write)}
+          {renderCapabilityTag('Chat', capabilities.chat_completions_write)}
+          {renderCapabilityTag('Compact', capabilities.responses_compact_write)}
+        </Space>
+      </Tooltip>
+    );
+  };
+
   // Table columns definition
   const columns = [
     {
@@ -407,12 +510,27 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
       },
     },
     {
+      title: t('账号权限'),
+      dataIndex: 'capabilities',
+      width: 240,
+      render: (capabilities) => renderCapabilities(capabilities),
+    },
+    {
       title: t('操作'),
       key: 'action',
       fixed: 'right',
-      width: 150,
+      width: 240,
       render: (_, record) => (
         <Space>
+          <Tooltip content={t('检测账号权限')}>
+            <Button
+              type='tertiary'
+              size='small'
+              icon={<IconSearch />}
+              loading={operationLoading[`probe_${record.index}`]}
+              onClick={() => handleProbeKeyCapabilities(record.index)}
+            />
+          </Tooltip>
           {record.status === 1 ? (
             <Button
               type='danger'
@@ -634,10 +752,20 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
                         <Button
                           size='small'
                           type='tertiary'
+                          icon={<IconRefresh />}
                           onClick={() => loadKeyStatus(currentPage, pageSize)}
                           loading={loading}
                         >
                           {t('刷新')}
+                        </Button>
+                        <Button
+                          size='small'
+                          type='tertiary'
+                          icon={<IconSearch />}
+                          loading={operationLoading.probe_all}
+                          onClick={handleProbeAllCapabilities}
+                        >
+                          {t('检测全部权限')}
                         </Button>
                         {manualDisabledCount + autoDisabledCount > 0 && (
                           <Popconfirm

@@ -75,6 +75,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	if info.RelayMode == relayconstant.RelayModeChatCompletions &&
 		!passThroughGlobal &&
 		!info.ChannelSetting.PassThroughBodyEnabled &&
+		!accountCapabilityPrefersChatCompletions(info) &&
 		service.ShouldChatCompletionsUseResponsesForEndpointGlobal(
 			info.ChannelOtherSettings.UsesResponsesWireAPI(),
 			info.ChannelId,
