@@ -11,10 +11,12 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 var commonGroupCol string
@@ -24,6 +26,30 @@ var commonFalseVal string
 
 var logKeyCol string
 var logGroupCol string
+
+type gormLogWriter struct{}
+
+func (gormLogWriter) Printf(format string, args ...any) {
+	common.LogWriterMu.RLock()
+	defer common.LogWriterMu.RUnlock()
+	_, _ = fmt.Fprintf(gin.DefaultWriter, format+"\n", args...)
+}
+
+func newGormLogger() gormlogger.Interface {
+	logLevel := gormlogger.Warn
+	parameterizedQueries := true
+	if common.DebugEnabled {
+		logLevel = gormlogger.Info
+		parameterizedQueries = false
+	}
+	return gormlogger.New(gormLogWriter{}, gormlogger.Config{
+		SlowThreshold:             200 * time.Millisecond,
+		Colorful:                  false,
+		IgnoreRecordNotFoundError: true,
+		ParameterizedQueries:      parameterizedQueries,
+		LogLevel:                  logLevel,
+	})
+}
 
 func initCol() {
 	// init common column names
@@ -134,6 +160,7 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 				PreferSimpleProtocol: true, // disables implicit prepared statement usage
 			}), &gorm.Config{
 				PrepareStmt: true, // precompile SQL
+				Logger:      newGormLogger(),
 			})
 		}
 		if strings.HasPrefix(dsn, "local") {
@@ -145,6 +172,7 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 			}
 			return gorm.Open(sqlite.Open(common.SQLitePath), &gorm.Config{
 				PrepareStmt: true, // precompile SQL
+				Logger:      newGormLogger(),
 			})
 		}
 		// Use MySQL
@@ -164,6 +192,7 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 		}
 		return gorm.Open(mysql.Open(dsn), &gorm.Config{
 			PrepareStmt: true, // precompile SQL
+			Logger:      newGormLogger(),
 		})
 	}
 	// Use SQLite
@@ -171,15 +200,13 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 	common.UsingSQLite = true
 	return gorm.Open(sqlite.Open(common.SQLitePath), &gorm.Config{
 		PrepareStmt: true, // precompile SQL
+		Logger:      newGormLogger(),
 	})
 }
 
 func InitDB() (err error) {
 	db, err := chooseDB("SQL_DSN", false)
 	if err == nil {
-		if common.DebugEnabled {
-			db = db.Debug()
-		}
 		DB = db
 		// MySQL charset/collation startup check: ensure Chinese-capable charset
 		if common.UsingMySQL {
@@ -217,9 +244,6 @@ func InitLogDB() (err error) {
 	}
 	db, err := chooseDB("LOG_SQL_DSN", true)
 	if err == nil {
-		if common.DebugEnabled {
-			db = db.Debug()
-		}
 		LOG_DB = db
 		// If log DB is MySQL, also ensure Chinese-capable charset
 		if common.LogSqlType == common.DatabaseTypeMySQL {

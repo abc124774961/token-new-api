@@ -65,6 +65,7 @@ func (e *ProbeExecutor) Execute(ctx context.Context, candidate ProbeCandidate) P
 		TargetKey:  candidate.Key,
 		StartedAt:  startedAt,
 		Plan:       candidate.Plan,
+		PromptType: selectProbePromptCategory(candidate),
 	}
 	if candidate.Channel == nil {
 		result.Err = errors.New("probe channel is nil")
@@ -90,7 +91,7 @@ func (e *ProbeExecutor) Execute(ctx context.Context, candidate ProbeCandidate) P
 func (e *ProbeExecutor) execute(ctx context.Context, result ProbeRunResult) ProbeRunResult {
 	probeEndpointType := probeEndpointType(result.Channel, result.Model, result.RuntimeKey.EndpointType)
 	requestPath := requestPathForEndpoint(probeEndpointType, result.Model)
-	request := buildProbeRequest(result.Model, probeEndpointType)
+	request := buildProbeRequestWithCategory(result.Model, probeEndpointType, result.PromptType)
 	if request == nil {
 		result.Err = fmt.Errorf("model %s is not supported for health probe", result.Model)
 		return result
@@ -355,36 +356,41 @@ func newProbeGinContext(ctx context.Context, probeID string, path string) (*gin.
 }
 
 func buildProbeRequest(modelName string, endpointType constant.EndpointType) dto.Request {
+	return buildProbeRequestWithCategory(modelName, endpointType, PromptCategoryShort)
+}
+
+func buildProbeRequestWithCategory(modelName string, endpointType constant.EndpointType, category string) dto.Request {
 	stream := true
 	streamOptions := &dto.StreamOptions{IncludeUsage: true}
+	prompt := probePromptForCategory(category)
 	switch endpointType {
 	case constant.EndpointTypeOpenAIResponse:
-		maxTokens := uint(8)
+		maxTokens := prompt.MaxOutputTokens
 		return &dto.OpenAIResponsesRequest{
 			Model:           modelName,
-			Input:           []byte(`[{"role":"user","content":"Reply with exactly the word ok."}]`),
+			Input:           []byte(fmt.Sprintf(`[{"role":"user","content":%q}]`, prompt.Content)),
 			Stream:          &stream,
 			StreamOptions:   streamOptions,
 			MaxOutputTokens: &maxTokens,
 		}
 	case constant.EndpointTypeAnthropic:
-		maxTokens := uint(8)
+		maxTokens := prompt.MaxOutputTokens
 		return &dto.ClaudeRequest{
 			Model: modelName,
 			Messages: []dto.ClaudeMessage{{
 				Role:    "user",
-				Content: "Reply with exactly the word ok.",
+				Content: prompt.Content,
 			}},
 			MaxTokens: &maxTokens,
 			Stream:    &stream,
 		}
 	case constant.EndpointTypeGemini:
-		maxTokens := uint(128)
+		maxTokens := prompt.MaxOutputTokens
 		return &dto.GeminiChatRequest{
 			Contents: []dto.GeminiChatContent{{
 				Role: "user",
 				Parts: []dto.GeminiPart{{
-					Text: "Reply with exactly the word ok.",
+					Text: prompt.Content,
 				}},
 			}},
 			GenerationConfig: dto.GeminiChatGenerationConfig{
@@ -392,14 +398,14 @@ func buildProbeRequest(modelName string, endpointType constant.EndpointType) dto
 			},
 		}
 	case constant.EndpointTypeOpenAI:
-		maxTokens := uint(8)
+		maxTokens := prompt.MaxOutputTokens
 		return &dto.GeneralOpenAIRequest{
 			Model:         modelName,
 			Stream:        &stream,
 			StreamOptions: streamOptions,
 			Messages: []dto.Message{{
 				Role:    "user",
-				Content: "Reply with exactly the word ok.",
+				Content: prompt.Content,
 			}},
 			MaxTokens: &maxTokens,
 		}

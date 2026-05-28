@@ -339,7 +339,7 @@ func setCodexModelResponseHeaders(c *gin.Context) {
 }
 
 func logCodexModelsTrace(c *gin.Context, response dto.CodexModelsResponse, stage string) {
-	if !shouldReturnCodexModels(c, constant.ChannelTypeOpenAI) && !service.ShouldLogClientRequestTrace(c) {
+	if !service.ShouldLogClientRequestTrace(c) {
 		return
 	}
 	trace := map[string]any{

@@ -44,6 +44,7 @@ var (
 
 const relayStatusClientClosedRequest = 499
 const relayFirstByteTimeout = 20 * time.Second
+const relayChannelInducedClientAbortMinDuration = 5 * time.Second
 
 func newRelayQueueManager() *modelgatewayscheduler.QueueManager {
 	policy := modelgatewayintegration.RuntimePolicySetting()
@@ -356,14 +357,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	if common.GetContextKeyBool(c, constant.ContextKeyHealthProbe) {
 		relayInfo.IsChannelTest = true
 	}
-	logger.LogInfo(c, fmt.Sprintf(
-		"relay model trace initialized: format=%s, request_model=%s, context_model=%s, origin_model=%s, path=%s",
+	logger.LogDebug(c, "relay model trace initialized: format=%s, request_model=%s, context_model=%s, origin_model=%s, path=%s",
 		relayFormat,
 		relayInfo.RequestModelName,
 		relayInfo.ContextModelName,
 		relayInfo.OriginModelName,
 		c.Request.URL.Path,
-	))
+	)
 	logRelayRequestTrace(c, relayInfo)
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
@@ -883,6 +883,10 @@ func newChannelErrorFromSelectedChannel(c *gin.Context, channel *model.Channel) 
 
 type modelGatewayAttemptFlow struct {
 	ErrorCategory                  string
+	WarningLevel                   string
+	WarningFlags                   []string
+	WarningMessage                 string
+	ChannelInducedClientAbort      bool
 	RetryAction                    string
 	RetryReason                    string
 	WillRetry                      bool
@@ -971,7 +975,12 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 		result.ErrorType = string(apiErr.GetErrorType())
 		result.ErrorMessage = apiErr.MaskSensitiveError()
 	}
+	applyModelGatewayAttemptWarnings(c, info, &flow)
 	result.ErrorCategory = flow.ErrorCategory
+	result.WarningLevel = flow.WarningLevel
+	result.WarningFlags = append([]string(nil), flow.WarningFlags...)
+	result.WarningMessage = flow.WarningMessage
+	result.ChannelInducedClientAbort = flow.ChannelInducedClientAbort
 	result.WillRetry = flow.WillRetry
 	result.RetryAction = flow.RetryAction
 	result.RetryReason = flow.RetryReason
@@ -990,9 +999,60 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 	wrapper.Facade.Report(c, result)
 }
 
+func applyModelGatewayAttemptWarnings(c *gin.Context, info *relaycommon.RelayInfo, flow *modelGatewayAttemptFlow) {
+	if flow == nil || !flow.ClientAborted {
+		return
+	}
+	if modelGatewayAttemptLikelyChannelInducedAbort(c, info, *flow) {
+		flow.ChannelInducedClientAbort = true
+		if flow.ErrorCategory == "" || flow.ErrorCategory == modelgatewaycore.ErrorCategoryClientAborted {
+			flow.ErrorCategory = modelgatewaycore.ErrorCategoryChannelInducedClientAbort
+		}
+		if flow.WarningLevel == "" {
+			flow.WarningLevel = modelgatewaycore.WarningLevelWarning
+		}
+		flow.WarningFlags = appendModelGatewayWarningFlag(flow.WarningFlags, modelgatewaycore.WarningFlagChannelInducedAbort)
+		if !relayResponseAlreadyStarted(c) {
+			flow.WarningFlags = appendModelGatewayWarningFlag(flow.WarningFlags, modelgatewaycore.WarningFlagNoEffectiveFirstByte)
+		}
+		if strings.TrimSpace(flow.WarningMessage) == "" {
+			flow.WarningMessage = "client aborted after waiting without an effective downstream response; possible channel-induced stream issue"
+		}
+	}
+}
+
+func modelGatewayAttemptLikelyChannelInducedAbort(c *gin.Context, info *relaycommon.RelayInfo, flow modelGatewayAttemptFlow) bool {
+	if !flow.ClientAborted {
+		return false
+	}
+	if flow.RelayTotal < relayChannelInducedClientAbortMinDuration {
+		return false
+	}
+	if relayResponseAlreadyStarted(c) {
+		return false
+	}
+	return true
+}
+
+func appendModelGatewayWarningFlag(flags []string, flag string) []string {
+	flag = strings.TrimSpace(flag)
+	if flag == "" {
+		return flags
+	}
+	for _, existing := range flags {
+		if strings.TrimSpace(existing) == flag {
+			return flags
+		}
+	}
+	return append(flags, flag)
+}
+
 func modelGatewayAttemptFailureScope(result modelgatewaycore.AttemptResult) string {
 	if result.FailureScope != "" {
 		return strings.TrimSpace(result.FailureScope)
+	}
+	if result.ChannelInducedClientAbort || result.ErrorCategory == modelgatewaycore.ErrorCategoryChannelInducedClientAbort {
+		return modelgatewaycore.FailureScopeAccount
 	}
 	if result.ClientAborted || result.ErrorCategory == modelgatewaycore.ErrorCategoryClientAborted {
 		return modelgatewaycore.FailureScopeClient

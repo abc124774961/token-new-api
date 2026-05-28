@@ -27,6 +27,7 @@ import {
   Check,
   CreditCard,
   FileSearch,
+  LineChart,
   LockKeyhole,
   Route,
   Shield,
@@ -110,6 +111,17 @@ const formatHeroDynamicPrice = (value) => {
   return `$${number.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
 };
 
+const formatHomeTrendTime = (timestamp, range) => {
+  const number = Number(timestamp);
+  if (!Number.isFinite(number) || number <= 0) return '--';
+  const date = new Date(number * 1000);
+  if (Number.isNaN(date.getTime())) return '--';
+  if (range === 'seven_days') {
+    return `${date.getMonth() + 1}/${date.getDate()}`;
+  }
+  return `${String(date.getHours()).padStart(2, '0')}:00`;
+};
+
 const formatHeroDynamicRatioRange = (minValue, maxValue) => {
   const minRatio = Number(minValue);
   const maxRatio = Number(maxValue);
@@ -141,6 +153,70 @@ const formatHomeMoney = (value, symbol = '$') => {
 const hasFinitePositiveValue = (value) => {
   const number = Number(value);
   return Number.isFinite(number) && number > 0;
+};
+
+const buildHomeRatioCurve = (points) => {
+  const normalizedPoints = Array.isArray(points) ? points : [];
+  const values = normalizedPoints
+    .map((point) => Number(point?.ratio || 0))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (normalizedPoints.length === 0 || values.length === 0) {
+    return {
+      line: '',
+      area: '',
+      dots: [],
+      min: 0,
+      max: 0,
+    };
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = Math.max(max - min, max * 0.12, 0.0001);
+  const width = 720;
+  const height = 300;
+  const padX = 30;
+  const padY = 36;
+  const usableWidth = width - padX * 2;
+  const usableHeight = height - padY * 2;
+  const plotPoints = normalizedPoints.map((point, index) => {
+    const ratio = Number(point?.ratio || 0);
+    const x =
+      padX +
+      (normalizedPoints.length <= 1
+        ? usableWidth / 2
+        : (usableWidth * index) / (normalizedPoints.length - 1));
+    const y =
+      ratio > 0
+        ? padY + usableHeight - ((ratio - min) / span) * usableHeight
+        : null;
+    return {
+      x,
+      y,
+      ratio,
+      sampleCount: Number(point?.sample_count || 0),
+      timestamp: point?.timestamp,
+    };
+  });
+  const validPoints = plotPoints.filter((point) => point.y !== null);
+  const line = validPoints
+    .map((point, index) =>
+      `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`,
+    )
+    .join(' ');
+  const first = validPoints[0];
+  const last = validPoints[validPoints.length - 1];
+  const baseline = height - padY;
+  const area =
+    first && last
+      ? `${line} L ${last.x.toFixed(1)} ${baseline} L ${first.x.toFixed(1)} ${baseline} Z`
+      : '';
+  return {
+    line,
+    area,
+    dots: validPoints,
+    min,
+    max,
+  };
 };
 
 const hasHeroDynamicBillingData = (status) =>
@@ -1725,6 +1801,160 @@ const PricingEstimator = ({
   </div>
 );
 
+const RatioCurveSection = ({ dynamicBilling, t }) => {
+  const [activeRange, setActiveRange] = useState('today');
+  const trend = dynamicBilling?.trend || {};
+  const ranges = [
+    { key: 'today', label: t('今天') },
+    { key: 'yesterday', label: t('昨天') },
+    { key: 'seven_days', label: t('7天') },
+  ];
+  const activeSeries = trend?.[activeRange] || {};
+  const points = Array.isArray(activeSeries.points) ? activeSeries.points : [];
+  const curve = useMemo(() => buildHomeRatioCurve(points), [points]);
+  const hasData = Number(activeSeries.sample_count || 0) > 0 && curve.line;
+  const latestRatio =
+    Number(activeSeries.latest_ratio || 0) ||
+    Number(dynamicBilling?.current_ratio || 0);
+  const sampleCount = Number(activeSeries.sample_count || 0);
+  const rangeLabel = formatHeroDynamicRatioRange(
+    activeSeries.min_ratio,
+    activeSeries.max_ratio,
+  );
+  const stats = [
+    {
+      label: t('当前倍率'),
+      value: formatHeroDynamicRatio(latestRatio),
+      note: dynamicBilling?.group || t('动态分组'),
+    },
+    {
+      label: t('区间范围'),
+      value: rangeLabel,
+      note: t('真实请求样本'),
+    },
+    {
+      label: t('展示价格'),
+      value: formatHeroDynamicPrice(dynamicBilling?.display_price_per_m),
+      note: dynamicBilling?.model || 'gpt-5.4',
+    },
+    {
+      label: t('样本数'),
+      value: sampleCount > 0 ? String(sampleCount) : '--',
+      note: t('不含探活'),
+    },
+  ];
+
+  return (
+    <section className='ct-lite-ratio-section'>
+      <div className='ct-lite-shell ct-lite-ratio-grid'>
+        <div className='ct-lite-ratio-copy'>
+          <span>
+            <LineChart size={17} />
+            {t('动态倍率曲线')}
+          </span>
+          <h2>{t('价格随真实请求样本自动校准')}</h2>
+          <p>
+            {t(
+              '公开展示当前动态计费倍率走势，帮助你在调用前快速了解今天、昨天和近 7 天的价格波动。',
+            )}
+          </p>
+          <div className='ct-lite-ratio-stats'>
+            {stats.map((item) => (
+              <div key={item.label}>
+                <small>{item.label}</small>
+                <strong>{item.value}</strong>
+                <em>{item.note}</em>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className='ct-lite-ratio-board'>
+          <div className='ct-lite-ratio-board-head'>
+            <div>
+              <span>{t('倍率趋势')}</span>
+              <strong>
+                {hasData
+                  ? t('{{range}} 动态倍率', {
+                      range: ranges.find((range) => range.key === activeRange)
+                        ?.label,
+                    })
+                  : t('等待真实请求样本')}
+              </strong>
+            </div>
+            <div className='ct-lite-ratio-tabs'>
+              {ranges.map((range) => (
+                <button
+                  type='button'
+                  key={range.key}
+                  className={activeRange === range.key ? 'active' : ''}
+                  onClick={() => setActiveRange(range.key)}
+                >
+                  {range.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className='ct-lite-ratio-chart'>
+            <svg viewBox='0 0 720 300' role='img' aria-label={t('动态倍率曲线')}>
+              <defs>
+                <linearGradient id='ct-lite-ratio-line' x1='0' y1='0' x2='1' y2='0'>
+                  <stop offset='0%' stopColor='#0d9ca5' />
+                  <stop offset='52%' stopColor='#23c7cf' />
+                  <stop offset='100%' stopColor='#5b7cfa' />
+                </linearGradient>
+                <linearGradient id='ct-lite-ratio-fill' x1='0' y1='0' x2='0' y2='1'>
+                  <stop offset='0%' stopColor='#23c7cf' stopOpacity='0.28' />
+                  <stop offset='100%' stopColor='#23c7cf' stopOpacity='0' />
+                </linearGradient>
+              </defs>
+              {[0, 1, 2, 3, 4].map((line) => (
+                <line
+                  key={line}
+                  x1='30'
+                  x2='690'
+                  y1={36 + line * 57}
+                  y2={36 + line * 57}
+                  className='ct-lite-ratio-gridline'
+                />
+              ))}
+              {hasData ? (
+                <>
+                  <path d={curve.area} className='ct-lite-ratio-area' />
+                  <path d={curve.line} className='ct-lite-ratio-line' />
+                  {curve.dots.map((point, index) => (
+                    <circle
+                      key={`${point.timestamp}-${index}`}
+                      cx={point.x}
+                      cy={point.y}
+                      r={index === curve.dots.length - 1 ? 5.8 : 3.8}
+                      className='ct-lite-ratio-dot'
+                    />
+                  ))}
+                </>
+              ) : (
+                <text x='360' y='152' textAnchor='middle' className='ct-lite-ratio-empty'>
+                  {t('暂无真实倍率样本')}
+                </text>
+              )}
+            </svg>
+            <div className='ct-lite-ratio-axis'>
+              <span>{formatHomeTrendTime(points[0]?.timestamp, activeRange)}</span>
+              <span>
+                {formatHeroDynamicRatio(curve.max || activeSeries.max_ratio)}
+              </span>
+              <span>
+                {formatHomeTrendTime(points[points.length - 1]?.timestamp, activeRange)}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+};
+
 const Home = () => {
   const { t, i18n } = useTranslation();
   const location = useLocation();
@@ -2597,6 +2827,8 @@ const Home = () => {
               </div>
             </div>
           </section>
+
+          <RatioCurveSection dynamicBilling={homeStatus.dynamic_billing} t={t} />
 
           <section className='ct-lite-flow-section'>
             <div className='ct-lite-shell'>

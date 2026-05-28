@@ -20,6 +20,7 @@ import (
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
+	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
 	modelgatewayscheduler "github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -49,15 +50,17 @@ const (
 	modelGatewayObservabilitySummaryFreshTTL    = 2 * time.Second
 	modelGatewayObservabilitySummaryStaleTTL    = 30 * time.Second
 	modelGatewayObservabilitySummaryMaxCache    = 128
-	modelGatewayObservabilityViewUserRequests   = "user_requests"
-	modelGatewayDynamicBillingDisplayModel      = "gpt-5.4"
-	modelGatewayHealthCheckQueueTypeAll         = "all"
-	modelGatewayHealthCheckQueueTypeLowScore    = "low_score"
-	modelGatewayHealthCheckQueueTypeLowTraffic  = "low_traffic"
-	modelGatewayHealthCheckQueueTypeRecovery    = "recovery"
-	modelGatewayHealthCheckQueueTypeIsolated    = "isolated"
-	modelGatewayHealthCheckSuccessRateThreshold = 0.80
-	modelGatewayHealthCheckOutputRateThreshold  = 0.02
+	// Keep batch size below SQLite's default bind parameter ceiling.
+	modelGatewayDynamicBillingAppliedSummaryBatchSize = 500
+	modelGatewayObservabilityViewUserRequests         = "user_requests"
+	modelGatewayDynamicBillingDisplayModel            = "gpt-5.4"
+	modelGatewayHealthCheckQueueTypeAll               = "all"
+	modelGatewayHealthCheckQueueTypeLowScore          = "low_score"
+	modelGatewayHealthCheckQueueTypeLowTraffic        = "low_traffic"
+	modelGatewayHealthCheckQueueTypeRecovery          = "recovery"
+	modelGatewayHealthCheckQueueTypeIsolated          = "isolated"
+	modelGatewayHealthCheckSuccessRateThreshold       = 0.80
+	modelGatewayHealthCheckOutputRateThreshold        = 0.02
 )
 
 type ModelGatewayObservabilityResponse struct {
@@ -176,6 +179,7 @@ type ModelGatewayHealthCheckQueueReason struct {
 	Key      string `json:"key"`
 	Severity string `json:"severity"`
 	Priority int    `json:"priority"`
+	Label    string `json:"label,omitempty"`
 }
 
 type ModelGatewayHealthCheckQueueReasonCount struct {
@@ -185,10 +189,13 @@ type ModelGatewayHealthCheckQueueReasonCount struct {
 
 type ModelGatewayHealthCheckQueueItem struct {
 	modelgatewayobservability.RuntimeStatusItem
-	Reasons   []ModelGatewayHealthCheckQueueReason `json:"reasons"`
-	Priority  int                                  `json:"priority"`
-	QueueType string                               `json:"queue_type"`
-	RowKey    string                               `json:"row_key"`
+	Reasons                []ModelGatewayHealthCheckQueueReason `json:"reasons"`
+	ProbeTriggerScoreItems []string                             `json:"probe_trigger_score_items,omitempty"`
+	ProbeSkipReason        string                               `json:"probe_skip_reason,omitempty"`
+	LastRealAttemptAt      int64                                `json:"last_real_attempt_at,omitempty"`
+	Priority               int                                  `json:"priority"`
+	QueueType              string                               `json:"queue_type"`
+	RowKey                 string                               `json:"row_key"`
 }
 
 type ModelGatewayScoreHistoryResponse struct {
@@ -401,40 +408,44 @@ type ModelGatewayUserRequestAggregate struct {
 }
 
 type ModelGatewayUserRequestRecord struct {
-	ID                    int                                 `json:"id"`
-	CreatedAt             int64                               `json:"created_at"`
-	CompletedAt           int64                               `json:"completed_at"`
-	RequestID             string                              `json:"request_id"`
-	UserID                int                                 `json:"user_id,omitempty"`
-	Username              string                              `json:"username,omitempty"`
-	RequestedModel        string                              `json:"requested_model"`
-	RequestedGroup        string                              `json:"requested_group"`
-	SelectedGroup         string                              `json:"selected_group,omitempty"`
-	ActualGroup           string                              `json:"actual_group,omitempty"`
-	ActualGroupRatio      float64                             `json:"actual_group_ratio,omitempty"`
-	FinalChannelID        int                                 `json:"final_channel_id,omitempty"`
-	FinalChannelName      string                              `json:"final_channel_name,omitempty"`
-	ActualChannelCost     float64                             `json:"actual_channel_cost,omitempty"`
-	UpstreamCostTotal     float64                             `json:"upstream_cost_total,omitempty"`
-	UpstreamCostModel     string                              `json:"upstream_cost_model,omitempty"`
-	UpstreamCostBreakdown map[string]interface{}              `json:"upstream_cost_breakdown,omitempty"`
-	UpstreamCostSource    string                              `json:"upstream_cost_source,omitempty"`
-	UpstreamCostAccuracy  string                              `json:"upstream_cost_accuracy,omitempty"`
-	Attempts              int                                 `json:"attempts"`
-	FinalSuccess          bool                                `json:"final_success"`
-	Recovered             bool                                `json:"recovered"`
-	FinalStatusCode       int                                 `json:"final_status_code,omitempty"`
-	FinalErrorCategory    string                              `json:"final_error_category,omitempty"`
-	EmptyOutput           bool                                `json:"empty_output,omitempty"`
-	ExperienceIssue       string                              `json:"experience_issue,omitempty"`
-	ClientAborted         bool                                `json:"client_aborted,omitempty"`
-	IsHealthProbe         bool                                `json:"is_health_probe,omitempty"`
-	ProbeReason           string                              `json:"probe_reason,omitempty"`
-	DurationMs            int64                               `json:"duration_ms,omitempty"`
-	TTFTMs                int64                               `json:"ttft_ms,omitempty"`
-	Status                string                              `json:"status,omitempty"`
-	Billing               *ModelGatewayUserRequestBillingInfo `json:"billing,omitempty"`
-	DispatchRecord        *ModelGatewayObservabilityRecord    `json:"dispatch_record,omitempty"`
+	ID                        int                                 `json:"id"`
+	CreatedAt                 int64                               `json:"created_at"`
+	CompletedAt               int64                               `json:"completed_at"`
+	RequestID                 string                              `json:"request_id"`
+	UserID                    int                                 `json:"user_id,omitempty"`
+	Username                  string                              `json:"username,omitempty"`
+	RequestedModel            string                              `json:"requested_model"`
+	RequestedGroup            string                              `json:"requested_group"`
+	SelectedGroup             string                              `json:"selected_group,omitempty"`
+	ActualGroup               string                              `json:"actual_group,omitempty"`
+	ActualGroupRatio          float64                             `json:"actual_group_ratio,omitempty"`
+	FinalChannelID            int                                 `json:"final_channel_id,omitempty"`
+	FinalChannelName          string                              `json:"final_channel_name,omitempty"`
+	ActualChannelCost         float64                             `json:"actual_channel_cost,omitempty"`
+	UpstreamCostTotal         float64                             `json:"upstream_cost_total,omitempty"`
+	UpstreamCostModel         string                              `json:"upstream_cost_model,omitempty"`
+	UpstreamCostBreakdown     map[string]interface{}              `json:"upstream_cost_breakdown,omitempty"`
+	UpstreamCostSource        string                              `json:"upstream_cost_source,omitempty"`
+	UpstreamCostAccuracy      string                              `json:"upstream_cost_accuracy,omitempty"`
+	Attempts                  int                                 `json:"attempts"`
+	FinalSuccess              bool                                `json:"final_success"`
+	Recovered                 bool                                `json:"recovered"`
+	FinalStatusCode           int                                 `json:"final_status_code,omitempty"`
+	FinalErrorCategory        string                              `json:"final_error_category,omitempty"`
+	WarningLevel              string                              `json:"warning_level,omitempty"`
+	WarningFlags              []string                            `json:"warning_flags,omitempty"`
+	WarningMessage            string                              `json:"warning_message,omitempty"`
+	ChannelInducedClientAbort bool                                `json:"channel_induced_client_abort,omitempty"`
+	EmptyOutput               bool                                `json:"empty_output,omitempty"`
+	ExperienceIssue           string                              `json:"experience_issue,omitempty"`
+	ClientAborted             bool                                `json:"client_aborted,omitempty"`
+	IsHealthProbe             bool                                `json:"is_health_probe,omitempty"`
+	ProbeReason               string                              `json:"probe_reason,omitempty"`
+	DurationMs                int64                               `json:"duration_ms,omitempty"`
+	TTFTMs                    int64                               `json:"ttft_ms,omitempty"`
+	Status                    string                              `json:"status,omitempty"`
+	Billing                   *ModelGatewayUserRequestBillingInfo `json:"billing,omitempty"`
+	DispatchRecord            *ModelGatewayObservabilityRecord    `json:"dispatch_record,omitempty"`
 }
 
 type ModelGatewayUserRequestBillingInfo struct {
@@ -666,6 +677,10 @@ type ModelGatewayObservabilityRecord struct {
 	CacheAffinity                  bool                               `json:"cache_affinity,omitempty"`
 	ErrorMessage                   string                             `json:"error_message,omitempty"`
 	ErrorCategory                  string                             `json:"error_category,omitempty"`
+	WarningLevel                   string                             `json:"warning_level,omitempty"`
+	WarningFlags                   []string                           `json:"warning_flags,omitempty"`
+	WarningMessage                 string                             `json:"warning_message,omitempty"`
+	ChannelInducedClientAbort      bool                               `json:"channel_induced_client_abort,omitempty"`
 	RetryAction                    string                             `json:"retry_action,omitempty"`
 	RetryReason                    string                             `json:"retry_reason,omitempty"`
 	WillRetry                      bool                               `json:"will_retry,omitempty"`
@@ -2197,15 +2212,22 @@ func loadModelGatewayDynamicBillingAppliedSummaries(logs []modelGatewayDynamicBi
 	if len(requestIDs) == 0 {
 		return summaryByRequestID, nil
 	}
-	summaries := make([]model.ModelGatewayUserRequestSummary, 0, len(requestIDs))
-	if err := model.DB.Model(&model.ModelGatewayUserRequestSummary{}).
-		Select("request_id", "requested_group", "selected_group").
-		Where("request_id IN ?", requestIDs).
-		Find(&summaries).Error; err != nil {
-		return nil, err
-	}
-	for _, summary := range summaries {
-		summaryByRequestID[strings.TrimSpace(summary.RequestId)] = summary
+	for start := 0; start < len(requestIDs); start += modelGatewayDynamicBillingAppliedSummaryBatchSize {
+		end := start + modelGatewayDynamicBillingAppliedSummaryBatchSize
+		if end > len(requestIDs) {
+			end = len(requestIDs)
+		}
+		batchRequestIDs := requestIDs[start:end]
+		summaries := make([]model.ModelGatewayUserRequestSummary, 0, len(batchRequestIDs))
+		if err := model.DB.Model(&model.ModelGatewayUserRequestSummary{}).
+			Select("request_id", "requested_group", "selected_group").
+			Where("request_id IN ?", batchRequestIDs).
+			Find(&summaries).Error; err != nil {
+			return nil, err
+		}
+		for _, summary := range summaries {
+			summaryByRequestID[strings.TrimSpace(summary.RequestId)] = summary
+		}
 	}
 	return summaryByRequestID, nil
 }
@@ -2389,11 +2411,14 @@ func BuildModelGatewayHealthCheckQueue(query modelgatewayobservability.RuntimeSt
 			continue
 		}
 		items = append(items, ModelGatewayHealthCheckQueueItem{
-			RuntimeStatusItem: runtimeItem,
-			Reasons:           reasons,
-			Priority:          reasons[0].Priority,
-			QueueType:         itemQueueType,
-			RowKey:            modelGatewayHealthCheckRuntimeRowKey(runtimeItem),
+			RuntimeStatusItem:      runtimeItem,
+			Reasons:                reasons,
+			ProbeTriggerScoreItems: modelGatewayHealthCheckTriggerScoreItems(runtimeItem, thresholds),
+			ProbeSkipReason:        modelGatewayHealthCheckProbeSkipReason(runtimeItem, thresholds),
+			LastRealAttemptAt:      runtimeItem.LastRealAttemptAt,
+			Priority:               reasons[0].Priority,
+			QueueType:              itemQueueType,
+			RowKey:                 modelGatewayHealthCheckRuntimeRowKey(runtimeItem),
 		})
 	}
 	sort.Slice(items, func(i int, j int) bool {
@@ -2445,6 +2470,7 @@ func modelGatewayHealthCheckQueueReasons(item modelgatewayobservability.RuntimeS
 			Key:      key,
 			Priority: priority,
 			Severity: severity,
+			Label:    modelGatewayHealthCheckReasonLabel(key),
 		})
 	}
 	if item.ConfigErrorIsolated || item.AuthConfigErrorCount > 0 {
@@ -2462,7 +2488,7 @@ func modelGatewayHealthCheckQueueReasons(item modelgatewayobservability.RuntimeS
 	if item.ProbeRecoveryPending {
 		addReason("probe_recovery_pending", 78, "info")
 	}
-	if item.ScoreTotal > 0 && item.ScoreTotal < thresholds.LowScore {
+	if len(modelGatewayHealthCheckTriggerScoreItems(item, thresholds)) > 0 {
 		addReason("low_score", 72, "warning")
 	}
 	if item.RealSampleCount30m <= 0 {
@@ -2484,6 +2510,84 @@ func modelGatewayHealthCheckQueueReasons(item modelgatewayobservability.RuntimeS
 		return reasons[i].Priority > reasons[j].Priority
 	})
 	return reasons
+}
+
+func modelGatewayHealthCheckReasonLabel(key string) string {
+	switch strings.TrimSpace(key) {
+	case "config_error":
+		return "配置异常"
+	case "circuit_open":
+		return "熔断中"
+	case "cooldown":
+		return "冷却中"
+	case "failure_avoidance":
+		return "近期失败恢复中"
+	case "probe_recovery_pending":
+		return "恢复确认中"
+	case "low_score":
+		return "低分待体检"
+	case "low_traffic":
+		return "近期缺少真实请求"
+	case "missing_samples":
+		return "缺少样本"
+	case "success_rate":
+		return "成功率偏低"
+	case "empty_output":
+		return "空输出偏高"
+	case "experience_issue":
+		return "体验异常偏高"
+	default:
+		return key
+	}
+}
+
+func modelGatewayHealthCheckTriggerScoreItems(item modelgatewayobservability.RuntimeStatusItem, thresholds ModelGatewayHealthCheckQueueThresholds) []string {
+	if !(item.ScoreTotal > 0 && item.ScoreTotal < thresholds.LowScore) {
+		return nil
+	}
+	setting := scheduler_setting.GetSetting()
+	enabled := modelgatewayprobe.NormalizeRecoverableScoreItems(setting.ProbeRecoverableScoreItems)
+	enabledSet := make(map[string]struct{}, len(enabled))
+	for _, key := range enabled {
+		enabledSet[key] = struct{}{}
+	}
+	out := make([]string, 0)
+	seen := map[string]struct{}{}
+	addItems := func(items []modelgatewaycore.ScoreItem) {
+		for _, scoreItem := range items {
+			if scoreItem.MissingReason != "" || scoreItem.Weight <= 0 {
+				continue
+			}
+			if _, ok := enabledSet[scoreItem.Key]; !ok {
+				continue
+			}
+			if scoreItem.Score < thresholds.LowScore {
+				if _, exists := seen[scoreItem.Key]; exists {
+					continue
+				}
+				seen[scoreItem.Key] = struct{}{}
+				out = append(out, scoreItem.Key)
+			}
+		}
+	}
+	addItems(item.ScoreItems)
+	addItems(item.RoutingScoreItems)
+	return out
+}
+
+func modelGatewayHealthCheckProbeSkipReason(item modelgatewayobservability.RuntimeStatusItem, thresholds ModelGatewayHealthCheckQueueThresholds) string {
+	setting := scheduler_setting.GetSetting()
+	if !setting.ProbeSkipRecentRealRequestEnabled || item.LastRealAttemptAt <= 0 {
+		return ""
+	}
+	window := setting.ProbeRecentRealRequestWindowSeconds
+	if window <= 0 {
+		window = 1800
+	}
+	if item.LastRealAttemptAt >= common.GetTimestamp()-int64(window) && len(modelGatewayHealthCheckTriggerScoreItems(item, thresholds)) > 0 {
+		return "recent_real_request"
+	}
+	return ""
 }
 
 func modelGatewayHealthCheckQueueAccumulateSummary(summary *ModelGatewayHealthCheckQueueSummary, item modelgatewayobservability.RuntimeStatusItem, reasons []ModelGatewayHealthCheckQueueReason) {
@@ -2896,6 +3000,7 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 			response.RecentRequests = append(response.RecentRequests, modelGatewayUserRequestRecord(userRequest))
 		}
 	}
+	attachModelGatewayUserRequestWarnings(response.RecentRequests)
 	if !options.Lite {
 		attachModelGatewayUserRequestBilling(response.RecentRequests)
 		attachModelGatewayUserRequestCosts(response.RecentRequests)
@@ -2908,6 +3013,7 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 	if !options.Lite || options.IncludeDispatch {
 		attachModelGatewayUserRequestDispatchRecords(response.RecentRequests)
 	}
+	attachModelGatewayUserRequestWarningDispatchFallback(response.RecentRequests)
 	normalizeModelGatewayUserRequestHealthProbeRecords(response.RecentRequests)
 	if !options.Lite {
 		attachModelGatewayUserRequestExecutionUsers(response.RecentRequests)
@@ -2977,6 +3083,88 @@ func attachModelGatewayUserRequestCosts(records []ModelGatewayUserRequestRecord)
 	}
 }
 
+func attachModelGatewayUserRequestWarnings(records []ModelGatewayUserRequestRecord) {
+	if len(records) == 0 || model.DB == nil {
+		return
+	}
+	requestIDs := make([]string, 0, len(records))
+	seen := make(map[string]bool, len(records))
+	for _, record := range records {
+		requestID := strings.TrimSpace(record.RequestID)
+		if requestID == "" || seen[requestID] {
+			continue
+		}
+		seen[requestID] = true
+		requestIDs = append(requestIDs, requestID)
+	}
+	if len(requestIDs) == 0 {
+		return
+	}
+
+	executionRecords := make([]model.ModelExecutionRecord, 0, len(requestIDs))
+	if err := model.DB.
+		Model(&model.ModelExecutionRecord{}).
+		Select("id, created_at, request_id, attempt_index, request_meta").
+		Where("request_id IN ?", requestIDs).
+		Order("request_id asc, attempt_index desc, created_at desc, id desc").
+		Find(&executionRecords).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to load model gateway user request warnings: %v", err))
+		return
+	}
+
+	type warningRecord struct {
+		attempt modelGatewayObservabilityAttemptMeta
+		record  model.ModelExecutionRecord
+	}
+	warningsByRequestID := make(map[string]warningRecord, len(executionRecords))
+	for _, record := range executionRecords {
+		requestID := strings.TrimSpace(record.RequestId)
+		if requestID == "" || strings.TrimSpace(record.RequestMeta) == "" {
+			continue
+		}
+		requestMeta, err := parseModelGatewayRequestMeta(record.RequestMeta)
+		if err != nil {
+			continue
+		}
+		attemptMeta := modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta)
+		if !modelGatewayObservabilityAttemptMetaHasWarning(attemptMeta) {
+			continue
+		}
+		current, exists := warningsByRequestID[requestID]
+		if exists && !modelGatewayWarningRecordBetter(record, current.record) {
+			continue
+		}
+		warningsByRequestID[requestID] = warningRecord{attempt: attemptMeta, record: record}
+	}
+	for idx := range records {
+		warning, ok := warningsByRequestID[strings.TrimSpace(records[idx].RequestID)]
+		if !ok {
+			continue
+		}
+		records[idx].WarningLevel = warning.attempt.WarningLevel
+		records[idx].WarningFlags = append([]string(nil), warning.attempt.WarningFlags...)
+		records[idx].WarningMessage = warning.attempt.WarningMessage
+		records[idx].ChannelInducedClientAbort = warning.attempt.ChannelInducedClientAbort
+	}
+}
+
+func modelGatewayObservabilityAttemptMetaHasWarning(meta modelGatewayObservabilityAttemptMeta) bool {
+	return strings.TrimSpace(meta.WarningLevel) != "" ||
+		len(meta.WarningFlags) > 0 ||
+		strings.TrimSpace(meta.WarningMessage) != "" ||
+		meta.ChannelInducedClientAbort
+}
+
+func modelGatewayWarningRecordBetter(left model.ModelExecutionRecord, right model.ModelExecutionRecord) bool {
+	if left.AttemptIndex != right.AttemptIndex {
+		return left.AttemptIndex > right.AttemptIndex
+	}
+	if left.CreatedAt != right.CreatedAt {
+		return left.CreatedAt > right.CreatedAt
+	}
+	return left.Id > right.Id
+}
+
 func attachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequestRecord) {
 	if len(records) == 0 || model.DB == nil {
 		return
@@ -3043,6 +3231,36 @@ func attachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequ
 			records[idx].UserID = dispatch.userID
 		}
 	}
+}
+
+func attachModelGatewayUserRequestWarningDispatchFallback(records []ModelGatewayUserRequestRecord) {
+	for idx := range records {
+		if modelGatewayUserRequestRecordHasWarning(records[idx]) || records[idx].DispatchRecord == nil {
+			continue
+		}
+		dispatch := records[idx].DispatchRecord
+		if !modelGatewayObservabilityRecordHasWarning(*dispatch) {
+			continue
+		}
+		records[idx].WarningLevel = dispatch.WarningLevel
+		records[idx].WarningFlags = append([]string(nil), dispatch.WarningFlags...)
+		records[idx].WarningMessage = dispatch.WarningMessage
+		records[idx].ChannelInducedClientAbort = dispatch.ChannelInducedClientAbort
+	}
+}
+
+func modelGatewayUserRequestRecordHasWarning(record ModelGatewayUserRequestRecord) bool {
+	return strings.TrimSpace(record.WarningLevel) != "" ||
+		len(record.WarningFlags) > 0 ||
+		strings.TrimSpace(record.WarningMessage) != "" ||
+		record.ChannelInducedClientAbort
+}
+
+func modelGatewayObservabilityRecordHasWarning(record ModelGatewayObservabilityRecord) bool {
+	return strings.TrimSpace(record.WarningLevel) != "" ||
+		len(record.WarningFlags) > 0 ||
+		strings.TrimSpace(record.WarningMessage) != "" ||
+		record.ChannelInducedClientAbort
 }
 
 func AttachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequestRecord) {
@@ -3621,6 +3839,9 @@ func ModelGatewayUserRequestRecordFromSummary(userRequest model.ModelGatewayUser
 		Recovered:          userRequest.Recovered,
 		FinalStatusCode:    userRequest.FinalStatusCode,
 		FinalErrorCategory: userRequest.FinalErrorCategory,
+		WarningLevel:       "",
+		WarningFlags:       nil,
+		WarningMessage:     "",
 		EmptyOutput:        userRequest.EmptyOutput,
 		ExperienceIssue:    userRequest.ExperienceIssue,
 		ClientAborted:      clientAborted,
@@ -3856,6 +4077,10 @@ func modelGatewayObservabilityRecentRecord(record model.ModelExecutionRecord, sc
 		CacheAffinity:                  meta.CacheAffinity,
 		ErrorMessage:                   attemptMeta.ErrorMessage,
 		ErrorCategory:                  attemptMeta.ErrorCategory,
+		WarningLevel:                   attemptMeta.WarningLevel,
+		WarningFlags:                   append([]string(nil), attemptMeta.WarningFlags...),
+		WarningMessage:                 attemptMeta.WarningMessage,
+		ChannelInducedClientAbort:      attemptMeta.ChannelInducedClientAbort,
 		RetryAction:                    attemptMeta.RetryAction,
 		RetryReason:                    attemptMeta.RetryReason,
 		WillRetry:                      attemptMeta.WillRetry,
@@ -4090,6 +4315,10 @@ type modelGatewayObservabilityDispatchMeta struct {
 type modelGatewayObservabilityAttemptMeta struct {
 	ErrorMessage                   string
 	ErrorCategory                  string
+	WarningLevel                   string
+	WarningFlags                   []string
+	WarningMessage                 string
+	ChannelInducedClientAbort      bool
 	RetryAction                    string
 	RetryReason                    string
 	WillRetry                      bool
@@ -4744,6 +4973,10 @@ func modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta map[string]
 	return modelGatewayObservabilityAttemptMeta{
 		ErrorMessage:                   strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["error_message"])),
 		ErrorCategory:                  strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["error_category"])),
+		WarningLevel:                   strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["warning_level"])),
+		WarningFlags:                   modelGatewayObservabilityStringSlice(requestMeta["warning_flags"]),
+		WarningMessage:                 strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["warning_message"])),
+		ChannelInducedClientAbort:      modelGatewayObservabilityMetaBool(requestMeta["channel_induced_client_abort"]),
 		RetryAction:                    strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["retry_action"])),
 		RetryReason:                    strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["retry_reason"])),
 		WillRetry:                      modelGatewayObservabilityMetaBool(requestMeta["will_retry"]),

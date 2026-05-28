@@ -1,17 +1,28 @@
 package core
 
 const (
-	ErrorCategoryUnknown                  = "unknown"
-	ErrorCategoryClientAborted            = "client_aborted"
-	ErrorCategoryStreamInterrupted        = "stream_interrupted"
-	ErrorCategoryLocalConcurrencyLimit    = "local_concurrency_limit"
-	ErrorCategoryUpstreamConcurrencyLimit = "upstream_concurrency_limit"
-	ErrorCategoryOverloadSkip             = "overload_skip"
-	ErrorCategoryAuthConfigError          = "auth_config_error"
-	ErrorCategoryRateLimit                = "upstream_rate_limit"
-	ErrorCategoryBalanceOrQuota           = "balance_or_quota"
-	ErrorCategoryUnsupportedCapability    = "unsupported_capability"
-	ErrorCategoryUpstreamError            = "upstream_error"
-	ErrorCategoryServerError              = "server_error"
-	ErrorCategoryTimeout                  = "timeout"
+	ErrorCategoryUnknown                   = "unknown"
+	ErrorCategoryClientAborted             = "client_aborted"
+	ErrorCategoryChannelInducedClientAbort = "channel_induced_client_abort"
+	ErrorCategoryStreamInterrupted         = "stream_interrupted"
+	ErrorCategoryLocalConcurrencyLimit     = "local_concurrency_limit"
+	ErrorCategoryUpstreamConcurrencyLimit  = "upstream_concurrency_limit"
+	ErrorCategoryOverloadSkip              = "overload_skip"
+	ErrorCategoryAuthConfigError           = "auth_config_error"
+	ErrorCategoryRateLimit                 = "upstream_rate_limit"
+	ErrorCategoryBalanceOrQuota            = "balance_or_quota"
+	ErrorCategoryUnsupportedCapability     = "unsupported_capability"
+	ErrorCategoryUpstreamError             = "upstream_error"
+	ErrorCategoryServerError               = "server_error"
+	ErrorCategoryTimeout                   = "timeout"
+)
+
+const (
+	WarningLevelInfo     = "info"
+	WarningLevelWarning  = "warning"
+	WarningLevelCritical = "critical"
+
+	WarningFlagChannelInducedAbort  = "channel_induced_abort"
+	WarningFlagNoEffectiveFirstByte = "no_effective_first_byte"
+	WarningFlagHighAbortRate        = "high_abort_rate"
 )

@@ -816,6 +816,52 @@ func TestAsyncExecutionRecorderSummarizesClientAbortAsUserCanceled(t *testing.T)
 	require.Contains(t, record.RequestMeta, "client_aborted")
 }
 
+func TestAsyncExecutionRecorderPersistsChannelInducedAbortWarningMeta(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:                 "req-channel-induced-abort",
+		AttemptIndex:              0,
+		ChannelID:                 18,
+		RequestedGroup:            "auto",
+		SelectedGroup:             "codex-plus",
+		ModelName:                 "gpt-5.5",
+		StatusCode:                499,
+		ErrorCategory:             core.ErrorCategoryChannelInducedClientAbort,
+		WarningLevel:              core.WarningLevelWarning,
+		WarningFlags:              []string{core.WarningFlagChannelInducedAbort, core.WarningFlagNoEffectiveFirstByte},
+		WarningMessage:            "client aborted before effective response",
+		ChannelInducedClientAbort: true,
+		RetryAction:               "client_aborted",
+		StreamInterrupted:         true,
+		ClientAborted:             true,
+		Duration:                  7 * time.Second,
+	})
+
+	require.Eventually(t, func() bool {
+		var record model.ModelExecutionRecord
+		err := db.Where("request_id = ?", "req-channel-induced-abort").First(&record).Error
+		return err == nil && record.RequestMeta != ""
+	}, time.Second, 10*time.Millisecond)
+
+	var record model.ModelExecutionRecord
+	require.NoError(t, db.Where("request_id = ?", "req-channel-induced-abort").First(&record).Error)
+	require.Equal(t, core.ErrorCategoryChannelInducedClientAbort, record.ErrorCategory)
+	require.Contains(t, record.RequestMeta, `"warning_level":"warning"`)
+	require.Contains(t, record.RequestMeta, `"channel_induced_client_abort":true`)
+	require.Contains(t, record.RequestMeta, core.WarningFlagChannelInducedAbort)
+	require.Contains(t, record.RequestMeta, core.WarningFlagNoEffectiveFirstByte)
+}
+
 func TestAsyncExecutionRecorderClientAbortOverridesStreamInterruptedCategory(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)

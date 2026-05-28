@@ -90,6 +90,14 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	setting.ProbeLongNoSuccessSeconds = 2400
 	setting.ProbeRecoverySuccessesRequired = 3
 	setting.ProbeFailureAvoidancePriorityEnabled = false
+	setting.ProbeRecoverableScoreItems = []string{"completion_rate", "bad", "first_byte_backlog"}
+	setting.ProbeSkipRecentRealRequestEnabled = false
+	setting.ProbeRecentRealRequestWindowSeconds = 900
+	setting.ProbeGoodBaselineEnabled = false
+	setting.ProbeGoodBaselineMinSamples = 8
+	setting.ProbeGoodBaselineWindowSeconds = 3600
+	setting.ProbePromptLibraryEnabled = false
+	setting.ProbePromptCategories = []string{"zh", "bad", "long"}
 	setting.CostCalculationEnabled = true
 	setting.CostCalculationIntervalSeconds = 4
 	setting.CostCalculationWorkerCount = 3
@@ -176,6 +184,14 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.Equal(t, 2400, payload.Data.Setting.ProbeLongNoSuccessSeconds)
 	require.Equal(t, 3, payload.Data.Setting.ProbeRecoverySuccessesRequired)
 	require.False(t, payload.Data.Setting.ProbeFailureAvoidancePriorityEnabled)
+	require.Equal(t, []string{"completion_rate", "first_byte_backlog"}, payload.Data.Setting.ProbeRecoverableScoreItems)
+	require.False(t, payload.Data.Setting.ProbeSkipRecentRealRequestEnabled)
+	require.Equal(t, 900, payload.Data.Setting.ProbeRecentRealRequestWindowSeconds)
+	require.False(t, payload.Data.Setting.ProbeGoodBaselineEnabled)
+	require.Equal(t, 8, payload.Data.Setting.ProbeGoodBaselineMinSamples)
+	require.Equal(t, 3600, payload.Data.Setting.ProbeGoodBaselineWindowSeconds)
+	require.False(t, payload.Data.Setting.ProbePromptLibraryEnabled)
+	require.Equal(t, []string{"zh", "long"}, payload.Data.Setting.ProbePromptCategories)
 	require.True(t, payload.Data.Setting.CostCalculationEnabled)
 	require.Equal(t, 4, payload.Data.Setting.CostCalculationIntervalSeconds)
 	require.Equal(t, 3, payload.Data.Setting.CostCalculationWorkerCount)
@@ -429,6 +445,54 @@ func TestModelGatewayConfigResetRestoresDefaults(t *testing.T) {
 	require.Equal(t, scheduler_setting.ModeOff, payload.Data.Setting.DefaultMode)
 	require.Equal(t, 0, payload.Data.Setting.RolloutPercent)
 	require.Equal(t, scheduler_setting.ProxyReusePolicyWarn, payload.Data.Setting.ProxySameBrandReusePolicy)
+}
+
+func TestModelGatewayProbeConfigPatchMergesProbeFields(t *testing.T) {
+	setupModelGatewayConfigControllerTestDB(t)
+	initial := scheduler_setting.DefaultSetting()
+	initial.Enabled = true
+	initial.DefaultMode = scheduler_setting.ModeActive
+	initial.DefaultStrategy = scheduler_setting.StrategySpeedFirst
+	restoreSetting := scheduler_setting.SetSettingForTest(initial)
+	defer restoreSetting()
+
+	router := gin.New()
+	router.PATCH("/api/model_gateway/config/probe", UpdateModelGatewayProbeConfig)
+
+	body := []byte(`{
+		"probe_enabled": false,
+		"probe_max_per_tick": 9,
+		"probe_low_score_threshold": 0.71,
+		"probe_recoverable_score_items": ["stream_interrupted_rate", "bad", "first_byte_backlog"],
+		"probe_skip_recent_real_request_enabled": true,
+		"probe_recent_real_request_window_seconds": 600,
+		"probe_good_baseline_enabled": true,
+		"probe_good_baseline_min_samples": 6,
+		"probe_good_baseline_window_seconds": 2400,
+		"probe_prompt_library_enabled": true,
+		"probe_prompt_categories": ["long", "bad", "short"]
+	}`)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/api/model_gateway/config/probe", bytes.NewReader(body))
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayConfigResponse(t, resp)
+	require.True(t, payload.Success, resp.Body.String())
+	require.False(t, payload.Data.Setting.ProbeEnabled)
+	require.Equal(t, 9, payload.Data.Setting.ProbeMaxPerTick)
+	require.Equal(t, 0.71, payload.Data.Setting.ProbeLowScoreThreshold)
+	require.Equal(t, []string{"first_byte_backlog", "stream_interrupted_rate"}, payload.Data.Setting.ProbeRecoverableScoreItems)
+	require.True(t, payload.Data.Setting.ProbeSkipRecentRealRequestEnabled)
+	require.Equal(t, 600, payload.Data.Setting.ProbeRecentRealRequestWindowSeconds)
+	require.True(t, payload.Data.Setting.ProbeGoodBaselineEnabled)
+	require.Equal(t, 6, payload.Data.Setting.ProbeGoodBaselineMinSamples)
+	require.Equal(t, 2400, payload.Data.Setting.ProbeGoodBaselineWindowSeconds)
+	require.True(t, payload.Data.Setting.ProbePromptLibraryEnabled)
+	require.Equal(t, []string{"short", "long"}, payload.Data.Setting.ProbePromptCategories)
+	require.True(t, payload.Data.Setting.Enabled)
+	require.Equal(t, scheduler_setting.ModeActive, payload.Data.Setting.DefaultMode)
+	require.Equal(t, scheduler_setting.StrategySpeedFirst, payload.Data.Setting.DefaultStrategy)
 }
 
 func decodeModelGatewayConfigResponse(t *testing.T, recorder *httptest.ResponseRecorder) modelGatewayConfigAPIResponse {

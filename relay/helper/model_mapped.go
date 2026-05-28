@@ -77,8 +77,7 @@ func ModelMappedHelper(c *gin.Context, info *relaycommon.RelayInfo, request dto.
 	if request != nil {
 		request.SetModelName(info.UpstreamModelName)
 	}
-	logger.LogInfo(c, fmt.Sprintf(
-		"relay model mapping trace: request_model=%s, context_model=%s, origin_model=%s, mapping_source=%s, upstream_model=%s, mapped=%t, channel_id=%d",
+	logger.LogDebug(c, "relay model mapping trace: request_model=%s, context_model=%s, origin_model=%s, mapping_source=%s, upstream_model=%s, mapped=%t, channel_id=%d",
 		info.RequestModelName,
 		info.ContextModelName,
 		info.OriginModelName,
@@ -86,6 +85,6 @@ func ModelMappedHelper(c *gin.Context, info *relaycommon.RelayInfo, request dto.
 		info.UpstreamModelName,
 		info.IsModelMapped,
 		info.ChannelId,
-	))
+	)
 	return nil
 }

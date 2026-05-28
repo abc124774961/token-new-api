@@ -368,12 +368,170 @@ func TestPublicHomeDynamicBillingOnlyExposesDisplayPrice(t *testing.T) {
 	require.Equal(t, "codex-plus", result.Group)
 	require.Equal(t, "gpt-5.4", result.Model)
 	require.InEpsilon(t, 0.0693, result.CurrentRatio, 0.000001)
-	require.InEpsilon(t, 0.055, result.MinRatio7d, 0.000001)
-	require.InEpsilon(t, 0.083, result.MaxRatio7d, 0.000001)
+	require.InEpsilon(t, 0.069, result.MinRatio7d, 0.000001)
+	require.InEpsilon(t, 0.069, result.MaxRatio7d, 0.000001)
 	require.Equal(t, modelGatewayDynamicBillingPricePerMillion("gpt-5.4", 0.0693), result.DisplayPricePerM)
 	require.EqualValues(t, 24, result.UpdatedSecondsAgo)
 
 	payload, err := common.Marshal(result)
+	require.NoError(t, err)
+	payloadText := strings.ToLower(string(payload))
+	require.NotContains(t, payloadText, "cost")
+	require.NotContains(t, payloadText, "profit")
+	require.NotContains(t, payloadText, "channel")
+}
+
+func TestPublicHomeDynamicBillingTrendAggregatesDisplayBuckets(t *testing.T) {
+	ratio_setting.InitRatioSettings()
+	db := setupModelGatewayReplayControllerTestDB(t)
+	nowTime := time.Date(2026, 5, 29, 12, 30, 0, 0, time.Local)
+	now := nowTime.Unix()
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		DynamicBillingEnabled:        true,
+		DynamicBillingMinSamples:     1,
+		DynamicBillingRefreshSeconds: 30,
+		DynamicBillingMaxAgeSeconds:  7 * 24 * 3600,
+		GroupPolicies: map[string]scheduler_setting.GroupPolicySetting{
+			"auto": {
+				BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+				CandidateGroups:  []string{"codex-plus"},
+			},
+		},
+	})
+	defer restoreSetting()
+
+	restoreBaselines := modelgatewaydynamicbilling.StoreDefaultBaselinesForTest(map[string]modelgatewaydynamicbilling.RatioBaseline{
+		"gpt-5.4:codex-plus": {
+			RequestedModel: "gpt-5.4",
+			Group:          "codex-plus",
+			Ratio:          0.0693,
+			PricePerM:      0.128,
+			SampleCount:    8,
+			CalculatedAt:   now - 24,
+		},
+	})
+	defer restoreBaselines()
+
+	today10 := time.Date(2026, 5, 29, 10, 20, 0, 0, time.Local).Unix()
+	today11 := time.Date(2026, 5, 29, 11, 10, 0, 0, time.Local).Unix()
+	yesterday18 := time.Date(2026, 5, 28, 18, 15, 0, 0, time.Local).Unix()
+	oldDay := time.Date(2026, 5, 24, 9, 0, 0, 0, time.Local).Unix()
+	require.NoError(t, db.Create(&[]model.ModelGatewayUserRequestSummary{
+		{
+			RequestId:      "req-trend-today-a",
+			CreatedAt:      today10,
+			CompletedAt:    today10,
+			RequestedGroup: "auto",
+			SelectedGroup:  "codex-plus",
+			FinalSuccess:   true,
+		},
+		{
+			RequestId:      "req-trend-today-b",
+			CreatedAt:      today11,
+			CompletedAt:    today11,
+			RequestedGroup: "auto",
+			SelectedGroup:  "codex-plus",
+			FinalSuccess:   true,
+		},
+		{
+			RequestId:      "req-trend-yesterday",
+			CreatedAt:      yesterday18,
+			CompletedAt:    yesterday18,
+			RequestedGroup: "auto",
+			SelectedGroup:  "codex-plus",
+			FinalSuccess:   true,
+		},
+		{
+			RequestId:      "req-trend-old",
+			CreatedAt:      oldDay,
+			CompletedAt:    oldDay,
+			RequestedGroup: "auto",
+			SelectedGroup:  "codex-plus",
+			FinalSuccess:   true,
+		},
+		{
+			RequestId:      "req-trend-probe",
+			CreatedAt:      today10,
+			CompletedAt:    today10,
+			RequestedGroup: "auto",
+			SelectedGroup:  "codex-plus",
+			FinalSuccess:   true,
+			IsHealthProbe:  true,
+		},
+	}).Error)
+
+	makeOther := func(ratio float64, extra map[string]any) string {
+		payload := map[string]any{
+			"dynamic_billing_applied":     true,
+			"dynamic_billing_group":       "codex-plus",
+			"dynamic_billing_ratio":       ratio,
+			"dynamic_billing_price_per_m": ratio * 2,
+		}
+		for key, value := range extra {
+			payload[key] = value
+		}
+		data, err := common.Marshal(payload)
+		require.NoError(t, err)
+		return string(data)
+	}
+	require.NoError(t, model.LOG_DB.Create(&[]model.Log{
+		{
+			Type:      model.LogTypeConsume,
+			RequestId: "req-trend-today-a",
+			CreatedAt: today10,
+			ModelName: "gpt-5.4",
+			Group:     "codex-plus",
+			Other:     makeOther(0.05, nil),
+		},
+		{
+			Type:      model.LogTypeConsume,
+			RequestId: "req-trend-today-b",
+			CreatedAt: today11,
+			ModelName: "gpt-5.4",
+			Group:     "codex-plus",
+			Other:     makeOther(0.07, nil),
+		},
+		{
+			Type:      model.LogTypeConsume,
+			RequestId: "req-trend-yesterday",
+			CreatedAt: yesterday18,
+			ModelName: "gpt-5.4",
+			Group:     "codex-plus",
+			Other:     makeOther(0.09, nil),
+		},
+		{
+			Type:      model.LogTypeConsume,
+			RequestId: "req-trend-old",
+			CreatedAt: oldDay,
+			ModelName: "gpt-5.4",
+			Group:     "codex-plus",
+			Other:     makeOther(0.11, nil),
+		},
+		{
+			Type:      model.LogTypeConsume,
+			RequestId: "req-trend-probe",
+			CreatedAt: today10,
+			ModelName: "gpt-5.4",
+			Group:     "codex-plus",
+			Other:     makeOther(0.5, map[string]any{"is_health_probe": true}),
+		},
+	}).Error)
+
+	result := buildPublicHomeDynamicBilling(now)
+
+	require.NotNil(t, result)
+	require.NotNil(t, result.Trend)
+	require.Len(t, result.Trend.Today.Points, 24)
+	require.Len(t, result.Trend.Yesterday.Points, 24)
+	require.Len(t, result.Trend.SevenDays.Points, 7)
+	require.EqualValues(t, 2, result.Trend.Today.SampleCount)
+	require.InEpsilon(t, 0.05, result.Trend.Today.MinRatio, 0.000001)
+	require.InEpsilon(t, 0.07, result.Trend.Today.MaxRatio, 0.000001)
+	require.InEpsilon(t, 0.06, result.Trend.Today.AvgRatio, 0.000001)
+	require.InEpsilon(t, 0.09, result.Trend.Yesterday.LatestRatio, 0.000001)
+	require.EqualValues(t, 4, result.Trend.SevenDays.SampleCount)
+
+	payload, err := common.Marshal(result.Trend)
 	require.NoError(t, err)
 	payloadText := strings.ToLower(string(payload))
 	require.NotContains(t, payloadText, "cost")

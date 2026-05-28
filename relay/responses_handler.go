@@ -434,8 +434,10 @@ func accountCapabilityPrefersChatCompletions(info *relaycommon.RelayInfo) bool {
 	if info == nil || info.ChannelAccountCapability == nil {
 		return false
 	}
-	return info.ChannelAccountCapability.HasResponsesWriteDenied() &&
-		info.ChannelAccountCapability.HasChatCompletionsWriteAllowed()
+	if info.ChannelAccountCapability.HasResponsesWriteDenied() {
+		return true
+	}
+	return info.ChannelAccountCapability.HasChatCompletionsWriteAllowed()
 }
 
 func ensureAccountCapabilityResponsesViaChatPlan(c *gin.Context, info *relaycommon.RelayInfo) func() {

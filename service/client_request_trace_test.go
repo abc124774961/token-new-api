@@ -2,10 +2,12 @@ package service
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
-
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -201,4 +203,42 @@ func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresOldSessionImageg
 
 	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
 	require.Empty(t, trace["imagegen_keyword_hits"])
+}
+
+func TestShouldLogClientRequestTrace(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	origDebug := common.DebugEnabled
+	common.DebugEnabled = false
+	t.Cleanup(func() {
+		common.DebugEnabled = origDebug
+	})
+
+	t.Setenv("CLIENT_REQUEST_TRACE_ENABLED", "false")
+
+	disabledCtx := newTraceTestContext(http.MethodPost, "/v1/responses", map[string]string{
+		"User-Agent": "Codex",
+	})
+	require.False(t, ShouldLogClientRequestTrace(disabledCtx))
+
+	t.Setenv("CLIENT_REQUEST_TRACE_ENABLED", "true")
+
+	responsesCtx := newTraceTestContext(http.MethodPost, "/v1/responses", nil)
+	require.True(t, ShouldLogClientRequestTrace(responsesCtx))
+
+	codexCtx := newTraceTestContext(http.MethodPost, "/v1/chat/completions", map[string]string{
+		"User-Agent": "Codex",
+	})
+	require.True(t, ShouldLogClientRequestTrace(codexCtx))
+}
+
+func newTraceTestContext(method, target string, headers map[string]string) *gin.Context {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	req := httptest.NewRequest(method, target, nil)
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	ctx.Request = req
+	return ctx
 }

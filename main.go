@@ -115,7 +115,15 @@ func main() {
 			before.ProbeMissingSampleThreshold == after.ProbeMissingSampleThreshold &&
 			before.ProbeLongNoSuccessSeconds == after.ProbeLongNoSuccessSeconds &&
 			before.ProbeRecoverySuccessesRequired == after.ProbeRecoverySuccessesRequired &&
-			before.ProbeFailureAvoidancePriorityEnabled == after.ProbeFailureAvoidancePriorityEnabled {
+			before.ProbeFailureAvoidancePriorityEnabled == after.ProbeFailureAvoidancePriorityEnabled &&
+			strings.Join(before.ProbeRecoverableScoreItems, ",") == strings.Join(after.ProbeRecoverableScoreItems, ",") &&
+			before.ProbeSkipRecentRealRequestEnabled == after.ProbeSkipRecentRealRequestEnabled &&
+			before.ProbeRecentRealRequestWindowSeconds == after.ProbeRecentRealRequestWindowSeconds &&
+			before.ProbeGoodBaselineEnabled == after.ProbeGoodBaselineEnabled &&
+			before.ProbeGoodBaselineMinSamples == after.ProbeGoodBaselineMinSamples &&
+			before.ProbeGoodBaselineWindowSeconds == after.ProbeGoodBaselineWindowSeconds &&
+			before.ProbePromptLibraryEnabled == after.ProbePromptLibraryEnabled &&
+			strings.Join(before.ProbePromptCategories, ",") == strings.Join(after.ProbePromptCategories, ",") {
 			return
 		}
 		modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()

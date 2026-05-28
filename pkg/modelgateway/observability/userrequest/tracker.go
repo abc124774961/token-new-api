@@ -34,28 +34,32 @@ type Event struct {
 }
 
 type Record struct {
-	ID                 int    `json:"id"`
-	CreatedAt          int64  `json:"created_at"`
-	CompletedAt        int64  `json:"completed_at"`
-	RequestID          string `json:"request_id"`
-	RequestedModel     string `json:"requested_model"`
-	RequestedGroup     string `json:"requested_group"`
-	SelectedGroup      string `json:"selected_group,omitempty"`
-	FinalChannelID     int    `json:"final_channel_id,omitempty"`
-	FinalChannelName   string `json:"final_channel_name,omitempty"`
-	Attempts           int    `json:"attempts"`
-	FinalSuccess       bool   `json:"final_success"`
-	Recovered          bool   `json:"recovered"`
-	FinalStatusCode    int    `json:"final_status_code,omitempty"`
-	FinalErrorCategory string `json:"final_error_category,omitempty"`
-	EmptyOutput        bool   `json:"empty_output,omitempty"`
-	ExperienceIssue    string `json:"experience_issue,omitempty"`
-	ClientAborted      bool   `json:"client_aborted,omitempty"`
-	IsHealthProbe      bool   `json:"is_health_probe,omitempty"`
-	ProbeReason        string `json:"probe_reason,omitempty"`
-	DurationMs         int64  `json:"duration_ms,omitempty"`
-	TTFTMs             int64  `json:"ttft_ms,omitempty"`
-	Status             string `json:"status,omitempty"`
+	ID                        int      `json:"id"`
+	CreatedAt                 int64    `json:"created_at"`
+	CompletedAt               int64    `json:"completed_at"`
+	RequestID                 string   `json:"request_id"`
+	RequestedModel            string   `json:"requested_model"`
+	RequestedGroup            string   `json:"requested_group"`
+	SelectedGroup             string   `json:"selected_group,omitempty"`
+	FinalChannelID            int      `json:"final_channel_id,omitempty"`
+	FinalChannelName          string   `json:"final_channel_name,omitempty"`
+	Attempts                  int      `json:"attempts"`
+	FinalSuccess              bool     `json:"final_success"`
+	Recovered                 bool     `json:"recovered"`
+	FinalStatusCode           int      `json:"final_status_code,omitempty"`
+	FinalErrorCategory        string   `json:"final_error_category,omitempty"`
+	WarningLevel              string   `json:"warning_level,omitempty"`
+	WarningFlags              []string `json:"warning_flags,omitempty"`
+	WarningMessage            string   `json:"warning_message,omitempty"`
+	ChannelInducedClientAbort bool     `json:"channel_induced_client_abort,omitempty"`
+	EmptyOutput               bool     `json:"empty_output,omitempty"`
+	ExperienceIssue           string   `json:"experience_issue,omitempty"`
+	ClientAborted             bool     `json:"client_aborted,omitempty"`
+	IsHealthProbe             bool     `json:"is_health_probe,omitempty"`
+	ProbeReason               string   `json:"probe_reason,omitempty"`
+	DurationMs                int64    `json:"duration_ms,omitempty"`
+	TTFTMs                    int64    `json:"ttft_ms,omitempty"`
+	Status                    string   `json:"status,omitempty"`
 }
 
 type Observer func(Event)
@@ -307,55 +311,63 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 	if summary != nil {
 		clientAborted := userRequestSummaryClientAborted(summary)
 		return Record{
-			ID:                 summary.Id,
-			CreatedAt:          summary.CreatedAt,
-			CompletedAt:        summary.CompletedAt,
-			RequestID:          summary.RequestId,
-			RequestedModel:     summary.RequestedModel,
-			RequestedGroup:     summary.RequestedGroup,
-			SelectedGroup:      summary.SelectedGroup,
-			FinalChannelID:     summary.FinalChannelID,
-			FinalChannelName:   summary.FinalChannelName,
-			Attempts:           summary.Attempts,
-			FinalSuccess:       summary.FinalSuccess,
-			Recovered:          summary.Recovered,
-			FinalStatusCode:    summary.FinalStatusCode,
-			FinalErrorCategory: summary.FinalErrorCategory,
-			EmptyOutput:        summary.EmptyOutput,
-			ExperienceIssue:    summary.ExperienceIssue,
-			ClientAborted:      clientAborted,
-			IsHealthProbe:      result.IsHealthProbe || summary.IsHealthProbe,
-			ProbeReason:        firstNonEmpty(result.ProbeReason, summary.ProbeReason),
-			DurationMs:         summary.DurationMs,
-			TTFTMs:             summary.TTFTMs,
-			Status:             userRequestStatus(summary.FinalSuccess, clientAborted, result.IsHealthProbe || summary.IsHealthProbe),
+			ID:                        summary.Id,
+			CreatedAt:                 summary.CreatedAt,
+			CompletedAt:               summary.CompletedAt,
+			RequestID:                 summary.RequestId,
+			RequestedModel:            summary.RequestedModel,
+			RequestedGroup:            summary.RequestedGroup,
+			SelectedGroup:             summary.SelectedGroup,
+			FinalChannelID:            summary.FinalChannelID,
+			FinalChannelName:          summary.FinalChannelName,
+			Attempts:                  summary.Attempts,
+			FinalSuccess:              summary.FinalSuccess,
+			Recovered:                 summary.Recovered,
+			FinalStatusCode:           summary.FinalStatusCode,
+			FinalErrorCategory:        summary.FinalErrorCategory,
+			WarningLevel:              strings.TrimSpace(result.WarningLevel),
+			WarningFlags:              append([]string(nil), result.WarningFlags...),
+			WarningMessage:            strings.TrimSpace(result.WarningMessage),
+			ChannelInducedClientAbort: result.ChannelInducedClientAbort,
+			EmptyOutput:               summary.EmptyOutput,
+			ExperienceIssue:           summary.ExperienceIssue,
+			ClientAborted:             clientAborted,
+			IsHealthProbe:             result.IsHealthProbe || summary.IsHealthProbe,
+			ProbeReason:               firstNonEmpty(result.ProbeReason, summary.ProbeReason),
+			DurationMs:                summary.DurationMs,
+			TTFTMs:                    summary.TTFTMs,
+			Status:                    userRequestStatus(summary.FinalSuccess, clientAborted, result.IsHealthProbe || summary.IsHealthProbe),
 		}
 	}
 	clientAborted := userRequestResultClientAborted(result)
 	success := result.Success && !result.StreamInterrupted && !clientAborted
 	completedAt := time.Now().Unix()
 	record := Record{
-		CreatedAt:          pending.CreatedAt,
-		CompletedAt:        completedAt,
-		RequestID:          strings.TrimSpace(result.RequestID),
-		RequestedModel:     strings.TrimSpace(result.ModelName),
-		RequestedGroup:     strings.TrimSpace(result.RequestedGroup),
-		SelectedGroup:      strings.TrimSpace(result.SelectedGroup),
-		FinalChannelID:     result.ChannelID,
-		FinalChannelName:   strings.TrimSpace(result.ChannelName),
-		Attempts:           maxInt(pending.Attempts, result.AttemptIndex+1),
-		FinalSuccess:       success,
-		Recovered:          false,
-		FinalStatusCode:    0,
-		FinalErrorCategory: "",
-		EmptyOutput:        result.EmptyOutput,
-		ExperienceIssue:    strings.TrimSpace(result.ExperienceIssue),
-		ClientAborted:      clientAborted,
-		IsHealthProbe:      result.IsHealthProbe,
-		ProbeReason:        strings.TrimSpace(result.ProbeReason),
-		DurationMs:         userRequestResultDuration(result).Milliseconds(),
-		TTFTMs:             userRequestResultTTFT(result).Milliseconds(),
-		Status:             userRequestStatus(success, clientAborted, result.IsHealthProbe),
+		CreatedAt:                 pending.CreatedAt,
+		CompletedAt:               completedAt,
+		RequestID:                 strings.TrimSpace(result.RequestID),
+		RequestedModel:            strings.TrimSpace(result.ModelName),
+		RequestedGroup:            strings.TrimSpace(result.RequestedGroup),
+		SelectedGroup:             strings.TrimSpace(result.SelectedGroup),
+		FinalChannelID:            result.ChannelID,
+		FinalChannelName:          strings.TrimSpace(result.ChannelName),
+		Attempts:                  maxInt(pending.Attempts, result.AttemptIndex+1),
+		FinalSuccess:              success,
+		Recovered:                 false,
+		FinalStatusCode:           0,
+		FinalErrorCategory:        "",
+		WarningLevel:              strings.TrimSpace(result.WarningLevel),
+		WarningFlags:              append([]string(nil), result.WarningFlags...),
+		WarningMessage:            strings.TrimSpace(result.WarningMessage),
+		ChannelInducedClientAbort: result.ChannelInducedClientAbort,
+		EmptyOutput:               result.EmptyOutput,
+		ExperienceIssue:           strings.TrimSpace(result.ExperienceIssue),
+		ClientAborted:             clientAborted,
+		IsHealthProbe:             result.IsHealthProbe,
+		ProbeReason:               strings.TrimSpace(result.ProbeReason),
+		DurationMs:                userRequestResultDuration(result).Milliseconds(),
+		TTFTMs:                    userRequestResultTTFT(result).Milliseconds(),
+		Status:                    userRequestStatus(success, clientAborted, result.IsHealthProbe),
 	}
 	if record.CreatedAt == 0 {
 		record.CreatedAt = completedAt

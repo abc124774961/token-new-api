@@ -168,6 +168,10 @@ func (s *ProbeScheduler) tick(ctx context.Context) {
 			defer wg.Done()
 			for candidate := range jobs {
 				candidate.Plan = s.buildDispatchPlan(candidate)
+				if skipRecentRealRequestProbe(candidate, s.config, s.snapshotStore, time.Now()) {
+					logProbeSkipped(candidate, reasonRecentRealRequest)
+					continue
+				}
 				result := s.executor.Execute(ctx, candidate)
 				s.selector.MarkResult(result)
 				if s.recorder != nil {
@@ -208,6 +212,14 @@ func SyncDefaultProbeSchedulerLifecycle() *ProbeScheduler {
 		LongNoSuccessThreshold:          time.Duration(setting.ProbeLongNoSuccessSeconds) * time.Second,
 		RecoverySuccessesRequired:       setting.ProbeRecoverySuccessesRequired,
 		FailureAvoidancePriorityEnabled: setting.ProbeFailureAvoidancePriorityEnabled,
+		RecoverableScoreItems:           setting.ProbeRecoverableScoreItems,
+		SkipRecentRealRequestEnabled:    setting.ProbeSkipRecentRealRequestEnabled,
+		RecentRealRequestWindow:         time.Duration(setting.ProbeRecentRealRequestWindowSeconds) * time.Second,
+		GoodBaselineEnabled:             setting.ProbeGoodBaselineEnabled,
+		GoodBaselineMinSamples:          setting.ProbeGoodBaselineMinSamples,
+		GoodBaselineWindow:              time.Duration(setting.ProbeGoodBaselineWindowSeconds) * time.Second,
+		PromptLibraryEnabled:            setting.ProbePromptLibraryEnabled,
+		PromptCategories:                setting.ProbePromptCategories,
 	}
 	if !config.Enabled {
 		return nil
@@ -282,6 +294,15 @@ func logProbeResult(result ProbeRunResult) {
 	}
 	common.SysLog(fmt.Sprintf("model gateway probe failed: probe_id=%s channel_id=%d model=%s reason=%s error=%s",
 		result.ProbeID, channelID, result.Model, result.Reason, common.MaskSensitiveInfo(errText)))
+}
+
+func logProbeSkipped(candidate ProbeCandidate, reason string) {
+	channelID := 0
+	if candidate.Channel != nil {
+		channelID = candidate.Channel.Id
+	}
+	common.SysLog(fmt.Sprintf("model gateway probe skipped: channel_id=%d model=%s reason=%s skip_reason=%s",
+		channelID, candidate.Model, candidate.Reason, reason))
 }
 
 func recentRealUserTrafficActive() (bool, error) {

@@ -354,6 +354,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			modelGatewayRoute.GET("/config", controller.GetModelGatewayConfig)
 			modelGatewayRoute.PUT("/config", controller.UpdateModelGatewayConfig)
+			modelGatewayRoute.PATCH("/config/probe", controller.UpdateModelGatewayProbeConfig)
 			modelGatewayRoute.POST("/config/reset", controller.ResetModelGatewayConfig)
 			modelGatewayRoute.GET("/proxies", controller.ListModelGatewayProxies)
 			modelGatewayRoute.POST("/proxies", controller.CreateModelGatewayProxy)

@@ -107,6 +107,14 @@ type SchedulerSetting struct {
 	ProbeLongNoSuccessSeconds            int                                  `json:"probe_long_no_success_seconds"`
 	ProbeRecoverySuccessesRequired       int                                  `json:"probe_recovery_successes_required"`
 	ProbeFailureAvoidancePriorityEnabled bool                                 `json:"probe_failure_avoidance_priority_enabled"`
+	ProbeRecoverableScoreItems           []string                             `json:"probe_recoverable_score_items"`
+	ProbeSkipRecentRealRequestEnabled    bool                                 `json:"probe_skip_recent_real_request_enabled"`
+	ProbeRecentRealRequestWindowSeconds  int                                  `json:"probe_recent_real_request_window_seconds"`
+	ProbeGoodBaselineEnabled             bool                                 `json:"probe_good_baseline_enabled"`
+	ProbeGoodBaselineMinSamples          int                                  `json:"probe_good_baseline_min_samples"`
+	ProbeGoodBaselineWindowSeconds       int                                  `json:"probe_good_baseline_window_seconds"`
+	ProbePromptLibraryEnabled            bool                                 `json:"probe_prompt_library_enabled"`
+	ProbePromptCategories                []string                             `json:"probe_prompt_categories"`
 	CostCalculationEnabled               bool                                 `json:"cost_calculation_enabled"`
 	CostCalculationIntervalSeconds       int                                  `json:"cost_calculation_interval_seconds"`
 	CostCalculationWorkerCount           int                                  `json:"cost_calculation_worker_count"`
@@ -189,6 +197,14 @@ var schedulerSetting = SchedulerSetting{
 	ProbeLongNoSuccessSeconds:            1800,
 	ProbeRecoverySuccessesRequired:       2,
 	ProbeFailureAvoidancePriorityEnabled: true,
+	ProbeRecoverableScoreItems:           []string{"completion_rate", "upstream_error_rate", "ttft_latency", "duration_latency", "first_byte_backlog", "empty_output_rate", "stream_interrupted_rate"},
+	ProbeSkipRecentRealRequestEnabled:    true,
+	ProbeRecentRealRequestWindowSeconds:  1800,
+	ProbeGoodBaselineEnabled:             true,
+	ProbeGoodBaselineMinSamples:          3,
+	ProbeGoodBaselineWindowSeconds:       86400,
+	ProbePromptLibraryEnabled:            true,
+	ProbePromptCategories:                []string{"short", "zh", "medium", "long"},
 	CostCalculationEnabled:               true,
 	CostCalculationIntervalSeconds:       5,
 	CostCalculationWorkerCount:           2,
@@ -324,6 +340,14 @@ func defaultSchedulerSetting() SchedulerSetting {
 	setting.ProbeLongNoSuccessSeconds = 1800
 	setting.ProbeRecoverySuccessesRequired = 2
 	setting.ProbeFailureAvoidancePriorityEnabled = true
+	setting.ProbeRecoverableScoreItems = []string{"completion_rate", "upstream_error_rate", "ttft_latency", "duration_latency", "first_byte_backlog", "empty_output_rate", "stream_interrupted_rate"}
+	setting.ProbeSkipRecentRealRequestEnabled = true
+	setting.ProbeRecentRealRequestWindowSeconds = 1800
+	setting.ProbeGoodBaselineEnabled = true
+	setting.ProbeGoodBaselineMinSamples = 3
+	setting.ProbeGoodBaselineWindowSeconds = 86400
+	setting.ProbePromptLibraryEnabled = true
+	setting.ProbePromptCategories = []string{"short", "zh", "medium", "long"}
 	setting.CostCalculationEnabled = true
 	setting.CostCalculationIntervalSeconds = 5
 	setting.CostCalculationWorkerCount = 2

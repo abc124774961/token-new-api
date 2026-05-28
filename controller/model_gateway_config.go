@@ -28,6 +28,28 @@ type ModelGatewayConfigResponse struct {
 	DynamicBillingBaselines []modelgatewaydynamicbilling.RatioBaseline `json:"dynamic_billing_baselines"`
 }
 
+type UpdateModelGatewayProbeConfigRequest struct {
+	ProbeEnabled                         *bool    `json:"probe_enabled,omitempty"`
+	ProbeIntervalSeconds                 *int     `json:"probe_interval_seconds,omitempty"`
+	ProbeWorkerCount                     *int     `json:"probe_worker_count,omitempty"`
+	ProbeTimeoutSeconds                  *int     `json:"probe_timeout_seconds,omitempty"`
+	ProbeMaxPerTick                      *int     `json:"probe_max_per_tick,omitempty"`
+	ProbeMinChannelIntervalSeconds       *int     `json:"probe_min_channel_interval_seconds,omitempty"`
+	ProbeLowScoreThreshold               *float64 `json:"probe_low_score_threshold,omitempty"`
+	ProbeMissingSampleThreshold          *int     `json:"probe_missing_sample_threshold,omitempty"`
+	ProbeLongNoSuccessSeconds            *int     `json:"probe_long_no_success_seconds,omitempty"`
+	ProbeRecoverySuccessesRequired       *int     `json:"probe_recovery_successes_required,omitempty"`
+	ProbeFailureAvoidancePriorityEnabled *bool    `json:"probe_failure_avoidance_priority_enabled,omitempty"`
+	ProbeRecoverableScoreItems           []string `json:"probe_recoverable_score_items,omitempty"`
+	ProbeSkipRecentRealRequestEnabled    *bool    `json:"probe_skip_recent_real_request_enabled,omitempty"`
+	ProbeRecentRealRequestWindowSeconds  *int     `json:"probe_recent_real_request_window_seconds,omitempty"`
+	ProbeGoodBaselineEnabled             *bool    `json:"probe_good_baseline_enabled,omitempty"`
+	ProbeGoodBaselineMinSamples          *int     `json:"probe_good_baseline_min_samples,omitempty"`
+	ProbeGoodBaselineWindowSeconds       *int     `json:"probe_good_baseline_window_seconds,omitempty"`
+	ProbePromptLibraryEnabled            *bool    `json:"probe_prompt_library_enabled,omitempty"`
+	ProbePromptCategories                []string `json:"probe_prompt_categories,omitempty"`
+}
+
 func GetModelGatewayConfig(c *gin.Context) {
 	common.ApiSuccess(c, buildModelGatewayConfigResponse())
 }
@@ -59,6 +81,104 @@ func UpdateModelGatewayConfig(c *gin.Context) {
 	modelgatewaycost.SyncDefaultWorkerLifecycle()
 	modelgatewaydynamicbilling.SyncDefaultRefresherLifecycle()
 	common.ApiSuccess(c, buildModelGatewayConfigResponse())
+}
+
+func UpdateModelGatewayProbeConfig(c *gin.Context) {
+	before := scheduler_setting.GetSetting()
+	setting := before
+	var request UpdateModelGatewayProbeConfigRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "无效的参数",
+		})
+		return
+	}
+	applyModelGatewayProbeConfigRequest(&setting, request)
+	normalized, err := normalizeModelGatewaySchedulerSetting(setting)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	normalized.DynamicBillingEnabledAt = before.DynamicBillingEnabledAt
+	if err := persistModelGatewaySchedulerSetting(normalized); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	modelgatewayprobe.RegisterRelayInvoker(Relay)
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()
+	modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()
+	modelgatewaycost.SyncDefaultWorkerLifecycle()
+	modelgatewaydynamicbilling.SyncDefaultRefresherLifecycle()
+	common.ApiSuccess(c, buildModelGatewayConfigResponse())
+}
+
+func applyModelGatewayProbeConfigRequest(setting *scheduler_setting.SchedulerSetting, request UpdateModelGatewayProbeConfigRequest) {
+	if setting == nil {
+		return
+	}
+	if request.ProbeEnabled != nil {
+		setting.ProbeEnabled = *request.ProbeEnabled
+	}
+	if request.ProbeIntervalSeconds != nil {
+		setting.ProbeIntervalSeconds = *request.ProbeIntervalSeconds
+	}
+	if request.ProbeWorkerCount != nil {
+		setting.ProbeWorkerCount = *request.ProbeWorkerCount
+	}
+	if request.ProbeTimeoutSeconds != nil {
+		setting.ProbeTimeoutSeconds = *request.ProbeTimeoutSeconds
+	}
+	if request.ProbeMaxPerTick != nil {
+		setting.ProbeMaxPerTick = *request.ProbeMaxPerTick
+	}
+	if request.ProbeMinChannelIntervalSeconds != nil {
+		setting.ProbeMinChannelIntervalSeconds = *request.ProbeMinChannelIntervalSeconds
+	}
+	if request.ProbeLowScoreThreshold != nil {
+		setting.ProbeLowScoreThreshold = *request.ProbeLowScoreThreshold
+	}
+	if request.ProbeMissingSampleThreshold != nil {
+		setting.ProbeMissingSampleThreshold = *request.ProbeMissingSampleThreshold
+	}
+	if request.ProbeLongNoSuccessSeconds != nil {
+		setting.ProbeLongNoSuccessSeconds = *request.ProbeLongNoSuccessSeconds
+	}
+	if request.ProbeRecoverySuccessesRequired != nil {
+		setting.ProbeRecoverySuccessesRequired = *request.ProbeRecoverySuccessesRequired
+	}
+	if request.ProbeFailureAvoidancePriorityEnabled != nil {
+		setting.ProbeFailureAvoidancePriorityEnabled = *request.ProbeFailureAvoidancePriorityEnabled
+	}
+	if request.ProbeRecoverableScoreItems != nil {
+		setting.ProbeRecoverableScoreItems = request.ProbeRecoverableScoreItems
+	}
+	if request.ProbeSkipRecentRealRequestEnabled != nil {
+		setting.ProbeSkipRecentRealRequestEnabled = *request.ProbeSkipRecentRealRequestEnabled
+	}
+	if request.ProbeRecentRealRequestWindowSeconds != nil {
+		setting.ProbeRecentRealRequestWindowSeconds = *request.ProbeRecentRealRequestWindowSeconds
+	}
+	if request.ProbeGoodBaselineEnabled != nil {
+		setting.ProbeGoodBaselineEnabled = *request.ProbeGoodBaselineEnabled
+	}
+	if request.ProbeGoodBaselineMinSamples != nil {
+		setting.ProbeGoodBaselineMinSamples = *request.ProbeGoodBaselineMinSamples
+	}
+	if request.ProbeGoodBaselineWindowSeconds != nil {
+		setting.ProbeGoodBaselineWindowSeconds = *request.ProbeGoodBaselineWindowSeconds
+	}
+	if request.ProbePromptLibraryEnabled != nil {
+		setting.ProbePromptLibraryEnabled = *request.ProbePromptLibraryEnabled
+	}
+	if request.ProbePromptCategories != nil {
+		if len(request.ProbePromptCategories) == 0 {
+			setting.ProbePromptCategories = []string{modelgatewayprobe.PromptCategoryShort}
+		} else {
+			setting.ProbePromptCategories = request.ProbePromptCategories
+		}
+	}
 }
 
 func ResetModelGatewayConfig(c *gin.Context) {
@@ -178,6 +298,11 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	setting.ProbeMissingSampleThreshold = normalizeModelGatewayConfigMin(setting.ProbeMissingSampleThreshold, 1, defaults.ProbeMissingSampleThreshold)
 	setting.ProbeLongNoSuccessSeconds = normalizeModelGatewayConfigMin(setting.ProbeLongNoSuccessSeconds, 1, defaults.ProbeLongNoSuccessSeconds)
 	setting.ProbeRecoverySuccessesRequired = normalizeModelGatewayConfigMin(setting.ProbeRecoverySuccessesRequired, 1, defaults.ProbeRecoverySuccessesRequired)
+	setting.ProbeRecoverableScoreItems = modelgatewayprobe.NormalizeRecoverableScoreItems(defaultNilStringSlice(setting.ProbeRecoverableScoreItems, defaults.ProbeRecoverableScoreItems))
+	setting.ProbeRecentRealRequestWindowSeconds = normalizeModelGatewayConfigMin(setting.ProbeRecentRealRequestWindowSeconds, 1, defaults.ProbeRecentRealRequestWindowSeconds)
+	setting.ProbeGoodBaselineMinSamples = normalizeModelGatewayConfigMin(setting.ProbeGoodBaselineMinSamples, 1, defaultInt(defaults.ProbeGoodBaselineMinSamples, defaults.ProbeMissingSampleThreshold))
+	setting.ProbeGoodBaselineWindowSeconds = normalizeModelGatewayConfigMin(setting.ProbeGoodBaselineWindowSeconds, 1, defaults.ProbeGoodBaselineWindowSeconds)
+	setting.ProbePromptCategories = modelgatewayprobe.NormalizePromptCategories(defaultNilStringSlice(setting.ProbePromptCategories, defaults.ProbePromptCategories))
 	setting.CostCalculationIntervalSeconds = normalizeModelGatewayConfigMin(setting.CostCalculationIntervalSeconds, 1, defaults.CostCalculationIntervalSeconds)
 	setting.CostCalculationWorkerCount = normalizeModelGatewayConfigMin(setting.CostCalculationWorkerCount, 1, defaults.CostCalculationWorkerCount)
 	setting.CostCalculationBatchSize = normalizeModelGatewayConfigMin(setting.CostCalculationBatchSize, 1, defaults.CostCalculationBatchSize)
@@ -342,6 +467,14 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 	if err != nil {
 		return nil, err
 	}
+	probeRecoverableScoreItems, err := common.Marshal(setting.ProbeRecoverableScoreItems)
+	if err != nil {
+		return nil, err
+	}
+	probePromptCategories, err := common.Marshal(setting.ProbePromptCategories)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]string{
 		"enabled":                                             strconv.FormatBool(setting.Enabled),
 		"default_mode":                                        setting.DefaultMode,
@@ -399,6 +532,14 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 		"probe_long_no_success_seconds":                       strconv.Itoa(setting.ProbeLongNoSuccessSeconds),
 		"probe_recovery_successes_required":                   strconv.Itoa(setting.ProbeRecoverySuccessesRequired),
 		"probe_failure_avoidance_priority_enabled":            strconv.FormatBool(setting.ProbeFailureAvoidancePriorityEnabled),
+		"probe_recoverable_score_items":                       string(probeRecoverableScoreItems),
+		"probe_skip_recent_real_request_enabled":              strconv.FormatBool(setting.ProbeSkipRecentRealRequestEnabled),
+		"probe_recent_real_request_window_seconds":            strconv.Itoa(setting.ProbeRecentRealRequestWindowSeconds),
+		"probe_good_baseline_enabled":                         strconv.FormatBool(setting.ProbeGoodBaselineEnabled),
+		"probe_good_baseline_min_samples":                     strconv.Itoa(setting.ProbeGoodBaselineMinSamples),
+		"probe_good_baseline_window_seconds":                  strconv.Itoa(setting.ProbeGoodBaselineWindowSeconds),
+		"probe_prompt_library_enabled":                        strconv.FormatBool(setting.ProbePromptLibraryEnabled),
+		"probe_prompt_categories":                             string(probePromptCategories),
 		"cost_calculation_enabled":                            strconv.FormatBool(setting.CostCalculationEnabled),
 		"cost_calculation_interval_seconds":                   strconv.Itoa(setting.CostCalculationIntervalSeconds),
 		"cost_calculation_worker_count":                       strconv.Itoa(setting.CostCalculationWorkerCount),
@@ -473,6 +614,20 @@ func normalizeModelGatewayConfigMin(value int, minValue int, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+func defaultInt(value int, fallback int) int {
+	if value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func defaultNilStringSlice(value []string, fallback []string) []string {
+	if value == nil {
+		return append([]string(nil), fallback...)
+	}
+	return append([]string(nil), value...)
 }
 
 func normalizeModelGatewayConfigNonNegative(value int) int {

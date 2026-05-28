@@ -1282,6 +1282,72 @@ func TestBuildModelGatewayObservabilitySummaryIncludesHealthProbeUserRequestsByD
 	require.Equal(t, int64(0), trend.FinalFailures)
 }
 
+func TestBuildModelGatewayUserRequestObservabilityAttachesChannelWarning(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	requestMeta, err := common.Marshal(map[string]any{
+		"client_aborted":               true,
+		"error_category":               core.ErrorCategoryChannelInducedClientAbort,
+		"warning_level":                core.WarningLevelWarning,
+		"warning_flags":                []string{core.WarningFlagChannelInducedAbort, core.WarningFlagNoEffectiveFirstByte},
+		"warning_message":              "client aborted before effective response",
+		"channel_induced_client_abort": true,
+		"retry_action":                 "client_aborted",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		CreatedAt:          now - 20,
+		UpdatedAt:          now - 18,
+		CompletedAt:        now - 18,
+		RequestId:          "req-channel-warning",
+		RequestedGroup:     "auto",
+		SelectedGroup:      "codex-plus",
+		RequestedModel:     "gpt-5.5",
+		FinalChannelID:     18,
+		FinalChannelName:   "bblabu",
+		Attempts:           1,
+		LastAttemptIndex:   0,
+		FinalSuccess:       false,
+		FinalStatusCode:    relayStatusClientClosedRequest,
+		FinalErrorCategory: model.ModelGatewayUserRequestErrorClientAborted,
+		StreamInterrupted:  true,
+		ClientAborted:      true,
+		DurationMs:         7000,
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelExecutionRecord{
+		CreatedAt:         now - 18,
+		RequestId:         "req-channel-warning",
+		AttemptIndex:      0,
+		RequestedGroup:    "auto",
+		SelectedGroup:     "codex-plus",
+		RequestedModel:    "gpt-5.5",
+		ChannelId:         18,
+		ChannelName:       "bblabu",
+		StatusCode:        relayStatusClientClosedRequest,
+		ErrorCategory:     core.ErrorCategoryChannelInducedClientAbort,
+		StreamInterrupted: true,
+		DurationMs:        7000,
+		RequestMeta:       string(requestMeta),
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	record := response.UserRequests.RecentRequests[0]
+	require.Equal(t, "req-channel-warning", record.RequestID)
+	require.Equal(t, core.WarningLevelWarning, record.WarningLevel)
+	require.True(t, record.ChannelInducedClientAbort)
+	require.Contains(t, record.WarningFlags, core.WarningFlagChannelInducedAbort)
+	require.Contains(t, record.WarningFlags, core.WarningFlagNoEffectiveFirstByte)
+	require.Equal(t, "client aborted before effective response", record.WarningMessage)
+}
+
 func TestBuildModelGatewayObservabilitySummaryFiltersHealthProbeUserRequests(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()

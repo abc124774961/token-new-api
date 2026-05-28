@@ -12,18 +12,19 @@ import (
 )
 
 const (
-	BillingSource          = "model_gateway_probe"
-	TokenName              = "系统健康探活"
-	ConsumeLogContent      = "模型网关健康探活"
-	probeIDPrefix          = "mg_probe_"
-	reasonNoSamples        = "missing_samples"
-	reasonLowScore         = "low_score"
-	reasonLongNoSuccess    = "long_no_success"
-	reasonCircuitProbe     = "circuit_half_open"
-	reasonFailureAvoidance = "failure_avoidance"
-	reasonCooldown         = "cooldown"
-	reasonSampling         = "sampling"
-	reasonLowTraffic       = "low_traffic"
+	BillingSource           = "model_gateway_probe"
+	TokenName               = "系统健康探活"
+	ConsumeLogContent       = "模型网关健康探活"
+	probeIDPrefix           = "mg_probe_"
+	reasonNoSamples         = "missing_samples"
+	reasonLowScore          = "low_score"
+	reasonLongNoSuccess     = "long_no_success"
+	reasonCircuitProbe      = "circuit_half_open"
+	reasonFailureAvoidance  = "failure_avoidance"
+	reasonCooldown          = "cooldown"
+	reasonSampling          = "sampling"
+	reasonLowTraffic        = "low_traffic"
+	reasonRecentRealRequest = "recent_real_request"
 )
 
 type ProbeConfig struct {
@@ -39,15 +40,25 @@ type ProbeConfig struct {
 	RecoverySuccessesRequired       int
 	FailureAvoidancePriorityEnabled bool
 	HighScoreSamplingInterval       time.Duration
+	RecoverableScoreItems           []string
+	SkipRecentRealRequestEnabled    bool
+	RecentRealRequestWindow         time.Duration
+	GoodBaselineEnabled             bool
+	GoodBaselineMinSamples          int
+	GoodBaselineWindow              time.Duration
+	PromptLibraryEnabled            bool
+	PromptCategories                []string
 }
 
 type ProbeCandidate struct {
-	Channel *model.Channel
-	Model   string
-	Group   string
-	Key     core.RuntimeKey
-	Reason  string
-	Plan    *core.DispatchPlan
+	Channel           *model.Channel
+	Model             string
+	Group             string
+	Key               core.RuntimeKey
+	Reason            string
+	TriggerScoreItems []string
+	PromptCategories  []string
+	Plan              *core.DispatchPlan
 }
 
 type ProbeRunResult struct {
@@ -71,4 +82,7 @@ type ProbeRunResult struct {
 	Duration    time.Duration
 	TTFT        time.Duration
 	Plan        *core.DispatchPlan
+	Skipped     bool
+	SkipReason  string
+	PromptType  string
 }

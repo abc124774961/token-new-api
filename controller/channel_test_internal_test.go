@@ -118,6 +118,31 @@ func TestResolveChannelTestEndpointUsesResponsesForOpenAIOAuthJSON(t *testing.T)
 	require.Equal(t, string(constant.EndpointTypeOpenAIResponse), endpointType)
 }
 
+func TestResolveChannelTestEndpointUsesChatForOpenAIOAuthJSONWhenResponsesDenied(t *testing.T) {
+	index := 1
+	denied := false
+	channel := &model.Channel{
+		Type: constant.ChannelTypeOpenAI,
+		Key:  `sk-normal` + "\n" + `{"access_token":"access-token","refresh_token":"refresh-token","account_id":"account-id"}`,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				1: {
+					ResponsesWrite: &denied,
+				},
+			},
+		},
+	}
+
+	endpointType := resolveChannelTestEndpoint(channel, "gpt-5.4", "", channelTestOptions{
+		CredentialIndex:  &index,
+		AllowProxyBridge: true,
+	})
+
+	require.Equal(t, string(constant.EndpointTypeOpenAI), endpointType)
+}
+
 func TestParseChannelTestOptionsEnablesProxyBridgeForCredentialIndex(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

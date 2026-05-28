@@ -690,6 +690,10 @@ type AttemptResult struct {
 	ErrorType                      string
 	ErrorMessage                   string
 	ErrorCategory                  string
+	WarningLevel                   string
+	WarningFlags                   []string
+	WarningMessage                 string
+	ChannelInducedClientAbort      bool
 	ObservedAt                     time.Time
 	Duration                       time.Duration
 	TTFT                           time.Duration

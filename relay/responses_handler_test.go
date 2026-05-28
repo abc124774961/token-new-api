@@ -636,12 +636,10 @@ func TestRelayProxyBridgeWithoutSelectedPlanDoesNotHandleResponse(t *testing.T) 
 
 func TestAccountCapabilityPrefersChatCompletions(t *testing.T) {
 	denied := false
-	allowed := true
 	info := &relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ChannelAccountCapability: &model.ChannelAccountCapability{
-				ResponsesWrite:       &denied,
-				ChatCompletionsWrite: &allowed,
+				ResponsesWrite: &denied,
 			},
 		},
 	}
@@ -653,7 +651,6 @@ func TestEnsureAccountCapabilityResponsesViaChatPlanUsesStandardProfile(t *testi
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	denied := false
-	allowed := true
 	info := &relaycommon.RelayInfo{
 		RelayMode:        relayconstant.RelayModeResponses,
 		RequestModelName: "gpt-4o",
@@ -664,8 +661,7 @@ func TestEnsureAccountCapabilityResponsesViaChatPlanUsesStandardProfile(t *testi
 			ChannelType:       constant.ChannelTypeOpenAI,
 			UpstreamModelName: "gpt-4o",
 			ChannelAccountCapability: &model.ChannelAccountCapability{
-				ResponsesWrite:       &denied,
-				ChatCompletionsWrite: &allowed,
+				ResponsesWrite: &denied,
 			},
 		},
 	}
@@ -684,7 +680,6 @@ func TestEnsureAccountCapabilityResponsesViaChatPlanUsesStandardProfile(t *testi
 
 func TestTextHelperDoesNotForceResponsesWhenAccountCapabilityPrefersChat(t *testing.T) {
 	denied := false
-	allowed := true
 	info := &relaycommon.RelayInfo{
 		RelayMode:       relayconstant.RelayModeChatCompletions,
 		OriginModelName: "gpt-4o",
@@ -693,8 +688,7 @@ func TestTextHelperDoesNotForceResponsesWhenAccountCapabilityPrefersChat(t *test
 			ChannelType:          constant.ChannelTypeOpenAI,
 			ChannelOtherSettings: dto.ChannelOtherSettings{WireAPI: "responses"},
 			ChannelAccountCapability: &model.ChannelAccountCapability{
-				ResponsesWrite:       &denied,
-				ChatCompletionsWrite: &allowed,
+				ResponsesWrite: &denied,
 			},
 		},
 	}

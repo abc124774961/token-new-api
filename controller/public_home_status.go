@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -112,16 +113,39 @@ type PublicHomeStatusGroupMeta struct {
 }
 
 type PublicHomeDynamicBilling struct {
-	Enabled           bool    `json:"enabled"`
-	Status            string  `json:"status,omitempty"`
-	Group             string  `json:"group,omitempty"`
-	Model             string  `json:"model,omitempty"`
-	CurrentRatio      float64 `json:"current_ratio,omitempty"`
-	MinRatio7d        float64 `json:"min_ratio_7d,omitempty"`
-	MaxRatio7d        float64 `json:"max_ratio_7d,omitempty"`
-	DisplayPricePerM  float64 `json:"display_price_per_m,omitempty"`
-	UpdatedSecondsAgo int64   `json:"updated_seconds_ago,omitempty"`
-	RefreshSeconds    int     `json:"refresh_seconds,omitempty"`
+	Enabled           bool                           `json:"enabled"`
+	Status            string                         `json:"status,omitempty"`
+	Group             string                         `json:"group,omitempty"`
+	Model             string                         `json:"model,omitempty"`
+	CurrentRatio      float64                        `json:"current_ratio,omitempty"`
+	MinRatio7d        float64                        `json:"min_ratio_7d,omitempty"`
+	MaxRatio7d        float64                        `json:"max_ratio_7d,omitempty"`
+	DisplayPricePerM  float64                        `json:"display_price_per_m,omitempty"`
+	Trend             *PublicHomeDynamicBillingTrend `json:"trend,omitempty"`
+	UpdatedSecondsAgo int64                          `json:"updated_seconds_ago,omitempty"`
+	RefreshSeconds    int                            `json:"refresh_seconds,omitempty"`
+}
+
+type PublicHomeDynamicBillingTrend struct {
+	Today     PublicHomeDynamicBillingTrendSeries `json:"today"`
+	Yesterday PublicHomeDynamicBillingTrendSeries `json:"yesterday"`
+	SevenDays PublicHomeDynamicBillingTrendSeries `json:"seven_days"`
+}
+
+type PublicHomeDynamicBillingTrendSeries struct {
+	Points      []PublicHomeDynamicBillingTrendPoint `json:"points"`
+	MinRatio    float64                              `json:"min_ratio,omitempty"`
+	MaxRatio    float64                              `json:"max_ratio,omitempty"`
+	AvgRatio    float64                              `json:"avg_ratio,omitempty"`
+	LatestRatio float64                              `json:"latest_ratio,omitempty"`
+	SampleCount int                                  `json:"sample_count,omitempty"`
+}
+
+type PublicHomeDynamicBillingTrendPoint struct {
+	Timestamp   int64   `json:"timestamp"`
+	Ratio       float64 `json:"ratio,omitempty"`
+	PricePerM   float64 `json:"price_per_m,omitempty"`
+	SampleCount int     `json:"sample_count,omitempty"`
 }
 
 type publicHomeModelGatewayStats struct {
@@ -396,7 +420,14 @@ func buildPublicHomeDynamicBilling(now int64) *PublicHomeDynamicBilling {
 	if displayPrice <= 0 && ratio > 0 {
 		displayPrice = modelGatewayDynamicBillingPricePerMillion(modelName, ratio)
 	}
-	minRatio7d, maxRatio7d := publicHomeDynamicBillingRatioRange(now, primary.PolicyGroup)
+	trend := buildPublicHomeDynamicBillingTrend(now, primary.PolicyGroup, modelName)
+	minRatio7d, maxRatio7d := 0.0, 0.0
+	if trend != nil && trend.SevenDays.SampleCount > 0 {
+		minRatio7d = trend.SevenDays.MinRatio
+		maxRatio7d = trend.SevenDays.MaxRatio
+	} else {
+		minRatio7d, maxRatio7d = publicHomeDynamicBillingRatioRange(now, primary.PolicyGroup)
+	}
 
 	updatedSecondsAgo := int64(0)
 	if primary.LatestCalculatedAt > 0 && now > 0 {
@@ -415,9 +446,169 @@ func buildPublicHomeDynamicBilling(now int64) *PublicHomeDynamicBilling {
 		MinRatio7d:        minRatio7d,
 		MaxRatio7d:        maxRatio7d,
 		DisplayPricePerM:  displayPrice,
+		Trend:             trend,
 		UpdatedSecondsAgo: updatedSecondsAgo,
 		RefreshSeconds:    refreshSeconds,
 	}
+}
+
+type publicHomeDynamicBillingTrendSample struct {
+	Timestamp int64
+	Ratio     float64
+	PricePerM float64
+}
+
+type publicHomeDynamicBillingTrendBucket struct {
+	Timestamp int64
+	RatioSum  float64
+	PriceSum  float64
+	Count     int
+}
+
+func buildPublicHomeDynamicBillingTrend(now int64, policyGroup string, modelName string) *PublicHomeDynamicBillingTrend {
+	policyGroup = strings.TrimSpace(policyGroup)
+	if now <= 0 {
+		now = time.Now().Unix()
+	}
+	if policyGroup == "" || model.DB == nil || model.LOG_DB == nil {
+		return nil
+	}
+	location := time.Local
+	nowTime := time.Unix(now, 0).In(location)
+	todayStart := time.Date(nowTime.Year(), nowTime.Month(), nowTime.Day(), 0, 0, 0, 0, location)
+	yesterdayStart := todayStart.AddDate(0, 0, -1)
+	sevenDaysStart := todayStart.AddDate(0, 0, -6)
+	samples, err := loadPublicHomeDynamicBillingTrendSamples(sevenDaysStart.Unix(), policyGroup, modelName)
+	if err != nil {
+		common.SysLog("failed to build public home dynamic billing trend: " + err.Error())
+		return nil
+	}
+	return &PublicHomeDynamicBillingTrend{
+		Today:     buildPublicHomeDynamicBillingTrendSeries(samples, todayStart, 24, time.Hour),
+		Yesterday: buildPublicHomeDynamicBillingTrendSeries(samples, yesterdayStart, 24, time.Hour),
+		SevenDays: buildPublicHomeDynamicBillingTrendSeries(samples, sevenDaysStart, 7, 24*time.Hour),
+	}
+}
+
+func loadPublicHomeDynamicBillingTrendSamples(startTime int64, policyGroup string, modelName string) ([]publicHomeDynamicBillingTrendSample, error) {
+	setting := scheduler_setting.GetSetting()
+	if setting.DynamicBillingEnabledAt > 0 && setting.DynamicBillingEnabledAt > startTime {
+		startTime = setting.DynamicBillingEnabledAt
+	}
+	policyTargets := make(map[string]map[string]struct{})
+	for groupName, policy := range setting.GroupPolicies {
+		if strings.TrimSpace(policy.BillingRatioMode) != scheduler_setting.BillingRatioModeDynamic {
+			continue
+		}
+		normalizedPolicyGroup := strings.TrimSpace(groupName)
+		targetGroups := normalizeModelGatewayDynamicTargetGroups(normalizedPolicyGroup, policy.CandidateGroups)
+		targetSet := make(map[string]struct{}, len(targetGroups))
+		for _, targetGroup := range targetGroups {
+			targetSet[targetGroup] = struct{}{}
+		}
+		policyTargets[normalizedPolicyGroup] = targetSet
+	}
+	if len(policyTargets) == 0 {
+		return nil, nil
+	}
+	appliedLogs, err := loadModelGatewayDynamicBillingAppliedLogs(startTime)
+	if err != nil {
+		return nil, err
+	}
+	summaryByRequestID, err := loadModelGatewayDynamicBillingAppliedSummaries(appliedLogs)
+	if err != nil {
+		return nil, err
+	}
+	samples := make([]publicHomeDynamicBillingTrendSample, 0, len(appliedLogs))
+	for _, logRow := range appliedLogs {
+		other := make(map[string]interface{})
+		if err := common.UnmarshalJsonStr(logRow.Other, &other); err != nil {
+			continue
+		}
+		if skipModelGatewayDynamicBillingAppliedLog(other) || !modelGatewayBillingBool(other, "dynamic_billing_applied") {
+			continue
+		}
+		ratio := modelGatewayBillingFloat(other, "dynamic_billing_ratio")
+		if ratio <= 0 {
+			continue
+		}
+		summary := summaryByRequestID[strings.TrimSpace(logRow.RequestId)]
+		targetGroup := firstNonEmptyTrimmed(
+			modelGatewayBillingString(other, "dynamic_billing_group"),
+			summary.SelectedGroup,
+			logRow.Group,
+		)
+		resolvedPolicyGroup := resolveModelGatewayDynamicPolicyGroup(
+			strings.TrimSpace(summary.RequestedGroup),
+			targetGroup,
+			policyTargets,
+		)
+		if strings.TrimSpace(resolvedPolicyGroup) != policyGroup {
+			continue
+		}
+		pricePerM := modelGatewayBillingFloat(other, "dynamic_billing_price_per_m")
+		if pricePerM <= 0 {
+			pricePerM = modelGatewayDynamicBillingPricePerMillion(modelName, ratio)
+		}
+		samples = append(samples, publicHomeDynamicBillingTrendSample{
+			Timestamp: logRow.CreatedAt,
+			Ratio:     ratio,
+			PricePerM: pricePerM,
+		})
+	}
+	return samples, nil
+}
+
+func buildPublicHomeDynamicBillingTrendSeries(samples []publicHomeDynamicBillingTrendSample, start time.Time, count int, step time.Duration) PublicHomeDynamicBillingTrendSeries {
+	if count <= 0 || step <= 0 {
+		return PublicHomeDynamicBillingTrendSeries{}
+	}
+	buckets := make([]publicHomeDynamicBillingTrendBucket, count)
+	for idx := range buckets {
+		buckets[idx].Timestamp = start.Add(time.Duration(idx) * step).Unix()
+	}
+	startTs := start.Unix()
+	endTs := start.Add(time.Duration(count) * step).Unix()
+	for _, sample := range samples {
+		if sample.Timestamp < startTs || sample.Timestamp >= endTs || sample.Ratio <= 0 {
+			continue
+		}
+		index := int((sample.Timestamp - startTs) / int64(step.Seconds()))
+		if index < 0 || index >= count {
+			continue
+		}
+		buckets[index].RatioSum += sample.Ratio
+		if sample.PricePerM > 0 {
+			buckets[index].PriceSum += sample.PricePerM
+		}
+		buckets[index].Count++
+	}
+	series := PublicHomeDynamicBillingTrendSeries{
+		Points: make([]PublicHomeDynamicBillingTrendPoint, 0, count),
+	}
+	totalRatio := 0.0
+	for _, bucket := range buckets {
+		point := PublicHomeDynamicBillingTrendPoint{Timestamp: bucket.Timestamp}
+		if bucket.Count > 0 {
+			point.Ratio = bucket.RatioSum / float64(bucket.Count)
+			point.PricePerM = bucket.PriceSum / float64(bucket.Count)
+			point.SampleCount = bucket.Count
+			series.SampleCount += bucket.Count
+			totalRatio += bucket.RatioSum
+			series.LatestRatio = point.Ratio
+			if series.MinRatio <= 0 || point.Ratio < series.MinRatio {
+				series.MinRatio = point.Ratio
+			}
+			if point.Ratio > series.MaxRatio {
+				series.MaxRatio = point.Ratio
+			}
+		}
+		series.Points = append(series.Points, point)
+	}
+	if series.SampleCount > 0 {
+		series.AvgRatio = totalRatio / float64(series.SampleCount)
+	}
+	return series
 }
 
 func publicHomeDynamicBillingRatioRange(now int64, policyGroup string) (float64, float64) {

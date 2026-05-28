@@ -56,11 +56,14 @@ var codexImageGenerationKeywordIgnoredBlocks = []*regexp.Regexp{
 	regexp.MustCompile(`(?is)<skill\b[^>]*>.*?</skill>`),
 }
 
-// ShouldLogClientRequestTrace returns true for Codex-like requests and Responses
-// requests. These traces are intentionally INFO-level so they are visible in
-// production console logs while debugging channel selection.
+// ShouldLogClientRequestTrace returns true only when client request tracing is
+// explicitly enabled. This keeps production quiet by default while still
+// allowing Codex-like / Responses traces during debugging.
 func ShouldLogClientRequestTrace(c *gin.Context) bool {
 	if c == nil || c.Request == nil {
+		return false
+	}
+	if !common.DebugEnabled && !common.GetEnvOrDefaultBool("CLIENT_REQUEST_TRACE_ENABLED", false) {
 		return false
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/responses") {

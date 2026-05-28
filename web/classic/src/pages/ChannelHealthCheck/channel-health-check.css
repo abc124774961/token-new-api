@@ -381,6 +381,50 @@
   color: var(--ch-teal);
 }
 
+.ct-channel-health-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.ct-channel-health-settings section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid #e5edf5;
+  padding-top: 14px;
+}
+
+.ct-channel-health-settings section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.ct-channel-health-settings-title {
+  color: var(--ch-text);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.ct-channel-health-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ct-channel-health-setting-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ct-channel-health-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
 @media (max-width: 1280px) {
   .ct-channel-health-metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -409,5 +453,10 @@
 
   .ct-channel-health-window-select {
     width: 100%;
+  }
+
+  .ct-channel-health-settings-grid,
+  .ct-channel-health-checkbox-grid {
+    grid-template-columns: 1fr;
   }
 }

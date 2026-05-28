@@ -1227,6 +1227,7 @@ function isAttemptClientAborted(attempt) {
     attempt?.client_aborted === true ||
     Number(attempt?.status_code || 0) === 499 ||
     category === 'client_aborted' ||
+    category === 'channel_induced_client_abort' ||
     category.includes('client_abort') ||
     category.includes('client_gone')
   );
@@ -1274,9 +1275,14 @@ function buildUserRequestDetailRecord(userRequest, records) {
   const finalStatusCode = latestAttemptClientAborted
     ? attempt?.status_code || 499
     : userRequest?.final_status_code || attempt?.status_code || 0;
-  const finalErrorCategory = latestAttemptClientAborted
-    ? 'client_aborted'
-    : userRequest?.final_error_category || attempt?.error_category || '';
+  const finalErrorCategory =
+    userRequest?.channel_induced_client_abort ||
+    attempt?.channel_induced_client_abort ||
+    attempt?.request_meta?.channel_induced_client_abort
+      ? 'channel_induced_client_abort'
+      : latestAttemptClientAborted
+        ? 'client_aborted'
+        : userRequest?.final_error_category || attempt?.error_category || '';
   return {
     ...base,
     ...attempt,
@@ -1347,6 +1353,25 @@ function buildUserRequestDetailRecord(userRequest, records) {
     final_status_code: finalStatusCode,
     error_category: finalErrorCategory,
     final_error_category: finalErrorCategory,
+    warning_level:
+      userRequest?.warning_level ||
+      attempt?.warning_level ||
+      attempt?.request_meta?.warning_level ||
+      '',
+    warning_flags:
+      userRequest?.warning_flags ||
+      attempt?.warning_flags ||
+      attempt?.request_meta?.warning_flags ||
+      [],
+    warning_message:
+      userRequest?.warning_message ||
+      attempt?.warning_message ||
+      attempt?.request_meta?.warning_message ||
+      '',
+    channel_induced_client_abort:
+      userRequest?.channel_induced_client_abort === true ||
+      attempt?.channel_induced_client_abort === true ||
+      attempt?.request_meta?.channel_induced_client_abort === true,
     retry_action: attempt?.retry_action || '',
     retry_reason:
       attempt?.retry_reason ||
@@ -1391,6 +1416,18 @@ function buildUserRequestDetailRecord(userRequest, records) {
       ...(userRequest?.is_health_probe ? { is_health_probe: true } : {}),
       ...(userRequest?.probe_reason
         ? { probe_reason: userRequest.probe_reason }
+        : {}),
+      ...(userRequest?.warning_level
+        ? { warning_level: userRequest.warning_level }
+        : {}),
+      ...(Array.isArray(userRequest?.warning_flags)
+        ? { warning_flags: userRequest.warning_flags }
+        : {}),
+      ...(userRequest?.warning_message
+        ? { warning_message: userRequest.warning_message }
+        : {}),
+      ...(userRequest?.channel_induced_client_abort
+        ? { channel_induced_client_abort: true }
         : {}),
       candidate_explanations: candidateExplanations,
     },
@@ -1900,6 +1937,10 @@ function formatAttemptChannelLabel(record, t) {
 
 function formatAttemptErrorCategory(category, t) {
   switch (category) {
+    case 'channel_induced_client_abort':
+      return t('渠道诱发中断');
+    case 'client_aborted':
+      return t('客户端中断');
     case 'upstream_concurrency_limit':
       return t('上游并发受限');
     case 'local_concurrency_limit':
@@ -1923,6 +1964,79 @@ function formatAttemptErrorCategory(category, t) {
     default:
       return category || '--';
   }
+}
+
+function getWarningFlags(record) {
+  const direct = record?.warning_flags;
+  const meta = record?.request_meta?.warning_flags;
+  const value = Array.isArray(direct) && direct.length ? direct : meta;
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+function hasModelGatewayWarning(record) {
+  return (
+    Boolean(record?.channel_induced_client_abort) ||
+    Boolean(record?.request_meta?.channel_induced_client_abort) ||
+    Boolean(String(record?.warning_level || '').trim()) ||
+    Boolean(String(record?.request_meta?.warning_level || '').trim()) ||
+    Boolean(String(record?.warning_message || '').trim()) ||
+    Boolean(String(record?.request_meta?.warning_message || '').trim()) ||
+    getWarningFlags(record).length > 0
+  );
+}
+
+function warningMessage(record) {
+  return String(
+    record?.warning_message || record?.request_meta?.warning_message || '',
+  ).trim();
+}
+
+function modelGatewayWarningLabel(record, t) {
+  const flags = getWarningFlags(record);
+  if (
+    record?.channel_induced_client_abort ||
+    record?.request_meta?.channel_induced_client_abort ||
+    flags.includes('channel_induced_abort')
+  ) {
+    return t('渠道诱发中断');
+  }
+  return t('渠道预警');
+}
+
+function modelGatewayWarningContent(record, t) {
+  const message = warningMessage(record);
+  if (message) return message;
+  const flags = getWarningFlags(record);
+  if (
+    record?.channel_induced_client_abort ||
+    record?.request_meta?.channel_induced_client_abort ||
+    flags.includes('channel_induced_abort')
+  ) {
+    return t('客户端在未收到有效下游响应前断开，疑似由渠道流式响应异常诱发');
+  }
+  return t('该请求命中调度预警，请查看尝试记录与渠道状态');
+}
+
+function modelGatewayWarningColor(record) {
+  const level = String(
+    record?.warning_level || record?.request_meta?.warning_level || '',
+  )
+    .trim()
+    .toLowerCase();
+  if (level === 'critical') return 'red';
+  return 'orange';
+}
+
+function ModelGatewayWarningTag({ record, t, size = 'small' }) {
+  if (!hasModelGatewayWarning(record)) return null;
+  return (
+    <Tooltip content={modelGatewayWarningContent(record, t)}>
+      <Tag color={modelGatewayWarningColor(record)} size={size} type='light'>
+        {modelGatewayWarningLabel(record, t)}
+      </Tag>
+    </Tooltip>
+  );
 }
 
 function flowActionTone(action, record) {
@@ -1975,9 +2089,26 @@ function DispatchFlowTags({ record, t, compact = false }) {
   }
   if (category) {
     tags.push(
-      <Tag key='category' color='grey' type='light' {...tagProps}>
+      <Tag
+        key='category'
+        color={
+          category === 'channel_induced_client_abort' ? 'orange' : 'grey'
+        }
+        type='light'
+        {...tagProps}
+      >
         {t('失败分类')}: {formatAttemptErrorCategory(category, t)}
       </Tag>,
+    );
+  }
+  if (hasModelGatewayWarning(record)) {
+    tags.push(
+      <ModelGatewayWarningTag
+        key='warning'
+        record={record}
+        t={t}
+        size={compact ? 'small' : 'default'}
+      />,
     );
   }
   if (retryReason) {
@@ -2053,6 +2184,13 @@ function attemptRecordStatusMeta(record, t) {
       color: 'red',
       label: t('首字超时'),
       detail: t('内部切换渠道'),
+    };
+  }
+  if (hasModelGatewayWarning(record)) {
+    return {
+      color: modelGatewayWarningColor(record),
+      label: modelGatewayWarningLabel(record, t),
+      detail: modelGatewayWarningContent(record, t),
     };
   }
   if (record?.client_aborted || Number(record?.status_code || 0) === 499) {
@@ -2480,6 +2618,13 @@ function getUserRequestStatusMeta(record, t) {
   if (record?.status === 'processing') {
     return { color: 'blue', label: t('处理中'), tone: 'processing' };
   }
+  if (hasModelGatewayWarning(record)) {
+    return {
+      color: modelGatewayWarningColor(record),
+      label: modelGatewayWarningLabel(record, t),
+      tone: 'warning',
+    };
+  }
   if (
     record?.client_aborted ||
     record?.status === 'client_aborted' ||
@@ -2503,6 +2648,8 @@ function isUserRequestProcessing(record) {
 
 function formatUserRequestErrorCategory(category, t) {
   switch (category) {
+    case 'channel_induced_client_abort':
+      return t('渠道诱发中断');
     case 'rate_limit':
       return t('最终失败类型：rate_limit');
     case 'timeout':
@@ -3165,7 +3312,9 @@ function UserRequestEventTooltip({ record, meta, processing, durationMs, t }) {
       t('事件'),
       processing
         ? t('请求仍在处理中')
-        : record?.client_aborted
+        : hasModelGatewayWarning(record)
+          ? modelGatewayWarningLabel(record, t)
+          : record?.client_aborted
           ? t('用户主动终止')
           : record?.recovered
             ? t('智能调度后成功')
@@ -3190,6 +3339,9 @@ function UserRequestEventTooltip({ record, meta, processing, durationMs, t }) {
         count: formatNumber(firstByteTimeoutAttempts),
       }),
     ]);
+  }
+  if (hasModelGatewayWarning(record) && !processing) {
+    rows.push([t('渠道预警'), modelGatewayWarningContent(record, t)]);
   }
 
   if (
@@ -4518,6 +4670,8 @@ function UserRequestRecentTable({
                 const issueLabel =
                   firstByteTimeoutAttempts > 0
                     ? t('首字超时切换')
+                    : hasModelGatewayWarning(record) && !processing
+                      ? modelGatewayWarningLabel(record, t)
                     : !record.final_success &&
                         record.final_error_category &&
                         meta.tone !== 'aborted' &&
@@ -4620,6 +4774,7 @@ function UserRequestRecentTable({
                             {t('健康探活')}
                           </Tag>
                         )}
+                        <ModelGatewayWarningTag record={record} t={t} />
                         <span title={channelLabel}>{channelLabel}</span>
                         {channelIdLabel && (
                           <code title={t('渠道 ID')}>{channelIdLabel}</code>

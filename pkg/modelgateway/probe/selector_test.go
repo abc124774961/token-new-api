@@ -142,6 +142,176 @@ func TestProbeSelectorLowScoreIgnoresNonRecoverableCostOnlyPenalty(t *testing.T)
 	require.Empty(t, candidates)
 }
 
+func TestProbeSelectorLowScoreHonorsConfiguredRecoverableItems(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-configured-items", "gpt-4.1", "default", "default", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "configured-items", "default", "gpt-4.1", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "gpt-4.1", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SampleCount:        20,
+		SuccessRate:        0.6,
+		LastRealAttemptAt:  now.Unix(),
+		LastRealSuccessAt:  now.Add(-2 * time.Hour).Unix(),
+		RealSampleCount30m: 1,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:           time.Second,
+		LowScoreThreshold:            0.7,
+		RecoverableScoreItems:        []string{ScoreItemTTFTLatency},
+		SkipRecentRealRequestEnabled: false,
+		GoodBaselineEnabled:          true,
+		GoodBaselineMinSamples:       3,
+	})
+	require.NoError(t, err)
+	require.Empty(t, candidates)
+
+	candidates, err = selector.Select(ProbeConfig{
+		MinChannelInterval:           time.Second,
+		LowScoreThreshold:            0.7,
+		RecoverableScoreItems:        []string{ScoreItemCompletionRate},
+		SkipRecentRealRequestEnabled: false,
+		GoodBaselineEnabled:          true,
+		GoodBaselineMinSamples:       3,
+	})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, []string{ScoreItemCompletionRate}, candidates[0].TriggerScoreItems)
+}
+
+func TestProbeSelectorFirstByteBacklogTriggersLowScoreRecovery(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-first-byte-backlog", "gpt-4.1", "default", "default", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "first-byte-backlog", "default", "gpt-4.1", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "gpt-4.1", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                   key,
+		SampleCount:           20,
+		SuccessRate:           0.99,
+		TTFTMs:                500,
+		DurationMs:            1200,
+		TokensPerSecond:       60,
+		FirstBytePending:      4,
+		SlowFirstBytePending:  3,
+		OldestFirstByteWaitMs: 20000,
+		LastRealAttemptAt:     now.Unix(),
+		LastRealSuccessAt:     now.Add(-2 * time.Hour).Unix(),
+		RealSampleCount30m:    1,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:           time.Second,
+		LowScoreThreshold:            1,
+		RecoverableScoreItems:        []string{ScoreItemFirstByteBacklog},
+		SkipRecentRealRequestEnabled: false,
+		GoodBaselineEnabled:          true,
+		GoodBaselineMinSamples:       3,
+	})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Contains(t, candidates[0].TriggerScoreItems, ScoreItemFirstByteBacklog)
+}
+
+func TestProbeSelectorSkipsWhenRecentRealRequestExistsForRuntime(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-recent-real", "gpt-4.1", "default", "default", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "recent-real", "default", "gpt-4.1", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "gpt-4.1", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SampleCount:        20,
+		SuccessRate:        0.3,
+		LastRealAttemptAt:  now.Unix(),
+		LastRealSuccessAt:  now.Add(-2 * time.Hour).Unix(),
+		RealSampleCount30m: 1,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:           time.Second,
+		LowScoreThreshold:            0.7,
+		RecoverableScoreItems:        []string{ScoreItemCompletionRate},
+		SkipRecentRealRequestEnabled: true,
+		RecentRealRequestWindow:      30 * time.Minute,
+		GoodBaselineEnabled:          true,
+		GoodBaselineMinSamples:       3,
+	})
+	require.NoError(t, err)
+	require.Empty(t, candidates)
+	require.True(t, skipRecentRealRequestProbe(ProbeCandidate{Key: key, Channel: channel, Model: "gpt-4.1", Group: "default"}, ProbeConfig{
+		SkipRecentRealRequestEnabled: true,
+		RecentRealRequestWindow:      30 * time.Minute,
+	}, store, now))
+}
+
+func TestProbeSelectorGoodBaselineRequiresRecentHistoricalSuccess(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequestForChannel(t, db, "req-baseline-traffic", "gpt-4.1", "default", "default", 2, now.Unix(), true)
+	channel := seedProbeSelectorChannel(t, db, 1, "baseline-window", "default", "gpt-4.1", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "gpt-4.1", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SampleCount:        20,
+		SuccessRate:        0.6,
+		LastRealAttemptAt:  now.Unix(),
+		LastRealSuccessAt:  now.Add(-48 * time.Hour).Unix(),
+		RealSampleCount30m: 1,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:           time.Second,
+		LowScoreThreshold:            0.7,
+		RecoverableScoreItems:        []string{ScoreItemCompletionRate},
+		SkipRecentRealRequestEnabled: false,
+		GoodBaselineEnabled:          true,
+		GoodBaselineMinSamples:       3,
+		GoodBaselineWindow:           24 * time.Hour,
+	})
+	require.NoError(t, err)
+	require.Empty(t, candidates)
+
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SampleCount:        20,
+		SuccessRate:        0.6,
+		LastRealAttemptAt:  now.Unix(),
+		LastRealSuccessAt:  now.Add(-time.Hour).Unix(),
+		RealSampleCount30m: 1,
+	})
+	candidates, err = selector.Select(ProbeConfig{
+		MinChannelInterval:           time.Second,
+		LowScoreThreshold:            0.7,
+		RecoverableScoreItems:        []string{ScoreItemCompletionRate},
+		SkipRecentRealRequestEnabled: false,
+		GoodBaselineEnabled:          true,
+		GoodBaselineMinSamples:       3,
+		GoodBaselineWindow:           24 * time.Hour,
+	})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, reasonLowScore, candidates[0].Reason)
+}
+
 func TestProbeSelectorDoesNotUseLongNoSuccessWhenChannelRecentlySucceeded(t *testing.T) {
 	db := setupProbeSelectorTestDB(t)
 	now := time.Now()

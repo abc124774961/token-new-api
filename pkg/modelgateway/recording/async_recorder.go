@@ -179,6 +179,10 @@ type dispatchRequestMeta struct {
 type attemptRequestMeta struct {
 	ErrorMessage                   string             `json:"error_message,omitempty"`
 	ErrorCategory                  string             `json:"error_category,omitempty"`
+	WarningLevel                   string             `json:"warning_level,omitempty"`
+	WarningFlags                   []string           `json:"warning_flags,omitempty"`
+	WarningMessage                 string             `json:"warning_message,omitempty"`
+	ChannelInducedClientAbort      bool               `json:"channel_induced_client_abort,omitempty"`
 	RetryAction                    string             `json:"retry_action,omitempty"`
 	RetryReason                    string             `json:"retry_reason,omitempty"`
 	WillRetry                      bool               `json:"will_retry,omitempty"`
@@ -354,6 +358,10 @@ func attemptRequestMetaFromResult(result core.AttemptResult) attemptRequestMeta 
 	return attemptRequestMeta{
 		ErrorMessage:                   result.ErrorMessage,
 		ErrorCategory:                  result.ErrorCategory,
+		WarningLevel:                   result.WarningLevel,
+		WarningFlags:                   append([]string(nil), result.WarningFlags...),
+		WarningMessage:                 result.WarningMessage,
+		ChannelInducedClientAbort:      result.ChannelInducedClientAbort,
 		RetryAction:                    result.RetryAction,
 		RetryReason:                    result.RetryReason,
 		WillRetry:                      result.WillRetry,
@@ -376,6 +384,10 @@ func attemptRequestMetaFromResult(result core.AttemptResult) attemptRequestMeta 
 func emptyAttemptRequestMeta(meta attemptRequestMeta) bool {
 	return meta.ErrorMessage == "" &&
 		meta.ErrorCategory == "" &&
+		meta.WarningLevel == "" &&
+		len(meta.WarningFlags) == 0 &&
+		meta.WarningMessage == "" &&
+		!meta.ChannelInducedClientAbort &&
 		meta.RetryAction == "" &&
 		meta.RetryReason == "" &&
 		!meta.WillRetry &&

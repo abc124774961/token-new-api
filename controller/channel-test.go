@@ -80,14 +80,14 @@ func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointTyp
 
 func resolveChannelTestEndpoint(channel *model.Channel, modelName, endpointType string, options channelTestOptions) string {
 	if channelTestUsesOAuthJSONCredential(channel, options) && strings.TrimSpace(endpointType) == "" {
-		if options.AllowProxyBridge {
-			endpointType = string(constant.EndpointTypeOpenAIResponse)
-		} else {
-			if capability, ok := channelTestAccountCapability(channel, options); ok &&
-				capability.HasResponsesWriteDenied() &&
-				capability.HasChatCompletionsWriteAllowed() {
+		if capability, ok := channelTestAccountCapability(channel, options); ok {
+			if capability.HasResponsesWriteAllowed() {
+				endpointType = string(constant.EndpointTypeOpenAIResponse)
+			} else if capability.HasResponsesWriteDenied() || capability.HasChatCompletionsWriteAllowed() {
 				return string(constant.EndpointTypeOpenAI)
 			}
+		}
+		if endpointType == "" {
 			endpointType = string(constant.EndpointTypeOpenAIResponse)
 		}
 	}
@@ -479,6 +479,21 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 	info.IsChannelTest = true
 	info.InitChannelMeta(c)
 
+	if capability, ok := channelTestAccountCapability(channel, testOptions); ok {
+		common.SysLog(fmt.Sprintf(
+			"channel test route decision: channel_id=%d credential_index=%d responses_write=%s chat_completions_write=%s compact_write=%s allow_proxy_bridge=%t relay_mode=%d endpoint_type=%s request_path=%s",
+			channel.Id,
+			lo.FromPtrOr(testOptions.CredentialIndex, -1),
+			channelTestCapabilityFlagString(capability.ResponsesWrite),
+			channelTestCapabilityFlagString(capability.ChatCompletionsWrite),
+			channelTestCapabilityFlagString(capability.ResponsesCompactWrite),
+			testOptions.AllowProxyBridge,
+			info.RelayMode,
+			endpointType,
+			requestPath,
+		))
+	}
+
 	err = attachTestBillingRequestInput(info, request)
 	if err != nil {
 		return testResult{
@@ -802,6 +817,16 @@ func firstChannelTestOptions(options []channelTestOptions) channelTestOptions {
 		return channelTestOptions{}
 	}
 	return options[0]
+}
+
+func channelTestCapabilityFlagString(value *bool) string {
+	if value == nil {
+		return "nil"
+	}
+	if *value {
+		return "true"
+	}
+	return "false"
 }
 
 func buildChannelTestSelection(channel *model.Channel, options channelTestOptions) *modelgatewayintegration.SelectionResult {

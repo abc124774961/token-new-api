@@ -22,10 +22,14 @@ import { useTranslation } from 'react-i18next';
 import {
   Banner,
   Button,
+  Checkbox,
   Empty,
   Input,
+  InputNumber,
+  Modal,
   Select,
   Spin,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -37,6 +41,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
+  Settings,
   History,
   ListChecks,
   RefreshCw,
@@ -44,13 +49,70 @@ import {
   ShieldCheck,
   Stethoscope,
 } from 'lucide-react';
-import { API, timestamp2string } from '../../helpers';
+import { API, showError, showSuccess, timestamp2string } from '../../helpers';
 import './channel-health-check.css';
 
 const { TabPane } = Tabs;
 
 const HISTORY_HOUR_OPTIONS = [1, 6, 24, 72, 168];
 const ALL_STATUSES = 'all';
+const PROBE_SCORE_ITEM_OPTIONS = [
+  ['completion_rate', '完成率'],
+  ['upstream_error_rate', '上游错误'],
+  ['ttft_latency', '首包速度'],
+  ['duration_latency', '完整耗时'],
+  ['first_byte_backlog', '首包积压'],
+  ['empty_output_rate', '空输出'],
+  ['stream_interrupted_rate', '流中断'],
+];
+const PROBE_PROMPT_CATEGORY_OPTIONS = [
+  ['short', '短文本'],
+  ['zh', '中文'],
+  ['medium', '中等文本'],
+  ['long', '长文本'],
+];
+
+const DEFAULT_PROBE_CONFIG = {
+  probe_enabled: true,
+  probe_interval_seconds: 60,
+  probe_worker_count: 2,
+  probe_timeout_seconds: 8,
+  probe_max_per_tick: 5,
+  probe_min_channel_interval_seconds: 300,
+  probe_low_score_threshold: 0.62,
+  probe_missing_sample_threshold: 3,
+  probe_long_no_success_seconds: 1800,
+  probe_recovery_successes_required: 2,
+  probe_failure_avoidance_priority_enabled: true,
+  probe_recoverable_score_items: PROBE_SCORE_ITEM_OPTIONS.map(([value]) => value),
+  probe_skip_recent_real_request_enabled: true,
+  probe_recent_real_request_window_seconds: 1800,
+  probe_good_baseline_enabled: true,
+  probe_good_baseline_min_samples: 3,
+  probe_good_baseline_window_seconds: 86400,
+  probe_prompt_library_enabled: true,
+  probe_prompt_categories: PROBE_PROMPT_CATEGORY_OPTIONS.map(([value]) => value),
+};
+
+function numberOrDefault(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeProbeConfig(setting = {}) {
+  return {
+    ...DEFAULT_PROBE_CONFIG,
+    ...setting,
+    probe_recoverable_score_items: Array.isArray(
+      setting.probe_recoverable_score_items,
+    )
+        ? setting.probe_recoverable_score_items
+        : DEFAULT_PROBE_CONFIG.probe_recoverable_score_items,
+    probe_prompt_categories: Array.isArray(setting.probe_prompt_categories)
+        ? setting.probe_prompt_categories
+        : DEFAULT_PROBE_CONFIG.probe_prompt_categories,
+  };
+}
 
 function unwrapApiData(response) {
   return response?.data?.data || response?.data || {};
@@ -445,6 +507,26 @@ function scoreMetricLabel(key, t) {
   }
 }
 
+function ProbeScoreItemTags({ items, t }) {
+  if (!items?.length) {
+    return <Typography.Text type='tertiary'>--</Typography.Text>;
+  }
+  return (
+    <div className='ct-channel-health-tags'>
+      {items.slice(0, 4).map((item) => (
+        <Tag key={item} color='orange' size='small' type='light'>
+          {scoreMetricLabel(item, t)}
+        </Tag>
+      ))}
+      {items.length > 4 && (
+        <Tag color='grey' size='small' type='light'>
+          +{items.length - 4}
+        </Tag>
+      )}
+    </div>
+  );
+}
+
 function importantScoreDeltaEntries(delta, t) {
   return Object.entries(delta || {})
     .map(([key, value]) => ({ key, value: Number(value) }))
@@ -539,6 +621,218 @@ function ReasonTags({ reasons, t }) {
   );
 }
 
+function ProbeSettingField({ label, children }) {
+  return (
+    <label className='ct-channel-health-setting-field'>
+      <Typography.Text type='secondary' size='small'>
+        {label}
+      </Typography.Text>
+      {children}
+    </label>
+  );
+}
+
+function ProbeSettingsModal({
+  visible,
+  config,
+  loading,
+  saving,
+  onCancel,
+  onChange,
+  onSave,
+  t,
+}) {
+  const update = (key, value) => onChange({ ...config, [key]: value });
+  const scoreItems = config.probe_recoverable_score_items || [];
+  const promptCategories = config.probe_prompt_categories || [];
+
+  return (
+    <Modal
+      title={t('健康探活设置')}
+      visible={visible}
+      onCancel={onCancel}
+      onOk={onSave}
+      confirmLoading={saving}
+      okText={t('保存设置')}
+      cancelText={t('取消')}
+      width={760}
+      className='ct-channel-health-settings-modal'
+    >
+      <Spin spinning={loading}>
+        <div className='ct-channel-health-settings'>
+          <section>
+            <div className='ct-channel-health-settings-title'>{t('基础开关')}</div>
+            <div className='ct-channel-health-settings-grid'>
+              <ProbeSettingField label={t('启用健康探活')}>
+                <Switch
+                  checked={config.probe_enabled !== false}
+                  onChange={(value) => update('probe_enabled', value)}
+                />
+              </ProbeSettingField>
+              <ProbeSettingField label={t('探活扫描间隔')}>
+                <InputNumber
+                  min={10}
+                  suffix={t('秒')}
+                  value={config.probe_interval_seconds}
+                  onChange={(value) =>
+                    update('probe_interval_seconds', numberOrDefault(value, 60))
+                  }
+                />
+              </ProbeSettingField>
+              <ProbeSettingField label={t('每轮最多探活')}>
+                <InputNumber
+                  min={1}
+                  value={config.probe_max_per_tick}
+                  onChange={(value) =>
+                    update('probe_max_per_tick', numberOrDefault(value, 5))
+                  }
+                />
+              </ProbeSettingField>
+              <ProbeSettingField label={t('单渠道最小间隔')}>
+                <InputNumber
+                  min={10}
+                  suffix={t('秒')}
+                  value={config.probe_min_channel_interval_seconds}
+                  onChange={(value) =>
+                    update(
+                      'probe_min_channel_interval_seconds',
+                      numberOrDefault(value, 300),
+                    )
+                  }
+                />
+              </ProbeSettingField>
+              <ProbeSettingField label={t('单次探活超时')}>
+                <InputNumber
+                  min={1}
+                  suffix={t('秒')}
+                  value={config.probe_timeout_seconds}
+                  onChange={(value) =>
+                    update('probe_timeout_seconds', numberOrDefault(value, 8))
+                  }
+                />
+              </ProbeSettingField>
+            </div>
+          </section>
+
+          <section>
+            <div className='ct-channel-health-settings-title'>{t('低分触发')}</div>
+            <div className='ct-channel-health-settings-grid'>
+              <ProbeSettingField label={t('低分阈值')}>
+                <InputNumber
+                  min={0.01}
+                  max={1}
+                  step={0.01}
+                  value={config.probe_low_score_threshold}
+                  onChange={(value) =>
+                    update('probe_low_score_threshold', numberOrDefault(value, 0.62))
+                  }
+                />
+              </ProbeSettingField>
+            </div>
+            <Checkbox.Group
+              value={scoreItems}
+              onChange={(values) => update('probe_recoverable_score_items', values)}
+            >
+              <div className='ct-channel-health-checkbox-grid'>
+                {PROBE_SCORE_ITEM_OPTIONS.map(([value, label]) => (
+                  <Checkbox key={value} value={value}>
+                    {t(label)}
+                  </Checkbox>
+                ))}
+              </div>
+            </Checkbox.Group>
+          </section>
+
+          <section>
+            <div className='ct-channel-health-settings-title'>{t('真实请求跳过')}</div>
+            <div className='ct-channel-health-settings-grid'>
+              <ProbeSettingField label={t('近期已有真实请求则跳过体检')}>
+                <Switch
+                  checked={config.probe_skip_recent_real_request_enabled !== false}
+                  onChange={(value) =>
+                    update('probe_skip_recent_real_request_enabled', value)
+                  }
+                />
+              </ProbeSettingField>
+              <ProbeSettingField label={t('近期窗口')}>
+                <InputNumber
+                  min={1}
+                  suffix={t('秒')}
+                  value={config.probe_recent_real_request_window_seconds}
+                  onChange={(value) =>
+                    update(
+                      'probe_recent_real_request_window_seconds',
+                      numberOrDefault(value, 1800),
+                    )
+                  }
+                />
+              </ProbeSettingField>
+            </div>
+          </section>
+
+          <section>
+            <div className='ct-channel-health-settings-title'>{t('轻量基线')}</div>
+            <div className='ct-channel-health-settings-grid'>
+              <ProbeSettingField label={t('只体检平常表现不错的渠道')}>
+                <Switch
+                  checked={config.probe_good_baseline_enabled !== false}
+                  onChange={(value) => update('probe_good_baseline_enabled', value)}
+                />
+              </ProbeSettingField>
+              <ProbeSettingField label={t('最低历史样本数')}>
+                <InputNumber
+                  min={1}
+                  value={config.probe_good_baseline_min_samples}
+                  onChange={(value) =>
+                    update('probe_good_baseline_min_samples', numberOrDefault(value, 3))
+                  }
+                />
+              </ProbeSettingField>
+              <ProbeSettingField label={t('历史成功窗口')}>
+                <InputNumber
+                  min={1}
+                  suffix={t('秒')}
+                  value={config.probe_good_baseline_window_seconds}
+                  onChange={(value) =>
+                    update(
+                      'probe_good_baseline_window_seconds',
+                      numberOrDefault(value, 86400),
+                    )
+                  }
+                />
+              </ProbeSettingField>
+            </div>
+          </section>
+
+          <section>
+            <div className='ct-channel-health-settings-title'>{t('样本库')}</div>
+            <div className='ct-channel-health-settings-grid'>
+              <ProbeSettingField label={t('启用内置低成本随机样本')}>
+                <Switch
+                  checked={config.probe_prompt_library_enabled !== false}
+                  onChange={(value) => update('probe_prompt_library_enabled', value)}
+                />
+              </ProbeSettingField>
+            </div>
+            <Checkbox.Group
+              value={promptCategories}
+              onChange={(values) => update('probe_prompt_categories', values)}
+            >
+              <div className='ct-channel-health-checkbox-grid'>
+                {PROBE_PROMPT_CATEGORY_OPTIONS.map(([value, label]) => (
+                  <Checkbox key={value} value={value}>
+                    {t(label)}
+                  </Checkbox>
+                ))}
+              </div>
+            </Checkbox.Group>
+          </section>
+        </div>
+      </Spin>
+    </Modal>
+  );
+}
+
 function ChannelHealthCheck() {
   const { t } = useTranslation();
   const [queueData, setQueueData] = useState(null);
@@ -549,6 +843,10 @@ function ChannelHealthCheck() {
   const [historyHours, setHistoryHours] = useState(24);
   const [statusFilter, setStatusFilter] = useState(ALL_STATUSES);
   const [keyword, setKeyword] = useState('');
+  const [settingsVisible, setSettingsVisible] = useState(false);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [probeConfig, setProbeConfig] = useState(DEFAULT_PROBE_CONFIG);
   const [filters, setFilters] = useState({
     model: '',
     group: '',
@@ -645,6 +943,50 @@ function ChannelHealthCheck() {
     loadData();
   }, [loadData]);
 
+  const loadProbeConfig = useCallback(async () => {
+    setSettingsLoading(true);
+    try {
+      const res = await API.get('/api/model_gateway/config', {
+        disableDuplicate: true,
+      });
+      const { success, message, data } = res.data || {};
+      if (!success) {
+        showError(t(message || '加载健康探活设置失败'));
+        return;
+      }
+      setProbeConfig(normalizeProbeConfig(data?.setting));
+    } catch (err) {
+      showError(t('加载健康探活设置失败'));
+    } finally {
+      setSettingsLoading(false);
+    }
+  }, [t]);
+
+  const openSettings = useCallback(() => {
+    setSettingsVisible(true);
+    loadProbeConfig();
+  }, [loadProbeConfig]);
+
+  const saveProbeConfig = useCallback(async () => {
+    try {
+      setSettingsSaving(true);
+      const res = await API.patch('/api/model_gateway/config/probe', probeConfig);
+      const { success, message, data } = res.data || {};
+      if (!success) {
+        showError(t(message || '保存健康探活设置失败'));
+        return;
+      }
+      setProbeConfig(normalizeProbeConfig(data?.setting));
+      setSettingsVisible(false);
+      showSuccess(t('设置已保存，探活调度已更新'));
+      loadData(true);
+    } catch (err) {
+      showError(t('保存健康探活设置失败'));
+    } finally {
+      setSettingsSaving(false);
+    }
+  }, [loadData, probeConfig, t]);
+
   const pendingRows = queueData?.items || [];
   const visiblePendingRows = useMemo(
     () =>
@@ -673,6 +1015,12 @@ function ChannelHealthCheck() {
   const lowTrafficCount = queueData?.summary?.low_traffic_count || 0;
   const recoveryCount = queueData?.summary?.recovery_count || 0;
   const isolatedCount = queueData?.summary?.isolated_count || 0;
+  const enabledScoreLabels = (probeConfig.probe_recoverable_score_items || [])
+    .map((item) => scoreMetricLabel(item, t))
+    .filter(Boolean)
+    .join(' / ');
+  const probeEnabledText =
+    probeConfig.probe_enabled !== false ? t('已启用') : t('未启用');
   const activeFilterCount = Object.values(appliedFilters).filter(Boolean).length;
   const lastUpdated = formatTimestamp(queueData?.summary?.updated_at);
 
@@ -752,7 +1100,7 @@ function ChannelHealthCheck() {
       {
         title: t('检查原因'),
         dataIndex: 'reasons',
-        width: 260,
+        width: 310,
         render: (reasons, record) => (
           <Tooltip
             content={
@@ -761,12 +1109,21 @@ function ChannelHealthCheck() {
                 <div>
                   {t('当前探活原因')}: {formatProbeReason(record.probe_trigger_reason, t)}
                 </div>
+                {record.probe_skip_reason === 'recent_real_request' && (
+                  <div>{t('已有真实请求，跳过体检')}</div>
+                )}
               </div>
             }
           >
-            <span>
+            <div className='ct-channel-health-stack'>
               <ReasonTags reasons={reasons} t={t} />
-            </span>
+              <ProbeScoreItemTags items={record.probe_trigger_score_items} t={t} />
+              {record.probe_skip_reason === 'recent_real_request' && (
+                <Tag color='green' size='small' type='light'>
+                  {t('已有真实请求，跳过体检')}
+                </Tag>
+              )}
+            </div>
           </Tooltip>
         ),
       },
@@ -1010,9 +1367,15 @@ function ChannelHealthCheck() {
             </div>
           </div>
           <div className='ct-channel-health-actions'>
+            <Button
+              icon={<Settings size={15} />}
+              onClick={openSettings}
+            >
+              {t('设置')}
+            </Button>
             <Select
-            value={historyHours}
-            onChange={(value) => setHistoryHours(Number(value) || 24)}
+              value={historyHours}
+              onChange={(value) => setHistoryHours(Number(value) || 24)}
               className='ct-channel-health-window-select'
               prefix={t('历史窗口')}
             >
@@ -1050,9 +1413,9 @@ function ChannelHealthCheck() {
         <Banner
           type='info'
           className='ct-channel-health-banner'
-          description={t(
+          description={`${t(
             '待检查队列由后端根据当前运行态和探活配置生成，检测历史来自实际健康探活请求记录。',
-          )}
+          )} ${t('当前探活')}: ${probeEnabledText} · ${t('当前启用触发分值')}: ${enabledScoreLabels || '--'}`}
           closeIcon={null}
         />
 
@@ -1216,6 +1579,16 @@ function ChannelHealthCheck() {
             {t('探活结果会更新评分，但不会增加真实访问样本计数。')}
           </span>
         </div>
+        <ProbeSettingsModal
+          visible={settingsVisible}
+          config={probeConfig}
+          loading={settingsLoading}
+          saving={settingsSaving}
+          onCancel={() => setSettingsVisible(false)}
+          onChange={setProbeConfig}
+          onSave={saveProbeConfig}
+          t={t}
+        />
       </div>
     </div>
   );

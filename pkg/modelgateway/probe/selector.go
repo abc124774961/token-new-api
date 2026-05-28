@@ -16,7 +16,10 @@ import (
 	"github.com/QuantumNous/new-api/service"
 )
 
-const probeActivationWindow = 30 * time.Minute
+const (
+	probeActivationWindow          = 30 * time.Minute
+	probeDefaultGoodBaselineWindow = 24 * time.Hour
+)
 
 type ProbeSelector struct {
 	store                core.RuntimeSnapshotStore
@@ -103,10 +106,16 @@ func (s *ProbeSelector) Select(config ProbeConfig) ([]ProbeCandidate, error) {
 	channelByID := eligibleProbeChannels(channels)
 	candidateByKey := map[core.RuntimeKey]ProbeCandidate{}
 	for _, candidate := range s.lowHealthCandidatesLocked(channelByID, recent, now, config) {
+		if skipRecentRealRequestProbe(candidate, config, s.store, now) {
+			continue
+		}
 		candidateByKey[candidate.Key] = candidate
 	}
 	for _, candidate := range s.lowTrafficCandidatesLocked(channelByID, recent, now, config) {
 		if _, exists := candidateByKey[candidate.Key]; exists {
+			continue
+		}
+		if skipRecentRealRequestProbe(candidate, config, s.store, now) {
 			continue
 		}
 		candidateByKey[candidate.Key] = candidate
@@ -239,11 +248,13 @@ func (s *ProbeSelector) lowHealthCandidatesLocked(channelByID map[int]*model.Cha
 		if channel == nil || !probeRuntimeKeyModelSupported(key) || !probeChannelSupportsKey(channel, key) {
 			continue
 		}
-		reason := s.probeReasonForSnapshotLocked(snapshot, recent, now, config)
+		reason, triggerItems := s.probeReasonForSnapshotLocked(snapshot, recent, now, config)
 		if reason == "" {
 			continue
 		}
 		candidate := probeCandidateFromSnapshot(channel, snapshot, reason)
+		candidate.TriggerScoreItems = triggerItems
+		candidate.PromptCategories = config.PromptCategories
 		if !s.probeIntervalPassedLocked(candidate.Key, snapshot, now, config) {
 			continue
 		}
@@ -280,11 +291,12 @@ func (s *ProbeSelector) lowTrafficCandidatesLocked(channelByID map[int]*model.Ch
 					continue
 				}
 				candidates = append(candidates, ProbeCandidate{
-					Channel: channel,
-					Model:   modelName,
-					Group:   group,
-					Key:     key,
-					Reason:  reasonLowTraffic,
+					Channel:          channel,
+					Model:            modelName,
+					Group:            group,
+					Key:              key,
+					Reason:           reasonLowTraffic,
+					PromptCategories: config.PromptCategories,
 				})
 			}
 		}
@@ -308,7 +320,7 @@ func (s *ProbeSelector) snapshotForKey(key core.RuntimeKey) (core.RuntimeSnapsho
 	return s.store.Get(legacyKey)
 }
 
-func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapshot, recent probeRecentScopes, now time.Time, config ProbeConfig) string {
+func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapshot, recent probeRecentScopes, now time.Time, config ProbeConfig) (string, []string) {
 	key := normalizeProbeRuntimeKey(snapshot.Key)
 	reason := ""
 	if s.breaker != nil {
@@ -317,23 +329,25 @@ func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapsh
 			if s.breaker.AllowProbe(key) {
 				reason = reasonCircuitProbe
 			} else {
-				return ""
+				return "", nil
 			}
 		}
 	}
 	if reason == "" {
 		if config.FailureAvoidancePriorityEnabled && snapshot.FailureAvoidance {
-			return reasonFailureAvoidance
+			return reasonFailureAvoidance, nil
 		}
 		if snapshot.Cooldown {
-			return reasonCooldown
+			return reasonCooldown, nil
 		}
-		reason = s.probeReason(snapshot, true, now, s.lastOKTimeLocked(key, snapshot), config)
+		var triggerItems []string
+		reason, triggerItems = s.probeReason(snapshot, true, now, s.lastOKTimeLocked(key, snapshot), config)
 		if reason == reasonLongNoSuccess && recent.RealSuccessWithin(key, now, config.LongNoSuccessThreshold) {
-			return ""
+			return "", nil
 		}
+		return reason, triggerItems
 	}
-	return reason
+	return reason, nil
 }
 
 func (s *ProbeSelector) markProbeSelectionLocked(key core.RuntimeKey, reason string, config ProbeConfig) {
@@ -398,20 +412,23 @@ func (s *ProbeSelector) lastOKTimeLocked(key core.RuntimeKey, snapshot core.Runt
 	return time.Time{}
 }
 
-func (s *ProbeSelector) probeReason(snapshot core.RuntimeSnapshot, ok bool, now time.Time, lastOK time.Time, config ProbeConfig) string {
+func (s *ProbeSelector) probeReason(snapshot core.RuntimeSnapshot, ok bool, now time.Time, lastOK time.Time, config ProbeConfig) (string, []string) {
 	if !ok || snapshot.SampleCount <= 0 {
-		return reasonNoSamples
+		return reasonNoSamples, nil
 	}
 	score := s.probeSnapshotScore(snapshot)
-	if probeScoreNeedsRecovery(score, config.LowScoreThreshold) {
-		return reasonLowScore
+	if items := probeScoreNeedsRecovery(score, config.LowScoreThreshold, config.RecoverableScoreItems); len(items) > 0 {
+		if probeGoodBaselineEligible(snapshot, now, config) {
+			return reasonLowScore, items
+		}
+		return "", nil
 	}
 	if lastOK.IsZero() || now.Sub(lastOK) >= config.LongNoSuccessThreshold {
 		if snapshot.SuccessRate < 0.99 {
-			return reasonLongNoSuccess
+			return reasonLongNoSuccess, nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func (s *ProbeSelector) probeSnapshotScore(snapshot core.RuntimeSnapshot) core.ScoreResult {
@@ -437,37 +454,114 @@ func (s *ProbeSelector) probeSnapshotScore(snapshot core.RuntimeSnapshot) core.S
 		}, false).Score
 }
 
-func probeScoreNeedsRecovery(score core.ScoreResult, threshold float64) bool {
+func probeScoreNeedsRecovery(score core.ScoreResult, threshold float64, configuredItems []string) []string {
 	if threshold <= 0 {
-		return false
+		return nil
 	}
-	for _, item := range score.Items {
-		if item.MissingReason != "" || item.Weight <= 0 {
-			continue
-		}
-		if !probeScoreItemCanRecover(item.Key) {
-			continue
-		}
-		if item.Score > 0 && item.Score < threshold {
-			return true
+	recoverable := probeRecoverableScoreItemSet(configuredItems)
+	matched := make([]string, 0)
+	seen := map[string]struct{}{}
+	checkItems := func(items []core.ScoreItem) {
+		for _, item := range items {
+			if item.MissingReason != "" || item.Weight <= 0 {
+				continue
+			}
+			if _, ok := recoverable[item.Key]; !ok {
+				continue
+			}
+			if item.Score < threshold {
+				if _, exists := seen[item.Key]; exists {
+					continue
+				}
+				seen[item.Key] = struct{}{}
+				matched = append(matched, item.Key)
+			}
 		}
 	}
-	return false
+	checkItems(score.Items)
+	checkItems(score.RoutingItems)
+	return matched
 }
 
-func probeScoreItemCanRecover(key string) bool {
-	switch strings.TrimSpace(key) {
-	case "completion_rate",
-		"upstream_error_rate",
-		"ttft_latency",
-		"duration_latency",
-		"throughput",
-		"empty_output_rate",
-		"stream_interrupted_rate":
+func probeRecoverableScoreItemSet(configuredItems []string) map[string]struct{} {
+	items := NormalizeRecoverableScoreItems(configuredItems)
+	set := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		set[item] = struct{}{}
+	}
+	return set
+}
+
+func probeGoodBaselineEligible(snapshot core.RuntimeSnapshot, now time.Time, config ProbeConfig) bool {
+	if !config.GoodBaselineEnabled {
 		return true
-	default:
+	}
+	minSamples := config.GoodBaselineMinSamples
+	if minSamples <= 0 {
+		minSamples = config.MissingSampleThreshold
+	}
+	if minSamples <= 0 {
+		minSamples = 3
+	}
+	if snapshot.SampleCount < minSamples {
 		return false
 	}
+	if snapshot.SuccessRate > 0 && snapshot.SuccessRate < 0.5 {
+		return false
+	}
+	if config.GoodBaselineWindow > 0 && snapshot.LastRealSuccessAt > 0 && !now.IsZero() {
+		return now.Unix()-snapshot.LastRealSuccessAt <= int64(config.GoodBaselineWindow.Seconds())
+	}
+	return true
+}
+
+func skipRecentRealRequestProbe(candidate ProbeCandidate, config ProbeConfig, store core.RuntimeSnapshotStore, now time.Time) bool {
+	config = normalizeProbeConfig(config)
+	if !config.SkipRecentRealRequestEnabled {
+		return false
+	}
+	window := config.RecentRealRequestWindow
+	if window <= 0 {
+		window = probeActivationWindow
+	}
+	key := normalizeProbeRuntimeKey(candidate.Key)
+	if key.ChannelID <= 0 {
+		return false
+	}
+	cutoff := now.Add(-window).Unix()
+	if store != nil {
+		if snapshot, ok := store.Get(key); ok && snapshot.LastRealAttemptAt >= cutoff {
+			return true
+		}
+		if key.CapabilityFingerprint != "" {
+			legacyKey := key
+			legacyKey.CapabilityFingerprint = ""
+			if snapshot, ok := store.Get(legacyKey); ok && snapshot.LastRealAttemptAt >= cutoff {
+				return true
+			}
+		}
+	}
+	return recentRealRequestExists(key, cutoff)
+}
+
+func recentRealRequestExists(key core.RuntimeKey, cutoff int64) bool {
+	if model.DB == nil || cutoff <= 0 || key.ChannelID <= 0 {
+		return false
+	}
+	query := model.DB.Model(&model.ModelGatewayUserRequestSummary{}).
+		Where("completed_at >= ? AND is_health_probe = ? AND final_channel_id = ?", cutoff, false, key.ChannelID)
+	if strings.TrimSpace(key.RequestedModel) != "" {
+		query = query.Where("requested_model = ?", strings.TrimSpace(key.RequestedModel))
+	}
+	group := strings.TrimSpace(key.Group)
+	if group != "" {
+		query = query.Where("(selected_group = ? OR requested_group = ?)", group, group)
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
 }
 
 func probePolicyForGroup(group string, priorityRatio float64, resolver func(group string) core.GroupSmartPolicy) core.GroupSmartPolicy {
@@ -804,6 +898,20 @@ func normalizeProbeConfig(config ProbeConfig) ProbeConfig {
 	}
 	if config.HighScoreSamplingInterval <= 0 {
 		config.HighScoreSamplingInterval = 6 * time.Hour
+	}
+	config.RecoverableScoreItems = NormalizeRecoverableScoreItems(config.RecoverableScoreItems)
+	if config.RecentRealRequestWindow <= 0 {
+		config.RecentRealRequestWindow = probeActivationWindow
+	}
+	if config.GoodBaselineMinSamples <= 0 {
+		config.GoodBaselineMinSamples = config.MissingSampleThreshold
+	}
+	if config.GoodBaselineWindow <= 0 {
+		config.GoodBaselineWindow = probeDefaultGoodBaselineWindow
+	}
+	config.PromptCategories = NormalizePromptCategories(config.PromptCategories)
+	if !config.PromptLibraryEnabled {
+		config.PromptCategories = []string{PromptCategoryShort}
 	}
 	return config
 }

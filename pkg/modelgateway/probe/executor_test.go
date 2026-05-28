@@ -68,6 +68,30 @@ func TestBuildProbeRequestUsesStreaming(t *testing.T) {
 	)
 }
 
+func TestBuildProbeRequestUsesPromptLibraryCategory(t *testing.T) {
+	openAIRequest, ok := buildProbeRequestWithCategory("gpt-4.1", constant.EndpointTypeOpenAI, PromptCategoryZH).(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, openAIRequest.Messages, 1)
+	require.Contains(t, openAIRequest.Messages[0].Content, "正常")
+
+	longRequest, ok := buildProbeRequestWithCategory("gpt-4.1", constant.EndpointTypeOpenAIResponse, PromptCategoryLong).(*dto.OpenAIResponsesRequest)
+	require.True(t, ok)
+	require.Contains(t, string(longRequest.Input), "diagnostic text")
+	require.NotNil(t, longRequest.MaxOutputTokens)
+	require.Equal(t, uint(32), *longRequest.MaxOutputTokens)
+
+	fallbackRequest, ok := buildProbeRequestWithCategory("gpt-4.1", constant.EndpointTypeOpenAI, "bad").(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Equal(t, "Reply with exactly: ok", fallbackRequest.Messages[0].Content)
+}
+
+func TestProbePromptCategoryNormalizationFallsBackToShort(t *testing.T) {
+	require.Equal(t, []string{PromptCategoryShort, PromptCategoryLong}, NormalizePromptCategories([]string{"long", "bad", "short"}))
+	require.Equal(t, []string{PromptCategoryShort}, NormalizePromptCategories([]string{"bad"}))
+	candidate := ProbeCandidate{Model: "gpt-4.1", Group: "default", PromptCategories: []string{"bad"}}
+	require.Equal(t, PromptCategoryShort, selectProbePromptCategory(candidate))
+}
+
 func TestProbeExecutorUsesNormalDistributorSelection(t *testing.T) {
 	db := setupProbeExecutorTestDB(t)
 	restoreSchedulerSetting := scheduler_setting.SetSettingForTest(scheduler_setting.DefaultSetting())
