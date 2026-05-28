@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/samber/lo"
@@ -35,6 +37,7 @@ const (
 	maxConcurrentFetches        = 8
 	maxRatioConfigBytes         = 10 << 20 // 10MB
 	floatEpsilon                = 1e-9
+	upstreamChannelCostField    = "channel_cost_multiplier"
 	officialRatioPresetID       = -100
 	officialRatioPresetName     = "官方倍率预设"
 	officialRatioPresetBaseURL  = "https://basellm.github.io"
@@ -56,12 +59,12 @@ func nearlyEqual(a, b float64) bool {
 }
 
 func valuesEqual(a, b interface{}) bool {
-	af, aok := a.(float64)
-	bf, bok := b.(float64)
+	af, aok := asFloat64(a)
+	bf, bok := asFloat64(b)
 	if aok && bok {
 		return nearlyEqual(af, bf)
 	}
-	return a == b
+	return reflect.DeepEqual(a, b)
 }
 
 var pricingSyncFields = []string{
@@ -86,6 +89,21 @@ var numericPricingSyncFields = map[string]bool{
 	"audio_ratio":            true,
 	"audio_completion_ratio": true,
 	"model_price":            true,
+}
+
+type UpstreamChannelCostSyncItem struct {
+	ChannelID             int     `json:"channel_id,omitempty"`
+	ChannelName           string  `json:"channel_name,omitempty"`
+	CostMultiplier        float64 `json:"cost_multiplier"`
+	CostCoefficient       float64 `json:"cost_coefficient,omitempty"`
+	TokenMultiplier       float64 `json:"token_multiplier,omitempty"`
+	RechargeMultiplier    float64 `json:"recharge_multiplier,omitempty"`
+	RequestPrice          float64 `json:"request_price,omitempty"`
+	Source                string  `json:"source,omitempty"`
+	Endpoint              string  `json:"endpoint,omitempty"`
+	UpstreamCostSource    string  `json:"upstream_cost_source,omitempty"`
+	UpstreamCostChannel   string  `json:"upstream_cost_channel,omitempty"`
+	UpstreamCostFieldPath string  `json:"upstream_cost_field_path,omitempty"`
 }
 
 type upstreamResult struct {
@@ -117,9 +135,6 @@ func asFloat64(value any) (float64, bool) {
 		return float64(typed), true
 	case int64:
 		return float64(typed), true
-	case json.Number:
-		parsed, err := typed.Float64()
-		return parsed, err == nil
 	default:
 		return 0, false
 	}
@@ -142,6 +157,324 @@ func getLocalPricingSyncData() map[string]any {
 	return data
 }
 
+func attachUpstreamChannelCostData(data map[string]any, chItem dto.UpstreamDTO, channel *model.Channel, bodyBytes []byte) {
+	if data == nil || chItem.ID <= 0 {
+		return
+	}
+	item, ok := extractUpstreamChannelCostSyncItem(bodyBytes, chItem, channel)
+	if !ok {
+		return
+	}
+	data[upstreamChannelCostField] = map[string]any{strconv.Itoa(chItem.ID): item}
+}
+
+func extractUpstreamChannelCostSyncItem(bodyBytes []byte, chItem dto.UpstreamDTO, channel *model.Channel) (UpstreamChannelCostSyncItem, bool) {
+	value, sourceChannelName, fieldPath, ok := extractUpstreamChannelCostMultiplier(bodyBytes, chItem, channel)
+	if !ok || !isValidPositiveRatio(value) {
+		return UpstreamChannelCostSyncItem{}, false
+	}
+	return UpstreamChannelCostSyncItem{
+		ChannelID:             chItem.ID,
+		ChannelName:           strings.TrimSpace(chItem.Name),
+		CostMultiplier:        roundRatioValue(value),
+		CostCoefficient:       roundRatioValue(value),
+		TokenMultiplier:       1,
+		RechargeMultiplier:    1,
+		Source:                modelgatewaycost.SourceAutoSynced,
+		Endpoint:              strings.TrimSpace(chItem.Endpoint),
+		UpstreamCostSource:    strings.TrimSpace(chItem.Name),
+		UpstreamCostChannel:   sourceChannelName,
+		UpstreamCostFieldPath: fieldPath,
+	}, true
+}
+
+func extractUpstreamChannelCostMultiplier(bodyBytes []byte, chItem dto.UpstreamDTO, channel *model.Channel) (float64, string, string, bool) {
+	var payload any
+	if err := common.Unmarshal(bodyBytes, &payload); err != nil {
+		return 0, "", "", false
+	}
+	candidates := unwrapUpstreamPayloadData(payload)
+	names := upstreamChannelCostCandidateNames(chItem, channel)
+	groups := upstreamChannelCostCandidateGroups(channel)
+	value, sourceChannelName, fieldPath, ok := findUpstreamChannelCostMultiplier(candidates, names, groups, "")
+	if ok {
+		return value, sourceChannelName, fieldPath, true
+	}
+	if len(names) == 0 {
+		value, sourceChannelName, fieldPath, ok = findUpstreamChannelCostMultiplier(candidates, nil, groups, "")
+	}
+	return value, sourceChannelName, fieldPath, ok
+}
+
+func unwrapUpstreamPayloadData(payload any) any {
+	current := payload
+	for {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return current
+		}
+		data, exists := obj["data"]
+		if !exists {
+			return current
+		}
+		switch data.(type) {
+		case []any, map[string]any:
+			current = data
+		default:
+			return current
+		}
+	}
+}
+
+func upstreamChannelCostCandidateNames(chItem dto.UpstreamDTO, channel *model.Channel) []string {
+	names := make([]string, 0, 4)
+	appendName := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range names {
+			if strings.EqualFold(existing, value) {
+				return
+			}
+		}
+		names = append(names, value)
+	}
+	appendName(chItem.Name)
+	if channel != nil {
+		appendName(channel.Name)
+	}
+	return names
+}
+
+func upstreamChannelCostCandidateGroups(channel *model.Channel) []string {
+	if channel == nil {
+		return nil
+	}
+	groups := make([]string, 0, 4)
+	for _, group := range channel.GetGroups() {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		groups = append(groups, group)
+	}
+	return groups
+}
+
+func findUpstreamChannelCostMultiplier(node any, candidateNames []string, candidateGroups []string, path string) (float64, string, string, bool) {
+	switch typed := node.(type) {
+	case []any:
+		for index, item := range typed {
+			childPath := fmt.Sprintf("%s[%d]", path, index)
+			if value, sourceName, fieldPath, ok := findUpstreamChannelCostMultiplier(item, candidateNames, candidateGroups, childPath); ok {
+				return value, sourceName, fieldPath, true
+			}
+		}
+	case map[string]any:
+		if value, field, ok := channelCostMultiplierFromNestedGroups(typed, candidateGroups); ok {
+			return value, objectStringField(typed, "name"), joinFieldPath(path, field), true
+		}
+		if len(candidateNames) == 0 || objectMatchesChannelCostCandidate(typed, candidateNames) || groupMatchesCandidate(typed, candidateGroups) {
+			if value, field, ok := channelCostMultiplierFromObject(typed, candidateGroups); ok {
+				return value, objectStringField(typed, "name"), joinFieldPath(path, field), true
+			}
+		}
+		for key, value := range typed {
+			if shouldSkipChannelCostTraversalKey(key) {
+				continue
+			}
+			if found, sourceName, fieldPath, ok := findUpstreamChannelCostMultiplier(value, candidateNames, candidateGroups, joinFieldPath(path, key)); ok {
+				return found, sourceName, fieldPath, true
+			}
+		}
+	}
+	return 0, "", "", false
+}
+
+func objectMatchesChannelCostCandidate(obj map[string]any, candidateNames []string) bool {
+	if len(candidateNames) == 0 {
+		return true
+	}
+	for _, field := range []string{"name", "channel_name", "display_name", "title"} {
+		value := objectStringField(obj, field)
+		if value == "" {
+			continue
+		}
+		for _, candidate := range candidateNames {
+			if strings.EqualFold(value, candidate) {
+				return true
+			}
+		}
+	}
+	if idValue, ok := asFloat64(obj["id"]); ok {
+		idText := strconv.FormatInt(int64(idValue), 10)
+		for _, candidate := range candidateNames {
+			if candidate == idText {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func channelCostMultiplierFromObject(obj map[string]any, candidateGroups []string) (float64, string, bool) {
+	fieldAliases := []string{
+		"cost_multiplier",
+		"upstream_cost_multiplier",
+		"actual_token_multiplier",
+		"actual_cost_multiplier",
+		"cost_coefficient",
+		"cost_ratio",
+		"channel_cost_ratio",
+		"rate_multiplier",
+		"ratio",
+		"rate",
+		"multiplier",
+	}
+	for _, field := range fieldAliases {
+		if value, ok := numberFromObjectField(obj, field); ok && isValidPositiveRatio(value) {
+			return value, field, true
+		}
+	}
+	if nested, ok := obj["upstream_cost_display"].(map[string]any); ok {
+		for _, field := range []string{"actual_token_multiplier", "cost_multiplier", "cost_coefficient"} {
+			if value, ok := numberFromObjectField(nested, field); ok && isValidPositiveRatio(value) {
+				return value, "upstream_cost_display." + field, true
+			}
+		}
+	}
+	if value, field, ok := channelCostMultiplierFromNestedGroups(obj, candidateGroups); ok {
+		return value, field, true
+	}
+	costCoefficient, hasCostCoefficient := numberFromObjectField(obj, "cost_coefficient")
+	tokenMultiplier, hasTokenMultiplier := numberFromObjectField(obj, "token_multiplier")
+	rechargeMultiplier, _ := numberFromObjectField(obj, "recharge_multiplier")
+	if hasCostCoefficient && hasTokenMultiplier && isValidPositiveRatio(costCoefficient) && isValidPositiveRatio(tokenMultiplier) {
+		rechargeMultiplier = positiveOrOne(rechargeMultiplier)
+		return costCoefficient * tokenMultiplier / rechargeMultiplier, "cost_coefficient/token_multiplier/recharge_multiplier", true
+	}
+	return 0, "", false
+}
+
+func channelCostMultiplierFromNestedGroups(obj map[string]any, candidateGroups []string) (float64, string, bool) {
+	platforms, ok := obj["platforms"].([]any)
+	if !ok {
+		return 0, "", false
+	}
+	var fallbackValue float64
+	var fallbackField string
+	hasFallback := false
+	for platformIndex, platform := range platforms {
+		platformObj, ok := platform.(map[string]any)
+		if !ok {
+			continue
+		}
+		groups, ok := platformObj["groups"].([]any)
+		if !ok {
+			continue
+		}
+		for groupIndex, group := range groups {
+			groupObj, ok := group.(map[string]any)
+			if !ok {
+				continue
+			}
+			value, ok := numberFromObjectField(groupObj, "rate_multiplier")
+			if !ok || !isValidPositiveRatio(value) {
+				continue
+			}
+			fieldPath := fmt.Sprintf("platforms[%d].groups[%d].rate_multiplier", platformIndex, groupIndex)
+			if groupMatchesCandidate(groupObj, candidateGroups) {
+				return value, fieldPath, true
+			}
+			if !hasFallback {
+				fallbackValue = value
+				fallbackField = fieldPath
+				hasFallback = true
+			}
+		}
+	}
+	if len(candidateGroups) == 0 && hasFallback {
+		return fallbackValue, fallbackField, true
+	}
+	return 0, "", false
+}
+
+func groupMatchesCandidate(groupObj map[string]any, candidateGroups []string) bool {
+	if len(candidateGroups) == 0 {
+		return true
+	}
+	groupName := objectStringField(groupObj, "name")
+	for _, candidate := range candidateGroups {
+		if strings.EqualFold(groupName, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func numberFromObjectField(obj map[string]any, field string) (float64, bool) {
+	value, ok := obj[field]
+	if !ok {
+		return 0, false
+	}
+	if numeric, ok := asFloat64(value); ok {
+		return numeric, true
+	}
+	switch typed := value.(type) {
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(typed, "x")), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func objectStringField(obj map[string]any, field string) string {
+	value, ok := obj[field]
+	if !ok {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text)
+	}
+	return ""
+}
+
+func shouldSkipChannelCostTraversalKey(key string) bool {
+	switch key {
+	case "pricing", "supported_models", "models", "intervals":
+		return true
+	default:
+		return false
+	}
+}
+
+func joinFieldPath(base string, field string) string {
+	field = strings.TrimSpace(field)
+	if base == "" {
+		return field
+	}
+	if field == "" {
+		return base
+	}
+	if strings.HasPrefix(field, "[") {
+		return base + field
+	}
+	return base + "." + field
+}
+
+func isValidPositiveRatio(value float64) bool {
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func positiveOrOne(value float64) float64 {
+	if isValidPositiveRatio(value) {
+		return value
+	}
+	return 1
+}
+
 func FetchUpstreamRatios(c *gin.Context) {
 	var req dto.UpstreamRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -155,6 +488,16 @@ func FetchUpstreamRatios(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
 		return
 	}
+	if result != nil {
+		if _, ok := result.Differences[upstreamChannelCostField]; ok {
+			applied, conflicts := applyUpstreamChannelCostSync(result.Differences, true)
+			result.CostSync = &UpstreamChannelCostSyncResult{
+				Applied:   applied,
+				Conflicts: conflicts,
+			}
+			delete(result.Differences, upstreamChannelCostField)
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -165,6 +508,29 @@ func FetchUpstreamRatios(c *gin.Context) {
 type UpstreamRatioDifferenceResult struct {
 	Differences map[string]map[string]dto.DifferenceItem `json:"differences"`
 	TestResults []dto.TestResult                         `json:"test_results"`
+	CostSync    *UpstreamChannelCostSyncResult           `json:"cost_sync,omitempty"`
+}
+
+type UpstreamChannelCostSyncResult struct {
+	Applied   int `json:"applied"`
+	Conflicts int `json:"conflicts"`
+}
+
+type applyUpstreamChannelCostSyncRequest struct {
+	Differences map[string]map[string]dto.DifferenceItem `json:"differences"`
+}
+
+func ApplyUpstreamChannelCostSync(c *gin.Context) {
+	var req applyUpstreamChannelCostSyncRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	applied, conflicts := applyUpstreamChannelCostSync(req.Differences, true)
+	common.ApiSuccess(c, UpstreamChannelCostSyncResult{
+		Applied:   applied,
+		Conflicts: conflicts,
+	})
 }
 
 type successfulUpstreamRatio struct {
@@ -221,6 +587,7 @@ func FetchUpstreamRatioDifferences(ctx context.Context, req dto.UpstreamRequest)
 
 			isOpenRouter := chItem.Endpoint == "openrouter"
 			isSub2API := chItem.Endpoint == sub2APIEndpointType || chItem.Endpoint == sub2APIEndpoint
+			dbCh := (*model.Channel)(nil)
 
 			endpoint := chItem.Endpoint
 			var fullURL string
@@ -240,6 +607,7 @@ func FetchUpstreamRatioDifferences(ctx context.Context, req dto.UpstreamRequest)
 			}
 			isModelsDev := isModelsDevAPIEndpoint(fullURL)
 			isSub2API = isSub2API || isSub2APIAvailableEndpoint(fullURL)
+			needsChannelContext := chItem.ID > 0 && (isOpenRouter || isSub2API || !isModelsDev)
 
 			uniqueName := chItem.Name
 			if chItem.ID != 0 {
@@ -256,13 +624,16 @@ func FetchUpstreamRatioDifferences(ctx context.Context, req dto.UpstreamRequest)
 				return
 			}
 
-			// OpenRouter and Sub2API available-channel endpoints require Bearer token auth
-			if (isOpenRouter || isSub2API) && chItem.ID != 0 {
-				dbCh, err := model.GetChannelById(chItem.ID, true)
+			if needsChannelContext {
+				dbCh, err = model.GetChannelById(chItem.ID, true)
 				if err != nil {
-					ch <- upstreamResult{Name: uniqueName, Err: "failed to get channel key: " + err.Error()}
+					ch <- upstreamResult{Name: uniqueName, Err: "failed to get channel: " + err.Error()}
 					return
 				}
+			}
+
+			// OpenRouter and Sub2API available-channel endpoints require Bearer token auth
+			if (isOpenRouter || isSub2API) && chItem.ID != 0 {
 				key, _, apiErr := dbCh.GetNextEnabledKey()
 				if apiErr != nil {
 					ch <- upstreamResult{Name: uniqueName, Err: "failed to get enabled channel key: " + apiErr.Error()}
@@ -320,6 +691,7 @@ func FetchUpstreamRatioDifferences(ctx context.Context, req dto.UpstreamRequest)
 					ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 					return
 				}
+				attachUpstreamChannelCostData(converted, chItem, dbCh, bodyBytes)
 				ch <- upstreamResult{Name: uniqueName, Data: converted}
 				return
 			}
@@ -332,6 +704,7 @@ func FetchUpstreamRatioDifferences(ctx context.Context, req dto.UpstreamRequest)
 					ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 					return
 				}
+				attachUpstreamChannelCostData(converted, chItem, dbCh, bodyBytes)
 				ch <- upstreamResult{Name: uniqueName, Data: converted}
 				return
 			}
@@ -344,6 +717,7 @@ func FetchUpstreamRatioDifferences(ctx context.Context, req dto.UpstreamRequest)
 					ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 					return
 				}
+				attachUpstreamChannelCostData(converted, chItem, dbCh, bodyBytes)
 				ch <- upstreamResult{Name: uniqueName, Data: converted}
 				return
 			}
@@ -382,6 +756,7 @@ func FetchUpstreamRatioDifferences(ctx context.Context, req dto.UpstreamRequest)
 					}
 				}
 				if isType1 {
+					attachUpstreamChannelCostData(type1Data, chItem, dbCh, bodyBytes)
 					ch <- upstreamResult{Name: uniqueName, Data: type1Data}
 					return
 				}
@@ -498,6 +873,7 @@ func FetchUpstreamRatioDifferences(ctx context.Context, req dto.UpstreamRequest)
 				converted[billing_setting.BillingExprField] = valueMap(billingExprMap)
 			}
 
+			attachUpstreamChannelCostData(converted, chItem, dbCh, bodyBytes)
 			ch <- upstreamResult{Name: uniqueName, Data: converted}
 		}(chn)
 	}
@@ -729,7 +1105,117 @@ func buildDifferences(localData map[string]any, successfulChannels []successfulU
 		}
 	}
 
+	appendChannelCostDifferences(differences, successfulChannels)
+
 	return differences
+}
+
+func appendChannelCostDifferences(differences map[string]map[string]dto.DifferenceItem, successfulChannels []successfulUpstreamRatio) {
+	channelIDs := collectChannelCostSyncIDs(successfulChannels)
+	if len(channelIDs) == 0 {
+		return
+	}
+	localValues := loadLocalChannelCostSyncMultipliers(channelIDs)
+	for _, channelID := range channelIDs {
+		channelIDText := strconv.Itoa(channelID)
+		localValue := localValues[channelID]
+		upstreamValues := make(map[string]interface{})
+		confidenceValues := make(map[string]bool)
+		hasUpstreamValue := false
+		hasDifference := false
+		for _, channel := range successfulChannels {
+			values := valueMap(channel.data[upstreamChannelCostField])
+			rawValue, exists := values[channelIDText]
+			if !exists {
+				continue
+			}
+			confidenceValues[channel.name] = true
+			syncItem, ok := normalizeUpstreamChannelCostSyncValue(rawValue)
+			if !ok || syncItem.CostMultiplier <= 0 {
+				upstreamValues[channel.name] = nil
+				confidenceValues[channel.name] = false
+				continue
+			}
+			syncItem.ChannelID = channelID
+			hasUpstreamValue = true
+			if nearlyEqual(localValue, syncItem.CostMultiplier) {
+				upstreamValues[channel.name] = "same"
+				continue
+			}
+			hasDifference = true
+			upstreamValues[channel.name] = syncItem
+		}
+		if !hasUpstreamValue || !hasDifference {
+			continue
+		}
+		if differences[upstreamChannelCostField] == nil {
+			differences[upstreamChannelCostField] = make(map[string]dto.DifferenceItem)
+		}
+		differences[upstreamChannelCostField][channelIDText] = dto.DifferenceItem{
+			Current:    localValue,
+			Upstreams:  upstreamValues,
+			Confidence: confidenceValues,
+		}
+	}
+}
+
+func collectChannelCostSyncIDs(successfulChannels []successfulUpstreamRatio) []int {
+	seen := make(map[int]struct{})
+	for _, channel := range successfulChannels {
+		values := valueMap(channel.data[upstreamChannelCostField])
+		for channelIDText, rawValue := range values {
+			syncItem, ok := normalizeUpstreamChannelCostSyncValue(rawValue)
+			channelID := syncItem.ChannelID
+			if channelID <= 0 {
+				parsed, err := strconv.Atoi(strings.TrimSpace(channelIDText))
+				if err == nil {
+					channelID = parsed
+				}
+			}
+			if !ok || channelID <= 0 {
+				continue
+			}
+			seen[channelID] = struct{}{}
+		}
+	}
+	ids := make([]int, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	return ids
+}
+
+func loadLocalChannelCostSyncMultipliers(channelIDs []int) map[int]float64 {
+	result := make(map[int]float64, len(channelIDs))
+	for _, channelID := range channelIDs {
+		result[channelID] = 1
+	}
+	if len(channelIDs) == 0 || model.DB == nil {
+		return result
+	}
+	profiles := make([]model.ModelGatewayChannelCostProfile, 0, len(channelIDs))
+	if err := model.DB.
+		Where("channel_id IN ? AND upstream_model = ?", channelIDs, defaultChannelCostModel).
+		Find(&profiles).Error; err != nil {
+		common.SysLog("failed to load local channel cost multipliers: " + err.Error())
+		return result
+	}
+	now := common.GetTimestamp()
+	profileByChannelID := make(map[int]model.ModelGatewayChannelCostProfile, len(profiles))
+	for _, profile := range profiles {
+		if profile.ChannelID <= 0 || profile.EffectiveTime > now {
+			continue
+		}
+		current, exists := profileByChannelID[profile.ChannelID]
+		if !exists || betterChannelCostDisplayProfile(profile, current) {
+			profileByChannelID[profile.ChannelID] = profile
+		}
+	}
+	for channelID, profile := range profileByChannelID {
+		result[channelID] = buildChannelBalanceMonitorRatioSummary(profile, profile.Id > 0).CostMultiplier
+	}
+	return result
 }
 
 func roundRatioValue(value float64) float64 {
@@ -1269,27 +1755,30 @@ func GetSyncableChannels(c *gin.Context) {
 	for _, channel := range channels {
 		if channel.GetBaseURL() != "" {
 			syncableChannels = append(syncableChannels, dto.SyncableChannel{
-				ID:      channel.Id,
-				Name:    channel.Name,
-				BaseURL: channel.GetBaseURL(),
-				Status:  channel.Status,
-				Type:    channel.Type,
+				ID:                channel.Id,
+				Name:              channel.Name,
+				BaseURL:           channel.GetBaseURL(),
+				Status:            channel.Status,
+				Type:              channel.Type,
+				CostSyncSupported: true,
 			})
 		}
 	}
 
 	syncableChannels = append(syncableChannels, dto.SyncableChannel{
-		ID:      officialRatioPresetID,
-		Name:    officialRatioPresetName,
-		BaseURL: officialRatioPresetBaseURL,
-		Status:  1,
+		ID:                officialRatioPresetID,
+		Name:              officialRatioPresetName,
+		BaseURL:           officialRatioPresetBaseURL,
+		Status:            1,
+		CostSyncSupported: false,
 	})
 
 	syncableChannels = append(syncableChannels, dto.SyncableChannel{
-		ID:      modelsDevPresetID,
-		Name:    modelsDevPresetName,
-		BaseURL: modelsDevPresetBaseURL,
-		Status:  1,
+		ID:                modelsDevPresetID,
+		Name:              modelsDevPresetName,
+		BaseURL:           modelsDevPresetBaseURL,
+		Status:            1,
+		CostSyncSupported: false,
 	})
 
 	c.JSON(http.StatusOK, gin.H{

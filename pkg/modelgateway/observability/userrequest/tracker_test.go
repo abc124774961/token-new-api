@@ -114,6 +114,44 @@ func TestTrackerFinishClientAbortRemovesProcessingAndPublishesFailedFinal(t *tes
 	require.Equal(t, 1, events[1].Record.Attempts)
 }
 
+func TestTrackerRetryingStreamInterruptedAttemptStaysProcessing(t *testing.T) {
+	tracker := NewTracker(10, time.Minute)
+	events := make([]Event, 0)
+	tracker.AddObserver(func(event Event) {
+		events = append(events, event)
+	})
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-retry-stream", RequestedGroup: "auto", ModelName: "gpt-5.5"},
+		Plan:       &core.DispatchPlan{SelectedGroup: "codex-plus"},
+		RecordedAt: time.Now(),
+	})
+
+	tracker.Finish(core.AttemptResult{
+		RequestID:         "req-retry-stream",
+		AttemptIndex:      0,
+		RequestedGroup:    "auto",
+		SelectedGroup:     "codex-plus",
+		ModelName:         "gpt-5.5",
+		ChannelID:         12,
+		ChannelName:       "freeyourtokens-plus",
+		StatusCode:        502,
+		ErrorCategory:     "stream_interrupted",
+		RetryAction:       "switch_channel",
+		WillRetry:         true,
+		StreamInterrupted: true,
+	}, nil)
+
+	items := tracker.Snapshot(5, Filters{})
+	require.Len(t, items, 1)
+	require.Equal(t, "req-retry-stream", items[0].RequestID)
+	require.Equal(t, StatusProcessing, items[0].Status)
+	require.Equal(t, 1, items[0].Attempts)
+	require.Equal(t, 12, items[0].FinalChannelID)
+	require.Len(t, events, 2)
+	require.Equal(t, EventStarted, events[1].Kind)
+	require.Equal(t, StatusProcessing, events[1].Record.Status)
+}
+
 func TestTrackerLateStartDoesNotReopenFinishedRequest(t *testing.T) {
 	tracker := NewTracker(10, time.Minute)
 	events := make([]Event, 0)

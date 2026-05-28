@@ -26,6 +26,7 @@ var channelConcurrencyControl sync.Map    // channel_id -> *channelConcurrencyCo
 const (
 	channelConcurrencyCeilingSettingKey = "max_concurrency_ceiling"
 	channelConcurrencyRecoveryThreshold = 3
+	channelConcurrencyMinLearnSample    = 3
 	channelConcurrencyDefaultCooldown   = 45 * time.Second
 	channelConcurrencyMaxCooldown       = 10 * time.Minute
 )
@@ -495,6 +496,9 @@ func RecordChannelConcurrencySuccess(channelID int) {
 		return
 	}
 	nextLimit := currentLimit + 1
+	if currentLimit < channelConcurrencyMinLearnSample {
+		nextLimit = ceilingLimit
+	}
 	if nextLimit > ceilingLimit {
 		nextLimit = ceilingLimit
 	}
@@ -551,7 +555,7 @@ func LearnChannelConcurrencyLimit(ctx *gin.Context, channelID int, activeAtLimit
 }
 
 func LearnChannelConcurrencyLimitWithResult(ctx *gin.Context, channelID int, activeAtLimit int, err *types.NewAPIError) ChannelConcurrencyLearnResult {
-	if channelID <= 0 || activeAtLimit <= 1 || !IsUpstreamConcurrencyLimitError(err) {
+	if channelID <= 0 || activeAtLimit < channelConcurrencyMinLearnSample || !IsUpstreamConcurrencyLimitError(err) {
 		return ChannelConcurrencyLearnResult{}
 	}
 	learnedLimit := activeAtLimit - 1

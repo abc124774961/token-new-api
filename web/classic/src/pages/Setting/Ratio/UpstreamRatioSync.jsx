@@ -238,6 +238,7 @@ export default function UpstreamRatioSync(props) {
       }
 
       const { differences = {}, test_results = [] } = res.data.data;
+      const costSync = res.data.data?.cost_sync;
 
       const errorResults = test_results.filter((r) => r.status === 'error');
       if (errorResults.length > 0) {
@@ -245,6 +246,22 @@ export default function UpstreamRatioSync(props) {
           t('部分渠道测试失败：') +
             errorResults.map((r) => `${r.name}: ${r.error}`).join(', '),
         );
+      }
+      if (costSync && (costSync.applied > 0 || costSync.conflicts > 0)) {
+        if (costSync.conflicts > 0) {
+          showWarning(
+            t('渠道成本倍率已更新 {{count}} 个，冲突 {{conflicts}} 个', {
+              count: costSync.applied || 0,
+              conflicts: costSync.conflicts || 0,
+            }),
+          );
+        } else {
+          showSuccess(
+            t('渠道成本倍率已更新 {{count}} 个', {
+              count: costSync.applied || 0,
+            }),
+          );
+        }
       }
 
       setDifferences(differences);

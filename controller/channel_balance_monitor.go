@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -15,11 +16,13 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
+	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const (
@@ -36,6 +39,9 @@ const (
 	channelBalanceMonitorEventRatioApplied     = "ratio_applied"
 	channelBalanceMonitorEventRatioConflict    = "ratio_conflict"
 	channelBalanceMonitorEventRatioFailed      = "ratio_failed"
+	channelBalanceMonitorEventCostApplied      = "cost_applied"
+	channelBalanceMonitorEventCostConflict     = "cost_conflict"
+	channelBalanceMonitorEventCostFailed       = "cost_failed"
 
 	channelBalanceMonitorStatusOK          = "ok"
 	channelBalanceMonitorStatusLow         = "low"
@@ -105,24 +111,20 @@ type ChannelBalanceMonitorChannelItem struct {
 }
 
 type ChannelBalanceMonitorRatioSummary struct {
-	GroupRatio         float64                           `json:"group_ratio"`
-	ModelCount         int                               `json:"model_count"`
-	ModelRatioMin      float64                           `json:"model_ratio_min,omitempty"`
-	ModelRatioMax      float64                           `json:"model_ratio_max,omitempty"`
-	CompletionRatioMin float64                           `json:"completion_ratio_min,omitempty"`
-	CompletionRatioMax float64                           `json:"completion_ratio_max,omitempty"`
-	Models             []ChannelBalanceMonitorModelRatio `json:"models,omitempty"`
-}
-
-type ChannelBalanceMonitorModelRatio struct {
-	Model            string  `json:"model"`
-	PricingModel     string  `json:"pricing_model,omitempty"`
-	ModelRatio       float64 `json:"model_ratio,omitempty"`
-	CompletionRatio  float64 `json:"completion_ratio,omitempty"`
-	CacheRatio       float64 `json:"cache_ratio,omitempty"`
-	CreateCacheRatio float64 `json:"create_cache_ratio,omitempty"`
-	ModelPrice       float64 `json:"model_price,omitempty"`
-	UsePrice         bool    `json:"use_price,omitempty"`
+	Configured            bool    `json:"configured"`
+	PriceConfigured       bool    `json:"price_configured"`
+	PricingMode           string  `json:"pricing_mode,omitempty"`
+	CostMultiplier        float64 `json:"cost_multiplier"`
+	ActualTokenMultiplier float64 `json:"actual_token_multiplier"`
+	CostCoefficient       float64 `json:"cost_coefficient"`
+	TokenMultiplier       float64 `json:"token_multiplier"`
+	RechargeMultiplier    float64 `json:"recharge_multiplier"`
+	RequestPrice          float64 `json:"request_price,omitempty"`
+	ActualRequestPrice    float64 `json:"actual_request_price,omitempty"`
+	Source                string  `json:"source,omitempty"`
+	Accuracy              string  `json:"accuracy,omitempty"`
+	UpdatedAt             int64   `json:"updated_at,omitempty"`
+	SyncedAt              int64   `json:"synced_at,omitempty"`
 }
 
 type ChannelBalanceMonitorSettings struct {
@@ -329,10 +331,11 @@ func buildChannelBalanceMonitorItems() ([]ChannelBalanceMonitorAccountItem, []Ch
 	latestEvents := latestAccountMonitorEvents()
 	threshold := channelBalanceMonitorSettings().WarningThreshold
 	affectedChannels := buildAffectedChannelLabelsByAccount(refs)
+	costProfiles := loadChannelBalanceMonitorCostProfiles(channels)
 	accounts := make([]ChannelBalanceMonitorAccountItem, 0, len(refs))
 	channelMap := make(map[int]*ChannelBalanceMonitorChannelItem)
 	for _, ref := range refs {
-		item := buildChannelBalanceMonitorAccountItem(ref, latestEvents[accountMonitorKey(ref.channel.Id, ref.account.CredentialIndex, ref.account.AccountIdentity.AccountID)], threshold)
+		item := buildChannelBalanceMonitorAccountItem(ref, latestEvents[accountMonitorKey(ref.channel.Id, ref.account.CredentialIndex, ref.account.AccountIdentity.AccountID)], threshold, costProfiles[ref.channel.Id])
 		item.AffectedChannels = affectedChannels[strings.TrimSpace(ref.account.AccountIdentity.AccountIdentityKey)]
 		accounts = append(accounts, item)
 		channelItem := channelMap[item.ChannelID]
@@ -432,104 +435,113 @@ func buildAffectedChannelLabelsByAccount(refs []channelBalanceMonitorAccountRef)
 	return labels
 }
 
-func buildChannelBalanceMonitorRatioSummary(channel *model.Channel) ChannelBalanceMonitorRatioSummary {
-	summary := ChannelBalanceMonitorRatioSummary{GroupRatio: 1}
-	if channel == nil {
-		return summary
+func loadChannelBalanceMonitorCostProfiles(channels []*model.Channel) map[int]model.ModelGatewayChannelCostProfile {
+	result := make(map[int]model.ModelGatewayChannelCostProfile)
+	if len(channels) == 0 || model.DB == nil {
+		return result
 	}
-
-	groups := channel.GetGroups()
-	if len(groups) == 0 {
-		groups = []string{"default"}
-	}
-	summary.GroupRatio = channelBalanceMonitorRepresentativeGroupRatio(groups)
-
-	modelNames := channel.GetModels()
-	if len(modelNames) == 0 {
-		return summary
-	}
-
-	seenModels := make(map[string]struct{}, len(modelNames))
-	for _, modelName := range modelNames {
-		modelName = strings.TrimSpace(modelName)
-		if modelName == "" {
+	ids := make([]int, 0, len(channels))
+	seen := make(map[int]struct{}, len(channels))
+	for _, channel := range channels {
+		if channel == nil || channel.Id <= 0 {
 			continue
 		}
-		if _, exists := seenModels[modelName]; exists {
+		if _, exists := seen[channel.Id]; exists {
 			continue
 		}
-		seenModels[modelName] = struct{}{}
-
-		pricingModel := channel.ResolveMappedModelName(modelName)
-		modelRatio := buildChannelBalanceMonitorModelRatio(modelName, pricingModel)
-		summary.ModelCount++
-		updateChannelBalanceMonitorRatioRange(&summary, modelRatio)
-		if len(summary.Models) < 6 {
-			summary.Models = append(summary.Models, modelRatio)
-		}
+		seen[channel.Id] = struct{}{}
+		ids = append(ids, channel.Id)
+	}
+	if len(ids) == 0 {
+		return result
 	}
 
-	return summary
+	profiles := make([]model.ModelGatewayChannelCostProfile, 0, len(ids))
+	if err := model.DB.
+		Where("channel_id IN ? AND upstream_model = ?", ids, defaultChannelCostModel).
+		Find(&profiles).Error; err != nil {
+		common.SysError("failed to load channel balance monitor cost profiles: " + err.Error())
+		return result
+	}
+	now := common.GetTimestamp()
+	for _, profile := range profiles {
+		if profile.ChannelID <= 0 || profile.EffectiveTime > now {
+			continue
+		}
+		current, exists := result[profile.ChannelID]
+		if !exists || betterChannelCostDisplayProfile(profile, current) {
+			result[profile.ChannelID] = profile
+		}
+	}
+	return result
 }
 
-func channelBalanceMonitorRepresentativeGroupRatio(groups []string) float64 {
-	for _, group := range groups {
-		group = strings.TrimSpace(group)
-		if group == "" {
-			continue
-		}
-		if ratio_setting.ContainsGroupRatio(group) {
-			return ratio_setting.GetGroupRatio(group)
-		}
+func buildChannelBalanceMonitorRatioSummary(profile model.ModelGatewayChannelCostProfile, configured bool) ChannelBalanceMonitorRatioSummary {
+	if !configured || profile.Id <= 0 {
+		profile = defaultChannelCostProfile(profile.ChannelID)
+		configured = false
+	}
+	costCoefficient := positiveOrDefault(profile.CostCoefficient, 1)
+	tokenMultiplier := positiveOrDefault(profile.TokenMultiplier, profile.InputCostMultiplier)
+	tokenMultiplier = positiveOrDefault(tokenMultiplier, 1)
+	rechargeMultiplier := positiveOrDefault(profile.RechargeMultiplier, 1)
+	actualTokenMultiplier := roundRatioValue(costCoefficient * tokenMultiplier / rechargeMultiplier)
+	requestPrice := nonNegativeFloat(profile.RequestPrice)
+	actualRequestPrice := 0.0
+	if requestPrice > 0 {
+		actualRequestPrice = roundRatioValue(requestPrice / rechargeMultiplier)
+	}
+	pricingMode := strings.TrimSpace(profile.PricingMode)
+	if pricingMode == "" {
+		pricingMode = defaultChannelCostPricingMode
+	}
+	return ChannelBalanceMonitorRatioSummary{
+		Configured:            configured,
+		PriceConfigured:       channelBalanceMonitorCostProfileHasPrice(profile),
+		PricingMode:           pricingMode,
+		CostMultiplier:        actualTokenMultiplier,
+		ActualTokenMultiplier: actualTokenMultiplier,
+		CostCoefficient:       costCoefficient,
+		TokenMultiplier:       tokenMultiplier,
+		RechargeMultiplier:    rechargeMultiplier,
+		RequestPrice:          requestPrice,
+		ActualRequestPrice:    actualRequestPrice,
+		Source:                strings.TrimSpace(profile.Source),
+		Accuracy:              strings.TrimSpace(profile.Accuracy),
+		UpdatedAt:             profile.UpdatedAt,
+		SyncedAt:              profile.SyncedAt,
+	}
+}
+
+func positiveOrDefault(value float64, fallback float64) float64 {
+	if value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+		return value
+	}
+	if fallback > 0 && !math.IsNaN(fallback) && !math.IsInf(fallback, 0) {
+		return fallback
 	}
 	return 1
 }
 
-func buildChannelBalanceMonitorModelRatio(modelName string, pricingModel string) ChannelBalanceMonitorModelRatio {
-	if strings.TrimSpace(pricingModel) == "" {
-		pricingModel = modelName
+func nonNegativeFloat(value float64) float64 {
+	if value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+		return value
 	}
-	value, usePrice, _ := ratio_setting.GetModelRatioOrPrice(pricingModel)
-	completionRatio := ratio_setting.GetCompletionRatioInfo(pricingModel).Ratio
-	cacheRatio, _ := ratio_setting.GetCacheRatio(pricingModel)
-	createCacheRatio, _ := ratio_setting.GetCreateCacheRatio(pricingModel)
-
-	modelRatio := ChannelBalanceMonitorModelRatio{
-		Model:            modelName,
-		CompletionRatio:  completionRatio,
-		CacheRatio:       cacheRatio,
-		CreateCacheRatio: createCacheRatio,
-		UsePrice:         usePrice,
-	}
-	if pricingModel != modelName {
-		modelRatio.PricingModel = pricingModel
-	}
-	if usePrice {
-		modelRatio.ModelPrice = value
-	} else {
-		modelRatio.ModelRatio = value
-	}
-	return modelRatio
+	return 0
 }
 
-func updateChannelBalanceMonitorRatioRange(summary *ChannelBalanceMonitorRatioSummary, modelRatio ChannelBalanceMonitorModelRatio) {
-	if summary == nil {
-		return
-	}
-	if !modelRatio.UsePrice {
-		if summary.ModelRatioMin == 0 || modelRatio.ModelRatio < summary.ModelRatioMin {
-			summary.ModelRatioMin = modelRatio.ModelRatio
-		}
-		if modelRatio.ModelRatio > summary.ModelRatioMax {
-			summary.ModelRatioMax = modelRatio.ModelRatio
-		}
-	}
-	if summary.CompletionRatioMin == 0 || modelRatio.CompletionRatio < summary.CompletionRatioMin {
-		summary.CompletionRatioMin = modelRatio.CompletionRatio
-	}
-	if modelRatio.CompletionRatio > summary.CompletionRatioMax {
-		summary.CompletionRatioMax = modelRatio.CompletionRatio
-	}
+func channelBalanceMonitorCostProfileHasPrice(profile model.ModelGatewayChannelCostProfile) bool {
+	return profile.InputPerMillion > 0 ||
+		profile.OutputPerMillion > 0 ||
+		profile.CacheReadPerMillion > 0 ||
+		profile.CacheWritePerMillion > 0 ||
+		profile.CacheWrite5mPerMillion > 0 ||
+		profile.CacheWrite1hPerMillion > 0 ||
+		profile.ImageInputPerMillion > 0 ||
+		profile.ImageOutputPerMillion > 0 ||
+		profile.AudioInputPerMillion > 0 ||
+		profile.AudioOutputPerMillion > 0 ||
+		profile.RequestPrice > 0
 }
 
 func buildChannelBalanceMonitorAccountRefs(channels []*model.Channel) []channelBalanceMonitorAccountRef {
@@ -547,7 +559,7 @@ func buildChannelBalanceMonitorAccountRefs(channels []*model.Channel) []channelB
 	return refs
 }
 
-func buildChannelBalanceMonitorAccountItem(ref channelBalanceMonitorAccountRef, latest *model.ChannelBalanceMonitorEvent, threshold float64) ChannelBalanceMonitorAccountItem {
+func buildChannelBalanceMonitorAccountItem(ref channelBalanceMonitorAccountRef, latest *model.ChannelBalanceMonitorEvent, threshold float64, costProfile model.ModelGatewayChannelCostProfile) ChannelBalanceMonitorAccountItem {
 	channel := ref.channel
 	account := ref.account
 	item := ChannelBalanceMonitorAccountItem{
@@ -568,7 +580,7 @@ func buildChannelBalanceMonitorAccountItem(ref channelBalanceMonitorAccountRef, 
 		Threshold:          threshold,
 		Supported:          supportsChannelBalanceMonitor(channel),
 		Models:             channel.Models,
-		RatioSummary:       buildChannelBalanceMonitorRatioSummary(channel),
+		RatioSummary:       buildChannelBalanceMonitorRatioSummary(costProfile, costProfile.Id > 0),
 		Status:             channelBalanceMonitorStatusUnsupported,
 	}
 	if latest != nil {
@@ -601,18 +613,15 @@ func supportsChannelBalanceMonitor(channel *model.Channel) bool {
 		return false
 	}
 	switch channel.Type {
-	case constant.ChannelTypeOpenAI,
-		constant.ChannelTypeCustom,
-		constant.ChannelTypeAIProxy,
+	case constant.ChannelTypeAIProxy,
 		constant.ChannelTypeAPI2GPT,
 		constant.ChannelTypeAIGC2D,
 		constant.ChannelTypeSiliconFlow,
-		constant.ChannelTypeDeepSeek,
 		constant.ChannelTypeOpenRouter,
 		constant.ChannelTypeMoonshot:
 		return true
 	default:
-		return false
+		return isOpenAICompatibleBalanceChannel(channel.Type)
 	}
 }
 
@@ -704,10 +713,10 @@ func countRecentRatioMonitorEvents() (int64, int64) {
 	var applied int64
 	var conflicts int64
 	_ = model.DB.Model(&model.ChannelBalanceMonitorEvent{}).
-		Where("scope = ? AND event_type = ? AND created_time >= ?", channelBalanceMonitorScopeRatio, channelBalanceMonitorEventRatioApplied, since).
+		Where("scope = ? AND event_type IN ? AND created_time >= ?", channelBalanceMonitorScopeRatio, []string{channelBalanceMonitorEventRatioApplied, channelBalanceMonitorEventCostApplied}, since).
 		Count(&applied).Error
 	_ = model.DB.Model(&model.ChannelBalanceMonitorEvent{}).
-		Where("scope = ? AND event_type = ? AND created_time >= ?", channelBalanceMonitorScopeRatio, channelBalanceMonitorEventRatioConflict, since).
+		Where("scope = ? AND event_type IN ? AND created_time >= ?", channelBalanceMonitorScopeRatio, []string{channelBalanceMonitorEventRatioConflict, channelBalanceMonitorEventCostConflict}, since).
 		Count(&conflicts).Error
 	return applied, conflicts
 }
@@ -787,11 +796,12 @@ func refreshChannelBalanceMonitorAccount(ref channelBalanceMonitorAccountRef) er
 		return fmt.Errorf("unsupported channel type")
 	}
 	accountChannel := cloneChannelForBalanceAccount(channel, account.CredentialIndex)
-	balance, err := fetchChannelBalance(accountChannel)
+	result, err := fetchChannelBalanceResult(accountChannel)
 	if err != nil {
 		recordChannelBalanceMonitorEvent(channel, account, channelBalanceMonitorEventRefreshFailed, 0, threshold, err.Error(), nil)
 		return err
 	}
+	balance := result.Balance
 	if !channel.ChannelInfo.IsMultiKey {
 		channel.UpdateBalance(balance)
 	}
@@ -804,8 +814,12 @@ func refreshChannelBalanceMonitorAccount(ref channelBalanceMonitorAccountRef) er
 		eventType = channelBalanceMonitorEventBalanceRecovered
 	}
 	recordChannelBalanceMonitorEvent(channel, account, eventType, balance, threshold, "", map[string]any{
-		"key_enabled":  account.KeyEnabled,
-		"is_multi_key": channel.ChannelInfo.IsMultiKey,
+		"key_enabled":      account.KeyEnabled,
+		"is_multi_key":     channel.ChannelInfo.IsMultiKey,
+		"balance_source":   result.Source,
+		"balance_endpoint": result.Endpoint,
+		"balance_currency": result.Currency,
+		"balance_raw_unit": result.RawUnit,
 	})
 	reconcileChannelAccountBalanceStatus(channel, account, balance, threshold)
 	return nil
@@ -1125,8 +1139,231 @@ func runChannelRatioMonitorSync(ctx context.Context, force bool) (int, int, erro
 			recordRatioMonitorEvent(channelBalanceMonitorEventRatioFailed, "", "", false, testResult.Error, map[string]any{"source": testResult.Name})
 		}
 	}
-	applied, conflicts := applyTrustedRatioDifferences(result.Differences, setting.ChannelRatioSyncTrustedAutoApply)
+	applied, conflicts := applyUpstreamChannelCostSync(result.Differences, setting.ChannelRatioSyncTrustedAutoApply)
 	return applied, conflicts, nil
+}
+
+func applyUpstreamChannelCostSync(differences map[string]map[string]dto.DifferenceItem, autoApply bool) (int, int) {
+	fields, ok := differences[upstreamChannelCostField]
+	if !ok || len(fields) == 0 {
+		return 0, 0
+	}
+	applied := 0
+	conflicts := 0
+	for channelIDText, item := range fields {
+		channelID, err := strconv.Atoi(strings.TrimSpace(channelIDText))
+		if err != nil || channelID <= 0 {
+			conflicts++
+			recordRatioMonitorEvent(channelBalanceMonitorEventCostConflict, channelIDText, upstreamChannelCostField, false, "渠道 ID 无效", map[string]any{"channel_id": channelIDText})
+			continue
+		}
+		value, source, ok, reason := chooseTrustedRatioValue(item)
+		if !ok {
+			conflicts++
+			recordRatioMonitorEvent(channelBalanceMonitorEventCostConflict, channelIDText, upstreamChannelCostField, false, reason, map[string]any{
+				"current":   item.Current,
+				"upstreams": item.Upstreams,
+			})
+			continue
+		}
+		syncItem, ok := normalizeUpstreamChannelCostSyncValue(value)
+		if !ok || syncItem.CostMultiplier <= 0 {
+			conflicts++
+			recordRatioMonitorEvent(channelBalanceMonitorEventCostConflict, channelIDText, upstreamChannelCostField, false, "上游通道倍率无法解析", map[string]any{"value": value})
+			continue
+		}
+		syncItem.ChannelID = channelID
+		if !autoApply {
+			conflicts++
+			recordRatioMonitorEvent(channelBalanceMonitorEventCostConflict, channelIDText, upstreamChannelCostField, false, "可信自动应用未开启", map[string]any{
+				"value":  syncItem,
+				"source": source,
+			})
+			continue
+		}
+		changed, err := applyChannelCostMultiplierSync(syncItem)
+		if err != nil {
+			conflicts++
+			recordRatioMonitorEvent(channelBalanceMonitorEventCostFailed, channelIDText, upstreamChannelCostField, false, err.Error(), map[string]any{
+				"value":  syncItem,
+				"source": source,
+			})
+			continue
+		}
+		if !changed {
+			recordRatioMonitorEvent(channelBalanceMonitorEventCostApplied, channelIDText, upstreamChannelCostField, true, "", map[string]any{
+				"value":   syncItem.CostMultiplier,
+				"source":  source,
+				"changed": false,
+			})
+			continue
+		}
+		applied++
+		recordRatioMonitorEvent(channelBalanceMonitorEventCostApplied, channelIDText, upstreamChannelCostField, true, "", map[string]any{
+			"value":   syncItem.CostMultiplier,
+			"source":  source,
+			"changed": true,
+		})
+	}
+	return applied, conflicts
+}
+
+func normalizeUpstreamChannelCostSyncValue(value any) (UpstreamChannelCostSyncItem, bool) {
+	switch typed := value.(type) {
+	case UpstreamChannelCostSyncItem:
+		return normalizeUpstreamChannelCostSyncItem(typed)
+	case map[string]any:
+		return normalizeUpstreamChannelCostSyncMap(typed)
+	default:
+		if numeric, ok := asFloat64(value); ok {
+			return normalizeUpstreamChannelCostSyncItem(UpstreamChannelCostSyncItem{CostMultiplier: numeric})
+		}
+		return UpstreamChannelCostSyncItem{}, false
+	}
+}
+
+func normalizeUpstreamChannelCostSyncMap(value map[string]any) (UpstreamChannelCostSyncItem, bool) {
+	item := UpstreamChannelCostSyncItem{}
+	item.ChannelID = intFromAny(value["channel_id"])
+	item.ChannelName = stringFromAny(value["channel_name"])
+	item.CostMultiplier = floatFromAny(value["cost_multiplier"])
+	item.CostCoefficient = floatFromAny(value["cost_coefficient"])
+	item.TokenMultiplier = floatFromAny(value["token_multiplier"])
+	item.RechargeMultiplier = floatFromAny(value["recharge_multiplier"])
+	item.RequestPrice = floatFromAny(value["request_price"])
+	item.Source = stringFromAny(value["source"])
+	item.Endpoint = stringFromAny(value["endpoint"])
+	item.UpstreamCostSource = stringFromAny(value["upstream_cost_source"])
+	item.UpstreamCostChannel = stringFromAny(value["upstream_cost_channel"])
+	item.UpstreamCostFieldPath = stringFromAny(value["upstream_cost_field_path"])
+	return normalizeUpstreamChannelCostSyncItem(item)
+}
+
+func normalizeUpstreamChannelCostSyncItem(item UpstreamChannelCostSyncItem) (UpstreamChannelCostSyncItem, bool) {
+	if item.CostMultiplier <= 0 {
+		item.CostMultiplier = item.CostCoefficient
+	}
+	if item.CostMultiplier <= 0 {
+		return UpstreamChannelCostSyncItem{}, false
+	}
+	item.CostMultiplier = roundRatioValue(item.CostMultiplier)
+	if item.CostCoefficient <= 0 {
+		item.CostCoefficient = item.CostMultiplier
+	}
+	if item.TokenMultiplier <= 0 {
+		item.TokenMultiplier = 1
+	}
+	if item.RechargeMultiplier <= 0 {
+		item.RechargeMultiplier = 1
+	}
+	if strings.TrimSpace(item.Source) == "" {
+		item.Source = modelgatewaycost.SourceAutoSynced
+	}
+	return item, true
+}
+
+func applyChannelCostMultiplierSync(item UpstreamChannelCostSyncItem) (bool, error) {
+	channel, err := model.GetChannelById(item.ChannelID, true)
+	if err != nil {
+		return false, fmt.Errorf("渠道不存在: %w", err)
+	}
+	existing, err := findChannelDefaultCostProfile(item.ChannelID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
+	profile := existing
+	if profile.Id == 0 {
+		profile = defaultChannelCostProfile(item.ChannelID)
+	}
+	oldMultiplier := buildChannelBalanceMonitorRatioSummary(profile, profile.Id > 0).CostMultiplier
+	newMultiplier := roundRatioValue(item.CostMultiplier)
+	if nearlyEqual(oldMultiplier, newMultiplier) && profile.Id > 0 {
+		return false, nil
+	}
+	now := common.GetTimestamp()
+	profile.ChannelID = item.ChannelID
+	profile.UpstreamModel = defaultChannelCostModel
+	profile.PricingMode = defaultChannelCostPricingMode
+	profile.Currency = defaultChannelCostCurrency
+	profile.Accuracy = defaultChannelCostAccuracy
+	profile.Source = item.Source
+	profile.CostCoefficient = newMultiplier
+	profile.TokenMultiplier = 1
+	profile.InputCostMultiplier = 1
+	profile.OutputCostMultiplier = 1
+	profile.CacheReadMultiplier = 1
+	profile.CacheWriteMultiplier = 1
+	profile.RequestCostMultiplier = 1
+	profile.RechargeMultiplier = 1
+	profile.RequestPrice = nonNegativeFloat(item.RequestPrice)
+	profile.EffectiveTime = 0
+	profile.Version = 1
+	profile.SyncedAt = now
+	profile.UpdatedAt = now
+	profile.MetadataJSON = channelCostSyncMetadataJSON(item, channel, oldMultiplier, now)
+	if profile.Id == 0 {
+		profile.CreatedAt = now
+		if err := model.DB.Create(&profile).Error; err != nil {
+			return false, err
+		}
+	} else if err := model.DB.Save(&profile).Error; err != nil {
+		return false, err
+	}
+	modelgatewaycost.StoreCachedDefaultProfile(profile)
+	return true, nil
+}
+
+func channelCostSyncMetadataJSON(item UpstreamChannelCostSyncItem, channel *model.Channel, oldMultiplier float64, syncedAt int64) string {
+	payload := map[string]any{
+		"old_cost_multiplier": oldMultiplier,
+		"new_cost_multiplier": item.CostMultiplier,
+		"synced_at":           syncedAt,
+	}
+	if channel != nil {
+		payload["channel_name"] = channel.Name
+	}
+	if item.UpstreamCostSource != "" {
+		payload["upstream_source"] = item.UpstreamCostSource
+	}
+	if item.UpstreamCostChannel != "" {
+		payload["upstream_channel"] = item.UpstreamCostChannel
+	}
+	if item.UpstreamCostFieldPath != "" {
+		payload["upstream_field_path"] = item.UpstreamCostFieldPath
+	}
+	if item.Endpoint != "" {
+		payload["endpoint"] = item.Endpoint
+	}
+	bytes, err := common.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return string(bytes)
+}
+
+func intFromAny(value any) int {
+	if numeric, ok := asFloat64(value); ok {
+		return int(numeric)
+	}
+	return 0
+}
+
+func floatFromAny(value any) float64 {
+	if numeric, ok := asFloat64(value); ok {
+		return numeric
+	}
+	if text, ok := value.(string); ok {
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(text, "x")), 64)
+		if err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func stringFromAny(value any) string {
+	text, _ := value.(string)
+	return strings.TrimSpace(text)
 }
 
 func applyTrustedRatioDifferences(differences map[string]map[string]dto.DifferenceItem, autoApply bool) (int, int) {
@@ -1138,6 +1375,9 @@ func applyTrustedRatioDifferences(differences map[string]map[string]dto.Differen
 	applied := 0
 	conflicts := 0
 	for modelName, fields := range differences {
+		if modelName == upstreamChannelCostField {
+			continue
+		}
 		for field, item := range fields {
 			value, source, ok, reason := chooseTrustedRatioValue(item)
 			if !ok {
@@ -1238,6 +1478,9 @@ func chooseTrustedRatioValue(item dto.DifferenceItem) (any, string, bool, string
 func normalizeComparableValue(value any) any {
 	if parsed, ok := asFloat64(value); ok {
 		return parsed
+	}
+	if item, ok := normalizeUpstreamChannelCostSyncValue(value); ok && item.CostMultiplier > 0 {
+		return item.CostMultiplier
 	}
 	return value
 }

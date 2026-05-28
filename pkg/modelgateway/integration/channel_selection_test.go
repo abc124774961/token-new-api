@@ -533,6 +533,36 @@ func TestChannelSelectionWrapperOffFallsBackToLegacy(t *testing.T) {
 	require.Equal(t, 1, h.Legacy.Calls)
 }
 
+func TestChannelSelectionWrapperFallbackConsumesRetryRoutingIntent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := testkit.NewDispatchTestHarness(core.SchedulerSettings{
+		Enabled:         true,
+		DefaultMode:     core.ModeOff,
+		DefaultStrategy: core.StrategyBalanced,
+		GroupPolicies: map[string]core.GroupPolicySetting{
+			"default": {Mode: core.ModeOff, Strategy: core.StrategyBalanced, AutoMode: core.AutoModeSequential},
+		},
+	})
+	h.Legacy.Channel = &model.Channel{Id: 5, Name: "legacy-recovery"}
+	h.Legacy.Group = "default"
+	wrapper := integration.NewChannelSelectionWrapper(h.Facade, h.Legacy)
+	ctx, _ := gin.CreateTestContext(nil)
+	core.SetRetryRoutingIntent(ctx, core.NewFirstByteTimeoutRetryRoutingIntent(4, "slow-first-byte", 0))
+
+	result, apiErr := wrapper.Select(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-4.1",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, result.FallbackUsed)
+	require.Equal(t, 5, result.Channel.Id)
+	_, ok := core.GetRetryRoutingIntent(ctx)
+	require.False(t, ok)
+}
+
 func TestChannelSelectionWrapperShadowFallsBackAndRecords(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := testkit.NewDispatchTestHarness(core.SchedulerSettings{

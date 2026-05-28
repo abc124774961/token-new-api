@@ -109,6 +109,68 @@ func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 	require.Equal(t, []string{core.DispatchFilterConditionCodexImageGenerationTool}, requestMeta.CandidateFilterConditions)
 }
 
+func TestAsyncExecutionRecorderRecordsRetryRoutingIntentMeta(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	intent := core.NewFirstByteTimeoutRetryRoutingIntent(11, "slow-first-byte", 0)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:     "req-retry-intent-meta",
+		AttemptIndex:  1,
+		ChannelID:     12,
+		ChannelName:   "healthy-channel",
+		SelectedGroup: "default",
+		ModelName:     "gpt-5.5",
+		Success:       true,
+		RetryAction:   "complete",
+		Plan: &core.DispatchPlan{
+			Channel:                 &model.Channel{Id: 12, Name: "healthy-channel"},
+			SelectedGroup:           "default",
+			SelectedReason:          "score_items_retry_intent",
+			QueueEnabled:            true,
+			QueuePriority:           core.RetryRoutingQueuePriority,
+			RetryRoutingIntent:      intent,
+			RetryIntentApplied:      true,
+			RetryQueuePriorityBoost: true,
+			Candidates: []core.CandidateExplanation{
+				{
+					ChannelID:          12,
+					ChannelName:        "healthy-channel",
+					Available:          true,
+					Selected:           true,
+					RetryIntentApplied: true,
+					RetryIntentReason:  core.RelayAttemptCancelReasonFirstByteTimeout,
+					RoutingScoreBreakdown: map[string]float64{
+						"retry_intent_recovery": 0.99,
+					},
+				},
+			},
+		},
+	})
+
+	require.Eventually(t, func() bool {
+		var count int64
+		require.NoError(t, db.Model(&model.ModelExecutionRecord{}).Where("request_id = ?", "req-retry-intent-meta").Count(&count).Error)
+		return count == 1
+	}, time.Second, 10*time.Millisecond)
+
+	var record model.ModelExecutionRecord
+	require.NoError(t, db.Where("request_id = ?", "req-retry-intent-meta").First(&record).Error)
+	require.Contains(t, record.RequestMeta, `"retry_routing_intent"`)
+	require.Contains(t, record.RequestMeta, `"retry_intent_applied":true`)
+	require.Contains(t, record.RequestMeta, `"retry_queue_priority_boost":true`)
+	require.Contains(t, record.RequestMeta, `"queue_priority":1000`)
+	require.Contains(t, record.RequestMeta, `"retry_intent_recovery"`)
+}
+
 func TestAsyncExecutionRecorderRecordsAttemptFlowMeta(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
@@ -160,6 +222,49 @@ func TestAsyncExecutionRecorderRecordsAttemptFlowMeta(t *testing.T) {
 
 	var summaries int64
 	require.NoError(t, db.Model(&model.ModelGatewayUserRequestSummary{}).Where("request_id = ?", "req-flow").Count(&summaries).Error)
+	require.Equal(t, int64(0), summaries)
+}
+
+func TestAsyncExecutionRecorderDoesNotSummarizeRetryingStreamInterruptedAttempt(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:         "req-retrying-stream-interrupted",
+		AttemptIndex:      0,
+		ChannelID:         12,
+		ChannelName:       "freeyourtokens-plus",
+		RequestedGroup:    "codex-plus",
+		SelectedGroup:     "codex-plus",
+		ModelName:         "gpt-5.5",
+		StatusCode:        502,
+		ErrorCategory:     "stream_interrupted",
+		RetryAction:       "switch_channel",
+		WillRetry:         true,
+		StreamInterrupted: true,
+		Duration:          3120 * time.Millisecond,
+	})
+
+	require.Eventually(t, func() bool {
+		var records int64
+		require.NoError(t, db.Model(&model.ModelExecutionRecord{}).
+			Where("request_id = ?", "req-retrying-stream-interrupted").
+			Count(&records).Error)
+		return records == 1
+	}, time.Second, 10*time.Millisecond)
+
+	var summaries int64
+	require.NoError(t, db.Model(&model.ModelGatewayUserRequestSummary{}).
+		Where("request_id = ?", "req-retrying-stream-interrupted").
+		Count(&summaries).Error)
 	require.Equal(t, int64(0), summaries)
 }
 
@@ -746,4 +851,73 @@ func TestAsyncExecutionRecorderClientAbortOverridesStreamInterruptedCategory(t *
 	require.NoError(t, db.Where("request_id = ?", "req-client-abort-stream-category").First(&summary).Error)
 	require.True(t, summary.ClientAborted)
 	require.Equal(t, model.ModelGatewayUserRequestErrorClientAborted, summary.FinalErrorCategory)
+}
+
+func TestAsyncExecutionRecorderDoesNotLetOlderFailedAttemptOverrideLaterClientAbort(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:         "req-switch-then-client-abort",
+		AttemptIndex:      1,
+		ChannelID:         4,
+		ChannelName:       "toioto",
+		RequestedGroup:    "codex-plus",
+		SelectedGroup:     "codex-plus",
+		ModelName:         "gpt-5.5",
+		StatusCode:        499,
+		ErrorCategory:     "client_aborted",
+		RetryAction:       "client_aborted",
+		StreamInterrupted: true,
+		ClientAborted:     true,
+		Duration:          3380 * time.Millisecond,
+	})
+	require.Eventually(t, func() bool {
+		var summary model.ModelGatewayUserRequestSummary
+		err := db.Where("request_id = ?", "req-switch-then-client-abort").First(&summary).Error
+		return err == nil && summary.LastAttemptIndex == 1
+	}, time.Second, 10*time.Millisecond)
+
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:         "req-switch-then-client-abort",
+		AttemptIndex:      0,
+		ChannelID:         12,
+		ChannelName:       "freeyourtokens-plus",
+		RequestedGroup:    "codex-plus",
+		SelectedGroup:     "codex-plus",
+		ModelName:         "gpt-5.5",
+		StatusCode:        502,
+		ErrorCategory:     "stream_interrupted",
+		RetryAction:       "switch_channel",
+		WillRetry:         true,
+		StreamInterrupted: true,
+		Duration:          3120 * time.Millisecond,
+	})
+
+	require.Eventually(t, func() bool {
+		var records int64
+		require.NoError(t, db.Model(&model.ModelExecutionRecord{}).
+			Where("request_id = ?", "req-switch-then-client-abort").
+			Count(&records).Error)
+		return records == 2
+	}, time.Second, 10*time.Millisecond)
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-switch-then-client-abort").First(&summary).Error)
+	require.Equal(t, 1, summary.LastAttemptIndex)
+	require.Equal(t, 2, summary.Attempts)
+	require.False(t, summary.FinalSuccess)
+	require.True(t, summary.ClientAborted)
+	require.Equal(t, 499, summary.FinalStatusCode)
+	require.Equal(t, model.ModelGatewayUserRequestErrorClientAborted, summary.FinalErrorCategory)
+	require.Equal(t, 4, summary.FinalChannelID)
+	require.Equal(t, "toioto", summary.FinalChannelName)
 }

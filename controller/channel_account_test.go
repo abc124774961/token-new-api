@@ -1,9 +1,13 @@
 package controller
 
 import (
+	"archive/zip"
 	"bytes"
+	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -854,6 +858,68 @@ func TestImportChannelAccountsRefreshesAccountCandidateIndex(t *testing.T) {
 	require.Equal(t, 2, after.Candidates)
 }
 
+func TestImportChannelAccountsAcceptsXAutoNewAPIZip(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     71,
+		Name:   "xauto codex pool",
+		Type:   constant.ChannelTypeCodex,
+		Key:    "",
+		Status: common.ChannelStatusAutoDisabled,
+		Models: "gpt-5",
+		Group:  "default",
+	}
+	channel.SetOtherInfo(map[string]interface{}{"status_reason": channelAccountAllKeysDisabledReason})
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5",
+		ChannelId: 71,
+		Enabled:   false,
+	}).Error)
+
+	archiveBytes := buildXAutoNewAPIArchive(t, []string{
+		`{"access_token":"access-one","refresh_token":"refresh-one","account_id":"acct-one"}`,
+		`{"access_token":"access-two","refresh_token":"refresh-two","account_id":"acct-two"}`,
+		`{"access_token":"access-two","refresh_token":"refresh-two","account_id":"acct-two"}`,
+	})
+	body, contentType := buildChannelAccountImportMultipart(t, "xauto-package-newapi.zip", archiveBytes, true)
+
+	router := gin.New()
+	router.PUT("/api/channel/:id/accounts", ImportChannelAccounts)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/channel/71/accounts", body)
+	req.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.NotNil(t, payload.Data.Operation)
+	require.Equal(t, "import", payload.Data.Operation.Type)
+	require.Equal(t, 3, payload.Data.Operation.TotalInput)
+	require.Equal(t, 2, payload.Data.Operation.Added)
+	require.Equal(t, 1, payload.Data.Operation.SkippedDuplicate)
+	require.True(t, payload.Data.Operation.ChannelRestored)
+	require.Equal(t, 2, payload.Data.Total)
+	require.Equal(t, 2, payload.Data.Enabled)
+	require.NotContains(t, recorder.Body.String(), "access-one")
+	require.NotContains(t, recorder.Body.String(), "refresh-one")
+
+	updated, err := model.GetChannelById(71, true)
+	require.NoError(t, err)
+	require.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	require.True(t, updated.ChannelInfo.IsMultiKey)
+	require.Equal(t, 2, updated.ChannelInfo.MultiKeySize)
+	keys := updated.GetKeys()
+	require.Len(t, keys, 2)
+	require.JSONEq(t, `{"access_token":"access-one","refresh_token":"refresh-one","account_id":"acct-one"}`, keys[0])
+	require.JSONEq(t, `{"access_token":"access-two","refresh_token":"refresh-two","account_id":"acct-two"}`, keys[1])
+
+	var ability model.Ability
+	require.NoError(t, db.First(&ability, "channel_id = ?", 71).Error)
+	require.True(t, ability.Enabled)
+}
+
 func TestDeleteChannelAccountsReindexesStatusAndKeepsRawKeysHidden(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	channel := model.Channel{
@@ -1326,6 +1392,57 @@ func createProxyReusePolicyFixture(t *testing.T, db *gorm.DB) {
 		CredentialFingerprint:        accounts[0].AccountIdentity.CredentialFingerprint,
 		LastStatus:                   model.ModelGatewayProxyUsageStatusBound,
 	}))
+}
+
+func buildXAutoNewAPIArchive(t *testing.T, credentials []string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	manifest, err := common.Marshal(map[string]interface{}{
+		"type":         "newapi-channel-files",
+		"version":      1,
+		"channel_type": constant.ChannelTypeCodex,
+	})
+	require.NoError(t, err)
+	manifestFile, err := writer.Create("newapi/manifest.json")
+	require.NoError(t, err)
+	_, err = manifestFile.Write(manifest)
+	require.NoError(t, err)
+
+	for index, credential := range credentials {
+		payload, err := common.Marshal(map[string]interface{}{
+			"mode": "single",
+			"channel": map[string]interface{}{
+				"name":     "XAutoJS Codex",
+				"type":     constant.ChannelTypeCodex,
+				"key":      credential,
+				"models":   "gpt-5",
+				"group":    "default",
+				"status":   common.ChannelStatusEnabled,
+				"auto_ban": 1,
+			},
+		})
+		require.NoError(t, err)
+		file, err := writer.Create(fmt.Sprintf("newapi/%03d-xauto@example.com.json", index+1))
+		require.NoError(t, err)
+		_, err = file.Write(payload)
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+	return buf.Bytes()
+}
+
+func buildChannelAccountImportMultipart(t *testing.T, filename string, fileBytes []byte, onlyNew bool) (*bytes.Buffer, string) {
+	t.Helper()
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	require.NoError(t, writer.WriteField("only_new", strconv.FormatBool(onlyNew)))
+	fileWriter, err := writer.CreateFormFile("file", filename)
+	require.NoError(t, err)
+	_, err = fileWriter.Write(fileBytes)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	return body, writer.FormDataContentType()
 }
 
 func decodeChannelAccountsResponse(t *testing.T, recorder *httptest.ResponseRecorder) channelAccountsAPIResponse {

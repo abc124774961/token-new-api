@@ -17,7 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { unzipSync, strFromU8 } from 'fflate';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
@@ -32,19 +33,25 @@ import {
   Skeleton,
   Space,
   Table,
+  Tabs,
   Tag,
   TextArea,
   Tooltip,
   Typography,
 } from '@douyinfe/semi-ui';
 import {
+  Activity,
   AlertTriangle,
   ArrowLeft,
   BadgeCheck,
   Clock3,
+  FileArchive,
+  FileText,
+  FileUp,
   Fingerprint,
   Gauge,
   KeyRound,
+  ListChecks,
   Pencil,
   Plus,
   PlugZap,
@@ -55,12 +62,18 @@ import {
   Trash2,
   ToggleLeft,
   ToggleRight,
+  UploadCloud,
   UserRoundCog,
+  XCircle,
 } from 'lucide-react';
-import { API, showError, showSuccess, timestamp2string } from '../../helpers';
+import { API, showError, showInfo, showSuccess, timestamp2string } from '../../helpers';
 import './channel-account.css';
 
 const { Text } = Typography;
+const CHANNEL_ACCOUNT_IMPORT_FILE_LIMIT = 32 * 1024 * 1024;
+const CHANNEL_ACCOUNT_IMPORT_FILE_ACCEPT =
+  '.zip,.json,.txt,.ndjson,application/zip,application/json,text/plain';
+const XAUTO_NEWAPI_PACKAGE_TYPE = 'newapi-channel-files';
 
 function unwrapApiData(response) {
   return response?.data?.data || response?.data || {};
@@ -109,6 +122,290 @@ function buildCredentialTypeOptions(t) {
     { value: 'session_cookie', label: t('Session Cookie') },
     { value: 'composite', label: t('组合凭证') },
   ];
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes || 0);
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(2)} MB`;
+  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${size} B`;
+}
+
+function uploadedFileInstance(item) {
+  return item?.fileInstance || item?.originFileObj || item?.file || null;
+}
+
+function uploadedFileName(item, fallback = 'unnamed') {
+  return item?.name || uploadedFileInstance(item)?.name || fallback;
+}
+
+function uploadedFileSize(item) {
+  return Number(item?.size || uploadedFileInstance(item)?.size || 0);
+}
+
+function importFileLooksLikeZip(item) {
+  return uploadedFileName(item).toLowerCase().endsWith('.zip');
+}
+
+function importFileNameLower(item) {
+  return uploadedFileName(item).toLowerCase();
+}
+
+function parseImportJSON(text) {
+  return JSON.parse(String(text || '').trim());
+}
+
+function extractCredentialsFromImportLines(text) {
+  return String(text || '')
+    .replaceAll('\r\n', '\n')
+    .split('\n')
+    .flatMap((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return [];
+      }
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          return extractCredentialsFromImportJSON(
+            parseImportJSON(trimmed),
+            false,
+          );
+        } catch (err) {
+          return [trimmed];
+        }
+      }
+      return [trimmed];
+    });
+}
+
+function extractCredentialsFromImportJSON(value, xautoPackage = false) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) =>
+      extractCredentialsFromImportJSON(item, xautoPackage),
+    );
+  }
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+  if (typeof value.channel?.key === 'string' && value.channel.key.trim()) {
+    return [value.channel.key.trim()];
+  }
+  if (value.type === XAUTO_NEWAPI_PACKAGE_TYPE) {
+    return [];
+  }
+  if (value.credential_list !== undefined) {
+    return extractCredentialsFromImportJSON(
+      value.credential_list,
+      xautoPackage,
+    );
+  }
+  if (value.credentials !== undefined) {
+    return extractCredentialsFromImportJSON(value.credentials, xautoPackage);
+  }
+  if (typeof value.credential === 'string' && value.credential.trim()) {
+    return [value.credential.trim()];
+  }
+  if (typeof value.key === 'string' && value.key.trim()) {
+    return [value.key.trim()];
+  }
+  return xautoPackage ? [] : [JSON.stringify(value)];
+}
+
+function isXAutoNewAPIZipEntries(entries) {
+  const manifestName = Object.keys(entries || {}).find(
+    (name) => name.toLowerCase().split('/').pop() === 'manifest.json',
+  );
+  if (!manifestName) {
+    return false;
+  }
+  try {
+    const manifest = parseImportJSON(strFromU8(entries[manifestName]));
+    return (
+      String(manifest?.type || '').trim().toLowerCase() ===
+      XAUTO_NEWAPI_PACKAGE_TYPE
+    );
+  } catch (err) {
+    return false;
+  }
+}
+
+async function credentialsFromXAutoZipFile(file) {
+  const buffer = await file.arrayBuffer();
+  const entries = unzipSync(new Uint8Array(buffer));
+  if (!isXAutoNewAPIZipEntries(entries)) {
+    return null;
+  }
+  return Object.entries(entries).flatMap(([name, bytes]) => {
+    const baseName = name.toLowerCase().split('/').pop();
+    if (
+      !baseName ||
+      baseName === 'manifest.json' ||
+      !baseName.endsWith('.json')
+    ) {
+      return [];
+    }
+    return extractCredentialsFromImportJSON(
+      parseImportJSON(strFromU8(bytes)),
+      true,
+    );
+  });
+}
+
+async function credentialsFromTextImportFile(file, item) {
+  const name = importFileNameLower(item);
+  if (
+    !name.endsWith('.json') &&
+    !name.endsWith('.txt') &&
+    !name.endsWith('.ndjson')
+  ) {
+    return null;
+  }
+  const text = await file.text();
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return [];
+  }
+  if (name.endsWith('.ndjson')) {
+    return extractCredentialsFromImportLines(trimmed);
+  }
+  if (
+    name.endsWith('.json') ||
+    trimmed.startsWith('{') ||
+    trimmed.startsWith('[')
+  ) {
+    return extractCredentialsFromImportJSON(parseImportJSON(trimmed), false);
+  }
+  return extractCredentialsFromImportLines(trimmed);
+}
+
+async function credentialsFromImportFile(item) {
+  const file = uploadedFileInstance(item);
+  if (!file) {
+    return null;
+  }
+  if (importFileLooksLikeZip(item)) {
+    return credentialsFromXAutoZipFile(file);
+  }
+  return credentialsFromTextImportFile(file, item);
+}
+
+class ChannelAccountImportFileQueue {
+  constructor(items = []) {
+    this.items = items;
+  }
+
+  static fromFiles(files) {
+    return new ChannelAccountImportFileQueue(
+      Array.from(files || [])
+        .filter(Boolean)
+        .map((file) => ({
+          uid: `${file.name || 'file'}-${file.size || 0}-${file.lastModified || Date.now()}`,
+          name: file.name,
+          size: file.size,
+          fileInstance: file,
+          status: 'success',
+        })),
+    );
+  }
+
+  oversized(maxSize) {
+    return this.items.filter((item) => uploadedFileSize(item) > maxSize);
+  }
+
+  withinSize(maxSize) {
+    return new ChannelAccountImportFileQueue(
+      this.items.filter((item) => uploadedFileSize(item) <= maxSize),
+    );
+  }
+
+  append(queue) {
+    const merged = [...this.items];
+    const seen = new Set(merged.map((item) => item.uid));
+    queue.items.forEach((item) => {
+      if (!seen.has(item.uid)) {
+        seen.add(item.uid);
+        merged.push(item);
+      }
+    });
+    return new ChannelAccountImportFileQueue(merged);
+  }
+}
+
+class ChannelAccountImportSubmission {
+  constructor({ credentials, files, onlyNew }) {
+    this.credentials = stringsTrim(credentials);
+    this.files = files || [];
+    this.onlyNew = Boolean(onlyNew);
+  }
+
+  hasInput() {
+    return this.credentials.length > 0 || this.files.length > 0;
+  }
+
+  async payload() {
+    const parsedFiles = await this.parseSupportedFiles();
+    if (parsedFiles.parsedCount > 0 && parsedFiles.unparsedFiles.length === 0) {
+      return {
+        body: {
+          credentials: this.credentials,
+          credential_list: parsedFiles.credentials,
+          only_new: this.onlyNew,
+        },
+        config: undefined,
+      };
+    }
+
+    if (this.files.length === 0) {
+      return {
+        body: {
+          credentials: this.credentials,
+          only_new: this.onlyNew,
+        },
+        config: undefined,
+      };
+    }
+
+    const form = new FormData();
+    form.append('credentials', this.credentials);
+    form.append('only_new', String(this.onlyNew));
+    parsedFiles.credentials.forEach((credential) => {
+      form.append('credential_list', credential);
+    });
+    parsedFiles.unparsedFiles.forEach((item) => {
+      const file = uploadedFileInstance(item);
+      if (file) {
+        form.append('files', file, uploadedFileName(item));
+      }
+    });
+    return {
+      body: form,
+      config: undefined,
+    };
+  }
+
+  async parseSupportedFiles() {
+    const credentials = [];
+    const unparsedFiles = [];
+    let parsedCount = 0;
+    for (const item of this.files) {
+      const parsedCredentials = await credentialsFromImportFile(item);
+      if (parsedCredentials === null) {
+        unparsedFiles.push(item);
+        continue;
+      }
+      parsedCount++;
+      credentials.push(...parsedCredentials);
+    }
+    return { credentials, parsedCount, unparsedFiles };
+  }
+}
+
+function stringsTrim(value) {
+  return String(value || '').trim();
 }
 
 function operationMessage(operation, t, fallback) {
@@ -468,7 +765,9 @@ function buildColumns(
   onDeleteAccount,
   onOpenEdit,
   onOpenProxy,
+  onTestAccount,
   statusLoadingKey,
+  testingAccountKey,
   totalAccounts,
 ) {
   return [
@@ -573,15 +872,30 @@ function buildColumns(
     {
       title: t('操作'),
       dataIndex: 'operation',
-      width: 168,
+      width: 286,
       fixed: 'right',
       render: (_, record) => {
         const action = record?.key_enabled ? 'disable' : 'enable';
         const loadingKey = `${record.channel_id}-${record.credential_index}`;
         const loading = statusLoadingKey === loadingKey;
+        const testing = testingAccountKey === loadingKey;
         const deleteDisabled = Number(totalAccounts || 0) <= 1;
         return (
-          <Space spacing={6}>
+          <Space className='ct-channel-account-operation' spacing={6}>
+            <Tooltip content={t('测试账号')}>
+              <Button
+                size='small'
+                type='tertiary'
+                theme='light'
+                icon={<Activity size={14} />}
+                loading={testing}
+                disabled={!record?.key_enabled}
+                onClick={() => onTestAccount(record)}
+                aria-label={t('测试账号')}
+              >
+                {t('测试')}
+              </Button>
+            </Tooltip>
             <Tooltip content={t('编辑账号')}>
               <Button
                 size='small'
@@ -682,16 +996,21 @@ function ChannelAccount() {
   const { t } = useTranslation();
   const { id } = useParams();
   const navigate = useNavigate();
+  const importFileInputRef = useRef(null);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [statusLoadingKey, setStatusLoadingKey] = useState('');
+  const [testingAccountKey, setTestingAccountKey] = useState('');
   const [batchLoading, setBatchLoading] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [importVisible, setImportVisible] = useState(false);
   const [importCredentials, setImportCredentials] = useState('');
+  const [importActiveTab, setImportActiveTab] = useState('file');
+  const [importFileList, setImportFileList] = useState([]);
+  const [importDragActive, setImportDragActive] = useState(false);
   const [importOnlyNew, setImportOnlyNew] = useState(true);
   const [importLoading, setImportLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -871,6 +1190,42 @@ function ChannelAccount() {
     [id, selectedRowKeys, t],
   );
 
+  const testAccount = useCallback(
+    async (record) => {
+      if (!record?.key_enabled) {
+        showError(t('请先启用账号'));
+        return;
+      }
+      const loadingKey = `${record.channel_id}-${record.credential_index}`;
+      setTestingAccountKey(loadingKey);
+      try {
+        const response = await API.get(`/api/channel/test/${id}`, {
+          params: {
+            credential_index: record.credential_index,
+          },
+          disableDuplicate: true,
+        });
+        const payload = response?.data || {};
+        if (!payload.success) {
+          throw new Error(payload.message || t('测试失败'));
+        }
+        showInfo(
+          t('账号测试成功，耗时 {{time}} 秒', {
+            time: Number(payload.time || 0).toFixed(2),
+          }),
+        );
+        loadAccounts();
+      } catch (err) {
+        const message =
+          err?.response?.data?.message || err?.message || t('测试失败');
+        showError(message);
+      } finally {
+        setTestingAccountKey('');
+      }
+    },
+    [id, loadAccounts, t],
+  );
+
   const deleteAccounts = useCallback(
     async (indexes) => {
       const normalizedIndexes = [...new Set(indexes)]
@@ -927,26 +1282,94 @@ function ChannelAccount() {
     return deleteAccounts(selectedIndexes);
   }, [deleteAccounts, selectedRowKeys]);
 
+  const resetImportModal = useCallback(() => {
+    setImportVisible(false);
+    setImportCredentials('');
+    setImportFileList([]);
+    setImportActiveTab('file');
+    setImportDragActive(false);
+    if (importFileInputRef.current) {
+      importFileInputRef.current.value = '';
+    }
+  }, []);
+
+  const appendImportFiles = useCallback(
+    (files) => {
+      const incomingQueue = ChannelAccountImportFileQueue.fromFiles(files);
+      const oversizedFiles = incomingQueue.oversized(
+        CHANNEL_ACCOUNT_IMPORT_FILE_LIMIT,
+      );
+      if (oversizedFiles.length > 0) {
+        showError(
+          t('文件过大：{{name}}', {
+            name: uploadedFileName(oversizedFiles[0], t('未命名文件')),
+          }),
+        );
+      }
+      const validQueue = incomingQueue.withinSize(
+        CHANNEL_ACCOUNT_IMPORT_FILE_LIMIT,
+      );
+      if (validQueue.items.length === 0) {
+        return;
+      }
+      setImportFileList((prev) =>
+        new ChannelAccountImportFileQueue(prev).append(validQueue).items,
+      );
+    },
+    [t],
+  );
+
+  const handleImportFileInputChange = useCallback(
+    (event) => {
+      appendImportFiles(event.target.files);
+      event.target.value = '';
+    },
+    [appendImportFiles],
+  );
+
+  const handleImportDrop = useCallback(
+    (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setImportDragActive(false);
+      appendImportFiles(event.dataTransfer?.files);
+    },
+    [appendImportFiles],
+  );
+
+  const openImportFilePicker = useCallback(() => {
+    importFileInputRef.current?.click();
+  }, []);
+
+  const removeImportFile = useCallback((uid) => {
+    setImportFileList((prev) => prev.filter((item) => item.uid !== uid));
+  }, []);
+
   const importAccounts = useCallback(async () => {
-    const credentials = importCredentials.trim();
-    if (!credentials) {
+    const submission = new ChannelAccountImportSubmission({
+      credentials: importCredentials,
+      files: importFileList,
+      onlyNew: importOnlyNew,
+    });
+    if (!submission.hasInput()) {
       showError(t('请先输入账号凭证'));
       return;
     }
     setImportLoading(true);
     try {
-      const response = await API.put(`/api/channel/${id}/accounts`, {
-        credentials,
-        only_new: importOnlyNew,
-      });
+      const { body, config } = await submission.payload();
+      const response = await API.put(
+        `/api/channel/${id}/accounts`,
+        body,
+        config,
+      );
       if (response?.data?.success === false) {
         throw new Error(response?.data?.message || t('导入失败'));
       }
       const payload = unwrapApiData(response);
       setData(payload);
       setSelectedRowKeys([]);
-      setImportVisible(false);
-      setImportCredentials('');
+      resetImportModal();
       showSuccess(operationMessage(payload.operation, t, t('导入成功')));
     } catch (err) {
       const message =
@@ -955,7 +1378,14 @@ function ChannelAccount() {
     } finally {
       setImportLoading(false);
     }
-  }, [id, importCredentials, importOnlyNew, t]);
+  }, [
+    id,
+    importCredentials,
+    importFileList,
+    importOnlyNew,
+    resetImportModal,
+    t,
+  ]);
 
   const openEditModal = useCallback((record) => {
     setEditRecord(record);
@@ -1158,7 +1588,9 @@ function ChannelAccount() {
         deleteSingleAccount,
         openEditModal,
         openProxyModal,
+        testAccount,
         statusLoadingKey,
+        testingAccountKey,
         data?.total,
       ),
     [
@@ -1167,7 +1599,9 @@ function ChannelAccount() {
       deleteSingleAccount,
       openEditModal,
       openProxyModal,
+      testAccount,
       statusLoadingKey,
+      testingAccountKey,
       data?.total,
     ],
   );
@@ -1386,7 +1820,7 @@ function ChannelAccount() {
                 pageSizeOpts: [12, 24, 48],
               }}
               empty={<Empty description={t('暂无账号数据')} />}
-              scroll={{ x: 1870 }}
+              scroll={{ x: 2060 }}
               loading={loading}
             />
           )}
@@ -1621,24 +2055,133 @@ function ChannelAccount() {
         <Modal
           title={t('导入账号')}
           visible={importVisible}
-          width={620}
+          width={760}
           okText={t('导入')}
           cancelText={t('取消')}
           confirmLoading={importLoading}
           onOk={importAccounts}
-          onCancel={() => {
-            setImportVisible(false);
-            setImportCredentials('');
-          }}
+          onCancel={resetImportModal}
         >
           <div className='ct-channel-account-import-modal'>
-            <TextArea
-              value={importCredentials}
-              onChange={setImportCredentials}
-              autosize={{ minRows: 8, maxRows: 14 }}
-              placeholder={t('每行一个账号凭证，支持 API Key 或 JSON 授权')}
-              showClear
-            />
+            <div className='ct-channel-account-import-overview'>
+              <div className='ct-channel-account-import-overview-item'>
+                <FileArchive size={16} />
+                <span>{t('XAutoJS newapi ZIP')}</span>
+              </div>
+              <div className='ct-channel-account-import-overview-item'>
+                <FileText size={16} />
+                <span>{t('JSON / TXT / NDJSON')}</span>
+              </div>
+              <div className='ct-channel-account-import-overview-item'>
+                <ListChecks size={16} />
+                <span>{t('粘贴多行凭证')}</span>
+              </div>
+            </div>
+            <Tabs
+              type='button'
+              activeKey={importActiveTab}
+              onChange={setImportActiveTab}
+              keepDOM
+            >
+              <Tabs.TabPane
+                itemKey='file'
+                tab={
+                  <span className='ct-channel-account-import-tab'>
+                    <FileUp size={14} />
+                    {t('文件导入')}
+                  </span>
+                }
+              >
+                <button
+                  type='button'
+                  className={`ct-channel-account-import-dropzone ${
+                    importDragActive
+                      ? 'ct-channel-account-import-dropzone-active'
+                      : ''
+                  }`}
+                  onClick={openImportFilePicker}
+                  onDragEnter={(event) => {
+                    event.preventDefault();
+                    setImportDragActive(true);
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = 'copy';
+                    setImportDragActive(true);
+                  }}
+                  onDragLeave={(event) => {
+                    event.preventDefault();
+                    if (!event.currentTarget.contains(event.relatedTarget)) {
+                      setImportDragActive(false);
+                    }
+                  }}
+                  onDrop={handleImportDrop}
+                >
+                  <input
+                    ref={importFileInputRef}
+                    type='file'
+                    accept={CHANNEL_ACCOUNT_IMPORT_FILE_ACCEPT}
+                    multiple
+                    className='ct-channel-account-import-file-input'
+                    onChange={handleImportFileInputChange}
+                  />
+                  <UploadCloud size={22} />
+                  <span>{t('上传 xauto 导出包或账号文件')}</span>
+                  <small>
+                    {t(
+                      '支持 .zip、.json、.txt、.ndjson；ZIP 内会自动识别 xauto newapi 导出结构',
+                    )}
+                  </small>
+                </button>
+                <div className='ct-channel-account-import-file-list'>
+                  {importFileList.length > 0 ? (
+                    importFileList.map((item) => (
+                      <div
+                        className='ct-channel-account-import-file'
+                        key={item.uid}
+                      >
+                        <div className='ct-channel-account-import-file-main'>
+                          <FileText size={15} />
+                          <span>{uploadedFileName(item, t('未命名文件'))}</span>
+                          <Tag size='small'>
+                            {formatFileSize(uploadedFileSize(item))}
+                          </Tag>
+                        </div>
+                        <Button
+                          aria-label={t('移除文件')}
+                          icon={<XCircle size={15} />}
+                          size='small'
+                          theme='borderless'
+                          type='tertiary'
+                          onClick={() => removeImportFile(item.uid)}
+                        />
+                      </div>
+                    ))
+                  ) : (
+                    <div className='ct-channel-account-import-empty'>
+                      {t('还没有选择文件')}
+                    </div>
+                  )}
+                </div>
+              </Tabs.TabPane>
+              <Tabs.TabPane
+                itemKey='paste'
+                tab={
+                  <span className='ct-channel-account-import-tab'>
+                    <KeyRound size={14} />
+                    {t('粘贴导入')}
+                  </span>
+                }
+              >
+                <TextArea
+                  value={importCredentials}
+                  onChange={setImportCredentials}
+                  autosize={{ minRows: 8, maxRows: 14 }}
+                  placeholder={t('每行一个账号凭证，也支持 JSON 对象或 JSON 数组')}
+                  showClear
+                />
+              </Tabs.TabPane>
+            </Tabs>
             <Checkbox
               checked={importOnlyNew}
               onChange={(event) => setImportOnlyNew(event.target.checked)}
@@ -1646,7 +2189,7 @@ function ChannelAccount() {
               {t('只导入新增账号')}
             </Checkbox>
             <Text type='tertiary' size='small'>
-              {t('导入后会追加到当前渠道账号池，不会在列表中展示完整凭证')}
+              {t('可同时上传文件并粘贴凭证；导入后会追加到当前渠道账号池，不会在列表中展示完整凭证')}
             </Text>
           </div>
         </Modal>

@@ -70,50 +70,54 @@ function formatRatio(value) {
   return `${numeric.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}x`;
 }
 
-function formatCurrencyValue(value) {
+function formatCostValue(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '--';
   return `$${numeric.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')}`;
 }
 
-function ratioRangeText(min, max, formatValue = formatRatio) {
-  const minValue = Number(min);
-  const maxValue = Number(max);
-  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue) || (minValue === 0 && maxValue === 0)) {
-    return '--';
-  }
-  if (minValue === maxValue) return formatValue(minValue);
-  return `${formatValue(minValue)}-${formatValue(maxValue)}`;
-}
-
 function RatioSummaryView({ summary, t }) {
   const ratioSummary = summary || {};
-  const models = Array.isArray(ratioSummary.models) ? ratioSummary.models : [];
-  const modelCount = Number(ratioSummary.model_count || 0);
-  const hasModelRatio = Number(ratioSummary.model_ratio_max || 0) > 0;
-  const modelText = hasModelRatio
-    ? ratioRangeText(ratioSummary.model_ratio_min, ratioSummary.model_ratio_max)
-    : t('按次');
+  const costMultiplier = Number(
+    ratioSummary.cost_multiplier ||
+      ratioSummary.actual_token_multiplier ||
+      1,
+  );
+  const hasRequestPrice = Number(ratioSummary.actual_request_price || 0) > 0;
+  const syncTime = Number(ratioSummary.synced_at || ratioSummary.updated_at || 0);
   const tooltip = (
     <div className='cbm-ratio-tooltip'>
-      <div>{t('分组倍率')}：{formatRatio(ratioSummary.group_ratio || 1)}</div>
-      <div>{t('模型倍率')}：{hasModelRatio ? modelText : t('按次')}</div>
-      {Number(ratioSummary.completion_ratio_max || 0) > 0 && (
-        <div>{t('输出倍率')}：{ratioRangeText(ratioSummary.completion_ratio_min, ratioSummary.completion_ratio_max)}</div>
-      )}
-      {models.map((item) => (
-        <div className='cbm-ratio-tooltip-row' key={`${item.model}-${item.pricing_model || ''}`}>
-          <span>{item.model}</span>
-          <span>
-            {item.use_price
-              ? formatCurrencyValue(item.model_price)
-              : formatRatio(item.model_ratio)}
-            {Number(item.completion_ratio || 0) > 0 ? ` / ${t('输出')} ${formatRatio(item.completion_ratio)}` : ''}
-          </span>
+      <div className='cbm-ratio-tooltip-row'>
+        <span>{t('1:1 实际成本倍率')}</span>
+        <span>{formatRatio(costMultiplier)}</span>
+      </div>
+      <div className='cbm-ratio-tooltip-row'>
+        <span>{t('成本系数')}</span>
+        <span>{formatRatio(ratioSummary.cost_coefficient || 1)}</span>
+      </div>
+      <div className='cbm-ratio-tooltip-row'>
+        <span>{t('费用计算倍率')}</span>
+        <span>{formatRatio(ratioSummary.token_multiplier || 1)}</span>
+      </div>
+      <div className='cbm-ratio-tooltip-row'>
+        <span>{t('充值倍率')}</span>
+        <span>{formatRatio(ratioSummary.recharge_multiplier || 1)}</span>
+      </div>
+      {hasRequestPrice && (
+        <div className='cbm-ratio-tooltip-row'>
+          <span>{t('按次成本 / 充值倍率')}</span>
+          <span>{formatCostValue(ratioSummary.actual_request_price)}</span>
         </div>
-      ))}
-      {modelCount > models.length && (
-        <div>{t('共 {{count}} 个模型', { count: modelCount })}</div>
+      )}
+      <div className='cbm-ratio-tooltip-row'>
+        <span>{t('价格来源')}</span>
+        <span>{ratioSummary.configured ? t('渠道上游成本倍率') : t('默认')}</span>
+      </div>
+      {syncTime > 0 && (
+        <div className='cbm-ratio-tooltip-row'>
+          <span>{t('最后同步')}</span>
+          <span>{formatTimestamp(syncTime)}</span>
+        </div>
       )}
     </div>
   );
@@ -122,13 +126,10 @@ function RatioSummaryView({ summary, t }) {
     <Tooltip content={tooltip} position='topLeft'>
       <div className='cbm-ratio-cell'>
         <div className='cbm-ratio-main'>
-          <span>{t('分组')} {formatRatio(ratioSummary.group_ratio || 1)}</span>
-          <span>{modelText}</span>
+          <span>{formatRatio(costMultiplier)}</span>
         </div>
         <div className='cbm-ratio-detail'>
-          {modelCount > 0
-            ? `${modelCount} ${t('个模型')}`
-            : t('无倍率数据')}
+          {ratioSummary.configured ? t('渠道上游成本倍率') : t('默认')}
         </div>
       </div>
     </Tooltip>
@@ -170,6 +171,12 @@ function eventMeta(eventType, t) {
       return { color: 'orange', label: t('倍率冲突') };
     case 'ratio_failed':
       return { color: 'red', label: t('倍率同步失败') };
+    case 'cost_applied':
+      return { color: 'green', label: t('成本倍率已更新') };
+    case 'cost_conflict':
+      return { color: 'orange', label: t('成本倍率冲突') };
+    case 'cost_failed':
+      return { color: 'red', label: t('成本倍率同步失败') };
     default:
       return { color: 'blue', label: eventType || t('事件') };
   }
@@ -318,7 +325,7 @@ export default function ChannelBalanceMonitor() {
       render: (value) => <Text strong>{formatBalance(value)}</Text>,
     },
     {
-      title: t('倍率'),
+      title: t('成本倍率'),
       dataIndex: 'ratio_summary',
       width: 170,
       render: (value) => <RatioSummaryView summary={value} t={t} />,
@@ -430,7 +437,7 @@ export default function ChannelBalanceMonitor() {
       ),
     },
     {
-      title: t('倍率'),
+      title: t('成本倍率'),
       dataIndex: 'ratio_summary',
       width: 170,
       render: (value) => <RatioSummaryView summary={value} t={t} />,
@@ -456,7 +463,7 @@ export default function ChannelBalanceMonitor() {
           <div>
             <div className='cbm-eyebrow'>{t('账号余额运营')}</div>
             <h2>{t('渠道余额监控')}</h2>
-            <p>{t('按账号监控余额、按渠道聚合影响，并记录倍率同步事件')}</p>
+            <p>{t('按账号监控余额、按渠道聚合影响，并记录成本倍率同步事件')}</p>
           </div>
         </div>
         <Space wrap className='cbm-actions'>
@@ -489,7 +496,7 @@ export default function ChannelBalanceMonitor() {
         <MetricCard icon={CreditCard} label={t('账号总数')} value={summary.account_total || 0} detail={`${t('阈值')} ${formatBalance(settings.warning_threshold)}`} />
         <MetricCard icon={AlertTriangle} label={t('低余额账号')} value={summary.low_balance_accounts || 0} detail={t('需要运营关注')} tone='orange' />
         <MetricCard icon={ShieldAlert} label={t('耗尽账号')} value={summary.empty_accounts || 0} detail={`${t('受影响渠道')} ${summary.affected_channels || 0}`} tone='red' />
-        <MetricCard icon={Zap} label={t('倍率自动应用')} value={summary.ratio_auto_applied || 0} detail={`${t('冲突')} ${summary.ratio_conflicts || 0}`} tone='green' />
+        <MetricCard icon={Zap} label={t('成本倍率更新')} value={summary.ratio_auto_applied || 0} detail={`${t('冲突')} ${summary.ratio_conflicts || 0}`} tone='green' />
         <MetricCard icon={Clock3} label={t('最后同步')} value={formatTimestamp(summary.last_sync_time)} detail={settings.enabled ? t('定时监控已开启') : t('定时监控未开启')} tone='blue' />
       </div>
 

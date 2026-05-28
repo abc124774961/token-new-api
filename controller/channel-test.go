@@ -21,6 +21,8 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -43,6 +45,10 @@ type testResult struct {
 	newAPIError *types.NewAPIError
 }
 
+type channelTestOptions struct {
+	CredentialIndex *int
+}
+
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
 	normalized := strings.TrimSpace(endpointType)
 	if normalized != "" {
@@ -63,7 +69,7 @@ func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointTyp
 	return normalized
 }
 
-func testChannel(channel *model.Channel, testModel string, endpointType string, isStream bool) testResult {
+func testChannel(channel *model.Channel, testModel string, endpointType string, isStream bool, options ...channelTestOptions) testResult {
 	tik := time.Now()
 	var unsupportedTestChannelTypes = []int{
 		constant.ChannelTypeMidjourney,
@@ -166,7 +172,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 	group, _ := model.GetUserGroup(1, false)
 	c.Set("group", group)
 
-	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
+	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel, buildChannelTestSelection(channel, firstChannelTestOptions(options)))
 	if newAPIError != nil {
 		return testResult{
 			context:     c,
@@ -511,6 +517,33 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 	}
 }
 
+func firstChannelTestOptions(options []channelTestOptions) channelTestOptions {
+	if len(options) == 0 {
+		return channelTestOptions{}
+	}
+	return options[0]
+}
+
+func buildChannelTestSelection(channel *model.Channel, options channelTestOptions) *modelgatewayintegration.SelectionResult {
+	if channel == nil || options.CredentialIndex == nil {
+		return nil
+	}
+	return &modelgatewayintegration.SelectionResult{
+		Channel: channel,
+		Group:   channel.Group,
+		Plan: &modelgatewaycore.DispatchPlan{
+			Channel:       channel,
+			SelectedGroup: channel.Group,
+			CredentialRef: modelgatewaycore.CredentialRef{
+				ResourceID:      fmt.Sprintf("platform:channel:%d", channel.Id),
+				CredentialIndex: *options.CredentialIndex,
+				Resolver:        "channel_key",
+			},
+		},
+		SmartHandled: true,
+	}
+}
+
 func attachTestBillingRequestInput(info *relaycommon.RelayInfo, request dto.Request) error {
 	if info == nil {
 		return nil
@@ -849,8 +882,12 @@ func TestChannel(c *gin.Context) {
 	testModel := c.Query("model")
 	endpointType := c.Query("endpoint_type")
 	isStream, _ := strconv.ParseBool(c.Query("stream"))
+	testOptions, ok := parseChannelTestOptions(c)
+	if !ok {
+		return
+	}
 	tik := time.Now()
-	result := testChannel(channel, testModel, endpointType, isStream)
+	result := testChannel(channel, testModel, endpointType, isStream, testOptions)
 	if result.localErr != nil {
 		shouldMarkBalanceInsufficient := markChannelBalanceInsufficientFromTest(channel, result)
 		resp := gin.H{
@@ -894,6 +931,19 @@ func TestChannel(c *gin.Context) {
 		"balance_insufficient":         false,
 		"balance_insufficient_cleared": balanceInsufficientCleared,
 	})
+}
+
+func parseChannelTestOptions(c *gin.Context) (channelTestOptions, bool) {
+	value := strings.TrimSpace(c.Query("credential_index"))
+	if value == "" {
+		return channelTestOptions{}, true
+	}
+	index, err := strconv.Atoi(value)
+	if err != nil || index < 0 {
+		common.ApiErrorMsg(c, "账号索引无效")
+		return channelTestOptions{}, false
+	}
+	return channelTestOptions{CredentialIndex: &index}, true
 }
 
 func markChannelBalanceInsufficientFromTest(channel *model.Channel, result testResult) bool {

@@ -412,6 +412,73 @@ func TestCostFirstDoesNotRouteToHigherCostGroupOnlyBecauseCheapGroupIsBusy(t *te
 	require.Contains(t, cheapPlus.RoutingScoreBreakdown, "first_byte_backlog")
 }
 
+func TestFirstByteRetryIntentPrefersFastSuccessfulRecoveryChannel(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	cheapSlowKey := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 21, Group: "codex-plus", EndpointType: constant.EndpointTypeOpenAI}
+	fastStableKey := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 22, Group: "codex-plus", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                cheapSlowKey,
+		SuccessRate:        0.90,
+		TTFTMs:             9800,
+		DurationMs:         15000,
+		TokensPerSecond:    20,
+		CostRatio:          0.05,
+		GroupPriorityRatio: 1,
+		SampleCount:        60,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                fastStableKey,
+		SuccessRate:        0.99,
+		TTFTMs:             420,
+		DurationMs:         2200,
+		TokensPerSecond:    70,
+		CostRatio:          0.18,
+		GroupPriorityRatio: 1,
+		SampleCount:        60,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 21, Name: "cheap-slow"}, Group: "codex-plus", UpstreamModel: "gpt-5.5", RuntimeKey: cheapSlowKey},
+			{Channel: &model.Channel{Id: 22, Name: "fast-stable"}, Group: "codex-plus", UpstreamModel: "gpt-5.5", RuntimeKey: fastStableKey},
+		}),
+		store,
+		scheduler.DefaultScoreWeights(),
+	)
+	policy := core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "codex-plus",
+		CandidateGroups: []string{"codex-plus"},
+		Strategy:        core.StrategyCostFirst,
+		QueueEnabled:    true,
+		GroupPriorityRatio: map[string]float64{
+			"codex-plus": 1,
+		},
+	}
+
+	normalPlan, handled, apiErr := selector.Select(nil, &service.RetryParam{TokenGroup: "codex-plus", ModelName: "gpt-5.5", EndpointType: constant.EndpointTypeOpenAI}, policy)
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.Equal(t, 21, normalPlan.Channel.Id)
+
+	ctx, _ := gin.CreateTestContext(nil)
+	core.SetRetryRoutingIntent(ctx, core.NewFirstByteTimeoutRetryRoutingIntent(21, "cheap-slow", 0))
+	recoveryPlan, handled, apiErr := selector.Select(ctx, &service.RetryParam{Ctx: ctx, TokenGroup: "codex-plus", ModelName: "gpt-5.5", EndpointType: constant.EndpointTypeOpenAI}, policy)
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.Equal(t, 22, recoveryPlan.Channel.Id)
+	require.True(t, recoveryPlan.RetryIntentApplied)
+	require.True(t, recoveryPlan.RetryQueuePriorityBoost)
+	require.Equal(t, core.RetryRoutingQueuePriority, recoveryPlan.QueuePriority)
+	require.Equal(t, "score_items_retry_intent", recoveryPlan.SelectedReason)
+	require.Equal(t, core.RelayAttemptCancelReasonFirstByteTimeout, recoveryPlan.RetryRoutingIntent.Reason)
+	fastStable := candidateExplanationByChannel(t, recoveryPlan.Candidates, 22)
+	require.True(t, fastStable.RetryIntentApplied)
+	require.Contains(t, fastStable.RoutingScoreBreakdown, "retry_intent_recovery")
+	require.Greater(t, fastStable.RoutingScoreBreakdown["retry_intent_recovery"], 0.95)
+	cheapSlow := candidateExplanationByChannel(t, recoveryPlan.Candidates, 21)
+	require.Less(t, cheapSlow.RoutingScoreBreakdown["retry_intent_recovery"], fastStable.RoutingScoreBreakdown["retry_intent_recovery"])
+}
+
 func TestConcurrencyLoadItemHardDropsCircuitOpenSnapshot(t *testing.T) {
 	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	score := scorer.Score(core.Candidate{Channel: &model.Channel{Id: 1}}, core.RuntimeSnapshot{

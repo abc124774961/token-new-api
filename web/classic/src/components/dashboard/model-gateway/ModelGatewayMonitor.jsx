@@ -1209,10 +1209,23 @@ function pickDispatchDetailRecord(records) {
 
 function pickAttemptDetailRecord(records) {
   if (!Array.isArray(records) || records.length === 0) return null;
+  const attempts = userRequestAttemptRecords(records);
+  if (!attempts.length) return null;
+  const successfulAttempt = [...attempts]
+    .reverse()
+    .find((record) => record?.success);
+  if (successfulAttempt) return successfulAttempt;
+  return attempts[attempts.length - 1] || null;
+}
+
+function isAttemptClientAborted(attempt) {
+  const category = String(attempt?.error_category || '').toLowerCase();
   return (
-    records.find((record) => !isDispatch(record) && record?.success) ||
-    records.find((record) => !isDispatch(record)) ||
-    null
+    attempt?.client_aborted === true ||
+    Number(attempt?.status_code || 0) === 499 ||
+    category === 'client_aborted' ||
+    category.includes('client_abort') ||
+    category.includes('client_gone')
   );
 }
 
@@ -1254,6 +1267,13 @@ function buildUserRequestDetailRecord(userRequest, records) {
     attempt?.channel_name ||
     base?.channel_name ||
     '';
+  const latestAttemptClientAborted = isAttemptClientAborted(attempt);
+  const finalStatusCode = latestAttemptClientAborted
+    ? attempt?.status_code || 499
+    : userRequest?.final_status_code || attempt?.status_code || 0;
+  const finalErrorCategory = latestAttemptClientAborted
+    ? 'client_aborted'
+    : userRequest?.final_error_category || attempt?.error_category || '';
   return {
     ...base,
     ...attempt,
@@ -1320,9 +1340,10 @@ function buildUserRequestDetailRecord(userRequest, records) {
       '',
     success: userRequest?.final_success === true || attempt?.success === true,
     final_success: userRequest?.final_success === true,
-    status_code: userRequest?.final_status_code || attempt?.status_code || 0,
-    error_category:
-      userRequest?.final_error_category || attempt?.error_category || '',
+    status_code: finalStatusCode,
+    final_status_code: finalStatusCode,
+    error_category: finalErrorCategory,
+    final_error_category: finalErrorCategory,
     retry_action: attempt?.retry_action || '',
     retry_reason:
       attempt?.retry_reason ||
@@ -1333,7 +1354,9 @@ function buildUserRequestDetailRecord(userRequest, records) {
     duration_ms: userRequest?.duration_ms || attempt?.duration_ms || 0,
     ttft_ms: userRequest?.ttft_ms || attempt?.ttft_ms || 0,
     client_aborted:
-      userRequest?.client_aborted === true || attempt?.client_aborted === true,
+      userRequest?.client_aborted === true ||
+      attempt?.client_aborted === true ||
+      latestAttemptClientAborted,
     stream_interrupted:
       userRequest?.stream_interrupted === true ||
       attempt?.stream_interrupted === true,

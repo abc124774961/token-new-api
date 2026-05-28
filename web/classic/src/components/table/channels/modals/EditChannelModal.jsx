@@ -3193,11 +3193,6 @@ const EditChannelModal = (props) => {
     const formValues = formApiRef.current ? formApiRef.current.getValues() : {};
     let localInputs = { ...formValues };
     localInputs.param_override = inputs.param_override;
-    const allowEmptyCodexAccountPool =
-      localInputs.type === 57 &&
-      !batch &&
-      (localInputs.key || '').trim() === '';
-
     if (localInputs.type === 57) {
       if (batch) {
         showInfo(t('Codex 渠道不支持批量创建'));
@@ -3238,7 +3233,7 @@ const EditChannelModal = (props) => {
       const keyType = localInputs.vertex_key_type || 'json';
       if (keyType === 'api_key') {
         // 直接作为普通字符串密钥处理
-        if (!isEdit && (!localInputs.key || localInputs.key.trim() === '')) {
+        if (batch && (!localInputs.key || localInputs.key.trim() === '')) {
           showInfo(t('请输入密钥！'));
           return;
         }
@@ -3253,7 +3248,7 @@ const EditChannelModal = (props) => {
               showError(t('密钥格式无效，请输入有效的 JSON 格式密钥'));
               return;
             }
-          } else if (!isEdit) {
+          } else if (batch) {
             showInfo(t('请输入密钥！'));
             return;
           }
@@ -3277,7 +3272,7 @@ const EditChannelModal = (props) => {
             }
           }
           if (keys.length === 0) {
-            if (!isEdit) {
+            if (batch) {
               showInfo(t('请上传密钥文件！'));
               return;
             } else {
@@ -3298,11 +3293,8 @@ const EditChannelModal = (props) => {
     }
     delete localInputs.vertex_files;
 
-    if (
-      !isEdit &&
-      (!localInputs.name || (!allowEmptyCodexAccountPool && !localInputs.key))
-    ) {
-      showInfo(t('请填写渠道名称和渠道密钥！'));
+    if (!isEdit && !localInputs.name) {
+      showInfo(t('请填写渠道名称！'));
       return;
     }
     if (!Array.isArray(localInputs.models) || localInputs.models.length === 0) {
@@ -4725,7 +4717,7 @@ const EditChannelModal = (props) => {
                             onChange={handleVertexUploadChange}
                             fileList={vertexFileList}
                             rules={
-                              isEdit
+                              isEdit || !batch
                                 ? []
                                 : [
                                     {
@@ -4752,7 +4744,7 @@ const EditChannelModal = (props) => {
                                 : t('请输入密钥，一行一个')
                             }
                             rules={
-                              isEdit
+                              isEdit || !batch
                                 ? []
                                 : [{ required: true, message: t('请输入密钥') }]
                             }
@@ -4959,7 +4951,7 @@ const EditChannelModal = (props) => {
                                     '请输入 JSON 格式的密钥内容，例如：\n{\n  "type": "service_account",\n  "project_id": "your-project-id",\n  "private_key_id": "...",\n  "private_key": "...",\n  "client_email": "...",\n  "client_id": "...",\n  "auth_uri": "...",\n  "token_uri": "...",\n  "auth_provider_x509_cert_url": "...",\n  "client_x509_cert_url": "..."\n}',
                                   )}
                                   rules={
-                                    isEdit
+                                    isEdit || !batch
                                       ? []
                                       : [
                                           {
@@ -5019,7 +5011,7 @@ const EditChannelModal = (props) => {
                                   onChange={handleVertexUploadChange}
                                   fileList={vertexFileList}
                                   rules={
-                                    isEdit
+                                    isEdit || !batch
                                       ? []
                                       : [
                                           {
@@ -5050,7 +5042,7 @@ const EditChannelModal = (props) => {
                                   : t(type2secretPrompt(inputs.type))
                               }
                               rules={
-                                isEdit
+                                isEdit || !batch
                                   ? []
                                   : [
                                       {

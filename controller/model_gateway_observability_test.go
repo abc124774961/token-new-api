@@ -1103,6 +1103,95 @@ func TestBuildModelGatewayObservabilitySummaryIncludesUserRequests(t *testing.T)
 	require.Equal(t, int64(520), trend.P95TTFTMs)
 }
 
+func TestBuildModelGatewayUserRequestObservabilityReconcilesLatestClientAbortAttempt(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	requestMeta, err := common.Marshal(map[string]any{
+		"client_aborted": true,
+		"error_category": "stream_interrupted",
+		"retry_action":   "client_aborted",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		CreatedAt:          now - 20,
+		UpdatedAt:          now - 18,
+		CompletedAt:        now - 18,
+		RequestId:          "req-switch-client-abort-old-summary",
+		RequestedGroup:     "auto",
+		SelectedGroup:      "codex-plus",
+		RequestedModel:     "gpt-5.5",
+		FinalChannelID:     12,
+		FinalChannelName:   "freeyourtokens-plus",
+		Attempts:           1,
+		LastAttemptIndex:   0,
+		FinalSuccess:       false,
+		FinalStatusCode:    http.StatusBadGateway,
+		FinalErrorCategory: model.ModelGatewayUserRequestErrorStreamInterrupted,
+		StreamInterrupted:  true,
+		DurationMs:         3120,
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ModelExecutionRecord{
+		{
+			CreatedAt:         now - 20,
+			RequestId:         "req-switch-client-abort-old-summary",
+			AttemptIndex:      0,
+			RequestedGroup:    "auto",
+			SelectedGroup:     "codex-plus",
+			RequestedModel:    "gpt-5.5",
+			ChannelId:         12,
+			ChannelName:       "freeyourtokens-plus",
+			StatusCode:        http.StatusBadGateway,
+			ErrorCategory:     "stream_interrupted",
+			StreamInterrupted: true,
+			DurationMs:        3120,
+		},
+		{
+			CreatedAt:         now - 17,
+			RequestId:         "req-switch-client-abort-old-summary",
+			AttemptIndex:      1,
+			RequestedGroup:    "auto",
+			SelectedGroup:     "codex-plus",
+			RequestedModel:    "gpt-5.5",
+			ChannelId:         4,
+			ChannelName:       "toioto",
+			ErrorCategory:     "stream_interrupted",
+			StreamInterrupted: true,
+			DurationMs:        3380,
+			RequestMeta:       string(requestMeta),
+		},
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	record := response.UserRequests.RecentRequests[0]
+	require.Equal(t, "req-switch-client-abort-old-summary", record.RequestID)
+	require.Equal(t, "client_aborted", record.Status)
+	require.True(t, record.ClientAborted)
+	require.False(t, record.FinalSuccess)
+	require.Equal(t, relayStatusClientClosedRequest, record.FinalStatusCode)
+	require.Equal(t, model.ModelGatewayUserRequestErrorClientAborted, record.FinalErrorCategory)
+	require.Equal(t, 4, record.FinalChannelID)
+	require.Equal(t, "toioto", record.FinalChannelName)
+	require.Equal(t, 2, record.Attempts)
+	require.Equal(t, int64(1), response.UserRequests.Summary.ClientAborted)
+	require.Zero(t, response.UserRequests.Summary.FinalFailures)
+	require.Zero(t, response.UserRequests.Summary.AvgDurationMs)
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-switch-client-abort-old-summary").First(&summary).Error)
+	require.True(t, summary.ClientAborted)
+	require.Equal(t, relayStatusClientClosedRequest, summary.FinalStatusCode)
+	require.Equal(t, model.ModelGatewayUserRequestErrorClientAborted, summary.FinalErrorCategory)
+	require.Equal(t, 1, summary.LastAttemptIndex)
+}
+
 func TestBuildModelGatewayObservabilitySummaryIncludesHealthProbeUserRequestsByDefault(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()

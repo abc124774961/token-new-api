@@ -264,6 +264,112 @@ func TestQueueManagerPriorityPolicyAllowsHighPriorityExtraCapacity(t *testing.T)
 	require.Equal(t, 0, manager.Depth(8008))
 }
 
+func TestQueueManagerPriorityPolicyAllowsRetryIntentPriorityExtraCapacity(t *testing.T) {
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
+	first, acquired := service.TryAcquireChannelConcurrency(8012, dto.ChannelSettings{MaxConcurrency: 1})
+	require.True(t, acquired)
+	defer first.Release()
+
+	manager := scheduler.NewQueueManagerWithAdmissionPolicy(500*time.Millisecond, 1, scheduler.NewPriorityQueueAdmissionPolicy(scheduler.QueueFairnessOptions{
+		HighPriorityThreshold:  core.RetryRoutingQueuePriority,
+		HighPriorityExtraDepth: 1,
+		AbsoluteMaxDepth:       2,
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	normalDone := make(chan scheduler.QueueAcquireResult, 1)
+	go func() {
+		normalDone <- manager.AcquireWithOptions(ctx, &core.DispatchPlan{
+			QueueEnabled: true,
+			QueueWaitMs:  400,
+		}, 8012, dto.ChannelSettings{MaxConcurrency: 1}, scheduler.QueueAcquireOptions{
+			Group: "default",
+		})
+	}()
+	require.Eventually(t, func() bool {
+		return manager.Depth(8012) == 1
+	}, 100*time.Millisecond, 10*time.Millisecond)
+
+	retryDone := make(chan scheduler.QueueAcquireResult, 1)
+	go func() {
+		retryDone <- manager.AcquireWithOptions(ctx, &core.DispatchPlan{
+			QueueEnabled: true,
+			QueueWaitMs:  400,
+		}, 8012, dto.ChannelSettings{MaxConcurrency: 1}, scheduler.QueueAcquireOptions{
+			Group:    "default",
+			Priority: core.RetryRoutingQueuePriority,
+		})
+	}()
+	require.Eventually(t, func() bool {
+		return manager.Depth(8012) == 2
+	}, 100*time.Millisecond, 10*time.Millisecond)
+
+	snapshot := manager.DetailedSnapshot()
+	require.Equal(t, 1, snapshot.Summary.HighPriorityDepth)
+	require.Equal(t, 1, snapshot.Summary.NormalDepth)
+
+	cancel()
+	require.Equal(t, scheduler.QueueAcquireRejected, (<-normalDone).Status)
+	require.Equal(t, scheduler.QueueAcquireRejected, (<-retryDone).Status)
+	require.Equal(t, 0, manager.Depth(8012))
+}
+
+func TestQueueManagerPriorityPolicyLetsRetryIntentAcquireBeforeNormalWaiter(t *testing.T) {
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
+	first, acquired := service.TryAcquireChannelConcurrency(8013, dto.ChannelSettings{MaxConcurrency: 1})
+	require.True(t, acquired)
+
+	manager := scheduler.NewQueueManagerWithAdmissionPolicy(500*time.Millisecond, 2, scheduler.NewPriorityQueueAdmissionPolicy(scheduler.QueueFairnessOptions{
+		HighPriorityThreshold: core.RetryRoutingQueuePriority,
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	normalDone := make(chan scheduler.QueueAcquireResult, 1)
+	go func() {
+		normalDone <- manager.AcquireWithOptions(ctx, &core.DispatchPlan{
+			QueueEnabled: true,
+			QueueWaitMs:  400,
+		}, 8013, dto.ChannelSettings{MaxConcurrency: 1}, scheduler.QueueAcquireOptions{
+			Group: "default",
+		})
+	}()
+	require.Eventually(t, func() bool {
+		return manager.Depth(8013) == 1
+	}, 100*time.Millisecond, 10*time.Millisecond)
+
+	retryDone := make(chan scheduler.QueueAcquireResult, 1)
+	go func() {
+		retryDone <- manager.AcquireWithOptions(ctx, &core.DispatchPlan{
+			QueueEnabled: true,
+			QueueWaitMs:  400,
+		}, 8013, dto.ChannelSettings{MaxConcurrency: 1}, scheduler.QueueAcquireOptions{
+			Group:    "default",
+			Priority: core.RetryRoutingQueuePriority,
+		})
+	}()
+	require.Eventually(t, func() bool {
+		return manager.Depth(8013) == 2
+	}, 100*time.Millisecond, 10*time.Millisecond)
+
+	first.Release()
+	retryResult := <-retryDone
+	require.Equal(t, scheduler.QueueAcquireQueued, retryResult.Status)
+	require.NotNil(t, retryResult.Lease)
+	retryResult.Lease.Release()
+
+	normalResult := <-normalDone
+	require.Equal(t, scheduler.QueueAcquireQueued, normalResult.Status)
+	require.NotNil(t, normalResult.Lease)
+	normalResult.Lease.Release()
+	require.Equal(t, 0, manager.Depth(8013))
+}
+
 func TestQueueManagerPriorityPolicyEnforcesAbsoluteLimit(t *testing.T) {
 	service.ClearChannelConcurrencyForTest()
 	t.Cleanup(service.ClearChannelConcurrencyForTest)

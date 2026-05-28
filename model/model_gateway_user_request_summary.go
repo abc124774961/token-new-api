@@ -117,6 +117,10 @@ func upsertModelGatewayUserRequestAttempt(attempt ModelGatewayUserRequestAttempt
 			if err := tx.Where("request_id = ?", attempt.RequestId).First(&existing).Error; err != nil {
 				return err
 			}
+			if attempt.AttemptIndex < existing.LastAttemptIndex {
+				updated = existing
+				return nil
+			}
 			updates := modelGatewayUserRequestSummaryUpdates(existing, attempt)
 			if err := tx.Model(&ModelGatewayUserRequestSummary{}).
 				Where("request_id = ?", attempt.RequestId).
@@ -294,7 +298,10 @@ func modelGatewayUserRequestExperienceIssue(attempt ModelGatewayUserRequestAttem
 }
 
 func modelGatewayUserRequestAttemptFinalized(attempt ModelGatewayUserRequestAttempt) bool {
-	return !attempt.WillRetry || attempt.Success || attempt.StreamInterrupted
+	if attempt.Success || modelGatewayUserRequestAttemptClientAborted(attempt) {
+		return true
+	}
+	return !attempt.WillRetry
 }
 
 func modelGatewayUserRequestFinalStatusCode(attempt ModelGatewayUserRequestAttempt, finalized bool, success bool) int {

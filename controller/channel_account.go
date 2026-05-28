@@ -1,7 +1,12 @@
 package controller
 
 import (
+	"archive/zip"
+	"bytes"
 	"fmt"
+	"io"
+	"mime/multipart"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +25,9 @@ import (
 const channelAccountManualDisabledReason = "manual_disabled"
 const channelAccountAllKeysDisabledReason = "All keys are disabled"
 const channelAccountEmptyCodexReason = channelAccountAllKeysDisabledReason
+const channelAccountImportMaxFileBytes int64 = 32 << 20
+const channelAccountImportMaxZipEntryBytes int64 = 4 << 20
+const channelAccountImportMaxZipEntries = 1000
 
 type ChannelAccountsResponse struct {
 	ChannelID   int                          `json:"channel_id"`
@@ -69,6 +77,13 @@ type ImportChannelAccountsRequest struct {
 	Credentials    string   `json:"credentials"`
 	CredentialList []string `json:"credential_list,omitempty"`
 	OnlyNew        bool     `json:"only_new"`
+}
+
+type ChannelAccountImportParser struct {
+	context     *gin.Context
+	maxFileSize int64
+	maxZipEntry int64
+	maxZipFiles int
 }
 
 type DeleteChannelAccountsRequest struct {
@@ -263,8 +278,8 @@ func ImportChannelAccounts(c *gin.Context) {
 		return
 	}
 
-	var request ImportChannelAccountsRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
+	request, err := NewChannelAccountImportParser(c).Parse()
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -373,6 +388,321 @@ func (request UpdateChannelAccountsStatusRequest) TargetEnabled() (bool, bool) {
 	default:
 		return false, false
 	}
+}
+
+func NewChannelAccountImportParser(c *gin.Context) *ChannelAccountImportParser {
+	return &ChannelAccountImportParser{
+		context:     c,
+		maxFileSize: channelAccountImportMaxFileBytes,
+		maxZipEntry: channelAccountImportMaxZipEntryBytes,
+		maxZipFiles: channelAccountImportMaxZipEntries,
+	}
+}
+
+func (parser *ChannelAccountImportParser) Parse() (ImportChannelAccountsRequest, error) {
+	if parser == nil || parser.context == nil {
+		return ImportChannelAccountsRequest{}, fmt.Errorf("导入请求无效")
+	}
+	if strings.HasPrefix(strings.ToLower(parser.context.GetHeader("Content-Type")), "multipart/") {
+		return parser.parseMultipart()
+	}
+
+	var request ImportChannelAccountsRequest
+	if err := parser.context.ShouldBindJSON(&request); err != nil {
+		return request, err
+	}
+	return request, nil
+}
+
+func (parser *ChannelAccountImportParser) parseMultipart() (ImportChannelAccountsRequest, error) {
+	form, err := parser.context.MultipartForm()
+	if err != nil {
+		return ImportChannelAccountsRequest{}, err
+	}
+	request := ImportChannelAccountsRequest{
+		Credentials:    strings.Join(form.Value["credentials"], "\n"),
+		CredentialList: append([]string{}, form.Value["credential_list"]...),
+	}
+	if values := form.Value["only_new"]; len(values) > 0 {
+		request.OnlyNew = channelAccountImportBool(values[len(values)-1])
+	}
+
+	for _, files := range form.File {
+		for _, fileHeader := range files {
+			credentials, err := parser.credentialsFromUploadedFile(fileHeader)
+			if err != nil {
+				return request, err
+			}
+			request.CredentialList = append(request.CredentialList, credentials...)
+		}
+	}
+	return request, nil
+}
+
+func (parser *ChannelAccountImportParser) credentialsFromUploadedFile(fileHeader *multipart.FileHeader) ([]string, error) {
+	if fileHeader == nil {
+		return nil, nil
+	}
+	if fileHeader.Size > parser.maxFileSize {
+		return nil, fmt.Errorf("导入文件过大，最大支持 %d MB", parser.maxFileSize>>20)
+	}
+	file, err := fileHeader.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	data, err := readChannelAccountImportBytes(file, parser.maxFileSize)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", fileHeader.Filename, err)
+	}
+	name := strings.TrimSpace(fileHeader.Filename)
+	if channelAccountImportLooksLikeZip(name, data) {
+		return parser.credentialsFromZip(data, name)
+	}
+	return parser.credentialsFromPayload(data, name, false)
+}
+
+func (parser *ChannelAccountImportParser) credentialsFromZip(data []byte, sourceName string) ([]string, error) {
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, fmt.Errorf("%s 不是有效的 ZIP 压缩包", sourceName)
+	}
+	isXAutoPackage := parser.zipLooksLikeXAutoPackage(reader)
+	credentials := make([]string, 0)
+	visited := 0
+	for _, file := range reader.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		visited++
+		if visited > parser.maxZipFiles {
+			return nil, fmt.Errorf("压缩包文件数量过多，最多支持 %d 个文件", parser.maxZipFiles)
+		}
+		if !parser.shouldParseZipEntry(file.Name, isXAutoPackage) {
+			continue
+		}
+		entryBytes, err := parser.readZipEntry(file)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", file.Name, err)
+		}
+		entryCredentials, err := parser.credentialsFromPayload(entryBytes, file.Name, isXAutoPackage)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", file.Name, err)
+		}
+		credentials = append(credentials, entryCredentials...)
+	}
+	if len(credentials) == 0 {
+		if isXAutoPackage {
+			return nil, fmt.Errorf("未在 xauto 导出包中找到可导入的账号凭证")
+		}
+		return nil, fmt.Errorf("压缩包中未找到可导入的账号凭证")
+	}
+	return credentials, nil
+}
+
+func (parser *ChannelAccountImportParser) zipLooksLikeXAutoPackage(reader *zip.Reader) bool {
+	if reader == nil {
+		return false
+	}
+	for _, file := range reader.File {
+		if strings.EqualFold(path.Base(file.Name), "manifest.json") {
+			data, err := parser.readZipEntry(file)
+			if err != nil {
+				return false
+			}
+			var payload map[string]interface{}
+			if err := common.Unmarshal(data, &payload); err != nil {
+				return false
+			}
+			packageType, _ := payload["type"].(string)
+			return strings.EqualFold(strings.TrimSpace(packageType), "newapi-channel-files")
+		}
+	}
+	return false
+}
+
+func (parser *ChannelAccountImportParser) shouldParseZipEntry(name string, isXAutoPackage bool) bool {
+	baseName := strings.ToLower(path.Base(name))
+	if baseName == "" || strings.HasPrefix(baseName, ".") || baseName == "manifest.json" {
+		return false
+	}
+	if isXAutoPackage {
+		return strings.HasSuffix(baseName, ".json")
+	}
+	return strings.HasSuffix(baseName, ".json") ||
+		strings.HasSuffix(baseName, ".txt") ||
+		strings.HasSuffix(baseName, ".ndjson")
+}
+
+func (parser *ChannelAccountImportParser) readZipEntry(file *zip.File) ([]byte, error) {
+	if file == nil {
+		return nil, fmt.Errorf("压缩包条目无效")
+	}
+	if int64(file.UncompressedSize64) > parser.maxZipEntry {
+		return nil, fmt.Errorf("压缩包内文件过大，最大支持 %d MB", parser.maxZipEntry>>20)
+	}
+	reader, err := file.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	return readChannelAccountImportBytes(reader, parser.maxZipEntry)
+}
+
+func (parser *ChannelAccountImportParser) credentialsFromPayload(data []byte, sourceName string, xautoPackage bool) ([]string, error) {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		credentials, ok, err := parser.credentialsFromJSONPayload([]byte(trimmed), xautoPackage)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			return credentials, nil
+		}
+		if xautoPackage || strings.HasSuffix(strings.ToLower(sourceName), ".json") {
+			return nil, nil
+		}
+	}
+	if xautoPackage {
+		return nil, nil
+	}
+	return strings.Split(strings.ReplaceAll(trimmed, "\r\n", "\n"), "\n"), nil
+}
+
+func (parser *ChannelAccountImportParser) credentialsFromJSONPayload(data []byte, xautoPackage bool) ([]string, bool, error) {
+	var payload interface{}
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return nil, false, err
+	}
+	credentials, ok, err := parser.credentialsFromJSONValue(payload, xautoPackage)
+	return credentials, ok, err
+}
+
+func (parser *ChannelAccountImportParser) credentialsFromJSONValue(value interface{}, xautoPackage bool) ([]string, bool, error) {
+	switch typed := value.(type) {
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return nil, false, nil
+		}
+		return []string{typed}, true, nil
+	case []interface{}:
+		credentials := make([]string, 0, len(typed))
+		for _, item := range typed {
+			itemCredentials, ok, err := parser.credentialsFromJSONValue(item, xautoPackage)
+			if err != nil {
+				return nil, false, err
+			}
+			if ok {
+				credentials = append(credentials, itemCredentials...)
+			}
+		}
+		return credentials, len(credentials) > 0, nil
+	case map[string]interface{}:
+		return parser.credentialsFromJSONObject(typed, xautoPackage)
+	default:
+		return nil, false, nil
+	}
+}
+
+func (parser *ChannelAccountImportParser) credentialsFromJSONObject(payload map[string]interface{}, xautoPackage bool) ([]string, bool, error) {
+	if key := channelAccountImportStringAtPath(payload, "channel", "key"); key != "" {
+		return []string{key}, true, nil
+	}
+	if credentialItems, ok, err := parser.credentialsFromJSONField(payload["credential_list"], xautoPackage); err != nil || ok {
+		return credentialItems, ok, err
+	}
+	if credentialItems, ok, err := parser.credentialsFromJSONField(payload["credentials"], xautoPackage); err != nil || ok {
+		return credentialItems, ok, err
+	}
+	if credential := channelAccountImportString(payload["credential"]); credential != "" {
+		return []string{credential}, true, nil
+	}
+	if credential := channelAccountImportString(payload["key"]); credential != "" && channelAccountImportLooksLikeCredentialPayload(payload) {
+		return []string{credential}, true, nil
+	}
+	if xautoPackage || channelAccountImportLooksLikeManifest(payload) {
+		return nil, false, nil
+	}
+	compacted, err := common.Marshal(payload)
+	if err != nil {
+		return nil, false, err
+	}
+	return []string{string(compacted)}, true, nil
+}
+
+func (parser *ChannelAccountImportParser) credentialsFromJSONField(value interface{}, xautoPackage bool) ([]string, bool, error) {
+	if value == nil {
+		return nil, false, nil
+	}
+	if text := channelAccountImportString(value); text != "" {
+		if parsed, ok := parseJSONCredentialInput(text); ok {
+			return parsed, true, nil
+		}
+		return []string{text}, true, nil
+	}
+	return parser.credentialsFromJSONValue(value, xautoPackage)
+}
+
+func readChannelAccountImportBytes(reader io.Reader, maxBytes int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("导入文件过大，最大支持 %d MB", maxBytes>>20)
+	}
+	return data, nil
+}
+
+func channelAccountImportBool(value string) bool {
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	return err == nil && parsed
+}
+
+func channelAccountImportLooksLikeZip(name string, data []byte) bool {
+	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(name)), ".zip") {
+		return true
+	}
+	return len(data) >= 4 && bytes.Equal(data[:4], []byte{'P', 'K', 3, 4})
+}
+
+func channelAccountImportString(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		return ""
+	}
+}
+
+func channelAccountImportStringAtPath(payload map[string]interface{}, pathParts ...string) string {
+	var current interface{} = payload
+	for _, part := range pathParts {
+		object, ok := current.(map[string]interface{})
+		if !ok {
+			return ""
+		}
+		current = object[part]
+	}
+	return channelAccountImportString(current)
+}
+
+func channelAccountImportLooksLikeManifest(payload map[string]interface{}) bool {
+	packageType := channelAccountImportString(payload["type"])
+	return strings.EqualFold(packageType, "newapi-channel-files")
+}
+
+func channelAccountImportLooksLikeCredentialPayload(payload map[string]interface{}) bool {
+	for _, key := range []string{"access_token", "refresh_token", "account_id", "api_key", "private_key", "client_email"} {
+		if channelAccountImportString(payload[key]) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func parseChannelAccountCredentialIndexParam(c *gin.Context) (int, bool) {

@@ -141,7 +141,8 @@
   border: 1px solid var(--ca-border);
   border-radius: 8px;
   background: var(--ca-surface);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .ct-channel-account-toolbar {
@@ -348,10 +349,142 @@
   font-size: 11px;
 }
 
+.ct-channel-account-operation {
+  min-width: 260px;
+  justify-content: flex-start;
+  white-space: nowrap;
+}
+
 .ct-channel-account-import-modal {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.ct-channel-account-import-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ct-channel-account-import-overview-item {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--ca-border);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: var(--ca-surface-soft);
+  color: var(--ca-text);
+  font-size: 12px;
+}
+
+.ct-channel-account-import-overview-item svg {
+  flex: 0 0 auto;
+  color: var(--ca-primary);
+}
+
+.ct-channel-account-import-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ct-channel-account-import-dropzone {
+  display: flex;
+  width: 100%;
+  min-height: 90px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px dashed #94a3b8;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fff;
+  color: var(--ca-text);
+  cursor: pointer;
+  font: inherit;
+  outline: none;
+  text-align: center;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    box-shadow 0.16s ease,
+    color 0.16s ease;
+}
+
+.ct-channel-account-import-dropzone:hover,
+.ct-channel-account-import-dropzone:focus-visible,
+.ct-channel-account-import-dropzone-active {
+  border-color: var(--ca-primary);
+  background: rgba(14, 165, 164, 0.07);
+  box-shadow: 0 0 0 3px rgba(14, 165, 164, 0.12);
+}
+
+.ct-channel-account-import-dropzone svg {
+  color: var(--ca-primary);
+}
+
+.ct-channel-account-import-dropzone span {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ct-channel-account-import-dropzone small {
+  color: var(--ca-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ct-channel-account-import-file-input {
+  display: none;
+}
+
+.ct-channel-account-import-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ct-channel-account-import-file,
+.ct-channel-account-import-file-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.ct-channel-account-import-file {
+  justify-content: space-between;
+  border: 1px solid var(--ca-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.ct-channel-account-import-file-main span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ca-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-channel-account-import-file-main svg {
+  flex: 0 0 auto;
+  color: #64748b;
+}
+
+.ct-channel-account-import-empty {
+  border: 1px dashed var(--ca-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--ca-muted);
+  font-size: 12px;
+  text-align: center;
 }
 
 .ct-channel-account-edit-modal,
@@ -446,6 +579,10 @@
   }
 
   .ct-channel-account-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .ct-channel-account-import-overview {
     grid-template-columns: 1fr;
   }
 

@@ -29,6 +29,11 @@ const (
 const RelayAttemptCancelReasonFirstByteTimeout = "first_byte_timeout"
 
 const (
+	RetryRoutingStrategyFirstByteRecovery = "first_byte_recovery"
+	RetryRoutingQueuePriority             = 1000
+)
+
+const (
 	ResourceTypePlatformOwned = "platform_owned"
 	ResourceTypeSupplierOwned = "supplier_owned"
 	ResourceTypePartnerOwned  = "partner_owned"
@@ -109,6 +114,7 @@ type DispatchRequest struct {
 	CurrentAutoGroup         string
 	CurrentAutoGroupIndex    int
 	HasCurrentAutoGroupIndex bool
+	RetryRoutingIntent       *RetryRoutingIntent
 }
 
 type GroupSmartPolicy struct {
@@ -186,6 +192,54 @@ type DispatchPlan struct {
 	ProbeReason               string
 	PoolLevel                 string
 	SwitchReason              string
+	RetryRoutingIntent        *RetryRoutingIntent
+	RetryIntentApplied        bool
+	RetryQueuePriorityBoost   bool
+}
+
+type RetryRoutingIntent struct {
+	Reason             string `json:"reason,omitempty"`
+	Strategy           string `json:"strategy,omitempty"`
+	PreferLowTTFT      bool   `json:"prefer_low_ttft,omitempty"`
+	PreferHighSuccess  bool   `json:"prefer_high_success,omitempty"`
+	QueuePriorityBoost bool   `json:"queue_priority_boost,omitempty"`
+	QueuePriority      int    `json:"queue_priority,omitempty"`
+	FailedChannelID    int    `json:"failed_channel_id,omitempty"`
+	FailedChannelName  string `json:"failed_channel_name,omitempty"`
+	AttemptIndex       int    `json:"attempt_index,omitempty"`
+}
+
+func NewFirstByteTimeoutRetryRoutingIntent(channelID int, channelName string, attemptIndex int) *RetryRoutingIntent {
+	return &RetryRoutingIntent{
+		Reason:             RelayAttemptCancelReasonFirstByteTimeout,
+		Strategy:           RetryRoutingStrategyFirstByteRecovery,
+		PreferLowTTFT:      true,
+		PreferHighSuccess:  true,
+		QueuePriorityBoost: true,
+		QueuePriority:      RetryRoutingQueuePriority,
+		FailedChannelID:    channelID,
+		FailedChannelName:  channelName,
+		AttemptIndex:       attemptIndex,
+	}
+}
+
+func (i *RetryRoutingIntent) Clone() *RetryRoutingIntent {
+	if i == nil {
+		return nil
+	}
+	clone := *i
+	return &clone
+}
+
+func (i *RetryRoutingIntent) Active() bool {
+	return i != nil && (i.Reason != "" || i.Strategy != "")
+}
+
+func (i *RetryRoutingIntent) FirstByteRecovery() bool {
+	if i == nil {
+		return false
+	}
+	return i.Reason == RelayAttemptCancelReasonFirstByteTimeout || i.Strategy == RetryRoutingStrategyFirstByteRecovery
 }
 
 type RuntimeKey struct {
@@ -467,6 +521,8 @@ type CandidateExplanation struct {
 	Selected                   bool               `json:"selected,omitempty"`
 	ScoreSampleSource          string             `json:"score_sample_source,omitempty"`
 	MatchedRuntimeKey          RuntimeKey         `json:"matched_runtime_key,omitempty"`
+	RetryIntentApplied         bool               `json:"retry_intent_applied,omitempty"`
+	RetryIntentReason          string             `json:"retry_intent_reason,omitempty"`
 }
 
 type ScoreWeights struct {

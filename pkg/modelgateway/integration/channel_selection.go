@@ -52,6 +52,7 @@ func (w *ChannelSelectionWrapper) Select(c *gin.Context, param *service.RetryPar
 			w.Facade.Shadow(c, param, channel, group)
 		})
 	}
+	core.ClearRetryRoutingIntent(c)
 	return &SelectionResult{
 		Channel:      channel,
 		Group:        group,
@@ -86,6 +87,7 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 		}
 		w.mu.Unlock()
 		SetSelectedPlan(c, plan)
+		core.ClearRetryRoutingIntent(c)
 		if plan.StickySource != "" {
 			SetFailedStickyPlan(c, plan)
 		}

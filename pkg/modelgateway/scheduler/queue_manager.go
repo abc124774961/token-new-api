@@ -51,6 +51,7 @@ type queueWaiterState struct {
 	Priority     int
 	HighPriority bool
 	RuntimeKey   core.RuntimeKey
+	Sequence     int64
 }
 
 // QueueAdmissionPolicy decides whether a request may wait in the channel queue.
@@ -197,6 +198,7 @@ type QueueManager struct {
 	queueGroupDepths map[int]map[string]int
 	queueWaiters     map[int][]queueWaiterState
 	rejectReasons    map[string]int
+	nextWaiterSeq    int64
 	timeout          time.Duration
 	tick             time.Duration
 	maxDepth         int
@@ -252,10 +254,11 @@ func (m *QueueManager) AcquireWithOptions(ctx context.Context, plan *core.Dispat
 	if timeout > m.timeout {
 		timeout = m.timeout
 	}
-	if !m.tryEnterQueue(channelID, options) {
+	waiter, entered := m.tryEnterQueue(channelID, options)
+	if !entered {
 		return QueueAcquireResult{Lease: lease, Status: QueueAcquireRejected}
 	}
-	defer m.leaveQueue(channelID, options)
+	defer m.leaveQueue(channelID, waiter)
 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -269,6 +272,9 @@ func (m *QueueManager) AcquireWithOptions(ctx context.Context, plan *core.Dispat
 		case <-timer.C:
 			return QueueAcquireResult{Lease: lease, Status: QueueAcquireRejected, WaitTime: time.Since(started)}
 		case <-ticker.C:
+			if !m.isQueueTurn(channelID, waiter) {
+				continue
+			}
 			nextLease, acquired := service.TryAcquireChannelConcurrency(channelID, setting)
 			if acquired {
 				return QueueAcquireResult{Lease: nextLease, Status: QueueAcquireQueued, WaitTime: time.Since(started)}
@@ -381,9 +387,9 @@ func (m *QueueManager) DetailedSnapshot() core.RuntimeQueueSnapshot {
 	return snapshot
 }
 
-func (m *QueueManager) tryEnterQueue(channelID int, options QueueAcquireOptions) bool {
+func (m *QueueManager) tryEnterQueue(channelID int, options QueueAcquireOptions) (queueWaiterState, bool) {
 	if m == nil {
-		return false
+		return queueWaiterState{}, false
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -412,37 +418,40 @@ func (m *QueueManager) tryEnterQueue(channelID int, options QueueAcquireOptions)
 			MaxDepth:          m.maxDepth,
 		}) {
 			m.rejectReasons[queueRejectReason(options, currentDepth, m.maxDepth)]++
-			return false
+			return queueWaiterState{}, false
 		}
 	} else if currentDepth >= m.maxDepth {
 		m.rejectReasons["max_depth_reached"]++
-		return false
+		return queueWaiterState{}, false
 	}
 	m.queueDepths[channelID]++
 	if m.queueGroupDepths[channelID] == nil {
 		m.queueGroupDepths[channelID] = map[string]int{}
 	}
 	m.queueGroupDepths[channelID][options.Group]++
-	m.queueWaiters[channelID] = append(m.queueWaiters[channelID], queueWaiterState{
+	m.nextWaiterSeq++
+	waiter := queueWaiterState{
 		Group:        options.Group,
 		Priority:     options.Priority,
 		HighPriority: m.isHighPriorityLocked(options),
 		RuntimeKey:   normalizedQueueRuntimeKey(channelID, options),
-	})
-	return true
+		Sequence:     m.nextWaiterSeq,
+	}
+	m.queueWaiters[channelID] = append(m.queueWaiters[channelID], waiter)
+	return waiter, true
 }
 
-func (m *QueueManager) leaveQueue(channelID int, options QueueAcquireOptions) {
+func (m *QueueManager) leaveQueue(channelID int, waiter queueWaiterState) {
 	if m == nil {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if groups := m.queueGroupDepths[channelID]; groups != nil {
-		if groups[options.Group] <= 1 {
-			delete(groups, options.Group)
+		if groups[waiter.Group] <= 1 {
+			delete(groups, waiter.Group)
 		} else {
-			groups[options.Group]--
+			groups[waiter.Group]--
 		}
 		if len(groups) == 0 {
 			delete(m.queueGroupDepths, channelID)
@@ -450,11 +459,11 @@ func (m *QueueManager) leaveQueue(channelID int, options QueueAcquireOptions) {
 	}
 	if m.queueDepths[channelID] <= 1 {
 		delete(m.queueDepths, channelID)
-		m.removeQueueWaiterLocked(channelID, options)
+		m.removeQueueWaiterLocked(channelID, waiter)
 		return
 	}
 	m.queueDepths[channelID]--
-	m.removeQueueWaiterLocked(channelID, options)
+	m.removeQueueWaiterLocked(channelID, waiter)
 }
 
 func (m *QueueManager) groupDepthLocked(channelID int, group string) int {
@@ -486,13 +495,13 @@ func (m *QueueManager) isHighPriorityLocked(options QueueAcquireOptions) bool {
 	return options.Priority > 0
 }
 
-func (m *QueueManager) removeQueueWaiterLocked(channelID int, options QueueAcquireOptions) {
+func (m *QueueManager) removeQueueWaiterLocked(channelID int, target queueWaiterState) {
 	waiters := m.queueWaiters[channelID]
 	if len(waiters) == 0 {
 		return
 	}
 	for index, waiter := range waiters {
-		if waiter.Group == options.Group && waiter.Priority == options.Priority {
+		if queueWaiterSameIdentity(waiter, target) {
 			m.queueWaiters[channelID] = append(waiters[:index], waiters[index+1:]...)
 			if len(m.queueWaiters[channelID]) == 0 {
 				delete(m.queueWaiters, channelID)
@@ -504,6 +513,44 @@ func (m *QueueManager) removeQueueWaiterLocked(channelID int, options QueueAcqui
 	if len(m.queueWaiters[channelID]) == 0 {
 		delete(m.queueWaiters, channelID)
 	}
+}
+
+func (m *QueueManager) isQueueTurn(channelID int, target queueWaiterState) bool {
+	if m == nil {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	waiters := m.queueWaiters[channelID]
+	if len(waiters) <= 1 {
+		return true
+	}
+	bestIndex := 0
+	for idx := 1; idx < len(waiters); idx++ {
+		if queueWaiterPrecedes(waiters[idx], waiters[bestIndex]) {
+			bestIndex = idx
+		}
+	}
+	best := waiters[bestIndex]
+	return queueWaiterSameIdentity(best, target)
+}
+
+func queueWaiterPrecedes(left queueWaiterState, right queueWaiterState) bool {
+	if left.Priority != right.Priority {
+		return left.Priority > right.Priority
+	}
+	if left.HighPriority != right.HighPriority {
+		return left.HighPriority
+	}
+	return left.Sequence < right.Sequence
+}
+
+func queueWaiterSameIdentity(left queueWaiterState, right queueWaiterState) bool {
+	return left.Group == right.Group &&
+		left.Priority == right.Priority &&
+		left.HighPriority == right.HighPriority &&
+		left.RuntimeKey == right.RuntimeKey &&
+		left.Sequence == right.Sequence
 }
 
 func applyQueuePriorityDepths(group *core.RuntimeQueueGroupSnapshot, waiters []queueWaiterState) {

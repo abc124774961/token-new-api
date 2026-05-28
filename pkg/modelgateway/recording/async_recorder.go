@@ -154,6 +154,7 @@ type dispatchRequestMeta struct {
 	QueueEnabled              bool                        `json:"queue_enabled,omitempty"`
 	QueueDepth                int                         `json:"queue_depth,omitempty"`
 	QueueCapacity             int                         `json:"queue_capacity,omitempty"`
+	QueuePriority             int                         `json:"queue_priority,omitempty"`
 	BillingRatioMode          string                      `json:"billing_ratio_mode,omitempty"`
 	Strategy                  string                      `json:"strategy,omitempty"`
 	AutoMode                  string                      `json:"auto_mode,omitempty"`
@@ -168,6 +169,9 @@ type dispatchRequestMeta struct {
 	CandidateExplanations     []core.CandidateExplanation `json:"candidate_explanations,omitempty"`
 	IsHealthProbe             bool                        `json:"is_health_probe,omitempty"`
 	ProbeReason               string                      `json:"probe_reason,omitempty"`
+	RetryRoutingIntent        *core.RetryRoutingIntent    `json:"retry_routing_intent,omitempty"`
+	RetryIntentApplied        bool                        `json:"retry_intent_applied,omitempty"`
+	RetryQueuePriorityBoost   bool                        `json:"retry_queue_priority_boost,omitempty"`
 }
 
 type attemptRequestMeta struct {
@@ -216,6 +220,7 @@ func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
 		QueueEnabled:           plan.QueueEnabled,
 		QueueDepth:             plan.QueueDepth,
 		QueueCapacity:          plan.QueueCapacity,
+		QueuePriority:          plan.QueuePriority,
 		BillingRatioMode:       plan.BillingRatioMode,
 		Strategy:               plan.Strategy,
 		AutoMode:               plan.AutoMode,
@@ -230,8 +235,11 @@ func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
 			plan.CandidateFilterConditions...),
 		CandidateExplanations: append([]core.CandidateExplanation(nil),
 			plan.Candidates...),
-		IsHealthProbe: plan.IsHealthProbe,
-		ProbeReason:   plan.ProbeReason,
+		IsHealthProbe:           plan.IsHealthProbe,
+		ProbeReason:             plan.ProbeReason,
+		RetryRoutingIntent:      plan.RetryRoutingIntent.Clone(),
+		RetryIntentApplied:      plan.RetryIntentApplied,
+		RetryQueuePriorityBoost: plan.RetryQueuePriorityBoost,
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	modelgatewaycredential "github.com/QuantumNous/new-api/pkg/modelgateway/credential"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
@@ -71,6 +72,32 @@ func TestBuildTestLogOtherInjectsTieredInfo(t *testing.T) {
 	require.Equal(t, "tiered_expr", other["billing_mode"])
 	require.Equal(t, "base", other["matched_tier"])
 	require.NotEmpty(t, other["expr_b64"])
+}
+
+func TestBuildChannelTestSelectionLocksCredentialIndex(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	index := 1
+	channel := &model.Channel{
+		Id:     703,
+		Name:   "account-test-lock",
+		Key:    "sk-one\nsk-two",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+
+	selection := buildChannelTestSelection(channel, channelTestOptions{CredentialIndex: &index})
+	require.NotNil(t, selection)
+	resolved, apiErr := modelgatewaycredential.ResolveChannelCredential(channel, selection.Plan.CredentialRef)
+
+	require.Nil(t, apiErr)
+	modelgatewaycredential.ApplyResolvedCredentialToContext(ctx, resolved)
+	require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyChannelMultiKeyIndex))
+	require.Equal(t, "sk-two", common.GetContextKeyString(ctx, constant.ContextKeyChannelKey))
 }
 
 func TestClearChannelBalanceInsufficientFromSuccessfulTestClearsMarkers(t *testing.T) {

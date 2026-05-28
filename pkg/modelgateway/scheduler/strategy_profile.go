@@ -15,6 +15,7 @@ const (
 	scoreItemFirstByteBacklog      = "first_byte_backlog"
 	scoreItemCost                  = "cost"
 	scoreItemGroupPriority         = "group_priority"
+	scoreItemRetryIntentRecovery   = "retry_intent_recovery"
 )
 
 const (

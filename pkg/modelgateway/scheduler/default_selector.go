@@ -95,6 +95,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		return nil, false, nil
 	}
 	req := core.NewDispatchRequestFromGin(c, param)
+	retryIntent := req.RetryRoutingIntent
 	if policy.RequestedGroup == "" {
 		policy.RequestedGroup = req.RequestedGroup
 	}
@@ -153,7 +154,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		if reference, ok := s.costReferenceForCandidate(candidate, snapshot, policy, costReferenceRatio); ok {
 			snapshot.CostReferenceRatio = reference
 		}
-		scored := s.scorePreparedCandidate(candidate, snapshot, policy, evaluation.stickyMatched)
+		scored := s.scorePreparedCandidate(candidate, snapshot, policy, evaluation.stickyMatched, retryIntent)
 		explanation := scored.Explanation
 		score := scored.Score
 		if evaluation.rejectReason != "" {
@@ -266,7 +267,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		QueueEnabled:              policy.QueueEnabled,
 		QueueDepth:                bestSnapshot.QueueDepth,
 		QueueCapacity:             bestSnapshot.QueueCapacity,
-		QueuePriority:             policy.QueuePriority,
+		QueuePriority:             queuePriorityForRetryIntent(policy.QueuePriority, retryIntent),
 		SelectedReason:            bestScore.Reason,
 		StickySource:              stickyRoute.Source,
 		StickyKeyFP:               stickyRoute.KeyFingerprint,
@@ -281,6 +282,9 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		CandidateFilterConditions: candidateFilterConditionsForDispatchRequest(req),
 		Candidates:                explanations,
 		PoolLevel:                 bestCandidate.PoolLevel,
+		RetryRoutingIntent:        retryIntent.Clone(),
+		RetryIntentApplied:        retryIntent != nil && retryIntent.Active(),
+		RetryQueuePriorityBoost:   retryIntent != nil && retryIntent.QueuePriorityBoost,
 	}
 	if s.shouldSaveStickyOnSelect() {
 		s.stickyRouter.Save(c, &req, plan)
@@ -306,11 +310,11 @@ func (s *DefaultSmartChannelSelector) ScoreCandidate(candidate core.Candidate, p
 			snapshot.CostReferenceRatio = reference
 		}
 	}
-	return s.scorePreparedCandidate(candidate, snapshot, policy, false)
+	return s.scorePreparedCandidate(candidate, snapshot, policy, false, nil)
 }
 
-func (s *DefaultSmartChannelSelector) scorePreparedCandidate(candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy, stickyMatched bool) CandidateScoreEvaluation {
-	return scoringServiceForSelector(s).EvaluatePreparedCandidate(candidate, snapshot, policy, scoringContextForPolicy(s, policy, candidate), stickyMatched)
+func (s *DefaultSmartChannelSelector) scorePreparedCandidate(candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy, stickyMatched bool, retryIntent *core.RetryRoutingIntent) CandidateScoreEvaluation {
+	return scoringServiceForSelector(s).EvaluatePreparedCandidate(candidate, snapshot, policy, scoringContextForPolicy(s, policy, candidate, retryIntent), stickyMatched)
 }
 
 func scoringServiceForSelector(selector *DefaultSmartChannelSelector) *CandidateScoringService {
@@ -324,7 +328,7 @@ func scoringServiceForSelector(selector *DefaultSmartChannelSelector) *Candidate
 	return selector.scoringService
 }
 
-func scoringContextForPolicy(selector *DefaultSmartChannelSelector, policy core.GroupSmartPolicy, candidate core.Candidate) ScoringContext {
+func scoringContextForPolicy(selector *DefaultSmartChannelSelector, policy core.GroupSmartPolicy, candidate core.Candidate, retryIntent *core.RetryRoutingIntent) ScoringContext {
 	ctx := ScoringContext{
 		RequestedModel:         strings.TrimSpace(candidate.RuntimeKey.RequestedModel),
 		EndpointType:           candidate.RuntimeKey.EndpointType,
@@ -333,12 +337,27 @@ func scoringContextForPolicy(selector *DefaultSmartChannelSelector, policy core.
 		Strategy:               policy.Strategy,
 		RequiresCodexImageTool: candidate.RequiresCodexImageTool,
 		ScoreWeights:           scoreWeightsForSelector(selector),
+		RetryRoutingIntent:     retryIntent.Clone(),
 		ExplainEnabled:         true,
 	}
 	if ctx.RequestedModel == "" {
 		ctx.RequestedModel = strings.TrimSpace(candidate.RuntimeKey.UpstreamModel)
 	}
 	return ctx
+}
+
+func queuePriorityForRetryIntent(base int, intent *core.RetryRoutingIntent) int {
+	if intent == nil || !intent.Active() || !intent.QueuePriorityBoost {
+		return base
+	}
+	priority := intent.QueuePriority
+	if priority <= 0 {
+		priority = core.RetryRoutingQueuePriority
+	}
+	if priority > base {
+		return priority
+	}
+	return base
 }
 
 func scoreWeightsForSelector(selector *DefaultSmartChannelSelector) core.ScoreWeights {

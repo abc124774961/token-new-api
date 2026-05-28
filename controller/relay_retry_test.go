@@ -498,6 +498,46 @@ func TestShouldRetryAllowsFirstByteTimeoutFailoverWithAlternativePeerChannel(t *
 	require.False(t, relayClientAborted(ctx, nil, err))
 }
 
+func TestFirstByteRetryIntentIsOnlySetWhenSwitchWillRetry(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 631, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 632, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Set("use_channel", []string{"631"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	service.MarkChannelSelectionSkipped(ctx, 631)
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	err := newRelayFirstByteTimeoutError(relayFirstByteTimeout)
+
+	willRetry := shouldRetry(ctx, err, param, 0)
+	require.True(t, willRetry)
+	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, willRetry))
+	require.True(t, setFirstByteRetryRoutingIntentIfNeeded(ctx, &model.Channel{Id: 631, Name: "slow-first-byte"}, 0, true, willRetry, "switch_channel"))
+	intent, ok := modelgatewaycore.GetRetryRoutingIntent(ctx)
+	require.True(t, ok)
+	require.Equal(t, modelgatewaycore.RelayAttemptCancelReasonFirstByteTimeout, intent.Reason)
+	require.Equal(t, 631, intent.FailedChannelID)
+	require.Equal(t, modelgatewaycore.RetryRoutingQueuePriority, intent.QueuePriority)
+
+	service.MarkChannelSelectionSkipped(ctx, 632)
+	err = newRelayFirstByteTimeoutError(relayFirstByteTimeout)
+	willRetry = shouldRetry(ctx, err, param, 0)
+	require.False(t, willRetry)
+	require.Equal(t, "stop", retryActionForAttempt(ctx, err, willRetry))
+	modelgatewaycore.ClearRetryRoutingIntent(ctx)
+	require.False(t, setFirstByteRetryRoutingIntentIfNeeded(ctx, &model.Channel{Id: 632, Name: "other"}, 1, true, willRetry, "stop"))
+	_, ok = modelgatewaycore.GetRetryRoutingIntent(ctx)
+	require.False(t, ok)
+}
+
 func TestShouldRetryRejectsFirstByteTimeoutWithoutAlternativeOrBudget(t *testing.T) {
 	db := serviceSetupRelayRetryDB(t)
 	serviceSeedRelayRetryChannel(t, db, 623, "default", "gpt-5.5", 10)

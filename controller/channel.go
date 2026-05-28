@@ -1106,10 +1106,6 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 
 	// 如果是添加操作，检查 channel 和 key 是否为空
 	if isAdd {
-		if strings.TrimSpace(channel.Key) == "" && channel.Type != constant.ChannelTypeCodex {
-			return fmt.Errorf("channel cannot be empty")
-		}
-
 		// 检查模型名称长度是否超过 255
 		for _, m := range channel.GetModels() {
 			if len(m) > 255 {
@@ -1194,6 +1190,22 @@ func prepareEmptyCodexAccountPoolChannel(channel *model.Channel) {
 	channel.ChannelInfo.MultiKeyProxyIDs = nil
 	channel.ChannelInfo.MultiKeyAccountTypes = nil
 	setChannelAccountStatusReason(channel, channelAccountEmptyCodexReason)
+}
+
+func prepareEmptyKeyChannel(channel *model.Channel) {
+	if channel == nil {
+		return
+	}
+	channel.Key = ""
+	channel.Status = common.ChannelStatusAutoDisabled
+	channel.ChannelInfo.IsMultiKey = false
+	channel.ChannelInfo.MultiKeySize = 0
+	channel.ChannelInfo.MultiKeyStatusList = nil
+	channel.ChannelInfo.MultiKeyDisabledReason = nil
+	channel.ChannelInfo.MultiKeyDisabledTime = nil
+	channel.ChannelInfo.MultiKeyProxyIDs = nil
+	channel.ChannelInfo.MultiKeyAccountTypes = nil
+	setChannelAccountStatusReason(channel, channelAccountAllKeysDisabledReason)
 }
 
 func RefreshCodexChannelCredential(c *gin.Context) {
@@ -1287,8 +1299,7 @@ func AddChannel(c *gin.Context) {
 	addChannelRequest.Channel.CostPerMillion = nil
 	addChannelRequest.Channel.CreatedTime = common.GetTimestamp()
 	keys := make([]string, 0)
-	allowEmptyCodexAccountPool := addChannelRequest.Mode == "single" &&
-		addChannelRequest.Channel.Type == constant.ChannelTypeCodex &&
+	allowEmptyKeyChannel := addChannelRequest.Mode == "single" &&
 		strings.TrimSpace(addChannelRequest.Channel.Key) == ""
 	switch addChannelRequest.Mode {
 	case "multi_to_single":
@@ -1345,13 +1356,17 @@ func AddChannel(c *gin.Context) {
 	channels := make([]model.Channel, 0, len(keys))
 	for _, key := range keys {
 		key = strings.TrimSpace(key)
-		if key == "" && !allowEmptyCodexAccountPool {
+		if key == "" && !allowEmptyKeyChannel {
 			continue
 		}
 		localChannel := *addChannelRequest.Channel
 		localChannel.Key = key
-		if allowEmptyCodexAccountPool {
-			prepareEmptyCodexAccountPoolChannel(&localChannel)
+		if allowEmptyKeyChannel {
+			if localChannel.Type == constant.ChannelTypeCodex {
+				prepareEmptyCodexAccountPoolChannel(&localChannel)
+			} else {
+				prepareEmptyKeyChannel(&localChannel)
+			}
 		}
 		if addChannelRequest.BatchAddSetKeyPrefix2Name && len(keys) > 1 {
 			keyPrefix := localChannel.Key

@@ -48,24 +48,44 @@ const relayFirstByteTimeout = 20 * time.Second
 func newRelayQueueManager() *modelgatewayscheduler.QueueManager {
 	policy := modelgatewayintegration.RuntimePolicySetting()
 	var admissionPolicy modelgatewayscheduler.QueueAdmissionPolicy
-	if policy.QueueFairness.HighPriorityThreshold > 0 ||
-		policy.QueueFairness.HighPriorityExtraDepth > 0 ||
-		policy.QueueFairness.HighPriorityReservedDepth > 0 ||
-		policy.QueueFairness.AbsoluteMaxDepth > 0 ||
-		len(policy.QueueFairness.HighPriorityGroups) > 0 {
-		admissionPolicy = modelgatewayscheduler.NewPriorityQueueAdmissionPolicy(modelgatewayscheduler.QueueFairnessOptions{
-			HighPriorityGroups:        append([]string(nil), policy.QueueFairness.HighPriorityGroups...),
-			HighPriorityThreshold:     policy.QueueFairness.HighPriorityThreshold,
-			HighPriorityExtraDepth:    policy.QueueFairness.HighPriorityExtraDepth,
-			HighPriorityReservedDepth: policy.QueueFairness.HighPriorityReservedDepth,
-			AbsoluteMaxDepth:          policy.QueueFairness.AbsoluteMaxDepth,
-		})
+	fairness := relayQueueFairnessOptions(policy.QueueFairness, policy.QueueMaxDepth)
+	if relayQueueFairnessEnabled(fairness) {
+		admissionPolicy = modelgatewayscheduler.NewPriorityQueueAdmissionPolicy(fairness)
 	}
 	return modelgatewayscheduler.NewQueueManagerWithAdmissionPolicy(
 		time.Duration(policy.QueueTimeoutMs)*time.Millisecond,
 		policy.QueueMaxDepth,
 		admissionPolicy,
 	)
+}
+
+func relayQueueFairnessOptions(setting modelgatewaycore.QueueFairnessPolicySetting, queueMaxDepth int) modelgatewayscheduler.QueueFairnessOptions {
+	options := modelgatewayscheduler.QueueFairnessOptions{
+		HighPriorityGroups:        append([]string(nil), setting.HighPriorityGroups...),
+		HighPriorityThreshold:     setting.HighPriorityThreshold,
+		HighPriorityExtraDepth:    setting.HighPriorityExtraDepth,
+		HighPriorityReservedDepth: setting.HighPriorityReservedDepth,
+		AbsoluteMaxDepth:          setting.AbsoluteMaxDepth,
+	}
+	configured := relayQueueFairnessEnabled(options)
+	if options.HighPriorityThreshold <= 0 || options.HighPriorityThreshold > modelgatewaycore.RetryRoutingQueuePriority {
+		options.HighPriorityThreshold = modelgatewaycore.RetryRoutingQueuePriority
+	}
+	if !configured {
+		options.HighPriorityExtraDepth = 1
+		if queueMaxDepth > 0 {
+			options.AbsoluteMaxDepth = queueMaxDepth + options.HighPriorityExtraDepth
+		}
+	}
+	return options
+}
+
+func relayQueueFairnessEnabled(options modelgatewayscheduler.QueueFairnessOptions) bool {
+	return options.HighPriorityThreshold > 0 ||
+		options.HighPriorityExtraDepth > 0 ||
+		options.HighPriorityReservedDepth > 0 ||
+		options.AbsoluteMaxDepth > 0 ||
+		len(options.HighPriorityGroups) > 0
 }
 
 func resetRelayQueueManager() {
@@ -507,6 +527,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			continue
 		}
 		firstByteLease := service.BeginChannelFirstByteWait(c, channel.Id, relayInfo.RequestId, relayInfo.RetryIndex)
+		upstreamConcurrencySample := concurrencyLease.ActiveAtHit()
 
 		addUsedChannel(c, channel.Id)
 		requestBodyPrepareStart := time.Now()
@@ -586,6 +607,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			service.RecordChannelConcurrencySuccess(channel.Id)
 			reportModelGatewayAttempt(c, relayInfo, retryParam, channel, nil, modelGatewayAttemptFlow{
 				RetryAction:            "complete",
+				ActiveConcurrency:      upstreamConcurrencySample,
 				QueueWait:              queueWait,
 				RelayToFirstByte:       relayToFirstByte,
 				RelayTotal:             relayTotal,
@@ -619,7 +641,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			service.MarkChannelSelectionSkipped(c, channel.Id)
 		}
 		if service.IsUpstreamConcurrencyLimitError(newAPIError) && !clientAbort {
-			flow.ActiveConcurrency = concurrencyLease.CurrentActive()
+			flow.ActiveConcurrency = upstreamConcurrencySample
 			if concurrencyLease.Limit > 0 {
 				flow.ConfiguredConcurrencyLimit = concurrencyLease.Limit
 			}
@@ -640,6 +662,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		willRetry := shouldRetry(c, newAPIError, retryParam, common.RetryTimes-retryParam.GetRetry()) && !clientAbort
 		flow.WillRetry = willRetry
 		flow.RetryAction = retryActionForAttempt(c, newAPIError, willRetry)
+		setFirstByteRetryRoutingIntentIfNeeded(c, channel, relayInfo.RetryIndex, firstByteTimeoutHit, willRetry, flow.RetryAction)
 		if !clientAbort && !firstByteTimeoutHit {
 			processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, !willRetry)
 		}
@@ -1070,6 +1093,14 @@ func retryActionForAttempt(c *gin.Context, apiErr *types.NewAPIError, willRetry 
 		return "switch_channel"
 	}
 	return "retry"
+}
+
+func setFirstByteRetryRoutingIntentIfNeeded(c *gin.Context, channel *model.Channel, attemptIndex int, firstByteTimeoutHit bool, willRetry bool, retryAction string) bool {
+	if c == nil || channel == nil || !firstByteTimeoutHit || !willRetry || retryAction != "switch_channel" {
+		return false
+	}
+	modelgatewaycore.SetRetryRoutingIntent(c, modelgatewaycore.NewFirstByteTimeoutRetryRoutingIntent(channel.Id, channel.Name, attemptIndex))
+	return true
 }
 
 func modelGatewayAttemptDuration(flow modelGatewayAttemptFlow) time.Duration {

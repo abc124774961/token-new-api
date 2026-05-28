@@ -18,6 +18,7 @@ type ScoringContext struct {
 	Strategy               string
 	RequiresCodexImageTool bool
 	ScoreWeights           core.ScoreWeights
+	RetryRoutingIntent     *core.RetryRoutingIntent
 	Now                    time.Time
 	ExplainEnabled         bool
 }
@@ -82,6 +83,7 @@ func (s *CandidateScoringService) EvaluateCandidate(candidate core.Candidate, sn
 	applyScoreItemDisplayMetricsToExplanation(&explanation, score.Items)
 	explanation.StateTags = score.StateTags
 	explanation.CostReferenceMissing = score.CostReferenceMissing
+	applyRetryIntentToExplanation(&explanation, ctx.RetryRoutingIntent)
 	return CandidateScoreEvaluation{Snapshot: snapshot, Score: score, Explanation: explanation}
 }
 
@@ -100,7 +102,16 @@ func (s *CandidateScoringService) EvaluatePreparedCandidate(candidate core.Candi
 	applyScoreItemDisplayMetricsToExplanation(&explanation, score.Items)
 	explanation.StateTags = score.StateTags
 	explanation.CostReferenceMissing = score.CostReferenceMissing
+	applyRetryIntentToExplanation(&explanation, ctx.RetryRoutingIntent)
 	return CandidateScoreEvaluation{Snapshot: snapshot, Score: score, Explanation: explanation}
+}
+
+func applyRetryIntentToExplanation(explanation *core.CandidateExplanation, intent *core.RetryRoutingIntent) {
+	if explanation == nil || intent == nil || !intent.Active() {
+		return
+	}
+	explanation.RetryIntentApplied = true
+	explanation.RetryIntentReason = intent.Reason
 }
 
 func (s *CandidateScoringService) BuildScoreItems(snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy, ctx ScoringContext, routing bool) []core.ScoreItem {
@@ -133,6 +144,9 @@ func (s *CandidateScoringService) BuildScoreItems(snapshot core.RuntimeSnapshot,
 		scoreItem(scoreItemCost, "成本分", scoreCategoryFormula, costRawValue(snapshot), "配置", costScoreItemValue(snapshot, profile), profile.Weights[scoreItemCost], snapshot.SampleCount, "min_cost / current_cost", ""),
 		scoreItem(scoreItemGroupPriority, "分组分", scoreCategoryFormula, groupRawValue(snapshot), "配置", groupPriorityItemScoreForStrategy(snapshot, policy, strategy), profile.Weights[scoreItemGroupPriority], snapshot.SampleCount, "group priority formula", ""),
 	}
+	if routing {
+		values = append(values, retryIntentScoreItem(snapshot, ctx))
+	}
 	annotateScoreItems(values, stats, snapshot, latency, profile)
 	markSampleMissingScoreItems(values, stats, snapshot, latency)
 	if snapshot.CostRatio <= 0 || snapshot.CostReferenceRatio <= 0 {
@@ -145,6 +159,53 @@ func (s *CandidateScoringService) BuildScoreItems(snapshot core.RuntimeSnapshot,
 		}
 	}
 	return normalizeScoreItems(values)
+}
+
+func retryIntentScoreItem(snapshot core.RuntimeSnapshot, ctx ScoringContext) core.ScoreItem {
+	intent := ctx.RetryRoutingIntent
+	if intent == nil || !intent.FirstByteRecovery() {
+		return scoreItem(scoreItemRetryIntentRecovery, "重试恢复分", scoreCategoryFormula, "inactive", "本次重试", 0, 0, snapshot.SampleCount, "retry_recovery_score", "")
+	}
+	successScore := completionRateScore(snapshot)
+	ttftScore := 0.55
+	if snapshot.TTFTMs > 0 {
+		ttftScore = inverseLatencyScore(snapshot.TTFTMs, 800, 12000)
+	}
+	backlogScore := firstByteBacklogScore(snapshot, core.StrategySpeedFirst)
+	score := 0.0
+	weightParts := 0.0
+	if intent.PreferHighSuccess {
+		score += successScore * 0.30
+		weightParts += 0.30
+	}
+	if intent.PreferLowTTFT {
+		score += ttftScore * 0.45
+		weightParts += 0.45
+	}
+	score += backlogScore * 0.25
+	weightParts += 0.25
+	if weightParts > 0 {
+		score = score / weightParts
+	}
+	item := scoreItem(
+		scoreItemRetryIntentRecovery,
+		"重试恢复分",
+		scoreCategoryFormula,
+		retryIntentRawValue(snapshot),
+		"本次重试",
+		score,
+		0.60,
+		snapshot.SampleCount,
+		"weighted(success_rate, ttft_latency, first_byte_backlog)",
+		intent.Reason,
+	)
+	item.Source = "retry_intent"
+	item.RawUnit = "recovery"
+	return item
+}
+
+func retryIntentRawValue(snapshot core.RuntimeSnapshot) string {
+	return fmt.Sprintf("success=%.4f ttft=%.0fms first_byte_pending=%d", completionRateScore(snapshot), snapshot.TTFTMs, snapshot.FirstBytePending)
 }
 
 func scoreLatencyViewFromSnapshot(snapshot core.RuntimeSnapshot, stats ScoreStats) scoreLatencyView {
@@ -229,6 +290,12 @@ func (s *CandidateScoringService) score(candidate core.Candidate, snapshot core.
 	routingItems := s.BuildScoreItems(snapshot, policy, ctx, true)
 	breakdown := scoreBreakdownFromItems(items)
 	routingBreakdown := scoreBreakdownFromItems(routingItems)
+	stateTags := stateTagsForSnapshot(snapshot)
+	reason := "score_items"
+	if ctx.RetryRoutingIntent != nil && ctx.RetryRoutingIntent.Active() {
+		stateTags = append(stateTags, "retry_intent:"+ctx.RetryRoutingIntent.Strategy)
+		reason = "score_items_retry_intent"
+	}
 	return core.ScoreResult{
 		Total:                scoreTotalFromItems(items, snapshot, strategy, false),
 		Breakdown:            breakdown,
@@ -236,9 +303,9 @@ func (s *CandidateScoringService) score(candidate core.Candidate, snapshot core.
 		RoutingTotal:         scoreTotalFromItems(routingItems, snapshot, strategy, true),
 		RoutingBreakdown:     routingBreakdown,
 		RoutingItems:         routingItems,
-		StateTags:            stateTagsForSnapshot(snapshot),
+		StateTags:            stateTags,
 		CostReferenceMissing: snapshot.CostRatio <= 0 || snapshot.CostReferenceRatio <= 0,
-		Reason:               "score_items",
+		Reason:               reason,
 	}
 }
 
@@ -353,6 +420,10 @@ func annotateScoreItems(items []core.ScoreItem, stats ScoreStats, snapshot core.
 			}
 		case scoreItemGroupPriority:
 			scoreItemSetRaw(item, snapshot.GroupPriorityRatio, "ratio", scoreItemSourceConfig)
+		case scoreItemRetryIntentRecovery:
+			if item.Source == "" {
+				item.Source = "retry_intent"
+			}
 		}
 	}
 }

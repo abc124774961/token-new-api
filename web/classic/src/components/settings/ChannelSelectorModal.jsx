@@ -220,6 +220,11 @@ const ChannelSelectorModal = forwardRef(
               {t('官方')}
             </Tag>
           )}
+          {record?._originalData?.cost_sync_supported && (
+            <Tag color='cyan' shape='circle' type='light'>
+              {t('成本倍率同步')}
+            </Tag>
+          )}
         </div>
       );
     };

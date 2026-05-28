@@ -408,7 +408,10 @@ func userRequestResultTTFT(result core.AttemptResult) time.Duration {
 }
 
 func modelGatewayAttemptFinalized(result core.AttemptResult) bool {
-	return !result.WillRetry || result.Success || result.StreamInterrupted
+	if result.Success || userRequestResultClientAborted(result) {
+		return true
+	}
+	return !result.WillRetry
 }
 
 func userRequestStatus(success bool, clientAborted bool, healthProbe bool) string {

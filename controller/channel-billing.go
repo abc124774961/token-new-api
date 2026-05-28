@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -120,6 +121,20 @@ type OpenRouterCreditResponse struct {
 	} `json:"data"`
 }
 
+type channelBalanceResult struct {
+	Balance  float64
+	Source   string
+	Endpoint string
+	Currency string
+	RawUnit  string
+}
+
+type channelBalanceProbe struct {
+	Source string
+	URL    string
+	Parse  func(body []byte, probe channelBalanceProbe) (channelBalanceResult, error)
+}
+
 // GetAuthHeader get auth header
 func GetAuthHeader(token string) http.Header {
 	h := http.Header{}
@@ -151,14 +166,11 @@ func GetResponseBody(method, url string, channel *model.Channel, headers http.He
 	if err != nil {
 		return nil, err
 	}
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("status code: %d", res.StatusCode)
 	}
 	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-	err = res.Body.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -427,49 +439,82 @@ func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
 	return balance, nil
 }
 
-func fetchChannelBalance(channel *model.Channel) (float64, error) {
-	baseURL := constant.ChannelBaseURLs[channel.Type]
-	if channel.GetBaseURL() == "" {
-		channel.BaseURL = &baseURL
+func balanceResult(balance float64, source string, endpoint string, currency string, rawUnit string) channelBalanceResult {
+	return channelBalanceResult{
+		Balance:  balance,
+		Source:   source,
+		Endpoint: endpoint,
+		Currency: currency,
+		RawUnit:  rawUnit,
 	}
-	switch channel.Type {
-	case constant.ChannelTypeOpenAI:
-		if channel.GetBaseURL() != "" {
-			baseURL = channel.GetBaseURL()
+}
+
+func normalizeBalanceBaseURL(baseURL string) string {
+	return strings.TrimRight(strings.TrimSpace(baseURL), "/")
+}
+
+func baseURLWithoutVersionSuffix(baseURL string) string {
+	baseURL = normalizeBalanceBaseURL(baseURL)
+	lower := strings.ToLower(baseURL)
+	for _, suffix := range []string{"/v1", "/v3", "/v4", "/api/v1", "/api/v3", "/api/v4"} {
+		if strings.HasSuffix(lower, suffix) {
+			return strings.TrimRight(baseURL[:len(baseURL)-len(suffix)], "/")
 		}
-	case constant.ChannelTypeAzure:
-		return 0, errors.New("尚未实现")
-	case constant.ChannelTypeCustom:
-		baseURL = channel.GetBaseURL()
-	//case common.ChannelTypeOpenAISB:
-	//	return fetchChannelOpenAISBBalance(channel)
-	case constant.ChannelTypeAIProxy:
-		return fetchChannelAIProxyBalance(channel)
-	case constant.ChannelTypeAPI2GPT:
-		return fetchChannelAPI2GPTBalance(channel)
-	case constant.ChannelTypeAIGC2D:
-		return fetchChannelAIGC2DBalance(channel)
-	case constant.ChannelTypeSiliconFlow:
-		return fetchChannelSiliconFlowBalance(channel)
-	case constant.ChannelTypeDeepSeek:
-		return fetchChannelDeepSeekBalance(channel)
-	case constant.ChannelTypeOpenRouter:
-		return fetchChannelOpenRouterBalance(channel)
-	case constant.ChannelTypeMoonshot:
-		return fetchChannelMoonshotBalance(channel)
-	default:
-		return 0, errors.New("尚未实现")
+	}
+	return baseURL
+}
+
+func uniqueBalanceBaseURLs(baseURL string) []string {
+	root := baseURLWithoutVersionSuffix(baseURL)
+	base := normalizeBalanceBaseURL(baseURL)
+	result := make([]string, 0, 2)
+	for _, candidate := range []string{root, base} {
+		if candidate == "" {
+			continue
+		}
+		seen := false
+		for _, existing := range result {
+			if existing == candidate {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			result = append(result, candidate)
+		}
+	}
+	return result
+}
+
+func channelBaseURLForBalance(channel *model.Channel) string {
+	if channel == nil {
+		return ""
+	}
+	baseURL := ""
+	if channel.BaseURL != nil {
+		baseURL = *channel.BaseURL
+	}
+	if strings.TrimSpace(baseURL) == "" && channel.Type >= 0 && channel.Type < len(constant.ChannelBaseURLs) {
+		baseURL = constant.ChannelBaseURLs[channel.Type]
+	}
+	return normalizeBalanceBaseURL(baseURL)
+}
+
+func fetchOpenAIUsageBalanceResult(channel *model.Channel, baseURL string) (channelBalanceResult, error) {
+	baseURL = normalizeBalanceBaseURL(baseURL)
+	if baseURL == "" {
+		return channelBalanceResult{}, errors.New("base url is empty")
 	}
 	url := fmt.Sprintf("%s/v1/dashboard/billing/subscription", baseURL)
 
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 	if err != nil {
-		return 0, err
+		return channelBalanceResult{}, err
 	}
 	subscription := OpenAISubscriptionResponse{}
 	err = common.Unmarshal(body, &subscription)
 	if err != nil {
-		return 0, err
+		return channelBalanceResult{}, err
 	}
 	now := time.Now()
 	startDate := fmt.Sprintf("%s-01", now.Format("2006-01"))
@@ -480,24 +525,319 @@ func fetchChannelBalance(channel *model.Channel) (float64, error) {
 	url = fmt.Sprintf("%s/v1/dashboard/billing/usage?start_date=%s&end_date=%s", baseURL, startDate, endDate)
 	body, err = GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 	if err != nil {
-		return 0, err
+		return channelBalanceResult{}, err
 	}
 	usage := OpenAIUsageResponse{}
 	err = common.Unmarshal(body, &usage)
 	if err != nil {
-		return 0, err
+		return channelBalanceResult{}, err
 	}
 	balance := subscription.HardLimitUSD - usage.TotalUsage/100
-	return balance, nil
+	return balanceResult(balance, "openai_usage", "/v1/dashboard/billing/subscription,/v1/dashboard/billing/usage", "USD", "usd"), nil
 }
 
-func updateChannelBalance(channel *model.Channel) (float64, error) {
-	balance, err := fetchChannelBalance(channel)
+func fetchGenericChannelBalance(channel *model.Channel, baseURL string) (channelBalanceResult, error) {
+	baseURLs := uniqueBalanceBaseURLs(baseURL)
+	if len(baseURLs) == 0 {
+		return channelBalanceResult{}, errors.New("base url is empty")
+	}
+	probes := make([]channelBalanceProbe, 0, len(baseURLs)*7)
+	for _, candidateBaseURL := range baseURLs {
+		probes = append(probes,
+			channelBalanceProbe{Source: "new_api_token_usage", URL: candidateBaseURL + "/api/usage/token/", Parse: parseGenericQuotaBalance},
+			channelBalanceProbe{Source: "new_api_token_usage", URL: candidateBaseURL + "/api/usage/token", Parse: parseGenericQuotaBalance},
+			channelBalanceProbe{Source: "new_api_user_self", URL: candidateBaseURL + "/api/user/self", Parse: parseGenericQuotaBalance},
+			channelBalanceProbe{Source: "new_api_user_self", URL: candidateBaseURL + "/api/user/self?with_balance=true", Parse: parseGenericQuotaBalance},
+			channelBalanceProbe{Source: "new_api_user_status", URL: candidateBaseURL + "/api/user/status", Parse: parseGenericQuotaBalance},
+			channelBalanceProbe{Source: "openai_credit_grants", URL: candidateBaseURL + "/dashboard/billing/credit_grants", Parse: parseCreditGrantBalance},
+			channelBalanceProbe{Source: "openai_credit_grants", URL: candidateBaseURL + "/v1/dashboard/billing/credit_grants", Parse: parseCreditGrantBalance},
+		)
+	}
+
+	var lastErr error
+	for _, probe := range probes {
+		body, err := GetResponseBody("GET", probe.URL, channel, GetAuthHeader(channel.Key))
+		if err != nil {
+			lastErr = fmt.Errorf("%s: %w", probe.Source, err)
+			continue
+		}
+		result, err := probe.Parse(body, probe)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: %w", probe.Source, err)
+			continue
+		}
+		return result, nil
+	}
+	if lastErr != nil {
+		return channelBalanceResult{}, lastErr
+	}
+	return channelBalanceResult{}, errors.New("no balance probe configured")
+}
+
+func parseCreditGrantBalance(body []byte, probe channelBalanceProbe) (channelBalanceResult, error) {
+	root := map[string]any{}
+	if err := common.Unmarshal(body, &root); err != nil {
+		return channelBalanceResult{}, err
+	}
+	if errMessage := genericBalanceErrorMessage(root); errMessage != "" {
+		return channelBalanceResult{}, errors.New(errMessage)
+	}
+	data := unwrapBalanceData(root)
+	if balance, ok := numericField(data, "total_available", "total_remaining", "available_balance", "remaining_balance"); ok {
+		return balanceResult(balance, probe.Source, probe.URL, "USD", "usd"), nil
+	}
+	if total, ok := numericField(data, "total_credits", "total_granted"); ok {
+		used, _ := numericField(data, "total_usage", "total_used", "used")
+		return balanceResult(total-used, probe.Source, probe.URL, "USD", "usd"), nil
+	}
+	return channelBalanceResult{}, errors.New("balance field not found")
+}
+
+func parseGenericQuotaBalance(body []byte, probe channelBalanceProbe) (channelBalanceResult, error) {
+	root := map[string]any{}
+	if err := common.Unmarshal(body, &root); err != nil {
+		return channelBalanceResult{}, err
+	}
+	if errMessage := genericBalanceErrorMessage(root); errMessage != "" {
+		return channelBalanceResult{}, errors.New(errMessage)
+	}
+	data := unwrapBalanceData(root)
+
+	if unlimited, ok := boolField(data, "unlimited_quota"); ok && unlimited {
+		return channelBalanceResult{}, errors.New("unlimited quota cannot be converted to balance")
+	}
+	if value, ok := numericField(data, "total_available", "remain_quota", "remaining_quota", "quota", "available_quota"); ok {
+		return balanceResult(value/common.QuotaPerUnit, probe.Source, probe.URL, "USD", "quota"), nil
+	}
+	if total, ok := numericField(data, "total_granted", "total_quota"); ok {
+		used, _ := numericField(data, "total_used", "used_quota")
+		return balanceResult((total-used)/common.QuotaPerUnit, probe.Source, probe.URL, "USD", "quota"), nil
+	}
+	if value, ok := numericField(data, "available_balance", "remaining_balance", "balance", "credit", "credits", "total_available_usd"); ok {
+		return balanceResult(value, probe.Source, probe.URL, "USD", "usd"), nil
+	}
+	return channelBalanceResult{}, errors.New("balance field not found")
+}
+
+func unwrapBalanceData(root map[string]any) map[string]any {
+	current := root
+	for _, key := range []string{"data", "user", "account", "result"} {
+		if nested, ok := mapField(current, key); ok {
+			current = nested
+		}
+	}
+	return current
+}
+
+func genericBalanceErrorMessage(root map[string]any) string {
+	if success, ok := boolField(root, "success"); ok && !success {
+		if message, ok := stringField(root, "message", "msg", "error"); ok {
+			return message
+		}
+		return "request failed"
+	}
+	if code, ok := numericField(root, "code"); ok && code != 0 && code != 200 && code != 20000 {
+		if message, ok := stringField(root, "message", "msg", "error"); ok {
+			return message
+		}
+		return fmt.Sprintf("code: %.0f", code)
+	}
+	return ""
+}
+
+func mapField(values map[string]any, key string) (map[string]any, bool) {
+	if values == nil {
+		return nil, false
+	}
+	value, ok := values[key]
+	if !ok {
+		return nil, false
+	}
+	nested, ok := value.(map[string]any)
+	return nested, ok
+}
+
+func stringField(values map[string]any, keys ...string) (string, bool) {
+	for _, key := range keys {
+		value, ok := values[key]
+		if !ok || value == nil {
+			continue
+		}
+		switch v := value.(type) {
+		case string:
+			if strings.TrimSpace(v) != "" {
+				return v, true
+			}
+		case map[string]any:
+			if message, ok := stringField(v, "message", "msg"); ok {
+				return message, true
+			}
+		}
+	}
+	return "", false
+}
+
+func boolField(values map[string]any, keys ...string) (bool, bool) {
+	for _, key := range keys {
+		value, ok := values[key]
+		if !ok || value == nil {
+			continue
+		}
+		switch v := value.(type) {
+		case bool:
+			return v, true
+		case string:
+			parsed, err := strconv.ParseBool(strings.TrimSpace(v))
+			if err == nil {
+				return parsed, true
+			}
+		}
+	}
+	return false, false
+}
+
+func numericField(values map[string]any, keys ...string) (float64, bool) {
+	for _, key := range keys {
+		value, ok := values[key]
+		if !ok || value == nil {
+			continue
+		}
+		if number, ok := numericValue(value); ok {
+			return number, true
+		}
+	}
+	return 0, false
+}
+
+func numericValue(value any) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
+func isOpenAICompatibleBalanceChannel(channelType int) bool {
+	switch channelType {
+	case constant.ChannelTypeOpenAI,
+		constant.ChannelTypeOpenAIMax,
+		constant.ChannelTypeOhMyGPT,
+		constant.ChannelTypeCustom,
+		constant.ChannelTypeAILS,
+		constant.ChannelTypeAIProxyLibrary,
+		constant.ChannelTypeLingYiWanWu,
+		constant.ChannelType360,
+		constant.ChannelTypePerplexity,
+		constant.ChannelTypeMistral,
+		constant.ChannelTypeDeepSeek,
+		constant.ChannelTypeXai,
+		constant.ChannelTypeSubmodel,
+		constant.ChannelTypeSora:
+		return true
+	default:
+		return false
+	}
+}
+
+func fetchChannelBalanceResult(channel *model.Channel) (channelBalanceResult, error) {
+	if channel == nil {
+		return channelBalanceResult{}, errors.New("channel is nil")
+	}
+	baseURL := channelBaseURLForBalance(channel)
+	switch channel.Type {
+	case constant.ChannelTypeAzure:
+		return channelBalanceResult{}, errors.New("尚未实现")
+	case constant.ChannelTypeAIProxy:
+		balance, err := fetchChannelAIProxyBalance(channel)
+		if err != nil {
+			return channelBalanceResult{}, err
+		}
+		return balanceResult(balance, "aiproxy", "https://aiproxy.io/api/report/getUserOverview", "USD", "points"), nil
+	case constant.ChannelTypeAPI2GPT:
+		balance, err := fetchChannelAPI2GPTBalance(channel)
+		if err != nil {
+			return channelBalanceResult{}, err
+		}
+		return balanceResult(balance, "api2gpt", "https://api.api2gpt.com/dashboard/billing/credit_grants", "USD", "usd"), nil
+	case constant.ChannelTypeAIGC2D:
+		balance, err := fetchChannelAIGC2DBalance(channel)
+		if err != nil {
+			return channelBalanceResult{}, err
+		}
+		return balanceResult(balance, "aigc2d", "https://api.aigc2d.com/dashboard/billing/credit_grants", "USD", "usd"), nil
+	case constant.ChannelTypeSiliconFlow:
+		balance, err := fetchChannelSiliconFlowBalance(channel)
+		if err != nil {
+			return channelBalanceResult{}, err
+		}
+		return balanceResult(balance, "siliconflow", "https://api.siliconflow.cn/v1/user/info", "CNY", "cny"), nil
+	case constant.ChannelTypeOpenRouter:
+		balance, err := fetchChannelOpenRouterBalance(channel)
+		if err != nil {
+			return channelBalanceResult{}, err
+		}
+		return balanceResult(balance, "openrouter", "https://openrouter.ai/api/v1/credits", "USD", "usd"), nil
+	case constant.ChannelTypeMoonshot:
+		balance, err := fetchChannelMoonshotBalance(channel)
+		if err != nil {
+			return channelBalanceResult{}, err
+		}
+		return balanceResult(balance, "moonshot", "https://api.moonshot.cn/v1/users/me/balance", "USD", "cny_converted"), nil
+	case constant.ChannelTypeDeepSeek:
+		balance, err := fetchChannelDeepSeekBalance(channel)
+		if err == nil {
+			return balanceResult(balance, "deepseek", "https://api.deepseek.com/user/balance", "CNY", "cny"), nil
+		}
+		if genericResult, genericErr := fetchGenericChannelBalance(channel, baseURL); genericErr == nil {
+			return genericResult, nil
+		}
+		return channelBalanceResult{}, err
+	default:
+		if !isOpenAICompatibleBalanceChannel(channel.Type) {
+			return channelBalanceResult{}, errors.New("尚未实现")
+		}
+	}
+
+	if genericResult, err := fetchGenericChannelBalance(channel, baseURL); err == nil {
+		return genericResult, nil
+	}
+	return fetchOpenAIUsageBalanceResult(channel, baseURLWithoutVersionSuffix(baseURL))
+}
+
+func fetchChannelBalance(channel *model.Channel) (float64, error) {
+	result, err := fetchChannelBalanceResult(channel)
 	if err != nil {
 		return 0, err
 	}
-	channel.UpdateBalance(balance)
-	return balance, nil
+	return result.Balance, nil
+}
+
+func updateChannelBalance(channel *model.Channel) (float64, error) {
+	result, err := fetchChannelBalanceResult(channel)
+	if err != nil {
+		return 0, err
+	}
+	channel.UpdateBalance(result.Balance)
+	return result.Balance, nil
 }
 
 func UpdateChannelBalance(c *gin.Context) {

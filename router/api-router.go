@@ -221,6 +221,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			ratioSyncRoute.GET("/channels", controller.GetSyncableChannels)
 			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)
+			ratioSyncRoute.POST("/channel_cost/apply", controller.ApplyUpstreamChannelCostSync)
 		}
 		apiRouter.GET("/channel/status_monitor", middleware.UserAuth(), controller.GetChannelStatusMonitor)
 		apiRouter.GET("/channel/balance_monitor", middleware.AdminAuth(), controller.GetChannelBalanceMonitor)

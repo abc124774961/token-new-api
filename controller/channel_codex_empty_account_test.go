@@ -118,3 +118,68 @@ func TestAddEmptyCodexAccountPoolChannelAutoDisablesUntilImport(t *testing.T) {
 	require.NoError(t, db.First(&ability, "channel_id = ?", channelID).Error)
 	require.True(t, ability.Enabled)
 }
+
+func TestAddSingleChannelAllowsEmptyKeyAndAutoDisables(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	router := gin.New()
+	router.POST("/api/channel/", AddChannel)
+
+	addBody, err := common.Marshal(gin.H{
+		"mode": "single",
+		"channel": gin.H{
+			"name":     "empty openai",
+			"type":     constant.ChannelTypeOpenAI,
+			"key":      "",
+			"models":   "gpt-5.5",
+			"group":    "default",
+			"status":   common.ChannelStatusEnabled,
+			"auto_ban": 1,
+		},
+	})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/channel/", bytes.NewReader(addBody)))
+
+	var payload channelAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Len(t, payload.Data.ChannelIDs, 1)
+
+	channel, err := model.GetChannelById(payload.Data.ChannelIDs[0], true)
+	require.NoError(t, err)
+	require.Equal(t, constant.ChannelTypeOpenAI, channel.Type)
+	require.Empty(t, channel.Key)
+	require.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
+	require.Equal(t, channelAccountAllKeysDisabledReason, channel.GetOtherInfo()["status_reason"])
+
+	var ability model.Ability
+	require.NoError(t, db.First(&ability, "channel_id = ?", channel.Id).Error)
+	require.False(t, ability.Enabled)
+}
+
+func TestAddBatchChannelStillRejectsEmptyKeys(t *testing.T) {
+	setupChannelAccountControllerTestDB(t)
+	router := gin.New()
+	router.POST("/api/channel/", AddChannel)
+
+	addBody, err := common.Marshal(gin.H{
+		"mode": "batch",
+		"channel": gin.H{
+			"name":     "empty batch",
+			"type":     constant.ChannelTypeOpenAI,
+			"key":      "\n  \n",
+			"models":   "gpt-5.5",
+			"group":    "default",
+			"status":   common.ChannelStatusEnabled,
+			"auto_ban": 1,
+		},
+	})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/channel/", bytes.NewReader(addBody)))
+
+	var payload channelAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.False(t, payload.Success, recorder.Body.String())
+	require.Contains(t, payload.Message, "请填写渠道密钥")
+}

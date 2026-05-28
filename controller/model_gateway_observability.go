@@ -2649,8 +2649,191 @@ func buildModelGatewayUserRequestObservability(startTime int64, endTime int64, o
 			userRequests = userRequests[:options.ScanLimit]
 		}
 	}
+	reconcileModelGatewayUserRequestClientAbortSummaries(userRequests)
 
 	return buildModelGatewayUserRequestObservabilityFromSummaries(userRequests, totalRequests, startTime, endTime, options), nil
+}
+
+func reconcileModelGatewayUserRequestClientAbortSummaries(userRequests []model.ModelGatewayUserRequestSummary) {
+	if len(userRequests) == 0 || model.DB == nil {
+		return
+	}
+	requestIDs := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, userRequest := range userRequests {
+		requestID := strings.TrimSpace(userRequest.RequestId)
+		if requestID == "" || seen[requestID] || !modelGatewayUserRequestNeedsClientAbortReconcile(userRequest) {
+			continue
+		}
+		seen[requestID] = true
+		requestIDs = append(requestIDs, requestID)
+	}
+	if len(requestIDs) == 0 {
+		return
+	}
+
+	clientAbortAttempts := loadModelGatewayUserRequestClientAbortAttempts(requestIDs)
+	if len(clientAbortAttempts) == 0 {
+		return
+	}
+	for idx := range userRequests {
+		attempt, ok := clientAbortAttempts[strings.TrimSpace(userRequests[idx].RequestId)]
+		if !ok || attempt.AttemptIndex < userRequests[idx].LastAttemptIndex {
+			continue
+		}
+		applyModelGatewayUserRequestClientAbortReconcile(&userRequests[idx], attempt)
+		persistModelGatewayUserRequestClientAbortReconcile(userRequests[idx])
+	}
+}
+
+func modelGatewayUserRequestNeedsClientAbortReconcile(userRequest model.ModelGatewayUserRequestSummary) bool {
+	if userRequest.FinalSuccess || modelGatewayUserRequestClientAborted(userRequest) {
+		return false
+	}
+	category := strings.ToLower(strings.TrimSpace(userRequest.FinalErrorCategory))
+	return userRequest.StreamInterrupted ||
+		category == model.ModelGatewayUserRequestErrorStreamInterrupted ||
+		strings.Contains(category, "stream")
+}
+
+func loadModelGatewayUserRequestClientAbortAttempts(requestIDs []string) map[string]model.ModelExecutionRecord {
+	const batchSize = 500
+	result := make(map[string]model.ModelExecutionRecord)
+	for start := 0; start < len(requestIDs); start += batchSize {
+		end := start + batchSize
+		if end > len(requestIDs) {
+			end = len(requestIDs)
+		}
+		records := make([]model.ModelExecutionRecord, 0)
+		if err := model.DB.
+			Model(&model.ModelExecutionRecord{}).
+			Select("id, created_at, request_id, attempt_index, channel_id, channel_name, success, status_code, error_code, error_type, error_category, stream_interrupted, duration_ms, ttft_ms, request_meta").
+			Where("request_id IN ?", requestIDs[start:end]).
+			Order("request_id asc, attempt_index desc, created_at desc, id desc").
+			Find(&records).Error; err != nil {
+			common.SysLog(fmt.Sprintf("failed to reconcile model gateway user request client abort summaries: %v", err))
+			continue
+		}
+		for _, record := range records {
+			requestID := strings.TrimSpace(record.RequestId)
+			if requestID == "" || !isModelGatewayAttemptRecord(record) {
+				continue
+			}
+			current, exists := result[requestID]
+			if !exists || modelGatewayClientAbortAttemptBetter(record, current) {
+				result[requestID] = record
+			}
+		}
+	}
+	for requestID, record := range result {
+		if !modelGatewayExecutionRecordClientAborted(record) {
+			delete(result, requestID)
+		}
+	}
+	return result
+}
+
+func modelGatewayClientAbortAttemptBetter(left model.ModelExecutionRecord, right model.ModelExecutionRecord) bool {
+	if left.AttemptIndex != right.AttemptIndex {
+		return left.AttemptIndex > right.AttemptIndex
+	}
+	if left.CreatedAt != right.CreatedAt {
+		return left.CreatedAt > right.CreatedAt
+	}
+	return left.Id > right.Id
+}
+
+func modelGatewayExecutionRecordClientAborted(record model.ModelExecutionRecord) bool {
+	category := strings.ToLower(strings.TrimSpace(record.ErrorCategory))
+	if record.StatusCode == relayStatusClientClosedRequest ||
+		category == model.ModelGatewayUserRequestErrorClientAborted ||
+		strings.Contains(category, "client_abort") ||
+		strings.Contains(category, "client_gone") {
+		return true
+	}
+	requestMeta, err := parseModelGatewayRequestMeta(record.RequestMeta)
+	if err != nil {
+		return false
+	}
+	attemptMeta := modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta)
+	category = strings.ToLower(strings.TrimSpace(attemptMeta.ErrorCategory))
+	return attemptMeta.ClientAborted ||
+		category == model.ModelGatewayUserRequestErrorClientAborted ||
+		strings.Contains(category, "client_abort") ||
+		strings.Contains(category, "client_gone")
+}
+
+func applyModelGatewayUserRequestClientAbortReconcile(userRequest *model.ModelGatewayUserRequestSummary, attempt model.ModelExecutionRecord) {
+	if userRequest == nil {
+		return
+	}
+	completedAt := attempt.CreatedAt
+	if completedAt <= 0 {
+		completedAt = userRequest.CompletedAt
+	}
+	if completedAt <= 0 {
+		completedAt = common.GetTimestamp()
+	}
+	userRequest.UpdatedAt = common.GetTimestamp()
+	userRequest.CompletedAt = completedAt
+	userRequest.FinalSuccess = false
+	userRequest.Recovered = false
+	userRequest.FinalStatusCode = relayStatusClientClosedRequest
+	userRequest.FinalErrorCategory = model.ModelGatewayUserRequestErrorClientAborted
+	userRequest.ClientAborted = true
+	userRequest.StreamInterrupted = attempt.StreamInterrupted
+	userRequest.EmptyOutput = false
+	userRequest.ExperienceIssue = ""
+	if attempt.ChannelId > 0 {
+		userRequest.FinalChannelID = attempt.ChannelId
+	}
+	if strings.TrimSpace(attempt.ChannelName) != "" {
+		userRequest.FinalChannelName = strings.TrimSpace(attempt.ChannelName)
+	}
+	if attempt.AttemptIndex > userRequest.LastAttemptIndex {
+		userRequest.LastAttemptIndex = attempt.AttemptIndex
+	}
+	if attempts := attempt.AttemptIndex + 1; attempts > userRequest.Attempts {
+		userRequest.Attempts = attempts
+	}
+	if attempt.DurationMs > 0 {
+		userRequest.DurationMs = attempt.DurationMs
+	}
+	if attempt.TTFTMs > 0 {
+		userRequest.TTFTMs = attempt.TTFTMs
+	}
+}
+
+func persistModelGatewayUserRequestClientAbortReconcile(userRequest model.ModelGatewayUserRequestSummary) {
+	if model.DB == nil || strings.TrimSpace(userRequest.RequestId) == "" {
+		return
+	}
+	query := model.DB.Model(&model.ModelGatewayUserRequestSummary{})
+	if userRequest.Id > 0 {
+		query = query.Where("id = ?", userRequest.Id)
+	} else {
+		query = query.Where("request_id = ?", userRequest.RequestId)
+	}
+	if err := query.Updates(map[string]any{
+		"updated_at":           userRequest.UpdatedAt,
+		"completed_at":         userRequest.CompletedAt,
+		"final_channel_id":     userRequest.FinalChannelID,
+		"final_channel_name":   userRequest.FinalChannelName,
+		"attempts":             userRequest.Attempts,
+		"last_attempt_index":   userRequest.LastAttemptIndex,
+		"final_success":        false,
+		"recovered":            false,
+		"final_status_code":    relayStatusClientClosedRequest,
+		"final_error_category": model.ModelGatewayUserRequestErrorClientAborted,
+		"empty_output":         false,
+		"experience_issue":     "",
+		"stream_interrupted":   userRequest.StreamInterrupted,
+		"client_aborted":       true,
+		"duration_ms":          userRequest.DurationMs,
+		"ttft_ms":              userRequest.TTFTMs,
+	}).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to persist model gateway user request client abort reconcile: request_id=%s error=%v", userRequest.RequestId, err))
+	}
 }
 
 type modelGatewayUserRequestAccumulator struct {
