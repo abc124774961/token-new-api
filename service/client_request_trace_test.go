@@ -80,8 +80,48 @@ func TestResponsesRequestRequiresCodexImageGenerationToolDetectsCodexSkillIntent
 	require.True(t, ResponsesRequestHasImageGenerationKeywordHits(req))
 	require.Contains(t, ResponsesRequestImageGenerationKeywordHits(req), "$imagegen")
 	require.Equal(t, map[string][]string{
-		"input_text": {"$imagegen", "imagegen"},
+		"input_text": {"$imagegen"},
 	}, ResponsesRequestRecentInputImageGenerationKeywordSources(req))
+}
+
+func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresSystemImagegenKeyword(t *testing.T) {
+	req := &dto.OpenAIResponsesRequest{
+		Model: "gpt-5.5",
+		Input: []byte(`[
+			{"role":"system","content":[
+				{"type":"input_text","text":"Available skills: $imagegen can generate raster images."}
+			]},
+			{"role":"user","content":[
+				{"type":"input_text","text":"这段调度详情哪里有问题？"}
+			]}
+		]`),
+		ToolChoice: []byte(`"auto"`),
+	}
+
+	trace := BuildResponsesRequestToolTraceForLog(req)
+
+	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
+	require.Empty(t, ResponsesRequestImageGenerationKeywordHits(req))
+	require.False(t, trace["requires_codex_image_tool"].(bool))
+	require.Empty(t, trace["imagegen_keyword_hits"])
+}
+
+func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresPlainImagegenWord(t *testing.T) {
+	req := &dto.OpenAIResponsesRequest{
+		Model: "gpt-5.5",
+		Input: []byte(`[
+			{"role":"user","content":[
+				{"type":"input_text","text":"为什么日志里出现 imagegen 或 image_generation 字样？"}
+			]}
+		]`),
+		ToolChoice: []byte(`"auto"`),
+	}
+
+	trace := BuildResponsesRequestToolTraceForLog(req)
+
+	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
+	require.Empty(t, ResponsesRequestImageGenerationKeywordHits(req))
+	require.False(t, trace["requires_codex_image_tool"].(bool))
 }
 
 func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresInlineSkillDefinitionBlock(t *testing.T) {

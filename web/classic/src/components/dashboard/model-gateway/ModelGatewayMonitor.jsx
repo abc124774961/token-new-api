@@ -9046,7 +9046,7 @@ function DispatchRequirementNotice({ requirements, t }) {
       <div className='ct-model-gateway-dispatch-requirement-body'>
         {requirements.tools.length ? (
           <div className='ct-model-gateway-dispatch-requirement-row'>
-            <span>{t('当前调用工具')}</span>
+            <span>{t('调度所需工具能力')}</span>
             <div className='ct-model-gateway-record-tags'>
               {requirements.tools.map((tool) => (
                 <Tag key={tool} color='purple' type='solid' size='small'>
@@ -10595,7 +10595,7 @@ function RecordDetailDrawer({
                     ? [
                         {
                           key: 'required_tools',
-                          label: t('当前调用工具'),
+                          label: t('调度所需工具能力'),
                           value: (
                             <div className='ct-model-gateway-record-tags'>
                               {dispatchRequirements.tools.map((tool) => (

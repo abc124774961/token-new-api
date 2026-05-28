@@ -5279,6 +5279,7 @@
     "调度因子": "Routing factors",
     "调度成功率": "Dispatch success rate",
     "调度成功率、响应速度和运行态风险均处于稳定区间": "Dispatch success rate, response speed, and runtime risk are stable.",
+    "调度所需工具能力": "Required tool capability",
     "调度权重": "Scheduling weight",
     "调度流转": "Dispatch flow",
     "调度状态": "Dispatch status",

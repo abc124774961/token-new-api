@@ -5606,6 +5606,7 @@
     "调度因子": "Yếu tố định tuyến",
     "调度成功率": "Tỷ lệ điều phối thành công",
     "调度成功率、响应速度和运行态风险均处于稳定区间": "Tỷ lệ điều phối thành công, tốc độ phản hồi và rủi ro runtime đều ổn định.",
+    "调度所需工具能力": "Năng lực công cụ cần cho điều phối",
     "调度权重": "Trọng số điều phối",
     "调度流转": "Luong dieu phoi",
     "调度状态": "Trạng thái điều phối",

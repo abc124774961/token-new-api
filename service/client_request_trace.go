@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -23,11 +24,30 @@ const (
 	responsesImageGenerationKeywordSourceToolChoice   = "tool_choice"
 )
 
+const (
+	responsesInputRoleUser         = "user"
+	responsesInputRoleInstructions = "instructions"
+)
+
 var codexImageGenerationFeatureKeywords = []string{
 	"$imagegen",
 	"imagegen",
 	"image generation",
 	dto.BuildInToolImageGeneration,
+}
+
+var codexImageGenerationIntentMarkers = []struct {
+	name    string
+	pattern *regexp.Regexp
+}{
+	{
+		name:    "$imagegen",
+		pattern: regexp.MustCompile(`(?i)(^|[^a-z0-9_])\$imagegen([^a-z0-9_-]|$)`),
+	},
+	{
+		name:    "@imagegen",
+		pattern: regexp.MustCompile(`(?i)(^|[^a-z0-9_])@imagegen([^a-z0-9_-]|$)`),
+	},
 }
 
 var codexImageGenerationKeywordIgnoredBlocks = []*regexp.Regexp{
@@ -137,6 +157,7 @@ func BuildResponsesRequestToolTraceForLog(req *dto.OpenAIResponsesRequest) map[s
 	trace["tools_bytes"] = len(req.Tools)
 	trace["tool_choice_bytes"] = len(req.ToolChoice)
 	trace["has_image_generation_tool"] = req.HasTool(dto.BuildInToolImageGeneration)
+	trace["requires_codex_image_tool"] = ResponsesRequestRequiresCodexImageGenerationTool(req)
 	trace["imagegen_keyword_hits"] = ResponsesRequestImageGenerationKeywordHits(req)
 	trace["imagegen_keyword_sources"] = ResponsesRequestImageGenerationKeywordSources(req)
 	if len(req.Tools) > 0 {
@@ -187,10 +208,7 @@ func BuildResponsesInputTextProbeForLog(req *dto.OpenAIResponsesRequest) map[str
 }
 
 func ResponsesRequestRequiresCodexImageGenerationTool(req *dto.OpenAIResponsesRequest) bool {
-	if req == nil {
-		return false
-	}
-	return len(ResponsesRequestImageGenerationKeywordHits(req)) > 0
+	return newResponsesImageGenerationRequirementDetector(req).RequiresCodexImageGenerationTool()
 }
 
 func ResponsesRequestHasImageGenerationKeywordHits(req *dto.OpenAIResponsesRequest) bool {
@@ -198,93 +216,15 @@ func ResponsesRequestHasImageGenerationKeywordHits(req *dto.OpenAIResponsesReque
 }
 
 func ResponsesRequestImageGenerationKeywordHits(req *dto.OpenAIResponsesRequest) []string {
-	if req == nil {
-		return nil
-	}
-	seen := map[string]struct{}{}
-	hits := make([]string, 0)
-	addText := func(text string) {
-		for _, keyword := range imageGenerationKeywordHitsFromText(text) {
-			if _, ok := seen[keyword]; ok {
-				continue
-			}
-			seen[keyword] = struct{}{}
-			hits = append(hits, keyword)
-		}
-	}
-	for _, part := range recentResponsesRequestInputTextParts(req) {
-		addText(part.Text)
-	}
-	return hits
+	return newResponsesImageGenerationRequirementDetector(req).IntentHits()
 }
 
 func ResponsesRequestImageGenerationKeywordSources(req *dto.OpenAIResponsesRequest) map[string][]string {
-	if req == nil {
-		return nil
-	}
-	sources := map[string][]string{}
-	addSourceText := func(source string, text string) {
-		hits := imageGenerationKeywordHitsFromText(text)
-		if len(hits) == 0 {
-			return
-		}
-		existing := sources[source]
-		seen := make(map[string]struct{}, len(existing)+len(hits))
-		for _, keyword := range existing {
-			seen[keyword] = struct{}{}
-		}
-		for _, keyword := range hits {
-			if _, ok := seen[keyword]; ok {
-				continue
-			}
-			seen[keyword] = struct{}{}
-			existing = append(existing, keyword)
-		}
-		sources[source] = existing
-	}
-	for _, part := range recentResponsesRequestInputTextParts(req) {
-		addSourceText(part.Source, part.Text)
-	}
-	if len(req.Tools) > 0 {
-		addSourceText(responsesImageGenerationKeywordSourceTools, string(req.Tools))
-	}
-	if len(req.ToolChoice) > 0 {
-		addSourceText(responsesImageGenerationKeywordSourceToolChoice, string(req.ToolChoice))
-	}
-	if len(sources) == 0 {
-		return nil
-	}
-	return sources
+	return newResponsesImageGenerationRequirementDetector(req).KeywordSources()
 }
 
 func ResponsesRequestRecentInputImageGenerationKeywordSources(req *dto.OpenAIResponsesRequest) map[string][]string {
-	if req == nil {
-		return nil
-	}
-	sources := map[string][]string{}
-	for _, part := range recentResponsesRequestInputTextParts(req) {
-		hits := imageGenerationKeywordHitsFromText(part.Text)
-		if len(hits) == 0 {
-			continue
-		}
-		existing := sources[part.Source]
-		seen := make(map[string]struct{}, len(existing)+len(hits))
-		for _, keyword := range existing {
-			seen[keyword] = struct{}{}
-		}
-		for _, keyword := range hits {
-			if _, ok := seen[keyword]; ok {
-				continue
-			}
-			seen[keyword] = struct{}{}
-			existing = append(existing, keyword)
-		}
-		sources[part.Source] = existing
-	}
-	if len(sources) == 0 {
-		return nil
-	}
-	return sources
+	return newResponsesImageGenerationRequirementDetector(req).RecentIntentSources()
 }
 
 func imageGenerationKeywordHitsFromText(text string) []string {
@@ -294,6 +234,17 @@ func imageGenerationKeywordHitsFromText(text string) []string {
 	for _, keyword := range codexImageGenerationFeatureKeywords {
 		if strings.Contains(lower, strings.ToLower(keyword)) {
 			hits = append(hits, keyword)
+		}
+	}
+	return hits
+}
+
+func imageGenerationIntentHitsFromText(text string) []string {
+	text = stripImageGenerationKeywordIgnoredBlocks(text)
+	hits := make([]string, 0)
+	for _, marker := range codexImageGenerationIntentMarkers {
+		if marker.pattern.MatchString(text) {
+			hits = append(hits, marker.name)
 		}
 	}
 	return hits
@@ -314,31 +265,11 @@ func responsesRequestInputTexts(req *dto.OpenAIResponsesRequest) []string {
 type responsesRequestInputTextPart struct {
 	Text   string
 	Source string
+	Role   string
 }
 
 func responsesRequestInputTextParts(req *dto.OpenAIResponsesRequest) []responsesRequestInputTextPart {
-	if req == nil {
-		return nil
-	}
-	parts := make([]responsesRequestInputTextPart, 0)
-	for _, input := range req.ParseInput() {
-		text := strings.TrimSpace(input.Text)
-		if text != "" {
-			parts = append(parts, responsesRequestInputTextPart{
-				Text:   text,
-				Source: responsesImageGenerationKeywordSourceInputText,
-			})
-		}
-	}
-	if len(req.Instructions) > 0 {
-		if instructions := strings.TrimSpace(string(req.Instructions)); instructions != "" {
-			parts = append(parts, responsesRequestInputTextPart{
-				Text:   instructions,
-				Source: responsesImageGenerationKeywordSourceInstructions,
-			})
-		}
-	}
-	return parts
+	return newResponsesImageGenerationRequirementDetector(req).InputTextParts()
 }
 
 func recentResponsesRequestInputTexts(req *dto.OpenAIResponsesRequest) []string {
@@ -354,11 +285,229 @@ func recentResponsesRequestInputTexts(req *dto.OpenAIResponsesRequest) []string 
 }
 
 func recentResponsesRequestInputTextParts(req *dto.OpenAIResponsesRequest) []responsesRequestInputTextPart {
-	parts := responsesRequestInputTextParts(req)
+	return newResponsesImageGenerationRequirementDetector(req).RecentInputTextParts()
+}
+
+type responsesImageGenerationRequirementDetector struct {
+	req *dto.OpenAIResponsesRequest
+}
+
+type responsesRawInputItem struct {
+	Type    string          `json:"type,omitempty"`
+	Role    string          `json:"role,omitempty"`
+	Text    string          `json:"text,omitempty"`
+	Content json.RawMessage `json:"content,omitempty"`
+}
+
+func newResponsesImageGenerationRequirementDetector(req *dto.OpenAIResponsesRequest) *responsesImageGenerationRequirementDetector {
+	return &responsesImageGenerationRequirementDetector{req: req}
+}
+
+func (d *responsesImageGenerationRequirementDetector) RequiresCodexImageGenerationTool() bool {
+	return len(d.IntentHits()) > 0
+}
+
+func (d *responsesImageGenerationRequirementDetector) IntentHits() []string {
+	seen := map[string]struct{}{}
+	hits := make([]string, 0)
+	for _, part := range d.RecentIntentTextParts() {
+		for _, keyword := range imageGenerationIntentHitsFromText(part.Text) {
+			if _, ok := seen[keyword]; ok {
+				continue
+			}
+			seen[keyword] = struct{}{}
+			hits = append(hits, keyword)
+		}
+	}
+	return hits
+}
+
+func (d *responsesImageGenerationRequirementDetector) KeywordSources() map[string][]string {
+	if d == nil || d.req == nil {
+		return nil
+	}
+	sources := d.RecentIntentSources()
+	if sources == nil {
+		sources = map[string][]string{}
+	}
+	if len(d.req.Tools) > 0 {
+		addImageGenerationSourceHits(sources, responsesImageGenerationKeywordSourceTools, imageGenerationKeywordHitsFromText(string(d.req.Tools)))
+	}
+	if len(d.req.ToolChoice) > 0 {
+		addImageGenerationSourceHits(sources, responsesImageGenerationKeywordSourceToolChoice, imageGenerationKeywordHitsFromText(string(d.req.ToolChoice)))
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+	return sources
+}
+
+func (d *responsesImageGenerationRequirementDetector) RecentIntentSources() map[string][]string {
+	sources := map[string][]string{}
+	for _, part := range d.RecentIntentTextParts() {
+		addImageGenerationSourceHits(sources, part.Source, imageGenerationIntentHitsFromText(part.Text))
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+	return sources
+}
+
+func (d *responsesImageGenerationRequirementDetector) RecentIntentTextParts() []responsesRequestInputTextPart {
+	parts := d.RecentInputTextParts()
+	filtered := make([]responsesRequestInputTextPart, 0, len(parts))
+	for _, part := range parts {
+		if part.Source != responsesImageGenerationKeywordSourceInputText {
+			continue
+		}
+		if !responsesInputRoleAllowsUserIntent(part.Role) {
+			continue
+		}
+		filtered = append(filtered, part)
+	}
+	return filtered
+}
+
+func (d *responsesImageGenerationRequirementDetector) RecentInputTextParts() []responsesRequestInputTextPart {
+	parts := d.InputTextParts()
 	if len(parts) <= responsesInputTextProbeWindow {
 		return parts
 	}
 	return parts[len(parts)-responsesInputTextProbeWindow:]
+}
+
+func (d *responsesImageGenerationRequirementDetector) InputTextParts() []responsesRequestInputTextPart {
+	if d == nil || d.req == nil {
+		return nil
+	}
+	parts := d.inputTextPartsFromRaw()
+	if len(d.req.Instructions) > 0 {
+		if instructions := strings.TrimSpace(string(d.req.Instructions)); instructions != "" {
+			parts = append(parts, responsesRequestInputTextPart{
+				Text:   instructions,
+				Source: responsesImageGenerationKeywordSourceInstructions,
+				Role:   responsesInputRoleInstructions,
+			})
+		}
+	}
+	return parts
+}
+
+func (d *responsesImageGenerationRequirementDetector) inputTextPartsFromRaw() []responsesRequestInputTextPart {
+	if d == nil || d.req == nil || len(d.req.Input) == 0 {
+		return nil
+	}
+	return responsesInputTextPartsFromRaw(d.req.Input, responsesInputRoleUser)
+}
+
+func responsesInputTextPartsFromRaw(raw json.RawMessage, defaultRole string) []responsesRequestInputTextPart {
+	switch common.GetJsonType(raw) {
+	case "string":
+		var text string
+		if err := common.Unmarshal(raw, &text); err != nil {
+			return nil
+		}
+		return appendResponsesTextPart(nil, text, responsesImageGenerationKeywordSourceInputText, defaultRole)
+	case "array":
+		var items []json.RawMessage
+		if err := common.Unmarshal(raw, &items); err != nil {
+			return nil
+		}
+		parts := make([]responsesRequestInputTextPart, 0, len(items))
+		for _, item := range items {
+			parts = append(parts, responsesInputTextPartsFromRaw(item, defaultRole)...)
+		}
+		return parts
+	case "object":
+		var item responsesRawInputItem
+		if err := common.Unmarshal(raw, &item); err != nil {
+			return nil
+		}
+		role := normalizeResponsesInputRole(item.Role, defaultRole)
+		parts := make([]responsesRequestInputTextPart, 0, 1)
+		if strings.TrimSpace(item.Text) != "" {
+			parts = appendResponsesTextPart(parts, item.Text, responsesImageGenerationKeywordSourceInputText, role)
+		}
+		if len(item.Content) > 0 {
+			parts = append(parts, responsesContentTextPartsFromRaw(item.Content, role)...)
+		}
+		return parts
+	default:
+		return nil
+	}
+}
+
+func responsesContentTextPartsFromRaw(raw json.RawMessage, role string) []responsesRequestInputTextPart {
+	switch common.GetJsonType(raw) {
+	case "string":
+		var text string
+		if err := common.Unmarshal(raw, &text); err != nil {
+			return nil
+		}
+		return appendResponsesTextPart(nil, text, responsesImageGenerationKeywordSourceInputText, role)
+	case "array":
+		var items []json.RawMessage
+		if err := common.Unmarshal(raw, &items); err != nil {
+			return nil
+		}
+		parts := make([]responsesRequestInputTextPart, 0, len(items))
+		for _, item := range items {
+			parts = append(parts, responsesContentTextPartsFromRaw(item, role)...)
+		}
+		return parts
+	case "object":
+		var item responsesRawInputItem
+		if err := common.Unmarshal(raw, &item); err != nil {
+			return nil
+		}
+		return appendResponsesTextPart(nil, item.Text, responsesImageGenerationKeywordSourceInputText, role)
+	default:
+		return nil
+	}
+}
+
+func appendResponsesTextPart(parts []responsesRequestInputTextPart, text string, source string, role string) []responsesRequestInputTextPart {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return parts
+	}
+	return append(parts, responsesRequestInputTextPart{
+		Text:   text,
+		Source: source,
+		Role:   normalizeResponsesInputRole(role, responsesInputRoleUser),
+	})
+}
+
+func normalizeResponsesInputRole(role string, fallback string) string {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "" {
+		role = strings.ToLower(strings.TrimSpace(fallback))
+	}
+	return role
+}
+
+func responsesInputRoleAllowsUserIntent(role string) bool {
+	role = normalizeResponsesInputRole(role, responsesInputRoleUser)
+	return role == responsesInputRoleUser
+}
+
+func addImageGenerationSourceHits(sources map[string][]string, source string, hits []string) {
+	if len(hits) == 0 {
+		return
+	}
+	existing := sources[source]
+	seen := make(map[string]struct{}, len(existing)+len(hits))
+	for _, keyword := range existing {
+		seen[keyword] = struct{}{}
+	}
+	for _, keyword := range hits {
+		if _, ok := seen[keyword]; ok {
+			continue
+		}
+		seen[keyword] = struct{}{}
+		existing = append(existing, keyword)
+	}
+	sources[source] = existing
 }
 
 func stripImageGenerationKeywordIgnoredBlocks(text string) string {
