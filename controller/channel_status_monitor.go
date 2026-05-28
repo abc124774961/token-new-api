@@ -1591,7 +1591,7 @@ func buildChannelStatusMonitorItem(channel *model.Channel, logStat *channelMonit
 		item.RecentAvgFirstRespMs = avgInt64(logStat.firstRespSum, logStat.firstRespCount)
 		item.RecentAvgOutputTokens = avgInt64(logStat.outputTokens, logStat.successes)
 		item.RecentTotalTokens = logStat.totalTokens
-		item.SuccessRate = successRate(logStat.successes, logStat.requests)
+		item.SuccessRate = channelMonitorUserSuccessRate(logStat.successes, logStat.requests, logStat.clientAborted, logStat.healthProbes)
 		item.LastRequestAt = logStat.lastRequestAt
 		item.LastSuccessAt = logStat.lastSuccessAt
 		item.LastFailureAt = logStat.lastFailureAt

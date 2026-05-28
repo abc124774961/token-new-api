@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -115,6 +116,19 @@ func TestResolveChannelTestEndpointUsesResponsesForOpenAIOAuthJSON(t *testing.T)
 	endpointType := resolveChannelTestEndpoint(channel, "gpt-5.4", "", channelTestOptions{CredentialIndex: &index})
 
 	require.Equal(t, string(constant.EndpointTypeOpenAIResponse), endpointType)
+}
+
+func TestParseChannelTestOptionsEnablesProxyBridgeForCredentialIndex(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/channel/test/1?credential_index=2", nil)
+
+	options, ok := parseChannelTestOptions(ctx)
+
+	require.True(t, ok)
+	require.NotNil(t, options.CredentialIndex)
+	require.Equal(t, 2, *options.CredentialIndex)
+	require.True(t, options.AllowProxyBridge)
 }
 
 func TestIsMissingResponsesScopeTestResult(t *testing.T) {

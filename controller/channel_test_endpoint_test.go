@@ -63,3 +63,32 @@ func TestResolveChannelTestEndpointUsesChatWhenStoredCapabilityDeniesResponses(t
 		t.Fatalf("resolveChannelTestEndpoint() = %q, want %q", got, string(constant.EndpointTypeOpenAI))
 	}
 }
+
+func TestResolveChannelTestEndpointUsesResponsesWhenProxyBridgeAllowed(t *testing.T) {
+	t.Parallel()
+
+	index := 0
+	denied := false
+	allowed := true
+	channel := &model.Channel{
+		Type: constant.ChannelTypeOpenAI,
+		Key:  `{"access_token":"access-token","refresh_token":"refresh-token","account_id":"account-id"}`,
+		ChannelInfo: model.ChannelInfo{
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					ResponsesWrite:       &denied,
+					ChatCompletionsWrite: &allowed,
+				},
+			},
+		},
+	}
+
+	got := resolveChannelTestEndpoint(channel, "gpt-4o", "", channelTestOptions{
+		CredentialIndex:  &index,
+		AllowProxyBridge: true,
+	})
+
+	if got != string(constant.EndpointTypeOpenAIResponse) {
+		t.Fatalf("resolveChannelTestEndpoint() = %q, want %q", got, string(constant.EndpointTypeOpenAIResponse))
+	}
+}

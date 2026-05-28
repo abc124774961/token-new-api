@@ -387,6 +387,27 @@ func TestChannelMonitorUserRequestStatsUseUserPerspective(t *testing.T) {
 	require.EqualValues(t, 0, plusStats.experienceIssues)
 }
 
+func TestChannelMonitorItemSuccessRateExcludesClientAbortAndHealthProbe(t *testing.T) {
+	channel := &model.Channel{
+		Id:     31,
+		Name:   "codex-channel",
+		Status: common.ChannelStatusEnabled,
+		Group:  "codex-pro",
+	}
+	item := buildChannelStatusMonitorItem(channel, &channelMonitorLogStats{
+		requests:      5,
+		successes:     2,
+		failures:      1,
+		clientAborted: 1,
+		healthProbes:  1,
+	})
+
+	require.EqualValues(t, 5, item.RecentRequests)
+	require.EqualValues(t, 1, item.RecentClientAborted)
+	require.EqualValues(t, 1, item.RecentHealthProbes)
+	require.InDelta(t, 66.6667, item.SuccessRate, 0.0001)
+}
+
 func TestChannelMonitorRuntimeDoesNotFillUserRequestHistory(t *testing.T) {
 	channel := &model.Channel{
 		Id:     30,

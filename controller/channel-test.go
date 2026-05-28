@@ -48,7 +48,8 @@ type testResult struct {
 }
 
 type channelTestOptions struct {
-	CredentialIndex *int
+	CredentialIndex  *int
+	AllowProxyBridge bool
 }
 
 type accountCapabilityProbeResult struct {
@@ -79,12 +80,16 @@ func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointTyp
 
 func resolveChannelTestEndpoint(channel *model.Channel, modelName, endpointType string, options channelTestOptions) string {
 	if channelTestUsesOAuthJSONCredential(channel, options) && strings.TrimSpace(endpointType) == "" {
-		if capability, ok := channelTestAccountCapability(channel, options); ok &&
-			capability.HasResponsesWriteDenied() &&
-			capability.HasChatCompletionsWriteAllowed() {
-			return string(constant.EndpointTypeOpenAI)
+		if options.AllowProxyBridge {
+			endpointType = string(constant.EndpointTypeOpenAIResponse)
+		} else {
+			if capability, ok := channelTestAccountCapability(channel, options); ok &&
+				capability.HasResponsesWriteDenied() &&
+				capability.HasChatCompletionsWriteAllowed() {
+				return string(constant.EndpointTypeOpenAI)
+			}
+			endpointType = string(constant.EndpointTypeOpenAIResponse)
 		}
-		endpointType = string(constant.EndpointTypeOpenAIResponse)
 	}
 	return normalizeChannelTestEndpoint(channel, modelName, endpointType)
 }
@@ -480,6 +485,53 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 			context:     c,
 			localErr:    err,
 			newAPIError: types.NewError(err, types.ErrorCodeJsonMarshalFailed),
+		}
+	}
+
+	if testOptions.AllowProxyBridge &&
+		(info.RelayMode == relayconstant.RelayModeResponses || info.RelayMode == relayconstant.RelayModeResponsesCompact) {
+		jsonData, err := common.Marshal(request)
+		if err != nil {
+			return testResult{
+				context:     c,
+				localErr:    err,
+				newAPIError: types.NewError(err, types.ErrorCodeJsonMarshalFailed),
+			}
+		}
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
+
+		common.SysLog(fmt.Sprintf("testing channel %d with model %s , info %+v ", channel.Id, testModel, info.ToString()))
+		newAPIError := relay.ResponsesHelper(c, info)
+		if newAPIError != nil {
+			return testResult{
+				context:     c,
+				localErr:    newAPIError,
+				newAPIError: newAPIError,
+			}
+		}
+
+		result := w.Result()
+		respBody, err := readTestResponseBody(result.Body, isStream)
+		if err != nil {
+			return testResult{
+				context:     c,
+				localErr:    err,
+				newAPIError: types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError),
+			}
+		}
+		if bodyErr := validateTestResponseBody(respBody, isStream); bodyErr != nil {
+			return testResult{
+				context:     c,
+				localErr:    bodyErr,
+				newAPIError: types.NewOpenAIError(bodyErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
+			}
+		}
+
+		common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+		return testResult{
+			context:     c,
+			localErr:    nil,
+			newAPIError: nil,
 		}
 	}
 
@@ -1326,7 +1378,10 @@ func parseChannelTestOptions(c *gin.Context) (channelTestOptions, bool) {
 		common.ApiErrorMsg(c, "账号索引无效")
 		return channelTestOptions{}, false
 	}
-	return channelTestOptions{CredentialIndex: &index}, true
+	return channelTestOptions{
+		CredentialIndex:  &index,
+		AllowProxyBridge: true,
+	}, true
 }
 
 func markChannelBalanceInsufficientFromTest(channel *model.Channel, result testResult) bool {
