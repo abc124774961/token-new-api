@@ -253,7 +253,6 @@ function getReasonMeta(reason, t) {
       failure_avoidance: 'orange',
       probe_recovery_pending: 'cyan',
       low_score: 'orange',
-      low_traffic: 'blue',
       missing_samples: 'grey',
       success_rate: 'orange',
       empty_output: 'orange',
@@ -268,7 +267,6 @@ function getReasonMeta(reason, t) {
       failure_avoidance: t('近期失败恢复中'),
       probe_recovery_pending: t('恢复确认中'),
       low_score: t('低评分'),
-      low_traffic: t('近30分钟无真实样本'),
       missing_samples: t('历史样本不足'),
       success_rate: t('成功率偏低'),
       empty_output: t('空输出偏高'),
@@ -1012,7 +1010,6 @@ function ChannelHealthCheck() {
     (record) => record.final_success || record.success,
   ).length;
   const lowScoreCount = queueData?.summary?.low_score_count || 0;
-  const lowTrafficCount = queueData?.summary?.low_traffic_count || 0;
   const recoveryCount = queueData?.summary?.recovery_count || 0;
   const isolatedCount = queueData?.summary?.isolated_count || 0;
   const enabledScoreLabels = (probeConfig.probe_recoverable_score_items || [])
@@ -1424,8 +1421,8 @@ function ChannelHealthCheck() {
             label={t('待检查队列')}
             value={formatNumber(queueData?.summary?.pending_count)}
             detail={`${formatNumber(lowScoreCount)} ${t('低评分')} · ${formatNumber(
-              lowTrafficCount,
-            )} ${t('低访问')}`}
+              recoveryCount,
+            )} ${t('恢复中')}`}
             icon={<ListChecks size={18} />}
             tone={Number(queueData?.summary?.pending_count || 0) > 0 ? 'warning' : 'success'}
           />
@@ -1492,7 +1489,6 @@ function ChannelHealthCheck() {
           >
             <Select.Option value={ALL_STATUSES}>{t('全部')}</Select.Option>
             <Select.Option value='low_score'>{t('低评分')}</Select.Option>
-            <Select.Option value='low_traffic'>{t('低访问')}</Select.Option>
             <Select.Option value='recovery'>{t('恢复中')}</Select.Option>
             <Select.Option value='isolated'>{t('隔离或冷却')}</Select.Option>
           </Select>

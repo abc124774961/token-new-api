@@ -15,6 +15,7 @@ import (
 	common2 "github.com/QuantumNous/new-api/common"
 	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	modelgatewayprovider "github.com/QuantumNous/new-api/pkg/modelgateway/provider"
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -353,6 +354,10 @@ func isCodexLikeUpstreamRequest(c *gin.Context, info *common.RelayInfo) bool {
 		return false
 	}
 	if info.ChannelOtherSettings.UsesCodexCompatibilityMode() {
+		return true
+	}
+	if info.ChannelOtherSettings.ProviderProfile == modelgatewayprovider.ProfileOpenAICodex ||
+		info.ChannelOtherSettings.ProxyProfile == modelgatewayprovider.ProxyModeNativeResponses {
 		return true
 	}
 	values := []string{

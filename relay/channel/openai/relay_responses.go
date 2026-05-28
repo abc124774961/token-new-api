@@ -32,7 +32,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+		return nil, service.UpstreamOpenAIError(*oaiError, resp.StatusCode)
 	}
 
 	if responsesResponse.HasImageGenerationCall() {
@@ -222,7 +222,7 @@ type bufferedResponsesStreamEvent struct {
 func newAPIErrorFromResponsesStreamFailure(streamResponse dto.ResponsesStreamResponse) *types.NewAPIError {
 	if streamResponse.Response != nil {
 		if oaiErr := streamResponse.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
-			return types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+			return service.UpstreamOpenAIError(*oaiErr, http.StatusInternalServerError)
 		}
 	}
 	return types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResponse.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)

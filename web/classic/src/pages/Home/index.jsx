@@ -104,6 +104,13 @@ const formatHeroDynamicRatio = (value) => {
   return `${number.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}x`;
 };
 
+const formatHeroDynamicRatioTick = (value) => {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '--';
+  if (number === 0) return '0x';
+  return formatHeroDynamicRatio(number);
+};
+
 const formatHeroDynamicPrice = (value) => {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) return '--';
@@ -155,44 +162,68 @@ const hasFinitePositiveValue = (value) => {
   return Number.isFinite(number) && number > 0;
 };
 
-const buildHomeRatioCurve = (points) => {
+const homeRatioChartMaxRatio = 0.3;
+const homeRatioChartTicks = [0.3, 0.225, 0.15, 0.075, 0];
+
+const buildHomeRatioCurve = (points, chartWidth = 720) => {
   const normalizedPoints = Array.isArray(points) ? points : [];
   const values = normalizedPoints
     .map((point) => Number(point?.ratio || 0))
     .filter((value) => Number.isFinite(value) && value > 0);
+  const width = Math.max(Math.round(Number(chartWidth) || 720), 360);
+  const height = 392;
+  const plotInsetX = Math.min(44, Math.max(24, width * 0.04));
+  const plotLeft = plotInsetX;
+  const plotRight = width - plotInsetX;
+  const plotTop = 22;
+  const plotBottom = 350;
   if (normalizedPoints.length === 0 || values.length === 0) {
     return {
+      width,
+      height,
+      plotLeft,
+      plotRight,
+      plotTop,
+      plotBottom,
       line: '',
       area: '',
       dots: [],
+      yTicks: homeRatioChartTicks.map((ratio) => ({
+        y:
+          plotBottom -
+          (ratio / homeRatioChartMaxRatio) * (plotBottom - plotTop),
+        ratio,
+      })),
+      xTicks: [],
       min: 0,
       max: 0,
     };
   }
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const span = Math.max(max - min, max * 0.12, 0.0001);
-  const width = 720;
-  const height = 300;
-  const padX = 30;
-  const padY = 36;
-  const usableWidth = width - padX * 2;
-  const usableHeight = height - padY * 2;
+  const usableWidth = plotRight - plotLeft;
+  const usableHeight = plotBottom - plotTop;
   const plotPoints = normalizedPoints.map((point, index) => {
     const ratio = Number(point?.ratio || 0);
+    const clampedRatio = Math.min(
+      Math.max(ratio, 0),
+      homeRatioChartMaxRatio,
+    );
     const x =
-      padX +
+      plotLeft +
       (normalizedPoints.length <= 1
         ? usableWidth / 2
         : (usableWidth * index) / (normalizedPoints.length - 1));
     const y =
       ratio > 0
-        ? padY + usableHeight - ((ratio - min) / span) * usableHeight
+        ? plotBottom -
+          (clampedRatio / homeRatioChartMaxRatio) * usableHeight
         : null;
     return {
       x,
       y,
       ratio,
+      pricePerM: Number(point?.price_per_m || 0),
       sampleCount: Number(point?.sample_count || 0),
       timestamp: point?.timestamp,
     };
@@ -205,15 +236,42 @@ const buildHomeRatioCurve = (points) => {
     .join(' ');
   const first = validPoints[0];
   const last = validPoints[validPoints.length - 1];
-  const baseline = height - padY;
+  const baseline = plotBottom;
   const area =
     first && last
       ? `${line} L ${last.x.toFixed(1)} ${baseline} L ${first.x.toFixed(1)} ${baseline} Z`
       : '';
+  const yTicks = homeRatioChartTicks.map((ratio) => ({
+    y: plotBottom - (ratio / homeRatioChartMaxRatio) * usableHeight,
+    ratio,
+  }));
+  const xTickCount = normalizedPoints.length >= 12 ? 7 : normalizedPoints.length;
+  const xTicks = Array.from({ length: Math.max(xTickCount, 0) })
+    .map((_, index) => {
+      const sourceIndex =
+        xTickCount <= 1
+          ? 0
+          : Math.round((index * (normalizedPoints.length - 1)) / (xTickCount - 1));
+      const plotPoint = plotPoints[sourceIndex];
+      if (!plotPoint) return null;
+      return {
+        x: plotPoint.x,
+        timestamp: plotPoint.timestamp,
+      };
+    })
+    .filter(Boolean);
   return {
+    width,
+    height,
+    plotLeft,
+    plotRight,
+    plotTop,
+    plotBottom,
     line,
     area,
     dots: validPoints,
+    yTicks,
+    xTicks,
     min,
     max,
   };
@@ -1803,6 +1861,10 @@ const PricingEstimator = ({
 
 const RatioCurveSection = ({ dynamicBilling, t }) => {
   const [activeRange, setActiveRange] = useState('today');
+  const [focusedPoint, setFocusedPoint] = useState(null);
+  const [chartWidth, setChartWidth] = useState(720);
+  const chartRef = useRef(null);
+  const chartSvgRef = useRef(null);
   const trend = dynamicBilling?.trend || {};
   const ranges = [
     { key: 'today', label: t('今天') },
@@ -1811,7 +1873,10 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
   ];
   const activeSeries = trend?.[activeRange] || {};
   const points = Array.isArray(activeSeries.points) ? activeSeries.points : [];
-  const curve = useMemo(() => buildHomeRatioCurve(points), [points]);
+  const curve = useMemo(
+    () => buildHomeRatioCurve(points, chartWidth),
+    [chartWidth, points],
+  );
   const hasData = Number(activeSeries.sample_count || 0) > 0 && curve.line;
   const latestRatio =
     Number(activeSeries.latest_ratio || 0) ||
@@ -1823,26 +1888,67 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
   );
   const stats = [
     {
+      key: 'current',
       label: t('当前倍率'),
       value: formatHeroDynamicRatio(latestRatio),
       note: dynamicBilling?.group || t('动态分组'),
     },
     {
+      key: 'range',
       label: t('区间范围'),
       value: rangeLabel,
       note: t('真实请求样本'),
     },
     {
+      key: 'price',
       label: t('展示价格'),
       value: formatHeroDynamicPrice(dynamicBilling?.display_price_per_m),
       note: dynamicBilling?.model || 'gpt-5.4',
     },
     {
+      key: 'samples',
       label: t('样本数'),
       value: sampleCount > 0 ? String(sampleCount) : '--',
       note: t('不含探活'),
     },
   ];
+  const tooltipPoint = focusedPoint;
+  useEffect(() => {
+    const chartElement = chartRef.current;
+    if (!chartElement) return undefined;
+    const updateChartWidth = () => {
+      const nextWidth = Math.round(chartElement.clientWidth || 0);
+      if (nextWidth > 0) {
+        setChartWidth(nextWidth);
+      }
+    };
+    updateChartWidth();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateChartWidth);
+      return () => window.removeEventListener('resize', updateChartWidth);
+    }
+    const observer = new ResizeObserver(updateChartWidth);
+    observer.observe(chartElement);
+    return () => observer.disconnect();
+  }, []);
+  const focusNearestPointFromEvent = (event) => {
+    if (!hasData || curve.dots.length === 0) return;
+    const rect = chartSvgRef.current?.getBoundingClientRect();
+    if (!rect?.width) return;
+    const x = ((event.clientX - rect.left) / rect.width) * curve.width;
+    const nearestPoint = curve.dots.reduce((closest, point) =>
+      Math.abs(point.x - x) < Math.abs(closest.x - x) ? point : closest,
+    );
+    setFocusedPoint(nearestPoint);
+  };
+  const tooltipPosition = tooltipPoint
+    ? {
+        left: `${Math.min(Math.max(tooltipPoint.x, 86), curve.width - 86)}px`,
+        top: `${Math.min(Math.max(tooltipPoint.y, 58), curve.height - 54)}px`,
+      }
+    : null;
+  const tooltipIsBelow =
+    tooltipPoint && tooltipPoint.y < curve.plotTop + 112;
 
   return (
     <section className='ct-lite-ratio-section'>
@@ -1860,7 +1966,7 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
           </p>
           <div className='ct-lite-ratio-stats'>
             {stats.map((item) => (
-              <div key={item.label}>
+              <div key={item.key} className={`is-${item.key}`}>
                 <small>{item.label}</small>
                 <strong>{item.value}</strong>
                 <em>{item.note}</em>
@@ -1896,8 +2002,18 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
             </div>
           </div>
 
-          <div className='ct-lite-ratio-chart'>
-            <svg viewBox='0 0 720 300' role='img' aria-label={t('动态倍率曲线')}>
+          <div
+            className='ct-lite-ratio-chart'
+            ref={chartRef}
+            onMouseMove={focusNearestPointFromEvent}
+            onMouseLeave={() => setFocusedPoint(null)}
+          >
+            <svg
+              ref={chartSvgRef}
+              viewBox={`0 0 ${curve.width} ${curve.height}`}
+              role='img'
+              aria-label={t('动态倍率曲线')}
+            >
               <defs>
                 <linearGradient id='ct-lite-ratio-line' x1='0' y1='0' x2='1' y2='0'>
                   <stop offset='0%' stopColor='#0d9ca5' />
@@ -1909,14 +2025,24 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
                   <stop offset='100%' stopColor='#23c7cf' stopOpacity='0' />
                 </linearGradient>
               </defs>
-              {[0, 1, 2, 3, 4].map((line) => (
+              {curve.yTicks.map((tick, index) => (
                 <line
-                  key={line}
-                  x1='30'
-                  x2='690'
-                  y1={36 + line * 57}
-                  y2={36 + line * 57}
+                  key={`y-${index}`}
+                  x1={curve.plotLeft}
+                  x2={curve.plotRight}
+                  y1={tick.y}
+                  y2={tick.y}
                   className='ct-lite-ratio-gridline'
+                />
+              ))}
+              {curve.xTicks.map((tick, index) => (
+                <line
+                  key={`x-${index}`}
+                  x1={tick.x}
+                  x2={tick.x}
+                  y1={curve.plotTop}
+                  y2={curve.plotBottom}
+                  className='ct-lite-ratio-gridline vertical'
                 />
               ))}
               {hasData ? (
@@ -1929,25 +2055,71 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
                       cx={point.x}
                       cy={point.y}
                       r={index === curve.dots.length - 1 ? 5.8 : 3.8}
-                      className='ct-lite-ratio-dot'
+                      tabIndex={0}
+                      className={`ct-lite-ratio-dot${
+                        focusedPoint?.timestamp === point.timestamp ? ' active' : ''
+                      }`}
+                      onMouseEnter={() => setFocusedPoint(point)}
+                      onFocus={() => setFocusedPoint(point)}
+                      onBlur={() => setFocusedPoint(null)}
                     />
                   ))}
                 </>
               ) : (
-                <text x='360' y='152' textAnchor='middle' className='ct-lite-ratio-empty'>
+                <text
+                  x={curve.width / 2}
+                  y={curve.height / 2}
+                  textAnchor='middle'
+                  className='ct-lite-ratio-empty'
+                >
                   {t('暂无真实倍率样本')}
                 </text>
               )}
+              {curve.xTicks.map((tick, index) => (
+                <text
+                  key={`xt-${index}`}
+                  x={tick.x}
+                  y={curve.height - 14}
+                  textAnchor={
+                    index === 0
+                      ? 'start'
+                      : index === curve.xTicks.length - 1
+                        ? 'end'
+                        : 'middle'
+                  }
+                  className='ct-lite-ratio-x-label'
+                >
+                  {formatHomeTrendTime(tick.timestamp, activeRange)}
+                </text>
+              ))}
             </svg>
-            <div className='ct-lite-ratio-axis'>
-              <span>{formatHomeTrendTime(points[0]?.timestamp, activeRange)}</span>
-              <span>
-                {formatHeroDynamicRatio(curve.max || activeSeries.max_ratio)}
-              </span>
-              <span>
-                {formatHomeTrendTime(points[points.length - 1]?.timestamp, activeRange)}
-              </span>
+            <div className='ct-lite-ratio-y-axis' aria-hidden='true'>
+              {curve.yTicks.map((tick, index) => (
+                <span
+                  key={`yt-${index}`}
+                  style={{
+                    top: `${(tick.y / curve.height) * 100}%`,
+                  }}
+                >
+                  {formatHeroDynamicRatioTick(tick.ratio)}
+                </span>
+              ))}
             </div>
+            {tooltipPoint ? (
+              <div
+                className={`ct-lite-ratio-tooltip${tooltipIsBelow ? ' is-below' : ''}`}
+                style={tooltipPosition}
+              >
+                <span>{formatHomeTrendTime(tooltipPoint.timestamp, activeRange)}</span>
+                <strong>{formatHeroDynamicRatio(tooltipPoint.ratio)}</strong>
+                <small>
+                  {t('展示价格')} {formatHeroDynamicPrice(tooltipPoint.pricePerM)}
+                </small>
+                <small>
+                  {t('样本数')} {tooltipPoint.sampleCount || 0}
+                </small>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

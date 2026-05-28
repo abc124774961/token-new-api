@@ -316,6 +316,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	defer func() {
 		if newAPIError != nil {
+			newAPIError = service.SanitizeClientRelayError(newAPIError)
 			logger.LogError(c, fmt.Sprintf("relay error: %s", newAPIError.Error()))
 			if relayResponseAlreadyStarted(c) {
 				return
@@ -1473,6 +1474,9 @@ func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIE
 		return true
 	}
 	if isUpstreamFailoverCandidate(openaiErr) {
+		return true
+	}
+	if service.IsBalanceInsufficientError(openaiErr) {
 		return true
 	}
 	code := openaiErr.StatusCode

@@ -202,6 +202,9 @@ func IsBalanceInsufficientError(err *types.NewAPIError) bool {
 	if err.GetErrorCode() == types.ErrorCodeInsufficientUserQuota {
 		return true
 	}
+	if err.GetErrorCode() == types.ErrorCodeUpstreamUnavailable {
+		return true
+	}
 	return IsBalanceInsufficientMessage(err.Error())
 }
 

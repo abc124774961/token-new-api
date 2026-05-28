@@ -19,6 +19,7 @@ import (
 )
 
 const upstreamResponseSnippetLimit = 512
+const upstreamBalanceInsufficientClientMessage = "上游渠道暂不可用，请稍后重试"
 
 func MidjourneyErrorWrapper(code int, desc string) *dto.MidjourneyResponse {
 	return &dto.MidjourneyResponse{
@@ -86,6 +87,38 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
 	return claudeErr
 }
 
+func UpstreamOpenAIError(openAIError types.OpenAIError, statusCode int) *types.NewAPIError {
+	newApiErr := types.WithOpenAIError(openAIError, statusCode)
+	if IsBalanceInsufficientError(newApiErr) {
+		return NewUpstreamBalanceInsufficientError(statusCode, nil)
+	}
+	return newApiErr
+}
+
+func NewUpstreamBalanceInsufficientError(upstreamStatusCode int, metadata json.RawMessage) *types.NewAPIError {
+	newApiErr := types.NewErrorWithStatusCode(
+		errors.New(upstreamBalanceInsufficientClientMessage),
+		types.ErrorCodeUpstreamUnavailable,
+		http.StatusServiceUnavailable,
+	)
+	if len(metadata) > 0 {
+		newApiErr.Metadata = metadata
+	} else if upstreamStatusCode > 0 {
+		newApiErr.Metadata = buildUpstreamStatusMetadata(upstreamStatusCode)
+	}
+	return newApiErr
+}
+
+func SanitizeClientRelayError(newApiErr *types.NewAPIError) *types.NewAPIError {
+	if newApiErr == nil {
+		return nil
+	}
+	if !IsBalanceInsufficientError(newApiErr) || types.IsSkipRetryError(newApiErr) {
+		return newApiErr
+	}
+	return NewUpstreamBalanceInsufficientError(newApiErr.StatusCode, newApiErr.Metadata)
+}
+
 func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFail bool) (newApiErr *types.NewAPIError) {
 	newApiErr = types.InitOpenAIError(types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
 
@@ -94,12 +127,16 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		return
 	}
 	CloseResponseBodyGracefully(resp)
-	upstreamMetadata := buildUpstreamResponseMetadata(resp, responseBody)
+	hideUpstreamBalanceError := !showBodyWhenFail
+	upstreamMetadata := buildUpstreamResponseMetadata(resp, responseBody, false)
 	attachUpstreamMetadata := func(e *types.NewAPIError) *types.NewAPIError {
 		if e != nil && len(upstreamMetadata) > 0 {
 			e.Metadata = upstreamMetadata
 		}
 		return e
+	}
+	buildBalanceInsufficientError := func() *types.NewAPIError {
+		return NewUpstreamBalanceInsufficientError(resp.StatusCode, buildUpstreamResponseMetadata(resp, responseBody, true))
 	}
 	var errResponse dto.GeneralErrorResponse
 	buildErrWithBody := func(message string) error {
@@ -111,6 +148,9 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 
 	err = common.Unmarshal(responseBody, &errResponse)
 	if err != nil {
+		if hideUpstreamBalanceError && IsBalanceInsufficientMessage(string(responseBody)) {
+			return buildBalanceInsufficientError()
+		}
 		if showBodyWhenFail {
 			newApiErr.Err = buildErrWithBody("")
 		} else {
@@ -125,6 +165,9 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		oaiError := errResponse.TryToOpenAIError()
 		if oaiError != nil {
 			newApiErr = types.WithOpenAIError(*oaiError, resp.StatusCode)
+			if hideUpstreamBalanceError && IsBalanceInsufficientError(newApiErr) {
+				return buildBalanceInsufficientError()
+			}
 			if showBodyWhenFail {
 				newApiErr.Err = buildErrWithBody(newApiErr.Error())
 			}
@@ -132,13 +175,29 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		}
 	}
 	newApiErr = types.NewOpenAIError(errors.New(errResponse.ToMessage()), types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
+	if hideUpstreamBalanceError && IsBalanceInsufficientError(newApiErr) {
+		return buildBalanceInsufficientError()
+	}
 	if showBodyWhenFail {
 		newApiErr.Err = buildErrWithBody(newApiErr.Error())
 	}
 	return attachUpstreamMetadata(newApiErr)
 }
 
-func buildUpstreamResponseMetadata(resp *http.Response, responseBody []byte) json.RawMessage {
+func buildUpstreamStatusMetadata(statusCode int) json.RawMessage {
+	if statusCode <= 0 {
+		return nil
+	}
+	raw, err := common.Marshal(map[string]any{
+		"status_code": statusCode,
+	})
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+func buildUpstreamResponseMetadata(resp *http.Response, responseBody []byte, omitBodySnippet bool) json.RawMessage {
 	metadata := map[string]any{}
 	if resp != nil {
 		metadata["status_code"] = resp.StatusCode
@@ -171,10 +230,12 @@ func buildUpstreamResponseMetadata(resp *http.Response, responseBody []byte) jso
 			bodySnippet = bodySnippet[:upstreamResponseSnippetLimit]
 			truncated = true
 		}
-		metadata["body_snippet"] = strings.TrimSpace(string(bodySnippet))
 		metadata["body_length"] = len(responseBody)
-		if truncated {
-			metadata["body_truncated"] = true
+		if !omitBodySnippet {
+			metadata["body_snippet"] = strings.TrimSpace(string(bodySnippet))
+			if truncated {
+				metadata["body_truncated"] = true
+			}
 		}
 	}
 	if len(metadata) == 0 {

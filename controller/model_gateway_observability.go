@@ -2473,6 +2473,7 @@ func modelGatewayHealthCheckQueueReasons(item modelgatewayobservability.RuntimeS
 			Label:    modelGatewayHealthCheckReasonLabel(key),
 		})
 	}
+	triggerScoreItems := modelGatewayHealthCheckTriggerScoreItems(item, thresholds)
 	if item.ConfigErrorIsolated || item.AuthConfigErrorCount > 0 {
 		addReason("config_error", 100, "critical")
 	}
@@ -2488,11 +2489,11 @@ func modelGatewayHealthCheckQueueReasons(item modelgatewayobservability.RuntimeS
 	if item.ProbeRecoveryPending {
 		addReason("probe_recovery_pending", 78, "info")
 	}
-	if len(modelGatewayHealthCheckTriggerScoreItems(item, thresholds)) > 0 {
+	if len(triggerScoreItems) > 0 {
 		addReason("low_score", 72, "warning")
 	}
-	if item.RealSampleCount30m <= 0 {
-		addReason("low_traffic", 58, "info")
+	if len(reasons) == 0 {
+		return nil
 	}
 	if item.SampleCount < thresholds.MissingSamples {
 		addReason("missing_samples", 48, "neutral")
@@ -2597,9 +2598,6 @@ func modelGatewayHealthCheckQueueAccumulateSummary(summary *ModelGatewayHealthCh
 	if modelGatewayHealthCheckReasonsContain(reasons, "low_score") {
 		summary.LowScoreCount++
 	}
-	if modelGatewayHealthCheckReasonsContain(reasons, "low_traffic") {
-		summary.LowTrafficCount++
-	}
 	if item.ProbeRecoveryPending || item.FailureAvoidance || modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") || modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") {
 		summary.RecoveryCount++
 	}
@@ -2623,9 +2621,6 @@ func modelGatewayHealthCheckQueueItemType(item modelgatewayobservability.Runtime
 	if modelGatewayHealthCheckReasonsContain(reasons, "low_score") {
 		return modelGatewayHealthCheckQueueTypeLowScore
 	}
-	if modelGatewayHealthCheckReasonsContain(reasons, "low_traffic") {
-		return modelGatewayHealthCheckQueueTypeLowTraffic
-	}
 	if len(reasons) > 0 {
 		return reasons[0].Key
 	}
@@ -2639,7 +2634,7 @@ func modelGatewayHealthCheckQueueItemMatchesType(itemQueueType string, item mode
 	case modelGatewayHealthCheckQueueTypeLowScore:
 		return modelGatewayHealthCheckReasonsContain(reasons, "low_score")
 	case modelGatewayHealthCheckQueueTypeLowTraffic:
-		return modelGatewayHealthCheckReasonsContain(reasons, "low_traffic")
+		return false
 	case modelGatewayHealthCheckQueueTypeRecovery:
 		return itemQueueType == modelGatewayHealthCheckQueueTypeRecovery || item.ProbeRecoveryPending || item.FailureAvoidance
 	case modelGatewayHealthCheckQueueTypeIsolated:

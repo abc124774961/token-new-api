@@ -422,6 +422,9 @@ func probeEndpointType(channel *model.Channel, modelName string, fallback consta
 	if endpointType == constant.EndpointTypeOpenAIResponseCompact {
 		return constant.EndpointTypeOpenAIResponse
 	}
+	if probeChannelPrefersResponses(channel, modelName) {
+		return constant.EndpointTypeOpenAIResponse
+	}
 	if endpointType != "" {
 		return endpointType
 	}
@@ -478,7 +481,7 @@ func endpointTypeForProbe(channel *model.Channel, modelName string) constant.End
 	if strings.HasSuffix(modelName, ratio_setting.CompactModelSuffix) {
 		return constant.EndpointTypeOpenAIResponse
 	}
-	if channel != nil && channel.Type == constant.ChannelTypeCodex {
+	if probeChannelPrefersResponses(channel, modelName) {
 		return constant.EndpointTypeOpenAIResponse
 	}
 	if strings.Contains(strings.ToLower(modelName), "codex") {
@@ -491,6 +494,27 @@ func endpointTypeForProbe(channel *model.Channel, modelName string) constant.End
 		}
 	}
 	return constant.EndpointTypeOpenAI
+}
+
+func probeChannelPrefersResponses(channel *model.Channel, modelName string) bool {
+	if channel == nil {
+		return false
+	}
+	if channel.Type == constant.ChannelTypeCodex {
+		return true
+	}
+	settings := channel.GetOtherSettings()
+	if settings.UsesResponsesWireAPI() || settings.UsesCodexCompatibilityMode() {
+		return true
+	}
+	profile := probeProviderProfile(channel, modelName)
+	if profile == nil {
+		return false
+	}
+	if profile.Name() == modelgatewayprovider.ProfileOpenAICodex {
+		return true
+	}
+	return profile.ProxyMode(channel, modelName) == modelgatewayprovider.ProxyModeNativeResponses
 }
 
 func requestPathForEndpoint(endpointType constant.EndpointType, modelName string) string {

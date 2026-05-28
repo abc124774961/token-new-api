@@ -477,7 +477,7 @@ func firstNonEmptyString(values ...string) string {
 func newAPIErrorFromResponsesStreamFailure(streamResponse dto.ResponsesStreamResponse, fallbackMessage string) *types.NewAPIError {
 	if streamResponse.Response != nil {
 		if oaiErr := streamResponse.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
-			return types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+			return service.UpstreamOpenAIError(*oaiErr, http.StatusInternalServerError)
 		}
 	}
 	if fallbackMessage == "" {

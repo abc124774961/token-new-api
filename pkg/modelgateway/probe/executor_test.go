@@ -68,6 +68,36 @@ func TestBuildProbeRequestUsesStreaming(t *testing.T) {
 	)
 }
 
+func TestProbeEndpointTypeHonorsExplicitCodexResponsesProfile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	settings := dto.ChannelOtherSettings{
+		ProviderProfile: modelgatewayprovider.ProfileOpenAICodex,
+		ProxyProfile:    modelgatewayprovider.ProxyModeNativeResponses,
+	}
+	settingsBytes, err := common.Marshal(settings)
+	require.NoError(t, err)
+	channel := &model.Channel{
+		Type:          constant.ChannelTypeOpenAI,
+		OtherSettings: string(settingsBytes),
+	}
+
+	require.Equal(t, constant.EndpointTypeOpenAIResponse, endpointTypeForProbe(channel, "gpt-5.5"))
+	require.Equal(t, constant.EndpointTypeOpenAIResponse, probeEndpointType(channel, "gpt-5.5", constant.EndpointTypeOpenAI))
+
+	request, ok := buildProbeRequest("gpt-5.5", probeEndpointType(channel, "gpt-5.5", constant.EndpointTypeOpenAI)).(*dto.OpenAIResponsesRequest)
+	require.True(t, ok)
+	require.NotNil(t, request.Stream)
+	require.True(t, *request.Stream)
+
+	ctx, _ := newProbeGinContext(context.Background(), "probe-explicit-codex", requestPathForEndpoint(constant.EndpointTypeOpenAIResponse, "gpt-5.5"))
+	common.SetContextKey(ctx, constant.ContextKeyChannelOtherSetting, settings)
+	info := relaycommon.GenRelayInfoOpenAI(ctx, request)
+	info.RelayMode = 0
+	info.RequestURLPath = "/v1/responses"
+	info.InitChannelMeta(ctx)
+	require.True(t, request.IsStream(ctx))
+}
+
 func TestBuildProbeRequestUsesPromptLibraryCategory(t *testing.T) {
 	openAIRequest, ok := buildProbeRequestWithCategory("gpt-4.1", constant.EndpointTypeOpenAI, PromptCategoryZH).(*dto.GeneralOpenAIRequest)
 	require.True(t, ok)

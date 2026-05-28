@@ -1009,6 +1009,42 @@ func TestProcessChannelErrorSkipsTemporaryAvoidanceForBalanceInsufficient(t *tes
 	require.Nil(t, service.GetChannelFailureAvoidanceStatus(914))
 }
 
+func TestShouldRetrySwitchesChannelForSanitizedUpstreamBalanceInsufficient(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 920, "default", "gpt-5.5", 0)
+	serviceSeedRelayRetryChannel(t, db, 921, "default", "gpt-5.5", 0)
+
+	ctx := newRelayRetryContext()
+	ctx.Set("use_channel", []string{"920"})
+	service.MarkChannelBalanceSkipped(ctx, 920)
+	service.MarkChannelBalanceInsufficient(920)
+	t.Cleanup(func() {
+		service.ClearChannelBalanceInsufficient(920)
+		service.ClearChannelBalanceInsufficient(921)
+	})
+
+	retry := 0
+	extraRetries := 0
+	param := &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-5.5",
+		EndpointType: constant.EndpointTypeOpenAI,
+		Retry:        &retry,
+		ExtraRetries: &extraRetries,
+	}
+	err := types.NewOpenAIError(
+		errors.New("上游渠道暂不可用，请稍后重试"),
+		types.ErrorCodeUpstreamUnavailable,
+		http.StatusServiceUnavailable,
+	)
+
+	require.True(t, service.IsBalanceInsufficientError(err))
+	require.True(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
+	require.Equal(t, 1, param.GetExtraRetries())
+}
+
 func TestProcessChannelErrorUpdatesBalanceReasonWhenAlreadyAutoDisabled(t *testing.T) {
 	db := serviceSetupRelayRetryDB(t)
 	originalAutomaticDisable := common.AutomaticDisableChannelEnabled

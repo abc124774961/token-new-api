@@ -367,11 +367,11 @@ func TestProbeSelectorDoesNotUseLongNoSuccessWhenSameRuntimeRecentlySucceededInS
 	require.NotContains(t, probeCandidateReasons(candidates), reasonLongNoSuccess)
 }
 
-func TestProbeSelectorSelectsLowTrafficOnlyForRecentScopes(t *testing.T) {
+func TestProbeSelectorDoesNotSelectLowTrafficForHealthyRecentScope(t *testing.T) {
 	db := setupProbeSelectorTestDB(t)
 	now := time.Now()
 	seedProbeSelectorRecentRequest(t, db, "req-traffic", "gpt-4.1", "codex-pro", "codex-pro", now.Unix())
-	target := seedProbeSelectorChannel(t, db, 1, "target", "codex-pro", "gpt-4.1", 1)
+	_ = seedProbeSelectorChannel(t, db, 1, "target", "codex-pro", "gpt-4.1", 1)
 	_ = seedProbeSelectorChannel(t, db, 2, "other-model", "codex-pro", "gpt-5.5", 1)
 	_ = seedProbeSelectorChannel(t, db, 3, "other-group", "codex-plus", "gpt-4.1", 1)
 	model.InitChannelCache()
@@ -379,29 +379,27 @@ func TestProbeSelectorSelectsLowTrafficOnlyForRecentScopes(t *testing.T) {
 	selector := NewProbeSelector(scheduler.NewMemoryRuntimeSnapshotStore(), nil)
 	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: time.Second})
 	require.NoError(t, err)
-	require.Len(t, candidates, 1)
-	require.Equal(t, reasonLowTraffic, candidates[0].Reason)
-	require.Equal(t, target.Id, candidates[0].Channel.Id)
-	require.Equal(t, "gpt-4.1", candidates[0].Model)
-	require.Equal(t, "codex-pro", candidates[0].Group)
+	require.Empty(t, candidates)
 }
 
-func TestProbeSelectorLowTrafficUsesSchedulingRuntimeKey(t *testing.T) {
+func TestProbeSelectorDoesNotUseLowTrafficForCodexRuntimeKeyActivation(t *testing.T) {
 	db := setupProbeSelectorTestDB(t)
 	now := time.Now()
 	seedProbeSelectorRecentRequest(t, db, "req-codex-runtime-key", "gpt-5.4", "codex-plus", "codex-plus", now.Unix())
 	channel := seedProbeSelectorChannel(t, db, 4, "toioto", "codex-plus", "gpt-5.4", 1)
 	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", channel.Id).Update("type", constant.ChannelTypeCodex).Error)
+	channel.Type = constant.ChannelTypeCodex
 	model.InitChannelCache()
 
 	selector := NewProbeSelector(scheduler.NewMemoryRuntimeSnapshotStore(), nil)
 	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: time.Second})
 	require.NoError(t, err)
-	require.Len(t, candidates, 1)
-	require.Equal(t, reasonLowTraffic, candidates[0].Reason)
-	require.Equal(t, constant.EndpointTypeOpenAIResponse, candidates[0].Key.EndpointType)
-	require.Contains(t, candidates[0].Key.CapabilityFingerprint, modelgatewayprovider.ProfileOpenAICodex)
-	require.Contains(t, candidates[0].Key.CapabilityFingerprint, modelgatewayprovider.ProxyModeNativeResponses)
+	require.Empty(t, candidates)
+
+	key := probeRuntimeKeyForChannel(channel, "gpt-5.4", "codex-plus", endpointTypeForProbe(channel, "gpt-5.4"), core.RuntimeKey{})
+	require.Equal(t, constant.EndpointTypeOpenAIResponse, key.EndpointType)
+	require.Contains(t, key.CapabilityFingerprint, modelgatewayprovider.ProfileOpenAICodex)
+	require.Contains(t, key.CapabilityFingerprint, modelgatewayprovider.ProxyModeNativeResponses)
 }
 
 func TestProbeSelectorCollapsesCandidatesToSingleModelPerChannel(t *testing.T) {
@@ -415,12 +413,24 @@ func TestProbeSelectorCollapsesCandidatesToSingleModelPerChannel(t *testing.T) {
 	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", channel.Id).Update("test_model", testModel).Error)
 	model.InitChannelCache()
 
-	selector := NewProbeSelector(scheduler.NewMemoryRuntimeSnapshotStore(), nil)
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	for _, modelName := range []string{"gpt-4.1", "gpt-5.5"} {
+		key := core.RuntimeKey{RequestedModel: modelName, UpstreamModel: modelName, ChannelID: channel.Id, Group: "codex-plus", EndpointType: constant.EndpointTypeOpenAI}
+		store.Put(core.RuntimeSnapshot{
+			Key:                key,
+			SampleCount:        8,
+			SuccessRate:        0.3,
+			LastRealAttemptAt:  now.Unix(),
+			RealSampleCount30m: 1,
+		})
+	}
+
+	selector := NewProbeSelector(store, nil)
 	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: time.Second})
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	require.Equal(t, channel.Id, candidates[0].Channel.Id)
-	require.Equal(t, reasonLowTraffic, candidates[0].Reason)
+	require.Equal(t, reasonLowScore, candidates[0].Reason)
 	require.Equal(t, "gpt-5.5", candidates[0].Model)
 	require.Equal(t, "codex-plus", candidates[0].Group)
 }

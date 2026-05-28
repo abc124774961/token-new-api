@@ -3096,21 +3096,17 @@ func TestGetModelGatewayHealthCheckQueueReturnsPendingReasons(t *testing.T) {
 
 	payload := decodeModelGatewayHealthCheckQueueResponse(t, resp)
 	require.True(t, payload.Success)
-	require.Equal(t, 2, payload.Data.Summary.PendingCount)
-	require.Equal(t, 2, payload.Data.Summary.ReturnedCount)
+	require.Equal(t, 1, payload.Data.Summary.PendingCount)
+	require.Equal(t, 1, payload.Data.Summary.ReturnedCount)
 	require.Equal(t, 1, payload.Data.Summary.LowScoreCount)
-	require.Equal(t, 1, payload.Data.Summary.LowTrafficCount)
+	require.Equal(t, 0, payload.Data.Summary.LowTrafficCount)
 	require.Equal(t, 1, payload.Data.Summary.RecoveryCount)
 	require.Equal(t, 0.62, payload.Data.Thresholds.LowScore)
-	require.Len(t, payload.Data.Items, 2)
+	require.Len(t, payload.Data.Items, 1)
 	require.Equal(t, 801, payload.Data.Items[0].ChannelID)
 	require.Equal(t, "recovery", payload.Data.Items[0].QueueType)
 	require.Equal(t, "probe_recovery_pending", payload.Data.Items[0].Reasons[0].Key)
 	require.True(t, modelGatewayHealthCheckTestReasonsContain(payload.Data.Items[0].Reasons, "low_score"))
-	require.Equal(t, 802, payload.Data.Items[1].ChannelID)
-	require.Equal(t, "low_traffic", payload.Data.Items[1].QueueType)
-	require.True(t, modelGatewayHealthCheckTestReasonsContain(payload.Data.Items[1].Reasons, "low_traffic"))
-	require.NotEmpty(t, payload.Data.Items[1].RowKey)
 	require.Nil(t, payload.Data.QueueSnapshot)
 }
 
@@ -3233,11 +3229,53 @@ func TestGetModelGatewayHealthCheckQueueFiltersQueueType(t *testing.T) {
 
 	payload := decodeModelGatewayHealthCheckQueueResponse(t, resp)
 	require.True(t, payload.Success)
-	require.Equal(t, 1, payload.Data.Summary.PendingCount)
-	require.Equal(t, 1, payload.Data.Summary.ReturnedCount)
+	require.Equal(t, 0, payload.Data.Summary.PendingCount)
+	require.Equal(t, 0, payload.Data.Summary.ReturnedCount)
 	require.Equal(t, "low_traffic", payload.Data.Summary.FilteredQueueType)
-	require.Len(t, payload.Data.Items, 1)
-	require.Equal(t, 811, payload.Data.Items[0].ChannelID)
+	require.Empty(t, payload.Data.Items)
+}
+
+func TestGetModelGatewayHealthCheckQueueIgnoresHealthyLowTrafficRuntime(t *testing.T) {
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		ProbeLowScoreThreshold:      0.62,
+		ProbeMissingSampleThreshold: 3,
+	})
+	t.Cleanup(restoreSetting)
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	require.NotNil(t, runtimeDeps)
+
+	runtimeDeps.LocalSnapshotStore.Put(core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			RequestedModel: "gpt-5.5",
+			UpstreamModel:  "gpt-5.5",
+			ChannelID:      813,
+			Group:          "vip",
+			EndpointType:   constant.EndpointTypeOpenAIResponse,
+		},
+		SuccessRate:        0.99,
+		TTFTMs:             300,
+		DurationMs:         1200,
+		TokensPerSecond:    80,
+		CostRatio:          0.2,
+		CostReferenceRatio: 0.1,
+		GroupPriorityRatio: 1,
+		SampleCount:        8,
+		RealSampleCount30m: 0,
+	})
+
+	router := gin.New()
+	router.GET("/api/model_gateway/observability/health-check/queue", GetModelGatewayHealthCheckQueue)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/observability/health-check/queue", nil)
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayHealthCheckQueueResponse(t, resp)
+	require.True(t, payload.Success)
+	require.Equal(t, 0, payload.Data.Summary.PendingCount)
+	require.Empty(t, payload.Data.Items)
 }
 
 func TestGetModelGatewayHealthCheckQueueRejectsInvalidQueueType(t *testing.T) {

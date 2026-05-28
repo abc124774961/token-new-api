@@ -111,15 +111,6 @@ func (s *ProbeSelector) Select(config ProbeConfig) ([]ProbeCandidate, error) {
 		}
 		candidateByKey[candidate.Key] = candidate
 	}
-	for _, candidate := range s.lowTrafficCandidatesLocked(channelByID, recent, now, config) {
-		if _, exists := candidateByKey[candidate.Key]; exists {
-			continue
-		}
-		if skipRecentRealRequestProbe(candidate, config, s.store, now) {
-			continue
-		}
-		candidateByKey[candidate.Key] = candidate
-	}
 	candidates := make([]ProbeCandidate, 0, len(candidateByKey))
 	for _, candidate := range candidateByKey {
 		candidates = append(candidates, candidate)
@@ -259,47 +250,6 @@ func (s *ProbeSelector) lowHealthCandidatesLocked(channelByID map[int]*model.Cha
 			continue
 		}
 		candidates = append(candidates, candidate)
-	}
-	return candidates
-}
-
-func (s *ProbeSelector) lowTrafficCandidatesLocked(channelByID map[int]*model.Channel, recent probeRecentScopes, now time.Time, config ProbeConfig) []ProbeCandidate {
-	candidates := make([]ProbeCandidate, 0)
-	for _, channel := range channelByID {
-		for _, group := range channel.GetGroups() {
-			group = strings.TrimSpace(group)
-			if group == "" || !recent.HasGroup(group) {
-				continue
-			}
-			for _, modelName := range channel.GetModels() {
-				modelName = strings.TrimSpace(modelName)
-				if !recent.Contains(modelName, group) || !probeModelSupported(modelName) {
-					continue
-				}
-				key := probeRuntimeKeyForChannel(channel, modelName, group, endpointTypeForProbe(channel, modelName), core.RuntimeKey{})
-				if !probeChannelSupportsKey(channel, key) {
-					continue
-				}
-				snapshot, ok := s.snapshotForKey(key)
-				if configErrorIsolatedRuntimeKey(key) || (ok && configErrorIsolatedSnapshot(snapshot)) {
-					continue
-				}
-				if !lowTrafficProbeNeeded(snapshot, ok, now, config) {
-					continue
-				}
-				if !s.probeIntervalPassedLocked(key, snapshot, now, config) {
-					continue
-				}
-				candidates = append(candidates, ProbeCandidate{
-					Channel:          channel,
-					Model:            modelName,
-					Group:            group,
-					Key:              key,
-					Reason:           reasonLowTraffic,
-					PromptCategories: config.PromptCategories,
-				})
-			}
-		}
 	}
 	return candidates
 }
@@ -638,19 +588,6 @@ func probeCandidateFromSnapshot(channel *model.Channel, snapshot core.RuntimeSna
 	}
 }
 
-func lowTrafficProbeNeeded(snapshot core.RuntimeSnapshot, ok bool, now time.Time, config ProbeConfig) bool {
-	if !ok || snapshot.SampleCount <= 0 {
-		return true
-	}
-	if snapshot.LastRealAttemptAt <= 0 || snapshot.LastRealAttemptAt < now.Add(-probeActivationWindow).Unix() {
-		return true
-	}
-	if snapshot.RealSampleCount30m <= 0 {
-		return true
-	}
-	return snapshot.SampleCount < config.MissingSampleThreshold
-}
-
 func eligibleProbeChannels(channels []*model.Channel) map[int]*model.Channel {
 	result := make(map[int]*model.Channel, len(channels))
 	for _, channel := range channels {
@@ -716,11 +653,6 @@ func (s probeRecentScopes) Empty() bool {
 
 func (s probeRecentScopes) Contains(modelName string, group string) bool {
 	_, ok := s.pairs[probeScopeKey(modelName, group)]
-	return ok
-}
-
-func (s probeRecentScopes) HasGroup(group string) bool {
-	_, ok := s.groups[strings.TrimSpace(group)]
 	return ok
 }
 
@@ -963,8 +895,8 @@ func probeRuntimeKeyForChannel(channel *model.Channel, requestedModel string, gr
 	if key.EndpointType == "" {
 		key.EndpointType = endpointType
 	}
-	if key.EndpointType == "" && channel != nil {
-		key.EndpointType = endpointTypeForProbe(channel, requestedModel)
+	if channel != nil {
+		key.EndpointType = probeEndpointType(channel, requestedModel, key.EndpointType)
 	}
 	if channel != nil {
 		profile := probeProviderProfile(channel, requestedModel)

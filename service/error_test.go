@@ -2,10 +2,11 @@ package service
 
 import (
 	"context"
-	"testing"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/types"
@@ -94,4 +95,142 @@ func TestRelayErrorHandlerAttachesUpstreamResponseMetadata(t *testing.T) {
 	require.True(t, metadata.BodyTruncated)
 	require.Len(t, metadata.BodySnippet, upstreamResponseSnippetLimit)
 	require.Equal(t, strings.Repeat("x", upstreamResponseSnippetLimit), metadata.BodySnippet)
+}
+
+func TestRelayErrorHandlerHidesUpstreamBalanceInsufficientFromClient(t *testing.T) {
+	t.Parallel()
+
+	body := `{"error":{"message":"Insufficient account balance","type":"billing_error","code":"INSUFFICIENT_BALANCE"}}`
+	resp := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Status:     "403 Forbidden",
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+		},
+		Body: io.NopCloser(strings.NewReader(body)),
+	}
+
+	err := RelayErrorHandler(context.Background(), resp, false)
+	require.NotNil(t, err)
+	require.Equal(t, types.ErrorCodeUpstreamUnavailable, err.GetErrorCode())
+	require.Equal(t, http.StatusServiceUnavailable, err.StatusCode)
+	require.True(t, IsBalanceInsufficientError(err))
+
+	clientErr := err.ToOpenAIError()
+	require.Equal(t, upstreamBalanceInsufficientClientMessage, clientErr.Message)
+	require.NotContains(t, strings.ToLower(clientErr.Message), "insufficient account balance")
+	require.NotContains(t, strings.ToLower(clientErr.Message), "balance")
+
+	var metadata struct {
+		StatusCode  int    `json:"status_code"`
+		StatusText  string `json:"status_text"`
+		BodySnippet string `json:"body_snippet"`
+		BodyLength  int    `json:"body_length"`
+	}
+	require.NoError(t, common.Unmarshal(err.Metadata, &metadata))
+	require.Equal(t, http.StatusForbidden, metadata.StatusCode)
+	require.Equal(t, "403 Forbidden", metadata.StatusText)
+	require.Equal(t, len(body), metadata.BodyLength)
+	require.Empty(t, metadata.BodySnippet)
+	require.NotContains(t, common.JsonRawMessageToString(err.Metadata), "Insufficient account balance")
+}
+
+func TestRelayErrorHandlerHidesPlainTextUpstreamBalanceInsufficient(t *testing.T) {
+	t.Parallel()
+
+	body := "unexpected status 403 Forbidden: Insufficient account balance"
+	resp := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Status:     "403 Forbidden",
+		Header: http.Header{
+			"Content-Type": []string{"text/plain"},
+		},
+		Body: io.NopCloser(strings.NewReader(body)),
+	}
+
+	err := RelayErrorHandler(context.Background(), resp, false)
+	require.NotNil(t, err)
+	require.Equal(t, types.ErrorCodeUpstreamUnavailable, err.GetErrorCode())
+	require.Equal(t, http.StatusServiceUnavailable, err.StatusCode)
+	require.True(t, IsBalanceInsufficientError(err))
+	require.NotContains(t, common.JsonRawMessageToString(err.Metadata), "Insufficient account balance")
+	require.NotContains(t, err.ToOpenAIError().Message, "Insufficient account balance")
+}
+
+func TestRelayErrorHandlerKeepsUpstreamBalanceDetailForExplicitChannelTest(t *testing.T) {
+	t.Parallel()
+
+	body := `{"error":{"message":"Insufficient account balance","type":"billing_error","code":"INSUFFICIENT_BALANCE"}}`
+	resp := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Status:     "403 Forbidden",
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+
+	err := RelayErrorHandler(context.Background(), resp, true)
+	require.NotNil(t, err)
+	require.NotEqual(t, types.ErrorCodeUpstreamUnavailable, err.GetErrorCode())
+	require.Contains(t, err.Error(), "Insufficient account balance")
+	require.Equal(t, http.StatusForbidden, err.StatusCode)
+}
+
+func TestUpstreamOpenAIErrorHidesBalanceInsufficient(t *testing.T) {
+	t.Parallel()
+
+	err := UpstreamOpenAIError(types.OpenAIError{
+		Message: "Insufficient account balance",
+		Type:    "billing_error",
+		Code:    "INSUFFICIENT_BALANCE",
+	}, http.StatusForbidden)
+
+	require.NotNil(t, err)
+	require.Equal(t, types.ErrorCodeUpstreamUnavailable, err.GetErrorCode())
+	require.Equal(t, http.StatusServiceUnavailable, err.StatusCode)
+	require.True(t, IsBalanceInsufficientError(err))
+	require.Equal(t, upstreamBalanceInsufficientClientMessage, err.ToOpenAIError().Message)
+	require.NotContains(t, common.JsonRawMessageToString(err.Metadata), "Insufficient account balance")
+}
+
+func TestSanitizeClientRelayErrorHidesUnhandledUpstreamBalanceInsufficient(t *testing.T) {
+	t.Parallel()
+
+	err := types.NewOpenAIError(
+		errors.New("unexpected status 403 Forbidden: Insufficient account balance"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusForbidden,
+	)
+
+	sanitized := SanitizeClientRelayError(err)
+	require.NotNil(t, sanitized)
+	require.Equal(t, types.ErrorCodeUpstreamUnavailable, sanitized.GetErrorCode())
+	require.Equal(t, http.StatusServiceUnavailable, sanitized.StatusCode)
+	require.Equal(t, upstreamBalanceInsufficientClientMessage, sanitized.ToOpenAIError().Message)
+}
+
+func TestSanitizeClientRelayErrorKeepsLocalUserQuotaMessage(t *testing.T) {
+	t.Parallel()
+
+	err := types.NewErrorWithStatusCode(
+		errors.New("用户额度不足"),
+		types.ErrorCodeInsufficientUserQuota,
+		http.StatusForbidden,
+		types.ErrOptionWithSkipRetry(),
+	)
+
+	require.Same(t, err, SanitizeClientRelayError(err))
+}
+
+func TestSanitizeClientRelayErrorHidesRetryableUpstreamUserQuotaCode(t *testing.T) {
+	t.Parallel()
+
+	err := types.WithOpenAIError(types.OpenAIError{
+		Message: "Insufficient account balance",
+		Type:    "insufficient_quota",
+		Code:    string(types.ErrorCodeInsufficientUserQuota),
+	}, http.StatusForbidden)
+
+	sanitized := SanitizeClientRelayError(err)
+	require.NotSame(t, err, sanitized)
+	require.Equal(t, types.ErrorCodeUpstreamUnavailable, sanitized.GetErrorCode())
+	require.NotContains(t, sanitized.ToOpenAIError().Message, "Insufficient account balance")
 }
