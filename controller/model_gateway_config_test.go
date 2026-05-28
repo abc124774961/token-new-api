@@ -106,6 +106,10 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	setting.CostFirstStickyEscapeCacheSpeedDrop = 0.04
 	setting.CostFirstStickyEscapeMinSamples = 8
 	setting.CostFirstStickyEscapeSuccessSlack = 0.03
+	setting.CostFirstGuardEnabled = true
+	setting.CostFirstGuardMultiple = 1.8
+	setting.CostFirstGuardSuccessAdvantage = 0.04
+	setting.CostFirstGuardSpeedAdvantage = 0.09
 	setting.CircuitErrorPolicies = map[string]scheduler_setting.CircuitErrorPolicySetting{
 		"unknown": {
 			FailureThreshold:   0.9,
@@ -188,6 +192,10 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.Equal(t, 0.04, payload.Data.Setting.CostFirstStickyEscapeCacheSpeedDrop)
 	require.Equal(t, 8, payload.Data.Setting.CostFirstStickyEscapeMinSamples)
 	require.Equal(t, 0.03, payload.Data.Setting.CostFirstStickyEscapeSuccessSlack)
+	require.True(t, payload.Data.Setting.CostFirstGuardEnabled)
+	require.Equal(t, 1.8, payload.Data.Setting.CostFirstGuardMultiple)
+	require.Equal(t, 0.04, payload.Data.Setting.CostFirstGuardSuccessAdvantage)
+	require.Equal(t, 0.09, payload.Data.Setting.CostFirstGuardSpeedAdvantage)
 	require.Len(t, payload.Data.Setting.CircuitErrorPolicies, 2)
 	require.Equal(t, 0.25, payload.Data.Setting.CircuitErrorPolicies["rate_limit"].FailureThreshold)
 	require.Equal(t, 2, payload.Data.Setting.CircuitErrorPolicies["rate_limit"].MinSamples)
@@ -262,6 +270,12 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	var stickyEscapeSpeedOption model.Option
 	require.NoError(t, db.First(&stickyEscapeSpeedOption, "key = ?", "scheduler_setting.cost_first_sticky_escape_max_speed_score_drop").Error)
 	require.Equal(t, "0.07", stickyEscapeSpeedOption.Value)
+	var costGuardMultipleOption model.Option
+	require.NoError(t, db.First(&costGuardMultipleOption, "key = ?", "scheduler_setting.cost_first_guard_multiple").Error)
+	require.Equal(t, "1.8", costGuardMultipleOption.Value)
+	var costGuardSpeedOption model.Option
+	require.NoError(t, db.First(&costGuardSpeedOption, "key = ?", "scheduler_setting.cost_first_guard_speed_advantage").Error)
+	require.Equal(t, "0.09", costGuardSpeedOption.Value)
 	require.Equal(t, "35", common.OptionMap["scheduler_setting.rollout_percent"])
 }
 

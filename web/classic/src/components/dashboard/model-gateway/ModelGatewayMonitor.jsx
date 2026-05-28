@@ -2623,6 +2623,12 @@ function formatBillingRatio(value) {
   return numeric.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
 }
 
+function formatRatioValue(value, digits = 4) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '--';
+  return `${numeric.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}x`;
+}
+
 function formatUserRequestGroupRatio(record) {
   const actualGroup = String(record?.actual_group || '').trim();
   const billingGroup = String(record?.billing?.group || '').trim();

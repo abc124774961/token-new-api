@@ -70,6 +70,10 @@ type SchedulerSetting struct {
 	CostFirstStickyEscapeCacheSpeedDrop  float64                              `json:"cost_first_sticky_escape_cache_max_speed_score_drop"`
 	CostFirstStickyEscapeMinSamples      int                                  `json:"cost_first_sticky_escape_min_samples"`
 	CostFirstStickyEscapeSuccessSlack    float64                              `json:"cost_first_sticky_escape_success_slack"`
+	CostFirstGuardEnabled                bool                                 `json:"cost_first_guard_enabled"`
+	CostFirstGuardMultiple               float64                              `json:"cost_first_guard_multiple"`
+	CostFirstGuardSuccessAdvantage       float64                              `json:"cost_first_guard_success_advantage"`
+	CostFirstGuardSpeedAdvantage         float64                              `json:"cost_first_guard_speed_advantage"`
 	QueueEnabled                         bool                                 `json:"queue_enabled"`
 	QueueDefaultTimeoutMs                int                                  `json:"queue_default_timeout_ms"`
 	QueueMaxDepthPerChannel              int                                  `json:"queue_max_depth_per_channel"`
@@ -148,6 +152,10 @@ var schedulerSetting = SchedulerSetting{
 	CostFirstStickyEscapeCacheSpeedDrop:  0.03,
 	CostFirstStickyEscapeMinSamples:      5,
 	CostFirstStickyEscapeSuccessSlack:    0.02,
+	CostFirstGuardEnabled:                true,
+	CostFirstGuardMultiple:               1.8,
+	CostFirstGuardSuccessAdvantage:       0.03,
+	CostFirstGuardSpeedAdvantage:         0.08,
 	QueueEnabled:                         true,
 	QueueDefaultTimeoutMs:                2000,
 	QueueMaxDepthPerChannel:              64,
@@ -279,6 +287,10 @@ func defaultSchedulerSetting() SchedulerSetting {
 	setting.CostFirstStickyEscapeCacheSpeedDrop = 0.03
 	setting.CostFirstStickyEscapeMinSamples = 5
 	setting.CostFirstStickyEscapeSuccessSlack = 0.02
+	setting.CostFirstGuardEnabled = true
+	setting.CostFirstGuardMultiple = 1.8
+	setting.CostFirstGuardSuccessAdvantage = 0.03
+	setting.CostFirstGuardSpeedAdvantage = 0.08
 	setting.QueueEnabled = true
 	setting.QueueDefaultTimeoutMs = 2000
 	setting.QueueMaxDepthPerChannel = 64

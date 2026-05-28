@@ -31,6 +31,7 @@ type RuntimePolicySettings struct {
 	CacheAffinityKeepScoreRatio      float64
 	CacheAffinityEnabled             bool
 	CostFirstStickyEscape            scheduler.CostFirstStickyEscapeConfig
+	CostFirstGuard                   scheduler.CostFirstGuardConfig
 	RuntimeSyncEnabled               bool
 	RuntimeSyncRedisEnabled          bool
 	RuntimeSyncNodeID                string
@@ -82,6 +83,12 @@ func RuntimePolicySetting() RuntimePolicySettings {
 			CacheSpeedDrop: setting.CostFirstStickyEscapeCacheSpeedDrop,
 			MinSamples:     setting.CostFirstStickyEscapeMinSamples,
 			SuccessSlack:   setting.CostFirstStickyEscapeSuccessSlack,
+		},
+		CostFirstGuard: scheduler.CostFirstGuardConfig{
+			Enabled:          setting.CostFirstGuardEnabled,
+			Multiple:         setting.CostFirstGuardMultiple,
+			SuccessAdvantage: setting.CostFirstGuardSuccessAdvantage,
+			SpeedAdvantage:   setting.CostFirstGuardSpeedAdvantage,
 		},
 		RuntimeSyncEnabled:               setting.RuntimeSyncEnabled,
 		RuntimeSyncRedisEnabled:          setting.RuntimeSyncRedisEnabled,

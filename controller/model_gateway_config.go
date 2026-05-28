@@ -150,6 +150,9 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	setting.CostFirstStickyEscapeCacheSpeedDrop = clampModelGatewayConfigFloat(defaultFloat(setting.CostFirstStickyEscapeCacheSpeedDrop, defaults.CostFirstStickyEscapeCacheSpeedDrop), 0, 1)
 	setting.CostFirstStickyEscapeMinSamples = normalizeModelGatewayConfigMin(setting.CostFirstStickyEscapeMinSamples, 1, defaults.CostFirstStickyEscapeMinSamples)
 	setting.CostFirstStickyEscapeSuccessSlack = clampModelGatewayConfigFloat(defaultFloat(setting.CostFirstStickyEscapeSuccessSlack, defaults.CostFirstStickyEscapeSuccessSlack), 0, 1)
+	setting.CostFirstGuardMultiple = clampModelGatewayConfigFloat(defaultFloat(setting.CostFirstGuardMultiple, defaults.CostFirstGuardMultiple), 1.01, 100)
+	setting.CostFirstGuardSuccessAdvantage = clampModelGatewayConfigFloat(defaultFloat(setting.CostFirstGuardSuccessAdvantage, defaults.CostFirstGuardSuccessAdvantage), 0, 1)
+	setting.CostFirstGuardSpeedAdvantage = clampModelGatewayConfigFloat(defaultFloat(setting.CostFirstGuardSpeedAdvantage, defaults.CostFirstGuardSpeedAdvantage), 0, 1)
 	setting.QueueDefaultTimeoutMs = normalizeModelGatewayConfigMin(setting.QueueDefaultTimeoutMs, 1, defaults.QueueDefaultTimeoutMs)
 	setting.QueueMaxDepthPerChannel = normalizeModelGatewayConfigMin(setting.QueueMaxDepthPerChannel, 1, defaults.QueueMaxDepthPerChannel)
 	setting.QueueDepthMultiplier = normalizeModelGatewayConfigMin(setting.QueueDepthMultiplier, 1, defaults.QueueDepthMultiplier)
@@ -359,6 +362,10 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 		"cost_first_sticky_escape_cache_max_speed_score_drop": strconv.FormatFloat(setting.CostFirstStickyEscapeCacheSpeedDrop, 'f', -1, 64),
 		"cost_first_sticky_escape_min_samples":                strconv.Itoa(setting.CostFirstStickyEscapeMinSamples),
 		"cost_first_sticky_escape_success_slack":              strconv.FormatFloat(setting.CostFirstStickyEscapeSuccessSlack, 'f', -1, 64),
+		"cost_first_guard_enabled":                            strconv.FormatBool(setting.CostFirstGuardEnabled),
+		"cost_first_guard_multiple":                           strconv.FormatFloat(setting.CostFirstGuardMultiple, 'f', -1, 64),
+		"cost_first_guard_success_advantage":                  strconv.FormatFloat(setting.CostFirstGuardSuccessAdvantage, 'f', -1, 64),
+		"cost_first_guard_speed_advantage":                    strconv.FormatFloat(setting.CostFirstGuardSpeedAdvantage, 'f', -1, 64),
 		"queue_enabled":                                       strconv.FormatBool(setting.QueueEnabled),
 		"queue_default_timeout_ms":                            strconv.Itoa(setting.QueueDefaultTimeoutMs),
 		"queue_max_depth_per_channel":                         strconv.Itoa(setting.QueueMaxDepthPerChannel),

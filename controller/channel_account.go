@@ -49,6 +49,7 @@ type ChannelAccountItem struct {
 	AccountIdentity modelgatewaycore.AccountIdentity     `json:"account_identity"`
 	CredentialRef   modelgatewaycore.CredentialRef       `json:"credential_ref"`
 	Proxy           *ModelGatewayProxyResponse           `json:"proxy,omitempty"`
+	Capabilities    *model.ChannelAccountCapability      `json:"capabilities,omitempty"`
 	SubjectShort    string                               `json:"subject_short,omitempty"`
 	CredentialShort string                               `json:"credential_short,omitempty"`
 	Score           *ChannelAccountScoreSummary          `json:"score,omitempty"`
@@ -768,6 +769,7 @@ func buildChannelAccountsResponse(channel *model.Channel) ChannelAccountsRespons
 	}
 	for _, account := range accounts {
 		item := buildChannelAccountItem(account, runtimeItems, len(accounts) == 1)
+		item.Capabilities = keyStatusCapabilities(channel, account.CredentialIndex)
 		if account.ProxyRef.ProxyID > 0 {
 			if proxyConfig, ok := proxiesByID[account.ProxyRef.ProxyID]; ok {
 				proxyResponse := buildModelGatewayProxyResponse(proxyConfig, proxyUsagesByID[account.ProxyRef.ProxyID])

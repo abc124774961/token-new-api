@@ -564,6 +564,60 @@ function proxyLabel(proxy, t) {
   return proxy.name || proxy.masked_address || `Proxy #${proxy.id}`;
 }
 
+function capabilityTag(label, value) {
+  if (value === true) {
+    return (
+      <Tag color='green' type='light' shape='circle' size='small'>
+        {label}
+      </Tag>
+    );
+  }
+  if (value === false) {
+    return (
+      <Tag color='red' type='light' shape='circle' size='small'>
+        {label}
+      </Tag>
+    );
+  }
+  return (
+    <Tag color='grey' type='light' shape='circle' size='small'>
+      {label}
+    </Tag>
+  );
+}
+
+function CapabilitiesCell({ capabilities, t }) {
+  if (!capabilities || !capabilities.checked_time) {
+    return <Text type='tertiary'>{t('未检测')}</Text>;
+  }
+
+  const content = (
+    <div className='ct-channel-account-capability-tip'>
+      <div>
+        {t('检测时间')}: {timestamp2string(capabilities.checked_time)}
+      </div>
+      {capabilities.last_endpoint ? (
+        <div>
+          {t('最后检测端点')}: {capabilities.last_endpoint}
+        </div>
+      ) : null}
+      {capabilities.last_message ? (
+        <div>{capabilities.last_message}</div>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <Tooltip content={content}>
+      <div className='ct-channel-account-capability-tags'>
+        {capabilityTag('Responses', capabilities.responses_write)}
+        {capabilityTag('Chat', capabilities.chat_completions_write)}
+        {capabilityTag('Compact', capabilities.responses_compact_write)}
+      </div>
+    </Tooltip>
+  );
+}
+
 function proxyAddress(proxy) {
   if (!proxy) return '';
   return proxy.masked_address || proxy.address || '';
@@ -952,8 +1006,10 @@ function buildColumns(
   onOpenProxy,
   onOpenProxyEdit,
   onTestAccount,
+  onProbeCapability,
   statusLoadingKey,
   testingAccountKey,
+  capabilityLoadingKey,
 ) {
   return [
     {
@@ -1040,6 +1096,14 @@ function buildColumns(
       render: (_, record) => <RuntimeKeysCell record={record} t={t} />,
     },
     {
+      title: t('账号权限'),
+      dataIndex: 'capabilities',
+      width: 230,
+      render: (capabilities) => (
+        <CapabilitiesCell capabilities={capabilities} t={t} />
+      ),
+    },
+    {
       title: t('最近活动'),
       dataIndex: 'recent_activity',
       key: 'recent_activity',
@@ -1069,6 +1133,7 @@ function buildColumns(
         const loadingKey = `${record.channel_id}-${record.credential_index}`;
         const loading = statusLoadingKey === loadingKey;
         const testing = testingAccountKey === loadingKey;
+        const probing = capabilityLoadingKey === loadingKey;
         return (
           <Space className='ct-channel-account-operation' spacing={6}>
             <Tooltip content={t('测试账号')}>
@@ -1084,6 +1149,17 @@ function buildColumns(
               >
                 {t('测试')}
               </Button>
+            </Tooltip>
+            <Tooltip content={t('检测账号权限')}>
+              <Button
+                size='small'
+                type='tertiary'
+                theme='borderless'
+                icon={<Search size={14} />}
+                loading={probing}
+                onClick={() => onProbeCapability(record)}
+                aria-label={t('检测账号权限')}
+              />
             </Tooltip>
             <Tooltip content={t('编辑账号')}>
               <Button
@@ -1185,6 +1261,8 @@ function ChannelAccount() {
   const [error, setError] = useState('');
   const [statusLoadingKey, setStatusLoadingKey] = useState('');
   const [testingAccountKey, setTestingAccountKey] = useState('');
+  const [capabilityLoadingKey, setCapabilityLoadingKey] = useState('');
+  const [capabilityBatchLoading, setCapabilityBatchLoading] = useState(false);
   const [batchLoading, setBatchLoading] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [keyword, setKeyword] = useState('');
@@ -1427,6 +1505,57 @@ function ChannelAccount() {
     },
     [id, loadAccounts, t],
   );
+
+  const probeAccountCapability = useCallback(
+    async (record) => {
+      const loadingKey = `${record.channel_id}-${record.credential_index}`;
+      setCapabilityLoadingKey(loadingKey);
+      try {
+        const response = await API.post('/api/channel/multi_key/manage', {
+          channel_id: Number(id),
+          action: 'probe_key_capabilities',
+          key_index: record.credential_index,
+        });
+        if (response?.data?.success === false) {
+          throw new Error(response?.data?.message || t('账号权限检测失败'));
+        }
+        showSuccess(response?.data?.message || t('账号权限检测完成'));
+        await loadAccounts();
+      } catch (err) {
+        const message =
+          err?.response?.data?.message ||
+          err?.message ||
+          t('账号权限检测失败');
+        showError(message);
+      } finally {
+        setCapabilityLoadingKey('');
+      }
+    },
+    [id, loadAccounts, t],
+  );
+
+  const probeAllAccountCapabilities = useCallback(async () => {
+    setCapabilityBatchLoading(true);
+    try {
+      const response = await API.post('/api/channel/multi_key/manage', {
+        channel_id: Number(id),
+        action: 'probe_all_key_capabilities',
+      });
+      if (response?.data?.success === false) {
+        throw new Error(response?.data?.message || t('账号权限检测失败'));
+      }
+      showSuccess(response?.data?.message || t('账号权限检测完成'));
+      await loadAccounts();
+    } catch (err) {
+      const message =
+        err?.response?.data?.message ||
+        err?.message ||
+        t('账号权限检测失败');
+      showError(message);
+    } finally {
+      setCapabilityBatchLoading(false);
+    }
+  }, [id, loadAccounts, t]);
 
   const deleteAccounts = useCallback(
     async (indexes) => {
@@ -1978,8 +2107,10 @@ function ChannelAccount() {
         openProxyModal,
         openProxyEditModal,
         testAccount,
+        probeAccountCapability,
         statusLoadingKey,
         testingAccountKey,
+        capabilityLoadingKey,
       ),
     [
       t,
@@ -1989,8 +2120,10 @@ function ChannelAccount() {
       openProxyModal,
       openProxyEditModal,
       testAccount,
+      probeAccountCapability,
       statusLoadingKey,
       testingAccountKey,
+      capabilityLoadingKey,
     ],
   );
   const items = data?.items || [];
@@ -2164,6 +2297,17 @@ function ChannelAccount() {
               </Popconfirm>
               <Button
                 size='small'
+                type='primary'
+                theme='light'
+                icon={<Search size={14} />}
+                loading={capabilityBatchLoading}
+                disabled={items.length === 0}
+                onClick={probeAllAccountCapabilities}
+              >
+                {t('检测全部权限')}
+              </Button>
+              <Button
+                size='small'
                 icon={<PlugZap size={14} />}
                 loading={proxySaving && batchProxyVisible}
                 disabled={selectedCount === 0}
@@ -2207,7 +2351,7 @@ function ChannelAccount() {
                 pageSizeOpts: [12, 24, 48],
               }}
               empty={<Empty description={t('暂无账号数据')} />}
-              scroll={{ x: 2060 }}
+              scroll={{ x: 2290 }}
               loading={loading}
             />
           )}

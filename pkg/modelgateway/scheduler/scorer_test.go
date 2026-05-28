@@ -231,6 +231,112 @@ func TestCostFirstPrefersCheapCandidateOverFasterExpensiveCandidate(t *testing.T
 	require.Greater(t, cheapPlus.RoutingTotal, fastPro.RoutingTotal)
 }
 
+func TestCostFirstGuardBlocksExpensiveScoreWinner(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	cheapKey := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 31, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	expensiveKey := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 32, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                cheapKey,
+		SuccessRate:        0.97,
+		TTFTMs:             1200,
+		DurationMs:         3200,
+		TokensPerSecond:    45,
+		CostRatio:          0.02,
+		GroupPriorityRatio: 1,
+		SampleCount:        80,
+		ScoreStatsJSON:     `{"version":1,"samples":80,"rates":{"completion":{"success":0,"total":80},"upstream_error":{"success":0,"total":80},"empty_output":{"success":0,"total":80},"stream_interrupted":{"success":0,"total":80}}}`,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                expensiveKey,
+		SuccessRate:        0.98,
+		TTFTMs:             1200,
+		DurationMs:         3000,
+		TokensPerSecond:    45,
+		CostRatio:          0.05,
+		GroupPriorityRatio: 1,
+		SampleCount:        80,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 31, Name: "cheap"}, Group: "default", RuntimeKey: cheapKey},
+			{Channel: &model.Channel{Id: 32, Name: "expensive"}, Group: "default", RuntimeKey: expensiveKey},
+		}),
+		store,
+		core.ScoreWeights{Success: 0.8, Speed: 0.2, Load: 0, Cost: 0, Group: 0},
+	)
+
+	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyCostFirst,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 31, plan.Channel.Id)
+	require.Equal(t, "cost_first_guard_baseline_selected", plan.SelectedReason)
+	require.NotNil(t, plan.CostGuardDecision)
+	require.Equal(t, "baseline", plan.CostGuardDecision.Decision)
+	require.InEpsilon(t, 2.5, plan.CostGuardDecision.CostMultiple, 0.0001)
+	require.InEpsilon(t, 1.8, plan.CostGuardDecision.CostGuardMultiple, 0.0001)
+	expensive := candidateExplanationByChannel(t, plan.Candidates, 32)
+	require.Equal(t, "baseline", expensive.CostGuardDecision)
+	require.Equal(t, "cost_first_guard_baseline_selected", expensive.CostGuardReason)
+}
+
+func TestCostFirstGuardAllowsExpensiveQualityOverride(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	cheapKey := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 33, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	expensiveKey := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 34, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                cheapKey,
+		SuccessRate:        0.94,
+		TTFTMs:             1300,
+		DurationMs:         3600,
+		TokensPerSecond:    40,
+		CostRatio:          0.02,
+		GroupPriorityRatio: 1,
+		SampleCount:        80,
+		ScoreStatsJSON:     `{"version":1,"samples":80,"rates":{"completion":{"success":0,"total":80},"upstream_error":{"success":0,"total":80},"empty_output":{"success":0,"total":80},"stream_interrupted":{"success":0,"total":80}}}`,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                expensiveKey,
+		SuccessRate:        0.99,
+		TTFTMs:             900,
+		DurationMs:         2600,
+		TokensPerSecond:    55,
+		CostRatio:          0.05,
+		GroupPriorityRatio: 1,
+		SampleCount:        80,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 33, Name: "cheap"}, Group: "default", RuntimeKey: cheapKey},
+			{Channel: &model.Channel{Id: 34, Name: "expensive"}, Group: "default", RuntimeKey: expensiveKey},
+		}),
+		store,
+		core.ScoreWeights{Success: 0.8, Speed: 0.2, Load: 0, Cost: 0, Group: 0},
+	)
+
+	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyCostFirst,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 34, plan.Channel.Id)
+	require.NotNil(t, plan.CostGuardDecision)
+	require.Equal(t, "override", plan.CostGuardDecision.Decision)
+	require.Equal(t, "cost_first_guard_quality_override", plan.CostGuardDecision.Reason)
+	require.GreaterOrEqual(t, plan.CostGuardDecision.SuccessDelta, 0.03)
+}
+
 func TestCostItemUsesCandidateMinimumCostReference(t *testing.T) {
 	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	candidate := core.Candidate{Channel: &model.Channel{Id: 1}, Group: "auto"}
@@ -250,7 +356,7 @@ func TestCostItemUsesCandidateMinimumCostReference(t *testing.T) {
 	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
 
 	require.Equal(t, 1.0, lowest.Breakdown["cost"])
-	require.InEpsilon(t, 0.2903, expensive.Breakdown["cost"], 0.0001)
+	require.InEpsilon(t, 0.4307, expensive.Breakdown["cost"], 0.0001)
 	require.Greater(t, lowest.Total, expensive.Total)
 	require.Greater(t, lowest.RoutingTotal, expensive.RoutingTotal)
 }
@@ -274,7 +380,7 @@ func TestCostFirstAmplifiesLargeRelativeCostGap(t *testing.T) {
 	}, core.GroupSmartPolicy{Strategy: core.StrategyCostFirst})
 
 	require.Equal(t, 1.0, cheap.Breakdown["cost"])
-	require.InEpsilon(t, 0.3535, expensive.Breakdown["cost"], 0.0001)
+	require.InEpsilon(t, 0.5214, expensive.Breakdown["cost"], 0.0001)
 	require.Greater(t, cheap.Total, expensive.Total)
 	require.Greater(t, cheap.RoutingTotal, expensive.RoutingTotal)
 }
@@ -406,7 +512,7 @@ func TestCostFirstDoesNotRouteToHigherCostGroupOnlyBecauseCheapGroupIsBusy(t *te
 	require.Equal(t, 0.05, cheapPlus.CostReferenceRatio)
 	require.Equal(t, 0.05, fastPro.CostReferenceRatio)
 	require.Equal(t, 1.0, cheapPlus.ScoreBreakdown["cost"])
-	require.InEpsilon(t, 0.3067, fastPro.ScoreBreakdown["cost"], 0.0001)
+	require.InEpsilon(t, 0.456, fastPro.ScoreBreakdown["cost"], 0.0001)
 	require.Greater(t, cheapPlus.RoutingScoreTotal, fastPro.RoutingScoreTotal)
 	require.Equal(t, cheapPlus.ScoreBreakdown["concurrency_load"], cheapPlus.RoutingScoreBreakdown["concurrency_load"])
 	require.Contains(t, cheapPlus.RoutingScoreBreakdown, "first_byte_backlog")

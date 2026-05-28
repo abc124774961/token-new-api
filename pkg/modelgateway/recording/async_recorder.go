@@ -173,6 +173,7 @@ type dispatchRequestMeta struct {
 	RetryRoutingIntent        *core.RetryRoutingIntent    `json:"retry_routing_intent,omitempty"`
 	RetryIntentApplied        bool                        `json:"retry_intent_applied,omitempty"`
 	RetryQueuePriorityBoost   bool                        `json:"retry_queue_priority_boost,omitempty"`
+	CostGuardDecision         *core.CostGuardDecision     `json:"cost_guard_decision,omitempty"`
 }
 
 type attemptRequestMeta struct {
@@ -242,6 +243,7 @@ func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
 		RetryRoutingIntent:      plan.RetryRoutingIntent.Clone(),
 		RetryIntentApplied:      plan.RetryIntentApplied,
 		RetryQueuePriorityBoost: plan.RetryQueuePriorityBoost,
+		CostGuardDecision:       plan.CostGuardDecision,
 	}
 }
 

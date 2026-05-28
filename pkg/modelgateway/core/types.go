@@ -196,6 +196,7 @@ type DispatchPlan struct {
 	RetryRoutingIntent        *RetryRoutingIntent
 	RetryIntentApplied        bool
 	RetryQueuePriorityBoost   bool
+	CostGuardDecision         *CostGuardDecision
 }
 
 type RetryRoutingIntent struct {
@@ -208,6 +209,27 @@ type RetryRoutingIntent struct {
 	FailedChannelID    int    `json:"failed_channel_id,omitempty"`
 	FailedChannelName  string `json:"failed_channel_name,omitempty"`
 	AttemptIndex       int    `json:"attempt_index,omitempty"`
+}
+
+type CostGuardDecision struct {
+	Reason               string  `json:"reason,omitempty"`
+	Decision             string  `json:"decision,omitempty"`
+	BaselineChannelID    int     `json:"baseline_channel_id,omitempty"`
+	BaselineChannelName  string  `json:"baseline_channel_name,omitempty"`
+	CandidateChannelID   int     `json:"candidate_channel_id,omitempty"`
+	CandidateChannelName string  `json:"candidate_channel_name,omitempty"`
+	BaselineCost         float64 `json:"baseline_cost,omitempty"`
+	CandidateCost        float64 `json:"candidate_cost,omitempty"`
+	CostMultiple         float64 `json:"cost_multiple,omitempty"`
+	CostGuardMultiple    float64 `json:"cost_guard_multiple,omitempty"`
+	SuccessDelta         float64 `json:"success_delta,omitempty"`
+	SuccessAdvantage     float64 `json:"success_advantage,omitempty"`
+	SpeedScoreDelta      float64 `json:"speed_score_delta,omitempty"`
+	SpeedAdvantage       float64 `json:"speed_advantage,omitempty"`
+	BaselineRisk         bool    `json:"baseline_risk,omitempty"`
+	RetryIntent          bool    `json:"retry_intent,omitempty"`
+	BaselineSampleCount  int     `json:"baseline_sample_count,omitempty"`
+	CandidateSampleCount int     `json:"candidate_sample_count,omitempty"`
 }
 
 func NewFirstByteTimeoutRetryRoutingIntent(channelID int, channelName string, attemptIndex int) *RetryRoutingIntent {
@@ -520,6 +542,8 @@ type CandidateExplanation struct {
 	LastAuthConfigErrorAt      int64              `json:"last_auth_config_error_at,omitempty"`
 	StickyMatched              bool               `json:"sticky_matched,omitempty"`
 	Selected                   bool               `json:"selected,omitempty"`
+	CostGuardReason            string             `json:"cost_guard_reason,omitempty"`
+	CostGuardDecision          string             `json:"cost_guard_decision,omitempty"`
 	ScoreSampleSource          string             `json:"score_sample_source,omitempty"`
 	MatchedRuntimeKey          RuntimeKey         `json:"matched_runtime_key,omitempty"`
 	RetryIntentApplied         bool               `json:"retry_intent_applied,omitempty"`

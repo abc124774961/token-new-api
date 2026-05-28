@@ -28,6 +28,8 @@ type StrategyProfile struct {
 	Strategy      string
 	Weights       map[string]float64
 	CostPower     float64
+	CostScoreMode string
+	CostZeroPoint float64
 	PressureRoute bool
 }
 
@@ -94,6 +96,8 @@ func StrategyProfileFor(strategy string) StrategyProfile {
 		Strategy:      strategy,
 		Weights:       defaultScoreItemWeights(),
 		CostPower:     1,
+		CostScoreMode: costScoreModeRelative,
+		CostZeroPoint: costFirstLogCostZeroMultiple,
 		PressureRoute: true,
 	}
 	switch strategy {
@@ -127,7 +131,8 @@ func StrategyProfileFor(strategy string) StrategyProfile {
 			scoreItemCost:                  0.344,
 			scoreItemGroupPriority:         0.05,
 		}
-		profile.CostPower = costFirstRelativeCostPower
+		profile.CostPower = 1
+		profile.CostScoreMode = costScoreModeLogMultiple
 	case core.StrategyStabilityFirst:
 		profile.Weights = map[string]float64{
 			scoreItemCompletionRate:        0.26,

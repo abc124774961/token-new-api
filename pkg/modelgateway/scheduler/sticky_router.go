@@ -182,10 +182,17 @@ func (r *MemoryStickyRouter) Route(c *gin.Context, req *core.DispatchRequest, po
 }
 
 func (r *MemoryStickyRouter) Save(c *gin.Context, req *core.DispatchRequest, plan *core.DispatchPlan) {
+	r.save(c, req, plan, true)
+}
+
+func (r *MemoryStickyRouter) save(c *gin.Context, req *core.DispatchRequest, plan *core.DispatchPlan, guardRetryAttempt bool) {
 	if r == nil || req == nil || plan == nil || plan.Channel == nil || plan.Channel.Id <= 0 {
 		return
 	}
 	if StickyRoutingDisabled(c) {
+		return
+	}
+	if guardRetryAttempt && shouldSkipStickySaveForRetryAttempt(c, req, plan, nil) {
 		return
 	}
 	key := r.userStickyKey(c, req, core.GroupSmartPolicy{})
@@ -229,8 +236,8 @@ func (r *MemoryStickyRouter) Report(c *gin.Context, req *core.DispatchRequest, p
 		return
 	}
 	if result.Success {
-		if r.renewOnSuccess {
-			r.Save(c, req, plan)
+		if r.renewOnSuccess && !shouldSkipStickySaveForRetryAttempt(c, req, plan, &result) {
+			r.save(c, req, plan, false)
 		}
 		return
 	}
@@ -244,6 +251,38 @@ func (r *MemoryStickyRouter) SaveOnSelect() bool {
 		return false
 	}
 	return r.saveOnSelect
+}
+
+func shouldSkipStickySaveForRetryAttempt(c *gin.Context, req *core.DispatchRequest, plan *core.DispatchPlan, result *core.AttemptResult) bool {
+	if req != nil {
+		if req.Retry > 0 {
+			return true
+		}
+		if req.RetryRoutingIntent != nil && req.RetryRoutingIntent.Active() {
+			return true
+		}
+	}
+	if plan != nil {
+		if plan.RetryIntentApplied {
+			return true
+		}
+		if plan.RetryRoutingIntent != nil && plan.RetryRoutingIntent.Active() {
+			return true
+		}
+	}
+	if result != nil {
+		if result.AttemptIndex > 0 {
+			return true
+		}
+		if len(result.UsedChannels) > 1 {
+			return true
+		}
+		if c != nil && len(c.GetStringSlice("use_channel")) > 1 {
+			return true
+		}
+		return false
+	}
+	return c != nil && len(c.GetStringSlice("use_channel")) > 0
 }
 
 func StickyRoutingDisabled(c *gin.Context) bool {

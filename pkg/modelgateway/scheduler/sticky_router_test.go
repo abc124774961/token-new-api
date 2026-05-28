@@ -730,6 +730,80 @@ func TestSelectorRetainsCacheAffinityForCostFirstUnlessCostGapIsLarge(t *testing
 	require.Empty(t, plan.StickyBreak)
 }
 
+func TestSelectorBreaksCostFirstStickyWhenGuardSelectsCheapBaseline(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-cost-first-guard"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 151)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+	}
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{}, nil)
+	sticky.Save(ctx, &req, &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 1},
+		SelectedGroup: "default",
+	})
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	stickyKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 1, Group: "default"}
+	cheapKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 2, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                stickyKey,
+		SuccessRate:        0.98,
+		TTFTMs:             800,
+		DurationMs:         3000,
+		TokensPerSecond:    45,
+		ActiveConcurrency:  1,
+		MaxConcurrency:     10,
+		CostRatio:          0.05,
+		GroupPriorityRatio: 1,
+		SampleCount:        30,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                cheapKey,
+		SuccessRate:        0.97,
+		TTFTMs:             950,
+		DurationMs:         3300,
+		TokensPerSecond:    42,
+		ActiveConcurrency:  1,
+		MaxConcurrency:     10,
+		CostRatio:          0.02,
+		GroupPriorityRatio: 1,
+		SampleCount:        30,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 1, Name: "sticky-expensive"}, Group: "default", RuntimeKey: stickyKey},
+			{Channel: &model.Channel{Id: 2, Name: "cheap"}, Group: "default", RuntimeKey: cheapKey},
+		}),
+		store,
+		scheduler.DefaultScoreWeights(),
+	).WithStickyRouter(sticky)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyCostFirst,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 2, plan.Channel.Id)
+	require.False(t, plan.StickyRetained)
+	require.Equal(t, "cost_first_cheaper_speed_acceptable", plan.StickyBreak)
+	require.Equal(t, "score_items_sticky_broken", plan.SelectedReason)
+	require.NotNil(t, plan.StickyDecision)
+	require.Equal(t, "switch", plan.StickyDecision.Decision)
+	require.InEpsilon(t, 0.4, plan.StickyDecision.CostRatio, 0.0001)
+}
+
 func TestStickyRouterSharesStoreAcrossInstances(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := newStickyRequestContext(t, `{"session_id":"sess-shared-store"}`, nil)
@@ -1021,6 +1095,67 @@ func TestStickyRouterReportSuccessRenewsTTL(t *testing.T) {
 	route, ok := sticky.Route(ctx, &req, core.GroupSmartPolicy{RequestedGroup: "default"})
 	require.True(t, ok)
 	require.Equal(t, 31, route.ChannelID)
+}
+
+func TestStickyRouterDoesNotSaveRetryAttempt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-retry-save-a"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 508)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+		EndpointType:   constant.EndpointTypeOpenAI,
+		Retry:          1,
+	}
+	router := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{
+		Store: scheduler.NewMemoryStickyStore(8),
+	}, nil)
+
+	router.Save(ctx, &req, &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 41},
+		SelectedGroup: "default",
+	})
+
+	req.Retry = 0
+	_, ok := router.Route(ctx, &req, core.GroupSmartPolicy{RequestedGroup: "default"})
+	require.False(t, ok)
+}
+
+func TestStickyRouterReportRetrySuccessDoesNotRenewTTL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-report-retry-success-a"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 509)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	store := scheduler.NewMemoryStickyStore(8)
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{
+		TTLSeconds:     1,
+		RenewOnSuccess: true,
+		Store:          store,
+	}, nil)
+	plan := &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 42},
+		SelectedGroup: "default",
+		StickySource:  "user_sticky",
+	}
+	sticky.Save(ctx, &req, plan)
+	time.Sleep(600 * time.Millisecond)
+
+	ctx.Set("use_channel", []string{"31", "42"})
+	sticky.Report(ctx, &req, plan, core.AttemptResult{
+		Success:      true,
+		AttemptIndex: 1,
+		UsedChannels: []string{"31", "42"},
+	})
+
+	time.Sleep(600 * time.Millisecond)
+	_, ok := sticky.Route(ctx, &req, core.GroupSmartPolicy{RequestedGroup: "default"})
+	require.False(t, ok)
 }
 
 func TestStickyRouterReportFailureKeepOrClear(t *testing.T) {

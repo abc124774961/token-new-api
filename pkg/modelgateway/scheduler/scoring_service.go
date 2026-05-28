@@ -141,7 +141,7 @@ func (s *CandidateScoringService) BuildScoreItems(snapshot core.RuntimeSnapshot,
 		scoreItem(scoreItemConcurrencyLoad, "并发负载分", scoreCategoryPressure, concurrencyRawValue(snapshot), "实时", loadScore, profile.Weights[scoreItemConcurrencyLoad], snapshot.SampleCount, "1 - load_penalty(active/effective_limit)", ""),
 		scoreItem(scoreItemQueuePressure, "队列压力分", scoreCategoryPressure, queueRawValue(snapshot), "实时", queueScore, profile.Weights[scoreItemQueuePressure], snapshot.SampleCount, "1 - queue_penalty(depth, wait)", ""),
 		scoreItem(scoreItemFirstByteBacklog, "首包积压分", scoreCategoryPressure, firstByteBacklogRawValue(snapshot), "实时", firstByteScore, profile.Weights[scoreItemFirstByteBacklog], snapshot.SampleCount, "1 - first_byte_pending_penalty", ""),
-		scoreItem(scoreItemCost, "成本分", scoreCategoryFormula, costRawValue(snapshot), "配置", costScoreItemValue(snapshot, profile), profile.Weights[scoreItemCost], snapshot.SampleCount, "min_cost / current_cost", ""),
+		scoreItem(scoreItemCost, "成本分", scoreCategoryFormula, costRawValue(snapshot), "配置", costScoreItemValue(snapshot, profile), profile.Weights[scoreItemCost], snapshot.SampleCount, costScoreFormula(profile), ""),
 		scoreItem(scoreItemGroupPriority, "分组分", scoreCategoryFormula, groupRawValue(snapshot), "配置", groupPriorityItemScoreForStrategy(snapshot, policy, strategy), profile.Weights[scoreItemGroupPriority], snapshot.SampleCount, "group priority formula", ""),
 	}
 	if routing {
@@ -415,8 +415,9 @@ func annotateScoreItems(items []core.ScoreItem, stats ScoreStats, snapshot core.
 				item.ReferenceNumber = scoreItemFloat(snapshot.CostReferenceRatio)
 				item.ReferenceUnit = costScoreItemUnit(snapshot)
 			}
-			if profile.CostPower > 0 {
-				item.FormulaParameters = map[string]float64{"cost_power": profile.CostPower}
+			item.FormulaParameters = costFormulaParameters(snapshot, profile)
+			if profile.CostScoreMode != "" {
+				item.Reason = profile.CostScoreMode
 			}
 		case scoreItemGroupPriority:
 			scoreItemSetRaw(item, snapshot.GroupPriorityRatio, "ratio", scoreItemSourceConfig)
@@ -688,11 +689,48 @@ func costScoreItemValue(snapshot core.RuntimeSnapshot, profile StrategyProfile) 
 	if snapshot.CostRatio <= 0 || snapshot.CostReferenceRatio <= 0 {
 		return 0
 	}
+	if profile.CostScoreMode == costScoreModeLogMultiple {
+		zeroPoint := profile.CostZeroPoint
+		if zeroPoint <= 1 {
+			zeroPoint = costFirstLogCostZeroMultiple
+		}
+		multiple := snapshot.CostRatio / snapshot.CostReferenceRatio
+		if multiple <= 1 {
+			return 1
+		}
+		score := 1 - math.Log(multiple)/math.Log(zeroPoint)
+		return clamp01(score)
+	}
 	score := clamp01(snapshot.CostReferenceRatio / snapshot.CostRatio)
 	if profile.CostPower > 1 {
 		score = math.Pow(score, profile.CostPower)
 	}
 	return clamp01(score)
+}
+
+func costScoreFormula(profile StrategyProfile) string {
+	if profile.CostScoreMode == costScoreModeLogMultiple {
+		return "1 - log(current_cost / min_cost) / log(zero_multiple)"
+	}
+	return "min_cost / current_cost"
+}
+
+func costFormulaParameters(snapshot core.RuntimeSnapshot, profile StrategyProfile) map[string]float64 {
+	params := map[string]float64{}
+	if profile.CostPower > 0 {
+		params["cost_power"] = profile.CostPower
+	}
+	if profile.CostScoreMode == costScoreModeLogMultiple {
+		zeroPoint := profile.CostZeroPoint
+		if zeroPoint <= 1 {
+			zeroPoint = costFirstLogCostZeroMultiple
+		}
+		params["cost_zero_multiple"] = zeroPoint
+		if snapshot.CostRatio > 0 && snapshot.CostReferenceRatio > 0 {
+			params["cost_multiple"] = snapshot.CostRatio / snapshot.CostReferenceRatio
+		}
+	}
+	return params
 }
 
 func stateTagsForSnapshot(snapshot core.RuntimeSnapshot) []string {

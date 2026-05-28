@@ -7,7 +7,14 @@ import (
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 )
 
-const costFirstRelativeCostPower = 1.35
+const (
+	costScoreModeRelative          = "relative"
+	costScoreModeLogMultiple       = "log_multiple"
+	costFirstLogCostZeroMultiple   = 5.0
+	costFirstGuardMultiple         = 1.8
+	costFirstGuardSuccessAdvantage = 0.03
+	costFirstGuardSpeedAdvantage   = 0.08
+)
 
 func DefaultScoreWeights() core.ScoreWeights {
 	return core.ScoreWeights{Success: 0.35, Speed: 0.35, Load: 0.15, Cost: 0.08, Group: 0.07}

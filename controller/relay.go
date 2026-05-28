@@ -579,6 +579,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		if newAPIError == nil {
 			concurrencyLease.Release()
+			if relayInfo.RetryIndex > 0 || len(c.GetStringSlice("use_channel")) > 1 {
+				service.MarkChannelAffinityRecordSkipped(c)
+			}
 			if relayClientAborted(c, relayInfo, nil) {
 				reportModelGatewayAttempt(c, relayInfo, retryParam, channel, types.NewErrorWithStatusCode(
 					context.Canceled,

@@ -117,6 +117,49 @@ func TestCostFirstWeightsShiftRequestedSignalsToCost(t *testing.T) {
 	require.InEpsilon(t, 1.0, totalWeight, 0.0001)
 }
 
+func TestCostFirstUsesLogMultipleCostScore(t *testing.T) {
+	service := scheduler.NewCandidateScoringService()
+	policy := core.GroupSmartPolicy{
+		Strategy:        core.StrategyCostFirst,
+		CandidateGroups: []string{"default"},
+		GroupPriorityRatio: map[string]float64{
+			"default": 1,
+		},
+	}
+	base := core.RuntimeSnapshot{
+		Key:                core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", Group: "default", EndpointType: constant.EndpointTypeOpenAI},
+		SuccessRate:        1,
+		CostReferenceRatio: 0.02,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	}
+
+	cheap := base
+	cheap.Key.ChannelID = 1
+	cheap.CostRatio = 0.02
+	mid := base
+	mid.Key.ChannelID = 2
+	mid.CostRatio = 0.05
+	expensive := base
+	expensive.Key.ChannelID = 3
+	expensive.CostRatio = 0.08
+
+	cheapScore := service.EvaluatePreparedCandidate(core.Candidate{RuntimeKey: cheap.Key, Group: "default"}, cheap, policy, scheduler.ScoringContext{Strategy: core.StrategyCostFirst}, false).Score
+	midScore := service.EvaluatePreparedCandidate(core.Candidate{RuntimeKey: mid.Key, Group: "default"}, mid, policy, scheduler.ScoringContext{Strategy: core.StrategyCostFirst}, false).Score
+	expensiveScore := service.EvaluatePreparedCandidate(core.Candidate{RuntimeKey: expensive.Key, Group: "default"}, expensive, policy, scheduler.ScoringContext{Strategy: core.StrategyCostFirst}, false).Score
+
+	cheapCost := scoreItemByKey(t, cheapScore.Items, "cost")
+	midCost := scoreItemByKey(t, midScore.Items, "cost")
+	expensiveCost := scoreItemByKey(t, expensiveScore.Items, "cost")
+	require.Equal(t, 1.0, cheapCost.Score)
+	require.InEpsilon(t, 0.4307, midCost.Score, 0.0001)
+	require.InEpsilon(t, 0.1386, expensiveCost.Score, 0.0001)
+	require.Equal(t, "log_multiple", midCost.Reason)
+	require.Equal(t, "1 - log(current_cost / min_cost) / log(zero_multiple)", midCost.Formula)
+	require.InEpsilon(t, 2.5, midCost.FormulaParameters["cost_multiple"], 0.0001)
+	require.InEpsilon(t, 5.0, midCost.FormulaParameters["cost_zero_multiple"], 0.0001)
+}
+
 func TestCandidateScoringServiceDoesNotDuplicateCompletionPenaltyIntoSeparateRateItems(t *testing.T) {
 	service := scheduler.NewCandidateScoringService()
 	snapshot := core.RuntimeSnapshot{

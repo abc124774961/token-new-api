@@ -101,6 +101,10 @@ const DEFAULT_SETTING = {
   cost_first_sticky_escape_cache_max_speed_score_drop: 0.03,
   cost_first_sticky_escape_min_samples: 5,
   cost_first_sticky_escape_success_slack: 0.02,
+  cost_first_guard_enabled: true,
+  cost_first_guard_multiple: 1.8,
+  cost_first_guard_success_advantage: 0.03,
+  cost_first_guard_speed_advantage: 0.08,
   queue_enabled: true,
   queue_default_timeout_ms: 2000,
   queue_max_depth_per_channel: 64,
@@ -830,6 +834,19 @@ export default function SettingsModelGatewayScheduler() {
       cost_first_sticky_escape_success_slack: numberOrDefault(
         setting.cost_first_sticky_escape_success_slack,
         0.02,
+      ),
+      cost_first_guard_enabled: setting.cost_first_guard_enabled !== false,
+      cost_first_guard_multiple: numberOrDefault(
+        setting.cost_first_guard_multiple,
+        1.8,
+      ),
+      cost_first_guard_success_advantage: numberOrDefault(
+        setting.cost_first_guard_success_advantage,
+        0.03,
+      ),
+      cost_first_guard_speed_advantage: numberOrDefault(
+        setting.cost_first_guard_speed_advantage,
+        0.08,
       ),
       queue_default_timeout_ms: numberOrDefault(
         setting.queue_default_timeout_ms,

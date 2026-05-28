@@ -86,6 +86,15 @@ func TestListChannelAccountsHidesRawKeysAndCarriesScoreSummary(t *testing.T) {
 			MultiKeySize:           2,
 			MultiKeyStatusList:     map[int]int{1: common.ChannelStatusAutoDisabled},
 			MultiKeyDisabledReason: map[int]string{1: "auth failed"},
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					ResponsesWrite:       common.GetPointer(true),
+					ChatCompletionsWrite: common.GetPointer(true),
+					CheckedTime:          1700000003,
+					LastEndpoint:         "responses",
+					LastMessage:          "ok",
+				},
+			},
 		},
 	}
 	require.NoError(t, db.Create(&channel).Error)
@@ -160,6 +169,9 @@ func TestListChannelAccountsHidesRawKeysAndCarriesScoreSummary(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "sk-disabled")
 	require.NotEmpty(t, payload.Data.Items[0].SubjectShort)
 	require.NotEmpty(t, payload.Data.Items[0].CredentialShort)
+	require.NotNil(t, payload.Data.Items[0].Capabilities)
+	require.Equal(t, int64(1700000003), payload.Data.Items[0].Capabilities.CheckedTime)
+	require.True(t, *payload.Data.Items[0].Capabilities.ResponsesWrite)
 	require.NotNil(t, payload.Data.Items[0].Score)
 	require.Equal(t, 9, payload.Data.Items[0].Score.SampleCount)
 	require.Equal(t, "gpt-5.4", payload.Data.Items[0].Score.RuntimeKey.RequestedModel)

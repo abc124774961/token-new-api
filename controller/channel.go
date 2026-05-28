@@ -2009,11 +2009,11 @@ type MultiKeyStatusResponse struct {
 }
 
 type KeyStatus struct {
-	Index        int                              `json:"index"`
-	Status       int                              `json:"status"` // 1: enabled, 2: disabled
-	DisabledTime int64                            `json:"disabled_time,omitempty"`
-	Reason       string                           `json:"reason,omitempty"`
-	KeyPreview   string                           `json:"key_preview"` // first 10 chars of key for identification
+	Index        int                             `json:"index"`
+	Status       int                             `json:"status"` // 1: enabled, 2: disabled
+	DisabledTime int64                           `json:"disabled_time,omitempty"`
+	Reason       string                          `json:"reason,omitempty"`
+	KeyPreview   string                          `json:"key_preview"` // first 10 chars of key for identification
 	Capabilities *model.ChannelAccountCapability `json:"capabilities,omitempty"`
 }
 
@@ -2046,7 +2046,7 @@ func ManageMultiKeys(c *gin.Context) {
 		return
 	}
 
-	if !channel.ChannelInfo.IsMultiKey {
+	if !channel.ChannelInfo.IsMultiKey && request.Action != "probe_key_capabilities" && request.Action != "probe_all_key_capabilities" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "该渠道不是多密钥模式",

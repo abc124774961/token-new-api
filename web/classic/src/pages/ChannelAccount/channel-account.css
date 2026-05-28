@@ -364,8 +364,24 @@
   font-size: 11px;
 }
 
+.ct-channel-account-capability-tags {
+  display: flex;
+  max-width: 190px;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.ct-channel-account-capability-tip {
+  display: flex;
+  max-width: 320px;
+  flex-direction: column;
+  gap: 5px;
+  word-break: break-word;
+}
+
 .ct-channel-account-operation {
-  min-width: 260px;
+  min-width: 282px;
   justify-content: flex-start;
   white-space: nowrap;
 }

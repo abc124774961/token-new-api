@@ -419,7 +419,7 @@ func TestRuntimeStatusServiceUsesInjectedGroupPolicyForScore(t *testing.T) {
 	require.Len(t, response.Items, 1)
 	item := response.Items[0]
 	require.Contains(t, item.ScoreBreakdown, "cost")
-	require.InEpsilon(t, 0.1539, item.ScoreBreakdown["cost"], 0.0001)
+	require.InEpsilon(t, 0.1386, item.ScoreBreakdown["cost"], 0.0001)
 }
 
 func TestRuntimeStatusServiceFiltersMultiNodeQueueSnapshotByChannel(t *testing.T) {

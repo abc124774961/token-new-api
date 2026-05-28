@@ -31,6 +31,7 @@ type DefaultSmartChannelSelector struct {
 	costBaselineProvider core.CostBaselineProvider
 	scoringService       *CandidateScoringService
 	stickyEscapeConfig   CostFirstStickyEscapeConfig
+	costGuardConfig      CostFirstGuardConfig
 }
 
 type CostFirstStickyEscapeConfig struct {
@@ -41,6 +42,13 @@ type CostFirstStickyEscapeConfig struct {
 	CacheSpeedDrop float64
 	MinSamples     int
 	SuccessSlack   float64
+}
+
+type CostFirstGuardConfig struct {
+	Enabled          bool
+	Multiple         float64
+	SuccessAdvantage float64
+	SpeedAdvantage   float64
 }
 
 type stickySaveOnSelectRouter interface {
@@ -55,6 +63,12 @@ type candidateEvaluation struct {
 	rejectReason  string
 }
 
+type costFirstGuardResult struct {
+	baseline         candidateEvaluation
+	decision         *core.CostGuardDecision
+	switchToBaseline bool
+}
+
 type CandidateScoreEvaluation struct {
 	Snapshot    core.RuntimeSnapshot
 	Score       core.ScoreResult
@@ -67,6 +81,7 @@ func NewDefaultSmartChannelSelector(candidateBuilder core.CandidatePoolBuilder, 
 		snapshotStore:      snapshotStore,
 		scoreWeights:       weights,
 		stickyEscapeConfig: DefaultCostFirstStickyEscapeConfig(),
+		costGuardConfig:    DefaultCostFirstGuardConfig(),
 	}
 }
 
@@ -80,6 +95,28 @@ func DefaultCostFirstStickyEscapeConfig() CostFirstStickyEscapeConfig {
 		MinSamples:     costFirstStickyEscapeMinSamples,
 		SuccessSlack:   costFirstStickyEscapeSuccessSlack,
 	}
+}
+
+func DefaultCostFirstGuardConfig() CostFirstGuardConfig {
+	return CostFirstGuardConfig{
+		Enabled:          true,
+		Multiple:         costFirstGuardMultiple,
+		SuccessAdvantage: costFirstGuardSuccessAdvantage,
+		SpeedAdvantage:   costFirstGuardSpeedAdvantage,
+	}
+}
+
+func (c CostFirstGuardConfig) normalized() CostFirstGuardConfig {
+	if c.Multiple <= 1 {
+		c.Multiple = costFirstGuardMultiple
+	}
+	if c.SuccessAdvantage < 0 {
+		c.SuccessAdvantage = 0
+	}
+	if c.SpeedAdvantage < 0 {
+		c.SpeedAdvantage = 0
+	}
+	return c
 }
 
 func (c CostFirstStickyEscapeConfig) normalized() CostFirstStickyEscapeConfig {
@@ -102,6 +139,14 @@ func (c CostFirstStickyEscapeConfig) normalized() CostFirstStickyEscapeConfig {
 		c.SuccessSlack = 0
 	}
 	return c
+}
+
+func (s *DefaultSmartChannelSelector) WithCostFirstGuardConfig(config CostFirstGuardConfig) *DefaultSmartChannelSelector {
+	if s == nil {
+		return nil
+	}
+	s.costGuardConfig = config.normalized()
+	return s
 }
 
 func (s *DefaultSmartChannelSelector) WithCostFirstStickyEscapeConfig(config CostFirstStickyEscapeConfig) *DefaultSmartChannelSelector {
@@ -253,6 +298,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	var bestCandidate core.Candidate
 	var bestSnapshot core.RuntimeSnapshot
 	var bestScore core.ScoreResult
+	var costGuardDecision *core.CostGuardDecision
 	selectedSaturated := false
 	if availableFound {
 		bestCandidate = bestAvailableCandidate
@@ -268,6 +314,30 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	}
 	if bestCandidate.Channel == nil {
 		return nil, false, nil
+	}
+	if !hasSticky {
+		if guard, ok := s.costFirstGuardCandidate(policy, bestCandidate, bestSnapshot, bestScore, availableEvaluations, retryIntent); ok {
+			costGuardDecision = guard.decision
+			if guard.switchToBaseline {
+				bestCandidate = guard.baseline.candidate
+				bestSnapshot = guard.baseline.snapshot
+				bestScore = guard.baseline.score
+				selectedSaturated = false
+				bestScore.Reason = guard.decision.Reason
+			}
+		}
+	}
+	if hasSticky && !stickyFound {
+		if guard, ok := s.costFirstGuardCandidate(policy, bestCandidate, bestSnapshot, bestScore, availableEvaluations, retryIntent); ok {
+			costGuardDecision = guard.decision
+			if guard.switchToBaseline {
+				bestCandidate = guard.baseline.candidate
+				bestSnapshot = guard.baseline.snapshot
+				bestScore = guard.baseline.score
+				selectedSaturated = false
+				bestScore.Reason = guard.decision.Reason
+			}
+		}
 	}
 	if hasSticky {
 		if stickyFound {
@@ -293,12 +363,36 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 				stickyDecision = decision
 			} else if policy.Strategy == core.StrategyCostFirst {
 				stickyDecision = decision
-				bestCandidate = stickyCandidate
-				bestSnapshot = stickySnapshot
-				bestScore = stickyScore
-				selectedSaturated = stickySaturated
-				bestScore.Reason = stickyRoute.Source + "_retained"
-				stickyBreak = ""
+				if guard, ok := s.costFirstGuardCandidate(policy, stickyCandidate, stickySnapshot, stickyScore, availableEvaluations, retryIntent); ok && guard.switchToBaseline {
+					costGuardDecision = guard.decision
+					bestCandidate = guard.baseline.candidate
+					bestSnapshot = guard.baseline.snapshot
+					bestScore = guard.baseline.score
+					selectedSaturated = false
+					bestScore.Reason = guard.decision.Reason
+					stickyBreak = "cost_first_guard_baseline_selected"
+					stickyDecision = stickyEscapeDecision(
+						"cost_first_guard_baseline_selected",
+						"switch",
+						stickyRoute,
+						s.stickyEscapeConfig.normalized(),
+						stickySnapshot,
+						stickyEscapeCost(stickySnapshot),
+						0,
+						guard.baseline,
+						costFirstEvaluationCost(guard.baseline),
+						0,
+						1/guard.decision.CostGuardMultiple,
+						0,
+					)
+				} else {
+					bestCandidate = stickyCandidate
+					bestSnapshot = stickySnapshot
+					bestScore = stickyScore
+					selectedSaturated = stickySaturated
+					bestScore.Reason = stickyRoute.Source + "_retained"
+					stickyBreak = ""
+				}
 			} else if stickyScore.Total >= bestScore.Total*keepRatio {
 				bestCandidate = stickyCandidate
 				bestSnapshot = stickySnapshot
@@ -314,6 +408,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		}
 	}
 	markSelectedCandidateExplanation(explanations, bestCandidate, bestSnapshot)
+	markCostGuardCandidateExplanations(explanations, costGuardDecision)
 	if bestSnapshot.CircuitState == core.CircuitStateHalfOpen && s.snapshotEnricher != nil {
 		if !s.snapshotEnricher.ReserveCircuitProbe(bestSnapshot.Key) {
 			return nil, false, nil
@@ -357,6 +452,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		RetryRoutingIntent:        retryIntent.Clone(),
 		RetryIntentApplied:        retryIntent != nil && retryIntent.Active(),
 		RetryQueuePriorityBoost:   retryIntent != nil && retryIntent.QueuePriorityBoost,
+		CostGuardDecision:         costGuardDecision,
 	}
 	if s.shouldSaveStickyOnSelect() {
 		s.stickyRouter.Save(c, &req, plan)
@@ -746,6 +842,22 @@ func defaultSnapshot(candidate core.Candidate) core.RuntimeSnapshot {
 	}
 }
 
+func markCostGuardCandidateExplanations(explanations []core.CandidateExplanation, decision *core.CostGuardDecision) {
+	if decision == nil {
+		return
+	}
+	for idx := range explanations {
+		switch explanations[idx].ChannelID {
+		case decision.BaselineChannelID:
+			explanations[idx].CostGuardDecision = decision.Decision
+			explanations[idx].CostGuardReason = decision.Reason
+		case decision.CandidateChannelID:
+			explanations[idx].CostGuardDecision = decision.Decision
+			explanations[idx].CostGuardReason = decision.Reason
+		}
+	}
+}
+
 func (s *DefaultSmartChannelSelector) fallbackSnapshotForCandidate(candidate core.Candidate) (core.RuntimeSnapshot, bool) {
 	if s == nil || s.snapshotStore == nil {
 		return core.RuntimeSnapshot{}, false
@@ -1089,6 +1201,154 @@ func (s *DefaultSmartChannelSelector) costFirstStickyEscapeCandidate(policy core
 		return best, bestDecision, true
 	}
 	return candidateEvaluation{}, retainDecision, false
+}
+
+func (s *DefaultSmartChannelSelector) costFirstGuardCandidate(policy core.GroupSmartPolicy, selectedCandidate core.Candidate, selectedSnapshot core.RuntimeSnapshot, selectedScore core.ScoreResult, candidates []candidateEvaluation, retryIntent *core.RetryRoutingIntent) (costFirstGuardResult, bool) {
+	if policy.Strategy != core.StrategyCostFirst || len(candidates) == 0 {
+		return costFirstGuardResult{}, false
+	}
+	config := DefaultCostFirstGuardConfig()
+	if s != nil {
+		config = s.costGuardConfig.normalized()
+	}
+	if !config.Enabled {
+		return costFirstGuardResult{}, false
+	}
+	selected := candidateEvaluation{candidate: selectedCandidate, snapshot: selectedSnapshot, score: selectedScore}
+	selectedCost := costFirstEvaluationCost(selected)
+	if selectedCost <= 0 {
+		return costFirstGuardResult{}, false
+	}
+	baseline, ok := costFirstGuardBaselineCandidate(candidates)
+	if !ok || sameRoutingCandidate(selectedCandidate, baseline.candidate) {
+		return costFirstGuardResult{}, false
+	}
+	baselineCost := costFirstEvaluationCost(baseline)
+	if baselineCost <= 0 {
+		return costFirstGuardResult{}, false
+	}
+	multiple := selectedCost / baselineCost
+	if multiple <= config.Multiple {
+		return costFirstGuardResult{}, false
+	}
+	decision := costFirstGuardDecision("cost_first_guard_baseline_selected", "baseline", config, baseline, selected, multiple, retryIntent)
+	if costFirstGuardAllowsExpensiveCandidate(config, baseline, selected, retryIntent) {
+		decision.Reason = "cost_first_guard_quality_override"
+		decision.Decision = "override"
+		return costFirstGuardResult{baseline: baseline, decision: decision}, true
+	}
+	return costFirstGuardResult{baseline: baseline, decision: decision, switchToBaseline: true}, true
+}
+
+func costFirstGuardBaselineCandidate(candidates []candidateEvaluation) (candidateEvaluation, bool) {
+	var best candidateEvaluation
+	bestCost := 0.0
+	found := false
+	for _, candidate := range candidates {
+		cost := costFirstEvaluationCost(candidate)
+		if cost <= 0 {
+			continue
+		}
+		if !found || cost < bestCost || (cost == bestCost && candidate.score.RoutingTotal > best.score.RoutingTotal) {
+			best = candidate
+			bestCost = cost
+			found = true
+		}
+	}
+	return best, found
+}
+
+func costFirstGuardAllowsExpensiveCandidate(config CostFirstGuardConfig, baseline candidateEvaluation, candidate candidateEvaluation, retryIntent *core.RetryRoutingIntent) bool {
+	if costFirstGuardBaselineRisk(baseline.snapshot) {
+		return true
+	}
+	successDelta := candidate.snapshot.SuccessRate - baseline.snapshot.SuccessRate
+	if successDelta >= config.SuccessAdvantage {
+		return true
+	}
+	speedDelta := costFirstGuardSpeedScore(candidate) - costFirstGuardSpeedScore(baseline)
+	if speedDelta >= config.SpeedAdvantage {
+		return true
+	}
+	if retryIntent != nil && retryIntent.FirstByteRecovery() && retryIntent.FailedChannelID == baselineChannelID(baseline) && (successDelta > 0 || speedDelta > 0) {
+		return true
+	}
+	return false
+}
+
+func costFirstGuardDecision(reason string, decision string, config CostFirstGuardConfig, baseline candidateEvaluation, candidate candidateEvaluation, multiple float64, retryIntent *core.RetryRoutingIntent) *core.CostGuardDecision {
+	baselineChannelID, baselineChannelName := costFirstGuardChannelMeta(baseline)
+	candidateChannelID, candidateChannelName := costFirstGuardChannelMeta(candidate)
+	return &core.CostGuardDecision{
+		Reason:               reason,
+		Decision:             decision,
+		BaselineChannelID:    baselineChannelID,
+		BaselineChannelName:  baselineChannelName,
+		CandidateChannelID:   candidateChannelID,
+		CandidateChannelName: candidateChannelName,
+		BaselineCost:         costFirstEvaluationCost(baseline),
+		CandidateCost:        costFirstEvaluationCost(candidate),
+		CostMultiple:         multiple,
+		CostGuardMultiple:    config.Multiple,
+		SuccessDelta:         candidate.snapshot.SuccessRate - baseline.snapshot.SuccessRate,
+		SuccessAdvantage:     config.SuccessAdvantage,
+		SpeedScoreDelta:      costFirstGuardSpeedScore(candidate) - costFirstGuardSpeedScore(baseline),
+		SpeedAdvantage:       config.SpeedAdvantage,
+		BaselineRisk:         costFirstGuardBaselineRisk(baseline.snapshot),
+		RetryIntent:          retryIntent != nil && retryIntent.Active(),
+		BaselineSampleCount:  baseline.snapshot.SampleCount,
+		CandidateSampleCount: candidate.snapshot.SampleCount,
+	}
+}
+
+func costFirstGuardChannelMeta(candidate candidateEvaluation) (int, string) {
+	if candidate.candidate.Channel != nil {
+		return candidate.candidate.Channel.Id, candidate.candidate.Channel.Name
+	}
+	return candidate.snapshot.Key.ChannelID, ""
+}
+
+func costFirstEvaluationCost(candidate candidateEvaluation) float64 {
+	return stickyEscapeCost(candidate.snapshot)
+}
+
+func baselineChannelID(candidate candidateEvaluation) int {
+	channelID, _ := costFirstGuardChannelMeta(candidate)
+	return channelID
+}
+
+func costFirstGuardBaselineRisk(snapshot core.RuntimeSnapshot) bool {
+	return snapshot.CircuitOpen ||
+		snapshot.Cooldown ||
+		snapshot.FailureAvoidance ||
+		snapshot.ConfigErrorIsolated ||
+		snapshot.FirstBytePending > 0 ||
+		snapshot.SlowFirstBytePending > 0 ||
+		snapshot.QueueDepth > 0
+}
+
+func costFirstGuardSpeedScore(candidate candidateEvaluation) float64 {
+	if score, ok := stickySpeedScore(candidate.score); ok {
+		return score
+	}
+	score := 0.0
+	parts := 0.0
+	if candidate.snapshot.TTFTMs > 0 {
+		score += inverseLatencyScore(candidate.snapshot.TTFTMs, 800, 20000)
+		parts++
+	}
+	if candidate.snapshot.DurationMs > 0 {
+		score += inverseLatencyScore(candidate.snapshot.DurationMs, 3000, 90000)
+		parts++
+	}
+	if candidate.snapshot.TokensPerSecond > 0 {
+		score += throughputScore(candidate.snapshot.TokensPerSecond, 5, 80)
+		parts++
+	}
+	if parts <= 0 {
+		return 0
+	}
+	return score / parts
 }
 
 func stickyEscapePreferredRetainDecision(current *core.StickyDecision, currentPriority int, currentCost float64, priority int, reason string, route core.StickyRoute, config CostFirstStickyEscapeConfig, stickySnapshot core.RuntimeSnapshot, stickyCost float64, stickySpeed float64, candidate candidateEvaluation, candidateCost float64, candidateSpeed float64, costThreshold float64, maxSpeedDrop float64) (*core.StickyDecision, int, float64) {
