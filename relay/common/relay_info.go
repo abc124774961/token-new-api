@@ -12,8 +12,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/reasoning"
@@ -65,24 +65,24 @@ type ResponsesUsageInfo struct {
 }
 
 type ChannelMeta struct {
-	ChannelType          int
-	ChannelId            int
-	ChannelIsMultiKey    bool
-	ChannelMultiKeyIndex int
-	ChannelBaseUrl       string
-	ApiType              int
-	ApiVersion           string
-	ApiKey               string
-	Organization         string
-	ChannelCreateTime    int64
-	ParamOverride        map[string]interface{}
-	HeadersOverride      map[string]interface{}
-	ChannelSetting       dto.ChannelSettings
-	ChannelOtherSettings dto.ChannelOtherSettings
-	ChannelAccountCapability *model.ChannelAccountCapability
-	UpstreamModelName    string
-	IsModelMapped        bool
-	SupportStreamOptions bool // 是否支持流式选项
+	ChannelType              int
+	ChannelId                int
+	ChannelIsMultiKey        bool
+	ChannelMultiKeyIndex     int
+	ChannelBaseUrl           string
+	ApiType                  int
+	ApiVersion               string
+	ApiKey                   string
+	Organization             string
+	ChannelCreateTime        int64
+	ParamOverride            map[string]interface{}
+	HeadersOverride          map[string]interface{}
+	ChannelSetting           dto.ChannelSettings
+	ChannelOtherSettings     dto.ChannelOtherSettings
+	ChannelAccountCapability *channelcapability.AccountCapability
+	UpstreamModelName        string
+	IsModelMapped            bool
+	SupportStreamOptions     bool // 是否支持流式选项
 }
 
 type TokenCountMeta struct {
@@ -250,7 +250,7 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	if ok {
 		channelMeta.ChannelOtherSettings = channelOtherSettings
 	}
-	if capability, ok := common.GetContextKeyType[model.ChannelAccountCapability](c, constant.ContextKeyChannelAccountCapability); ok {
+	if capability, ok := common.GetContextKeyType[channelcapability.AccountCapability](c, constant.ContextKeyChannelAccountCapability); ok {
 		channelMeta.ChannelAccountCapability = &capability
 	}
 

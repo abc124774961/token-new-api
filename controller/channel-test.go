@@ -167,7 +167,8 @@ func probeChannelAccountCapabilities(c *gin.Context, channel *model.Channel, cre
 	}
 
 	if capability.ResponsesWrite != nil && *capability.ResponsesWrite {
-		channel, compactResult := runChannelCapabilityProbeTest(c, channel, testModel, string(constant.EndpointTypeOpenAIResponseCompact), false, options)
+		var compactResult testResult
+		channel, compactResult = runChannelCapabilityProbeTest(c, channel, testModel, string(constant.EndpointTypeOpenAIResponseCompact), false, options)
 		capability.ResponsesCompactWrite = channelCapabilityValueFromProbe(compactResult)
 		if probeMessage := channelCapabilityProbeMessage("Compact", compactResult); probeMessage != "" {
 			messages = append(messages, probeMessage)

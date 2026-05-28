@@ -512,6 +512,10 @@ func TestSelectorRetainsStickyRouteForCostFirstSmallCostGap(t *testing.T) {
 	require.True(t, plan.StickyRetained)
 	require.Equal(t, "user_sticky_retained", plan.SelectedReason)
 	require.Empty(t, plan.StickyBreak)
+	require.NotNil(t, plan.StickyDecision)
+	require.Equal(t, "retain", plan.StickyDecision.Decision)
+	require.Equal(t, "cost_first_sticky_escape_cost_gap_insufficient", plan.StickyDecision.Reason)
+	require.InEpsilon(t, 0.8, plan.StickyDecision.CostRatio, 0.001)
 }
 
 func TestSelectorRetainsStickyRouteForCostFirstWhenCheapCandidateIsTooSlow(t *testing.T) {
@@ -582,6 +586,9 @@ func TestSelectorRetainsStickyRouteForCostFirstWhenCheapCandidateIsTooSlow(t *te
 	require.Equal(t, 1, plan.Channel.Id)
 	require.True(t, plan.StickyRetained)
 	require.Empty(t, plan.StickyBreak)
+	require.NotNil(t, plan.StickyDecision)
+	require.Equal(t, "retain", plan.StickyDecision.Decision)
+	require.Equal(t, "cost_first_sticky_escape_speed_drop_exceeded", plan.StickyDecision.Reason)
 }
 
 func TestSelectorBreaksStickyRouteForCostFirstWhenThroughputMissing(t *testing.T) {

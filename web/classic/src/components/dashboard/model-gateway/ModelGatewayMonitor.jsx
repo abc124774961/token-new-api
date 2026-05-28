@@ -9326,6 +9326,31 @@ function buildStickyBreakText(reason, t) {
   });
 }
 
+function formatStickyDecisionReason(reason, t) {
+  const normalized = String(reason || '').trim();
+  if (!normalized) return '';
+  const labels = {
+    cost_first_cheaper_speed_acceptable: t('成本更低且速度影响可接受'),
+    cost_first_sticky_escape_disabled: t('低成本切换已关闭'),
+    cost_first_sticky_escape_sticky_cost_missing: t('粘滞候选成本缺失'),
+    cost_first_sticky_escape_sticky_samples_insufficient: t(
+      '粘滞候选样本不足',
+    ),
+    cost_first_sticky_escape_sticky_speed_missing: t('粘滞候选速度样本不足'),
+    cost_first_sticky_escape_cost_gap_insufficient: t('成本差不足'),
+    cost_first_sticky_escape_candidate_samples_insufficient: t(
+      '低成本候选样本不足',
+    ),
+    cost_first_sticky_escape_success_guard_failed: t('成功率保护未通过'),
+    cost_first_sticky_escape_candidate_speed_missing: t(
+      '低成本候选速度样本不足',
+    ),
+    cost_first_sticky_escape_speed_drop_exceeded: t('速度损失超过阈值'),
+    cost_first_sticky_escape_no_candidate: t('没有满足条件的低成本候选'),
+  };
+  return labels[normalized] || formatTechnicalCode(normalized);
+}
+
 function buildStickyDecisionMetrics(decision, t) {
   if (!decision || typeof decision !== 'object') return [];
   const costRatio = Number(decision.cost_ratio);
@@ -9334,6 +9359,21 @@ function buildStickyDecisionMetrics(decision, t) {
     Number(decision.candidate_success_rate) -
     Number(decision.sticky_success_rate);
   return [
+    {
+      key: 'sticky_escape_decision',
+      label: t('粘滞判断'),
+      value:
+        decision.decision === 'switch'
+          ? t('已切换')
+          : decision.decision === 'retain'
+            ? t('已保留')
+            : '--',
+    },
+    {
+      key: 'sticky_escape_reason',
+      label: t('判断原因'),
+      value: formatStickyDecisionReason(decision.reason, t) || '--',
+    },
     {
       key: 'sticky_escape_cost',
       label: t('成本差'),
@@ -9377,6 +9417,16 @@ function buildStickyDecisionMetrics(decision, t) {
 function buildSelectionSummaryText(insight, t) {
   const label = insight.selectedLabel || '--';
   if (insight.stickyRetained) {
+    const decisionReason = formatStickyDecisionReason(
+      insight.stickyDecision?.reason,
+      t,
+    );
+    if (insight.stickyDecision?.decision === 'retain' && decisionReason) {
+      return t('选择 {{channel}}：成本优先低成本切换未触发，{{reason}}。', {
+        channel: label,
+        reason: decisionReason,
+      });
+    }
     return t('选择 {{channel}}：命中粘滞路由且质量仍满足保留阈值。', {
       channel: label,
     });
@@ -9747,6 +9797,7 @@ function buildSelectionInsight(record, candidates, t) {
     explanation,
     stickyRetained,
     stickyBroken,
+    stickyDecision: record?.sticky_decision || record?.request_meta?.sticky_decision,
     stickySource: formatStickySource(record?.sticky_source, t),
     stickyBreakText,
     selectedRank,

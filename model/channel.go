@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/samber/lo"
@@ -61,42 +62,19 @@ type Channel struct {
 }
 
 type ChannelInfo struct {
-	IsMultiKey                 bool                              `json:"is_multi_key"`                            // 是否多Key模式
-	MultiKeySize               int                               `json:"multi_key_size"`                          // 多Key模式下的Key数量
-	MultiKeyStatusList         map[int]int                       `json:"multi_key_status_list"`                   // key状态列表，key index -> status
-	MultiKeyDisabledReason     map[int]string                    `json:"multi_key_disabled_reason,omitempty"`     // key禁用原因列表，key index -> reason
-	MultiKeyDisabledTime       map[int]int64                     `json:"multi_key_disabled_time,omitempty"`       // key禁用时间列表，key index -> time
-	MultiKeyProxyIDs           map[int]int                       `json:"multi_key_proxy_ids,omitempty"`           // key 绑定的代理资源，key index -> proxy id
-	MultiKeyAccountTypes       map[int]string                    `json:"multi_key_account_types,omitempty"`       // key 账号凭证类型，key index -> account type
-	MultiKeyCapabilities       map[int]ChannelAccountCapability  `json:"multi_key_capabilities,omitempty"`        // key 功能权限检测结果，key index -> capability
-	MultiKeyPollingIndex       int                               `json:"multi_key_polling_index"`                 // 多Key模式下轮询的key索引
-	MultiKeyMode               constant.MultiKeyMode             `json:"multi_key_mode"`
+	IsMultiKey             bool                             `json:"is_multi_key"`                        // 是否多Key模式
+	MultiKeySize           int                              `json:"multi_key_size"`                      // 多Key模式下的Key数量
+	MultiKeyStatusList     map[int]int                      `json:"multi_key_status_list"`               // key状态列表，key index -> status
+	MultiKeyDisabledReason map[int]string                   `json:"multi_key_disabled_reason,omitempty"` // key禁用原因列表，key index -> reason
+	MultiKeyDisabledTime   map[int]int64                    `json:"multi_key_disabled_time,omitempty"`   // key禁用时间列表，key index -> time
+	MultiKeyProxyIDs       map[int]int                      `json:"multi_key_proxy_ids,omitempty"`       // key 绑定的代理资源，key index -> proxy id
+	MultiKeyAccountTypes   map[int]string                   `json:"multi_key_account_types,omitempty"`   // key 账号凭证类型，key index -> account type
+	MultiKeyCapabilities   map[int]ChannelAccountCapability `json:"multi_key_capabilities,omitempty"`    // key 功能权限检测结果，key index -> capability
+	MultiKeyPollingIndex   int                              `json:"multi_key_polling_index"`             // 多Key模式下轮询的key索引
+	MultiKeyMode           constant.MultiKeyMode            `json:"multi_key_mode"`
 }
 
-type ChannelAccountCapability struct {
-	ResponsesWrite        *bool  `json:"responses_write,omitempty"`
-	ResponsesCompactWrite *bool  `json:"responses_compact_write,omitempty"`
-	ChatCompletionsWrite  *bool  `json:"chat_completions_write,omitempty"`
-	CheckedTime           int64  `json:"checked_time,omitempty"`
-	LastEndpoint          string `json:"last_endpoint,omitempty"`
-	LastMessage           string `json:"last_message,omitempty"`
-}
-
-func (cap ChannelAccountCapability) HasResponsesWriteDenied() bool {
-	return cap.ResponsesWrite != nil && !*cap.ResponsesWrite
-}
-
-func (cap ChannelAccountCapability) HasChatCompletionsWriteAllowed() bool {
-	return cap.ChatCompletionsWrite != nil && *cap.ChatCompletionsWrite
-}
-
-func (cap ChannelAccountCapability) HasResponsesWriteAllowed() bool {
-	return cap.ResponsesWrite != nil && *cap.ResponsesWrite
-}
-
-func (cap ChannelAccountCapability) HasResponsesCompactWriteAllowed() bool {
-	return cap.ResponsesCompactWrite != nil && *cap.ResponsesCompactWrite
-}
+type ChannelAccountCapability = channelcapability.AccountCapability
 
 func (info ChannelInfo) AccountCapability(index int) (ChannelAccountCapability, bool) {
 	if info.MultiKeyCapabilities == nil {

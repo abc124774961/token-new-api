@@ -8,6 +8,31 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 )
 
+type AccountCapability struct {
+	ResponsesWrite        *bool  `json:"responses_write,omitempty"`
+	ResponsesCompactWrite *bool  `json:"responses_compact_write,omitempty"`
+	ChatCompletionsWrite  *bool  `json:"chat_completions_write,omitempty"`
+	CheckedTime           int64  `json:"checked_time,omitempty"`
+	LastEndpoint          string `json:"last_endpoint,omitempty"`
+	LastMessage           string `json:"last_message,omitempty"`
+}
+
+func (cap AccountCapability) HasResponsesWriteDenied() bool {
+	return cap.ResponsesWrite != nil && !*cap.ResponsesWrite
+}
+
+func (cap AccountCapability) HasChatCompletionsWriteAllowed() bool {
+	return cap.ChatCompletionsWrite != nil && *cap.ChatCompletionsWrite
+}
+
+func (cap AccountCapability) HasResponsesWriteAllowed() bool {
+	return cap.ResponsesWrite != nil && *cap.ResponsesWrite
+}
+
+func (cap AccountCapability) HasResponsesCompactWriteAllowed() bool {
+	return cap.ResponsesCompactWrite != nil && *cap.ResponsesCompactWrite
+}
+
 // SupportedEndpointTypes returns the effective endpoint capabilities for one
 // concrete channel. It keeps default OpenAI-compatible behavior broad, and uses
 // explicit channel settings for Codex-specific routing decisions.

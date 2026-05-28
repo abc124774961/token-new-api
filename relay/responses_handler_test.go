@@ -660,9 +660,9 @@ func TestEnsureAccountCapabilityResponsesViaChatPlanUsesStandardProfile(t *testi
 		OriginModelName:  "gpt-4o",
 		UsingGroup:       "default",
 		ChannelMeta: &relaycommon.ChannelMeta{
-			ChannelId:             99,
-			ChannelType:           constant.ChannelTypeOpenAI,
-			UpstreamModelName:     "gpt-4o",
+			ChannelId:         99,
+			ChannelType:       constant.ChannelTypeOpenAI,
+			UpstreamModelName: "gpt-4o",
 			ChannelAccountCapability: &model.ChannelAccountCapability{
 				ResponsesWrite:       &denied,
 				ChatCompletionsWrite: &allowed,
@@ -689,9 +689,9 @@ func TestTextHelperDoesNotForceResponsesWhenAccountCapabilityPrefersChat(t *test
 		RelayMode:       relayconstant.RelayModeChatCompletions,
 		OriginModelName: "gpt-4o",
 		ChannelMeta: &relaycommon.ChannelMeta{
-			ChannelId:             100,
-			ChannelType:           constant.ChannelTypeOpenAI,
-			ChannelOtherSettings:  dto.ChannelOtherSettings{WireAPI: "responses"},
+			ChannelId:            100,
+			ChannelType:          constant.ChannelTypeOpenAI,
+			ChannelOtherSettings: dto.ChannelOtherSettings{WireAPI: "responses"},
 			ChannelAccountCapability: &model.ChannelAccountCapability{
 				ResponsesWrite:       &denied,
 				ChatCompletionsWrite: &allowed,
