@@ -266,6 +266,7 @@ func TestPublicHomeModelGatewayStatsAggregatesFromDB(t *testing.T) {
 
 func TestPublicHomeDynamicBillingOnlyExposesDisplayPrice(t *testing.T) {
 	ratio_setting.InitRatioSettings()
+	db := setupModelGatewayReplayControllerTestDB(t)
 	now := time.Now().Unix()
 	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
 		DynamicBillingEnabled:        true,
@@ -293,6 +294,73 @@ func TestPublicHomeDynamicBillingOnlyExposesDisplayPrice(t *testing.T) {
 	})
 	defer restoreBaselines()
 
+	require.NoError(t, db.Create(&[]model.ModelGatewayUserRequestSummary{
+		{
+			RequestId:       "req-home-range-low",
+			CreatedAt:       now - 120,
+			UpdatedAt:       now - 120,
+			CompletedAt:     now - 120,
+			RequestedModel:  "gpt-5.4",
+			RequestedGroup:  "auto",
+			SelectedGroup:   "codex-plus",
+			FinalChannelID:  4,
+			Attempts:        1,
+			FinalSuccess:    true,
+			FinalStatusCode: 200,
+		},
+		{
+			RequestId:       "req-home-range-high",
+			CreatedAt:       now - 60,
+			UpdatedAt:       now - 60,
+			CompletedAt:     now - 60,
+			RequestedModel:  "gpt-5.4",
+			RequestedGroup:  "auto",
+			SelectedGroup:   "codex-plus",
+			FinalChannelID:  4,
+			Attempts:        1,
+			FinalSuccess:    true,
+			FinalStatusCode: 200,
+		},
+	}).Error)
+	lowOther, err := common.Marshal(map[string]any{
+		"dynamic_billing_applied":     true,
+		"dynamic_billing_group":       "codex-plus",
+		"dynamic_billing_ratio":       0.055,
+		"dynamic_billing_price_per_m": 0.102,
+	})
+	require.NoError(t, err)
+	highOther, err := common.Marshal(map[string]any{
+		"dynamic_billing_applied":     true,
+		"dynamic_billing_group":       "codex-plus",
+		"dynamic_billing_ratio":       0.083,
+		"dynamic_billing_price_per_m": 0.154,
+	})
+	require.NoError(t, err)
+	require.NoError(t, model.LOG_DB.Create(&[]model.Log{
+		{
+			Type:             model.LogTypeConsume,
+			RequestId:        "req-home-range-low",
+			CreatedAt:        now - 120,
+			ModelName:        "gpt-5.4",
+			Group:            "codex-plus",
+			PromptTokens:     100,
+			CompletionTokens: 100,
+			Quota:            100,
+			Other:            string(lowOther),
+		},
+		{
+			Type:             model.LogTypeConsume,
+			RequestId:        "req-home-range-high",
+			CreatedAt:        now - 60,
+			ModelName:        "gpt-5.4",
+			Group:            "codex-plus",
+			PromptTokens:     100,
+			CompletionTokens: 100,
+			Quota:            100,
+			Other:            string(highOther),
+		},
+	}).Error)
+
 	result := buildPublicHomeDynamicBilling(now)
 
 	require.NotNil(t, result)
@@ -300,6 +368,8 @@ func TestPublicHomeDynamicBillingOnlyExposesDisplayPrice(t *testing.T) {
 	require.Equal(t, "codex-plus", result.Group)
 	require.Equal(t, "gpt-5.4", result.Model)
 	require.InEpsilon(t, 0.0693, result.CurrentRatio, 0.000001)
+	require.InEpsilon(t, 0.055, result.MinRatio7d, 0.000001)
+	require.InEpsilon(t, 0.083, result.MaxRatio7d, 0.000001)
 	require.Equal(t, modelGatewayDynamicBillingPricePerMillion("gpt-5.4", 0.0693), result.DisplayPricePerM)
 	require.EqualValues(t, 24, result.UpdatedSecondsAgo)
 

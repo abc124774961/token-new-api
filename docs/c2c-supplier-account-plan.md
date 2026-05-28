@@ -1163,7 +1163,7 @@ C 端消费和 C2C 供应商结算采用同一套账务内核：
 
 详细一期需求、目标、任务点、验收、产品/运营/技术评审和技术架构见独立文档：[C2C 一期：统一资源模型、账号级调度与评分底座](./c2c-phase1-unified-resource-account-dispatch-plan.md)。
 
-一期先把现有渠道管理升级为统一资源模型，并完成账号级智能调度、评分、探活和候选索引底座。C2C 不在这一期作为业务闭环上线，但一期产物必须能支撑二期 C2C 直接接入。
+一期先把现有渠道管理升级为统一资源账号模型，并完成账号级智能调度、评分、探活和候选索引底座。C2C 不在这一期作为业务闭环上线，但一期产物必须能支撑二期 C2C 直接接入。
 
 核心交付：
 
@@ -1176,8 +1176,15 @@ C 端消费和 C2C 供应商结算采用同一套账务内核：
 - `RuntimeKey`、`RuntimeSnapshot`、`ModelGatewayScoreEvent`、探活和隔离扩展到账号维度。
 - relay 使用 `DispatchPlan` 中选中的 credential，避免执行阶段二次 `GetNextEnabledKey()` 覆盖调度结果。
 - Codex 多账号按账号级物化评分参与智能调度，评分体系复用现有最新评分引擎，不新增第二套账号评分。
+- 一期只有一个生产候选池 `Pro`；`Pro` 表示可生产调度候选池，不是高等级池，新账号满足启用、凭证有效、能力匹配、未隔离即可进入，并使用冷启动默认分和保守并发。
+- 账号级分数是主干，模型级 runtime 评分只在最终 Top-K 排序阶段做低权重修正；模型能力、工具能力、endpoint 支持仍是硬过滤。
+- 所有评分事实携带 `failure_scope`，区分 `account/resource/provider/system/client`，避免同渠道不同账号互相污染。
+- 首字延迟过高时，只能在未向客户端输出前内部中断并切换，切换记录标记为“智能调度”和具体原因。
 - 运营成本、能力配置继承渠道/账号维度；分组只作为策略权重，不进入成本分；质量、健康、探活、隔离按账号独立更新。
-- 候选索引按 `requested_model + group + endpoint_type + required_tools` 组织，避免大账号池请求链路全量扫描。
+- 成本分由平台/上游运营成本和相关候选集合后台物化，运营成本或候选集合不变时不因单次请求动态升降。
+- 候选索引按 `group + endpoint_type + required_tools + provider/brand` 分桶，模型能力用 bitmap/set 过滤，避免大账号池请求链路全量扫描。
+- 实现按 `AccountRegistry/CredentialResolver/CandidateIndexStore/RuntimeSnapshotStore/ScoreEngine/CostScoreMaterializer/ProbePlanner/DispatchPlanner` 等对象封装，热路径只读轻量内存快照；Redis 只做锁、版本、限频、队列等短期协调，DB 只做事实和物化结果持久化，不参与请求时全量候选扫描。
+- 一期按公共契约、账号导入、前端管理、Pro 索引、调度账号化、relay 凭证固定、评分成本、探活、观测、性能验证拆成并行任务包，先冻结公共 DTO 和迁移，再分支开发，最后在调度链路合拢。
 
 ### 二期：C2C 供应渠道账号最小闭环
 

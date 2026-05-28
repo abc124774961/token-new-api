@@ -254,6 +254,9 @@ func migrateDB() error {
 	if err := migrateTokenModelLimitsToText(); err != nil {
 		return err
 	}
+	if err := deduplicateRuntimeSnapshotHashes(); err != nil {
+		return err
+	}
 	if err := migrateRuntimeSnapshotCapabilityFingerprintToText(); err != nil {
 		return err
 	}
@@ -269,12 +272,16 @@ func migrateDB() error {
 	if err := ensureRuntimeSnapshotRecoveryColumns(); err != nil {
 		return err
 	}
+	if err := ensureModelGatewayAccountScopeColumns(); err != nil {
+		return err
+	}
 	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
 		return err
 	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
+		&ChannelBalanceMonitorEvent{},
 		&ChannelFailureEvent{},
 		&ModelExecutionRecord{},
 		&ModelGatewayUserRequestSummary{},
@@ -283,6 +290,8 @@ func migrateDB() error {
 		&ModelGatewayDynamicBillingBaseline{},
 		&ModelGatewayRuntimeSnapshot{},
 		&ModelGatewayScoreEvent{},
+		&ModelGatewayProxy{},
+		&ModelGatewayProxyUsage{},
 		&Token{},
 		&User{},
 		&PasskeyCredential{},
@@ -344,6 +353,7 @@ func migrateDBFast() error {
 		name  string
 	}{
 		{&Channel{}, "Channel"},
+		{&ChannelBalanceMonitorEvent{}, "ChannelBalanceMonitorEvent"},
 		{&ChannelFailureEvent{}, "ChannelFailureEvent"},
 		{&ModelExecutionRecord{}, "ModelExecutionRecord"},
 		{&ModelGatewayUserRequestSummary{}, "ModelGatewayUserRequestSummary"},
@@ -352,6 +362,8 @@ func migrateDBFast() error {
 		{&ModelGatewayDynamicBillingBaseline{}, "ModelGatewayDynamicBillingBaseline"},
 		{&ModelGatewayRuntimeSnapshot{}, "ModelGatewayRuntimeSnapshot"},
 		{&ModelGatewayScoreEvent{}, "ModelGatewayScoreEvent"},
+		{&ModelGatewayProxy{}, "ModelGatewayProxy"},
+		{&ModelGatewayProxyUsage{}, "ModelGatewayProxyUsage"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
 		{&PasskeyCredential{}, "PasskeyCredential"},
@@ -756,6 +768,126 @@ func ensureRuntimeSnapshotRecoveryColumns() error {
 			return err
 		}
 	}
+	return nil
+}
+
+type modelGatewayColumnSpec struct {
+	dbName    string
+	fieldName string
+}
+
+func ensureModelGatewayAccountScopeColumns() error {
+	if DB == nil {
+		return nil
+	}
+	runtimeColumns := []modelGatewayColumnSpec{
+		{"resource_id", "ResourceID"},
+		{"resource_type", "ResourceType"},
+		{"account_id", "AccountID"},
+		{"account_type", "AccountType"},
+		{"brand", "Brand"},
+		{"provider", "Provider"},
+		{"credential_index", "CredentialIndex"},
+		{"credential_subject_fingerprint", "CredentialSubjectFP"},
+		{"credential_fingerprint", "CredentialFP"},
+	}
+	if err := ensureColumns(&ModelGatewayRuntimeSnapshot{}, runtimeColumns); err != nil {
+		return err
+	}
+	scoreEventColumns := []modelGatewayColumnSpec{
+		{"resource_id", "ResourceID"},
+		{"resource_type", "ResourceType"},
+		{"account_id", "AccountID"},
+		{"account_type", "AccountType"},
+		{"brand", "Brand"},
+		{"provider", "Provider"},
+		{"credential_index", "CredentialIndex"},
+		{"credential_subject_fingerprint", "CredentialSubjectFP"},
+		{"credential_fingerprint", "CredentialFP"},
+		{"failure_scope", "FailureScope"},
+		{"switch_reason", "SwitchReason"},
+	}
+	return ensureColumns(&ModelGatewayScoreEvent{}, scoreEventColumns)
+}
+
+func ensureColumns(table any, columns []modelGatewayColumnSpec) error {
+	if DB == nil || !DB.Migrator().HasTable(table) {
+		return nil
+	}
+	for _, column := range columns {
+		if DB.Migrator().HasColumn(table, column.dbName) {
+			continue
+		}
+		if err := DB.Migrator().AddColumn(table, column.fieldName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deduplicateRuntimeSnapshotHashes() error {
+	if DB == nil || !DB.Migrator().HasTable(&ModelGatewayRuntimeSnapshot{}) {
+		return nil
+	}
+	if !DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, "id") ||
+		!DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, "runtime_key_hash") {
+		return nil
+	}
+	type snapshotHashRow struct {
+		Id             int
+		RuntimeKeyHash string
+		UpdatedAt      int64
+	}
+	hasUpdatedAt := DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, "updated_at")
+	selectColumns := "id, runtime_key_hash"
+	orderBy := "runtime_key_hash ASC, id DESC"
+	if hasUpdatedAt {
+		selectColumns = "id, runtime_key_hash, updated_at"
+		orderBy = "runtime_key_hash ASC, updated_at DESC, id DESC"
+	}
+	rows := make([]snapshotHashRow, 0)
+	if err := DB.Table("model_gateway_runtime_snapshots").
+		Select(selectColumns).
+		Order(orderBy).
+		Find(&rows).Error; err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	keepByHash := make(map[string]snapshotHashRow)
+	deleteIDs := make([]int, 0)
+	for _, row := range rows {
+		hash := strings.TrimSpace(row.RuntimeKeyHash)
+		if row.Id <= 0 || hash == "" {
+			if row.Id > 0 {
+				deleteIDs = append(deleteIDs, row.Id)
+			}
+			continue
+		}
+		current, exists := keepByHash[hash]
+		if !exists || row.UpdatedAt > current.UpdatedAt || (row.UpdatedAt == current.UpdatedAt && row.Id > current.Id) {
+			if exists {
+				deleteIDs = append(deleteIDs, current.Id)
+			}
+			keepByHash[hash] = row
+			continue
+		}
+		deleteIDs = append(deleteIDs, row.Id)
+	}
+	if len(deleteIDs) == 0 {
+		return nil
+	}
+	for start := 0; start < len(deleteIDs); start += 500 {
+		end := start + 500
+		if end > len(deleteIDs) {
+			end = len(deleteIDs)
+		}
+		if err := DB.Where("id IN ?", deleteIDs[start:end]).Delete(&ModelGatewayRuntimeSnapshot{}).Error; err != nil {
+			return err
+		}
+	}
+	common.SysLog(fmt.Sprintf("deduplicated model gateway runtime snapshots: removed %d duplicate or empty hash rows", len(deleteIDs)))
 	return nil
 }
 

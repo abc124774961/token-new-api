@@ -165,7 +165,7 @@ func GetResponseBody(method, url string, channel *model.Channel, headers http.He
 	return body, nil
 }
 
-func updateChannelCloseAIBalance(channel *model.Channel) (float64, error) {
+func fetchChannelCloseAIBalance(channel *model.Channel) (float64, error) {
 	url := fmt.Sprintf("%s/dashboard/billing/credit_grants", channel.GetBaseURL())
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 
@@ -177,11 +177,19 @@ func updateChannelCloseAIBalance(channel *model.Channel) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	channel.UpdateBalance(response.TotalAvailable)
 	return response.TotalAvailable, nil
 }
 
-func updateChannelOpenAISBBalance(channel *model.Channel) (float64, error) {
+func updateChannelCloseAIBalance(channel *model.Channel) (float64, error) {
+	balance, err := fetchChannelCloseAIBalance(channel)
+	if err != nil {
+		return 0, err
+	}
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
+func fetchChannelOpenAISBBalance(channel *model.Channel) (float64, error) {
 	url := fmt.Sprintf("https://api.openai-sb.com/sb-api/user/status?api_key=%s", channel.Key)
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 	if err != nil {
@@ -199,11 +207,19 @@ func updateChannelOpenAISBBalance(channel *model.Channel) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
+	return balance, nil
+}
+
+func updateChannelOpenAISBBalance(channel *model.Channel) (float64, error) {
+	balance, err := fetchChannelOpenAISBBalance(channel)
+	if err != nil {
+		return 0, err
+	}
 	channel.UpdateBalance(balance)
 	return balance, nil
 }
 
-func updateChannelAIProxyBalance(channel *model.Channel) (float64, error) {
+func fetchChannelAIProxyBalance(channel *model.Channel) (float64, error) {
 	url := "https://aiproxy.io/api/report/getUserOverview"
 	headers := http.Header{}
 	headers.Add("Api-Key", channel.Key)
@@ -219,11 +235,19 @@ func updateChannelAIProxyBalance(channel *model.Channel) (float64, error) {
 	if !response.Success {
 		return 0, fmt.Errorf("code: %d, message: %s", response.ErrorCode, response.Message)
 	}
-	channel.UpdateBalance(response.Data.TotalPoints)
 	return response.Data.TotalPoints, nil
 }
 
-func updateChannelAPI2GPTBalance(channel *model.Channel) (float64, error) {
+func updateChannelAIProxyBalance(channel *model.Channel) (float64, error) {
+	balance, err := fetchChannelAIProxyBalance(channel)
+	if err != nil {
+		return 0, err
+	}
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
+func fetchChannelAPI2GPTBalance(channel *model.Channel) (float64, error) {
 	url := "https://api.api2gpt.com/dashboard/billing/credit_grants"
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 
@@ -235,11 +259,19 @@ func updateChannelAPI2GPTBalance(channel *model.Channel) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	channel.UpdateBalance(response.TotalRemaining)
 	return response.TotalRemaining, nil
 }
 
-func updateChannelSiliconFlowBalance(channel *model.Channel) (float64, error) {
+func updateChannelAPI2GPTBalance(channel *model.Channel) (float64, error) {
+	balance, err := fetchChannelAPI2GPTBalance(channel)
+	if err != nil {
+		return 0, err
+	}
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
+func fetchChannelSiliconFlowBalance(channel *model.Channel) (float64, error) {
 	url := "https://api.siliconflow.cn/v1/user/info"
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 	if err != nil {
@@ -257,11 +289,19 @@ func updateChannelSiliconFlowBalance(channel *model.Channel) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
+	return balance, nil
+}
+
+func updateChannelSiliconFlowBalance(channel *model.Channel) (float64, error) {
+	balance, err := fetchChannelSiliconFlowBalance(channel)
+	if err != nil {
+		return 0, err
+	}
 	channel.UpdateBalance(balance)
 	return balance, nil
 }
 
-func updateChannelDeepSeekBalance(channel *model.Channel) (float64, error) {
+func fetchChannelDeepSeekBalance(channel *model.Channel) (float64, error) {
 	url := "https://api.deepseek.com/user/balance"
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 	if err != nil {
@@ -286,11 +326,19 @@ func updateChannelDeepSeekBalance(channel *model.Channel) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
+	return balance, nil
+}
+
+func updateChannelDeepSeekBalance(channel *model.Channel) (float64, error) {
+	balance, err := fetchChannelDeepSeekBalance(channel)
+	if err != nil {
+		return 0, err
+	}
 	channel.UpdateBalance(balance)
 	return balance, nil
 }
 
-func updateChannelAIGC2DBalance(channel *model.Channel) (float64, error) {
+func fetchChannelAIGC2DBalance(channel *model.Channel) (float64, error) {
 	url := "https://api.aigc2d.com/dashboard/billing/credit_grants"
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 	if err != nil {
@@ -301,11 +349,19 @@ func updateChannelAIGC2DBalance(channel *model.Channel) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	channel.UpdateBalance(response.TotalAvailable)
 	return response.TotalAvailable, nil
 }
 
-func updateChannelOpenRouterBalance(channel *model.Channel) (float64, error) {
+func updateChannelAIGC2DBalance(channel *model.Channel) (float64, error) {
+	balance, err := fetchChannelAIGC2DBalance(channel)
+	if err != nil {
+		return 0, err
+	}
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
+func fetchChannelOpenRouterBalance(channel *model.Channel) (float64, error) {
 	url := "https://openrouter.ai/api/v1/credits"
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 	if err != nil {
@@ -317,11 +373,19 @@ func updateChannelOpenRouterBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	balance := response.Data.TotalCredits - response.Data.TotalUsage
+	return balance, nil
+}
+
+func updateChannelOpenRouterBalance(channel *model.Channel) (float64, error) {
+	balance, err := fetchChannelOpenRouterBalance(channel)
+	if err != nil {
+		return 0, err
+	}
 	channel.UpdateBalance(balance)
 	return balance, nil
 }
 
-func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
+func fetchChannelMoonshotBalance(channel *model.Channel) (float64, error) {
 	url := "https://api.moonshot.cn/v1/users/me/balance"
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
 	if err != nil {
@@ -351,11 +415,19 @@ func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
 	}
 	availableBalanceCny := response.Data.AvailableBalance
 	availableBalanceUsd := decimal.NewFromFloat(availableBalanceCny).Div(decimal.NewFromFloat(operation_setting.Price)).InexactFloat64()
-	channel.UpdateBalance(availableBalanceUsd)
 	return availableBalanceUsd, nil
 }
 
-func updateChannelBalance(channel *model.Channel) (float64, error) {
+func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
+	balance, err := fetchChannelMoonshotBalance(channel)
+	if err != nil {
+		return 0, err
+	}
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
+func fetchChannelBalance(channel *model.Channel) (float64, error) {
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() == "" {
 		channel.BaseURL = &baseURL
@@ -370,21 +442,21 @@ func updateChannelBalance(channel *model.Channel) (float64, error) {
 	case constant.ChannelTypeCustom:
 		baseURL = channel.GetBaseURL()
 	//case common.ChannelTypeOpenAISB:
-	//	return updateChannelOpenAISBBalance(channel)
+	//	return fetchChannelOpenAISBBalance(channel)
 	case constant.ChannelTypeAIProxy:
-		return updateChannelAIProxyBalance(channel)
+		return fetchChannelAIProxyBalance(channel)
 	case constant.ChannelTypeAPI2GPT:
-		return updateChannelAPI2GPTBalance(channel)
+		return fetchChannelAPI2GPTBalance(channel)
 	case constant.ChannelTypeAIGC2D:
-		return updateChannelAIGC2DBalance(channel)
+		return fetchChannelAIGC2DBalance(channel)
 	case constant.ChannelTypeSiliconFlow:
-		return updateChannelSiliconFlowBalance(channel)
+		return fetchChannelSiliconFlowBalance(channel)
 	case constant.ChannelTypeDeepSeek:
-		return updateChannelDeepSeekBalance(channel)
+		return fetchChannelDeepSeekBalance(channel)
 	case constant.ChannelTypeOpenRouter:
-		return updateChannelOpenRouterBalance(channel)
+		return fetchChannelOpenRouterBalance(channel)
 	case constant.ChannelTypeMoonshot:
-		return updateChannelMoonshotBalance(channel)
+		return fetchChannelMoonshotBalance(channel)
 	default:
 		return 0, errors.New("尚未实现")
 	}
@@ -416,6 +488,14 @@ func updateChannelBalance(channel *model.Channel) (float64, error) {
 		return 0, err
 	}
 	balance := subscription.HardLimitUSD - usage.TotalUsage/100
+	return balance, nil
+}
+
+func updateChannelBalance(channel *model.Channel) (float64, error) {
+	balance, err := fetchChannelBalance(channel)
+	if err != nil {
+		return 0, err
+	}
 	channel.UpdateBalance(balance)
 	return balance, nil
 }

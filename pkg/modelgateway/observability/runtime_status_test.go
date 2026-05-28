@@ -31,6 +31,51 @@ func (p fakeRuntimeStateProvider) FailureAvoidanceStatus(channelID int) *service
 	return p.avoidance[channelID]
 }
 
+func TestRuntimeStatusServiceCarriesAccountScopeFields(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{
+		RequestedModel:        "gpt-5.4",
+		UpstreamModel:         "gpt-5.4",
+		ChannelID:             501,
+		ResourceID:            "platform:channel:501",
+		ResourceType:          core.ResourceTypePlatformOwned,
+		AccountID:             "openai:openai:acct-1",
+		AccountType:           core.AccountTypeOAuthAccount,
+		Brand:                 "openai",
+		Provider:              "openai",
+		CredentialIndex:       2,
+		CredentialSubjectFP:   "subject-fp",
+		CredentialFP:          "credential-fp",
+		Group:                 "default",
+		EndpointType:          constant.EndpointTypeOpenAI,
+		CapabilityFingerprint: "openai_codex",
+	}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SuccessRate:        1,
+		CostRatio:          0.05,
+		GroupPriorityRatio: 1,
+		SampleCount:        3,
+	})
+
+	service := observability.NewRuntimeStatusService(observability.RuntimeStatusDeps{
+		SnapshotStore: store,
+	})
+	response := service.Build(observability.RuntimeStatusQuery{ChannelID: 501, Limit: 10})
+
+	require.Len(t, response.Items, 1)
+	item := response.Items[0]
+	require.Equal(t, key.ResourceID, item.ResourceID)
+	require.Equal(t, key.ResourceType, item.ResourceType)
+	require.Equal(t, key.AccountID, item.AccountID)
+	require.Equal(t, key.AccountType, item.AccountType)
+	require.Equal(t, key.Brand, item.Brand)
+	require.Equal(t, key.Provider, item.Provider)
+	require.Equal(t, key.CredentialIndex, item.CredentialIndex)
+	require.Equal(t, key.CredentialSubjectFP, item.CredentialSubjectFP)
+	require.Equal(t, key.CredentialFP, item.CredentialFP)
+}
+
 func TestRuntimeStatusServiceMergesSnapshotCircuitQueueAndLiveState(t *testing.T) {
 	now := time.Unix(1710000000, 0)
 	store := scheduler.NewMemoryRuntimeSnapshotStore()

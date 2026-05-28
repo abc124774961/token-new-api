@@ -473,6 +473,19 @@ func UpdateAbilityStatusByTag(tag string, status bool) error {
 	return err
 }
 
+func SyncAbilityStatusByTag(tag string) error {
+	var channels []Channel
+	if err := DB.Select("id", "status").Where("tag = ?", tag).Find(&channels).Error; err != nil {
+		return err
+	}
+	for _, channel := range channels {
+		if err := UpdateAbilityStatus(channel.Id, channel.Status == common.ChannelStatusEnabled); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func UpdateAbilityByTag(tag string, newTag *string, priority *int64, weight *uint) error {
 	ability := Ability{}
 	if newTag != nil {

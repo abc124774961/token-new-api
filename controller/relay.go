@@ -786,7 +786,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, apiErr
 	}
 	logRelaySelectedChannelTrace(c, info, retryParam, channel, selectGroup, false)
-	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
+	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName, selection)
 	if newAPIError != nil {
 		return nil, newAPIError
 	}
@@ -959,7 +959,47 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 	result.LearnedConcurrencyLimit = flow.LearnedConcurrencyLimit
 	result.LearnedConcurrencyLimitChanged = flow.LearnedConcurrencyLimitChanged
 	result.UsedChannels = append([]string(nil), flow.UsedChannels...)
+	result.FailureScope = modelGatewayAttemptFailureScope(*result)
+	result.SwitchReason = modelGatewayAttemptSwitchReason(*result)
 	wrapper.Facade.Report(c, result)
+}
+
+func modelGatewayAttemptFailureScope(result modelgatewaycore.AttemptResult) string {
+	if result.FailureScope != "" {
+		return strings.TrimSpace(result.FailureScope)
+	}
+	if result.ClientAborted || result.ErrorCategory == modelgatewaycore.ErrorCategoryClientAborted {
+		return modelgatewaycore.FailureScopeClient
+	}
+	if result.Success {
+		return ""
+	}
+	if result.ConcurrencyLimited || result.ErrorCategory == modelgatewaycore.ErrorCategoryLocalConcurrencyLimit {
+		return modelgatewaycore.FailureScopeSystem
+	}
+	if result.BalanceInsufficient || result.ErrorCategory == modelgatewaycore.ErrorCategoryBalanceOrQuota || result.ErrorCategory == modelgatewaycore.ErrorCategoryAuthConfigError || result.ErrorCategory == modelgatewaycore.ErrorCategoryUnsupportedCapability {
+		return modelgatewaycore.FailureScopeResource
+	}
+	if result.RetryReason == modelgatewaycore.RelayAttemptCancelReasonFirstByteTimeout || result.ErrorCategory == modelgatewaycore.ErrorCategoryTimeout || result.ErrorCategory == modelgatewaycore.ErrorCategoryRateLimit || result.ErrorCategory == modelgatewaycore.ErrorCategoryUpstreamConcurrencyLimit || result.ErrorCategory == modelgatewaycore.ErrorCategoryOverloadSkip || result.ErrorCategory == modelgatewaycore.ErrorCategoryUpstreamError || result.ErrorCategory == modelgatewaycore.ErrorCategoryServerError {
+		return modelgatewaycore.FailureScopeAccount
+	}
+	return modelgatewaycore.FailureScopeAccount
+}
+
+func modelGatewayAttemptSwitchReason(result modelgatewaycore.AttemptResult) string {
+	if result.SwitchReason != "" {
+		return strings.TrimSpace(result.SwitchReason)
+	}
+	if result.RetryAction != "switch_channel" || !result.WillRetry {
+		return ""
+	}
+	if result.RetryReason != "" {
+		return strings.TrimSpace(result.RetryReason)
+	}
+	if result.ErrorCategory != "" {
+		return strings.TrimSpace(result.ErrorCategory)
+	}
+	return "retry"
 }
 
 func relayEmptyOutput(c *gin.Context) bool {

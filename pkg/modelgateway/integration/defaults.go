@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/modelgateway"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/policy"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/recording"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
@@ -34,6 +35,7 @@ type DefaultRuntimeObservability struct {
 	RuntimeSyncEventStore *scheduler.RuntimeSyncEventStore
 	QueueSnapshotSyncer   *scheduler.RuntimeQueueSnapshotSyncer
 	SnapshotPersistence   *scheduler.RuntimeSnapshotPersistence
+	AccountCandidateIndex *AccountCandidateIndexRuntime
 	RuntimeSyncNodeID     string
 }
 
@@ -135,8 +137,9 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 			runtimePolicy.QueueMaxDepth,
 			runtimePolicy.QueueDepthMultiplier,
 		).WithCircuitBreaker(circuitBreaker).WithCostBaselineProvider(costBaselineCache)
+		candidateBuilder, accountCandidateIndex := coreCandidatePoolBuilder(runtimePolicy)
 		smartSelector := scheduler.NewDefaultSmartChannelSelector(
-			NewModelCandidatePoolBuilder(),
+			candidateBuilder,
 			snapshotStore,
 			runtimePolicy.ScoreWeights,
 		).WithRuntimeSnapshotEnricher(runtimeEnricher).WithCostBaselineProvider(costBaselineCache).WithStickyRouter(stickyRouter)
@@ -166,6 +169,7 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 			RuntimeSyncEventStore: runtimeSyncEventStore,
 			QueueSnapshotSyncer:   queueSnapshotSyncer,
 			SnapshotPersistence:   snapshotPersistence,
+			AccountCandidateIndex: accountCandidateIndex,
 			RuntimeSyncNodeID:     runtimeSyncNodeID,
 		}
 	})
@@ -181,6 +185,16 @@ func DefaultRuntimeObservabilityDeps() *DefaultRuntimeObservability {
 	return defaultRuntime
 }
 
+func RefreshDefaultAccountCandidateIndex() {
+	defaultWrapperMu.Lock()
+	runtimeDeps := defaultRuntime
+	defaultWrapperMu.Unlock()
+	if runtimeDeps == nil || runtimeDeps.AccountCandidateIndex == nil {
+		return
+	}
+	runtimeDeps.AccountCandidateIndex.Refresh()
+}
+
 func ResetDefaultRuntimeObservabilityDeps() {
 	defaultWrapperMu.Lock()
 	defer defaultWrapperMu.Unlock()
@@ -193,9 +207,31 @@ func ResetDefaultRuntimeObservabilityDeps() {
 	if defaultRuntime != nil && defaultRuntime.CostBaselineCache != nil {
 		defaultRuntime.CostBaselineCache.Close()
 	}
+	if defaultRuntime != nil && defaultRuntime.AccountCandidateIndex != nil {
+		defaultRuntime.AccountCandidateIndex.Close()
+	}
 	defaultWrapperOnce = sync.Once{}
 	defaultWrapper = nil
 	defaultRuntime = nil
+}
+
+func coreCandidatePoolBuilder(runtimePolicy RuntimePolicySettings) (core.CandidatePoolBuilder, *AccountCandidateIndexRuntime) {
+	primary := NewModelCandidatePoolBuilder()
+	if !runtimePolicy.AccountCandidateIndexEnabled {
+		return primary, nil
+	}
+	refreshInterval := time.Duration(runtimePolicy.AccountCandidateIndexRefreshMs) * time.Millisecond
+	indexRuntime := NewAccountCandidateIndexRuntime(nil, AccountCandidateIndexOptions{
+		RefreshInterval: refreshInterval,
+		ShadowLog:       runtimePolicy.AccountCandidateIndexShadowLog,
+	})
+	indexRuntime.Start()
+	indexed := NewIndexedCandidatePoolBuilder(indexRuntime.Index(), primary.MaxCandidatesPerGroup)
+	return NewAccountCandidatePrimaryBuilder(indexed, primary, AccountCandidateIndexOptions{
+		RefreshInterval: refreshInterval,
+		LogInterval:     refreshInterval,
+		ShadowLog:       runtimePolicy.AccountCandidateIndexShadowLog,
+	}), indexRuntime
 }
 
 func defaultRuntimeSyncTTL(settings RuntimePolicySettings) time.Duration {

@@ -8,14 +8,28 @@ import (
 )
 
 type MonitorSetting struct {
-	AutoTestChannelEnabled bool    `json:"auto_test_channel_enabled"`
-	AutoTestChannelMinutes float64 `json:"auto_test_channel_minutes"`
+	AutoTestChannelEnabled               bool    `json:"auto_test_channel_enabled"`
+	AutoTestChannelMinutes               float64 `json:"auto_test_channel_minutes"`
+	ChannelBalanceMonitorEnabled         bool    `json:"channel_balance_monitor_enabled"`
+	ChannelBalanceMonitorIntervalMinutes float64 `json:"channel_balance_monitor_interval_minutes"`
+	ChannelBalanceWarningThreshold       float64 `json:"channel_balance_warning_threshold"`
+	ChannelRatioSyncEnabled              bool    `json:"channel_ratio_sync_enabled"`
+	ChannelRatioSyncIntervalMinutes      float64 `json:"channel_ratio_sync_interval_minutes"`
+	ChannelRatioSyncTrustedAutoApply     bool    `json:"channel_ratio_sync_trusted_auto_apply"`
+	ChannelBalanceMonitorRetentionDays   int     `json:"channel_balance_monitor_retention_days"`
 }
 
 // 默认配置
 var monitorSetting = MonitorSetting{
-	AutoTestChannelEnabled: false,
-	AutoTestChannelMinutes: 10,
+	AutoTestChannelEnabled:               false,
+	AutoTestChannelMinutes:               10,
+	ChannelBalanceMonitorEnabled:         false,
+	ChannelBalanceMonitorIntervalMinutes: 10,
+	ChannelBalanceWarningThreshold:       10,
+	ChannelRatioSyncEnabled:              false,
+	ChannelRatioSyncIntervalMinutes:      60,
+	ChannelRatioSyncTrustedAutoApply:     true,
+	ChannelBalanceMonitorRetentionDays:   30,
 }
 
 func init() {
@@ -32,4 +46,12 @@ func GetMonitorSetting() *MonitorSetting {
 		}
 	}
 	return &monitorSetting
+}
+
+func SetMonitorSettingForTest(setting MonitorSetting) func() {
+	previous := monitorSetting
+	monitorSetting = setting
+	return func() {
+		monitorSetting = previous
+	}
 }

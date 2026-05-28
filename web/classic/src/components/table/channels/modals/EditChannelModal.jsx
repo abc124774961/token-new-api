@@ -402,7 +402,7 @@ function type2secretPrompt(type) {
     case 51:
       return '按照如下格式输入: AccessKey|SecretAccessKey';
     case 57:
-      return '请输入 Codex OAuth JSON 凭据（必须包含 access_token 和 account_id）。标准 OpenAI API Key 请使用 OpenAI 渠道';
+      return '可留空；填写时必须是包含 access_token 和 account_id 的 Codex OAuth JSON 凭据。留空创建后请通过账号管理导入账号';
     default:
       return '请输入渠道对应的鉴权密钥';
   }
@@ -3193,6 +3193,10 @@ const EditChannelModal = (props) => {
     const formValues = formApiRef.current ? formApiRef.current.getValues() : {};
     let localInputs = { ...formValues };
     localInputs.param_override = inputs.param_override;
+    const allowEmptyCodexAccountPool =
+      localInputs.type === 57 &&
+      !batch &&
+      (localInputs.key || '').trim() === '';
 
     if (localInputs.type === 57) {
       if (batch) {
@@ -3201,11 +3205,6 @@ const EditChannelModal = (props) => {
       }
 
       const rawKey = (localInputs.key || '').trim();
-      if (!isEdit && rawKey === '') {
-        showInfo(t('请输入密钥！'));
-        return;
-      }
-
       if (rawKey !== '') {
         if (!verifyJSON(rawKey)) {
           showInfo(t('密钥必须是合法的 JSON 格式！'));
@@ -3299,7 +3298,10 @@ const EditChannelModal = (props) => {
     }
     delete localInputs.vertex_files;
 
-    if (!isEdit && (!localInputs.name || !localInputs.key)) {
+    if (
+      !isEdit &&
+      (!localInputs.name || (!allowEmptyCodexAccountPool && !localInputs.key))
+    ) {
       showInfo(t('请填写渠道名称和渠道密钥！'));
       return;
     }
@@ -4801,18 +4803,9 @@ const EditChannelModal = (props) => {
                                     : t('密钥')
                                 }
                                 placeholder={t(
-                                  '请输入 JSON 格式的 OAuth 凭据，例如：\n{\n  "access_token": "...",\n  "account_id": "..." \n}',
+                                  '可留空。输入时请使用 JSON 格式的 OAuth 凭据，例如：\n{\n  "access_token": "...",\n  "account_id": "..." \n}',
                                 )}
-                                rules={
-                                  isEdit
-                                    ? []
-                                    : [
-                                        {
-                                          required: true,
-                                          message: t('请输入密钥'),
-                                        },
-                                      ]
-                                }
+                                rules={[]}
                                 autoComplete='new-password'
                                 onChange={(value) =>
                                   handleInputChange('key', value)
@@ -4822,7 +4815,7 @@ const EditChannelModal = (props) => {
                                   <div className='flex flex-col gap-2'>
                                     <Text type='tertiary' size='small'>
                                       {t(
-                                        '仅支持 Codex OAuth JSON 对象，必须包含 access_token 与 account_id。标准 OpenAI API Key 与 Codex 模型请使用 OpenAI 渠道',
+                                        '密钥可留空，创建后渠道会保持自动禁用；请到账号管理导入 Codex OAuth JSON 凭据后再启用。填写时仅支持包含 access_token 与 account_id 的 JSON 对象',
                                       )}
                                     </Text>
 

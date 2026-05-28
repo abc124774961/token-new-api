@@ -66,6 +66,8 @@ type ChannelInfo struct {
 	MultiKeyStatusList     map[int]int           `json:"multi_key_status_list"`               // key状态列表，key index -> status
 	MultiKeyDisabledReason map[int]string        `json:"multi_key_disabled_reason,omitempty"` // key禁用原因列表，key index -> reason
 	MultiKeyDisabledTime   map[int]int64         `json:"multi_key_disabled_time,omitempty"`   // key禁用时间列表，key index -> time
+	MultiKeyProxyIDs       map[int]int           `json:"multi_key_proxy_ids,omitempty"`       // key 绑定的代理资源，key index -> proxy id
+	MultiKeyAccountTypes   map[int]string        `json:"multi_key_account_types,omitempty"`   // key 账号凭证类型，key index -> account type
 	MultiKeyPollingIndex   int                   `json:"multi_key_polling_index"`             // 多Key模式下轮询的key索引
 	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`
 }
@@ -574,6 +576,16 @@ func (channel *Channel) Update() error {
 				}
 			}
 		}
+		if channel.ChannelInfo.MultiKeyAccountTypes != nil {
+			for idx := range channel.ChannelInfo.MultiKeyAccountTypes {
+				if idx >= channel.ChannelInfo.MultiKeySize {
+					delete(channel.ChannelInfo.MultiKeyAccountTypes, idx)
+				}
+			}
+			if len(channel.ChannelInfo.MultiKeyAccountTypes) == 0 {
+				channel.ChannelInfo.MultiKeyAccountTypes = nil
+			}
+		}
 	}
 	var err error
 	err = DB.Model(channel).Updates(channel).Error
@@ -878,11 +890,25 @@ func updateChannelStatusWithInfo(channelId int, usingKey string, status int, rea
 }
 
 func EnableChannelByTag(tag string) error {
-	err := DB.Model(&Channel{}).Where("tag = ?", tag).Update("status", common.ChannelStatusEnabled).Error
+	emptyCodexAccountPoolQuery := DB.Model(&Channel{}).
+		Select("id").
+		Where("tag = ?", tag).
+		Where(clause.Eq{Column: clause.Column{Name: "type"}, Value: constant.ChannelTypeCodex}).
+		Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: ""})
+	err := DB.Model(&Channel{}).
+		Where("id IN (?)", emptyCodexAccountPoolQuery).
+		Update("status", common.ChannelStatusAutoDisabled).Error
 	if err != nil {
 		return err
 	}
-	err = UpdateAbilityStatusByTag(tag, true)
+	err = DB.Model(&Channel{}).
+		Where("tag = ?", tag).
+		Where("id NOT IN (?)", emptyCodexAccountPoolQuery).
+		Update("status", common.ChannelStatusEnabled).Error
+	if err != nil {
+		return err
+	}
+	err = SyncAbilityStatusByTag(tag)
 	return err
 }
 

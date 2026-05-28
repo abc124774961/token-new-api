@@ -44,6 +44,13 @@ export default function SettingsMonitoring(props) {
       '100-199,300-399,401-407,409-499,500-503,505-523,525-599',
     'monitor_setting.auto_test_channel_enabled': false,
     'monitor_setting.auto_test_channel_minutes': 10,
+    'monitor_setting.channel_balance_monitor_enabled': false,
+    'monitor_setting.channel_balance_monitor_interval_minutes': 10,
+    'monitor_setting.channel_balance_warning_threshold': 10,
+    'monitor_setting.channel_ratio_sync_enabled': false,
+    'monitor_setting.channel_ratio_sync_interval_minutes': 60,
+    'monitor_setting.channel_ratio_sync_trusted_auto_apply': true,
+    'monitor_setting.channel_balance_monitor_retention_days': 30,
   });
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);
@@ -159,6 +166,129 @@ export default function SettingsMonitoring(props) {
                     setInputs({
                       ...inputs,
                       'monitor_setting.auto_test_channel_minutes':
+                        parseInt(value),
+                    })
+                  }
+                />
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={'monitor_setting.channel_balance_monitor_enabled'}
+                  label={t('渠道余额监控')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  extraText={t('定时刷新账号余额并记录余额事件')}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'monitor_setting.channel_balance_monitor_enabled': value,
+                    })
+                  }
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.InputNumber
+                  label={t('余额监控间隔')}
+                  step={1}
+                  min={1}
+                  suffix={t('分钟')}
+                  extraText={t('每隔多少分钟刷新一次渠道账号余额')}
+                  field={'monitor_setting.channel_balance_monitor_interval_minutes'}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'monitor_setting.channel_balance_monitor_interval_minutes':
+                        parseInt(value),
+                    })
+                  }
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.InputNumber
+                  label={t('渠道余额告警阈值')}
+                  step={1}
+                  min={0}
+                  suffix={'USD'}
+                  extraText={t('账号余额低于该值时记录告警并通知管理员')}
+                  field={'monitor_setting.channel_balance_warning_threshold'}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'monitor_setting.channel_balance_warning_threshold':
+                        String(value),
+                    })
+                  }
+                />
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={'monitor_setting.channel_ratio_sync_enabled'}
+                  label={t('渠道倍率同步监控')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  extraText={t('定时检查上游倍率变化')}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'monitor_setting.channel_ratio_sync_enabled': value,
+                    })
+                  }
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.InputNumber
+                  label={t('倍率同步间隔')}
+                  step={1}
+                  min={1}
+                  suffix={t('分钟')}
+                  extraText={t('每隔多少分钟检查一次倍率变化')}
+                  field={'monitor_setting.channel_ratio_sync_interval_minutes'}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'monitor_setting.channel_ratio_sync_interval_minutes':
+                        parseInt(value),
+                    })
+                  }
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={'monitor_setting.channel_ratio_sync_trusted_auto_apply'}
+                  label={t('可信倍率自动应用')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  extraText={t('可信且无冲突的倍率变化将自动写入配置')}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'monitor_setting.channel_ratio_sync_trusted_auto_apply':
+                        value,
+                    })
+                  }
+                />
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.InputNumber
+                  label={t('余额监控事件保留天数')}
+                  step={1}
+                  min={1}
+                  suffix={t('天')}
+                  extraText={t('超过该天数的余额和倍率事件会自动清理')}
+                  field={'monitor_setting.channel_balance_monitor_retention_days'}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'monitor_setting.channel_balance_monitor_retention_days':
                         parseInt(value),
                     })
                   }

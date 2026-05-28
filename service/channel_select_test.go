@@ -58,6 +58,9 @@ func initChannelSelectColumnNames(t *testing.T) {
 
 func setupChannelSelectTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	originalDB := model.DB
+	originalLogDB := model.LOG_DB
+
 	initChannelSelectColumnNames(t)
 
 	gin.SetMode(gin.TestMode)
@@ -75,6 +78,8 @@ func setupChannelSelectTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelFailureEvent{}))
 
 	t.Cleanup(func() {
+		model.DB = originalDB
+		model.LOG_DB = originalLogDB
 		sqlDB, err := db.DB()
 		if err == nil {
 			_ = sqlDB.Close()

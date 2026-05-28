@@ -110,6 +110,20 @@ const formatHeroDynamicPrice = (value) => {
   return `$${number.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
 };
 
+const formatHeroDynamicRatioRange = (minValue, maxValue) => {
+  const minRatio = Number(minValue);
+  const maxRatio = Number(maxValue);
+  if (!Number.isFinite(minRatio) || !Number.isFinite(maxRatio)) return '--';
+  if (minRatio <= 0 || maxRatio <= 0) return '--';
+  const low = Math.min(minRatio, maxRatio);
+  const high = Math.max(minRatio, maxRatio);
+  const lowLabel = formatHeroDynamicRatio(low);
+  const highLabel = formatHeroDynamicRatio(high);
+  if (lowLabel === '--' || highLabel === '--') return '--';
+  if (lowLabel === highLabel) return lowLabel;
+  return `${lowLabel}-${highLabel}`;
+};
+
 const formatCompactNumber = (value, fallback = '--') => {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
@@ -261,6 +275,11 @@ const HeroOrbitCard = ({ item, slot }) => {
         ) : null}
       </div>
       <div className='ct-lite-orbit-card-visual'>
+        {item.visualLabel ? (
+          <span className='ct-lite-orbit-card-visual-label'>
+            {item.visualLabel}
+          </span>
+        ) : null}
         {item.type === 'bars' ? <MiniBars /> : <Sparkline />}
       </div>
     </div>
@@ -284,6 +303,20 @@ const HeroOrbitVisual = ({
   const group = String(dynamicBilling?.group || '').trim();
   const model = String(dynamicBilling?.model || '').trim();
   const billingChips = [group, model].filter(Boolean);
+  const ratioRangeLabel = formatHeroDynamicRatioRange(
+    dynamicBilling?.min_ratio_7d,
+    dynamicBilling?.max_ratio_7d,
+  );
+  const billingPriceLabel =
+    isBillingReady && priceValue > 0
+      ? t('￥1:$1充值-{{price}}', {
+          price: formatHeroDynamicPrice(priceValue),
+        })
+      : t('等待真实请求样本');
+  const billingVisualLabel =
+    ratioRangeLabel !== '--'
+      ? `${t('7天倍率区间')} ${ratioRangeLabel}`
+      : t('7天倍率区间');
   const cards = [
     {
       key: 'first-byte',
@@ -325,16 +358,9 @@ const HeroOrbitVisual = ({
       key: 'billing',
       label: isBillingReady ? t('当前动态倍率') : t('动态倍率计算中'),
       value: isBillingReady ? formatHeroDynamicRatio(ratioValue) : '--',
-      note:
-        isBillingReady && priceValue > 0
-          ? formatHeroDynamicPrice(priceValue)
-          : t('等待真实请求样本'),
-      detail: isBillingReady
-        ? `${model ? `${t('参考计费')} ${model}` : t('参考计费')} · ${t(
-            'RMB recharge billing hint',
-          )}`
-        : t('等待真实请求样本'),
+      note: billingPriceLabel,
       chips: billingChips,
+      visualLabel: billingVisualLabel,
       tone: isBillingReady ? 'amber' : 'muted',
     },
   ];

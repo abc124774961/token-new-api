@@ -2,7 +2,10 @@ package scheduler_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -73,6 +76,134 @@ func TestRuntimeSnapshotPersistenceFlushAndRestore(t *testing.T) {
 	require.EqualValues(t, 1769999900, snapshot.LastAuthConfigErrorAt)
 	require.Zero(t, snapshot.ActiveConcurrency)
 	require.Zero(t, snapshot.QueueDepth)
+}
+
+func TestRuntimeSnapshotPersistenceFlushesAccountScopeColumns(t *testing.T) {
+	db := setupRuntimeSnapshotPersistenceDB(t)
+	key := core.RuntimeKey{
+		RequestedModel:        "gpt-5.4",
+		UpstreamModel:         "gpt-5.4",
+		ChannelID:             420,
+		ResourceID:            "platform:channel:420",
+		ResourceType:          core.ResourceTypePlatformOwned,
+		AccountID:             "openai:openai:acct-1",
+		AccountType:           core.AccountTypeOAuthAccount,
+		Brand:                 "openai",
+		Provider:              "openai",
+		CredentialIndex:       1,
+		CredentialSubjectFP:   "subject-fp",
+		CredentialFP:          "credential-fp",
+		Group:                 "default",
+		EndpointType:          constant.EndpointTypeOpenAI,
+		CapabilityFingerprint: "openai_codex|native",
+	}
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	store.Put(core.RuntimeSnapshot{
+		Key:         key,
+		SuccessRate: 1,
+		SampleCount: 1,
+	})
+
+	persistence := scheduler.NewRuntimeSnapshotPersistence(store, scheduler.RuntimeSnapshotPersistenceOptions{})
+	require.NoError(t, persistence.Flush(context.Background()))
+
+	var row model.ModelGatewayRuntimeSnapshot
+	require.NoError(t, db.Where("channel_id = ?", 420).First(&row).Error)
+	require.Equal(t, key.ResourceID, row.ResourceID)
+	require.Equal(t, key.ResourceType, row.ResourceType)
+	require.Equal(t, key.AccountID, row.AccountID)
+	require.Equal(t, key.AccountType, row.AccountType)
+	require.Equal(t, key.Brand, row.Brand)
+	require.Equal(t, key.Provider, row.Provider)
+	require.Equal(t, key.CredentialIndex, row.CredentialIndex)
+	require.Equal(t, key.CredentialSubjectFP, row.CredentialSubjectFP)
+	require.Equal(t, key.CredentialFP, row.CredentialFP)
+
+	restored := scheduler.NewMemoryRuntimeSnapshotStore()
+	restorer := scheduler.NewRuntimeSnapshotPersistence(restored, scheduler.RuntimeSnapshotPersistenceOptions{})
+	require.NoError(t, restorer.Restore(context.Background()))
+	snapshot, ok := restored.Get(key)
+	require.True(t, ok)
+	require.Equal(t, key.AccountID, snapshot.Key.AccountID)
+	require.Equal(t, key.CredentialSubjectFP, snapshot.Key.CredentialSubjectFP)
+}
+
+func TestRuntimeSnapshotPersistenceSkipsUnchangedFlushRows(t *testing.T) {
+	db := setupRuntimeSnapshotPersistenceDB(t)
+	key := core.RuntimeKey{
+		RequestedModel: "gpt-5.4",
+		UpstreamModel:  "gpt-5.4",
+		ChannelID:      421,
+		Group:          "default",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	store.Put(core.RuntimeSnapshot{
+		Key:         key,
+		SuccessRate: 1,
+		SampleCount: 3,
+		ScoreStatsJSON: runtimeSnapshotPersistenceMustMarshal(t, map[string]any{
+			"version": 1,
+			"samples": 3,
+		}),
+		RecentLatencySamples: []core.RuntimeLatencySample{
+			{ObservedAt: 100, TTFTMs: 1000, DurationMs: 3000},
+			{ObservedAt: 101, TTFTMs: 900, DurationMs: 2400},
+		},
+	})
+
+	persistence := scheduler.NewRuntimeSnapshotPersistence(store, scheduler.RuntimeSnapshotPersistenceOptions{})
+	require.NoError(t, persistence.Flush(context.Background()))
+	var first model.ModelGatewayRuntimeSnapshot
+	require.NoError(t, db.Where("channel_id = ?", 421).First(&first).Error)
+	require.NotZero(t, first.UpdatedAt)
+
+	time.Sleep(time.Second)
+	require.NoError(t, persistence.Flush(context.Background()))
+	var second model.ModelGatewayRuntimeSnapshot
+	require.NoError(t, db.Where("channel_id = ?", 421).First(&second).Error)
+	require.Equal(t, first.UpdatedAt, second.UpdatedAt)
+	require.Equal(t, first.ScoreStatsJSON, second.ScoreStatsJSON)
+	require.Equal(t, first.LatencySamples, second.LatencySamples)
+}
+
+func TestRuntimeSnapshotPersistenceRestoreDoesNotRewriteCleanRows(t *testing.T) {
+	db := setupRuntimeSnapshotPersistenceDB(t)
+	key := core.RuntimeKey{
+		RequestedModel: "gpt-5.4",
+		UpstreamModel:  "gpt-5.4",
+		ChannelID:      422,
+		Group:          "default",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	keyBytes, err := common.Marshal(key)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ModelGatewayRuntimeSnapshot{
+		RuntimeKeyHash:    runtimeSnapshotPersistenceHash(t, key),
+		RuntimeKey:        string(keyBytes),
+		UpdatedAt:         123,
+		RequestedModel:    key.RequestedModel,
+		UpstreamModel:     key.UpstreamModel,
+		ChannelID:         key.ChannelID,
+		Group:             key.Group,
+		EndpointType:      string(key.EndpointType),
+		SampleCount:       3,
+		SuccessRate:       1,
+		TTFTMs:            1000,
+		DurationMs:        2000,
+		ScoreStatsJSON:    runtimeSnapshotPersistenceMustMarshal(t, map[string]any{"version": 1, "samples": 3}),
+		LatencySamples:    runtimeSnapshotPersistenceMustMarshal(t, []core.RuntimeLatencySample{{ObservedAt: 100, TTFTMs: 1000, DurationMs: 2000}}),
+		LastRealAttemptAt: 120,
+		LastRealSuccessAt: 120,
+	}).Error)
+
+	restored := scheduler.NewMemoryRuntimeSnapshotStore()
+	restorer := scheduler.NewRuntimeSnapshotPersistence(restored, scheduler.RuntimeSnapshotPersistenceOptions{})
+	require.NoError(t, restorer.Restore(context.Background()))
+
+	var row model.ModelGatewayRuntimeSnapshot
+	require.NoError(t, db.Where("channel_id = ?", 422).First(&row).Error)
+	require.EqualValues(t, 123, row.UpdatedAt)
 }
 
 func TestRuntimeSnapshotPersistenceNormalizesAndCoalescesLegacyEndpointRows(t *testing.T) {
@@ -234,6 +365,14 @@ func setupRuntimeSnapshotPersistenceDB(t *testing.T) *gorm.DB {
 
 func runtimeSnapshotPersistenceTestHash(value string) string {
 	return "test-" + value
+}
+
+func runtimeSnapshotPersistenceHash(t *testing.T, key core.RuntimeKey) string {
+	t.Helper()
+	data, err := common.Marshal(key)
+	require.NoError(t, err)
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum[:])
 }
 
 func runtimeSnapshotPersistenceMustMarshal(t *testing.T, v any) string {

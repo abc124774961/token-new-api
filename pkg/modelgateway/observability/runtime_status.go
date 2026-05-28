@@ -80,6 +80,15 @@ type RuntimeStatusItem struct {
 	RequestedModel                   string                      `json:"requested_model,omitempty"`
 	UpstreamModel                    string                      `json:"upstream_model,omitempty"`
 	ChannelID                        int                         `json:"channel_id,omitempty"`
+	ResourceID                       string                      `json:"resource_id,omitempty"`
+	ResourceType                     string                      `json:"resource_type,omitempty"`
+	AccountID                        string                      `json:"account_id,omitempty"`
+	AccountType                      string                      `json:"account_type,omitempty"`
+	Brand                            string                      `json:"brand,omitempty"`
+	Provider                         string                      `json:"provider,omitempty"`
+	CredentialIndex                  int                         `json:"credential_index,omitempty"`
+	CredentialSubjectFP              string                      `json:"credential_subject_fingerprint,omitempty"`
+	CredentialFP                     string                      `json:"credential_fingerprint,omitempty"`
 	Group                            string                      `json:"group,omitempty"`
 	EndpointType                     string                      `json:"endpoint_type,omitempty"`
 	CapabilityFingerprint            string                      `json:"capability_fingerprint,omitempty"`
@@ -508,6 +517,15 @@ func itemForRuntimeKey(items map[core.RuntimeKey]*RuntimeStatusItem, key core.Ru
 		RequestedModel:        key.RequestedModel,
 		UpstreamModel:         key.UpstreamModel,
 		ChannelID:             key.ChannelID,
+		ResourceID:            key.ResourceID,
+		ResourceType:          key.ResourceType,
+		AccountID:             key.AccountID,
+		AccountType:           key.AccountType,
+		Brand:                 key.Brand,
+		Provider:              key.Provider,
+		CredentialIndex:       key.CredentialIndex,
+		CredentialSubjectFP:   key.CredentialSubjectFP,
+		CredentialFP:          key.CredentialFP,
 		Group:                 key.Group,
 		EndpointType:          string(key.EndpointType),
 		CapabilityFingerprint: key.CapabilityFingerprint,

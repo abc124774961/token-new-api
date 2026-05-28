@@ -521,6 +521,55 @@ func TestShouldRetryRejectsFirstByteTimeoutWithoutAlternativeOrBudget(t *testing
 	require.Equal(t, "stop", retryActionForAttempt(ctx, err, false))
 }
 
+func TestModelGatewayAttemptFailureScopeClassifiesClientAbort(t *testing.T) {
+	result := modelgatewaycore.AttemptResult{
+		Success:       false,
+		ClientAborted: true,
+		ErrorCategory: modelgatewaycore.ErrorCategoryClientAborted,
+		RetryAction:   "client_aborted",
+	}
+
+	require.Equal(t, modelgatewaycore.FailureScopeClient, modelGatewayAttemptFailureScope(result))
+	require.Empty(t, modelGatewayAttemptSwitchReason(result))
+}
+
+func TestModelGatewayAttemptFailureScopeClassifiesFirstByteSwitchAsAccount(t *testing.T) {
+	result := modelgatewaycore.AttemptResult{
+		Success:       false,
+		WillRetry:     true,
+		RetryAction:   "switch_channel",
+		RetryReason:   modelgatewaycore.RelayAttemptCancelReasonFirstByteTimeout,
+		ErrorCategory: modelgatewaycore.ErrorCategoryTimeout,
+	}
+
+	require.Equal(t, modelgatewaycore.FailureScopeAccount, modelGatewayAttemptFailureScope(result))
+	require.Equal(t, modelgatewaycore.RelayAttemptCancelReasonFirstByteTimeout, modelGatewayAttemptSwitchReason(result))
+}
+
+func TestModelGatewayAttemptFailureScopeClassifiesResourceFailures(t *testing.T) {
+	for _, category := range []string{
+		modelgatewaycore.ErrorCategoryBalanceOrQuota,
+		modelgatewaycore.ErrorCategoryAuthConfigError,
+		modelgatewaycore.ErrorCategoryUnsupportedCapability,
+	} {
+		result := modelgatewaycore.AttemptResult{
+			Success:       false,
+			ErrorCategory: category,
+		}
+		require.Equal(t, modelgatewaycore.FailureScopeResource, modelGatewayAttemptFailureScope(result))
+	}
+}
+
+func TestModelGatewayAttemptFailureScopeClassifiesLocalConcurrencyAsSystem(t *testing.T) {
+	result := modelgatewaycore.AttemptResult{
+		Success:            false,
+		ConcurrencyLimited: true,
+		ErrorCategory:      modelgatewaycore.ErrorCategoryLocalConcurrencyLimit,
+	}
+
+	require.Equal(t, modelgatewaycore.FailureScopeSystem, modelGatewayAttemptFailureScope(result))
+}
+
 func TestRelayFirstByteWatchdogAppliesOnlySafeStreamingSmartRequests(t *testing.T) {
 	ctx := newRelayRetryContext()
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)

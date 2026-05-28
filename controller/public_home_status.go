@@ -117,6 +117,8 @@ type PublicHomeDynamicBilling struct {
 	Group             string  `json:"group,omitempty"`
 	Model             string  `json:"model,omitempty"`
 	CurrentRatio      float64 `json:"current_ratio,omitempty"`
+	MinRatio7d        float64 `json:"min_ratio_7d,omitempty"`
+	MaxRatio7d        float64 `json:"max_ratio_7d,omitempty"`
 	DisplayPricePerM  float64 `json:"display_price_per_m,omitempty"`
 	UpdatedSecondsAgo int64   `json:"updated_seconds_ago,omitempty"`
 	RefreshSeconds    int     `json:"refresh_seconds,omitempty"`
@@ -394,6 +396,7 @@ func buildPublicHomeDynamicBilling(now int64) *PublicHomeDynamicBilling {
 	if displayPrice <= 0 && ratio > 0 {
 		displayPrice = modelGatewayDynamicBillingPricePerMillion(modelName, ratio)
 	}
+	minRatio7d, maxRatio7d := publicHomeDynamicBillingRatioRange(now, primary.PolicyGroup)
 
 	updatedSecondsAgo := int64(0)
 	if primary.LatestCalculatedAt > 0 && now > 0 {
@@ -409,10 +412,50 @@ func buildPublicHomeDynamicBilling(now int64) *PublicHomeDynamicBilling {
 		Group:             firstNonEmptyTrimmed(primary.DisplayGroup, primary.CurrentTargetGroup, primary.PolicyGroup),
 		Model:             modelName,
 		CurrentRatio:      ratio,
+		MinRatio7d:        minRatio7d,
+		MaxRatio7d:        maxRatio7d,
 		DisplayPricePerM:  displayPrice,
 		UpdatedSecondsAgo: updatedSecondsAgo,
 		RefreshSeconds:    refreshSeconds,
 	}
+}
+
+func publicHomeDynamicBillingRatioRange(now int64, policyGroup string) (float64, float64) {
+	policyGroup = strings.TrimSpace(policyGroup)
+	if policyGroup == "" || model.DB == nil || model.LOG_DB == nil {
+		return 0, 0
+	}
+	overview7d := buildModelGatewayDynamicBillingOverviewForDisplay(now, 7*24*60)
+	for _, item := range overview7d.Groups {
+		if strings.TrimSpace(item.PolicyGroup) != policyGroup {
+			continue
+		}
+		minRatio := firstPositiveDynamicBillingValue(
+			item.MinRatio,
+			item.BlendedRatio,
+			item.AverageRatio,
+			item.CurrentRatio,
+			item.MaxRatio,
+		)
+		maxRatio := firstPositiveDynamicBillingValue(
+			item.MaxRatio,
+			item.BlendedRatio,
+			item.AverageRatio,
+			item.CurrentRatio,
+			item.MinRatio,
+		)
+		if maxRatio > 0 && minRatio <= 0 {
+			minRatio = maxRatio
+		}
+		if minRatio > 0 && maxRatio <= 0 {
+			maxRatio = minRatio
+		}
+		if minRatio > 0 && maxRatio > 0 && minRatio > maxRatio {
+			minRatio, maxRatio = maxRatio, minRatio
+		}
+		return minRatio, maxRatio
+	}
+	return 0, 0
 }
 
 func publicHomeDynamicBillingStatusRank(status string) int {

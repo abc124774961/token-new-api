@@ -55,6 +55,9 @@ const NotFound = lazy(() => import('./pages/NotFound'));
 const Forbidden = lazy(() => import('./pages/Forbidden'));
 const Setting = lazy(() => import('./pages/Setting'));
 const Channel = lazy(() => import('./pages/Channel'));
+const ChannelAccount = lazy(() => import('./pages/ChannelAccount'));
+const ChannelBalanceMonitor = lazy(() => import('./pages/ChannelBalanceMonitor'));
+const ChannelProxy = lazy(() => import('./pages/ChannelProxy'));
 const Token = lazy(() => import('./pages/Token'));
 const Redemption = lazy(() => import('./pages/Redemption'));
 const TopUp = lazy(() => import('./pages/TopUp'));
@@ -151,6 +154,30 @@ function App() {
             element={
               <AdminRoute>
                 <Channel />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path='/console/channel/:id/accounts'
+            element={
+              <AdminRoute>
+                <ChannelAccount />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path='/console/channel-balance-monitor'
+            element={
+              <AdminRoute>
+                <ChannelBalanceMonitor />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path='/console/channel-proxies'
+            element={
+              <AdminRoute>
+                <ChannelProxy />
               </AdminRoute>
             }
           />

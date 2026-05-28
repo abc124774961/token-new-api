@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 const (
 	defaultRuntimeSnapshotPersistenceInterval = 10 * time.Second
 	defaultRuntimeSnapshotPersistenceMaxRows  = 5000
-	defaultRuntimeSnapshotPersistenceBatch    = 200
+	defaultRuntimeSnapshotPersistenceBatch    = 50
 )
 
 type RuntimeSnapshotPersistenceOptions struct {
@@ -28,10 +29,12 @@ type RuntimeSnapshotPersistenceOptions struct {
 }
 
 type RuntimeSnapshotPersistence struct {
-	store    core.RuntimeSnapshotStore
-	interval time.Duration
-	maxRows  int
-	batch    int
+	store        core.RuntimeSnapshotStore
+	interval     time.Duration
+	maxRows      int
+	batch        int
+	signaturesMu sync.Mutex
+	signatures   map[string]string
 
 	stop      chan struct{}
 	done      chan struct{}
@@ -55,12 +58,13 @@ func NewRuntimeSnapshotPersistence(store core.RuntimeSnapshotStore, options Runt
 		batch = defaultRuntimeSnapshotPersistenceBatch
 	}
 	return &RuntimeSnapshotPersistence{
-		store:    store,
-		interval: interval,
-		maxRows:  maxRows,
-		batch:    batch,
-		stop:     make(chan struct{}),
-		done:     make(chan struct{}),
+		store:      store,
+		interval:   interval,
+		maxRows:    maxRows,
+		batch:      batch,
+		signatures: make(map[string]string),
+		stop:       make(chan struct{}),
+		done:       make(chan struct{}),
 	}
 }
 
@@ -135,16 +139,19 @@ func (p *RuntimeSnapshotPersistence) Restore(ctx context.Context) error {
 	if query.Error != nil {
 		return query.Error
 	}
-	for _, row := range coalesceRuntimeSnapshotRows(rows) {
+	coalescedRows := coalesceRuntimeSnapshotRows(rows)
+	needsRewrite := runtimeSnapshotRowsNeedRewrite(rows, coalescedRows)
+	for _, row := range coalescedRows {
 		snapshot, ok := runtimeSnapshotFromDB(row)
 		if !ok {
 			continue
 		}
 		p.store.Put(snapshot)
 	}
-	if len(rows) > 0 {
+	if len(rows) > 0 && needsRewrite {
 		return p.Flush(ctx)
 	}
+	p.markPersistedRows(coalescedRows)
 	return nil
 }
 
@@ -175,46 +182,63 @@ func (p *RuntimeSnapshotPersistence) Flush(ctx context.Context) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	if err := model.DB.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "runtime_key_hash"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"runtime_key",
-			"updated_at",
-			"requested_model",
-			"upstream_model",
-			"channel_id",
-			"group",
-			"endpoint_type",
-			"capability_fingerprint",
-			"score_stats_json",
-			"latency_samples",
-			"sample_count",
-			"success_rate",
-			"ttft_ms",
-			"duration_ms",
-			"tokens_per_second",
-			"empty_output_rate",
-			"experience_issue_rate",
-			"probe_recovery_pending",
-			"probe_recovery_success_count",
-			"probe_recovery_required",
-			"probe_trigger_reason",
-			"last_real_attempt_at",
-			"last_real_success_at",
-			"last_real_failure_at",
-			"real_sample_count_30m",
-			"last_probe_at",
-			"last_probe_success_at",
-			"config_error_isolated",
-			"isolation_reason",
-			"isolation_until",
-			"auth_config_error_count",
-			"last_auth_config_error_at",
-		}),
-	}).CreateInBatches(rows, p.batch).Error; err != nil {
-		return err
+	changedRows := p.changedRows(rows)
+	if len(changedRows) > 0 {
+		if err := model.DB.WithContext(ctx).Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "runtime_key_hash"}},
+			DoUpdates: clause.AssignmentColumns(runtimeSnapshotPersistenceUpdateColumns()),
+		}).CreateInBatches(changedRows, p.batch).Error; err != nil {
+			return err
+		}
+		p.markPersistedRows(changedRows)
 	}
 	return p.pruneStaleRows(ctx, rows)
+}
+
+func runtimeSnapshotPersistenceUpdateColumns() []string {
+	return []string{
+		"runtime_key",
+		"updated_at",
+		"requested_model",
+		"upstream_model",
+		"channel_id",
+		"resource_id",
+		"resource_type",
+		"account_id",
+		"account_type",
+		"brand",
+		"provider",
+		"credential_index",
+		"credential_subject_fingerprint",
+		"credential_fingerprint",
+		"group",
+		"endpoint_type",
+		"capability_fingerprint",
+		"score_stats_json",
+		"latency_samples",
+		"sample_count",
+		"success_rate",
+		"ttft_ms",
+		"duration_ms",
+		"tokens_per_second",
+		"empty_output_rate",
+		"experience_issue_rate",
+		"probe_recovery_pending",
+		"probe_recovery_success_count",
+		"probe_recovery_required",
+		"probe_trigger_reason",
+		"last_real_attempt_at",
+		"last_real_success_at",
+		"last_real_failure_at",
+		"real_sample_count_30m",
+		"last_probe_at",
+		"last_probe_success_at",
+		"config_error_isolated",
+		"isolation_reason",
+		"isolation_until",
+		"auth_config_error_count",
+		"last_auth_config_error_at",
+	}
 }
 
 func (p *RuntimeSnapshotPersistence) isStarted() bool {
@@ -249,6 +273,92 @@ func (p *RuntimeSnapshotPersistence) pruneStaleRows(ctx context.Context, rows []
 	return model.DB.WithContext(ctx).
 		Where("endpoint_type = ? OR runtime_key_hash NOT IN ?", "", hashes).
 		Delete(&model.ModelGatewayRuntimeSnapshot{}).Error
+}
+
+func (p *RuntimeSnapshotPersistence) changedRows(rows []model.ModelGatewayRuntimeSnapshot) []model.ModelGatewayRuntimeSnapshot {
+	if p == nil || len(rows) == 0 {
+		return nil
+	}
+	changed := make([]model.ModelGatewayRuntimeSnapshot, 0, len(rows))
+	p.signaturesMu.Lock()
+	defer p.signaturesMu.Unlock()
+	for _, row := range rows {
+		if row.RuntimeKeyHash == "" {
+			continue
+		}
+		signature := runtimeSnapshotRowSignature(row)
+		if p.signatures[row.RuntimeKeyHash] == signature {
+			continue
+		}
+		changed = append(changed, row)
+	}
+	return changed
+}
+
+func (p *RuntimeSnapshotPersistence) markPersistedRows(rows []model.ModelGatewayRuntimeSnapshot) {
+	if p == nil || len(rows) == 0 {
+		return
+	}
+	p.signaturesMu.Lock()
+	defer p.signaturesMu.Unlock()
+	for _, row := range rows {
+		if row.RuntimeKeyHash == "" {
+			continue
+		}
+		p.signatures[row.RuntimeKeyHash] = runtimeSnapshotRowSignature(row)
+	}
+}
+
+func runtimeSnapshotRowSignature(row model.ModelGatewayRuntimeSnapshot) string {
+	parts := []string{
+		row.RuntimeKeyHash,
+		row.RuntimeKey,
+		row.RequestedModel,
+		row.UpstreamModel,
+		strconv.Itoa(row.ChannelID),
+		row.ResourceID,
+		row.ResourceType,
+		row.AccountID,
+		row.AccountType,
+		row.Brand,
+		row.Provider,
+		strconv.Itoa(row.CredentialIndex),
+		row.CredentialSubjectFP,
+		row.CredentialFP,
+		row.Group,
+		row.EndpointType,
+		row.CapabilityFingerprint,
+		row.ScoreStatsJSON,
+		row.LatencySamples,
+		strconv.Itoa(row.SampleCount),
+		strconv.FormatFloat(row.SuccessRate, 'g', -1, 64),
+		strconv.FormatFloat(row.TTFTMs, 'g', -1, 64),
+		strconv.FormatFloat(row.DurationMs, 'g', -1, 64),
+		strconv.FormatFloat(row.TokensPerSecond, 'g', -1, 64),
+		strconv.FormatFloat(row.EmptyOutputRate, 'g', -1, 64),
+		strconv.FormatFloat(row.ExperienceIssueRate, 'g', -1, 64),
+		strconv.FormatBool(row.ProbeRecoveryPending),
+		strconv.Itoa(row.ProbeRecoverySuccessCount),
+		strconv.Itoa(row.ProbeRecoveryRequired),
+		row.ProbeTriggerReason,
+		strconv.FormatInt(row.LastRealAttemptAt, 10),
+		strconv.FormatInt(row.LastRealSuccessAt, 10),
+		strconv.FormatInt(row.LastRealFailureAt, 10),
+		strconv.Itoa(row.RealSampleCount30m),
+		strconv.FormatInt(row.LastProbeAt, 10),
+		strconv.FormatInt(row.LastProbeSuccessAt, 10),
+		strconv.FormatBool(row.ConfigErrorIsolated),
+		row.IsolationReason,
+		strconv.FormatInt(row.IsolationUntil, 10),
+		strconv.Itoa(row.AuthConfigErrorCount),
+		strconv.FormatInt(row.LastAuthConfigErrorAt, 10),
+	}
+	data, err := common.Marshal(parts)
+	if err != nil {
+		return fmt.Sprintf("%s:%d:%d", row.RuntimeKeyHash, row.SampleCount, row.UpdatedAt)
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum[:])
 }
 
 func (p *RuntimeSnapshotPersistence) run() {
@@ -297,6 +407,15 @@ func runtimeSnapshotToDB(snapshot core.RuntimeSnapshot, updatedAt int64) (model.
 		RequestedModel:            snapshot.Key.RequestedModel,
 		UpstreamModel:             snapshot.Key.UpstreamModel,
 		ChannelID:                 snapshot.Key.ChannelID,
+		ResourceID:                snapshot.Key.ResourceID,
+		ResourceType:              snapshot.Key.ResourceType,
+		AccountID:                 snapshot.Key.AccountID,
+		AccountType:               snapshot.Key.AccountType,
+		Brand:                     snapshot.Key.Brand,
+		Provider:                  snapshot.Key.Provider,
+		CredentialIndex:           snapshot.Key.CredentialIndex,
+		CredentialSubjectFP:       snapshot.Key.CredentialSubjectFP,
+		CredentialFP:              snapshot.Key.CredentialFP,
 		Group:                     snapshot.Key.Group,
 		EndpointType:              string(snapshot.Key.EndpointType),
 		CapabilityFingerprint:     snapshot.Key.CapabilityFingerprint,
@@ -337,10 +456,46 @@ func runtimeSnapshotFromDB(row model.ModelGatewayRuntimeSnapshot) (core.RuntimeS
 			RequestedModel:        row.RequestedModel,
 			UpstreamModel:         row.UpstreamModel,
 			ChannelID:             row.ChannelID,
+			ResourceID:            row.ResourceID,
+			ResourceType:          row.ResourceType,
+			AccountID:             row.AccountID,
+			AccountType:           row.AccountType,
+			Brand:                 row.Brand,
+			Provider:              row.Provider,
+			CredentialIndex:       row.CredentialIndex,
+			CredentialSubjectFP:   row.CredentialSubjectFP,
+			CredentialFP:          row.CredentialFP,
 			Group:                 row.Group,
 			EndpointType:          constant.EndpointType(row.EndpointType),
 			CapabilityFingerprint: row.CapabilityFingerprint,
 		}
+	}
+	if key.ResourceID == "" {
+		key.ResourceID = row.ResourceID
+	}
+	if key.ResourceType == "" {
+		key.ResourceType = row.ResourceType
+	}
+	if key.AccountID == "" {
+		key.AccountID = row.AccountID
+	}
+	if key.AccountType == "" {
+		key.AccountType = row.AccountType
+	}
+	if key.Brand == "" {
+		key.Brand = row.Brand
+	}
+	if key.Provider == "" {
+		key.Provider = row.Provider
+	}
+	if key.CredentialIndex == 0 {
+		key.CredentialIndex = row.CredentialIndex
+	}
+	if key.CredentialSubjectFP == "" {
+		key.CredentialSubjectFP = row.CredentialSubjectFP
+	}
+	if key.CredentialFP == "" {
+		key.CredentialFP = row.CredentialFP
 	}
 	key = normalizeRuntimeKey(key)
 	if key.ChannelID <= 0 || row.SampleCount <= 0 {
@@ -433,6 +588,32 @@ func coalesceRuntimeSnapshotRows(rows []model.ModelGatewayRuntimeSnapshot) []mod
 		return out[i].UpdatedAt > out[j].UpdatedAt
 	})
 	return out
+}
+
+func runtimeSnapshotRowsNeedRewrite(rows []model.ModelGatewayRuntimeSnapshot, coalesced []model.ModelGatewayRuntimeSnapshot) bool {
+	if len(rows) != len(coalesced) {
+		return true
+	}
+	coalescedByHash := make(map[string]model.ModelGatewayRuntimeSnapshot, len(coalesced))
+	for _, row := range coalesced {
+		if row.RuntimeKeyHash == "" {
+			return true
+		}
+		coalescedByHash[row.RuntimeKeyHash] = row
+	}
+	for _, row := range rows {
+		if row.RuntimeKeyHash == "" {
+			return true
+		}
+		coalescedRow, ok := coalescedByHash[row.RuntimeKeyHash]
+		if !ok {
+			return true
+		}
+		if runtimeSnapshotRowSignature(row) != runtimeSnapshotRowSignature(coalescedRow) {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeRuntimeSnapshotRows(left, right model.ModelGatewayRuntimeSnapshot) model.ModelGatewayRuntimeSnapshot {

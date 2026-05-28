@@ -151,6 +151,7 @@ func main() {
 
 	// Channel upstream model update check task
 	controller.StartChannelUpstreamModelUpdateTask()
+	controller.StartChannelBalanceMonitorTask()
 
 	if common.IsMasterNode && constant.UpdateTask {
 		gopool.Go(func() {

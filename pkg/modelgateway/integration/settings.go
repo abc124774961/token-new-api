@@ -1,6 +1,8 @@
 package integration
 
 import (
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
@@ -35,6 +37,9 @@ type RuntimePolicySettings struct {
 	RuntimeSyncQueueMinInterval      int
 	RuntimeSyncEventPushEnabled      bool
 	RuntimeSyncEventSubscribeEnabled bool
+	AccountCandidateIndexEnabled     bool
+	AccountCandidateIndexShadowLog   bool
+	AccountCandidateIndexRefreshMs   int
 	ScoreWeights                     core.ScoreWeights
 }
 
@@ -75,6 +80,9 @@ func RuntimePolicySetting() RuntimePolicySettings {
 		RuntimeSyncQueueMinInterval:      setting.RuntimeSyncQueueMinIntervalMs,
 		RuntimeSyncEventPushEnabled:      setting.RuntimeSyncEventPushEnabled,
 		RuntimeSyncEventSubscribeEnabled: setting.RuntimeSyncEventSubscribeEnabled,
+		AccountCandidateIndexEnabled:     boolEnv("MODEL_GATEWAY_ACCOUNT_CANDIDATE_INDEX_ENABLED", true),
+		AccountCandidateIndexShadowLog:   boolEnv("MODEL_GATEWAY_ACCOUNT_CANDIDATE_INDEX_SHADOW_LOG", false),
+		AccountCandidateIndexRefreshMs:   intEnv("MODEL_GATEWAY_ACCOUNT_CANDIDATE_INDEX_REFRESH_MS", 30000),
 		ScoreWeights: core.ScoreWeights{
 			Success: setting.SuccessWeight,
 			Speed:   setting.SpeedWeight,
@@ -83,6 +91,30 @@ func RuntimePolicySetting() RuntimePolicySettings {
 			Group:   setting.GroupWeight,
 		},
 	}
+}
+
+func boolEnv(key string, defaultValue bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return defaultValue
+	}
+	return parsed
+}
+
+func intEnv(key string, defaultValue int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return defaultValue
+	}
+	return parsed
 }
 
 func (p *SchedulerSettingsProvider) Get() core.SchedulerSettings {

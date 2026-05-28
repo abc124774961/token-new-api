@@ -95,6 +95,7 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	setting.CostCalculationWorkerCount = 3
 	setting.CostCalculationBatchSize = 80
 	setting.DynamicBillingWindowSamples = 280
+	setting.ProxySameBrandReusePolicy = scheduler_setting.ProxyReusePolicyConfirm
 	setting.StickySaveOnSelect = true
 	setting.StickyRenewOnSuccess = false
 	setting.StickyFailurePolicy = scheduler_setting.StickyFailurePolicyKeep
@@ -169,6 +170,7 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.Equal(t, 3, payload.Data.Setting.CostCalculationWorkerCount)
 	require.Equal(t, 80, payload.Data.Setting.CostCalculationBatchSize)
 	require.Equal(t, 280, payload.Data.Setting.DynamicBillingWindowSamples)
+	require.Equal(t, scheduler_setting.ProxyReusePolicyConfirm, payload.Data.Setting.ProxySameBrandReusePolicy)
 	require.True(t, payload.Data.Setting.StickySaveOnSelect)
 	require.False(t, payload.Data.Setting.StickyRenewOnSuccess)
 	require.Equal(t, scheduler_setting.StickyFailurePolicyKeep, payload.Data.Setting.StickyFailurePolicy)
@@ -229,6 +231,9 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	var dynamicBillingWindowSamplesOption model.Option
 	require.NoError(t, db.First(&dynamicBillingWindowSamplesOption, "key = ?", "scheduler_setting.dynamic_billing_window_samples").Error)
 	require.Equal(t, "280", dynamicBillingWindowSamplesOption.Value)
+	var proxyReusePolicyOption model.Option
+	require.NoError(t, db.First(&proxyReusePolicyOption, "key = ?", "scheduler_setting.proxy_same_brand_reuse_policy").Error)
+	require.Equal(t, scheduler_setting.ProxyReusePolicyConfirm, proxyReusePolicyOption.Value)
 	var circuitErrorPolicyOption model.Option
 	require.NoError(t, db.First(&circuitErrorPolicyOption, "key = ?", "scheduler_setting.circuit_error_policies").Error)
 	require.Contains(t, circuitErrorPolicyOption.Value, `"rate_limit"`)
@@ -349,6 +354,25 @@ func TestModelGatewayConfigRejectsInvalidPolicy(t *testing.T) {
 	require.Contains(t, resp.Body.String(), "invalid mode")
 }
 
+func TestModelGatewayConfigRejectsInvalidProxyReusePolicy(t *testing.T) {
+	setupModelGatewayConfigControllerTestDB(t)
+	router := gin.New()
+	router.PUT("/api/model_gateway/config", UpdateModelGatewayConfig)
+
+	setting := scheduler_setting.DefaultSetting()
+	setting.ProxySameBrandReusePolicy = "invalid"
+	body, err := common.Marshal(setting)
+	require.NoError(t, err)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/model_gateway/config", bytes.NewReader(body))
+	router.ServeHTTP(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	require.Contains(t, resp.Body.String(), `"success":false`)
+	require.Contains(t, resp.Body.String(), "invalid proxy_same_brand_reuse_policy")
+}
+
 func TestModelGatewayConfigResetRestoresDefaults(t *testing.T) {
 	setupModelGatewayConfigControllerTestDB(t)
 	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
@@ -370,6 +394,7 @@ func TestModelGatewayConfigResetRestoresDefaults(t *testing.T) {
 	require.False(t, payload.Data.Setting.Enabled)
 	require.Equal(t, scheduler_setting.ModeOff, payload.Data.Setting.DefaultMode)
 	require.Equal(t, 0, payload.Data.Setting.RolloutPercent)
+	require.Equal(t, scheduler_setting.ProxyReusePolicyWarn, payload.Data.Setting.ProxySameBrandReusePolicy)
 }
 
 func decodeModelGatewayConfigResponse(t *testing.T, recorder *httptest.ResponseRecorder) modelGatewayConfigAPIResponse {

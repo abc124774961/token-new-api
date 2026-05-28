@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewaycredential "github.com/QuantumNous/new-api/pkg/modelgateway/credential"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
@@ -47,6 +48,7 @@ func DistributeWithNext(next gin.HandlerFunc) gin.HandlerFunc {
 
 func distribute(c *gin.Context, next gin.HandlerFunc) {
 	var channel *model.Channel
+	var selection *modelgatewayintegration.SelectionResult
 	channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 	modelRequest, shouldSelectChannel, err := getModelRequest(c)
 	if err != nil {
@@ -118,7 +120,8 @@ func distribute(c *gin.Context, next gin.HandlerFunc) {
 				}
 			}
 
-			selection, selectionErr := modelgatewayintegration.DefaultChannelSelectionWrapper().SelectSmartOnly(c, &service.RetryParam{
+			var selectionErr *types.NewAPIError
+			selection, selectionErr = modelgatewayintegration.DefaultChannelSelectionWrapper().SelectSmartOnly(c, &service.RetryParam{
 				Ctx:                    c,
 				ModelName:              modelRequest.Model,
 				EndpointType:           modelRequest.EndpointType,
@@ -209,7 +212,10 @@ func distribute(c *gin.Context, next gin.HandlerFunc) {
 	}
 	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 	logDistributorSelectedChannel(c, channel, modelRequest)
-	SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+	if setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model, selection); setupErr != nil {
+		abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": common.GetContextKeyString(c, constant.ContextKeyUsingGroup), "Model": modelRequest.Model, "Error": setupErr.Error()}), setupErr.GetErrorCode())
+		return
+	}
 	if next != nil {
 		next(c)
 	}
@@ -604,7 +610,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	return &modelRequest, shouldSelectChannel, nil
 }
 
-func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string, selections ...*modelgatewayintegration.SelectionResult) *types.NewAPIError {
 	c.Set("original_model", modelName) // for retry
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
@@ -629,19 +635,26 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 
-	key, index, newAPIError := channel.GetNextEnabledKey()
-	if newAPIError != nil {
-		return newAPIError
-	}
-	if channel.ChannelInfo.IsMultiKey {
-		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, true)
-		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
+	if applied, apiErr := applySelectedPlanCredential(c, channel, firstSelection(selections)); apiErr != nil {
+		return apiErr
+	} else if !applied {
+		key, index, newAPIError := channel.GetNextEnabledKey()
+		if newAPIError != nil {
+			return newAPIError
+		}
+		if channel.ChannelInfo.IsMultiKey {
+			common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, true)
+			common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
+		} else {
+			// 必须设置为 false，否则在重试到单个 key 的时候会导致日志显示错误
+			common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
+		}
+		// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
+		common.SetContextKey(c, constant.ContextKeyChannelKey, key)
+		applyLegacySelectedKeyProxy(c, channel, index)
 	} else {
-		// 必须设置为 false，否则在重试到单个 key 的时候会导致日志显示错误
-		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
+		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, channel.ChannelInfo.IsMultiKey)
 	}
-	// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
-	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
 
 	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
@@ -666,6 +679,49 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		c.Set("bot_id", channel.Other)
 	}
 	return nil
+}
+
+func firstSelection(selections []*modelgatewayintegration.SelectionResult) *modelgatewayintegration.SelectionResult {
+	if len(selections) == 0 {
+		return nil
+	}
+	return selections[0]
+}
+
+func applySelectedPlanCredential(c *gin.Context, channel *model.Channel, selection *modelgatewayintegration.SelectionResult) (bool, *types.NewAPIError) {
+	if c == nil || channel == nil || selection == nil || !selection.SmartHandled || selection.Plan == nil {
+		return false, nil
+	}
+	ref := selection.Plan.CredentialRef
+	if ref.ResourceID == "" && ref.AccountID == "" && ref.CredentialFingerprint == "" {
+		return false, nil
+	}
+	resolved, apiErr := modelgatewaycredential.ResolveChannelCredential(channel, ref)
+	if apiErr != nil {
+		return false, apiErr
+	}
+	modelgatewaycredential.ApplyResolvedCredentialToContext(c, resolved)
+	return true, nil
+}
+
+func applyLegacySelectedKeyProxy(c *gin.Context, channel *model.Channel, credentialIndex int) {
+	if c == nil || channel == nil || credentialIndex < 0 || channel.ChannelInfo.MultiKeyProxyIDs == nil {
+		return
+	}
+	proxyID := channel.ChannelInfo.MultiKeyProxyIDs[credentialIndex]
+	if proxyID <= 0 {
+		return
+	}
+	proxyConfig, err := model.GetModelGatewayProxyByID(proxyID)
+	if err != nil || proxyConfig == nil || !proxyConfig.Enabled {
+		return
+	}
+	proxyURL, err := proxyConfig.ProxyURL()
+	if err != nil || strings.TrimSpace(proxyURL) == "" {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelAccountProxyID, proxyID)
+	common.SetContextKey(c, constant.ContextKeyChannelAccountProxyURL, proxyURL)
 }
 
 // extractModelNameFromGeminiPath 从 Gemini API URL 路径中提取模型名

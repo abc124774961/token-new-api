@@ -171,6 +171,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				deliveredEventCount++
 			}
 			sr.Stop(streamErr)
+			resp.Body.Close()
 			return
 		default:
 			sendOrBufferEvent(streamResponse, data, true)
@@ -181,6 +182,10 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	if streamErr != nil {
+		if info != nil && info.StreamStatus != nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonEOF {
+			info.StreamStatus = relaycommon.NewStreamStatus()
+			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonHandlerStop, streamErr)
+		}
 		return nil, streamErr
 	}
 

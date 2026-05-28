@@ -25,10 +25,7 @@ func (b *ModelCandidatePoolBuilder) Build(req *core.DispatchRequest, policy core
 	if req == nil {
 		return nil
 	}
-	groups := policy.CandidateGroups
-	if len(groups) == 0 && req.RequestedGroup != "" && req.RequestedGroup != "auto" {
-		groups = []string{req.RequestedGroup}
-	}
+	groups := candidateGroupsForRequest(req, policy)
 	if len(groups) == 0 {
 		return nil
 	}
@@ -60,11 +57,11 @@ func (b *ModelCandidatePoolBuilder) buildGroupCandidates(req *core.DispatchReque
 		profile := b.providerProfile(channel, req.ModelName)
 		capability := profile.Capabilities(channel, req.ModelName)
 		candidates = append(candidates, core.Candidate{
-			Channel:         channel,
-			Group:           group,
-			UpstreamModel:   upstreamModel,
-			ProviderProfile: profile.Name(),
-			ProxyMode:       profile.ProxyMode(channel, req.ModelName),
+			Channel:                channel,
+			Group:                  group,
+			UpstreamModel:          upstreamModel,
+			ProviderProfile:        profile.Name(),
+			ProxyMode:              profile.ProxyMode(channel, req.ModelName),
 			RequiresCodexImageTool: req.RequiresCodexImageTool,
 			RuntimeKey: core.RuntimeKey{
 				RequestedModel:        req.ModelName,
@@ -91,3 +88,26 @@ func (b *ModelCandidatePoolBuilder) providerProfile(channel *model.Channel, mode
 }
 
 var _ core.CandidatePoolBuilder = (*ModelCandidatePoolBuilder)(nil)
+
+func candidateGroupsForRequest(req *core.DispatchRequest, policy core.GroupSmartPolicy) []string {
+	groups := policy.CandidateGroups
+	if len(groups) == 0 && req != nil && req.RequestedGroup != "" && req.RequestedGroup != "auto" {
+		groups = []string{req.RequestedGroup}
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(groups))
+	seen := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		if group == "" {
+			continue
+		}
+		if _, ok := seen[group]; ok {
+			continue
+		}
+		seen[group] = struct{}{}
+		out = append(out, group)
+	}
+	return out
+}

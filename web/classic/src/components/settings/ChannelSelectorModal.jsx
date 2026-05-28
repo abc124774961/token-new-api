@@ -41,6 +41,7 @@ const OFFICIAL_RATIO_PRESET_NAME = '官方倍率预设';
 const MODELS_DEV_PRESET_NAME = 'models.dev 价格预设';
 const OFFICIAL_RATIO_PRESET_BASE_URL = 'https://basellm.github.io';
 const MODELS_DEV_PRESET_BASE_URL = 'https://models.dev';
+const SUB2_API_AVAILABLE_ENDPOINT = '/api/v1/channels/available';
 
 const ChannelSelectorModal = forwardRef(
   (
@@ -128,6 +129,7 @@ const ChannelSelectorModal = forwardRef(
         if (ep === '/api/ratio_config') return 'ratio_config';
         if (ep === '/api/pricing') return 'pricing';
         if (ep === 'openrouter') return 'openrouter';
+        if (ep === SUB2_API_AVAILABLE_ENDPOINT || ep === 'sub2_available') return 'sub2_available';
         return 'custom';
       };
 
@@ -140,6 +142,8 @@ const ChannelSelectorModal = forwardRef(
           updateEndpoint(channelId, '/api/pricing');
         } else if (val === 'openrouter') {
           updateEndpoint(channelId, 'openrouter');
+        } else if (val === 'sub2_available') {
+          updateEndpoint(channelId, SUB2_API_AVAILABLE_ENDPOINT);
         } else {
           if (currentType !== 'custom') {
             updateEndpoint(channelId, '');
@@ -158,6 +162,7 @@ const ChannelSelectorModal = forwardRef(
               { label: 'pricing', value: 'pricing' },
               { label: 'ratio_config', value: 'ratio_config' },
               { label: 'OpenRouter', value: 'openrouter' },
+              { label: 'Sub2API', value: 'sub2_available' },
               { label: 'custom', value: 'custom' },
             ]}
           />

@@ -265,6 +265,9 @@ const renderStatusReason = (reason, t) => {
   ) {
     return t('余额不足');
   }
+  if (normalized === 'all keys are disabled') {
+    return t('账号池为空或全部账号已禁用');
+  }
   return reason;
 };
 
@@ -523,10 +526,7 @@ const trimFixedNumber = (value, precision) => {
   if (!Number.isFinite(numberValue) || numberValue <= 0) {
     return '0';
   }
-  return numberValue
-    .toFixed(precision)
-    .replace(/0+$/, '')
-    .replace(/\.$/, '');
+  return numberValue.toFixed(precision).replace(/0+$/, '').replace(/\.$/, '');
 };
 
 const formatChannelCostRatio = (value) => {
@@ -636,7 +636,8 @@ const renderChannelCostDisplay = (record, t) => {
             {t('成本系数')}: {formatChannelCostRatio(display.cost_coefficient)}
           </div>
           <div>
-            {t('费用计算倍率')}: {formatChannelCostRatio(display.fee_multiplier)}
+            {t('费用计算倍率')}:{' '}
+            {formatChannelCostRatio(display.fee_multiplier)}
           </div>
           <div>
             {t('1:1 实际成本倍率')}: {ratioText}
@@ -1087,6 +1088,14 @@ export const getChannelsColumns = ({
         if (record.children === undefined) {
           const upstreamUpdateMeta = getUpstreamUpdateMeta(record);
           const moreMenuItems = [
+            {
+              node: 'item',
+              name: t('账号管理'),
+              type: 'tertiary',
+              onClick: () => {
+                window.location.href = `/console/channel/${record.id}/accounts`;
+              },
+            },
             {
               node: 'item',
               name: t('删除'),

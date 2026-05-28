@@ -182,10 +182,15 @@ func TestReplayScoreDriftReportCanBeUsedAsExactGolden(t *testing.T) {
 	require.Len(t, reports, 1)
 	require.NotZero(t, reports[0].ActualScoreTotal)
 
-	artifact.Records[0].ScoreTotal = reports[0].ActualScoreTotal
-	artifact.Records[0].ScoreBreakdown = map[string]float64{}
+	exactScoreBreakdown := map[string]float64{}
 	for _, item := range reports[0].Breakdown {
-		artifact.Records[0].ScoreBreakdown[item.Key] = item.Actual
+		exactScoreBreakdown[item.Key] = item.Actual
+	}
+	artifact.Records[0].ScoreTotal = reports[0].ActualScoreTotal
+	artifact.Records[0].ScoreBreakdown = exactScoreBreakdown
+	if len(artifact.Scenarios) > 0 {
+		artifact.Scenarios[0].ExpectReplay.ScoreTotal = reports[0].ActualScoreTotal
+		artifact.Scenarios[0].ExpectReplay.ScoreBreakdown = exactScoreBreakdown
 	}
 	reports, err = EvaluateReplayScoreDrift(artifact, ReplayScoreDriftOptions{
 		ScoreTolerance:     0.0001,

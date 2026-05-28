@@ -839,6 +839,84 @@ func TestSelectorReadsSnapshotStoredUnderEnrichedRuntimeKey(t *testing.T) {
 	require.Zero(t, candidate.ScoreBreakdown["ttft_latency"])
 }
 
+func TestSelectorCarriesAccountCredentialFieldsToPlanAndExplanation(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{
+		RequestedModel:      "gpt-5.4",
+		UpstreamModel:       "gpt-5.4",
+		ChannelID:           44,
+		ResourceID:          "platform:channel:44",
+		ResourceType:        core.ResourceTypePlatformOwned,
+		AccountID:           "openai:openai:acct-a",
+		AccountType:         core.AccountTypeAPIKey,
+		Brand:               "openai",
+		Provider:            "openai",
+		CredentialIndex:     1,
+		CredentialSubjectFP: "subject-a",
+		CredentialFP:        "credential-a",
+		Group:               "default",
+		EndpointType:        constant.EndpointTypeOpenAI,
+	}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SuccessRate:        1,
+		TTFTMs:             200,
+		DurationMs:         300,
+		GroupPriorityRatio: 1,
+		SampleCount:        5,
+	})
+	candidate := core.Candidate{
+		Channel:     &model.Channel{Id: 44, Name: "accounted"},
+		ResourceRef: core.ResourceRef{ResourceID: key.ResourceID, ResourceType: key.ResourceType, ExecutionBindingID: 44, Provider: "openai", Brand: "openai"},
+		AccountIdentity: core.AccountIdentity{
+			AccountID:                    key.AccountID,
+			AccountType:                  key.AccountType,
+			Brand:                        key.Brand,
+			Provider:                     key.Provider,
+			CredentialIndex:              key.CredentialIndex,
+			CredentialSubjectFingerprint: key.CredentialSubjectFP,
+			CredentialFingerprint:        key.CredentialFP,
+		},
+		CredentialRef: core.CredentialRef{
+			ResourceID:                   key.ResourceID,
+			AccountID:                    key.AccountID,
+			CredentialIndex:              key.CredentialIndex,
+			CredentialSubjectFingerprint: key.CredentialSubjectFP,
+			CredentialFingerprint:        key.CredentialFP,
+			Resolver:                     "channel_key",
+		},
+		Group:         "default",
+		UpstreamModel: "gpt-5.4",
+		RuntimeKey:    key,
+		PoolLevel:     core.CandidatePoolPro,
+	}
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{candidate}),
+		store,
+		scheduler.DefaultScoreWeights(),
+	)
+
+	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, candidate.ResourceRef, plan.ResourceRef)
+	require.Equal(t, candidate.AccountIdentity, plan.AccountIdentity)
+	require.Equal(t, candidate.CredentialRef, plan.CredentialRef)
+	require.Equal(t, core.CandidatePoolPro, plan.PoolLevel)
+	require.Len(t, plan.Candidates, 1)
+	require.True(t, plan.Candidates[0].Selected)
+	require.Equal(t, key.AccountID, plan.Candidates[0].AccountID)
+	require.Equal(t, key.CredentialFP, plan.Candidates[0].CredentialFP)
+	require.Equal(t, core.CandidatePoolPro, plan.Candidates[0].PoolLevel)
+}
+
 func TestSelectorPrefersEnrichedSnapshotOverLegacyRuntimeKey(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	baseKey := core.RuntimeKey{

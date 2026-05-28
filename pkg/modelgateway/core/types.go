@@ -28,6 +28,71 @@ const (
 
 const RelayAttemptCancelReasonFirstByteTimeout = "first_byte_timeout"
 
+const (
+	ResourceTypePlatformOwned = "platform_owned"
+	ResourceTypeSupplierOwned = "supplier_owned"
+	ResourceTypePartnerOwned  = "partner_owned"
+)
+
+const (
+	AccountTypeAPIKey        = "api_key"
+	AccountTypeOAuthAccount  = "oauth_account"
+	AccountTypeJSONAuth      = "json_auth"
+	AccountTypeTokenKey      = "token_key"
+	AccountTypeSessionCookie = "session_cookie"
+	AccountTypeComposite     = "composite"
+)
+
+const (
+	FailureScopeAccount  = "account"
+	FailureScopeResource = "resource"
+	FailureScopeProvider = "provider"
+	FailureScopeSystem   = "system"
+	FailureScopeClient   = "client"
+)
+
+const (
+	CandidatePoolPro = "pro"
+)
+
+type ResourceRef struct {
+	ResourceID         string `json:"resource_id,omitempty"`
+	ResourceType       string `json:"resource_type,omitempty"`
+	ExecutionBindingID int    `json:"execution_binding_id,omitempty"`
+	Provider           string `json:"provider,omitempty"`
+	Brand              string `json:"brand,omitempty"`
+}
+
+type AccountIdentity struct {
+	AccountID                    string `json:"account_id,omitempty"`
+	AccountType                  string `json:"account_type,omitempty"`
+	Brand                        string `json:"brand,omitempty"`
+	Provider                     string `json:"provider,omitempty"`
+	CredentialIndex              int    `json:"credential_index,omitempty"`
+	CredentialSubjectFingerprint string `json:"credential_subject_fingerprint,omitempty"`
+	CredentialFingerprint        string `json:"credential_fingerprint,omitempty"`
+	AccountIdentityKey           string `json:"account_identity_key,omitempty"`
+	AccountUniqueKey             string `json:"account_unique_key,omitempty"`
+	DisplayName                  string `json:"display_name,omitempty"`
+	Status                       string `json:"status,omitempty"`
+}
+
+type CredentialRef struct {
+	ResourceID                   string `json:"resource_id,omitempty"`
+	AccountID                    string `json:"account_id,omitempty"`
+	CredentialIndex              int    `json:"credential_index,omitempty"`
+	CredentialSubjectFingerprint string `json:"credential_subject_fingerprint,omitempty"`
+	CredentialFingerprint        string `json:"credential_fingerprint,omitempty"`
+	Resolver                     string `json:"resolver,omitempty"`
+}
+
+type ProxyRef struct {
+	ProxyID       int    `json:"proxy_id,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Protocol      string `json:"protocol,omitempty"`
+	MaskedAddress string `json:"masked_address,omitempty"`
+}
+
 type DispatchRequest struct {
 	RequestID                string
 	UserID                   int
@@ -84,6 +149,10 @@ type AutoGroupPlan struct {
 
 type DispatchPlan struct {
 	Channel                   *model.Channel
+	ResourceRef               ResourceRef
+	AccountIdentity           AccountIdentity
+	CredentialRef             CredentialRef
+	ProxyRef                  ProxyRef
 	SelectedGroup             string
 	RequestedGroup            string
 	BillingRatioMode          string
@@ -115,12 +184,23 @@ type DispatchPlan struct {
 	Candidates                []CandidateExplanation
 	IsHealthProbe             bool
 	ProbeReason               string
+	PoolLevel                 string
+	SwitchReason              string
 }
 
 type RuntimeKey struct {
 	RequestedModel        string                `json:"requested_model,omitempty"`
 	UpstreamModel         string                `json:"upstream_model,omitempty"`
 	ChannelID             int                   `json:"channel_id,omitempty"`
+	ResourceID            string                `json:"resource_id,omitempty"`
+	ResourceType          string                `json:"resource_type,omitempty"`
+	AccountID             string                `json:"account_id,omitempty"`
+	AccountType           string                `json:"account_type,omitempty"`
+	Brand                 string                `json:"brand,omitempty"`
+	Provider              string                `json:"provider,omitempty"`
+	CredentialIndex       int                   `json:"credential_index,omitempty"`
+	CredentialSubjectFP   string                `json:"credential_subject_fingerprint,omitempty"`
+	CredentialFP          string                `json:"credential_fingerprint,omitempty"`
 	Group                 string                `json:"group,omitempty"`
 	EndpointType          constant.EndpointType `json:"endpoint_type,omitempty"`
 	CapabilityFingerprint string                `json:"capability_fingerprint,omitempty"`
@@ -304,17 +384,35 @@ type CircuitSnapshot struct {
 
 type Candidate struct {
 	Channel                *model.Channel
+	ResourceRef            ResourceRef
+	AccountIdentity        AccountIdentity
+	CredentialRef          CredentialRef
+	ProxyRef               ProxyRef
 	Group                  string
 	UpstreamModel          string
 	ProviderProfile        string
 	ProxyMode              string
 	RequiresCodexImageTool bool
 	RuntimeKey             RuntimeKey
+	PoolLevel              string
 }
 
 type CandidateExplanation struct {
 	ChannelID                  int                `json:"channel_id"`
 	ChannelName                string             `json:"channel_name,omitempty"`
+	ResourceID                 string             `json:"resource_id,omitempty"`
+	ResourceType               string             `json:"resource_type,omitempty"`
+	AccountID                  string             `json:"account_id,omitempty"`
+	AccountType                string             `json:"account_type,omitempty"`
+	Brand                      string             `json:"brand,omitempty"`
+	Provider                   string             `json:"provider,omitempty"`
+	CredentialIndex            int                `json:"credential_index,omitempty"`
+	CredentialSubjectFP        string             `json:"credential_subject_fingerprint,omitempty"`
+	CredentialFP               string             `json:"credential_fingerprint,omitempty"`
+	ProxyID                    int                `json:"proxy_id,omitempty"`
+	PoolLevel                  string             `json:"pool_level,omitempty"`
+	SwitchReason               string             `json:"switch_reason,omitempty"`
+	FailureScope               string             `json:"failure_scope,omitempty"`
 	Group                      string             `json:"group,omitempty"`
 	UpstreamModel              string             `json:"upstream_model,omitempty"`
 	ProviderProfile            string             `json:"provider_profile,omitempty"`
@@ -517,10 +615,15 @@ type AttemptResult struct {
 	UsedChannels                   []string
 	IsHealthProbe                  bool
 	ProbeReason                    string
+	FailureScope                   string
+	SwitchReason                   string
 }
 
 func (r AttemptResult) RuntimeKey() RuntimeKey {
 	key := r.Key
+	if r.Plan != nil {
+		key = mergeRuntimeKeyFallback(key, r.Plan.RuntimeKey)
+	}
 	if key.ChannelID == 0 {
 		key.ChannelID = r.ChannelID
 	}
@@ -538,6 +641,55 @@ func (r AttemptResult) RuntimeKey() RuntimeKey {
 	}
 	if key.EndpointType == "" {
 		key.EndpointType = constant.EndpointTypeOpenAI
+	}
+	return key
+}
+
+func mergeRuntimeKeyFallback(key RuntimeKey, fallback RuntimeKey) RuntimeKey {
+	if key.RequestedModel == "" {
+		key.RequestedModel = fallback.RequestedModel
+	}
+	if key.UpstreamModel == "" {
+		key.UpstreamModel = fallback.UpstreamModel
+	}
+	if key.ChannelID == 0 {
+		key.ChannelID = fallback.ChannelID
+	}
+	if key.ResourceID == "" {
+		key.ResourceID = fallback.ResourceID
+	}
+	if key.ResourceType == "" {
+		key.ResourceType = fallback.ResourceType
+	}
+	if key.AccountID == "" {
+		key.AccountID = fallback.AccountID
+	}
+	if key.AccountType == "" {
+		key.AccountType = fallback.AccountType
+	}
+	if key.Brand == "" {
+		key.Brand = fallback.Brand
+	}
+	if key.Provider == "" {
+		key.Provider = fallback.Provider
+	}
+	if key.CredentialIndex == 0 {
+		key.CredentialIndex = fallback.CredentialIndex
+	}
+	if key.CredentialSubjectFP == "" {
+		key.CredentialSubjectFP = fallback.CredentialSubjectFP
+	}
+	if key.CredentialFP == "" {
+		key.CredentialFP = fallback.CredentialFP
+	}
+	if key.Group == "" {
+		key.Group = fallback.Group
+	}
+	if key.EndpointType == "" {
+		key.EndpointType = fallback.EndpointType
+	}
+	if key.CapabilityFingerprint == "" {
+		key.CapabilityFingerprint = fallback.CapabilityFingerprint
 	}
 	return key
 }

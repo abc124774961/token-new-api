@@ -249,6 +249,10 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	}
 	plan := &core.DispatchPlan{
 		Channel:                   bestCandidate.Channel,
+		ResourceRef:               bestCandidate.ResourceRef,
+		AccountIdentity:           bestCandidate.AccountIdentity,
+		CredentialRef:             bestCandidate.CredentialRef,
+		ProxyRef:                  bestCandidate.ProxyRef,
 		SelectedGroup:             bestCandidate.Group,
 		RequestedGroup:            req.RequestedGroup,
 		RuntimeKey:                bestSnapshot.Key,
@@ -276,6 +280,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		RequiredTools:             requiredToolsForDispatchRequest(req),
 		CandidateFilterConditions: candidateFilterConditionsForDispatchRequest(req),
 		Candidates:                explanations,
+		PoolLevel:                 bestCandidate.PoolLevel,
 	}
 	if s.shouldSaveStickyOnSelect() {
 		s.stickyRouter.Save(c, &req, plan)
@@ -436,6 +441,17 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 		UpstreamModel:              candidate.UpstreamModel,
 		ProviderProfile:            candidate.ProviderProfile,
 		ProxyMode:                  candidate.ProxyMode,
+		ResourceID:                 candidate.ResourceRef.ResourceID,
+		ResourceType:               candidate.ResourceRef.ResourceType,
+		AccountID:                  candidate.AccountIdentity.AccountID,
+		AccountType:                candidate.AccountIdentity.AccountType,
+		Brand:                      candidate.AccountIdentity.Brand,
+		Provider:                   candidate.AccountIdentity.Provider,
+		CredentialIndex:            candidate.CredentialRef.CredentialIndex,
+		CredentialSubjectFP:        candidate.CredentialRef.CredentialSubjectFingerprint,
+		CredentialFP:               candidate.CredentialRef.CredentialFingerprint,
+		ProxyID:                    candidate.ProxyRef.ProxyID,
+		PoolLevel:                  candidate.PoolLevel,
 		RuntimeKey:                 candidateExplanationRuntimeKey(candidate, snapshot),
 		SuccessRate:                snapshot.SuccessRate,
 		TTFTMs:                     snapshot.TTFTMs,
@@ -511,6 +527,33 @@ func candidateExplanationRuntimeKey(candidate core.Candidate, snapshot core.Runt
 	if key.CapabilityFingerprint == "" {
 		key.CapabilityFingerprint = candidate.RuntimeKey.CapabilityFingerprint
 	}
+	if key.ResourceID == "" {
+		key.ResourceID = candidate.RuntimeKey.ResourceID
+	}
+	if key.ResourceType == "" {
+		key.ResourceType = candidate.RuntimeKey.ResourceType
+	}
+	if key.AccountID == "" {
+		key.AccountID = candidate.RuntimeKey.AccountID
+	}
+	if key.AccountType == "" {
+		key.AccountType = candidate.RuntimeKey.AccountType
+	}
+	if key.Brand == "" {
+		key.Brand = candidate.RuntimeKey.Brand
+	}
+	if key.Provider == "" {
+		key.Provider = candidate.RuntimeKey.Provider
+	}
+	if key.CredentialIndex == 0 {
+		key.CredentialIndex = candidate.RuntimeKey.CredentialIndex
+	}
+	if key.CredentialSubjectFP == "" {
+		key.CredentialSubjectFP = candidate.RuntimeKey.CredentialSubjectFP
+	}
+	if key.CredentialFP == "" {
+		key.CredentialFP = candidate.RuntimeKey.CredentialFP
+	}
 	return normalizeRuntimeKey(key)
 }
 
@@ -529,17 +572,24 @@ func markSelectedCandidateExplanation(explanations []core.CandidateExplanation, 
 	if channelID == 0 {
 		channelID = snapshot.Key.ChannelID
 	}
+	selectedKey := candidateExplanationRuntimeKey(candidate, snapshot)
 	for idx := range explanations {
 		if explanations[idx].ChannelID != channelID {
 			continue
 		}
-		if snapshot.Key.Group != "" && explanations[idx].RuntimeKey.Group != "" && explanations[idx].RuntimeKey.Group != snapshot.Key.Group {
+		if selectedKey.Group != "" && explanations[idx].RuntimeKey.Group != "" && explanations[idx].RuntimeKey.Group != selectedKey.Group {
 			continue
 		}
-		if snapshot.Key.RequestedModel != "" && explanations[idx].RuntimeKey.RequestedModel != "" && explanations[idx].RuntimeKey.RequestedModel != snapshot.Key.RequestedModel {
+		if selectedKey.RequestedModel != "" && explanations[idx].RuntimeKey.RequestedModel != "" && explanations[idx].RuntimeKey.RequestedModel != selectedKey.RequestedModel {
 			continue
 		}
-		if snapshot.Key.EndpointType != "" && explanations[idx].RuntimeKey.EndpointType != "" && explanations[idx].RuntimeKey.EndpointType != snapshot.Key.EndpointType {
+		if selectedKey.EndpointType != "" && explanations[idx].RuntimeKey.EndpointType != "" && explanations[idx].RuntimeKey.EndpointType != selectedKey.EndpointType {
+			continue
+		}
+		if selectedKey.AccountID != "" && explanations[idx].RuntimeKey.AccountID != "" && explanations[idx].RuntimeKey.AccountID != selectedKey.AccountID {
+			continue
+		}
+		if selectedKey.CredentialFP != "" && explanations[idx].RuntimeKey.CredentialFP != "" && explanations[idx].RuntimeKey.CredentialFP != selectedKey.CredentialFP {
 			continue
 		}
 		explanations[idx].Selected = true

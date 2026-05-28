@@ -58,6 +58,7 @@ const CIRCUIT_ERROR_TYPES = [
 ];
 const STICKY_FAILURE_POLICY_OPTIONS = ['clear', 'keep'];
 const BILLING_RATIO_MODE_OPTIONS = ['static', 'dynamic'];
+const PROXY_REUSE_POLICY_OPTIONS = ['warn', 'confirm', 'block'];
 
 const DEFAULT_SETTING = {
   enabled: false,
@@ -118,6 +119,7 @@ const DEFAULT_SETTING = {
   failure_fast_window_seconds: 60,
   failure_main_window_seconds: 300,
   failure_fallback_window_seconds: 1800,
+  proxy_same_brand_reuse_policy: 'warn',
 };
 
 const numberOrDefault = (value, fallback = 0) => {
@@ -429,6 +431,19 @@ const billingRatioModeLabel = (mode, t) => {
   }
 };
 
+const proxyReusePolicyLabel = (policy, t) => {
+  switch (policy) {
+    case 'warn':
+      return t('代理复用策略：仅提醒');
+    case 'confirm':
+      return t('代理复用策略：二次确认');
+    case 'block':
+      return t('代理复用策略：禁止复用');
+    default:
+      return policy;
+  }
+};
+
 const makeCircuitErrorRows = (policies = {}) =>
   CIRCUIT_ERROR_TYPES.map((type) => {
     const policy = policies?.[type] || {};
@@ -573,6 +588,14 @@ export default function SettingsModelGatewayScheduler() {
       BILLING_RATIO_MODE_OPTIONS.map((value) => ({
         value,
         label: billingRatioModeLabel(value, t),
+      })),
+    [t],
+  );
+  const proxyReusePolicyOptions = useMemo(
+    () =>
+      PROXY_REUSE_POLICY_OPTIONS.map((value) => ({
+        value,
+        label: proxyReusePolicyLabel(value, t),
       })),
     [t],
   );
@@ -888,6 +911,8 @@ export default function SettingsModelGatewayScheduler() {
         setting.failure_fallback_window_seconds,
         1800,
       ),
+      proxy_same_brand_reuse_policy:
+        setting.proxy_same_brand_reuse_policy || 'warn',
       group_priority_ratio: priorities,
       group_policies: policies,
       circuit_error_policies: circuitErrorRowsToPolicyMap(circuitErrorRows),
@@ -1580,7 +1605,29 @@ export default function SettingsModelGatewayScheduler() {
                 }
               />
             </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Form.Select
+                field='proxy_same_brand_reuse_policy'
+                label={t('代理同品牌复用策略')}
+                optionList={proxyReusePolicyOptions}
+                onChange={(value) =>
+                  updateSetting(
+                    'proxy_same_brand_reuse_policy',
+                    value || 'warn',
+                  )
+                }
+              />
+            </Col>
           </Row>
+          <Banner
+            type='warning'
+            fullMode={false}
+            closeIcon={null}
+            description={t(
+              '仅提醒不拦截绑定；二次确认会在同品牌不同账号共用同一代理时要求确认；禁止复用会直接阻止绑定。',
+            )}
+            style={{ marginTop: 8, marginBottom: 16 }}
+          />
           <Banner
             type='info'
             fullMode={false}

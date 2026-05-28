@@ -162,6 +162,15 @@ function formatNumber(value) {
   return new Intl.NumberFormat().format(Number(value) || 0);
 }
 
+function shortenText(value, maxLength = 18) {
+  const text = String(value || '').trim();
+  if (!text || text.length <= maxLength) return text;
+  if (maxLength <= 8) return `${text.slice(0, maxLength)}...`;
+  const head = Math.ceil((maxLength - 3) / 2);
+  const tail = Math.floor((maxLength - 3) / 2);
+  return `${text.slice(0, head)}...${text.slice(-tail)}`;
+}
+
 function formatPercent(value, digits = 1) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '--';
@@ -379,7 +388,11 @@ function formatScoreItemRawValue(item, t) {
   if (!item) return '--';
   if (item.missing_reason) return t(item.missing_reason);
   const rawNumber = Number(item.raw_number);
-  if (item.raw_number !== null && Number.isFinite(rawNumber) && rawNumber >= 0) {
+  if (
+    item.raw_number !== null &&
+    Number.isFinite(rawNumber) &&
+    rawNumber >= 0
+  ) {
     const unit = String(item.raw_unit || '').trim();
     if (unit === 'ms') return formatLatency(rawNumber);
     if (unit === 'tps') return `${formatNumber(rawNumber)} tps`;
@@ -554,7 +567,9 @@ function scoreHistoryContributionEntries(current, history, direction, t) {
         : t('原始子项变化，不等于总分直接加减'),
       item.reason ||
         scoreMetricDescription(item.key, t) ||
-        [item.before_raw_value, item.after_raw_value].filter(Boolean).join(' → '),
+        [item.before_raw_value, item.after_raw_value]
+          .filter(Boolean)
+          .join(' → '),
     ].filter(Boolean);
     rows.push({
       key: item.key,
@@ -566,7 +581,8 @@ function scoreHistoryContributionEntries(current, history, direction, t) {
     });
   }
   if (!rows.length && !scoreItemDeltas.length) {
-    const sourceDelta = current?.score_breakdown_delta || history?.metric_deltas || {};
+    const sourceDelta =
+      current?.score_breakdown_delta || history?.metric_deltas || {};
     for (const [key, rawValue] of Object.entries(sourceDelta)) {
       const value = Number(rawValue || 0);
       if (!Number.isFinite(value) || Math.abs(value) < 0.0001) continue;
@@ -614,13 +630,21 @@ function scoreHistoryRecommendation(current, negativeEntries, t) {
     return t('建议排查不可调度原因');
   }
   const mainNegative = negativeEntries?.[0]?.key || '';
-  if (['upstream_error_rate', 'stream_interrupted_rate'].includes(mainNegative)) {
+  if (
+    ['upstream_error_rate', 'stream_interrupted_rate'].includes(mainNegative)
+  ) {
     return t('建议排查上游错误');
   }
-  if (['ttft_latency', 'duration_latency', 'throughput'].includes(mainNegative)) {
+  if (
+    ['ttft_latency', 'duration_latency', 'throughput'].includes(mainNegative)
+  ) {
     return t('建议关注速度变化');
   }
-  if (['concurrency_load', 'queue_pressure', 'first_byte_backlog'].includes(mainNegative)) {
+  if (
+    ['concurrency_load', 'queue_pressure', 'first_byte_backlog'].includes(
+      mainNegative,
+    )
+  ) {
     return t('建议观察负载与排队');
   }
   if (mainNegative === 'cost') {
@@ -718,12 +742,19 @@ function dynamicBillingRefreshCountdown(
   return configured;
 }
 
-function dynamicBillingRemainingSeconds(latestCalculatedAt, refreshSeconds, nowMs) {
+function dynamicBillingRemainingSeconds(
+  latestCalculatedAt,
+  refreshSeconds,
+  nowMs,
+) {
   const interval = Math.max(0, Number(refreshSeconds || 0));
   if (interval <= 0) return 0;
   const anchor = normalizeTimestamp(latestCalculatedAt);
   if (!anchor) return interval;
-  const nowSeconds = Math.max(0, Math.floor(Number(nowMs || Date.now()) / 1000));
+  const nowSeconds = Math.max(
+    0,
+    Math.floor(Number(nowMs || Date.now()) / 1000),
+  );
   const elapsed = Math.max(0, nowSeconds - anchor);
   const remainder = interval - (elapsed % interval);
   return remainder > 0 ? remainder : interval;
@@ -1363,7 +1394,10 @@ function userRequestScoreRecord(record) {
 function selectedUserRequestScoreCandidate(record) {
   const scoreRecord = userRequestScoreRecord(record);
   if (!scoreRecord) return null;
-  return findSelectedCandidate(scoreRecord, getCandidateExplanations(scoreRecord));
+  return findSelectedCandidate(
+    scoreRecord,
+    getCandidateExplanations(scoreRecord),
+  );
 }
 
 function scoreHistoryCandidateFromRecord(record) {
@@ -1653,7 +1687,11 @@ function RoutingScoreItemsPanel({ items = [], total, t }) {
                   </span>
                 </div>
                 <div className='ct-model-gateway-routing-score-bar'>
-                  <i style={{ width: `${Math.max(2, Math.min(100, item.score * 100))}%` }} />
+                  <i
+                    style={{
+                      width: `${Math.max(2, Math.min(100, item.score * 100))}%`,
+                    }}
+                  />
                 </div>
                 <div className='ct-model-gateway-routing-score-item-foot'>
                   {t('贡献')} {formatScore(item.weighted_score)}
@@ -1791,7 +1829,9 @@ function formatAttemptFlowAction(action, t) {
 }
 
 function getAttemptRetryReason(record) {
-  return String(record?.retry_reason || record?.request_meta?.retry_reason || '')
+  return String(
+    record?.retry_reason || record?.request_meta?.retry_reason || '',
+  )
     .trim()
     .toLowerCase();
 }
@@ -1801,7 +1841,11 @@ function isFirstByteTimeoutAttempt(record) {
 }
 
 function formatAttemptRetryReason(reason, t) {
-  switch (String(reason || '').trim().toLowerCase()) {
+  switch (
+    String(reason || '')
+      .trim()
+      .toLowerCase()
+  ) {
     case RETRY_REASON_FIRST_BYTE_TIMEOUT:
       return t('首字超时');
     default:
@@ -1811,7 +1855,10 @@ function formatAttemptRetryReason(reason, t) {
 
 function formatAttemptChannelLabel(record, t) {
   const id = Number(
-    record?.actual_channel_id || record?.channel_id || record?.final_channel_id || 0,
+    record?.actual_channel_id ||
+      record?.channel_id ||
+      record?.final_channel_id ||
+      0,
   );
   const name = stripChannelRatioSuffix(
     record?.actual_channel_name ||
@@ -2766,7 +2813,11 @@ function formatDynamicBillingPriceRange(item) {
   const minPrice = safeNumber(item.min_price_per_m);
   const maxPrice = safeNumber(item.max_price_per_m);
   if (minPrice <= 0 && maxPrice <= 0) return '--';
-  if (minPrice > 0 && maxPrice > 0 && Math.abs(minPrice - maxPrice) >= 0.000001) {
+  if (
+    minPrice > 0 &&
+    maxPrice > 0 &&
+    Math.abs(minPrice - maxPrice) >= 0.000001
+  ) {
     return `${formatUsdCostAmount(minPrice)}-${formatUsdCostAmount(maxPrice)}/M`;
   }
   return `${formatUsdCostAmount(maxPrice || minPrice)}/M`;
@@ -2863,7 +2914,8 @@ function formatDynamicBillingCostPriceAverage(item, overview) {
   const averagePrice = safeNumber(item.average_price_per_m);
   const fallbackPrice =
     averagePrice > 0 ? averagePrice : safeNumber(item.current_price_per_m);
-  if (fallbackPrice <= 0) return formatDynamicBillingCostPriceCompact(item, overview);
+  if (fallbackPrice <= 0)
+    return formatDynamicBillingCostPriceCompact(item, overview);
   const costPrice = fallbackPrice / factor;
   const digits = costPrice < 0.01 ? 4 : costPrice < 1 ? 3 : 2;
   return `$${costPrice.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}/M`;
@@ -3595,9 +3647,7 @@ function UserRequestCostSummaryCell({ record, t }) {
       >
         <div className='ct-model-gateway-user-request-cost-summary-line'>
           <span>{t('上游成本')}</span>
-          <strong title={t('1:1 实际成本倍率')}>
-            {upstreamSummaryLabel}
-          </strong>
+          <strong title={t('1:1 实际成本倍率')}>{upstreamSummaryLabel}</strong>
         </div>
         <div className='ct-model-gateway-user-request-cost-summary-line ct-model-gateway-user-request-cost-summary-billing'>
           <span>{t('扣费')}</span>
@@ -3616,9 +3666,9 @@ function UserRequestCostSummaryCell({ record, t }) {
 
 function UserRequestScoreSummaryTooltip({ candidate, scoreRecord, t }) {
   const sampleCount = Number(candidate?.sample_count || 0);
-  const scoreItems = normalizeScoreItemsForDisplay(candidate?.score_items).filter(
-    (item) => item.weight > 0 && !item.missing_reason,
-  );
+  const scoreItems = normalizeScoreItemsForDisplay(
+    candidate?.score_items,
+  ).filter((item) => item.weight > 0 && !item.missing_reason);
   const routingScore = getCandidateRoutingScore(candidate);
   return (
     <div className='ct-model-gateway-user-request-score-tooltip'>
@@ -3627,13 +3677,17 @@ function UserRequestScoreSummaryTooltip({ candidate, scoreRecord, t }) {
       </div>
       <div className='ct-model-gateway-cost-tooltip-row'>
         <span>{t('本次选中模型')}</span>
-        <strong title={candidate?.upstream_model || scoreRecord?.requested_model}>
+        <strong
+          title={candidate?.upstream_model || scoreRecord?.requested_model}
+        >
           {candidate?.upstream_model || scoreRecord?.requested_model || '--'}
         </strong>
       </div>
       <div className='ct-model-gateway-cost-tooltip-row'>
         <span>{t('稳定评分')}</span>
-        <strong>{formatScore(candidate?.score_total || scoreRecord?.score_total)}</strong>
+        <strong>
+          {formatScore(candidate?.score_total || scoreRecord?.score_total)}
+        </strong>
       </div>
       {routingScore !== null && (
         <div className='ct-model-gateway-cost-tooltip-row'>
@@ -3643,7 +3697,9 @@ function UserRequestScoreSummaryTooltip({ candidate, scoreRecord, t }) {
       )}
       <div className='ct-model-gateway-cost-tooltip-row'>
         <span>{t('评分样本')}</span>
-        <strong>{sampleCount > 0 ? formatNumber(sampleCount) : t('暂无评分样本')}</strong>
+        <strong>
+          {sampleCount > 0 ? formatNumber(sampleCount) : t('暂无评分样本')}
+        </strong>
       </div>
       {scoreItems.length > 0 && (
         <div className='ct-model-gateway-cost-tooltip-divider' />
@@ -3656,7 +3712,8 @@ function UserRequestScoreSummaryTooltip({ candidate, scoreRecord, t }) {
 function UserRequestScoreSummaryCell({ record, t, onOpenScoreHistory }) {
   const scoreRecord = userRequestScoreRecord(record);
   const candidate = selectedUserRequestScoreCandidate(record);
-  const score = getCandidateScore(candidate) ?? Number(scoreRecord?.score_total || 0);
+  const score =
+    getCandidateScore(candidate) ?? Number(scoreRecord?.score_total || 0);
   const routingScore = getCandidateRoutingScore(candidate);
   const hasScore = Number.isFinite(score) && score > 0;
   const metricEntries = normalizeScoreItemsForDisplay(candidate?.score_items)
@@ -3668,7 +3725,9 @@ function UserRequestScoreSummaryCell({ record, t, onOpenScoreHistory }) {
     Boolean(candidate || scoreHistoryCandidateFromRecord(scoreRecord));
   const handleOpenHistory = () => {
     if (!canOpenHistory) return;
-    onOpenScoreHistory(candidate || scoreHistoryCandidateFromRecord(scoreRecord));
+    onOpenScoreHistory(
+      candidate || scoreHistoryCandidateFromRecord(scoreRecord),
+    );
   };
 
   if (!hasScore) {
@@ -4103,7 +4162,9 @@ function DynamicBillingMiniPanel({
     : formatDynamicBillingCostRatioCurrent(primary, overview);
   const costValue =
     costPriceValue !== '--' || costRatioValue !== '--'
-      ? [costPriceValue, costRatioValue].filter((item) => item && item !== '--').join(' · ')
+      ? [costPriceValue, costRatioValue]
+          .filter((item) => item && item !== '--')
+          .join(' · ')
       : '--';
   const groupValue = dynamicBillingDisplayGroup(primary);
   const referenceModelValue = String(
@@ -4145,7 +4206,9 @@ function DynamicBillingMiniPanel({
         </div>
       </div>
       <div className='ct-model-gateway-dynamic-mini-main-row'>
-        <strong className='ct-model-gateway-dynamic-mini-price'>{ratioValue}</strong>
+        <strong className='ct-model-gateway-dynamic-mini-price'>
+          {ratioValue}
+        </strong>
         {priceValue !== '--' ? (
           <div className='ct-model-gateway-dynamic-mini-inline-ratio'>
             <span className='ct-model-gateway-dynamic-mini-inline-ratio-label'>
@@ -4159,7 +4222,9 @@ function DynamicBillingMiniPanel({
       </div>
       <div className='ct-model-gateway-dynamic-mini-cost-row'>
         <span>{t('成本')}</span>
-        <bdi className='ct-model-gateway-dynamic-mini-cost-value'>{costValue}</bdi>
+        <bdi className='ct-model-gateway-dynamic-mini-cost-value'>
+          {costValue}
+        </bdi>
       </div>
     </div>
   );
@@ -4425,26 +4490,25 @@ function UserRequestRecentTable({
                         record.final_error_category &&
                         meta.tone !== 'aborted' &&
                         !processing
-                    ? formatUserRequestErrorCategory(
-                        record.final_error_category,
-                        t,
-                      )
-                    : record.final_success &&
-                        (record.empty_output || record.experience_issue) &&
-                        !processing
-                      ? formatUserRequestExperienceIssue(
-                          record.experience_issue ||
-                            (record.empty_output ? 'empty_output' : ''),
+                      ? formatUserRequestErrorCategory(
+                          record.final_error_category,
                           t,
                         )
-                      : '';
+                      : record.final_success &&
+                          (record.empty_output || record.experience_issue) &&
+                          !processing
+                        ? formatUserRequestExperienceIssue(
+                            record.experience_issue ||
+                              (record.empty_output ? 'empty_output' : ''),
+                            t,
+                          )
+                        : '';
                 const StatusIcon =
                   meta.tone === 'processing'
                     ? RadioTower
                     : meta.tone === 'aborted'
                       ? Ban
-                      : meta.tone === 'failed' ||
-                          meta.tone === 'probe-warning'
+                      : meta.tone === 'failed' || meta.tone === 'probe-warning'
                         ? Info
                         : CheckCircle2;
                 const durationTone = getThresholdTone(
@@ -8317,7 +8381,12 @@ function RuntimeStatusPanel({ runtimeStatus, t, circuitErrorType = '' }) {
           }
           if (record.probe_recovery_pending) {
             tags.push(
-              <Tag key='recovery-progress' color='cyan' size='small' type='light'>
+              <Tag
+                key='recovery-progress'
+                color='cyan'
+                size='small'
+                type='light'
+              >
                 {t('恢复')}{' '}
                 {formatNumber(record.probe_recovery_success_count || 0)}/
                 {formatNumber(record.probe_recovery_required || 0)}
@@ -8565,9 +8634,7 @@ function ScoreItemsTable({
             >
               <strong>{item.name}</strong>
               {item.category ? <small>{t(item.category)}</small> : null}
-              {item.missing_reason ? (
-                <em>{t(item.missing_reason)}</em>
-              ) : null}
+              {item.missing_reason ? <em>{t(item.missing_reason)}</em> : null}
             </span>
             <span className='ct-model-gateway-score-item-raw'>
               {formatScoreItemRawValue(item, t)}
@@ -8824,7 +8891,9 @@ function TimingBreakdownPanel({ record, t }) {
             {timing.upstreamResponseHeaderMs > 0 ? (
               <div>
                 <span>{t('上游响应头')}</span>
-                <strong>{formatLatency(timing.upstreamResponseHeaderMs)}</strong>
+                <strong>
+                  {formatLatency(timing.upstreamResponseHeaderMs)}
+                </strong>
               </div>
             ) : null}
             {timing.upstreamFirstEventWaitMs > 0 ? (
@@ -8891,9 +8960,7 @@ function getCandidateExplanations(record) {
 
 function normalizeMetaStringList(value) {
   if (Array.isArray(value)) {
-    return value
-      .map((item) => String(item || '').trim())
-      .filter(Boolean);
+    return value.map((item) => String(item || '').trim()).filter(Boolean);
   }
   if (typeof value === 'string') {
     return value
@@ -8910,9 +8977,7 @@ function getDispatchRequirements(record) {
     meta?.requires_codex_image_tool === true ||
     record?.requires_codex_image_tool === true;
   const tools = normalizeMetaStringList(meta?.required_tools);
-  const conditions = normalizeMetaStringList(
-    meta?.candidate_filter_conditions,
-  );
+  const conditions = normalizeMetaStringList(meta?.candidate_filter_conditions);
   if (requiresCodexImageTool && !tools.includes('image_generation')) {
     tools.push('image_generation');
   }
@@ -8993,6 +9058,10 @@ function formatRuntimeKey(runtimeKey) {
     runtimeKey.requested_model,
     runtimeKey.upstream_model,
     runtimeKey.channel_id ? `#${runtimeKey.channel_id}` : '',
+    runtimeKey.account_id,
+    runtimeKey.credential_subject_fingerprint
+      ? `fp:${runtimeKey.credential_subject_fingerprint}`
+      : '',
     runtimeKey.group,
     runtimeKey.endpoint_type,
     runtimeKey.capability_fingerprint,
@@ -9008,6 +9077,26 @@ function buildRuntimeKeyParams(runtimeKey = {}) {
   }
   if (runtimeKey.upstream_model) {
     params.upstream_model = runtimeKey.upstream_model;
+  }
+  if (runtimeKey.resource_id) params.resource_id = runtimeKey.resource_id;
+  if (runtimeKey.resource_type) params.resource_type = runtimeKey.resource_type;
+  if (runtimeKey.account_id) params.account_id = runtimeKey.account_id;
+  if (runtimeKey.account_type) params.account_type = runtimeKey.account_type;
+  if (runtimeKey.brand) params.brand = runtimeKey.brand;
+  if (runtimeKey.provider) params.provider = runtimeKey.provider;
+  if (
+    runtimeKey.credential_index !== undefined &&
+    runtimeKey.credential_index !== null &&
+    runtimeKey.credential_index !== ''
+  ) {
+    params.credential_index = runtimeKey.credential_index;
+  }
+  if (runtimeKey.credential_subject_fingerprint) {
+    params.credential_subject_fingerprint =
+      runtimeKey.credential_subject_fingerprint;
+  }
+  if (runtimeKey.credential_fingerprint) {
+    params.credential_fingerprint = runtimeKey.credential_fingerprint;
   }
   if (runtimeKey.group) params.group = runtimeKey.group;
   if (runtimeKey.endpoint_type) params.endpoint_type = runtimeKey.endpoint_type;
@@ -9423,7 +9512,10 @@ function buildSelectionInsight(record, candidates, t) {
   const selectedAllScoreItems = normalizeScoreItemsForDisplay(
     selectedCandidate?.score_items,
   );
-  const selectedTtftItem = scoreItemByKey(selectedAllScoreItems, 'ttft_latency');
+  const selectedTtftItem = scoreItemByKey(
+    selectedAllScoreItems,
+    'ttft_latency',
+  );
   const selectedDurationItem = scoreItemByKey(
     selectedAllScoreItems,
     'duration_latency',
@@ -9787,6 +9879,19 @@ function CandidateExplanationCard({
   );
   const emptyOutputRate = Number(candidate?.empty_output_rate || 0);
   const issueRate = Number(candidate?.experience_issue_rate || 0);
+  const accountLabel =
+    candidate?.account_id ||
+    candidate?.runtime_key?.account_id ||
+    candidate?.credential_subject_fingerprint ||
+    candidate?.runtime_key?.credential_subject_fingerprint ||
+    '';
+  const credentialLabel =
+    candidate?.credential_subject_fingerprint ||
+    candidate?.runtime_key?.credential_subject_fingerprint ||
+    candidate?.credential_fingerprint ||
+    candidate?.runtime_key?.credential_fingerprint ||
+    '';
+  const poolLevel = candidate?.pool_level || candidate?.runtime_key?.pool_level;
   const referenceCost =
     formatCostScoreItemSummary(costScoreItem, t) ||
     formatCandidateReferenceCost(candidate, t);
@@ -9881,6 +9986,11 @@ function CandidateExplanationCard({
               #{index + 1}
             </Tag>
           )}
+          {poolLevel ? (
+            <Tag color='cyan' type='light' size='small'>
+              {poolLevel}
+            </Tag>
+          ) : null}
         </div>
       </div>
 
@@ -9903,6 +10013,21 @@ function CandidateExplanationCard({
             {t('粘滞匹配')}: {stickyMatched ? t('已匹配') : t('未匹配')}
           </span>
         )}
+        {candidate?.brand || candidate?.provider ? (
+          <span>
+            {t('品牌')}: {candidate?.brand || candidate?.provider}
+          </span>
+        ) : null}
+        {accountLabel ? (
+          <span title={accountLabel}>
+            {t('账号')}: {shortenText(accountLabel, 18)}
+          </span>
+        ) : null}
+        {credentialLabel ? (
+          <span title={credentialLabel}>
+            {t('凭证')}: {shortenText(credentialLabel, 18)}
+          </span>
+        ) : null}
       </div>
 
       <div className='ct-model-gateway-candidate-dynamic-grid'>
@@ -10300,7 +10425,7 @@ function RecordDetailDrawer({
                     ? `${formatNumber(filteredCandidateCount)} ${t('已过滤')}`
                     : dispatchRequirements.visible
                       ? t('工具过滤后候选')
-                    : t('全部可用')
+                      : t('全部可用')
                 }
               />
             </div>
@@ -10622,7 +10747,11 @@ function ScoreHistoryModal({ history, loading, visible, onCancel, t }) {
   const statusMeta = scoreHistoryStatusMeta(current, t);
   const sourceMeta = scoreHistorySourceMeta(current, t);
   const confidenceMeta = scoreHistorySampleConfidence(current, t);
-  const recommendation = scoreHistoryRecommendation(current, negativeEntries, t);
+  const recommendation = scoreHistoryRecommendation(
+    current,
+    negativeEntries,
+    t,
+  );
   const currentRows = scoreItemDisplayRows(
     current?.score_items,
     current?.score_item_deltas,
@@ -10763,11 +10892,7 @@ function ScoreHistoryModal({ history, loading, visible, onCancel, t }) {
                 </Button>
               ) : null}
             </div>
-            <ScoreItemsTable
-              preparedRows={visibleCurrentItems}
-              t={t}
-              compact
-            />
+            <ScoreItemsTable preparedRows={visibleCurrentItems} t={t} compact />
           </div>
         ) : null}
 
@@ -10781,9 +10906,7 @@ function ScoreHistoryModal({ history, loading, visible, onCancel, t }) {
           <div className='ct-model-gateway-score-history-section'>
             <div className='ct-model-gateway-score-history-section-head'>
               <div>
-                <Typography.Text strong>
-                  {t('评分事件时间线')}
-                </Typography.Text>
+                <Typography.Text strong>{t('评分事件时间线')}</Typography.Text>
                 <Typography.Text type='secondary' size='small'>
                   {t('最近评分变化')}
                 </Typography.Text>
@@ -10823,7 +10946,12 @@ function ScoreHistoryModal({ history, loading, visible, onCancel, t }) {
   );
 }
 
-function ScoreHistoryContributionCard({ title, emptyText, entries = [], tone }) {
+function ScoreHistoryContributionCard({
+  title,
+  emptyText,
+  entries = [],
+  tone,
+}) {
   return (
     <div
       className={`ct-model-gateway-score-history-contrib ct-model-gateway-score-history-contrib-${tone}`}
@@ -10875,7 +11003,8 @@ function ScoreHistoryRecordItem({ item, t }) {
       !scoreItem.missing_reason,
   );
   const hasRoutingScore =
-    routingScore > 0 && Math.abs(routingScore - Number(item?.score_total || 0)) >= 0.0001;
+    routingScore > 0 &&
+    Math.abs(routingScore - Number(item?.score_total || 0)) >= 0.0001;
 
   return (
     <div className='ct-model-gateway-score-history-item'>
@@ -11414,7 +11543,9 @@ export default function ModelGatewayMonitor() {
         setDetailRecord(detail);
       } catch (err) {
         if (fallbackRecords.length) {
-          setDetailRecord(buildUserRequestDetailRecord(record, fallbackRecords));
+          setDetailRecord(
+            buildUserRequestDetailRecord(record, fallbackRecords),
+          );
           return;
         }
         const message =
@@ -11750,20 +11881,20 @@ export default function ModelGatewayMonitor() {
                   HTTP {record.status_code}
                 </div>
               )}
-                    {(record.is_health_probe ||
-                      record.request_meta?.is_health_probe) && (
-                      <div className='text-xs text-semi-color-text-2'>
-                        {formatProbeReasonWithScope(record, t)}
-                      </div>
-                    )}
-                    {isFirstByteTimeoutAttempt(record) && (
-                      <div className='text-xs text-semi-color-text-2'>
-                        {t('首字超时内部切换')}
-                      </div>
-                    )}
-                  </div>
-                );
-              },
+              {(record.is_health_probe ||
+                record.request_meta?.is_health_probe) && (
+                <div className='text-xs text-semi-color-text-2'>
+                  {formatProbeReasonWithScope(record, t)}
+                </div>
+              )}
+              {isFirstByteTimeoutAttempt(record) && (
+                <div className='text-xs text-semi-color-text-2'>
+                  {t('首字超时内部切换')}
+                </div>
+              )}
+            </div>
+          );
+        },
       },
       {
         key: 'recent-duration',

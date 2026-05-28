@@ -1106,7 +1106,7 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 
 	// 如果是添加操作，检查 channel 和 key 是否为空
 	if isAdd {
-		if channel.Key == "" {
+		if strings.TrimSpace(channel.Key) == "" && channel.Type != constant.ChannelTypeCodex {
 			return fmt.Errorf("channel cannot be empty")
 		}
 
@@ -1136,25 +1136,64 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 
 	// Codex OAuth key validation (optional, only when JSON object is provided)
 	if channel.Type == constant.ChannelTypeCodex {
-		trimmedKey := strings.TrimSpace(channel.Key)
-		if isAdd || trimmedKey != "" {
-			if !strings.HasPrefix(trimmedKey, "{") {
-				return fmt.Errorf("Codex channel only supports OAuth JSON credentials. Use OpenAI channel for standard API keys")
-			}
-			var keyMap map[string]any
-			if err := common.Unmarshal([]byte(trimmedKey), &keyMap); err != nil {
-				return fmt.Errorf("Codex key must be a valid OAuth JSON object")
-			}
-			if v, ok := keyMap["access_token"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
-				return fmt.Errorf("Codex key JSON must include access_token")
-			}
-			if v, ok := keyMap["account_id"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
-				return fmt.Errorf("Codex key JSON must include account_id")
-			}
+		if err := validateCodexChannelCredential(channel.Key); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+func validateCodexChannelCredential(key string) error {
+	trimmedKey := strings.TrimSpace(key)
+	if trimmedKey == "" {
+		return nil
+	}
+	if !strings.HasPrefix(trimmedKey, "{") {
+		return fmt.Errorf("Codex channel only supports OAuth JSON credentials. Use OpenAI channel for standard API keys")
+	}
+	var keyMap map[string]any
+	if err := common.Unmarshal([]byte(trimmedKey), &keyMap); err != nil {
+		return fmt.Errorf("Codex key must be a valid OAuth JSON object")
+	}
+	if v, ok := keyMap["access_token"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
+		return fmt.Errorf("Codex key JSON must include access_token")
+	}
+	if v, ok := keyMap["account_id"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
+		return fmt.Errorf("Codex key JSON must include account_id")
+	}
+	return nil
+}
+
+func isCodexChannelWithoutAccounts(channel *model.Channel) bool {
+	if channel == nil || channel.Type != constant.ChannelTypeCodex {
+		return false
+	}
+	if strings.TrimSpace(channel.Key) == "" {
+		return true
+	}
+	for _, key := range channel.GetKeys() {
+		if strings.TrimSpace(key) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func prepareEmptyCodexAccountPoolChannel(channel *model.Channel) {
+	if channel == nil {
+		return
+	}
+	channel.Key = ""
+	channel.Status = common.ChannelStatusAutoDisabled
+	channel.ChannelInfo.IsMultiKey = false
+	channel.ChannelInfo.MultiKeySize = 0
+	channel.ChannelInfo.MultiKeyStatusList = nil
+	channel.ChannelInfo.MultiKeyDisabledReason = nil
+	channel.ChannelInfo.MultiKeyDisabledTime = nil
+	channel.ChannelInfo.MultiKeyProxyIDs = nil
+	channel.ChannelInfo.MultiKeyAccountTypes = nil
+	setChannelAccountStatusReason(channel, channelAccountEmptyCodexReason)
 }
 
 func RefreshCodexChannelCredential(c *gin.Context) {
@@ -1248,6 +1287,9 @@ func AddChannel(c *gin.Context) {
 	addChannelRequest.Channel.CostPerMillion = nil
 	addChannelRequest.Channel.CreatedTime = common.GetTimestamp()
 	keys := make([]string, 0)
+	allowEmptyCodexAccountPool := addChannelRequest.Mode == "single" &&
+		addChannelRequest.Channel.Type == constant.ChannelTypeCodex &&
+		strings.TrimSpace(addChannelRequest.Channel.Key) == ""
 	switch addChannelRequest.Mode {
 	case "multi_to_single":
 		addChannelRequest.Channel.ChannelInfo.IsMultiKey = true
@@ -1302,11 +1344,15 @@ func AddChannel(c *gin.Context) {
 
 	channels := make([]model.Channel, 0, len(keys))
 	for _, key := range keys {
-		if key == "" {
+		key = strings.TrimSpace(key)
+		if key == "" && !allowEmptyCodexAccountPool {
 			continue
 		}
-		localChannel := addChannelRequest.Channel
+		localChannel := *addChannelRequest.Channel
 		localChannel.Key = key
+		if allowEmptyCodexAccountPool {
+			prepareEmptyCodexAccountPoolChannel(&localChannel)
+		}
 		if addChannelRequest.BatchAddSetKeyPrefix2Name && len(keys) > 1 {
 			keyPrefix := localChannel.Key
 			if len(localChannel.Key) > 8 {
@@ -1314,7 +1360,14 @@ func AddChannel(c *gin.Context) {
 			}
 			localChannel.Name = fmt.Sprintf("%s %s", localChannel.Name, keyPrefix)
 		}
-		channels = append(channels, *localChannel)
+		channels = append(channels, localChannel)
+	}
+	if len(channels) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "请填写渠道密钥",
+		})
+		return
 	}
 	err = model.BatchInsertChannels(channels)
 	if err != nil {
@@ -1538,6 +1591,37 @@ func UpdateChannel(c *gin.Context) {
 			"message": err.Error(),
 		})
 		return
+	}
+
+	targetType := channel.Type
+	if targetType == 0 {
+		targetType = originChannel.Type
+	}
+	targetKey := channel.Key
+	if strings.TrimSpace(targetKey) == "" {
+		targetKey = originChannel.Key
+	}
+	if targetType == constant.ChannelTypeCodex && strings.TrimSpace(targetKey) != "" {
+		if err := validateCodexChannelCredential(targetKey); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+	}
+
+	if channel.Status == common.ChannelStatusEnabled && targetType == constant.ChannelTypeCodex {
+		candidateChannel := *originChannel
+		candidateChannel.Type = targetType
+		candidateChannel.Key = targetKey
+		if isCodexChannelWithoutAccounts(&candidateChannel) {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "请先通过账号管理导入 Codex 账号凭证后再启用渠道",
+			})
+			return
+		}
 	}
 
 	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.

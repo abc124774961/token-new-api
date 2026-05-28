@@ -24,6 +24,10 @@ const (
 
 	BillingRatioModeStatic  = "static"
 	BillingRatioModeDynamic = "dynamic"
+
+	ProxyReusePolicyWarn    = "warn"
+	ProxyReusePolicyConfirm = "confirm"
+	ProxyReusePolicyBlock   = "block"
 )
 
 type GroupPolicySetting struct {
@@ -114,6 +118,7 @@ type SchedulerSetting struct {
 	FailureFastWindowSeconds             int                                  `json:"failure_fast_window_seconds"`
 	FailureMainWindowSeconds             int                                  `json:"failure_main_window_seconds"`
 	FailureFallbackWindowSeconds         int                                  `json:"failure_fallback_window_seconds"`
+	ProxySameBrandReusePolicy            string                               `json:"proxy_same_brand_reuse_policy"`
 }
 
 var schedulerSetting = SchedulerSetting{
@@ -183,6 +188,7 @@ var schedulerSetting = SchedulerSetting{
 	FailureFastWindowSeconds:             60,
 	FailureMainWindowSeconds:             300,
 	FailureFallbackWindowSeconds:         1800,
+	ProxySameBrandReusePolicy:            ProxyReusePolicyWarn,
 }
 
 var (
@@ -306,5 +312,6 @@ func defaultSchedulerSetting() SchedulerSetting {
 	setting.FailureFastWindowSeconds = 60
 	setting.FailureMainWindowSeconds = 300
 	setting.FailureFallbackWindowSeconds = 1800
+	setting.ProxySameBrandReusePolicy = ProxyReusePolicyWarn
 	return setting
 }

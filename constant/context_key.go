@@ -37,6 +37,8 @@ const (
 	ContextKeyChannelIsMultiKey         ContextKey = "channel_is_multi_key"
 	ContextKeyChannelMultiKeyIndex      ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey                ContextKey = "channel_key"
+	ContextKeyChannelAccountProxyID     ContextKey = "channel_account_proxy_id"
+	ContextKeyChannelAccountProxyURL    ContextKey = "channel_account_proxy_url"
 	ContextKeyUpstreamRequestInfo       ContextKey = "upstream_request_info"
 	ContextKeyUpstreamResponseHeaderMs  ContextKey = "upstream_response_header_ms"
 	ContextKeyChannelFailureTrace       ContextKey = "channel_failure_trace"

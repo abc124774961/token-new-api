@@ -240,6 +240,9 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	if ok {
 		channelMeta.ChannelSetting = channelSetting
 	}
+	if accountProxyURL := strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyChannelAccountProxyURL)); accountProxyURL != "" {
+		channelMeta.ChannelSetting.Proxy = accountProxyURL
+	}
 
 	channelOtherSettings, ok := common.GetContextKeyType[dto.ChannelOtherSettings](c, constant.ContextKeyChannelOtherSetting)
 	if ok {

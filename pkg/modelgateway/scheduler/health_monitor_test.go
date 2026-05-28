@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/service"
@@ -611,4 +612,69 @@ func TestRuntimeHealthMonitorClearsAvoidanceAfterTwoFastProbeSuccesses(t *testin
 	require.True(t, ok)
 	require.False(t, snapshot.ProbeRecoveryPending)
 	require.Equal(t, 2, snapshot.ProbeRecoverySuccessCount)
+}
+
+func TestRuntimeHealthMonitorKeepsAccountRuntimeSnapshotsIsolated(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	base := core.RuntimeKey{
+		RequestedModel: "gpt-5.4",
+		UpstreamModel:  "gpt-5.4",
+		ChannelID:      120,
+		ResourceID:     "platform:channel:120",
+		ResourceType:   core.ResourceTypePlatformOwned,
+		AccountType:    core.AccountTypeAPIKey,
+		Brand:          "openai",
+		Provider:       "openai",
+		Group:          "default",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	accountA := base
+	accountA.AccountID = "openai:openai:account-a"
+	accountA.CredentialIndex = 0
+	accountA.CredentialSubjectFP = "subject-a"
+	accountA.CredentialFP = "credential-a"
+	accountB := base
+	accountB.AccountID = "openai:openai:account-b"
+	accountB.CredentialIndex = 1
+	accountB.CredentialSubjectFP = "subject-b"
+	accountB.CredentialFP = "credential-b"
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:        accountA,
+		ChannelID:  120,
+		Success:    false,
+		StatusCode: http.StatusBadGateway,
+		Duration:   900 * time.Millisecond,
+	})
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:       accountB,
+		ChannelID: 120,
+		Success:   true,
+		Duration:  300 * time.Millisecond,
+		TTFT:      120 * time.Millisecond,
+	})
+
+	snapshotA, ok := store.Get(accountA)
+	require.True(t, ok)
+	require.Equal(t, 1, snapshotA.SampleCount)
+	require.Equal(t, 0.0, snapshotA.SuccessRate)
+	require.Equal(t, accountA.AccountID, snapshotA.Key.AccountID)
+
+	snapshotB, ok := store.Get(accountB)
+	require.True(t, ok)
+	require.Equal(t, 1, snapshotB.SampleCount)
+	require.Equal(t, 1.0, snapshotB.SuccessRate)
+	require.Equal(t, accountB.AccountID, snapshotB.Key.AccountID)
+
+	legacyKey := base
+	legacyKey.AccountID = ""
+	legacyKey.AccountType = ""
+	legacyKey.Brand = ""
+	legacyKey.Provider = ""
+	legacyKey.CredentialIndex = 0
+	legacyKey.CredentialSubjectFP = ""
+	legacyKey.CredentialFP = ""
+	_, ok = store.Get(legacyKey)
+	require.False(t, ok)
 }

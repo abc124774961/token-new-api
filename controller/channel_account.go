@@ -1,0 +1,1496 @@
+package controller
+
+import (
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
+	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
+	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
+	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
+	"github.com/gin-gonic/gin"
+)
+
+const channelAccountManualDisabledReason = "manual_disabled"
+const channelAccountAllKeysDisabledReason = "All keys are disabled"
+const channelAccountEmptyCodexReason = channelAccountAllKeysDisabledReason
+
+type ChannelAccountsResponse struct {
+	ChannelID   int                          `json:"channel_id"`
+	ChannelName string                       `json:"channel_name,omitempty"`
+	ResourceRef modelgatewaycore.ResourceRef `json:"resource_ref"`
+	Total       int                          `json:"total"`
+	Enabled     int                          `json:"enabled"`
+	Disabled    int                          `json:"disabled"`
+	Items       []ChannelAccountItem         `json:"items"`
+	Operation   *ChannelAccountOperation     `json:"operation,omitempty"`
+}
+
+type ChannelAccountItem struct {
+	ChannelID       int                                  `json:"channel_id"`
+	CredentialIndex int                                  `json:"credential_index"`
+	KeyEnabled      bool                                 `json:"key_enabled"`
+	DisabledReason  string                               `json:"disabled_reason,omitempty"`
+	ResourceRef     modelgatewaycore.ResourceRef         `json:"resource_ref"`
+	AccountIdentity modelgatewaycore.AccountIdentity     `json:"account_identity"`
+	CredentialRef   modelgatewaycore.CredentialRef       `json:"credential_ref"`
+	Proxy           *ModelGatewayProxyResponse           `json:"proxy,omitempty"`
+	SubjectShort    string                               `json:"subject_short,omitempty"`
+	CredentialShort string                               `json:"credential_short,omitempty"`
+	Score           *ChannelAccountScoreSummary          `json:"score,omitempty"`
+	RuntimeKeys     []ChannelAccountRuntimeScoreSnapshot `json:"runtime_keys,omitempty"`
+}
+
+type UpdateChannelAccountStatusRequest struct {
+	Enabled *bool  `json:"enabled"`
+	Action  string `json:"action,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+type UpdateChannelAccountCredentialRequest struct {
+	Credential     string `json:"credential"`
+	CredentialType string `json:"credential_type,omitempty"`
+}
+
+type UpdateChannelAccountsStatusRequest struct {
+	Enabled           *bool  `json:"enabled"`
+	Action            string `json:"action,omitempty"`
+	Reason            string `json:"reason,omitempty"`
+	CredentialIndexes []int  `json:"credential_indexes"`
+}
+
+type ImportChannelAccountsRequest struct {
+	Credentials    string   `json:"credentials"`
+	CredentialList []string `json:"credential_list,omitempty"`
+	OnlyNew        bool     `json:"only_new"`
+}
+
+type DeleteChannelAccountsRequest struct {
+	CredentialIndexes []int `json:"credential_indexes"`
+}
+
+type UpdateChannelAccountProxyRequest struct {
+	ProxyID        *int `json:"proxy_id"`
+	AllowReuseRisk bool `json:"allow_reuse_risk,omitempty"`
+}
+
+type ChannelAccountOperation struct {
+	Type             string `json:"type,omitempty"`
+	Action           string `json:"action,omitempty"`
+	Requested        int    `json:"requested,omitempty"`
+	Affected         int    `json:"affected,omitempty"`
+	Added            int    `json:"added,omitempty"`
+	Deleted          int    `json:"deleted,omitempty"`
+	Skipped          int    `json:"skipped,omitempty"`
+	SkippedExisting  int    `json:"skipped_existing,omitempty"`
+	SkippedDuplicate int    `json:"skipped_duplicate,omitempty"`
+	TotalInput       int    `json:"total_input,omitempty"`
+	ChannelRestored  bool   `json:"channel_restored,omitempty"`
+	ChannelDisabled  bool   `json:"channel_disabled,omitempty"`
+}
+
+type ChannelAccountScoreSummary struct {
+	RuntimeKey              modelgatewaycore.RuntimeKey `json:"runtime_key"`
+	HealthStatus            string                      `json:"health_status,omitempty"`
+	ScoreTotal              float64                     `json:"score_total,omitempty"`
+	RoutingScoreTotal       float64                     `json:"routing_score_total,omitempty"`
+	CostItemScore           float64                     `json:"cost_item_score,omitempty"`
+	CostRatio               float64                     `json:"cost_ratio,omitempty"`
+	CostReferenceRatio      float64                     `json:"cost_reference_ratio,omitempty"`
+	CostPricingMode         string                      `json:"cost_pricing_mode,omitempty"`
+	SampleCount             int                         `json:"sample_count"`
+	RealSampleCount30m      int                         `json:"real_sample_count_30m,omitempty"`
+	SuccessRate             float64                     `json:"success_rate"`
+	TTFTMs                  float64                     `json:"ttft_ms"`
+	DurationMs              float64                     `json:"duration_ms"`
+	TokensPerSecond         float64                     `json:"tokens_per_second,omitempty"`
+	EmptyOutputRate         float64                     `json:"empty_output_rate,omitempty"`
+	ExperienceIssueRate     float64                     `json:"experience_issue_rate,omitempty"`
+	LastRealAttemptAt       int64                       `json:"last_real_attempt_at,omitempty"`
+	LastRealSuccessAt       int64                       `json:"last_real_success_at,omitempty"`
+	LastRealFailureAt       int64                       `json:"last_real_failure_at,omitempty"`
+	LastProbeAt             int64                       `json:"last_probe_at,omitempty"`
+	LastProbeSuccessAt      int64                       `json:"last_probe_success_at,omitempty"`
+	ConfigErrorIsolated     bool                        `json:"config_error_isolated,omitempty"`
+	IsolationReason         string                      `json:"isolation_reason,omitempty"`
+	ProbeRecoveryPending    bool                        `json:"probe_recovery_pending,omitempty"`
+	ProbeTriggerReason      string                      `json:"probe_trigger_reason,omitempty"`
+	ActiveConcurrency       int                         `json:"active_concurrency,omitempty"`
+	EffectiveConcurrencyCap int                         `json:"effective_concurrency_limit,omitempty"`
+	QueueDepth              int                         `json:"queue_depth,omitempty"`
+	QueueCapacity           int                         `json:"queue_capacity,omitempty"`
+}
+
+type ChannelAccountRuntimeScoreSnapshot struct {
+	RuntimeKey          modelgatewaycore.RuntimeKey `json:"runtime_key"`
+	HealthStatus        string                      `json:"health_status,omitempty"`
+	ScoreTotal          float64                     `json:"score_total,omitempty"`
+	RoutingScoreTotal   float64                     `json:"routing_score_total,omitempty"`
+	SampleCount         int                         `json:"sample_count"`
+	RealSampleCount30m  int                         `json:"real_sample_count_30m,omitempty"`
+	SuccessRate         float64                     `json:"success_rate"`
+	TTFTMs              float64                     `json:"ttft_ms"`
+	LastRealSuccessAt   int64                       `json:"last_real_success_at,omitempty"`
+	LastProbeSuccessAt  int64                       `json:"last_probe_success_at,omitempty"`
+	ConfigErrorIsolated bool                        `json:"config_error_isolated,omitempty"`
+}
+
+func ListChannelAccounts(c *gin.Context) {
+	channelID, ok := parseChannelIDParam(c)
+	if !ok {
+		return
+	}
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		common.ApiErrorMsg(c, "渠道不存在")
+		return
+	}
+
+	common.ApiSuccess(c, buildChannelAccountsResponse(channel))
+}
+
+func UpdateChannelAccountStatus(c *gin.Context) {
+	channelID, ok := parseChannelIDParam(c)
+	if !ok {
+		return
+	}
+	credentialIndex, ok := parseChannelAccountCredentialIndexParam(c)
+	if !ok {
+		return
+	}
+
+	var request UpdateChannelAccountStatusRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	enabled, ok := request.TargetEnabled()
+	if !ok {
+		common.ApiErrorMsg(c, "账号状态参数无效")
+		return
+	}
+
+	operation, err := updateChannelAccountStatus(channelID, credentialIndex, enabled, request.Reason)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		common.ApiErrorMsg(c, "渠道不存在")
+		return
+	}
+	common.ApiSuccess(c, buildChannelAccountsResponseWithOperation(channel, operation))
+}
+
+func UpdateChannelAccountCredential(c *gin.Context) {
+	channelID, ok := parseChannelIDParam(c)
+	if !ok {
+		return
+	}
+	credentialIndex, ok := parseChannelAccountCredentialIndexParam(c)
+	if !ok {
+		return
+	}
+
+	var request UpdateChannelAccountCredentialRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	operation, err := updateChannelAccountCredential(channelID, credentialIndex, request.Credential, request.CredentialType)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		common.ApiErrorMsg(c, "渠道不存在")
+		return
+	}
+	common.ApiSuccess(c, buildChannelAccountsResponseWithOperation(channel, operation))
+}
+
+func UpdateChannelAccountsStatus(c *gin.Context) {
+	channelID, ok := parseChannelIDParam(c)
+	if !ok {
+		return
+	}
+
+	var request UpdateChannelAccountsStatusRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	enabled, ok := request.TargetEnabled()
+	if !ok {
+		common.ApiErrorMsg(c, "账号状态参数无效")
+		return
+	}
+
+	operation, err := updateChannelAccountsStatus(channelID, request.CredentialIndexes, enabled, request.Reason)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		common.ApiErrorMsg(c, "渠道不存在")
+		return
+	}
+	common.ApiSuccess(c, buildChannelAccountsResponseWithOperation(channel, operation))
+}
+
+func ImportChannelAccounts(c *gin.Context) {
+	channelID, ok := parseChannelIDParam(c)
+	if !ok {
+		return
+	}
+
+	var request ImportChannelAccountsRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	operation, err := importChannelAccounts(channelID, request.Credentials, request.CredentialList, request.OnlyNew)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		common.ApiErrorMsg(c, "渠道不存在")
+		return
+	}
+	common.ApiSuccess(c, buildChannelAccountsResponseWithOperation(channel, operation))
+}
+
+func DeleteChannelAccounts(c *gin.Context) {
+	channelID, ok := parseChannelIDParam(c)
+	if !ok {
+		return
+	}
+
+	var request DeleteChannelAccountsRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	operation, err := deleteChannelAccounts(channelID, request.CredentialIndexes)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		common.ApiErrorMsg(c, "渠道不存在")
+		return
+	}
+	common.ApiSuccess(c, buildChannelAccountsResponseWithOperation(channel, operation))
+}
+
+func UpdateChannelAccountProxy(c *gin.Context) {
+	channelID, ok := parseChannelIDParam(c)
+	if !ok {
+		return
+	}
+	credentialIndex, ok := parseChannelAccountCredentialIndexParam(c)
+	if !ok {
+		return
+	}
+	var request UpdateChannelAccountProxyRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	proxyID := 0
+	if request.ProxyID != nil {
+		proxyID = *request.ProxyID
+	}
+	operation, err := updateChannelAccountProxy(channelID, credentialIndex, proxyID, request.AllowReuseRisk)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		common.ApiErrorMsg(c, "渠道不存在")
+		return
+	}
+	common.ApiSuccess(c, buildChannelAccountsResponseWithOperation(channel, operation))
+}
+
+func (request UpdateChannelAccountStatusRequest) TargetEnabled() (bool, bool) {
+	if request.Enabled != nil {
+		return *request.Enabled, true
+	}
+	switch strings.ToLower(strings.TrimSpace(request.Action)) {
+	case "enable", "enabled":
+		return true, true
+	case "disable", "disabled":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func (request UpdateChannelAccountsStatusRequest) TargetEnabled() (bool, bool) {
+	if request.Enabled != nil {
+		return *request.Enabled, true
+	}
+	switch strings.ToLower(strings.TrimSpace(request.Action)) {
+	case "enable", "enabled":
+		return true, true
+	case "disable", "disabled":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func parseChannelAccountCredentialIndexParam(c *gin.Context) (int, bool) {
+	credentialIndex, err := strconv.Atoi(c.Param("credential_index"))
+	if err != nil || credentialIndex < 0 {
+		common.ApiError(c, fmt.Errorf("账号索引无效"))
+		return 0, false
+	}
+	return credentialIndex, true
+}
+
+func buildChannelAccountsResponse(channel *model.Channel) ChannelAccountsResponse {
+	accounts := modelgatewayaccount.NewRegistry().AccountsForChannel(channel)
+	proxiesByID := channelAccountProxiesByID(channel)
+	proxyUsagesByID := channelAccountProxyUsagesByID(proxiesByID)
+	runtimeItems := defaultModelGatewayRuntimeStatusService().Build(modelgatewayobservability.RuntimeStatusQuery{
+		ChannelID: channel.Id,
+		Limit:     modelGatewayRuntimeStatusMaxLimit,
+	}).Items
+
+	response := ChannelAccountsResponse{
+		ChannelID:   channel.Id,
+		ChannelName: channel.Name,
+		ResourceRef: modelgatewayaccount.ResourceRefForChannel(channel),
+		Total:       len(accounts),
+		Items:       make([]ChannelAccountItem, 0, len(accounts)),
+	}
+	for _, account := range accounts {
+		item := buildChannelAccountItem(account, runtimeItems, len(accounts) == 1)
+		if account.ProxyRef.ProxyID > 0 {
+			if proxyConfig, ok := proxiesByID[account.ProxyRef.ProxyID]; ok {
+				proxyResponse := buildModelGatewayProxyResponse(proxyConfig, proxyUsagesByID[account.ProxyRef.ProxyID])
+				item.Proxy = &proxyResponse
+			} else {
+				item.Proxy = &ModelGatewayProxyResponse{
+					ID:             account.ProxyRef.ProxyID,
+					Name:           fmt.Sprintf("Proxy #%d", account.ProxyRef.ProxyID),
+					Enabled:        false,
+					PasswordMasked: true,
+				}
+			}
+		}
+		if item.KeyEnabled {
+			response.Enabled++
+		} else {
+			response.Disabled++
+		}
+		response.Items = append(response.Items, item)
+	}
+	return response
+}
+
+func channelAccountProxyUsagesByID(proxiesByID map[int]model.ModelGatewayProxy) map[int][]model.ModelGatewayProxyUsage {
+	result := make(map[int][]model.ModelGatewayProxyUsage)
+	if len(proxiesByID) == 0 {
+		return result
+	}
+	proxyIDs := make([]int, 0, len(proxiesByID))
+	for proxyID := range proxiesByID {
+		if proxyID > 0 {
+			proxyIDs = append(proxyIDs, proxyID)
+		}
+	}
+	usages, err := model.ListModelGatewayProxyUsages(proxyIDs)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("failed to load account proxy usages: proxy_ids=%v, error=%v", proxyIDs, err))
+		return result
+	}
+	for _, usage := range usages {
+		result[usage.ProxyID] = append(result[usage.ProxyID], usage)
+	}
+	return result
+}
+
+func channelAccountProxiesByID(channel *model.Channel) map[int]model.ModelGatewayProxy {
+	if channel == nil || channel.ChannelInfo.MultiKeyProxyIDs == nil {
+		return nil
+	}
+	proxyIDs := make([]int, 0, len(channel.ChannelInfo.MultiKeyProxyIDs))
+	for _, proxyID := range channel.ChannelInfo.MultiKeyProxyIDs {
+		if proxyID > 0 {
+			proxyIDs = append(proxyIDs, proxyID)
+		}
+	}
+	proxiesByID, err := model.GetModelGatewayProxiesByIDs(proxyIDs)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("failed to load account proxies: channel_id=%d, error=%v", channel.Id, err))
+		return nil
+	}
+	return proxiesByID
+}
+
+func buildChannelAccountsResponseWithOperation(channel *model.Channel, operation *ChannelAccountOperation) ChannelAccountsResponse {
+	response := buildChannelAccountsResponse(channel)
+	response.Operation = operation
+	return response
+}
+
+func updateChannelAccountStatus(channelID int, credentialIndex int, enabled bool, reason string) (*ChannelAccountOperation, error) {
+	return updateChannelAccountsStatus(channelID, []int{credentialIndex}, enabled, reason)
+}
+
+func updateChannelAccountCredential(channelID int, credentialIndex int, credential string, credentialType string) (*ChannelAccountOperation, error) {
+	if channelID <= 0 {
+		return nil, fmt.Errorf("渠道不存在")
+	}
+	lock := model.GetChannelPollingLock(channelID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		return nil, fmt.Errorf("渠道不存在")
+	}
+	normalizedCredential, accountType, err := normalizeChannelAccountEditableCredentialForChannel(channel, credential, credentialType)
+	if err != nil {
+		return nil, err
+	}
+	keys := channel.GetKeys()
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("渠道没有可管理的账号")
+	}
+	if credentialIndex < 0 || credentialIndex >= len(keys) {
+		return nil, fmt.Errorf("账号索引超出范围")
+	}
+	for index, key := range keys {
+		if index == credentialIndex {
+			continue
+		}
+		if strings.TrimSpace(key) == normalizedCredential {
+			return nil, fmt.Errorf("账号凭证已存在")
+		}
+	}
+
+	keys[credentialIndex] = normalizedCredential
+	channel.Key = strings.Join(keys, "\n")
+	channel.ChannelInfo.IsMultiKey = len(keys) > 1
+	channel.ChannelInfo.MultiKeySize = len(keys)
+	if accountType != "" {
+		if channel.ChannelInfo.MultiKeyAccountTypes == nil {
+			channel.ChannelInfo.MultiKeyAccountTypes = make(map[int]string)
+		}
+		channel.ChannelInfo.MultiKeyAccountTypes[credentialIndex] = accountType
+	} else if channel.ChannelInfo.MultiKeyAccountTypes != nil {
+		delete(channel.ChannelInfo.MultiKeyAccountTypes, credentialIndex)
+		if len(channel.ChannelInfo.MultiKeyAccountTypes) == 0 {
+			channel.ChannelInfo.MultiKeyAccountTypes = nil
+		}
+	}
+	cleanupChannelAccountStatusMaps(channel, len(keys))
+	if err := channel.Update(); err != nil {
+		return nil, err
+	}
+	return &ChannelAccountOperation{
+		Type:      "credential",
+		Action:    "update",
+		Requested: 1,
+		Affected:  1,
+	}, nil
+}
+
+func updateChannelAccountsStatus(channelID int, credentialIndexes []int, enabled bool, reason string) (*ChannelAccountOperation, error) {
+	if channelID <= 0 {
+		return nil, fmt.Errorf("渠道不存在")
+	}
+	lock := model.GetChannelPollingLock(channelID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		return nil, fmt.Errorf("渠道不存在")
+	}
+	keys := channel.GetKeys()
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("渠道没有可管理的账号")
+	}
+	indexes, err := normalizeChannelAccountIndexes(credentialIndexes, len(keys))
+	if err != nil {
+		return nil, err
+	}
+	operation := &ChannelAccountOperation{
+		Type:      "status",
+		Action:    channelAccountStatusAction(enabled),
+		Requested: len(credentialIndexes),
+		Affected:  len(indexes),
+	}
+	beforeStatus := channel.Status
+	beforeAllKeysDisabled := beforeStatus == common.ChannelStatusAutoDisabled && channelAccountStatusReasonIsAllKeysDisabled(channel)
+	if channel.ChannelInfo.IsMultiKey {
+		err := updateMultiKeyChannelAccountsStatusLocked(channel, indexes, enabled, reason, len(keys))
+		operation.ChannelRestored = beforeAllKeysDisabled && channel.Status == common.ChannelStatusEnabled
+		operation.ChannelDisabled = beforeStatus == common.ChannelStatusEnabled && channel.Status == common.ChannelStatusAutoDisabled
+		return operation, err
+	}
+	if len(indexes) != 1 || indexes[0] != 0 {
+		return nil, fmt.Errorf("该渠道不是多账号模式")
+	}
+	err = updateSingleKeyChannelAccountStatus(channel, enabled, reason)
+	operation.ChannelRestored = beforeStatus != common.ChannelStatusEnabled && channel.Status == common.ChannelStatusEnabled
+	operation.ChannelDisabled = beforeStatus == common.ChannelStatusEnabled && channel.Status != common.ChannelStatusEnabled
+	return operation, err
+}
+
+func normalizeChannelAccountIndexes(credentialIndexes []int, keyCount int) ([]int, error) {
+	if len(credentialIndexes) == 0 {
+		return nil, fmt.Errorf("请先选择账号")
+	}
+	indexSet := make(map[int]struct{}, len(credentialIndexes))
+	for _, credentialIndex := range credentialIndexes {
+		if credentialIndex < 0 || credentialIndex >= keyCount {
+			return nil, fmt.Errorf("账号索引超出范围")
+		}
+		indexSet[credentialIndex] = struct{}{}
+	}
+	indexes := make([]int, 0, len(indexSet))
+	for index := range indexSet {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	return indexes, nil
+}
+
+func updateChannelAccountProxy(channelID int, credentialIndex int, proxyID int, allowReuseRisk bool) (*ChannelAccountOperation, error) {
+	if channelID <= 0 {
+		return nil, fmt.Errorf("渠道不存在")
+	}
+	if proxyID > 0 {
+		if _, err := getModelGatewayProxyOrNil(proxyID); err != nil {
+			return nil, err
+		}
+	}
+	lock := model.GetChannelPollingLock(channelID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		return nil, fmt.Errorf("渠道不存在")
+	}
+	keys := channel.GetKeys()
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("渠道没有可管理的账号")
+	}
+	indexes, err := normalizeChannelAccountIndexes([]int{credentialIndex}, len(keys))
+	if err != nil {
+		return nil, err
+	}
+	if proxyID > 0 {
+		accounts := modelgatewayaccount.NewRegistry().AccountsForChannel(channel)
+		account, ok := channelAccountByCredentialIndex(accounts, indexes[0])
+		if !ok {
+			return nil, fmt.Errorf("账号不存在")
+		}
+		if err := enforceChannelAccountProxyReusePolicy(proxyID, account, allowReuseRisk); err != nil {
+			return nil, err
+		}
+	}
+	cleanupChannelAccountStatusMaps(channel, len(keys))
+	if proxyID > 0 {
+		if channel.ChannelInfo.MultiKeyProxyIDs == nil {
+			channel.ChannelInfo.MultiKeyProxyIDs = make(map[int]int)
+		}
+		channel.ChannelInfo.MultiKeyProxyIDs[indexes[0]] = proxyID
+	} else if channel.ChannelInfo.MultiKeyProxyIDs != nil {
+		delete(channel.ChannelInfo.MultiKeyProxyIDs, indexes[0])
+		if len(channel.ChannelInfo.MultiKeyProxyIDs) == 0 {
+			channel.ChannelInfo.MultiKeyProxyIDs = nil
+		}
+	}
+	if err := channel.SaveWithoutKey(); err != nil {
+		return nil, err
+	}
+	if proxyID > 0 {
+		recordChannelAccountProxyBinding(channel, indexes[0], proxyID)
+	}
+	return &ChannelAccountOperation{
+		Type:      "proxy",
+		Action:    channelAccountProxyAction(proxyID),
+		Requested: 1,
+		Affected:  1,
+	}, nil
+}
+
+func channelAccountByCredentialIndex(accounts []modelgatewayaccount.ChannelAccount, credentialIndex int) (modelgatewayaccount.ChannelAccount, bool) {
+	for _, account := range accounts {
+		if account.CredentialIndex == credentialIndex {
+			return account, true
+		}
+	}
+	return modelgatewayaccount.ChannelAccount{}, false
+}
+
+func enforceChannelAccountProxyReusePolicy(proxyID int, account modelgatewayaccount.ChannelAccount, allowReuseRisk bool) error {
+	policy := scheduler_setting.GetSetting().ProxySameBrandReusePolicy
+	if policy == "" {
+		policy = scheduler_setting.ProxyReusePolicyWarn
+	}
+	if policy == scheduler_setting.ProxyReusePolicyWarn {
+		return nil
+	}
+	risk, err := detectChannelAccountProxyReuseRisk(proxyID, account)
+	if err != nil {
+		return err
+	}
+	if risk == nil {
+		return nil
+	}
+	switch policy {
+	case scheduler_setting.ProxyReusePolicyConfirm:
+		if allowReuseRisk {
+			return nil
+		}
+		return fmt.Errorf("该代理已被同品牌其他账号使用，请确认后继续绑定")
+	case scheduler_setting.ProxyReusePolicyBlock:
+		return fmt.Errorf("该代理已被同品牌其他账号使用，请选择其它代理")
+	default:
+		return fmt.Errorf("invalid proxy_same_brand_reuse_policy")
+	}
+}
+
+func detectChannelAccountProxyReuseRisk(proxyID int, account modelgatewayaccount.ChannelAccount) (*ModelGatewayProxyReuseRisk, error) {
+	brand := strings.ToLower(strings.TrimSpace(account.AccountIdentity.Brand))
+	if brand == "" {
+		brand = strings.ToLower(strings.TrimSpace(account.AccountIdentity.Provider))
+	}
+	if proxyID <= 0 || brand == "" {
+		return nil, nil
+	}
+	usages, err := model.ListModelGatewayProxyUsages([]int{proxyID})
+	if err != nil {
+		return nil, err
+	}
+	relevant := make([]model.ModelGatewayProxyUsage, 0, len(usages)+1)
+	subject := strings.TrimSpace(account.AccountIdentity.CredentialSubjectFingerprint)
+	credential := strings.TrimSpace(account.AccountIdentity.CredentialFingerprint)
+	for _, usage := range usages {
+		usageBrand := strings.ToLower(strings.TrimSpace(usage.Brand))
+		if usageBrand == "" {
+			usageBrand = strings.ToLower(strings.TrimSpace(usage.Provider))
+		}
+		if usageBrand != brand {
+			continue
+		}
+		usageSubject := strings.TrimSpace(usage.CredentialSubjectFingerprint)
+		usageCredential := strings.TrimSpace(usage.CredentialFingerprint)
+		if subject != "" && usageSubject == subject {
+			continue
+		}
+		if subject == "" && credential != "" && usageCredential == credential {
+			continue
+		}
+		relevant = append(relevant, usage)
+	}
+	if len(relevant) == 0 {
+		return nil, nil
+	}
+	relevant = append(relevant, model.ModelGatewayProxyUsage{
+		ProxyID:                      proxyID,
+		ChannelID:                    account.ChannelID,
+		ResourceID:                   account.ResourceRef.ResourceID,
+		ResourceType:                 account.ResourceRef.ResourceType,
+		AccountID:                    account.AccountIdentity.AccountID,
+		AccountType:                  account.AccountIdentity.AccountType,
+		Brand:                        account.AccountIdentity.Brand,
+		Provider:                     account.AccountIdentity.Provider,
+		CredentialIndex:              account.CredentialIndex,
+		CredentialSubjectFingerprint: account.AccountIdentity.CredentialSubjectFingerprint,
+		CredentialFingerprint:        account.AccountIdentity.CredentialFingerprint,
+		LastStatus:                   model.ModelGatewayProxyUsageStatusBound,
+	})
+	risks := buildModelGatewayProxyReuseRisks(relevant)
+	if len(risks) == 0 {
+		return nil, nil
+	}
+	return &risks[0], nil
+}
+
+func recordChannelAccountProxyBinding(channel *model.Channel, credentialIndex int, proxyID int) {
+	if channel == nil || proxyID <= 0 {
+		return
+	}
+	accounts := modelgatewayaccount.NewRegistry().AccountsForChannel(channel)
+	for _, account := range accounts {
+		if account.CredentialIndex != credentialIndex {
+			continue
+		}
+		_ = model.RecordModelGatewayProxyUsage(model.ModelGatewayProxyUsage{
+			ProxyID:                      proxyID,
+			ChannelID:                    channel.Id,
+			ResourceID:                   account.ResourceRef.ResourceID,
+			ResourceType:                 account.ResourceRef.ResourceType,
+			AccountID:                    account.AccountIdentity.AccountID,
+			AccountType:                  account.AccountIdentity.AccountType,
+			Brand:                        account.AccountIdentity.Brand,
+			Provider:                     account.AccountIdentity.Provider,
+			CredentialIndex:              account.CredentialIndex,
+			CredentialSubjectFingerprint: account.AccountIdentity.CredentialSubjectFingerprint,
+			CredentialFingerprint:        account.AccountIdentity.CredentialFingerprint,
+			LastStatus:                   model.ModelGatewayProxyUsageStatusBound,
+		})
+		return
+	}
+}
+
+func channelAccountProxyAction(proxyID int) string {
+	if proxyID > 0 {
+		return "bind"
+	}
+	return "clear"
+}
+
+func normalizeChannelAccountEditableCredential(credential string, credentialType string) (string, string, error) {
+	credential = strings.TrimSpace(credential)
+	if credential == "" {
+		return "", "", fmt.Errorf("请填写账号凭证")
+	}
+	accountType := strings.ToLower(strings.TrimSpace(credentialType))
+	switch accountType {
+	case "", "auto":
+		if compacted, ok := compactJSONCredential(credential); ok {
+			return compacted, "", nil
+		}
+		return credential, "", nil
+	case modelgatewaycore.AccountTypeAPIKey:
+		if strings.HasPrefix(credential, "{") || strings.HasPrefix(credential, "[") {
+			return "", "", fmt.Errorf("API Key 类型不支持 JSON 凭证")
+		}
+		return credential, modelgatewaycore.AccountTypeAPIKey, nil
+	case modelgatewaycore.AccountTypeJSONAuth,
+		modelgatewaycore.AccountTypeOAuthAccount,
+		modelgatewaycore.AccountTypeTokenKey,
+		modelgatewaycore.AccountTypeSessionCookie,
+		modelgatewaycore.AccountTypeComposite:
+		compacted, ok := compactJSONCredential(credential)
+		if !ok {
+			return "", "", fmt.Errorf("该凭证类型需要填写 JSON 对象")
+		}
+		return compacted, accountType, nil
+	default:
+		return "", "", fmt.Errorf("账号凭证类型无效")
+	}
+}
+
+func normalizeChannelAccountEditableCredentialForChannel(channel *model.Channel, credential string, credentialType string) (string, string, error) {
+	normalizedCredential, accountType, err := normalizeChannelAccountEditableCredential(credential, credentialType)
+	if err != nil {
+		return "", "", err
+	}
+	if err := validateChannelAccountCredentialsForChannel(channel, []string{normalizedCredential}); err != nil {
+		return "", "", err
+	}
+	return normalizedCredential, accountType, nil
+}
+
+func validateChannelAccountCredentialsForChannel(channel *model.Channel, credentials []string) error {
+	if channel == nil || channel.Type != constant.ChannelTypeCodex {
+		return nil
+	}
+	for _, credential := range credentials {
+		if err := validateCodexChannelCredential(credential); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type normalizedChannelAccountCredentials struct {
+	Keys              []string
+	InputCount        int
+	DuplicateInInput  int
+	SkippedBlankInput int
+}
+
+func importChannelAccounts(channelID int, credentials string, credentialList []string, onlyNew bool) (*ChannelAccountOperation, error) {
+	if channelID <= 0 {
+		return nil, fmt.Errorf("渠道不存在")
+	}
+	normalizedCredentials := normalizeChannelAccountCredentialLines(credentials, credentialList)
+	if len(normalizedCredentials.Keys) == 0 {
+		return nil, fmt.Errorf("请先输入账号凭证")
+	}
+
+	lock := model.GetChannelPollingLock(channelID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		return nil, fmt.Errorf("渠道不存在")
+	}
+	if err := validateChannelAccountCredentialsForChannel(channel, normalizedCredentials.Keys); err != nil {
+		return nil, err
+	}
+	existingKeys := channel.GetKeys()
+	existingSet := make(map[string]struct{}, len(existingKeys))
+	for _, key := range existingKeys {
+		normalized := strings.TrimSpace(key)
+		if normalized != "" {
+			existingSet[normalized] = struct{}{}
+		}
+	}
+	nextKeys := make([]string, 0, len(existingKeys)+len(normalizedCredentials.Keys))
+	nextKeys = append(nextKeys, existingKeys...)
+	added := 0
+	skippedExisting := 0
+	for _, key := range normalizedCredentials.Keys {
+		if _, exists := existingSet[key]; exists {
+			if onlyNew {
+				skippedExisting++
+				continue
+			}
+			return nil, fmt.Errorf("账号凭证已存在")
+		}
+		existingSet[key] = struct{}{}
+		nextKeys = append(nextKeys, key)
+		added++
+	}
+	if added == 0 {
+		return nil, fmt.Errorf("没有可导入的新账号")
+	}
+
+	wasAutoDisabledByAllKeys := channelAccountShouldRestoreAfterImport(channel)
+	channel.Key = strings.Join(nextKeys, "\n")
+	channel.ChannelInfo.IsMultiKey = len(nextKeys) > 1
+	channel.ChannelInfo.MultiKeySize = len(nextKeys)
+	if channel.ChannelInfo.IsMultiKey && channel.ChannelInfo.MultiKeyMode == "" {
+		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyModeRandom
+	}
+	cleanupChannelAccountStatusMaps(channel, len(nextKeys))
+	if wasAutoDisabledByAllKeys {
+		channel.Status = common.ChannelStatusEnabled
+		clearChannelAccountStatusReason(channel)
+	}
+	if err := channel.Update(); err != nil {
+		return nil, err
+	}
+	if err := model.UpdateAbilityStatus(channel.Id, channel.Status == common.ChannelStatusEnabled); err != nil {
+		return nil, err
+	}
+	skippedDuplicate := normalizedCredentials.DuplicateInInput
+	return &ChannelAccountOperation{
+		Type:             "import",
+		TotalInput:       normalizedCredentials.InputCount,
+		Requested:        normalizedCredentials.InputCount,
+		Affected:         added,
+		Added:            added,
+		Skipped:          skippedExisting + skippedDuplicate,
+		SkippedExisting:  skippedExisting,
+		SkippedDuplicate: skippedDuplicate,
+		ChannelRestored:  wasAutoDisabledByAllKeys && channel.Status == common.ChannelStatusEnabled,
+	}, nil
+}
+
+func normalizeChannelAccountCredentialLines(credentials string, credentialList []string) normalizedChannelAccountCredentials {
+	lines := make([]string, 0)
+	for _, value := range credentialList {
+		lines = append(lines, value)
+	}
+	trimmedCredentials := strings.TrimSpace(credentials)
+	if jsonCredentials, ok := parseJSONCredentialInput(trimmedCredentials); ok {
+		lines = append(lines, jsonCredentials...)
+	} else {
+		lines = append(lines, strings.Split(strings.ReplaceAll(credentials, "\r\n", "\n"), "\n")...)
+	}
+
+	result := normalizedChannelAccountCredentials{
+		Keys: make([]string, 0, len(lines)),
+	}
+	seen := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		key := strings.TrimSpace(line)
+		if key == "" {
+			result.SkippedBlankInput++
+			continue
+		}
+		if compacted, ok := compactJSONCredential(key); ok {
+			key = compacted
+		}
+		result.InputCount++
+		if _, ok := seen[key]; ok {
+			result.DuplicateInInput++
+			continue
+		}
+		seen[key] = struct{}{}
+		result.Keys = append(result.Keys, key)
+	}
+	return result
+}
+
+func parseJSONCredentialInput(value string) ([]string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, false
+	}
+	if strings.HasPrefix(value, "{") {
+		var payload map[string]interface{}
+		if err := common.Unmarshal([]byte(value), &payload); err != nil {
+			return nil, false
+		}
+		compacted, err := common.Marshal(payload)
+		if err != nil {
+			return nil, false
+		}
+		return []string{string(compacted)}, true
+	}
+	if strings.HasPrefix(value, "[") {
+		var rawItems []interface{}
+		if err := common.Unmarshal([]byte(value), &rawItems); err != nil {
+			return nil, false
+		}
+		items := make([]string, 0, len(rawItems))
+		for _, rawItem := range rawItems {
+			switch item := rawItem.(type) {
+			case string:
+				item = strings.TrimSpace(item)
+				if compacted, ok := compactJSONCredential(item); ok {
+					item = compacted
+				}
+				items = append(items, item)
+			default:
+				itemBytes, err := common.Marshal(item)
+				if err != nil {
+					return nil, false
+				}
+				items = append(items, string(itemBytes))
+			}
+		}
+		return items, true
+	}
+	return nil, false
+}
+
+func compactJSONCredential(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || !strings.HasPrefix(value, "{") {
+		return "", false
+	}
+	var payload map[string]interface{}
+	if err := common.Unmarshal([]byte(value), &payload); err != nil {
+		return "", false
+	}
+	compacted, err := common.Marshal(payload)
+	if err != nil {
+		return "", false
+	}
+	return string(compacted), true
+}
+
+func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAccountOperation, error) {
+	if channelID <= 0 {
+		return nil, fmt.Errorf("渠道不存在")
+	}
+	lock := model.GetChannelPollingLock(channelID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		return nil, fmt.Errorf("渠道不存在")
+	}
+	keys := channel.GetKeys()
+	indexes, err := normalizeChannelAccountIndexes(credentialIndexes, len(keys))
+	if err != nil {
+		return nil, err
+	}
+	if len(indexes) >= len(keys) {
+		return nil, fmt.Errorf("不能删除最后一个账号")
+	}
+
+	deleteSet := make(map[int]struct{}, len(indexes))
+	for _, index := range indexes {
+		deleteSet[index] = struct{}{}
+	}
+	beforeStatus := channel.Status
+	beforeAllKeysDisabled := beforeStatus == common.ChannelStatusAutoDisabled && channelAccountStatusReasonIsAllKeysDisabled(channel)
+	remainingKeys := make([]string, 0, len(keys)-len(indexes))
+	newStatusList := make(map[int]int)
+	newDisabledTime := make(map[int]int64)
+	newDisabledReason := make(map[int]string)
+	newProxyIDs := make(map[int]int)
+	newAccountTypes := make(map[int]string)
+	newIndex := 0
+	for oldIndex, key := range keys {
+		if _, shouldDelete := deleteSet[oldIndex]; shouldDelete {
+			continue
+		}
+		remainingKeys = append(remainingKeys, key)
+		if channel.ChannelInfo.MultiKeyStatusList != nil {
+			if status, exists := channel.ChannelInfo.MultiKeyStatusList[oldIndex]; exists && status != common.ChannelStatusEnabled {
+				newStatusList[newIndex] = status
+			}
+		}
+		if channel.ChannelInfo.MultiKeyDisabledTime != nil {
+			if disabledTime, exists := channel.ChannelInfo.MultiKeyDisabledTime[oldIndex]; exists {
+				newDisabledTime[newIndex] = disabledTime
+			}
+		}
+		if channel.ChannelInfo.MultiKeyDisabledReason != nil {
+			if disabledReason, exists := channel.ChannelInfo.MultiKeyDisabledReason[oldIndex]; exists {
+				newDisabledReason[newIndex] = disabledReason
+			}
+		}
+		if channel.ChannelInfo.MultiKeyProxyIDs != nil {
+			if proxyID, exists := channel.ChannelInfo.MultiKeyProxyIDs[oldIndex]; exists && proxyID > 0 {
+				newProxyIDs[newIndex] = proxyID
+			}
+		}
+		if channel.ChannelInfo.MultiKeyAccountTypes != nil {
+			if accountType, exists := channel.ChannelInfo.MultiKeyAccountTypes[oldIndex]; exists && isKnownChannelAccountType(accountType) {
+				newAccountTypes[newIndex] = strings.ToLower(strings.TrimSpace(accountType))
+			}
+		}
+		newIndex++
+	}
+
+	channel.Key = strings.Join(remainingKeys, "\n")
+	channel.ChannelInfo.IsMultiKey = len(remainingKeys) > 1
+	channel.ChannelInfo.MultiKeySize = len(remainingKeys)
+	channel.ChannelInfo.MultiKeyStatusList = newStatusList
+	channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
+	channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
+	channel.ChannelInfo.MultiKeyProxyIDs = newProxyIDs
+	channel.ChannelInfo.MultiKeyAccountTypes = newAccountTypes
+	if !channel.ChannelInfo.IsMultiKey {
+		channel.ChannelInfo.MultiKeyStatusList = nil
+		channel.ChannelInfo.MultiKeyDisabledTime = nil
+		channel.ChannelInfo.MultiKeyDisabledReason = nil
+	}
+	if len(channel.ChannelInfo.MultiKeyProxyIDs) == 0 {
+		channel.ChannelInfo.MultiKeyProxyIDs = nil
+	}
+	if len(channel.ChannelInfo.MultiKeyAccountTypes) == 0 {
+		channel.ChannelInfo.MultiKeyAccountTypes = nil
+	}
+	if channel.ChannelInfo.MultiKeyPollingIndex >= len(remainingKeys) {
+		channel.ChannelInfo.MultiKeyPollingIndex = 0
+	}
+
+	enabledCount := channelAccountEnabledCount(channel, len(remainingKeys))
+	if enabledCount == 0 {
+		channel.Status = common.ChannelStatusAutoDisabled
+		setChannelAccountStatusReason(channel, channelAccountAllKeysDisabledReason)
+	} else if channel.Status == common.ChannelStatusAutoDisabled && channelAccountStatusReasonIsAllKeysDisabled(channel) {
+		channel.Status = common.ChannelStatusEnabled
+		clearChannelAccountStatusReason(channel)
+	}
+
+	if err := channel.Update(); err != nil {
+		return nil, err
+	}
+	if err := model.UpdateAbilityStatus(channel.Id, channel.Status == common.ChannelStatusEnabled); err != nil {
+		return nil, err
+	}
+	return &ChannelAccountOperation{
+		Type:            "delete",
+		Requested:       len(credentialIndexes),
+		Affected:        len(indexes),
+		Deleted:         len(indexes),
+		ChannelRestored: beforeAllKeysDisabled && channel.Status == common.ChannelStatusEnabled,
+		ChannelDisabled: beforeStatus == common.ChannelStatusEnabled && channel.Status == common.ChannelStatusAutoDisabled,
+	}, nil
+}
+
+func channelAccountStatusAction(enabled bool) string {
+	if enabled {
+		return "enable"
+	}
+	return "disable"
+}
+
+func updateSingleKeyChannelAccountStatus(channel *model.Channel, enabled bool, reason string) error {
+	beforeStatus := channel.Status
+	if enabled {
+		channel.Status = common.ChannelStatusEnabled
+		clearChannelAccountStatusReason(channel)
+	} else {
+		channel.Status = common.ChannelStatusManuallyDisabled
+		setChannelAccountStatusReason(channel, normalizeChannelAccountDisabledReason(reason))
+	}
+	if err := channel.SaveWithoutKey(); err != nil {
+		return err
+	}
+	if beforeStatus != channel.Status {
+		if err := model.UpdateAbilityStatus(channel.Id, channel.Status == common.ChannelStatusEnabled); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func updateMultiKeyChannelAccountStatus(channel *model.Channel, credentialIndex int, enabled bool, reason string, keyCount int) error {
+	return updateMultiKeyChannelAccountsStatusLocked(channel, []int{credentialIndex}, enabled, reason, keyCount)
+}
+
+func updateMultiKeyChannelAccountsStatusLocked(channel *model.Channel, credentialIndexes []int, enabled bool, reason string, keyCount int) error {
+	beforeStatus := channel.Status
+	channel.ChannelInfo.MultiKeySize = keyCount
+	cleanupChannelAccountStatusMaps(channel, keyCount)
+	if !enabled {
+		if channel.ChannelInfo.MultiKeyStatusList == nil {
+			channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
+		}
+		if channel.ChannelInfo.MultiKeyDisabledReason == nil {
+			channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
+		}
+		if channel.ChannelInfo.MultiKeyDisabledTime == nil {
+			channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
+		}
+	}
+	now := common.GetTimestamp()
+	disabledReason := normalizeChannelAccountDisabledReason(reason)
+	for _, credentialIndex := range credentialIndexes {
+		if enabled {
+			delete(channel.ChannelInfo.MultiKeyStatusList, credentialIndex)
+			delete(channel.ChannelInfo.MultiKeyDisabledReason, credentialIndex)
+			delete(channel.ChannelInfo.MultiKeyDisabledTime, credentialIndex)
+			continue
+		}
+		channel.ChannelInfo.MultiKeyStatusList[credentialIndex] = common.ChannelStatusManuallyDisabled
+		channel.ChannelInfo.MultiKeyDisabledReason[credentialIndex] = disabledReason
+		channel.ChannelInfo.MultiKeyDisabledTime[credentialIndex] = now
+	}
+
+	enabledCount := channelAccountEnabledCount(channel, keyCount)
+	if enabledCount == 0 {
+		if channel.Status == common.ChannelStatusEnabled ||
+			(channel.Status == common.ChannelStatusAutoDisabled && channelAccountStatusReasonIsAllKeysDisabled(channel)) {
+			channel.Status = common.ChannelStatusAutoDisabled
+			setChannelAccountStatusReason(channel, channelAccountAllKeysDisabledReason)
+		}
+	} else if channel.Status == common.ChannelStatusAutoDisabled && channelAccountStatusReasonIsAllKeysDisabled(channel) {
+		channel.Status = common.ChannelStatusEnabled
+		clearChannelAccountStatusReason(channel)
+	}
+
+	if err := channel.SaveWithoutKey(); err != nil {
+		return err
+	}
+	if beforeStatus != channel.Status {
+		if err := model.UpdateAbilityStatus(channel.Id, channel.Status == common.ChannelStatusEnabled); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func normalizeChannelAccountDisabledReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return channelAccountManualDisabledReason
+	}
+	return reason
+}
+
+func cleanupChannelAccountStatusMaps(channel *model.Channel, keyCount int) {
+	if channel.ChannelInfo.MultiKeyStatusList != nil {
+		for index, status := range channel.ChannelInfo.MultiKeyStatusList {
+			if index < 0 || index >= keyCount || status == common.ChannelStatusEnabled {
+				delete(channel.ChannelInfo.MultiKeyStatusList, index)
+			}
+		}
+	}
+	if channel.ChannelInfo.MultiKeyDisabledReason != nil {
+		for index := range channel.ChannelInfo.MultiKeyDisabledReason {
+			if index < 0 || index >= keyCount {
+				delete(channel.ChannelInfo.MultiKeyDisabledReason, index)
+			}
+		}
+	}
+	if channel.ChannelInfo.MultiKeyDisabledTime != nil {
+		for index := range channel.ChannelInfo.MultiKeyDisabledTime {
+			if index < 0 || index >= keyCount {
+				delete(channel.ChannelInfo.MultiKeyDisabledTime, index)
+			}
+		}
+	}
+	if channel.ChannelInfo.MultiKeyProxyIDs != nil {
+		for index, proxyID := range channel.ChannelInfo.MultiKeyProxyIDs {
+			if index < 0 || index >= keyCount || proxyID <= 0 {
+				delete(channel.ChannelInfo.MultiKeyProxyIDs, index)
+			}
+		}
+		if len(channel.ChannelInfo.MultiKeyProxyIDs) == 0 {
+			channel.ChannelInfo.MultiKeyProxyIDs = nil
+		}
+	}
+	if channel.ChannelInfo.MultiKeyAccountTypes != nil {
+		for index, accountType := range channel.ChannelInfo.MultiKeyAccountTypes {
+			if index < 0 || index >= keyCount || !isKnownChannelAccountType(accountType) {
+				delete(channel.ChannelInfo.MultiKeyAccountTypes, index)
+			}
+		}
+		if len(channel.ChannelInfo.MultiKeyAccountTypes) == 0 {
+			channel.ChannelInfo.MultiKeyAccountTypes = nil
+		}
+	}
+}
+
+func isKnownChannelAccountType(accountType string) bool {
+	switch strings.ToLower(strings.TrimSpace(accountType)) {
+	case modelgatewaycore.AccountTypeAPIKey,
+		modelgatewaycore.AccountTypeJSONAuth,
+		modelgatewaycore.AccountTypeOAuthAccount,
+		modelgatewaycore.AccountTypeTokenKey,
+		modelgatewaycore.AccountTypeSessionCookie,
+		modelgatewaycore.AccountTypeComposite:
+		return true
+	default:
+		return false
+	}
+}
+
+func channelAccountEnabledCount(channel *model.Channel, keyCount int) int {
+	if keyCount <= 0 {
+		return 0
+	}
+	count := 0
+	for index := 0; index < keyCount; index++ {
+		status := common.ChannelStatusEnabled
+		if channel.ChannelInfo.MultiKeyStatusList != nil {
+			if value, ok := channel.ChannelInfo.MultiKeyStatusList[index]; ok {
+				status = value
+			}
+		}
+		if status == common.ChannelStatusEnabled {
+			count++
+		}
+	}
+	return count
+}
+
+func channelAccountShouldRestoreAfterImport(channel *model.Channel) bool {
+	if channel == nil || channel.Status != common.ChannelStatusAutoDisabled {
+		return false
+	}
+	return channelAccountStatusReasonIsAllKeysDisabled(channel)
+}
+
+func setChannelAccountStatusReason(channel *model.Channel, reason string) {
+	info := channel.GetOtherInfo()
+	info["status_reason"] = reason
+	info["status_time"] = common.GetTimestamp()
+	channel.SetOtherInfo(info)
+}
+
+func clearChannelAccountStatusReason(channel *model.Channel) {
+	info := channel.GetOtherInfo()
+	delete(info, "status_reason")
+	delete(info, "status_time")
+	delete(info, "pause_type")
+	channel.SetOtherInfo(info)
+}
+
+func channelAccountStatusReasonIsAllKeysDisabled(channel *model.Channel) bool {
+	info := channel.GetOtherInfo()
+	reason, _ := info["status_reason"].(string)
+	return strings.TrimSpace(reason) == "" || strings.TrimSpace(reason) == channelAccountAllKeysDisabledReason
+}
+
+func buildChannelAccountItem(account modelgatewayaccount.ChannelAccount, runtimeItems []modelgatewayobservability.RuntimeStatusItem, allowChannelFallback bool) ChannelAccountItem {
+	matches := make([]modelgatewayobservability.RuntimeStatusItem, 0)
+	for _, item := range runtimeItems {
+		if channelAccountRuntimeItemMatches(account, item, allowChannelFallback) {
+			matches = append(matches, item)
+		}
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		return channelAccountRuntimeItemBetter(matches[i], matches[j])
+	})
+
+	item := ChannelAccountItem{
+		ChannelID:       account.ChannelID,
+		CredentialIndex: account.CredentialIndex,
+		KeyEnabled:      account.KeyEnabled,
+		DisabledReason:  account.DisabledReason,
+		ResourceRef:     account.ResourceRef,
+		AccountIdentity: account.AccountIdentity,
+		CredentialRef:   account.CredentialRef,
+		SubjectShort:    modelgatewayaccount.ShortFingerprint(account.AccountIdentity.CredentialSubjectFingerprint),
+		CredentialShort: modelgatewayaccount.ShortFingerprint(account.AccountIdentity.CredentialFingerprint),
+		RuntimeKeys:     make([]ChannelAccountRuntimeScoreSnapshot, 0, min(len(matches), 5)),
+	}
+	for _, match := range matches {
+		if item.Score == nil {
+			summary := channelAccountScoreSummaryFromRuntimeItem(match)
+			item.Score = &summary
+		}
+		if len(item.RuntimeKeys) >= 5 {
+			continue
+		}
+		item.RuntimeKeys = append(item.RuntimeKeys, channelAccountRuntimeSnapshotFromItem(match))
+	}
+	if len(item.RuntimeKeys) == 0 {
+		item.RuntimeKeys = nil
+	}
+	return item
+}
+
+func channelAccountRuntimeItemMatches(account modelgatewayaccount.ChannelAccount, item modelgatewayobservability.RuntimeStatusItem, allowChannelFallback bool) bool {
+	if account.ChannelID <= 0 || item.ChannelID != account.ChannelID {
+		return false
+	}
+	if strings.TrimSpace(item.AccountID) == "" &&
+		strings.TrimSpace(item.CredentialSubjectFP) == "" &&
+		strings.TrimSpace(item.CredentialFP) == "" {
+		return allowChannelFallback
+	}
+	if account.AccountIdentity.AccountID != "" && item.AccountID != "" && item.AccountID == account.AccountIdentity.AccountID {
+		return true
+	}
+	if account.AccountIdentity.CredentialSubjectFingerprint != "" &&
+		item.CredentialSubjectFP != "" &&
+		item.CredentialSubjectFP == account.AccountIdentity.CredentialSubjectFingerprint {
+		return true
+	}
+	if account.AccountIdentity.CredentialFingerprint != "" &&
+		item.CredentialFP != "" &&
+		item.CredentialFP == account.AccountIdentity.CredentialFingerprint {
+		return true
+	}
+	return false
+}
+
+func channelAccountRuntimeItemBetter(left, right modelgatewayobservability.RuntimeStatusItem) bool {
+	leftTime := channelAccountRuntimeItemLatestTime(left)
+	rightTime := channelAccountRuntimeItemLatestTime(right)
+	if left.SampleCount != right.SampleCount {
+		return left.SampleCount > right.SampleCount
+	}
+	if left.RealSampleCount30m != right.RealSampleCount30m {
+		return left.RealSampleCount30m > right.RealSampleCount30m
+	}
+	if left.ScoreTotal != right.ScoreTotal {
+		return left.ScoreTotal > right.ScoreTotal
+	}
+	if leftTime != rightTime {
+		return leftTime > rightTime
+	}
+	if left.RequestedModel != right.RequestedModel {
+		return left.RequestedModel < right.RequestedModel
+	}
+	return left.Group < right.Group
+}
+
+func channelAccountRuntimeItemLatestTime(item modelgatewayobservability.RuntimeStatusItem) int64 {
+	return maxInt64(
+		maxInt64(item.LastRealAttemptAt, item.LastRealSuccessAt),
+		maxInt64(item.LastRealFailureAt, maxInt64(item.LastProbeAt, item.LastProbeSuccessAt)),
+	)
+}
+
+func channelAccountScoreSummaryFromRuntimeItem(item modelgatewayobservability.RuntimeStatusItem) ChannelAccountScoreSummary {
+	return ChannelAccountScoreSummary{
+		RuntimeKey:              channelAccountRuntimeKeyFromItem(item),
+		HealthStatus:            item.HealthStatus,
+		ScoreTotal:              item.ScoreTotal,
+		RoutingScoreTotal:       item.RoutingScoreTotal,
+		CostItemScore:           item.ScoreBreakdown["cost"],
+		CostRatio:               item.CostRatio,
+		CostReferenceRatio:      item.CostReferenceRatio,
+		CostPricingMode:         item.CostPricingMode,
+		SampleCount:             item.SampleCount,
+		RealSampleCount30m:      item.RealSampleCount30m,
+		SuccessRate:             item.SuccessRate,
+		TTFTMs:                  item.TTFTMs,
+		DurationMs:              item.DurationMs,
+		TokensPerSecond:         item.TokensPerSecond,
+		EmptyOutputRate:         item.EmptyOutputRate,
+		ExperienceIssueRate:     item.ExperienceIssueRate,
+		LastRealAttemptAt:       item.LastRealAttemptAt,
+		LastRealSuccessAt:       item.LastRealSuccessAt,
+		LastRealFailureAt:       item.LastRealFailureAt,
+		LastProbeAt:             item.LastProbeAt,
+		LastProbeSuccessAt:      item.LastProbeSuccessAt,
+		ConfigErrorIsolated:     item.ConfigErrorIsolated,
+		IsolationReason:         item.IsolationReason,
+		ProbeRecoveryPending:    item.ProbeRecoveryPending,
+		ProbeTriggerReason:      item.ProbeTriggerReason,
+		ActiveConcurrency:       item.ActiveConcurrency,
+		EffectiveConcurrencyCap: item.EffectiveConcurrencyLimit,
+		QueueDepth:              item.QueueDepth,
+		QueueCapacity:           item.QueueCapacity,
+	}
+}
+
+func channelAccountRuntimeSnapshotFromItem(item modelgatewayobservability.RuntimeStatusItem) ChannelAccountRuntimeScoreSnapshot {
+	return ChannelAccountRuntimeScoreSnapshot{
+		RuntimeKey:          channelAccountRuntimeKeyFromItem(item),
+		HealthStatus:        item.HealthStatus,
+		ScoreTotal:          item.ScoreTotal,
+		RoutingScoreTotal:   item.RoutingScoreTotal,
+		SampleCount:         item.SampleCount,
+		RealSampleCount30m:  item.RealSampleCount30m,
+		SuccessRate:         item.SuccessRate,
+		TTFTMs:              item.TTFTMs,
+		LastRealSuccessAt:   item.LastRealSuccessAt,
+		LastProbeSuccessAt:  item.LastProbeSuccessAt,
+		ConfigErrorIsolated: item.ConfigErrorIsolated,
+	}
+}
+
+func channelAccountRuntimeKeyFromItem(item modelgatewayobservability.RuntimeStatusItem) modelgatewaycore.RuntimeKey {
+	return modelgatewaycore.RuntimeKey{
+		RequestedModel:        item.RequestedModel,
+		UpstreamModel:         item.UpstreamModel,
+		ChannelID:             item.ChannelID,
+		ResourceID:            item.ResourceID,
+		ResourceType:          item.ResourceType,
+		AccountID:             item.AccountID,
+		AccountType:           item.AccountType,
+		Brand:                 item.Brand,
+		Provider:              item.Provider,
+		CredentialIndex:       item.CredentialIndex,
+		CredentialSubjectFP:   item.CredentialSubjectFP,
+		CredentialFP:          item.CredentialFP,
+		Group:                 item.Group,
+		EndpointType:          constant.EndpointType(item.EndpointType),
+		CapabilityFingerprint: item.CapabilityFingerprint,
+	}
+}

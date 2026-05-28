@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -43,6 +44,8 @@ const (
 	modelsDevHost               = "models.dev"
 	modelsDevPath               = "/api.json"
 	modelsDevInputCostRatioBase = 1000.0
+	sub2APIEndpoint             = "/api/v1/channels/available"
+	sub2APIEndpointType         = "sub2_available"
 )
 
 func nearlyEqual(a, b float64) bool {
@@ -147,48 +150,39 @@ func FetchUpstreamRatios(c *gin.Context) {
 		return
 	}
 
+	result, err := FetchUpstreamRatioDifferences(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    result,
+	})
+}
+
+type UpstreamRatioDifferenceResult struct {
+	Differences map[string]map[string]dto.DifferenceItem `json:"differences"`
+	TestResults []dto.TestResult                         `json:"test_results"`
+}
+
+type successfulUpstreamRatio struct {
+	name string
+	data map[string]any
+}
+
+func FetchUpstreamRatioDifferences(ctx context.Context, req dto.UpstreamRequest) (*UpstreamRatioDifferenceResult, error) {
 	if req.Timeout <= 0 {
 		req.Timeout = defaultTimeoutSeconds
 	}
 
-	var upstreams []dto.UpstreamDTO
-
-	if len(req.Upstreams) > 0 {
-		for _, u := range req.Upstreams {
-			if strings.HasPrefix(u.BaseURL, "http") {
-				if u.Endpoint == "" {
-					u.Endpoint = defaultEndpoint
-				}
-				u.BaseURL = strings.TrimRight(u.BaseURL, "/")
-				upstreams = append(upstreams, u)
-			}
-		}
-	} else if len(req.ChannelIDs) > 0 {
-		intIds := make([]int, 0, len(req.ChannelIDs))
-		for _, id64 := range req.ChannelIDs {
-			intIds = append(intIds, int(id64))
-		}
-		dbChannels, err := model.GetChannelsByIds(intIds)
-		if err != nil {
-			logger.LogError(c.Request.Context(), "failed to query channels: "+err.Error())
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "查询渠道失败"})
-			return
-		}
-		for _, ch := range dbChannels {
-			if base := ch.GetBaseURL(); strings.HasPrefix(base, "http") {
-				upstreams = append(upstreams, dto.UpstreamDTO{
-					ID:       ch.Id,
-					Name:     ch.Name,
-					BaseURL:  strings.TrimRight(base, "/"),
-					Endpoint: "",
-				})
-			}
-		}
+	upstreams, err := resolveRatioSyncUpstreams(req)
+	if err != nil {
+		return nil, err
 	}
-
 	if len(upstreams) == 0 {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无有效上游渠道"})
-		return
+		return nil, errors.New("无有效上游渠道")
 	}
 
 	var wg sync.WaitGroup
@@ -226,11 +220,14 @@ func FetchUpstreamRatios(c *gin.Context) {
 			defer func() { <-sem }()
 
 			isOpenRouter := chItem.Endpoint == "openrouter"
+			isSub2API := chItem.Endpoint == sub2APIEndpointType || chItem.Endpoint == sub2APIEndpoint
 
 			endpoint := chItem.Endpoint
 			var fullURL string
 			if isOpenRouter {
 				fullURL = chItem.BaseURL + "/v1/models"
+			} else if endpoint == sub2APIEndpointType {
+				fullURL = chItem.BaseURL + sub2APIEndpoint
 			} else if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
 				fullURL = endpoint
 			} else {
@@ -242,24 +239,25 @@ func FetchUpstreamRatios(c *gin.Context) {
 				fullURL = chItem.BaseURL + endpoint
 			}
 			isModelsDev := isModelsDevAPIEndpoint(fullURL)
+			isSub2API = isSub2API || isSub2APIAvailableEndpoint(fullURL)
 
 			uniqueName := chItem.Name
 			if chItem.ID != 0 {
 				uniqueName = fmt.Sprintf("%s(%d)", chItem.Name, chItem.ID)
 			}
 
-			ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(req.Timeout)*time.Second)
+			requestCtx, cancel := context.WithTimeout(ctx, time.Duration(req.Timeout)*time.Second)
 			defer cancel()
 
-			httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+			httpReq, err := http.NewRequestWithContext(requestCtx, http.MethodGet, fullURL, nil)
 			if err != nil {
-				logger.LogWarn(c.Request.Context(), "build request failed: "+err.Error())
+				logger.LogWarn(ctx, "build request failed: "+err.Error())
 				ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 				return
 			}
 
-			// OpenRouter requires Bearer token auth
-			if isOpenRouter && chItem.ID != 0 {
+			// OpenRouter and Sub2API available-channel endpoints require Bearer token auth
+			if (isOpenRouter || isSub2API) && chItem.ID != 0 {
 				dbCh, err := model.GetChannelById(chItem.ID, true)
 				if err != nil {
 					ch <- upstreamResult{Name: uniqueName, Err: "failed to get channel key: " + err.Error()}
@@ -291,25 +289,25 @@ func FetchUpstreamRatios(c *gin.Context) {
 				time.Sleep(time.Duration(200*(1<<attempt)) * time.Millisecond)
 			}
 			if lastErr != nil {
-				logger.LogWarn(c.Request.Context(), "http error on "+chItem.Name+": "+lastErr.Error())
+				logger.LogWarn(ctx, "http error on "+chItem.Name+": "+lastErr.Error())
 				ch <- upstreamResult{Name: uniqueName, Err: lastErr.Error()}
 				return
 			}
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
-				logger.LogWarn(c.Request.Context(), "non-200 from "+chItem.Name+": "+resp.Status)
+				logger.LogWarn(ctx, "non-200 from "+chItem.Name+": "+resp.Status)
 				ch <- upstreamResult{Name: uniqueName, Err: resp.Status}
 				return
 			}
 
 			// Content-Type 和响应体大小校验
 			if ct := resp.Header.Get("Content-Type"); ct != "" && !strings.Contains(strings.ToLower(ct), "application/json") {
-				logger.LogWarn(c.Request.Context(), "unexpected content-type from "+chItem.Name+": "+ct)
+				logger.LogWarn(ctx, "unexpected content-type from "+chItem.Name+": "+ct)
 			}
 			limited := io.LimitReader(resp.Body, maxRatioConfigBytes)
 			bodyBytes, err := io.ReadAll(limited)
 			if err != nil {
-				logger.LogWarn(c.Request.Context(), "read response failed from "+chItem.Name+": "+err.Error())
+				logger.LogWarn(ctx, "read response failed from "+chItem.Name+": "+err.Error())
 				ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 				return
 			}
@@ -318,7 +316,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			if isOpenRouter {
 				converted, err := convertOpenRouterToRatioData(bytes.NewReader(bodyBytes))
 				if err != nil {
-					logger.LogWarn(c.Request.Context(), "OpenRouter parse failed from "+chItem.Name+": "+err.Error())
+					logger.LogWarn(ctx, "OpenRouter parse failed from "+chItem.Name+": "+err.Error())
 					ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 					return
 				}
@@ -330,7 +328,19 @@ func FetchUpstreamRatios(c *gin.Context) {
 			if isModelsDev {
 				converted, err := convertModelsDevToRatioData(bytes.NewReader(bodyBytes))
 				if err != nil {
-					logger.LogWarn(c.Request.Context(), "models.dev parse failed from "+chItem.Name+": "+err.Error())
+					logger.LogWarn(ctx, "models.dev parse failed from "+chItem.Name+": "+err.Error())
+					ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
+					return
+				}
+				ch <- upstreamResult{Name: uniqueName, Data: converted}
+				return
+			}
+
+			// type5: Sub2API /api/v1/channels/available -> convert available model pricing to ratios
+			if isSub2API {
+				converted, err := convertSub2APIAvailableChannelsToRatioData(bytes.NewReader(bodyBytes))
+				if err != nil {
+					logger.LogWarn(ctx, "Sub2API parse failed from "+chItem.Name+": "+err.Error())
 					ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 					return
 				}
@@ -348,7 +358,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 
 			if err := common.DecodeJson(bytes.NewReader(bodyBytes), &body); err != nil {
-				logger.LogWarn(c.Request.Context(), "json decode failed from "+chItem.Name+": "+err.Error())
+				logger.LogWarn(ctx, "json decode failed from "+chItem.Name+": "+err.Error())
 				ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 				return
 			}
@@ -393,7 +403,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 				BillingExpr          string   `json:"billing_expr"`
 			}
 			if err := common.Unmarshal(body.Data, &pricingItems); err != nil {
-				logger.LogWarn(c.Request.Context(), "unrecognized data format from "+chItem.Name+": "+err.Error())
+				logger.LogWarn(ctx, "unrecognized data format from "+chItem.Name+": "+err.Error())
 				ch <- upstreamResult{Name: uniqueName, Err: "无法解析上游返回数据"}
 				return
 			}
@@ -498,10 +508,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 	localData := getLocalPricingSyncData()
 
 	var testResults []dto.TestResult
-	var successfulChannels []struct {
-		name string
-		data map[string]any
-	}
+	var successfulChannels []successfulUpstreamRatio
 
 	for r := range ch {
 		if r.Err != "" {
@@ -515,28 +522,58 @@ func FetchUpstreamRatios(c *gin.Context) {
 				Name:   r.Name,
 				Status: "success",
 			})
-			successfulChannels = append(successfulChannels, struct {
-				name string
-				data map[string]any
-			}{name: r.Name, data: r.Data})
+			successfulChannels = append(successfulChannels, successfulUpstreamRatio{name: r.Name, data: r.Data})
 		}
 	}
 
 	differences := buildDifferences(localData, successfulChannels)
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": gin.H{
-			"differences":  differences,
-			"test_results": testResults,
-		},
-	})
+	return &UpstreamRatioDifferenceResult{
+		Differences: differences,
+		TestResults: testResults,
+	}, nil
 }
 
-func buildDifferences(localData map[string]any, successfulChannels []struct {
-	name string
-	data map[string]any
-}) map[string]map[string]dto.DifferenceItem {
+func resolveRatioSyncUpstreams(req dto.UpstreamRequest) ([]dto.UpstreamDTO, error) {
+	var upstreams []dto.UpstreamDTO
+
+	if len(req.Upstreams) > 0 {
+		for _, u := range req.Upstreams {
+			if strings.HasPrefix(u.BaseURL, "http") {
+				if u.Endpoint == "" {
+					u.Endpoint = defaultEndpoint
+				}
+				u.BaseURL = strings.TrimRight(u.BaseURL, "/")
+				upstreams = append(upstreams, u)
+			}
+		}
+		return upstreams, nil
+	}
+	if len(req.ChannelIDs) == 0 {
+		return nil, nil
+	}
+	intIds := make([]int, 0, len(req.ChannelIDs))
+	for _, id64 := range req.ChannelIDs {
+		intIds = append(intIds, int(id64))
+	}
+	dbChannels, err := model.GetChannelsByIds(intIds)
+	if err != nil {
+		return nil, fmt.Errorf("查询渠道失败: %w", err)
+	}
+	for _, ch := range dbChannels {
+		if base := ch.GetBaseURL(); strings.HasPrefix(base, "http") {
+			upstreams = append(upstreams, dto.UpstreamDTO{
+				ID:       ch.Id,
+				Name:     ch.Name,
+				BaseURL:  strings.TrimRight(base, "/"),
+				Endpoint: "",
+			})
+		}
+	}
+	return upstreams, nil
+}
+
+func buildDifferences(localData map[string]any, successfulChannels []successfulUpstreamRatio) map[string]map[string]dto.DifferenceItem {
 	differences := make(map[string]map[string]dto.DifferenceItem)
 
 	allModels := make(map[string]struct{})
@@ -712,6 +749,18 @@ func isModelsDevAPIEndpoint(rawURL string) bool {
 		path = "/"
 	}
 	return path == modelsDevPath
+}
+
+func isSub2APIAvailableEndpoint(rawURL string) bool {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	path := strings.TrimSuffix(parsedURL.Path, "/")
+	if path == "" {
+		path = "/"
+	}
+	return path == sub2APIEndpoint
 }
 
 // convertOpenRouterToRatioData parses OpenRouter's /v1/models response and converts
@@ -982,6 +1031,228 @@ func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 		converted["cache_ratio"] = cacheRatioMap
 	}
 	return converted, nil
+}
+
+type sub2APIAvailableChannel struct {
+	Platforms []sub2APIPlatformSection `json:"platforms"`
+}
+
+type sub2APIPlatformSection struct {
+	SupportedModels []sub2APISupportedModel `json:"supported_models"`
+}
+
+type sub2APISupportedModel struct {
+	Name    string          `json:"name"`
+	Pricing *sub2APIPricing `json:"pricing"`
+}
+
+type sub2APIPricing struct {
+	BillingMode      string                   `json:"billing_mode"`
+	InputPrice       *float64                 `json:"input_price"`
+	OutputPrice      *float64                 `json:"output_price"`
+	CacheWritePrice  *float64                 `json:"cache_write_price"`
+	CacheReadPrice   *float64                 `json:"cache_read_price"`
+	ImageOutputPrice *float64                 `json:"image_output_price"`
+	PerRequestPrice  *float64                 `json:"per_request_price"`
+	Intervals        []sub2APIPricingInterval `json:"intervals"`
+}
+
+type sub2APIPricingInterval struct {
+	InputPrice      *float64 `json:"input_price"`
+	OutputPrice     *float64 `json:"output_price"`
+	CacheWritePrice *float64 `json:"cache_write_price"`
+	CacheReadPrice  *float64 `json:"cache_read_price"`
+	PerRequestPrice *float64 `json:"per_request_price"`
+}
+
+type sub2APIPricingCandidate struct {
+	InputPrice       float64
+	OutputPrice      *float64
+	CacheWritePrice  *float64
+	CacheReadPrice   *float64
+	ImageOutputPrice *float64
+	PerRequestPrice  *float64
+}
+
+func convertSub2APIAvailableChannelsToRatioData(reader io.Reader) (map[string]any, error) {
+	bodyBytes, err := io.ReadAll(io.LimitReader(reader, maxRatioConfigBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Sub2API response: %w", err)
+	}
+
+	channels, err := decodeSub2APIAvailableChannels(bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	modelRatioMap := make(map[string]any)
+	completionRatioMap := make(map[string]any)
+	cacheRatioMap := make(map[string]any)
+	createCacheRatioMap := make(map[string]any)
+	imageRatioMap := make(map[string]any)
+	modelPriceMap := make(map[string]any)
+
+	for _, channel := range channels {
+		for _, platform := range channel.Platforms {
+			for _, modelItem := range platform.SupportedModels {
+				modelName := strings.TrimSpace(modelItem.Name)
+				if modelName == "" || modelItem.Pricing == nil {
+					continue
+				}
+				candidate, ok := selectSub2APIPricingCandidate(modelItem.Pricing)
+				if !ok {
+					continue
+				}
+				if candidate.InputPrice > 0 {
+					modelRatioMap[modelName] = roundRatioValue(candidate.InputPrice * 1000 * ratio_setting.USD)
+					if candidate.OutputPrice != nil && isValidNonNegativeCost(*candidate.OutputPrice) {
+						completionRatioMap[modelName] = roundRatioValue(*candidate.OutputPrice / candidate.InputPrice)
+					}
+					if candidate.CacheReadPrice != nil && isValidNonNegativeCost(*candidate.CacheReadPrice) {
+						cacheRatioMap[modelName] = roundRatioValue(*candidate.CacheReadPrice / candidate.InputPrice)
+					}
+					if candidate.CacheWritePrice != nil && isValidNonNegativeCost(*candidate.CacheWritePrice) {
+						createCacheRatioMap[modelName] = roundRatioValue(*candidate.CacheWritePrice / candidate.InputPrice)
+					}
+					if candidate.ImageOutputPrice != nil && isValidNonNegativeCost(*candidate.ImageOutputPrice) {
+						imageRatioMap[modelName] = roundRatioValue(*candidate.ImageOutputPrice / candidate.InputPrice)
+					}
+				} else {
+					modelRatioMap[modelName] = 0.0
+				}
+				if candidate.PerRequestPrice != nil && isValidNonNegativeCost(*candidate.PerRequestPrice) {
+					modelPriceMap[modelName] = roundRatioValue(*candidate.PerRequestPrice)
+				}
+			}
+		}
+	}
+
+	converted := make(map[string]any)
+	if len(modelRatioMap) > 0 {
+		converted["model_ratio"] = modelRatioMap
+	}
+	if len(completionRatioMap) > 0 {
+		converted["completion_ratio"] = completionRatioMap
+	}
+	if len(cacheRatioMap) > 0 {
+		converted["cache_ratio"] = cacheRatioMap
+	}
+	if len(createCacheRatioMap) > 0 {
+		converted["create_cache_ratio"] = createCacheRatioMap
+	}
+	if len(imageRatioMap) > 0 {
+		converted["image_ratio"] = imageRatioMap
+	}
+	if len(modelPriceMap) > 0 {
+		converted["model_price"] = modelPriceMap
+	}
+	if len(converted) == 0 {
+		return nil, fmt.Errorf("no valid Sub2API pricing entries found")
+	}
+	return converted, nil
+}
+
+func decodeSub2APIAvailableChannels(bodyBytes []byte) ([]sub2APIAvailableChannel, error) {
+	var wrapped struct {
+		Code    int             `json:"code"`
+		Success *bool           `json:"success"`
+		Data    json.RawMessage `json:"data"`
+		Message string          `json:"message"`
+	}
+	if err := common.Unmarshal(bodyBytes, &wrapped); err == nil && len(wrapped.Data) > 0 {
+		if wrapped.Success != nil && !*wrapped.Success {
+			if strings.TrimSpace(wrapped.Message) != "" {
+				return nil, errors.New(wrapped.Message)
+			}
+			return nil, fmt.Errorf("Sub2API response success=false")
+		}
+		if wrapped.Code != 0 {
+			if strings.TrimSpace(wrapped.Message) != "" {
+				return nil, errors.New(wrapped.Message)
+			}
+			return nil, fmt.Errorf("Sub2API response code=%d", wrapped.Code)
+		}
+		var channels []sub2APIAvailableChannel
+		if err := common.Unmarshal(wrapped.Data, &channels); err != nil {
+			return nil, fmt.Errorf("failed to decode Sub2API data: %w", err)
+		}
+		return channels, nil
+	}
+
+	var channels []sub2APIAvailableChannel
+	if err := common.Unmarshal(bodyBytes, &channels); err != nil {
+		return nil, fmt.Errorf("failed to decode Sub2API response: %w", err)
+	}
+	return channels, nil
+}
+
+func selectSub2APIPricingCandidate(pricing *sub2APIPricing) (sub2APIPricingCandidate, bool) {
+	if pricing == nil {
+		return sub2APIPricingCandidate{}, false
+	}
+
+	if candidate, ok := buildSub2APIPricingCandidate(
+		pricing.InputPrice,
+		pricing.OutputPrice,
+		pricing.CacheWritePrice,
+		pricing.CacheReadPrice,
+		pricing.PerRequestPrice,
+		pricing.ImageOutputPrice,
+	); ok {
+		return candidate, true
+	}
+
+	for _, interval := range pricing.Intervals {
+		if candidate, ok := buildSub2APIPricingCandidate(
+			interval.InputPrice,
+			interval.OutputPrice,
+			interval.CacheWritePrice,
+			interval.CacheReadPrice,
+			interval.PerRequestPrice,
+			pricing.ImageOutputPrice,
+		); ok {
+			return candidate, true
+		}
+	}
+
+	if pricing.PerRequestPrice != nil && isValidNonNegativeCost(*pricing.PerRequestPrice) {
+		return sub2APIPricingCandidate{
+			InputPrice:      0,
+			PerRequestPrice: cloneFloatPtr(pricing.PerRequestPrice),
+		}, true
+	}
+
+	return sub2APIPricingCandidate{}, false
+}
+
+func buildSub2APIPricingCandidate(inputPrice, outputPrice, cacheWritePrice, cacheReadPrice, perRequestPrice, imageOutputPrice *float64) (sub2APIPricingCandidate, bool) {
+	if inputPrice == nil || !isValidNonNegativeCost(*inputPrice) {
+		return sub2APIPricingCandidate{}, false
+	}
+	if *inputPrice == 0 {
+		hasPositiveDependentPrice := (outputPrice != nil && *outputPrice > 0) ||
+			(cacheWritePrice != nil && *cacheWritePrice > 0) ||
+			(cacheReadPrice != nil && *cacheReadPrice > 0) ||
+			(imageOutputPrice != nil && *imageOutputPrice > 0)
+		if hasPositiveDependentPrice {
+			return sub2APIPricingCandidate{}, false
+		}
+	}
+	return sub2APIPricingCandidate{
+		InputPrice:       *inputPrice,
+		OutputPrice:      cloneValidSub2APICostPtr(outputPrice),
+		CacheWritePrice:  cloneValidSub2APICostPtr(cacheWritePrice),
+		CacheReadPrice:   cloneValidSub2APICostPtr(cacheReadPrice),
+		ImageOutputPrice: cloneValidSub2APICostPtr(imageOutputPrice),
+		PerRequestPrice:  cloneValidSub2APICostPtr(perRequestPrice),
+	}, true
+}
+
+func cloneValidSub2APICostPtr(value *float64) *float64 {
+	if value == nil || !isValidNonNegativeCost(*value) {
+		return nil
+	}
+	return cloneFloatPtr(value)
 }
 
 func GetSyncableChannels(c *gin.Context) {

@@ -354,11 +354,18 @@ func WriteReplayArtifact(path string, artifact *ReplayArtifact) error {
 }
 
 func LoadReplayArtifact(path string) (*ReplayArtifact, error) {
-	artifact, err := replay.LoadArtifact(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return BuildReplayArtifact(artifact, ReplayExportOptions{})
+	var artifact ReplayArtifact
+	if err := common.Unmarshal(data, &artifact); err != nil {
+		return nil, err
+	}
+	if err := artifact.Validate(); err != nil {
+		return nil, err
+	}
+	return &artifact, nil
 }
 
 func (a *ReplayArtifact) Validate() error {
@@ -689,11 +696,11 @@ func runtimeSnapshotsFromReplayRecord(r replay.Record, selectedGroup string) []R
 		snapshot := RuntimeSnapshotFixture{
 			ChannelID:          channelID,
 			Group:              firstNonEmptyReplay(candidate.Group, candidate.RuntimeKey.Group, selectedGroup),
-			SuccessRate:        replayCandidateMetric(candidate.ScoreBreakdown, "success", 0.80),
+			SuccessRate:        replayCandidateMetric(candidate.ScoreBreakdown, "completion_rate", "success", 0.80),
 			TTFTMs:             float64(r.TTFTMs),
 			DurationMs:         float64(r.DurationMs),
 			CostRatio:          replayCandidateCostRatio(candidate.ScoreBreakdown),
-			GroupPriorityRatio: replayCandidateMetric(candidate.ScoreBreakdown, "group", 1),
+			GroupPriorityRatio: replayCandidateMetric(candidate.ScoreBreakdown, "group_priority", "group", 1),
 			SampleCount:        1,
 		}
 		if !candidate.Available {
@@ -739,15 +746,17 @@ func candidateExpectationsFromReplayRecord(r replay.Record) []CandidateExpectati
 	return expectations
 }
 
-func replayCandidateMetric(values map[string]float64, key string, fallback float64) float64 {
-	if value, ok := values[key]; ok && value > 0 {
-		return value
+func replayCandidateMetric(values map[string]float64, primaryKey string, legacyKey string, fallback float64) float64 {
+	for _, key := range []string{primaryKey, legacyKey} {
+		if value, ok := values[key]; ok && value > 0 {
+			return value
+		}
 	}
 	return fallback
 }
 
 func replayCandidateCostRatio(values map[string]float64) float64 {
-	score := replayCandidateMetric(values, "cost", 1)
+	score := replayCandidateMetric(values, "cost", "", 1)
 	if score <= 0 {
 		return 1
 	}

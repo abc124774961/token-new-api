@@ -3185,6 +3185,93 @@ func TestGetModelGatewayScoreHistoryReturnsCandidateChanges(t *testing.T) {
 	require.Equal(t, 0.11, payload.Data.ScoreDelta)
 }
 
+func TestGetModelGatewayScoreHistoryFiltersByAccountRuntimeKey(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+	now := common.GetTimestamp()
+	buildMeta := func(accountID string, credentialSubjectFP string, score float64) string {
+		t.Helper()
+		body, err := common.Marshal(map[string]any{
+			"candidate_explanations": []core.CandidateExplanation{
+				{
+					ChannelID:           88,
+					ChannelName:         "score-channel",
+					ResourceID:          "platform:channel:88",
+					AccountID:           accountID,
+					AccountType:         core.AccountTypeOAuthAccount,
+					Brand:               "openai",
+					Provider:            "openai",
+					CredentialIndex:     1,
+					CredentialSubjectFP: credentialSubjectFP,
+					CredentialFP:        "credential-" + credentialSubjectFP,
+					Group:               "codex-plus",
+					UpstreamModel:       "gpt-5.5",
+					RuntimeKey: core.RuntimeKey{
+						RequestedModel:      "gpt-5.5",
+						UpstreamModel:       "gpt-5.5",
+						ChannelID:           88,
+						ResourceID:          "platform:channel:88",
+						AccountID:           accountID,
+						AccountType:         core.AccountTypeOAuthAccount,
+						Brand:               "openai",
+						Provider:            "openai",
+						CredentialIndex:     1,
+						CredentialSubjectFP: credentialSubjectFP,
+						CredentialFP:        "credential-" + credentialSubjectFP,
+						Group:               "codex-plus",
+						EndpointType:        constant.EndpointTypeOpenAI,
+					},
+					Available:      true,
+					Selected:       true,
+					ScoreTotal:     score,
+					ScoreBreakdown: map[string]float64{"completion_rate": score},
+					SampleCount:    6,
+				},
+			},
+		})
+		require.NoError(t, err)
+		return string(body)
+	}
+	require.NoError(t, db.Create(&[]model.ModelExecutionRecord{
+		{
+			CreatedAt:      now - 20,
+			RequestId:      "score-account-a",
+			RequestedGroup: "codex-plus",
+			SelectedGroup:  "codex-plus",
+			RequestedModel: "gpt-5.5",
+			PolicyMode:     "active",
+			SmartHandled:   true,
+			RequestMeta:    buildMeta("account-a", "subject-a", 0.72),
+		},
+		{
+			CreatedAt:      now - 30,
+			RequestId:      "score-account-b",
+			RequestedGroup: "codex-plus",
+			SelectedGroup:  "codex-plus",
+			RequestedModel: "gpt-5.5",
+			PolicyMode:     "active",
+			SmartHandled:   true,
+			RequestMeta:    buildMeta("account-b", "subject-b", 0.31),
+		},
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/model_gateway/observability/score-history", GetModelGatewayScoreHistory)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/observability/score-history?hours=1&limit=10&channel_id=88&requested_model=gpt-5.5&group=codex-plus&account_id=account-a&credential_subject_fingerprint=subject-a", nil)
+	router.ServeHTTP(resp, req)
+
+	var payload modelGatewayScoreHistoryAPIResponse
+	require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &payload), resp.Body.String())
+	require.True(t, payload.Success)
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, "score-account-a", payload.Data.Items[0].RequestID)
+	require.Equal(t, "account-a", payload.Data.Items[0].RuntimeKey.AccountID)
+	require.Equal(t, "subject-a", payload.Data.Items[0].RuntimeKey.CredentialSubjectFP)
+}
+
 func TestGetModelGatewayScoreHistoryPrependsRuntimeCurrentScore(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()

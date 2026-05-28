@@ -83,6 +83,8 @@ import {
   RadioTower,
   GitBranch,
   Stethoscope,
+  Network,
+  WalletCards,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -151,8 +153,12 @@ export function getLucideIcon(key, selected = false) {
       return <CalendarClock {...commonProps} color={iconColor} />;
     case 'channel':
       return <Layers {...commonProps} color={iconColor} />;
+    case 'channel_balance_monitor':
+      return <WalletCards {...commonProps} color={iconColor} />;
     case 'channel_health_check':
       return <Stethoscope {...commonProps} color={iconColor} />;
+    case 'channel_proxy':
+      return <Network {...commonProps} color={iconColor} />;
     case 'redemption':
       return <Gift {...commonProps} color={iconColor} />;
     case 'user':

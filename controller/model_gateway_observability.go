@@ -218,6 +218,9 @@ type ModelGatewayScoreHistoryItem struct {
 	ChannelID             int                                    `json:"channel_id"`
 	ChannelName           string                                 `json:"channel_name,omitempty"`
 	RuntimeKey            ModelGatewayRuntimeKey                 `json:"runtime_key,omitempty"`
+	PoolLevel             string                                 `json:"pool_level,omitempty"`
+	SwitchReason          string                                 `json:"switch_reason,omitempty"`
+	FailureScope          string                                 `json:"failure_scope,omitempty"`
 	Selected              bool                                   `json:"selected,omitempty"`
 	SelectedReason        string                                 `json:"selected_reason,omitempty"`
 	Available             bool                                   `json:"available"`
@@ -686,6 +689,18 @@ type ModelGatewayObservabilityRecord struct {
 type ModelGatewayCandidateExplanation struct {
 	ChannelID                    int                          `json:"channel_id"`
 	ChannelName                  string                       `json:"channel_name,omitempty"`
+	ResourceID                   string                       `json:"resource_id,omitempty"`
+	ResourceType                 string                       `json:"resource_type,omitempty"`
+	AccountID                    string                       `json:"account_id,omitempty"`
+	AccountType                  string                       `json:"account_type,omitempty"`
+	Brand                        string                       `json:"brand,omitempty"`
+	Provider                     string                       `json:"provider,omitempty"`
+	CredentialIndex              int                          `json:"credential_index,omitempty"`
+	CredentialSubjectFP          string                       `json:"credential_subject_fingerprint,omitempty"`
+	CredentialFP                 string                       `json:"credential_fingerprint,omitempty"`
+	PoolLevel                    string                       `json:"pool_level,omitempty"`
+	SwitchReason                 string                       `json:"switch_reason,omitempty"`
+	FailureScope                 string                       `json:"failure_scope,omitempty"`
 	Group                        string                       `json:"group,omitempty"`
 	UpstreamModel                string                       `json:"upstream_model,omitempty"`
 	ProviderProfile              string                       `json:"provider_profile,omitempty"`
@@ -749,6 +764,16 @@ type ModelGatewayRuntimeKey struct {
 	RequestedModel        string `json:"requested_model,omitempty"`
 	UpstreamModel         string `json:"upstream_model,omitempty"`
 	ChannelID             int    `json:"channel_id,omitempty"`
+	ResourceID            string `json:"resource_id,omitempty"`
+	ResourceType          string `json:"resource_type,omitempty"`
+	AccountID             string `json:"account_id,omitempty"`
+	AccountType           string `json:"account_type,omitempty"`
+	Brand                 string `json:"brand,omitempty"`
+	Provider              string `json:"provider,omitempty"`
+	CredentialIndex       int    `json:"credential_index,omitempty"`
+	CredentialIndexSet    bool   `json:"-"`
+	CredentialSubjectFP   string `json:"credential_subject_fingerprint,omitempty"`
+	CredentialFP          string `json:"credential_fingerprint,omitempty"`
 	Group                 string `json:"group,omitempty"`
 	EndpointType          string `json:"endpoint_type,omitempty"`
 	CapabilityFingerprint string `json:"capability_fingerprint,omitempty"`
@@ -1109,6 +1134,16 @@ func parseModelGatewayScoreHistoryOptions(c *gin.Context) (modelGatewayScoreHist
 			RequestedModel:        strings.TrimSpace(c.Query("requested_model")),
 			UpstreamModel:         strings.TrimSpace(c.Query("upstream_model")),
 			ChannelID:             channelID,
+			ResourceID:            strings.TrimSpace(c.Query("resource_id")),
+			ResourceType:          strings.TrimSpace(c.Query("resource_type")),
+			AccountID:             strings.TrimSpace(c.Query("account_id")),
+			AccountType:           strings.TrimSpace(c.Query("account_type")),
+			Brand:                 strings.TrimSpace(c.Query("brand")),
+			Provider:              strings.TrimSpace(c.Query("provider")),
+			CredentialIndex:       normalizeModelGatewayObservabilityInt(c.Query("credential_index"), -1, -1, math.MaxInt32),
+			CredentialIndexSet:    strings.TrimSpace(c.Query("credential_index")) != "",
+			CredentialSubjectFP:   strings.TrimSpace(c.Query("credential_subject_fingerprint")),
+			CredentialFP:          strings.TrimSpace(c.Query("credential_fingerprint")),
 			Group:                 strings.TrimSpace(c.Query("group")),
 			EndpointType:          strings.TrimSpace(c.Query("endpoint_type")),
 			CapabilityFingerprint: strings.TrimSpace(c.Query("capability_fingerprint")),
@@ -3794,6 +3829,33 @@ func modelGatewayConfigIsolationCandidateKey(candidate ModelGatewayCandidateExpl
 	if key.ChannelID <= 0 {
 		key.ChannelID = candidate.ChannelID
 	}
+	if key.ResourceID == "" {
+		key.ResourceID = candidate.ResourceID
+	}
+	if key.ResourceType == "" {
+		key.ResourceType = candidate.ResourceType
+	}
+	if key.AccountID == "" {
+		key.AccountID = candidate.AccountID
+	}
+	if key.AccountType == "" {
+		key.AccountType = candidate.AccountType
+	}
+	if key.Brand == "" {
+		key.Brand = candidate.Brand
+	}
+	if key.Provider == "" {
+		key.Provider = candidate.Provider
+	}
+	if key.CredentialIndex == 0 {
+		key.CredentialIndex = candidate.CredentialIndex
+	}
+	if key.CredentialSubjectFP == "" {
+		key.CredentialSubjectFP = candidate.CredentialSubjectFP
+	}
+	if key.CredentialFP == "" {
+		key.CredentialFP = candidate.CredentialFP
+	}
 	if key.Group == "" {
 		key.Group = candidate.Group
 	}
@@ -3803,15 +3865,24 @@ func modelGatewayConfigIsolationCandidateKey(candidate ModelGatewayCandidateExpl
 	if key.ChannelID <= 0 &&
 		key.RequestedModel == "" &&
 		key.UpstreamModel == "" &&
+		key.ResourceID == "" &&
+		key.AccountID == "" &&
+		key.CredentialSubjectFP == "" &&
+		key.CredentialFP == "" &&
 		key.Group == "" &&
 		key.EndpointType == "" &&
 		key.CapabilityFingerprint == "" {
 		return ""
 	}
-	return fmt.Sprintf("%d|%s|%s|%s|%s|%s",
+	return fmt.Sprintf("%d|%s|%s|%s|%s|%s|%s|%d|%s|%s|%s",
 		key.ChannelID,
 		key.RequestedModel,
 		key.UpstreamModel,
+		key.ResourceID,
+		key.AccountID,
+		key.CredentialSubjectFP,
+		key.CredentialFP,
+		key.CredentialIndex,
 		key.Group,
 		key.EndpointType,
 		key.CapabilityFingerprint,
@@ -4121,6 +4192,33 @@ func modelGatewayRuntimeStatusItemMatchesScoreHistory(item modelgatewayobservabi
 	if filter.CapabilityFingerprint != "" && item.CapabilityFingerprint != filter.CapabilityFingerprint {
 		return false
 	}
+	if filter.ResourceID != "" && item.ResourceID != filter.ResourceID {
+		return false
+	}
+	if filter.ResourceType != "" && item.ResourceType != filter.ResourceType {
+		return false
+	}
+	if filter.AccountID != "" && item.AccountID != filter.AccountID {
+		return false
+	}
+	if filter.AccountType != "" && item.AccountType != filter.AccountType {
+		return false
+	}
+	if filter.Brand != "" && item.Brand != filter.Brand {
+		return false
+	}
+	if filter.Provider != "" && item.Provider != filter.Provider {
+		return false
+	}
+	if filter.CredentialIndexSet && item.CredentialIndex != filter.CredentialIndex {
+		return false
+	}
+	if filter.CredentialSubjectFP != "" && item.CredentialSubjectFP != filter.CredentialSubjectFP {
+		return false
+	}
+	if filter.CredentialFP != "" && item.CredentialFP != filter.CredentialFP {
+		return false
+	}
 	return true
 }
 
@@ -4155,6 +4253,33 @@ func modelGatewayRuntimeStatusItemExactForScoreHistory(item modelgatewayobservab
 		return false
 	}
 	if filter.CapabilityFingerprint != "" && item.CapabilityFingerprint != filter.CapabilityFingerprint {
+		return false
+	}
+	if filter.ResourceID != "" && item.ResourceID != filter.ResourceID {
+		return false
+	}
+	if filter.ResourceType != "" && item.ResourceType != filter.ResourceType {
+		return false
+	}
+	if filter.AccountID != "" && item.AccountID != filter.AccountID {
+		return false
+	}
+	if filter.AccountType != "" && item.AccountType != filter.AccountType {
+		return false
+	}
+	if filter.Brand != "" && item.Brand != filter.Brand {
+		return false
+	}
+	if filter.Provider != "" && item.Provider != filter.Provider {
+		return false
+	}
+	if filter.CredentialIndexSet && item.CredentialIndex != filter.CredentialIndex {
+		return false
+	}
+	if filter.CredentialSubjectFP != "" && item.CredentialSubjectFP != filter.CredentialSubjectFP {
+		return false
+	}
+	if filter.CredentialFP != "" && item.CredentialFP != filter.CredentialFP {
 		return false
 	}
 	return true
@@ -4207,6 +4332,15 @@ func modelGatewayRuntimeKeyFromStatusItem(item modelgatewayobservability.Runtime
 		RequestedModel:        item.RequestedModel,
 		UpstreamModel:         item.UpstreamModel,
 		ChannelID:             item.ChannelID,
+		ResourceID:            item.ResourceID,
+		ResourceType:          item.ResourceType,
+		AccountID:             item.AccountID,
+		AccountType:           item.AccountType,
+		Brand:                 item.Brand,
+		Provider:              item.Provider,
+		CredentialIndex:       item.CredentialIndex,
+		CredentialSubjectFP:   item.CredentialSubjectFP,
+		CredentialFP:          item.CredentialFP,
 		Group:                 item.Group,
 		EndpointType:          item.EndpointType,
 		CapabilityFingerprint: item.CapabilityFingerprint,
@@ -4255,6 +4389,33 @@ func modelGatewayRuntimeKeyMatchesFilter(candidate ModelGatewayRuntimeKey, filte
 	if filter.CapabilityFingerprint != "" && filter.CapabilityFingerprint != candidate.CapabilityFingerprint {
 		return false
 	}
+	if filter.ResourceID != "" && filter.ResourceID != candidate.ResourceID {
+		return false
+	}
+	if filter.ResourceType != "" && filter.ResourceType != candidate.ResourceType {
+		return false
+	}
+	if filter.AccountID != "" && filter.AccountID != candidate.AccountID {
+		return false
+	}
+	if filter.AccountType != "" && filter.AccountType != candidate.AccountType {
+		return false
+	}
+	if filter.Brand != "" && filter.Brand != candidate.Brand {
+		return false
+	}
+	if filter.Provider != "" && filter.Provider != candidate.Provider {
+		return false
+	}
+	if filter.CredentialIndexSet && filter.CredentialIndex != candidate.CredentialIndex {
+		return false
+	}
+	if filter.CredentialSubjectFP != "" && filter.CredentialSubjectFP != candidate.CredentialSubjectFP {
+		return false
+	}
+	if filter.CredentialFP != "" && filter.CredentialFP != candidate.CredentialFP {
+		return false
+	}
 	return true
 }
 
@@ -4262,6 +4423,15 @@ func modelGatewayRuntimeKeyIsEmpty(key ModelGatewayRuntimeKey) bool {
 	return key.RequestedModel == "" &&
 		key.UpstreamModel == "" &&
 		key.ChannelID == 0 &&
+		key.ResourceID == "" &&
+		key.ResourceType == "" &&
+		key.AccountID == "" &&
+		key.AccountType == "" &&
+		key.Brand == "" &&
+		key.Provider == "" &&
+		!key.CredentialIndexSet &&
+		key.CredentialSubjectFP == "" &&
+		key.CredentialFP == "" &&
 		key.Group == "" &&
 		key.EndpointType == "" &&
 		key.CapabilityFingerprint == ""
@@ -4280,6 +4450,9 @@ func modelGatewayScoreHistoryItem(record model.ModelExecutionRecord, candidate M
 		ChannelID:             modelGatewayCandidateChannelID(candidate),
 		ChannelName:           candidate.ChannelName,
 		RuntimeKey:            candidate.RuntimeKey,
+		PoolLevel:             candidate.PoolLevel,
+		SwitchReason:          candidate.SwitchReason,
+		FailureScope:          candidate.FailureScope,
 		Selected:              candidate.Selected,
 		SelectedReason:        record.SelectedReason,
 		Available:             candidate.Available,
@@ -4432,6 +4605,18 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 		item := ModelGatewayCandidateExplanation{
 			ChannelID:                  candidate.ChannelID,
 			ChannelName:                candidate.ChannelName,
+			ResourceID:                 strings.TrimSpace(candidate.ResourceID),
+			ResourceType:               strings.TrimSpace(candidate.ResourceType),
+			AccountID:                  strings.TrimSpace(candidate.AccountID),
+			AccountType:                strings.TrimSpace(candidate.AccountType),
+			Brand:                      strings.TrimSpace(candidate.Brand),
+			Provider:                   strings.TrimSpace(candidate.Provider),
+			CredentialIndex:            candidate.CredentialIndex,
+			CredentialSubjectFP:        strings.TrimSpace(candidate.CredentialSubjectFP),
+			CredentialFP:               strings.TrimSpace(candidate.CredentialFP),
+			PoolLevel:                  strings.TrimSpace(candidate.PoolLevel),
+			SwitchReason:               strings.TrimSpace(candidate.SwitchReason),
+			FailureScope:               strings.TrimSpace(candidate.FailureScope),
 			Group:                      candidate.Group,
 			UpstreamModel:              candidate.UpstreamModel,
 			ProviderProfile:            candidate.ProviderProfile,
@@ -4521,6 +4706,15 @@ func modelGatewayRuntimeKeyFromCore(key modelgatewaycore.RuntimeKey) ModelGatewa
 		RequestedModel:        key.RequestedModel,
 		UpstreamModel:         key.UpstreamModel,
 		ChannelID:             key.ChannelID,
+		ResourceID:            key.ResourceID,
+		ResourceType:          key.ResourceType,
+		AccountID:             key.AccountID,
+		AccountType:           key.AccountType,
+		Brand:                 key.Brand,
+		Provider:              key.Provider,
+		CredentialIndex:       key.CredentialIndex,
+		CredentialSubjectFP:   key.CredentialSubjectFP,
+		CredentialFP:          key.CredentialFP,
 		Group:                 key.Group,
 		EndpointType:          string(key.EndpointType),
 		CapabilityFingerprint: key.CapabilityFingerprint,

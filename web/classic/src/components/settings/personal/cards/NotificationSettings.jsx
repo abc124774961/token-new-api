@@ -89,7 +89,9 @@ const NotificationSettings = ({
     admin: {
       enabled: true,
       channel: true,
+      channel_balance_monitor: true,
       channel_health_check: true,
+      channel_proxy: true,
       models: true,
       deployment: true,
       subscription: true,
@@ -182,7 +184,9 @@ const NotificationSettings = ({
       admin: {
         enabled: true,
         channel: true,
+        channel_balance_monitor: true,
         channel_health_check: true,
+        channel_proxy: true,
         models: true,
         deployment: true,
         subscription: true,
@@ -332,9 +336,19 @@ const NotificationSettings = ({
       modules: [
         { key: 'channel', title: t('渠道管理'), description: t('API渠道配置') },
         {
+          key: 'channel_balance_monitor',
+          title: t('渠道余额监控'),
+          description: t('账号余额告警和倍率同步'),
+        },
+        {
           key: 'channel_health_check',
           title: t('渠道健康检测'),
           description: t('待检查队列和探活历史'),
+        },
+        {
+          key: 'channel_proxy',
+          title: t('代理管理'),
+          description: t('渠道账号代理资源管理'),
         },
         { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
         {

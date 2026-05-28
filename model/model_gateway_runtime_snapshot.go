@@ -8,6 +8,15 @@ type ModelGatewayRuntimeSnapshot struct {
 	RequestedModel            string  `json:"requested_model" gorm:"type:varchar(191);index;default:''"`
 	UpstreamModel             string  `json:"upstream_model" gorm:"type:varchar(191);default:''"`
 	ChannelID                 int     `json:"channel_id" gorm:"index;default:0"`
+	ResourceID                string  `json:"resource_id" gorm:"type:varchar(191);index;default:''"`
+	ResourceType              string  `json:"resource_type" gorm:"type:varchar(64);index;default:''"`
+	AccountID                 string  `json:"account_id" gorm:"type:varchar(191);index;default:''"`
+	AccountType               string  `json:"account_type" gorm:"type:varchar(64);index;default:''"`
+	Brand                     string  `json:"brand" gorm:"type:varchar(64);index;default:''"`
+	Provider                  string  `json:"provider" gorm:"type:varchar(64);index;default:''"`
+	CredentialIndex           int     `json:"credential_index" gorm:"default:0"`
+	CredentialSubjectFP       string  `json:"credential_subject_fingerprint" gorm:"column:credential_subject_fingerprint;type:varchar(191);index;default:''"`
+	CredentialFP              string  `json:"credential_fingerprint" gorm:"column:credential_fingerprint;type:varchar(191);index;default:''"`
 	Group                     string  `json:"group" gorm:"column:group;type:varchar(64);index;default:''"`
 	EndpointType              string  `json:"endpoint_type" gorm:"type:varchar(64);index;default:''"`
 	CapabilityFingerprint     string  `json:"capability_fingerprint" gorm:"type:text"`

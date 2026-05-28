@@ -181,6 +181,12 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	setting.FailureFastWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureFastWindowSeconds, 1, defaults.FailureFastWindowSeconds)
 	setting.FailureMainWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureMainWindowSeconds, 1, defaults.FailureMainWindowSeconds)
 	setting.FailureFallbackWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureFallbackWindowSeconds, 1, defaults.FailureFallbackWindowSeconds)
+	if setting.ProxySameBrandReusePolicy == "" {
+		setting.ProxySameBrandReusePolicy = defaults.ProxySameBrandReusePolicy
+	}
+	if !validModelGatewayConfigValue(setting.ProxySameBrandReusePolicy, modelGatewayConfigProxyReusePolicies()) {
+		return scheduler_setting.SchedulerSetting{}, errors.New("invalid proxy_same_brand_reuse_policy")
+	}
 
 	weights := []float64{setting.SuccessWeight, setting.SpeedWeight, setting.LoadWeight, setting.CostWeight, setting.GroupWeight}
 	for _, weight := range weights {
@@ -394,6 +400,7 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 		"failure_fast_window_seconds":              strconv.Itoa(setting.FailureFastWindowSeconds),
 		"failure_main_window_seconds":              strconv.Itoa(setting.FailureMainWindowSeconds),
 		"failure_fallback_window_seconds":          strconv.Itoa(setting.FailureFallbackWindowSeconds),
+		"proxy_same_brand_reuse_policy":            setting.ProxySameBrandReusePolicy,
 	}, nil
 }
 
@@ -425,6 +432,14 @@ func modelGatewayConfigStickyFailurePolicies() map[string]struct{} {
 	return map[string]struct{}{
 		scheduler_setting.StickyFailurePolicyKeep:  {},
 		scheduler_setting.StickyFailurePolicyClear: {},
+	}
+}
+
+func modelGatewayConfigProxyReusePolicies() map[string]struct{} {
+	return map[string]struct{}{
+		scheduler_setting.ProxyReusePolicyWarn:    {},
+		scheduler_setting.ProxyReusePolicyConfirm: {},
+		scheduler_setting.ProxyReusePolicyBlock:   {},
 	}
 }
 
