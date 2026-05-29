@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/channelcapability"
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/samber/lo"
@@ -201,8 +203,15 @@ func (channel *Channel) GetKeys() []string {
 }
 
 func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
+	return channel.GetNextEnabledKeyForEndpoint("")
+}
+
+func (channel *Channel) GetNextEnabledKeyForEndpoint(endpointType constant.EndpointType) (string, int, *types.NewAPIError) {
 	// If not in multi-key mode, return the original key string directly.
 	if !channel.ChannelInfo.IsMultiKey {
+		if channel.keyUsesCodexBackendForEndpoint(0, channel.Key, endpointType) && !channel.codexKeySupportsRequestedCapability(0, endpointType) {
+			return "", 0, types.NewError(errors.New("key does not support required codex capability"), types.ErrorCodeChannelNoAvailableKey)
+		}
 		return channel.Key, 0, nil
 	}
 
@@ -233,6 +242,9 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	enabledIdx := make([]int, 0, len(keys))
 	for i := range keys {
 		if getStatus(i) == common.ChannelStatusEnabled {
+			if channel.keyUsesCodexBackendForEndpoint(i, keys[i], endpointType) && !channel.codexKeySupportsRequestedCapability(i, endpointType) {
+				continue
+			}
 			enabledIdx = append(enabledIdx, i)
 		}
 	}
@@ -273,7 +285,7 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 		}
 		for i := 0; i < len(keys); i++ {
 			idx := (start + i) % len(keys)
-			if getStatus(idx) == common.ChannelStatusEnabled {
+			if getStatus(idx) == common.ChannelStatusEnabled && slices.Contains(enabledIdx, idx) {
 				// update polling index for next call (point to the next position)
 				channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
 				return keys[idx], idx, nil
@@ -285,6 +297,47 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 		// Unknown mode, default to first enabled key (or original key string)
 		return keys[enabledIdx[0]], enabledIdx[0], nil
 	}
+}
+
+func (channel *Channel) keyUsesCodexBackendForEndpoint(index int, rawKey string, endpointType constant.EndpointType) bool {
+	if channel == nil {
+		return false
+	}
+	if channel.Type == constant.ChannelTypeCodex {
+		return true
+	}
+	if channel.Type != constant.ChannelTypeOpenAI {
+		return false
+	}
+	switch endpointType {
+	case constant.EndpointTypeOpenAIResponse, constant.EndpointTypeOpenAIResponseCompact:
+	default:
+		return false
+	}
+	return codexauth.IsOAuthJSONCredential(rawKey)
+}
+
+func (channel *Channel) codexKeySupportsRequestedCapability(index int, endpointType constant.EndpointType) bool {
+	if channel == nil {
+		return true
+	}
+	if channel.ChannelInfo.MultiKeyCapabilities == nil {
+		return true
+	}
+	capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]
+	if !ok {
+		return true
+	}
+	if endpointType == constant.EndpointTypeOpenAIResponseCompact {
+		if capability.CodexBackendCompactWrite == nil {
+			return true
+		}
+		return capability.HasCodexBackendCompactAllowed()
+	}
+	if capability.CodexBackendResponsesStreamWrite == nil {
+		return true
+	}
+	return capability.HasCodexBackendResponsesStreamAllowed()
 }
 
 func (channel *Channel) SaveChannelInfo() error {

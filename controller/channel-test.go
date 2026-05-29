@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	"github.com/QuantumNous/new-api/relay"
@@ -151,6 +152,20 @@ func probeChannelAccountCapabilities(c *gin.Context, channel *model.Channel, cre
 	if channel.Type != constant.ChannelTypeOpenAI && channel.Type != constant.ChannelTypeCodex {
 		return accountCapabilityProbeResult{}, errors.New("该渠道暂不支持账号权限检测")
 	}
+	if isOAuthJSONAccountKey(keys[credentialIndex]) {
+		result, err := service.ProbeCodexOAuthAccountCapabilities(c.Request.Context(), channel, credentialIndex, service.CodexCapabilityProbeOptions{})
+		if err != nil {
+			return accountCapabilityProbeResult{}, err
+		}
+		if err := saveChannelAccountCapability(channel.Id, credentialIndex, result.Capability); err != nil {
+			return accountCapabilityProbeResult{}, err
+		}
+		return accountCapabilityProbeResult{
+			Index:        credentialIndex,
+			Capabilities: result.Capability,
+			OAuthJSON:    result.OAuthJSON,
+		}, nil
+	}
 
 	options := channelTestOptions{CredentialIndex: &credentialIndex}
 	capability := model.ChannelAccountCapability{
@@ -204,6 +219,88 @@ func probeChannelAccountCapabilities(c *gin.Context, channel *model.Channel, cre
 
 	if err := saveChannelAccountCapability(channel.Id, credentialIndex, capability); err != nil {
 		return accountCapabilityProbeResult{}, err
+	}
+	return accountCapabilityProbeResult{
+		Index:        credentialIndex,
+		Capabilities: capability,
+		OAuthJSON:    isOAuthJSONAccountKey(keys[credentialIndex]),
+	}, nil
+}
+
+func probePlatformAccountCapabilities(c *gin.Context, channel *model.Channel, credentialIndex int, testModel string) (accountCapabilityProbeResult, error) {
+	if channel == nil {
+		return accountCapabilityProbeResult{}, errors.New("渠道不存在")
+	}
+	keys := channel.GetKeys()
+	if credentialIndex < 0 || credentialIndex >= len(keys) {
+		return accountCapabilityProbeResult{}, errors.New("账号索引超出范围")
+	}
+	if channel.Type != constant.ChannelTypeOpenAI && channel.Type != constant.ChannelTypeCodex {
+		return accountCapabilityProbeResult{}, errors.New("该渠道暂不支持 Platform API 诊断")
+	}
+	if isOAuthJSONAccountKey(keys[credentialIndex]) {
+		result, err := service.ProbeCodexOAuthPlatformCapabilities(c.Request.Context(), channel, credentialIndex)
+		if err != nil {
+			return accountCapabilityProbeResult{}, err
+		}
+		if err := saveChannelAccountCapability(channel.Id, credentialIndex, result.Capability); err != nil {
+			return accountCapabilityProbeResult{}, err
+		}
+		return accountCapabilityProbeResult{
+			Index:        credentialIndex,
+			Capabilities: result.Capability,
+			OAuthJSON:    result.OAuthJSON,
+		}, nil
+	}
+	options := channelTestOptions{CredentialIndex: &credentialIndex}
+	capability := model.ChannelAccountCapability{
+		CheckedTime:            common.GetTimestamp(),
+		CapabilityProbeSurface: "platform_api",
+	}
+	if existing, ok := channel.ChannelInfo.AccountCapability(credentialIndex); ok {
+		capability = existing
+		capability.CheckedTime = common.GetTimestamp()
+		capability.CapabilityProbeSurface = "platform_api"
+	}
+
+	messages := make([]string, 0, 3)
+	_, chatResult := runChannelCapabilityProbeTest(c, channel, testModel, string(constant.EndpointTypeOpenAI), false, options)
+	capability.PlatformChatCompletionsWrite = channelCapabilityValueFromProbe(chatResult)
+	capability.ChatCompletionsWrite = capability.PlatformChatCompletionsWrite
+	if probeMessage := channelCapabilityProbeMessage("Platform Chat", chatResult); probeMessage != "" {
+		messages = append(messages, probeMessage)
+	}
+
+	channel, responsesResult := runChannelCapabilityProbeTest(c, channel, testModel, string(constant.EndpointTypeOpenAIResponse), false, options)
+	capability.PlatformResponsesWrite = channelCapabilityValueFromProbe(responsesResult)
+	if channel.Type != constant.ChannelTypeCodex {
+		capability.ResponsesWrite = capability.PlatformResponsesWrite
+	}
+	if probeMessage := channelCapabilityProbeMessage("Platform Responses", responsesResult); probeMessage != "" {
+		messages = append(messages, probeMessage)
+	}
+
+	_, compactResult := runChannelCapabilityProbeTest(c, channel, testModel, string(constant.EndpointTypeOpenAIResponseCompact), false, options)
+	capability.PlatformResponsesCompactWrite = channelCapabilityValueFromProbe(compactResult)
+	if channel.Type != constant.ChannelTypeCodex {
+		capability.ResponsesCompactWrite = capability.PlatformResponsesCompactWrite
+	}
+	if probeMessage := channelCapabilityProbeMessage("Platform Compact", compactResult); probeMessage != "" {
+		messages = append(messages, probeMessage)
+	}
+
+	capability.LastEndpoint = string(constant.EndpointTypeOpenAI)
+	rawMessage := strings.Join(messages, "；")
+	rawLower := strings.ToLower(rawMessage)
+	if len(messages) == 0 {
+		capability.LastMessage = "Platform API 诊断完成"
+	} else {
+		capability.LastMessage = service.SummarizePlatformAPIDiagnosticMessages(messages)
+		if strings.Contains(rawLower, "insufficient_quota") || strings.Contains(rawLower, "exceeded your current quota") {
+			capability.CapabilityClassification = channelcapability.ClassificationPlatformQuotaInsufficient
+		} else if strings.Contains(rawLower, "api.responses.write") || strings.Contains(rawLower, "missing scopes") || strings.Contains(rawLower, "insufficient permissions") {
+			capability.CapabilityClassification = channelcapability.ClassificationPlatformResponsesScopeMiss
+		}
 	}
 	return accountCapabilityProbeResult{
 		Index:        credentialIndex,
@@ -405,7 +502,13 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 	group, _ := model.GetUserGroup(1, false)
 	c.Set("group", group)
 
-	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel, buildChannelTestSelection(channel, testOptions))
+	newAPIError := middleware.SetupContextForSelectedChannelWithEndpoint(
+		c,
+		channel,
+		testModel,
+		constant.EndpointType(endpointType),
+		buildChannelTestSelection(channel, testOptions),
+	)
 	if newAPIError != nil {
 		return testResult{
 			context:     c,
@@ -1281,6 +1384,9 @@ func friendlyChannelTestErrorMessage(result testResult) string {
 
 	if strings.Contains(lower, "api.responses.write") || strings.Contains(lower, "missing scopes") || strings.Contains(lower, "insufficient permissions") {
 		return "账号权限不足，缺少 Responses API 写入权限（api.responses.write）。请重新授权/导入带该权限的账号，或检查 OpenAI 组织和项目角色。"
+	}
+	if strings.Contains(lower, "insufficient_quota") || strings.Contains(lower, "exceeded your current quota") {
+		return "Platform API 额度不足或未开通计费；这不影响 Codex backend 调度。请使用“检测 Codex 能力”确认账号可用性。"
 	}
 	if strings.Contains(lower, "token_invalidated") || strings.Contains(lower, "authentication token has been invalidated") {
 		if result.refreshed {

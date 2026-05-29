@@ -57,3 +57,18 @@ func TestRelayInfoInitChannelMetaAccountProxyOverridesChannelProxy(t *testing.T)
 
 	require.Equal(t, "socks5://account-proxy:1080", info.ChannelSetting.Proxy)
 }
+
+func TestRelayInfoInitChannelMetaUsesEffectiveCodexChannelType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := &gin.Context{}
+	basecommon.SetContextKey(ctx, constant.ContextKeyChannelType, constant.ChannelTypeCodex)
+	basecommon.SetContextKey(ctx, constant.ContextKeyChannelBaseUrl, constant.ChannelBaseURLs[constant.ChannelTypeCodex])
+	basecommon.SetContextKey(ctx, constant.ContextKeyChannelKey, `{"access_token":"access-a","account_id":"acct-a"}`)
+
+	info := &RelayInfo{}
+	info.InitChannelMeta(ctx)
+
+	require.Equal(t, constant.ChannelTypeCodex, info.ChannelType)
+	require.Equal(t, constant.APITypeCodex, info.ApiType)
+	require.Equal(t, constant.ChannelBaseURLs[constant.ChannelTypeCodex], info.ChannelBaseUrl)
+}

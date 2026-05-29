@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/channelcapability"
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 )
@@ -625,7 +626,121 @@ func ChannelSupportsRequiredCapabilities(channel *model.Channel, modelName strin
 	if requiresCodexImageTool && !ChannelSupportsCodexImageGenerationTool(channel) {
 		return false
 	}
+	if channel != nil && channel.Type == constant.ChannelTypeCodex {
+		if endpointType == constant.EndpointTypeOpenAIResponseCompact && !codexChannelHasCompactCapableAccount(channel) {
+			return false
+		}
+		if endpointType == constant.EndpointTypeOpenAIResponse && !codexChannelHasResponsesCapableAccount(channel) {
+			return false
+		}
+	}
+	if channel != nil && channel.Type == constant.ChannelTypeOpenAI && openAICodexOAuthChannelApplies(channel, endpointType) {
+		if endpointType == constant.EndpointTypeOpenAIResponseCompact {
+			return openAICodexOAuthChannelHasCompactCapableAccount(channel)
+		}
+		if endpointType == constant.EndpointTypeOpenAIResponse {
+			return openAICodexOAuthChannelHasResponsesCapableAccount(channel)
+		}
+	}
 	return ChannelSupportsRequiredEndpoint(channel, modelName, endpointType)
+}
+
+func codexChannelHasResponsesCapableAccount(channel *model.Channel) bool {
+	if channel == nil {
+		return false
+	}
+	if len(channel.ChannelInfo.MultiKeyCapabilities) == 0 {
+		return true
+	}
+	for index, capability := range channel.ChannelInfo.MultiKeyCapabilities {
+		if channel.ChannelInfo.IsMultiKey && !channelKeyEnabledForCapability(channel, index) {
+			continue
+		}
+		if capability.CodexBackendResponsesStreamWrite == nil || capability.HasCodexBackendResponsesStreamAllowed() {
+			return true
+		}
+	}
+	return false
+}
+
+func codexChannelHasCompactCapableAccount(channel *model.Channel) bool {
+	if channel == nil {
+		return false
+	}
+	if len(channel.ChannelInfo.MultiKeyCapabilities) == 0 {
+		return true
+	}
+	for index, capability := range channel.ChannelInfo.MultiKeyCapabilities {
+		if channel.ChannelInfo.IsMultiKey && !channelKeyEnabledForCapability(channel, index) {
+			continue
+		}
+		if capability.CodexBackendCompactWrite == nil || capability.HasCodexBackendCompactAllowed() {
+			return true
+		}
+	}
+	return false
+}
+
+func channelKeyEnabledForCapability(channel *model.Channel, index int) bool {
+	if channel == nil || !channel.ChannelInfo.IsMultiKey || channel.ChannelInfo.MultiKeyStatusList == nil {
+		return true
+	}
+	status, ok := channel.ChannelInfo.MultiKeyStatusList[index]
+	return !ok || status == common.ChannelStatusEnabled
+}
+
+func openAICodexOAuthChannelApplies(channel *model.Channel, endpointType constant.EndpointType) bool {
+	if channel == nil || channel.Type != constant.ChannelTypeOpenAI {
+		return false
+	}
+	switch endpointType {
+	case constant.EndpointTypeOpenAIResponse, constant.EndpointTypeOpenAIResponseCompact:
+	default:
+		return false
+	}
+	for _, key := range channel.GetKeys() {
+		if codexauth.IsOAuthJSONCredential(key) {
+			return true
+		}
+	}
+	return false
+}
+
+func openAICodexOAuthChannelHasResponsesCapableAccount(channel *model.Channel) bool {
+	return openAICodexOAuthChannelHasCapableAccount(channel, constant.EndpointTypeOpenAIResponse)
+}
+
+func openAICodexOAuthChannelHasCompactCapableAccount(channel *model.Channel) bool {
+	return openAICodexOAuthChannelHasCapableAccount(channel, constant.EndpointTypeOpenAIResponseCompact)
+}
+
+func openAICodexOAuthChannelHasCapableAccount(channel *model.Channel, endpointType constant.EndpointType) bool {
+	if channel == nil {
+		return false
+	}
+	keys := channel.GetKeys()
+	if len(keys) == 0 {
+		return false
+	}
+	for index, key := range keys {
+		if !codexauth.IsOAuthJSONCredential(key) || !channelKeyEnabledForCapability(channel, index) {
+			continue
+		}
+		capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]
+		if !ok {
+			return true
+		}
+		if endpointType == constant.EndpointTypeOpenAIResponseCompact {
+			if capability.CodexBackendCompactWrite == nil || capability.HasCodexBackendCompactAllowed() {
+				return true
+			}
+			continue
+		}
+		if capability.CodexBackendResponsesStreamWrite == nil || capability.HasCodexBackendResponsesStreamAllowed() {
+			return true
+		}
+	}
+	return false
 }
 
 func ChannelSupportsCodexImageGenerationTool(channel *model.Channel) bool {

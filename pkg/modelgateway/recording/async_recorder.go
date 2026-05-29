@@ -77,6 +77,7 @@ func (r *AsyncExecutionRecorder) run() {
 		if e.record != nil {
 			userrequest.Start(*e.record)
 			model.RecordModelExecution(modelExecutionRecordFromDispatch(*e.record))
+			recordChannelAccountUsageDispatch(*e.record)
 			r.forwardRecord(*e.record)
 			continue
 		}
@@ -86,6 +87,7 @@ func (r *AsyncExecutionRecorder) run() {
 				userrequest.Finish(*e.result, summary)
 			}
 			model.RecordModelExecution(modelExecutionRecordFromAttempt(*e.result))
+			recordChannelAccountUsageAttempt(*e.result)
 			r.forwardResult(*e.result)
 		}
 	}
@@ -337,6 +339,194 @@ func modelGatewayUserRequestAttemptFromResult(result core.AttemptResult) model.M
 		ProbeReason:       result.ProbeReason,
 		EmptyOutput:       result.EmptyOutput,
 		ExperienceIssue:   result.ExperienceIssue,
+	}
+}
+
+func recordChannelAccountUsageDispatch(record core.DispatchRecord) {
+	if record.Plan == nil {
+		return
+	}
+	if err := model.UpsertChannelAccountUsageDispatch(channelAccountUsageEventFromDispatch(record)); err != nil {
+		common.SysLog("failed to upsert channel account usage dispatch: request_id=" + record.Request.RequestID + " error=" + err.Error())
+	}
+}
+
+func recordChannelAccountUsageAttempt(result core.AttemptResult) {
+	if err := model.UpsertChannelAccountUsageAttempt(channelAccountUsageEventFromAttempt(result)); err != nil {
+		common.SysLog("failed to upsert channel account usage attempt: request_id=" + result.RequestID + " error=" + err.Error())
+	}
+}
+
+func channelAccountUsageEventFromDispatch(record core.DispatchRecord) model.ChannelAccountUsageEvent {
+	event := model.ChannelAccountUsageEvent{
+		RequestId:       record.Request.RequestID,
+		RequestedGroup:  record.Request.RequestedGroup,
+		RequestedModel:  record.Request.ModelName,
+		EndpointType:    string(record.Request.EndpointType),
+		SelectedGroup:   record.ActualGroup,
+		IsHealthProbe:   false,
+		CredentialIndex: -1,
+	}
+	if record.RecordedAt.Unix() > 0 {
+		event.CreatedAt = record.RecordedAt.Unix()
+		event.UpdatedAt = event.CreatedAt
+	}
+	if record.Plan != nil {
+		event.ChannelID = channelID(record.Plan.Channel)
+		event.ChannelName = channelName(record.Plan.Channel)
+		event.SelectedGroup = record.Plan.SelectedGroup
+		event.IsHealthProbe = record.Plan.IsHealthProbe
+		applyChannelAccountUsagePlan(&event, record.Plan)
+	}
+	if record.Actual != nil {
+		event.ChannelID = record.Actual.Id
+		event.ChannelName = record.Actual.Name
+	}
+	return event
+}
+
+func channelAccountUsageEventFromAttempt(result core.AttemptResult) model.ChannelAccountUsageEvent {
+	observedAt := result.ObservedAt.Unix()
+	if observedAt == 0 {
+		observedAt = time.Now().Unix()
+	}
+	event := model.ChannelAccountUsageEvent{
+		RequestId:       result.RequestID,
+		ChannelID:       result.ChannelID,
+		ChannelName:     result.ChannelName,
+		CredentialIndex: -1,
+		RequestedGroup:  result.RequestedGroup,
+		SelectedGroup:   result.SelectedGroup,
+		RequestedModel:  result.ModelName,
+		EndpointType:    string(result.EndpointType),
+		CompletedAt:     observedAt,
+		Success:         result.Success && !result.StreamInterrupted && !result.ClientAborted,
+		StatusCode:      result.StatusCode,
+		ErrorCategory:   result.ErrorCategory,
+		IsHealthProbe:   result.IsHealthProbe,
+		DurationMs:      requestDuration(result).Milliseconds(),
+		TTFTMs:          requestTTFT(result).Milliseconds(),
+		CreatedAt:       observedAt,
+		UpdatedAt:       observedAt,
+	}
+	if result.Plan != nil {
+		applyChannelAccountUsagePlan(&event, result.Plan)
+		if event.ChannelID <= 0 {
+			event.ChannelID = channelID(result.Plan.Channel)
+		}
+		if event.ChannelName == "" {
+			event.ChannelName = channelName(result.Plan.Channel)
+		}
+	}
+	if event.ChannelID <= 0 {
+		key := result.RuntimeKey()
+		applyChannelAccountUsageRuntimeKey(&event, key)
+	}
+	return event
+}
+
+func applyChannelAccountUsagePlan(event *model.ChannelAccountUsageEvent, plan *core.DispatchPlan) {
+	if event == nil || plan == nil {
+		return
+	}
+	if plan.Channel != nil {
+		event.ChannelID = plan.Channel.Id
+		event.ChannelName = plan.Channel.Name
+	}
+	if plan.SelectedGroup != "" {
+		event.SelectedGroup = plan.SelectedGroup
+	}
+	if plan.RuntimeKey.RequestedModel != "" {
+		event.RequestedModel = plan.RuntimeKey.RequestedModel
+	}
+	if plan.RuntimeKey.Group != "" {
+		event.SelectedGroup = plan.RuntimeKey.Group
+	}
+	if plan.RuntimeKey.EndpointType != "" {
+		event.EndpointType = string(plan.RuntimeKey.EndpointType)
+	}
+	applyChannelAccountUsageRuntimeKey(event, plan.RuntimeKey)
+	identity := plan.AccountIdentity
+	if identity.AccountID != "" {
+		event.AccountID = identity.AccountID
+	}
+	if identity.AccountIdentityKey != "" {
+		event.AccountIdentityKey = identity.AccountIdentityKey
+	}
+	if identity.CredentialIndex >= 0 {
+		event.CredentialIndex = identity.CredentialIndex
+	}
+	if identity.CredentialSubjectFingerprint != "" {
+		event.CredentialSubjectFingerprint = identity.CredentialSubjectFingerprint
+	}
+	if identity.CredentialFingerprint != "" {
+		event.CredentialFingerprint = identity.CredentialFingerprint
+	}
+	if identity.AccountType != "" {
+		event.AccountType = identity.AccountType
+	}
+	if identity.Brand != "" {
+		event.Brand = identity.Brand
+	}
+	if identity.Provider != "" {
+		event.Provider = identity.Provider
+	}
+	if plan.CredentialRef.CredentialIndex >= 0 {
+		event.CredentialIndex = plan.CredentialRef.CredentialIndex
+	}
+	if plan.CredentialRef.CredentialSubjectFingerprint != "" {
+		event.CredentialSubjectFingerprint = plan.CredentialRef.CredentialSubjectFingerprint
+	}
+	if plan.CredentialRef.CredentialFingerprint != "" {
+		event.CredentialFingerprint = plan.CredentialRef.CredentialFingerprint
+	}
+	if plan.ResourceRef.Brand != "" {
+		event.Brand = plan.ResourceRef.Brand
+	}
+	if plan.ResourceRef.Provider != "" {
+		event.Provider = plan.ResourceRef.Provider
+	}
+}
+
+func applyChannelAccountUsageRuntimeKey(event *model.ChannelAccountUsageEvent, key core.RuntimeKey) {
+	if event == nil {
+		return
+	}
+	if key.ChannelID > 0 {
+		event.ChannelID = key.ChannelID
+	}
+	if key.RequestedModel != "" {
+		event.RequestedModel = key.RequestedModel
+	}
+	if key.Group != "" {
+		event.SelectedGroup = key.Group
+	}
+	if key.EndpointType != "" {
+		event.EndpointType = string(key.EndpointType)
+	}
+	if key.AccountID != "" {
+		event.AccountID = key.AccountID
+		if event.AccountIdentityKey == "" {
+			event.AccountIdentityKey = key.AccountID
+		}
+	}
+	if key.CredentialIndex >= 0 {
+		event.CredentialIndex = key.CredentialIndex
+	}
+	if key.CredentialSubjectFP != "" {
+		event.CredentialSubjectFingerprint = key.CredentialSubjectFP
+	}
+	if key.CredentialFP != "" {
+		event.CredentialFingerprint = key.CredentialFP
+	}
+	if key.AccountType != "" {
+		event.AccountType = key.AccountType
+	}
+	if key.Brand != "" {
+		event.Brand = key.Brand
+	}
+	if key.Provider != "" {
+		event.Provider = key.Provider
 	}
 }
 

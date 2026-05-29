@@ -2025,6 +2025,7 @@ func keyStatusCapabilities(channel *model.Channel, index int) *model.ChannelAcco
 	if !ok {
 		return nil
 	}
+	capability.CapabilityClassification = capability.EffectiveClassification()
 	return &capability
 }
 
@@ -2074,6 +2075,28 @@ func ManageMultiKeys(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "账号权限检测完成",
+			"data":    result,
+		})
+		return
+	case "diagnose_platform_key_capabilities":
+		if request.KeyIndex == nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "未指定要诊断的账号索引",
+			})
+			return
+		}
+		result, err := probePlatformAccountCapabilities(c, channel, *request.KeyIndex, request.Model)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "Platform API 诊断完成",
 			"data":    result,
 		})
 		return

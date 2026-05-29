@@ -200,7 +200,13 @@ func (w *Worker) calculateLog(log model.Log) error {
 	result := Calculate(usage, profile)
 	now := common.GetTimestamp()
 	summary := result.Summary(now)
-	return upsertCostSummary(summary)
+	if err := upsertCostSummary(summary); err != nil {
+		return err
+	}
+	if err := model.UpsertChannelAccountUsageCost(summary); err != nil {
+		common.SysLog(fmt.Sprintf("channel account usage cost upsert failed: request_id=%s error=%v", summary.RequestId, err))
+	}
+	return nil
 }
 
 type costLogResult struct {

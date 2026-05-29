@@ -103,6 +103,126 @@ func TestProIndexQueryAppliesEndpointToolAndExclusionFilters(t *testing.T) {
 	require.Empty(t, excluded)
 }
 
+func TestProIndexQueryFiltersCodexAccountCapabilities(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	streamDenied := false
+	streamAllowed := true
+	compactDenied := false
+	compactAllowed := true
+	index := New(account.NewRegistry(), nil)
+	channel := &model.Channel{
+		Id:     6,
+		Type:   constant.ChannelTypeCodex,
+		Key:    `{"access_token":"a","account_id":"a"}` + "\n" + `{"access_token":"b","account_id":"b"}` + "\n" + `{"access_token":"c","account_id":"c"}`,
+		Status: common.ChannelStatusEnabled,
+		Group:  "codex",
+		Models: "gpt-5.4",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true,
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CodexBackendResponsesStreamWrite: &streamDenied,
+					CodexBackendCompactWrite:         &compactDenied,
+				},
+				1: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+					CodexBackendCompactWrite:         &compactDenied,
+				},
+				2: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+					CodexBackendCompactWrite:         &compactAllowed,
+				},
+			},
+		},
+	}
+
+	index.Rebuild([]*model.Channel{channel})
+	responseCandidates := index.Query(Query{
+		Groups:       []string{"codex"},
+		ModelName:    "gpt-5.4",
+		EndpointType: constant.EndpointTypeOpenAIResponse,
+	})
+	compactCandidates := index.Query(Query{
+		Groups:       []string{"codex"},
+		ModelName:    "gpt-5.4",
+		EndpointType: constant.EndpointTypeOpenAIResponseCompact,
+	})
+
+	require.Len(t, responseCandidates, 2)
+	require.Equal(t, 1, responseCandidates[0].CredentialRef.CredentialIndex)
+	require.Equal(t, 2, responseCandidates[1].CredentialRef.CredentialIndex)
+	require.Len(t, compactCandidates, 1)
+	require.Equal(t, 2, compactCandidates[0].CredentialRef.CredentialIndex)
+}
+
+func TestProIndexQueryFiltersSingleCodexAccountDeniedCapability(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	streamDenied := false
+	index := New(account.NewRegistry(), nil)
+	channel := &model.Channel{
+		Id:     7,
+		Type:   constant.ChannelTypeCodex,
+		Key:    `{"access_token":"a","account_id":"a"}`,
+		Status: common.ChannelStatusEnabled,
+		Group:  "codex",
+		Models: "gpt-5.4",
+		ChannelInfo: model.ChannelInfo{
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CodexBackendResponsesStreamWrite: &streamDenied,
+				},
+			},
+		},
+	}
+
+	index.Rebuild([]*model.Channel{channel})
+	candidates := index.Query(Query{
+		Groups:       []string{"codex"},
+		ModelName:    "gpt-5.4",
+		EndpointType: constant.EndpointTypeOpenAIResponse,
+	})
+
+	require.Empty(t, candidates)
+}
+
+func TestProIndexQueryFiltersOpenAICodexOAuthAccountCapabilities(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	streamDenied := false
+	streamAllowed := true
+	index := New(account.NewRegistry(), nil)
+	channel := &model.Channel{
+		Id:     8,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    `{"access_token":"access-a","account_id":"acct-a"}` + "\n" + `{"access_token":"access-b","account_id":"acct-b"}`,
+		Status: common.ChannelStatusEnabled,
+		Group:  "codex",
+		Models: "gpt-5.4",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true,
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CodexBackendResponsesStreamWrite: &streamDenied,
+				},
+				1: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+				},
+			},
+		},
+	}
+
+	index.Rebuild([]*model.Channel{channel})
+	candidates := index.Query(Query{
+		Groups:       []string{"codex"},
+		ModelName:    "gpt-5.4",
+		EndpointType: constant.EndpointTypeOpenAIResponse,
+	})
+
+	require.Len(t, candidates, 1)
+	require.Equal(t, 1, candidates[0].CredentialRef.CredentialIndex)
+	require.Equal(t, account.ProviderCodexOAuth, candidates[0].AccountIdentity.Provider)
+	require.Equal(t, "codex", candidates[0].AccountIdentity.Brand)
+}
+
 func TestProIndexFallsBackToNormalizedModelButKeepsRequestedRuntimeModel(t *testing.T) {
 	common.CryptoSecret = "test-secret"
 	index := New(account.NewRegistry(), nil)

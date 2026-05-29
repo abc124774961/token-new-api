@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 	modelgatewaycredential "github.com/QuantumNous/new-api/pkg/modelgateway/credential"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -30,6 +31,10 @@ type ModelRequest struct {
 	Group                  string                `json:"group,omitempty"`
 	EndpointType           constant.EndpointType `json:"-"`
 	RequiresCodexImageTool bool                  `json:"-"`
+}
+
+type selectedChannelContextOptions struct {
+	EndpointType constant.EndpointType
 }
 
 func Distribute() func(c *gin.Context) {
@@ -212,7 +217,7 @@ func distribute(c *gin.Context, next gin.HandlerFunc) {
 	}
 	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 	logDistributorSelectedChannel(c, channel, modelRequest)
-	if setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model, selection); setupErr != nil {
+	if setupErr := SetupContextForSelectedChannelWithEndpoint(c, channel, modelRequest.Model, modelRequest.EndpointType, selection); setupErr != nil {
 		abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": common.GetContextKeyString(c, constant.ContextKeyUsingGroup), "Model": modelRequest.Model, "Error": setupErr.Error()}), setupErr.GetErrorCode())
 		return
 	}
@@ -611,6 +616,14 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 }
 
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string, selections ...*modelgatewayintegration.SelectionResult) *types.NewAPIError {
+	return setupContextForSelectedChannel(c, channel, modelName, selectedChannelContextOptions{}, selections...)
+}
+
+func SetupContextForSelectedChannelWithEndpoint(c *gin.Context, channel *model.Channel, modelName string, endpointType constant.EndpointType, selections ...*modelgatewayintegration.SelectionResult) *types.NewAPIError {
+	return setupContextForSelectedChannel(c, channel, modelName, selectedChannelContextOptions{EndpointType: endpointType}, selections...)
+}
+
+func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string, options selectedChannelContextOptions, selections ...*modelgatewayintegration.SelectionResult) *types.NewAPIError {
 	c.Set("original_model", modelName) // for retry
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
@@ -638,7 +651,7 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	if applied, apiErr := applySelectedPlanCredential(c, channel, firstSelection(selections)); apiErr != nil {
 		return apiErr
 	} else if !applied {
-		key, index, newAPIError := channel.GetNextEnabledKey()
+		key, index, newAPIError := channel.GetNextEnabledKeyForEndpoint(options.EndpointType)
 		if newAPIError != nil {
 			return newAPIError
 		}
@@ -658,6 +671,7 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		applySelectedAccountCapability(c, channel, common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex))
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
+	applyEffectiveCodexOAuthRelayContext(c, channel, options.EndpointType)
 
 	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
 
@@ -712,6 +726,28 @@ func applySelectedAccountCapability(c *gin.Context, channel *model.Channel, cred
 	}
 	if capability, ok := channel.ChannelInfo.AccountCapability(credentialIndex); ok {
 		common.SetContextKey(c, constant.ContextKeyChannelAccountCapability, capability)
+	}
+}
+
+func applyEffectiveCodexOAuthRelayContext(c *gin.Context, channel *model.Channel, endpointType constant.EndpointType) {
+	if c == nil || channel == nil || channel.Type != constant.ChannelTypeOpenAI {
+		return
+	}
+	switch endpointType {
+	case constant.EndpointTypeOpenAIResponse, constant.EndpointTypeOpenAIResponseCompact:
+	default:
+		return
+	}
+	if _, ok := codexauth.ParseOAuthJSONCredential(common.GetContextKeyString(c, constant.ContextKeyChannelKey)); !ok {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeCodex)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, constant.ChannelBaseURLs[constant.ChannelTypeCodex])
+	common.SetContextKey(c, constant.ContextKeyProviderSurface, "codex_backend")
+	if capability, ok := common.GetContextKeyType[model.ChannelAccountCapability](c, constant.ContextKeyChannelAccountCapability); ok {
+		if classification := capability.EffectiveClassification(); classification != "" {
+			common.SetContextKey(c, constant.ContextKeyCapabilityClassification, classification)
+		}
 	}
 }
 

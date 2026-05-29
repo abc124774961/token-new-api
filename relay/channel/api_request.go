@@ -15,6 +15,7 @@ import (
 	common2 "github.com/QuantumNous/new-api/common"
 	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 	modelgatewayprovider "github.com/QuantumNous/new-api/pkg/modelgateway/provider"
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
@@ -79,10 +80,7 @@ var passthroughSkipHeaderNamesLower = map[string]struct{}{
 	"sec-websocket-extensions": {},
 }
 
-type OAuthJSONCredential struct {
-	AccessToken string `json:"access_token,omitempty"`
-	AccountID   string `json:"account_id,omitempty"`
-}
+type OAuthJSONCredential = codexauth.OAuthJSONCredential
 
 var oauthJSONManagedHeaderNamesLower = map[string]struct{}{
 	"authorization":      {},
@@ -92,20 +90,7 @@ var oauthJSONManagedHeaderNamesLower = map[string]struct{}{
 var headerPassthroughRegexCache sync.Map // map[string]*regexp.Regexp
 
 func ParseOAuthJSONCredential(raw string) (OAuthJSONCredential, bool) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || !strings.HasPrefix(raw, "{") {
-		return OAuthJSONCredential{}, false
-	}
-	var credential OAuthJSONCredential
-	if err := common2.Unmarshal([]byte(raw), &credential); err != nil {
-		return OAuthJSONCredential{}, false
-	}
-	credential.AccessToken = strings.TrimSpace(credential.AccessToken)
-	credential.AccountID = strings.TrimSpace(credential.AccountID)
-	if credential.AccessToken == "" || credential.AccountID == "" {
-		return OAuthJSONCredential{}, false
-	}
-	return credential, true
+	return codexauth.ParseOAuthJSONCredential(raw)
 }
 
 func usesOAuthJSONCredential(info *common.RelayInfo) bool {
@@ -700,7 +685,13 @@ func upstreamRequestErrorKind(err error) string {
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	var client *http.Client
 	var err error
-	if info.ChannelSetting.Proxy != "" {
+	accountProxyURL := common2.GetContextKeyString(c, appconstant.ContextKeyChannelAccountProxyURL)
+	if accountProxyURL != "" {
+		client, err = service.NewProxyHttpClient(accountProxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("new account proxy http client failed: %w", err)
+		}
+	} else if info.ChannelSetting.Proxy != "" {
 		client, err = service.NewProxyHttpClient(info.ChannelSetting.Proxy)
 		if err != nil {
 			return nil, fmt.Errorf("new proxy http client failed: %w", err)

@@ -92,6 +92,23 @@
   word-break: break-word;
 }
 
+.ct-channel-account-viewbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--ca-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.ct-channel-account-view-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .ct-channel-account-metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -317,6 +334,83 @@
   font-weight: 700;
 }
 
+.ct-channel-account-stat-cell {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  color: var(--ca-muted);
+  font-size: 12px;
+}
+
+.ct-channel-account-stat-cell > div,
+.ct-channel-account-dispatch-grid {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ct-channel-account-stat-cell strong,
+.ct-channel-account-dispatch-cell strong,
+.ct-channel-account-window-row strong,
+.ct-channel-account-detail-grid strong {
+  color: var(--ca-text);
+  font-weight: 780;
+  font-variant-numeric: tabular-nums;
+}
+
+.ct-channel-account-money {
+  color: #059669 !important;
+}
+
+.ct-channel-account-window-stack,
+.ct-channel-account-dispatch-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ct-channel-account-window-row {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+  grid-template-columns: 46px 64px 48px 68px 68px 82px minmax(0, 1fr);
+  color: var(--ca-muted);
+  font-size: 12px;
+}
+
+.ct-channel-account-window-bar {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbe4ef;
+}
+
+.ct-channel-account-window-bar span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #14b8a6, #22c55e);
+}
+
+.ct-channel-account-dispatch-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ct-channel-account-dispatch-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  color: var(--ca-muted);
+  font-size: 12px;
+}
+
 .ct-channel-account-score-empty {
   display: inline-flex;
   width: fit-content;
@@ -366,10 +460,30 @@
 
 .ct-channel-account-capability-tags {
   display: flex;
-  max-width: 190px;
   align-items: center;
   gap: 5px;
   flex-wrap: wrap;
+}
+
+.ct-channel-account-capability-stack {
+  display: flex;
+  max-width: 300px;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ct-channel-account-capability-group {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+}
+
+.ct-channel-account-capability-group > span {
+  color: var(--ca-muted);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 22px;
 }
 
 .ct-channel-account-capability-tip {
@@ -612,6 +726,80 @@
 
 .ct-channel-account-proxy-existing .semi-banner {
   width: 100%;
+}
+
+.ct-channel-account-detail-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
+  padding: 16px;
+  background: #f8fafc;
+}
+
+.ct-channel-account-detail-head,
+.ct-channel-account-detail-section,
+.ct-channel-account-detail-window {
+  border: 1px solid var(--ca-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ct-channel-account-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+}
+
+.ct-channel-account-detail-head h3 {
+  margin: 0;
+  color: var(--ca-text);
+  font-size: 18px;
+  font-weight: 850;
+}
+
+.ct-channel-account-detail-head p {
+  margin: 5px 0 0;
+  color: var(--ca-muted);
+  font-size: 12px;
+}
+
+.ct-channel-account-detail-section {
+  padding: 12px;
+}
+
+.ct-channel-account-detail-title,
+.ct-channel-account-detail-window-title {
+  margin-bottom: 10px;
+  color: var(--ca-text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.ct-channel-account-detail-grid {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 7px 12px;
+  color: var(--ca-muted);
+  font-size: 12px;
+}
+
+.ct-channel-account-detail-grid strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ct-channel-account-detail-windows {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.ct-channel-account-detail-window {
+  padding: 10px;
+  background: var(--ca-surface-soft);
 }
 
 @media (max-width: 1180px) {

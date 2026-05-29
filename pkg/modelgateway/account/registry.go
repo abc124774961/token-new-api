@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 )
 
@@ -55,8 +56,15 @@ func (r *Registry) AccountsForChannel(channel *model.Channel) []ChannelAccount {
 			continue
 		}
 		identity := AccountIdentityForChannelKey(channel, idx, key)
+		accountResourceRef := resourceRef
+		if identity.Provider != "" {
+			accountResourceRef.Provider = identity.Provider
+		}
+		if identity.Brand != "" {
+			accountResourceRef.Brand = identity.Brand
+		}
 		credentialRef := core.CredentialRef{
-			ResourceID:                   resourceRef.ResourceID,
+			ResourceID:                   accountResourceRef.ResourceID,
 			AccountID:                    identity.AccountID,
 			CredentialIndex:              idx,
 			CredentialSubjectFingerprint: identity.CredentialSubjectFingerprint,
@@ -65,7 +73,7 @@ func (r *Registry) AccountsForChannel(channel *model.Channel) []ChannelAccount {
 		}
 		enabled, reason := channelKeyEnabled(channel, idx)
 		accounts = append(accounts, ChannelAccount{
-			ResourceRef:     resourceRef,
+			ResourceRef:     accountResourceRef,
 			AccountIdentity: identity,
 			CredentialRef:   credentialRef,
 			ProxyRef:        proxyRefForChannelKey(channel, idx),
@@ -95,8 +103,8 @@ func AccountIdentityForChannelKey(channel *model.Channel, credentialIndex int, r
 	if channel == nil {
 		return core.AccountIdentity{}
 	}
-	provider := providerForChannel(channel)
-	brand := brandForChannel(channel)
+	provider := providerForChannelKey(channel, rawKey)
+	brand := brandForChannelKey(channel, rawKey)
 	accountType := accountTypeForChannelKey(channel, credentialIndex, rawKey)
 	subjectSource := subjectSourceForChannelKey(channel, rawKey)
 	subjectFP := fingerprint(subjectSource)
@@ -198,6 +206,20 @@ func brandForChannel(channel *model.Channel) string {
 	}
 }
 
+func providerForChannelKey(channel *model.Channel, rawKey string) string {
+	if channel != nil && channel.Type == constant.ChannelTypeOpenAI && codexauth.IsOAuthJSONCredential(rawKey) {
+		return ProviderCodexOAuth
+	}
+	return providerForChannel(channel)
+}
+
+func brandForChannelKey(channel *model.Channel, rawKey string) string {
+	if channel != nil && channel.Type == constant.ChannelTypeOpenAI && codexauth.IsOAuthJSONCredential(rawKey) {
+		return "codex"
+	}
+	return brandForChannel(channel)
+}
+
 func accountTypeForChannelKey(channel *model.Channel, credentialIndex int, rawKey string) string {
 	if channel == nil {
 		return core.AccountTypeAPIKey
@@ -208,7 +230,7 @@ func accountTypeForChannelKey(channel *model.Channel, credentialIndex int, rawKe
 		}
 	}
 	key := strings.TrimSpace(rawKey)
-	if channel.Type == constant.ChannelTypeCodex {
+	if channel.Type == constant.ChannelTypeCodex || codexauth.IsOAuthJSONCredential(key) {
 		return core.AccountTypeOAuthAccount
 	}
 	if accountType := accountTypeFromJSONCredential(key); accountType != "" {
@@ -283,8 +305,8 @@ func hasAnyNonEmpty(payload map[string]interface{}, keys ...string) bool {
 
 func subjectSourceForChannelKey(channel *model.Channel, rawKey string) string {
 	key := strings.TrimSpace(rawKey)
-	if channel != nil && channel.Type == constant.ChannelTypeCodex && strings.HasPrefix(key, "{") {
-		if oauthKey, err := parseCodexOAuthSubject(key); err == nil {
+	if channel != nil && (channel.Type == constant.ChannelTypeCodex || channel.Type == constant.ChannelTypeOpenAI) && strings.HasPrefix(key, "{") {
+		if oauthKey, ok := codexauth.ParseOAuthJSONCredential(key); ok {
 			accountID := strings.TrimSpace(oauthKey.AccountID)
 			if accountID != "" {
 				return "codex:account_id:" + accountID
@@ -300,20 +322,6 @@ func subjectSourceForChannelKey(channel *model.Channel, rawKey string) string {
 		}
 	}
 	return credentialSourceForKey(key)
-}
-
-type codexOAuthSubject struct {
-	AccountID    string `json:"account_id,omitempty"`
-	Email        string `json:"email,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-}
-
-func parseCodexOAuthSubject(raw string) (*codexOAuthSubject, error) {
-	var subject codexOAuthSubject
-	if err := common.Unmarshal([]byte(raw), &subject); err != nil {
-		return nil, err
-	}
-	return &subject, nil
 }
 
 func credentialSourceForKey(rawKey string) string {

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
@@ -99,6 +100,13 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	if isCompact {
 		return request, nil
 	}
+	// ChatGPT Codex backend requires streaming on the responses endpoint.
+	// Downstream non-stream callers are handled by aggregating the upstream
+	// stream in DoResponse.
+	if info != nil && !info.IsStream {
+		common.SetContextKey(c, appconstant.ContextKeyCodexUpstreamStreamForced, true)
+	}
+	request.Stream = common.GetPointer(true)
 	// codex: store must be false
 	request.Store = json.RawMessage("false")
 	// rm max_output_tokens
@@ -115,6 +123,10 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	if info.RelayMode != relayconstant.RelayModeResponses && info.RelayMode != relayconstant.RelayModeResponsesCompact {
 		return nil, types.NewError(errors.New("codex channel: endpoint not supported"), types.ErrorCodeInvalidRequest)
 	}
+	common.SetContextKey(c, appconstant.ContextKeyProviderSurface, "codex_backend")
+	if info != nil && info.ChannelAccountCapability != nil && info.ChannelAccountCapability.CapabilityClassification != "" {
+		common.SetContextKey(c, appconstant.ContextKeyCapabilityClassification, info.ChannelAccountCapability.CapabilityClassification)
+	}
 
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
 		return openai.OaiResponsesCompactionHandler(c, resp)
@@ -122,6 +134,9 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 
 	if info.IsStream {
 		return openai.OaiResponsesStreamHandler(c, info, resp)
+	}
+	if common.GetContextKeyBool(c, appconstant.ContextKeyCodexUpstreamStreamForced) {
+		return openai.OaiResponsesStreamAsNonStreamHandler(c, info, resp)
 	}
 	return openai.OaiResponsesHandler(c, info, resp)
 }

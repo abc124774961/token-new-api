@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/types"
 
@@ -245,10 +247,58 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
+	recordChannelAccountUsageBilling(c, requestId, params, log.CreatedAt)
 	if common.DataExportEnabled {
 		gopool.Go(func() {
 			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})
+	}
+}
+
+func recordChannelAccountUsageBilling(c *gin.Context, requestId string, params RecordConsumeLogParams, completedAt int64) {
+	if strings.TrimSpace(requestId) == "" {
+		return
+	}
+	event := ChannelAccountUsageEvent{
+		RequestId:        requestId,
+		ChannelID:        params.ChannelId,
+		CredentialIndex:  -1,
+		RequestedModel:   params.ModelName,
+		RequestedGroup:   params.Group,
+		SelectedGroup:    params.Group,
+		CompletedAt:      completedAt,
+		PromptTokens:     int64(params.PromptTokens),
+		CompletionTokens: int64(params.CompletionTokens),
+		TotalTokens:      int64(params.PromptTokens + params.CompletionTokens),
+		Quota:            int64(params.Quota),
+		CreatedAt:        completedAt,
+		UpdatedAt:        completedAt,
+	}
+	if c != nil {
+		if value := common.GetContextKeyString(c, constant.ContextKeyChannelName); value != "" {
+			event.ChannelName = value
+		}
+		if index := common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex); index >= 0 {
+			event.CredentialIndex = index
+		}
+		if common.GetContextKeyBool(c, constant.ContextKeyHealthProbe) {
+			event.IsHealthProbe = true
+		}
+		if value := common.GetContextKeyString(c, constant.ContextKeyProviderSurface); value != "" {
+			event.ProviderSurface = value
+		}
+		if value := common.GetContextKeyString(c, constant.ContextKeyCapabilityClassification); value != "" {
+			event.CapabilityClassification = value
+		}
+		if common.GetContextKeyBool(c, constant.ContextKeyUsageEstimated) {
+			event.UsageEstimated = true
+		}
+		if proxyID := common.GetContextKeyInt(c, constant.ContextKeyChannelAccountProxyID); proxyID > 0 {
+			event.ProxyID = proxyID
+		}
+	}
+	if err := UpsertChannelAccountUsageBilling(event); err != nil {
+		logger.LogError(c, "failed to upsert channel account usage billing: "+err.Error())
 	}
 }
 

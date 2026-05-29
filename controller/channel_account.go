@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -28,16 +30,28 @@ const channelAccountEmptyCodexReason = channelAccountAllKeysDisabledReason
 const channelAccountImportMaxFileBytes int64 = 32 << 20
 const channelAccountImportMaxZipEntryBytes int64 = 4 << 20
 const channelAccountImportMaxZipEntries = 1000
+const channelAccountDefaultPageSize = 20
+const channelAccountMaxPageSize = 100
+
+const (
+	channelAccountViewManage = "manage"
+	channelAccountViewStats  = "stats"
+)
 
 type ChannelAccountsResponse struct {
-	ChannelID   int                          `json:"channel_id"`
-	ChannelName string                       `json:"channel_name,omitempty"`
-	ResourceRef modelgatewaycore.ResourceRef `json:"resource_ref"`
-	Total       int                          `json:"total"`
-	Enabled     int                          `json:"enabled"`
-	Disabled    int                          `json:"disabled"`
-	Items       []ChannelAccountItem         `json:"items"`
-	Operation   *ChannelAccountOperation     `json:"operation,omitempty"`
+	ChannelID     int                          `json:"channel_id"`
+	ChannelName   string                       `json:"channel_name,omitempty"`
+	ResourceRef   modelgatewaycore.ResourceRef `json:"resource_ref"`
+	View          string                       `json:"view,omitempty"`
+	Page          int                          `json:"page,omitempty"`
+	PageSize      int                          `json:"page_size,omitempty"`
+	Total         int                          `json:"total"`
+	FilteredTotal int                          `json:"filtered_total"`
+	Enabled       int                          `json:"enabled"`
+	Disabled      int                          `json:"disabled"`
+	Items         []ChannelAccountItem         `json:"items"`
+	Summary       ChannelAccountSummary        `json:"summary"`
+	Operation     *ChannelAccountOperation     `json:"operation,omitempty"`
 }
 
 type ChannelAccountItem struct {
@@ -54,6 +68,62 @@ type ChannelAccountItem struct {
 	CredentialShort string                               `json:"credential_short,omitempty"`
 	Score           *ChannelAccountScoreSummary          `json:"score,omitempty"`
 	RuntimeKeys     []ChannelAccountRuntimeScoreSnapshot `json:"runtime_keys,omitempty"`
+	Stats           *ChannelAccountStats                 `json:"stats,omitempty"`
+}
+
+type ChannelAccountSummary struct {
+	Scored              int64                             `json:"scored"`
+	RealSampleCount30m  int64                             `json:"real_sample_count_30m"`
+	Today               ChannelAccountUsageWindowResponse `json:"today"`
+	Last5h              ChannelAccountUsageWindowResponse `json:"last_5h"`
+	Last7d              ChannelAccountUsageWindowResponse `json:"last_7d"`
+	HealthProbeExcluded bool                              `json:"health_probe_excluded"`
+}
+
+type ChannelAccountStats struct {
+	Today              ChannelAccountUsageWindowResponse `json:"today"`
+	Last5h             ChannelAccountUsageWindowResponse `json:"last_5h"`
+	Last7d             ChannelAccountUsageWindowResponse `json:"last_7d"`
+	LastActiveAt       int64                             `json:"last_active_at,omitempty"`
+	MainErrorCategory  string                            `json:"main_error_category,omitempty"`
+	ProbeRecoveryState *ChannelAccountProbeRecoveryState `json:"probe_recovery_state,omitempty"`
+}
+
+type ChannelAccountUsageWindowResponse struct {
+	Requests          int64   `json:"requests"`
+	SuccessRequests   int64   `json:"success_requests"`
+	ErrorRequests     int64   `json:"error_requests"`
+	TimeoutRequests   int64   `json:"timeout_requests"`
+	PromptTokens      int64   `json:"prompt_tokens"`
+	CompletionTokens  int64   `json:"completion_tokens"`
+	TotalTokens       int64   `json:"total_tokens"`
+	Quota             int64   `json:"quota"`
+	UpstreamCostTotal float64 `json:"upstream_cost_total"`
+	SuccessRate       float64 `json:"success_rate"`
+	ErrorRate         float64 `json:"error_rate"`
+	TimeoutRate       float64 `json:"timeout_rate"`
+	AvgDurationMs     float64 `json:"avg_duration_ms"`
+	AvgTTFTMs         float64 `json:"avg_ttft_ms"`
+	LastActiveAt      int64   `json:"last_active_at,omitempty"`
+	TopErrorCategory  string  `json:"top_error_category,omitempty"`
+	TopErrorCount     int64   `json:"top_error_count,omitempty"`
+}
+
+type ChannelAccountProbeRecoveryState struct {
+	Pending      bool   `json:"pending,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	SuccessCount int    `json:"success_count,omitempty"`
+	Required     int    `json:"required,omitempty"`
+}
+
+type channelAccountsQuery struct {
+	View     string
+	Page     int
+	PageSize int
+	Keyword  string
+	Status   string
+	Sort     string
+	Order    string
 }
 
 type UpdateChannelAccountStatusRequest struct {
@@ -118,35 +188,37 @@ type ChannelAccountOperation struct {
 }
 
 type ChannelAccountScoreSummary struct {
-	RuntimeKey              modelgatewaycore.RuntimeKey `json:"runtime_key"`
-	HealthStatus            string                      `json:"health_status,omitempty"`
-	ScoreTotal              float64                     `json:"score_total,omitempty"`
-	RoutingScoreTotal       float64                     `json:"routing_score_total,omitempty"`
-	CostItemScore           float64                     `json:"cost_item_score,omitempty"`
-	CostRatio               float64                     `json:"cost_ratio,omitempty"`
-	CostReferenceRatio      float64                     `json:"cost_reference_ratio,omitempty"`
-	CostPricingMode         string                      `json:"cost_pricing_mode,omitempty"`
-	SampleCount             int                         `json:"sample_count"`
-	RealSampleCount30m      int                         `json:"real_sample_count_30m,omitempty"`
-	SuccessRate             float64                     `json:"success_rate"`
-	TTFTMs                  float64                     `json:"ttft_ms"`
-	DurationMs              float64                     `json:"duration_ms"`
-	TokensPerSecond         float64                     `json:"tokens_per_second,omitempty"`
-	EmptyOutputRate         float64                     `json:"empty_output_rate,omitempty"`
-	ExperienceIssueRate     float64                     `json:"experience_issue_rate,omitempty"`
-	LastRealAttemptAt       int64                       `json:"last_real_attempt_at,omitempty"`
-	LastRealSuccessAt       int64                       `json:"last_real_success_at,omitempty"`
-	LastRealFailureAt       int64                       `json:"last_real_failure_at,omitempty"`
-	LastProbeAt             int64                       `json:"last_probe_at,omitempty"`
-	LastProbeSuccessAt      int64                       `json:"last_probe_success_at,omitempty"`
-	ConfigErrorIsolated     bool                        `json:"config_error_isolated,omitempty"`
-	IsolationReason         string                      `json:"isolation_reason,omitempty"`
-	ProbeRecoveryPending    bool                        `json:"probe_recovery_pending,omitempty"`
-	ProbeTriggerReason      string                      `json:"probe_trigger_reason,omitempty"`
-	ActiveConcurrency       int                         `json:"active_concurrency,omitempty"`
-	EffectiveConcurrencyCap int                         `json:"effective_concurrency_limit,omitempty"`
-	QueueDepth              int                         `json:"queue_depth,omitempty"`
-	QueueCapacity           int                         `json:"queue_capacity,omitempty"`
+	RuntimeKey                modelgatewaycore.RuntimeKey `json:"runtime_key"`
+	HealthStatus              string                      `json:"health_status,omitempty"`
+	ScoreTotal                float64                     `json:"score_total,omitempty"`
+	RoutingScoreTotal         float64                     `json:"routing_score_total,omitempty"`
+	CostItemScore             float64                     `json:"cost_item_score,omitempty"`
+	CostRatio                 float64                     `json:"cost_ratio,omitempty"`
+	CostReferenceRatio        float64                     `json:"cost_reference_ratio,omitempty"`
+	CostPricingMode           string                      `json:"cost_pricing_mode,omitempty"`
+	SampleCount               int                         `json:"sample_count"`
+	RealSampleCount30m        int                         `json:"real_sample_count_30m,omitempty"`
+	SuccessRate               float64                     `json:"success_rate"`
+	TTFTMs                    float64                     `json:"ttft_ms"`
+	DurationMs                float64                     `json:"duration_ms"`
+	TokensPerSecond           float64                     `json:"tokens_per_second,omitempty"`
+	EmptyOutputRate           float64                     `json:"empty_output_rate,omitempty"`
+	ExperienceIssueRate       float64                     `json:"experience_issue_rate,omitempty"`
+	LastRealAttemptAt         int64                       `json:"last_real_attempt_at,omitempty"`
+	LastRealSuccessAt         int64                       `json:"last_real_success_at,omitempty"`
+	LastRealFailureAt         int64                       `json:"last_real_failure_at,omitempty"`
+	LastProbeAt               int64                       `json:"last_probe_at,omitempty"`
+	LastProbeSuccessAt        int64                       `json:"last_probe_success_at,omitempty"`
+	ConfigErrorIsolated       bool                        `json:"config_error_isolated,omitempty"`
+	IsolationReason           string                      `json:"isolation_reason,omitempty"`
+	ProbeRecoveryPending      bool                        `json:"probe_recovery_pending,omitempty"`
+	ProbeTriggerReason        string                      `json:"probe_trigger_reason,omitempty"`
+	ProbeRecoverySuccessCount int                         `json:"probe_recovery_success_count,omitempty"`
+	ProbeRecoveryRequired     int                         `json:"probe_recovery_required,omitempty"`
+	ActiveConcurrency         int                         `json:"active_concurrency,omitempty"`
+	EffectiveConcurrencyCap   int                         `json:"effective_concurrency_limit,omitempty"`
+	QueueDepth                int                         `json:"queue_depth,omitempty"`
+	QueueCapacity             int                         `json:"queue_capacity,omitempty"`
 }
 
 type ChannelAccountRuntimeScoreSnapshot struct {
@@ -174,7 +246,7 @@ func ListChannelAccounts(c *gin.Context) {
 		return
 	}
 
-	common.ApiSuccess(c, buildChannelAccountsResponse(channel))
+	common.ApiSuccess(c, buildChannelAccountsResponse(channel, parseChannelAccountsQuery(c)))
 }
 
 func UpdateChannelAccountStatus(c *gin.Context) {
@@ -652,6 +724,9 @@ func (parser *ChannelAccountImportParser) credentialsFromJSONObject(payload map[
 	if credentialItems, ok, err := parser.credentialsFromJSONField(payload["credential_list"], xautoPackage); err != nil || ok {
 		return credentialItems, ok, err
 	}
+	if credentialItems, ok, err := parser.credentialsFromJSONField(payload["accounts"], xautoPackage); err != nil || ok {
+		return credentialItems, ok, err
+	}
 	if credentialItems, ok, err := parser.credentialsFromJSONField(payload["credentials"], xautoPackage); err != nil || ok {
 		return credentialItems, ok, err
 	}
@@ -751,25 +826,52 @@ func parseChannelAccountCredentialIndexParam(c *gin.Context) (int, bool) {
 	return credentialIndex, true
 }
 
-func buildChannelAccountsResponse(channel *model.Channel) ChannelAccountsResponse {
+func buildChannelAccountsResponse(channel *model.Channel, query ...channelAccountsQuery) ChannelAccountsResponse {
+	params := normalizeChannelAccountsQuery(channelAccountsQuery{})
+	if len(query) > 0 {
+		params = normalizeChannelAccountsQuery(query[0])
+	}
 	accounts := modelgatewayaccount.NewRegistry().AccountsForChannel(channel)
-	proxiesByID := channelAccountProxiesByID(channel)
-	proxyUsagesByID := channelAccountProxyUsagesByID(proxiesByID)
-	runtimeItems := defaultModelGatewayRuntimeStatusService().Build(modelgatewayobservability.RuntimeStatusQuery{
-		ChannelID: channel.Id,
-		Limit:     modelGatewayRuntimeStatusMaxLimit,
-	}).Items
-
 	response := ChannelAccountsResponse{
-		ChannelID:   channel.Id,
-		ChannelName: channel.Name,
-		ResourceRef: modelgatewayaccount.ResourceRefForChannel(channel),
-		Total:       len(accounts),
-		Items:       make([]ChannelAccountItem, 0, len(accounts)),
+		ChannelID:     channel.Id,
+		ChannelName:   channel.Name,
+		ResourceRef:   modelgatewayaccount.ResourceRefForChannel(channel),
+		View:          params.View,
+		Page:          params.Page,
+		PageSize:      params.PageSize,
+		Total:         len(accounts),
+		FilteredTotal: len(accounts),
+		Items:         make([]ChannelAccountItem, 0, params.PageSize),
+		Summary:       ChannelAccountSummary{HealthProbeExcluded: true},
 	}
 	for _, account := range accounts {
+		if account.KeyEnabled {
+			response.Enabled++
+		} else {
+			response.Disabled++
+		}
+	}
+
+	statsByAccount, summary := channelAccountStatsForAccounts(channel.Id, accounts)
+	response.Summary = summary
+
+	filtered := filterChannelAccounts(accounts, params)
+	sortChannelAccounts(filtered, params, statsByAccount)
+	response.FilteredTotal = len(filtered)
+	pageAccounts := paginateChannelAccounts(filtered, params)
+	runtimeItems := runtimeItemsForChannelAccounts(channel.Id, pageAccounts, len(accounts) == 1)
+
+	proxiesByID := channelAccountProxiesByID(channel, pageAccounts)
+	proxyUsagesByID := channelAccountProxyUsagesByID(proxiesByID)
+	for _, account := range pageAccounts {
 		item := buildChannelAccountItem(account, runtimeItems, len(accounts) == 1)
 		item.Capabilities = keyStatusCapabilities(channel, account.CredentialIndex)
+		if item.Capabilities != nil {
+			item.Capabilities.CapabilityClassification = item.Capabilities.EffectiveClassification()
+		}
+		if stats, ok := statsByAccount[channelAccountStatsKey(account)]; ok {
+			item.Stats = stats
+		}
 		if account.ProxyRef.ProxyID > 0 {
 			if proxyConfig, ok := proxiesByID[account.ProxyRef.ProxyID]; ok {
 				proxyResponse := buildModelGatewayProxyResponse(proxyConfig, proxyUsagesByID[account.ProxyRef.ProxyID])
@@ -783,10 +885,9 @@ func buildChannelAccountsResponse(channel *model.Channel) ChannelAccountsRespons
 				}
 			}
 		}
-		if item.KeyEnabled {
-			response.Enabled++
-		} else {
-			response.Disabled++
+		response.Summary.Scored += boolToInt64(item.Score != nil)
+		if item.Score != nil {
+			response.Summary.RealSampleCount30m += int64(item.Score.RealSampleCount30m)
 		}
 		response.Items = append(response.Items, item)
 	}
@@ -815,12 +916,18 @@ func channelAccountProxyUsagesByID(proxiesByID map[int]model.ModelGatewayProxy) 
 	return result
 }
 
-func channelAccountProxiesByID(channel *model.Channel) map[int]model.ModelGatewayProxy {
+func channelAccountProxiesByID(channel *model.Channel, accounts []modelgatewayaccount.ChannelAccount) map[int]model.ModelGatewayProxy {
 	if channel == nil || channel.ChannelInfo.MultiKeyProxyIDs == nil {
 		return nil
 	}
-	proxyIDs := make([]int, 0, len(channel.ChannelInfo.MultiKeyProxyIDs))
-	for _, proxyID := range channel.ChannelInfo.MultiKeyProxyIDs {
+	proxySet := make(map[int]struct{})
+	for _, account := range accounts {
+		if account.ProxyRef.ProxyID > 0 {
+			proxySet[account.ProxyRef.ProxyID] = struct{}{}
+		}
+	}
+	proxyIDs := make([]int, 0, len(proxySet))
+	for proxyID := range proxySet {
 		if proxyID > 0 {
 			proxyIDs = append(proxyIDs, proxyID)
 		}
@@ -837,6 +944,378 @@ func buildChannelAccountsResponseWithOperation(channel *model.Channel, operation
 	response := buildChannelAccountsResponse(channel)
 	response.Operation = operation
 	return response
+}
+
+func parseChannelAccountsQuery(c *gin.Context) channelAccountsQuery {
+	if c == nil {
+		return normalizeChannelAccountsQuery(channelAccountsQuery{})
+	}
+	return normalizeChannelAccountsQuery(channelAccountsQuery{
+		View:     c.DefaultQuery("view", channelAccountViewManage),
+		Page:     parsePositiveQueryInt(c, "page", 1),
+		PageSize: parsePositiveQueryInt(c, "page_size", channelAccountDefaultPageSize),
+		Keyword:  c.Query("keyword"),
+		Status:   c.DefaultQuery("status", "all"),
+		Sort:     c.Query("sort"),
+		Order:    c.Query("order"),
+	})
+}
+
+func parsePositiveQueryInt(c *gin.Context, key string, fallback int) int {
+	if c == nil {
+		return fallback
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(c.Query(key)))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func normalizeChannelAccountsQuery(query channelAccountsQuery) channelAccountsQuery {
+	query.View = strings.ToLower(strings.TrimSpace(query.View))
+	if query.View != channelAccountViewStats {
+		query.View = channelAccountViewManage
+	}
+	if query.Page <= 0 {
+		query.Page = 1
+	}
+	if query.PageSize <= 0 {
+		query.PageSize = channelAccountDefaultPageSize
+	}
+	if query.PageSize > channelAccountMaxPageSize {
+		query.PageSize = channelAccountMaxPageSize
+	}
+	query.Keyword = strings.ToLower(strings.TrimSpace(query.Keyword))
+	query.Status = strings.ToLower(strings.TrimSpace(query.Status))
+	if query.Status != "enabled" && query.Status != "disabled" {
+		query.Status = "all"
+	}
+	query.Sort = strings.ToLower(strings.TrimSpace(query.Sort))
+	query.Order = strings.ToLower(strings.TrimSpace(query.Order))
+	if query.Order == "" {
+		query.Order = "asc"
+		if query.View == channelAccountViewStats && query.Sort == "" {
+			query.Sort = "last_active_at"
+			query.Order = "desc"
+		}
+	} else if query.Order != "asc" {
+		query.Order = "desc"
+	}
+	return query
+}
+
+func filterChannelAccounts(accounts []modelgatewayaccount.ChannelAccount, query channelAccountsQuery) []modelgatewayaccount.ChannelAccount {
+	filtered := make([]modelgatewayaccount.ChannelAccount, 0, len(accounts))
+	for _, account := range accounts {
+		if query.Status == "enabled" && !account.KeyEnabled {
+			continue
+		}
+		if query.Status == "disabled" && account.KeyEnabled {
+			continue
+		}
+		if query.Keyword != "" && !strings.Contains(channelAccountSearchText(account), query.Keyword) {
+			continue
+		}
+		filtered = append(filtered, account)
+	}
+	return filtered
+}
+
+func channelAccountSearchText(account modelgatewayaccount.ChannelAccount) string {
+	identity := account.AccountIdentity
+	resource := account.ResourceRef
+	proxy := account.ProxyRef
+	parts := []string{
+		identity.DisplayName,
+		identity.AccountID,
+		identity.AccountIdentityKey,
+		identity.AccountType,
+		identity.Brand,
+		identity.Provider,
+		resource.Brand,
+		resource.Provider,
+		account.DisabledReason,
+		modelgatewayaccount.ShortFingerprint(identity.CredentialSubjectFingerprint),
+		modelgatewayaccount.ShortFingerprint(identity.CredentialFingerprint),
+		identity.CredentialSubjectFingerprint,
+		identity.CredentialFingerprint,
+		proxy.Name,
+		proxy.MaskedAddress,
+		strconv.Itoa(account.CredentialIndex + 1),
+	}
+	return strings.ToLower(strings.Join(parts, " "))
+}
+
+func sortChannelAccounts(accounts []modelgatewayaccount.ChannelAccount, query channelAccountsQuery, statsByAccount map[string]*ChannelAccountStats) {
+	sort.SliceStable(accounts, func(i, j int) bool {
+		left := accounts[i]
+		right := accounts[j]
+		less := false
+		switch query.Sort {
+		case "status":
+			if left.KeyEnabled != right.KeyEnabled {
+				less = left.KeyEnabled
+			} else {
+				less = left.CredentialIndex < right.CredentialIndex
+			}
+		case "today_requests":
+			less = channelAccountStatRequests(statsByAccount, left, "today") < channelAccountStatRequests(statsByAccount, right, "today")
+		case "last_5h_requests":
+			less = channelAccountStatRequests(statsByAccount, left, "last_5h") < channelAccountStatRequests(statsByAccount, right, "last_5h")
+		case "last_7d_requests":
+			less = channelAccountStatRequests(statsByAccount, left, "last_7d") < channelAccountStatRequests(statsByAccount, right, "last_7d")
+		case "last_active_at":
+			less = channelAccountStatLastActive(statsByAccount, left) < channelAccountStatLastActive(statsByAccount, right)
+		case "success_rate":
+			less = channelAccountStatSuccessRate(statsByAccount, left) < channelAccountStatSuccessRate(statsByAccount, right)
+		case "score":
+			less = left.CredentialIndex < right.CredentialIndex
+		case "credential_index", "":
+			fallthrough
+		default:
+			less = left.CredentialIndex < right.CredentialIndex
+		}
+		if query.Order == "asc" {
+			return less
+		}
+		return !less && !channelAccountSortEqual(left, right, query, statsByAccount)
+	})
+}
+
+func channelAccountSortEqual(left, right modelgatewayaccount.ChannelAccount, query channelAccountsQuery, statsByAccount map[string]*ChannelAccountStats) bool {
+	switch query.Sort {
+	case "status":
+		return left.KeyEnabled == right.KeyEnabled && left.CredentialIndex == right.CredentialIndex
+	case "today_requests":
+		return channelAccountStatRequests(statsByAccount, left, "today") == channelAccountStatRequests(statsByAccount, right, "today")
+	case "last_5h_requests":
+		return channelAccountStatRequests(statsByAccount, left, "last_5h") == channelAccountStatRequests(statsByAccount, right, "last_5h")
+	case "last_7d_requests":
+		return channelAccountStatRequests(statsByAccount, left, "last_7d") == channelAccountStatRequests(statsByAccount, right, "last_7d")
+	case "last_active_at":
+		return channelAccountStatLastActive(statsByAccount, left) == channelAccountStatLastActive(statsByAccount, right)
+	case "success_rate":
+		return channelAccountStatSuccessRate(statsByAccount, left) == channelAccountStatSuccessRate(statsByAccount, right)
+	case "score":
+		return left.CredentialIndex == right.CredentialIndex
+	default:
+		return left.CredentialIndex == right.CredentialIndex
+	}
+}
+
+func paginateChannelAccounts(accounts []modelgatewayaccount.ChannelAccount, query channelAccountsQuery) []modelgatewayaccount.ChannelAccount {
+	start := (query.Page - 1) * query.PageSize
+	if start >= len(accounts) {
+		return nil
+	}
+	end := start + query.PageSize
+	if end > len(accounts) {
+		end = len(accounts)
+	}
+	return accounts[start:end]
+}
+
+func runtimeItemsForChannelAccounts(channelID int, accounts []modelgatewayaccount.ChannelAccount, allowChannelFallback bool) []modelgatewayobservability.RuntimeStatusItem {
+	runtimeQuery := modelgatewayobservability.RuntimeStatusQuery{
+		ChannelID: channelID,
+		Limit:     modelGatewayRuntimeStatusMaxLimit,
+	}
+	if len(accounts) > 0 && !allowChannelFallback {
+		runtimeQuery.AccountIDs = make([]string, 0, len(accounts))
+		runtimeQuery.CredentialIndexes = make([]int, 0, len(accounts))
+		runtimeQuery.CredentialSubjectFPs = make([]string, 0, len(accounts))
+		runtimeQuery.CredentialFPs = make([]string, 0, len(accounts))
+		for _, account := range accounts {
+			runtimeQuery.AccountIDs = append(runtimeQuery.AccountIDs, account.AccountIdentity.AccountID)
+			runtimeQuery.CredentialIndexes = append(runtimeQuery.CredentialIndexes, account.CredentialIndex)
+			runtimeQuery.CredentialSubjectFPs = append(runtimeQuery.CredentialSubjectFPs, account.AccountIdentity.CredentialSubjectFingerprint)
+			runtimeQuery.CredentialFPs = append(runtimeQuery.CredentialFPs, account.AccountIdentity.CredentialFingerprint)
+		}
+	}
+	return defaultModelGatewayRuntimeStatusService().Build(runtimeQuery).Items
+}
+
+func channelAccountStatsForAccounts(channelID int, accounts []modelgatewayaccount.ChannelAccount) (map[string]*ChannelAccountStats, ChannelAccountSummary) {
+	result := make(map[string]*ChannelAccountStats, len(accounts))
+	summary := ChannelAccountSummary{HealthProbeExcluded: true}
+	if channelID <= 0 || len(accounts) == 0 {
+		return result, summary
+	}
+	now := time.Now()
+	windows := []model.ChannelAccountUsageWindowSpec{
+		{Name: "today", Since: time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()},
+		{Name: "last_5h", Since: now.Add(-5 * time.Hour).Unix()},
+		{Name: "last_7d", Since: now.Add(-7 * 24 * time.Hour).Unix()},
+	}
+	aggregates, err := model.QueryChannelAccountUsageWindowAggregates(channelID, windows, false)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("failed to load channel account usage stats: channel_id=%d error=%v", channelID, err))
+		return result, summary
+	}
+	accountKeys := make(map[string]string, len(accounts)*2)
+	for _, account := range accounts {
+		result[channelAccountStatsKey(account)] = &ChannelAccountStats{}
+		accountKeys[model.ChannelAccountUsageAggregateKey(account.AccountIdentity.AccountIdentityKey, account.CredentialIndex)] = channelAccountStatsKey(account)
+		accountKeys[model.ChannelAccountUsageAggregateKey(account.AccountIdentity.AccountID, account.CredentialIndex)] = channelAccountStatsKey(account)
+		accountKeys[model.ChannelAccountUsageAggregateKey("", account.CredentialIndex)] = channelAccountStatsKey(account)
+	}
+	for _, aggregate := range aggregates {
+		targetKey, ok := accountKeys[model.ChannelAccountUsageAggregateKey(aggregate.AccountIdentityKey, aggregate.CredentialIndex)]
+		if !ok {
+			targetKey, ok = accountKeys[model.ChannelAccountUsageAggregateKey("", aggregate.CredentialIndex)]
+		}
+		if !ok {
+			continue
+		}
+		stats := result[targetKey]
+		if stats == nil {
+			stats = &ChannelAccountStats{}
+			result[targetKey] = stats
+		}
+		window := channelAccountUsageWindowFromAggregate(aggregate)
+		switch aggregate.Window {
+		case "today":
+			stats.Today = window
+			summary.Today = addChannelAccountUsageWindow(summary.Today, window)
+		case "last_5h":
+			stats.Last5h = window
+			summary.Last5h = addChannelAccountUsageWindow(summary.Last5h, window)
+		case "last_7d":
+			stats.Last7d = window
+			summary.Last7d = addChannelAccountUsageWindow(summary.Last7d, window)
+		}
+		if window.LastActiveAt > stats.LastActiveAt {
+			stats.LastActiveAt = window.LastActiveAt
+		}
+		if stats.MainErrorCategory == "" && window.TopErrorCategory != "" {
+			stats.MainErrorCategory = window.TopErrorCategory
+		}
+	}
+	summary.Today = finalizeChannelAccountUsageWindow(summary.Today)
+	summary.Last5h = finalizeChannelAccountUsageWindow(summary.Last5h)
+	summary.Last7d = finalizeChannelAccountUsageWindow(summary.Last7d)
+	return result, summary
+}
+
+func channelAccountStatsKey(account modelgatewayaccount.ChannelAccount) string {
+	return model.ChannelAccountUsageAggregateKey(account.AccountIdentity.AccountIdentityKey, account.CredentialIndex)
+}
+
+func channelAccountUsageWindowFromAggregate(aggregate model.ChannelAccountUsageWindowAggregate) ChannelAccountUsageWindowResponse {
+	return finalizeChannelAccountUsageWindow(ChannelAccountUsageWindowResponse{
+		Requests:          aggregate.Requests,
+		SuccessRequests:   aggregate.SuccessRequests,
+		ErrorRequests:     aggregate.ErrorRequests,
+		TimeoutRequests:   aggregate.TimeoutRequests,
+		PromptTokens:      aggregate.PromptTokens,
+		CompletionTokens:  aggregate.CompletionTokens,
+		TotalTokens:       aggregate.TotalTokens,
+		Quota:             aggregate.Quota,
+		UpstreamCostTotal: aggregate.UpstreamCostTotal,
+		AvgDurationMs:     aggregate.AvgDurationMs,
+		AvgTTFTMs:         aggregate.AvgTTFTMs,
+		LastActiveAt:      aggregate.LastActiveAt,
+		TopErrorCategory:  aggregate.TopErrorCategory,
+		TopErrorCount:     aggregate.TopErrorCount,
+	})
+}
+
+func addChannelAccountUsageWindow(left ChannelAccountUsageWindowResponse, right ChannelAccountUsageWindowResponse) ChannelAccountUsageWindowResponse {
+	totalRequests := left.Requests + right.Requests
+	leftAvgDurationWeighted := left.AvgDurationMs * float64(left.Requests)
+	rightAvgDurationWeighted := right.AvgDurationMs * float64(right.Requests)
+	leftAvgTTFTWeighted := left.AvgTTFTMs * float64(left.Requests)
+	rightAvgTTFTWeighted := right.AvgTTFTMs * float64(right.Requests)
+	out := ChannelAccountUsageWindowResponse{
+		Requests:          totalRequests,
+		SuccessRequests:   left.SuccessRequests + right.SuccessRequests,
+		ErrorRequests:     left.ErrorRequests + right.ErrorRequests,
+		TimeoutRequests:   left.TimeoutRequests + right.TimeoutRequests,
+		PromptTokens:      left.PromptTokens + right.PromptTokens,
+		CompletionTokens:  left.CompletionTokens + right.CompletionTokens,
+		TotalTokens:       left.TotalTokens + right.TotalTokens,
+		Quota:             left.Quota + right.Quota,
+		UpstreamCostTotal: left.UpstreamCostTotal + right.UpstreamCostTotal,
+		TopErrorCategory:  left.TopErrorCategory,
+		TopErrorCount:     left.TopErrorCount,
+	}
+	if right.TopErrorCount > out.TopErrorCount {
+		out.TopErrorCategory = right.TopErrorCategory
+		out.TopErrorCount = right.TopErrorCount
+	}
+	if right.LastActiveAt > left.LastActiveAt {
+		out.LastActiveAt = right.LastActiveAt
+	} else {
+		out.LastActiveAt = left.LastActiveAt
+	}
+	if totalRequests > 0 {
+		out.AvgDurationMs = (leftAvgDurationWeighted + rightAvgDurationWeighted) / float64(totalRequests)
+		out.AvgTTFTMs = (leftAvgTTFTWeighted + rightAvgTTFTWeighted) / float64(totalRequests)
+	}
+	return out
+}
+
+func finalizeChannelAccountUsageWindow(window ChannelAccountUsageWindowResponse) ChannelAccountUsageWindowResponse {
+	if window.Requests > 0 {
+		window.SuccessRate = float64(window.SuccessRequests) / float64(window.Requests)
+		window.ErrorRate = float64(window.ErrorRequests) / float64(window.Requests)
+		window.TimeoutRate = float64(window.TimeoutRequests) / float64(window.Requests)
+	}
+	window.UpstreamCostTotal = roundChannelAccountFloat(window.UpstreamCostTotal)
+	window.AvgDurationMs = roundChannelAccountFloat(window.AvgDurationMs)
+	window.AvgTTFTMs = roundChannelAccountFloat(window.AvgTTFTMs)
+	window.SuccessRate = roundChannelAccountFloat(window.SuccessRate)
+	window.ErrorRate = roundChannelAccountFloat(window.ErrorRate)
+	window.TimeoutRate = roundChannelAccountFloat(window.TimeoutRate)
+	return window
+}
+
+func channelAccountStatRequests(statsByAccount map[string]*ChannelAccountStats, account modelgatewayaccount.ChannelAccount, window string) int64 {
+	stats := statsByAccount[channelAccountStatsKey(account)]
+	if stats == nil {
+		return 0
+	}
+	switch window {
+	case "today":
+		return stats.Today.Requests
+	case "last_5h":
+		return stats.Last5h.Requests
+	case "last_7d":
+		return stats.Last7d.Requests
+	default:
+		return 0
+	}
+}
+
+func channelAccountStatSuccessRate(statsByAccount map[string]*ChannelAccountStats, account modelgatewayaccount.ChannelAccount) float64 {
+	stats := statsByAccount[channelAccountStatsKey(account)]
+	if stats == nil {
+		return 0
+	}
+	return stats.Today.SuccessRate
+}
+
+func channelAccountStatLastActive(statsByAccount map[string]*ChannelAccountStats, account modelgatewayaccount.ChannelAccount) int64 {
+	stats := statsByAccount[channelAccountStatsKey(account)]
+	if stats == nil {
+		return 0
+	}
+	return stats.LastActiveAt
+}
+
+func boolToInt64(value bool) int64 {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func roundChannelAccountFloat(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	return math.Round(value*10000) / 10000
 }
 
 func updateChannelAccountStatus(channelID int, credentialIndex int, enabled bool, reason string) (*ChannelAccountOperation, error) {
@@ -1416,6 +1895,9 @@ func parseJSONCredentialInput(value string) ([]string, bool) {
 		if err := common.Unmarshal([]byte(value), &payload); err != nil {
 			return nil, false
 		}
+		if parsed, ok := parseJSONCredentialContainer(payload); ok {
+			return parsed, true
+		}
 		compacted, err := common.Marshal(payload)
 		if err != nil {
 			return nil, false
@@ -1445,6 +1927,23 @@ func parseJSONCredentialInput(value string) ([]string, bool) {
 			}
 		}
 		return items, true
+	}
+	return nil, false
+}
+
+func parseJSONCredentialContainer(payload map[string]interface{}) ([]string, bool) {
+	if len(payload) == 0 {
+		return nil, false
+	}
+	parser := &ChannelAccountImportParser{}
+	for _, key := range []string{"credential_list", "accounts", "credentials"} {
+		credentials, ok, err := parser.credentialsFromJSONField(payload[key], false)
+		if err != nil {
+			return nil, false
+		}
+		if ok {
+			return credentials, true
+		}
 	}
 	return nil, false
 }
@@ -1858,7 +2357,23 @@ func buildChannelAccountItem(account modelgatewayaccount.ChannelAccount, runtime
 	if len(item.RuntimeKeys) == 0 {
 		item.RuntimeKeys = nil
 	}
+	if item.Score != nil && item.Score.ProbeRecoveryPending {
+		item.Stats = ensureChannelAccountStats(item.Stats)
+		item.Stats.ProbeRecoveryState = &ChannelAccountProbeRecoveryState{
+			Pending:      true,
+			Reason:       item.Score.ProbeTriggerReason,
+			SuccessCount: item.Score.ProbeRecoverySuccessCount,
+			Required:     item.Score.ProbeRecoveryRequired,
+		}
+	}
 	return item
+}
+
+func ensureChannelAccountStats(stats *ChannelAccountStats) *ChannelAccountStats {
+	if stats != nil {
+		return stats
+	}
+	return &ChannelAccountStats{}
 }
 
 func channelAccountRuntimeItemMatches(account modelgatewayaccount.ChannelAccount, item modelgatewayobservability.RuntimeStatusItem, allowChannelFallback bool) bool {
@@ -1916,35 +2431,37 @@ func channelAccountRuntimeItemLatestTime(item modelgatewayobservability.RuntimeS
 
 func channelAccountScoreSummaryFromRuntimeItem(item modelgatewayobservability.RuntimeStatusItem) ChannelAccountScoreSummary {
 	return ChannelAccountScoreSummary{
-		RuntimeKey:              channelAccountRuntimeKeyFromItem(item),
-		HealthStatus:            item.HealthStatus,
-		ScoreTotal:              item.ScoreTotal,
-		RoutingScoreTotal:       item.RoutingScoreTotal,
-		CostItemScore:           item.ScoreBreakdown["cost"],
-		CostRatio:               item.CostRatio,
-		CostReferenceRatio:      item.CostReferenceRatio,
-		CostPricingMode:         item.CostPricingMode,
-		SampleCount:             item.SampleCount,
-		RealSampleCount30m:      item.RealSampleCount30m,
-		SuccessRate:             item.SuccessRate,
-		TTFTMs:                  item.TTFTMs,
-		DurationMs:              item.DurationMs,
-		TokensPerSecond:         item.TokensPerSecond,
-		EmptyOutputRate:         item.EmptyOutputRate,
-		ExperienceIssueRate:     item.ExperienceIssueRate,
-		LastRealAttemptAt:       item.LastRealAttemptAt,
-		LastRealSuccessAt:       item.LastRealSuccessAt,
-		LastRealFailureAt:       item.LastRealFailureAt,
-		LastProbeAt:             item.LastProbeAt,
-		LastProbeSuccessAt:      item.LastProbeSuccessAt,
-		ConfigErrorIsolated:     item.ConfigErrorIsolated,
-		IsolationReason:         item.IsolationReason,
-		ProbeRecoveryPending:    item.ProbeRecoveryPending,
-		ProbeTriggerReason:      item.ProbeTriggerReason,
-		ActiveConcurrency:       item.ActiveConcurrency,
-		EffectiveConcurrencyCap: item.EffectiveConcurrencyLimit,
-		QueueDepth:              item.QueueDepth,
-		QueueCapacity:           item.QueueCapacity,
+		RuntimeKey:                channelAccountRuntimeKeyFromItem(item),
+		HealthStatus:              item.HealthStatus,
+		ScoreTotal:                item.ScoreTotal,
+		RoutingScoreTotal:         item.RoutingScoreTotal,
+		CostItemScore:             item.ScoreBreakdown["cost"],
+		CostRatio:                 item.CostRatio,
+		CostReferenceRatio:        item.CostReferenceRatio,
+		CostPricingMode:           item.CostPricingMode,
+		SampleCount:               item.SampleCount,
+		RealSampleCount30m:        item.RealSampleCount30m,
+		SuccessRate:               item.SuccessRate,
+		TTFTMs:                    item.TTFTMs,
+		DurationMs:                item.DurationMs,
+		TokensPerSecond:           item.TokensPerSecond,
+		EmptyOutputRate:           item.EmptyOutputRate,
+		ExperienceIssueRate:       item.ExperienceIssueRate,
+		LastRealAttemptAt:         item.LastRealAttemptAt,
+		LastRealSuccessAt:         item.LastRealSuccessAt,
+		LastRealFailureAt:         item.LastRealFailureAt,
+		LastProbeAt:               item.LastProbeAt,
+		LastProbeSuccessAt:        item.LastProbeSuccessAt,
+		ConfigErrorIsolated:       item.ConfigErrorIsolated,
+		IsolationReason:           item.IsolationReason,
+		ProbeRecoveryPending:      item.ProbeRecoveryPending,
+		ProbeTriggerReason:        item.ProbeTriggerReason,
+		ProbeRecoverySuccessCount: item.ProbeRecoverySuccessCount,
+		ProbeRecoveryRequired:     item.ProbeRecoveryRequired,
+		ActiveConcurrency:         item.ActiveConcurrency,
+		EffectiveConcurrencyCap:   item.EffectiveConcurrencyLimit,
+		QueueDepth:                item.QueueDepth,
+		QueueCapacity:             item.QueueCapacity,
 	}
 }
 

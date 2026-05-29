@@ -1,10 +1,13 @@
 package openai
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	appconstant "github.com/QuantumNous/new-api/constant"
@@ -72,6 +75,9 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 }
 
 func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	if info != nil && !info.IsStream && common.GetContextKeyBool(c, appconstant.ContextKeyCodexUpstreamStreamForced) {
+		return OaiResponsesStreamAsNonStreamHandler(c, info, resp)
+	}
 	if resp == nil || resp.Body == nil {
 		logger.LogError(c, "invalid response or response body")
 		return nil, types.NewError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse)
@@ -212,6 +218,195 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	markRelayEmptyOutput(c, info, usage, responseTextBuilder.String())
 
 	return usage, nil
+}
+
+func OaiResponsesStreamAsNonStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	if resp == nil || resp.Body == nil {
+		logger.LogError(c, "invalid response or response body")
+		return nil, types.NewError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse)
+	}
+	usage := &dto.Usage{}
+	var finalResponse *dto.OpenAIResponsesResponse
+	var outputText strings.Builder
+	var streamErr *types.NewAPIError
+	scanResponsesSSE(resp, info, func(data string, sr *responsesNonStreamResult) {
+		var streamResponse dto.ResponsesStreamResponse
+		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
+			logger.LogError(c, "failed to unmarshal responses stream response for aggregation: "+err.Error())
+			sr.Error(err)
+			return
+		}
+		switch streamResponse.Type {
+		case "response.output_text.delta":
+			outputText.WriteString(streamResponse.Delta)
+		case "response.completed":
+			normalizeResponsesStreamResponseModel(info, &streamResponse)
+			if streamResponse.Response != nil {
+				finalResponse = streamResponse.Response
+				mergeResponsesUsageFromResponse(usage, finalResponse)
+			}
+		case "response.error", "response.failed":
+			streamErr = newAPIErrorFromResponsesStreamFailure(streamResponse)
+			sr.Stop(streamErr)
+			resp.Body.Close()
+			return
+		}
+	})
+	if err := helper.InternalRelayAttemptError(c); err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusGatewayTimeout)
+	}
+	if streamErr != nil {
+		return nil, streamErr
+	}
+	if finalResponse == nil {
+		finalResponse = buildAggregatedResponsesResponse(info, outputText.String(), usage)
+	} else if len(finalResponse.Output) == 0 && outputText.Len() > 0 {
+		finalResponse.Output = aggregatedResponsesOutput(outputText.String())
+	}
+	if usage.CompletionTokens == 0 && outputText.Len() > 0 {
+		usage.CompletionTokens = service.CountTextToken(outputText.String(), info.UpstreamModelName)
+		common.SetContextKey(c, appconstant.ContextKeyUsageEstimated, true)
+	}
+	if usage.PromptTokens == 0 && usage.CompletionTokens != 0 {
+		usage.PromptTokens = info.GetEstimatePromptTokens()
+		common.SetContextKey(c, appconstant.ContextKeyUsageEstimated, true)
+	}
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	if finalResponse.Usage == nil {
+		finalResponse.Usage = usage
+	}
+	normalizeResponsesResponseModel(info, finalResponse)
+	responseBody, err := common.Marshal(finalResponse)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
+	}
+	responseBody = normalizeOpenAIJSONBodyModel(info, responseBody)
+	if resp.Header == nil {
+		resp.Header = make(http.Header)
+	}
+	resp.Header.Set("Content-Type", "application/json")
+	resp.Header.Del("Transfer-Encoding")
+	service.IOCopyBytesGracefully(c, resp, responseBody)
+	markRelayEmptyOutput(c, info, usage, outputText.String())
+	return usage, nil
+}
+
+type responsesNonStreamResult struct {
+	status  *relaycommon.StreamStatus
+	stopped bool
+}
+
+func (r *responsesNonStreamResult) Error(err error) {
+	if err != nil && r.status != nil {
+		r.status.RecordError(err.Error())
+	}
+}
+
+func (r *responsesNonStreamResult) Stop(err error) {
+	if r.status != nil {
+		if err != nil {
+			r.status.RecordError(err.Error())
+		}
+		r.status.SetEndReason(relaycommon.StreamEndReasonHandlerStop, err)
+	}
+	r.stopped = true
+}
+
+func (r *responsesNonStreamResult) Done() {
+	if r.status != nil {
+		r.status.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+	}
+	r.stopped = true
+}
+
+func (r *responsesNonStreamResult) IsStopped() bool {
+	return r.stopped
+}
+
+func scanResponsesSSE(resp *http.Response, info *relaycommon.RelayInfo, dataHandler func(data string, sr *responsesNonStreamResult)) {
+	if resp == nil || resp.Body == nil || dataHandler == nil || info == nil {
+		return
+	}
+	if info.StreamStatus == nil {
+		info.StreamStatus = relaycommon.NewStreamStatus()
+	}
+	defer func() { _ = resp.Body.Close() }()
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, helper.InitialScannerBufferSize), helper.DefaultMaxScannerBufferSize)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		sr := &responsesNonStreamResult{status: info.StreamStatus}
+		dataHandler(data, sr)
+		if sr.IsStopped() {
+			return
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, err)
+	}
+}
+
+func mergeResponsesUsageFromResponse(usage *dto.Usage, response *dto.OpenAIResponsesResponse) {
+	if usage == nil || response == nil || response.Usage == nil {
+		return
+	}
+	if response.Usage.InputTokens != 0 {
+		usage.PromptTokens = response.Usage.InputTokens
+	}
+	if response.Usage.OutputTokens != 0 {
+		usage.CompletionTokens = response.Usage.OutputTokens
+	}
+	if response.Usage.TotalTokens != 0 {
+		usage.TotalTokens = response.Usage.TotalTokens
+	}
+	if response.Usage.InputTokensDetails != nil {
+		usage.PromptTokensDetails.CachedTokens = response.Usage.InputTokensDetails.CachedTokens
+	}
+}
+
+func buildAggregatedResponsesResponse(info *relaycommon.RelayInfo, text string, usage *dto.Usage) *dto.OpenAIResponsesResponse {
+	modelName := ""
+	if info != nil {
+		modelName = info.UpstreamModelName
+		if downstream := clientVisibleModelName(info); downstream != "" {
+			modelName = downstream
+		}
+	}
+	return &dto.OpenAIResponsesResponse{
+		ID:        fmt.Sprintf("resp_%d", time.Now().UnixNano()),
+		Object:    "response",
+		CreatedAt: int(time.Now().Unix()),
+		Status:    json.RawMessage(`"completed"`),
+		Model:     modelName,
+		Output:    aggregatedResponsesOutput(text),
+		Usage:     usage,
+	}
+}
+
+func aggregatedResponsesOutput(text string) []dto.ResponsesOutput {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	return []dto.ResponsesOutput{
+		{
+			Type:   "message",
+			Status: "completed",
+			Role:   "assistant",
+			Content: []dto.ResponsesOutputContent{
+				{
+					Type: "output_text",
+					Text: text,
+				},
+			},
+		},
+	}
 }
 
 type bufferedResponsesStreamEvent struct {

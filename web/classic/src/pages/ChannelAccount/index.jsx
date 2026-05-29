@@ -20,13 +20,14 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { unzipSync, strFromU8 } from 'fflate';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Banner,
   Button,
   Checkbox,
   Empty,
   Input,
+  SideSheet,
   Modal,
   Popconfirm,
   Select,
@@ -42,6 +43,7 @@ import {
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   ArrowLeft,
   BadgeCheck,
   Clock3,
@@ -59,6 +61,7 @@ import {
   Server,
   RefreshCw,
   ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   ToggleLeft,
   ToggleRight,
@@ -67,6 +70,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { API, showError, showInfo, showSuccess, timestamp2string } from '../../helpers';
+import { renderQuota } from '../../helpers/render';
 import ProxyEditorModal from '../../components/model-gateway/ProxyEditorModal';
 import './channel-account.css';
 
@@ -82,6 +86,17 @@ function unwrapApiData(response) {
 
 function formatNumber(value) {
   return new Intl.NumberFormat().format(Number(value) || 0);
+}
+
+function formatCompactNumber(value) {
+  const numeric = Number(value || 0);
+  if (Math.abs(numeric) >= 1000000) {
+    return `${(numeric / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
+  }
+  if (Math.abs(numeric) >= 1000) {
+    return `${(numeric / 1000).toFixed(1).replace(/\.0$/, '')}K`;
+  }
+  return formatNumber(numeric);
 }
 
 function formatPercent(value, digits = 1) {
@@ -107,6 +122,18 @@ function formatTimestamp(timestamp) {
   return Number(timestamp || 0) > 0
     ? timestamp2string(Number(timestamp))
     : '--';
+}
+
+function formatCost(value) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 'US$0.00';
+  return `US$${numeric.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}`;
+}
+
+function formatQuotaValue(value) {
+  const quota = Number(value || 0);
+  if (quota <= 0) return renderQuota(0, 2);
+  return renderQuota(quota, 2);
 }
 
 function pluralCount(value) {
@@ -203,6 +230,9 @@ function extractCredentialsFromImportJSON(value, xautoPackage = false) {
       value.credential_list,
       xautoPackage,
     );
+  }
+  if (value.accounts !== undefined) {
+    return extractCredentialsFromImportJSON(value.accounts, xautoPackage);
   }
   if (value.credentials !== undefined) {
     return extractCredentialsFromImportJSON(value.credentials, xautoPackage);
@@ -586,16 +616,78 @@ function capabilityTag(label, value) {
   );
 }
 
+function classificationMeta(value, t) {
+  switch (value) {
+    case 'codex_compact_available':
+      return { color: 'green', label: t('Codex/Compact 可用') };
+    case 'codex_backend_available':
+      return { color: 'green', label: t('Codex 可用') };
+    case 'stream_only':
+      return { color: 'cyan', label: t('仅支持流式') };
+    case 'platform_quota_insufficient':
+      return { color: 'orange', label: t('Platform 余额不足') };
+    case 'platform_responses_scope_missing':
+      return { color: 'orange', label: t('Platform Responses 权限不足') };
+    case 'proxy_error':
+      return { color: 'red', label: t('代理异常') };
+    case 'auth_error':
+      return { color: 'red', label: t('授权异常') };
+    case 'region_error':
+      return { color: 'red', label: t('区域异常') };
+    case 'unknown':
+      return { color: 'grey', label: t('未知') };
+    default:
+      return { color: 'grey', label: value || t('未分类') };
+  }
+}
+
+function effectiveCapabilityClassification(capabilities) {
+  if (!capabilities) return '';
+  if (capabilities.codex_backend_responses_stream_write === true) {
+    return capabilities.codex_backend_compact_write === true
+      ? 'codex_compact_available'
+      : 'codex_backend_available';
+  }
+  if (capabilities.proxy_last_error) {
+    return 'proxy_error';
+  }
+  return capabilities.capability_classification || '';
+}
+
 function CapabilitiesCell({ capabilities, t }) {
   if (!capabilities || !capabilities.checked_time) {
     return <Text type='tertiary'>{t('未检测')}</Text>;
   }
 
+  const classification = classificationMeta(
+    effectiveCapabilityClassification(capabilities),
+    t,
+  );
+  const proxyParts = [
+    capabilities.proxy_id ? `Proxy #${capabilities.proxy_id}` : '',
+    capabilities.proxy_exit_ip || '',
+    capabilities.proxy_region || '',
+  ].filter(Boolean);
   const content = (
     <div className='ct-channel-account-capability-tip'>
       <div>
         {t('检测时间')}: {timestamp2string(capabilities.checked_time)}
       </div>
+      {capabilities.capability_probe_surface ? (
+        <div>
+          {t('检测口径')}: {capabilities.capability_probe_surface}
+        </div>
+      ) : null}
+      {proxyParts.length > 0 ? (
+        <div>
+          {t('代理出口')}: {proxyParts.join(' / ')}
+        </div>
+      ) : null}
+      {capabilities.proxy_last_error ? (
+        <div>
+          {t('代理错误')}: {capabilities.proxy_last_error}
+        </div>
+      ) : null}
       {capabilities.last_endpoint ? (
         <div>
           {t('最后检测端点')}: {capabilities.last_endpoint}
@@ -609,10 +701,26 @@ function CapabilitiesCell({ capabilities, t }) {
 
   return (
     <Tooltip content={content}>
-      <div className='ct-channel-account-capability-tags'>
-        {capabilityTag('Responses', capabilities.responses_write)}
-        {capabilityTag('Chat', capabilities.chat_completions_write)}
-        {capabilityTag('Compact', capabilities.responses_compact_write)}
+      <div className='ct-channel-account-capability-stack'>
+        <Tag color={classification.color} type='light' shape='circle' size='small'>
+          {classification.label}
+        </Tag>
+        <div className='ct-channel-account-capability-group'>
+          <span>{t('Codex')}</span>
+          <div className='ct-channel-account-capability-tags'>
+            {capabilityTag('Stream', capabilities.codex_backend_responses_stream_write)}
+            {capabilityTag('Compact', capabilities.codex_backend_compact_write)}
+            {capabilityTag('Stream Only', capabilities.codex_backend_requires_stream)}
+          </div>
+        </div>
+        <div className='ct-channel-account-capability-group'>
+          <span>{t('Platform')}</span>
+          <div className='ct-channel-account-capability-tags'>
+            {capabilityTag('Chat', capabilities.platform_chat_completions_write)}
+            {capabilityTag('Responses', capabilities.platform_responses_write)}
+            {capabilityTag('Compact', capabilities.platform_responses_compact_write)}
+          </div>
+        </div>
       </div>
     </Tooltip>
   );
@@ -681,6 +789,43 @@ function proxyReusePolicyLabel(policy, t) {
 
 function isProxyReuseConfirmRequiredMessage(message) {
   return String(message || '').includes('请确认后继续绑定');
+}
+
+function accountIsCodexOAuth(record) {
+  const identity = record?.account_identity || {};
+  const resource = record?.resource_ref || {};
+  const values = [
+    identity.account_type,
+    identity.brand,
+    identity.provider,
+    resource.brand,
+    resource.provider,
+  ]
+    .map((value) => String(value || '').toLowerCase())
+    .join(' ');
+  return values.includes('oauth') && values.includes('codex');
+}
+
+function summarizeAccountCapabilityError(message, t) {
+  const raw = String(message || '').trim();
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes('insufficient_quota') ||
+    lower.includes('exceeded your current quota')
+  ) {
+    return t('Platform API 额度不足或未开通计费；这不影响 Codex backend 调度。');
+  }
+  if (
+    lower.includes('api.responses.write') ||
+    lower.includes('missing scopes') ||
+    lower.includes('insufficient permissions')
+  ) {
+    return t('Platform Responses API 权限不足；这不影响 Codex backend 调度。');
+  }
+  if (raw.length > 260) {
+    return `${raw.slice(0, 260)}...`;
+  }
+  return raw;
 }
 
 function ProxyCell({ record, t, onOpenProxy, onOpenProxyEdit }) {
@@ -791,6 +936,117 @@ function ScoreSummary({ score, t }) {
         <span>{t('成本分')}</span>
         <strong>{formatScore(score.cost_item_score)}</strong>
       </div>
+    </div>
+  );
+}
+
+function accountStatsWindow(record, key) {
+  return record?.stats?.[key] || {};
+}
+
+function AccountStatsBlock({ stats, t }) {
+  const today = stats?.today || {};
+  if (!today.requests) {
+    return <Text type='tertiary'>{t('无统计数据')}</Text>;
+  }
+  return (
+    <div className='ct-channel-account-stat-cell'>
+      <div>
+        <span>{t('请求')}</span>
+        <strong>{formatCompactNumber(today.requests)}</strong>
+      </div>
+      <div>
+        <span>Token</span>
+        <strong>{formatCompactNumber(today.total_tokens)}</strong>
+      </div>
+      <div>
+        <span>{t('账号成本')}</span>
+        <strong className='ct-channel-account-money'>
+          {formatCost(today.upstream_cost_total)}
+        </strong>
+      </div>
+      <div>
+        <span>{t('用户扣费')}</span>
+        <strong>{formatQuotaValue(today.quota)}</strong>
+      </div>
+      <div>
+        <span>{t('成功率')}</span>
+        <strong>{formatPercent(today.success_rate)}</strong>
+      </div>
+      <div>
+        <span>{t('超时率')}</span>
+        <strong>{formatPercent(today.timeout_rate)}</strong>
+      </div>
+    </div>
+  );
+}
+
+function WindowUsagePill({ label, window, t }) {
+  const requests = Number(window?.requests || 0);
+  const successRate = Number(window?.success_rate || 0);
+  const errorLabel = window?.top_error_category || t('无异常');
+  return (
+    <div className='ct-channel-account-window-row'>
+      <Tag color={label === '5h' ? 'violet' : 'teal'} type='light'>
+        {label}
+      </Tag>
+      <div className='ct-channel-account-window-bar'>
+        <span style={{ width: `${Math.min(100, Math.max(0, successRate * 100))}%` }} />
+      </div>
+      <strong>{formatPercent(successRate, 0)}</strong>
+      <span>{formatCompactNumber(requests)} req</span>
+      <span>{formatCompactNumber(window?.total_tokens || 0)}</span>
+      <span>{formatQuotaValue(window?.quota || 0)}</span>
+      <Text type='tertiary' ellipsis={{ showTooltip: true }}>
+        {errorLabel}
+      </Text>
+    </div>
+  );
+}
+
+function UsageWindowsBlock({ stats, t }) {
+  return (
+    <div className='ct-channel-account-window-stack'>
+      <WindowUsagePill label='5h' window={stats?.last_5h || {}} t={t} />
+      <WindowUsagePill label='7d' window={stats?.last_7d || {}} t={t} />
+    </div>
+  );
+}
+
+function DispatchHealthBlock({ record, t }) {
+  const score = record?.score;
+  if (!score) {
+    return <Text type='tertiary'>{t('暂无运行态')}</Text>;
+  }
+  const meta = healthTagMeta(score.health_status, t);
+  return (
+    <div className='ct-channel-account-dispatch-cell'>
+      <div className='ct-channel-account-dispatch-head'>
+        <Tag color={meta.color} type='light' shape='circle'>
+          {meta.label}
+        </Tag>
+        <strong>{formatScore(score.score_total)}</strong>
+      </div>
+      <div className='ct-channel-account-dispatch-grid'>
+        <span>{t('并发')}</span>
+        <strong>
+          {formatNumber(score.active_concurrency || 0)} /{' '}
+          {formatNumber(score.effective_concurrency_limit || 0)}
+        </strong>
+        <span>{t('队列')}</span>
+        <strong>
+          {formatNumber(score.queue_depth || 0)} /{' '}
+          {formatNumber(score.queue_capacity || 0)}
+        </strong>
+      </div>
+      {score.probe_recovery_pending ? (
+        <Tag color='orange' size='small' type='light' shape='circle'>
+          {t('恢复样本 {{current}}/{{required}}', {
+            current: score.probe_recovery_success_count || 0,
+            required: score.probe_recovery_required || 0,
+          })}
+        </Tag>
+      ) : null}
     </div>
   );
 }
@@ -1007,6 +1263,7 @@ function buildColumns(
   onOpenProxyEdit,
   onTestAccount,
   onProbeCapability,
+  onDiagnosePlatformCapability,
   statusLoadingKey,
   testingAccountKey,
   capabilityLoadingKey,
@@ -1014,9 +1271,13 @@ function buildColumns(
   return [
     {
       title: t('账号'),
-      dataIndex: 'account_identity',
+      dataIndex: 'credential_index',
+      key: 'credential_index',
+      sorter: true,
       width: 280,
-      render: (identity = {}, record) => (
+      render: (_, record) => {
+        const identity = record?.account_identity || {};
+        return (
         <div className='ct-channel-account-identity'>
           <div className='ct-channel-account-avatar'>
             <UserRoundCog size={17} />
@@ -1037,7 +1298,8 @@ function buildColumns(
             ) : null}
           </div>
         </div>
-      ),
+        );
+      },
     },
     {
       title: t('品牌与凭证'),
@@ -1085,7 +1347,8 @@ function buildColumns(
     {
       title: t('当前评分'),
       dataIndex: 'score',
-      key: 'score_summary',
+      key: 'score',
+      sorter: true,
       width: 240,
       render: (score) => <ScoreSummary score={score} t={t} />,
     },
@@ -1096,9 +1359,9 @@ function buildColumns(
       render: (_, record) => <RuntimeKeysCell record={record} t={t} />,
     },
     {
-      title: t('账号权限'),
+      title: t('账号能力'),
       dataIndex: 'capabilities',
-      width: 230,
+      width: 320,
       render: (capabilities) => (
         <CapabilitiesCell capabilities={capabilities} t={t} />
       ),
@@ -1107,6 +1370,7 @@ function buildColumns(
       title: t('最近活动'),
       dataIndex: 'recent_activity',
       key: 'recent_activity',
+      sorter: true,
       width: 260,
       render: (_, record) => {
         const score = record.score;
@@ -1126,7 +1390,7 @@ function buildColumns(
     {
       title: t('操作'),
       dataIndex: 'operation',
-      width: 286,
+      width: 330,
       fixed: 'right',
       render: (_, record) => {
         const action = record?.key_enabled ? 'disable' : 'enable';
@@ -1134,6 +1398,7 @@ function buildColumns(
         const loading = statusLoadingKey === loadingKey;
         const testing = testingAccountKey === loadingKey;
         const probing = capabilityLoadingKey === loadingKey;
+        const platformDiagnosing = capabilityLoadingKey === `${loadingKey}:platform`;
         return (
           <Space className='ct-channel-account-operation' spacing={6}>
             <Tooltip content={t('测试账号')}>
@@ -1150,7 +1415,7 @@ function buildColumns(
                 {t('测试')}
               </Button>
             </Tooltip>
-            <Tooltip content={t('检测账号权限')}>
+            <Tooltip content={t('检测 Codex 能力')}>
               <Button
                 size='small'
                 type='tertiary'
@@ -1158,7 +1423,18 @@ function buildColumns(
                 icon={<Search size={14} />}
                 loading={probing}
                 onClick={() => onProbeCapability(record)}
-                aria-label={t('检测账号权限')}
+                aria-label={t('检测 Codex 能力')}
+              />
+            </Tooltip>
+            <Tooltip content={t('Platform API 诊断')}>
+              <Button
+                size='small'
+                type='tertiary'
+                theme='borderless'
+                icon={<PlugZap size={14} />}
+                loading={platformDiagnosing}
+                onClick={() => onDiagnosePlatformCapability(record)}
+                aria-label={t('Platform API 诊断')}
               />
             </Tooltip>
             <Tooltip content={t('编辑账号')}>
@@ -1222,39 +1498,236 @@ function buildColumns(
   ];
 }
 
-function accountSearchText(item) {
-  const identity = item?.account_identity || {};
-  const resource = item?.resource_ref || {};
-  const score = item?.score || {};
-  const proxy = item?.proxy || {};
-  const runtimeKeys = (item?.runtime_keys || [])
-    .map((runtime) => runtimeKeyLabel(runtime.runtime_key, (value) => value))
-    .join(' ');
+function buildStatsColumns(
+  t,
+  onToggleStatus,
+  onOpenDetail,
+  statusLoadingKey,
+) {
   return [
-    identity.display_name,
-    identity.account_id,
-    identity.account_type,
-    identity.brand,
-    resource.brand,
-    item?.subject_short,
-    item?.credential_short,
-    item?.disabled_reason,
-    proxy.name,
-    proxy.masked_address,
-    proxy.address,
-    score.runtime_key && runtimeKeyLabel(score.runtime_key, (value) => value),
-    runtimeKeys,
-    item?.credential_index != null ? String(item.credential_index + 1) : '',
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
+    {
+      title: t('状态'),
+      dataIndex: 'credential_index',
+      key: 'credential_index',
+      width: 270,
+      render: (_, record) => {
+        const identity = record?.account_identity || {};
+        return (
+        <div className='ct-channel-account-identity'>
+          <div className='ct-channel-account-avatar'>
+            <BarChart3 size={17} />
+          </div>
+          <div>
+            <div className='ct-channel-account-name'>
+              {identity.display_name ||
+                `${t('账号')} #${record.credential_index + 1}`}
+              {statusTag(record, t)}
+            </div>
+            <div className='ct-channel-account-sub'>
+              {identity.brand || record?.resource_ref?.brand || '--'} ·{' '}
+              {t('凭证序号')} #{record.credential_index + 1}
+            </div>
+            {record.disabled_reason ? (
+              <div className='ct-channel-account-warning'>
+                {record.disabled_reason}
+              </div>
+            ) : null}
+          </div>
+        </div>
+        );
+      },
+    },
+    {
+      title: t('调度'),
+      dataIndex: 'score',
+      width: 230,
+      render: (_, record) => <DispatchHealthBlock record={record} t={t} />,
+    },
+    {
+      title: t('今日统计'),
+      dataIndex: 'today_requests',
+      key: 'today_requests',
+      sorter: true,
+      width: 260,
+      render: (_, record) => <AccountStatsBlock stats={record?.stats} t={t} />,
+    },
+    {
+      title: t('用量窗口'),
+      dataIndex: 'last_7d_requests',
+      key: 'last_7d_requests',
+      sorter: true,
+      width: 470,
+      render: (_, record) => <UsageWindowsBlock stats={record?.stats} t={t} />,
+    },
+    {
+      title: t('最近活跃'),
+      dataIndex: 'last_active_at',
+      key: 'last_active_at',
+      sorter: true,
+      width: 190,
+      render: (_, record) => {
+        const stats = record?.stats || {};
+        return (
+        <div className='ct-channel-account-time-grid'>
+          <span>{t('请求')}</span>
+          <strong>{formatTimestamp(stats?.last_active_at)}</strong>
+          <span>{t('主要异常')}</span>
+          <strong>{stats?.main_error_category || t('无异常')}</strong>
+        </div>
+        );
+      },
+    },
+    {
+      title: t('操作'),
+      dataIndex: 'operation',
+      width: 210,
+      fixed: 'right',
+      render: (_, record) => {
+        const action = record?.key_enabled ? 'disable' : 'enable';
+        const loadingKey = `${record.channel_id}-${record.credential_index}`;
+        return (
+          <Space spacing={6}>
+            <Button
+              size='small'
+              type='tertiary'
+              theme='light'
+              icon={<FileText size={14} />}
+              onClick={() => onOpenDetail(record)}
+            >
+              {t('详情')}
+            </Button>
+            <Popconfirm
+              title={
+                action === 'disable'
+                  ? t('确定禁用该账号？')
+                  : t('确定启用该账号？')
+              }
+              content={
+                action === 'disable'
+                  ? t('禁用后该账号不会参与智能调度')
+                  : t('启用后该账号可重新参与智能调度')
+              }
+              onConfirm={() => onToggleStatus(record)}
+            >
+              <Button
+                size='small'
+                type={action === 'disable' ? 'warning' : 'primary'}
+                theme='light'
+                loading={statusLoadingKey === loadingKey}
+                icon={
+                  action === 'disable' ? (
+                    <ToggleLeft size={14} />
+                  ) : (
+                    <ToggleRight size={14} />
+                  )
+                }
+              >
+                {action === 'disable' ? t('禁用') : t('启用')}
+              </Button>
+            </Popconfirm>
+          </Space>
+        );
+      },
+    },
+  ];
+}
+
+function DetailStatWindow({ title, window, t }) {
+  return (
+    <div className='ct-channel-account-detail-window'>
+      <div className='ct-channel-account-detail-window-title'>{title}</div>
+      <div className='ct-channel-account-detail-grid'>
+        <span>{t('请求')}</span>
+        <strong>{formatNumber(window?.requests)}</strong>
+        <span>Token</span>
+        <strong>{formatCompactNumber(window?.total_tokens)}</strong>
+        <span>{t('成功率')}</span>
+        <strong>{formatPercent(window?.success_rate)}</strong>
+        <span>{t('账号成本')}</span>
+        <strong>{formatCost(window?.upstream_cost_total)}</strong>
+        <span>{t('用户扣费')}</span>
+        <strong>{formatQuotaValue(window?.quota)}</strong>
+        <span>{t('平均首包')}</span>
+        <strong>{formatLatency(window?.avg_ttft_ms)}</strong>
+        <span>{t('平均耗时')}</span>
+        <strong>{formatLatency(window?.avg_duration_ms)}</strong>
+        <span>{t('主要异常')}</span>
+        <strong>{window?.top_error_category || t('无异常')}</strong>
+      </div>
+    </div>
+  );
+}
+
+function AccountDetailSideSheet({ visible, record, onClose, t }) {
+  const identity = record?.account_identity || {};
+  const stats = record?.stats || {};
+  return (
+    <SideSheet
+      title={t('账号详情')}
+      visible={visible}
+      width={560}
+      onCancel={onClose}
+      bodyStyle={{ padding: 0 }}
+    >
+      <div className='ct-channel-account-detail-sheet'>
+        <div className='ct-channel-account-detail-head'>
+          <div>
+            <h3>
+              {identity.display_name ||
+                `${t('账号')} #${Number(record?.credential_index || 0) + 1}`}
+            </h3>
+            <p>
+              {identity.brand || record?.resource_ref?.brand || '--'} ·{' '}
+              {identity.account_type || '--'}
+            </p>
+          </div>
+          {record ? statusTag(record, t) : null}
+        </div>
+        <div className='ct-channel-account-detail-section'>
+          <div className='ct-channel-account-detail-title'>{t('凭证身份')}</div>
+          <div className='ct-channel-account-detail-grid'>
+            <span>{t('凭证序号')}</span>
+            <strong>#{Number(record?.credential_index || 0) + 1}</strong>
+            <span>{t('账号标识')}</span>
+            <strong>{identity.account_id || '--'}</strong>
+            <span>{t('主体指纹')}</span>
+            <strong>{record?.subject_short || '--'}</strong>
+            <span>{t('凭证指纹')}</span>
+            <strong>{record?.credential_short || '--'}</strong>
+            <span>{t('代理')}</span>
+            <strong>{proxyLabel(record?.proxy, t)}</strong>
+          </div>
+        </div>
+        <div className='ct-channel-account-detail-section'>
+          <div className='ct-channel-account-detail-title'>{t('调度健康')}</div>
+          <DispatchHealthBlock record={record} t={t} />
+        </div>
+        <div className='ct-channel-account-detail-section'>
+          <div className='ct-channel-account-detail-title'>{t('用量统计')}</div>
+          <div className='ct-channel-account-detail-windows'>
+            <DetailStatWindow title={t('今日统计')} window={stats.today || {}} t={t} />
+            <DetailStatWindow title={t('近5小时')} window={stats.last_5h || {}} t={t} />
+            <DetailStatWindow title={t('近7天')} window={stats.last_7d || {}} t={t} />
+          </div>
+        </div>
+        <div className='ct-channel-account-detail-section'>
+          <div className='ct-channel-account-detail-title'>{t('运行键')}</div>
+          <RuntimeKeysCell record={record} t={t} />
+        </div>
+        <div className='ct-channel-account-detail-section'>
+          <div className='ct-channel-account-detail-title'>{t('账号权限')}</div>
+          <CapabilitiesCell capabilities={record?.capabilities} t={t} />
+        </div>
+      </div>
+    </SideSheet>
+  );
 }
 
 function ChannelAccount() {
   const { t } = useTranslation();
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const importFileInputRef = useRef(null);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -1267,6 +1740,23 @@ function ChannelAccount() {
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [view, setViewState] = useState(
+    searchParams.get('view') === 'stats' ? 'stats' : 'manage',
+  );
+  const [page, setPage] = useState(
+    Math.max(1, Number.parseInt(searchParams.get('page') || '1', 10) || 1),
+  );
+  const [pageSize, setPageSize] = useState(
+    Math.max(1, Number.parseInt(searchParams.get('page_size') || '20', 10) || 20),
+  );
+  const [sortConfig, setSortConfig] = useState({ sort: '', order: '' });
+  const [detailRecord, setDetailRecord] = useState(null);
+  const setView = useCallback((nextView) => {
+    const normalized = nextView === 'stats' ? 'stats' : 'manage';
+    setViewState(normalized);
+    setSortConfig({ sort: '', order: '' });
+    setPage(1);
+  }, []);
   const [importVisible, setImportVisible] = useState(false);
   const [importCredentials, setImportCredentials] = useState('');
   const [importActiveTab, setImportActiveTab] = useState('file');
@@ -1329,6 +1819,15 @@ function ChannelAccount() {
     setError('');
     try {
       const response = await API.get(`/api/channel/${id}/accounts`, {
+        params: {
+          view,
+          page,
+          page_size: pageSize,
+          keyword: keyword.trim(),
+          status: statusFilter,
+          sort: sortConfig.sort,
+          order: sortConfig.order,
+        },
         disableDuplicate: true,
       });
       const payload = unwrapApiData(response);
@@ -1344,10 +1843,25 @@ function ChannelAccount() {
     } finally {
       setLoading(false);
     }
-  }, [id, t]);
+  }, [id, keyword, page, pageSize, sortConfig.order, sortConfig.sort, statusFilter, t, view]);
 
   useEffect(() => {
-    loadAccounts();
+    const next = new URLSearchParams(searchParams);
+    next.set('view', view);
+    if (page > 1) next.set('page', String(page));
+    else next.delete('page');
+    if (pageSize !== 20) next.set('page_size', String(pageSize));
+    else next.delete('page_size');
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [page, pageSize, searchParams, setSearchParams, view]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      loadAccounts();
+    }, 250);
+    return () => clearTimeout(timer);
   }, [loadAccounts]);
 
   const loadProxies = useCallback(async () => {
@@ -1389,7 +1903,7 @@ function ChannelAccount() {
 
   useEffect(() => {
     setSelectedRowKeys([]);
-  }, [id, keyword, statusFilter]);
+  }, [id, keyword, page, pageSize, statusFilter, view]);
 
   const toggleAccountStatus = useCallback(
     async (record) => {
@@ -1408,7 +1922,7 @@ function ChannelAccount() {
           throw new Error(response?.data?.message || t('操作失败'));
         }
         const payload = unwrapApiData(response);
-        setData(payload);
+        await loadAccounts();
         showSuccess(
           operationMessage(
             payload.operation,
@@ -1424,7 +1938,7 @@ function ChannelAccount() {
         setStatusLoadingKey('');
       }
     },
-    [id, t],
+    [id, loadAccounts, t],
   );
 
   const batchUpdateAccountStatus = useCallback(
@@ -1444,7 +1958,7 @@ function ChannelAccount() {
           throw new Error(response?.data?.message || t('操作失败'));
         }
         const payload = unwrapApiData(response);
-        setData(payload);
+        await loadAccounts();
         setSelectedRowKeys([]);
         showSuccess(
           operationMessage(
@@ -1467,7 +1981,7 @@ function ChannelAccount() {
         setBatchLoading(false);
       }
     },
-    [id, selectedIndexes, t],
+    [id, loadAccounts, selectedIndexes, t],
   );
 
   const testAccount = useCallback(
@@ -1477,6 +1991,36 @@ function ChannelAccount() {
         return;
       }
       const loadingKey = `${record.channel_id}-${record.credential_index}`;
+      if (accountIsCodexOAuth(record)) {
+        setTestingAccountKey(loadingKey);
+        setCapabilityLoadingKey(loadingKey);
+        try {
+          const response = await API.post('/api/channel/multi_key/manage', {
+            channel_id: Number(id),
+            action: 'probe_key_capabilities',
+            key_index: record.credential_index,
+          });
+          if (response?.data?.success === false) {
+            throw new Error(response?.data?.message || t('账号权限检测失败'));
+          }
+          const capabilityMessage =
+            response?.data?.data?.capabilities?.last_message ||
+            response?.data?.message ||
+            t('账号权限检测完成');
+          showSuccess(summarizeAccountCapabilityError(capabilityMessage, t));
+          await loadAccounts();
+        } catch (err) {
+          const message =
+            err?.response?.data?.message ||
+            err?.message ||
+            t('账号权限检测失败');
+          showError(summarizeAccountCapabilityError(message, t));
+        } finally {
+          setTestingAccountKey('');
+          setCapabilityLoadingKey('');
+        }
+        return;
+      }
       setTestingAccountKey(loadingKey);
       try {
         const response = await API.get(`/api/channel/test/${id}`, {
@@ -1498,7 +2042,7 @@ function ChannelAccount() {
       } catch (err) {
         const message =
           err?.response?.data?.message || err?.message || t('测试失败');
-        showError(message);
+        showError(summarizeAccountCapabilityError(message, t));
       } finally {
         setTestingAccountKey('');
       }
@@ -1519,14 +2063,50 @@ function ChannelAccount() {
         if (response?.data?.success === false) {
           throw new Error(response?.data?.message || t('账号权限检测失败'));
         }
-        showSuccess(response?.data?.message || t('账号权限检测完成'));
+        const capabilityMessage =
+          response?.data?.data?.capabilities?.last_message ||
+          response?.data?.message ||
+          t('账号权限检测完成');
+        showSuccess(summarizeAccountCapabilityError(capabilityMessage, t));
         await loadAccounts();
       } catch (err) {
         const message =
           err?.response?.data?.message ||
           err?.message ||
           t('账号权限检测失败');
-        showError(message);
+        showError(summarizeAccountCapabilityError(message, t));
+      } finally {
+        setCapabilityLoadingKey('');
+      }
+    },
+    [id, loadAccounts, t],
+  );
+
+  const diagnosePlatformCapability = useCallback(
+    async (record) => {
+      const loadingKey = `${record.channel_id}-${record.credential_index}:platform`;
+      setCapabilityLoadingKey(loadingKey);
+      try {
+        const response = await API.post('/api/channel/multi_key/manage', {
+          channel_id: Number(id),
+          action: 'diagnose_platform_key_capabilities',
+          key_index: record.credential_index,
+        });
+        if (response?.data?.success === false) {
+          throw new Error(response?.data?.message || t('Platform API 诊断失败'));
+        }
+        const capabilityMessage =
+          response?.data?.data?.capabilities?.last_message ||
+          response?.data?.message ||
+          t('Platform API 诊断完成');
+        showInfo(summarizeAccountCapabilityError(capabilityMessage, t));
+        await loadAccounts();
+      } catch (err) {
+        const message =
+          err?.response?.data?.message ||
+          err?.message ||
+          t('Platform API 诊断失败');
+        showError(summarizeAccountCapabilityError(message, t));
       } finally {
         setCapabilityLoadingKey('');
       }
@@ -1577,7 +2157,7 @@ function ChannelAccount() {
           throw new Error(response?.data?.message || t('操作失败'));
         }
         const payload = unwrapApiData(response);
-        setData(payload);
+        await loadAccounts();
         setSelectedRowKeys([]);
         showSuccess(
           operationMessage(
@@ -1594,7 +2174,7 @@ function ChannelAccount() {
         setDeleteLoading(false);
       }
     },
-    [id, t],
+    [id, loadAccounts, t],
   );
 
   const deleteSingleAccount = useCallback(
@@ -1691,7 +2271,7 @@ function ChannelAccount() {
         throw new Error(response?.data?.message || t('导入失败'));
       }
       const payload = unwrapApiData(response);
-      setData(payload);
+      await loadAccounts();
       setSelectedRowKeys([]);
       resetImportModal();
       showSuccess(operationMessage(payload.operation, t, t('导入成功')));
@@ -1707,6 +2287,7 @@ function ChannelAccount() {
     importCredentials,
     importFileList,
     importOnlyNew,
+    loadAccounts,
     resetImportModal,
     t,
   ]);
@@ -1925,7 +2506,7 @@ function ChannelAccount() {
           ),
         );
       }
-      if (payload) setData(payload);
+      if (payload) await loadAccounts();
       closeEditModal();
       showSuccess(messages.filter(Boolean).join(t('、')) || t('保存成功'));
     } catch (err) {
@@ -1960,6 +2541,7 @@ function ChannelAccount() {
     editRecord,
     id,
     proxyBindingChanged,
+    loadAccounts,
     proxyReusePolicy,
     selectedProxyRisk,
     submitProxyBinding,
@@ -1972,7 +2554,7 @@ function ChannelAccount() {
     try {
       const result = await submitProxyBinding(proxyRecord, allowReuseRisk);
       const payload = result?.payload;
-      setData(payload);
+      await loadAccounts();
       closeProxyModal();
       showSuccess(
         operationMessage(
@@ -2009,6 +2591,7 @@ function ChannelAccount() {
   }, [
     closeProxyModal,
     createProxyInline,
+    loadAccounts,
     proxyRecord,
     selectedProxyRisk,
     submitProxyBinding,
@@ -2048,7 +2631,7 @@ function ChannelAccount() {
     try {
       const result = await submitBatchProxyBinding(allowReuseRisk);
       const payload = result?.payload;
-      setData(payload);
+      await loadAccounts();
       setSelectedRowKeys([]);
       closeBatchProxyModal();
       showSuccess(
@@ -2088,6 +2671,7 @@ function ChannelAccount() {
   }, [
     closeBatchProxyModal,
     createProxyInline,
+    loadAccounts,
     selectedIndexes,
     submitBatchProxyBinding,
     t,
@@ -2108,6 +2692,7 @@ function ChannelAccount() {
         openProxyEditModal,
         testAccount,
         probeAccountCapability,
+        diagnosePlatformCapability,
         statusLoadingKey,
         testingAccountKey,
         capabilityLoadingKey,
@@ -2121,27 +2706,116 @@ function ChannelAccount() {
       openProxyEditModal,
       testAccount,
       probeAccountCapability,
+      diagnosePlatformCapability,
       statusLoadingKey,
       testingAccountKey,
       capabilityLoadingKey,
     ],
   );
+  const statsColumns = useMemo(
+    () =>
+      buildStatsColumns(
+        t,
+        toggleAccountStatus,
+        setDetailRecord,
+        statusLoadingKey,
+      ),
+    [t, toggleAccountStatus, statusLoadingKey],
+  );
   const items = data?.items || [];
-  const filteredItems = useMemo(() => {
-    const normalizedKeyword = keyword.trim().toLowerCase();
-    return items.filter((item) => {
-      if (statusFilter === 'enabled' && !item.key_enabled) return false;
-      if (statusFilter === 'disabled' && item.key_enabled) return false;
-      if (
-        normalizedKeyword &&
-        !accountSearchText(item).includes(normalizedKeyword)
-      ) {
-        return false;
-      }
-      return true;
-    });
-  }, [items, keyword, statusFilter]);
   const selectedCount = selectedRowKeys.length;
+  const isStatsView = view === 'stats';
+  const summary = data?.summary || {};
+  const tableColumns = isStatsView ? statsColumns : columns;
+  const tableScrollX = isStatsView ? 1660 : 2420;
+  const tablePagination = useMemo(
+    () => ({
+      currentPage: data?.page || page,
+      pageSize: data?.page_size || pageSize,
+      total: data?.filtered_total ?? data?.total ?? 0,
+      showSizeChanger: true,
+      pageSizeOpts: [20, 50, 100],
+      onPageChange: (nextPage) => setPage(nextPage),
+      onPageSizeChange: (nextSize) => {
+        setPageSize(nextSize);
+        setPage(1);
+      },
+    }),
+    [data?.filtered_total, data?.page, data?.page_size, data?.total, page, pageSize],
+  );
+  const handleTableChange = useCallback((changeInfo = {}) => {
+    const sorter = changeInfo?.sorter || {};
+    const sortOrder = sorter.sortOrder || sorter.order || sorter.sorter?.sortOrder || '';
+    const sortKey =
+      sorter.dataIndex ||
+      sorter.key ||
+      sorter.columnKey ||
+      sorter.sorter?.dataIndex ||
+      sorter.sorter?.key ||
+      '';
+    if (!sortOrder) {
+      setSortConfig({ sort: '', order: '' });
+      return;
+    }
+    setSortConfig({
+      sort: String(sortKey || ''),
+      order: String(sortOrder).toLowerCase().includes('asc') ? 'asc' : 'desc',
+    });
+    setPage(1);
+  }, []);
+  const metricCards = isStatsView
+    ? [
+        {
+          icon: <KeyRound size={18} />,
+          label: t('账号总数'),
+          value: formatNumber(data?.total),
+          detail: t('当前渠道可识别凭证'),
+        },
+        {
+          icon: <BarChart3 size={18} />,
+          label: t('今日请求'),
+          value: formatCompactNumber(summary.today?.requests),
+          detail: t('默认排除健康探活'),
+        },
+        {
+          icon: <Gauge size={18} />,
+          label: t('近5小时请求'),
+          value: formatCompactNumber(summary.last_5h?.requests),
+          detail: `${t('成功率')} ${formatPercent(summary.last_5h?.success_rate)}`,
+        },
+        {
+          icon: <Clock3 size={18} />,
+          label: t('近7天扣费'),
+          value: formatQuotaValue(summary.last_7d?.quota),
+          detail: `${t('账号成本')} ${formatCost(summary.last_7d?.upstream_cost_total)}`,
+        },
+      ]
+    : [
+        {
+          icon: <KeyRound size={18} />,
+          label: t('账号总数'),
+          value: formatNumber(data?.total),
+          detail: t('当前渠道可识别凭证'),
+        },
+        {
+          icon: <BadgeCheck size={18} />,
+          label: t('启用账号'),
+          value: formatNumber(data?.enabled),
+          detail: t('可参与智能调度'),
+        },
+        {
+          icon: <Gauge size={18} />,
+          label: t('已有评分'),
+          value: formatNumber(summary.scored),
+          detail: t('当前页运行态快照'),
+        },
+        {
+          icon: <Clock3 size={18} />,
+          label: t('近30分钟真实样本'),
+          value: formatNumber(summary.real_sample_count_30m),
+          detail: t('当前页评分样本'),
+        },
+      ];
   const rowSelection = useMemo(
     () => ({
       selectedRowKeys,
@@ -2195,6 +2869,38 @@ function ChannelAccount() {
           </Space>
         </div>
 
+        <div className='ct-channel-account-viewbar'>
+          <Tabs
+            type='button'
+            activeKey={view}
+            onChange={(key) => setView(key)}
+          >
+            <Tabs.TabPane
+              itemKey='manage'
+              tab={
+                <span className='ct-channel-account-view-tab'>
+                  <SlidersHorizontal size={14} />
+                  {t('管理视图')}
+                </span>
+              }
+            />
+            <Tabs.TabPane
+              itemKey='stats'
+              tab={
+                <span className='ct-channel-account-view-tab'>
+                  <BarChart3 size={14} />
+                  {t('统计视图')}
+                </span>
+              }
+            />
+          </Tabs>
+          <Text type='tertiary'>
+            {isStatsView
+              ? t('统计从上线后开始累计，默认排除健康探活')
+              : t('Codex 能力和 Platform API 诊断分开展示，Platform 失败不影响 Codex 调度')}
+          </Text>
+        </div>
+
         {error ? (
           <Banner
             type='danger'
@@ -2206,36 +2912,15 @@ function ChannelAccount() {
         ) : null}
 
         <div className='ct-channel-account-metric-grid'>
-          <MetricCard
-            icon={<KeyRound size={18} />}
-            label={t('账号总数')}
-            value={formatNumber(data?.total)}
-            detail={t('当前渠道可识别凭证')}
-          />
-          <MetricCard
-            icon={<BadgeCheck size={18} />}
-            label={t('启用账号')}
-            value={formatNumber(data?.enabled)}
-            detail={t('可参与智能调度')}
-          />
-          <MetricCard
-            icon={<Gauge size={18} />}
-            label={t('已有评分')}
-            value={formatNumber(items.filter((item) => item.score).length)}
-            detail={t('来自当前运行态快照')}
-          />
-          <MetricCard
-            icon={<Clock3 size={18} />}
-            label={t('近30分钟真实样本')}
-            value={formatNumber(
-              items.reduce(
-                (sum, item) =>
-                  sum + Number(item.score?.real_sample_count_30m || 0),
-                0,
-              ),
-            )}
-            detail={t('用于激活账号评分')}
-          />
+          {metricCards.map((card) => (
+            <MetricCard
+              key={card.label}
+              icon={card.icon}
+              label={card.label}
+              value={card.value}
+              detail={card.detail}
+            />
+          ))}
         </div>
 
         <div className='ct-channel-account-table-wrap'>
@@ -2244,13 +2929,19 @@ function ChannelAccount() {
               <Input
                 prefix={<Search size={14} />}
                 value={keyword}
-                onChange={setKeyword}
+                onChange={(value) => {
+                  setKeyword(value);
+                  setPage(1);
+                }}
                 placeholder={t('搜索账号、品牌、凭证或运行键')}
                 className='ct-channel-account-search'
               />
               <Select
                 value={statusFilter}
-                onChange={setStatusFilter}
+                onChange={(value) => {
+                  setStatusFilter(value);
+                  setPage(1);
+                }}
                 prefix={t('状态')}
                 className='ct-channel-account-status-select'
               >
@@ -2259,7 +2950,11 @@ function ChannelAccount() {
                 <Select.Option value='disabled'>{t('已禁用')}</Select.Option>
               </Select>
             </div>
-            <Space className='ct-channel-account-batch-actions' spacing={8}>
+            <Space
+              className='ct-channel-account-batch-actions'
+              spacing={8}
+              style={{ display: isStatsView ? 'none' : undefined }}
+            >
               <Text type='tertiary'>
                 {t('已选 {{total}} 个账号', { total: selectedCount })}
               </Text>
@@ -2339,23 +3034,26 @@ function ChannelAccount() {
           ) : (
             <Table
               size='small'
-              columns={columns}
-              dataSource={filteredItems}
+              columns={tableColumns}
+              dataSource={items}
               rowKey={(record) =>
                 `${record.channel_id}-${record.credential_index}`
               }
-              rowSelection={rowSelection}
-              pagination={{
-                pageSize: 12,
-                showSizeChanger: true,
-                pageSizeOpts: [12, 24, 48],
-              }}
+              rowSelection={isStatsView ? undefined : rowSelection}
+              pagination={tablePagination}
+              onChange={handleTableChange}
               empty={<Empty description={t('暂无账号数据')} />}
-              scroll={{ x: 2290 }}
+              scroll={{ x: tableScrollX }}
               loading={loading}
             />
           )}
         </div>
+        <AccountDetailSideSheet
+          visible={Boolean(detailRecord)}
+          record={detailRecord}
+          t={t}
+          onClose={() => setDetailRecord(null)}
+        />
         <Modal
           title={t('编辑账号')}
           visible={editVisible}

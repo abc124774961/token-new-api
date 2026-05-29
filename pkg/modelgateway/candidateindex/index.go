@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/provider"
@@ -316,6 +317,9 @@ func candidateMatchesQuery(candidate core.Candidate, query Query) bool {
 	if query.EndpointType != "" && !service.ChannelSupportsRequiredCapabilities(candidate.Channel, candidate.RuntimeKey.RequestedModel, query.EndpointType, query.RequiresCodexImageTool) {
 		return false
 	}
+	if !candidateAccountSupportsRequiredCapabilities(candidate, query) {
+		return false
+	}
 	if len(query.ExcludedChannelIDs) > 0 {
 		if _, excluded := query.ExcludedChannelIDs[candidate.RuntimeKey.ChannelID]; excluded {
 			return false
@@ -336,6 +340,71 @@ func candidateMatchesQuery(candidate core.Candidate, query Query) bool {
 		return false
 	}
 	return true
+}
+
+func candidateAccountSupportsRequiredCapabilities(candidate core.Candidate, query Query) bool {
+	channel := candidate.Channel
+	usesCodexBackend, applies := candidateUsesCodexBackendForEndpoint(candidate, query.EndpointType)
+	if !applies {
+		return true
+	}
+	if !usesCodexBackend {
+		return service.ChannelSupportsRequiredEndpoint(channel, candidate.RuntimeKey.RequestedModel, query.EndpointType)
+	}
+	if channel == nil || len(channel.ChannelInfo.MultiKeyCapabilities) == 0 {
+		return true
+	}
+	capability, ok := channel.ChannelInfo.MultiKeyCapabilities[candidate.CredentialRef.CredentialIndex]
+	if !ok {
+		return true
+	}
+	if query.EndpointType == constant.EndpointTypeOpenAIResponseCompact {
+		return capability.CodexBackendCompactWrite == nil || capability.HasCodexBackendCompactAllowed()
+	}
+	if capability.CodexBackendResponsesStreamWrite == nil {
+		return true
+	}
+	return capability.HasCodexBackendResponsesStreamAllowed()
+}
+
+func candidateUsesCodexBackendForEndpoint(candidate core.Candidate, endpointType constant.EndpointType) (bool, bool) {
+	channel := candidate.Channel
+	if channel == nil {
+		return false, false
+	}
+	switch endpointType {
+	case constant.EndpointTypeOpenAIResponse, constant.EndpointTypeOpenAIResponseCompact:
+	default:
+		return false, false
+	}
+	if channel.Type == constant.ChannelTypeCodex {
+		return true, true
+	}
+	if channel.Type != constant.ChannelTypeOpenAI {
+		return false, false
+	}
+	keys := channel.GetKeys()
+	if len(keys) == 0 {
+		return false, false
+	}
+	hasCodexOAuthCredential := false
+	for _, key := range keys {
+		if codexauth.IsOAuthJSONCredential(key) {
+			hasCodexOAuthCredential = true
+			break
+		}
+	}
+	if !hasCodexOAuthCredential {
+		return false, false
+	}
+	index := candidate.CredentialRef.CredentialIndex
+	if !channel.ChannelInfo.IsMultiKey {
+		index = 0
+	}
+	if index < 0 || index >= len(keys) {
+		return false, true
+	}
+	return codexauth.IsOAuthJSONCredential(keys[index]), true
 }
 
 func prepareCandidateForQuery(candidate core.Candidate, query Query) core.Candidate {

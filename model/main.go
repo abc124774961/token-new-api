@@ -302,6 +302,9 @@ func migrateDB() error {
 	if err := ensureModelGatewayProxyGeoColumns(); err != nil {
 		return err
 	}
+	if err := ensureChannelAccountUsageEventCodexColumns(); err != nil {
+		return err
+	}
 	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
 		return err
 	}
@@ -314,6 +317,7 @@ func migrateDB() error {
 		&ModelGatewayUserRequestSummary{},
 		&ModelGatewayChannelCostProfile{},
 		&ModelGatewayRequestCostSummary{},
+		&ChannelAccountUsageEvent{},
 		&ModelGatewayDynamicBillingBaseline{},
 		&ModelGatewayRuntimeSnapshot{},
 		&ModelGatewayScoreEvent{},
@@ -386,6 +390,7 @@ func migrateDBFast() error {
 		{&ModelGatewayUserRequestSummary{}, "ModelGatewayUserRequestSummary"},
 		{&ModelGatewayChannelCostProfile{}, "ModelGatewayChannelCostProfile"},
 		{&ModelGatewayRequestCostSummary{}, "ModelGatewayRequestCostSummary"},
+		{&ChannelAccountUsageEvent{}, "ChannelAccountUsageEvent"},
 		{&ModelGatewayDynamicBillingBaseline{}, "ModelGatewayDynamicBillingBaseline"},
 		{&ModelGatewayRuntimeSnapshot{}, "ModelGatewayRuntimeSnapshot"},
 		{&ModelGatewayScoreEvent{}, "ModelGatewayScoreEvent"},
@@ -853,6 +858,19 @@ func ensureModelGatewayProxyGeoColumns() error {
 		{"geo_error", "GeoError"},
 	}
 	return ensureColumns(&ModelGatewayProxy{}, columns)
+}
+
+func ensureChannelAccountUsageEventCodexColumns() error {
+	if DB == nil || !DB.Migrator().HasTable(&ChannelAccountUsageEvent{}) {
+		return nil
+	}
+	columns := []modelGatewayColumnSpec{
+		{"usage_estimated", "UsageEstimated"},
+		{"provider_surface", "ProviderSurface"},
+		{"capability_classification", "CapabilityClassification"},
+		{"proxy_id", "ProxyID"},
+	}
+	return ensureColumns(&ChannelAccountUsageEvent{}, columns)
 }
 
 func ensureColumns(table any, columns []modelGatewayColumnSpec) error {

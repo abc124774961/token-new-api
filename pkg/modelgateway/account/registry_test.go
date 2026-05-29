@@ -162,6 +162,33 @@ func TestRegistryCodexOAuthSubjectFingerprintStableAcrossAccessTokenRefresh(t *t
 	require.NotEqual(t, accountA[0].AccountIdentity.CredentialFingerprint, accountB[0].AccountIdentity.CredentialFingerprint)
 }
 
+func TestRegistryOpenAIOAuthJSONAccountUsesCodexIdentity(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	channel := &model.Channel{
+		Id:     20,
+		Type:   constant.ChannelTypeOpenAI,
+		Status: common.ChannelStatusEnabled,
+	}
+	channelA := *channel
+	channelA.Key = `{"account_id":"acct-123","email":"a@example.com","access_token":"access-a","refresh_token":"refresh-a"}`
+	channelB := *channel
+	channelB.Key = `{"account_id":"acct-123","email":"a@example.com","access_token":"access-b","refresh_token":"refresh-b"}`
+
+	accountA := NewRegistry().AccountsForChannel(&channelA)
+	accountB := NewRegistry().AccountsForChannel(&channelB)
+
+	require.Len(t, accountA, 1)
+	require.Len(t, accountB, 1)
+	require.Equal(t, ProviderCodexOAuth, accountA[0].AccountIdentity.Provider)
+	require.Equal(t, "codex", accountA[0].AccountIdentity.Brand)
+	require.Equal(t, ProviderCodexOAuth, accountA[0].ResourceRef.Provider)
+	require.Equal(t, "codex", accountA[0].ResourceRef.Brand)
+	require.Equal(t, core.AccountTypeOAuthAccount, accountA[0].AccountIdentity.AccountType)
+	require.Equal(t, accountA[0].AccountIdentity.CredentialSubjectFingerprint, accountB[0].AccountIdentity.CredentialSubjectFingerprint)
+	require.Equal(t, accountA[0].AccountIdentity.AccountID, accountB[0].AccountIdentity.AccountID)
+	require.NotEqual(t, accountA[0].AccountIdentity.CredentialFingerprint, accountB[0].AccountIdentity.CredentialFingerprint)
+}
+
 func TestRuntimeKeyForChannelAccountAddsAccountScope(t *testing.T) {
 	common.CryptoSecret = "test-secret"
 	channel := &model.Channel{

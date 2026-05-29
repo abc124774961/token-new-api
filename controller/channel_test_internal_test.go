@@ -118,6 +118,13 @@ func TestResolveChannelTestEndpointUsesResponsesForOpenAIOAuthJSON(t *testing.T)
 	require.Equal(t, string(constant.EndpointTypeOpenAIResponse), endpointType)
 }
 
+func TestOAuthJSONAccountKeyDetectionForCodexPayload(t *testing.T) {
+	require.True(t, isOAuthJSONAccountKey(`{"access_token":"access-token","refresh_token":"refresh-token","account_id":"account-id"}`))
+	require.True(t, isOAuthJSONAccountKey(`{"refresh_token":"refresh-token","account_id":"account-id"}`))
+	require.False(t, isOAuthJSONAccountKey(`{"access_token":"access-token"}`))
+	require.False(t, isOAuthJSONAccountKey(`sk-normal`))
+}
+
 func TestResolveChannelTestEndpointUsesChatForOpenAIOAuthJSONWhenResponsesDenied(t *testing.T) {
 	index := 1
 	denied := false
@@ -252,6 +259,20 @@ func TestFriendlyChannelTestErrorMessageForMissingResponsesScope(t *testing.T) {
 
 	require.Contains(t, message, "账号权限不足")
 	require.Contains(t, message, "api.responses.write")
+}
+
+func TestFriendlyChannelTestErrorMessageForPlatformQuotaDoesNotDumpRawBody(t *testing.T) {
+	message := friendlyChannelTestErrorMessage(testResult{
+		newAPIError: types.NewOpenAIError(
+			errors.New(`bad response status code 429, message: You exceeded your current quota, body: {"error":{"type":"insufficient_quota","code":"insufficient_quota"}}`),
+			types.ErrorCodeBadResponseStatusCode,
+			429,
+		),
+	})
+
+	require.Contains(t, message, "Platform API 额度不足")
+	require.Contains(t, message, "不影响 Codex backend 调度")
+	require.NotContains(t, message, "bad response status code")
 }
 
 func TestFriendlyChannelTestErrorMessageForProxyConnectionRefused(t *testing.T) {

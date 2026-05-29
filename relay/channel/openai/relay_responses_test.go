@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -205,4 +206,45 @@ func TestOaiResponsesStreamHandlerReturnsRetryableErrorBeforeDelivery(t *testing
 	require.False(t, common.GetContextKeyBool(ctx, constant.ContextKeyRelayResponseStarted))
 	require.False(t, common.GetContextKeyBool(ctx, constant.ContextKeyRelayStreamInterrupted))
 	require.Equal(t, relaycommon.StreamEndReasonHandlerStop, info.StreamStatus.EndReason)
+}
+
+func TestOaiResponsesStreamAsNonStreamHandlerAggregatesCodexStream(t *testing.T) {
+	service.InitTokenEncoders()
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"hello "}`,
+			`data: {"type":"response.output_text.delta","delta":"world"}`,
+			`data: {"type":"response.completed","response":{"id":"resp_1","object":"response","created_at":1,"status":"completed","model":"gpt-5.4","output":[{"type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"hello world"}]}],"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}`,
+		}, "\n"))),
+		Header: make(http.Header),
+	}
+	resp.Header.Set("Content-Type", "text/event-stream")
+	info := &relaycommon.RelayInfo{
+		RequestModelName: "gpt-5.4",
+		OriginModelName:  "gpt-5.4",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gpt-5.4",
+		},
+		StreamStatus: relaycommon.NewStreamStatus(),
+	}
+
+	usage, err := OaiResponsesStreamAsNonStreamHandler(ctx, info, resp)
+
+	require.Nil(t, err)
+	require.NotNil(t, usage)
+	require.Equal(t, 3, usage.PromptTokens)
+	require.Equal(t, 2, usage.CompletionTokens)
+	require.Equal(t, 5, usage.TotalTokens)
+	require.Contains(t, recorder.Header().Get("Content-Type"), "application/json")
+	require.NotContains(t, recorder.Body.String(), "data:")
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.Equal(t, "resp_1", payload["id"])
+	require.Equal(t, "response", payload["object"])
 }

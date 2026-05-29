@@ -45,10 +45,14 @@ type RuntimeStatusService struct {
 }
 
 type RuntimeStatusQuery struct {
-	Model     string
-	Group     string
-	ChannelID int
-	Limit     int
+	Model                string
+	Group                string
+	ChannelID            int
+	Limit                int
+	AccountIDs           []string
+	CredentialIndexes    []int
+	CredentialSubjectFPs []string
+	CredentialFPs        []string
 }
 
 type RuntimeStatusResponse struct {
@@ -661,6 +665,9 @@ func runtimeStatusMatchesQuery(key core.RuntimeKey, query RuntimeStatusQuery) bo
 	if query.ChannelID > 0 && key.ChannelID > 0 && key.ChannelID != query.ChannelID {
 		return false
 	}
+	if !runtimeStatusMatchesAccountFilters(key.AccountID, key.CredentialIndex, key.CredentialSubjectFP, key.CredentialFP, query) {
+		return false
+	}
 	return true
 }
 
@@ -674,7 +681,55 @@ func runtimeStatusItemMatchesQuery(item RuntimeStatusItem, query RuntimeStatusQu
 	if query.ChannelID > 0 && item.ChannelID != query.ChannelID {
 		return false
 	}
+	if !runtimeStatusMatchesAccountFilters(item.AccountID, item.CredentialIndex, item.CredentialSubjectFP, item.CredentialFP, query) {
+		return false
+	}
 	return true
+}
+
+func runtimeStatusMatchesAccountFilters(accountID string, credentialIndex int, subjectFP string, credentialFP string, query RuntimeStatusQuery) bool {
+	hasFilters := len(query.AccountIDs) > 0 ||
+		len(query.CredentialIndexes) > 0 ||
+		len(query.CredentialSubjectFPs) > 0 ||
+		len(query.CredentialFPs) > 0
+	if !hasFilters {
+		return true
+	}
+	if accountID != "" && stringSliceContains(query.AccountIDs, accountID) {
+		return true
+	}
+	if intSliceContains(query.CredentialIndexes, credentialIndex) {
+		return true
+	}
+	if subjectFP != "" && stringSliceContains(query.CredentialSubjectFPs, subjectFP) {
+		return true
+	}
+	if credentialFP != "" && stringSliceContains(query.CredentialFPs, credentialFP) {
+		return true
+	}
+	return false
+}
+
+func stringSliceContains(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func intSliceContains(values []int, target int) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func runtimeHealthStatus(item RuntimeStatusItem) string {

@@ -1,0 +1,135 @@
+package model
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+)
+
+func setupChannelCapabilitySelectionTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	common.UsingSQLite = true
+	common.UsingMySQL = false
+	common.UsingPostgreSQL = false
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Channel{}))
+	oldDB := DB
+	DB = db
+	t.Cleanup(func() {
+		DB = oldDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	return db
+}
+
+func TestGetNextEnabledKeyForEndpointSkipsCodexAccountsWithDeniedCapabilities(t *testing.T) {
+	db := setupChannelCapabilitySelectionTestDB(t)
+	streamDenied := false
+	streamAllowed := true
+	compactDenied := false
+	compactAllowed := true
+	channel := &Channel{
+		Id:     9001,
+		Type:   constant.ChannelTypeCodex,
+		Key:    "oauth-a\noauth-b\noauth-c",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:           true,
+			MultiKeyMode:         constant.MultiKeyModePolling,
+			MultiKeyPollingIndex: 0,
+			MultiKeyCapabilities: map[int]ChannelAccountCapability{
+				0: {
+					CodexBackendResponsesStreamWrite: &streamDenied,
+					CodexBackendCompactWrite:         &compactDenied,
+				},
+				1: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+					CodexBackendCompactWrite:         &compactDenied,
+				},
+				2: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+					CodexBackendCompactWrite:         &compactAllowed,
+				},
+			},
+		},
+	}
+	require.NoError(t, db.Create(channel).Error)
+
+	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse)
+	require.Nil(t, apiErr)
+	require.Equal(t, "oauth-b", key)
+	require.Equal(t, 1, index)
+
+	key, index, apiErr = channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponseCompact)
+	require.Nil(t, apiErr)
+	require.Equal(t, "oauth-c", key)
+	require.Equal(t, 2, index)
+}
+
+func TestGetNextEnabledKeyForEndpointRejectsSingleCodexAccountWithDeniedCapability(t *testing.T) {
+	streamDenied := false
+	channel := &Channel{
+		Id:     9002,
+		Type:   constant.ChannelTypeCodex,
+		Key:    "oauth-a",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: ChannelInfo{
+			MultiKeyCapabilities: map[int]ChannelAccountCapability{
+				0: {
+					CodexBackendResponsesStreamWrite: &streamDenied,
+				},
+			},
+		},
+	}
+
+	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse)
+
+	require.NotNil(t, apiErr)
+	require.Empty(t, key)
+	require.Equal(t, 0, index)
+}
+
+func TestGetNextEnabledKeyForEndpointSkipsOpenAICodexOAuthAccountsWithDeniedCapabilities(t *testing.T) {
+	db := setupChannelCapabilitySelectionTestDB(t)
+	streamDenied := false
+	streamAllowed := true
+	channel := &Channel{
+		Id:     9003,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    `{"access_token":"access-a","account_id":"acct-a"}` + "\n" + `{"access_token":"access-b","account_id":"acct-b"}`,
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:           true,
+			MultiKeyMode:         constant.MultiKeyModePolling,
+			MultiKeyPollingIndex: 0,
+			MultiKeyCapabilities: map[int]ChannelAccountCapability{
+				0: {
+					CodexBackendResponsesStreamWrite: &streamDenied,
+				},
+				1: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+				},
+			},
+		},
+	}
+	require.NoError(t, db.Create(channel).Error)
+
+	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse)
+
+	require.Nil(t, apiErr)
+	require.JSONEq(t, `{"access_token":"access-b","account_id":"acct-b"}`, key)
+	require.Equal(t, 1, index)
+}

@@ -250,6 +250,73 @@ func TestSetupContextForSelectedChannelAppliesAccountCapability(t *testing.T) {
 	require.True(t, capability.HasChatCompletionsWriteAllowed())
 }
 
+func TestSetupContextForSelectedChannelUsesEndpointSpecificCodexCapability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	streamAllowed := true
+	compactDenied := false
+	compactAllowed := true
+	channel := &model.Channel{
+		Id:     46,
+		Type:   constant.ChannelTypeCodex,
+		Key:    "oauth-a\noauth-b",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "gpt-5.4",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:           true,
+			MultiKeyMode:         constant.MultiKeyModeRandom,
+			MultiKeyPollingIndex: 0,
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+					CodexBackendCompactWrite:         &compactDenied,
+				},
+				1: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+					CodexBackendCompactWrite:         &compactAllowed,
+				},
+			},
+		},
+	}
+
+	apiErr := SetupContextForSelectedChannelWithEndpoint(ctx, channel, "gpt-5.4", constant.EndpointTypeOpenAIResponseCompact)
+
+	require.Nil(t, apiErr)
+	require.Equal(t, "oauth-b", common.GetContextKeyString(ctx, constant.ContextKeyChannelKey))
+	require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyChannelMultiKeyIndex))
+}
+
+func TestSetupContextForSelectedOpenAIOAuthJSONResponsesUsesCodexBackend(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	streamAllowed := true
+	channel := &model.Channel{
+		Id:     47,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    `{"access_token":"access-a","account_id":"acct-a"}`,
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "gpt-5.4",
+		ChannelInfo: model.ChannelInfo{
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+				},
+			},
+		},
+	}
+
+	apiErr := SetupContextForSelectedChannelWithEndpoint(ctx, channel, "gpt-5.4", constant.EndpointTypeOpenAIResponse)
+
+	require.Nil(t, apiErr)
+	require.Equal(t, constant.ChannelTypeCodex, common.GetContextKeyInt(ctx, constant.ContextKeyChannelType))
+	require.Equal(t, constant.ChannelBaseURLs[constant.ChannelTypeCodex], common.GetContextKeyString(ctx, constant.ContextKeyChannelBaseUrl))
+	require.Equal(t, "codex_backend", common.GetContextKeyString(ctx, constant.ContextKeyProviderSurface))
+	require.Equal(t, "codex_backend_available", common.GetContextKeyString(ctx, constant.ContextKeyCapabilityClassification))
+	require.JSONEq(t, `{"access_token":"access-a","account_id":"acct-a"}`, common.GetContextKeyString(ctx, constant.ContextKeyChannelKey))
+}
+
 func setupDistributorProxyTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	common.UsingSQLite = true

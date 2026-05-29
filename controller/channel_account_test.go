@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -50,6 +51,7 @@ func setupChannelAccountControllerTestDB(t *testing.T) *gorm.DB {
 		&model.ModelGatewayRuntimeSnapshot{},
 		&model.ModelGatewayProxy{},
 		&model.ModelGatewayProxyUsage{},
+		&model.ChannelAccountUsageEvent{},
 	))
 	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 
@@ -220,6 +222,185 @@ func TestListChannelAccountsUsesSingleKeyChannelRuntimeFallback(t *testing.T) {
 	require.NotNil(t, payload.Data.Items[0].Score)
 	require.Equal(t, 4, payload.Data.Items[0].Score.SampleCount)
 	require.Equal(t, 0.88, payload.Data.Items[0].Score.SuccessRate)
+}
+
+func TestListChannelAccountsSupportsServerSidePaginationAndStatusFilter(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     33,
+		Name:   "paged accounts",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-one\nsk-two\nsk-three\nsk-four",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:             true,
+			MultiKeySize:           4,
+			MultiKeyStatusList:     map[int]int{1: common.ChannelStatusManuallyDisabled, 3: common.ChannelStatusAutoDisabled},
+			MultiKeyDisabledReason: map[int]string{1: "maintenance", 3: "balance_insufficient"},
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5.4",
+		ChannelId: 33,
+		Enabled:   true,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/channel/:id/accounts", ListChannelAccounts)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/channel/33/accounts?status=disabled&page=2&page_size=1&sort=credential_index&order=asc", nil)
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, channelAccountViewManage, payload.Data.View)
+	require.Equal(t, 4, payload.Data.Total)
+	require.Equal(t, 2, payload.Data.FilteredTotal)
+	require.Equal(t, 2, payload.Data.Enabled)
+	require.Equal(t, 2, payload.Data.Disabled)
+	require.Equal(t, 2, payload.Data.Page)
+	require.Equal(t, 1, payload.Data.PageSize)
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, 3, payload.Data.Items[0].CredentialIndex)
+	require.False(t, payload.Data.Items[0].KeyEnabled)
+	require.Equal(t, "balance_insufficient", payload.Data.Items[0].DisabledReason)
+	require.NotContains(t, recorder.Body.String(), "sk-one")
+	require.NotContains(t, recorder.Body.String(), "sk-four")
+}
+
+func TestListChannelAccountsStatsViewAggregatesUsageAndExcludesHealthProbes(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     34,
+		Name:   "stats accounts",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-stat-one\nsk-stat-two",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5.4",
+		ChannelId: 34,
+		Enabled:   true,
+	}).Error)
+	accounts := modelgatewayaccount.NewRegistry().AccountsForChannel(&channel)
+	require.Len(t, accounts, 2)
+	now := time.Now().Unix()
+	account := accounts[0]
+	require.NoError(t, db.Create(&[]model.ChannelAccountUsageEvent{
+		{
+			RequestId:          "stats-user-success",
+			ChannelID:          34,
+			ChannelName:        channel.Name,
+			CredentialIndex:    account.CredentialIndex,
+			AccountID:          account.AccountIdentity.AccountID,
+			AccountIdentityKey: account.AccountIdentity.AccountIdentityKey,
+			AccountType:        account.AccountIdentity.AccountType,
+			Brand:              account.AccountIdentity.Brand,
+			Provider:           account.AccountIdentity.Provider,
+			RequestedModel:     "gpt-5.4",
+			RequestedGroup:     "default",
+			SelectedGroup:      "default",
+			EndpointType:       string(constant.EndpointTypeOpenAI),
+			CompletedAt:        now - 60,
+			Success:            true,
+			StatusCode:         http.StatusOK,
+			DurationMs:         1200,
+			TTFTMs:             320,
+			PromptTokens:       100,
+			CompletionTokens:   40,
+			TotalTokens:        140,
+			Quota:              1400,
+			UpstreamCostTotal:  0.0025,
+			CostSource:         "profile",
+			CostAccuracy:       "precise",
+			CostCalculatedAt:   now - 50,
+		},
+		{
+			RequestId:          "stats-user-timeout",
+			ChannelID:          34,
+			ChannelName:        channel.Name,
+			CredentialIndex:    account.CredentialIndex,
+			AccountID:          account.AccountIdentity.AccountID,
+			AccountIdentityKey: account.AccountIdentity.AccountIdentityKey,
+			AccountType:        account.AccountIdentity.AccountType,
+			Brand:              account.AccountIdentity.Brand,
+			Provider:           account.AccountIdentity.Provider,
+			RequestedModel:     "gpt-5.4",
+			RequestedGroup:     "default",
+			SelectedGroup:      "default",
+			EndpointType:       string(constant.EndpointTypeOpenAI),
+			CompletedAt:        now - 40,
+			Success:            false,
+			StatusCode:         http.StatusGatewayTimeout,
+			ErrorCategory:      model.ModelGatewayUserRequestErrorTimeout,
+			DurationMs:         5000,
+			TTFTMs:             0,
+		},
+		{
+			RequestId:          "stats-health-probe",
+			ChannelID:          34,
+			ChannelName:        channel.Name,
+			CredentialIndex:    account.CredentialIndex,
+			AccountID:          account.AccountIdentity.AccountID,
+			AccountIdentityKey: account.AccountIdentity.AccountIdentityKey,
+			AccountType:        account.AccountIdentity.AccountType,
+			Brand:              account.AccountIdentity.Brand,
+			Provider:           account.AccountIdentity.Provider,
+			RequestedModel:     "gpt-5.4",
+			RequestedGroup:     "default",
+			SelectedGroup:      "default",
+			EndpointType:       string(constant.EndpointTypeOpenAI),
+			CompletedAt:        now - 20,
+			Success:            true,
+			StatusCode:         http.StatusOK,
+			IsHealthProbe:      true,
+			DurationMs:         100,
+			TTFTMs:             20,
+			PromptTokens:       999,
+			CompletionTokens:   999,
+			TotalTokens:        1998,
+			Quota:              19980,
+			UpstreamCostTotal:  99,
+		},
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/channel/:id/accounts", ListChannelAccounts)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/channel/34/accounts?view=stats&page=1&page_size=20", nil)
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, channelAccountViewStats, payload.Data.View)
+	require.True(t, payload.Data.Summary.HealthProbeExcluded)
+	require.Equal(t, int64(2), payload.Data.Summary.Today.Requests)
+	require.Equal(t, int64(1), payload.Data.Summary.Today.SuccessRequests)
+	require.Equal(t, int64(1), payload.Data.Summary.Today.ErrorRequests)
+	require.Equal(t, int64(1), payload.Data.Summary.Today.TimeoutRequests)
+	require.Equal(t, int64(140), payload.Data.Summary.Today.TotalTokens)
+	require.Equal(t, int64(1400), payload.Data.Summary.Today.Quota)
+	require.InEpsilon(t, 0.0025, payload.Data.Summary.Today.UpstreamCostTotal, 0.0001)
+	require.InEpsilon(t, 0.5, payload.Data.Summary.Today.SuccessRate, 0.0001)
+	require.Len(t, payload.Data.Items, 2)
+	require.Equal(t, 0, payload.Data.Items[0].CredentialIndex)
+	require.NotNil(t, payload.Data.Items[0].Stats)
+	require.Equal(t, int64(2), payload.Data.Items[0].Stats.Today.Requests)
+	require.Equal(t, model.ModelGatewayUserRequestErrorTimeout, payload.Data.Items[0].Stats.Today.TopErrorCategory)
+	require.Equal(t, int64(1), payload.Data.Items[0].Stats.Today.TopErrorCount)
+	require.Equal(t, int64(0), payload.Data.Items[1].Stats.Today.Requests)
 }
 
 func TestUpdateChannelAccountStatusDisablesMultiKeyAccount(t *testing.T) {
@@ -837,6 +1018,136 @@ func TestImportChannelAccountsExpandsJSONCredentialArray(t *testing.T) {
 	require.Len(t, keys, 3)
 	require.Equal(t, "sk-two", keys[1])
 	require.JSONEq(t, `{"account_id":"acct-json","refresh_token":"rt-json"}`, keys[2])
+}
+
+func TestImportChannelAccountsAcceptsSub2APIAccountExport(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     72,
+		Name:   "sub2api import",
+		Type:   constant.ChannelTypeCodex,
+		Key:    "",
+		Status: common.ChannelStatusAutoDisabled,
+		Models: "gpt-5",
+		Group:  "default",
+	}
+	channel.SetOtherInfo(map[string]interface{}{"status_reason": channelAccountAllKeysDisabledReason})
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5",
+		ChannelId: 72,
+		Enabled:   false,
+	}).Error)
+
+	payload := map[string]interface{}{
+		"type":        "sub2api-data",
+		"version":     1,
+		"exported_at": "2026-05-29T12:00:46.820Z",
+		"proxies":     []interface{}{},
+		"accounts": []interface{}{
+			map[string]interface{}{
+				"name":     "first@example.com",
+				"platform": "openai",
+				"type":     "oauth",
+				"credentials": map[string]interface{}{
+					"access_token":       "access-one",
+					"refresh_token":      "refresh-one",
+					"id_token":           "id-one",
+					"email":              "first@example.com",
+					"account_id":         "acct-one",
+					"chatgpt_account_id": "acct-one",
+					"chatgpt_user_id":    "user-one",
+					"expires_at":         "2026-06-08T11:51:36Z",
+				},
+				"concurrency":           10,
+				"priority":              1,
+				"rate_multiplier":       1,
+				"auto_pause_on_expired": true,
+			},
+			map[string]interface{}{
+				"name":     "second@example.com",
+				"platform": "openai",
+				"type":     "oauth",
+				"credentials": map[string]interface{}{
+					"access_token":       "access-two",
+					"refresh_token":      "refresh-two",
+					"id_token":           "id-two",
+					"email":              "second@example.com",
+					"account_id":         "acct-two",
+					"chatgpt_account_id": "acct-two",
+					"chatgpt_user_id":    "user-two",
+					"expires_at":         "2026-06-08T11:53:12Z",
+				},
+				"concurrency":           10,
+				"priority":              1,
+				"rate_multiplier":       1,
+				"auto_pause_on_expired": true,
+			},
+		},
+	}
+	sub2apiBytes, err := common.Marshal(payload)
+	require.NoError(t, err)
+	bodyBytes, err := common.Marshal(map[string]interface{}{
+		"credentials": string(sub2apiBytes),
+		"only_new":    true,
+	})
+	require.NoError(t, err)
+
+	router := gin.New()
+	router.PUT("/api/channel/:id/accounts", ImportChannelAccounts)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/channel/72/accounts", bytes.NewReader(bodyBytes))
+	router.ServeHTTP(recorder, req)
+
+	response := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, response.Success, recorder.Body.String())
+	require.Equal(t, 2, response.Data.Operation.Added)
+	require.Equal(t, 2, response.Data.Total)
+	require.Equal(t, 2, response.Data.Enabled)
+	require.True(t, response.Data.Operation.ChannelRestored)
+	require.NotContains(t, recorder.Body.String(), "access-one")
+	require.NotContains(t, recorder.Body.String(), "refresh-two")
+
+	updated, err := model.GetChannelById(72, true)
+	require.NoError(t, err)
+	require.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	keys := updated.GetKeys()
+	require.Len(t, keys, 2)
+	require.JSONEq(t, `{"access_token":"access-one","refresh_token":"refresh-one","id_token":"id-one","email":"first@example.com","account_id":"acct-one","chatgpt_account_id":"acct-one","chatgpt_user_id":"user-one","expires_at":"2026-06-08T11:51:36Z"}`, keys[0])
+	require.JSONEq(t, `{"access_token":"access-two","refresh_token":"refresh-two","id_token":"id-two","email":"second@example.com","account_id":"acct-two","chatgpt_account_id":"acct-two","chatgpt_user_id":"user-two","expires_at":"2026-06-08T11:53:12Z"}`, keys[1])
+
+	fileChannel := model.Channel{
+		Id:     73,
+		Name:   "sub2api file import",
+		Type:   constant.ChannelTypeCodex,
+		Key:    "",
+		Status: common.ChannelStatusAutoDisabled,
+		Models: "gpt-5",
+		Group:  "default",
+	}
+	fileChannel.SetOtherInfo(map[string]interface{}{"status_reason": channelAccountAllKeysDisabledReason})
+	require.NoError(t, db.Create(&fileChannel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5",
+		ChannelId: 73,
+		Enabled:   false,
+	}).Error)
+
+	fileBody, contentType := buildChannelAccountImportMultipart(t, "sub2api-export.json", sub2apiBytes, true)
+	fileRecorder := httptest.NewRecorder()
+	fileReq := httptest.NewRequest(http.MethodPut, "/api/channel/73/accounts", fileBody)
+	fileReq.Header.Set("Content-Type", contentType)
+	router.ServeHTTP(fileRecorder, fileReq)
+
+	fileResponse := decodeChannelAccountsResponse(t, fileRecorder)
+	require.True(t, fileResponse.Success, fileRecorder.Body.String())
+	require.Equal(t, 2, fileResponse.Data.Operation.Added)
+	require.Equal(t, 2, fileResponse.Data.Total)
+	updatedFromFile, err := model.GetChannelById(73, true)
+	require.NoError(t, err)
+	require.Len(t, updatedFromFile.GetKeys(), 2)
 }
 
 func TestImportChannelAccountsRefreshesAccountCandidateIndex(t *testing.T) {

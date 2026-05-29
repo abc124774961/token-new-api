@@ -864,6 +864,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 			Name:    c.GetString("channel_name"),
 			AutoBan: &autoBanInt,
 		}
+		info.InitChannelMeta(c)
 		logRelaySelectedChannelTrace(c, info, retryParam, channel, info.TokenGroup, true)
 		return channel, nil
 	}
@@ -887,10 +888,11 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, apiErr
 	}
 	logRelaySelectedChannelTrace(c, info, retryParam, channel, selectGroup, false)
-	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName, selection)
+	newAPIError := middleware.SetupContextForSelectedChannelWithEndpoint(c, channel, info.OriginModelName, retryParam.EndpointType, selection)
 	if newAPIError != nil {
 		return nil, newAPIError
 	}
+	info.InitChannelMeta(c)
 	return channel, nil
 }
 
@@ -2301,7 +2303,7 @@ func RelayTask(c *gin.Context) {
 		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
 			channel = lockedCh
 			if retryParam.GetRetry() > 0 {
-				if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
+				if setupErr := middleware.SetupContextForSelectedChannelWithEndpoint(c, channel, relayInfo.OriginModelName, retryParam.EndpointType); setupErr != nil {
 					taskErr = service.TaskErrorWrapperLocal(setupErr.Err, "setup_locked_channel_failed", http.StatusInternalServerError)
 					break
 				}
