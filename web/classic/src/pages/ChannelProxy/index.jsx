@@ -40,11 +40,13 @@ import {
   Clock3,
   EyeOff,
   Fingerprint,
-  KeyRound,
+  Globe2,
   ListChecks,
+  MapPin,
   Network,
   Pencil,
   Plus,
+  Radar,
   RefreshCw,
   Search,
   Server,
@@ -55,6 +57,7 @@ import ProxyEditorModal from '../../components/model-gateway/ProxyEditorModal';
 import './channel-proxy.css';
 
 const { Text } = Typography;
+const EMPTY_VALUE = String.fromCharCode(45, 45);
 
 function unwrapApiData(response) {
   return response?.data?.data || response?.data || {};
@@ -67,7 +70,7 @@ function formatNumber(value) {
 function formatTimestamp(timestamp) {
   return Number(timestamp || 0) > 0
     ? timestamp2string(Number(timestamp))
-    : '--';
+    : EMPTY_VALUE;
 }
 
 function protocolLabel(protocol) {
@@ -80,6 +83,19 @@ function proxyAddress(proxy) {
 
 function proxyReuseRisks(proxy) {
   return Array.isArray(proxy?.reuse_risks) ? proxy.reuse_risks : [];
+}
+
+function proxyRegionCode(proxy) {
+  return String(proxy?.region_code || '')
+    .trim()
+    .toUpperCase();
+}
+
+function proxyGeoLocation(proxy) {
+  return [proxy?.city, proxy?.region_name, proxy?.country_name]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(' / ');
 }
 
 function reuseRiskText(risk, t) {
@@ -110,6 +126,12 @@ function proxySearchText(proxy) {
     proxyAddress(proxy),
     proxy?.username,
     proxy?.remark,
+    proxy?.exit_ip,
+    proxy?.region_code,
+    proxy?.region_name,
+    proxy?.country_name,
+    proxy?.city,
+    proxy?.timezone,
     ...usages.flatMap((usage) => [
       usage?.brand,
       usage?.provider,
@@ -132,7 +154,10 @@ function statusTag(proxy, t) {
       </Tag>
     );
   }
-  if (Number(proxy?.failure_count || 0) > 0 && Number(proxy?.last_failure_at || 0) > Number(proxy?.last_success_at || 0)) {
+  if (
+    Number(proxy?.failure_count || 0) > 0 &&
+    Number(proxy?.last_failure_at || 0) > Number(proxy?.last_success_at || 0)
+  ) {
     return (
       <Tag color='orange' type='light' shape='circle'>
         {t('最近失败')}
@@ -157,6 +182,7 @@ function ChannelProxy() {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingProxy, setEditingProxy] = useState(null);
   const [usageProxy, setUsageProxy] = useState(null);
+  const [detectingProxyId, setDetectingProxyId] = useState(null);
 
   const loadProxies = useCallback(async () => {
     setLoading(true);
@@ -199,20 +225,75 @@ function ChannelProxy() {
     setEditingProxy(null);
   }, []);
 
+  const detectProxyGeo = useCallback(
+    async (proxy, options = {}) => {
+      if (!proxy?.id) {
+        return null;
+      }
+      const silent = Boolean(options.silent);
+      setDetectingProxyId(proxy.id);
+      try {
+        const response = await API.post(
+          `/api/model_gateway/proxies/${proxy.id}/detect`,
+          {},
+          { disableDuplicate: true, skipErrorHandler: true },
+        );
+        if (response?.data?.success === false) {
+          throw new Error(response?.data?.message || t('代理地区检测失败'));
+        }
+        const savedProxy = unwrapApiData(response);
+        if (!silent) {
+          const code = proxyRegionCode(savedProxy);
+          showSuccess(
+            code
+              ? t('代理地区已更新：{{region}}', { region: code })
+              : t('代理地区已更新'),
+          );
+        }
+        await loadProxies();
+        return savedProxy;
+      } catch (err) {
+        const message =
+          err?.response?.data?.message || err?.message || t('代理地区检测失败');
+        if (!silent) {
+          showError(message);
+        }
+        await loadProxies();
+        return null;
+      } finally {
+        setDetectingProxyId(null);
+      }
+    },
+    [loadProxies, t],
+  );
+
+  const handleProxySaved = useCallback(
+    async (savedProxy) => {
+      await loadProxies();
+      if (savedProxy?.id) {
+        await detectProxyGeo(savedProxy, { silent: true });
+      }
+    },
+    [detectProxyGeo, loadProxies],
+  );
+
   const toggleProxyEnabled = useCallback(
     async (proxy) => {
       const nextEnabled = !proxy?.enabled;
       setSaving(true);
       try {
-        const response = await API.put(`/api/model_gateway/proxies/${proxy.id}`, {
-          name: proxy.name,
-          protocol: proxy.protocol,
-          address: '',
-          username: proxy.username || '',
-          password: '',
-          enabled: nextEnabled,
-          remark: proxy.remark || '',
-        });
+        const response = await API.put(
+          `/api/model_gateway/proxies/${proxy.id}`,
+          {
+            name: proxy.name,
+            protocol: proxy.protocol,
+            address: '',
+            username: proxy.username || '',
+            password: '',
+            enabled: nextEnabled,
+            remark: proxy.remark || '',
+          },
+        );
         if (response?.data?.success === false) {
           throw new Error(response?.data?.message || t('操作失败'));
         }
@@ -234,7 +315,10 @@ function ChannelProxy() {
     return proxies.filter((proxy) => {
       if (statusFilter === 'enabled' && proxy.enabled === false) return false;
       if (statusFilter === 'disabled' && proxy.enabled !== false) return false;
-      if (normalizedKeyword && !proxySearchText(proxy).includes(normalizedKeyword)) {
+      if (
+        normalizedKeyword &&
+        !proxySearchText(proxy).includes(normalizedKeyword)
+      ) {
         return false;
       }
       return true;
@@ -243,16 +327,7 @@ function ChannelProxy() {
 
   const metrics = useMemo(() => {
     const enabled = proxies.filter((proxy) => proxy.enabled !== false).length;
-    const used = proxies.filter(
-      (proxy) =>
-        Number(proxy.use_count || 0) > 0 ||
-        (Array.isArray(proxy.brand_usage) && proxy.brand_usage.length > 0),
-    ).length;
-    const brandCount = new Set(
-      proxies.flatMap((proxy) =>
-        (proxy.brand_usage || []).map((usage) => usage.brand || usage.provider),
-      ).filter(Boolean),
-    ).size;
+    const detected = proxies.filter((proxy) => proxyRegionCode(proxy)).length;
     const failed = proxies.filter(
       (proxy) =>
         Number(proxy.failure_count || 0) > 0 &&
@@ -261,7 +336,7 @@ function ChannelProxy() {
     const reuseRisk = proxies.filter(
       (proxy) => proxyReuseRisks(proxy).length > 0,
     ).length;
-    return { enabled, used, brandCount, failed, reuseRisk };
+    return { enabled, detected, failed, reuseRisk };
   }, [proxies]);
 
   const columns = useMemo(
@@ -277,13 +352,18 @@ function ChannelProxy() {
             </div>
             <div className='ct-channel-proxy-main'>
               <div className='ct-channel-proxy-name'>
-                <span title={record.name}>{record.name || `#${record.id}`}</span>
+                <span title={record.name}>
+                  {record.name || `#${record.id}`}
+                </span>
                 <Tag color='cyan' type='light' shape='circle'>
-                  ID {record.id}
+                  {`ID ${record.id}`}
                 </Tag>
               </div>
-              <div className='ct-channel-proxy-address' title={proxyAddress(record)}>
-                {proxyAddress(record) || '--'}
+              <div
+                className='ct-channel-proxy-address'
+                title={proxyAddress(record)}
+              >
+                {proxyAddress(record) || EMPTY_VALUE}
               </div>
               {record.remark ? (
                 <div className='ct-channel-proxy-remark' title={record.remark}>
@@ -324,10 +404,59 @@ function ChannelProxy() {
               </Tooltip>
             ) : null}
             {!record.username && !record.password_set ? (
-              <Text type='tertiary'>--</Text>
+              <Text type='tertiary'>{EMPTY_VALUE}</Text>
             ) : null}
           </div>
         ),
+      },
+      {
+        title: t('地区'),
+        dataIndex: 'region_code',
+        width: 230,
+        render: (_, record) => {
+          const code = proxyRegionCode(record);
+          const location = proxyGeoLocation(record);
+          const isFailed = record.geo_status === 'failed';
+          return (
+            <div className='ct-channel-proxy-geo-cell'>
+              <div className='ct-channel-proxy-geo-main'>
+                <Tag
+                  color={isFailed ? 'orange' : code ? 'teal' : 'grey'}
+                  type='light'
+                  shape='circle'
+                  prefixIcon={<MapPin size={12} />}
+                >
+                  {code || t('未检测')}
+                </Tag>
+                {isFailed && record.geo_error ? (
+                  <Tooltip content={record.geo_error}>
+                    <AlertTriangle
+                      className='ct-channel-proxy-geo-error-icon'
+                      size={14}
+                    />
+                  </Tooltip>
+                ) : null}
+              </div>
+              <div className='ct-channel-proxy-geo-meta'>
+                {record.exit_ip ? (
+                  <span title={record.exit_ip}>
+                    {t('出口 IP')}: {record.exit_ip}
+                  </span>
+                ) : (
+                  <span>
+                    {t('出口 IP')}: {EMPTY_VALUE}
+                  </span>
+                )}
+                {location ? <span title={location}>{location}</span> : null}
+                {record.geo_checked_at ? (
+                  <span>
+                    {t('检测时间')}: {formatTimestamp(record.geo_checked_at)}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          );
+        },
       },
       {
         title: t('状态'),
@@ -434,21 +563,42 @@ function ChannelProxy() {
         title: t('操作'),
         dataIndex: 'action',
         fixed: 'right',
-        width: 120,
+        width: 190,
         render: (_, record) => (
-          <Button
-            size='small'
-            type='primary'
-            theme='light'
-            icon={<Pencil size={14} />}
-            onClick={() => openEditModal(record)}
-          >
-            {t('编辑')}
-          </Button>
+          <Space spacing={6}>
+            <Tooltip content={t('检测代理出口地区并保存简称')}>
+              <Button
+                size='small'
+                type='tertiary'
+                theme='light'
+                icon={<Radar size={14} />}
+                loading={detectingProxyId === record.id}
+                onClick={() => detectProxyGeo(record)}
+              >
+                {t('检测地区')}
+              </Button>
+            </Tooltip>
+            <Button
+              size='small'
+              type='primary'
+              theme='light'
+              icon={<Pencil size={14} />}
+              onClick={() => openEditModal(record)}
+            >
+              {t('编辑')}
+            </Button>
+          </Space>
         ),
       },
     ],
-    [openEditModal, saving, t, toggleProxyEnabled],
+    [
+      detectProxyGeo,
+      detectingProxyId,
+      openEditModal,
+      saving,
+      t,
+      toggleProxyEnabled,
+    ],
   );
 
   const usageColumns = useMemo(
@@ -457,13 +607,13 @@ function ChannelProxy() {
         title: t('品牌'),
         dataIndex: 'brand',
         width: 130,
-        render: (_, record) => record.brand || record.provider || '--',
+        render: (_, record) => record.brand || record.provider || EMPTY_VALUE,
       },
       {
         title: t('渠道'),
         dataIndex: 'channel_id',
         width: 90,
-        render: (value) => (value ? `#${value}` : '--'),
+        render: (value) => (value ? `#${value}` : EMPTY_VALUE),
       },
       {
         title: t('账号'),
@@ -471,7 +621,7 @@ function ChannelProxy() {
         width: 170,
         render: (_, record) => (
           <div className='ct-channel-proxy-usage-account'>
-            <span>{record.account_id || '--'}</span>
+            <span>{record.account_id || EMPTY_VALUE}</span>
             {record.credential_index != null ? (
               <Text type='tertiary'>
                 {t('凭证序号')} #{Number(record.credential_index) + 1}
@@ -486,7 +636,7 @@ function ChannelProxy() {
         render: (value) => (
           <span className='ct-channel-proxy-fingerprint'>
             <Fingerprint size={13} />
-            {value || '--'}
+            {value || EMPTY_VALUE}
           </span>
         ),
       },
@@ -496,7 +646,7 @@ function ChannelProxy() {
         width: 120,
         render: (value) => (
           <Tag color={value === 'bound' ? 'cyan' : 'green'} type='light'>
-            {value === 'bound' ? t('已绑定') : value || '--'}
+            {value === 'bound' ? t('已绑定') : value || EMPTY_VALUE}
           </Tag>
         ),
       },
@@ -551,7 +701,9 @@ function ChannelProxy() {
           <Banner
             type='danger'
             closeIcon={null}
-            description={<span className='ct-channel-proxy-error'>{error}</span>}
+            description={
+              <span className='ct-channel-proxy-error'>{error}</span>
+            }
           />
         ) : null}
 
@@ -569,10 +721,10 @@ function ChannelProxy() {
             detail={t('可参与账号访问')}
           />
           <MetricCard
-            icon={<KeyRound size={18} />}
-            label={t('已绑定代理')}
-            value={formatNumber(metrics.used)}
-            detail={t('存在账号使用记录')}
+            icon={<Globe2 size={18} />}
+            label={t('已检测地区')}
+            value={formatNumber(metrics.detected)}
+            detail={t('已保存出口地区简称')}
           />
           <MetricCard
             icon={<Activity size={18} />}
@@ -622,7 +774,7 @@ function ChannelProxy() {
               pageSizeOpts: [12, 24, 48],
             }}
             empty={<Empty description={t('暂无代理数据')} />}
-            scroll={{ x: 1440 }}
+            scroll={{ x: 1660 }}
             loading={loading}
           />
         </div>
@@ -631,7 +783,7 @@ function ChannelProxy() {
           visible={modalVisible}
           proxy={editingProxy}
           onCancel={closeModal}
-          onSaved={loadProxies}
+          onSaved={handleProxySaved}
         />
 
         <Modal
@@ -646,10 +798,11 @@ function ChannelProxy() {
           <div className='ct-channel-proxy-usage-modal'>
             <div className='ct-channel-proxy-usage-head'>
               <div>
-                <Text strong>{usageProxy?.name || '--'}</Text>
+                <Text strong>{usageProxy?.name || EMPTY_VALUE}</Text>
                 <div>
                   <Text type='tertiary'>
-                    {proxyAddress(usageProxy)} · {protocolLabel(usageProxy?.protocol)}
+                    {proxyAddress(usageProxy) || EMPTY_VALUE} ·{' '}
+                    {protocolLabel(usageProxy?.protocol)}
                   </Text>
                 </div>
               </div>
@@ -681,10 +834,12 @@ function ChannelProxy() {
               <span>
                 {t('最近使用')}: {formatTimestamp(usageProxy?.last_used_at)}
               </span>
-              {Number(usageProxy?.last_failure_at || 0) > Number(usageProxy?.last_success_at || 0) ? (
+              {Number(usageProxy?.last_failure_at || 0) >
+              Number(usageProxy?.last_success_at || 0) ? (
                 <span className='ct-channel-proxy-warning'>
                   <AlertTriangle size={14} />
-                  {t('最近失败')}: {formatTimestamp(usageProxy?.last_failure_at)}
+                  {t('最近失败')}:{' '}
+                  {formatTimestamp(usageProxy?.last_failure_at)}
                 </span>
               ) : null}
             </div>

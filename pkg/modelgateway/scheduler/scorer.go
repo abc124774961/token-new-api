@@ -14,6 +14,7 @@ const (
 	costFirstGuardMultiple         = 1.8
 	costFirstGuardSuccessAdvantage = 0.03
 	costFirstGuardSpeedAdvantage   = 0.08
+	progressiveTTFTLatencyDecay    = 2.2
 )
 
 func DefaultScoreWeights() core.ScoreWeights {
@@ -232,6 +233,25 @@ func inverseLatencyScore(value, good, poor float64) float64 {
 		return 0
 	}
 	return clamp01(1 - (value-good)/(poor-good))
+}
+
+func progressiveTTFTLatencyScore(value, good, poor float64) float64 {
+	if value <= good {
+		return 1
+	}
+	if value >= poor {
+		return 0
+	}
+	if poor <= good || progressiveTTFTLatencyDecay <= 0 {
+		return inverseLatencyScore(value, good, poor)
+	}
+	x := clamp01((value - good) / (poor - good))
+	floor := math.Exp(-progressiveTTFTLatencyDecay)
+	denominator := 1 - floor
+	if denominator <= 0 {
+		return inverseLatencyScore(value, good, poor)
+	}
+	return clamp01((math.Exp(-progressiveTTFTLatencyDecay*x) - floor) / denominator)
 }
 
 func throughputScore(value, low, high float64) float64 {

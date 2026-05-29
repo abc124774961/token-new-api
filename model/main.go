@@ -299,6 +299,9 @@ func migrateDB() error {
 	if err := ensureModelGatewayAccountScopeColumns(); err != nil {
 		return err
 	}
+	if err := ensureModelGatewayProxyGeoColumns(); err != nil {
+		return err
+	}
 	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
 		return err
 	}
@@ -832,6 +835,24 @@ func ensureModelGatewayAccountScopeColumns() error {
 		{"switch_reason", "SwitchReason"},
 	}
 	return ensureColumns(&ModelGatewayScoreEvent{}, scoreEventColumns)
+}
+
+func ensureModelGatewayProxyGeoColumns() error {
+	if DB == nil || !DB.Migrator().HasTable(&ModelGatewayProxy{}) {
+		return nil
+	}
+	columns := []modelGatewayColumnSpec{
+		{"exit_ip", "ExitIP"},
+		{"region_code", "RegionCode"},
+		{"region_name", "RegionName"},
+		{"country_name", "CountryName"},
+		{"city", "City"},
+		{"timezone", "Timezone"},
+		{"geo_checked_at", "GeoCheckedAt"},
+		{"geo_status", "GeoStatus"},
+		{"geo_error", "GeoError"},
+	}
+	return ensureColumns(&ModelGatewayProxy{}, columns)
 }
 
 func ensureColumns(table any, columns []modelGatewayColumnSpec) error {

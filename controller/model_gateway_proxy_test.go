@@ -224,6 +224,131 @@ func TestModelGatewayProxyListReportsSameBrandReuseRisk(t *testing.T) {
 	require.Equal(t, "same_brand_multi_account", payload.Data[0].ReuseRisks[0].Reason)
 }
 
+func TestModelGatewayProxyListIncludesGeoFields(t *testing.T) {
+	db := setupModelGatewayProxyControllerTestDB(t)
+	require.NoError(t, db.Create(&model.ModelGatewayProxy{
+		ID:           104,
+		Name:         "hk exit",
+		Protocol:     "socks5",
+		Address:      "127.0.0.1:1080",
+		Enabled:      true,
+		ExitIP:       "66.93.162.84",
+		RegionCode:   "US",
+		RegionName:   "California",
+		CountryName:  "United States",
+		City:         "Los Angeles",
+		Timezone:     "America/Los_Angeles",
+		GeoCheckedAt: 1700000300,
+		GeoStatus:    "success",
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/model_gateway/proxies", ListModelGatewayProxies)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/proxies", nil)
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeModelGatewayProxyListResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Len(t, payload.Data, 1)
+	require.Equal(t, "US", payload.Data[0].RegionCode)
+	require.Equal(t, "66.93.162.84", payload.Data[0].ExitIP)
+	require.Equal(t, "Los Angeles", payload.Data[0].City)
+	require.Equal(t, int64(1700000300), payload.Data[0].GeoCheckedAt)
+}
+
+func TestDetectModelGatewayProxyGeoSavesRegionCode(t *testing.T) {
+	db := setupModelGatewayProxyControllerTestDB(t)
+	require.NoError(t, db.Create(&model.ModelGatewayProxy{
+		ID:       105,
+		Name:     "geo direct",
+		Protocol: "http",
+		Address:  "127.0.0.1:18080",
+		Enabled:  true,
+	}).Error)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ip":"66.93.162.84","country_code":"us","country_name":"United States","region":"California","city":"Los Angeles","timezone":"America/Los_Angeles"}`))
+	}))
+	defer server.Close()
+	originalEndpoints := modelGatewayProxyGeoEndpoints
+	modelGatewayProxyGeoEndpoints = []string{server.URL}
+	originalFactory := modelGatewayProxyGeoHTTPClientFactory
+	modelGatewayProxyGeoHTTPClientFactory = func(proxyURL string) (*http.Client, error) {
+		require.NotEmpty(t, proxyURL)
+		return server.Client(), nil
+	}
+	t.Cleanup(func() {
+		modelGatewayProxyGeoEndpoints = originalEndpoints
+		modelGatewayProxyGeoHTTPClientFactory = originalFactory
+	})
+
+	router := gin.New()
+	router.POST("/api/model_gateway/proxies/:proxy_id/detect", DetectModelGatewayProxyGeo)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/model_gateway/proxies/105/detect", nil)
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeModelGatewayProxyResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, "US", payload.Data.RegionCode)
+	require.Equal(t, "66.93.162.84", payload.Data.ExitIP)
+	require.Equal(t, "success", payload.Data.GeoStatus)
+	require.NotZero(t, payload.Data.GeoCheckedAt)
+
+	var updated model.ModelGatewayProxy
+	require.NoError(t, db.First(&updated, "id = ?", 105).Error)
+	require.Equal(t, "US", updated.RegionCode)
+	require.Equal(t, "United States", updated.CountryName)
+	require.Equal(t, "Los Angeles", updated.City)
+	require.Equal(t, "success", updated.GeoStatus)
+}
+
+func TestDetectModelGatewayProxyGeoSavesFailureReason(t *testing.T) {
+	db := setupModelGatewayProxyControllerTestDB(t)
+	require.NoError(t, db.Create(&model.ModelGatewayProxy{
+		ID:       106,
+		Name:     "geo fail",
+		Protocol: "http",
+		Address:  "127.0.0.1:18080",
+		Enabled:  true,
+	}).Error)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad geo", http.StatusBadGateway)
+	}))
+	defer server.Close()
+	originalEndpoints := modelGatewayProxyGeoEndpoints
+	modelGatewayProxyGeoEndpoints = []string{server.URL}
+	originalFactory := modelGatewayProxyGeoHTTPClientFactory
+	modelGatewayProxyGeoHTTPClientFactory = func(proxyURL string) (*http.Client, error) {
+		require.NotEmpty(t, proxyURL)
+		return server.Client(), nil
+	}
+	t.Cleanup(func() {
+		modelGatewayProxyGeoEndpoints = originalEndpoints
+		modelGatewayProxyGeoHTTPClientFactory = originalFactory
+	})
+
+	router := gin.New()
+	router.POST("/api/model_gateway/proxies/:proxy_id/detect", DetectModelGatewayProxyGeo)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/model_gateway/proxies/106/detect", nil)
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeModelGatewayProxyResponse(t, recorder)
+	require.False(t, payload.Success, recorder.Body.String())
+	require.Contains(t, payload.Message, "代理地区检测失败")
+
+	var updated model.ModelGatewayProxy
+	require.NoError(t, db.First(&updated, "id = ?", 106).Error)
+	require.Equal(t, "failed", updated.GeoStatus)
+	require.Contains(t, updated.GeoError, "HTTP 502")
+	require.Equal(t, int64(1), updated.FailureCount)
+	require.NotZero(t, updated.GeoCheckedAt)
+}
+
 func decodeModelGatewayProxyResponse(t *testing.T, recorder *httptest.ResponseRecorder) modelGatewayProxyAPIResponse {
 	t.Helper()
 	var payload modelGatewayProxyAPIResponse

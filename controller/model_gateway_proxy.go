@@ -1,17 +1,31 @@
 package controller
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+const modelGatewayProxyGeoDetectTimeout = 12 * time.Second
+
+var modelGatewayProxyGeoEndpoints = []string{
+	"https://ipapi.co/json/",
+	"https://ipwho.is/",
+}
+
+var modelGatewayProxyGeoHTTPClientFactory = service.NewProxyHttpClient
 
 type ModelGatewayProxyResponse struct {
 	ID             int                           `json:"id"`
@@ -27,6 +41,15 @@ type ModelGatewayProxyResponse struct {
 	LastFailureAt  int64                         `json:"last_failure_at,omitempty"`
 	FailureCount   int64                         `json:"failure_count,omitempty"`
 	UseCount       int64                         `json:"use_count,omitempty"`
+	ExitIP         string                        `json:"exit_ip,omitempty"`
+	RegionCode     string                        `json:"region_code,omitempty"`
+	RegionName     string                        `json:"region_name,omitempty"`
+	CountryName    string                        `json:"country_name,omitempty"`
+	City           string                        `json:"city,omitempty"`
+	Timezone       string                        `json:"timezone,omitempty"`
+	GeoCheckedAt   int64                         `json:"geo_checked_at,omitempty"`
+	GeoStatus      string                        `json:"geo_status,omitempty"`
+	GeoError       string                        `json:"geo_error,omitempty"`
 	CreatedTime    int64                         `json:"created_time"`
 	UpdatedTime    int64                         `json:"updated_time"`
 	BrandUsage     []ModelGatewayProxyUsageBrief `json:"brand_usage,omitempty"`
@@ -130,6 +153,41 @@ func UpdateModelGatewayProxy(c *gin.Context) {
 	common.ApiSuccess(c, buildModelGatewayProxyResponse(*proxy, nil))
 }
 
+func DetectModelGatewayProxyGeo(c *gin.Context) {
+	proxyID, ok := parseModelGatewayProxyIDParam(c)
+	if !ok {
+		return
+	}
+	proxy, err := model.GetModelGatewayProxyByID(proxyID)
+	if err != nil {
+		common.ApiErrorMsg(c, "代理不存在")
+		return
+	}
+	result, detectErr := detectModelGatewayProxyGeo(c.Request.Context(), *proxy)
+	if detectErr != nil {
+		now := common.GetTimestamp()
+		proxy.GeoCheckedAt = now
+		proxy.GeoStatus = "failed"
+		proxy.GeoError = truncateModelGatewayProxyGeoError(detectErr.Error())
+		proxy.LastFailureAt = now
+		proxy.FailureCount++
+		if err := model.DB.Save(proxy).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		model.InvalidateModelGatewayProxyCache(proxy.ID)
+		common.ApiErrorMsg(c, "代理地区检测失败："+proxy.GeoError)
+		return
+	}
+	applyModelGatewayProxyGeoResult(proxy, result)
+	if err := model.DB.Save(proxy).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.InvalidateModelGatewayProxyCache(proxy.ID)
+	common.ApiSuccess(c, buildModelGatewayProxyResponse(*proxy, nil))
+}
+
 func parseModelGatewayProxyIDParam(c *gin.Context) (int, bool) {
 	proxyID, err := strconv.Atoi(c.Param("proxy_id"))
 	if err != nil || proxyID <= 0 {
@@ -186,6 +244,15 @@ func modelGatewayProxyFromRequest(request SaveModelGatewayProxyRequest, existing
 		proxy.LastFailureAt = existing.LastFailureAt
 		proxy.FailureCount = existing.FailureCount
 		proxy.UseCount = existing.UseCount
+		proxy.ExitIP = existing.ExitIP
+		proxy.RegionCode = existing.RegionCode
+		proxy.RegionName = existing.RegionName
+		proxy.CountryName = existing.CountryName
+		proxy.City = existing.City
+		proxy.Timezone = existing.Timezone
+		proxy.GeoCheckedAt = existing.GeoCheckedAt
+		proxy.GeoStatus = existing.GeoStatus
+		proxy.GeoError = existing.GeoError
 		proxy.CreatedTime = existing.CreatedTime
 		if request.Remark == "" {
 			proxy.Remark = existing.Remark
@@ -261,6 +328,15 @@ func buildModelGatewayProxyResponse(proxy model.ModelGatewayProxy, usages []mode
 		LastFailureAt:  proxy.LastFailureAt,
 		FailureCount:   proxy.FailureCount,
 		UseCount:       proxy.UseCount,
+		ExitIP:         proxy.ExitIP,
+		RegionCode:     proxy.RegionCode,
+		RegionName:     proxy.RegionName,
+		CountryName:    proxy.CountryName,
+		City:           proxy.City,
+		Timezone:       proxy.Timezone,
+		GeoCheckedAt:   proxy.GeoCheckedAt,
+		GeoStatus:      proxy.GeoStatus,
+		GeoError:       proxy.GeoError,
 		CreatedTime:    proxy.CreatedTime,
 		UpdatedTime:    proxy.UpdatedTime,
 		PasswordSet:    proxy.Password != "",
@@ -365,6 +441,157 @@ func buildModelGatewayProxyReuseRisks(usages []model.ModelGatewayProxyUsage) []M
 		return risks[i].LastUsedAt > risks[j].LastUsedAt
 	})
 	return risks
+}
+
+type modelGatewayProxyGeoResult struct {
+	ExitIP      string
+	RegionCode  string
+	RegionName  string
+	CountryName string
+	City        string
+	Timezone    string
+}
+
+type modelGatewayProxyGeoAPIResponse struct {
+	IP          string `json:"ip"`
+	Query       string `json:"query"`
+	Country     string `json:"country"`
+	CountryCode string `json:"country_code"`
+	CountryName string `json:"country_name"`
+	Region      string `json:"region"`
+	RegionCode  string `json:"region_code"`
+	RegionName  string `json:"region_name"`
+	City        string `json:"city"`
+	Timezone    string `json:"timezone"`
+	Success     *bool  `json:"success"`
+	Message     string `json:"message"`
+	Reason      string `json:"reason"`
+	Error       string `json:"error"`
+}
+
+func detectModelGatewayProxyGeo(parent context.Context, proxy model.ModelGatewayProxy) (modelGatewayProxyGeoResult, error) {
+	proxyURL, err := proxy.ProxyURL()
+	if err != nil {
+		return modelGatewayProxyGeoResult{}, err
+	}
+	client, err := modelGatewayProxyGeoHTTPClientFactory(proxyURL)
+	if err != nil {
+		return modelGatewayProxyGeoResult{}, err
+	}
+	ctx := parent
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, modelGatewayProxyGeoDetectTimeout)
+	defer cancel()
+
+	var lastErr error
+	for _, endpoint := range modelGatewayProxyGeoEndpoints {
+		result, err := detectModelGatewayProxyGeoFromEndpoint(ctx, client, endpoint)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("没有可用的地区检测服务")
+	}
+	return modelGatewayProxyGeoResult{}, lastErr
+}
+
+func detectModelGatewayProxyGeoFromEndpoint(ctx context.Context, client *http.Client, endpoint string) (modelGatewayProxyGeoResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return modelGatewayProxyGeoResult{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "new-api-proxy-geo-detector/1.0")
+	resp, err := client.Do(req)
+	if err != nil {
+		return modelGatewayProxyGeoResult{}, err
+	}
+	defer service.CloseResponseBodyGracefully(resp)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 128*1024))
+	if err != nil {
+		return modelGatewayProxyGeoResult{}, err
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return modelGatewayProxyGeoResult{}, fmt.Errorf("检测服务返回 HTTP %d", resp.StatusCode)
+	}
+	var payload modelGatewayProxyGeoAPIResponse
+	if err := common.Unmarshal(body, &payload); err != nil {
+		return modelGatewayProxyGeoResult{}, err
+	}
+	if payload.Success != nil && !*payload.Success {
+		reason := strings.TrimSpace(firstNonEmptyString(payload.Message, payload.Reason, payload.Error))
+		if reason == "" {
+			reason = "检测服务返回失败"
+		}
+		return modelGatewayProxyGeoResult{}, fmt.Errorf("%s", reason)
+	}
+	result := normalizeModelGatewayProxyGeoResult(payload)
+	if result.ExitIP == "" || result.RegionCode == "" {
+		return modelGatewayProxyGeoResult{}, fmt.Errorf("检测服务未返回有效地区")
+	}
+	return result, nil
+}
+
+func normalizeModelGatewayProxyGeoResult(payload modelGatewayProxyGeoAPIResponse) modelGatewayProxyGeoResult {
+	countryCode := normalizeModelGatewayProxyRegionCode(firstNonEmptyString(payload.CountryCode, payload.Country))
+	countryName := strings.TrimSpace(firstNonEmptyString(payload.CountryName, payload.Country))
+	if countryName == countryCode {
+		countryName = ""
+	}
+	return modelGatewayProxyGeoResult{
+		ExitIP:      strings.TrimSpace(firstNonEmptyString(payload.IP, payload.Query)),
+		RegionCode:  countryCode,
+		RegionName:  strings.TrimSpace(firstNonEmptyString(payload.RegionName, payload.Region)),
+		CountryName: countryName,
+		City:        strings.TrimSpace(payload.City),
+		Timezone:    strings.TrimSpace(payload.Timezone),
+	}
+}
+
+func applyModelGatewayProxyGeoResult(proxy *model.ModelGatewayProxy, result modelGatewayProxyGeoResult) {
+	if proxy == nil {
+		return
+	}
+	now := common.GetTimestamp()
+	proxy.ExitIP = result.ExitIP
+	proxy.RegionCode = result.RegionCode
+	proxy.RegionName = result.RegionName
+	proxy.CountryName = result.CountryName
+	proxy.City = result.City
+	proxy.Timezone = result.Timezone
+	proxy.GeoCheckedAt = now
+	proxy.GeoStatus = "success"
+	proxy.GeoError = ""
+	proxy.LastSuccessAt = now
+}
+
+func normalizeModelGatewayProxyRegionCode(value string) string {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	if len(value) > 16 {
+		value = value[:16]
+	}
+	return value
+}
+
+func truncateModelGatewayProxyGeoError(message string) string {
+	message = strings.TrimSpace(message)
+	if len(message) <= 240 {
+		return message
+	}
+	return message[:240]
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func proxyIDsFromModelGatewayProxies(proxies []model.ModelGatewayProxy) []int {

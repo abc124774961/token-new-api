@@ -226,6 +226,7 @@
 }
 
 .ct-channel-proxy-auth,
+.ct-channel-proxy-geo-main,
 .ct-channel-proxy-usage-tags,
 .ct-channel-proxy-usage-cell {
   display: flex;
@@ -233,6 +234,38 @@
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.ct-channel-proxy-geo-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ct-channel-proxy-geo-main {
+  gap: 5px;
+}
+
+.ct-channel-proxy-geo-meta {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--cp-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.ct-channel-proxy-geo-meta span {
+  overflow: hidden;
+  max-width: 190px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-channel-proxy-geo-error-icon {
+  color: var(--cp-orange);
 }
 
 .ct-channel-proxy-usage-cell {

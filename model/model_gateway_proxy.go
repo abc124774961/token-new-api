@@ -41,6 +41,15 @@ type ModelGatewayProxy struct {
 	LastFailureAt int64  `json:"last_failure_at,omitempty" gorm:"bigint;index"`
 	FailureCount  int64  `json:"failure_count,omitempty" gorm:"bigint;default:0"`
 	UseCount      int64  `json:"use_count,omitempty" gorm:"bigint;default:0"`
+	ExitIP        string `json:"exit_ip,omitempty" gorm:"size:64;index"`
+	RegionCode    string `json:"region_code,omitempty" gorm:"size:16;index"`
+	RegionName    string `json:"region_name,omitempty" gorm:"size:128"`
+	CountryName   string `json:"country_name,omitempty" gorm:"size:128"`
+	City          string `json:"city,omitempty" gorm:"size:128"`
+	Timezone      string `json:"timezone,omitempty" gorm:"size:128"`
+	GeoCheckedAt  int64  `json:"geo_checked_at,omitempty" gorm:"bigint;index"`
+	GeoStatus     string `json:"geo_status,omitempty" gorm:"size:32;index"`
+	GeoError      string `json:"geo_error,omitempty" gorm:"type:varchar(255)"`
 	CreatedTime   int64  `json:"created_time" gorm:"bigint;index"`
 	UpdatedTime   int64  `json:"updated_time" gorm:"bigint;index"`
 }

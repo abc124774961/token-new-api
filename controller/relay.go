@@ -584,12 +584,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				service.MarkChannelAffinityRecordSkipped(c)
 			}
 			if relayClientAborted(c, relayInfo, nil) {
-				reportModelGatewayAttempt(c, relayInfo, retryParam, channel, types.NewErrorWithStatusCode(
+				abortErr := types.NewErrorWithStatusCode(
 					context.Canceled,
 					types.ErrorCodeDoRequestFailed,
 					relayStatusClientClosedRequest,
-					types.ErrOptionWithSkipRetry(),
-				), modelGatewayAttemptFlow{
+				)
+				abortFlow := modelGatewayAttemptFlow{
 					ErrorCategory:          modelgatewaycore.ErrorCategoryClientAborted,
 					RetryAction:            "client_aborted",
 					ClientAborted:          true,
@@ -601,7 +601,35 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 					RequestBodyPrepare:     requestBodyPrepare,
 					RequestBodyBytes:       requestBodyBytes,
 					RequestBodyStorage:     requestBodyStorage,
-				})
+				}
+				channelInducedAbort := !relayRequestContextCanceled(c) && modelGatewayAttemptLikelyChannelInducedAbort(c, relayInfo, abortFlow)
+				if channelInducedAbort {
+					abortFlow.ErrorCategory = modelgatewaycore.ErrorCategoryChannelInducedClientAbort
+					abortFlow.RetryReason = modelgatewaycore.RelayAttemptCancelReasonChannelInducedClientAbort
+					willRetry := shouldRetry(c, abortErr, retryParam, common.RetryTimes-retryParam.GetRetry())
+					abortFlow.WillRetry = willRetry
+					abortFlow.RetryAction = retryActionForAttempt(c, abortErr, willRetry)
+					if willRetry {
+						service.MarkChannelSelectionSkipped(c, channel.Id)
+						setChannelInducedRetryRoutingIntentIfNeeded(c, channel, relayInfo.RetryIndex, abortFlow.RetryAction)
+					} else {
+						finalAttemptReported = true
+					}
+					processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), abortErr, !willRetry)
+					reportModelGatewayAttempt(c, relayInfo, retryParam, channel, abortErr, abortFlow)
+					newAPIError = abortErr
+					if willRetry {
+						continue
+					}
+					break
+				}
+				abortErr = types.NewErrorWithStatusCode(
+					context.Canceled,
+					types.ErrorCodeDoRequestFailed,
+					relayStatusClientClosedRequest,
+					types.ErrOptionWithSkipRetry(),
+				)
+				reportModelGatewayAttempt(c, relayInfo, retryParam, channel, abortErr, abortFlow)
 				finalAttemptReported = true
 				return
 			}
@@ -626,7 +654,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
+		channelInducedAbort := relayChannelInducedClientAbort(c, relayInfo, newAPIError)
 		clientAbort := relayClientAborted(c, relayInfo, newAPIError)
+		terminalClientAbort := clientAbort && !channelInducedAbort
 		errorCategory := classifyRelayAttemptError(c, newAPIError)
 		overloadSkip := errorCategory == modelgatewaycore.ErrorCategoryOverloadSkip
 		flow := modelGatewayAttemptFlow{
@@ -634,17 +664,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			ConcurrencyLimited: overloadSkip || service.IsUpstreamConcurrencyLimitError(newAPIError),
 			ClientAborted:      clientAbort,
 		}
+		if channelInducedAbort {
+			flow.ErrorCategory = modelgatewaycore.ErrorCategoryChannelInducedClientAbort
+			flow.RetryReason = modelgatewaycore.RelayAttemptCancelReasonChannelInducedClientAbort
+		}
 		if firstByteTimeoutHit {
 			flow.ErrorCategory = modelgatewaycore.ErrorCategoryTimeout
 			flow.RetryReason = helper.RelayAttemptCancelReasonFirstByteTimeout
 			flow.ClientAborted = false
 			clientAbort = false
+			terminalClientAbort = false
 			service.MarkChannelSelectionSkipped(c, channel.Id)
 		}
-		if (overloadSkip || service.IsUpstreamConcurrencyLimitError(newAPIError)) && !clientAbort {
+		if (overloadSkip || service.IsUpstreamConcurrencyLimitError(newAPIError)) && !terminalClientAbort {
 			service.MarkChannelSelectionSkipped(c, channel.Id)
 		}
-		if service.IsUpstreamConcurrencyLimitError(newAPIError) && !clientAbort {
+		if service.IsUpstreamConcurrencyLimitError(newAPIError) && !terminalClientAbort {
 			flow.ActiveConcurrency = upstreamConcurrencySample
 			if concurrencyLease.Limit > 0 {
 				flow.ConfiguredConcurrencyLimit = concurrencyLease.Limit
@@ -656,18 +691,21 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				flow.ConfiguredConcurrencyLimit = learned.PreviousLimit
 			}
 		}
-		if service.IsBalanceInsufficientError(newAPIError) && !clientAbort {
+		if service.IsBalanceInsufficientError(newAPIError) && !terminalClientAbort {
 			service.MarkChannelBalanceSkipped(c, channel.Id)
 			service.MarkChannelBalanceInsufficient(channel.Id)
 			flow.BalanceInsufficient = true
 		}
 		concurrencyLease.Release()
 
-		willRetry := shouldRetry(c, newAPIError, retryParam, common.RetryTimes-retryParam.GetRetry()) && !clientAbort
+		willRetry := shouldRetry(c, newAPIError, retryParam, common.RetryTimes-retryParam.GetRetry()) && !terminalClientAbort
 		flow.WillRetry = willRetry
 		flow.RetryAction = retryActionForAttempt(c, newAPIError, willRetry)
+		if channelInducedAbort && willRetry {
+			setChannelInducedRetryRoutingIntentIfNeeded(c, channel, relayInfo.RetryIndex, flow.RetryAction)
+		}
 		setFirstByteRetryRoutingIntentIfNeeded(c, channel, relayInfo.RetryIndex, firstByteTimeoutHit, willRetry, flow.RetryAction)
-		if !clientAbort && !firstByteTimeoutHit {
+		if !terminalClientAbort && !firstByteTimeoutHit {
 			processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, !willRetry)
 		}
 		flow.UsedChannels = append([]string(nil), c.GetStringSlice("use_channel")...)
@@ -1104,6 +1142,9 @@ func classifyRelayAttemptError(c *gin.Context, apiErr *types.NewAPIError) string
 	if apiErr == nil {
 		return ""
 	}
+	if relayChannelInducedClientAbort(c, nil, apiErr) {
+		return modelgatewaycore.ErrorCategoryChannelInducedClientAbort
+	}
 	if relayClientAborted(c, nil, apiErr) {
 		return modelgatewaycore.ErrorCategoryClientAborted
 	}
@@ -1144,6 +1185,12 @@ func retryActionForAttempt(c *gin.Context, apiErr *types.NewAPIError, willRetry 
 	if apiErr == nil {
 		return "complete"
 	}
+	if relayChannelInducedClientAbort(c, nil, apiErr) {
+		if willRetry {
+			return "switch_channel"
+		}
+		return "stop"
+	}
 	if relayClientAborted(c, nil, apiErr) {
 		return "client_aborted"
 	}
@@ -1164,6 +1211,14 @@ func setFirstByteRetryRoutingIntentIfNeeded(c *gin.Context, channel *model.Chann
 		return false
 	}
 	modelgatewaycore.SetRetryRoutingIntent(c, modelgatewaycore.NewFirstByteTimeoutRetryRoutingIntent(channel.Id, channel.Name, attemptIndex))
+	return true
+}
+
+func setChannelInducedRetryRoutingIntentIfNeeded(c *gin.Context, channel *model.Channel, attemptIndex int, retryAction string) bool {
+	if c == nil || channel == nil || retryAction != "switch_channel" {
+		return false
+	}
+	modelgatewaycore.SetRetryRoutingIntent(c, modelgatewaycore.NewChannelInducedClientAbortRetryRoutingIntent(channel.Id, channel.Name, attemptIndex))
 	return true
 }
 
@@ -1420,6 +1475,19 @@ func relayClientAborted(c *gin.Context, info *relaycommon.RelayInfo, apiErr *typ
 		return true
 	}
 	return apiErr != nil && errors.Is(apiErr, context.Canceled)
+}
+
+func relayChannelInducedClientAbort(c *gin.Context, info *relaycommon.RelayInfo, apiErr *types.NewAPIError) bool {
+	if info != nil && info.StreamStatus != nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonInternalFirstByteTimeout {
+		return true
+	}
+	if apiErr == nil || !errors.Is(apiErr, context.Canceled) {
+		return false
+	}
+	if relayRequestContextCanceled(c) || relayResponseAlreadyStarted(c) {
+		return false
+	}
+	return true
 }
 
 func relayRequestContextCanceled(c *gin.Context) bool {

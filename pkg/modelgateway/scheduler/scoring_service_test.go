@@ -227,6 +227,52 @@ func TestCandidateScoringServiceExplanationUsesScoreItemLatencyWindow(t *testing
 	require.Greater(t, fastTTFT.Score, slowTTFT.Score)
 }
 
+func TestTTFTLatencyUsesProgressiveScore(t *testing.T) {
+	service := scheduler.NewCandidateScoringService()
+	policy := core.GroupSmartPolicy{
+		Strategy:        core.StrategyBalanced,
+		CandidateGroups: []string{"default"},
+		GroupPriorityRatio: map[string]float64{
+			"default": 1,
+		},
+	}
+	base := core.RuntimeSnapshot{
+		Key:                core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", Group: "default", EndpointType: constant.EndpointTypeOpenAI},
+		SuccessRate:        1,
+		DurationMs:         5000,
+		TokensPerSecond:    45,
+		CostRatio:          1,
+		CostReferenceRatio: 1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	}
+
+	scoreForTTFT := func(ttftMs float64) core.ScoreItem {
+		snapshot := base
+		snapshot.TTFTMs = ttftMs
+		evaluation := service.EvaluatePreparedCandidate(core.Candidate{RuntimeKey: snapshot.Key, Group: "default"}, snapshot, policy, scheduler.ScoringContext{Strategy: core.StrategyBalanced}, false)
+		return scoreItemByKey(t, evaluation.Score.Items, "ttft_latency")
+	}
+
+	at800 := scoreForTTFT(800)
+	at1930 := scoreForTTFT(1930)
+	at3990 := scoreForTTFT(3990)
+	at8050 := scoreForTTFT(8050)
+	at18000 := scoreForTTFT(18000)
+	at20000 := scoreForTTFT(20000)
+
+	require.Equal(t, 1.0, at800.Score)
+	require.Greater(t, at1930.Score, at3990.Score)
+	require.Greater(t, at3990.Score, at8050.Score)
+	require.Greater(t, at8050.Score, at18000.Score)
+	require.InEpsilon(t, 0.8634, at1930.Score, 0.0001)
+	require.InEpsilon(t, 0.6557, at3990.Score, 0.0001)
+	require.InEpsilon(t, 0.3654, at8050.Score, 0.0001)
+	require.InEpsilon(t, 0.0321, at18000.Score, 0.0001)
+	require.Equal(t, 0.0, at20000.Score)
+	require.Equal(t, "progressive_latency_score(ttft, 800ms, 20000ms, decay=2.2)", at3990.Formula)
+}
+
 func scoreItemByKey(t *testing.T, items []core.ScoreItem, key string) core.ScoreItem {
 	t.Helper()
 	for _, item := range items {

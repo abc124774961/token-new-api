@@ -457,9 +457,49 @@ func TestRelayClientAbortClassificationDoesNotRetry(t *testing.T) {
 	)
 
 	require.True(t, relayClientAborted(ctx, nil, err))
+	require.False(t, relayChannelInducedClientAbort(ctx, nil, err))
 	require.Equal(t, "client_aborted", classifyRelayAttemptError(ctx, err))
 	require.Equal(t, "client_aborted", retryActionForAttempt(ctx, err, false))
 	require.False(t, shouldRetry(ctx, err, param, 3))
+}
+
+func TestChannelInducedClientAbortCanSwitchChannel(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 641, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 642, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set("use_channel", []string{"641"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	info := &relaycommon.RelayInfo{StreamStatus: relaycommon.NewStreamStatus()}
+	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonInternalFirstByteTimeout, errors.New("channel induced stream stall"))
+	err := types.NewErrorWithStatusCode(
+		context.Canceled,
+		types.ErrorCodeDoRequestFailed,
+		relayStatusClientClosedRequest,
+	)
+
+	require.True(t, relayClientAborted(ctx, info, err))
+	require.True(t, relayChannelInducedClientAbort(ctx, info, err))
+	require.Equal(t, modelgatewaycore.ErrorCategoryChannelInducedClientAbort, classifyRelayAttemptError(ctx, err))
+	willRetry := shouldRetry(ctx, err, param, 0)
+	require.True(t, willRetry)
+	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, willRetry))
+	require.True(t, setChannelInducedRetryRoutingIntentIfNeeded(ctx, &model.Channel{Id: 641, Name: "stalled-channel"}, 0, "switch_channel"))
+	intent, ok := modelgatewaycore.GetRetryRoutingIntent(ctx)
+	require.True(t, ok)
+	require.Equal(t, modelgatewaycore.RelayAttemptCancelReasonChannelInducedClientAbort, intent.Reason)
+	require.Equal(t, 641, intent.FailedChannelID)
+	require.Equal(t, modelgatewaycore.RetryRoutingQueuePriority, intent.QueuePriority)
 }
 
 func TestRelayClientAbortIgnoresCanceledContextAfterNormalStreamEnd(t *testing.T) {

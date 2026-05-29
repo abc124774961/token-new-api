@@ -26,7 +26,10 @@ const (
 	DispatchFilterConditionCodexImageGenerationTool = "codex_image_generation_tool"
 )
 
-const RelayAttemptCancelReasonFirstByteTimeout = "first_byte_timeout"
+const (
+	RelayAttemptCancelReasonFirstByteTimeout          = "first_byte_timeout"
+	RelayAttemptCancelReasonChannelInducedClientAbort = "channel_induced_client_abort"
+)
 
 const (
 	RetryRoutingStrategyFirstByteRecovery = "first_byte_recovery"
@@ -235,6 +238,20 @@ type CostGuardDecision struct {
 func NewFirstByteTimeoutRetryRoutingIntent(channelID int, channelName string, attemptIndex int) *RetryRoutingIntent {
 	return &RetryRoutingIntent{
 		Reason:             RelayAttemptCancelReasonFirstByteTimeout,
+		Strategy:           RetryRoutingStrategyFirstByteRecovery,
+		PreferLowTTFT:      true,
+		PreferHighSuccess:  true,
+		QueuePriorityBoost: true,
+		QueuePriority:      RetryRoutingQueuePriority,
+		FailedChannelID:    channelID,
+		FailedChannelName:  channelName,
+		AttemptIndex:       attemptIndex,
+	}
+}
+
+func NewChannelInducedClientAbortRetryRoutingIntent(channelID int, channelName string, attemptIndex int) *RetryRoutingIntent {
+	return &RetryRoutingIntent{
+		Reason:             RelayAttemptCancelReasonChannelInducedClientAbort,
 		Strategy:           RetryRoutingStrategyFirstByteRecovery,
 		PreferLowTTFT:      true,
 		PreferHighSuccess:  true,

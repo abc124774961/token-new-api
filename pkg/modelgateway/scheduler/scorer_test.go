@@ -1153,7 +1153,7 @@ func TestSelectorPrefersEnrichedSnapshotOverLegacyRuntimeKey(t *testing.T) {
 	require.Equal(t, enrichedKey, candidate.MatchedRuntimeKey)
 	require.Equal(t, 1705, candidate.SampleCount)
 	require.Equal(t, 12500.0, candidate.TTFTMs)
-	require.InEpsilon(t, 0.3906, candidate.ScoreBreakdown["ttft_latency"], 0.0001)
+	require.InEpsilon(t, 0.1697, candidate.ScoreBreakdown["ttft_latency"], 0.0001)
 }
 
 func TestSelectorUsesRoutingScoreButReportsStableScore(t *testing.T) {
@@ -1745,7 +1745,7 @@ func TestSelectorReusesSimilarRuntimeSnapshotForRealSamples(t *testing.T) {
 	require.Equal(t, exactKey, candidate.MatchedRuntimeKey)
 	require.Equal(t, candidateKey, candidate.RuntimeKey)
 	require.Equal(t, 0.97, candidate.ScoreBreakdown["completion_rate"])
-	require.InEpsilon(t, 0.9583, candidate.ScoreBreakdown["ttft_latency"], 0.0001)
+	require.InEpsilon(t, 0.9015, candidate.ScoreBreakdown["ttft_latency"], 0.0001)
 }
 
 func TestSelectorSimilarSnapshotPrefersCapabilityOverGroupOnlyMatch(t *testing.T) {

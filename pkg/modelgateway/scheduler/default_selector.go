@@ -1334,7 +1334,7 @@ func costFirstGuardSpeedScore(candidate candidateEvaluation) float64 {
 	score := 0.0
 	parts := 0.0
 	if candidate.snapshot.TTFTMs > 0 {
-		score += inverseLatencyScore(candidate.snapshot.TTFTMs, 800, 20000)
+		score += progressiveTTFTLatencyScore(candidate.snapshot.TTFTMs, 800, 20000)
 		parts++
 	}
 	if candidate.snapshot.DurationMs > 0 {

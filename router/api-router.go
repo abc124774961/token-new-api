@@ -359,6 +359,7 @@ func SetApiRouter(router *gin.Engine) {
 			modelGatewayRoute.GET("/proxies", controller.ListModelGatewayProxies)
 			modelGatewayRoute.POST("/proxies", controller.CreateModelGatewayProxy)
 			modelGatewayRoute.PUT("/proxies/:proxy_id", controller.UpdateModelGatewayProxy)
+			modelGatewayRoute.POST("/proxies/:proxy_id/detect", controller.DetectModelGatewayProxyGeo)
 			modelGatewayRoute.GET("/observability/summary", controller.GetModelGatewayObservabilitySummary)
 			modelGatewayRoute.GET("/observability/trends/export", controller.ExportModelGatewayObservabilityTrends)
 			modelGatewayRoute.GET("/observability/runtime", controller.GetModelGatewayRuntimeStatus)

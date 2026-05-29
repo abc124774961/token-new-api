@@ -108,7 +108,7 @@ func runtimeLatencyStats(samples []core.RuntimeLatencySample) (durationMs float6
 	ttftMs = trimmedMeanFloat64(ttfts)
 	switch {
 	case ttftMs > 0:
-		latencyScore = inverseLatencyScore(ttftMs, 800, 20000)
+		latencyScore = progressiveTTFTLatencyScore(ttftMs, 800, 20000)
 	case durationMs > 0:
 		latencyScore = inverseLatencyScore(durationMs, 3000, 90000)
 	default:

@@ -133,7 +133,7 @@ func (s *CandidateScoringService) BuildScoreItems(snapshot core.RuntimeSnapshot,
 	values := []core.ScoreItem{
 		scoreItem(scoreItemCompletionRate, "完成率分", scoreCategorySample, scoreRateSuccessRawValue(stats.Rates["completion"], "completion_rate"), "评分窗口", scoreRateValue(stats.Rates["completion"], completionRateScore(snapshot)), profile.Weights[scoreItemCompletionRate], scoreRateSampleCount(stats.Rates["completion"], snapshot.SampleCount), "completed / total", ""),
 		scoreItem(scoreItemUpstreamErrorRate, "上游错误率分", scoreCategorySample, scoreRateEventRawValue(stats.Rates["upstream_error"], "upstream_error_rate"), "评分窗口", scoreRateValue(stats.Rates["upstream_error"], 1), profile.Weights[scoreItemUpstreamErrorRate], scoreRateSampleCount(stats.Rates["upstream_error"], snapshot.SampleCount), "1 - upstream_error_rate", ""),
-		scoreItem(scoreItemTTFTLatency, "首包速度分", scoreCategorySample, rawTTFTRawValue(latency), "评分窗口", ttftScoreItemValue(latency), profile.Weights[scoreItemTTFTLatency], latency.SampleCount(snapshot.SampleCount), "inverse_latency_score(ttft, 800ms, 20000ms)", ""),
+		scoreItem(scoreItemTTFTLatency, "首包速度分", scoreCategorySample, rawTTFTRawValue(latency), "评分窗口", ttftScoreItemValue(latency), profile.Weights[scoreItemTTFTLatency], latency.SampleCount(snapshot.SampleCount), "progressive_latency_score(ttft, 800ms, 20000ms, decay=2.2)", ""),
 		scoreItem(scoreItemDurationLatency, "完整耗时分", scoreCategorySample, rawDurationRawValue(latency), "评分窗口", durationScoreItemValue(latency), profile.Weights[scoreItemDurationLatency], latency.SampleCount(snapshot.SampleCount), "inverse_latency_score(duration, 3000ms, 90000ms)", ""),
 		scoreItem(scoreItemThroughput, "吞吐速度分", scoreCategorySample, rawThroughputRawValue(latency), "评分窗口", throughputScoreItemValue(latency), profile.Weights[scoreItemThroughput], latency.ThroughputSampleCount(snapshot.SampleCount), "throughput_score(tps, 5, 80)", ""),
 		scoreItem(scoreItemEmptyOutputRate, "空输出率分", scoreCategorySample, scoreRateEventRawValue(stats.Rates["empty_output"], "empty_output_rate"), "评分窗口", scoreRateValue(stats.Rates["empty_output"], clamp01(1-clamp01(snapshot.EmptyOutputRate))), profile.Weights[scoreItemEmptyOutputRate], scoreRateSampleCount(stats.Rates["empty_output"], snapshot.SampleCount), "1 - empty_output_rate", ""),
@@ -169,7 +169,7 @@ func retryIntentScoreItem(snapshot core.RuntimeSnapshot, ctx ScoringContext) cor
 	successScore := completionRateScore(snapshot)
 	ttftScore := 0.55
 	if snapshot.TTFTMs > 0 {
-		ttftScore = inverseLatencyScore(snapshot.TTFTMs, 800, 12000)
+		ttftScore = progressiveTTFTLatencyScore(snapshot.TTFTMs, 800, 12000)
 	}
 	backlogScore := firstByteBacklogScore(snapshot, core.StrategySpeedFirst)
 	score := 0.0
@@ -639,7 +639,7 @@ func ttftScoreItemValue(latency scoreLatencyView) float64 {
 	if latency.TTFTMs <= 0 {
 		return 0
 	}
-	return inverseLatencyScore(latency.TTFTMs, 800, 20000)
+	return progressiveTTFTLatencyScore(latency.TTFTMs, 800, 20000)
 }
 
 func durationScoreItemValue(latency scoreLatencyView) float64 {
