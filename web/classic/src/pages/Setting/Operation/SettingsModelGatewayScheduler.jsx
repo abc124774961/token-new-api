@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Banner,
   Button,
@@ -74,6 +80,14 @@ const DEFAULT_SETTING = {
   probe_long_no_success_seconds: 1800,
   probe_recovery_successes_required: 2,
   probe_failure_avoidance_priority_enabled: true,
+  relay_total_timeout_enabled: true,
+  relay_total_timeout_seconds: 180,
+  channel_timeout_degrade_enabled: true,
+  channel_timeout_degrade_window_seconds: 600,
+  channel_timeout_degrade_min_samples: 5,
+  channel_timeout_degrade_threshold: 0.4,
+  channel_timeout_degrade_consecutive: 3,
+  channel_timeout_recovery_probe_successes: 2,
   cost_calculation_enabled: true,
   cost_calculation_interval_seconds: 5,
   cost_calculation_worker_count: 2,
@@ -155,7 +169,10 @@ const formatPricePerMillion = (value) => {
 };
 
 const formatStaticBillingRatio = (group, ratio, t) => {
-  if (String(group || '').trim() === 'auto' && !Number.isFinite(Number(ratio))) {
+  if (
+    String(group || '').trim() === 'auto' &&
+    !Number.isFinite(Number(ratio))
+  ) {
     return t('按实际分组');
   }
   return formatRatioValue(ratio);
@@ -912,6 +929,34 @@ export default function SettingsModelGatewayScheduler() {
       ),
       probe_failure_avoidance_priority_enabled:
         setting.probe_failure_avoidance_priority_enabled !== false,
+      relay_total_timeout_enabled:
+        setting.relay_total_timeout_enabled !== false,
+      relay_total_timeout_seconds: numberOrDefault(
+        setting.relay_total_timeout_seconds,
+        180,
+      ),
+      channel_timeout_degrade_enabled:
+        setting.channel_timeout_degrade_enabled !== false,
+      channel_timeout_degrade_window_seconds: numberOrDefault(
+        setting.channel_timeout_degrade_window_seconds,
+        600,
+      ),
+      channel_timeout_degrade_min_samples: numberOrDefault(
+        setting.channel_timeout_degrade_min_samples,
+        5,
+      ),
+      channel_timeout_degrade_threshold: numberOrDefault(
+        setting.channel_timeout_degrade_threshold,
+        0.4,
+      ),
+      channel_timeout_degrade_consecutive: numberOrDefault(
+        setting.channel_timeout_degrade_consecutive,
+        3,
+      ),
+      channel_timeout_recovery_probe_successes: numberOrDefault(
+        setting.channel_timeout_recovery_probe_successes,
+        2,
+      ),
       cost_calculation_interval_seconds: numberOrDefault(
         setting.cost_calculation_interval_seconds,
         5,
@@ -1480,6 +1525,122 @@ export default function SettingsModelGatewayScheduler() {
                   updateSetting(
                     'sticky_keep_score_ratio',
                     numberOrDefault(value, 0.85),
+                  )
+                }
+              />
+            </Col>
+          </Row>
+          <Banner
+            type='info'
+            fullMode={false}
+            closeIcon={null}
+            title={t('超时切换与降级恢复')}
+            description={t(
+              '流式智能网关请求在未输出前达到总耗时阈值会内部切换；频繁超时渠道进入降级避让，只能由恢复探活连续成功后恢复。',
+            )}
+            style={{ marginTop: 8, marginBottom: 16 }}
+          />
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={4}>
+              <Form.Switch
+                field='relay_total_timeout_enabled'
+                label={t('启用总耗时保护')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting('relay_total_timeout_enabled', value)
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='relay_total_timeout_seconds'
+                label={t('总耗时阈值')}
+                min={1}
+                suffix={t('秒')}
+                onChange={(value) =>
+                  updateSetting(
+                    'relay_total_timeout_seconds',
+                    numberOrDefault(value, 180),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.Switch
+                field='channel_timeout_degrade_enabled'
+                label={t('启用超时降级')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting('channel_timeout_degrade_enabled', value)
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='channel_timeout_degrade_window_seconds'
+                label={t('降级统计窗口')}
+                min={1}
+                suffix={t('秒')}
+                onChange={(value) =>
+                  updateSetting(
+                    'channel_timeout_degrade_window_seconds',
+                    numberOrDefault(value, 600),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='channel_timeout_degrade_min_samples'
+                label={t('降级最小样本')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting(
+                    'channel_timeout_degrade_min_samples',
+                    numberOrDefault(value, 5),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='channel_timeout_degrade_threshold'
+                label={t('超时率阈值')}
+                min={0.01}
+                max={1}
+                step={0.01}
+                onChange={(value) =>
+                  updateSetting(
+                    'channel_timeout_degrade_threshold',
+                    numberOrDefault(value, 0.4),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='channel_timeout_degrade_consecutive'
+                label={t('连续超时阈值')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting(
+                    'channel_timeout_degrade_consecutive',
+                    numberOrDefault(value, 3),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='channel_timeout_recovery_probe_successes'
+                label={t('恢复探活成功数')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting(
+                    'channel_timeout_recovery_probe_successes',
+                    numberOrDefault(value, 2),
                   )
                 }
               />
@@ -2106,7 +2267,9 @@ export default function SettingsModelGatewayScheduler() {
               type='info'
               fullMode={false}
               closeIcon={null}
-              description={t('请求链路只读取内存动态价格结果，样本窗口按最近样本数由后台任务计算。')}
+              description={t(
+                '请求链路只读取内存动态价格结果，样本窗口按最近样本数由后台任务计算。',
+              )}
               style={{ marginBottom: 12 }}
             />
             <Typography.Text strong>{t('按错误类型熔断策略')}</Typography.Text>

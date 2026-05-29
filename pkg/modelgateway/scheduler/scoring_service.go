@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/service"
 )
 
 type ScoringContext struct {
@@ -32,6 +33,7 @@ type scoreLatencyView struct {
 	TTFTMs                 float64
 	DurationMs             float64
 	TokensPerSecond        float64
+	TTFTStabilityPenalty   float64
 	LatencySamples         int
 	ThroughputSamples      int
 	UsesScoreStatsLatency  bool
@@ -133,7 +135,7 @@ func (s *CandidateScoringService) BuildScoreItems(snapshot core.RuntimeSnapshot,
 	values := []core.ScoreItem{
 		scoreItem(scoreItemCompletionRate, "完成率分", scoreCategorySample, scoreRateSuccessRawValue(stats.Rates["completion"], "completion_rate"), "评分窗口", scoreRateValue(stats.Rates["completion"], completionRateScore(snapshot)), profile.Weights[scoreItemCompletionRate], scoreRateSampleCount(stats.Rates["completion"], snapshot.SampleCount), "completed / total", ""),
 		scoreItem(scoreItemUpstreamErrorRate, "上游错误率分", scoreCategorySample, scoreRateEventRawValue(stats.Rates["upstream_error"], "upstream_error_rate"), "评分窗口", scoreRateValue(stats.Rates["upstream_error"], 1), profile.Weights[scoreItemUpstreamErrorRate], scoreRateSampleCount(stats.Rates["upstream_error"], snapshot.SampleCount), "1 - upstream_error_rate", ""),
-		scoreItem(scoreItemTTFTLatency, "首包速度分", scoreCategorySample, rawTTFTRawValue(latency), "评分窗口", ttftScoreItemValue(latency), profile.Weights[scoreItemTTFTLatency], latency.SampleCount(snapshot.SampleCount), "progressive_latency_score(ttft, 800ms, 20000ms, decay=2.2)", ""),
+		scoreItem(scoreItemTTFTLatency, "首包速度分", scoreCategorySample, rawTTFTRawValue(latency), "评分窗口", ttftScoreItemValue(latency), profile.Weights[scoreItemTTFTLatency], latency.SampleCount(snapshot.SampleCount), "recency_weighted_p50_progressive_score(ttft, decay=2.2, half_life=16, stability_penalty)", ""),
 		scoreItem(scoreItemDurationLatency, "完整耗时分", scoreCategorySample, rawDurationRawValue(latency), "评分窗口", durationScoreItemValue(latency), profile.Weights[scoreItemDurationLatency], latency.SampleCount(snapshot.SampleCount), "inverse_latency_score(duration, 3000ms, 90000ms)", ""),
 		scoreItem(scoreItemThroughput, "吞吐速度分", scoreCategorySample, rawThroughputRawValue(latency), "评分窗口", throughputScoreItemValue(latency), profile.Weights[scoreItemThroughput], latency.ThroughputSampleCount(snapshot.SampleCount), "throughput_score(tps, 5, 80)", ""),
 		scoreItem(scoreItemEmptyOutputRate, "空输出率分", scoreCategorySample, scoreRateEventRawValue(stats.Rates["empty_output"], "empty_output_rate"), "评分窗口", scoreRateValue(stats.Rates["empty_output"], clamp01(1-clamp01(snapshot.EmptyOutputRate))), profile.Weights[scoreItemEmptyOutputRate], scoreRateSampleCount(stats.Rates["empty_output"], snapshot.SampleCount), "1 - empty_output_rate", ""),
@@ -210,18 +212,30 @@ func retryIntentRawValue(snapshot core.RuntimeSnapshot) string {
 
 func scoreLatencyViewFromSnapshot(snapshot core.RuntimeSnapshot, stats ScoreStats) scoreLatencyView {
 	view := scoreLatencyView{
-		TTFTMs:           snapshot.TTFTMs,
-		DurationMs:       snapshot.DurationMs,
-		TokensPerSecond:  snapshot.TokensPerSecond,
-		TTFTSource:       scoreItemSourceForSnapshotValue(snapshot.TTFTMs),
-		DurationSource:   scoreItemSourceForSnapshotValue(snapshot.DurationMs),
-		ThroughputSource: scoreItemSourceForSnapshotValue(snapshot.TokensPerSecond),
+		TTFTMs:               snapshot.TTFTMs,
+		DurationMs:           snapshot.DurationMs,
+		TokensPerSecond:      snapshot.TokensPerSecond,
+		TTFTStabilityPenalty: 1,
+		TTFTSource:           scoreItemSourceForSnapshotValue(snapshot.TTFTMs),
+		DurationSource:       scoreItemSourceForSnapshotValue(snapshot.DurationMs),
+		ThroughputSource:     scoreItemSourceForSnapshotValue(snapshot.TokensPerSecond),
+	}
+	if len(snapshot.RecentLatencySamples) > 0 {
+		if weightedTTFTMs, stabilityPenalty, sampleCount := recencyWeightedTTFTLatency(snapshot.RecentLatencySamples); weightedTTFTMs > 0 {
+			view.TTFTMs = weightedTTFTMs
+			view.TTFTStabilityPenalty = stabilityPenalty
+			view.TTFTSource = scoreItemSourceRuntimeLatencySamples
+			view.LatencySamples = maxIntValue(view.LatencySamples, sampleCount)
+			view.UsesRuntimeLatencyView = true
+		}
 	}
 	if len(stats.Latency.TTFTMs) > 0 {
-		view.TTFTMs = trimmedMeanFloat64(stats.Latency.TTFTMs)
-		view.LatencySamples = maxIntValue(view.LatencySamples, len(stats.Latency.TTFTMs))
-		view.UsesScoreStatsLatency = true
-		view.TTFTSource = scoreItemSourceScoreStatsLatency
+		if view.TTFTMs <= 0 || view.TTFTSource == scoreItemSourceSnapshotFallback || view.TTFTSource == scoreItemSourceSampleMissing {
+			view.TTFTMs = trimmedMeanFloat64(stats.Latency.TTFTMs)
+			view.LatencySamples = maxIntValue(view.LatencySamples, len(stats.Latency.TTFTMs))
+			view.UsesScoreStatsLatency = true
+			view.TTFTSource = scoreItemSourceScoreStatsLatency
+		}
 	}
 	if len(stats.Latency.DurationMs) > 0 {
 		view.DurationMs = trimmedMeanFloat64(stats.Latency.DurationMs)
@@ -235,7 +249,7 @@ func scoreLatencyViewFromSnapshot(snapshot core.RuntimeSnapshot, stats ScoreStat
 		view.UsesScoreStatsLatency = true
 		view.ThroughputSource = scoreItemSourceScoreStatsLatency
 	}
-	if !view.UsesScoreStatsLatency && len(snapshot.RecentLatencySamples) > 0 {
+	if !view.UsesScoreStatsLatency && !view.UsesRuntimeLatencyView && len(snapshot.RecentLatencySamples) > 0 {
 		durationMs, ttftMs, _ := runtimeLatencyStats(snapshot.RecentLatencySamples)
 		if ttftMs > 0 {
 			view.TTFTMs = ttftMs
@@ -395,6 +409,7 @@ func annotateScoreItems(items []core.ScoreItem, stats ScoreStats, snapshot core.
 			scoreItemSetRaw(item, 1-scoreRateRawNumber(stats.Rates["upstream_error"], 1), "ratio", scoreRateSource(stats.Rates["upstream_error"], snapshot.SampleCount))
 		case scoreItemTTFTLatency:
 			scoreItemSetRaw(item, latency.TTFTMs, "ms", scoreItemSourceForValue(latency.TTFTMs, latency.TTFTSource))
+			item.FormulaParameters = ttftFormulaParameters(latency)
 		case scoreItemDurationLatency:
 			scoreItemSetRaw(item, latency.DurationMs, "ms", scoreItemSourceForValue(latency.DurationMs, latency.DurationSource))
 		case scoreItemThroughput:
@@ -682,7 +697,11 @@ func ttftScoreItemValue(latency scoreLatencyView) float64 {
 	if latency.TTFTMs <= 0 {
 		return 0
 	}
-	return progressiveTTFTLatencyScore(latency.TTFTMs, 800, 20000)
+	penalty := latency.TTFTStabilityPenalty
+	if penalty <= 0 {
+		penalty = 1
+	}
+	return progressiveTTFTLatencyScore(latency.TTFTMs, 800, 20000) * clamp01(penalty)
 }
 
 func durationScoreItemValue(latency scoreLatencyView) float64 {
@@ -776,6 +795,17 @@ func costFormulaParameters(snapshot core.RuntimeSnapshot, profile StrategyProfil
 	return params
 }
 
+func ttftFormulaParameters(latency scoreLatencyView) map[string]float64 {
+	params := map[string]float64{
+		"decay":     progressiveTTFTLatencyDecay,
+		"half_life": ttftRecencyHalfLifeSamples,
+	}
+	if latency.TTFTStabilityPenalty > 0 && latency.TTFTStabilityPenalty < 1 {
+		params["stability_penalty"] = latency.TTFTStabilityPenalty
+	}
+	return params
+}
+
 func stateTagsForSnapshot(snapshot core.RuntimeSnapshot) []string {
 	tags := make([]string, 0, 4)
 	if snapshot.CircuitOpen {
@@ -786,6 +816,9 @@ func stateTagsForSnapshot(snapshot core.RuntimeSnapshot) []string {
 	}
 	if snapshot.FailureAvoidance {
 		tags = append(tags, "failure_avoidance")
+	}
+	if snapshot.FailureAvoidance && strings.TrimSpace(snapshot.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason {
+		tags = append(tags, service.ChannelTimeoutRecoveryReason)
 	}
 	if snapshot.ProbeRecoveryPending {
 		tags = append(tags, "probe_recovery_pending")

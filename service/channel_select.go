@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,33 +29,38 @@ type RetryParam struct {
 }
 
 type channelAvoidanceEntry struct {
-	until        time.Time
-	reason       string
-	failureCount int
+	until                 time.Time
+	reason                string
+	failureCount          int
+	probeRecoveryRequired bool
 }
 
 var channelFailureAvoidance sync.Map
+var channelTimeoutDegradeEvents sync.Map
 
 const (
 	channelFailureAvoidancePauseDuration = 30 * time.Minute
 	channelFailureAvoidanceStepSeconds   = 8
+	ChannelTimeoutRecoveryReason         = "timeout_recovery"
 )
 
 type ChannelFailureAvoidanceStatus struct {
-	Active       bool   `json:"active"`
-	Reason       string `json:"reason,omitempty"`
-	Until        int64  `json:"until,omitempty"`
-	RemainingSec int64  `json:"remaining_seconds,omitempty"`
-	FailureCount int    `json:"failure_count,omitempty"`
+	Active                bool   `json:"active"`
+	Reason                string `json:"reason,omitempty"`
+	Until                 int64  `json:"until,omitempty"`
+	RemainingSec          int64  `json:"remaining_seconds,omitempty"`
+	FailureCount          int    `json:"failure_count,omitempty"`
+	ProbeRecoveryRequired bool   `json:"probe_recovery_required,omitempty"`
 }
 
 type ChannelFailureAvoidanceRecord struct {
-	Active       bool
-	Reason       string
-	Until        time.Time
-	Remaining    time.Duration
-	FailureCount int
-	ShouldPause  bool
+	Active                bool
+	Reason                string
+	Until                 time.Time
+	Remaining             time.Duration
+	FailureCount          int
+	ShouldPause           bool
+	ProbeRecoveryRequired bool
 }
 
 type ChannelFailureAvoidanceContext struct {
@@ -82,6 +88,27 @@ type ChannelPerformanceAvoidanceContext struct {
 	AttemptIndex int
 	TTFTMs       int64
 	DurationMs   int64
+}
+
+type ChannelTimeoutDegradeConfig struct {
+	Enabled               bool
+	Window                time.Duration
+	MinSamples            int
+	Threshold             float64
+	Consecutive           int
+	RecoveryProbeRequired bool
+}
+
+type channelTimeoutEvent struct {
+	at      time.Time
+	kind    string
+	timeout bool
+}
+
+type channelTimeoutDegradeState struct {
+	mu          sync.Mutex
+	events      []channelTimeoutEvent
+	consecutive int
 }
 
 func (p *RetryParam) GetRetry() int {
@@ -208,13 +235,37 @@ func getAvoidedChannelSet() map[int]struct{} {
 			channelFailureAvoidance.Delete(key)
 			return true
 		}
-		if !entry.until.After(now) {
+		if !entry.until.After(now) && !entry.probeRecoveryRequired {
 			return true
 		}
 		avoided[channelID] = struct{}{}
 		return true
 	})
 	return avoided
+}
+
+func getTimeoutRecoveryChannelSet() map[int]struct{} {
+	recovering := make(map[int]struct{})
+	if !common.ChannelFailureAvoidanceEnabled || common.ChannelFailureAvoidanceTTLSeconds <= 0 {
+		return recovering
+	}
+	channelFailureAvoidance.Range(func(key, value any) bool {
+		channelID, ok := key.(int)
+		if !ok {
+			channelFailureAvoidance.Delete(key)
+			return true
+		}
+		entry, ok := value.(channelAvoidanceEntry)
+		if !ok {
+			channelFailureAvoidance.Delete(key)
+			return true
+		}
+		if entry.probeRecoveryRequired || IsTimeoutRecoveryReason(entry.reason) {
+			recovering[channelID] = struct{}{}
+		}
+		return true
+	})
+	return recovering
 }
 
 func getBalanceInsufficientChannelSet() map[int]struct{} {
@@ -268,16 +319,100 @@ func GetChannelFailureAvoidanceStatus(channelID int) *ChannelFailureAvoidanceSta
 		return nil
 	}
 	now := time.Now()
-	if !entry.until.After(now) {
+	if !entry.until.After(now) && !entry.probeRecoveryRequired {
 		return nil
 	}
-	return &ChannelFailureAvoidanceStatus{
-		Active:       true,
-		Reason:       entry.reason,
-		Until:        entry.until.Unix(),
-		RemainingSec: int64(entry.until.Sub(now).Seconds()),
-		FailureCount: entry.failureCount,
+	remaining := int64(0)
+	if entry.until.After(now) {
+		remaining = int64(entry.until.Sub(now).Seconds())
 	}
+	return &ChannelFailureAvoidanceStatus{
+		Active:                true,
+		Reason:                entry.reason,
+		Until:                 entry.until.Unix(),
+		RemainingSec:          remaining,
+		FailureCount:          entry.failureCount,
+		ProbeRecoveryRequired: entry.probeRecoveryRequired,
+	}
+}
+
+func RecordChannelTimeoutDegradeSuccess(channelID int, config ChannelTimeoutDegradeConfig) {
+	recordChannelTimeoutDegradeSample(channelID, "success", false, config, nil)
+}
+
+func RecordChannelTimeoutDegradeSample(channelID int, kind string, config ChannelTimeoutDegradeConfig, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	return recordChannelTimeoutDegradeSample(channelID, kind, true, config, failureContext)
+}
+
+func recordChannelTimeoutDegradeSample(channelID int, kind string, timeoutSample bool, config ChannelTimeoutDegradeConfig, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	if channelID <= 0 || !config.Enabled {
+		return nil
+	}
+	if config.Window <= 0 {
+		config.Window = 10 * time.Minute
+	}
+	if config.MinSamples <= 0 {
+		config.MinSamples = 5
+	}
+	if config.Threshold <= 0 {
+		config.Threshold = 0.4
+	}
+	if config.Threshold > 1 {
+		config.Threshold = 1
+	}
+	if config.Consecutive <= 0 {
+		config.Consecutive = 3
+	}
+	stateValue, _ := channelTimeoutDegradeEvents.LoadOrStore(channelID, &channelTimeoutDegradeState{})
+	state, ok := stateValue.(*channelTimeoutDegradeState)
+	if !ok || state == nil {
+		state = &channelTimeoutDegradeState{}
+		channelTimeoutDegradeEvents.Store(channelID, state)
+	}
+	now := time.Now()
+	state.mu.Lock()
+	cutoff := now.Add(-config.Window)
+	events := state.events[:0]
+	for _, event := range state.events {
+		if event.at.After(cutoff) {
+			events = append(events, event)
+		}
+	}
+	events = append(events, channelTimeoutEvent{at: now, kind: strings.TrimSpace(kind), timeout: timeoutSample})
+	state.events = events
+	if timeoutSample {
+		state.consecutive++
+	} else {
+		state.consecutive = 0
+	}
+	samples := len(state.events)
+	consecutive := state.consecutive
+	timeoutCount := 0
+	for _, event := range state.events {
+		if event.timeout {
+			timeoutCount++
+		}
+	}
+	rate := 0.0
+	if samples > 0 {
+		rate = float64(timeoutCount) / float64(samples)
+	}
+	triggered := consecutive >= config.Consecutive || (samples >= config.MinSamples && rate >= config.Threshold)
+	state.mu.Unlock()
+	if !timeoutSample || !triggered {
+		return nil
+	}
+	if failureContext == nil {
+		failureContext = &ChannelFailureAvoidanceContext{}
+	}
+	failureContext.ErrorType = "timeout"
+	failureContext.ErrorCode = ChannelTimeoutRecoveryReason
+	failureContext.Message = strings.TrimSpace(fmt.Sprintf("%s samples=%d consecutive=%d rate=%.2f", kind, samples, consecutive, rate))
+	record := RecordChannelTimeoutRecovery(channelID, failureContext)
+	if record != nil {
+		common.SysLog(fmt.Sprintf("channel #%d entered timeout recovery: kind=%s samples=%d consecutive=%d rate=%.2f", channelID, kind, samples, consecutive, rate))
+	}
+	return record
 }
 
 func mergeChannelSets(sets ...map[int]struct{}) map[int]struct{} {
@@ -288,6 +423,17 @@ func mergeChannelSets(sets ...map[int]struct{}) map[int]struct{} {
 		}
 	}
 	return merged
+}
+
+func subtractChannelSet(set map[int]struct{}, excluded map[int]struct{}) map[int]struct{} {
+	result := make(map[int]struct{}, len(set))
+	for channelID := range set {
+		if _, skip := excluded[channelID]; skip {
+			continue
+		}
+		result[channelID] = struct{}{}
+	}
+	return result
 }
 
 func RecordChannelFailureAvoidance(channelID int, reason string) *ChannelFailureAvoidanceRecord {
@@ -319,6 +465,10 @@ func RecordChannelFailureAvoidanceWithContext(channelID int, reason string, fail
 }
 
 func recordChannelAvoidance(channelID int, reason string, failureContext *ChannelFailureAvoidanceContext, allowPause bool) *ChannelFailureAvoidanceRecord {
+	return recordChannelAvoidanceWithProbeRecovery(channelID, reason, failureContext, allowPause, false)
+}
+
+func recordChannelAvoidanceWithProbeRecovery(channelID int, reason string, failureContext *ChannelFailureAvoidanceContext, allowPause bool, probeRecoveryRequired bool) *ChannelFailureAvoidanceRecord {
 	if channelID <= 0 || !common.ChannelFailureAvoidanceEnabled || common.ChannelFailureAvoidanceTTLSeconds <= 0 {
 		return nil
 	}
@@ -328,6 +478,10 @@ func recordChannelAvoidance(channelID int, reason string, failureContext *Channe
 	if value, ok := channelFailureAvoidance.Load(channelID); ok {
 		if entry, ok := value.(channelAvoidanceEntry); ok {
 			failureCount = entry.failureCount + 1
+			if entry.probeRecoveryRequired && !probeRecoveryRequired {
+				probeRecoveryRequired = true
+				reason = entry.reason
+			}
 		}
 	}
 	ttl := baseTTL
@@ -342,19 +496,21 @@ func recordChannelAvoidance(channelID int, reason string, failureContext *Channe
 		remaining = channelFailureAvoidancePauseDuration
 	}
 	channelFailureAvoidance.Store(channelID, channelAvoidanceEntry{
-		until:        until,
-		reason:       reason,
-		failureCount: failureCount,
+		until:                 until,
+		reason:                reason,
+		failureCount:          failureCount,
+		probeRecoveryRequired: probeRecoveryRequired,
 	})
 	common.SysLog(fmt.Sprintf("channel #%d temporarily cooled for %s until %s after %d errors: %s", channelID, remaining, until.Format(time.RFC3339), failureCount, reason))
 	recordChannelFailureAvoidanceEvent(channelID, reason, until, remaining, failureCount, shouldPause, failureContext)
 	return &ChannelFailureAvoidanceRecord{
-		Active:       true,
-		Reason:       reason,
-		Until:        until,
-		Remaining:    remaining,
-		FailureCount: failureCount,
-		ShouldPause:  shouldPause,
+		Active:                true,
+		Reason:                reason,
+		Until:                 until,
+		Remaining:             remaining,
+		FailureCount:          failureCount,
+		ShouldPause:           shouldPause,
+		ProbeRecoveryRequired: probeRecoveryRequired,
 	}
 }
 
@@ -394,6 +550,45 @@ func ClearChannelFailureAvoidance(channelID int) {
 		return
 	}
 	channelFailureAvoidance.Delete(channelID)
+	channelTimeoutDegradeEvents.Delete(channelID)
+}
+
+func ClearChannelFailureAvoidanceOnRealSuccess(channelID int) bool {
+	if channelID <= 0 {
+		return false
+	}
+	value, ok := channelFailureAvoidance.Load(channelID)
+	if !ok {
+		return false
+	}
+	entry, ok := value.(channelAvoidanceEntry)
+	if !ok {
+		channelFailureAvoidance.Delete(channelID)
+		return true
+	}
+	if entry.probeRecoveryRequired || IsTimeoutRecoveryReason(entry.reason) {
+		return false
+	}
+	channelFailureAvoidance.Delete(channelID)
+	return true
+}
+
+func ClearChannelProbeRecoveryAvoidance(channelID int) {
+	ClearChannelFailureAvoidance(channelID)
+}
+
+func IsTimeoutRecoveryReason(reason string) bool {
+	return strings.TrimSpace(reason) == ChannelTimeoutRecoveryReason
+}
+
+func RecordChannelTimeoutRecovery(channelID int, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	if failureContext != nil {
+		if strings.TrimSpace(failureContext.ErrorType) == "" {
+			failureContext.ErrorType = "timeout"
+		}
+		failureContext.ErrorCode = ChannelTimeoutRecoveryReason
+	}
+	return recordChannelAvoidanceWithProbeRecovery(channelID, ChannelTimeoutRecoveryReason, failureContext, true, true)
 }
 
 func getChannelFailureAvoidanceForTest(channelID int) (channelAvoidanceEntry, bool) {
@@ -408,6 +603,10 @@ func getChannelFailureAvoidanceForTest(channelID int) (channelAvoidanceEntry, bo
 func clearAllChannelFailureAvoidanceForTest() {
 	channelFailureAvoidance.Range(func(key, value any) bool {
 		channelFailureAvoidance.Delete(key)
+		return true
+	})
+	channelTimeoutDegradeEvents.Range(func(key, value any) bool {
+		channelTimeoutDegradeEvents.Delete(key)
 		return true
 	})
 }
@@ -441,6 +640,7 @@ func selectChannelForGroup(ctx *gin.Context, group string, modelName string, end
 	selectionSkippedChannelIDs := getSelectionSkippedChannelSet(ctx)
 	balanceSkippedChannelIDs := getBalanceSkippedChannelSet(ctx)
 	avoidedChannelIDs := getAvoidedChannelSet()
+	timeoutRecoveryChannelIDs := getTimeoutRecoveryChannelSet()
 	balanceInsufficientChannelIDs := getBalanceInsufficientChannelSet()
 	excludedWithAvoided := mergeChannelSets(excludedChannelIDs, selectionSkippedChannelIDs, balanceSkippedChannelIDs, balanceInsufficientChannelIDs, avoidedChannelIDs, getChannelConcurrencyCooldownSet())
 	channel, err := selectNonFullChannel(group, modelName, endpointType, requiresCodexImageTool, retry, excludedWithAvoided)
@@ -450,9 +650,9 @@ func selectChannelForGroup(ctx *gin.Context, group string, modelName string, end
 	if channel != nil {
 		return channel, nil
 	}
-	if len(avoidedChannelIDs) > 0 && allowUsedChannelFallback {
+	if fallbackAvoidedChannelIDs := subtractChannelSet(avoidedChannelIDs, timeoutRecoveryChannelIDs); len(fallbackAvoidedChannelIDs) > 0 && allowUsedChannelFallback {
 		// Prefer a temporarily avoided channel over failing the request when no healthy peer exists.
-		channel, err = selectNonFullChannel(group, modelName, endpointType, requiresCodexImageTool, retry, mergeChannelSets(excludedChannelIDs, selectionSkippedChannelIDs, balanceSkippedChannelIDs, balanceInsufficientChannelIDs))
+		channel, err = selectNonFullChannel(group, modelName, endpointType, requiresCodexImageTool, retry, mergeChannelSets(excludedChannelIDs, selectionSkippedChannelIDs, balanceSkippedChannelIDs, balanceInsufficientChannelIDs, timeoutRecoveryChannelIDs))
 		if err != nil {
 			return nil, err
 		}
@@ -466,8 +666,8 @@ func selectChannelForGroup(ctx *gin.Context, group string, modelName string, end
 	}
 	// All peer channels in the current priority/group have been tried. Allow reusing an
 	// already-used channel so multi-key channels can continue rotating to another key.
-	if len(avoidedChannelIDs) > 0 {
-		channel, err = selectNonFullChannel(group, modelName, endpointType, requiresCodexImageTool, retry, mergeChannelSets(avoidedChannelIDs, selectionSkippedChannelIDs, balanceSkippedChannelIDs, balanceInsufficientChannelIDs))
+	if fallbackAvoidedChannelIDs := subtractChannelSet(avoidedChannelIDs, timeoutRecoveryChannelIDs); len(fallbackAvoidedChannelIDs) > 0 {
+		channel, err = selectNonFullChannel(group, modelName, endpointType, requiresCodexImageTool, retry, mergeChannelSets(fallbackAvoidedChannelIDs, timeoutRecoveryChannelIDs, selectionSkippedChannelIDs, balanceSkippedChannelIDs, balanceInsufficientChannelIDs))
 		if err != nil {
 			return nil, err
 		}

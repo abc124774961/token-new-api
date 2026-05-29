@@ -20,7 +20,10 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const RelayAttemptCancelReasonFirstByteTimeout = modelgatewaycore.RelayAttemptCancelReasonFirstByteTimeout
+const (
+	RelayAttemptCancelReasonFirstByteTimeout     = modelgatewaycore.RelayAttemptCancelReasonFirstByteTimeout
+	RelayAttemptCancelReasonTotalDurationTimeout = modelgatewaycore.RelayAttemptCancelReasonTotalDurationTimeout
+)
 
 type RelayAttemptControl struct {
 	ctx          context.Context

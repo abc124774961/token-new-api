@@ -14,7 +14,17 @@ const (
 	runtimeLatencyTrimRatio      = 0.10
 	runtimeLatencyTrimMinSamples = 10
 	runtimeLatencySmallTrimMin   = 3
+	ttftRecencyWeightWindow      = 64.0
+	ttftRecencyHalfLifeSamples   = 16.0
+	ttftStabilitySlowBaseMs      = 8000.0
+	ttftStabilitySlowMultiple    = 4.0
+	ttftStabilityMaxPenalty      = 0.35
 )
+
+type weightedLatencyValue struct {
+	value  float64
+	weight float64
+}
 
 func runtimeLatencySampleFromAttempt(result core.AttemptResult, observedAt time.Time) (core.RuntimeLatencySample, bool) {
 	sample := core.RuntimeLatencySample{}
@@ -105,16 +115,103 @@ func runtimeLatencyStats(samples []core.RuntimeLatencySample) (durationMs float6
 		}
 	}
 	durationMs = trimmedMeanFloat64(durations)
-	ttftMs = trimmedMeanFloat64(ttfts)
+	ttftMs, stabilityPenalty, _ := recencyWeightedTTFTLatency(samples)
+	if ttftMs <= 0 {
+		ttftMs = trimmedMeanFloat64(ttfts)
+		stabilityPenalty = 1
+	}
 	switch {
 	case ttftMs > 0:
-		latencyScore = progressiveTTFTLatencyScore(ttftMs, 800, 20000)
+		latencyScore = progressiveTTFTLatencyScore(ttftMs, 800, 20000) * stabilityPenalty
 	case durationMs > 0:
 		latencyScore = inverseLatencyScore(durationMs, 3000, 90000)
 	default:
 		latencyScore = 0
 	}
 	return durationMs, ttftMs, latencyScore
+}
+
+func recencyWeightedTTFTLatency(samples []core.RuntimeLatencySample) (ttftMs float64, stabilityPenalty float64, sampleCount int) {
+	samples = normalizeRuntimeLatencySamples(samples)
+	if len(samples) == 0 {
+		return 0, 1, 0
+	}
+	ordered := make([]weightedLatencyValue, 0, len(samples))
+	for _, sample := range samples {
+		if finitePositive(sample.TTFTMs) {
+			ordered = append(ordered, weightedLatencyValue{value: sample.TTFTMs})
+		}
+	}
+	if len(ordered) == 0 {
+		return 0, 1, 0
+	}
+	for idx := range ordered {
+		age := float64(len(ordered) - 1 - idx)
+		if len(ordered) >= runtimeLatencyTrimMinSamples && float64(len(ordered)) < ttftRecencyWeightWindow {
+			age *= ttftRecencyWeightWindow / float64(len(ordered))
+		}
+		ordered[idx].weight = math.Pow(0.5, age/ttftRecencyHalfLifeSamples)
+	}
+	p50 := weightedPercentile(ordered, 0.50)
+	if p50 <= 0 {
+		return 0, 1, len(ordered)
+	}
+	return p50, ttftStabilityPenalty(ordered, p50), len(ordered)
+}
+
+func weightedPercentile(values []weightedLatencyValue, percentile float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	clean := make([]weightedLatencyValue, 0, len(values))
+	totalWeight := 0.0
+	for _, item := range values {
+		if finitePositive(item.value) && finitePositive(item.weight) {
+			clean = append(clean, item)
+			totalWeight += item.weight
+		}
+	}
+	if len(clean) == 0 || totalWeight <= 0 {
+		return 0
+	}
+	sort.SliceStable(clean, func(i, j int) bool {
+		return clean[i].value < clean[j].value
+	})
+	target := clamp01(percentile) * totalWeight
+	if target <= 0 {
+		return clean[0].value
+	}
+	running := 0.0
+	for _, item := range clean {
+		running += item.weight
+		if running >= target {
+			return item.value
+		}
+	}
+	return clean[len(clean)-1].value
+}
+
+func ttftStabilityPenalty(values []weightedLatencyValue, representativeTTFT float64) float64 {
+	if len(values) == 0 || representativeTTFT <= 0 {
+		return 1
+	}
+	slowThreshold := math.Max(ttftStabilitySlowBaseMs, representativeTTFT*ttftStabilitySlowMultiple)
+	totalWeight := 0.0
+	slowWeight := 0.0
+	for _, item := range values {
+		if !finitePositive(item.value) || !finitePositive(item.weight) {
+			continue
+		}
+		totalWeight += item.weight
+		if item.value >= slowThreshold {
+			slowWeight += item.weight
+		}
+	}
+	if totalWeight <= 0 || slowWeight <= 0 {
+		return 1
+	}
+	slowRatio := clamp01(slowWeight / totalWeight)
+	return clamp01(1 - slowRatio*ttftStabilityMaxPenalty)
 }
 
 func trimmedMeanFloat64(values []float64) float64 {

@@ -344,6 +344,10 @@ func setInternalRelayAttemptEnd(c *gin.Context, info *relaycommon.RelayInfo) boo
 	if reason == "" || info == nil || info.StreamStatus == nil {
 		return false
 	}
-	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonInternalFirstByteTimeout, errors.New(reason))
+	endReason := relaycommon.StreamEndReasonInternalFirstByteTimeout
+	if reason == RelayAttemptCancelReasonTotalDurationTimeout {
+		endReason = relaycommon.StreamEndReasonInternalTotalTimeout
+	}
+	info.StreamStatus.SetEndReason(endReason, errors.New(reason))
 	return true
 }

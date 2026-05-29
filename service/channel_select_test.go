@@ -538,6 +538,70 @@ func TestRecordChannelPerformanceAvoidanceDoesNotPauseChannel(t *testing.T) {
 	require.Equal(t, "slow_ttft", record.Reason)
 }
 
+func TestRecordChannelTimeoutDegradeTriggersProbeRecovery(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 1
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	config := ChannelTimeoutDegradeConfig{
+		Enabled:     true,
+		Window:      time.Minute,
+		MinSamples:  5,
+		Threshold:   0.4,
+		Consecutive: 3,
+	}
+	require.Nil(t, RecordChannelTimeoutDegradeSample(385, "first_byte_timeout", config, nil))
+	require.Nil(t, RecordChannelTimeoutDegradeSample(385, "total_duration_timeout", config, nil))
+	record := RecordChannelTimeoutDegradeSample(385, "stream_timeout", config, nil)
+	require.NotNil(t, record)
+	require.Equal(t, ChannelTimeoutRecoveryReason, record.Reason)
+	require.True(t, record.ProbeRecoveryRequired)
+
+	status := GetChannelFailureAvoidanceStatus(385)
+	require.NotNil(t, status)
+	require.True(t, status.ProbeRecoveryRequired)
+	require.Equal(t, ChannelTimeoutRecoveryReason, status.Reason)
+
+	require.False(t, ClearChannelFailureAvoidanceOnRealSuccess(385))
+	require.NotNil(t, GetChannelFailureAvoidanceStatus(385))
+
+	ClearChannelProbeRecoveryAvoidance(385)
+	require.Nil(t, GetChannelFailureAvoidanceStatus(385))
+}
+
+func TestRecordChannelTimeoutDegradeUsesWindowRate(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 1
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	config := ChannelTimeoutDegradeConfig{
+		Enabled:     true,
+		Window:      time.Minute,
+		MinSamples:  5,
+		Threshold:   0.4,
+		Consecutive: 4,
+	}
+	RecordChannelTimeoutDegradeSuccess(386, config)
+	RecordChannelTimeoutDegradeSuccess(386, config)
+	require.Nil(t, RecordChannelTimeoutDegradeSample(386, "status_504", config, nil))
+	require.Nil(t, RecordChannelTimeoutDegradeSample(386, "status_503", config, nil))
+	record := RecordChannelTimeoutDegradeSample(386, "stream_timeout", config, nil)
+	require.NotNil(t, record)
+	require.Equal(t, ChannelTimeoutRecoveryReason, record.Reason)
+}
+
 func TestRecordChannelFailureAvoidancePersistsEventContext(t *testing.T) {
 	db := setupChannelSelectTestDB(t)
 

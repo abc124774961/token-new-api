@@ -201,25 +201,28 @@ func SyncDefaultProbeSchedulerLifecycle() *ProbeScheduler {
 	stopDefaultProbeSchedulerLocked()
 	setting := scheduler_setting.GetSetting()
 	config := ProbeConfig{
-		Enabled:                         setting.ProbeEnabled,
-		Interval:                        time.Duration(setting.ProbeIntervalSeconds) * time.Second,
-		WorkerCount:                     setting.ProbeWorkerCount,
-		Timeout:                         time.Duration(setting.ProbeTimeoutSeconds) * time.Second,
-		MaxPerTick:                      setting.ProbeMaxPerTick,
-		MinChannelInterval:              time.Duration(setting.ProbeMinChannelIntervalSeconds) * time.Second,
-		LowScoreThreshold:               setting.ProbeLowScoreThreshold,
-		MissingSampleThreshold:          setting.ProbeMissingSampleThreshold,
-		LongNoSuccessThreshold:          time.Duration(setting.ProbeLongNoSuccessSeconds) * time.Second,
-		RecoverySuccessesRequired:       setting.ProbeRecoverySuccessesRequired,
-		FailureAvoidancePriorityEnabled: setting.ProbeFailureAvoidancePriorityEnabled,
-		RecoverableScoreItems:           setting.ProbeRecoverableScoreItems,
-		SkipRecentRealRequestEnabled:    setting.ProbeSkipRecentRealRequestEnabled,
-		RecentRealRequestWindow:         time.Duration(setting.ProbeRecentRealRequestWindowSeconds) * time.Second,
-		GoodBaselineEnabled:             setting.ProbeGoodBaselineEnabled,
-		GoodBaselineMinSamples:          setting.ProbeGoodBaselineMinSamples,
-		GoodBaselineWindow:              time.Duration(setting.ProbeGoodBaselineWindowSeconds) * time.Second,
-		PromptLibraryEnabled:            setting.ProbePromptLibraryEnabled,
-		PromptCategories:                setting.ProbePromptCategories,
+		Enabled:                          setting.ProbeEnabled,
+		Interval:                         time.Duration(setting.ProbeIntervalSeconds) * time.Second,
+		WorkerCount:                      setting.ProbeWorkerCount,
+		Timeout:                          time.Duration(setting.ProbeTimeoutSeconds) * time.Second,
+		MaxPerTick:                       setting.ProbeMaxPerTick,
+		MinChannelInterval:               time.Duration(setting.ProbeMinChannelIntervalSeconds) * time.Second,
+		LowScoreThreshold:                setting.ProbeLowScoreThreshold,
+		MissingSampleThreshold:           setting.ProbeMissingSampleThreshold,
+		LongNoSuccessThreshold:           time.Duration(setting.ProbeLongNoSuccessSeconds) * time.Second,
+		RecoverySuccessesRequired:        setting.ProbeRecoverySuccessesRequired,
+		TimeoutRecoverySuccessesRequired: setting.ChannelTimeoutRecoveryProbeSuccesses,
+		FirstByteTimeout:                 20 * time.Second,
+		TotalTimeout:                     time.Duration(setting.RelayTotalTimeoutSeconds) * time.Second,
+		FailureAvoidancePriorityEnabled:  setting.ProbeFailureAvoidancePriorityEnabled,
+		RecoverableScoreItems:            setting.ProbeRecoverableScoreItems,
+		SkipRecentRealRequestEnabled:     setting.ProbeSkipRecentRealRequestEnabled,
+		RecentRealRequestWindow:          time.Duration(setting.ProbeRecentRealRequestWindowSeconds) * time.Second,
+		GoodBaselineEnabled:              setting.ProbeGoodBaselineEnabled,
+		GoodBaselineMinSamples:           setting.ProbeGoodBaselineMinSamples,
+		GoodBaselineWindow:               time.Duration(setting.ProbeGoodBaselineWindowSeconds) * time.Second,
+		PromptLibraryEnabled:             setting.ProbePromptLibraryEnabled,
+		PromptCategories:                 setting.ProbePromptCategories,
 	}
 	if !config.Enabled {
 		return nil
@@ -241,7 +244,8 @@ func SyncDefaultProbeSchedulerLifecycle() *ProbeScheduler {
 		WithCostBaselineProvider(deps.CostBaselineCache).
 		WithScoreWeights(runtimePolicy.ScoreWeights).
 		WithPolicyForGroup(probeDispatchPolicy)
-	executor := NewProbeExecutor(config.Timeout, NewProbeBillingRecorder())
+	executor := NewProbeExecutor(config.Timeout, NewProbeBillingRecorder()).
+		WithTimeoutRecoveryThresholds(config.FirstByteTimeout, config.TotalTimeout)
 	s := NewProbeScheduler(config, selector, executor, recorder).
 		WithSnapshotStore(deps.SnapshotStore).
 		WithRuntimeSnapshotEnricher(deps.RuntimeEnricher).
@@ -369,7 +373,10 @@ func (s *ProbeScheduler) applyProbeScore(plan *core.DispatchPlan, candidate Prob
 	if snapshot.ProbeRecoveryRequired <= 0 {
 		snapshot.ProbeRecoveryRequired = normalizeProbeConfig(s.config).RecoverySuccessesRequired
 	}
-	if candidate.Reason == reasonLowScore || candidate.Reason == reasonFailureAvoidance || snapshot.FailureAvoidance {
+	if candidate.Reason == reasonTimeoutRecovery {
+		snapshot.ProbeRecoveryRequired = normalizeProbeConfig(s.config).TimeoutRecoverySuccessesRequired
+	}
+	if candidate.Reason == reasonLowScore || candidate.Reason == reasonFailureAvoidance || candidate.Reason == reasonTimeoutRecovery || snapshot.FailureAvoidance {
 		snapshot.ProbeRecoveryPending = true
 	}
 	score := scored.Score

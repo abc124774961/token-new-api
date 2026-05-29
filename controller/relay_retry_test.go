@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -33,6 +34,64 @@ func newRelayRetryContext() *gin.Context {
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	return ctx
+}
+
+func TestRelayTotalDurationWatchdogAppliesOnlySmartStreamingNonSpecificRequests(t *testing.T) {
+	setting := scheduler_setting.DefaultSetting()
+	setting.RelayTotalTimeoutEnabled = true
+	setting.RelayTotalTimeoutSeconds = 180
+	restore := scheduler_setting.SetSettingForTest(setting)
+	t.Cleanup(restore)
+
+	ctx := newRelayRetryContext()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	plan := &modelgatewaycore.DispatchPlan{PolicyMode: modelgatewaycore.ModeActive}
+	info := &relaycommon.RelayInfo{
+		IsStream:    true,
+		RelayMode:   relayconstant.RelayModeChatCompletions,
+		StartTime:   time.Now(),
+		RelayFormat: types.RelayFormatOpenAI,
+	}
+
+	require.True(t, relayTotalDurationWatchdogApplies(ctx, info, plan))
+	require.Equal(t, 180*time.Second, relayTotalDurationTimeout(ctx, info, plan))
+
+	ctx.Set("specific_channel_id", "1")
+	require.False(t, relayTotalDurationWatchdogApplies(ctx, info, plan))
+
+	ctx = newRelayRetryContext()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	plan.IsHealthProbe = true
+	require.False(t, relayTotalDurationWatchdogApplies(ctx, info, plan))
+
+	plan.IsHealthProbe = false
+	info.IsStream = false
+	require.False(t, relayTotalDurationWatchdogApplies(ctx, info, plan))
+
+	info.IsStream = true
+	setting.RelayTotalTimeoutEnabled = false
+	restoreDisabled := scheduler_setting.SetSettingForTest(setting)
+	defer restoreDisabled()
+	require.False(t, relayTotalDurationWatchdogApplies(ctx, info, plan))
+}
+
+func TestRelayTotalDurationWatchdogCanCancelOnlyBeforeOutput(t *testing.T) {
+	ctx := newRelayRetryContext()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	info := &relaycommon.RelayInfo{StartTime: time.Now()}
+
+	require.True(t, relayTotalDurationWatchdogCanCancel(ctx, info))
+
+	info.ForceSetFirstResponseTime()
+	require.False(t, relayTotalDurationWatchdogCanCancel(ctx, info))
+	require.True(t, relayTotalDurationAfterOutput(info, 181*time.Second, 180*time.Second))
+
+	info = &relaycommon.RelayInfo{StartTime: time.Now()}
+	helper.MarkRelayDownstreamStarted(ctx)
+	require.True(t, relayTotalDurationWatchdogCanCancel(ctx, info))
+
+	common.SetContextKey(ctx, constant.ContextKeyRelayResponseStarted, true)
+	require.False(t, relayTotalDurationWatchdogCanCancel(ctx, info))
 }
 
 func TestSelectedRelayGroupForTracePrefersActualGroupOverAuto(t *testing.T) {

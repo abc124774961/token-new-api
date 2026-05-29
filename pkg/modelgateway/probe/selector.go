@@ -285,6 +285,9 @@ func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapsh
 	}
 	if reason == "" {
 		if config.FailureAvoidancePriorityEnabled && snapshot.FailureAvoidance {
+			if strings.TrimSpace(snapshot.ProbeTriggerReason) == reasonTimeoutRecovery {
+				return reasonTimeoutRecovery, nil
+			}
 			return reasonFailureAvoidance, nil
 		}
 		if snapshot.Cooldown {
@@ -309,12 +312,25 @@ func (s *ProbeSelector) markProbeSelectionLocked(key core.RuntimeKey, reason str
 		return
 	}
 	snapshot = normalizeProbeSelectionSnapshot(snapshot)
-	snapshot.Key = normalizeProbeRuntimeKey(key)
+	storedKey := normalizeProbeRuntimeKey(snapshot.Key)
+	if storedKey.ChannelID <= 0 {
+		storedKey = normalizeProbeRuntimeKey(key)
+	}
+	snapshot.Key = storedKey
 	snapshot.ProbeTriggerReason = reason
 	snapshot.ProbeRecoveryRequired = config.RecoverySuccessesRequired
-	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || reason == reasonLowScore || reason == reasonFailureAvoidance
+	if reason == reasonTimeoutRecovery {
+		snapshot.ProbeRecoveryRequired = config.TimeoutRecoverySuccessesRequired
+	}
+	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || reason == reasonLowScore || reason == reasonFailureAvoidance || reason == reasonTimeoutRecovery
 	snapshot.LastProbeAt = s.now().Unix()
 	s.store.Put(snapshot)
+	enrichedKey := normalizeProbeRuntimeKey(key)
+	if enrichedKey != storedKey {
+		enrichedSnapshot := snapshot
+		enrichedSnapshot.Key = enrichedKey
+		s.store.Put(enrichedSnapshot)
+	}
 }
 
 func normalizeProbeSelectionSnapshot(snapshot core.RuntimeSnapshot) core.RuntimeSnapshot {
@@ -553,20 +569,22 @@ func probeReasonPriority(reason string) int {
 	switch strings.TrimSpace(reason) {
 	case reasonCircuitProbe:
 		return 1
-	case reasonFailureAvoidance:
+	case reasonTimeoutRecovery:
 		return 2
-	case reasonCooldown:
+	case reasonFailureAvoidance:
 		return 3
-	case reasonLowScore:
+	case reasonCooldown:
 		return 4
-	case reasonLongNoSuccess:
+	case reasonLowScore:
 		return 5
-	case reasonNoSamples:
+	case reasonLongNoSuccess:
 		return 6
-	case reasonLowTraffic:
+	case reasonNoSamples:
 		return 7
-	case reasonSampling:
+	case reasonLowTraffic:
 		return 8
+	case reasonSampling:
+		return 9
 	default:
 		return 99
 	}
@@ -827,6 +845,9 @@ func normalizeProbeConfig(config ProbeConfig) ProbeConfig {
 	}
 	if config.RecoverySuccessesRequired <= 0 {
 		config.RecoverySuccessesRequired = 2
+	}
+	if config.TimeoutRecoverySuccessesRequired <= 0 {
+		config.TimeoutRecoverySuccessesRequired = config.RecoverySuccessesRequired
 	}
 	if config.HighScoreSamplingInterval <= 0 {
 		config.HighScoreSamplingInterval = 6 * time.Hour

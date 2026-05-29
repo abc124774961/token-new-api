@@ -69,6 +69,43 @@ func TestProbeSelectorSelectsLowScoreRuntimeWithRecentTraffic(t *testing.T) {
 	require.Equal(t, "default", candidates[0].Group)
 }
 
+func TestProbeSelectorTimeoutRecoveryHasPriorityAndRequiredSamples(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-timeout-recovery", "gpt-4.1", "default", "default", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 2, "timeout-recovery", "default", "gpt-4.1", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "gpt-4.1", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                  key,
+		SampleCount:          8,
+		SuccessRate:          0.99,
+		FailureAvoidance:     true,
+		ProbeRecoveryPending: true,
+		ProbeTriggerReason:   reasonTimeoutRecovery,
+		LastRealAttemptAt:    now.Unix(),
+		RealSampleCount30m:   2,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:               time.Second,
+		RecoverySuccessesRequired:        2,
+		TimeoutRecoverySuccessesRequired: 3,
+		FailureAvoidancePriorityEnabled:  true,
+	})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, reasonTimeoutRecovery, candidates[0].Reason)
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.True(t, snapshot.ProbeRecoveryPending)
+	require.Equal(t, 3, snapshot.ProbeRecoveryRequired)
+}
+
 func TestProbeSelectorDoesNotSelectLowScoreWhenUnifiedHealthAboveThreshold(t *testing.T) {
 	db := setupProbeSelectorTestDB(t)
 	now := time.Now()

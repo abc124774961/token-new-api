@@ -205,6 +205,29 @@ func TestRuntimeSnapshotEnricherAppliesFirstBytePending(t *testing.T) {
 	require.Equal(t, 14000.0, snapshot.OldestFirstByteWaitMs)
 }
 
+func TestRuntimeSnapshotEnricherMarksTimeoutRecoveryPending(t *testing.T) {
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{
+		FailureAvoidanceStatusByChannel: map[int]*service.ChannelFailureAvoidanceStatus{
+			7: {
+				Active:                true,
+				Reason:                service.ChannelTimeoutRecoveryReason,
+				ProbeRecoveryRequired: true,
+				FailureCount:          3,
+			},
+		},
+	}, 1500, 8, 2)
+
+	snapshot := enricher.Enrich(core.Candidate{
+		Channel: &model.Channel{Id: 7},
+		Group:   "default",
+	}, core.RuntimeSnapshot{}, core.GroupSmartPolicy{})
+
+	require.True(t, snapshot.FailureAvoidance)
+	require.True(t, snapshot.ProbeRecoveryPending)
+	require.Equal(t, service.ChannelTimeoutRecoveryReason, snapshot.ProbeTriggerReason)
+	require.Equal(t, 2, snapshot.ProbeRecoveryRequired)
+}
+
 func TestRuntimeSnapshotEnricherAppliesConfigIsolation(t *testing.T) {
 	key := core.RuntimeKey{
 		RequestedModel: "gpt-5-codex",

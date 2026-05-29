@@ -1113,8 +1113,17 @@ function formatChannelStatusReason(reason, t) {
   if (normalized === 'cooldown') {
     return t('临时冷却');
   }
+  if (normalized === 'timeout_recovery') {
+    return t('频繁超时降级中');
+  }
   if (normalized === 'failure_avoidance') {
     return t('近期失败恢复中');
+  }
+  if (
+    normalized === 'already_failed_in_request' ||
+    normalized === 'routing_slot_reserved'
+  ) {
+    return t('本次请求已尝试失败');
   }
   if (normalized === 'max_depth_reached') {
     return t('排队已满');
@@ -1146,6 +1155,8 @@ function formatProbeReason(value, t) {
       return t('低分恢复探测');
     case 'failure_avoidance':
       return t('近期失败恢复中');
+    case 'timeout_recovery':
+      return t('等待恢复探活');
     case 'cooldown':
       return t('冷却恢复探测');
     case 'long_no_success':
@@ -2091,9 +2102,7 @@ function DispatchFlowTags({ record, t, compact = false }) {
     tags.push(
       <Tag
         key='category'
-        color={
-          category === 'channel_induced_client_abort' ? 'orange' : 'grey'
-        }
+        color={category === 'channel_induced_client_abort' ? 'orange' : 'grey'}
         type='light'
         {...tagProps}
       >
@@ -3315,12 +3324,12 @@ function UserRequestEventTooltip({ record, meta, processing, durationMs, t }) {
         : hasModelGatewayWarning(record)
           ? modelGatewayWarningLabel(record, t)
           : record?.client_aborted
-          ? t('用户主动终止')
-          : record?.recovered
-            ? t('智能调度后成功')
-            : record?.final_success
-              ? t('请求完成')
-              : t('请求失败'),
+            ? t('用户主动终止')
+            : record?.recovered
+              ? t('智能调度后成功')
+              : record?.final_success
+                ? t('请求完成')
+                : t('请求失败'),
     ],
     [t('创建时间'), formatTimestamp(record?.created_at)],
     [
@@ -4672,23 +4681,23 @@ function UserRequestRecentTable({
                     ? t('首字超时切换')
                     : hasModelGatewayWarning(record) && !processing
                       ? modelGatewayWarningLabel(record, t)
-                    : !record.final_success &&
-                        record.final_error_category &&
-                        meta.tone !== 'aborted' &&
-                        !processing
-                      ? formatUserRequestErrorCategory(
-                          record.final_error_category,
-                          t,
-                        )
-                      : record.final_success &&
-                          (record.empty_output || record.experience_issue) &&
+                      : !record.final_success &&
+                          record.final_error_category &&
+                          meta.tone !== 'aborted' &&
                           !processing
-                        ? formatUserRequestExperienceIssue(
-                            record.experience_issue ||
-                              (record.empty_output ? 'empty_output' : ''),
+                        ? formatUserRequestErrorCategory(
+                            record.final_error_category,
                             t,
                           )
-                        : '';
+                        : record.final_success &&
+                            (record.empty_output || record.experience_issue) &&
+                            !processing
+                          ? formatUserRequestExperienceIssue(
+                              record.experience_issue ||
+                                (record.empty_output ? 'empty_output' : ''),
+                              t,
+                            )
+                          : '';
                 const StatusIcon =
                   meta.tone === 'processing'
                     ? RadioTower
@@ -9494,18 +9503,14 @@ function formatStickyDecisionReason(reason, t) {
     cost_first_cheaper_speed_acceptable: t('成本更低且速度影响可接受'),
     cost_first_sticky_escape_disabled: t('低成本切换已关闭'),
     cost_first_sticky_escape_sticky_cost_missing: t('粘滞候选成本缺失'),
-    cost_first_sticky_escape_sticky_samples_insufficient: t(
-      '粘滞候选样本不足',
-    ),
+    cost_first_sticky_escape_sticky_samples_insufficient: t('粘滞候选样本不足'),
     cost_first_sticky_escape_sticky_speed_missing: t('粘滞候选速度样本不足'),
     cost_first_sticky_escape_cost_gap_insufficient: t('成本差不足'),
-    cost_first_sticky_escape_candidate_samples_insufficient: t(
-      '低成本候选样本不足',
-    ),
+    cost_first_sticky_escape_candidate_samples_insufficient:
+      t('低成本候选样本不足'),
     cost_first_sticky_escape_success_guard_failed: t('成功率保护未通过'),
-    cost_first_sticky_escape_candidate_speed_missing: t(
-      '低成本候选速度样本不足',
-    ),
+    cost_first_sticky_escape_candidate_speed_missing:
+      t('低成本候选速度样本不足'),
     cost_first_sticky_escape_speed_drop_exceeded: t('速度损失超过阈值'),
     cost_first_sticky_escape_no_candidate: t('没有满足条件的低成本候选'),
   };
@@ -9663,6 +9668,18 @@ function buildCandidateDecisionText(candidate, candidates, record, t) {
       (isBalanceInsufficientStatus(candidate)
         ? t('余额不足')
         : t('无过滤原因'));
+    const normalizedReason = String(candidate?.reject_reason || '')
+      .trim()
+      .toLowerCase();
+    if (
+      normalizedReason === 'already_failed_in_request' ||
+      normalizedReason === 'routing_slot_reserved'
+    ) {
+      return t(
+        '{{channel}} 本次未参与排序：首字超时或上游错误后内部切换，避免本次请求再次选择同一渠道。',
+        { channel },
+      );
+    }
     return t('{{channel}} 本次未进入可用候选，原因是 {{reason}}。', {
       channel,
       reason,
@@ -9688,6 +9705,15 @@ function buildCandidateDecisionText(candidate, candidates, record, t) {
               )}`
             : formatNumber(activeConcurrency),
       },
+    );
+  }
+  if (
+    candidate?.selection_skip_reason === 'already_failed_in_request' ||
+    candidate?.selection_skip_reason === 'routing_slot_reserved'
+  ) {
+    return t(
+      '{{channel}} 本次不参与排序：首字超时或上游错误后内部切换，避免本次请求再次选择同一渠道。',
+      { channel },
     );
   }
   if (candidateSelectionScore !== null && selectedSelectionScore !== null) {
@@ -9958,7 +9984,8 @@ function buildSelectionInsight(record, candidates, t) {
     explanation,
     stickyRetained,
     stickyBroken,
-    stickyDecision: record?.sticky_decision || record?.request_meta?.sticky_decision,
+    stickyDecision:
+      record?.sticky_decision || record?.request_meta?.sticky_decision,
     stickySource: formatStickySource(record?.sticky_source, t),
     stickyBreakText,
     selectedRank,
@@ -10145,6 +10172,9 @@ function CandidateExplanationCard({
       .map((item) => [item.key, scoreItemLabel(item, t), item.score]),
   ].filter(([, , value]) => Number(value) > 0);
   const routingScore = Number(candidate?.routing_score_total || 0);
+  const unavailableReason = String(candidate?.reject_reason || '')
+    .trim()
+    .toLowerCase();
   const routingScoreItems = allRoutingScoreItems.length
     ? allRoutingScoreItems
     : allScoreItems;
@@ -10198,6 +10228,17 @@ function CandidateExplanationCard({
     record,
     t,
   );
+  const timeoutRecovery =
+    unavailableReason === 'timeout_recovery' ||
+    candidate?.probe_trigger_reason === 'timeout_recovery' ||
+    (candidate?.state_tags || []).includes('timeout_recovery');
+  const alreadyFailedInRequest =
+    unavailableReason === 'already_failed_in_request' ||
+    unavailableReason === 'routing_slot_reserved';
+  const recoverySuccessCount = Number(
+    candidate?.probe_recovery_success_count || 0,
+  );
+  const recoveryRequired = Number(candidate?.probe_recovery_required || 0);
   const candidateSummaryMetrics = [
     {
       key: 'ttft',
@@ -10278,6 +10319,24 @@ function CandidateExplanationCard({
               {t('不可用')}
             </Tag>
           )}
+          {alreadyFailedInRequest ? (
+            <Tag color='orange' type='light' size='small'>
+              {t('不参与本次排序')}
+            </Tag>
+          ) : null}
+          {timeoutRecovery ? (
+            <Tag color='orange' type='light' size='small'>
+              {t('等待恢复探活')}
+            </Tag>
+          ) : null}
+          {timeoutRecovery && recoveryRequired > 0 ? (
+            <Tag color='cyan' type='light' size='small'>
+              {t('恢复样本 {{count}}/{{required}}', {
+                count: recoverySuccessCount,
+                required: recoveryRequired,
+              })}
+            </Tag>
+          ) : null}
           {!selected && !available && !unavailable && (
             <Tag color='grey' type='light' size='small'>
               #{index + 1}

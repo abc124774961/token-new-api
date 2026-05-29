@@ -32,7 +32,9 @@ import (
 )
 
 type ProbeExecutor struct {
-	timeout time.Duration
+	timeout          time.Duration
+	firstByteTimeout time.Duration
+	totalTimeout     time.Duration
 }
 
 type RelayInvoker func(*gin.Context, types.RelayFormat)
@@ -50,6 +52,15 @@ func NewProbeExecutor(timeout time.Duration, _ *ProbeBillingRecorder) *ProbeExec
 	return &ProbeExecutor{
 		timeout: timeout,
 	}
+}
+
+func (e *ProbeExecutor) WithTimeoutRecoveryThresholds(firstByteTimeout time.Duration, totalTimeout time.Duration) *ProbeExecutor {
+	if e == nil {
+		return nil
+	}
+	e.firstByteTimeout = firstByteTimeout
+	e.totalTimeout = totalTimeout
+	return e
 }
 
 func (e *ProbeExecutor) Execute(ctx context.Context, candidate ProbeCandidate) ProbeRunResult {
@@ -180,9 +191,44 @@ func (e *ProbeExecutor) execute(ctx context.Context, result ProbeRunResult) Prob
 		result.NewAPIError = types.NewErrorWithStatusCode(result.Err, types.ErrorCodeDoRequestFailed, result.StatusCode)
 		return result
 	}
+	if strings.TrimSpace(result.Reason) == reasonTimeoutRecovery {
+		if err := e.validateTimeoutRecoveryProbe(result); err != nil {
+			result.Err = err
+			result.NewAPIError = types.NewErrorWithStatusCode(err, types.ErrorCodeDoRequestFailed, http.StatusGatewayTimeout)
+			result.StatusCode = http.StatusGatewayTimeout
+			return result
+		}
+	}
 	result.Success = true
 	_ = recorder.Result().Body.Close()
 	return result
+}
+
+func (e *ProbeExecutor) validateTimeoutRecoveryProbe(result ProbeRunResult) error {
+	if result.RelayInfo == nil {
+		return errors.New("timeout recovery probe missing relay info")
+	}
+	if result.RelayInfo.ReceivedResponseCount <= 0 {
+		return errors.New("timeout recovery probe produced empty output")
+	}
+	if result.RelayInfo.StreamStatus != nil && !result.RelayInfo.StreamStatus.IsNormalEnd() {
+		return fmt.Errorf("timeout recovery probe stream interrupted: %s", result.RelayInfo.StreamStatus.Summary())
+	}
+	firstByteTimeout := e.firstByteTimeout
+	if firstByteTimeout <= 0 {
+		firstByteTimeout = 20 * time.Second
+	}
+	if result.TTFT <= 0 || result.TTFT > firstByteTimeout {
+		return fmt.Errorf("timeout recovery probe first byte timeout: %dms", result.TTFT.Milliseconds())
+	}
+	totalTimeout := e.totalTimeout
+	if totalTimeout <= 0 {
+		totalTimeout = 180 * time.Second
+	}
+	if result.Duration <= 0 || result.Duration > totalTimeout {
+		return fmt.Errorf("timeout recovery probe total duration timeout: %dms", result.Duration.Milliseconds())
+	}
+	return nil
 }
 
 func (r ProbeRunResult) AttemptResult() core.AttemptResult {

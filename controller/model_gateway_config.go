@@ -303,6 +303,12 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	setting.ProbeGoodBaselineMinSamples = normalizeModelGatewayConfigMin(setting.ProbeGoodBaselineMinSamples, 1, defaultInt(defaults.ProbeGoodBaselineMinSamples, defaults.ProbeMissingSampleThreshold))
 	setting.ProbeGoodBaselineWindowSeconds = normalizeModelGatewayConfigMin(setting.ProbeGoodBaselineWindowSeconds, 1, defaults.ProbeGoodBaselineWindowSeconds)
 	setting.ProbePromptCategories = modelgatewayprobe.NormalizePromptCategories(defaultNilStringSlice(setting.ProbePromptCategories, defaults.ProbePromptCategories))
+	setting.RelayTotalTimeoutSeconds = normalizeModelGatewayConfigMin(setting.RelayTotalTimeoutSeconds, 1, defaults.RelayTotalTimeoutSeconds)
+	setting.ChannelTimeoutDegradeWindowSeconds = normalizeModelGatewayConfigMin(setting.ChannelTimeoutDegradeWindowSeconds, 1, defaults.ChannelTimeoutDegradeWindowSeconds)
+	setting.ChannelTimeoutDegradeMinSamples = normalizeModelGatewayConfigMin(setting.ChannelTimeoutDegradeMinSamples, 1, defaults.ChannelTimeoutDegradeMinSamples)
+	setting.ChannelTimeoutDegradeThreshold = clampModelGatewayConfigFloat(defaultFloat(setting.ChannelTimeoutDegradeThreshold, defaults.ChannelTimeoutDegradeThreshold), 0.01, 1)
+	setting.ChannelTimeoutDegradeConsecutive = normalizeModelGatewayConfigMin(setting.ChannelTimeoutDegradeConsecutive, 1, defaults.ChannelTimeoutDegradeConsecutive)
+	setting.ChannelTimeoutRecoveryProbeSuccesses = normalizeModelGatewayConfigMin(setting.ChannelTimeoutRecoveryProbeSuccesses, 1, defaults.ChannelTimeoutRecoveryProbeSuccesses)
 	setting.CostCalculationIntervalSeconds = normalizeModelGatewayConfigMin(setting.CostCalculationIntervalSeconds, 1, defaults.CostCalculationIntervalSeconds)
 	setting.CostCalculationWorkerCount = normalizeModelGatewayConfigMin(setting.CostCalculationWorkerCount, 1, defaults.CostCalculationWorkerCount)
 	setting.CostCalculationBatchSize = normalizeModelGatewayConfigMin(setting.CostCalculationBatchSize, 1, defaults.CostCalculationBatchSize)
@@ -540,6 +546,14 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 		"probe_good_baseline_window_seconds":                  strconv.Itoa(setting.ProbeGoodBaselineWindowSeconds),
 		"probe_prompt_library_enabled":                        strconv.FormatBool(setting.ProbePromptLibraryEnabled),
 		"probe_prompt_categories":                             string(probePromptCategories),
+		"relay_total_timeout_enabled":                         strconv.FormatBool(setting.RelayTotalTimeoutEnabled),
+		"relay_total_timeout_seconds":                         strconv.Itoa(setting.RelayTotalTimeoutSeconds),
+		"channel_timeout_degrade_enabled":                     strconv.FormatBool(setting.ChannelTimeoutDegradeEnabled),
+		"channel_timeout_degrade_window_seconds":              strconv.Itoa(setting.ChannelTimeoutDegradeWindowSeconds),
+		"channel_timeout_degrade_min_samples":                 strconv.Itoa(setting.ChannelTimeoutDegradeMinSamples),
+		"channel_timeout_degrade_threshold":                   strconv.FormatFloat(setting.ChannelTimeoutDegradeThreshold, 'f', -1, 64),
+		"channel_timeout_degrade_consecutive":                 strconv.Itoa(setting.ChannelTimeoutDegradeConsecutive),
+		"channel_timeout_recovery_probe_successes":            strconv.Itoa(setting.ChannelTimeoutRecoveryProbeSuccesses),
 		"cost_calculation_enabled":                            strconv.FormatBool(setting.CostCalculationEnabled),
 		"cost_calculation_interval_seconds":                   strconv.Itoa(setting.CostCalculationIntervalSeconds),
 		"cost_calculation_worker_count":                       strconv.Itoa(setting.CostCalculationWorkerCount),

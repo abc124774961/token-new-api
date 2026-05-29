@@ -1495,7 +1495,7 @@ func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapsh
 		return service.ChannelStatusReasonBalanceInsufficient
 	}
 	if candidate.Channel != nil && service.IsChannelSelectionSkipped(c, candidate.Channel.Id) {
-		return "routing_slot_reserved"
+		return "already_failed_in_request"
 	}
 	if snapshot.CircuitOpen {
 		return "circuit_open"
@@ -1504,6 +1504,9 @@ func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapsh
 		return "cooldown"
 	}
 	if snapshot.FailureAvoidance {
+		if strings.TrimSpace(snapshot.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason {
+			return service.ChannelTimeoutRecoveryReason
+		}
 		return "failure_avoidance"
 	}
 	return ""

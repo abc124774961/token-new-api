@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -612,6 +613,88 @@ func TestRuntimeHealthMonitorClearsAvoidanceAfterTwoFastProbeSuccesses(t *testin
 	require.True(t, ok)
 	require.False(t, snapshot.ProbeRecoveryPending)
 	require.Equal(t, 2, snapshot.ProbeRecoverySuccessCount)
+}
+
+func TestRuntimeHealthMonitorTimeoutRecoveryRequiresProbeSamples(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 1
+	setting := scheduler_setting.DefaultSetting()
+	setting.ChannelTimeoutRecoveryProbeSuccesses = 2
+	restoreSetting := scheduler_setting.SetSettingForTest(setting)
+	t.Cleanup(func() {
+		restoreSetting()
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(103)
+	})
+
+	service.RecordChannelTimeoutRecovery(103, &service.ChannelFailureAvoidanceContext{Message: "timeout"})
+	status := service.GetChannelFailureAvoidanceStatus(103)
+	require.NotNil(t, status)
+	require.True(t, status.ProbeRecoveryRequired)
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 103, Group: "auto"}
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:        key,
+		ChannelID:  103,
+		Success:    true,
+		Duration:   time.Second,
+		TTFT:       100 * time.Millisecond,
+		ObservedAt: time.Now(),
+	})
+	require.NotNil(t, service.GetChannelFailureAvoidanceStatus(103))
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:           key,
+		ChannelID:     103,
+		Success:       true,
+		Duration:      time.Second,
+		TTFT:          100 * time.Millisecond,
+		IsHealthProbe: true,
+		ProbeReason:   service.ChannelTimeoutRecoveryReason,
+	})
+	require.NotNil(t, service.GetChannelFailureAvoidanceStatus(103))
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.True(t, snapshot.ProbeRecoveryPending)
+	require.Equal(t, 1, snapshot.ProbeRecoverySuccessCount)
+	require.Equal(t, 2, snapshot.ProbeRecoveryRequired)
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:           key,
+		ChannelID:     103,
+		Success:       false,
+		Duration:      time.Second,
+		TTFT:          100 * time.Millisecond,
+		IsHealthProbe: true,
+		ProbeReason:   service.ChannelTimeoutRecoveryReason,
+	})
+	snapshot, ok = store.Get(key)
+	require.True(t, ok)
+	require.Equal(t, 0, snapshot.ProbeRecoverySuccessCount)
+	require.NotNil(t, service.GetChannelFailureAvoidanceStatus(103))
+
+	for i := 0; i < 2; i++ {
+		monitor.Report(context.Background(), core.AttemptResult{
+			Key:           key,
+			ChannelID:     103,
+			Success:       true,
+			Duration:      time.Second,
+			TTFT:          100 * time.Millisecond,
+			IsHealthProbe: true,
+			ProbeReason:   service.ChannelTimeoutRecoveryReason,
+		})
+	}
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(103))
+	snapshot, ok = store.Get(key)
+	require.True(t, ok)
+	require.False(t, snapshot.ProbeRecoveryPending)
+	require.False(t, snapshot.FailureAvoidance)
 }
 
 func TestRuntimeHealthMonitorKeepsAccountRuntimeSnapshotsIsolated(t *testing.T) {

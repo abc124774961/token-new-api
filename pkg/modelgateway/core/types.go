@@ -28,6 +28,8 @@ const (
 
 const (
 	RelayAttemptCancelReasonFirstByteTimeout          = "first_byte_timeout"
+	RelayAttemptCancelReasonTotalDurationTimeout      = "total_duration_timeout"
+	RelayAttemptCancelReasonTotalDurationAfterOutput  = "total_duration_timeout_after_output"
 	RelayAttemptCancelReasonChannelInducedClientAbort = "channel_induced_client_abort"
 )
 
@@ -238,6 +240,20 @@ type CostGuardDecision struct {
 func NewFirstByteTimeoutRetryRoutingIntent(channelID int, channelName string, attemptIndex int) *RetryRoutingIntent {
 	return &RetryRoutingIntent{
 		Reason:             RelayAttemptCancelReasonFirstByteTimeout,
+		Strategy:           RetryRoutingStrategyFirstByteRecovery,
+		PreferLowTTFT:      true,
+		PreferHighSuccess:  true,
+		QueuePriorityBoost: true,
+		QueuePriority:      RetryRoutingQueuePriority,
+		FailedChannelID:    channelID,
+		FailedChannelName:  channelName,
+		AttemptIndex:       attemptIndex,
+	}
+}
+
+func NewTotalDurationTimeoutRetryRoutingIntent(channelID int, channelName string, attemptIndex int) *RetryRoutingIntent {
+	return &RetryRoutingIntent{
+		Reason:             RelayAttemptCancelReasonTotalDurationTimeout,
 		Strategy:           RetryRoutingStrategyFirstByteRecovery,
 		PreferLowTTFT:      true,
 		PreferHighSuccess:  true,

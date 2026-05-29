@@ -20,6 +20,7 @@ const (
 	StreamEndReasonPanic                    StreamEndReason = "panic"
 	StreamEndReasonPingFail                 StreamEndReason = "ping_fail"
 	StreamEndReasonInternalFirstByteTimeout StreamEndReason = "internal_first_byte_timeout"
+	StreamEndReasonInternalTotalTimeout     StreamEndReason = "internal_total_duration_timeout"
 )
 
 const maxStreamErrorEntries = 20

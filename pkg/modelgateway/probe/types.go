@@ -21,6 +21,7 @@ const (
 	reasonLongNoSuccess     = "long_no_success"
 	reasonCircuitProbe      = "circuit_half_open"
 	reasonFailureAvoidance  = "failure_avoidance"
+	reasonTimeoutRecovery   = "timeout_recovery"
 	reasonCooldown          = "cooldown"
 	reasonSampling          = "sampling"
 	reasonLowTraffic        = "low_traffic"
@@ -28,26 +29,29 @@ const (
 )
 
 type ProbeConfig struct {
-	Enabled                         bool
-	Interval                        time.Duration
-	WorkerCount                     int
-	Timeout                         time.Duration
-	MaxPerTick                      int
-	MinChannelInterval              time.Duration
-	LowScoreThreshold               float64
-	MissingSampleThreshold          int
-	LongNoSuccessThreshold          time.Duration
-	RecoverySuccessesRequired       int
-	FailureAvoidancePriorityEnabled bool
-	HighScoreSamplingInterval       time.Duration
-	RecoverableScoreItems           []string
-	SkipRecentRealRequestEnabled    bool
-	RecentRealRequestWindow         time.Duration
-	GoodBaselineEnabled             bool
-	GoodBaselineMinSamples          int
-	GoodBaselineWindow              time.Duration
-	PromptLibraryEnabled            bool
-	PromptCategories                []string
+	Enabled                          bool
+	Interval                         time.Duration
+	WorkerCount                      int
+	Timeout                          time.Duration
+	MaxPerTick                       int
+	MinChannelInterval               time.Duration
+	LowScoreThreshold                float64
+	MissingSampleThreshold           int
+	LongNoSuccessThreshold           time.Duration
+	RecoverySuccessesRequired        int
+	TimeoutRecoverySuccessesRequired int
+	FirstByteTimeout                 time.Duration
+	TotalTimeout                     time.Duration
+	FailureAvoidancePriorityEnabled  bool
+	HighScoreSamplingInterval        time.Duration
+	RecoverableScoreItems            []string
+	SkipRecentRealRequestEnabled     bool
+	RecentRealRequestWindow          time.Duration
+	GoodBaselineEnabled              bool
+	GoodBaselineMinSamples           int
+	GoodBaselineWindow               time.Duration
+	PromptLibraryEnabled             bool
+	PromptCategories                 []string
 }
 
 type ProbeCandidate struct {

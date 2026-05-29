@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 )
 
 const (
@@ -20,6 +21,7 @@ type RuntimeStateProvider interface {
 	ActiveConcurrency(channelID int) int
 	ConcurrencyCooldownActive(channelID int) bool
 	FailureAvoidanceActive(channelID int) bool
+	FailureAvoidanceStatus(channelID int) *service.ChannelFailureAvoidanceStatus
 	FirstBytePendingStatus(channelID int) *service.ChannelFirstBytePendingStatus
 	ConfigErrorIsolationStatus(key core.RuntimeKey) *service.ChannelConfigIsolationStatus
 }
@@ -52,6 +54,10 @@ func (p *ServiceRuntimeStateProvider) ConcurrencyCooldownActive(channelID int) b
 
 func (p *ServiceRuntimeStateProvider) FailureAvoidanceActive(channelID int) bool {
 	return service.GetChannelFailureAvoidanceStatus(channelID) != nil
+}
+
+func (p *ServiceRuntimeStateProvider) FailureAvoidanceStatus(channelID int) *service.ChannelFailureAvoidanceStatus {
+	return service.GetChannelFailureAvoidanceStatus(channelID)
 }
 
 func (p *ServiceRuntimeStateProvider) FirstBytePendingStatus(channelID int) *service.ChannelFirstBytePendingStatus {
@@ -158,10 +164,33 @@ func (e *RuntimeSnapshotEnricher) Enrich(candidate core.Candidate, snapshot core
 	snapshot = e.applyConcurrency(snapshot, channelID, setting, policy)
 	snapshot = e.applyFirstBytePending(snapshot, channelID)
 	snapshot.Cooldown = snapshot.Cooldown || e.stateProvider.ConcurrencyCooldownActive(channelID)
-	snapshot.FailureAvoidance = snapshot.FailureAvoidance || e.stateProvider.FailureAvoidanceActive(channelID)
+	snapshot = e.applyFailureAvoidance(snapshot, channelID)
 	snapshot = e.applyConfigErrorIsolation(snapshot)
 	snapshot = e.applyCostSnapshot(candidate, snapshot, policy)
 	snapshot = e.applyCircuit(snapshot, policy)
+	return snapshot
+}
+
+func (e *RuntimeSnapshotEnricher) applyFailureAvoidance(snapshot core.RuntimeSnapshot, channelID int) core.RuntimeSnapshot {
+	status := e.stateProvider.FailureAvoidanceStatus(channelID)
+	if status == nil {
+		snapshot.FailureAvoidance = snapshot.FailureAvoidance || e.stateProvider.FailureAvoidanceActive(channelID)
+		return snapshot
+	}
+	snapshot.FailureAvoidance = true
+	if service.IsTimeoutRecoveryReason(status.Reason) || status.ProbeRecoveryRequired {
+		snapshot.ProbeRecoveryPending = true
+		snapshot.ProbeTriggerReason = service.ChannelTimeoutRecoveryReason
+		setting := scheduler_setting.GetSetting()
+		required := setting.ChannelTimeoutRecoveryProbeSuccesses
+		if required <= 0 {
+			required = setting.ProbeRecoverySuccessesRequired
+		}
+		if required <= 0 {
+			required = 2
+		}
+		snapshot.ProbeRecoveryRequired = required
+	}
 	return snapshot
 }
 

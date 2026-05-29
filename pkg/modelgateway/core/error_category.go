@@ -22,7 +22,8 @@ const (
 	WarningLevelWarning  = "warning"
 	WarningLevelCritical = "critical"
 
-	WarningFlagChannelInducedAbort  = "channel_induced_abort"
-	WarningFlagNoEffectiveFirstByte = "no_effective_first_byte"
-	WarningFlagHighAbortRate        = "high_abort_rate"
+	WarningFlagChannelInducedAbort     = "channel_induced_abort"
+	WarningFlagNoEffectiveFirstByte    = "no_effective_first_byte"
+	WarningFlagHighAbortRate           = "high_abort_rate"
+	WarningFlagTotalTimeoutAfterOutput = "total_duration_timeout_after_output"
 )

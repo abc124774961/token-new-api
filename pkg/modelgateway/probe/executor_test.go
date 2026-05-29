@@ -122,6 +122,45 @@ func TestProbePromptCategoryNormalizationFallsBackToShort(t *testing.T) {
 	require.Equal(t, PromptCategoryShort, selectProbePromptCategory(candidate))
 }
 
+func TestTimeoutRecoveryProbeUsesMediumOrLongPrompt(t *testing.T) {
+	candidate := ProbeCandidate{Model: "gpt-4.1", Group: "default", Reason: reasonTimeoutRecovery, PromptCategories: []string{PromptCategoryShort}}
+	require.Contains(t, []string{PromptCategoryMedium, PromptCategoryLong}, selectProbePromptCategory(candidate))
+}
+
+func TestProbeExecutorTimeoutRecoveryValidation(t *testing.T) {
+	executor := NewProbeExecutor(time.Second, nil).WithTimeoutRecoveryThresholds(200*time.Millisecond, time.Second)
+	start := time.Now().Add(-100 * time.Millisecond)
+	result := ProbeRunResult{
+		Reason:   reasonTimeoutRecovery,
+		Duration: 500 * time.Millisecond,
+		TTFT:     50 * time.Millisecond,
+		RelayInfo: &relaycommon.RelayInfo{
+			StartTime:             start,
+			FirstResponseTime:     start.Add(50 * time.Millisecond),
+			ReceivedResponseCount: 1,
+			StreamStatus:          relaycommon.NewStreamStatus(),
+		},
+	}
+	result.RelayInfo.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+	require.NoError(t, executor.validateTimeoutRecoveryProbe(result))
+
+	result.RelayInfo.ReceivedResponseCount = 0
+	require.ErrorContains(t, executor.validateTimeoutRecoveryProbe(result), "empty output")
+
+	result.RelayInfo.ReceivedResponseCount = 1
+	result.TTFT = 300 * time.Millisecond
+	require.ErrorContains(t, executor.validateTimeoutRecoveryProbe(result), "first byte timeout")
+
+	result.TTFT = 50 * time.Millisecond
+	result.Duration = 2 * time.Second
+	require.ErrorContains(t, executor.validateTimeoutRecoveryProbe(result), "total duration timeout")
+
+	result.Duration = 500 * time.Millisecond
+	result.RelayInfo.StreamStatus = relaycommon.NewStreamStatus()
+	result.RelayInfo.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, nil)
+	require.ErrorContains(t, executor.validateTimeoutRecoveryProbe(result), "stream interrupted")
+}
+
 func TestProbeExecutorUsesNormalDistributorSelection(t *testing.T) {
 	db := setupProbeExecutorTestDB(t)
 	restoreSchedulerSetting := scheduler_setting.SetSettingForTest(scheduler_setting.DefaultSetting())

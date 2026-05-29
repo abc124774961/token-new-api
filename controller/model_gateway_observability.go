@@ -2484,7 +2484,12 @@ func modelGatewayHealthCheckQueueReasons(item modelgatewayobservability.RuntimeS
 		addReason("cooldown", 90, "warning")
 	}
 	if item.FailureAvoidance {
-		addReason("failure_avoidance", 88, "warning")
+		if strings.TrimSpace(item.FailureAvoidanceReason) == service.ChannelTimeoutRecoveryReason ||
+			strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason {
+			addReason(service.ChannelTimeoutRecoveryReason, 92, "warning")
+		} else {
+			addReason("failure_avoidance", 88, "warning")
+		}
 	}
 	if item.ProbeRecoveryPending {
 		addReason("probe_recovery_pending", 78, "info")
@@ -2521,6 +2526,8 @@ func modelGatewayHealthCheckReasonLabel(key string) string {
 		return "熔断中"
 	case "cooldown":
 		return "冷却中"
+	case service.ChannelTimeoutRecoveryReason:
+		return "频繁超时降级中"
 	case "failure_avoidance":
 		return "近期失败恢复中"
 	case "probe_recovery_pending":
@@ -2598,7 +2605,7 @@ func modelGatewayHealthCheckQueueAccumulateSummary(summary *ModelGatewayHealthCh
 	if modelGatewayHealthCheckReasonsContain(reasons, "low_score") {
 		summary.LowScoreCount++
 	}
-	if item.ProbeRecoveryPending || item.FailureAvoidance || modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") || modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") {
+	if item.ProbeRecoveryPending || item.FailureAvoidance || modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") || modelGatewayHealthCheckReasonsContain(reasons, service.ChannelTimeoutRecoveryReason) || modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") {
 		summary.RecoveryCount++
 	}
 	if item.CircuitOpen || item.Cooldown || item.ConfigErrorIsolated || modelGatewayHealthCheckReasonsContain(reasons, "circuit_open") || modelGatewayHealthCheckReasonsContain(reasons, "cooldown") || modelGatewayHealthCheckReasonsContain(reasons, "config_error") {
@@ -2615,6 +2622,7 @@ func modelGatewayHealthCheckQueueItemType(item modelgatewayobservability.Runtime
 	}
 	if item.ProbeRecoveryPending || item.FailureAvoidance ||
 		modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") ||
+		modelGatewayHealthCheckReasonsContain(reasons, service.ChannelTimeoutRecoveryReason) ||
 		modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") {
 		return modelGatewayHealthCheckQueueTypeRecovery
 	}
@@ -4783,6 +4791,10 @@ func modelGatewayRuntimeStatusRejectReason(item modelgatewayobservability.Runtim
 	case "cooldown":
 		return "concurrency_cooldown"
 	case "failure_avoidance":
+		if strings.TrimSpace(item.FailureAvoidanceReason) == service.ChannelTimeoutRecoveryReason ||
+			strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason {
+			return service.ChannelTimeoutRecoveryReason
+		}
 		return "failure_avoidance"
 	case "high_pressure":
 		return "concurrency_pressure"
@@ -5775,6 +5787,10 @@ func modelGatewayRuntimeRiskReason(item modelgatewayobservability.RuntimeStatusI
 	case "cooldown":
 		return strings.TrimSpace(item.CooldownReason)
 	case "failure_avoidance":
+		if strings.TrimSpace(item.FailureAvoidanceReason) == service.ChannelTimeoutRecoveryReason ||
+			strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason {
+			return service.ChannelTimeoutRecoveryReason
+		}
 		return strings.TrimSpace(item.FailureAvoidanceReason)
 	case "queued":
 		return "queue_depth"
@@ -5794,6 +5810,8 @@ func modelGatewayRiskStatusForRejectReason(reason string) string {
 		return "circuit_open"
 	case strings.Contains(normalized, "cooldown"):
 		return "cooldown"
+	case strings.Contains(normalized, "timeout_recovery"):
+		return "failure_avoidance"
 	case strings.Contains(normalized, "avoid"):
 		return "failure_avoidance"
 	case strings.Contains(normalized, "concurrency") || strings.Contains(normalized, "queue"):

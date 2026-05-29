@@ -41,6 +41,16 @@ var probePromptLibrary = []probePrompt{
 }
 
 func selectProbePromptCategory(candidate ProbeCandidate) string {
+	if strings.TrimSpace(candidate.Reason) == reasonTimeoutRecovery {
+		seed := strings.Join([]string{
+			candidate.Model,
+			candidate.Group,
+			candidate.Key.CapabilityFingerprint,
+			time.Now().UTC().Format("200601021504"),
+		}, "\x00")
+		categories := []string{PromptCategoryMedium, PromptCategoryLong}
+		return categories[hashProbePromptSeed(seed)%len(categories)]
+	}
 	categories := NormalizePromptCategories(candidate.PromptCategories)
 	if candidate.Channel != nil && len(candidate.Channel.GetModels()) > 0 {
 		// Keep the hash stable for a channel/model group while still rotating over time.

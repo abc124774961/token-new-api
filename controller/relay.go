@@ -28,6 +28,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -551,7 +552,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		resetRelayUpstreamTiming(c)
 
 		relayStart := time.Now()
-		attemptWatchdog := beginRelayFirstByteWatchdog(c, relayInfo, plan, relayStart)
+		attemptWatchdog := beginRelayAttemptWatchdog(c, relayInfo, plan, relayStart)
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
 			newAPIError = relay.WssHelper(c, relayInfo)
@@ -562,14 +563,21 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		default:
 			newAPIError = relayHandler(c, relayInfo)
 		}
-		firstByteTimeoutHit := attemptWatchdog.hit()
+		firstByteTimeoutHit := attemptWatchdog.firstByteHit()
+		totalDurationTimeoutHit := attemptWatchdog.totalDurationHit()
 		attemptWatchdog.stop()
 		if firstByteTimeoutHit {
-			newAPIError = newRelayFirstByteTimeoutError(attemptWatchdog.elapsed())
+			newAPIError = newRelayFirstByteTimeoutError(attemptWatchdog.firstByteElapsed())
+		}
+		if totalDurationTimeoutHit {
+			newAPIError = newRelayTotalDurationTimeoutError(attemptWatchdog.totalDurationElapsed())
 		}
 		relayTotal := time.Since(relayStart)
-		if firstByteTimeoutHit && relayTotal < attemptWatchdog.elapsed() {
-			relayTotal = attemptWatchdog.elapsed()
+		if firstByteTimeoutHit && relayTotal < attemptWatchdog.firstByteElapsed() {
+			relayTotal = attemptWatchdog.firstByteElapsed()
+		}
+		if totalDurationTimeoutHit && relayTotal < attemptWatchdog.totalDurationElapsed() {
+			relayTotal = attemptWatchdog.totalDurationElapsed()
 		}
 		relayToFirstByte := time.Duration(0)
 		if relayInfo.HasSendResponse() && relayInfo.FirstResponseTime.After(relayStart) {
@@ -577,6 +585,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		upstreamResponseHeader := relayUpstreamResponseHeaderDuration(c)
 		firstByteLease.Release()
+		totalDurationAfterOutput := relayTotalDurationAfterOutput(relayInfo, relayTotal, attemptWatchdog.totalTimeout)
 
 		if newAPIError == nil {
 			concurrencyLease.Release()
@@ -634,10 +643,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				return
 			}
 			relayInfo.LastError = nil
-			service.ClearChannelFailureAvoidance(channel.Id)
+			service.ClearChannelFailureAvoidanceOnRealSuccess(channel.Id)
+			if totalDurationAfterOutput {
+				recordRelayChannelTimeoutDegrade(c, channel, modelgatewaycore.RelayAttemptCancelReasonTotalDurationAfterOutput, nil, false)
+			} else {
+				recordRelayChannelTimeoutDegradeSuccess(channel.Id)
+			}
 			recordRelayChannelConfigSuccess(c, channel.Id, relayInfo, retryParam)
 			service.RecordChannelConcurrencySuccess(channel.Id)
-			reportModelGatewayAttempt(c, relayInfo, retryParam, channel, nil, modelGatewayAttemptFlow{
+			completeFlow := modelGatewayAttemptFlow{
 				RetryAction:            "complete",
 				ActiveConcurrency:      upstreamConcurrencySample,
 				QueueWait:              queueWait,
@@ -647,7 +661,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				RequestBodyPrepare:     requestBodyPrepare,
 				RequestBodyBytes:       requestBodyBytes,
 				RequestBodyStorage:     requestBodyStorage,
-			})
+			}
+			if totalDurationAfterOutput {
+				completeFlow.WarningLevel = modelgatewaycore.WarningLevelWarning
+				completeFlow.WarningFlags = appendModelGatewayWarningFlag(completeFlow.WarningFlags, modelgatewaycore.WarningFlagTotalTimeoutAfterOutput)
+				completeFlow.WarningMessage = "total duration timeout after downstream output; not switching mid-stream"
+				completeFlow.ExperienceIssue = modelgatewaycore.RelayAttemptCancelReasonTotalDurationAfterOutput
+			}
+			reportModelGatewayAttempt(c, relayInfo, retryParam, channel, nil, completeFlow)
 			finalAttemptReported = true
 			return
 		}
@@ -671,6 +692,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if firstByteTimeoutHit {
 			flow.ErrorCategory = modelgatewaycore.ErrorCategoryTimeout
 			flow.RetryReason = helper.RelayAttemptCancelReasonFirstByteTimeout
+			flow.ClientAborted = false
+			clientAbort = false
+			terminalClientAbort = false
+			service.MarkChannelSelectionSkipped(c, channel.Id)
+		}
+		if totalDurationTimeoutHit {
+			flow.ErrorCategory = modelgatewaycore.ErrorCategoryTimeout
+			flow.RetryReason = helper.RelayAttemptCancelReasonTotalDurationTimeout
 			flow.ClientAborted = false
 			clientAbort = false
 			terminalClientAbort = false
@@ -705,7 +734,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			setChannelInducedRetryRoutingIntentIfNeeded(c, channel, relayInfo.RetryIndex, flow.RetryAction)
 		}
 		setFirstByteRetryRoutingIntentIfNeeded(c, channel, relayInfo.RetryIndex, firstByteTimeoutHit, willRetry, flow.RetryAction)
-		if !terminalClientAbort && !firstByteTimeoutHit {
+		setTotalDurationRetryRoutingIntentIfNeeded(c, channel, relayInfo.RetryIndex, totalDurationTimeoutHit, willRetry, flow.RetryAction)
+		if firstByteTimeoutHit {
+			recordRelayChannelTimeoutDegrade(c, channel, "first_byte_timeout", newAPIError, !willRetry)
+		}
+		if totalDurationTimeoutHit {
+			recordRelayChannelTimeoutDegrade(c, channel, string(modelgatewaycore.RelayAttemptCancelReasonTotalDurationTimeout), newAPIError, !willRetry)
+		}
+		if !terminalClientAbort && !firstByteTimeoutHit && !totalDurationTimeoutHit {
 			processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, !willRetry)
 		}
 		flow.UsedChannels = append([]string(nil), c.GetStringSlice("use_channel")...)
@@ -1214,6 +1250,14 @@ func setFirstByteRetryRoutingIntentIfNeeded(c *gin.Context, channel *model.Chann
 	return true
 }
 
+func setTotalDurationRetryRoutingIntentIfNeeded(c *gin.Context, channel *model.Channel, attemptIndex int, timeoutHit bool, willRetry bool, retryAction string) bool {
+	if c == nil || channel == nil || !timeoutHit || !willRetry || retryAction != "switch_channel" {
+		return false
+	}
+	modelgatewaycore.SetRetryRoutingIntent(c, modelgatewaycore.NewTotalDurationTimeoutRetryRoutingIntent(channel.Id, channel.Name, attemptIndex))
+	return true
+}
+
 func setChannelInducedRetryRoutingIntentIfNeeded(c *gin.Context, channel *model.Channel, attemptIndex int, retryAction string) bool {
 	if c == nil || channel == nil || retryAction != "switch_channel" {
 		return false
@@ -1270,18 +1314,21 @@ func resetRelayUpstreamTiming(c *gin.Context) {
 	common.SetContextKey(c, constant.ContextKeyUpstreamRequestInfo, nil)
 }
 
-type relayFirstByteWatchdog struct {
-	enabled bool
-	ctx     *gin.Context
-	start   time.Time
-	control *helper.RelayAttemptControl
-	cancel  context.CancelFunc
-	done    chan struct{}
+type relayAttemptWatchdog struct {
+	enabled      bool
+	ctx          *gin.Context
+	start        time.Time
+	control      *helper.RelayAttemptControl
+	cancel       context.CancelFunc
+	done         chan struct{}
+	totalTimeout time.Duration
 }
 
-func beginRelayFirstByteWatchdog(c *gin.Context, info *relaycommon.RelayInfo, plan *modelgatewaycore.DispatchPlan, startedAt time.Time) *relayFirstByteWatchdog {
-	w := &relayFirstByteWatchdog{ctx: c, start: startedAt}
-	if !relayFirstByteWatchdogApplies(c, info, plan) {
+func beginRelayAttemptWatchdog(c *gin.Context, info *relaycommon.RelayInfo, plan *modelgatewaycore.DispatchPlan, startedAt time.Time) *relayAttemptWatchdog {
+	w := &relayAttemptWatchdog{ctx: c, start: startedAt}
+	firstByteEnabled := relayFirstByteWatchdogApplies(c, info, plan)
+	totalTimeout := relayTotalDurationTimeout(c, info, plan)
+	if !firstByteEnabled && totalTimeout <= 0 {
 		return w
 	}
 	baseCtx := context.Background()
@@ -1295,17 +1342,41 @@ func beginRelayFirstByteWatchdog(c *gin.Context, info *relaycommon.RelayInfo, pl
 	w.control = control
 	w.cancel = cancel
 	w.done = make(chan struct{})
+	w.totalTimeout = totalTimeout
 	go func() {
-		timer := time.NewTimer(relayFirstByteTimeout)
-		defer timer.Stop()
+		var firstByteTimer *time.Timer
+		var firstByteC <-chan time.Time
+		if firstByteEnabled {
+			firstByteTimer = time.NewTimer(relayFirstByteTimeout)
+			firstByteC = firstByteTimer.C
+			defer firstByteTimer.Stop()
+		}
+		var totalTimer *time.Timer
+		var totalC <-chan time.Time
+		if totalTimeout > 0 {
+			totalTimer = time.NewTimer(totalTimeout)
+			totalC = totalTimer.C
+			defer totalTimer.Stop()
+		}
 		defer close(w.done)
-		select {
-		case <-timer.C:
-			if relayFirstByteWatchdogCanCancel(c, info) {
-				control.SetCancelReason(helper.RelayAttemptCancelReasonFirstByteTimeout)
-				cancel()
+		for firstByteC != nil || totalC != nil {
+			select {
+			case <-firstByteC:
+				if relayFirstByteWatchdogCanCancel(c, info) {
+					control.SetCancelReason(helper.RelayAttemptCancelReasonFirstByteTimeout)
+					cancel()
+					return
+				}
+				firstByteC = nil
+			case <-totalC:
+				if relayTotalDurationWatchdogCanCancel(c, info) {
+					control.SetCancelReason(helper.RelayAttemptCancelReasonTotalDurationTimeout)
+					cancel()
+				}
+				return
+			case <-attemptCtx.Done():
+				return
 			}
-		case <-attemptCtx.Done():
 		}
 	}()
 	return w
@@ -1316,6 +1387,43 @@ func relayFirstByteWatchdogApplies(c *gin.Context, info *relaycommon.RelayInfo, 
 		return false
 	}
 	if plan.PolicyMode != modelgatewaycore.ModeActive || plan.IsHealthProbe {
+		return false
+	}
+	if !info.IsStream || !relayFirstByteWatchdogSupportedMode(info) {
+		return false
+	}
+	if info.IsChannelTest || relayDownstreamAlreadyStarted(c) {
+		return false
+	}
+	return !relayRequestContextCanceled(c)
+}
+
+func relayTotalDurationTimeout(c *gin.Context, info *relaycommon.RelayInfo, plan *modelgatewaycore.DispatchPlan) time.Duration {
+	if !relayTotalDurationWatchdogApplies(c, info, plan) {
+		return 0
+	}
+	seconds := scheduler_setting.GetSetting().RelayTotalTimeoutSeconds
+	if seconds <= 0 {
+		seconds = scheduler_setting.DefaultSetting().RelayTotalTimeoutSeconds
+	}
+	if seconds <= 0 {
+		seconds = 180
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func relayTotalDurationWatchdogApplies(c *gin.Context, info *relaycommon.RelayInfo, plan *modelgatewaycore.DispatchPlan) bool {
+	if c == nil || info == nil || plan == nil {
+		return false
+	}
+	setting := scheduler_setting.GetSetting()
+	if !setting.RelayTotalTimeoutEnabled {
+		return false
+	}
+	if plan.PolicyMode != modelgatewaycore.ModeActive || plan.IsHealthProbe {
+		return false
+	}
+	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
 	if !info.IsStream || !relayFirstByteWatchdogSupportedMode(info) {
@@ -1357,27 +1465,66 @@ func relayFirstByteWatchdogCanCancel(c *gin.Context, info *relaycommon.RelayInfo
 	return !info.HasSendResponse()
 }
 
-func (w *relayFirstByteWatchdog) hit() bool {
+func relayTotalDurationWatchdogCanCancel(c *gin.Context, info *relaycommon.RelayInfo) bool {
+	if c == nil || info == nil {
+		return false
+	}
+	if relayRequestContextCanceled(c) || relayResponseAlreadyStarted(c) {
+		return false
+	}
+	return !info.HasSendResponse()
+}
+
+func relayTotalDurationAfterOutput(info *relaycommon.RelayInfo, relayTotal time.Duration, threshold time.Duration) bool {
+	if info == nil || threshold <= 0 || relayTotal < threshold {
+		return false
+	}
+	return info.HasSendResponse()
+}
+
+func (w *relayAttemptWatchdog) cancelReason() string {
+	if w == nil || w.control == nil {
+		return ""
+	}
+	return w.control.CancelReason()
+}
+
+func (w *relayAttemptWatchdog) firstByteHit() bool {
 	return w != nil && w.control != nil && w.control.CancelReason() == helper.RelayAttemptCancelReasonFirstByteTimeout
 }
 
-func (w *relayFirstByteWatchdog) elapsed() time.Duration {
+func (w *relayAttemptWatchdog) totalDurationHit() bool {
+	return w != nil && w.control != nil && w.control.CancelReason() == helper.RelayAttemptCancelReasonTotalDurationTimeout
+}
+
+func (w *relayAttemptWatchdog) firstByteElapsed() time.Duration {
 	if w == nil || w.start.IsZero() {
 		return relayFirstByteTimeout
 	}
 	elapsed := time.Since(w.start)
-	if elapsed < relayFirstByteTimeout && w.hit() {
+	if elapsed < relayFirstByteTimeout && w.firstByteHit() {
 		return relayFirstByteTimeout
 	}
 	return elapsed
 }
 
-func (w *relayFirstByteWatchdog) stop() {
+func (w *relayAttemptWatchdog) totalDurationElapsed() time.Duration {
+	if w == nil || w.start.IsZero() {
+		return w.totalTimeout
+	}
+	elapsed := time.Since(w.start)
+	if w.totalTimeout > 0 && elapsed < w.totalTimeout && w.totalDurationHit() {
+		return w.totalTimeout
+	}
+	return elapsed
+}
+
+func (w *relayAttemptWatchdog) stop() {
 	if w == nil || !w.enabled {
 		return
 	}
 	defer helper.ClearRelayAttemptControl(w.ctx)
-	if w.cancel != nil && !w.hit() {
+	if w.cancel != nil && w.cancelReason() == "" {
 		w.cancel()
 	}
 	if w.done != nil {
@@ -1391,6 +1538,17 @@ func newRelayFirstByteTimeoutError(elapsed time.Duration) *types.NewAPIError {
 	}
 	return types.NewErrorWithStatusCode(
 		fmt.Errorf("first byte timeout after %dms", elapsed.Milliseconds()),
+		types.ErrorCodeChannelResponseTimeExceeded,
+		http.StatusGatewayTimeout,
+	)
+}
+
+func newRelayTotalDurationTimeoutError(elapsed time.Duration) *types.NewAPIError {
+	if elapsed <= 0 {
+		elapsed = time.Duration(scheduler_setting.DefaultSetting().RelayTotalTimeoutSeconds) * time.Second
+	}
+	return types.NewErrorWithStatusCode(
+		fmt.Errorf("total duration timeout after %dms", elapsed.Milliseconds()),
 		types.ErrorCodeChannelResponseTimeExceeded,
 		http.StatusGatewayTimeout,
 	)
@@ -1481,7 +1639,13 @@ func relayChannelInducedClientAbort(c *gin.Context, info *relaycommon.RelayInfo,
 	if info != nil && info.StreamStatus != nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonInternalFirstByteTimeout {
 		return true
 	}
+	if info != nil && info.StreamStatus != nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonInternalTotalTimeout {
+		return false
+	}
 	if apiErr == nil || !errors.Is(apiErr, context.Canceled) {
+		return false
+	}
+	if helper.RelayAttemptCanceledFor(c, helper.RelayAttemptCancelReasonTotalDurationTimeout) {
 		return false
 	}
 	if relayRequestContextCanceled(c) || relayResponseAlreadyStarted(c) {
@@ -1698,6 +1862,9 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	if errorCategory == modelgatewaycore.ErrorCategoryOverloadSkip {
 		return
 	}
+	if kind, ok := relayTimeoutDegradeKindFromError(err); ok {
+		recordRelayChannelTimeoutDegradeForChannelError(c, channelError, kind, err, persistLog)
+	}
 	if service.ShouldDisableChannelForBalance(err) && channelError.AutoBan {
 		service.DisableChannelForBalance(channelError)
 	}
@@ -1760,6 +1927,50 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 	}
 
+}
+
+func relayTimeoutDegradeKindFromError(err *types.NewAPIError) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	if err.GetErrorCode() == types.ErrorCodeChannelResponseTimeExceeded {
+		return "timeout", true
+	}
+	switch err.StatusCode {
+	case http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return fmt.Sprintf("status_%d", err.StatusCode), true
+	default:
+		return "", false
+	}
+}
+
+func recordRelayChannelTimeoutDegradeSuccess(channelID int) {
+	setting := scheduler_setting.GetSetting()
+	service.RecordChannelTimeoutDegradeSuccess(channelID, service.ChannelTimeoutDegradeConfig{
+		Enabled:     setting.ChannelTimeoutDegradeEnabled,
+		Window:      time.Duration(setting.ChannelTimeoutDegradeWindowSeconds) * time.Second,
+		MinSamples:  setting.ChannelTimeoutDegradeMinSamples,
+		Threshold:   setting.ChannelTimeoutDegradeThreshold,
+		Consecutive: setting.ChannelTimeoutDegradeConsecutive,
+	})
+}
+
+func recordRelayChannelTimeoutDegrade(c *gin.Context, channel *model.Channel, kind string, err *types.NewAPIError, finalFailure bool) {
+	if channel == nil {
+		return
+	}
+	recordRelayChannelTimeoutDegradeForChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), kind, err, finalFailure)
+}
+
+func recordRelayChannelTimeoutDegradeForChannelError(c *gin.Context, channelError types.ChannelError, kind string, err *types.NewAPIError, finalFailure bool) {
+	setting := scheduler_setting.GetSetting()
+	service.RecordChannelTimeoutDegradeSample(channelError.ChannelId, kind, service.ChannelTimeoutDegradeConfig{
+		Enabled:     setting.ChannelTimeoutDegradeEnabled,
+		Window:      time.Duration(setting.ChannelTimeoutDegradeWindowSeconds) * time.Second,
+		MinSamples:  setting.ChannelTimeoutDegradeMinSamples,
+		Threshold:   setting.ChannelTimeoutDegradeThreshold,
+		Consecutive: setting.ChannelTimeoutDegradeConsecutive,
+	}, buildChannelFailureAvoidanceContext(c, channelError, err, finalFailure))
 }
 
 func buildChannelFailureAvoidanceContext(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, finalFailure bool) *service.ChannelFailureAvoidanceContext {

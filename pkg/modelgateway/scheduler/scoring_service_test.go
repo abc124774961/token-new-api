@@ -2,6 +2,7 @@ package scheduler_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
@@ -313,7 +314,83 @@ func TestTTFTLatencyUsesProgressiveScore(t *testing.T) {
 	require.InEpsilon(t, 0.3654, at8050.Score, 0.0001)
 	require.InEpsilon(t, 0.0321, at18000.Score, 0.0001)
 	require.Equal(t, 0.0, at20000.Score)
-	require.Equal(t, "progressive_latency_score(ttft, 800ms, 20000ms, decay=2.2)", at3990.Formula)
+	require.Equal(t, "recency_weighted_p50_progressive_score(ttft, decay=2.2, half_life=16, stability_penalty)", at3990.Formula)
+}
+
+func TestTTFTLatencyUsesRecencyWeightedP50ForOccasionalSlowSample(t *testing.T) {
+	service := scheduler.NewCandidateScoringService()
+	snapshot := scoringServiceLatencySnapshot()
+	for i := 0; i < 19; i++ {
+		snapshot.RecentLatencySamples = append(snapshot.RecentLatencySamples, runtimeLatencySampleForTest(i, 2000))
+	}
+	snapshot.RecentLatencySamples = append(snapshot.RecentLatencySamples, runtimeLatencySampleForTest(19, 16000))
+	snapshot.TTFTMs = 2700
+	snapshot.ScoreStatsJSON = `{"version":1,"samples":20,"rates":{},"latency":{"ttft_ms":[2000,2000,2000,2000,2000,2000,2000,2000,2000,2000,2000,2000,2000,2000,2000,2000,2000,2000,2000,16000]}}`
+
+	evaluation := service.EvaluatePreparedCandidate(core.Candidate{RuntimeKey: snapshot.Key, Group: "default"}, snapshot, core.GroupSmartPolicy{Strategy: core.StrategyBalanced}, scheduler.ScoringContext{Strategy: core.StrategyBalanced}, false)
+	ttftItem := scoreItemByKey(t, evaluation.Score.Items, "ttft_latency")
+
+	require.NotNil(t, ttftItem.RawNumber)
+	require.Equal(t, 2000.0, *ttftItem.RawNumber)
+	require.Equal(t, "runtime_latency_samples", ttftItem.Source)
+	require.Greater(t, ttftItem.Score, 0.75)
+	require.Less(t, ttftItem.FormulaParameters["stability_penalty"], 1.0)
+}
+
+func TestTTFTLatencyPrefersRecentSamples(t *testing.T) {
+	service := scheduler.NewCandidateScoringService()
+	snapshot := scoringServiceLatencySnapshot()
+	for i := 0; i < 20; i++ {
+		ttft := 2000.0
+		if i >= 15 {
+			ttft = 9000
+		}
+		snapshot.RecentLatencySamples = append(snapshot.RecentLatencySamples, runtimeLatencySampleForTest(i, ttft))
+	}
+	snapshot.TTFTMs = 3750
+
+	evaluation := service.EvaluatePreparedCandidate(core.Candidate{RuntimeKey: snapshot.Key, Group: "default"}, snapshot, core.GroupSmartPolicy{Strategy: core.StrategyBalanced}, scheduler.ScoringContext{Strategy: core.StrategyBalanced}, false)
+	ttftItem := scoreItemByKey(t, evaluation.Score.Items, "ttft_latency")
+
+	require.NotNil(t, ttftItem.RawNumber)
+	require.Equal(t, 9000.0, *ttftItem.RawNumber)
+	require.Equal(t, "runtime_latency_samples", ttftItem.Source)
+	require.Less(t, ttftItem.Score, 0.35)
+}
+
+func TestTTFTLatencyFallsBackToScoreStatsWithoutRuntimeSamples(t *testing.T) {
+	service := scheduler.NewCandidateScoringService()
+	snapshot := scoringServiceLatencySnapshot()
+	snapshot.TTFTMs = 12000
+	snapshot.ScoreStatsJSON = `{"version":1,"samples":4,"rates":{},"latency":{"ttft_ms":[2100,2200,2300,2400]}}`
+
+	evaluation := service.EvaluatePreparedCandidate(core.Candidate{RuntimeKey: snapshot.Key, Group: "default"}, snapshot, core.GroupSmartPolicy{Strategy: core.StrategyBalanced}, scheduler.ScoringContext{Strategy: core.StrategyBalanced}, false)
+	ttftItem := scoreItemByKey(t, evaluation.Score.Items, "ttft_latency")
+
+	require.NotNil(t, ttftItem.RawNumber)
+	require.Equal(t, 2250.0, *ttftItem.RawNumber)
+	require.Equal(t, "score_stats_latency", ttftItem.Source)
+}
+
+func scoringServiceLatencySnapshot() core.RuntimeSnapshot {
+	return core.RuntimeSnapshot{
+		Key:                core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", Group: "default", EndpointType: constant.EndpointTypeOpenAI},
+		SuccessRate:        1,
+		DurationMs:         5000,
+		TokensPerSecond:    45,
+		CostRatio:          1,
+		CostReferenceRatio: 1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	}
+}
+
+func runtimeLatencySampleForTest(index int, ttftMs float64) core.RuntimeLatencySample {
+	return core.RuntimeLatencySample{
+		ObservedAt: time.Unix(1700000000+int64(index), 0).Unix(),
+		DurationMs: ttftMs + 1000,
+		TTFTMs:     ttftMs,
+	}
 }
 
 func scoreItemByKey(t *testing.T, items []core.ScoreItem, key string) core.ScoreItem {

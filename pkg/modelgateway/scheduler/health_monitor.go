@@ -261,6 +261,19 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 	if required <= 0 {
 		required = 2
 	}
+	avoidance := service.GetChannelFailureAvoidanceStatus(result.ChannelID)
+	timeoutRecovery := (avoidance != nil && (avoidance.ProbeRecoveryRequired || service.IsTimeoutRecoveryReason(avoidance.Reason))) ||
+		strings.TrimSpace(snapshot.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason ||
+		strings.TrimSpace(result.ProbeReason) == service.ChannelTimeoutRecoveryReason
+	if timeoutRecovery {
+		required = setting.ChannelTimeoutRecoveryProbeSuccesses
+		if required <= 0 {
+			required = setting.ProbeRecoverySuccessesRequired
+		}
+		if required <= 0 {
+			required = 2
+		}
+	}
 	lowScoreThreshold := setting.ProbeLowScoreThreshold
 	if lowScoreThreshold <= 0 {
 		lowScoreThreshold = 0.62
@@ -269,13 +282,21 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 	if result.IsHealthProbe {
 		snapshot.ProbeTriggerReason = strings.TrimSpace(result.ProbeReason)
 	}
+	if timeoutRecovery {
+		snapshot.ProbeTriggerReason = service.ChannelTimeoutRecoveryReason
+		snapshot.FailureAvoidance = true
+		snapshot.ProbeRecoveryPending = true
+	}
 	if result.IsHealthProbe && result.Success {
 		snapshot.ProbeRecoverySuccessCount++
-		if snapshot.ProbeRecoverySuccessCount >= required && service.GetChannelFailureAvoidanceStatus(result.ChannelID) != nil {
-			service.ClearChannelFailureAvoidance(result.ChannelID)
+		if snapshot.ProbeRecoverySuccessCount >= required && avoidance != nil && (!avoidance.ProbeRecoveryRequired || timeoutRecovery) {
+			service.ClearChannelProbeRecoveryAvoidance(result.ChannelID)
 			snapshot.FailureAvoidance = false
 			snapshot.ProbeRecoveryPending = false
 			snapshot.ProbeRecoverySuccessCount = required
+			if timeoutRecovery {
+				snapshot.ProbeTriggerReason = ""
+			}
 			return
 		}
 	}
@@ -283,11 +304,11 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 		snapshot.ProbeRecoverySuccessCount = 0
 	}
 	if !result.IsHealthProbe && !result.Success {
-		snapshot.FailureAvoidance = snapshot.FailureAvoidance || service.GetChannelFailureAvoidanceStatus(result.ChannelID) != nil
+		snapshot.FailureAvoidance = snapshot.FailureAvoidance || avoidance != nil
 	}
-	snapshot.FailureAvoidance = snapshot.FailureAvoidance || service.GetChannelFailureAvoidanceStatus(result.ChannelID) != nil
+	snapshot.FailureAvoidance = snapshot.FailureAvoidance || avoidance != nil
 	score := m.scoreSnapshot(result, *snapshot)
-	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || (score.Total > 0 && score.Total < lowScoreThreshold)
+	snapshot.ProbeRecoveryPending = timeoutRecovery || snapshot.FailureAvoidance || (score.Total > 0 && score.Total < lowScoreThreshold)
 	if !snapshot.ProbeRecoveryPending && probeTriggerReasonClearedOnRecovery(snapshot.ProbeTriggerReason) {
 		snapshot.ProbeTriggerReason = ""
 	}
