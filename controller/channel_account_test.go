@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
@@ -30,6 +31,12 @@ type channelAccountsAPIResponse struct {
 	Success bool                    `json:"success"`
 	Message string                  `json:"message"`
 	Data    ChannelAccountsResponse `json:"data"`
+}
+
+type channelAccountRecentRequestsAPIResponse struct {
+	Success bool                                 `json:"success"`
+	Message string                               `json:"message"`
+	Data    ChannelAccountRecentRequestsResponse `json:"data"`
 }
 
 func setupChannelAccountControllerTestDB(t *testing.T) *gorm.DB {
@@ -181,6 +188,61 @@ func TestListChannelAccountsHidesRawKeysAndCarriesScoreSummary(t *testing.T) {
 	require.False(t, payload.Data.Items[1].KeyEnabled)
 	require.Equal(t, "auth failed", payload.Data.Items[1].DisabledReason)
 	require.Nil(t, payload.Data.Items[1].Score)
+}
+
+func TestListChannelAccountsIncludesSchedulingExplanation(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	now := common.GetTimestamp()
+	channel := model.Channel{
+		Id:     38,
+		Name:   "codex scheduling",
+		Type:   constant.ChannelTypeCodex,
+		Key:    `{"access_token":"access-a","account_id":"acct-a"}` + "\n" + `{"access_token":"access-b","account_id":"acct-b"}`,
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:             true,
+			MultiKeySize:           2,
+			MultiKeyStatusList:     map[int]int{1: common.ChannelStatusAutoDisabled},
+			MultiKeyDisabledReason: map[int]string{1: "manual disabled"},
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CodexBackendResponsesStreamWrite: common.GetPointer(true),
+					UsageLimitStatus:                 channelcapability.UsageLimitStatusLimited,
+					UsageLimitReason:                 channelcapability.UsageLimitReasonReached,
+					UsageLimitMessage:                "usage limit has been reached",
+					UsageLimitDetectedTime:           now - 30,
+					UsageLimitExpiresAt:              now + 600,
+					UsageLimitResetSource:            "retry_after_seconds",
+				},
+			},
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	router := gin.New()
+	router.GET("/api/channel/:id/accounts", ListChannelAccounts)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/channel/38/accounts", nil)
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Len(t, payload.Data.Items, 2)
+	first := payload.Data.Items[0]
+	require.NotNil(t, first.Scheduling)
+	require.False(t, first.Scheduling.Schedulable)
+	require.Equal(t, channelcapability.ClassificationAccountUsageLimited, first.Scheduling.PrimaryReason)
+	require.Contains(t, first.Scheduling.BlockingReasons, channelcapability.ClassificationAccountUsageLimited)
+	require.Equal(t, now+600, first.Scheduling.RecoveryAt)
+	require.Equal(t, "retry_after_seconds", first.Scheduling.RecoverySource)
+
+	second := payload.Data.Items[1]
+	require.NotNil(t, second.Scheduling)
+	require.False(t, second.Scheduling.Schedulable)
+	require.Equal(t, "account_disabled", second.Scheduling.PrimaryReason)
+	require.Contains(t, second.Scheduling.BlockingReasons, "account_disabled")
 }
 
 func TestListChannelAccountsUsesSingleKeyChannelRuntimeFallback(t *testing.T) {
@@ -401,6 +463,63 @@ func TestListChannelAccountsStatsViewAggregatesUsageAndExcludesHealthProbes(t *t
 	require.Equal(t, model.ModelGatewayUserRequestErrorTimeout, payload.Data.Items[0].Stats.Today.TopErrorCategory)
 	require.Equal(t, int64(1), payload.Data.Items[0].Stats.Today.TopErrorCount)
 	require.Equal(t, int64(0), payload.Data.Items[1].Stats.Today.Requests)
+}
+
+func TestChannelAccountRecentRequestsAndAttributionRefresh(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     35,
+		Name:   "recent accounts",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-recent-one\nsk-recent-two",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&model.ChannelAccountUsageEvent{
+		RequestId:       "req-recent-account",
+		ChannelID:       35,
+		CredentialIndex: 1,
+		RequestedModel:  "gpt-5.4",
+		CompletedAt:     now - 30,
+		Success:         false,
+		StatusCode:      http.StatusTooManyRequests,
+		ErrorCategory:   "rate_limit",
+		IsHealthProbe:   true,
+		DurationMs:      900,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/channel/:id/accounts/:credential_index/requests", ListChannelAccountRecentRequests)
+	router.POST("/api/channel/:id/accounts/:credential_index/refresh-attribution", RefreshChannelAccountUsageAttribution)
+
+	getRecorder := httptest.NewRecorder()
+	getReq := httptest.NewRequest(http.MethodGet, "/api/channel/35/accounts/1/requests", nil)
+	router.ServeHTTP(getRecorder, getReq)
+	getPayload := decodeChannelAccountRecentRequestsResponse(t, getRecorder)
+	require.True(t, getPayload.Success, getRecorder.Body.String())
+	require.Len(t, getPayload.Data.Items, 1)
+	require.Equal(t, "req-recent-account", getPayload.Data.Items[0].RequestID)
+	require.True(t, getPayload.Data.Items[0].IsHealthProbe)
+	require.False(t, getPayload.Data.Items[0].AttributionComplete)
+
+	refreshRecorder := httptest.NewRecorder()
+	refreshReq := httptest.NewRequest(http.MethodPost, "/api/channel/35/accounts/1/refresh-attribution", nil)
+	router.ServeHTTP(refreshRecorder, refreshReq)
+	refreshPayload := decodeChannelAccountRecentRequestsResponse(t, refreshRecorder)
+	require.True(t, refreshPayload.Success, refreshRecorder.Body.String())
+	require.NotNil(t, refreshPayload.Data.RefreshResult)
+	require.Equal(t, 1, refreshPayload.Data.RefreshResult.Scanned)
+	require.Equal(t, 1, refreshPayload.Data.RefreshResult.Updated)
+	require.Len(t, refreshPayload.Data.Items, 1)
+	require.True(t, refreshPayload.Data.Items[0].AttributionComplete)
+	require.NotEmpty(t, refreshPayload.Data.Items[0].AccountIdentityKey)
 }
 
 func TestUpdateChannelAccountStatusDisablesMultiKeyAccount(t *testing.T) {
@@ -1949,6 +2068,13 @@ func buildChannelAccountImportMultipart(t *testing.T, filename string, fileBytes
 func decodeChannelAccountsResponse(t *testing.T, recorder *httptest.ResponseRecorder) channelAccountsAPIResponse {
 	t.Helper()
 	var payload channelAccountsAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	return payload
+}
+
+func decodeChannelAccountRecentRequestsResponse(t *testing.T, recorder *httptest.ResponseRecorder) channelAccountRecentRequestsAPIResponse {
+	t.Helper()
+	var payload channelAccountRecentRequestsAPIResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
 	return payload
 }

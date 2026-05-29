@@ -5,10 +5,26 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 	"gorm.io/gorm/clause"
 )
 
 const unknownChannelAccountCredentialIndex = -1
+
+const (
+	channelAccountUsageProviderManualAPIKey = "manual_api_key"
+	channelAccountUsageProviderCodexOAuth   = "codex_oauth"
+	channelAccountUsageProviderOpenAI       = "openai"
+	channelAccountUsageProviderCodex        = "codex"
+
+	channelAccountUsageTypeAPIKey        = "api_key"
+	channelAccountUsageTypeOAuthAccount  = "oauth_account"
+	channelAccountUsageTypeJSONAuth      = "json_auth"
+	channelAccountUsageTypeTokenKey      = "token_key"
+	channelAccountUsageTypeSessionCookie = "session_cookie"
+	channelAccountUsageTypeComposite     = "composite"
+)
 
 type ChannelAccountUsageEvent struct {
 	Id                           int     `json:"id" gorm:"primaryKey"`
@@ -79,6 +95,13 @@ type ChannelAccountUsageWindowAggregate struct {
 	TopErrorCount      int64
 }
 
+type ChannelAccountUsageAttributionRefreshResult struct {
+	Since   int64 `json:"since"`
+	Scanned int   `json:"scanned"`
+	Updated int   `json:"updated"`
+	Skipped int   `json:"skipped"`
+}
+
 func UpsertChannelAccountUsageDispatch(event ChannelAccountUsageEvent) error {
 	event = normalizeChannelAccountUsageEvent(event)
 	updates := baseChannelAccountUsageAssignments(event)
@@ -107,6 +130,7 @@ func UpsertChannelAccountUsageAttempt(event ChannelAccountUsageEvent) error {
 func UpsertChannelAccountUsageBilling(event ChannelAccountUsageEvent) error {
 	event = normalizeChannelAccountUsageEvent(event)
 	updates := baseChannelAccountUsageAssignments(event)
+	addChannelAccountUsageIdentityAssignments(updates, event)
 	addChannelAccountUsageRequestAssignments(updates, event)
 	if event.ChannelID > 0 {
 		updates["channel_id"] = event.ChannelID
@@ -135,6 +159,7 @@ func UpsertChannelAccountUsageCost(summary ModelGatewayRequestCostSummary) error
 	event := normalizeChannelAccountUsageEvent(ChannelAccountUsageEvent{
 		RequestId:         summary.RequestId,
 		ChannelID:         summary.ChannelID,
+		CredentialIndex:   unknownChannelAccountCredentialIndex,
 		RequestedModel:    summary.UpstreamModel,
 		UpstreamCostTotal: summary.UpstreamCostTotal,
 		CostSource:        summary.CostSource,
@@ -153,6 +178,63 @@ func UpsertChannelAccountUsageCost(summary ModelGatewayRequestCostSummary) error
 	updates["cost_accuracy"] = event.CostAccuracy
 	updates["cost_calculated_at"] = event.CostCalculatedAt
 	return upsertChannelAccountUsageEvent(event, updates)
+}
+
+func QueryChannelAccountUsageRecentEvents(channelID int, credentialIndex int, limit int) ([]ChannelAccountUsageEvent, error) {
+	if DB == nil || channelID <= 0 || credentialIndex < 0 {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	rows := make([]ChannelAccountUsageEvent, 0, limit)
+	err := DB.Model(&ChannelAccountUsageEvent{}).
+		Where("channel_id = ? AND credential_index = ?", channelID, credentialIndex).
+		Order(channelAccountUsageEffectiveCompletedAtExpr() + " DESC").
+		Order("id DESC").
+		Limit(limit).
+		Find(&rows).Error
+	return rows, err
+}
+
+func RefreshChannelAccountUsageAttribution(channelID int, credentialIndex int, since int64, limit int) (ChannelAccountUsageAttributionRefreshResult, error) {
+	result := ChannelAccountUsageAttributionRefreshResult{Since: since}
+	if DB == nil || channelID <= 0 || credentialIndex < 0 {
+		return result, nil
+	}
+	if since <= 0 {
+		since = common.GetTimestamp() - 6*60*60
+		result.Since = since
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 500
+	}
+	rows := make([]ChannelAccountUsageEvent, 0, limit)
+	err := DB.Model(&ChannelAccountUsageEvent{}).
+		Where("channel_id = ? AND credential_index = ?", channelID, credentialIndex).
+		Where(channelAccountUsageEffectiveCompletedAtExpr()+" >= ?", since).
+		Order(channelAccountUsageEffectiveCompletedAtExpr() + " DESC").
+		Order("id DESC").
+		Limit(limit).
+		Find(&rows).Error
+	if err != nil {
+		return result, err
+	}
+	result.Scanned = len(rows)
+	for _, row := range rows {
+		enriched := normalizeChannelAccountUsageEvent(row)
+		if !channelAccountUsageIdentityRefreshChanged(row, enriched) {
+			result.Skipped++
+			continue
+		}
+		updates := map[string]any{"updated_at": common.GetTimestamp()}
+		addChannelAccountUsageIdentityAssignments(updates, enriched)
+		if err := DB.Model(&ChannelAccountUsageEvent{}).Where("id = ?", row.Id).Updates(updates).Error; err != nil {
+			return result, err
+		}
+		result.Updated++
+	}
+	return result, nil
 }
 
 func QueryChannelAccountUsageWindowAggregates(channelID int, windows []ChannelAccountUsageWindowSpec, includeHealthProbes bool) ([]ChannelAccountUsageWindowAggregate, error) {
@@ -308,6 +390,10 @@ func normalizeChannelAccountUsageEvent(event ChannelAccountUsageEvent) ChannelAc
 	if event.CredentialIndex < 0 {
 		event.CredentialIndex = unknownChannelAccountCredentialIndex
 	}
+	event = enrichChannelAccountUsageEventIdentity(event)
+	if event.AccountIdentityKey == "" {
+		event.AccountIdentityKey = event.AccountID
+	}
 	if event.CompletedAt < 0 {
 		event.CompletedAt = 0
 	}
@@ -389,4 +475,240 @@ func channelAccountUsageAggregateKey(accountIdentityKey string, credentialIndex 
 		return "identity:" + accountIdentityKey
 	}
 	return fmt.Sprintf("credential:%d", credentialIndex)
+}
+
+func channelAccountUsageIdentityRefreshChanged(before ChannelAccountUsageEvent, after ChannelAccountUsageEvent) bool {
+	return strings.TrimSpace(before.ChannelName) != strings.TrimSpace(after.ChannelName) ||
+		strings.TrimSpace(before.AccountID) != strings.TrimSpace(after.AccountID) ||
+		strings.TrimSpace(before.AccountIdentityKey) != strings.TrimSpace(after.AccountIdentityKey) ||
+		strings.TrimSpace(before.CredentialSubjectFingerprint) != strings.TrimSpace(after.CredentialSubjectFingerprint) ||
+		strings.TrimSpace(before.CredentialFingerprint) != strings.TrimSpace(after.CredentialFingerprint) ||
+		strings.TrimSpace(before.AccountType) != strings.TrimSpace(after.AccountType) ||
+		strings.TrimSpace(before.Brand) != strings.TrimSpace(after.Brand) ||
+		strings.TrimSpace(before.Provider) != strings.TrimSpace(after.Provider)
+}
+
+func enrichChannelAccountUsageEventIdentity(event ChannelAccountUsageEvent) ChannelAccountUsageEvent {
+	if event.ChannelID <= 0 || event.CredentialIndex < 0 {
+		return event
+	}
+	if !common.MemoryCacheEnabled && DB == nil {
+		return event
+	}
+	if event.ChannelName != "" && event.AccountIdentityKey != "" && event.AccountID != "" && event.CredentialFingerprint != "" && event.CredentialSubjectFingerprint != "" && event.AccountType != "" && event.Brand != "" && event.Provider != "" {
+		return event
+	}
+	channel, err := CacheGetChannel(event.ChannelID)
+	if err != nil || channel == nil {
+		return event
+	}
+	if event.ChannelName == "" {
+		event.ChannelName = strings.TrimSpace(channel.Name)
+	}
+	keys := channel.GetKeys()
+	if len(keys) == 0 && strings.TrimSpace(channel.Key) != "" {
+		keys = []string{channel.Key}
+	}
+	if event.CredentialIndex >= len(keys) {
+		return event
+	}
+	rawKey := strings.TrimSpace(keys[event.CredentialIndex])
+	if rawKey == "" {
+		return event
+	}
+
+	provider := channelAccountUsageProviderForChannelKey(channel, rawKey)
+	brand := channelAccountUsageBrandForChannelKey(channel, rawKey)
+	accountType := channelAccountUsageAccountTypeForChannelKey(channel, event.CredentialIndex, rawKey)
+	subjectFP := channelAccountUsageFingerprint(channelAccountUsageSubjectSourceForChannelKey(channel, rawKey))
+	credentialFP := channelAccountUsageFingerprint(rawKey)
+	identityKey := strings.Join([]string{provider, brand, subjectFP}, ":")
+
+	if event.Provider == "" {
+		event.Provider = provider
+	}
+	if event.Brand == "" {
+		event.Brand = brand
+	}
+	if event.AccountType == "" {
+		event.AccountType = accountType
+	}
+	if event.CredentialSubjectFingerprint == "" {
+		event.CredentialSubjectFingerprint = subjectFP
+	}
+	if event.CredentialFingerprint == "" {
+		event.CredentialFingerprint = credentialFP
+	}
+	if event.AccountIdentityKey == "" {
+		event.AccountIdentityKey = identityKey
+	}
+	if event.AccountID == "" {
+		event.AccountID = event.AccountIdentityKey
+	}
+	return event
+}
+
+func channelAccountUsageProviderForChannel(channel *Channel) string {
+	if channel == nil {
+		return ""
+	}
+	switch channel.Type {
+	case constant.ChannelTypeCodex:
+		return channelAccountUsageProviderCodexOAuth
+	case constant.ChannelTypeOpenAI:
+		if channel.GetOtherSettings().UsesCodexCompatibilityMode() {
+			return channelAccountUsageProviderCodex
+		}
+		return channelAccountUsageProviderOpenAI
+	default:
+		name := strings.TrimSpace(constant.GetChannelTypeName(channel.Type))
+		if name == "" || strings.EqualFold(name, "unknown") {
+			return channelAccountUsageProviderManualAPIKey
+		}
+		return strings.ToLower(strings.ReplaceAll(name, " ", "_"))
+	}
+}
+
+func channelAccountUsageBrandForChannel(channel *Channel) string {
+	if channel == nil {
+		return ""
+	}
+	switch channel.Type {
+	case constant.ChannelTypeCodex:
+		return "codex"
+	case constant.ChannelTypeOpenAI:
+		if channel.GetOtherSettings().UsesCodexCompatibilityMode() {
+			return "codex"
+		}
+		return "openai"
+	default:
+		name := strings.TrimSpace(constant.GetChannelTypeName(channel.Type))
+		if name == "" || strings.EqualFold(name, "unknown") {
+			return "unknown"
+		}
+		return strings.ToLower(strings.ReplaceAll(name, " ", "_"))
+	}
+}
+
+func channelAccountUsageProviderForChannelKey(channel *Channel, rawKey string) string {
+	if channel != nil && channel.Type == constant.ChannelTypeOpenAI && codexauth.IsOAuthJSONCredential(rawKey) {
+		return channelAccountUsageProviderCodexOAuth
+	}
+	return channelAccountUsageProviderForChannel(channel)
+}
+
+func channelAccountUsageBrandForChannelKey(channel *Channel, rawKey string) string {
+	if channel != nil && channel.Type == constant.ChannelTypeOpenAI && codexauth.IsOAuthJSONCredential(rawKey) {
+		return "codex"
+	}
+	return channelAccountUsageBrandForChannel(channel)
+}
+
+func channelAccountUsageAccountTypeForChannelKey(channel *Channel, credentialIndex int, rawKey string) string {
+	if channel == nil {
+		return channelAccountUsageTypeAPIKey
+	}
+	if channel.ChannelInfo.MultiKeyAccountTypes != nil {
+		if accountType := strings.TrimSpace(channel.ChannelInfo.MultiKeyAccountTypes[credentialIndex]); accountType != "" {
+			return accountType
+		}
+	}
+	key := strings.TrimSpace(rawKey)
+	if channel.Type == constant.ChannelTypeCodex || codexauth.IsOAuthJSONCredential(key) {
+		return channelAccountUsageTypeOAuthAccount
+	}
+	if accountType := channelAccountUsageAccountTypeFromJSONCredential(key); accountType != "" {
+		return accountType
+	}
+	if strings.HasPrefix(key, "{") {
+		return channelAccountUsageTypeJSONAuth
+	}
+	return channelAccountUsageTypeAPIKey
+}
+
+func channelAccountUsageAccountTypeFromJSONCredential(rawKey string) string {
+	rawKey = strings.TrimSpace(rawKey)
+	if !strings.HasPrefix(rawKey, "{") {
+		return ""
+	}
+	var payload map[string]interface{}
+	if err := common.Unmarshal([]byte(rawKey), &payload); err != nil {
+		return ""
+	}
+	if channelAccountUsageHasAnyNonEmpty(payload, "account_type", "credential_type", "type") {
+		for _, key := range []string{"account_type", "credential_type", "type"} {
+			accountType := channelAccountUsageNormalizeAccountType(fmt.Sprint(payload[key]))
+			if accountType != "" {
+				return accountType
+			}
+		}
+	}
+	if channelAccountUsageHasAnyNonEmpty(payload, "refresh_token", "access_token", "id_token", "client_id") {
+		return channelAccountUsageTypeOAuthAccount
+	}
+	if channelAccountUsageHasAnyNonEmpty(payload, "session_cookie", "cookie", "cookies", "session_token") {
+		return channelAccountUsageTypeSessionCookie
+	}
+	if channelAccountUsageHasAnyNonEmpty(payload, "token_key", "api_token") {
+		return channelAccountUsageTypeTokenKey
+	}
+	return ""
+}
+
+func channelAccountUsageNormalizeAccountType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case channelAccountUsageTypeAPIKey, "api-key", "apikey":
+		return channelAccountUsageTypeAPIKey
+	case channelAccountUsageTypeOAuthAccount, "oauth", "oauth_json", "oauth-json", "codex", "codex_oauth":
+		return channelAccountUsageTypeOAuthAccount
+	case channelAccountUsageTypeJSONAuth, "json", "json-auth":
+		return channelAccountUsageTypeJSONAuth
+	case channelAccountUsageTypeTokenKey, "token", "token-key":
+		return channelAccountUsageTypeTokenKey
+	case channelAccountUsageTypeSessionCookie, "session", "cookie", "session-cookie":
+		return channelAccountUsageTypeSessionCookie
+	case channelAccountUsageTypeComposite:
+		return channelAccountUsageTypeComposite
+	default:
+		return ""
+	}
+}
+
+func channelAccountUsageHasAnyNonEmpty(payload map[string]interface{}, keys ...string) bool {
+	for _, key := range keys {
+		value, ok := payload[key]
+		if !ok || value == nil {
+			continue
+		}
+		if strings.TrimSpace(fmt.Sprint(value)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func channelAccountUsageSubjectSourceForChannelKey(channel *Channel, rawKey string) string {
+	key := strings.TrimSpace(rawKey)
+	if channel != nil && (channel.Type == constant.ChannelTypeCodex || channel.Type == constant.ChannelTypeOpenAI) && strings.HasPrefix(key, "{") {
+		if oauthKey, ok := codexauth.ParseOAuthJSONCredential(key); ok {
+			if accountID := strings.TrimSpace(oauthKey.AccountID); accountID != "" {
+				return "codex:account_id:" + accountID
+			}
+			if email := strings.TrimSpace(strings.ToLower(oauthKey.Email)); email != "" {
+				return "codex:email:" + email
+			}
+			if refresh := strings.TrimSpace(oauthKey.RefreshToken); refresh != "" {
+				return "codex:refresh:" + refresh
+			}
+		}
+	}
+	return key
+}
+
+func channelAccountUsageFingerprint(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return common.GenerateHMAC(value)
 }

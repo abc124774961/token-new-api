@@ -20,7 +20,7 @@ func setupChannelAccountUsageEventTestDB(t *testing.T) *gorm.DB {
 
 	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&ChannelAccountUsageEvent{}))
+	require.NoError(t, db.AutoMigrate(&Channel{}, &ChannelAccountUsageEvent{}))
 
 	oldDB := DB
 	DB = db
@@ -125,6 +125,121 @@ func TestChannelAccountUsageEventUpsertsMergeOutOfOrderRequestStages(t *testing.
 	require.InEpsilon(t, 0.03125, aggregates[0].UpstreamCostTotal, 0.0001)
 	require.InEpsilon(t, 1500, aggregates[0].AvgDurationMs, 0.0001)
 	require.InEpsilon(t, 360, aggregates[0].AvgTTFTMs, 0.0001)
+}
+
+func TestChannelAccountUsageBillingBackfillsIdentityFromChannelCredentialIndex(t *testing.T) {
+	db := setupChannelAccountUsageEventTestDB(t)
+	oldCryptoSecret := common.CryptoSecret
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	oldChannelsIDM := channelsIDM
+	common.CryptoSecret = "test-secret"
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.CryptoSecret = oldCryptoSecret
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		channelsIDM = oldChannelsIDM
+	})
+
+	key := `{"account_id":"acct-123","email":"a@example.com","access_token":"access-a","refresh_token":"refresh-a"}`
+	channelsIDM = map[int]*Channel{
+		88: {
+			Id:     88,
+			Type:   constant.ChannelTypeCodex,
+			Key:    key,
+			Status: common.ChannelStatusEnabled,
+			ChannelInfo: ChannelInfo{
+				IsMultiKey:   true,
+				MultiKeySize: 1,
+			},
+		},
+	}
+	requestID := "req-account-usage-billing-identity-fallback"
+
+	require.NoError(t, UpsertChannelAccountUsageCost(ModelGatewayRequestCostSummary{
+		RequestId:         requestID,
+		ChannelID:         88,
+		UpstreamModel:     "gpt-5.5",
+		UpstreamCostTotal: 0.0125,
+		CostSource:        "profile",
+		CostAccuracy:      "precise",
+		CalculatedAt:      90,
+	}))
+	require.NoError(t, UpsertChannelAccountUsageBilling(ChannelAccountUsageEvent{
+		RequestId:        requestID,
+		ChannelID:        88,
+		CredentialIndex:  0,
+		RequestedModel:   "gpt-5.5",
+		CompletedAt:      100,
+		PromptTokens:     300,
+		CompletionTokens: 120,
+		TotalTokens:      420,
+		Quota:            4200,
+	}))
+
+	expectedSubjectFP := common.GenerateHMAC("codex:account_id:acct-123")
+	var row ChannelAccountUsageEvent
+	require.NoError(t, db.First(&row, "request_id = ?", requestID).Error)
+	require.Equal(t, 88, row.ChannelID)
+	require.Equal(t, 0, row.CredentialIndex)
+	require.Equal(t, "codex_oauth:codex:"+expectedSubjectFP, row.AccountIdentityKey)
+	require.Equal(t, row.AccountIdentityKey, row.AccountID)
+	require.Equal(t, expectedSubjectFP, row.CredentialSubjectFingerprint)
+	require.Equal(t, common.GenerateHMAC(key), row.CredentialFingerprint)
+	require.Equal(t, "oauth_account", row.AccountType)
+	require.Equal(t, "codex", row.Brand)
+	require.Equal(t, "codex_oauth", row.Provider)
+	require.Equal(t, int64(420), row.TotalTokens)
+	require.InEpsilon(t, 0.0125, row.UpstreamCostTotal, 0.0001)
+	require.Equal(t, "profile", row.CostSource)
+}
+
+func TestRefreshChannelAccountUsageAttributionBackfillsRecentRows(t *testing.T) {
+	db := setupChannelAccountUsageEventTestDB(t)
+	oldCryptoSecret := common.CryptoSecret
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	oldChannelsIDM := channelsIDM
+	common.CryptoSecret = "test-secret"
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.CryptoSecret = oldCryptoSecret
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		channelsIDM = oldChannelsIDM
+	})
+
+	key := "sk-refresh-primary\n" + `{"account_id":"acct-refresh","email":"refresh@example.com","access_token":"access-refresh","refresh_token":"refresh-refresh"}`
+	channelsIDM = map[int]*Channel{
+		89: {
+			Id:     89,
+			Name:   "refresh codex",
+			Type:   constant.ChannelTypeCodex,
+			Key:    key,
+			Status: common.ChannelStatusEnabled,
+			ChannelInfo: ChannelInfo{
+				IsMultiKey:   true,
+				MultiKeySize: 2,
+			},
+		},
+	}
+	require.NoError(t, db.Create(&ChannelAccountUsageEvent{
+		RequestId:       "req-refresh-attribution",
+		ChannelID:       89,
+		CredentialIndex: 1,
+		CompletedAt:     200,
+		Success:         true,
+		StatusCode:      http.StatusOK,
+	}).Error)
+
+	result, err := RefreshChannelAccountUsageAttribution(89, 1, 100, 100)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Scanned)
+	require.Equal(t, 1, result.Updated)
+
+	rows, err := QueryChannelAccountUsageRecentEvents(89, 1, 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "refresh codex", rows[0].ChannelName)
+	require.Equal(t, common.GenerateHMAC("codex:account_id:acct-refresh"), rows[0].CredentialSubjectFingerprint)
+	require.NotEmpty(t, rows[0].AccountIdentityKey)
 }
 
 func TestChannelAccountUsageAttemptDoesNotOverwritePositiveCompletedAtWithInvalidValue(t *testing.T) {

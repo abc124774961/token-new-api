@@ -155,6 +155,44 @@ func TestProIndexQueryFiltersCodexAccountCapabilities(t *testing.T) {
 	require.Equal(t, 2, compactCandidates[0].CredentialRef.CredentialIndex)
 }
 
+func TestProIndexQueryFiltersUsageLimitedCodexAccount(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	streamAllowed := true
+	index := New(account.NewRegistry(), nil)
+	channel := &model.Channel{
+		Id:     16,
+		Type:   constant.ChannelTypeCodex,
+		Key:    `{"access_token":"a","account_id":"a"}` + "\n" + `{"access_token":"b","account_id":"b"}`,
+		Status: common.ChannelStatusEnabled,
+		Group:  "codex",
+		Models: "gpt-5.4",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true,
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+					UsageLimitStatus:                 "limited",
+					UsageLimitReason:                 "usage_limit_reached",
+					UsageLimitExpiresAt:              common.GetTimestamp() + 3600,
+				},
+				1: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+				},
+			},
+		},
+	}
+
+	index.Rebuild([]*model.Channel{channel})
+	candidates := index.Query(Query{
+		Groups:       []string{"codex"},
+		ModelName:    "gpt-5.4",
+		EndpointType: constant.EndpointTypeOpenAIResponse,
+	})
+
+	require.Len(t, candidates, 1)
+	require.Equal(t, 1, candidates[0].CredentialRef.CredentialIndex)
+}
+
 func TestProIndexQueryFiltersSingleCodexAccountDeniedCapability(t *testing.T) {
 	common.CryptoSecret = "test-secret"
 	streamDenied := false

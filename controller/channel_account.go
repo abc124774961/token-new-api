@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
@@ -69,6 +70,7 @@ type ChannelAccountItem struct {
 	Score           *ChannelAccountScoreSummary          `json:"score,omitempty"`
 	RuntimeKeys     []ChannelAccountRuntimeScoreSnapshot `json:"runtime_keys,omitempty"`
 	Stats           *ChannelAccountStats                 `json:"stats,omitempty"`
+	Scheduling      *ChannelAccountSchedulingExplanation `json:"scheduling,omitempty"`
 }
 
 type ChannelAccountSummary struct {
@@ -114,6 +116,67 @@ type ChannelAccountProbeRecoveryState struct {
 	Reason       string `json:"reason,omitempty"`
 	SuccessCount int    `json:"success_count,omitempty"`
 	Required     int    `json:"required,omitempty"`
+}
+
+type ChannelAccountSchedulingExplanation struct {
+	Schedulable              bool     `json:"schedulable"`
+	PrimaryReason            string   `json:"primary_reason,omitempty"`
+	BlockingReasons          []string `json:"blocking_reasons,omitempty"`
+	WarningReasons           []string `json:"warning_reasons,omitempty"`
+	Detail                   string   `json:"detail,omitempty"`
+	RecoveryAt               int64    `json:"recovery_at,omitempty"`
+	RecoverySource           string   `json:"recovery_source,omitempty"`
+	ProbeRecoveryPending     bool     `json:"probe_recovery_pending,omitempty"`
+	ProbeRecoverySuccesses   int      `json:"probe_recovery_successes,omitempty"`
+	ProbeRecoveryRequired    int      `json:"probe_recovery_required,omitempty"`
+	ActiveConcurrency        int      `json:"active_concurrency,omitempty"`
+	EffectiveConcurrencyCap  int      `json:"effective_concurrency_limit,omitempty"`
+	QueueDepth               int      `json:"queue_depth,omitempty"`
+	QueueCapacity            int      `json:"queue_capacity,omitempty"`
+	CapabilityClassification string   `json:"capability_classification,omitempty"`
+}
+
+type ChannelAccountRecentRequestsResponse struct {
+	ChannelID        int                                `json:"channel_id"`
+	CredentialIndex  int                                `json:"credential_index"`
+	Items            []ChannelAccountRecentRequestItem  `json:"items"`
+	RefreshResult    *ChannelAccountAttributionResponse `json:"refresh_result,omitempty"`
+	AttributionSince int64                              `json:"attribution_since,omitempty"`
+}
+
+type ChannelAccountRecentRequestItem struct {
+	RequestID                string  `json:"request_id"`
+	ChannelID                int     `json:"channel_id"`
+	CredentialIndex          int     `json:"credential_index"`
+	AccountIdentityKey       string  `json:"account_identity_key,omitempty"`
+	RequestedModel           string  `json:"requested_model,omitempty"`
+	RequestedGroup           string  `json:"requested_group,omitempty"`
+	SelectedGroup            string  `json:"selected_group,omitempty"`
+	EndpointType             string  `json:"endpoint_type,omitempty"`
+	CompletedAt              int64   `json:"completed_at,omitempty"`
+	Success                  bool    `json:"success"`
+	StatusCode               int     `json:"status_code,omitempty"`
+	ErrorCategory            string  `json:"error_category,omitempty"`
+	IsHealthProbe            bool    `json:"is_health_probe"`
+	DurationMs               int64   `json:"duration_ms,omitempty"`
+	TTFTMs                   int64   `json:"ttft_ms,omitempty"`
+	TotalTokens              int64   `json:"total_tokens,omitempty"`
+	Quota                    int64   `json:"quota,omitempty"`
+	UpstreamCostTotal        float64 `json:"upstream_cost_total,omitempty"`
+	StatisticsRecorded       bool    `json:"statistics_recorded"`
+	BillingRecorded          bool    `json:"billing_recorded"`
+	CostRecorded             bool    `json:"cost_recorded"`
+	AttributionComplete      bool    `json:"attribution_complete"`
+	UsageEstimated           bool    `json:"usage_estimated,omitempty"`
+	ProviderSurface          string  `json:"provider_surface,omitempty"`
+	CapabilityClassification string  `json:"capability_classification,omitempty"`
+}
+
+type ChannelAccountAttributionResponse struct {
+	Since   int64 `json:"since"`
+	Scanned int   `json:"scanned"`
+	Updated int   `json:"updated"`
+	Skipped int   `json:"skipped"`
 }
 
 type channelAccountsQuery struct {
@@ -247,6 +310,53 @@ func ListChannelAccounts(c *gin.Context) {
 	}
 
 	common.ApiSuccess(c, buildChannelAccountsResponse(channel, parseChannelAccountsQuery(c)))
+}
+
+func ListChannelAccountRecentRequests(c *gin.Context) {
+	channelID, credentialIndex, ok := parseChannelAccountRequestTarget(c)
+	if !ok {
+		return
+	}
+	rows, err := model.QueryChannelAccountUsageRecentEvents(channelID, credentialIndex, 10)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, ChannelAccountRecentRequestsResponse{
+		ChannelID:       channelID,
+		CredentialIndex: credentialIndex,
+		Items:           buildChannelAccountRecentRequestItems(rows),
+	})
+}
+
+func RefreshChannelAccountUsageAttribution(c *gin.Context) {
+	channelID, credentialIndex, ok := parseChannelAccountRequestTarget(c)
+	if !ok {
+		return
+	}
+	since := common.GetTimestamp() - 6*60*60
+	result, err := model.RefreshChannelAccountUsageAttribution(channelID, credentialIndex, since, 500)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	rows, err := model.QueryChannelAccountUsageRecentEvents(channelID, credentialIndex, 10)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, ChannelAccountRecentRequestsResponse{
+		ChannelID:       channelID,
+		CredentialIndex: credentialIndex,
+		Items:           buildChannelAccountRecentRequestItems(rows),
+		RefreshResult: &ChannelAccountAttributionResponse{
+			Since:   result.Since,
+			Scanned: result.Scanned,
+			Updated: result.Updated,
+			Skipped: result.Skipped,
+		},
+		AttributionSince: result.Since,
+	})
 }
 
 func UpdateChannelAccountStatus(c *gin.Context) {
@@ -826,6 +936,27 @@ func parseChannelAccountCredentialIndexParam(c *gin.Context) (int, bool) {
 	return credentialIndex, true
 }
 
+func parseChannelAccountRequestTarget(c *gin.Context) (int, int, bool) {
+	channelID, ok := parseChannelIDParam(c)
+	if !ok {
+		return 0, 0, false
+	}
+	credentialIndex, ok := parseChannelAccountCredentialIndexParam(c)
+	if !ok {
+		return 0, 0, false
+	}
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil || channel == nil {
+		common.ApiErrorMsg(c, "渠道不存在")
+		return 0, 0, false
+	}
+	if credentialIndex >= len(channel.GetKeys()) {
+		common.ApiErrorMsg(c, "账号索引超出范围")
+		return 0, 0, false
+	}
+	return channelID, credentialIndex, true
+}
+
 func buildChannelAccountsResponse(channel *model.Channel, query ...channelAccountsQuery) ChannelAccountsResponse {
 	params := normalizeChannelAccountsQuery(channelAccountsQuery{})
 	if len(query) > 0 {
@@ -885,6 +1016,7 @@ func buildChannelAccountsResponse(channel *model.Channel, query ...channelAccoun
 				}
 			}
 		}
+		item.Scheduling = buildChannelAccountSchedulingExplanation(item)
 		response.Summary.Scored += boolToInt64(item.Score != nil)
 		if item.Score != nil {
 			response.Summary.RealSampleCount30m += int64(item.Score.RealSampleCount30m)
@@ -1200,6 +1332,58 @@ func channelAccountStatsForAccounts(channelID int, accounts []modelgatewayaccoun
 
 func channelAccountStatsKey(account modelgatewayaccount.ChannelAccount) string {
 	return model.ChannelAccountUsageAggregateKey(account.AccountIdentity.AccountIdentityKey, account.CredentialIndex)
+}
+
+func buildChannelAccountRecentRequestItems(rows []model.ChannelAccountUsageEvent) []ChannelAccountRecentRequestItem {
+	items := make([]ChannelAccountRecentRequestItem, 0, len(rows))
+	for _, row := range rows {
+		completedAt := row.CompletedAt
+		if completedAt <= 0 {
+			if row.UpdatedAt > 0 {
+				completedAt = row.UpdatedAt
+			} else {
+				completedAt = row.CreatedAt
+			}
+		}
+		items = append(items, ChannelAccountRecentRequestItem{
+			RequestID:                row.RequestId,
+			ChannelID:                row.ChannelID,
+			CredentialIndex:          row.CredentialIndex,
+			AccountIdentityKey:       row.AccountIdentityKey,
+			RequestedModel:           row.RequestedModel,
+			RequestedGroup:           row.RequestedGroup,
+			SelectedGroup:            row.SelectedGroup,
+			EndpointType:             row.EndpointType,
+			CompletedAt:              completedAt,
+			Success:                  row.Success,
+			StatusCode:               row.StatusCode,
+			ErrorCategory:            row.ErrorCategory,
+			IsHealthProbe:            row.IsHealthProbe,
+			DurationMs:               row.DurationMs,
+			TTFTMs:                   row.TTFTMs,
+			TotalTokens:              row.TotalTokens,
+			Quota:                    row.Quota,
+			UpstreamCostTotal:        row.UpstreamCostTotal,
+			StatisticsRecorded:       channelAccountUsageStatisticsRecorded(row),
+			BillingRecorded:          row.TotalTokens > 0 || row.Quota != 0,
+			CostRecorded:             row.CostCalculatedAt > 0 || row.UpstreamCostTotal != 0,
+			AttributionComplete:      row.CredentialIndex >= 0 && (strings.TrimSpace(row.AccountIdentityKey) != "" || strings.TrimSpace(row.CredentialFingerprint) != ""),
+			UsageEstimated:           row.UsageEstimated,
+			ProviderSurface:          row.ProviderSurface,
+			CapabilityClassification: row.CapabilityClassification,
+		})
+	}
+	return items
+}
+
+func channelAccountUsageStatisticsRecorded(row model.ChannelAccountUsageEvent) bool {
+	return row.CompletedAt > 0 ||
+		row.StatusCode > 0 ||
+		row.DurationMs > 0 ||
+		row.TTFTMs > 0 ||
+		row.TotalTokens > 0 ||
+		row.Quota != 0 ||
+		strings.TrimSpace(row.ErrorCategory) != ""
 }
 
 func channelAccountUsageWindowFromAggregate(aggregate model.ChannelAccountUsageWindowAggregate) ChannelAccountUsageWindowResponse {
@@ -2374,6 +2558,110 @@ func ensureChannelAccountStats(stats *ChannelAccountStats) *ChannelAccountStats 
 		return stats
 	}
 	return &ChannelAccountStats{}
+}
+
+func buildChannelAccountSchedulingExplanation(item ChannelAccountItem) *ChannelAccountSchedulingExplanation {
+	explanation := &ChannelAccountSchedulingExplanation{
+		Schedulable: true,
+	}
+	blocking := make([]string, 0, 4)
+	warnings := make([]string, 0, 4)
+
+	if !item.KeyEnabled {
+		blocking = appendChannelAccountSchedulingReason(blocking, "account_disabled")
+		if item.DisabledReason != "" {
+			explanation.Detail = item.DisabledReason
+		}
+	}
+
+	if capability := item.Capabilities; capability != nil {
+		explanation.CapabilityClassification = capability.EffectiveClassification()
+		if capability.UsageLimitActiveAt(common.GetTimestamp()) {
+			blocking = appendChannelAccountSchedulingReason(blocking, channelcapability.ClassificationAccountUsageLimited)
+			explanation.RecoveryAt = capability.UsageLimitExpiresAt
+			explanation.RecoverySource = capability.UsageLimitResetSource
+			if capability.UsageLimitMessage != "" {
+				explanation.Detail = capability.UsageLimitMessage
+			}
+		}
+		if strings.TrimSpace(capability.ProxyLastError) != "" {
+			blocking = appendChannelAccountSchedulingReason(blocking, channelcapability.ClassificationProxyError)
+			if explanation.Detail == "" {
+				explanation.Detail = capability.ProxyLastError
+			}
+		}
+		if capability.CodexBackendResponsesStreamWrite != nil && !capability.HasCodexBackendResponsesStreamAllowed() {
+			blocking = appendChannelAccountSchedulingReason(blocking, "codex_stream_unavailable")
+		}
+		if capability.CodexBackendCompactWrite != nil && !capability.HasCodexBackendCompactAllowed() {
+			warnings = appendChannelAccountSchedulingReason(warnings, "codex_compact_unavailable")
+		}
+		if capability.CapabilityClassification == channelcapability.ClassificationAuthError {
+			blocking = appendChannelAccountSchedulingReason(blocking, channelcapability.ClassificationAuthError)
+		}
+	}
+
+	if score := item.Score; score != nil {
+		explanation.ActiveConcurrency = score.ActiveConcurrency
+		explanation.EffectiveConcurrencyCap = score.EffectiveConcurrencyCap
+		explanation.QueueDepth = score.QueueDepth
+		explanation.QueueCapacity = score.QueueCapacity
+		if score.ConfigErrorIsolated {
+			blocking = appendChannelAccountSchedulingReason(blocking, "config_error_isolated")
+			if explanation.Detail == "" {
+				explanation.Detail = score.IsolationReason
+			}
+		}
+		if score.ProbeRecoveryPending {
+			blocking = appendChannelAccountSchedulingReason(blocking, "probe_recovery_pending")
+			explanation.ProbeRecoveryPending = true
+			explanation.ProbeRecoverySuccesses = score.ProbeRecoverySuccessCount
+			explanation.ProbeRecoveryRequired = score.ProbeRecoveryRequired
+			if explanation.Detail == "" {
+				explanation.Detail = score.ProbeTriggerReason
+			}
+		}
+		if score.EffectiveConcurrencyCap > 0 && score.ActiveConcurrency >= score.EffectiveConcurrencyCap {
+			blocking = appendChannelAccountSchedulingReason(blocking, "concurrency_full")
+		}
+		if score.QueueCapacity > 0 && score.QueueDepth >= score.QueueCapacity {
+			blocking = appendChannelAccountSchedulingReason(blocking, "queue_full")
+		}
+		if score.SampleCount == 0 {
+			warnings = appendChannelAccountSchedulingReason(warnings, "no_score_sample")
+		}
+	} else {
+		warnings = appendChannelAccountSchedulingReason(warnings, "no_runtime_snapshot")
+	}
+
+	if item.Proxy != nil && !item.Proxy.Enabled {
+		warnings = appendChannelAccountSchedulingReason(warnings, "proxy_disabled")
+	}
+
+	explanation.BlockingReasons = blocking
+	explanation.WarningReasons = warnings
+	if len(blocking) > 0 {
+		explanation.Schedulable = false
+		explanation.PrimaryReason = blocking[0]
+	} else if len(warnings) > 0 {
+		explanation.PrimaryReason = warnings[0]
+	} else {
+		explanation.PrimaryReason = "schedulable"
+	}
+	return explanation
+}
+
+func appendChannelAccountSchedulingReason(reasons []string, reason string) []string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return reasons
+	}
+	for _, existing := range reasons {
+		if existing == reason {
+			return reasons
+		}
+	}
+	return append(reasons, reason)
 }
 
 func channelAccountRuntimeItemMatches(account modelgatewayaccount.ChannelAccount, item modelgatewayobservability.RuntimeStatusItem, allowChannelFallback bool) bool {

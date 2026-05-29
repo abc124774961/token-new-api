@@ -3107,7 +3107,65 @@ func TestGetModelGatewayHealthCheckQueueReturnsPendingReasons(t *testing.T) {
 	require.Equal(t, "recovery", payload.Data.Items[0].QueueType)
 	require.Equal(t, "probe_recovery_pending", payload.Data.Items[0].Reasons[0].Key)
 	require.True(t, modelGatewayHealthCheckTestReasonsContain(payload.Data.Items[0].Reasons, "low_score"))
+	require.Greater(t, payload.Data.Items[0].NextProbeAt, int64(0))
+	require.Equal(t, int64(0), payload.Data.Items[0].NextProbeRemainingSeconds)
 	require.Nil(t, payload.Data.QueueSnapshot)
+}
+
+func TestGetModelGatewayHealthCheckQueueReturnsNextProbeCountdown(t *testing.T) {
+	now := common.GetTimestamp()
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		ProbeMinChannelIntervalSeconds:      300,
+		ProbeLowScoreThreshold:              0.8,
+		ProbeMissingSampleThreshold:         3,
+		ProbeRecoverableScoreItems:          []string{"completion_rate", "ttft_latency", "duration_latency"},
+		ProbeSkipRecentRealRequestEnabled:   true,
+		ProbeRecentRealRequestWindowSeconds: 1800,
+	})
+	t.Cleanup(restoreSetting)
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	require.NotNil(t, runtimeDeps)
+	require.NotNil(t, runtimeDeps.LocalSnapshotStore)
+
+	lastRealAttemptAt := now - 120
+	runtimeDeps.LocalSnapshotStore.Put(core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			RequestedModel: "gpt-5.5",
+			UpstreamModel:  "gpt-5.5",
+			ChannelID:      820,
+			Group:          "vip",
+			EndpointType:   constant.EndpointTypeOpenAI,
+		},
+		SuccessRate:        0.2,
+		TTFTMs:             25000,
+		DurationMs:         45000,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        8,
+		RealSampleCount30m: 2,
+		LastRealAttemptAt:  lastRealAttemptAt,
+		LastProbeAt:        now - 600,
+	})
+
+	router := gin.New()
+	router.GET("/api/model_gateway/observability/health-check/queue", GetModelGatewayHealthCheckQueue)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/observability/health-check/queue?model=gpt-5.5&group=vip", nil)
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayHealthCheckQueueResponse(t, resp)
+	require.True(t, payload.Success)
+	require.Len(t, payload.Data.Items, 1)
+	item := payload.Data.Items[0]
+	expectedNextProbeAt := lastRealAttemptAt + 1800
+	require.Equal(t, 820, item.ChannelID)
+	require.Equal(t, "recent_real_request", item.ProbeSkipReason)
+	require.Equal(t, expectedNextProbeAt, item.NextProbeAt)
+	require.InDelta(t, expectedNextProbeAt-common.GetTimestamp(), item.NextProbeRemainingSeconds, 2)
+	require.Greater(t, item.NextProbeRemainingSeconds, int64(1600))
 }
 
 func TestGetModelGatewayHealthCheckQueueCanIncludeQueueSnapshot(t *testing.T) {

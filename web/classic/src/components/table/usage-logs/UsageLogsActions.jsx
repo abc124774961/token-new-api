@@ -18,7 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Tag, Space, Skeleton } from '@douyinfe/semi-ui';
+import { Button, Tag, Space, Skeleton } from '@douyinfe/semi-ui';
+import { Activity } from 'lucide-react';
 import { renderQuota } from '../../../helpers';
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
 import { useMinimumLoadingTime } from '../../../hooks/common/useMinimumLoadingTime';
@@ -29,6 +30,8 @@ const LogsActions = ({
   showStat,
   compactMode,
   setCompactMode,
+  isAdminUser,
+  openChannelAffinityDiagnosticsModal,
   t,
 }) => {
   const showSkeleton = useMinimumLoadingTime(loadingStat);
@@ -88,6 +91,16 @@ const LogsActions = ({
         setCompactMode={setCompactMode}
         t={t}
       />
+      {isAdminUser ? (
+        <Button
+          theme='light'
+          type='tertiary'
+          icon={<Activity size={14} />}
+          onClick={openChannelAffinityDiagnosticsModal}
+        >
+          {t('缓存诊断')}
+        </Button>
+      ) : null}
     </div>
   );
 };

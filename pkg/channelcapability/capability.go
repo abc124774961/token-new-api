@@ -23,6 +23,12 @@ type AccountCapability struct {
 
 	CapabilityClassification string `json:"capability_classification,omitempty"`
 	CapabilityProbeSurface   string `json:"capability_probe_surface,omitempty"`
+	UsageLimitStatus         string `json:"usage_limit_status,omitempty"`
+	UsageLimitReason         string `json:"usage_limit_reason,omitempty"`
+	UsageLimitMessage        string `json:"usage_limit_message,omitempty"`
+	UsageLimitDetectedTime   int64  `json:"usage_limit_detected_time,omitempty"`
+	UsageLimitExpiresAt      int64  `json:"usage_limit_expires_at,omitempty"`
+	UsageLimitResetSource    string `json:"usage_limit_reset_source,omitempty"`
 	ProxyID                  int    `json:"proxy_id,omitempty"`
 	ProxyExitIP              string `json:"proxy_exit_ip,omitempty"`
 	ProxyRegion              string `json:"proxy_region,omitempty"`
@@ -39,12 +45,16 @@ const (
 	ClassificationStreamOnly                 = "stream_only"
 	ClassificationPlatformQuotaInsufficient  = "platform_quota_insufficient"
 	ClassificationPlatformResponsesScopeMiss = "platform_responses_scope_missing"
+	ClassificationAccountUsageLimited        = "account_usage_limited"
 	ClassificationProxyError                 = "proxy_error"
 	ClassificationAuthError                  = "auth_error"
 	ClassificationRegionError                = "region_error"
 	ClassificationUnknown                    = "unknown"
 	ProbeSurfaceCodexBackend                 = "codex_backend"
 	ProbeSurfacePlatformAPI                  = "platform_api"
+	UsageLimitStatusLimited                  = "limited"
+	UsageLimitStatusClear                    = "clear"
+	UsageLimitReasonReached                  = "usage_limit_reached"
 )
 
 func (cap AccountCapability) HasResponsesWriteDenied() bool {
@@ -71,7 +81,27 @@ func (cap AccountCapability) HasCodexBackendCompactAllowed() bool {
 	return cap.CodexBackendCompactWrite != nil && *cap.CodexBackendCompactWrite
 }
 
+func (cap AccountCapability) UsageLimitActiveAt(now int64) bool {
+	if strings.TrimSpace(cap.UsageLimitStatus) != UsageLimitStatusLimited {
+		return false
+	}
+	return cap.UsageLimitExpiresAt <= 0 || cap.UsageLimitExpiresAt > now
+}
+
+func (cap AccountCapability) ClearUsageLimit() AccountCapability {
+	cap.UsageLimitStatus = ""
+	cap.UsageLimitReason = ""
+	cap.UsageLimitMessage = ""
+	cap.UsageLimitDetectedTime = 0
+	cap.UsageLimitExpiresAt = 0
+	cap.UsageLimitResetSource = ""
+	return cap
+}
+
 func (cap AccountCapability) EffectiveClassification() string {
+	if cap.UsageLimitActiveAt(common.GetTimestamp()) {
+		return ClassificationAccountUsageLimited
+	}
 	if cap.HasCodexBackendResponsesStreamAllowed() {
 		if cap.HasCodexBackendCompactAllowed() {
 			return ClassificationCodexCompactAvailable

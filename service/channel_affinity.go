@@ -42,19 +42,20 @@ var (
 )
 
 type channelAffinityMeta struct {
-	CacheKey       string
-	TTLSeconds     int
-	RuleName       string
-	SkipRetry      bool
-	ParamTemplate  map[string]interface{}
-	KeySourceType  string
-	KeySourceKey   string
-	KeySourcePath  string
-	KeyHint        string
-	KeyFingerprint string
-	UsingGroup     string
-	ModelName      string
-	RequestPath    string
+	CacheKey           string
+	TTLSeconds         int
+	RuleName           string
+	SkipRetry          bool
+	ParamTemplate      map[string]interface{}
+	KeySourceType      string
+	KeySourceKey       string
+	KeySourcePath      string
+	KeyHint            string
+	KeyFingerprint     string
+	UsingGroup         string
+	ModelName          string
+	RequestPath        string
+	PreferredChannelID int
 }
 
 type ChannelAffinityStatsContext struct {
@@ -77,6 +78,27 @@ type ChannelAffinitySignal struct {
 	KeyFingerprint     string
 	TTLSeconds         int
 	PreferredChannelID int
+}
+
+type ChannelAffinitySelectionInfo struct {
+	SelectedGroup                string
+	SelectedChannelID            int
+	Retained                     bool
+	Broken                       bool
+	BreakReason                  string
+	StickySource                 string
+	SelectedReason               string
+	AccountID                    string
+	AccountType                  string
+	AccountIdentityKey           string
+	CredentialIndex              int
+	HasCredentialIndex           bool
+	CredentialSubjectFingerprint string
+	CredentialFingerprint        string
+	ResourceID                   string
+	ResourceType                 string
+	ProxyID                      int
+	PoolLevel                    string
 }
 
 const (
@@ -627,14 +649,16 @@ func ResolveChannelAffinitySignal(c *gin.Context, modelName string, usingGroup s
 			ModelName:      modelName,
 			RequestPath:    path,
 		}
-		setChannelAffinityContext(c, meta)
-
 		cache := getChannelAffinityCache()
 		channelID, found, err := cache.Get(cacheKeySuffix)
 		if err != nil {
 			common.SysError(fmt.Sprintf("channel affinity cache get failed: key=%s, err=%v", cacheKeyFull, err))
 			return ChannelAffinitySignal{}, false
 		}
+		if found {
+			meta.PreferredChannelID = channelID
+		}
+		setChannelAffinityContext(c, meta)
 		signal := ChannelAffinitySignal{
 			CacheKey:           cacheKeyFull,
 			CacheKeySuffix:     cacheKeySuffix,
@@ -695,7 +719,31 @@ func channelAffinityRecordSkipped(c *gin.Context) bool {
 }
 
 func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int) {
-	if c == nil || channelID <= 0 {
+	MarkChannelAffinitySelection(c, ChannelAffinitySelectionInfo{
+		SelectedGroup:     selectedGroup,
+		SelectedChannelID: channelID,
+		Retained:          true,
+		StickySource:      "legacy_affinity",
+	})
+}
+
+func MarkChannelAffinityBroken(c *gin.Context, breakReason string) {
+	if c == nil {
+		return
+	}
+	meta, ok := getChannelAffinityMeta(c)
+	if !ok || meta.PreferredChannelID <= 0 {
+		return
+	}
+	MarkChannelAffinitySelection(c, ChannelAffinitySelectionInfo{
+		Broken:       true,
+		BreakReason:  strings.TrimSpace(breakReason),
+		StickySource: "legacy_affinity",
+	})
+}
+
+func MarkChannelAffinitySelection(c *gin.Context, selection ChannelAffinitySelectionInfo) {
+	if c == nil {
 		return
 	}
 	meta, ok := getChannelAffinityMeta(c)
@@ -703,21 +751,115 @@ func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int
 		return
 	}
 	c.Set(ginKeyChannelAffinitySkipRetry, meta.SkipRetry)
+	channelID := selection.SelectedChannelID
+	if channelID <= 0 {
+		channelID = meta.PreferredChannelID
+	}
+	if channelID <= 0 && !selection.Broken {
+		return
+	}
+	if meta.PreferredChannelID <= 0 && selection.Broken {
+		return
+	}
+	if selection.SelectedGroup == "" {
+		selection.SelectedGroup = meta.UsingGroup
+	}
+	if !selection.Broken && meta.PreferredChannelID > 0 && channelID != meta.PreferredChannelID {
+		selection.Broken = true
+		if selection.BreakReason == "" {
+			selection.BreakReason = "selected_channel_changed"
+		}
+	}
+	if selection.Retained && meta.PreferredChannelID > 0 && channelID != meta.PreferredChannelID {
+		selection.Retained = false
+	}
+	if !selection.Retained && !selection.Broken && meta.PreferredChannelID > 0 && channelID == meta.PreferredChannelID {
+		selection.Retained = true
+	}
+	if existingInfo, ok := c.Get(ginKeyChannelAffinityLogInfo); ok && existingInfo != nil {
+		if existing, ok := existingInfo.(map[string]interface{}); ok {
+			if selection.BreakReason == "" {
+				if breakReason, exists := existing["break_reason"]; exists && breakReason != nil {
+					selection.BreakReason = strings.TrimSpace(fmt.Sprint(breakReason))
+				}
+			}
+			if !selection.Broken {
+				if broken, ok := existing["broken"].(bool); ok && broken {
+					selection.Broken = true
+				}
+			}
+		}
+	}
+	keySource := channelAffinityLogKeySource(meta)
 	info := map[string]interface{}{
-		"reason":         meta.RuleName,
-		"rule_name":      meta.RuleName,
-		"using_group":    meta.UsingGroup,
-		"selected_group": selectedGroup,
-		"model":          meta.ModelName,
-		"request_path":   meta.RequestPath,
-		"channel_id":     channelID,
-		"key_source":     meta.KeySourceType,
-		"key_key":        meta.KeySourceKey,
-		"key_path":       meta.KeySourcePath,
-		"key_hint":       meta.KeyHint,
-		"key_fp":         meta.KeyFingerprint,
+		"reason":               meta.RuleName,
+		"rule_name":            meta.RuleName,
+		"using_group":          meta.UsingGroup,
+		"selected_group":       selection.SelectedGroup,
+		"model":                meta.ModelName,
+		"request_path":         meta.RequestPath,
+		"channel_id":           channelID,
+		"preferred_channel_id": meta.PreferredChannelID,
+		"selected_channel_id":  channelID,
+		"retained":             selection.Retained,
+		"broken":               selection.Broken,
+		"key_source":           keySource,
+		"key_source_type":      meta.KeySourceType,
+		"key_key":              meta.KeySourceKey,
+		"key_path":             meta.KeySourcePath,
+		"key_hint":             meta.KeyHint,
+		"key_fp":               meta.KeyFingerprint,
+	}
+	if selection.BreakReason != "" {
+		info["break_reason"] = selection.BreakReason
+	}
+	if selection.StickySource != "" {
+		info["sticky_source"] = selection.StickySource
+	}
+	if selection.SelectedReason != "" {
+		info["selected_reason"] = selection.SelectedReason
+	}
+	if selection.AccountID != "" {
+		info["account_id"] = selection.AccountID
+	}
+	if selection.AccountType != "" {
+		info["account_type"] = selection.AccountType
+	}
+	if selection.AccountIdentityKey != "" {
+		info["account_identity_key"] = selection.AccountIdentityKey
+	}
+	if selection.HasCredentialIndex {
+		info["credential_index"] = selection.CredentialIndex
+	}
+	if selection.CredentialSubjectFingerprint != "" {
+		info["credential_subject_fingerprint"] = selection.CredentialSubjectFingerprint
+	}
+	if selection.CredentialFingerprint != "" {
+		info["credential_fingerprint"] = selection.CredentialFingerprint
+	}
+	if selection.ResourceID != "" {
+		info["resource_id"] = selection.ResourceID
+	}
+	if selection.ResourceType != "" {
+		info["resource_type"] = selection.ResourceType
+	}
+	if selection.ProxyID > 0 {
+		info["proxy_id"] = selection.ProxyID
+	}
+	if selection.PoolLevel != "" {
+		info["pool_level"] = selection.PoolLevel
 	}
 	c.Set(ginKeyChannelAffinityLogInfo, info)
+}
+
+func channelAffinityLogKeySource(meta channelAffinityMeta) string {
+	if s := strings.TrimSpace(meta.KeySourcePath); s != "" {
+		return s
+	}
+	if s := strings.TrimSpace(meta.KeySourceKey); s != "" {
+		return s
+	}
+	return strings.TrimSpace(meta.KeySourceType)
 }
 
 func AppendChannelAffinityAdminInfo(c *gin.Context, adminInfo map[string]interface{}) {

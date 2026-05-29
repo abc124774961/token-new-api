@@ -656,6 +656,9 @@ func codexChannelHasResponsesCapableAccount(channel *model.Channel) bool {
 		if channel.ChannelInfo.IsMultiKey && !channelKeyEnabledForCapability(channel, index) {
 			continue
 		}
+		if !ChannelAccountCapabilityAllowsScheduling(capability) {
+			continue
+		}
 		if capability.CodexBackendResponsesStreamWrite == nil || capability.HasCodexBackendResponsesStreamAllowed() {
 			return true
 		}
@@ -672,6 +675,9 @@ func codexChannelHasCompactCapableAccount(channel *model.Channel) bool {
 	}
 	for index, capability := range channel.ChannelInfo.MultiKeyCapabilities {
 		if channel.ChannelInfo.IsMultiKey && !channelKeyEnabledForCapability(channel, index) {
+			continue
+		}
+		if !ChannelAccountCapabilityAllowsScheduling(capability) {
 			continue
 		}
 		if capability.CodexBackendCompactWrite == nil || capability.HasCodexBackendCompactAllowed() {
@@ -729,6 +735,9 @@ func openAICodexOAuthChannelHasCapableAccount(channel *model.Channel, endpointTy
 		capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]
 		if !ok {
 			return true
+		}
+		if !ChannelAccountCapabilityAllowsScheduling(capability) {
+			continue
 		}
 		if endpointType == constant.EndpointTypeOpenAIResponseCompact {
 			if capability.CodexBackendCompactWrite == nil || capability.HasCodexBackendCompactAllowed() {

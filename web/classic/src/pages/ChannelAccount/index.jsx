@@ -136,6 +136,13 @@ function formatQuotaValue(value) {
   return renderQuota(quota, 2);
 }
 
+function shortRequestId(value) {
+  const text = String(value || '').trim();
+  if (!text) return '--';
+  if (text.length <= 18) return text;
+  return `${text.slice(0, 10)}...${text.slice(-6)}`;
+}
+
 function pluralCount(value) {
   return Number(value || 0);
 }
@@ -628,6 +635,8 @@ function classificationMeta(value, t) {
       return { color: 'orange', label: t('Platform 余额不足') };
     case 'platform_responses_scope_missing':
       return { color: 'orange', label: t('Platform Responses 权限不足') };
+    case 'account_usage_limited':
+      return { color: 'orange', label: t('账号用量限制中') };
     case 'proxy_error':
       return { color: 'red', label: t('代理异常') };
     case 'auth_error':
@@ -641,8 +650,50 @@ function classificationMeta(value, t) {
   }
 }
 
+function schedulingReasonMeta(value, t) {
+  switch (value) {
+    case 'schedulable':
+      return { color: 'green', label: t('可参与调度') };
+    case 'account_disabled':
+      return { color: 'red', label: t('账号已禁用') };
+    case 'account_usage_limited':
+      return { color: 'orange', label: t('账号用量限制中') };
+    case 'proxy_error':
+      return { color: 'red', label: t('代理异常') };
+    case 'codex_stream_unavailable':
+      return { color: 'red', label: t('Codex Stream 不可用') };
+    case 'codex_compact_unavailable':
+      return { color: 'orange', label: t('Compact 不可用') };
+    case 'auth_error':
+      return { color: 'red', label: t('授权异常') };
+    case 'config_error_isolated':
+      return { color: 'red', label: t('配置异常隔离') };
+    case 'probe_recovery_pending':
+      return { color: 'orange', label: t('等待恢复探活') };
+    case 'concurrency_full':
+      return { color: 'orange', label: t('并发已满') };
+    case 'queue_full':
+      return { color: 'orange', label: t('队列已满') };
+    case 'no_score_sample':
+      return { color: 'grey', label: t('暂无评分样本') };
+    case 'no_runtime_snapshot':
+      return { color: 'grey', label: t('暂无运行态') };
+    case 'proxy_disabled':
+      return { color: 'orange', label: t('代理未启用') };
+    default:
+      return { color: 'grey', label: value || t('未知原因') };
+  }
+}
+
 function effectiveCapabilityClassification(capabilities) {
   if (!capabilities) return '';
+  if (
+    capabilities.usage_limit_status === 'limited' &&
+    (!capabilities.usage_limit_expires_at ||
+      capabilities.usage_limit_expires_at > Math.floor(Date.now() / 1000))
+  ) {
+    return 'account_usage_limited';
+  }
   if (capabilities.codex_backend_responses_stream_write === true) {
     return capabilities.codex_backend_compact_write === true
       ? 'codex_compact_available'
@@ -695,6 +746,21 @@ function CapabilitiesCell({ capabilities, t }) {
       ) : null}
       {capabilities.last_message ? (
         <div>{capabilities.last_message}</div>
+      ) : null}
+      {capabilities.usage_limit_status === 'limited' ? (
+        <>
+          <div>
+            {t('限流')}: {capabilities.usage_limit_reason || t('账号用量限制中')}
+          </div>
+          {capabilities.usage_limit_expires_at ? (
+            <div>
+              {t('预计恢复')}: {timestamp2string(capabilities.usage_limit_expires_at)}
+            </div>
+          ) : null}
+          {capabilities.usage_limit_message ? (
+            <div>{capabilities.usage_limit_message}</div>
+          ) : null}
+        </>
       ) : null}
     </div>
   );
@@ -1009,6 +1075,188 @@ function UsageWindowsBlock({ stats, t }) {
     <div className='ct-channel-account-window-stack'>
       <WindowUsagePill label='5h' window={stats?.last_5h || {}} t={t} />
       <WindowUsagePill label='7d' window={stats?.last_7d || {}} t={t} />
+    </div>
+  );
+}
+
+function usageLimitActive(capabilities) {
+  return (
+    capabilities?.usage_limit_status === 'limited' &&
+    (!capabilities.usage_limit_expires_at ||
+      capabilities.usage_limit_expires_at > Math.floor(Date.now() / 1000))
+  );
+}
+
+function AccountDiagnosisBlock({ record, t }) {
+  const capabilities = record?.capabilities || {};
+  const score = record?.score || {};
+  const probeState = record?.stats?.probe_recovery_state || {};
+  const limited = usageLimitActive(capabilities);
+  const disabled = record && !record.key_enabled;
+  const probePending = Boolean(score.probe_recovery_pending || probeState.pending);
+  const fallbackBlockingReasons = [
+    disabled ? 'account_disabled' : '',
+    limited ? 'account_usage_limited' : '',
+    probePending ? 'probe_recovery_pending' : '',
+  ].filter(Boolean);
+  const scheduling = record?.scheduling || {
+    schedulable: fallbackBlockingReasons.length === 0,
+    primary_reason: fallbackBlockingReasons[0] || 'schedulable',
+    blocking_reasons: fallbackBlockingReasons,
+    warning_reasons: score.sample_count === 0 ? ['no_score_sample'] : [],
+    recovery_at: capabilities.usage_limit_expires_at,
+    recovery_source: capabilities.usage_limit_reset_source,
+    probe_recovery_pending: probePending,
+    probe_recovery_successes:
+      score.probe_recovery_success_count ?? probeState.success_count ?? 0,
+    probe_recovery_required: score.probe_recovery_required ?? probeState.required ?? 0,
+    active_concurrency: score.active_concurrency,
+    effective_concurrency_limit: score.effective_concurrency_limit,
+    queue_depth: score.queue_depth,
+    queue_capacity: score.queue_capacity,
+    detail: capabilities.usage_limit_message || score.probe_trigger_reason,
+  };
+  const blockingReasons = Array.isArray(scheduling.blocking_reasons)
+    ? scheduling.blocking_reasons
+    : [];
+  const warningReasons = Array.isArray(scheduling.warning_reasons)
+    ? scheduling.warning_reasons
+    : [];
+  const primaryMeta = schedulingReasonMeta(
+    scheduling.primary_reason || 'schedulable',
+    t,
+  );
+  const conclusion = !scheduling.schedulable
+    ? t('账号不可调度')
+    : warningReasons.length > 0
+      ? t('可调度但有提醒')
+      : t('可参与调度');
+  const probeCurrent =
+    scheduling.probe_recovery_successes ??
+    score.probe_recovery_success_count ??
+    probeState.success_count ??
+    0;
+  const probeRequired =
+    scheduling.probe_recovery_required ??
+    score.probe_recovery_required ??
+    probeState.required ??
+    0;
+  const activeConcurrency =
+    scheduling.active_concurrency ?? score.active_concurrency ?? 0;
+  const concurrencyCap =
+    scheduling.effective_concurrency_limit ??
+    score.effective_concurrency_limit ??
+    0;
+  const queueDepth = scheduling.queue_depth ?? score.queue_depth ?? 0;
+  const queueCapacity = scheduling.queue_capacity ?? score.queue_capacity ?? 0;
+  const classification = classificationMeta(
+    scheduling.capability_classification ||
+      effectiveCapabilityClassification(capabilities),
+    t,
+  );
+  const recoveryAt =
+    scheduling.recovery_at || capabilities.usage_limit_expires_at || 0;
+  const recoverySource =
+    scheduling.recovery_source || capabilities.usage_limit_reset_source || '';
+  return (
+    <div className='ct-channel-account-diagnosis'>
+      <div className='ct-channel-account-diagnosis-card'>
+        <span>{t('调度解释')}</span>
+        <div className='ct-channel-account-reason-line'>
+          <Tag color={primaryMeta.color} type='light' shape='circle'>
+            {primaryMeta.label}
+          </Tag>
+          <strong>{conclusion}</strong>
+        </div>
+        <small>
+          {scheduling.detail ||
+          (score.health_status
+            ? `${t('健康状态')}: ${healthTagMeta(score.health_status, t).label}`
+            : t('暂无运行态'))}
+        </small>
+      </div>
+      <div className='ct-channel-account-diagnosis-card'>
+        <span>{t('阻塞与提醒')}</span>
+        <div className='ct-channel-account-reason-tags'>
+          {blockingReasons.length === 0 && warningReasons.length === 0 ? (
+            <Tag color='green' size='small' type='light' shape='circle'>
+              {t('无阻塞')}
+            </Tag>
+          ) : null}
+          {blockingReasons.map((reason) => {
+            const meta = schedulingReasonMeta(reason, t);
+            return (
+              <Tag
+                color={meta.color}
+                key={`blocking-${reason}`}
+                size='small'
+                type='light'
+                shape='circle'
+              >
+                {meta.label}
+              </Tag>
+            );
+          })}
+          {warningReasons.map((reason) => {
+            const meta = schedulingReasonMeta(reason, t);
+            return (
+              <Tag
+                color={meta.color}
+                key={`warning-${reason}`}
+                size='small'
+                type='light'
+                shape='circle'
+              >
+                {meta.label}
+              </Tag>
+            );
+          })}
+        </div>
+        <small>
+          {classification.label
+            ? `${t('能力分类')}: ${classification.label}`
+            : t('能力不受 Platform API 失败影响')}
+        </small>
+      </div>
+      <div className='ct-channel-account-diagnosis-card'>
+        <span>{t('并发与队列')}</span>
+        <strong>
+          {t('并发')} {formatNumber(activeConcurrency)} /{' '}
+          {concurrencyCap > 0 ? formatNumber(concurrencyCap) : t('不限')}
+        </strong>
+        <small>
+          {t('队列')} {formatNumber(queueDepth)} /{' '}
+          {queueCapacity > 0 ? formatNumber(queueCapacity) : t('不限')}
+        </small>
+      </div>
+      <div className='ct-channel-account-diagnosis-card'>
+        <span>{t('恢复与限制')}</span>
+        <strong>
+          {scheduling.probe_recovery_pending
+            ? `${formatNumber(probeCurrent)} / ${formatNumber(probeRequired)}`
+            : recoveryAt
+              ? formatTimestamp(recoveryAt)
+              : t('无需恢复探活')}
+        </strong>
+        <small>{score.probe_trigger_reason || probeState.reason || '--'}</small>
+        {recoverySource ? (
+          <small>
+            {t('恢复来源')}: {recoverySource}
+          </small>
+        ) : null}
+      </div>
+      <div className='ct-channel-account-diagnosis-card'>
+        <span>{t('最近样本')}</span>
+        <strong>
+          {formatNumber(score.real_sample_count_30m || 0)} /{' '}
+          {formatNumber(score.sample_count || 0)}
+        </strong>
+        <small>
+          {score.last_real_attempt_at
+            ? `${t('最后真实请求')}: ${formatTimestamp(score.last_real_attempt_at)}`
+            : t('暂无真实样本')}
+        </small>
+      </div>
     </div>
   );
 }
@@ -1658,7 +1906,204 @@ function DetailStatWindow({ title, window, t }) {
   );
 }
 
-function AccountDetailSideSheet({ visible, record, onClose, t }) {
+function RecentRequestsBlock({ visible, record, onReload, t }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshResult, setRefreshResult] = useState(null);
+  const channelID = Number(record?.channel_id || 0);
+  const credentialIndex = Number(record?.credential_index ?? -1);
+  const recentSummary = useMemo(() => {
+    const summary = {
+      real: 0,
+      probes: 0,
+      errors: 0,
+      rateLimited: 0,
+      timeout: 0,
+      latestError: null,
+    };
+    items.forEach((item) => {
+      if (item.is_health_probe) summary.probes += 1;
+      else summary.real += 1;
+      if (!item.success) {
+        summary.errors += 1;
+        if (!summary.latestError) summary.latestError = item;
+      }
+      const errorText = `${item.error_category || ''} ${item.status_code || ''}`.toLowerCase();
+      if (item.status_code === 429 || errorText.includes('rate_limit')) {
+        summary.rateLimited += 1;
+      }
+      if (
+        [408, 504, 524].includes(Number(item.status_code || 0)) ||
+        errorText.includes('timeout')
+      ) {
+        summary.timeout += 1;
+      }
+    });
+    return summary;
+  }, [items]);
+
+  const loadRecentRequests = useCallback(async () => {
+    if (!visible || channelID <= 0 || credentialIndex < 0) {
+      setItems([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await API.get(
+        `/api/channel/${channelID}/accounts/${credentialIndex}/requests`,
+        { disableDuplicate: true },
+      );
+      if (response?.data?.success === false) {
+        throw new Error(response?.data?.message || t('请求异常'));
+      }
+      const payload = unwrapApiData(response);
+      setItems(Array.isArray(payload?.items) ? payload.items : []);
+    } catch (err) {
+      const message =
+        err?.response?.data?.message || err?.message || t('请求异常');
+      showError(message);
+    } finally {
+      setLoading(false);
+    }
+  }, [channelID, credentialIndex, t, visible]);
+
+  useEffect(() => {
+    loadRecentRequests();
+  }, [loadRecentRequests]);
+
+  const refreshAttribution = useCallback(async () => {
+    if (channelID <= 0 || credentialIndex < 0) return;
+    setRefreshing(true);
+    try {
+      const response = await API.post(
+        `/api/channel/${channelID}/accounts/${credentialIndex}/refresh-attribution`,
+        {},
+      );
+      if (response?.data?.success === false) {
+        throw new Error(response?.data?.message || t('操作失败'));
+      }
+      const payload = unwrapApiData(response);
+      setItems(Array.isArray(payload?.items) ? payload.items : []);
+      setRefreshResult(payload?.refresh_result || null);
+      showSuccess(t('归因已刷新'));
+      onReload?.();
+    } catch (err) {
+      const message =
+        err?.response?.data?.message || err?.message || t('操作失败');
+      showError(message);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [channelID, credentialIndex, onReload, t]);
+
+  return (
+    <div className='ct-channel-account-recent'>
+      <div className='ct-channel-account-recent-head'>
+        <div>
+          <div className='ct-channel-account-detail-title'>{t('最近10条请求')}</div>
+          {refreshResult ? (
+            <p>
+              {t('已处理')} {formatNumber(refreshResult.scanned)} · {t('已更新')}{' '}
+              {formatNumber(refreshResult.updated)}
+            </p>
+          ) : (
+            <p>{t('仅重算最近6小时的统计归因')}</p>
+          )}
+        </div>
+        <Button
+          size='small'
+          theme='light'
+          type='primary'
+          icon={<RefreshCw size={14} />}
+          loading={refreshing}
+          onClick={refreshAttribution}
+        >
+          {t('刷新统计归因')}
+        </Button>
+      </div>
+      {loading ? (
+        <Skeleton placeholder={<Skeleton.Paragraph rows={3} />} loading active />
+      ) : items.length === 0 ? (
+        <Empty title={t('暂无请求记录')} />
+      ) : (
+        <>
+          <div className='ct-channel-account-recent-summary'>
+            <div>
+              <span>{t('真实请求')}</span>
+              <strong>{formatNumber(recentSummary.real)}</strong>
+            </div>
+            <div>
+              <span>{t('探活样本')}</span>
+              <strong>{formatNumber(recentSummary.probes)}</strong>
+            </div>
+            <div>
+              <span>{t('限流次数')}</span>
+              <strong>{formatNumber(recentSummary.rateLimited)}</strong>
+            </div>
+            <div>
+              <span>{t('超时次数')}</span>
+              <strong>{formatNumber(recentSummary.timeout)}</strong>
+            </div>
+            <div className='ct-channel-account-recent-summary-wide'>
+              <span>{t('最近异常')}</span>
+              <strong>
+                {recentSummary.latestError
+                  ? recentSummary.latestError.error_category ||
+                    recentSummary.latestError.status_code ||
+                    t('失败')
+                  : t('无异常')}
+              </strong>
+            </div>
+          </div>
+          <div className='ct-channel-account-recent-list'>
+            {items.map((item) => (
+              <div
+                className='ct-channel-account-recent-item'
+                key={item.request_id || `${item.completed_at}-${item.status_code}`}
+              >
+                <div className='ct-channel-account-recent-main'>
+                  <Tooltip content={item.request_id || '--'}>
+                    <strong>{shortRequestId(item.request_id)}</strong>
+                  </Tooltip>
+                  <span>{item.requested_model || '--'}</span>
+                </div>
+                <div className='ct-channel-account-recent-tags'>
+                  <Tag size='small' color={item.is_health_probe ? 'cyan' : 'green'}>
+                    {item.is_health_probe ? t('探活样本') : t('真实请求')}
+                  </Tag>
+                  <Tag size='small' color={item.success ? 'green' : 'red'}>
+                    {item.success ? t('成功') : item.error_category || item.status_code || t('失败')}
+                  </Tag>
+                  <Tag
+                    size='small'
+                    color={item.statistics_recorded ? 'green' : 'grey'}
+                  >
+                    {item.statistics_recorded ? t('写入统计') : t('未写入统计')}
+                  </Tag>
+                  <Tag
+                    size='small'
+                    color={item.attribution_complete ? 'green' : 'orange'}
+                  >
+                    {item.attribution_complete ? t('归因完整') : t('归因缺失')}
+                  </Tag>
+                </div>
+                <div className='ct-channel-account-recent-meta'>
+                  <span>{formatTimestamp(item.completed_at)}</span>
+                  <span>{formatLatency(item.ttft_ms)} / {formatLatency(item.duration_ms)}</span>
+                  <span>{formatCompactNumber(item.total_tokens)} Token</span>
+                  <span>{formatQuotaValue(item.quota)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function AccountDetailSideSheet({ visible, record, onClose, onReload, t }) {
   const identity = record?.account_identity || {};
   const stats = record?.stats || {};
   return (
@@ -1682,6 +2127,10 @@ function AccountDetailSideSheet({ visible, record, onClose, t }) {
             </p>
           </div>
           {record ? statusTag(record, t) : null}
+        </div>
+        <div className='ct-channel-account-detail-section'>
+          <div className='ct-channel-account-detail-title'>{t('账号诊断')}</div>
+          <AccountDiagnosisBlock record={record} t={t} />
         </div>
         <div className='ct-channel-account-detail-section'>
           <div className='ct-channel-account-detail-title'>{t('凭证身份')}</div>
@@ -1709,6 +2158,14 @@ function AccountDetailSideSheet({ visible, record, onClose, t }) {
             <DetailStatWindow title={t('近5小时')} window={stats.last_5h || {}} t={t} />
             <DetailStatWindow title={t('近7天')} window={stats.last_7d || {}} t={t} />
           </div>
+        </div>
+        <div className='ct-channel-account-detail-section'>
+          <RecentRequestsBlock
+            visible={visible}
+            record={record}
+            onReload={onReload}
+            t={t}
+          />
         </div>
         <div className='ct-channel-account-detail-section'>
           <div className='ct-channel-account-detail-title'>{t('运行键')}</div>
@@ -3053,6 +3510,7 @@ function ChannelAccount() {
           record={detailRecord}
           t={t}
           onClose={() => setDetailRecord(null)}
+          onReload={loadAccounts}
         />
         <Modal
           title={t('编辑账号')}

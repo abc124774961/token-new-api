@@ -1073,7 +1073,29 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 	result.UsedChannels = append([]string(nil), flow.UsedChannels...)
 	result.FailureScope = modelGatewayAttemptFailureScope(*result)
 	result.SwitchReason = modelGatewayAttemptSwitchReason(*result)
+	updateCodexAccountUsageLimitFromRelay(c, channel, apiErr)
 	wrapper.Facade.Report(c, result)
+}
+
+func updateCodexAccountUsageLimitFromRelay(c *gin.Context, channel *model.Channel, apiErr *types.NewAPIError) {
+	if c == nil || channel == nil {
+		return
+	}
+	credentialIndex := common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
+	if apiErr == nil {
+		if _, err := service.ClearCodexAccountUsageLimit(channel.Id, credentialIndex); err != nil {
+			logger.LogWarn(c, fmt.Sprintf("failed to clear codex account usage limit: channel_id=%d credential_index=%d error=%v", channel.Id, credentialIndex, err))
+		}
+		return
+	}
+	message := apiErr.Error()
+	if !service.IsCodexAccountUsageLimitMessage(message) {
+		return
+	}
+	cooldownSec, resetSource := service.CodexAccountUsageLimitCooldownFromMetadata(apiErr.Metadata, common.GetTimestamp())
+	if _, err := service.MarkCodexAccountUsageLimitedWithCooldown(channel.Id, credentialIndex, message, cooldownSec, resetSource); err != nil {
+		logger.LogWarn(c, fmt.Sprintf("failed to mark codex account usage limit: channel_id=%d credential_index=%d error=%v", channel.Id, credentialIndex, err))
+	}
 }
 
 func applyModelGatewayAttemptWarnings(c *gin.Context, info *relaycommon.RelayInfo, flow *modelGatewayAttemptFlow) {

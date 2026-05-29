@@ -91,6 +91,16 @@ var DB *gorm.DB
 
 var LOG_DB *gorm.DB
 
+func LogGroupColumn() string {
+	if logGroupCol != "" {
+		return logGroupCol
+	}
+	if common.UsingPostgreSQL {
+		return `"group"`
+	}
+	return "`group`"
+}
+
 func createRootAccountIfNeed() error {
 	var user User
 	//if user.Status != common.UserStatusEnabled {

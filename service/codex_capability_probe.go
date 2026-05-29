@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	codexBackendResponsesURL = "https://chatgpt.com/backend-api/codex/responses"
-	codexBackendCompactURL   = "https://chatgpt.com/backend-api/codex/responses/compact"
-	codexCapabilityProbeTime = 30 * time.Second
+	codexBackendResponsesURL                 = "https://chatgpt.com/backend-api/codex/responses"
+	codexBackendCompactURL                   = "https://chatgpt.com/backend-api/codex/responses/compact"
+	codexCapabilityProbeTime                 = 30 * time.Second
+	codexAccountUsageLimitDefaultCooldownSec = int64((30 * time.Minute) / time.Second)
 )
 
 type CodexCapabilityProbeOptions struct {
@@ -113,7 +114,10 @@ func ProbeCodexOAuthAccountCapabilities(ctx context.Context, channel *model.Chan
 	}
 
 	streamResult := probeCodexBackendResponses(ctx, client, credential, true)
-	capability.CodexBackendResponsesStreamWrite = capabilityBool(streamResult.Success)
+	streamUsageLimited := codexHTTPProbeUsageLimited(streamResult)
+	if !streamUsageLimited || streamResult.Success {
+		capability.CodexBackendResponsesStreamWrite = capabilityBool(streamResult.Success)
+	}
 	if streamResult.Success {
 		capability.ResponsesWrite = capabilityBool(true)
 		capability.CapabilityClassification = channelcapability.ClassificationCodexBackendAvailable
@@ -122,7 +126,10 @@ func ProbeCodexOAuthAccountCapabilities(ctx context.Context, channel *model.Chan
 	}
 
 	compactResult := probeCodexBackendCompact(ctx, client, credential)
-	capability.CodexBackendCompactWrite = capabilityBool(compactResult.Success)
+	usageLimited := streamUsageLimited || codexHTTPProbeUsageLimited(compactResult)
+	if !usageLimited || compactResult.Success {
+		capability.CodexBackendCompactWrite = capabilityBool(compactResult.Success)
+	}
 	if compactResult.Success {
 		capability.ResponsesCompactWrite = capabilityBool(true)
 		if streamResult.Success {
@@ -134,6 +141,11 @@ func ProbeCodexOAuthAccountCapabilities(ctx context.Context, channel *model.Chan
 
 	classification := classifyCodexCapability(capability, streamResult, compactResult)
 	capability.CapabilityClassification = classification
+	if usageLimited {
+		capability = applyCodexAccountUsageLimit(capability, strings.Join(messages, "；"), common.GetTimestamp())
+	} else if streamResult.Success {
+		capability = capability.ClearUsageLimit()
+	}
 	capability.LastEndpoint = codexBackendResponsesURL
 	if len(messages) == 0 {
 		capability.LastMessage = "Codex backend 能力检测完成"
@@ -394,6 +406,9 @@ func classifyCodexCapability(capability model.ChannelAccountCapability, streamRe
 		return channelcapability.ClassificationCodexBackendAvailable
 	}
 	lower := strings.ToLower(streamResult.Message + " " + compactResult.Message)
+	if isCodexAccountUsageLimitMessage(lower) {
+		return channelcapability.ClassificationAccountUsageLimited
+	}
 	if strings.Contains(lower, "unsupported_country_region_territory") || strings.Contains(lower, "country, region") {
 		return channelcapability.ClassificationRegionError
 	}
@@ -405,6 +420,43 @@ func classifyCodexCapability(capability model.ChannelAccountCapability, streamRe
 
 func capabilityBool(value bool) *bool {
 	return &value
+}
+
+func codexHTTPProbeUsageLimited(result codexHTTPProbeResult) bool {
+	return isCodexAccountUsageLimitMessage(result.Message)
+}
+
+func IsCodexAccountUsageLimitMessage(message string) bool {
+	return isCodexAccountUsageLimitMessage(message)
+}
+
+func isCodexAccountUsageLimitMessage(message string) bool {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "usage limit has been reached") ||
+		strings.Contains(lower, "your usage limit") ||
+		strings.Contains(lower, "codex usage limit") ||
+		strings.Contains(lower, "account usage limit")
+}
+
+func applyCodexAccountUsageLimit(capability model.ChannelAccountCapability, message string, now int64) model.ChannelAccountCapability {
+	return applyCodexAccountUsageLimitWithCooldown(capability, message, now, codexAccountUsageLimitDefaultCooldownSec, "default")
+}
+
+func applyCodexAccountUsageLimitWithCooldown(capability model.ChannelAccountCapability, message string, now int64, cooldownSec int64, resetSource string) model.ChannelAccountCapability {
+	if cooldownSec <= 0 {
+		cooldownSec = codexAccountUsageLimitDefaultCooldownSec
+	}
+	capability.UsageLimitStatus = channelcapability.UsageLimitStatusLimited
+	capability.UsageLimitReason = channelcapability.UsageLimitReasonReached
+	capability.UsageLimitMessage = truncateCapabilityMessage(message, 360)
+	capability.UsageLimitDetectedTime = now
+	capability.UsageLimitExpiresAt = now + cooldownSec
+	capability.UsageLimitResetSource = strings.TrimSpace(resetSource)
+	capability.CapabilityClassification = channelcapability.ClassificationAccountUsageLimited
+	return capability
 }
 
 func codexProbeCredentialProxy(channel *model.Channel, credentialIndex int) (int, string, error) {

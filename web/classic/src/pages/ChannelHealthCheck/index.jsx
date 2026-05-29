@@ -207,6 +207,46 @@ function formatRelativeTime(timestamp, t) {
   });
 }
 
+function formatCountdownDuration(seconds, t) {
+  const totalSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (totalSeconds <= 0) return t('可立即探测');
+  if (totalSeconds < 60) {
+    return t('{{seconds}}秒后', { seconds: totalSeconds });
+  }
+  if (totalSeconds < 3600) {
+    return t('{{minutes}}分{{seconds}}秒后', {
+      minutes: Math.floor(totalSeconds / 60),
+      seconds: totalSeconds % 60,
+    });
+  }
+  if (totalSeconds < 86400) {
+    return t('{{hours}}小时{{minutes}}分钟后', {
+      hours: Math.floor(totalSeconds / 3600),
+      minutes: Math.floor((totalSeconds % 3600) / 60),
+    });
+  }
+  return t('{{days}}天{{hours}}小时后', {
+    days: Math.floor(totalSeconds / 86400),
+    hours: Math.floor((totalSeconds % 86400) / 3600),
+  });
+}
+
+function getProbeCountdownSeconds(record, nowTick, generatedAt) {
+  const remaining = Number(record?.next_probe_remaining_seconds);
+  const generated = Number(generatedAt || 0);
+  if (Number.isFinite(remaining) && remaining >= 0 && generated > 0) {
+    return Math.max(0, Math.floor(generated + remaining - nowTick));
+  }
+  const nextProbeAt = Number(record?.next_probe_at || 0);
+  if (nextProbeAt > 0) {
+    return Math.max(0, Math.floor(nextProbeAt - nowTick));
+  }
+  if (Number.isFinite(remaining) && remaining > 0) {
+    return Math.floor(remaining);
+  }
+  return 0;
+}
+
 function getRuntimeHealthMeta(status, t) {
   switch (status) {
     case 'circuit_open':
@@ -845,6 +885,7 @@ function ChannelHealthCheck() {
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [probeConfig, setProbeConfig] = useState(DEFAULT_PROBE_CONFIG);
+  const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
   const [filters, setFilters] = useState({
     model: '',
     group: '',
@@ -909,7 +950,10 @@ function ChannelHealthCheck() {
           if (result.status === 'fulfilled') {
             const data = unwrapApiData(result.value);
             if (requestMeta.key === 'queue') {
-              setQueueData(data);
+              setQueueData({
+                ...data,
+                local_generated_at: Math.floor(Date.now() / 1000),
+              });
             } else {
               setHistoryData(data);
             }
@@ -940,6 +984,13 @@ function ChannelHealthCheck() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowTick(Math.floor(Date.now() / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const loadProbeConfig = useCallback(async () => {
     setSettingsLoading(true);
@@ -1020,6 +1071,9 @@ function ChannelHealthCheck() {
     probeConfig.probe_enabled !== false ? t('已启用') : t('未启用');
   const activeFilterCount = Object.values(appliedFilters).filter(Boolean).length;
   const lastUpdated = formatTimestamp(queueData?.summary?.updated_at);
+  const queueGeneratedAt = Number(
+    queueData?.local_generated_at || queueData?.generated_at || 0,
+  );
 
   const applyFilters = () => {
     setAppliedFilters({
@@ -1163,23 +1217,40 @@ function ChannelHealthCheck() {
       {
         title: t('探活状态'),
         dataIndex: 'last_probe_at',
-        width: 240,
-        render: (_, record) => (
-          <div className='ct-channel-health-stack'>
-            <Typography.Text>
-              {t('上次探活')} {formatRelativeTime(record.last_probe_at, t)}
-            </Typography.Text>
-            <Typography.Text type='secondary' size='small'>
-              {t('上次成功')} {formatRelativeTime(record.last_probe_success_at, t)}
-            </Typography.Text>
-            {record.probe_recovery_pending && (
-              <Tag color='cyan' size='small' type='light'>
-                {t('恢复')} {formatNumber(record.probe_recovery_success_count)}/
-                {formatNumber(record.probe_recovery_required)}
-              </Tag>
-            )}
-          </div>
-        ),
+        width: 260,
+        render: (_, record) => {
+          const countdownSeconds = getProbeCountdownSeconds(
+            record,
+            nowTick,
+            queueGeneratedAt,
+          );
+          const countdownReady = countdownSeconds <= 0;
+          return (
+            <div className='ct-channel-health-stack'>
+              <div
+                className={`ct-channel-health-countdown ${
+                  countdownReady ? 'ct-channel-health-countdown-ready' : ''
+                }`}
+              >
+                <Clock3 size={12} />
+                <span>{t('下一次探测')}</span>
+                <strong>{formatCountdownDuration(countdownSeconds, t)}</strong>
+              </div>
+              <Typography.Text>
+                {t('上次探活')} {formatRelativeTime(record.last_probe_at, t)}
+              </Typography.Text>
+              <Typography.Text type='secondary' size='small'>
+                {t('上次成功')} {formatRelativeTime(record.last_probe_success_at, t)}
+              </Typography.Text>
+              {record.probe_recovery_pending && (
+                <Tag color='cyan' size='small' type='light'>
+                  {t('恢复')} {formatNumber(record.probe_recovery_success_count)}/
+                  {formatNumber(record.probe_recovery_required)}
+                </Tag>
+              )}
+            </div>
+          );
+        },
       },
       {
         title: t('性能'),
@@ -1204,7 +1275,7 @@ function ChannelHealthCheck() {
         ),
       },
     ],
-    [t],
+    [nowTick, queueGeneratedAt, t],
   );
 
   const historyColumns = useMemo(

@@ -358,6 +358,9 @@ func candidateAccountSupportsRequiredCapabilities(candidate core.Candidate, quer
 	if !ok {
 		return true
 	}
+	if !service.ChannelAccountCapabilityAllowsScheduling(capability) {
+		return false
+	}
 	if query.EndpointType == constant.EndpointTypeOpenAIResponseCompact {
 		return capability.CodexBackendCompactWrite == nil || capability.HasCodexBackendCompactAllowed()
 	}

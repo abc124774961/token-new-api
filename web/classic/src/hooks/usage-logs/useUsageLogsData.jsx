@@ -186,6 +186,10 @@ export const useLogsData = () => {
   ] = useState(false);
   const [channelAffinityUsageCacheTarget, setChannelAffinityUsageCacheTarget] =
     useState(null);
+  const [
+    showChannelAffinityDiagnosticsModal,
+    setShowChannelAffinityDiagnosticsModal,
+  ] = useState(false);
   const [showParamOverrideModal, setShowParamOverrideModal] = useState(false);
   const [paramOverrideTarget, setParamOverrideTarget] = useState(null);
 
@@ -350,6 +354,35 @@ export const useLogsData = () => {
       key_fp: a.key_fp || '',
     });
     setShowChannelAffinityUsageCacheModal(true);
+  };
+
+  const getChannelAffinityDiagnosticsParams = () => {
+    const {
+      username,
+      token_name,
+      model_name,
+      start_timestamp,
+      end_timestamp,
+      channel,
+      group,
+    } = getFormValues();
+    return {
+      username,
+      token_name,
+      model_name,
+      start_timestamp: Date.parse(start_timestamp) / 1000,
+      end_timestamp: Date.parse(end_timestamp) / 1000,
+      channel,
+      group,
+      limit: 10000,
+    };
+  };
+
+  const openChannelAffinityDiagnosticsModal = () => {
+    if (!isAdminUser) {
+      return;
+    }
+    setShowChannelAffinityDiagnosticsModal(true);
   };
 
   const openParamOverrideModal = (log, other) => {
@@ -930,6 +963,10 @@ export const useLogsData = () => {
     setShowChannelAffinityUsageCacheModal,
     channelAffinityUsageCacheTarget,
     openChannelAffinityUsageCacheModal,
+    showChannelAffinityDiagnosticsModal,
+    setShowChannelAffinityDiagnosticsModal,
+    getChannelAffinityDiagnosticsParams,
+    openChannelAffinityDiagnosticsModal,
     showParamOverrideModal,
     setShowParamOverrideModal,
     paramOverrideTarget,

@@ -92,7 +92,26 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 			SetFailedStickyPlan(c, plan)
 		}
 		if plan.CacheAffinity {
-			service.MarkChannelAffinityUsed(c, plan.SelectedGroup, plan.Channel.Id)
+			service.MarkChannelAffinitySelection(c, service.ChannelAffinitySelectionInfo{
+				SelectedGroup:                plan.SelectedGroup,
+				SelectedChannelID:            plan.Channel.Id,
+				Retained:                     plan.StickyRetained,
+				Broken:                       !plan.StickyRetained,
+				BreakReason:                  plan.StickyBreak,
+				StickySource:                 plan.StickySource,
+				SelectedReason:               plan.SelectedReason,
+				AccountID:                    plan.AccountIdentity.AccountID,
+				AccountType:                  plan.AccountIdentity.AccountType,
+				AccountIdentityKey:           plan.AccountIdentity.AccountIdentityKey,
+				CredentialIndex:              plan.CredentialRef.CredentialIndex,
+				HasCredentialIndex:           true,
+				CredentialSubjectFingerprint: plan.CredentialRef.CredentialSubjectFingerprint,
+				CredentialFingerprint:        plan.CredentialRef.CredentialFingerprint,
+				ResourceID:                   plan.ResourceRef.ResourceID,
+				ResourceType:                 plan.ResourceRef.ResourceType,
+				ProxyID:                      plan.ProxyRef.ProxyID,
+				PoolLevel:                    plan.PoolLevel,
+			})
 		}
 		return &SelectionResult{
 			Channel:      plan.Channel,

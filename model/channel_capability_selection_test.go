@@ -79,6 +79,40 @@ func TestGetNextEnabledKeyForEndpointSkipsCodexAccountsWithDeniedCapabilities(t 
 	require.Equal(t, 2, index)
 }
 
+func TestGetNextEnabledKeyForEndpointSkipsUsageLimitedCodexAccount(t *testing.T) {
+	db := setupChannelCapabilitySelectionTestDB(t)
+	streamAllowed := true
+	channel := &Channel{
+		Id:     9004,
+		Type:   constant.ChannelTypeCodex,
+		Key:    "oauth-a\noauth-b",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:           true,
+			MultiKeyMode:         constant.MultiKeyModePolling,
+			MultiKeyPollingIndex: 0,
+			MultiKeyCapabilities: map[int]ChannelAccountCapability{
+				0: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+					UsageLimitStatus:                 "limited",
+					UsageLimitReason:                 "usage_limit_reached",
+					UsageLimitExpiresAt:              common.GetTimestamp() + 3600,
+				},
+				1: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+				},
+			},
+		},
+	}
+	require.NoError(t, db.Create(channel).Error)
+
+	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse)
+
+	require.Nil(t, apiErr)
+	require.Equal(t, "oauth-b", key)
+	require.Equal(t, 1, index)
+}
+
 func TestGetNextEnabledKeyForEndpointRejectsSingleCodexAccountWithDeniedCapability(t *testing.T) {
 	streamDenied := false
 	channel := &Channel{

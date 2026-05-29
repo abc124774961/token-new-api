@@ -328,6 +328,9 @@ func (channel *Channel) codexKeySupportsRequestedCapability(index int, endpointT
 	if !ok {
 		return true
 	}
+	if capability.UsageLimitActiveAt(common.GetTimestamp()) {
+		return false
+	}
 	if endpointType == constant.EndpointTypeOpenAIResponseCompact {
 		if capability.CodexBackendCompactWrite == nil {
 			return true

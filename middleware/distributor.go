@@ -153,11 +153,13 @@ func distribute(c *gin.Context, next gin.HandlerFunc) {
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					if err == nil && preferred != nil {
 						if preferred.Status != common.ChannelStatusEnabled {
+							service.MarkChannelAffinityBroken(c, "channel_disabled")
 							if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 								abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
 								return
 							}
 						} else if !channelSupportsModelRequest(preferred, *modelRequest) {
+							service.MarkChannelAffinityBroken(c, "model_not_supported")
 							logger.LogDebug(c, "Skipping affinity channel #%d because it does not support endpoint %s for model %s", preferred.Id, modelRequest.EndpointType, modelRequest.Model)
 						} else if usingGroup == "auto" {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
@@ -171,11 +173,18 @@ func distribute(c *gin.Context, next gin.HandlerFunc) {
 									break
 								}
 							}
+							if channel == nil {
+								service.MarkChannelAffinityBroken(c, "group_not_supported")
+							}
 						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
 							channel = preferred
 							selectGroup = usingGroup
 							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+						} else {
+							service.MarkChannelAffinityBroken(c, "group_not_supported")
 						}
+					} else {
+						service.MarkChannelAffinityBroken(c, "channel_missing")
 					}
 				}
 			}
@@ -206,6 +215,14 @@ func distribute(c *gin.Context, next gin.HandlerFunc) {
 				if selection != nil {
 					channel = selection.Channel
 					selectGroup = selection.Group
+					if channel != nil {
+						service.MarkChannelAffinitySelection(c, service.ChannelAffinitySelectionInfo{
+							SelectedGroup:     selectGroup,
+							SelectedChannelID: channel.Id,
+							Broken:            true,
+							StickySource:      "legacy_affinity",
+						})
+					}
 				}
 				if channel == nil {
 					abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)

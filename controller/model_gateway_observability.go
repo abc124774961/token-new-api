@@ -189,13 +189,15 @@ type ModelGatewayHealthCheckQueueReasonCount struct {
 
 type ModelGatewayHealthCheckQueueItem struct {
 	modelgatewayobservability.RuntimeStatusItem
-	Reasons                []ModelGatewayHealthCheckQueueReason `json:"reasons"`
-	ProbeTriggerScoreItems []string                             `json:"probe_trigger_score_items,omitempty"`
-	ProbeSkipReason        string                               `json:"probe_skip_reason,omitempty"`
-	LastRealAttemptAt      int64                                `json:"last_real_attempt_at,omitempty"`
-	Priority               int                                  `json:"priority"`
-	QueueType              string                               `json:"queue_type"`
-	RowKey                 string                               `json:"row_key"`
+	Reasons                   []ModelGatewayHealthCheckQueueReason `json:"reasons"`
+	ProbeTriggerScoreItems    []string                             `json:"probe_trigger_score_items,omitempty"`
+	ProbeSkipReason           string                               `json:"probe_skip_reason,omitempty"`
+	LastRealAttemptAt         int64                                `json:"last_real_attempt_at,omitempty"`
+	NextProbeAt               int64                                `json:"next_probe_at,omitempty"`
+	NextProbeRemainingSeconds int64                                `json:"next_probe_remaining_seconds"`
+	Priority                  int                                  `json:"priority"`
+	QueueType                 string                               `json:"queue_type"`
+	RowKey                    string                               `json:"row_key"`
 }
 
 type ModelGatewayScoreHistoryResponse struct {
@@ -2410,15 +2412,19 @@ func BuildModelGatewayHealthCheckQueue(query modelgatewayobservability.RuntimeSt
 		if !modelGatewayHealthCheckQueueItemMatchesType(itemQueueType, runtimeItem, reasons, queueType) {
 			continue
 		}
+		probeSkipReason := modelGatewayHealthCheckProbeSkipReason(runtimeItem, thresholds)
+		nextProbeAt, nextProbeRemaining := modelGatewayHealthCheckNextProbeSchedule(runtimeItem)
 		items = append(items, ModelGatewayHealthCheckQueueItem{
-			RuntimeStatusItem:      runtimeItem,
-			Reasons:                reasons,
-			ProbeTriggerScoreItems: modelGatewayHealthCheckTriggerScoreItems(runtimeItem, thresholds),
-			ProbeSkipReason:        modelGatewayHealthCheckProbeSkipReason(runtimeItem, thresholds),
-			LastRealAttemptAt:      runtimeItem.LastRealAttemptAt,
-			Priority:               reasons[0].Priority,
-			QueueType:              itemQueueType,
-			RowKey:                 modelGatewayHealthCheckRuntimeRowKey(runtimeItem),
+			RuntimeStatusItem:         runtimeItem,
+			Reasons:                   reasons,
+			ProbeTriggerScoreItems:    modelGatewayHealthCheckTriggerScoreItems(runtimeItem, thresholds),
+			ProbeSkipReason:           probeSkipReason,
+			LastRealAttemptAt:         runtimeItem.LastRealAttemptAt,
+			NextProbeAt:               nextProbeAt,
+			NextProbeRemainingSeconds: nextProbeRemaining,
+			Priority:                  reasons[0].Priority,
+			QueueType:                 itemQueueType,
+			RowKey:                    modelGatewayHealthCheckRuntimeRowKey(runtimeItem),
 		})
 	}
 	sort.Slice(items, func(i int, j int) bool {
@@ -2596,6 +2602,34 @@ func modelGatewayHealthCheckProbeSkipReason(item modelgatewayobservability.Runti
 		return "recent_real_request"
 	}
 	return ""
+}
+
+func modelGatewayHealthCheckNextProbeSchedule(item modelgatewayobservability.RuntimeStatusItem) (int64, int64) {
+	setting := scheduler_setting.GetSetting()
+	now := common.GetTimestamp()
+	nextAt := now
+	minInterval := setting.ProbeMinChannelIntervalSeconds
+	if minInterval <= 0 {
+		minInterval = 300
+	}
+	if item.LastProbeAt > 0 {
+		nextAt = item.LastProbeAt + int64(minInterval)
+	}
+	if setting.ProbeSkipRecentRealRequestEnabled && item.LastRealAttemptAt > 0 {
+		window := setting.ProbeRecentRealRequestWindowSeconds
+		if window <= 0 {
+			window = 1800
+		}
+		recentRequestNextAt := item.LastRealAttemptAt + int64(window)
+		if recentRequestNextAt > nextAt && item.LastRealAttemptAt >= now-int64(window) {
+			nextAt = recentRequestNextAt
+		}
+	}
+	remaining := nextAt - now
+	if remaining <= 0 {
+		return now, 0
+	}
+	return nextAt, remaining
 }
 
 func modelGatewayHealthCheckQueueAccumulateSummary(summary *ModelGatewayHealthCheckQueueSummary, item modelgatewayobservability.RuntimeStatusItem, reasons []ModelGatewayHealthCheckQueueReason) {

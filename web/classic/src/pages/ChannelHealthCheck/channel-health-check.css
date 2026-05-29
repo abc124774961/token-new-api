@@ -264,6 +264,46 @@
   font-size: 12px;
 }
 
+.ct-channel-health-countdown {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #bae6fd;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: #f0f9ff;
+  color: #0369a1;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.ct-channel-health-countdown svg {
+  flex: 0 0 auto;
+}
+
+.ct-channel-health-countdown span,
+.ct-channel-health-countdown strong {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-channel-health-countdown strong {
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-weight: 850;
+}
+
+.ct-channel-health-countdown-ready {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #047857;
+}
+
 .ct-channel-health-score-change {
   display: flex;
   min-width: 0;

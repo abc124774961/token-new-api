@@ -236,15 +236,26 @@ function buildChannelAffinityTooltip(affinity, t) {
   const keyPath = affinity.key_path || affinity.key_key || '-';
   const keyHint = affinity.key_hint || '';
   const keyFp = affinity.key_fp ? `#${affinity.key_fp}` : '';
-  const keyText = `${keySource}:${keyPath}${keyFp}`;
+  const keyText =
+    keyPath === '-' || keyPath === keySource
+      ? `${keySource}${keyFp}`
+      : `${keySource}:${keyPath}${keyFp}`;
+  const preferredChannelId = affinity.preferred_channel_id;
+  const selectedChannelId = affinity.selected_channel_id || affinity.channel_id;
+  const retained = affinity.retained === true;
+  const broken = affinity.broken === true;
 
   const lines = [
     t('渠道亲和性'),
     `${t('规则')}：${affinity.rule_name || '-'}`,
     `${t('分组')}：${affinity.selected_group || '-'}`,
     `${t('Key')}：${keyText}`,
+    preferredChannelId ? `${t('原渠道')}：${preferredChannelId}` : null,
+    selectedChannelId ? `${t('最终渠道')}：${selectedChannelId}` : null,
+    retained ? `${t('亲和状态')}：${t('保留')}` : null,
+    broken ? `${t('亲和状态')}：${t('打断')} (${affinity.break_reason || '-'})` : null,
     ...(keyHint ? [`${t('Key 摘要')}：${keyHint}`] : []),
-  ];
+  ].filter(Boolean);
 
   return (
     <div style={{ lineHeight: 1.6, display: 'flex', flexDirection: 'column' }}>
@@ -265,6 +276,34 @@ function normalizeChannelId(channelId) {
 function formatChannelId(channelId) {
   const normalized = normalizeChannelId(channelId);
   return normalized ? `#${normalized}` : '#?';
+}
+
+function normalizeCredentialIndex(value) {
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric >= 0 ? numeric : null;
+}
+
+function buildMultiKeyAccountTooltip(record, credentialIndex, t) {
+  const accountNumber =
+    credentialIndex === null || credentialIndex === undefined
+      ? null
+      : credentialIndex + 1;
+  const rows = [
+    [t('渠道 ID'), record?.channel || record?.channel_id || '--'],
+    [t('账号'), accountNumber ? `#${accountNumber}` : '--'],
+    ['credential_index', credentialIndex ?? '--'],
+  ];
+
+  return (
+    <div style={{ lineHeight: 1.6, minWidth: 180 }}>
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <span style={{ color: 'var(--semi-color-text-2)' }}>{label}：</span>
+          <span>{value}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function formatChannelFailureReason(failure, t) {
@@ -876,7 +915,7 @@ export const getLogsColumns = ({
           let adminInfo = other.admin_info;
           if (adminInfo?.is_multi_key) {
             isMultiKey = true;
-            multiKeyIndex = adminInfo.multi_key_index;
+            multiKeyIndex = normalizeCredentialIndex(adminInfo.multi_key_index);
           }
           if (
             Array.isArray(adminInfo.use_channel) &&
@@ -965,9 +1004,19 @@ export const getLogsColumns = ({
               )}
             </span>
             {isMultiKey && (
-              <Tag color='white' shape='circle'>
-                {multiKeyIndex}
-              </Tag>
+              <Tooltip
+                content={buildMultiKeyAccountTooltip(
+                  record,
+                  multiKeyIndex,
+                  t,
+                )}
+              >
+                <Tag color='white' shape='circle'>
+                  {multiKeyIndex === null
+                    ? '--'
+                    : `${t('账号')} #${multiKeyIndex + 1}`}
+                </Tag>
+              </Tooltip>
             )}
           </Space>
         ) : null;

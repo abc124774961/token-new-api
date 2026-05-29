@@ -54,3 +54,21 @@ func TestSupportedEndpointTypesKeepsResponsesWireAPIWithoutCodexImageCapability(
 	require.Contains(t, endpoints, constant.EndpointTypeImageEdit)
 	require.NotContains(t, endpoints, constant.EndpointTypeOpenAIResponseCompact)
 }
+
+func TestEffectiveClassificationPrefersActiveUsageLimitOverCapability(t *testing.T) {
+	allowed := true
+	capability := AccountCapability{
+		CodexBackendResponsesStreamWrite: &allowed,
+		CodexBackendCompactWrite:         &allowed,
+		UsageLimitStatus:                 UsageLimitStatusLimited,
+		UsageLimitReason:                 UsageLimitReasonReached,
+		UsageLimitExpiresAt:              9999999999,
+		UsageLimitResetSource:            "retry_after_seconds",
+	}
+
+	require.Equal(t, ClassificationAccountUsageLimited, capability.EffectiveClassification())
+	require.True(t, capability.UsageLimitActiveAt(100))
+	require.False(t, capability.UsageLimitActiveAt(9999999999))
+	cleared := capability.ClearUsageLimit()
+	require.Empty(t, cleared.UsageLimitResetSource)
+}
