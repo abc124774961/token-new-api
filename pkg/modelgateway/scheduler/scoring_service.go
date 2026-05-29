@@ -533,11 +533,54 @@ func normalizeScoreItems(items []core.ScoreItem) []core.ScoreItem {
 			out = append(out, item)
 			continue
 		}
-		item.Weight = round4(item.Weight / totalWeight)
-		item.WeightedScore = round4(item.Score * item.Weight)
+		item.Weight = item.Weight / totalWeight
 		out = append(out, item)
 	}
+	applyMinimumNormalizedScoreItemWeight(out, scoreItemTTFTLatency, scoreItemTTFTLatencyMinWeight)
+	for idx := range out {
+		if out[idx].MissingReason != "" || out[idx].Weight <= 0 {
+			continue
+		}
+		out[idx].Weight = round4(out[idx].Weight)
+		out[idx].WeightedScore = round4(out[idx].Score * out[idx].Weight)
+	}
 	return out
+}
+
+func applyMinimumNormalizedScoreItemWeight(items []core.ScoreItem, key string, target float64) {
+	if len(items) == 0 || strings.TrimSpace(key) == "" || target <= 0 || target >= 1 {
+		return
+	}
+	target = clamp01(target)
+	targetIdx := -1
+	current := 0.0
+	for idx, item := range items {
+		if item.Key != key || item.MissingReason != "" || item.Weight <= 0 {
+			continue
+		}
+		targetIdx = idx
+		current = item.Weight
+		break
+	}
+	if targetIdx < 0 || current >= target {
+		return
+	}
+	otherTotal := 1 - current
+	if otherTotal <= 0 {
+		items[targetIdx].Weight = target
+		return
+	}
+	scale := (1 - target) / otherTotal
+	for idx := range items {
+		if items[idx].MissingReason != "" || items[idx].Weight <= 0 {
+			continue
+		}
+		if idx == targetIdx {
+			items[idx].Weight = target
+			continue
+		}
+		items[idx].Weight *= scale
+	}
 }
 
 func markSampleMissingScoreItems(items []core.ScoreItem, stats ScoreStats, snapshot core.RuntimeSnapshot, latency scoreLatencyView) {

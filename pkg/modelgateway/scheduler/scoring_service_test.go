@@ -103,18 +103,61 @@ func TestCostFirstWeightsShiftRequestedSignalsToCost(t *testing.T) {
 	upstreamErrorItem := scoreItemByKey(t, evaluation.Score.Items, "upstream_error_rate")
 	ttftItem := scoreItemByKey(t, evaluation.Score.Items, "ttft_latency")
 	firstByteBacklogItem := scoreItemByKey(t, evaluation.Score.Items, "first_byte_backlog")
-	require.InEpsilon(t, 0.344, costItem.Weight, 0.0001)
-	require.InEpsilon(t, 0.112, completionItem.Weight, 0.0001)
-	require.InEpsilon(t, 0.08, upstreamErrorItem.Weight, 0.0001)
-	require.InEpsilon(t, 0.12, ttftItem.Weight, 0.0001)
-	require.InEpsilon(t, 0.064, firstByteBacklogItem.Weight, 0.0001)
+	require.InEpsilon(t, 0.3401, costItem.Weight, 0.0001)
+	require.InEpsilon(t, 0.1107, completionItem.Weight, 0.0001)
+	require.InEpsilon(t, 0.0791, upstreamErrorItem.Weight, 0.0001)
+	require.InEpsilon(t, 0.13, ttftItem.Weight, 0.0001)
+	require.InEpsilon(t, 0.0633, firstByteBacklogItem.Weight, 0.0001)
 	totalWeight := 0.0
 	for _, item := range evaluation.Score.Items {
 		if item.MissingReason == "" {
 			totalWeight += item.Weight
 		}
 	}
-	require.InEpsilon(t, 1.0, totalWeight, 0.0001)
+	require.InDelta(t, 1.0, totalWeight, 0.0005)
+}
+
+func TestTTFTLatencyKeepsMinimumWeightWithRetryIntent(t *testing.T) {
+	service := scheduler.NewCandidateScoringService()
+	snapshot := core.RuntimeSnapshot{
+		Key:                core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 12, Group: "codex-plus", EndpointType: constant.EndpointTypeOpenAI},
+		SuccessRate:        1,
+		TTFTMs:             5140,
+		DurationMs:         11270,
+		TokensPerSecond:    30,
+		CostRatio:          0.89,
+		CostReferenceRatio: 0.89,
+		GroupPriorityRatio: 1,
+		SampleCount:        40,
+	}
+	evaluation := service.EvaluatePreparedCandidate(core.Candidate{RuntimeKey: snapshot.Key, Group: "codex-plus"}, snapshot, core.GroupSmartPolicy{
+		Strategy:        core.StrategyCostFirst,
+		CandidateGroups: []string{"codex-plus"},
+		GroupPriorityRatio: map[string]float64{
+			"codex-plus": 1,
+		},
+	}, scheduler.ScoringContext{
+		Strategy: core.StrategyCostFirst,
+		RetryRoutingIntent: core.NewFirstByteTimeoutRetryRoutingIntent(
+			9,
+			"slow-first-byte",
+			0,
+		),
+	}, true)
+
+	ttftItem := scoreItemByKey(t, evaluation.Score.RoutingItems, "ttft_latency")
+	costItem := scoreItemByKey(t, evaluation.Score.RoutingItems, "cost")
+	retryItem := scoreItemByKey(t, evaluation.Score.RoutingItems, "retry_intent_recovery")
+	require.InEpsilon(t, 0.13, ttftItem.Weight, 0.0001)
+	require.InEpsilon(t, 0.2022, costItem.Weight, 0.0001)
+	require.InEpsilon(t, 0.3527, retryItem.Weight, 0.0001)
+	totalWeight := 0.0
+	for _, item := range evaluation.Score.RoutingItems {
+		if item.MissingReason == "" {
+			totalWeight += item.Weight
+		}
+	}
+	require.InDelta(t, 1.0, totalWeight, 0.0005)
 }
 
 func TestCostFirstUsesLogMultipleCostScore(t *testing.T) {

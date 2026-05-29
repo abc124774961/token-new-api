@@ -115,6 +115,14 @@ type SchedulerSetting struct {
 	ProbeGoodBaselineWindowSeconds       int                                  `json:"probe_good_baseline_window_seconds"`
 	ProbePromptLibraryEnabled            bool                                 `json:"probe_prompt_library_enabled"`
 	ProbePromptCategories                []string                             `json:"probe_prompt_categories"`
+	RelayTotalTimeoutEnabled             bool                                 `json:"relay_total_timeout_enabled"`
+	RelayTotalTimeoutSeconds             int                                  `json:"relay_total_timeout_seconds"`
+	ChannelTimeoutDegradeEnabled         bool                                 `json:"channel_timeout_degrade_enabled"`
+	ChannelTimeoutDegradeWindowSeconds   int                                  `json:"channel_timeout_degrade_window_seconds"`
+	ChannelTimeoutDegradeMinSamples      int                                  `json:"channel_timeout_degrade_min_samples"`
+	ChannelTimeoutDegradeThreshold       float64                              `json:"channel_timeout_degrade_threshold"`
+	ChannelTimeoutDegradeConsecutive     int                                  `json:"channel_timeout_degrade_consecutive"`
+	ChannelTimeoutRecoveryProbeSuccesses int                                  `json:"channel_timeout_recovery_probe_successes"`
 	CostCalculationEnabled               bool                                 `json:"cost_calculation_enabled"`
 	CostCalculationIntervalSeconds       int                                  `json:"cost_calculation_interval_seconds"`
 	CostCalculationWorkerCount           int                                  `json:"cost_calculation_worker_count"`
@@ -205,6 +213,14 @@ var schedulerSetting = SchedulerSetting{
 	ProbeGoodBaselineWindowSeconds:       86400,
 	ProbePromptLibraryEnabled:            true,
 	ProbePromptCategories:                []string{"short", "zh", "medium", "long"},
+	RelayTotalTimeoutEnabled:             true,
+	RelayTotalTimeoutSeconds:             180,
+	ChannelTimeoutDegradeEnabled:         true,
+	ChannelTimeoutDegradeWindowSeconds:   600,
+	ChannelTimeoutDegradeMinSamples:      5,
+	ChannelTimeoutDegradeThreshold:       0.4,
+	ChannelTimeoutDegradeConsecutive:     3,
+	ChannelTimeoutRecoveryProbeSuccesses: 2,
 	CostCalculationEnabled:               true,
 	CostCalculationIntervalSeconds:       5,
 	CostCalculationWorkerCount:           2,
@@ -348,6 +364,14 @@ func defaultSchedulerSetting() SchedulerSetting {
 	setting.ProbeGoodBaselineWindowSeconds = 86400
 	setting.ProbePromptLibraryEnabled = true
 	setting.ProbePromptCategories = []string{"short", "zh", "medium", "long"}
+	setting.RelayTotalTimeoutEnabled = true
+	setting.RelayTotalTimeoutSeconds = 180
+	setting.ChannelTimeoutDegradeEnabled = true
+	setting.ChannelTimeoutDegradeWindowSeconds = 600
+	setting.ChannelTimeoutDegradeMinSamples = 5
+	setting.ChannelTimeoutDegradeThreshold = 0.4
+	setting.ChannelTimeoutDegradeConsecutive = 3
+	setting.ChannelTimeoutRecoveryProbeSuccesses = 2
 	setting.CostCalculationEnabled = true
 	setting.CostCalculationIntervalSeconds = 5
 	setting.CostCalculationWorkerCount = 2

@@ -24,6 +24,8 @@ const (
 	scoreCategoryFormula  = "formula"
 )
 
+const scoreItemTTFTLatencyMinWeight = 0.13
+
 type StrategyProfile struct {
 	Strategy      string
 	Weights       map[string]float64
