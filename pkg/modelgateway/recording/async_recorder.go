@@ -387,7 +387,7 @@ func channelAccountUsageEventFromDispatch(record core.DispatchRecord) model.Chan
 
 func channelAccountUsageEventFromAttempt(result core.AttemptResult) model.ChannelAccountUsageEvent {
 	observedAt := result.ObservedAt.Unix()
-	if observedAt == 0 {
+	if observedAt <= 0 {
 		observedAt = time.Now().Unix()
 	}
 	event := model.ChannelAccountUsageEvent{

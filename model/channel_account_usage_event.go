@@ -92,7 +92,9 @@ func UpsertChannelAccountUsageAttempt(event ChannelAccountUsageEvent) error {
 	updates := baseChannelAccountUsageAssignments(event)
 	addChannelAccountUsageIdentityAssignments(updates, event)
 	addChannelAccountUsageRequestAssignments(updates, event)
-	updates["completed_at"] = event.CompletedAt
+	if event.CompletedAt > 0 {
+		updates["completed_at"] = event.CompletedAt
+	}
 	updates["success"] = event.Success
 	updates["status_code"] = event.StatusCode
 	updates["error_category"] = event.ErrorCategory
@@ -199,10 +201,10 @@ func queryChannelAccountUsageWindowAggregate(channelID int, window string, since
 				"COALESCE(SUM(upstream_cost_total), 0) AS upstream_cost_total, "+
 				"COALESCE(AVG(CASE WHEN duration_ms > 0 THEN duration_ms ELSE NULL END), 0) AS avg_duration_ms, "+
 				"COALESCE(AVG(CASE WHEN ttft_ms > 0 THEN ttft_ms ELSE NULL END), 0) AS avg_ttft_ms, "+
-				"COALESCE(MAX(completed_at), 0) AS last_active_at",
+				"COALESCE(MAX("+channelAccountUsageEffectiveCompletedAtExpr()+"), 0) AS last_active_at",
 			window, true, true, ModelGatewayUserRequestErrorTimeout, 408, 504, 524,
 		).
-		Where("channel_id = ? AND completed_at >= ?", channelID, since).
+		Where(channelAccountUsageWindowWhere(), channelAccountUsageWindowWhereArgs(channelID, since)...).
 		Group("account_identity_key, credential_index")
 	if !includeHealthProbes {
 		query = query.Where("is_health_probe = ?", false)
@@ -220,7 +222,8 @@ func queryChannelAccountUsageTopErrors(channelID int, window string, since int64
 	rows := make([]row, 0)
 	query := DB.Model(&ChannelAccountUsageEvent{}).
 		Select("account_identity_key, credential_index, error_category, COUNT(*) AS error_count").
-		Where("channel_id = ? AND completed_at >= ? AND success = ? AND error_category <> ?", channelID, since, false, "").
+		Where(channelAccountUsageWindowWhere(), channelAccountUsageWindowWhereArgs(channelID, since)...).
+		Where("success = ? AND error_category <> ?", false, "").
 		Group("account_identity_key, credential_index, error_category").
 		Order("error_count DESC")
 	if !includeHealthProbes {
@@ -244,6 +247,18 @@ func queryChannelAccountUsageTopErrors(channelID int, window string, since int64
 		}
 	}
 	return result, nil
+}
+
+func channelAccountUsageEffectiveCompletedAtExpr() string {
+	return "CASE WHEN completed_at > 0 THEN completed_at WHEN updated_at > 0 THEN updated_at ELSE created_at END"
+}
+
+func channelAccountUsageWindowWhere() string {
+	return "channel_id = ? AND (completed_at >= ? OR (completed_at <= 0 AND (success = ? OR status_code <> ? OR total_tokens > ? OR quota <> ? OR error_category <> ?) AND (updated_at >= ? OR (updated_at <= 0 AND created_at >= ?))))"
+}
+
+func channelAccountUsageWindowWhereArgs(channelID int, since int64) []any {
+	return []any{channelID, since, true, 0, 0, 0, "", since, since}
 }
 
 func upsertChannelAccountUsageEvent(event ChannelAccountUsageEvent, updates map[string]any) error {
@@ -292,6 +307,9 @@ func normalizeChannelAccountUsageEvent(event ChannelAccountUsageEvent) ChannelAc
 	}
 	if event.CredentialIndex < 0 {
 		event.CredentialIndex = unknownChannelAccountCredentialIndex
+	}
+	if event.CompletedAt < 0 {
+		event.CompletedAt = 0
 	}
 	if event.CreatedAt <= 0 {
 		event.CreatedAt = now

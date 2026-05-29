@@ -127,6 +127,38 @@ func TestChannelAccountUsageEventUpsertsMergeOutOfOrderRequestStages(t *testing.
 	require.InEpsilon(t, 360, aggregates[0].AvgTTFTMs, 0.0001)
 }
 
+func TestChannelAccountUsageAttemptDoesNotOverwritePositiveCompletedAtWithInvalidValue(t *testing.T) {
+	db := setupChannelAccountUsageEventTestDB(t)
+	requestID := "req-account-usage-invalid-completed-at"
+
+	require.NoError(t, UpsertChannelAccountUsageBilling(ChannelAccountUsageEvent{
+		RequestId:        requestID,
+		ChannelID:        42,
+		CredentialIndex:  2,
+		CompletedAt:      110,
+		PromptTokens:     12,
+		CompletionTokens: 8,
+		TotalTokens:      20,
+		Quota:            200,
+	}))
+	require.NoError(t, UpsertChannelAccountUsageAttempt(ChannelAccountUsageEvent{
+		RequestId:       requestID,
+		ChannelID:       42,
+		CredentialIndex: 2,
+		CompletedAt:     -62135596800,
+		Success:         true,
+		StatusCode:      http.StatusOK,
+		DurationMs:      1500,
+	}))
+
+	var row ChannelAccountUsageEvent
+	require.NoError(t, db.First(&row, "request_id = ?", requestID).Error)
+	require.Equal(t, int64(110), row.CompletedAt)
+	require.True(t, row.Success)
+	require.Equal(t, http.StatusOK, row.StatusCode)
+	require.Equal(t, int64(1500), row.DurationMs)
+}
+
 func TestChannelAccountUsageWindowAggregatesExcludeHealthProbes(t *testing.T) {
 	db := setupChannelAccountUsageEventTestDB(t)
 	require.NoError(t, db.Create(&[]ChannelAccountUsageEvent{
@@ -164,4 +196,44 @@ func TestChannelAccountUsageWindowAggregatesExcludeHealthProbes(t *testing.T) {
 	require.Len(t, aggregates, 1)
 	require.Equal(t, int64(2), aggregates[0].Requests)
 	require.Equal(t, int64(1019), aggregates[0].TotalTokens)
+}
+
+func TestChannelAccountUsageWindowAggregatesFallbackToCreatedAtForInvalidCompletedAt(t *testing.T) {
+	db := setupChannelAccountUsageEventTestDB(t)
+	require.NoError(t, db.Create(&[]ChannelAccountUsageEvent{
+		{
+			RequestId:          "req-invalid-completed",
+			CreatedAt:          100,
+			UpdatedAt:          -62135596800,
+			ChannelID:          77,
+			CredentialIndex:    0,
+			AccountIdentityKey: "account-a",
+			CompletedAt:        -62135596800,
+			Success:            true,
+			StatusCode:         http.StatusOK,
+			TotalTokens:        20,
+			Quota:              200,
+		},
+		{
+			RequestId:          "req-pending-dispatch",
+			CreatedAt:          120,
+			UpdatedAt:          120,
+			ChannelID:          77,
+			CredentialIndex:    0,
+			AccountIdentityKey: "account-a",
+			CompletedAt:        0,
+		},
+	}).Error)
+
+	aggregates, err := QueryChannelAccountUsageWindowAggregates(77, []ChannelAccountUsageWindowSpec{{Name: "today", Since: 90}}, false)
+	require.NoError(t, err)
+	require.Len(t, aggregates, 1)
+	require.Equal(t, int64(1), aggregates[0].Requests)
+	require.Equal(t, int64(20), aggregates[0].TotalTokens)
+	require.Equal(t, int64(200), aggregates[0].Quota)
+	require.Equal(t, int64(100), aggregates[0].LastActiveAt)
+
+	aggregates, err = QueryChannelAccountUsageWindowAggregates(77, []ChannelAccountUsageWindowSpec{{Name: "today", Since: 110}}, false)
+	require.NoError(t, err)
+	require.Empty(t, aggregates)
 }

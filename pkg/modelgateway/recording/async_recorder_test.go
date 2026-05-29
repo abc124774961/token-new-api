@@ -109,6 +109,22 @@ func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 	require.Equal(t, []string{core.DispatchFilterConditionCodexImageGenerationTool}, requestMeta.CandidateFilterConditions)
 }
 
+func TestChannelAccountUsageEventFromAttemptUsesCurrentTimeWhenObservedAtUnset(t *testing.T) {
+	before := time.Now().Unix()
+	event := channelAccountUsageEventFromAttempt(core.AttemptResult{
+		RequestID:  "req-no-observed-at",
+		ChannelID:  22,
+		Success:    true,
+		StatusCode: 200,
+	})
+	after := time.Now().Unix()
+
+	require.GreaterOrEqual(t, event.CompletedAt, before)
+	require.LessOrEqual(t, event.CompletedAt, after)
+	require.Greater(t, event.CreatedAt, int64(0))
+	require.Greater(t, event.UpdatedAt, int64(0))
+}
+
 func TestAsyncExecutionRecorderRecordsRetryRoutingIntentMeta(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
