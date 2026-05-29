@@ -723,6 +723,21 @@
   font-weight: 700;
 }
 
+.ct-model-gateway-user-request-probe-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid rgba(213, 222, 235, 0.88);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #526174;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .ct-model-gateway-user-request-search {
   width: 250px;
 }
@@ -1929,6 +1944,10 @@
 
   .ct-model-gateway-user-request-list-actions {
     flex-wrap: wrap;
+  }
+
+  .ct-model-gateway-user-request-probe-toggle {
+    flex: 1 1 180px;
   }
 
   .ct-model-gateway-user-request-pagination {

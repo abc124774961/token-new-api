@@ -36,6 +36,7 @@ import {
   Select,
   SideSheet,
   Skeleton,
+  Switch,
   Table,
   Tag,
   TextArea,
@@ -1034,8 +1035,12 @@ function isLatencyWarning(value, thresholds) {
   return Number(value || 0) >= thresholds.warning;
 }
 
+function isHealthProbeRecord(record) {
+  return Boolean(record?.is_health_probe || record?.request_meta?.is_health_probe);
+}
+
 function getStatusMeta(record, t) {
-  if (record?.is_health_probe || record?.request_meta?.is_health_probe) {
+  if (isHealthProbeRecord(record)) {
     if (record?.success) {
       return { color: 'cyan', label: t('健康探活') };
     }
@@ -4532,6 +4537,7 @@ function UserRequestRecentTable({
     Math.floor(Date.now() / 1000),
   );
   const [query, setQuery] = useState('');
+  const [showHealthProbes, setShowHealthProbes] = useState(false);
   const [page, setPage] = useState(1);
   const [jumpPage, setJumpPage] = useState('1');
   const hasProcessing = useMemo(
@@ -4550,9 +4556,10 @@ function UserRequestRecentTable({
   const filteredItems = useMemo(
     () =>
       [...(records || [])]
+        .filter((record) => showHealthProbes || !isHealthProbeRecord(record))
         .filter((record) => userRequestMatchesQuery(record, query))
         .sort(compareUserRequestsForDisplay),
-    [query, records],
+    [query, records, showHealthProbes],
   );
   const totalPages = Math.max(
     1,
@@ -4566,7 +4573,7 @@ function UserRequestRecentTable({
 
   useEffect(() => {
     setPage(1);
-  }, [query, records]);
+  }, [query, records, showHealthProbes]);
 
   useEffect(() => {
     setJumpPage(String(currentPage));
@@ -4614,6 +4621,14 @@ function UserRequestRecentTable({
           <p>{t('按时间倒序展示最近的请求记录')}</p>
         </div>
         <div className='ct-model-gateway-user-request-list-actions'>
+          <label className='ct-model-gateway-user-request-probe-toggle'>
+            <Switch
+              size='small'
+              checked={showHealthProbes}
+              onChange={setShowHealthProbes}
+            />
+            <span>{t('显示探活数据')}</span>
+          </label>
           <Input
             value={query}
             onChange={setQuery}
