@@ -3805,7 +3805,9 @@ func applyModelGatewayUserRequestAccumulator(accumulator *modelGatewayUserReques
 	}
 	clientAborted := modelGatewayUserRequestClientAborted(userRequest)
 	if clientAborted {
-		accumulator.ClientAborted++
+		if !isHealthProbe {
+			accumulator.ClientAborted++
+		}
 	} else if userRequest.FinalSuccess && !isHealthProbe {
 		accumulator.Successes++
 	} else if !isHealthProbe {
@@ -6413,6 +6415,12 @@ func hasModelGatewayScoreTotalSample(record model.ModelExecutionRecord) bool {
 func successRateModelGatewayObservability(successes int64, attempts int64) float64 {
 	if attempts <= 0 {
 		return 0
+	}
+	if successes < 0 {
+		successes = 0
+	}
+	if successes > attempts {
+		successes = attempts
 	}
 	return roundModelGatewayObservabilityFloat(float64(successes) / float64(attempts))
 }

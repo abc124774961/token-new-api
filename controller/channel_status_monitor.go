@@ -1136,7 +1136,9 @@ func applyChannelMonitorUserRequestRow(stats *channelMonitorLogStats, row model.
 		stats.latencyCount++
 	}
 	if status == "client_aborted" {
-		stats.clientAborted++
+		if !row.IsHealthProbe {
+			stats.clientAborted++
+		}
 		return
 	}
 	if row.FinalSuccess {
@@ -1682,6 +1684,12 @@ func channelMonitorUserSuccessRate(successes, requests, clientAborted, healthPro
 func successRate(successes, requests int64) float64 {
 	if requests <= 0 {
 		return 0
+	}
+	if successes < 0 {
+		successes = 0
+	}
+	if successes > requests {
+		successes = requests
 	}
 	return float64(successes) / float64(requests) * 100
 }

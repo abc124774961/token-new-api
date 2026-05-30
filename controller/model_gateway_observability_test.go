@@ -1282,6 +1282,55 @@ func TestBuildModelGatewayObservabilitySummaryIncludesHealthProbeUserRequestsByD
 	require.Equal(t, int64(0), trend.FinalFailures)
 }
 
+func TestBuildModelGatewayUserRequestObservabilityDoesNotDoubleSubtractAbortedHealthProbe(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+
+	require.NoError(t, db.Create(&[]model.ModelGatewayUserRequestSummary{
+		{
+			CreatedAt:      now - 20,
+			UpdatedAt:      now - 19,
+			CompletedAt:    now - 18,
+			RequestId:      "req-user-success",
+			RequestedGroup: "auto",
+			SelectedGroup:  "vip",
+			RequestedModel: "gpt-5.5",
+			FinalSuccess:   true,
+			DurationMs:     500,
+			TTFTMs:         100,
+		},
+		{
+			CreatedAt:          now - 15,
+			UpdatedAt:          now - 14,
+			CompletedAt:        now - 13,
+			RequestId:          "req-probe-aborted",
+			RequestedGroup:     "auto",
+			SelectedGroup:      "vip",
+			RequestedModel:     "gpt-5.5",
+			FinalStatusCode:    relayStatusClientClosedRequest,
+			FinalErrorCategory: model.ModelGatewayUserRequestErrorClientAborted,
+			ClientAborted:      true,
+			IsHealthProbe:      true,
+			ProbeReason:        "failure_avoidance",
+		},
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+		ViewMode:    "user_requests",
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), response.UserRequests.Summary.TotalRequests)
+	require.Equal(t, int64(1), response.UserRequests.Summary.HealthProbes)
+	require.Equal(t, int64(1), response.UserRequests.Summary.UserRequests)
+	require.Equal(t, int64(0), response.UserRequests.Summary.ClientAborted)
+	require.Equal(t, int64(1), response.UserRequests.Summary.Successes)
+	require.Equal(t, 1.0, response.UserRequests.Summary.UserSuccessRate)
+}
+
 func TestBuildModelGatewayUserRequestObservabilityAttachesChannelWarning(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()

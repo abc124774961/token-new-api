@@ -408,6 +408,43 @@ func TestChannelMonitorItemSuccessRateExcludesClientAbortAndHealthProbe(t *testi
 	require.InDelta(t, 66.6667, item.SuccessRate, 0.0001)
 }
 
+func TestChannelMonitorUserSuccessRateNeverExceedsHundred(t *testing.T) {
+	require.Equal(t, float64(100), channelMonitorUserSuccessRate(2, 2, 1, 0))
+}
+
+func TestChannelMonitorUserRequestStatsDoNotDoubleSubtractAbortedHealthProbe(t *testing.T) {
+	rows := []model.ModelGatewayUserRequestSummary{
+		{
+			Id:             1,
+			RequestId:      "req-success",
+			CompletedAt:    100,
+			RequestedGroup: "codex-pro",
+			FinalChannelID: 10,
+			FinalSuccess:   true,
+		},
+		{
+			Id:                 2,
+			RequestId:          "req-probe-aborted",
+			CompletedAt:        101,
+			RequestedGroup:     "codex-pro",
+			FinalChannelID:     10,
+			FinalErrorCategory: model.ModelGatewayUserRequestErrorClientAborted,
+			FinalStatusCode:    relayStatusClientClosedRequest,
+			ClientAborted:      true,
+			IsHealthProbe:      true,
+		},
+	}
+
+	stats := buildChannelMonitorUserRequestStats(rows)
+	groupStats := stats.byGroup["codex-pro"]
+	require.NotNil(t, groupStats)
+	require.EqualValues(t, 2, groupStats.requests)
+	require.EqualValues(t, 1, groupStats.healthProbes)
+	require.EqualValues(t, 0, groupStats.clientAborted)
+	require.EqualValues(t, 1, groupStats.successes)
+	require.Equal(t, float64(100), channelMonitorUserSuccessRate(groupStats.successes, groupStats.requests, groupStats.clientAborted, groupStats.healthProbes))
+}
+
 func TestChannelMonitorRuntimeDoesNotFillUserRequestHistory(t *testing.T) {
 	channel := &model.Channel{
 		Id:     30,
