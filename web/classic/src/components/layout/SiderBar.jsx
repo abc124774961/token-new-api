@@ -36,6 +36,7 @@ const routerMap = {
   channel_balance_monitor: '/console/channel-balance-monitor',
   channel_health_check: '/console/channel-health-check',
   channel_proxy: '/console/channel-proxies',
+  profit_monitor: '/console/profit-monitor',
   channel_status: '/console/channel-status',
   model_gateway: '/console/model-gateway',
   token: '/console/token',
@@ -202,6 +203,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('代理管理'),
         itemKey: 'channel_proxy',
         to: '/channel-proxies',
+        className: isAdminUser ? '' : 'tableHiddle',
+      },
+      {
+        text: t('盈利监控台'),
+        itemKey: 'profit_monitor',
+        to: '/profit-monitor',
         className: isAdminUser ? '' : 'tableHiddle',
       },
       {

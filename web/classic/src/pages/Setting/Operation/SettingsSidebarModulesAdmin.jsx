@@ -69,6 +69,7 @@ export default function SettingsSidebarModulesAdmin(props) {
       channel_balance_monitor: true,
       channel_health_check: true,
       channel_proxy: true,
+      profit_monitor: true,
       models: true,
       deployment: true,
       redemption: true,
@@ -137,6 +138,7 @@ export default function SettingsSidebarModulesAdmin(props) {
         channel_balance_monitor: true,
         channel_health_check: true,
         channel_proxy: true,
+        profit_monitor: true,
         models: true,
         deployment: true,
         redemption: true,
@@ -284,6 +286,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'channel_proxy',
           title: t('代理管理'),
           description: t('渠道账号代理资源管理'),
+        },
+        {
+          key: 'profit_monitor',
+          title: t('盈利监控台'),
+          description: t('经营利润和资源成本监控'),
         },
         { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
         {

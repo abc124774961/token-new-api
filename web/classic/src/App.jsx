@@ -36,6 +36,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const ChannelStatus = lazy(() => import('./pages/ChannelStatus'));
 const ModelGateway = lazy(() => import('./pages/ModelGateway'));
 const ChannelHealthCheck = lazy(() => import('./pages/ChannelHealthCheck'));
+const ProfitMonitor = lazy(() => import('./pages/ProfitMonitor'));
 const About = lazy(() => import('./pages/About'));
 const UserAgreement = lazy(() => import('./pages/UserAgreement'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
@@ -216,6 +217,19 @@ function App() {
                   key={location.pathname}
                 >
                   <ChannelHealthCheck />
+                </Suspense>
+              </AdminRoute>
+            }
+          />
+          <Route
+            path='/console/profit-monitor'
+            element={
+              <AdminRoute>
+                <Suspense
+                  fallback={<Loading></Loading>}
+                  key={location.pathname}
+                >
+                  <ProfitMonitor />
                 </Suspense>
               </AdminRoute>
             }

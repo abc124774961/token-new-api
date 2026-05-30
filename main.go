@@ -24,6 +24,7 @@ import (
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayrealtime "github.com/QuantumNous/new-api/pkg/modelgateway/observability/realtime"
 	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
+	modelgatewaytraffic "github.com/QuantumNous/new-api/pkg/modelgateway/traffic"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/router"
@@ -338,6 +339,7 @@ func InitResources() error {
 	defer modelgatewayintegration.CloseRuntimeEventSubscriber()
 
 	perfmetrics.Init()
+	modelgatewaytraffic.Init()
 
 	// 启动系统监控
 	common.StartSystemMonitor()
