@@ -30,6 +30,10 @@ import {
 import { API, showError, showSuccess } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
 import { StatusContext } from '../../../context/Status';
+import {
+  DEFAULT_HEADER_NAV_MODULES,
+  normalizeHeaderNavModules,
+} from '../../../constants/header-nav.constants';
 
 const { Text } = Typography;
 
@@ -39,16 +43,9 @@ export default function SettingsHeaderNavModules(props) {
   const [statusState, statusDispatch] = useContext(StatusContext);
 
   // 顶栏模块管理状态
-  const [headerNavModules, setHeaderNavModules] = useState({
-    home: true,
-    console: true,
-    pricing: {
-      enabled: true,
-      requireAuth: false, // 默认不需要登录鉴权
-    },
-    docs: true,
-    about: true,
-  });
+  const [headerNavModules, setHeaderNavModules] = useState(() =>
+    normalizeHeaderNavModules(DEFAULT_HEADER_NAV_MODULES),
+  );
 
   // 处理顶栏模块配置变更
   function handleHeaderNavModuleChange(moduleKey) {
@@ -79,17 +76,7 @@ export default function SettingsHeaderNavModules(props) {
 
   // 重置顶栏模块为默认配置
   function resetHeaderNavModules() {
-    const defaultModules = {
-      home: true,
-      console: true,
-      pricing: {
-        enabled: true,
-        requireAuth: false,
-      },
-      docs: true,
-      about: true,
-    };
-    setHeaderNavModules(defaultModules);
+    setHeaderNavModules(normalizeHeaderNavModules(DEFAULT_HEADER_NAV_MODULES));
     showSuccess(t('已重置为默认配置'));
   }
 
@@ -132,30 +119,14 @@ export default function SettingsHeaderNavModules(props) {
     // 从 props.options 中获取配置
     if (props.options && props.options.HeaderNavModules) {
       try {
-        const modules = JSON.parse(props.options.HeaderNavModules);
-
-        // 处理向后兼容性：如果pricing是boolean，转换为对象格式
-        if (typeof modules.pricing === 'boolean') {
-          modules.pricing = {
-            enabled: modules.pricing,
-            requireAuth: false, // 默认不需要登录鉴权
-          };
-        }
-
-        setHeaderNavModules(modules);
+        setHeaderNavModules(
+          normalizeHeaderNavModules(JSON.parse(props.options.HeaderNavModules)),
+        );
       } catch (error) {
         // 使用默认配置
-        const defaultModules = {
-          home: true,
-          console: true,
-          pricing: {
-            enabled: true,
-            requireAuth: false,
-          },
-          docs: true,
-          about: true,
-        };
-        setHeaderNavModules(defaultModules);
+        setHeaderNavModules(
+          normalizeHeaderNavModules(DEFAULT_HEADER_NAV_MODULES),
+        );
       }
     }
   }, [props.options]);
@@ -187,6 +158,11 @@ export default function SettingsHeaderNavModules(props) {
       key: 'about',
       title: t('关于'),
       description: t('关于系统的详细信息'),
+    },
+    {
+      key: 'integrationDocs',
+      title: t('接入文档'),
+      description: t('统一接入 Codex 等客户端的说明'),
     },
   ];
 

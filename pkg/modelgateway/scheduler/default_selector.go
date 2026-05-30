@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/service"
@@ -1493,6 +1494,9 @@ func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapsh
 	}
 	if candidate.Channel != nil && service.IsRuntimeBalanceInsufficientChannelID(candidate.Channel.Id) {
 		return service.ChannelStatusReasonBalanceInsufficient
+	}
+	if candidate.Channel != nil && candidate.Channel.Status != 0 && candidate.Channel.Status != common.ChannelStatusEnabled {
+		return "channel_disabled"
 	}
 	if candidate.Channel != nil && service.IsChannelSelectionSkipped(c, candidate.Channel.Id) {
 		return "already_failed_in_request"

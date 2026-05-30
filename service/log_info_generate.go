@@ -240,6 +240,39 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other map[string]interf
 		other["dynamic_billing_applied"] = snapshot.Applied
 		other["dynamic_billing_group"] = snapshot.Group
 		other["dynamic_billing_static_group_ratio"] = snapshot.StaticGroupRatio
+		if snapshot.CostSource != "" {
+			other["dynamic_billing_cost_source"] = snapshot.CostSource
+		}
+		if snapshot.ApplyMode != "" {
+			other["dynamic_billing_apply_mode"] = snapshot.ApplyMode
+		}
+		if snapshot.ApplyReason != "" {
+			other["dynamic_billing_apply_reason"] = snapshot.ApplyReason
+		}
+		if snapshot.OperatingCostUSD > 0 {
+			other["dynamic_billing_operating_cost_usd"] = snapshot.OperatingCostUSD
+		}
+		if snapshot.RequiredRevenueUSD > 0 {
+			other["dynamic_billing_required_revenue_usd"] = snapshot.RequiredRevenueUSD
+		}
+		if snapshot.BaseQuotaAtRatio1 > 0 {
+			other["dynamic_billing_base_quota_at_ratio_1"] = snapshot.BaseQuotaAtRatio1
+		}
+		if snapshot.CostMultiplier > 0 {
+			other["dynamic_billing_cost_multiplier"] = snapshot.CostMultiplier
+		}
+		if snapshot.TargetRatio > 0 {
+			other["dynamic_billing_target_ratio"] = snapshot.TargetRatio
+		}
+		if snapshot.EffectiveRatio > 0 {
+			other["dynamic_billing_effective_ratio"] = snapshot.EffectiveRatio
+		}
+		if snapshot.Clamped {
+			other["dynamic_billing_clamped"] = true
+		}
+		if snapshot.PendingManualConfirm {
+			other["dynamic_billing_pending_manual_confirm"] = true
+		}
 		if snapshot.Applied {
 			other["billing_mode"] = "model_gateway_dynamic"
 			other["billing_source_detail"] = "dynamic_group_ratio"
@@ -252,6 +285,15 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other map[string]interf
 			other["dynamic_billing_calculated_at"] = snapshot.CalculatedAt
 			other["dynamic_billing_window_start"] = snapshot.WindowStart
 			other["dynamic_billing_window_end"] = snapshot.WindowEnd
+			if snapshot.RequestCount > 0 {
+				other["dynamic_billing_request_count"] = snapshot.RequestCount
+			}
+			if snapshot.SuccessRequestCount > 0 {
+				other["dynamic_billing_success_request_count"] = snapshot.SuccessRequestCount
+			}
+			if snapshot.TotalTokens > 0 {
+				other["dynamic_billing_total_tokens"] = snapshot.TotalTokens
+			}
 		} else if snapshot.FallbackReason != "" {
 			other["dynamic_billing_fallback"] = true
 			other["dynamic_fallback_reason"] = snapshot.FallbackReason

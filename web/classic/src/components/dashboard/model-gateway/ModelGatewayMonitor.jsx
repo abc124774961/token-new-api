@@ -2902,6 +2902,7 @@ function dynamicBillingSummaryLabel(billing, t) {
       billing.dynamic_billing_price_per_m > 0
         ? `${formatUsdCostAmount(billing.dynamic_billing_price_per_m)}/M`
         : '',
+      dynamicBillingApplyReasonLabel(billing.dynamic_billing_apply_reason, t),
     ]
       .filter(Boolean)
       .join(' · ');
@@ -2910,6 +2911,18 @@ function dynamicBillingSummaryLabel(billing, t) {
     return `${t('回退静态')} ${billing.dynamic_fallback_reason || ''}`.trim();
   }
   return '';
+}
+
+function dynamicBillingApplyReasonLabel(reason, t) {
+  switch (String(reason || '').trim()) {
+    case 'step_change_auto_applied':
+      return `${t('自动应用')} · ${t('变化过大')}`;
+    case 'manual_mode_auto_applied':
+    case 'auto_applied':
+      return t('自动应用');
+    default:
+      return '';
+  }
 }
 
 function dynamicBillingOverviewFromData(data) {
@@ -2958,6 +2971,21 @@ function formatDynamicBillingOverviewStatus(status, t) {
       return t('结果过期');
     case 'global_disabled':
       return t('全局未启用');
+    case 'manual_confirm':
+    case 'manual_confirm_required':
+      return t('自动应用');
+    case 'observe_mode':
+      return t('仅观测');
+    case 'step_change_too_large':
+      return t('自动应用');
+    case 'insufficient_usage':
+      return t('样本不足');
+    case 'no_cost_data':
+      return t('成本缺失');
+    case 'base_quota_missing':
+      return t('基础计费缺失');
+    case 'traffic_not_ready':
+      return t('流量成本未就绪');
     case 'waiting_samples':
     default:
       return t('等待样本');
@@ -2967,21 +2995,35 @@ function formatDynamicBillingOverviewStatus(status, t) {
 function dynamicBillingOverviewStatusRank(status) {
   switch (status) {
     case 'active':
+    case 'manual_confirm':
+    case 'manual_confirm_required':
+    case 'step_change_too_large':
       return 0;
-    case 'waiting_samples':
+    case 'observe_mode':
       return 1;
-    case 'expired':
+    case 'waiting_samples':
+    case 'insufficient_usage':
+    case 'no_cost_data':
+    case 'base_quota_missing':
+    case 'traffic_not_ready':
       return 2;
+    case 'expired':
+      return 3;
     case 'global_disabled':
     default:
-      return 3;
+      return 4;
   }
 }
 
 function dynamicBillingOverviewStatusClassName(status) {
   switch (status) {
     case 'active':
+    case 'manual_confirm':
+    case 'manual_confirm_required':
+    case 'step_change_too_large':
       return 'is-active';
+    case 'observe_mode':
+      return 'is-waiting';
     case 'expired':
       return 'is-expired';
     case 'global_disabled':
@@ -3101,6 +3143,10 @@ function formatDynamicBillingCostPriceCompact(item, overview) {
 
 function formatDynamicBillingCostRatioCurrent(item, overview) {
   if (!item) return '--';
+  const costMultiplier = safeNumber(item.cost_multiplier);
+  if (costMultiplier > 0) {
+    return formatCostRatio(costMultiplier);
+  }
   const factor = dynamicBillingCostFactor(overview);
   const currentRatio = safeNumber(item.current_ratio);
   if (currentRatio > 0) {
@@ -3136,6 +3182,10 @@ function formatDynamicBillingCostPriceAverage(item, overview) {
 
 function formatDynamicBillingCostRatioAverage(item, overview) {
   if (!item) return '--';
+  const costMultiplier = safeNumber(item.cost_multiplier);
+  if (costMultiplier > 0) {
+    return formatCostRatio(costMultiplier);
+  }
   const factor = dynamicBillingCostFactor(overview);
   const blendedRatio = safeNumber(item.blended_ratio);
   if (blendedRatio > 0) {
@@ -3146,6 +3196,17 @@ function formatDynamicBillingCostRatioAverage(item, overview) {
     return formatCostRatio(averageRatio / factor);
   }
   return formatDynamicBillingCostRatioCurrent(item, overview);
+}
+
+function dynamicBillingCostSourceLabel(source, t) {
+  switch (String(source || '').trim()) {
+    case 'profit_24h':
+      return t('24h 盈利经营成本');
+    case 'sample_cost':
+      return t('近期上游成本样本');
+    default:
+      return '';
+  }
 }
 
 function billingPromptTokens(billing) {
@@ -3516,6 +3577,7 @@ function UserRequestCostTooltip({ billing, t }) {
         billing.dynamic_billing_price_per_m > 0
           ? `${formatUsdCostAmount(billing.dynamic_billing_price_per_m)}/M`
           : '',
+        dynamicBillingApplyReasonLabel(billing.dynamic_billing_apply_reason, t),
       ]
         .filter(Boolean)
         .join(' · '),
@@ -4389,6 +4451,20 @@ function DynamicBillingMiniPanel({
     primary?.reference_model || primary?.current_model || '',
   ).trim();
   const priceLabel = averageMode ? t('均价') : t('参考价');
+  const costSourceLabel =
+    dynamicBillingCostSourceLabel(primary?.cost_source, t) ||
+    dynamicBillingCostSourceLabel(overview?.cost_source, t);
+  const statusLabel = formatDynamicBillingOverviewStatus(primary?.status, t);
+  const upstreamCost = safeNumber(primary?.upstream_cost_usd);
+  const requiredRevenue = safeNumber(primary?.required_revenue_usd);
+  const costMultiplierRatio = safeNumber(primary?.cost_multiplier);
+  const profitMarkupRatio =
+    upstreamCost > 0 && requiredRevenue > 0
+      ? requiredRevenue / upstreamCost
+      : dynamicBillingCostFactor(overview);
+  const targetRatio = safeNumber(
+    primary?.effective_ratio || primary?.target_ratio,
+  );
   const refreshCountdown = countdownEnabled
     ? dynamicBillingRemainingSeconds(
         primary?.latest_calculated_at,
@@ -4396,6 +4472,41 @@ function DynamicBillingMiniPanel({
         countdownNow,
       )
     : 0;
+  const statusClassName = dynamicBillingOverviewStatusClassName(
+    primary?.status,
+  );
+  const profitDetailRows =
+    primary?.cost_source === 'profit_24h'
+      ? [
+          {
+            label: t('上游成本'),
+            value:
+              upstreamCost > 0
+                ? `${formatUsdCostAmount(upstreamCost)}${
+                    targetRatio > 0 ? ` · ${formatCostRatio(targetRatio)}` : ''
+                  }`
+                : '--',
+          },
+          {
+            label: t('成本倍率'),
+            value:
+              costMultiplierRatio > 0
+                ? formatCostRatio(costMultiplierRatio)
+                : '--',
+          },
+          {
+            label: t('利润加成'),
+            value:
+              profitMarkupRatio > 0 ? formatCostRatio(profitMarkupRatio) : '--',
+          },
+        ]
+      : [];
+  const costRow = (
+    <div className='ct-model-gateway-dynamic-mini-cost-row'>
+      <span>{t('成本')}</span>
+      <bdi className='ct-model-gateway-dynamic-mini-cost-value'>{costValue}</bdi>
+    </div>
+  );
   return (
     <div className='ct-model-gateway-kpi-card ct-model-gateway-kpi-card-default ct-model-gateway-dynamic-mini-card'>
       <div className='ct-model-gateway-kpi-head'>
@@ -4414,6 +4525,11 @@ function DynamicBillingMiniPanel({
           {referenceModelValue ? (
             <span className='ct-model-gateway-dynamic-mini-chip is-model'>
               {referenceModelValue}
+            </span>
+          ) : null}
+          {costSourceLabel ? (
+            <span className='ct-model-gateway-dynamic-mini-chip is-model'>
+              {costSourceLabel}
             </span>
           ) : null}
           {refreshCountdown > 0 ? (
@@ -4438,11 +4554,30 @@ function DynamicBillingMiniPanel({
           </div>
         ) : null}
       </div>
-      <div className='ct-model-gateway-dynamic-mini-cost-row'>
-        <span>{t('成本')}</span>
-        <bdi className='ct-model-gateway-dynamic-mini-cost-value'>
-          {costValue}
-        </bdi>
+      <div className='ct-model-gateway-dynamic-mini-foot-row'>
+        {profitDetailRows.length > 0 ? (
+          <Tooltip
+            content={
+              <div className='ct-model-gateway-dynamic-mini-tooltip'>
+                {profitDetailRows.map((item) => (
+                  <div key={item.label}>
+                    <span>{item.label}</span>
+                    <bdi>{item.value}</bdi>
+                  </div>
+                ))}
+              </div>
+            }
+          >
+            {costRow}
+          </Tooltip>
+        ) : (
+          costRow
+        )}
+        <span
+          className={`ct-model-gateway-dynamic-mini-status ${statusClassName}`}
+        >
+          {statusLabel}
+        </span>
       </div>
     </div>
   );

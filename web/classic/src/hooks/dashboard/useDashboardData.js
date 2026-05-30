@@ -67,6 +67,13 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
   const [pieData, setPieData] = useState([{ type: 'null', value: '0' }]);
   const [lineData, setLineData] = useState([]);
   const [modelColors, setModelColors] = useState({});
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+  const [activeSubscriptions, setActiveSubscriptions] = useState([]);
+  const [allSubscriptions, setAllSubscriptions] = useState([]);
+  const [subscriptionPlans, setSubscriptionPlans] = useState([]);
+  const [billingPreference, setBillingPreference] = useState(
+    'subscription_first',
+  );
 
   // ========== 图表状态 ==========
   const [activeChartTab, setActiveChartTab] = useState('1');
@@ -149,7 +156,7 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     }
 
     const username = userState?.user?.username || '';
-    return `👋${greeting}，${username}`;
+    return `${greeting}，${username} 👋`;
   }, [t, userState?.user?.username]);
 
   // ========== 回调函数 ==========
@@ -253,6 +260,43 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     }
   }, [activeUptimeTab]);
 
+  const loadSubscriptionData = useCallback(async () => {
+    setSubscriptionLoading(true);
+    try {
+      const [plansResult, selfResult] = await Promise.allSettled([
+        API.get('/api/subscription/plans', { skipErrorHandler: true }),
+        API.get('/api/subscription/self', { skipErrorHandler: true }),
+      ]);
+
+      if (
+        plansResult.status === 'fulfilled' &&
+        plansResult.value?.data?.success
+      ) {
+        setSubscriptionPlans(plansResult.value.data.data || []);
+      } else {
+        setSubscriptionPlans([]);
+      }
+
+      if (
+        selfResult.status === 'fulfilled' &&
+        selfResult.value?.data?.success
+      ) {
+        const payload = selfResult.value.data.data || {};
+        setBillingPreference(payload.billing_preference || 'subscription_first');
+        setActiveSubscriptions(payload.subscriptions || []);
+        setAllSubscriptions(payload.all_subscriptions || []);
+      } else {
+        setBillingPreference('subscription_first');
+        setActiveSubscriptions([]);
+        setAllSubscriptions([]);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSubscriptionLoading(false);
+    }
+  }, []);
+
   const loadUserQuotaData = useCallback(
     async (overrideInputs) => {
       if (!isAdminUser) return [];
@@ -291,10 +335,10 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
   const refresh = useCallback(
     async (overrideInputs, overrideDefaultTime) => {
       const data = await loadQuotaData(overrideInputs, overrideDefaultTime);
-      await loadUptimeData();
+      await Promise.all([loadUptimeData(), loadSubscriptionData()]);
       return data;
     },
-    [loadQuotaData, loadUptimeData],
+    [loadQuotaData, loadUptimeData, loadSubscriptionData],
   );
 
   // ========== Effects ==========
@@ -336,6 +380,11 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     setLineData,
     modelColors,
     setModelColors,
+    subscriptionLoading,
+    activeSubscriptions,
+    allSubscriptions,
+    subscriptionPlans,
+    billingPreference,
 
     // 图表状态
     activeChartTab,
@@ -370,6 +419,7 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     loadQuotaData,
     loadUserQuotaData,
     loadUptimeData,
+    loadSubscriptionData,
     getUserData,
     refresh,
 

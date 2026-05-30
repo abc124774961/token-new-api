@@ -446,6 +446,25 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.RetryIndex = relayAttemptIndex(c)
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
+			if channel != nil && selectedModelGatewayPlan(c) != nil {
+				service.ReleaseChannelSelectionReservation(c, channel.Id)
+				willRetry := prepareModelGatewaySetupFailureRetry(c, channel, channelErr, retryParam)
+				addUsedChannel(c, channel.Id)
+				if usedCount := len(c.GetStringSlice("use_channel")); usedCount > 0 {
+					relayInfo.RetryIndex = usedCount - 1
+				}
+				traceChannelFailure(c, *newChannelErrorFromSelectedChannel(c, channel), channelErr, !willRetry)
+				reportModelGatewayAttempt(c, relayInfo, retryParam, channel, channelErr, modelGatewayAttemptFlow{
+					ErrorCategory: setupFailureErrorCategory(c, channelErr),
+					RetryAction:   lo.Ternary(willRetry, "switch_channel", "stop"),
+					WillRetry:     willRetry,
+					UsedChannels:  append([]string(nil), c.GetStringSlice("use_channel")...),
+				})
+				if willRetry {
+					continue
+				}
+				finalAttemptReported = true
+			}
 			if channelErr.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
 				lastConcurrencyLimitError = channelErr
 				if canFailover, forceNextAutoGroup := service.GetConcurrencyLimitFailoverPlan(retryParam); canFailover {
@@ -885,15 +904,59 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 
 	helper.ApplySelectedGroupRatio(c, info, selectGroup)
 	if apiErr := reserveSelectedGroupBilling(c, info); apiErr != nil {
-		return nil, apiErr
+		return channel, apiErr
 	}
 	logRelaySelectedChannelTrace(c, info, retryParam, channel, selectGroup, false)
 	newAPIError := middleware.SetupContextForSelectedChannelWithEndpoint(c, channel, info.OriginModelName, retryParam.EndpointType, selection)
 	if newAPIError != nil {
-		return nil, newAPIError
+		return channel, newAPIError
 	}
 	info.InitChannelMeta(c)
 	return channel, nil
+}
+
+func prepareModelGatewaySetupFailureRetry(c *gin.Context, channel *model.Channel, apiErr *types.NewAPIError, retryParam *service.RetryParam) bool {
+	if c == nil || channel == nil || retryParam == nil || !shouldFailoverOnModelGatewaySetupFailure(c, apiErr) {
+		return false
+	}
+	service.MarkChannelSelectionSkipped(c, channel.Id)
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	canFailover, forceNextAutoGroup := service.GetChannelFailoverPlan(retryParam)
+	if !canFailover {
+		return false
+	}
+	if forceNextAutoGroup {
+		common.SetContextKey(c, constant.ContextKeyForceNextAutoGroup, true)
+	}
+	retryParam.AllowExtraRetry(1)
+	return true
+}
+
+func shouldFailoverOnModelGatewaySetupFailure(c *gin.Context, apiErr *types.NewAPIError) bool {
+	if c == nil || apiErr == nil {
+		return false
+	}
+	if _, ok := c.Get("specific_channel_id"); ok {
+		return false
+	}
+	switch apiErr.GetErrorCode() {
+	case types.ErrorCodeChannelNoAvailableKey, types.ErrorCodeChannelInvalidKey, types.ErrorCodeGetChannelFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func setupFailureErrorCategory(c *gin.Context, apiErr *types.NewAPIError) string {
+	if apiErr == nil {
+		return ""
+	}
+	switch apiErr.GetErrorCode() {
+	case types.ErrorCodeChannelNoAvailableKey, types.ErrorCodeChannelInvalidKey, types.ErrorCodeGetChannelFailed:
+		return modelgatewaycore.ErrorCategoryAuthConfigError
+	default:
+		return classifyRelayAttemptError(c, apiErr)
+	}
 }
 
 func reserveSelectedGroupBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {

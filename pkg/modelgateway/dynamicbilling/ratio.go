@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -24,6 +25,17 @@ const (
 	FallbackMissingKey          = "missing_key"
 	FallbackInsufficientSamples = "insufficient_samples"
 	FallbackBaselineExpired     = "baseline_expired"
+	FallbackObserveMode         = "observe_mode"
+	FallbackManualConfirm       = "manual_confirm_required"
+	FallbackStepChangeTooLarge  = "step_change_too_large"
+	FallbackInsufficientUsage   = "insufficient_usage"
+	FallbackNoCostData          = "no_cost_data"
+	FallbackMissingBaseQuota    = "base_quota_missing"
+	FallbackTrafficNotReady     = "traffic_not_ready"
+
+	ApplyReasonAutoApplied           = "auto_applied"
+	ApplyReasonManualModeAutoApplied = "manual_mode_auto_applied"
+	ApplyReasonStepChangeAutoApplied = "step_change_auto_applied"
 )
 
 type RatioBaseline struct {
@@ -38,6 +50,29 @@ type RatioBaseline struct {
 	WindowStart    int64   `json:"window_start"`
 	WindowEnd      int64   `json:"window_end"`
 	ProfitRate     float64 `json:"profit_rate"`
+	CostSource     string  `json:"cost_source,omitempty"`
+	ApplyMode      string  `json:"apply_mode,omitempty"`
+	ApplyReason    string  `json:"apply_reason,omitempty"`
+
+	OperatingCostUSD     float64 `json:"operating_cost_usd,omitempty"`
+	RequiredRevenueUSD   float64 `json:"required_revenue_usd,omitempty"`
+	BaseQuotaAtRatio1    float64 `json:"base_quota_at_ratio_1,omitempty"`
+	CostMultiplier       float64 `json:"cost_multiplier,omitempty"`
+	TargetRatio          float64 `json:"target_ratio,omitempty"`
+	EffectiveRatio       float64 `json:"effective_ratio,omitempty"`
+	Clamped              bool    `json:"clamped,omitempty"`
+	PendingManualConfirm bool    `json:"pending_manual_confirm,omitempty"`
+	FallbackReason       string  `json:"fallback_reason,omitempty"`
+
+	RequestCount        int64   `json:"request_count,omitempty"`
+	SuccessRequestCount int64   `json:"success_request_count,omitempty"`
+	TotalTokens         int64   `json:"total_tokens,omitempty"`
+	TrafficCostUSD      float64 `json:"traffic_cost_usd,omitempty"`
+	TrafficEstimated    bool    `json:"traffic_estimated,omitempty"`
+	TrafficDataReady    bool    `json:"traffic_data_ready,omitempty"`
+	ServerCostUSD       float64 `json:"server_cost_usd,omitempty"`
+	ResourceCostUSD     float64 `json:"resource_cost_usd,omitempty"`
+	UpstreamCostUSD     float64 `json:"upstream_cost_usd,omitempty"`
 }
 
 type SnapshotFilter struct {
@@ -332,6 +367,8 @@ func Apply(input ApplyInput) types.DynamicBillingSnapshot {
 		Group:            strings.TrimSpace(input.Group),
 		StaticGroupRatio: staticRatio,
 		ProfitRate:       input.Setting.DynamicBillingProfitRate,
+		CostSource:       normalizeCostSource(input.Setting.DynamicBillingCostSource),
+		ApplyMode:        normalizeApplyMode(input.Setting.DynamicBillingApplyMode),
 	}
 	if !input.Setting.DynamicBillingEnabled {
 		snapshot.FallbackReason = FallbackDisabled
@@ -361,9 +398,52 @@ func Apply(input ApplyInput) types.DynamicBillingSnapshot {
 	snapshot.WindowStart = baseline.WindowStart
 	snapshot.WindowEnd = baseline.WindowEnd
 	snapshot.ProfitRate = baseline.ProfitRate
+	snapshot.CostSource = firstNonEmptyTrimmed(baseline.CostSource, snapshot.CostSource)
+	snapshot.ApplyMode = firstNonEmptyTrimmed(baseline.ApplyMode, snapshot.ApplyMode)
+	snapshot.ApplyReason = strings.TrimSpace(baseline.ApplyReason)
+	snapshot.OperatingCostUSD = baseline.OperatingCostUSD
+	snapshot.RequiredRevenueUSD = baseline.RequiredRevenueUSD
+	snapshot.BaseQuotaAtRatio1 = baseline.BaseQuotaAtRatio1
+	snapshot.CostMultiplier = baseline.CostMultiplier
+	snapshot.TargetRatio = baseline.TargetRatio
+	snapshot.EffectiveRatio = baseline.EffectiveRatio
+	snapshot.Clamped = baseline.Clamped
+	snapshot.PendingManualConfirm = false
+	snapshot.RequestCount = baseline.RequestCount
+	snapshot.SuccessRequestCount = baseline.SuccessRequestCount
+	snapshot.TotalTokens = baseline.TotalTokens
+	snapshot.TrafficCostUSD = baseline.TrafficCostUSD
+	snapshot.TrafficEstimated = baseline.TrafficEstimated
+	snapshot.TrafficDataReady = baseline.TrafficDataReady
+	snapshot.ServerCostUSD = baseline.ServerCostUSD
+	snapshot.ResourceCostUSD = baseline.ResourceCostUSD
+	snapshot.UpstreamCostUSD = baseline.UpstreamCostUSD
+	if fallbackReason := strings.TrimSpace(baseline.FallbackReason); fallbackReason != "" && !isAutoAppliedLegacyFallback(fallbackReason) {
+		snapshot.FallbackReason = fallbackReason
+		return snapshot
+	} else if fallbackReason != "" && snapshot.ApplyReason == "" {
+		snapshot.ApplyReason = applyReasonForLegacyFallback(fallbackReason)
+	}
 	if input.Setting.DynamicBillingMinSamples > 0 && baseline.SampleCount < input.Setting.DynamicBillingMinSamples {
 		snapshot.FallbackReason = FallbackInsufficientSamples
 		return snapshot
+	}
+	if isProfit24hBaseline(baseline) {
+		if baseline.RequestCount < int64(input.Setting.DynamicBillingMinRequests) ||
+			baseline.SuccessRequestCount < int64(input.Setting.DynamicBillingMinSuccessRequests) ||
+			baseline.TotalTokens < int64(input.Setting.DynamicBillingMinTokens) {
+			snapshot.FallbackReason = FallbackInsufficientUsage
+			return snapshot
+		}
+		if baseline.BaseQuotaAtRatio1 <= 0 {
+			snapshot.FallbackReason = FallbackMissingBaseQuota
+			return snapshot
+		}
+		switch normalizeApplyMode(snapshot.ApplyMode) {
+		case scheduler_setting.DynamicBillingApplyModeObserve:
+			snapshot.FallbackReason = FallbackObserveMode
+			return snapshot
+		}
 	}
 	maxAge := input.Setting.DynamicBillingMaxAgeSeconds
 	if maxAge > 0 {
@@ -380,6 +460,9 @@ func Apply(input ApplyInput) types.DynamicBillingSnapshot {
 		snapshot.FallbackReason = FallbackMissingKey
 		return snapshot
 	}
+	if snapshot.ApplyReason == "" {
+		snapshot.ApplyReason = defaultApplyReason(snapshot.ApplyMode)
+	}
 	snapshot.Applied = true
 	return snapshot
 }
@@ -389,6 +472,13 @@ func BuildRatioBaselines(db *gorm.DB, logDB *gorm.DB, setting scheduler_setting.
 }
 
 func BuildRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, setting scheduler_setting.SchedulerSetting, now int64, filter SnapshotFilter) (map[string]RatioBaseline, error) {
+	if normalizeCostSource(setting.DynamicBillingCostSource) == scheduler_setting.DynamicBillingCostSourceProfit24h {
+		return buildProfit24hRatioBaselines(db, logDB, setting, now, filter)
+	}
+	return buildSampleCostRatioBaselinesWithFilter(db, logDB, setting, now, filter)
+}
+
+func buildSampleCostRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, setting scheduler_setting.SchedulerSetting, now int64, filter SnapshotFilter) (map[string]RatioBaseline, error) {
 	if db == nil || logDB == nil {
 		return map[string]RatioBaseline{}, nil
 	}
@@ -413,12 +503,14 @@ func BuildRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, setting schedule
 	}
 	result := make(map[string]RatioBaseline, len(rows))
 	type groupAccumulator struct {
-		Group         string
-		SampleCount   int
-		ModelCount    int
-		TotalCost     float64
-		TotalBaseQuota float64
-		ReferenceRow  *baselineRow
+		Group           string
+		SampleCount     int
+		ModelCount      int
+		TotalCost       float64
+		TotalBaseQuota  float64
+		CostRatioSum    float64
+		CostRatioWeight float64
+		ReferenceRow    *baselineRow
 	}
 	accumulators := make(map[string]*groupAccumulator, len(rows))
 	for _, row := range rows {
@@ -444,6 +536,10 @@ func BuildRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, setting schedule
 		accumulator.ModelCount++
 		accumulator.TotalCost += row.CostTotal
 		accumulator.TotalBaseQuota += baseQuotaPerStaticRatio
+		if row.CostMultiplier > 0 && row.CostMultiplierWeight > 0 {
+			accumulator.CostRatioSum += row.CostMultiplier * row.CostMultiplierWeight
+			accumulator.CostRatioWeight += row.CostMultiplierWeight
+		}
 		if shouldReplaceReferenceRow(accumulator.ReferenceRow, &row) {
 			rowCopy := row
 			accumulator.ReferenceRow = &rowCopy
@@ -454,6 +550,11 @@ func BuildRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, setting schedule
 			continue
 		}
 		ratio := accumulator.TotalCost * (1 + profitRate) * common.QuotaPerUnit / accumulator.TotalBaseQuota
+		costMultiplier := 0.0
+		if accumulator.CostRatioWeight > 0 {
+			costMultiplier = accumulator.CostRatioSum / accumulator.CostRatioWeight
+			ratio = costMultiplier * (1 + profitRate)
+		}
 		if ratio <= 0 {
 			continue
 		}
@@ -462,17 +563,25 @@ func BuildRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, setting schedule
 			referenceModel = strings.TrimSpace(accumulator.ReferenceRow.ModelName)
 		}
 		baseline := RatioBaseline{
-			RequestedModel: referenceModel,
-			ReferenceModel: referenceModel,
-			Group:          accumulator.Group,
-			Ratio:          ratio,
-			PricePerM:      requestedModelPricePerMillion(referenceModel, ratio),
-			SampleCount:    accumulator.SampleCount,
-			ModelCount:     accumulator.ModelCount,
-			CalculatedAt:   now,
-			WindowStart:    windowStart,
-			WindowEnd:      now,
-			ProfitRate:     profitRate,
+			RequestedModel:    referenceModel,
+			ReferenceModel:    referenceModel,
+			Group:             accumulator.Group,
+			Ratio:             ratio,
+			PricePerM:         requestedModelPricePerMillion(referenceModel, ratio),
+			SampleCount:       accumulator.SampleCount,
+			ModelCount:        accumulator.ModelCount,
+			CalculatedAt:      now,
+			WindowStart:       windowStart,
+			WindowEnd:         now,
+			ProfitRate:        profitRate,
+			CostSource:        scheduler_setting.DynamicBillingCostSourceSampleCost,
+			ApplyMode:         normalizeApplyMode(setting.DynamicBillingApplyMode),
+			ApplyReason:       applyReasonForConfiguredMode(setting.DynamicBillingApplyMode),
+			UpstreamCostUSD:   accumulator.TotalCost,
+			BaseQuotaAtRatio1: accumulator.TotalBaseQuota,
+			CostMultiplier:    costMultiplier,
+			TargetRatio:       ratio,
+			EffectiveRatio:    ratio,
 		}
 		result[groupCacheKey(accumulator.Group)] = baseline
 	}
@@ -480,28 +589,31 @@ func BuildRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, setting schedule
 }
 
 type baselineRow struct {
-	ModelName     string
-	Group         string
-	SampleCount   int
-	LatestCalculatedAt int64
-	PromptSum     int64
-	CompleteSum   int64
-	CacheSum      int64
-	CacheWriteSum int64
-	ImageSum      int64
-	AudioSum      int64
-	ToolQuotaSum  int64
-	ModelPriceSum float64
-	BaseQuotaSum  float64
-	QuotaTotal    int64
-	CostTotal     float64
+	ModelName            string
+	Group                string
+	SampleCount          int
+	LatestCalculatedAt   int64
+	PromptSum            int64
+	CompleteSum          int64
+	CacheSum             int64
+	CacheWriteSum        int64
+	ImageSum             int64
+	AudioSum             int64
+	ToolQuotaSum         int64
+	ModelPriceSum        float64
+	BaseQuotaSum         float64
+	QuotaTotal           int64
+	CostTotal            float64
+	CostMultiplier       float64
+	CostMultiplierWeight float64
 }
 
 type costRow struct {
-	ID           int
-	RequestId    string
-	Cost         float64
-	CalculatedAt int64
+	ID            int
+	RequestId     string
+	Cost          float64
+	BreakdownJSON string
+	CalculatedAt  int64
 }
 
 func (r baselineRow) TokenTotal() float64 {
@@ -567,7 +679,7 @@ func audioRatio(modelName string) float64 {
 
 func loadBaselineRows(db *gorm.DB, logDB *gorm.DB, windowEnd int64, windowSamples int, windowMinutes int, filter SnapshotFilter) ([]baselineRow, int64, error) {
 	queryBase := db.Model(&model.ModelGatewayRequestCostSummary{}).
-		Select("id, request_id, upstream_cost_total AS cost, calculated_at").
+		Select("id, request_id, upstream_cost_total AS cost, breakdown_json, calculated_at").
 		Where("upstream_cost_total > 0")
 	if filter.MinCalculatedAt > 0 {
 		queryBase = queryBase.Where("calculated_at >= ?", filter.MinCalculatedAt)
@@ -668,10 +780,13 @@ func loadBaselineRowsByTimeWindow(query *gorm.DB, logDB *gorm.DB) ([]baselineRow
 }
 
 type requestCostLogPair struct {
-	RequestID    string
-	Cost         float64
-	CalculatedAt int64
-	Log          model.Log
+	RequestID            string
+	Cost                 float64
+	BaseQuotaAtRatio1    float64
+	CostMultiplier       float64
+	CostMultiplierWeight float64
+	CalculatedAt         int64
+	Log                  model.Log
 }
 
 func loadEligibleRequestCostLogPairs(logDB *gorm.DB, costRows []costRow) ([]requestCostLogPair, error) {
@@ -694,6 +809,9 @@ func loadEligibleRequestCostLogPairs(logDB *gorm.DB, costRows []costRow) ([]requ
 			requestIDs = append(requestIDs, requestID)
 		}
 		entry.Cost += row.Cost
+		if multiplier, ok := modelgatewaycost.MultiplierFromBreakdownJSON(row.BreakdownJSON); ok {
+			entry.BaseQuotaAtRatio1 += row.Cost / multiplier * common.QuotaPerUnit
+		}
 		if row.CalculatedAt > 0 && (entry.CalculatedAt <= 0 || row.CalculatedAt < entry.CalculatedAt) {
 			entry.CalculatedAt = row.CalculatedAt
 		}
@@ -726,6 +844,9 @@ func loadEligibleRequestCostLogPairs(logDB *gorm.DB, costRows []costRow) ([]requ
 		if !exists || costPair.Cost <= 0 {
 			continue
 		}
+		if costPair.BaseQuotaAtRatio1 > 0 {
+			costPair.CostMultiplier = costPair.Cost * common.QuotaPerUnit / costPair.BaseQuotaAtRatio1
+		}
 		if log.Quota <= 0 || log.PromptTokens+log.CompletionTokens <= 0 {
 			continue
 		}
@@ -736,6 +857,16 @@ func loadEligibleRequestCostLogPairs(logDB *gorm.DB, costRows []costRow) ([]requ
 		group := strings.TrimSpace(log.Group)
 		if modelName == "" || group == "" {
 			continue
+		}
+		other := parseOther(log.Other)
+		costPair.BaseQuotaAtRatio1 = requestBaseQuotaAtRatio1(costPair, log, other)
+		if costPair.BaseQuotaAtRatio1 <= 0 {
+			continue
+		}
+		if costPair.CostMultiplier > 0 {
+			costPair.CostMultiplierWeight = costPair.BaseQuotaAtRatio1
+		} else {
+			costPair.CostMultiplierWeight = 0
 		}
 		costPair.Log = log
 		pairs = append(pairs, costPair)
@@ -781,19 +912,48 @@ func rollupBaselineRowsFromPairs(pairs []requestCostLogPair) ([]baselineRow, int
 		row.AudioSum += int64(intMapValue(other, "audio_input_token_count"))
 		row.ToolQuotaSum += int64(toolQuotaFromOther(other, groupRatio))
 		row.ModelPriceSum += floatMapValue(other, "model_price")
-		if groupRatio > 0 {
-			row.BaseQuotaSum += float64(log.Quota) / groupRatio
-		}
+		row.BaseQuotaSum += pair.BaseQuotaAtRatio1
 		row.QuotaTotal += int64(log.Quota)
 		row.CostTotal += pair.Cost
+		if pair.CostMultiplier > 0 && pair.CostMultiplierWeight > 0 {
+			row.CostMultiplier += pair.CostMultiplier * pair.CostMultiplierWeight
+			row.CostMultiplierWeight += pair.CostMultiplierWeight
+		}
 		rollups[key] = row
 	}
 
 	result := make([]baselineRow, 0, len(rollups))
 	for _, row := range rollups {
+		if row.CostMultiplierWeight > 0 {
+			row.CostMultiplier = row.CostMultiplier / row.CostMultiplierWeight
+		}
 		result = append(result, row)
 	}
 	return result, oldestCalculatedAt, nil
+}
+
+func requestBaseQuotaAtRatio1(pair requestCostLogPair, log model.Log, other map[string]interface{}) float64 {
+	if pair.BaseQuotaAtRatio1 > 0 {
+		return pair.BaseQuotaAtRatio1
+	}
+	if pair.Cost > 0 && pair.CostMultiplier > 0 {
+		return pair.Cost / pair.CostMultiplier * common.QuotaPerUnit
+	}
+	return logBaseQuotaAtRatio1(log, other)
+}
+
+func logBaseQuotaAtRatio1(log model.Log, other map[string]interface{}) float64 {
+	if log.Quota <= 0 {
+		return 0
+	}
+	groupRatio := floatMapValue(other, "group_ratio")
+	if groupRatio <= 0 {
+		groupRatio = ratio_setting.GetGroupRatio(strings.TrimSpace(log.Group))
+	}
+	if groupRatio <= 0 {
+		return 0
+	}
+	return float64(log.Quota) / groupRatio
 }
 
 func skipLog(log model.Log) bool {
@@ -950,6 +1110,79 @@ func groupCacheKey(group string) string {
 	return group
 }
 
+func normalizeCostSource(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case scheduler_setting.DynamicBillingCostSourceProfit24h:
+		return scheduler_setting.DynamicBillingCostSourceProfit24h
+	default:
+		return scheduler_setting.DynamicBillingCostSourceSampleCost
+	}
+}
+
+func isAutoAppliedLegacyFallback(reason string) bool {
+	switch strings.TrimSpace(reason) {
+	case FallbackManualConfirm, FallbackStepChangeTooLarge:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsAutoAppliedLegacyFallback(reason string) bool {
+	return isAutoAppliedLegacyFallback(reason)
+}
+
+func applyReasonForLegacyFallback(reason string) string {
+	switch strings.TrimSpace(reason) {
+	case FallbackStepChangeTooLarge:
+		return ApplyReasonStepChangeAutoApplied
+	case FallbackManualConfirm:
+		return ApplyReasonManualModeAutoApplied
+	default:
+		return ""
+	}
+}
+
+func defaultApplyReason(applyMode string) string {
+	if normalizeApplyMode(applyMode) == scheduler_setting.DynamicBillingApplyModeManual {
+		return ApplyReasonManualModeAutoApplied
+	}
+	return ApplyReasonAutoApplied
+}
+
+func applyReasonForConfiguredMode(applyMode string) string {
+	if normalizeApplyMode(applyMode) == scheduler_setting.DynamicBillingApplyModeObserve {
+		return ""
+	}
+	return defaultApplyReason(applyMode)
+}
+
+func normalizeApplyMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case scheduler_setting.DynamicBillingApplyModeObserve:
+		return scheduler_setting.DynamicBillingApplyModeObserve
+	case scheduler_setting.DynamicBillingApplyModeAuto:
+		return scheduler_setting.DynamicBillingApplyModeAuto
+	case scheduler_setting.DynamicBillingApplyModeManual:
+		return scheduler_setting.DynamicBillingApplyModeManual
+	default:
+		return scheduler_setting.DynamicBillingApplyModeAuto
+	}
+}
+
+func isProfit24hBaseline(baseline RatioBaseline) bool {
+	return normalizeCostSource(baseline.CostSource) == scheduler_setting.DynamicBillingCostSourceProfit24h
+}
+
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func shouldReplaceReferenceRow(current *baselineRow, candidate *baselineRow) bool {
 	if candidate == nil {
 		return false
@@ -985,17 +1218,38 @@ func loadPersistedBaselines(db *gorm.DB) map[string]RatioBaseline {
 			continue
 		}
 		values[groupCacheKey(group)] = RatioBaseline{
-			RequestedModel: strings.TrimSpace(row.ReferenceModel),
-			ReferenceModel: strings.TrimSpace(row.ReferenceModel),
-			Group:          group,
-			Ratio:          row.Ratio,
-			PricePerM:      row.ReferencePricePerM,
-			SampleCount:    row.SampleCount,
-			ModelCount:     row.ModelCount,
-			CalculatedAt:   row.CalculatedAt,
-			WindowStart:    row.WindowStart,
-			WindowEnd:      row.WindowEnd,
-			ProfitRate:     row.ProfitRate,
+			RequestedModel:       strings.TrimSpace(row.ReferenceModel),
+			ReferenceModel:       strings.TrimSpace(row.ReferenceModel),
+			Group:                group,
+			Ratio:                row.Ratio,
+			PricePerM:            row.ReferencePricePerM,
+			SampleCount:          row.SampleCount,
+			ModelCount:           row.ModelCount,
+			CalculatedAt:         row.CalculatedAt,
+			WindowStart:          row.WindowStart,
+			WindowEnd:            row.WindowEnd,
+			ProfitRate:           row.ProfitRate,
+			CostSource:           normalizeCostSource(row.CostSource),
+			ApplyMode:            normalizeApplyMode(row.ApplyMode),
+			ApplyReason:          strings.TrimSpace(row.ApplyReason),
+			OperatingCostUSD:     row.OperatingCostUSD,
+			RequiredRevenueUSD:   row.RequiredRevenueUSD,
+			BaseQuotaAtRatio1:    row.BaseQuotaAtRatio1,
+			CostMultiplier:       row.CostMultiplier,
+			TargetRatio:          row.TargetRatio,
+			EffectiveRatio:       row.EffectiveRatio,
+			Clamped:              row.Clamped,
+			PendingManualConfirm: row.PendingManualConfirm,
+			FallbackReason:       strings.TrimSpace(row.FallbackReason),
+			RequestCount:         row.RequestCount,
+			SuccessRequestCount:  row.SuccessRequestCount,
+			TotalTokens:          row.TotalTokens,
+			TrafficCostUSD:       row.TrafficCostUSD,
+			TrafficEstimated:     row.TrafficEstimated,
+			TrafficDataReady:     row.TrafficDataReady,
+			ServerCostUSD:        row.ServerCostUSD,
+			ResourceCostUSD:      row.ResourceCostUSD,
+			UpstreamCostUSD:      row.UpstreamCostUSD,
 		}
 	}
 	return values
@@ -1019,17 +1273,38 @@ func persistBaselines(db *gorm.DB, values map[string]RatioBaseline) error {
 		}
 		groups = append(groups, group)
 		rows = append(rows, model.ModelGatewayDynamicBillingBaseline{
-			BillingGroup:       group,
-			ReferenceModel:     referenceModel,
-			Ratio:              value.Ratio,
-			ReferencePricePerM: value.PricePerM,
-			SampleCount:        value.SampleCount,
-			ModelCount:         value.ModelCount,
-			WindowStart:        value.WindowStart,
-			WindowEnd:          value.WindowEnd,
-			ProfitRate:         value.ProfitRate,
-			CalculatedAt:       value.CalculatedAt,
-			UpdatedAt:          now,
+			BillingGroup:         group,
+			ReferenceModel:       referenceModel,
+			Ratio:                value.Ratio,
+			ReferencePricePerM:   value.PricePerM,
+			SampleCount:          value.SampleCount,
+			ModelCount:           value.ModelCount,
+			WindowStart:          value.WindowStart,
+			WindowEnd:            value.WindowEnd,
+			ProfitRate:           value.ProfitRate,
+			CostSource:           normalizeCostSource(value.CostSource),
+			ApplyMode:            normalizeApplyMode(value.ApplyMode),
+			ApplyReason:          strings.TrimSpace(value.ApplyReason),
+			OperatingCostUSD:     value.OperatingCostUSD,
+			RequiredRevenueUSD:   value.RequiredRevenueUSD,
+			BaseQuotaAtRatio1:    value.BaseQuotaAtRatio1,
+			CostMultiplier:       value.CostMultiplier,
+			TargetRatio:          value.TargetRatio,
+			EffectiveRatio:       value.EffectiveRatio,
+			Clamped:              value.Clamped,
+			PendingManualConfirm: value.PendingManualConfirm,
+			FallbackReason:       strings.TrimSpace(value.FallbackReason),
+			RequestCount:         value.RequestCount,
+			SuccessRequestCount:  value.SuccessRequestCount,
+			TotalTokens:          value.TotalTokens,
+			TrafficCostUSD:       value.TrafficCostUSD,
+			TrafficEstimated:     value.TrafficEstimated,
+			TrafficDataReady:     value.TrafficDataReady,
+			ServerCostUSD:        value.ServerCostUSD,
+			ResourceCostUSD:      value.ResourceCostUSD,
+			UpstreamCostUSD:      value.UpstreamCostUSD,
+			CalculatedAt:         value.CalculatedAt,
+			UpdatedAt:            now,
 		})
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
@@ -1053,16 +1328,37 @@ func persistBaselines(db *gorm.DB, values map[string]RatioBaseline) error {
 				return err
 			}
 			updates := map[string]interface{}{
-				"reference_model":      row.ReferenceModel,
-				"ratio":                row.Ratio,
-				"reference_price_per_m": row.ReferencePricePerM,
-				"sample_count":         row.SampleCount,
-				"model_count":          row.ModelCount,
-				"window_start":         row.WindowStart,
-				"window_end":           row.WindowEnd,
-				"profit_rate":          row.ProfitRate,
-				"calculated_at":        row.CalculatedAt,
-				"updated_at":           now,
+				"reference_model":        row.ReferenceModel,
+				"ratio":                  row.Ratio,
+				"reference_price_per_m":  row.ReferencePricePerM,
+				"sample_count":           row.SampleCount,
+				"model_count":            row.ModelCount,
+				"window_start":           row.WindowStart,
+				"window_end":             row.WindowEnd,
+				"profit_rate":            row.ProfitRate,
+				"cost_source":            row.CostSource,
+				"apply_mode":             row.ApplyMode,
+				"apply_reason":           row.ApplyReason,
+				"operating_cost_usd":     row.OperatingCostUSD,
+				"required_revenue_usd":   row.RequiredRevenueUSD,
+				"base_quota_at_ratio_1":  row.BaseQuotaAtRatio1,
+				"cost_multiplier":        row.CostMultiplier,
+				"target_ratio":           row.TargetRatio,
+				"effective_ratio":        row.EffectiveRatio,
+				"clamped":                row.Clamped,
+				"pending_manual_confirm": row.PendingManualConfirm,
+				"fallback_reason":        row.FallbackReason,
+				"request_count":          row.RequestCount,
+				"success_request_count":  row.SuccessRequestCount,
+				"total_tokens":           row.TotalTokens,
+				"traffic_cost_usd":       row.TrafficCostUSD,
+				"traffic_estimated":      row.TrafficEstimated,
+				"traffic_data_ready":     row.TrafficDataReady,
+				"server_cost_usd":        row.ServerCostUSD,
+				"resource_cost_usd":      row.ResourceCostUSD,
+				"upstream_cost_usd":      row.UpstreamCostUSD,
+				"calculated_at":          row.CalculatedAt,
+				"updated_at":             now,
 			}
 			if err := tx.Model(&model.ModelGatewayDynamicBillingBaseline{}).
 				Where("billing_group = ?", row.BillingGroup).

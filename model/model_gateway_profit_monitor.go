@@ -88,6 +88,8 @@ type ModelGatewayProfitRatioRecommendation struct {
 	CurrentMargin                float64 `json:"current_margin" gorm:"type:decimal(18,8);default:0"`
 	RequiredRevenueUSD           float64 `json:"required_revenue_usd" gorm:"type:decimal(18,8);default:0"`
 	RevenueGapUSD                float64 `json:"revenue_gap_usd" gorm:"type:decimal(18,8);default:0"`
+	CostMultiplier               float64 `json:"cost_multiplier" gorm:"type:decimal(18,8);default:0"`
+	CostMarkupMultiplier         float64 `json:"cost_markup_multiplier" gorm:"type:decimal(18,8);default:0"`
 	RecommendedRevenueMultiplier float64 `json:"recommended_revenue_multiplier" gorm:"type:decimal(18,8);default:0"`
 	RecommendedFloorPerMTokenUSD float64 `json:"recommended_floor_per_m_token_usd" gorm:"type:decimal(18,8);default:0"`
 	Confidence                   float64 `json:"confidence" gorm:"type:decimal(18,8);default:0"`
@@ -254,6 +256,18 @@ func (r *ModelGatewayProfitRatioRecommendation) Normalize() {
 	}
 	if r.PlannedRevenueMultiplier > 100 {
 		r.PlannedRevenueMultiplier = 100
+	}
+	if r.CostMarkupMultiplier < 0 {
+		r.CostMarkupMultiplier = 0
+	}
+	if r.CostMarkupMultiplier > 100 {
+		r.CostMarkupMultiplier = 100
+	}
+	if r.CostMultiplier < 0 {
+		r.CostMultiplier = 0
+	}
+	if r.CostMultiplier > 100 {
+		r.CostMultiplier = 100
 	}
 }
 

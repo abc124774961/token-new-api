@@ -19,7 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import { Button, Input, Tag } from '@douyinfe/semi-ui';
-import { Clock3, RefreshCw, ShieldCheck, UserRound } from 'lucide-react';
+import {
+  PiArrowsClockwiseDuotone,
+  PiClockCountdownDuotone,
+  PiPulseDuotone,
+  PiShieldCheckDuotone,
+  PiSquaresFourDuotone,
+  PiUserCircleDuotone,
+} from 'react-icons/pi';
 
 const DashboardHeader = ({
   getGreeting,
@@ -57,22 +64,31 @@ const DashboardHeader = ({
   };
 
   return (
-    <div className='ct-dashboard-hero'>
-      <div className='ct-dashboard-hero-main'>
-        <div className='ct-dashboard-hero-copy'>
-          <div className='ct-dashboard-eyebrow'>{t('数据看板')}</div>
+    <div className='ct-command-hero'>
+      <div className='ct-command-hero-main'>
+        <div className='ct-command-hero-copy'>
+          <div className='ct-command-eyebrow'>
+            <PiSquaresFourDuotone size={15} />
+            {t('控制台工作区')}
+          </div>
           <h2
-            className='ct-dashboard-greeting'
+            className='ct-command-greeting'
             style={{ opacity: greetingVisible ? 1 : 0 }}
           >
             {getGreeting}
           </h2>
         </div>
-        <div className='ct-dashboard-hero-meta'>
-          <Tag shape='circle' prefixIcon={<ShieldCheck size={12} />}>
+        <div className='ct-command-hero-meta'>
+          <Tag shape='circle' prefixIcon={<PiPulseDuotone size={13} />}>
+            {t('运行状态')}
+          </Tag>
+          <Tag shape='circle' prefixIcon={<PiShieldCheckDuotone size={13} />}>
             {isAdminUser ? t('管理员') : t('用户')}
           </Tag>
-          <Tag shape='circle' prefixIcon={<Clock3 size={12} />}>
+          <Tag
+            shape='circle'
+            prefixIcon={<PiClockCountdownDuotone size={13} />}
+          >
             {t('时间粒度')} · {activeTimeLabel}
           </Tag>
           <Tag shape='circle'>
@@ -81,8 +97,8 @@ const DashboardHeader = ({
           </Tag>
         </div>
       </div>
-      <div className='ct-dashboard-filter-toolbar'>
-        <div className='ct-dashboard-range-control' aria-label={t('时间范围')}>
+      <div className='ct-command-filter-toolbar'>
+        <div className='ct-command-range-control' aria-label={t('时间范围')}>
           {dateRangePresets.map((option) => {
             const active = option.value === activeDateRange;
             return (
@@ -91,8 +107,8 @@ const DashboardHeader = ({
                 type='tertiary'
                 onClick={() => onDateRangeChange?.(option.value)}
                 disabled={loading}
-                className={`ct-dashboard-range-button ${
-                  active ? 'ct-dashboard-range-button-active' : ''
+                className={`ct-command-range-button ${
+                  active ? 'ct-command-range-button-active' : ''
                 }`}
               >
                 {option.label}
@@ -101,8 +117,8 @@ const DashboardHeader = ({
           })}
         </div>
         {isAdminUser && (
-          <div className='ct-dashboard-username-filter'>
-            <span className='ct-dashboard-filter-label'>{t('用户名')}:</span>
+          <div className='ct-command-username-filter'>
+            <span className='ct-command-filter-label'>{t('用户名')}:</span>
             <Input
               value={inputs?.username || ''}
               onChange={onUsernameChange}
@@ -110,18 +126,18 @@ const DashboardHeader = ({
               onBlur={onUsernameCommit}
               onClear={onUsernameClear}
               showClear
-              prefix={<UserRound size={14} />}
+              prefix={<PiUserCircleDuotone size={15} />}
               placeholder={t('用户名')}
-              className='ct-dashboard-username-input'
+              className='ct-command-username-input'
             />
           </div>
         )}
         <Button
           type='tertiary'
-          icon={<RefreshCw size={16} />}
+          icon={<PiArrowsClockwiseDuotone size={17} />}
           onClick={() => refresh?.()}
           loading={loading}
-          className='ct-dashboard-icon-button ct-dashboard-icon-button-refresh'
+          className='ct-command-refresh-button'
         >
           {t('刷新')}
         </Button>

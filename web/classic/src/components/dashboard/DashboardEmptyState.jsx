@@ -18,21 +18,17 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Empty } from '@douyinfe/semi-ui';
-import {
-  IllustrationConstruction,
-  IllustrationConstructionDark,
-} from '@douyinfe/semi-illustrations';
-import { ILLUSTRATION_SIZE } from '../../constants/dashboard.constants';
+import { PiTrayDuotone } from 'react-icons/pi';
 
 const DashboardEmptyState = ({ title, description, className = '' }) => (
-  <div className={`ct-dashboard-empty ${className}`}>
-    <Empty
-      image={<IllustrationConstruction style={ILLUSTRATION_SIZE} />}
-      darkModeImage={<IllustrationConstructionDark style={ILLUSTRATION_SIZE} />}
-      title={title}
-      description={description}
-    />
+  <div className={`ct-command-empty ${className}`}>
+    <div className='ct-command-empty-icon'>
+      <PiTrayDuotone size={24} />
+    </div>
+    <div className='ct-command-empty-title'>{title}</div>
+    {description && (
+      <div className='ct-command-empty-description'>{description}</div>
+    )}
   </div>
 );
 

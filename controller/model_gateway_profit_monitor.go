@@ -9,7 +9,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewaytraffic "github.com/QuantumNous/new-api/pkg/modelgateway/traffic"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -188,13 +190,20 @@ type ModelGatewayProfitResourceSummary struct {
 }
 
 type ModelGatewayProfitRecommendation struct {
-	TargetProfitRate             float64 `json:"target_profit_rate"`
-	RequiredRevenueUSD           float64 `json:"required_revenue_usd"`
-	RevenueGapUSD                float64 `json:"revenue_gap_usd"`
-	RecommendedRevenueMultiplier float64 `json:"recommended_revenue_multiplier"`
-	RecommendedFloorPerMTokenUSD float64 `json:"recommended_floor_per_m_token_usd"`
-	CanRecommend                 bool    `json:"can_recommend"`
-	Reason                       string  `json:"reason"`
+	TargetProfitRate               float64 `json:"target_profit_rate"`
+	RequiredRevenueUSD             float64 `json:"required_revenue_usd"`
+	RevenueGapUSD                  float64 `json:"revenue_gap_usd"`
+	CostMultiplier                 float64 `json:"cost_multiplier"`
+	CostMarkupMultiplier           float64 `json:"cost_markup_multiplier"`
+	RecommendedRevenueMultiplier   float64 `json:"recommended_revenue_multiplier"`
+	RecommendedFloorPerMTokenUSD   float64 `json:"recommended_floor_per_m_token_usd"`
+	BaseQuotaAtRatio1              float64 `json:"base_quota_at_ratio_1"`
+	MinimumRevenuePerMBaseQuotaUSD float64 `json:"minimum_revenue_per_m_base_quota_usd"`
+	SuggestedDynamicRatio          float64 `json:"suggested_dynamic_ratio"`
+	CurrentEffectiveDynamicRatio   float64 `json:"current_effective_dynamic_ratio"`
+	DynamicBillingApplied          bool    `json:"dynamic_billing_applied"`
+	CanRecommend                   bool    `json:"can_recommend"`
+	Reason                         string  `json:"reason"`
 }
 
 type modelGatewayProfitUsageAggregate struct {
@@ -263,7 +272,7 @@ type UpsertModelGatewayProfitCanaryTaskRequest struct {
 
 func GetModelGatewayProfitMonitorConfig(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
-		"config":   loadModelGatewayProfitMonitorConfig(),
+		"config":   effectiveModelGatewayProfitMonitorRecommendationConfig(loadModelGatewayProfitMonitorConfig()),
 		"defaults": defaultModelGatewayProfitMonitorConfig(),
 		"resource_types": []string{
 			model.ModelGatewayProfitResourceTypeAccountPool,
@@ -488,6 +497,7 @@ func UpdateModelGatewayProfitMonitorCanaryTask(c *gin.Context) {
 }
 
 func buildModelGatewayProfitMonitorResponse(window string, startTimestamp int64, endTimestamp int64, dimension string, config ModelGatewayProfitMonitorConfig) (ModelGatewayProfitMonitorResponse, error) {
+	config = effectiveModelGatewayProfitMonitorRecommendationConfig(config)
 	summary, err := queryModelGatewayProfitMonitorSummary(startTimestamp, endTimestamp, config)
 	if err != nil {
 		return ModelGatewayProfitMonitorResponse{}, err
@@ -518,6 +528,9 @@ func buildModelGatewayProfitMonitorResponse(window string, startTimestamp int64,
 	}
 	allocateModelGatewayProfitMonitorBreakdownCosts(breakdown, summary, resources, config, dimension, hasTrafficBreakdown)
 
+	recommendation := buildModelGatewayProfitRecommendation(summary, config)
+	enrichModelGatewayProfitRecommendationWithDynamicBilling(&recommendation)
+
 	return ModelGatewayProfitMonitorResponse{
 		Window:         window,
 		Dimension:      dimension,
@@ -527,7 +540,7 @@ func buildModelGatewayProfitMonitorResponse(window string, startTimestamp int64,
 		Summary:        summary,
 		Breakdown:      breakdown,
 		Resources:      resources,
-		Recommendation: buildModelGatewayProfitRecommendation(summary, config),
+		Recommendation: recommendation,
 	}, nil
 }
 
@@ -713,6 +726,9 @@ func normalizeModelGatewayProfitMonitorConfig(config ModelGatewayProfitMonitorCo
 	if config.TargetProfitRate < 0 {
 		config.TargetProfitRate = 0
 	}
+	if config.TargetProfitRate > 1 && config.TargetProfitRate <= 95 {
+		config.TargetProfitRate = config.TargetProfitRate / 100
+	}
 	if config.TargetProfitRate > 0.95 {
 		config.TargetProfitRate = 0.95
 	}
@@ -722,6 +738,15 @@ func normalizeModelGatewayProfitMonitorConfig(config ModelGatewayProfitMonitorCo
 		config.DynamicRatioRecommendationMode = "observe"
 	}
 	return config
+}
+
+func effectiveModelGatewayProfitMonitorRecommendationConfig(config ModelGatewayProfitMonitorConfig) ModelGatewayProfitMonitorConfig {
+	config = normalizeModelGatewayProfitMonitorConfig(config)
+	setting := scheduler_setting.GetSetting()
+	if strings.TrimSpace(setting.DynamicBillingCostSource) == scheduler_setting.DynamicBillingCostSourceProfit24h && setting.DynamicBillingProfitRate >= 0 {
+		config.TargetProfitRate = setting.DynamicBillingProfitRate
+	}
+	return normalizeModelGatewayProfitMonitorConfig(config)
 }
 
 func parseModelGatewayProfitMonitorWindow(c *gin.Context) (string, int64, int64) {
@@ -1099,7 +1124,7 @@ func buildModelGatewayProfitRecommendation(summary ModelGatewayProfitMonitorSumm
 		result.Reason = modelGatewayProfitRecommendationReasonDisabled
 		return result
 	}
-	if summary.OperatingCostUSD <= 0 {
+	if summary.UpstreamCostUSD <= 0 {
 		result.Reason = modelGatewayProfitRecommendationReasonNoCost
 		return result
 	}
@@ -1107,9 +1132,13 @@ func buildModelGatewayProfitRecommendation(summary ModelGatewayProfitMonitorSumm
 	if target >= 0.95 {
 		target = 0.95
 	}
-	requiredRevenue := summary.OperatingCostUSD / (1 - target)
+	if target < 0 {
+		target = 0
+	}
+	requiredRevenue := summary.UpstreamCostUSD * (1 + target)
 	result.RequiredRevenueUSD = requiredRevenue
 	result.RevenueGapUSD = requiredRevenue - summary.RevenueUSD
+	result.CostMarkupMultiplier = requiredRevenue / summary.UpstreamCostUSD
 	if summary.RevenueUSD > 0 {
 		result.RecommendedRevenueMultiplier = requiredRevenue / summary.RevenueUSD
 	}
@@ -1131,6 +1160,72 @@ func buildModelGatewayProfitRecommendation(summary ModelGatewayProfitMonitorSumm
 		result.Reason = modelGatewayProfitRecommendationReasonNoRevenue
 	}
 	return result
+}
+
+func enrichModelGatewayProfitRecommendationWithDynamicBilling(recommendation *ModelGatewayProfitRecommendation) {
+	if recommendation == nil {
+		return
+	}
+	currentRevenue := recommendation.RequiredRevenueUSD - recommendation.RevenueGapUSD
+	baselines := modelgatewaydynamicbilling.DefaultBaselineSnapshots()
+	if len(baselines) == 0 {
+		return
+	}
+	baseQuota := 0.0
+	requiredRevenue := 0.0
+	costMultiplierSum := 0.0
+	costMultiplierWeight := 0.0
+	totalTokens := int64(0)
+	currentRatio := 0.0
+	applied := false
+	for _, baseline := range baselines {
+		if baseline.CostSource != "profit_24h" {
+			continue
+		}
+		baseQuota += baseline.BaseQuotaAtRatio1
+		requiredRevenue += baseline.RequiredRevenueUSD
+		totalTokens += baseline.TotalTokens
+		if baseline.CostMultiplier > 0 && baseline.BaseQuotaAtRatio1 > 0 {
+			costMultiplierSum += baseline.CostMultiplier * baseline.BaseQuotaAtRatio1
+			costMultiplierWeight += baseline.BaseQuotaAtRatio1
+		}
+		if baseline.EffectiveRatio > currentRatio {
+			currentRatio = baseline.EffectiveRatio
+		}
+		if (baseline.FallbackReason == "" || modelgatewaydynamicbilling.IsAutoAppliedLegacyFallback(baseline.FallbackReason)) && baseline.Ratio > 0 {
+			applied = true
+		}
+	}
+	if baseQuota <= 0 {
+		return
+	}
+	recommendation.BaseQuotaAtRatio1 = baseQuota
+	if costMultiplierWeight > 0 {
+		recommendation.CostMultiplier = costMultiplierSum / costMultiplierWeight
+		markupMultiplier := recommendation.CostMarkupMultiplier
+		if markupMultiplier <= 0 {
+			markupMultiplier = 1 + recommendation.TargetProfitRate
+		}
+		if markupMultiplier <= 0 {
+			markupMultiplier = 1
+		}
+		recommendation.SuggestedDynamicRatio = recommendation.CostMultiplier * markupMultiplier
+		recommendation.RequiredRevenueUSD = recommendation.SuggestedDynamicRatio * baseQuota / common.QuotaPerUnit
+		if currentRevenue > 0 {
+			recommendation.RevenueGapUSD = recommendation.RequiredRevenueUSD - currentRevenue
+			recommendation.RecommendedRevenueMultiplier = recommendation.RequiredRevenueUSD / currentRevenue
+		}
+		if totalTokens > 0 {
+			recommendation.RecommendedFloorPerMTokenUSD = recommendation.RequiredRevenueUSD / float64(totalTokens) * 1_000_000
+		}
+	} else if requiredRevenue > 0 {
+		recommendation.SuggestedDynamicRatio = requiredRevenue * common.QuotaPerUnit / baseQuota
+	}
+	if recommendation.SuggestedDynamicRatio > 0 {
+		recommendation.MinimumRevenuePerMBaseQuotaUSD = recommendation.SuggestedDynamicRatio * 1_000_000 / common.QuotaPerUnit
+	}
+	recommendation.CurrentEffectiveDynamicRatio = currentRatio
+	recommendation.DynamicBillingApplied = applied
 }
 
 func modelGatewayProfitRecommendationHasEnoughSamples(summary ModelGatewayProfitMonitorSummary) bool {
@@ -1170,6 +1265,8 @@ func buildModelGatewayProfitRecommendationSnapshot(payload ModelGatewayProfitMon
 			"operating_cost_usd":                summary.OperatingCostUSD,
 			"required_revenue_usd":              recommendation.RequiredRevenueUSD,
 			"revenue_gap_usd":                   recommendation.RevenueGapUSD,
+			"cost_multiplier":                   recommendation.CostMultiplier,
+			"cost_markup_multiplier":            recommendation.CostMarkupMultiplier,
 			"recommended_revenue_multiplier":    recommendation.RecommendedRevenueMultiplier,
 			"recommended_floor_per_m_token_usd": recommendation.RecommendedFloorPerMTokenUSD,
 			"traffic_cost_usd":                  summary.TrafficCostUSD,
@@ -1205,6 +1302,8 @@ func buildModelGatewayProfitRecommendationSnapshot(payload ModelGatewayProfitMon
 		CurrentMargin:                summary.GrossMargin,
 		RequiredRevenueUSD:           recommendation.RequiredRevenueUSD,
 		RevenueGapUSD:                recommendation.RevenueGapUSD,
+		CostMultiplier:               recommendation.CostMultiplier,
+		CostMarkupMultiplier:         recommendation.CostMarkupMultiplier,
 		RecommendedRevenueMultiplier: recommendation.RecommendedRevenueMultiplier,
 		RecommendedFloorPerMTokenUSD: recommendation.RecommendedFloorPerMTokenUSD,
 		Confidence:                   confidence,
@@ -1310,6 +1409,8 @@ func recordModelGatewayProfitRecommendationDecisionLog(c *gin.Context, row *mode
 		"new_planned_revenue_multiplier":    row.PlannedRevenueMultiplier,
 		"old_decision_remark":               beforeRemark,
 		"new_decision_remark":               row.DecisionRemark,
+		"cost_multiplier":                   row.CostMultiplier,
+		"cost_markup_multiplier":            row.CostMarkupMultiplier,
 		"recommended_revenue_multiplier":    row.RecommendedRevenueMultiplier,
 		"recommended_floor_per_m_token_usd": row.RecommendedFloorPerMTokenUSD,
 		"recommendation_window":             row.Window,

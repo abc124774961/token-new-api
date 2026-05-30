@@ -29,8 +29,13 @@ import Loading from './components/common/ui/Loading';
 import { AuthRedirect, PrivateRoute, AdminRoute } from './helpers';
 import { StatusContext } from './context/Status';
 import SetupCheck from './components/layout/SetupCheck';
+import {
+  isPricingAuthRequired,
+  parseHeaderNavModulesConfig,
+} from './constants/header-nav.constants';
 
 const Home = lazy(() => import('./pages/Home'));
+const IntegrationDocs = lazy(() => import('./pages/IntegrationDocs'));
 const User = lazy(() => import('./pages/User'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const ChannelStatus = lazy(() => import('./pages/ChannelStatus'));
@@ -57,7 +62,9 @@ const Forbidden = lazy(() => import('./pages/Forbidden'));
 const Setting = lazy(() => import('./pages/Setting'));
 const Channel = lazy(() => import('./pages/Channel'));
 const ChannelAccount = lazy(() => import('./pages/ChannelAccount'));
-const ChannelBalanceMonitor = lazy(() => import('./pages/ChannelBalanceMonitor'));
+const ChannelBalanceMonitor = lazy(
+  () => import('./pages/ChannelBalanceMonitor'),
+);
 const ChannelProxy = lazy(() => import('./pages/ChannelProxy'));
 const Token = lazy(() => import('./pages/Token'));
 const Redemption = lazy(() => import('./pages/Redemption'));
@@ -85,24 +92,9 @@ function App() {
 
   // 获取模型广场权限配置
   const pricingRequireAuth = useMemo(() => {
-    const headerNavModulesConfig = statusState?.status?.HeaderNavModules;
-    if (headerNavModulesConfig) {
-      try {
-        const modules = JSON.parse(headerNavModulesConfig);
-
-        // 处理向后兼容性：如果pricing是boolean，默认不需要登录
-        if (typeof modules.pricing === 'boolean') {
-          return false; // 默认不需要登录鉴权
-        }
-
-        // 如果是对象格式，使用requireAuth配置
-        return modules.pricing?.requireAuth === true;
-      } catch (error) {
-        console.error('解析顶栏模块配置失败:', error);
-        return false; // 默认不需要登录
-      }
-    }
-    return false; // 默认不需要登录
+    return isPricingAuthRequired(
+      parseHeaderNavModulesConfig(statusState?.status?.HeaderNavModules),
+    );
   }, [statusState?.status?.HeaderNavModules]);
 
   return (
@@ -122,6 +114,14 @@ function App() {
             element={
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                 <Setup />
+              </Suspense>
+            }
+          />
+          <Route
+            path='/integration-docs'
+            element={
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <IntegrationDocs />
               </Suspense>
             }
           />

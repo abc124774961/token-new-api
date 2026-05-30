@@ -19,39 +19,33 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import { Collapse } from '@douyinfe/semi-ui';
-import { HelpCircle } from 'lucide-react';
+import { PiQuestionDuotone } from 'react-icons/pi';
 import { IconPlus, IconMinus } from '@douyinfe/semi-icons';
 import { marked } from 'marked';
 import ScrollableContainer from '../common/ui/ScrollableContainer';
-import DashboardCard from './DashboardCard';
 import DashboardEmptyState from './DashboardEmptyState';
 
 const FaqPanel = ({
   faqData,
-  CARD_PROPS,
-  FLEX_CENTER_GAP2,
-  ILLUSTRATION_SIZE,
   t,
 }) => {
   return (
-    <DashboardCard
-      {...CARD_PROPS}
-      className='ct-dashboard-side-card ct-dashboard-faq-card lg:col-span-1'
-      tone='faq'
-      title={
-        <div className={`${FLEX_CENTER_GAP2} ct-dashboard-panel-title`}>
-          <HelpCircle size={16} />
-          {t('常见问答')}
+    <section className='ct-command-feed-panel ct-command-faq-panel'>
+      <div className='ct-command-panel-head ct-command-panel-head-compact'>
+        <div className='ct-command-panel-title-group'>
+          <div className='ct-command-panel-icon ct-command-panel-icon-faq'>
+            <PiQuestionDuotone size={20} />
+          </div>
+          <h3 className='ct-command-panel-title'>{t('常见问答')}</h3>
         </div>
-      }
-      bodyStyle={{ padding: 0 }}
-    >
-      <ScrollableContainer maxHeight='24rem'>
+      </div>
+      <ScrollableContainer maxHeight='26rem'>
         {faqData.length > 0 ? (
           <Collapse
             accordion
             expandIcon={<IconPlus />}
             collapseIcon={<IconMinus />}
+            className='ct-command-collapse'
           >
             {faqData.map((item, index) => (
               <Collapse.Panel
@@ -68,7 +62,7 @@ const FaqPanel = ({
             ))}
           </Collapse>
         ) : (
-          <div className='ct-dashboard-empty-wrap'>
+          <div className='ct-command-empty-wrap'>
             <DashboardEmptyState
               title={t('暂无常见问答')}
               description={t('请联系管理员在系统设置中配置常见问答')}
@@ -76,7 +70,7 @@ const FaqPanel = ({
           </div>
         )}
       </ScrollableContainer>
-    </DashboardCard>
+    </section>
   );
 };
 

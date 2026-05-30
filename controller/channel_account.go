@@ -1366,6 +1366,7 @@ func runtimeItemsForChannelAccounts(channelID int, accounts []modelgatewayaccoun
 		Limit:     modelGatewayRuntimeStatusMaxLimit,
 	}
 	if len(accounts) > 0 && !allowChannelFallback {
+		runtimeQuery.StrictAccountScope = true
 		runtimeQuery.AccountIDs = make([]string, 0, len(accounts))
 		runtimeQuery.CredentialIndexes = make([]int, 0, len(accounts))
 		runtimeQuery.CredentialSubjectFPs = make([]string, 0, len(accounts))

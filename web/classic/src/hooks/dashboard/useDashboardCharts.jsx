@@ -32,41 +32,41 @@ import {
 } from '../../helpers/dashboard';
 
 const DASHBOARD_MODEL_PALETTE = [
-  '#14b8a6',
-  '#38bdf8',
-  '#6366f1',
-  '#f59e0b',
-  '#8b5cf6',
-  '#10b981',
-  '#ec4899',
-  '#f97316',
-  '#22c55e',
-  '#0ea5e9',
+  '#8aa4c0',
+  '#6f86a3',
+  '#a0aec0',
+  '#7891b2',
+  '#94a3b8',
+  '#64748b',
+  '#9aa8b8',
+  '#7c8fa6',
+  '#b6c2d1',
+  '#5f7590',
 ];
 
 const DASHBOARD_MODEL_COLOR_RULES = [
-  { pattern: /gpt[-_.\s]?5[-_.\s]?5|5\.5/i, color: '#14b8a6' },
-  { pattern: /gpt[-_.\s]?5[-_.\s]?4|5\.4/i, color: '#38bdf8' },
-  { pattern: /gpt[-_.\s]?4|o[34]/i, color: '#6366f1' },
-  { pattern: /claude/i, color: '#f59e0b' },
-  { pattern: /gemini/i, color: '#8b5cf6' },
-  { pattern: /deepseek/i, color: '#10b981' },
-  { pattern: /qwen|通义/i, color: '#0ea5e9' },
-  { pattern: /llama|meta/i, color: '#ec4899' },
-  { pattern: /mistral/i, color: '#f97316' },
+  { pattern: /gpt[-_.\s]?5[-_.\s]?5|5\.5/i, color: '#8aa4c0' },
+  { pattern: /gpt[-_.\s]?5[-_.\s]?4|5\.4/i, color: '#6f86a3' },
+  { pattern: /gpt[-_.\s]?4|o[34]/i, color: '#a0aec0' },
+  { pattern: /claude/i, color: '#c2a878' },
+  { pattern: /gemini/i, color: '#9f96b5' },
+  { pattern: /deepseek/i, color: '#8db9a4' },
+  { pattern: /qwen|通义/i, color: '#7891b2' },
+  { pattern: /llama|meta/i, color: '#9aa8b8' },
+  { pattern: /mistral/i, color: '#c49b77' },
 ];
 
 const USER_COLORS = [
-  '#14b8a6',
-  '#38bdf8',
-  '#6366f1',
-  '#f59e0b',
-  '#8b5cf6',
-  '#10b981',
-  '#ec4899',
-  '#f97316',
-  '#22c55e',
-  '#0ea5e9',
+  '#8aa4c0',
+  '#6f86a3',
+  '#a0aec0',
+  '#7891b2',
+  '#94a3b8',
+  '#64748b',
+  '#9aa8b8',
+  '#7c8fa6',
+  '#b6c2d1',
+  '#5f7590',
 ];
 
 const getStablePaletteColor = (value, palette = DASHBOARD_MODEL_PALETTE) => {
@@ -90,8 +90,8 @@ const getDashboardModelColor = (modelName, fallbackColor) => {
 };
 
 const DASHBOARD_GRID_STYLE = {
-  stroke: 'rgba(148, 163, 184, 0.18)',
-  lineDash: [4, 4],
+  stroke: 'rgba(148, 163, 184, 0.07)',
+  lineDash: [],
   lineWidth: 1,
 };
 
@@ -148,13 +148,13 @@ const DASHBOARD_LEGEND_STYLE = {
 
 const DASHBOARD_TOOLTIP_STYLE = {
   panel: {
-    backgroundColor: 'rgba(15, 23, 42, 0.94)',
+    backgroundColor: 'rgba(18, 25, 38, 0.96)',
     border: {
-      color: 'rgba(94, 234, 212, 0.22)',
-      width: 1,
+      color: 'rgba(148, 163, 184, 0.12)',
+      width: 0,
     },
     borderRadius: 12,
-    shadow: '0 18px 46px rgba(2, 6, 23, 0.28)',
+    shadow: 'none',
   },
   titleLabel: {
     fill: '#f8fafc',
@@ -248,8 +248,7 @@ const DASHBOARD_BAR_STYLE = {
   },
   state: {
     hover: {
-      stroke: '#5eead4',
-      lineWidth: 1.4,
+      lineWidth: 0,
       fillOpacity: 0.92,
     },
   },

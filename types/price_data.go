@@ -9,18 +9,38 @@ type GroupRatioInfo struct {
 }
 
 type DynamicBillingSnapshot struct {
-	Applied          bool    `json:"applied"`
-	FallbackReason   string  `json:"fallback_reason,omitempty"`
-	RequestedModel   string  `json:"requested_model,omitempty"`
-	Group            string  `json:"group,omitempty"`
-	StaticGroupRatio float64 `json:"static_group_ratio,omitempty"`
-	DynamicRatio     float64 `json:"dynamic_ratio,omitempty"`
-	PricePerM        float64 `json:"price_per_m,omitempty"`
-	ProfitRate       float64 `json:"profit_rate,omitempty"`
-	SampleCount      int     `json:"sample_count,omitempty"`
-	CalculatedAt     int64   `json:"calculated_at,omitempty"`
-	WindowStart      int64   `json:"window_start,omitempty"`
-	WindowEnd        int64   `json:"window_end,omitempty"`
+	Applied              bool    `json:"applied"`
+	FallbackReason       string  `json:"fallback_reason,omitempty"`
+	RequestedModel       string  `json:"requested_model,omitempty"`
+	Group                string  `json:"group,omitempty"`
+	StaticGroupRatio     float64 `json:"static_group_ratio,omitempty"`
+	DynamicRatio         float64 `json:"dynamic_ratio,omitempty"`
+	PricePerM            float64 `json:"price_per_m,omitempty"`
+	ProfitRate           float64 `json:"profit_rate,omitempty"`
+	SampleCount          int     `json:"sample_count,omitempty"`
+	CalculatedAt         int64   `json:"calculated_at,omitempty"`
+	WindowStart          int64   `json:"window_start,omitempty"`
+	WindowEnd            int64   `json:"window_end,omitempty"`
+	CostSource           string  `json:"cost_source,omitempty"`
+	ApplyMode            string  `json:"apply_mode,omitempty"`
+	ApplyReason          string  `json:"apply_reason,omitempty"`
+	OperatingCostUSD     float64 `json:"operating_cost_usd,omitempty"`
+	RequiredRevenueUSD   float64 `json:"required_revenue_usd,omitempty"`
+	BaseQuotaAtRatio1    float64 `json:"base_quota_at_ratio_1,omitempty"`
+	CostMultiplier       float64 `json:"cost_multiplier,omitempty"`
+	TargetRatio          float64 `json:"target_ratio,omitempty"`
+	EffectiveRatio       float64 `json:"effective_ratio,omitempty"`
+	Clamped              bool    `json:"clamped,omitempty"`
+	PendingManualConfirm bool    `json:"pending_manual_confirm,omitempty"`
+	RequestCount         int64   `json:"request_count,omitempty"`
+	SuccessRequestCount  int64   `json:"success_request_count,omitempty"`
+	TotalTokens          int64   `json:"total_tokens,omitempty"`
+	TrafficCostUSD       float64 `json:"traffic_cost_usd,omitempty"`
+	TrafficEstimated     bool    `json:"traffic_estimated,omitempty"`
+	TrafficDataReady     bool    `json:"traffic_data_ready,omitempty"`
+	ServerCostUSD        float64 `json:"server_cost_usd,omitempty"`
+	ResourceCostUSD      float64 `json:"resource_cost_usd,omitempty"`
+	UpstreamCostUSD      float64 `json:"upstream_cost_usd,omitempty"`
 }
 
 type PriceData struct {

@@ -41,13 +41,22 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
+  Fingerprint,
+  Gauge,
+  Hash,
   Settings,
   History,
+  KeyRound,
+  Layers,
   ListChecks,
   RefreshCw,
+  Route,
   Search,
+  Server,
   ShieldCheck,
   Stethoscope,
+  Timer,
+  UserRound,
 } from 'lucide-react';
 import { API, showError, showSuccess, timestamp2string } from '../../helpers';
 import './channel-health-check.css';
@@ -185,6 +194,95 @@ function formatLatency(value) {
 
 function formatTimestamp(timestamp) {
   return Number(timestamp || 0) > 0 ? timestamp2string(Number(timestamp)) : '--';
+}
+
+function compactIdentity(value, head = 8, tail = 6) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (text.length <= head + tail + 4) return text;
+  return `${text.slice(0, head)}...${text.slice(-tail)}`;
+}
+
+function normalizedIdentityValue(...values) {
+  return values
+    .map((value) => String(value || '').trim())
+    .find(Boolean) || '';
+}
+
+function credentialNumber(value) {
+  const index = Number(value);
+  if (!Number.isFinite(index) || index < 0) return null;
+  return Math.floor(index) + 1;
+}
+
+function getRuntimeKey(record) {
+  return record?.runtime_key || record?.runtimeKey || {};
+}
+
+function getCredentialIdentity(record = {}, fallback = {}) {
+  const runtimeKey = getRuntimeKey(fallback);
+  const index = credentialNumber(
+    record.credential_index ??
+      fallback.credential_index ??
+      runtimeKey.credential_index,
+  );
+  const subjectFP = normalizedIdentityValue(
+    record.credential_subject_fingerprint,
+    fallback.credential_subject_fingerprint,
+    runtimeKey.credential_subject_fingerprint,
+  );
+  const credentialFP = normalizedIdentityValue(
+    record.credential_fingerprint,
+    fallback.credential_fingerprint,
+    runtimeKey.credential_fingerprint,
+  );
+  return { index, subjectFP, credentialFP };
+}
+
+function getChannelIdentity(record = {}, fallback = {}) {
+  const runtimeKey = getRuntimeKey(fallback);
+  const channelID = Number(
+    record.channel_id ||
+      record.final_channel_id ||
+      fallback.channel_id ||
+      runtimeKey.channel_id ||
+      0,
+  );
+  return {
+    channelID,
+    channelName: normalizedIdentityValue(
+      record.channel_name,
+      record.final_channel_name,
+      fallback.channel_name,
+    ),
+    accountID: normalizedIdentityValue(
+      record.account_id,
+      fallback.account_id,
+      runtimeKey.account_id,
+    ),
+    accountType: normalizedIdentityValue(
+      record.account_type,
+      fallback.account_type,
+      runtimeKey.account_type,
+    ),
+    brand: normalizedIdentityValue(record.brand, fallback.brand, runtimeKey.brand),
+    provider: normalizedIdentityValue(
+      record.provider,
+      fallback.provider,
+      runtimeKey.provider,
+    ),
+    resourceID: normalizedIdentityValue(
+      record.resource_id,
+      fallback.resource_id,
+      runtimeKey.resource_id,
+    ),
+    resourceType: normalizedIdentityValue(
+      record.resource_type,
+      fallback.resource_type,
+      runtimeKey.resource_type,
+    ),
+    ...getCredentialIdentity(record, fallback),
+  };
 }
 
 function formatRelativeTime(timestamp, t) {
@@ -354,17 +452,66 @@ function formatProbeReason(value, t) {
 function recordMatchesSearch(record, keyword) {
   const normalized = keyword.trim().toLowerCase();
   if (!normalized) return true;
+  const dispatch = record?.dispatch_record || record?.dispatchRecord || {};
+  const candidates = [
+    ...(Array.isArray(record?.candidate_explanations)
+      ? record.candidate_explanations
+      : []),
+    ...(Array.isArray(dispatch?.candidate_explanations)
+      ? dispatch.candidate_explanations
+      : []),
+    ...(Array.isArray(dispatch?.request_meta?.candidate_explanations)
+      ? dispatch.request_meta.candidate_explanations
+      : []),
+  ];
+  const candidateValues = candidates.flatMap((candidate) => {
+    const runtimeKey = candidate?.runtime_key || {};
+    return [
+      candidate?.channel_name,
+      candidate?.channel_id ? `#${candidate.channel_id}` : '',
+      candidate?.account_id,
+      candidate?.account_type,
+      candidate?.brand,
+      candidate?.provider,
+      candidate?.resource_id,
+      candidate?.resource_type,
+      candidate?.credential_index != null
+        ? `#${Number(candidate.credential_index) + 1}`
+        : '',
+      candidate?.credential_subject_fingerprint,
+      candidate?.credential_fingerprint,
+      runtimeKey.account_id,
+      runtimeKey.credential_index != null
+        ? `#${Number(runtimeKey.credential_index) + 1}`
+        : '',
+      runtimeKey.credential_subject_fingerprint,
+      runtimeKey.credential_fingerprint,
+    ];
+  });
   return [
     record.requested_model,
     record.upstream_model,
     record.group,
     record.endpoint_type,
+    record.channel_name,
     record.channel_id ? `#${record.channel_id}` : '',
     record.final_channel_id ? `#${record.final_channel_id}` : '',
     record.final_channel_name,
+    record.account_id,
+    record.account_type,
+    record.brand,
+    record.provider,
+    record.resource_id,
+    record.resource_type,
+    record.credential_index != null
+      ? `#${Number(record.credential_index) + 1}`
+      : '',
+    record.credential_subject_fingerprint,
+    record.credential_fingerprint,
     record.request_id,
     record.probe_reason,
     record.final_error_category,
+    ...candidateValues,
   ]
     .filter(Boolean)
     .some((value) => String(value).toLowerCase().includes(normalized));
@@ -636,6 +783,280 @@ function MetricCard({ label, value, detail, icon, tone = 'default' }) {
   );
 }
 
+function IconBadge({ icon, label, tooltip, tone = 'default', mono = false }) {
+  if (!label) return null;
+  const badge = (
+    <span
+      className={`ct-channel-health-icon-badge ct-channel-health-icon-badge-${tone} ${
+        mono ? 'ct-channel-health-icon-badge-mono' : ''
+      }`}
+    >
+      {icon}
+      <span>{label}</span>
+    </span>
+  );
+  return tooltip ? <Tooltip content={tooltip}>{badge}</Tooltip> : badge;
+}
+
+function IdentityTooltip({ identity, t }) {
+  const rows = [
+    [t('渠道 ID'), identity.channelID ? `#${identity.channelID}` : ''],
+    [t('渠道'), identity.channelName],
+    [t('账号标识'), identity.accountID],
+    [t('账号凭证类型'), identity.accountType],
+    [t('凭证序号'), identity.index ? `#${identity.index}` : ''],
+    [t('凭证主体指纹'), identity.subjectFP],
+    [t('凭证指纹'), identity.credentialFP],
+    [t('品牌'), identity.brand],
+    [t('供应商'), identity.provider],
+    [t('资源'), identity.resourceID],
+    [t('资源类型'), identity.resourceType],
+  ].filter(([, value]) => String(value || '').trim());
+  if (!rows.length) return null;
+  return (
+    <div className='ct-channel-health-identity-tooltip'>
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ChannelIdentityCell({ record, t, fallback = null }) {
+  const identity = getChannelIdentity(record, fallback || {});
+  const title =
+    identity.channelName ||
+    (identity.channelID ? `${t('渠道')} #${identity.channelID}` : '--');
+  const detail = [identity.brand, identity.provider].filter(Boolean).join(' / ');
+  const tooltip = <IdentityTooltip identity={identity} t={t} />;
+  return (
+    <div className='ct-channel-health-identity-cell'>
+      <div className='ct-channel-health-identity-title'>
+        <Tooltip content={tooltip || title}>
+          <Typography.Text strong ellipsis={{ showTooltip: false }}>
+            {title}
+          </Typography.Text>
+        </Tooltip>
+      </div>
+      <div className='ct-channel-health-badge-row'>
+        <IconBadge
+          icon={<Hash size={12} />}
+          label={identity.channelID ? `#${identity.channelID}` : ''}
+          tooltip={t('渠道 ID')}
+          mono
+        />
+        <IconBadge
+          icon={<KeyRound size={12} />}
+          label={identity.index ? `#${identity.index}` : ''}
+          tooltip={t('凭证序号')}
+          tone='blue'
+          mono
+        />
+        <IconBadge
+          icon={<UserRound size={12} />}
+          label={compactIdentity(identity.accountID)}
+          tooltip={`${t('账号标识')}: ${identity.accountID}`}
+          tone='green'
+          mono
+        />
+        <IconBadge
+          icon={<Fingerprint size={12} />}
+          label={compactIdentity(identity.subjectFP || identity.credentialFP)}
+          tooltip={
+            identity.subjectFP
+              ? `${t('凭证主体指纹')}: ${identity.subjectFP}`
+              : identity.credentialFP
+                ? `${t('凭证指纹')}: ${identity.credentialFP}`
+                : ''
+          }
+          tone='purple'
+          mono
+        />
+      </div>
+      {detail && (
+        <div className='ct-channel-health-badge-row'>
+          <IconBadge
+            icon={<Server size={12} />}
+            label={compactIdentity(detail, 10, 4)}
+            tooltip={detail}
+            tone='grey'
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScopeCell({ record, t }) {
+  const dispatch = getRecordDispatch(record) || {};
+  const candidate = getSelectedScoreCandidate(record) || {};
+  const runtimeKey = candidate.runtime_key || {};
+  const requestedModel =
+    record.requested_model || dispatch.requested_model || runtimeKey.requested_model || '';
+  const group =
+    record.group ||
+    candidate.group ||
+    runtimeKey.group ||
+    record.actual_group ||
+    dispatch.actual_group ||
+    dispatch.selected_group ||
+    record.selected_group ||
+    record.requested_group ||
+    dispatch.requested_group ||
+    '';
+  const upstreamModel =
+    record.upstream_model ||
+    candidate.upstream_model ||
+    runtimeKey.upstream_model ||
+    dispatch.upstream_model ||
+    '';
+  const endpointType =
+    record.endpoint_type || dispatch.endpoint_type || runtimeKey.endpoint_type || '';
+  return (
+    <div className='ct-channel-health-scope-cell'>
+      <Typography.Text strong ellipsis={{ showTooltip: true }}>
+        {requestedModel || '--'}
+      </Typography.Text>
+      <div className='ct-channel-health-badge-row'>
+        <IconBadge
+          icon={<Layers size={12} />}
+          label={group}
+          tooltip={t('分组')}
+          tone='green'
+        />
+        <IconBadge
+          icon={<Route size={12} />}
+          label={upstreamModel}
+          tooltip={t('上游模型')}
+          tone='blue'
+        />
+        <IconBadge
+          icon={<Server size={12} />}
+          label={endpointType}
+          tooltip={t('端点')}
+          tone='grey'
+        />
+      </div>
+    </div>
+  );
+}
+
+function ScoreCompactCell({ record, t }) {
+  return (
+    <div className='ct-channel-health-score-stack'>
+      <strong>{formatScore(record.score_total)}</strong>
+      <div className='ct-channel-health-badge-row'>
+        <IconBadge
+          icon={<Gauge size={12} />}
+          label={formatScore(record.routing_score_total)}
+          tooltip={t('本次调度评分')}
+          tone='blue'
+          mono
+        />
+        <IconBadge
+          icon={<CheckCircle2 size={12} />}
+          label={formatScore(record.score_breakdown?.completion_rate)}
+          tooltip={t('完成率')}
+          tone='green'
+          mono
+        />
+        <IconBadge
+          icon={<AlertTriangle size={12} />}
+          label={formatPercent(record.empty_output_rate)}
+          tooltip={t('空输出率')}
+          tone={Number(record.empty_output_rate || 0) > 0 ? 'orange' : 'grey'}
+          mono
+        />
+      </div>
+    </div>
+  );
+}
+
+function SamplesCell({ record, t }) {
+  return (
+    <div className='ct-channel-health-stack'>
+      <div className='ct-channel-health-badge-row'>
+        <IconBadge
+          icon={<Clock3 size={12} />}
+          label={`30m ${formatNumber(record.real_sample_count_30m)}`}
+          tooltip={t('近30分钟')}
+          tone='blue'
+          mono
+        />
+        <IconBadge
+          icon={<ListChecks size={12} />}
+          label={formatNumber(record.sample_count)}
+          tooltip={t('历史样本')}
+          tone='grey'
+          mono
+        />
+      </div>
+      <Typography.Text type='tertiary' size='small'>
+        {t('最后真实成功')} {formatRelativeTime(record.last_real_success_at, t)}
+      </Typography.Text>
+    </div>
+  );
+}
+
+function PerformanceCell({ record, t }) {
+  return (
+    <div className='ct-channel-health-stack'>
+      <div className='ct-channel-health-badge-row'>
+        <IconBadge
+          icon={<CheckCircle2 size={12} />}
+          label={record.sample_count > 0 ? formatPercent(record.success_rate) : '--'}
+          tooltip={t('完成率')}
+          tone='green'
+          mono
+        />
+        <IconBadge
+          icon={<Timer size={12} />}
+          label={formatLatency(record.ttft_ms)}
+          tooltip={t('首包')}
+          tone='blue'
+          mono
+        />
+        <IconBadge
+          icon={<Gauge size={12} />}
+          label={formatLatency(record.duration_ms)}
+          tooltip={t('耗时')}
+          tone='purple'
+          mono
+        />
+      </div>
+      <Typography.Text type='tertiary' size='small'>
+        {t('并发')} {formatNumber(record.active_concurrency)}
+        {record.max_concurrency > 0
+          ? ` / ${formatNumber(record.max_concurrency)}`
+          : ''}
+      </Typography.Text>
+    </div>
+  );
+}
+
+function reasonIconForKey(key) {
+  switch (key) {
+    case 'config_error':
+    case 'circuit_open':
+      return <AlertTriangle size={11} />;
+    case 'cooldown':
+    case 'failure_avoidance':
+    case 'timeout_recovery':
+      return <Clock3 size={11} />;
+    case 'probe_recovery_pending':
+      return <ShieldCheck size={11} />;
+    case 'low_score':
+      return <Gauge size={11} />;
+    case 'missing_samples':
+      return <ListChecks size={11} />;
+    default:
+      return <Activity size={11} />;
+  }
+}
+
 function ReasonTags({ reasons, t }) {
   if (!reasons?.length) {
     return <Typography.Text type='tertiary'>--</Typography.Text>;
@@ -646,7 +1067,10 @@ function ReasonTags({ reasons, t }) {
         const meta = getReasonMeta(reason, t);
         return (
           <Tag key={meta.key} color={meta.color} size='small' type='light'>
-            {meta.label}
+            <span className='ct-channel-health-tag-content'>
+              {reasonIconForKey(meta.key)}
+              {meta.label}
+            </span>
           </Tag>
         );
       })}
@@ -1096,7 +1520,7 @@ function ChannelHealthCheck() {
       {
         title: t('优先级'),
         dataIndex: 'priority',
-        width: 120,
+        width: 105,
         render: (value) => {
           const meta = getPriorityMeta(value, t);
           return (
@@ -1109,36 +1533,19 @@ function ChannelHealthCheck() {
       {
         title: t('模型 / 分组'),
         dataIndex: 'requested_model',
-        width: 260,
-        render: (_, record) => (
-          <div className='ct-channel-health-main-cell'>
-            <Typography.Text strong ellipsis={{ showTooltip: true }}>
-              {record.requested_model || '--'}
-            </Typography.Text>
-            <Typography.Text type='secondary' size='small'>
-              {t('分组')} {record.group || '--'}
-              {record.upstream_model ? ` · ${record.upstream_model}` : ''}
-            </Typography.Text>
-            {record.endpoint_type && (
-              <Typography.Text type='tertiary' size='small'>
-                {record.endpoint_type}
-              </Typography.Text>
-            )}
-          </div>
-        ),
+        width: 230,
+        render: (_, record) => <ScopeCell record={record} t={t} />,
       },
       {
-        title: t('渠道'),
+        title: `${t('渠道')} / ${t('账号')}`,
         dataIndex: 'channel_id',
-        width: 110,
-        render: (value) => (
-          <Typography.Text strong>{value ? `#${value}` : '--'}</Typography.Text>
-        ),
+        width: 300,
+        render: (_, record) => <ChannelIdentityCell record={record} t={t} />,
       },
       {
         title: t('状态'),
         dataIndex: 'health_status',
-        width: 130,
+        width: 110,
         render: (value) => {
           const meta = getRuntimeHealthMeta(value, t);
           return (
@@ -1151,7 +1558,7 @@ function ChannelHealthCheck() {
       {
         title: t('检查原因'),
         dataIndex: 'reasons',
-        width: 310,
+        width: 270,
         render: (reasons, record) => (
           <Tooltip
             content={
@@ -1181,43 +1588,19 @@ function ChannelHealthCheck() {
       {
         title: t('当前稳定评分'),
         dataIndex: 'score_total',
-        width: 220,
-        render: (_, record) => (
-          <div className='ct-channel-health-score-stack'>
-            <strong>{formatScore(record.score_total)}</strong>
-            <span>
-              {t('本次调度评分')} {formatScore(record.routing_score_total)} ·{' '}
-              {t('完成率')} {formatScore(record.score_breakdown?.completion_rate)}
-            </span>
-            <span>
-              {t('空输出率')} {formatPercent(record.empty_output_rate)} ·{' '}
-              {t('体验异常率')} {formatPercent(record.experience_issue_rate)}
-            </span>
-          </div>
-        ),
+        width: 170,
+        render: (_, record) => <ScoreCompactCell record={record} t={t} />,
       },
       {
         title: t('真实样本'),
         dataIndex: 'real_sample_count_30m',
-        width: 240,
-        render: (_, record) => (
-          <div className='ct-channel-health-stack'>
-            <Typography.Text strong>
-              {t('近30分钟')} {formatNumber(record.real_sample_count_30m)}
-            </Typography.Text>
-            <Typography.Text type='secondary' size='small'>
-              {t('历史样本')} {formatNumber(record.sample_count)}
-            </Typography.Text>
-            <Typography.Text type='tertiary' size='small'>
-              {t('最后真实成功')} {formatRelativeTime(record.last_real_success_at, t)}
-            </Typography.Text>
-          </div>
-        ),
+        width: 170,
+        render: (_, record) => <SamplesCell record={record} t={t} />,
       },
       {
         title: t('探活状态'),
         dataIndex: 'last_probe_at',
-        width: 260,
+        width: 230,
         render: (_, record) => {
           const countdownSeconds = getProbeCountdownSeconds(
             record,
@@ -1255,24 +1638,8 @@ function ChannelHealthCheck() {
       {
         title: t('性能'),
         dataIndex: 'success_rate',
-        width: 210,
-        render: (_, record) => (
-          <div className='ct-channel-health-stack'>
-            <Typography.Text strong>
-              {record.sample_count > 0 ? formatPercent(record.success_rate) : '--'}
-            </Typography.Text>
-            <Typography.Text type='secondary' size='small'>
-              {t('首包')} {formatLatency(record.ttft_ms)} · {t('耗时')}{' '}
-              {formatLatency(record.duration_ms)}
-            </Typography.Text>
-            <Typography.Text type='tertiary' size='small'>
-              {t('并发')} {formatNumber(record.active_concurrency)}
-              {record.max_concurrency > 0
-                ? ` / ${formatNumber(record.max_concurrency)}`
-                : ''}
-            </Typography.Text>
-          </div>
-        ),
+        width: 190,
+        render: (_, record) => <PerformanceCell record={record} t={t} />,
       },
     ],
     [nowTick, queueGeneratedAt, t],
@@ -1309,31 +1676,19 @@ function ChannelHealthCheck() {
       {
         title: t('检测范围'),
         dataIndex: 'requested_model',
-        width: 260,
-        render: (_, record) => (
-          <div className='ct-channel-health-main-cell'>
-            <Typography.Text strong ellipsis={{ showTooltip: true }}>
-              {record.requested_model || '--'}
-            </Typography.Text>
-            <Typography.Text type='secondary' size='small'>
-              {record.actual_group || record.selected_group || record.requested_group || '--'}
-            </Typography.Text>
-          </div>
-        ),
+        width: 230,
+        render: (_, record) => <ScopeCell record={record} t={t} />,
       },
       {
-        title: t('渠道'),
+        title: `${t('渠道')} / ${t('账号')}`,
         dataIndex: 'final_channel_id',
-        width: 200,
+        width: 300,
         render: (_, record) => (
-          <div className='ct-channel-health-main-cell'>
-            <Typography.Text strong>
-              {record.final_channel_id ? `#${record.final_channel_id}` : '--'}
-            </Typography.Text>
-            <Typography.Text type='secondary' size='small' ellipsis={{ showTooltip: true }}>
-              {record.final_channel_name || '--'}
-            </Typography.Text>
-          </div>
+          <ChannelIdentityCell
+            record={record}
+            fallback={getSelectedScoreCandidate(record)}
+            t={t}
+          />
         ),
       },
       {
@@ -1529,7 +1884,7 @@ function ChannelHealthCheck() {
             value={keyword}
             onChange={setKeyword}
             prefix={<Search size={14} />}
-            placeholder={t('搜索模型、分组、渠道或请求ID')}
+            placeholder={`${t('搜索模型、分组、渠道或请求ID')} / ${t('账号凭证')}`}
             className='ct-channel-health-search'
           />
           <Input
@@ -1599,7 +1954,7 @@ function ChannelHealthCheck() {
                     pageSizeOpts: [12, 24, 48],
                   }}
                   empty={<Empty description={t('暂无待检查渠道')} />}
-                  scroll={{ x: 1610 }}
+                  scroll={{ x: 1775 }}
                 />
               </TabPane>
               <TabPane
@@ -1627,7 +1982,7 @@ function ChannelHealthCheck() {
                     pageSizeOpts: [12, 24, 48],
                   }}
                   empty={<Empty description={t('暂无健康检测历史')} />}
-                  scroll={{ x: 1790 }}
+                  scroll={{ x: 1880 }}
                 />
               </TabPane>
             </Tabs>

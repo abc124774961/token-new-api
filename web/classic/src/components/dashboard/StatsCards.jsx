@@ -18,103 +18,180 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Avatar, Skeleton, Tag } from '@douyinfe/semi-ui';
-import { VChart } from '@visactor/react-vchart';
+import { Skeleton, Tag } from '@douyinfe/semi-ui';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import DashboardCard from './DashboardCard';
+
+const buildSparklinePoints = (values, width = 100, height = 40) => {
+  const source = (Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  const data = source.length > 1 ? source : [0, 0];
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const range = Math.max(max - min, 1);
+  const padX = 2;
+  const padY = 4;
+  const step = (width - padX * 2) / Math.max(data.length - 1, 1);
+
+  return data
+    .map((value, index) => {
+      const normalized = max === min ? 0.5 : (value - min) / range;
+      const x = padX + index * step;
+      const y = height - padY - normalized * (height - padY * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+};
+
+const TrendSparkline = ({ data, color, compact = false }) => (
+  <svg
+    className='ct-command-sparkline'
+    viewBox='0 0 100 40'
+    preserveAspectRatio='none'
+    aria-hidden='true'
+  >
+    <polyline
+      points={buildSparklinePoints(data)}
+      fill='none'
+      stroke={color || '#14b8a6'}
+      strokeWidth={compact ? 2.4 : 2.8}
+      strokeLinecap='round'
+      strokeLinejoin='round'
+      vectorEffect='non-scaling-stroke'
+    />
+  </svg>
+);
 
 const StatsCards = ({
   groupedStatsData,
   loading,
-  getTrendSpec,
-  CARD_PROPS,
-  CHART_CONFIG,
 }) => {
   const navigate = useNavigate();
   const { t } = useTranslation();
+
+  const renderValue = (value) => (
+    <Skeleton
+      loading={loading}
+      active
+      placeholder={
+        <Skeleton.Paragraph
+          active
+          rows={1}
+          style={{
+            width: '72px',
+            height: '26px',
+            marginTop: '4px',
+          }}
+        />
+      }
+    >
+      {value}
+    </Skeleton>
+  );
+
   return (
-    <div className='ct-dashboard-kpi-section'>
-      <div className='ct-dashboard-kpi-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4'>
-        {groupedStatsData.map((group, idx) => (
-          <DashboardCard
+    <div className='ct-command-metric-grid'>
+      {groupedStatsData.map((group, idx) => {
+        const primary = group.items?.[0];
+        const secondaryItems = group.items?.slice(1) || [];
+        return (
+          <section
             key={idx}
-            {...CARD_PROPS}
-            className={`ct-dashboard-kpi-card w-full ${group.color || ''}`}
-            title={<div className='ct-dashboard-kpi-title'>{group.title}</div>}
-            tone={group.tone || 'default'}
-            bodyStyle={{ padding: 0 }}
+            className={`ct-command-metric-card ct-command-metric-card-${group.tone || 'default'}`}
           >
-            <div className='ct-dashboard-stat-list'>
-              {group.items.map((item, itemIdx) => (
+            <div className='ct-command-metric-head'>
+              <div className='ct-command-metric-title'>{group.title}</div>
+              <span className='ct-command-metric-index'>
+                {String(idx + 1).padStart(2, '0')}
+              </span>
+            </div>
+
+            {primary && (
+              <div
+                className='ct-command-metric-primary'
+                onClick={primary.onClick}
+              >
+                <span
+                  className={`ct-command-metric-icon ct-command-metric-icon-${primary.iconTone || 'teal'}`}
+                >
+                  {primary.icon}
+                </span>
+                <span className='ct-command-metric-copy'>
+                  <span className='ct-command-metric-label'>
+                    {primary.title}
+                  </span>
+                  <span
+                    className={`ct-command-metric-value ct-command-tone-${primary.iconTone || 'teal'}`}
+                  >
+                    {renderValue(primary.value)}
+                  </span>
+                </span>
+                {primary.title === t('当前余额') ? (
+                  <Tag
+                    color='green'
+                    shape='circle'
+                    size='large'
+                    className='ct-command-recharge-tag'
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate('/console/recharge');
+                    }}
+                  >
+                    {t('充值')}
+                  </Tag>
+                ) : (
+                  (loading ||
+                    (primary.trendData && primary.trendData.length > 0)) && (
+                    <span className='ct-command-metric-trend'>
+                      <TrendSparkline
+                        data={primary.trendData || []}
+                        color={primary.trendColor}
+                      />
+                    </span>
+                  )
+                )}
+              </div>
+            )}
+
+            <div className='ct-command-metric-subgrid'>
+              {secondaryItems.map((item, itemIdx) => (
                 <div
                   key={itemIdx}
-                  className='ct-dashboard-stat-row'
+                  className='ct-command-metric-secondary'
                   onClick={item.onClick}
                 >
-                  <div className='ct-dashboard-stat-main'>
-                    <Avatar
-                      className={`ct-dashboard-stat-avatar ct-dashboard-stat-avatar-${item.iconTone || 'teal'}`}
-                      size='small'
-                      color={item.avatarColor}
+                  <span
+                    className={`ct-command-metric-mini-icon ct-command-metric-icon-${item.iconTone || 'teal'}`}
+                  >
+                    {item.icon}
+                  </span>
+                  <span className='ct-command-metric-secondary-copy'>
+                    <span className='ct-command-metric-label'>
+                      {item.title}
+                    </span>
+                    <span
+                      className={`ct-command-metric-secondary-value ct-command-tone-${item.iconTone || 'teal'}`}
                     >
-                      {item.icon}
-                    </Avatar>
-                    <div className='ct-dashboard-stat-copy'>
-                      <div className='ct-dashboard-stat-label'>
-                        {item.title}
-                      </div>
-                      <div className='ct-dashboard-stat-value'>
-                        <Skeleton
-                          loading={loading}
-                          active
-                          placeholder={
-                            <Skeleton.Paragraph
-                              active
-                              rows={1}
-                              style={{
-                                width: '65px',
-                                height: '24px',
-                                marginTop: '4px',
-                              }}
-                            />
-                          }
-                        >
-                          {item.value}
-                        </Skeleton>
-                      </div>
-                    </div>
-                  </div>
-                  {item.title === t('当前余额') ? (
-                    <Tag
-                      color='green'
-                      shape='circle'
-                      size='large'
-                      className='ct-dashboard-action-tag'
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate('/console/recharge');
-                      }}
-                    >
-                      {t('充值')}
-                    </Tag>
-                  ) : (
-                    (loading ||
-                      (item.trendData && item.trendData.length > 0)) && (
-                      <div className='ct-dashboard-stat-trend'>
-                        <VChart
-                          spec={getTrendSpec(item.trendData, item.trendColor)}
-                          option={CHART_CONFIG}
+                      {renderValue(item.value)}
+                    </span>
+                  </span>
+                  {(loading || (item.trendData && item.trendData.length > 0)) &&
+                    item.title !== t('当前余额') && (
+                      <span className='ct-command-metric-mini-trend'>
+                        <TrendSparkline
+                          data={item.trendData || []}
+                          color={item.trendColor}
+                          compact
                         />
-                      </div>
-                    )
-                  )}
+                      </span>
+                    )}
                 </div>
               ))}
             </div>
-          </DashboardCard>
-        ))}
-      </div>
+          </section>
+        );
+      })}
     </div>
   );
 };

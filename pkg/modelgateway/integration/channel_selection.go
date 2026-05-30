@@ -2,10 +2,13 @@ package integration
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewaycredential "github.com/QuantumNous/new-api/pkg/modelgateway/credential"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
@@ -80,6 +83,13 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 			w.mu.Unlock()
 			return nil, nil
 		}
+		if ok, reason := validateSelectedSmartPlan(plan); !ok {
+			service.MarkChannelSelectionSkipped(c, plan.Channel.Id)
+			w.mu.Unlock()
+			common.SysLog(fmt.Sprintf("model gateway smart selection skipped stale candidate: channel_id=%d reason=%s", plan.Channel.Id, reason))
+			RefreshDefaultAccountCandidateIndex()
+			continue
+		}
 		if !service.ReserveChannelSelectionRouting(c, plan.Channel.Id) {
 			service.MarkChannelSelectionSkipped(c, plan.Channel.Id)
 			w.mu.Unlock()
@@ -121,4 +131,37 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 		}, nil
 	}
 	return nil, nil
+}
+
+func validateSelectedSmartPlan(plan *core.DispatchPlan) (bool, string) {
+	if plan == nil || plan.Channel == nil {
+		return true, ""
+	}
+	if common.MemoryCacheEnabled || model.DB != nil {
+		if current, err := model.CacheGetChannel(plan.Channel.Id); err == nil && current != nil {
+			plan.Channel = current
+		}
+	}
+	if channelDisabledForSmartSelection(plan.Channel) {
+		return false, "channel_disabled"
+	}
+	if !dispatchPlanHasCredentialRef(plan) {
+		return true, ""
+	}
+	if _, apiErr := modelgatewaycredential.ResolveChannelCredential(plan.Channel, plan.CredentialRef); apiErr != nil {
+		return false, apiErr.Error()
+	}
+	return true, ""
+}
+
+func channelDisabledForSmartSelection(channel *model.Channel) bool {
+	return channel != nil && channel.Status != 0 && channel.Status != common.ChannelStatusEnabled
+}
+
+func dispatchPlanHasCredentialRef(plan *core.DispatchPlan) bool {
+	if plan == nil {
+		return false
+	}
+	ref := plan.CredentialRef
+	return ref.ResourceID != "" || ref.AccountID != "" || ref.CredentialFingerprint != ""
 }

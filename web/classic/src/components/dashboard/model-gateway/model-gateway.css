@@ -429,15 +429,19 @@
 
 .ct-model-gateway-dynamic-mini-card {
   justify-content: space-between;
+  overflow: hidden;
 }
 
 .ct-model-gateway-dynamic-mini-head-meta {
   display: inline-flex;
+  max-width: 64%;
   min-width: 0;
+  flex: 1 1 auto;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  flex-wrap: wrap;
+  overflow: hidden;
+  flex-wrap: nowrap;
 }
 
 .ct-model-gateway-dynamic-mini-status {
@@ -490,8 +494,8 @@
   min-width: 0;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: 8px;
+  flex-wrap: nowrap;
 }
 
 .ct-model-gateway-dynamic-mini-inline-ratio {
@@ -527,14 +531,18 @@
 
 .ct-model-gateway-dynamic-mini-chip {
   display: inline-flex;
-  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 88px;
+  flex: 0 1 auto;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   border-radius: 999px;
   padding: 2px 8px;
   font-size: 10px;
   font-weight: 780;
   line-height: 1.25;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -559,6 +567,8 @@
   min-width: 0;
   align-items: baseline;
   gap: 6px;
+  overflow: hidden;
+  flex-wrap: nowrap;
 }
 
 .ct-model-gateway-dynamic-mini-cost-row span {
@@ -570,6 +580,7 @@
 }
 
 .ct-model-gateway-dynamic-mini-cost-value {
+  display: inline-block;
   min-width: 0;
   overflow: hidden;
   color: #7c2d12;
@@ -579,6 +590,51 @@
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ct-model-gateway-dynamic-mini-foot-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.ct-model-gateway-dynamic-mini-foot-row
+  .ct-model-gateway-dynamic-mini-cost-row {
+  flex: 1 1 auto;
+}
+
+.ct-model-gateway-dynamic-mini-foot-row
+  .ct-model-gateway-dynamic-mini-status {
+  max-width: 86px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ct-model-gateway-dynamic-mini-tooltip {
+  display: grid;
+  gap: 5px;
+  min-width: 180px;
+}
+
+.ct-model-gateway-dynamic-mini-tooltip div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ct-model-gateway-dynamic-mini-tooltip span {
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ct-model-gateway-dynamic-mini-tooltip bdi {
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 760;
 }
 
 @media (max-width: 980px) {

@@ -295,6 +295,92 @@ func TestListChannelAccountsUsesSingleKeyChannelRuntimeFallback(t *testing.T) {
 	require.Equal(t, 0.88, payload.Data.Items[0].Score.SuccessRate)
 }
 
+func TestListChannelAccountsStatsViewUsesAccountScopedRuntime(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     42,
+		Name:   "account scoped runtime",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-account-a\nsk-account-b",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.5",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5.5",
+		ChannelId: 42,
+		Enabled:   true,
+	}).Error)
+
+	accounts := modelgatewayaccount.NewRegistry().AccountsForChannel(&channel)
+	require.Len(t, accounts, 2)
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	baseKey := modelgatewaycore.RuntimeKey{
+		RequestedModel: "gpt-5.5",
+		UpstreamModel:  "gpt-5.5",
+		Group:          "default",
+		EndpointType:   constant.EndpointTypeOpenAIResponse,
+	}
+	keyA := modelgatewayaccount.RuntimeKeyForChannelAccount(baseKey, accounts[0])
+	keyB := modelgatewayaccount.RuntimeKeyForChannelAccount(baseKey, accounts[1])
+	runtimeDeps.SnapshotStore.Put(modelgatewaycore.RuntimeSnapshot{
+		Key:                       keyA,
+		SuccessRate:               0.99,
+		ActiveConcurrency:         1,
+		EffectiveConcurrencyLimit: 10,
+		SampleCount:               8,
+	})
+	runtimeDeps.SnapshotStore.Put(modelgatewaycore.RuntimeSnapshot{
+		Key:                       keyB,
+		SuccessRate:               0.98,
+		ActiveConcurrency:         0,
+		EffectiveConcurrencyLimit: 10,
+		SampleCount:               8,
+	})
+	runtimeDeps.SnapshotStore.Put(modelgatewaycore.RuntimeSnapshot{
+		Key: modelgatewaycore.RuntimeKey{
+			RequestedModel:  "gpt-5.5",
+			UpstreamModel:   "gpt-5.5",
+			ChannelID:       42,
+			CredentialIndex: 0,
+			Group:           "default",
+			EndpointType:    constant.EndpointTypeOpenAIResponse,
+		},
+		SuccessRate:               0.90,
+		ActiveConcurrency:         6,
+		EffectiveConcurrencyLimit: 10,
+		QueueDepth:                6,
+		SampleCount:               12,
+	})
+
+	router := gin.New()
+	router.GET("/api/channel/:id/accounts", ListChannelAccounts)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/channel/42/accounts?view=stats&page=1&page_size=20", nil)
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, channelAccountViewStats, payload.Data.View)
+	require.Len(t, payload.Data.Items, 2)
+	items := map[int]ChannelAccountItem{}
+	for _, item := range payload.Data.Items {
+		items[item.CredentialIndex] = item
+	}
+	require.NotNil(t, items[0].Score)
+	require.NotNil(t, items[1].Score)
+	require.Equal(t, 0, items[0].Score.ActiveConcurrency)
+	require.Equal(t, 0, items[0].Score.QueueDepth)
+	require.Equal(t, 0, items[1].Score.ActiveConcurrency)
+	require.Equal(t, 0, items[1].Score.QueueDepth)
+}
+
 func TestListChannelAccountsSupportsServerSidePaginationAndStatusFilter(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	channel := model.Channel{

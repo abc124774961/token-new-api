@@ -26,9 +26,11 @@ import DashboardHeader from './DashboardHeader';
 import StatsCards from './StatsCards';
 import ChartsPanel from './ChartsPanel';
 import ApiInfoPanel from './ApiInfoPanel';
+import SubscriptionOverviewPanel from './SubscriptionOverviewPanel';
 import AnnouncementsPanel from './AnnouncementsPanel';
 import FaqPanel from './FaqPanel';
 import UptimePanel from './UptimePanel';
+import './dashboard-modern.css';
 
 import { useDashboardData } from '../../hooks/dashboard/useDashboardData';
 import { useDashboardStats } from '../../hooks/dashboard/useDashboardStats';
@@ -36,14 +38,10 @@ import { useDashboardCharts } from '../../hooks/dashboard/useDashboardCharts';
 
 import {
   CHART_CONFIG,
-  CARD_PROPS,
-  FLEX_CENTER_GAP2,
-  ILLUSTRATION_SIZE,
   ANNOUNCEMENT_LEGEND_DATA,
   UPTIME_STATUS_MAP,
 } from '../../constants/dashboard.constants';
 import {
-  getTrendSpec,
   handleCopyUrl,
   handleSpeedTest,
   getUptimeStatusColor,
@@ -101,7 +99,10 @@ const Dashboard = () => {
       }
     });
     await loadUserData();
-    await dashboardData.loadUptimeData();
+    await Promise.all([
+      dashboardData.loadUptimeData(),
+      dashboardData.loadSubscriptionData(),
+    ]);
   };
 
   const handleRefresh = async (overrideInputs, overrideDefaultTime) => {
@@ -167,7 +168,7 @@ const Dashboard = () => {
   }, []);
 
   return (
-    <div className='ct-dashboard-shell ct-data-dashboard-page h-full'>
+    <div className='ct-dashboard-shell ct-command-dashboard-page h-full'>
       <DashboardHeader
         getGreeting={dashboardData.getGreeting}
         greetingVisible={dashboardData.greetingVisible}
@@ -187,111 +188,101 @@ const Dashboard = () => {
         t={dashboardData.t}
       />
 
-      <div className='ct-dashboard-main-flow'>
+      <div className='ct-command-dashboard-body'>
+        <SubscriptionOverviewPanel
+          activeSubscriptions={dashboardData.activeSubscriptions}
+          allSubscriptions={dashboardData.allSubscriptions}
+          plans={dashboardData.subscriptionPlans}
+          billingPreference={dashboardData.billingPreference}
+          loading={dashboardData.subscriptionLoading}
+          navigate={dashboardData.navigate}
+          t={dashboardData.t}
+        />
+
         <StatsCards
           groupedStatsData={groupedStatsData}
           loading={dashboardData.loading}
-          getTrendSpec={getTrendSpec}
-          CARD_PROPS={CARD_PROPS}
-          CHART_CONFIG={CHART_CONFIG}
         />
 
-        {/* API信息和图表面板 */}
-        <div>
-          <div
-            className={`ct-dashboard-insight-grid grid grid-cols-1 gap-4 ${dashboardData.hasApiInfoPanel ? 'lg:grid-cols-4' : ''}`}
-          >
-            <ChartsPanel
-              activeChartTab={dashboardData.activeChartTab}
-              setActiveChartTab={dashboardData.setActiveChartTab}
-              spec_line={dashboardCharts.spec_line}
-              spec_model_line={dashboardCharts.spec_model_line}
-              spec_pie={dashboardCharts.spec_pie}
-              spec_rank_bar={dashboardCharts.spec_rank_bar}
-              spec_user_rank={dashboardCharts.spec_user_rank}
-              spec_user_trend={dashboardCharts.spec_user_trend}
-              isAdminUser={dashboardData.isAdminUser}
-              CARD_PROPS={CARD_PROPS}
-              CHART_CONFIG={CHART_CONFIG}
-              FLEX_CENTER_GAP2={FLEX_CENTER_GAP2}
-              hasApiInfoPanel={dashboardData.hasApiInfoPanel}
+        <div
+          className={`ct-command-dashboard-workbench ${
+            dashboardData.hasApiInfoPanel
+              ? 'ct-command-dashboard-workbench-has-rail'
+              : 'ct-command-dashboard-workbench-full'
+          }`}
+        >
+          <ChartsPanel
+            activeChartTab={dashboardData.activeChartTab}
+            setActiveChartTab={dashboardData.setActiveChartTab}
+            spec_line={dashboardCharts.spec_line}
+            spec_model_line={dashboardCharts.spec_model_line}
+            spec_pie={dashboardCharts.spec_pie}
+            spec_rank_bar={dashboardCharts.spec_rank_bar}
+            spec_user_rank={dashboardCharts.spec_user_rank}
+            spec_user_trend={dashboardCharts.spec_user_trend}
+            isAdminUser={dashboardData.isAdminUser}
+            CHART_CONFIG={CHART_CONFIG}
+            hasApiInfoPanel={dashboardData.hasApiInfoPanel}
+            t={dashboardData.t}
+          />
+
+          {dashboardData.hasApiInfoPanel && (
+            <ApiInfoPanel
+              apiInfoData={apiInfoData}
+              handleCopyUrl={(url) => handleCopyUrl(url, dashboardData.t)}
+              handleSpeedTest={handleSpeedTest}
               t={dashboardData.t}
             />
+          )}
+        </div>
 
-            {dashboardData.hasApiInfoPanel && (
-              <ApiInfoPanel
-                apiInfoData={apiInfoData}
-                handleCopyUrl={(url) => handleCopyUrl(url, dashboardData.t)}
-                handleSpeedTest={handleSpeedTest}
-                CARD_PROPS={CARD_PROPS}
-                FLEX_CENTER_GAP2={FLEX_CENTER_GAP2}
-                ILLUSTRATION_SIZE={ILLUSTRATION_SIZE}
+        {dashboardData.hasInfoPanels && (
+          <div className='ct-command-dashboard-service-grid'>
+            {dashboardData.announcementsEnabled && (
+              <AnnouncementsPanel
+                announcementData={announcementData}
+                announcementLegendData={ANNOUNCEMENT_LEGEND_DATA.map(
+                  (item) => ({
+                    ...item,
+                    label: dashboardData.t(item.label),
+                  }),
+                )}
                 t={dashboardData.t}
               />
             )}
-          </div>
-        </div>
 
-        {/* 系统公告和常见问答卡片 */}
-        {dashboardData.hasInfoPanels && (
-          <div>
-            <div className='ct-dashboard-service-grid grid grid-cols-1 lg:grid-cols-4 gap-4'>
-              {/* 公告卡片 */}
-              {dashboardData.announcementsEnabled && (
-                <AnnouncementsPanel
-                  announcementData={announcementData}
-                  announcementLegendData={ANNOUNCEMENT_LEGEND_DATA.map(
-                    (item) => ({
-                      ...item,
-                      label: dashboardData.t(item.label),
-                    }),
-                  )}
-                  CARD_PROPS={CARD_PROPS}
-                  ILLUSTRATION_SIZE={ILLUSTRATION_SIZE}
-                  t={dashboardData.t}
-                />
-              )}
+            {dashboardData.faqEnabled && (
+              <FaqPanel
+                faqData={faqData}
+                t={dashboardData.t}
+              />
+            )}
 
-              {/* 常见问答卡片 */}
-              {dashboardData.faqEnabled && (
-                <FaqPanel
-                  faqData={faqData}
-                  CARD_PROPS={CARD_PROPS}
-                  FLEX_CENTER_GAP2={FLEX_CENTER_GAP2}
-                  ILLUSTRATION_SIZE={ILLUSTRATION_SIZE}
-                  t={dashboardData.t}
-                />
-              )}
-
-              {/* 服务可用性卡片 */}
-              {dashboardData.uptimeEnabled && (
-                <UptimePanel
-                  uptimeData={dashboardData.uptimeData}
-                  uptimeLoading={dashboardData.uptimeLoading}
-                  activeUptimeTab={dashboardData.activeUptimeTab}
-                  setActiveUptimeTab={dashboardData.setActiveUptimeTab}
-                  loadUptimeData={dashboardData.loadUptimeData}
-                  uptimeLegendData={uptimeLegendData}
-                  renderMonitorList={(monitors) =>
-                    renderMonitorList(
-                      monitors,
-                      (status) =>
-                        getUptimeStatusColor(status, UPTIME_STATUS_MAP),
-                      (status) =>
-                        getUptimeStatusText(
-                          status,
-                          UPTIME_STATUS_MAP,
-                          dashboardData.t,
-                        ),
-                      dashboardData.t,
-                    )
-                  }
-                  CARD_PROPS={CARD_PROPS}
-                  ILLUSTRATION_SIZE={ILLUSTRATION_SIZE}
-                  t={dashboardData.t}
-                />
-              )}
-            </div>
+            {dashboardData.uptimeEnabled && (
+              <UptimePanel
+                uptimeData={dashboardData.uptimeData}
+                uptimeLoading={dashboardData.uptimeLoading}
+                activeUptimeTab={dashboardData.activeUptimeTab}
+                setActiveUptimeTab={dashboardData.setActiveUptimeTab}
+                loadUptimeData={dashboardData.loadUptimeData}
+                uptimeLegendData={uptimeLegendData}
+                renderMonitorList={(monitors) =>
+                  renderMonitorList(
+                    monitors,
+                    (status) =>
+                      getUptimeStatusColor(status, UPTIME_STATUS_MAP),
+                    (status) =>
+                      getUptimeStatusText(
+                        status,
+                        UPTIME_STATUS_MAP,
+                        dashboardData.t,
+                      ),
+                    dashboardData.t,
+                  )
+                }
+                t={dashboardData.t}
+              />
+            )}
           </div>
         )}
       </div>

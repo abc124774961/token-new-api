@@ -1223,6 +1223,65 @@ function usageLimitActive(capabilities) {
   );
 }
 
+function AccountUsageLimitTag({ record, t }) {
+  const capabilities = record?.capabilities || {};
+  const scheduling = record?.scheduling || {};
+  const blockingReasons = Array.isArray(scheduling.blocking_reasons)
+    ? scheduling.blocking_reasons
+    : [];
+  const active =
+    usageLimitActive(capabilities) ||
+    blockingReasons.includes('account_usage_limited');
+  if (!active) {
+    return null;
+  }
+
+  const recoveryAt =
+    scheduling.recovery_at || capabilities.usage_limit_expires_at || 0;
+  const recoverySource =
+    scheduling.recovery_source || capabilities.usage_limit_reset_source || '';
+  const reason =
+    capabilities.usage_limit_reason ||
+    scheduling.detail ||
+    capabilities.usage_limit_message ||
+    t('账号用量限制中');
+  const content = (
+    <div className='ct-channel-account-capability-tip'>
+      <div>
+        {t('限流')}: {reason}
+      </div>
+      {capabilities.usage_limit_message &&
+      capabilities.usage_limit_message !== reason ? (
+        <div>{capabilities.usage_limit_message}</div>
+      ) : null}
+      {recoveryAt ? (
+        <div>
+          {t('预计恢复')}: {formatTimestamp(recoveryAt)}
+        </div>
+      ) : null}
+      {recoverySource ? (
+        <div>
+          {t('恢复来源')}: {recoverySource}
+        </div>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <Tooltip content={content}>
+      <Tag
+        color='orange'
+        type='light'
+        shape='circle'
+        size='small'
+        prefixIcon={<AlertTriangle size={12} />}
+      >
+        {t('账号用量限制中')}
+      </Tag>
+    </Tooltip>
+  );
+}
+
 function AccountDiagnosisBlock({ record, t }) {
   const capabilities = record?.capabilities || {};
   const score = record?.score || {};
@@ -1400,7 +1459,12 @@ function AccountDiagnosisBlock({ record, t }) {
 function DispatchHealthBlock({ record, t }) {
   const score = record?.score;
   if (!score) {
-    return <Text type='tertiary'>{t('暂无运行态')}</Text>;
+    return (
+      <div className='ct-channel-account-dispatch-cell'>
+        <Text type='tertiary'>{t('暂无运行态')}</Text>
+        <AccountUsageLimitTag record={record} t={t} />
+      </div>
+    );
   }
   const meta = healthTagMeta(score.health_status, t);
   return (
@@ -1431,6 +1495,7 @@ function DispatchHealthBlock({ record, t }) {
           })}
         </Tag>
       ) : null}
+      <AccountUsageLimitTag record={record} t={t} />
     </div>
   );
 }
@@ -1671,6 +1736,7 @@ function buildColumns(
               {identity.display_name ||
                 `${t('账号')} #${record.credential_index + 1}`}
               {statusTag(record, t)}
+              <AccountUsageLimitTag record={record} t={t} />
             </div>
             <div className='ct-channel-account-sub'>
               {t('凭证序号')} #{record.credential_index + 1}
@@ -1906,6 +1972,7 @@ function buildStatsColumns(
               {identity.display_name ||
                 `${t('账号')} #${record.credential_index + 1}`}
               {statusTag(record, t)}
+              <AccountUsageLimitTag record={record} t={t} />
             </div>
             <div className='ct-channel-account-sub'>
               {identity.brand || record?.resource_ref?.brand || '--'} ·{' '}

@@ -250,6 +250,129 @@
   gap: 3px;
 }
 
+.ct-channel-health-scope-cell,
+.ct-channel-health-identity-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ct-channel-health-identity-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.ct-channel-health-identity-title .semi-typography,
+.ct-channel-health-scope-cell > .semi-typography {
+  max-width: 100%;
+}
+
+.ct-channel-health-badge-row {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.ct-channel-health-icon-badge {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #d8e5ef;
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: #f8fbff;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 17px;
+  white-space: nowrap;
+}
+
+.ct-channel-health-icon-badge svg {
+  flex: 0 0 auto;
+}
+
+.ct-channel-health-icon-badge span {
+  overflow: hidden;
+  min-width: 0;
+  max-width: 132px;
+  text-overflow: ellipsis;
+}
+
+.ct-channel-health-icon-badge-mono span {
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-weight: 850;
+}
+
+.ct-channel-health-icon-badge-blue {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.ct-channel-health-icon-badge-green {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #047857;
+}
+
+.ct-channel-health-icon-badge-orange {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.ct-channel-health-icon-badge-purple {
+  border-color: #ddd6fe;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.ct-channel-health-icon-badge-grey {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.ct-channel-health-identity-tooltip {
+  display: grid;
+  gap: 5px;
+  min-width: 240px;
+  max-width: 380px;
+  font-size: 12px;
+}
+
+.ct-channel-health-identity-tooltip div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.ct-channel-health-identity-tooltip span {
+  color: #94a3b8;
+}
+
+.ct-channel-health-identity-tooltip strong {
+  overflow-wrap: anywhere;
+  color: #f8fafc;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-weight: 800;
+}
+
+.ct-channel-health-tag-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .ct-channel-health-score-stack strong {
   color: var(--ch-text);
   font-family:
@@ -262,6 +385,11 @@
 .ct-channel-health-score-stack span {
   color: var(--ch-muted);
   font-size: 12px;
+}
+
+.ct-channel-health-score-stack .ct-channel-health-icon-badge span {
+  color: inherit;
+  font-size: 11px;
 }
 
 .ct-channel-health-countdown {

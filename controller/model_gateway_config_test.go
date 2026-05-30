@@ -102,6 +102,15 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	setting.CostCalculationIntervalSeconds = 4
 	setting.CostCalculationWorkerCount = 3
 	setting.CostCalculationBatchSize = 80
+	setting.DynamicBillingCostSource = scheduler_setting.DynamicBillingCostSourceProfit24h
+	setting.DynamicBillingApplyMode = scheduler_setting.DynamicBillingApplyModeAuto
+	setting.DynamicBillingProfitWindowHours = 24
+	setting.DynamicBillingMinTokens = 1200
+	setting.DynamicBillingMinRequests = 22
+	setting.DynamicBillingMinSuccessRequests = 6
+	setting.DynamicBillingMinRatio = 0.02
+	setting.DynamicBillingMaxRatio = 1.8
+	setting.DynamicBillingMaxStepChange = 0.25
 	setting.DynamicBillingWindowSamples = 280
 	setting.ProxySameBrandReusePolicy = scheduler_setting.ProxyReusePolicyConfirm
 	setting.StickySaveOnSelect = true
@@ -196,6 +205,15 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.Equal(t, 4, payload.Data.Setting.CostCalculationIntervalSeconds)
 	require.Equal(t, 3, payload.Data.Setting.CostCalculationWorkerCount)
 	require.Equal(t, 80, payload.Data.Setting.CostCalculationBatchSize)
+	require.Equal(t, scheduler_setting.DynamicBillingCostSourceProfit24h, payload.Data.Setting.DynamicBillingCostSource)
+	require.Equal(t, scheduler_setting.DynamicBillingApplyModeAuto, payload.Data.Setting.DynamicBillingApplyMode)
+	require.Equal(t, 24, payload.Data.Setting.DynamicBillingProfitWindowHours)
+	require.Equal(t, 1200, payload.Data.Setting.DynamicBillingMinTokens)
+	require.Equal(t, 22, payload.Data.Setting.DynamicBillingMinRequests)
+	require.Equal(t, 6, payload.Data.Setting.DynamicBillingMinSuccessRequests)
+	require.Equal(t, 0.02, payload.Data.Setting.DynamicBillingMinRatio)
+	require.Equal(t, 1.8, payload.Data.Setting.DynamicBillingMaxRatio)
+	require.Equal(t, 0.25, payload.Data.Setting.DynamicBillingMaxStepChange)
 	require.Equal(t, 280, payload.Data.Setting.DynamicBillingWindowSamples)
 	require.Equal(t, scheduler_setting.ProxyReusePolicyConfirm, payload.Data.Setting.ProxySameBrandReusePolicy)
 	require.True(t, payload.Data.Setting.StickySaveOnSelect)
@@ -269,6 +287,12 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	var dynamicBillingWindowSamplesOption model.Option
 	require.NoError(t, db.First(&dynamicBillingWindowSamplesOption, "key = ?", "scheduler_setting.dynamic_billing_window_samples").Error)
 	require.Equal(t, "280", dynamicBillingWindowSamplesOption.Value)
+	var dynamicBillingCostSourceOption model.Option
+	require.NoError(t, db.First(&dynamicBillingCostSourceOption, "key = ?", "scheduler_setting.dynamic_billing_cost_source").Error)
+	require.Equal(t, scheduler_setting.DynamicBillingCostSourceProfit24h, dynamicBillingCostSourceOption.Value)
+	var dynamicBillingApplyModeOption model.Option
+	require.NoError(t, db.First(&dynamicBillingApplyModeOption, "key = ?", "scheduler_setting.dynamic_billing_apply_mode").Error)
+	require.Equal(t, scheduler_setting.DynamicBillingApplyModeAuto, dynamicBillingApplyModeOption.Value)
 	var proxyReusePolicyOption model.Option
 	require.NoError(t, db.First(&proxyReusePolicyOption, "key = ?", "scheduler_setting.proxy_same_brand_reuse_policy").Error)
 	require.Equal(t, scheduler_setting.ProxyReusePolicyConfirm, proxyReusePolicyOption.Value)

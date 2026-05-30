@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/observability"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
@@ -60,11 +61,18 @@ func TestRuntimeStatusServiceCarriesAccountScopeFields(t *testing.T) {
 
 	service := observability.NewRuntimeStatusService(observability.RuntimeStatusDeps{
 		SnapshotStore: store,
+		ChannelProvider: func(channelID int) (*model.Channel, bool) {
+			if channelID == 501 {
+				return &model.Channel{Id: channelID, Name: "OpenAI pooled channel"}, true
+			}
+			return nil, false
+		},
 	})
 	response := service.Build(observability.RuntimeStatusQuery{ChannelID: 501, Limit: 10})
 
 	require.Len(t, response.Items, 1)
 	item := response.Items[0]
+	require.Equal(t, "OpenAI pooled channel", item.ChannelName)
 	require.Equal(t, key.ResourceID, item.ResourceID)
 	require.Equal(t, key.ResourceType, item.ResourceType)
 	require.Equal(t, key.AccountID, item.AccountID)
@@ -74,6 +82,96 @@ func TestRuntimeStatusServiceCarriesAccountScopeFields(t *testing.T) {
 	require.Equal(t, key.CredentialIndex, item.CredentialIndex)
 	require.Equal(t, key.CredentialSubjectFP, item.CredentialSubjectFP)
 	require.Equal(t, key.CredentialFP, item.CredentialFP)
+}
+
+func TestRuntimeStatusServiceStrictAccountScopeDoesNotApplyChannelLiveStateOrQueue(t *testing.T) {
+	now := time.Unix(1710000100, 0)
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	keyA := core.RuntimeKey{
+		RequestedModel:      "gpt-5.5",
+		UpstreamModel:       "gpt-5.5",
+		ChannelID:           601,
+		AccountID:           "acct-a",
+		CredentialIndex:     0,
+		CredentialSubjectFP: "subject-a",
+		CredentialFP:        "credential-a",
+		Group:               "default",
+		EndpointType:        constant.EndpointTypeOpenAIResponse,
+	}
+	keyB := core.RuntimeKey{
+		RequestedModel:      "gpt-5.5",
+		UpstreamModel:       "gpt-5.5",
+		ChannelID:           601,
+		AccountID:           "acct-b",
+		CredentialIndex:     1,
+		CredentialSubjectFP: "subject-b",
+		CredentialFP:        "credential-b",
+		Group:               "default",
+		EndpointType:        constant.EndpointTypeOpenAIResponse,
+	}
+	store.Put(core.RuntimeSnapshot{Key: keyA, SuccessRate: 0.99, ActiveConcurrency: 1, MaxConcurrency: 10, SampleCount: 8})
+	store.Put(core.RuntimeSnapshot{Key: keyB, SuccessRate: 0.98, ActiveConcurrency: 0, MaxConcurrency: 10, SampleCount: 8})
+	store.Put(core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			RequestedModel:  "gpt-5.5",
+			UpstreamModel:   "gpt-5.5",
+			ChannelID:       601,
+			CredentialIndex: 0,
+			Group:           "default",
+			EndpointType:    constant.EndpointTypeOpenAIResponse,
+		},
+		SuccessRate:       0.90,
+		ActiveConcurrency: 6,
+		QueueDepth:        6,
+		SampleCount:       12,
+	})
+
+	service := observability.NewRuntimeStatusService(observability.RuntimeStatusDeps{
+		SnapshotStore: store,
+		QueueSnapshot: func() map[int]int {
+			return map[int]int{601: 9}
+		},
+		QueueDetailSnapshot: func() core.RuntimeQueueSnapshot {
+			return core.RuntimeQueueSnapshot{
+				UpdatedAt: now.Unix(),
+				Summary:   core.RuntimeQueueSummary{UpdatedAt: now.Unix(), TotalQueued: 9},
+				Channels: []core.RuntimeQueueChannelSnapshot{
+					{ChannelID: 601, QueueDepth: 9, QueuedRequests: 9, WaitingRequests: 9, QueueCapacity: 20},
+				},
+				RuntimeKeys: []core.RuntimeQueueKeySnapshot{
+					{RuntimeKey: keyA, RequestedModel: keyA.RequestedModel, UpstreamModel: keyA.UpstreamModel, ChannelID: keyA.ChannelID, Group: keyA.Group, EndpointType: string(keyA.EndpointType), QueueDepth: 2, QueuedRequests: 2, WaitingRequests: 2, NormalDepth: 2},
+				},
+			}
+		},
+		StateProvider: fakeRuntimeStateProvider{
+			active: map[int]int{601: 9},
+		},
+		Now: func() time.Time { return now },
+	})
+
+	response := service.Build(observability.RuntimeStatusQuery{
+		ChannelID:          601,
+		Limit:              10,
+		AccountIDs:         []string{"acct-a", "acct-b"},
+		CredentialIndexes:  []int{0, 1},
+		StrictAccountScope: true,
+	})
+
+	require.Len(t, response.Items, 2)
+	byAccount := map[string]observability.RuntimeStatusItem{}
+	for _, item := range response.Items {
+		byAccount[item.AccountID] = item
+	}
+	require.Equal(t, 0, byAccount["acct-a"].ActiveConcurrency)
+	require.Equal(t, 2, byAccount["acct-a"].QueueDepth)
+	require.Equal(t, 0, byAccount["acct-b"].ActiveConcurrency)
+	require.Equal(t, 0, byAccount["acct-b"].QueueDepth)
+	require.Equal(t, 0, response.Summary.ActiveConcurrency)
+	require.Equal(t, 2, response.Summary.QueuedRequests)
+	require.NotNil(t, response.QueueSnapshot)
+	require.Empty(t, response.QueueSnapshot.Channels)
+	require.Len(t, response.QueueSnapshot.RuntimeKeys, 1)
+	require.Equal(t, 2, response.QueueSnapshot.Summary.TotalQueued)
 }
 
 func TestRuntimeStatusServiceMergesSnapshotCircuitQueueAndLiveState(t *testing.T) {

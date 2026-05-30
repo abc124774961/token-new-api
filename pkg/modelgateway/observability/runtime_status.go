@@ -55,6 +55,7 @@ type RuntimeStatusQuery struct {
 	CredentialIndexes    []int
 	CredentialSubjectFPs []string
 	CredentialFPs        []string
+	StrictAccountScope   bool
 }
 
 type RuntimeStatusResponse struct {
@@ -86,6 +87,7 @@ type RuntimeStatusItem struct {
 	RequestedModel                   string                      `json:"requested_model,omitempty"`
 	UpstreamModel                    string                      `json:"upstream_model,omitempty"`
 	ChannelID                        int                         `json:"channel_id,omitempty"`
+	ChannelName                      string                      `json:"channel_name,omitempty"`
 	ResourceID                       string                      `json:"resource_id,omitempty"`
 	ResourceType                     string                      `json:"resource_type,omitempty"`
 	AccountID                        string                      `json:"account_id,omitempty"`
@@ -195,6 +197,7 @@ func (s *RuntimeStatusService) Build(query RuntimeStatusQuery) RuntimeStatusResp
 		return RuntimeStatusResponse{}
 	}
 	query.Limit = normalizeRuntimeStatusLimit(query.Limit)
+	accountScoped := runtimeStatusStrictAccountScope(query)
 	items := map[core.RuntimeKey]*RuntimeStatusItem{}
 
 	for _, snapshot := range s.snapshots(query.Model) {
@@ -211,54 +214,84 @@ func (s *RuntimeStatusService) Build(query RuntimeStatusQuery) RuntimeStatusResp
 		item := itemForRuntimeKey(items, circuit.Key)
 		applyCircuitSnapshot(item, circuit)
 	}
-	for channelID, depth := range s.queueSnapshot() {
-		if channelID <= 0 || depth <= 0 {
-			continue
-		}
-		if query.ChannelID > 0 && query.ChannelID != channelID {
-			continue
-		}
-		matched := false
+	if accountScoped {
 		for _, item := range items {
-			if item.ChannelID != channelID {
+			clearAccountScopedChannelDynamicFields(item)
+		}
+	}
+	if !accountScoped {
+		for channelID, depth := range s.queueSnapshot() {
+			if channelID <= 0 || depth <= 0 {
 				continue
 			}
-			if depth > item.QueueDepth {
+			if query.ChannelID > 0 && query.ChannelID != channelID {
+				continue
+			}
+			matched := false
+			for _, item := range items {
+				if item.ChannelID != channelID {
+					continue
+				}
+				if depth > item.QueueDepth {
+					item.QueueDepth = depth
+				}
+				matched = true
+			}
+			if !matched && query.Model == "" && query.Group == "" {
+				key := core.RuntimeKey{ChannelID: channelID}
+				item := itemForRuntimeKey(items, key)
 				item.QueueDepth = depth
 			}
-			matched = true
-		}
-		if !matched && query.Model == "" && query.Group == "" {
-			key := core.RuntimeKey{ChannelID: channelID}
-			item := itemForRuntimeKey(items, key)
-			item.QueueDepth = depth
 		}
 	}
 	detailedQueue := s.queueDetailSnapshot()
-	for _, channel := range detailedQueue.Channels {
-		if channel.ChannelID <= 0 || channel.QueueDepth <= 0 {
+	for _, queueKey := range detailedQueue.RuntimeKeys {
+		if queueKey.QueueDepth <= 0 {
 			continue
 		}
-		if query.ChannelID > 0 && query.ChannelID != channel.ChannelID {
+		key := runtimeQueueSnapshotKey(queueKey)
+		if !runtimeStatusMatchesQuery(key, query) {
 			continue
 		}
 		matched := false
 		for _, item := range items {
-			if item.ChannelID != channel.ChannelID {
+			if !runtimeStatusItemMatchesQueueKey(*item, key) {
 				continue
 			}
-			applyRuntimeQueueChannelSnapshot(item, channel)
+			applyRuntimeQueueKeySnapshot(item, queueKey)
 			matched = true
 		}
-		if !matched && query.Model == "" && query.Group == "" {
-			item := itemForRuntimeKey(items, core.RuntimeKey{ChannelID: channel.ChannelID})
-			applyRuntimeQueueChannelSnapshot(item, channel)
+		if !matched && (query.Model == "" || key.RequestedModel == query.Model) && (query.Group == "" || key.Group == query.Group) {
+			item := itemForRuntimeKey(items, key)
+			applyRuntimeQueueKeySnapshot(item, queueKey)
+		}
+	}
+	if !accountScoped {
+		for _, channel := range detailedQueue.Channels {
+			if channel.ChannelID <= 0 || channel.QueueDepth <= 0 {
+				continue
+			}
+			if query.ChannelID > 0 && query.ChannelID != channel.ChannelID {
+				continue
+			}
+			matched := false
+			for _, item := range items {
+				if item.ChannelID != channel.ChannelID {
+					continue
+				}
+				applyRuntimeQueueChannelSnapshot(item, channel)
+				matched = true
+			}
+			if !matched && query.Model == "" && query.Group == "" {
+				item := itemForRuntimeKey(items, core.RuntimeKey{ChannelID: channel.ChannelID})
+				applyRuntimeQueueChannelSnapshot(item, channel)
+			}
 		}
 	}
 
 	result := make([]RuntimeStatusItem, 0, len(items))
 	for _, item := range items {
-		s.applyLiveState(item)
+		s.applyLiveState(item, query)
 		if !runtimeStatusItemMatchesQuery(*item, query) {
 			continue
 		}
@@ -313,12 +346,14 @@ func (s *RuntimeStatusService) queueDetailSnapshot() core.RuntimeQueueSnapshot {
 	return s.deps.QueueDetailSnapshot()
 }
 
-func (s *RuntimeStatusService) applyLiveState(item *RuntimeStatusItem) {
+func (s *RuntimeStatusService) applyLiveState(item *RuntimeStatusItem, query RuntimeStatusQuery) {
 	if s == nil || s.deps.StateProvider == nil || item == nil || item.ChannelID <= 0 {
 		return
 	}
-	if active := s.deps.StateProvider.ActiveConcurrency(item.ChannelID); active > item.ActiveConcurrency {
-		item.ActiveConcurrency = active
+	if !runtimeStatusStrictAccountScope(query) {
+		if active := s.deps.StateProvider.ActiveConcurrency(item.ChannelID); active > item.ActiveConcurrency {
+			item.ActiveConcurrency = active
+		}
 	}
 	if cooldown := s.deps.StateProvider.ConcurrencyCooldownStatus(item.ChannelID); cooldown != nil && cooldown.Active {
 		item.Cooldown = true
@@ -393,8 +428,12 @@ func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem) {
 	if item.CircuitState != "" {
 		snapshot.CircuitState = core.CircuitState(item.CircuitState)
 	}
+	channel := s.channelForRuntimeStatusItem(item)
+	if channel != nil && strings.TrimSpace(item.ChannelName) == "" {
+		item.ChannelName = channel.Name
+	}
 	candidate := core.Candidate{
-		Channel:       s.channelForRuntimeStatusItem(item),
+		Channel:       channel,
 		Group:         item.Group,
 		UpstreamModel: item.UpstreamModel,
 		RuntimeKey:    snapshot.Key,
@@ -625,6 +664,33 @@ func applyRuntimeQueueChannelSnapshot(item *RuntimeStatusItem, snapshot core.Run
 	}
 }
 
+func applyRuntimeQueueKeySnapshot(item *RuntimeStatusItem, snapshot core.RuntimeQueueKeySnapshot) {
+	if item == nil {
+		return
+	}
+	if snapshot.QueueDepth > item.QueueDepth {
+		item.QueueDepth = snapshot.QueueDepth
+	}
+}
+
+func clearAccountScopedChannelDynamicFields(item *RuntimeStatusItem) {
+	if item == nil {
+		return
+	}
+	item.ActiveConcurrency = 0
+	item.MaxConcurrency = 0
+	item.ConfiguredConcurrencyLimit = 0
+	item.LearnedConcurrencyLimit = 0
+	item.EffectiveConcurrencyLimit = 0
+	item.QueueDepth = 0
+	item.QueueCapacity = 0
+	item.QueueTimeoutMs = 0
+	item.EstimatedQueueWaitMs = 0
+	item.FirstBytePending = 0
+	item.SlowFirstBytePending = 0
+	item.OldestFirstByteWaitMs = 0
+}
+
 func (s *RuntimeStatusService) applyQueueCooldownHints(snapshot *core.RuntimeQueueSnapshot, items []RuntimeStatusItem) {
 	if s == nil || snapshot == nil || s.deps.StateProvider == nil {
 		return
@@ -711,12 +777,11 @@ func runtimeStatusItemMatchesQuery(item RuntimeStatusItem, query RuntimeStatusQu
 }
 
 func runtimeStatusMatchesAccountFilters(accountID string, credentialIndex int, subjectFP string, credentialFP string, query RuntimeStatusQuery) bool {
-	hasFilters := len(query.AccountIDs) > 0 ||
-		len(query.CredentialIndexes) > 0 ||
-		len(query.CredentialSubjectFPs) > 0 ||
-		len(query.CredentialFPs) > 0
-	if !hasFilters {
+	if !runtimeStatusHasAccountFilters(query) {
 		return true
+	}
+	if query.StrictAccountScope && !runtimeStatusHasAccountIdentity(accountID, subjectFP, credentialFP) {
+		return false
 	}
 	if accountID != "" && stringSliceContains(query.AccountIDs, accountID) {
 		return true
@@ -728,6 +793,89 @@ func runtimeStatusMatchesAccountFilters(accountID string, credentialIndex int, s
 		return true
 	}
 	if credentialFP != "" && stringSliceContains(query.CredentialFPs, credentialFP) {
+		return true
+	}
+	return false
+}
+
+func runtimeStatusStrictAccountScope(query RuntimeStatusQuery) bool {
+	return query.StrictAccountScope && runtimeStatusHasAccountFilters(query)
+}
+
+func runtimeStatusHasAccountFilters(query RuntimeStatusQuery) bool {
+	return len(query.AccountIDs) > 0 ||
+		len(query.CredentialIndexes) > 0 ||
+		len(query.CredentialSubjectFPs) > 0 ||
+		len(query.CredentialFPs) > 0
+}
+
+func runtimeStatusHasAccountIdentity(accountID string, subjectFP string, credentialFP string) bool {
+	return strings.TrimSpace(accountID) != "" ||
+		strings.TrimSpace(subjectFP) != "" ||
+		strings.TrimSpace(credentialFP) != ""
+}
+
+func runtimeQueueSnapshotKey(snapshot core.RuntimeQueueKeySnapshot) core.RuntimeKey {
+	key := snapshot.RuntimeKey
+	if key.RequestedModel == "" {
+		key.RequestedModel = snapshot.RequestedModel
+	}
+	if key.UpstreamModel == "" {
+		key.UpstreamModel = snapshot.UpstreamModel
+	}
+	if key.ChannelID <= 0 {
+		key.ChannelID = snapshot.ChannelID
+	}
+	if key.Group == "" {
+		key.Group = snapshot.Group
+	}
+	if key.EndpointType == "" && snapshot.EndpointType != "" {
+		key.EndpointType = constant.EndpointType(snapshot.EndpointType)
+	}
+	if key.CapabilityFingerprint == "" {
+		key.CapabilityFingerprint = snapshot.CapabilityFingerprint
+	}
+	return key
+}
+
+func runtimeStatusItemMatchesQueueKey(item RuntimeStatusItem, key core.RuntimeKey) bool {
+	if key.ChannelID > 0 && item.ChannelID != key.ChannelID {
+		return false
+	}
+	if key.RequestedModel != "" && item.RequestedModel != "" && item.RequestedModel != key.RequestedModel {
+		return false
+	}
+	if key.UpstreamModel != "" && item.UpstreamModel != "" && item.UpstreamModel != key.UpstreamModel {
+		return false
+	}
+	if key.Group != "" && item.Group != "" && item.Group != key.Group {
+		return false
+	}
+	if key.EndpointType != "" && item.EndpointType != "" && item.EndpointType != string(key.EndpointType) {
+		return false
+	}
+	if key.CapabilityFingerprint != "" && item.CapabilityFingerprint != "" && item.CapabilityFingerprint != key.CapabilityFingerprint {
+		return false
+	}
+	if !runtimeStatusQueueAccountIdentityMatches(item, key) {
+		return false
+	}
+	return true
+}
+
+func runtimeStatusQueueAccountIdentityMatches(item RuntimeStatusItem, key core.RuntimeKey) bool {
+	hasItemAccount := runtimeStatusHasAccountIdentity(item.AccountID, item.CredentialSubjectFP, item.CredentialFP)
+	hasKeyAccount := runtimeStatusHasAccountIdentity(key.AccountID, key.CredentialSubjectFP, key.CredentialFP)
+	if !hasItemAccount && !hasKeyAccount {
+		return true
+	}
+	if item.AccountID != "" && key.AccountID != "" && item.AccountID == key.AccountID {
+		return true
+	}
+	if item.CredentialSubjectFP != "" && key.CredentialSubjectFP != "" && item.CredentialSubjectFP == key.CredentialSubjectFP {
+		return true
+	}
+	if item.CredentialFP != "" && key.CredentialFP != "" && item.CredentialFP == key.CredentialFP {
 		return true
 	}
 	return false
@@ -850,9 +998,10 @@ func runtimeConcurrencyPressureRatio(item RuntimeStatusItem) float64 {
 }
 
 func filteredRuntimeQueueSnapshot(snapshot core.RuntimeQueueSnapshot, items []RuntimeStatusItem, query RuntimeStatusQuery) *core.RuntimeQueueSnapshot {
-	if len(snapshot.Channels) == 0 && len(snapshot.Groups) == 0 && len(snapshot.RejectReasons) == 0 && snapshot.Summary.TotalQueued == 0 {
+	if len(snapshot.Channels) == 0 && len(snapshot.RuntimeKeys) == 0 && len(snapshot.Groups) == 0 && len(snapshot.RejectReasons) == 0 && snapshot.Summary.TotalQueued == 0 {
 		return nil
 	}
+	accountScoped := runtimeStatusStrictAccountScope(query)
 	allowedChannels := map[int]struct{}{}
 	for _, item := range items {
 		if item.ChannelID > 0 {
@@ -874,35 +1023,47 @@ func filteredRuntimeQueueSnapshot(snapshot core.RuntimeQueueSnapshot, items []Ru
 	if out.Summary.UpdatedAt == 0 {
 		out.Summary.UpdatedAt = out.UpdatedAt
 	}
-	for _, channel := range snapshot.Channels {
-		if len(allowedChannels) > 0 {
-			if _, ok := allowedChannels[channel.ChannelID]; !ok {
+	if !accountScoped {
+		for _, channel := range snapshot.Channels {
+			if len(allowedChannels) > 0 {
+				if _, ok := allowedChannels[channel.ChannelID]; !ok {
+					continue
+				}
+			}
+			if query.Group != "" && !runtimeQueueChannelHasGroup(channel, query.Group) {
 				continue
 			}
+			filteredChannel := channel
+			filteredChannel.Groups = filterRuntimeQueueGroups(channel.Groups, query.Group)
+			out.Channels = append(out.Channels, filteredChannel)
+			addRuntimeQueueChannelToSummary(&out.Summary, filteredChannel)
 		}
-		if query.Group != "" && !runtimeQueueChannelHasGroup(channel, query.Group) {
-			continue
-		}
-		filteredChannel := channel
-		filteredChannel.Groups = filterRuntimeQueueGroups(channel.Groups, query.Group)
-		out.Channels = append(out.Channels, filteredChannel)
-		addRuntimeQueueChannelToSummary(&out.Summary, filteredChannel)
 	}
+	queueKeyChannels := map[int]struct{}{}
 	for _, item := range snapshot.RuntimeKeys {
+		key := runtimeQueueSnapshotKey(item)
 		if len(allowedChannels) > 0 {
-			if _, ok := allowedChannels[item.ChannelID]; !ok {
+			if _, ok := allowedChannels[key.ChannelID]; !ok {
 				continue
 			}
 		}
-		if query.Group != "" && item.Group != query.Group {
-			continue
-		}
-		if query.Model != "" && item.RequestedModel != "" && item.RequestedModel != query.Model {
+		if !runtimeStatusMatchesQuery(key, query) {
 			continue
 		}
 		out.RuntimeKeys = append(out.RuntimeKeys, item)
+		if accountScoped {
+			addRuntimeQueueKeyToSummary(&out.Summary, item)
+			if key.ChannelID > 0 && item.QueueDepth > 0 {
+				queueKeyChannels[key.ChannelID] = struct{}{}
+			}
+		}
 	}
-	out.Groups = aggregateRuntimeQueueSnapshotGroups(out.Channels)
+	if accountScoped {
+		out.Summary.QueueChannels = len(queueKeyChannels)
+		out.Groups = aggregateRuntimeQueueSnapshotGroupsFromKeys(out.RuntimeKeys)
+	} else {
+		out.Groups = aggregateRuntimeQueueSnapshotGroups(out.Channels)
+	}
 	out.Summary.QueueGroups = len(out.Groups)
 	out.Summary.QueueNodes = len(out.Nodes)
 	if len(out.Channels) == 0 && len(out.RuntimeKeys) == 0 && len(out.RejectReasons) == 0 {
@@ -915,6 +1076,7 @@ func filterRuntimeQueueNodes(nodes []core.RuntimeQueueNodeSnapshot, allowedChann
 	if len(nodes) == 0 {
 		return nil
 	}
+	accountScoped := runtimeStatusStrictAccountScope(query)
 	out := make([]core.RuntimeQueueNodeSnapshot, 0, len(nodes))
 	for _, node := range nodes {
 		filtered := core.RuntimeQueueNodeSnapshot{
@@ -930,35 +1092,47 @@ func filterRuntimeQueueNodes(nodes []core.RuntimeQueueNodeSnapshot, allowedChann
 		if filtered.Summary.UpdatedAt == 0 {
 			filtered.Summary.UpdatedAt = filtered.UpdatedAt
 		}
-		for _, channel := range node.Channels {
-			if len(allowedChannels) > 0 {
-				if _, ok := allowedChannels[channel.ChannelID]; !ok {
+		if !accountScoped {
+			for _, channel := range node.Channels {
+				if len(allowedChannels) > 0 {
+					if _, ok := allowedChannels[channel.ChannelID]; !ok {
+						continue
+					}
+				}
+				if query.Group != "" && !runtimeQueueChannelHasGroup(channel, query.Group) {
 					continue
 				}
+				filteredChannel := channel
+				filteredChannel.Groups = filterRuntimeQueueGroups(channel.Groups, query.Group)
+				filtered.Channels = append(filtered.Channels, filteredChannel)
+				addRuntimeQueueChannelToSummary(&filtered.Summary, filteredChannel)
 			}
-			if query.Group != "" && !runtimeQueueChannelHasGroup(channel, query.Group) {
-				continue
-			}
-			filteredChannel := channel
-			filteredChannel.Groups = filterRuntimeQueueGroups(channel.Groups, query.Group)
-			filtered.Channels = append(filtered.Channels, filteredChannel)
-			addRuntimeQueueChannelToSummary(&filtered.Summary, filteredChannel)
 		}
+		queueKeyChannels := map[int]struct{}{}
 		for _, item := range node.RuntimeKeys {
+			key := runtimeQueueSnapshotKey(item)
 			if len(allowedChannels) > 0 {
-				if _, ok := allowedChannels[item.ChannelID]; !ok {
+				if _, ok := allowedChannels[key.ChannelID]; !ok {
 					continue
 				}
 			}
-			if query.Group != "" && item.Group != query.Group {
-				continue
-			}
-			if query.Model != "" && item.RequestedModel != "" && item.RequestedModel != query.Model {
+			if !runtimeStatusMatchesQuery(key, query) {
 				continue
 			}
 			filtered.RuntimeKeys = append(filtered.RuntimeKeys, item)
+			if accountScoped {
+				addRuntimeQueueKeyToSummary(&filtered.Summary, item)
+				if key.ChannelID > 0 && item.QueueDepth > 0 {
+					queueKeyChannels[key.ChannelID] = struct{}{}
+				}
+			}
 		}
-		filtered.Groups = aggregateRuntimeQueueSnapshotGroups(filtered.Channels)
+		if accountScoped {
+			filtered.Summary.QueueChannels = len(queueKeyChannels)
+			filtered.Groups = aggregateRuntimeQueueSnapshotGroupsFromKeys(filtered.RuntimeKeys)
+		} else {
+			filtered.Groups = aggregateRuntimeQueueSnapshotGroups(filtered.Channels)
+		}
 		filtered.Summary.QueueGroups = len(filtered.Groups)
 		if len(filtered.Channels) == 0 && len(filtered.RuntimeKeys) == 0 && len(filtered.RejectReasons) == 0 && filtered.Summary.TotalQueued == 0 {
 			continue
@@ -1028,6 +1202,22 @@ func addRuntimeQueueChannelToSummary(summary *core.RuntimeQueueSummary, channel 
 	}
 }
 
+func addRuntimeQueueKeyToSummary(summary *core.RuntimeQueueSummary, item core.RuntimeQueueKeySnapshot) {
+	if summary == nil {
+		return
+	}
+	summary.TotalQueued += item.QueueDepth
+	summary.TotalDepth += item.QueueDepth
+	summary.Waiting += item.WaitingRequests
+	summary.QueuedRequests += item.QueuedRequests
+	summary.WaitingRequests += item.WaitingRequests
+	summary.HighPriorityDepth += item.HighPriorityDepth
+	summary.NormalDepth += item.NormalDepth
+	if item.QueueDepth > summary.MaxQueueDepth {
+		summary.MaxQueueDepth = item.QueueDepth
+	}
+}
+
 func aggregateRuntimeQueueSnapshotGroups(channels []core.RuntimeQueueChannelSnapshot) []core.RuntimeQueueGroupSnapshot {
 	groupMap := map[string]*core.RuntimeQueueGroupSnapshot{}
 	for _, channel := range channels {
@@ -1047,6 +1237,44 @@ func aggregateRuntimeQueueSnapshotGroups(channels []core.RuntimeQueueChannelSnap
 			target.HighPriorityDepth += group.HighPriorityDepth
 			target.NormalDepth += group.NormalDepth
 		}
+	}
+	groups := make([]core.RuntimeQueueGroupSnapshot, 0, len(groupMap))
+	for _, group := range groupMap {
+		groups = append(groups, *group)
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		if groups[i].QueueDepth != groups[j].QueueDepth {
+			return groups[i].QueueDepth > groups[j].QueueDepth
+		}
+		return groups[i].Group < groups[j].Group
+	})
+	return groups
+}
+
+func aggregateRuntimeQueueSnapshotGroupsFromKeys(keys []core.RuntimeQueueKeySnapshot) []core.RuntimeQueueGroupSnapshot {
+	groupMap := map[string]*core.RuntimeQueueGroupSnapshot{}
+	for _, item := range keys {
+		if item.QueueDepth <= 0 {
+			continue
+		}
+		runtimeKey := runtimeQueueSnapshotKey(item)
+		groupKey := runtimeKey.Group
+		if groupKey == "" {
+			groupKey = "_default"
+		}
+		target := groupMap[groupKey]
+		if target == nil {
+			target = &core.RuntimeQueueGroupSnapshot{
+				ChannelID: runtimeKey.ChannelID,
+				Group:     runtimeKey.Group,
+			}
+			groupMap[groupKey] = target
+		}
+		target.QueueDepth += item.QueueDepth
+		target.QueuedRequests += item.QueuedRequests
+		target.WaitingRequests += item.WaitingRequests
+		target.HighPriorityDepth += item.HighPriorityDepth
+		target.NormalDepth += item.NormalDepth
 	}
 	groups := make([]core.RuntimeQueueGroupSnapshot, 0, len(groupMap))
 	for _, group := range groupMap {

@@ -19,9 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import { Button, Spin, Tabs, TabPane, Tag } from '@douyinfe/semi-ui';
-import { Gauge, RefreshCw } from 'lucide-react';
+import { PiArrowsClockwiseDuotone, PiGaugeDuotone } from 'react-icons/pi';
 import ScrollableContainer from '../common/ui/ScrollableContainer';
-import DashboardCard from './DashboardCard';
 import DashboardEmptyState from './DashboardEmptyState';
 
 const UptimePanel = ({
@@ -32,40 +31,32 @@ const UptimePanel = ({
   loadUptimeData,
   uptimeLegendData,
   renderMonitorList,
-  CARD_PROPS,
-  ILLUSTRATION_SIZE,
   t,
 }) => {
   return (
-    <DashboardCard
-      {...CARD_PROPS}
-      className='ct-dashboard-side-card ct-dashboard-uptime-card lg:col-span-1'
-      tone='uptime'
-      title={
-        <div className='flex items-center justify-between w-full gap-2'>
-          <div className='ct-dashboard-panel-title'>
-            <Gauge size={16} />
-            {t('服务可用性')}
+    <section className='ct-command-feed-panel ct-command-uptime-panel'>
+      <div className='ct-command-panel-head ct-command-panel-head-compact'>
+        <div className='ct-command-panel-title-group'>
+          <div className='ct-command-panel-icon ct-command-panel-icon-uptime'>
+            <PiGaugeDuotone size={20} />
           </div>
-          <Button
-            icon={<RefreshCw size={14} />}
-            onClick={loadUptimeData}
-            loading={uptimeLoading}
-            size='small'
-            theme='borderless'
-            type='tertiary'
-            className='ct-dashboard-card-action'
-          />
+          <h3 className='ct-command-panel-title'>{t('服务可用性')}</h3>
         </div>
-      }
-      bodyStyle={{ padding: 0 }}
-    >
-      {/* 内容区域 */}
-      <div className='relative'>
+        <Button
+          icon={<PiArrowsClockwiseDuotone size={16} />}
+          onClick={loadUptimeData}
+          loading={uptimeLoading}
+          size='small'
+          theme='borderless'
+          type='tertiary'
+          className='ct-command-panel-action'
+        />
+      </div>
+      <div className='ct-command-uptime-body'>
         <Spin spinning={uptimeLoading}>
           {uptimeData.length > 0 ? (
             uptimeData.length === 1 ? (
-              <ScrollableContainer maxHeight='24rem'>
+              <ScrollableContainer maxHeight='23rem'>
                 {renderMonitorList(uptimeData[0].monitors)}
               </ScrollableContainer>
             ) : (
@@ -75,12 +66,13 @@ const UptimePanel = ({
                 activeKey={activeUptimeTab}
                 onChange={setActiveUptimeTab}
                 size='small'
+                className='ct-command-uptime-tabs'
               >
                 {uptimeData.map((group, groupIdx) => (
                   <TabPane
                     tab={
                       <span className='flex items-center gap-2'>
-                        <Gauge size={14} />
+                        <PiGaugeDuotone size={16} />
                         {group.categoryName}
                         <Tag
                           color={
@@ -98,7 +90,7 @@ const UptimePanel = ({
                     itemKey={group.categoryName}
                     key={groupIdx}
                   >
-                    <ScrollableContainer maxHeight='21.5rem'>
+                    <ScrollableContainer maxHeight='20.5rem'>
                       {renderMonitorList(group.monitors)}
                     </ScrollableContainer>
                   </TabPane>
@@ -106,7 +98,7 @@ const UptimePanel = ({
               </Tabs>
             )
           ) : (
-            <div className='ct-dashboard-empty-wrap'>
+            <div className='ct-command-empty-wrap'>
               <DashboardEmptyState
                 title={t('暂无监控数据')}
                 description={t('请联系管理员在系统设置中配置Uptime')}
@@ -116,14 +108,13 @@ const UptimePanel = ({
         </Spin>
       </div>
 
-      {/* 图例 */}
       {uptimeData.length > 0 && (
-        <div className='ct-dashboard-legend-bar'>
-          <div className='ct-dashboard-legend-inline justify-center'>
+        <div className='ct-command-legend-bar'>
+          <div className='ct-command-legend-inline justify-center'>
             {uptimeLegendData.map((legend, index) => (
-              <div key={index} className='ct-dashboard-legend-item'>
+              <div key={index} className='ct-command-legend-item'>
                 <div
-                  className='w-2 h-2 rounded-full'
+                  className='ct-command-legend-dot'
                   style={{ backgroundColor: legend.color }}
                 />
                 <span>{legend.label}</span>
@@ -132,7 +123,7 @@ const UptimePanel = ({
           </div>
         </div>
       )}
-    </DashboardCard>
+    </section>
   );
 };
 

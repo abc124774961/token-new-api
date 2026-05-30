@@ -56,6 +56,36 @@ func TestProIndexExpandsMultiKeyChannelIntoAccountCandidates(t *testing.T) {
 	require.Equal(t, constant.EndpointTypeOpenAI, candidates[0].RuntimeKey.EndpointType)
 }
 
+func TestProIndexSkipsDisabledChannelAccounts(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	index := New(account.NewRegistry(), nil)
+	channel := &model.Channel{
+		Id:     21,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-a\nsk-b",
+		Status: common.ChannelStatusManuallyDisabled,
+		Name:   "disabled-multi",
+		Group:  "default",
+		Models: "gpt-5.4",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true,
+		},
+	}
+
+	stats := index.Rebuild([]*model.Channel{channel})
+	candidates := index.Query(Query{
+		Groups:       []string{"default"},
+		ModelName:    "gpt-5.4",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Equal(t, 1, stats.Channels)
+	require.Equal(t, 2, stats.Accounts)
+	require.Equal(t, 2, stats.DisabledKeys)
+	require.Zero(t, stats.Candidates)
+	require.Empty(t, candidates)
+}
+
 func TestProIndexQueryAppliesEndpointToolAndExclusionFilters(t *testing.T) {
 	common.CryptoSecret = "test-secret"
 	settingsBytes, err := common.Marshal(dto.ChannelOtherSettings{

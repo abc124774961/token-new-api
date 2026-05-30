@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/codexauth"
@@ -197,6 +198,15 @@ func (b *snapshotBuilder) addChannel(channel *model.Channel) {
 	}
 	b.next.stats.Channels++
 	accounts := b.registry.AccountsForChannel(channel)
+	if channel.Status != common.ChannelStatusEnabled {
+		if len(accounts) == 0 {
+			b.next.stats.SkippedKeys++
+			return
+		}
+		b.next.stats.Accounts += len(accounts)
+		b.next.stats.DisabledKeys += len(accounts)
+		return
+	}
 	if len(accounts) == 0 {
 		b.next.stats.SkippedKeys++
 		return

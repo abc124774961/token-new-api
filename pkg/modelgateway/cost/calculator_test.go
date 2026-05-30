@@ -13,6 +13,16 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestMultiplierFromBreakdownJSONUsesActualTokenMultiplier(t *testing.T) {
+	multiplier, ok := MultiplierFromBreakdownJSON(`{"token_multiplier":0.026,"input_multiplier":0.5}`)
+	require.True(t, ok)
+	require.Equal(t, 0.026, multiplier)
+
+	multiplier, ok = MultiplierFromBreakdownJSON(`{"input_multiplier":0.03}`)
+	require.True(t, ok)
+	require.Equal(t, 0.03, multiplier)
+}
+
 func TestCalculatePreciseBreakdownIgnoresUserBillingRatios(t *testing.T) {
 	profile := &model.ModelGatewayChannelCostProfile{
 		ChannelID:            7,

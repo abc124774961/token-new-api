@@ -225,7 +225,15 @@ func modelGatewayDynamicBillingPolicySignature(setting scheduler_setting.Schedul
 	if !setting.DynamicBillingEnabled || len(setting.GroupPolicies) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(setting.GroupPolicies))
+	parts := []string{
+		"source=" + setting.DynamicBillingCostSource,
+		"apply=" + setting.DynamicBillingApplyMode,
+		"profit=" + strconv.FormatFloat(setting.DynamicBillingProfitRate, 'f', -1, 64),
+		"profit_window=" + strconv.Itoa(setting.DynamicBillingProfitWindowHours),
+		"min_ratio=" + strconv.FormatFloat(setting.DynamicBillingMinRatio, 'f', -1, 64),
+		"max_ratio=" + strconv.FormatFloat(setting.DynamicBillingMaxRatio, 'f', -1, 64),
+		"max_step=" + strconv.FormatFloat(setting.DynamicBillingMaxStepChange, 'f', -1, 64),
+	}
 	for group, policy := range setting.GroupPolicies {
 		if strings.TrimSpace(policy.BillingRatioMode) != scheduler_setting.BillingRatioModeDynamic {
 			continue
@@ -318,6 +326,25 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	setting.DynamicBillingMinSamples = normalizeModelGatewayConfigMin(setting.DynamicBillingMinSamples, 1, defaults.DynamicBillingMinSamples)
 	setting.DynamicBillingRefreshSeconds = normalizeModelGatewayConfigMin(setting.DynamicBillingRefreshSeconds, 1, defaults.DynamicBillingRefreshSeconds)
 	setting.DynamicBillingMaxAgeSeconds = normalizeModelGatewayConfigMin(setting.DynamicBillingMaxAgeSeconds, 1, defaults.DynamicBillingMaxAgeSeconds)
+	if setting.DynamicBillingCostSource == "" {
+		setting.DynamicBillingCostSource = defaults.DynamicBillingCostSource
+	}
+	if !validModelGatewayConfigValue(setting.DynamicBillingCostSource, modelGatewayConfigDynamicBillingCostSources()) {
+		return scheduler_setting.SchedulerSetting{}, errors.New("invalid dynamic_billing_cost_source")
+	}
+	if setting.DynamicBillingApplyMode == "" {
+		setting.DynamicBillingApplyMode = defaults.DynamicBillingApplyMode
+	}
+	if !validModelGatewayConfigValue(setting.DynamicBillingApplyMode, modelGatewayConfigDynamicBillingApplyModes()) {
+		return scheduler_setting.SchedulerSetting{}, errors.New("invalid dynamic_billing_apply_mode")
+	}
+	setting.DynamicBillingProfitWindowHours = normalizeModelGatewayConfigMin(setting.DynamicBillingProfitWindowHours, 1, defaults.DynamicBillingProfitWindowHours)
+	setting.DynamicBillingMinTokens = normalizeModelGatewayConfigMin(setting.DynamicBillingMinTokens, 1, defaults.DynamicBillingMinTokens)
+	setting.DynamicBillingMinRequests = normalizeModelGatewayConfigMin(setting.DynamicBillingMinRequests, 1, defaults.DynamicBillingMinRequests)
+	setting.DynamicBillingMinSuccessRequests = normalizeModelGatewayConfigMin(setting.DynamicBillingMinSuccessRequests, 1, defaults.DynamicBillingMinSuccessRequests)
+	setting.DynamicBillingMinRatio = clampModelGatewayConfigFloat(defaultFloat(setting.DynamicBillingMinRatio, defaults.DynamicBillingMinRatio), 0.000001, 100)
+	setting.DynamicBillingMaxRatio = clampModelGatewayConfigFloat(defaultFloat(setting.DynamicBillingMaxRatio, defaults.DynamicBillingMaxRatio), setting.DynamicBillingMinRatio, 100)
+	setting.DynamicBillingMaxStepChange = clampModelGatewayConfigFloat(defaultFloat(setting.DynamicBillingMaxStepChange, defaults.DynamicBillingMaxStepChange), 0.01, 10)
 	setting.FailureFastWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureFastWindowSeconds, 1, defaults.FailureFastWindowSeconds)
 	setting.FailureMainWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureMainWindowSeconds, 1, defaults.FailureMainWindowSeconds)
 	setting.FailureFallbackWindowSeconds = normalizeModelGatewayConfigMin(setting.FailureFallbackWindowSeconds, 1, defaults.FailureFallbackWindowSeconds)
@@ -560,7 +587,17 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 		"cost_calculation_batch_size":                         strconv.Itoa(setting.CostCalculationBatchSize),
 		"dynamic_billing_enabled":                             strconv.FormatBool(setting.DynamicBillingEnabled),
 		"dynamic_billing_profit_rate":                         strconv.FormatFloat(setting.DynamicBillingProfitRate, 'f', -1, 64),
+		"dynamic_billing_cost_source":                         setting.DynamicBillingCostSource,
+		"dynamic_billing_profit_window_hours":                 strconv.Itoa(setting.DynamicBillingProfitWindowHours),
+		"dynamic_billing_min_tokens":                          strconv.Itoa(setting.DynamicBillingMinTokens),
+		"dynamic_billing_min_requests":                        strconv.Itoa(setting.DynamicBillingMinRequests),
+		"dynamic_billing_min_success_requests":                strconv.Itoa(setting.DynamicBillingMinSuccessRequests),
+		"dynamic_billing_min_ratio":                           strconv.FormatFloat(setting.DynamicBillingMinRatio, 'f', -1, 64),
+		"dynamic_billing_max_ratio":                           strconv.FormatFloat(setting.DynamicBillingMaxRatio, 'f', -1, 64),
+		"dynamic_billing_max_step_change":                     strconv.FormatFloat(setting.DynamicBillingMaxStepChange, 'f', -1, 64),
+		"dynamic_billing_apply_mode":                          setting.DynamicBillingApplyMode,
 		"dynamic_billing_window_samples":                      strconv.Itoa(setting.DynamicBillingWindowSamples),
+		"dynamic_billing_window_minutes":                      strconv.Itoa(setting.DynamicBillingWindowMinutes),
 		"dynamic_billing_min_samples":                         strconv.Itoa(setting.DynamicBillingMinSamples),
 		"dynamic_billing_refresh_seconds":                     strconv.Itoa(setting.DynamicBillingRefreshSeconds),
 		"dynamic_billing_max_age_seconds":                     strconv.Itoa(setting.DynamicBillingMaxAgeSeconds),
@@ -615,6 +652,21 @@ func modelGatewayConfigProxyReusePolicies() map[string]struct{} {
 		scheduler_setting.ProxyReusePolicyWarn:    {},
 		scheduler_setting.ProxyReusePolicyConfirm: {},
 		scheduler_setting.ProxyReusePolicyBlock:   {},
+	}
+}
+
+func modelGatewayConfigDynamicBillingCostSources() map[string]struct{} {
+	return map[string]struct{}{
+		scheduler_setting.DynamicBillingCostSourceSampleCost: {},
+		scheduler_setting.DynamicBillingCostSourceProfit24h:  {},
+	}
+}
+
+func modelGatewayConfigDynamicBillingApplyModes() map[string]struct{} {
+	return map[string]struct{}{
+		scheduler_setting.DynamicBillingApplyModeObserve: {},
+		scheduler_setting.DynamicBillingApplyModeManual:  {},
+		scheduler_setting.DynamicBillingApplyModeAuto:    {},
 	}
 }
 

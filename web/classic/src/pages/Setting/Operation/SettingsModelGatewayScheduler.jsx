@@ -65,6 +65,8 @@ const CIRCUIT_ERROR_TYPES = [
 const STICKY_FAILURE_POLICY_OPTIONS = ['clear', 'keep'];
 const BILLING_RATIO_MODE_OPTIONS = ['static', 'dynamic'];
 const PROXY_REUSE_POLICY_OPTIONS = ['warn', 'confirm', 'block'];
+const DYNAMIC_BILLING_COST_SOURCE_OPTIONS = ['sample_cost', 'profit_24h'];
+const DYNAMIC_BILLING_APPLY_MODE_OPTIONS = ['observe', 'auto'];
 
 const DEFAULT_SETTING = {
   enabled: false,
@@ -94,6 +96,17 @@ const DEFAULT_SETTING = {
   cost_calculation_batch_size: 100,
   dynamic_billing_enabled: false,
   dynamic_billing_profit_rate: 0.2,
+  dynamic_billing_profit_rate_percent: 20,
+  dynamic_billing_cost_source: 'profit_24h',
+  dynamic_billing_profit_window_hours: 24,
+  dynamic_billing_min_tokens: 1000,
+  dynamic_billing_min_requests: 20,
+  dynamic_billing_min_success_requests: 5,
+  dynamic_billing_min_ratio: 0.01,
+  dynamic_billing_max_ratio: 2,
+  dynamic_billing_max_step_change: 0.3,
+  dynamic_billing_max_step_change_percent: 30,
+  dynamic_billing_apply_mode: 'auto',
   dynamic_billing_window_samples: 300,
   dynamic_billing_min_samples: 5,
   dynamic_billing_refresh_seconds: 30,
@@ -472,6 +485,30 @@ const proxyReusePolicyLabel = (policy, t) => {
   }
 };
 
+const dynamicBillingCostSourceLabel = (source, t) => {
+  switch (source) {
+    case 'profit_24h':
+      return t('24h 盈利经营成本');
+    case 'sample_cost':
+      return t('近期上游成本样本');
+    default:
+      return source;
+  }
+};
+
+const dynamicBillingApplyModeLabel = (mode, t) => {
+  switch (mode) {
+    case 'observe':
+      return t('仅观测');
+    case 'manual':
+      return t('自动应用');
+    case 'auto':
+      return t('自动应用');
+    default:
+      return mode;
+  }
+};
+
 const makeCircuitErrorRows = (policies = {}) =>
   CIRCUIT_ERROR_TYPES.map((type) => {
     const policy = policies?.[type] || {};
@@ -507,12 +544,29 @@ const circuitErrorRowsToPolicyMap = (rows) => {
   return policies;
 };
 
-const normalizeSetting = (setting) => ({
-  ...DEFAULT_SETTING,
-  ...(setting || {}),
-  group_priority_ratio: setting?.group_priority_ratio || {},
-  group_policies: setting?.group_policies || {},
-});
+const normalizeSetting = (setting) => {
+  const merged = {
+    ...DEFAULT_SETTING,
+    ...(setting || {}),
+    group_priority_ratio: setting?.group_priority_ratio || {},
+    group_policies: setting?.group_policies || {},
+  };
+  merged.dynamic_billing_cost_source =
+    merged.dynamic_billing_cost_source || 'profit_24h';
+  merged.dynamic_billing_apply_mode =
+    merged.dynamic_billing_apply_mode === 'manual'
+      ? 'auto'
+      : merged.dynamic_billing_apply_mode || 'auto';
+  merged.dynamic_billing_profit_rate_percent = Number(
+    (numberOrDefault(merged.dynamic_billing_profit_rate, 0.2) * 100).toFixed(2),
+  );
+  merged.dynamic_billing_max_step_change_percent = Number(
+    (numberOrDefault(merged.dynamic_billing_max_step_change, 0.3) * 100).toFixed(
+      2,
+    ),
+  );
+  return merged;
+};
 
 const policyMapToRows = (policies = {}, priorities = {}) =>
   Object.entries(policies)
@@ -624,6 +678,22 @@ export default function SettingsModelGatewayScheduler() {
       PROXY_REUSE_POLICY_OPTIONS.map((value) => ({
         value,
         label: proxyReusePolicyLabel(value, t),
+      })),
+    [t],
+  );
+  const dynamicBillingCostSourceOptions = useMemo(
+    () =>
+      DYNAMIC_BILLING_COST_SOURCE_OPTIONS.map((value) => ({
+        value,
+        label: dynamicBillingCostSourceLabel(value, t),
+      })),
+    [t],
+  );
+  const dynamicBillingApplyModeOptions = useMemo(
+    () =>
+      DYNAMIC_BILLING_APPLY_MODE_OPTIONS.map((value) => ({
+        value,
+        label: dynamicBillingApplyModeLabel(value, t),
       })),
     [t],
   );
@@ -969,10 +1039,46 @@ export default function SettingsModelGatewayScheduler() {
         setting.cost_calculation_batch_size,
         100,
       ),
-      dynamic_billing_profit_rate: numberOrDefault(
-        setting.dynamic_billing_profit_rate,
-        0.2,
+      dynamic_billing_profit_rate:
+        numberOrDefault(
+          setting.dynamic_billing_profit_rate_percent,
+          numberOrDefault(setting.dynamic_billing_profit_rate, 0.2) * 100,
+        ) / 100,
+      dynamic_billing_cost_source:
+        setting.dynamic_billing_cost_source || 'profit_24h',
+      dynamic_billing_apply_mode:
+        setting.dynamic_billing_apply_mode === 'manual'
+          ? 'auto'
+          : setting.dynamic_billing_apply_mode || 'auto',
+      dynamic_billing_profit_window_hours: numberOrDefault(
+        setting.dynamic_billing_profit_window_hours,
+        24,
       ),
+      dynamic_billing_min_tokens: numberOrDefault(
+        setting.dynamic_billing_min_tokens,
+        1000,
+      ),
+      dynamic_billing_min_requests: numberOrDefault(
+        setting.dynamic_billing_min_requests,
+        20,
+      ),
+      dynamic_billing_min_success_requests: numberOrDefault(
+        setting.dynamic_billing_min_success_requests,
+        5,
+      ),
+      dynamic_billing_min_ratio: numberOrDefault(
+        setting.dynamic_billing_min_ratio,
+        0.01,
+      ),
+      dynamic_billing_max_ratio: numberOrDefault(
+        setting.dynamic_billing_max_ratio,
+        2,
+      ),
+      dynamic_billing_max_step_change:
+        numberOrDefault(
+          setting.dynamic_billing_max_step_change_percent,
+          numberOrDefault(setting.dynamic_billing_max_step_change, 0.3) * 100,
+        ) / 100,
       dynamic_billing_window_samples: numberOrDefault(
         setting.dynamic_billing_window_samples,
         300,
@@ -2193,16 +2299,42 @@ export default function SettingsModelGatewayScheduler() {
             </Col>
             <Col xs={24} sm={12} md={4}>
               <Form.InputNumber
-                field='dynamic_billing_profit_rate'
-                label={t('利润率')}
+                field='dynamic_billing_profit_rate_percent'
+                label={t('目标利润率')}
                 min={0}
-                step={0.01}
-                suffix='x'
+                max={95}
+                step={1}
+                suffix='%'
+                onChange={(value) => {
+                  const percent = numberOrDefault(value, 20);
+                  setSetting((current) => ({
+                    ...current,
+                    dynamic_billing_profit_rate_percent: percent,
+                    dynamic_billing_profit_rate: percent / 100,
+                  }));
+                }}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.Select
+                field='dynamic_billing_cost_source'
+                label={t('动态倍率成本来源')}
+                optionList={dynamicBillingCostSourceOptions}
                 onChange={(value) =>
                   updateSetting(
-                    'dynamic_billing_profit_rate',
-                    numberOrDefault(value, 0.2),
+                    'dynamic_billing_cost_source',
+                    value || 'profit_24h',
                   )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.Select
+                field='dynamic_billing_apply_mode'
+                label={t('倍率应用模式')}
+                optionList={dynamicBillingApplyModeOptions}
+                onChange={(value) =>
+                  updateSetting('dynamic_billing_apply_mode', value || 'auto')
                 }
               />
             </Col>
@@ -2262,13 +2394,118 @@ export default function SettingsModelGatewayScheduler() {
               />
             </Col>
           </Row>
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='dynamic_billing_profit_window_hours'
+                label={t('盈利窗口')}
+                min={1}
+                suffix={t('小时')}
+                onChange={(value) =>
+                  updateSetting(
+                    'dynamic_billing_profit_window_hours',
+                    numberOrDefault(value, 24),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='dynamic_billing_min_requests'
+                label={t('最小请求数')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting(
+                    'dynamic_billing_min_requests',
+                    numberOrDefault(value, 20),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='dynamic_billing_min_success_requests'
+                label={t('最小成功请求')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting(
+                    'dynamic_billing_min_success_requests',
+                    numberOrDefault(value, 5),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='dynamic_billing_min_tokens'
+                label={t('最小 token 数')}
+                min={1}
+                onChange={(value) =>
+                  updateSetting(
+                    'dynamic_billing_min_tokens',
+                    numberOrDefault(value, 1000),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='dynamic_billing_max_step_change_percent'
+                label={t('最大单次变化')}
+                min={1}
+                max={1000}
+                step={1}
+                suffix='%'
+                onChange={(value) => {
+                  const percent = numberOrDefault(value, 30);
+                  setSetting((current) => ({
+                    ...current,
+                    dynamic_billing_max_step_change_percent: percent,
+                    dynamic_billing_max_step_change: percent / 100,
+                  }));
+                }}
+              />
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='dynamic_billing_min_ratio'
+                label={t('倍率下限')}
+                min={0.000001}
+                step={0.01}
+                suffix='x'
+                onChange={(value) =>
+                  updateSetting(
+                    'dynamic_billing_min_ratio',
+                    numberOrDefault(value, 0.01),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='dynamic_billing_max_ratio'
+                label={t('倍率上限')}
+                min={0.000001}
+                step={0.01}
+                suffix='x'
+                onChange={(value) =>
+                  updateSetting(
+                    'dynamic_billing_max_ratio',
+                    numberOrDefault(value, 2),
+                  )
+                }
+              />
+            </Col>
+          </Row>
           <div style={{ marginTop: 8, marginBottom: 16 }}>
             <Banner
               type='info'
               fullMode={false}
               closeIcon={null}
               description={t(
-                '请求链路只读取内存动态价格结果，样本窗口按最近样本数由后台任务计算。',
+                '请求链路只读取内存动态价格结果；24h 盈利经营成本由后台任务预先聚合，样本不足、成本缺失、结果过期或处于观测模式时会回退静态分组倍率。',
               )}
               style={{ marginBottom: 12 }}
             />

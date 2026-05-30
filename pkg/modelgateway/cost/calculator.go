@@ -99,6 +99,33 @@ type Result struct {
 	Accuracy      string
 }
 
+func MultiplierFromBreakdownJSON(raw string) (float64, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return 0, false
+	}
+	var breakdown Breakdown
+	if err := common.UnmarshalJsonStr(raw, &breakdown); err != nil {
+		return 0, false
+	}
+	return MultiplierFromBreakdown(breakdown)
+}
+
+func MultiplierFromBreakdown(breakdown Breakdown) (float64, bool) {
+	candidates := []float64{
+		breakdown.TokenMultiplier,
+		breakdown.InputMultiplier,
+		breakdown.OutputMultiplier,
+		breakdown.CacheReadMultiplier,
+		breakdown.CacheWriteMultiplier,
+	}
+	for _, value := range candidates {
+		if value > 0 && value <= 100 {
+			return value, true
+		}
+	}
+	return 0, false
+}
+
 type SystemRatioQuote struct {
 	Model                      string  `json:"model"`
 	PricingModel               string  `json:"pricing_model,omitempty"`

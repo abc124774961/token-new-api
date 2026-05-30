@@ -151,6 +151,7 @@ func TestGenerateTextOtherInfoIncludesDynamicBillingSnapshot(t *testing.T) {
 			PricePerM:        1.48,
 			ProfitRate:       0.2,
 			SampleCount:      8,
+			CostMultiplier:   0.031,
 			CalculatedAt:     now,
 			WindowStart:      now - 60,
 			WindowEnd:        now,
@@ -166,6 +167,7 @@ func TestGenerateTextOtherInfoIncludesDynamicBillingSnapshot(t *testing.T) {
 	require.Equal(t, 0.1, other["dynamic_billing_static_group_ratio"])
 	require.Equal(t, 0.37, other["dynamic_billing_ratio"])
 	require.Equal(t, 1.48, other["dynamic_billing_price_per_m"])
+	require.Equal(t, 0.031, other["dynamic_billing_cost_multiplier"])
 	require.Equal(t, 8, other["dynamic_billing_sample_count"])
 }
 

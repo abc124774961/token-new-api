@@ -31,6 +31,16 @@ body {
   background-color: var(--semi-color-bg-0);
 }
 
+body[theme-mode='dark'] {
+  background: #121926;
+}
+
+html.dark .app-layout,
+html.dark .semi-layout,
+html.dark .semi-layout-content {
+  background: #121926;
+}
+
 .token-group-option {
   display: flex;
   align-items: stretch;
@@ -521,12 +531,8 @@ body[theme-mode='dark'] .usage-log-channel-cost-meta {
 }
 
 .dark .ct-header {
-  background: linear-gradient(
-    180deg,
-    rgba(3, 7, 14, 0.86),
-    rgba(3, 7, 14, 0.58) 72%,
-    rgba(3, 7, 14, 0)
-  );
+  background: #182131;
+  backdrop-filter: none;
 }
 
 .ct-header-wrap {
@@ -594,8 +600,8 @@ body[theme-mode='dark'] .usage-log-channel-cost-meta {
 }
 
 .dark .ct-header-console {
-  background: rgba(16, 17, 22, 0.86);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+  background: #182131;
+  box-shadow: none;
 }
 
 .ct-header-console .ct-header-shell {
@@ -606,7 +612,7 @@ body[theme-mode='dark'] .usage-log-channel-cost-meta {
 }
 
 .dark .ct-header-console .ct-header-shell {
-  box-shadow: inset 0 -1px 0 rgba(148, 163, 184, 0.04);
+  box-shadow: none;
 }
 
 .ct-header-console .ct-header-shell::before {
@@ -625,30 +631,19 @@ body[theme-mode='dark'] .usage-log-channel-cost-meta {
 }
 
 .dark .ct-header-shell {
-  box-shadow: inset 0 -1px 0 rgba(148, 163, 184, 0.055);
+  box-shadow: none;
 }
 
 .dark .ct-header-shell::before {
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(45, 212, 191, 0.18),
-    rgba(59, 130, 246, 0.1),
-    transparent
-  );
+  display: none;
 }
 
 .dark .ct-header-shell::after {
-  background: linear-gradient(180deg, rgba(3, 7, 14, 0.14), transparent);
+  background: transparent;
 }
 
 .dark .ct-header-console .ct-header-shell::before {
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(45, 212, 191, 0.08),
-    transparent
-  );
+  display: none;
 }
 
 .dark .ct-header-console .ct-header-shell::after {
@@ -685,7 +680,7 @@ body[theme-mode='dark'] .usage-log-channel-cost-meta {
 .ct-header-brand:hover {
   background: rgba(15, 23, 42, 0.045);
   box-shadow: none;
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .dark .ct-header-brand {
@@ -693,7 +688,17 @@ body[theme-mode='dark'] .usage-log-channel-cost-meta {
 }
 
 .dark .ct-header-brand:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: #273244;
+}
+
+.dark .ct-header-logo,
+.dark .ct-header-console .ct-header-logo {
+  box-shadow: none !important;
+}
+
+.dark .ct-header-logo img,
+.dark .ct-header-logo svg {
+  filter: none;
 }
 
 .ct-header-logo {
@@ -789,8 +794,8 @@ body[theme-mode='dark'] .usage-log-channel-cost-meta {
 }
 
 .dark .ct-nav {
-  background: rgba(255, 255, 255, 0.075);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+  background: #101722;
+  box-shadow: none;
 }
 
 .ct-header-console .ct-nav {
@@ -800,8 +805,8 @@ body[theme-mode='dark'] .usage-log-channel-cost-meta {
 }
 
 .dark .ct-header-console .ct-nav {
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.075);
+  background: #101722;
+  box-shadow: none;
 }
 
 .ct-nav-item {
@@ -842,16 +847,16 @@ body[theme-mode='dark'] .usage-log-channel-cost-meta {
 .ct-nav-item:hover {
   color: #0f172a;
   background: rgba(15, 23, 42, 0.055);
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .dark .ct-nav-item {
-  color: rgba(226, 232, 240, 0.82);
+  color: rgba(203, 213, 225, 0.78);
 }
 
 .dark .ct-nav-item:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
+  color: #f8fafc;
+  background: #273244;
 }
 
 .ct-nav-item-active {
@@ -867,15 +872,9 @@ body[theme-mode='dark'] .usage-log-channel-cost-meta {
 }
 
 .dark .ct-nav-item-active {
-  color: #d1fae5;
-  background: linear-gradient(
-    135deg,
-    rgba(20, 184, 166, 0.36),
-    rgba(15, 23, 42, 0.75)
-  );
-  box-shadow:
-    0 12px 26px rgba(20, 184, 166, 0.16),
-    inset 0 0 0 1px rgba(94, 234, 212, 0.2);
+  color: #f8fafc;
+  background: #3d4a5f;
+  box-shadow: none;
 }
 
 .ct-header-actions {
@@ -933,24 +932,22 @@ body[theme-mode='dark'] .usage-log-channel-cost-meta {
 .ct-header-actions .ct-user-button:hover,
 .ct-header-actions .ct-login-button:hover {
   background: rgba(240, 253, 250, 0.94) !important;
-  box-shadow:
-    inset 0 0 0 1px rgba(20, 184, 166, 0.22),
-    0 12px 24px rgba(15, 23, 42, 0.1) !important;
+  box-shadow: inset 0 0 0 1px rgba(20, 184, 166, 0.22) !important;
   color: #0f766e !important;
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .ct-header-actions .ct-register-button {
   padding: 0 18px !important;
   background: linear-gradient(135deg, #0f766e, #155e75) !important;
-  box-shadow: 0 14px 28px rgba(20, 184, 166, 0.22) !important;
+  box-shadow: none !important;
   color: #fff !important;
 }
 
 .ct-header-actions .ct-register-button:hover {
   background: linear-gradient(135deg, #14b8a6, #0284c7) !important;
-  box-shadow: 0 16px 32px rgba(20, 184, 166, 0.32) !important;
-  transform: translateY(-1px);
+  box-shadow: none !important;
+  transform: none;
 }
 
 .ct-header-actions .ct-user-button {
@@ -963,19 +960,27 @@ body[theme-mode='dark'] .usage-log-channel-cost-meta {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
 }
 
+.dark .ct-header-actions .semi-avatar {
+  background: #3d4a5f !important;
+  box-shadow: none !important;
+  color: #f8fafc !important;
+}
+
 .dark .ct-header-actions .ct-tool-button,
 .dark .ct-header-actions .ct-user-button,
-.dark .ct-header-actions .ct-login-button {
-  background: rgba(15, 23, 42, 0.72) !important;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
-  color: rgba(226, 232, 240, 0.88) !important;
+.dark .ct-header-actions .ct-login-button,
+.dark .ct-header-actions .ct-register-button {
+  background: #101722 !important;
+  box-shadow: none !important;
+  color: rgba(203, 213, 225, 0.82) !important;
 }
 
 .dark .ct-header-actions .ct-tool-button:hover,
 .dark .ct-header-actions .ct-user-button:hover,
-.dark .ct-header-actions .ct-login-button:hover {
-  background: rgba(20, 184, 166, 0.16) !important;
-  color: #ccfbf1 !important;
+.dark .ct-header-actions .ct-login-button:hover,
+.dark .ct-header-actions .ct-register-button:hover {
+  background: #273244 !important;
+  color: #f8fafc !important;
 }
 
 @media (max-width: 900px) {
@@ -6463,6 +6468,102 @@ code {
 /* 侧边栏区域容器 */
 .sidebar-section {
   padding-top: 12px;
+}
+
+html.dark .app-sider,
+html.dark .sidebar-container,
+html.dark .sidebar-nav {
+  background: #182131 !important;
+  box-shadow: none;
+}
+
+html.dark .sidebar-nav-item {
+  color: rgba(203, 213, 225, 0.78);
+}
+
+html.dark .sidebar-nav-item:hover {
+  background: #273244 !important;
+  color: #f8fafc !important;
+}
+
+html.dark .sidebar-nav-item-selected {
+  background: #3d4a5f !important;
+  color: #f8fafc !important;
+  box-shadow: none;
+}
+
+html.dark .sidebar-nav .semi-navigation-item,
+html.dark .sidebar-nav .semi-navigation-sub-title,
+html.dark .sidebar-nav .semi-navigation-item-text,
+html.dark .sidebar-nav .semi-navigation-item-text span,
+html.dark .sidebar-nav a {
+  color: rgba(203, 213, 225, 0.78) !important;
+}
+
+html.dark .sidebar-nav .semi-navigation-item:hover,
+html.dark .sidebar-nav .semi-navigation-sub-title:hover {
+  background: #273244 !important;
+  color: #f8fafc !important;
+}
+
+html.dark .sidebar-nav .semi-navigation-item:hover .semi-navigation-item-text,
+html.dark
+  .sidebar-nav
+  .semi-navigation-item:hover
+  .semi-navigation-item-text
+  span,
+html.dark
+  .sidebar-nav
+  .semi-navigation-sub-title:hover
+  .semi-navigation-item-text,
+html.dark
+  .sidebar-nav
+  .semi-navigation-sub-title:hover
+  .semi-navigation-item-text
+  span {
+  color: #f8fafc !important;
+}
+
+html.dark .sidebar-nav .semi-navigation-item-selected {
+  background: #3d4a5f !important;
+  box-shadow: none;
+}
+
+html.dark .sidebar-nav .semi-navigation-item-selected,
+html.dark .sidebar-nav .semi-navigation-item-selected .semi-navigation-item-text,
+html.dark
+  .sidebar-nav
+  .semi-navigation-item-selected
+  .semi-navigation-item-text
+  span {
+  color: #f8fafc !important;
+}
+
+html.dark .sidebar-nav .sidebar-icon-container,
+html.dark .sidebar-nav .sidebar-sub-icon-container,
+html.dark .sidebar-nav .semi-navigation-item svg,
+html.dark .sidebar-nav .semi-navigation-sub-title svg {
+  color: currentColor !important;
+}
+
+html.dark .sidebar-group-label {
+  color: rgba(148, 163, 184, 0.56);
+}
+
+html.dark .sidebar-divider {
+  opacity: 0;
+}
+
+html.dark .sidebar-collapse-button {
+  background: #182131;
+  border-top: 0;
+  box-shadow: none;
+}
+
+html.dark .sidebar-collapse-button-inner {
+  background: #101722;
+  color: rgba(203, 213, 225, 0.86);
+  box-shadow: none;
 }
 
 @media (max-width: 767px) {

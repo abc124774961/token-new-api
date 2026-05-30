@@ -25,6 +25,13 @@ const (
 	BillingRatioModeStatic  = "static"
 	BillingRatioModeDynamic = "dynamic"
 
+	DynamicBillingCostSourceSampleCost = "sample_cost"
+	DynamicBillingCostSourceProfit24h  = "profit_24h"
+
+	DynamicBillingApplyModeObserve = "observe"
+	DynamicBillingApplyModeManual  = "manual"
+	DynamicBillingApplyModeAuto    = "auto"
+
 	ProxyReusePolicyWarn    = "warn"
 	ProxyReusePolicyConfirm = "confirm"
 	ProxyReusePolicyBlock   = "block"
@@ -135,6 +142,15 @@ type SchedulerSetting struct {
 	DynamicBillingRefreshSeconds         int                                  `json:"dynamic_billing_refresh_seconds"`
 	DynamicBillingMaxAgeSeconds          int                                  `json:"dynamic_billing_max_age_seconds"`
 	DynamicBillingEnabledAt              int64                                `json:"dynamic_billing_enabled_at"`
+	DynamicBillingCostSource             string                               `json:"dynamic_billing_cost_source"`
+	DynamicBillingProfitWindowHours      int                                  `json:"dynamic_billing_profit_window_hours"`
+	DynamicBillingMinTokens              int                                  `json:"dynamic_billing_min_tokens"`
+	DynamicBillingMinRequests            int                                  `json:"dynamic_billing_min_requests"`
+	DynamicBillingMinSuccessRequests     int                                  `json:"dynamic_billing_min_success_requests"`
+	DynamicBillingMinRatio               float64                              `json:"dynamic_billing_min_ratio"`
+	DynamicBillingMaxRatio               float64                              `json:"dynamic_billing_max_ratio"`
+	DynamicBillingMaxStepChange          float64                              `json:"dynamic_billing_max_step_change"`
+	DynamicBillingApplyMode              string                               `json:"dynamic_billing_apply_mode"`
 	SuccessWeight                        float64                              `json:"success_weight"`
 	SpeedWeight                          float64                              `json:"speed_weight"`
 	LoadWeight                           float64                              `json:"load_weight"`
@@ -232,6 +248,15 @@ var schedulerSetting = SchedulerSetting{
 	DynamicBillingMinSamples:             5,
 	DynamicBillingRefreshSeconds:         30,
 	DynamicBillingMaxAgeSeconds:          300,
+	DynamicBillingCostSource:             DynamicBillingCostSourceProfit24h,
+	DynamicBillingProfitWindowHours:      24,
+	DynamicBillingMinTokens:              1000,
+	DynamicBillingMinRequests:            20,
+	DynamicBillingMinSuccessRequests:     5,
+	DynamicBillingMinRatio:               0.01,
+	DynamicBillingMaxRatio:               2.0,
+	DynamicBillingMaxStepChange:          0.30,
+	DynamicBillingApplyMode:              DynamicBillingApplyModeAuto,
 	SuccessWeight:                        0.32,
 	SpeedWeight:                          0.28,
 	LoadWeight:                           0.20,
@@ -383,6 +408,15 @@ func defaultSchedulerSetting() SchedulerSetting {
 	setting.DynamicBillingMinSamples = 5
 	setting.DynamicBillingRefreshSeconds = 30
 	setting.DynamicBillingMaxAgeSeconds = 300
+	setting.DynamicBillingCostSource = DynamicBillingCostSourceProfit24h
+	setting.DynamicBillingProfitWindowHours = 24
+	setting.DynamicBillingMinTokens = 1000
+	setting.DynamicBillingMinRequests = 20
+	setting.DynamicBillingMinSuccessRequests = 5
+	setting.DynamicBillingMinRatio = 0.01
+	setting.DynamicBillingMaxRatio = 2.0
+	setting.DynamicBillingMaxStepChange = 0.30
+	setting.DynamicBillingApplyMode = DynamicBillingApplyModeAuto
 	setting.SuccessWeight = 0.32
 	setting.SpeedWeight = 0.28
 	setting.LoadWeight = 0.20

@@ -365,6 +365,9 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := ensureDynamicBillingBaselineColumns(); err != nil {
+		return err
+	}
 	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
 		return err
 	}
@@ -461,6 +464,9 @@ func migrateDBFast() error {
 		if err != nil {
 			return err
 		}
+	}
+	if err := ensureDynamicBillingBaselineColumns(); err != nil {
+		return err
 	}
 	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
 		return err
@@ -890,6 +896,36 @@ func ensureChannelAccountUsageEventCodexColumns() error {
 		{"proxy_id", "ProxyID"},
 	}
 	return ensureColumns(&ChannelAccountUsageEvent{}, columns)
+}
+
+func ensureDynamicBillingBaselineColumns() error {
+	if DB == nil || !DB.Migrator().HasTable(&ModelGatewayDynamicBillingBaseline{}) {
+		return nil
+	}
+	columns := []modelGatewayColumnSpec{
+		{"cost_source", "CostSource"},
+		{"apply_mode", "ApplyMode"},
+		{"apply_reason", "ApplyReason"},
+		{"operating_cost_usd", "OperatingCostUSD"},
+		{"required_revenue_usd", "RequiredRevenueUSD"},
+		{"base_quota_at_ratio_1", "BaseQuotaAtRatio1"},
+		{"cost_multiplier", "CostMultiplier"},
+		{"target_ratio", "TargetRatio"},
+		{"effective_ratio", "EffectiveRatio"},
+		{"clamped", "Clamped"},
+		{"pending_manual_confirm", "PendingManualConfirm"},
+		{"fallback_reason", "FallbackReason"},
+		{"request_count", "RequestCount"},
+		{"success_request_count", "SuccessRequestCount"},
+		{"total_tokens", "TotalTokens"},
+		{"traffic_cost_usd", "TrafficCostUSD"},
+		{"traffic_estimated", "TrafficEstimated"},
+		{"traffic_data_ready", "TrafficDataReady"},
+		{"server_cost_usd", "ServerCostUSD"},
+		{"resource_cost_usd", "ResourceCostUSD"},
+		{"upstream_cost_usd", "UpstreamCostUSD"},
+	}
+	return ensureColumns(&ModelGatewayDynamicBillingBaseline{}, columns)
 }
 
 func ensureColumns(table any, columns []modelGatewayColumnSpec) error {

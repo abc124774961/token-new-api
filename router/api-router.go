@@ -360,6 +360,7 @@ func SetApiRouter(router *gin.Engine) {
 			modelGatewayRoute.PUT("/config", controller.UpdateModelGatewayConfig)
 			modelGatewayRoute.PATCH("/config/probe", controller.UpdateModelGatewayProbeConfig)
 			modelGatewayRoute.POST("/config/reset", controller.ResetModelGatewayConfig)
+			modelGatewayRoute.POST("/dynamic_billing/confirm", controller.ConfirmModelGatewayDynamicBilling)
 			modelGatewayRoute.GET("/channels/:id/score_boosts", controller.GetModelGatewayChannelScoreBoosts)
 			modelGatewayRoute.PATCH("/channels/:id/score_boosts", controller.UpdateModelGatewayChannelScoreBoosts)
 			modelGatewayRoute.GET("/proxies", controller.ListModelGatewayProxies)

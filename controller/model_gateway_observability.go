@@ -83,41 +83,71 @@ type ModelGatewayObservabilityResponse struct {
 }
 
 type ModelGatewayDynamicBillingOverview struct {
-	Enabled        bool                                      `json:"enabled"`
-	ProfitRate     float64                                   `json:"profit_rate,omitempty"`
-	WindowSamples  int                                       `json:"window_samples,omitempty"`
-	WindowMinutes  int                                       `json:"window_minutes,omitempty"`
-	MinSamples     int                                       `json:"min_samples,omitempty"`
-	RefreshSeconds int                                       `json:"refresh_seconds,omitempty"`
-	MaxAgeSeconds  int                                       `json:"max_age_seconds,omitempty"`
-	PolicyCount    int                                       `json:"policy_count"`
-	ActiveCount    int                                       `json:"active_count"`
-	WaitingCount   int                                       `json:"waiting_count"`
-	Groups         []ModelGatewayDynamicBillingGroupOverview `json:"groups"`
+	Enabled            bool                                      `json:"enabled"`
+	ProfitRate         float64                                   `json:"profit_rate,omitempty"`
+	WindowSamples      int                                       `json:"window_samples,omitempty"`
+	WindowMinutes      int                                       `json:"window_minutes,omitempty"`
+	MinSamples         int                                       `json:"min_samples,omitempty"`
+	RefreshSeconds     int                                       `json:"refresh_seconds,omitempty"`
+	MaxAgeSeconds      int                                       `json:"max_age_seconds,omitempty"`
+	CostSource         string                                    `json:"cost_source,omitempty"`
+	ApplyMode          string                                    `json:"apply_mode,omitempty"`
+	ProfitWindowHours  int                                       `json:"profit_window_hours,omitempty"`
+	MinTokens          int                                       `json:"min_tokens,omitempty"`
+	MinRequests        int                                       `json:"min_requests,omitempty"`
+	MinSuccessRequests int                                       `json:"min_success_requests,omitempty"`
+	MinRatio           float64                                   `json:"min_ratio,omitempty"`
+	MaxRatio           float64                                   `json:"max_ratio,omitempty"`
+	MaxStepChange      float64                                   `json:"max_step_change,omitempty"`
+	PolicyCount        int                                       `json:"policy_count"`
+	ActiveCount        int                                       `json:"active_count"`
+	WaitingCount       int                                       `json:"waiting_count"`
+	Groups             []ModelGatewayDynamicBillingGroupOverview `json:"groups"`
 }
 
 type ModelGatewayDynamicBillingGroupOverview struct {
-	PolicyGroup        string   `json:"policy_group"`
-	DisplayGroup       string   `json:"display_group,omitempty"`
-	TargetGroups       []string `json:"target_groups,omitempty"`
-	Status             string   `json:"status"`
-	CurrentRatio       float64  `json:"current_ratio,omitempty"`
-	CurrentPricePerM   float64  `json:"current_price_per_m,omitempty"`
-	AverageRatio       float64  `json:"average_ratio,omitempty"`
-	AveragePricePerM   float64  `json:"average_price_per_m,omitempty"`
-	BlendedRatio       float64  `json:"blended_ratio,omitempty"`
-	BlendedPricePerM   float64  `json:"blended_price_per_m,omitempty"`
-	CurrentTargetGroup string   `json:"current_target_group,omitempty"`
-	CurrentModel       string   `json:"current_model,omitempty"`
-	ReferenceModel     string   `json:"reference_model,omitempty"`
-	MinRatio           float64  `json:"min_ratio,omitempty"`
-	MaxRatio           float64  `json:"max_ratio,omitempty"`
-	MinPricePerM       float64  `json:"min_price_per_m,omitempty"`
-	MaxPricePerM       float64  `json:"max_price_per_m,omitempty"`
-	SampleCount        int      `json:"sample_count,omitempty"`
-	EffectiveSamples   int      `json:"effective_sample_count,omitempty"`
-	ModelCount         int      `json:"model_count,omitempty"`
-	LatestCalculatedAt int64    `json:"latest_calculated_at,omitempty"`
+	PolicyGroup          string   `json:"policy_group"`
+	DisplayGroup         string   `json:"display_group,omitempty"`
+	TargetGroups         []string `json:"target_groups,omitempty"`
+	Status               string   `json:"status"`
+	CurrentRatio         float64  `json:"current_ratio,omitempty"`
+	CurrentPricePerM     float64  `json:"current_price_per_m,omitempty"`
+	AverageRatio         float64  `json:"average_ratio,omitempty"`
+	AveragePricePerM     float64  `json:"average_price_per_m,omitempty"`
+	BlendedRatio         float64  `json:"blended_ratio,omitempty"`
+	BlendedPricePerM     float64  `json:"blended_price_per_m,omitempty"`
+	CurrentTargetGroup   string   `json:"current_target_group,omitempty"`
+	CurrentModel         string   `json:"current_model,omitempty"`
+	ReferenceModel       string   `json:"reference_model,omitempty"`
+	MinRatio             float64  `json:"min_ratio,omitempty"`
+	MaxRatio             float64  `json:"max_ratio,omitempty"`
+	MinPricePerM         float64  `json:"min_price_per_m,omitempty"`
+	MaxPricePerM         float64  `json:"max_price_per_m,omitempty"`
+	SampleCount          int      `json:"sample_count,omitempty"`
+	EffectiveSamples     int      `json:"effective_sample_count,omitempty"`
+	ModelCount           int      `json:"model_count,omitempty"`
+	LatestCalculatedAt   int64    `json:"latest_calculated_at,omitempty"`
+	CostSource           string   `json:"cost_source,omitempty"`
+	ApplyMode            string   `json:"apply_mode,omitempty"`
+	ApplyReason          string   `json:"apply_reason,omitempty"`
+	OperatingCostUSD     float64  `json:"operating_cost_usd,omitempty"`
+	RequiredRevenueUSD   float64  `json:"required_revenue_usd,omitempty"`
+	BaseQuotaAtRatio1    float64  `json:"base_quota_at_ratio_1,omitempty"`
+	CostMultiplier       float64  `json:"cost_multiplier,omitempty"`
+	TargetRatio          float64  `json:"target_ratio,omitempty"`
+	EffectiveRatio       float64  `json:"effective_ratio,omitempty"`
+	Clamped              bool     `json:"clamped,omitempty"`
+	PendingManualConfirm bool     `json:"pending_manual_confirm,omitempty"`
+	FallbackReason       string   `json:"fallback_reason,omitempty"`
+	RequestCount         int64    `json:"request_count,omitempty"`
+	SuccessRequestCount  int64    `json:"success_request_count,omitempty"`
+	TotalTokens          int64    `json:"total_tokens,omitempty"`
+	TrafficCostUSD       float64  `json:"traffic_cost_usd,omitempty"`
+	TrafficEstimated     bool     `json:"traffic_estimated,omitempty"`
+	TrafficDataReady     bool     `json:"traffic_data_ready,omitempty"`
+	ServerCostUSD        float64  `json:"server_cost_usd,omitempty"`
+	ResourceCostUSD      float64  `json:"resource_cost_usd,omitempty"`
+	UpstreamCostUSD      float64  `json:"upstream_cost_usd,omitempty"`
 }
 
 type ModelGatewayStickyStoreResponse struct {
@@ -483,6 +513,7 @@ type ModelGatewayUserRequestBillingInfo struct {
 	DynamicBillingApplied     bool    `json:"dynamic_billing_applied,omitempty"`
 	DynamicBillingFallback    bool    `json:"dynamic_billing_fallback,omitempty"`
 	DynamicFallbackReason     string  `json:"dynamic_fallback_reason,omitempty"`
+	DynamicApplyReason        string  `json:"dynamic_billing_apply_reason,omitempty"`
 	DynamicBillingRatio       float64 `json:"dynamic_billing_ratio,omitempty"`
 	DynamicBillingPricePerM   float64 `json:"dynamic_billing_price_per_m,omitempty"`
 	DynamicBillingSampleCount int     `json:"dynamic_billing_sample_count,omitempty"`
@@ -1576,17 +1607,20 @@ func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabi
 		if err != nil {
 			return ModelGatewayObservabilityResponse{}, err
 		}
-		return ModelGatewayObservabilityResponse{
+		response := ModelGatewayObservabilityResponse{
 			Summary: ModelGatewayObservabilitySummary{
 				WindowHours:        options.Hours,
 				TrendBucketSeconds: options.TrendBucketSeconds,
 				StartTime:          startTime,
 				EndTime:            endTime,
 			},
-			UserRequests:     userRequests,
-			DynamicBilling:   buildModelGatewayDynamicBillingOverviewForDisplay(time.Now().Unix(), 0),
-			DynamicBilling7d: buildModelGatewayDynamicBillingOverviewForDisplay(time.Now().Unix(), 7*24*60),
-		}, nil
+			UserRequests: userRequests,
+		}
+		if shouldIncludeModelGatewayDynamicBillingOverview(options) {
+			response.DynamicBilling = buildModelGatewayDynamicBillingOverviewForDisplay(time.Now().Unix(), 0)
+			response.DynamicBilling7d = buildModelGatewayDynamicBillingOverviewForDisplay(time.Now().Unix(), 7*24*60)
+		}
+		return response, nil
 	}
 
 	base := model.DB.Model(&model.ModelExecutionRecord{}).Where("created_at >= ?", startTime)
@@ -1618,8 +1652,10 @@ func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabi
 		return ModelGatewayObservabilityResponse{}, err
 	}
 	response.UserRequests = userRequests
-	response.DynamicBilling = buildModelGatewayDynamicBillingOverviewForDisplay(time.Now().Unix(), 0)
-	response.DynamicBilling7d = buildModelGatewayDynamicBillingOverviewForDisplay(time.Now().Unix(), 7*24*60)
+	if shouldIncludeModelGatewayDynamicBillingOverview(options) {
+		response.DynamicBilling = buildModelGatewayDynamicBillingOverviewForDisplay(time.Now().Unix(), 0)
+		response.DynamicBilling7d = buildModelGatewayDynamicBillingOverviewForDisplay(time.Now().Unix(), 7*24*60)
+	}
 	response.RuntimeStatus = defaultModelGatewayRuntimeStatusService().Build(modelgatewayobservability.RuntimeStatusQuery{
 		Model:     options.Model,
 		Group:     options.Group,
@@ -1628,6 +1664,10 @@ func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabi
 	})
 	applyModelGatewayRuntimeRiskEvents(&response)
 	return response, nil
+}
+
+func shouldIncludeModelGatewayDynamicBillingOverview(options ModelGatewayObservabilityOptions) bool {
+	return !options.HealthProbeOnly
 }
 
 func buildModelGatewayDynamicBillingOverview(now int64, windowMinutesOverride int) ModelGatewayDynamicBillingOverview {
@@ -1651,13 +1691,22 @@ func buildModelGatewayDynamicBillingOverviewWithOptions(now int64, windowMinutes
 		windowSamples = scheduler_setting.DefaultSetting().DynamicBillingWindowSamples
 	}
 	overview := ModelGatewayDynamicBillingOverview{
-		Enabled:        setting.DynamicBillingEnabled,
-		ProfitRate:     setting.DynamicBillingProfitRate,
-		WindowSamples:  windowSamples,
-		MinSamples:     setting.DynamicBillingMinSamples,
-		RefreshSeconds: setting.DynamicBillingRefreshSeconds,
-		MaxAgeSeconds:  setting.DynamicBillingMaxAgeSeconds,
-		Groups:         make([]ModelGatewayDynamicBillingGroupOverview, 0),
+		Enabled:            setting.DynamicBillingEnabled,
+		ProfitRate:         setting.DynamicBillingProfitRate,
+		WindowSamples:      windowSamples,
+		MinSamples:         setting.DynamicBillingMinSamples,
+		RefreshSeconds:     setting.DynamicBillingRefreshSeconds,
+		MaxAgeSeconds:      setting.DynamicBillingMaxAgeSeconds,
+		CostSource:         setting.DynamicBillingCostSource,
+		ApplyMode:          setting.DynamicBillingApplyMode,
+		ProfitWindowHours:  setting.DynamicBillingProfitWindowHours,
+		MinTokens:          setting.DynamicBillingMinTokens,
+		MinRequests:        setting.DynamicBillingMinRequests,
+		MinSuccessRequests: setting.DynamicBillingMinSuccessRequests,
+		MinRatio:           setting.DynamicBillingMinRatio,
+		MaxRatio:           setting.DynamicBillingMaxRatio,
+		MaxStepChange:      setting.DynamicBillingMaxStepChange,
+		Groups:             make([]ModelGatewayDynamicBillingGroupOverview, 0),
 	}
 	if windowMinutesOverride > 0 {
 		overview.WindowSamples = 0
@@ -1694,8 +1743,22 @@ func buildModelGatewayDynamicBillingOverviewWithOptions(now int64, windowMinutes
 		if baseline.Ratio <= 0 {
 			return false
 		}
+		if strings.TrimSpace(baseline.FallbackReason) != "" && !modelgatewaydynamicbilling.IsAutoAppliedLegacyFallback(baseline.FallbackReason) {
+			return false
+		}
 		if setting.DynamicBillingMinSamples > 0 && baseline.SampleCount < setting.DynamicBillingMinSamples {
 			return false
+		}
+		if baseline.CostSource == scheduler_setting.DynamicBillingCostSourceProfit24h {
+			if baseline.RequestCount < int64(setting.DynamicBillingMinRequests) ||
+				baseline.SuccessRequestCount < int64(setting.DynamicBillingMinSuccessRequests) ||
+				baseline.TotalTokens < int64(setting.DynamicBillingMinTokens) ||
+				baseline.BaseQuotaAtRatio1 <= 0 {
+				return false
+			}
+			if setting.DynamicBillingApplyMode == scheduler_setting.DynamicBillingApplyModeObserve {
+				return false
+			}
 		}
 		if setting.DynamicBillingMaxAgeSeconds > 0 && (baseline.CalculatedAt <= 0 || now-baseline.CalculatedAt > int64(setting.DynamicBillingMaxAgeSeconds)) {
 			return false
@@ -1803,11 +1866,11 @@ func buildModelGatewayDynamicBillingOverviewWithOptions(now int64, windowMinutes
 				if baseline.Ratio <= 0 {
 					continue
 				}
-				if setting.DynamicBillingMinSamples > 0 && baseline.SampleCount < setting.DynamicBillingMinSamples {
-					expiredOnly = false
-					continue
-				}
-				if setting.DynamicBillingMaxAgeSeconds > 0 && (baseline.CalculatedAt <= 0 || now-baseline.CalculatedAt > int64(setting.DynamicBillingMaxAgeSeconds)) {
+				if !baselineActive {
+					isExpired := setting.DynamicBillingMaxAgeSeconds > 0 && (baseline.CalculatedAt <= 0 || now-baseline.CalculatedAt > int64(setting.DynamicBillingMaxAgeSeconds))
+					if !isExpired {
+						expiredOnly = false
+					}
 					continue
 				}
 				active = true
@@ -1848,11 +1911,38 @@ func buildModelGatewayDynamicBillingOverviewWithOptions(now int64, windowMinutes
 			item.CurrentTargetGroup = currentBaseline.Group
 			item.CurrentModel = currentBaseline.RequestedModel
 			item.ReferenceModel = firstNonEmptyTrimmed(currentBaseline.ReferenceModel, currentBaseline.RequestedModel)
+			item.CostSource = currentBaseline.CostSource
+			item.ApplyMode = currentBaseline.ApplyMode
+			item.ApplyReason = currentBaseline.ApplyReason
+			item.OperatingCostUSD = currentBaseline.OperatingCostUSD
+			item.RequiredRevenueUSD = currentBaseline.RequiredRevenueUSD
+			item.BaseQuotaAtRatio1 = currentBaseline.BaseQuotaAtRatio1
+			item.CostMultiplier = currentBaseline.CostMultiplier
+			item.TargetRatio = currentBaseline.TargetRatio
+			item.EffectiveRatio = currentBaseline.EffectiveRatio
+			item.Clamped = currentBaseline.Clamped
+			item.PendingManualConfirm = currentBaseline.PendingManualConfirm && !modelgatewaydynamicbilling.IsAutoAppliedLegacyFallback(currentBaseline.FallbackReason)
+			item.FallbackReason = currentBaseline.FallbackReason
+			item.RequestCount = currentBaseline.RequestCount
+			item.SuccessRequestCount = currentBaseline.SuccessRequestCount
+			item.TotalTokens = currentBaseline.TotalTokens
+			item.TrafficCostUSD = currentBaseline.TrafficCostUSD
+			item.TrafficEstimated = currentBaseline.TrafficEstimated
+			item.TrafficDataReady = currentBaseline.TrafficDataReady
+			item.ServerCostUSD = currentBaseline.ServerCostUSD
+			item.ResourceCostUSD = currentBaseline.ResourceCostUSD
+			item.UpstreamCostUSD = currentBaseline.UpstreamCostUSD
 		}
 		switch {
 		case active:
 			item.Status = "active"
 			overview.ActiveCount++
+		case hasCurrentBaseline && modelgatewaydynamicbilling.IsAutoAppliedLegacyFallback(currentBaseline.FallbackReason):
+			item.Status = "active"
+			overview.ActiveCount++
+		case hasCurrentBaseline && strings.TrimSpace(currentBaseline.FallbackReason) != "":
+			item.Status = currentBaseline.FallbackReason
+			overview.WaitingCount++
 		case latestCalculatedAt > 0 && expiredOnly:
 			item.Status = "expired"
 			overview.WaitingCount++
@@ -2165,6 +2255,7 @@ func buildModelGatewayDynamicBillingAppliedOverview(now int64, windowMinutes int
 func loadModelGatewayDynamicBillingAppliedLogs(startTime int64) ([]modelGatewayDynamicBillingAppliedLog, error) {
 	rows := make([]model.Log, 0)
 	query := model.LOG_DB.Model(&model.Log{}).
+		Select("request_id", "created_at", "model_name", "group", "other").
 		Where("type = ? AND created_at >= ? AND request_id <> ''", model.LogTypeConsume, startTime)
 	query = query.Where("other LIKE ?", `%"dynamic_billing_applied":true%`)
 	if err := query.Order("created_at asc, id asc").Find(&rows).Error; err != nil {
@@ -2714,6 +2805,11 @@ func modelGatewayHealthCheckRuntimeRowKey(item modelgatewayobservability.Runtime
 		nonEmptyTrimmed(item.RequestedModel, "model"),
 		nonEmptyTrimmed(item.UpstreamModel, "upstream"),
 		strconv.Itoa(item.ChannelID),
+		nonEmptyTrimmed(item.ResourceID, "resource"),
+		nonEmptyTrimmed(item.AccountID, "account"),
+		strconv.Itoa(item.CredentialIndex),
+		nonEmptyTrimmed(item.CredentialSubjectFP, "subject"),
+		nonEmptyTrimmed(item.CredentialFP, "credential"),
 		nonEmptyTrimmed(item.Group, "group"),
 		nonEmptyTrimmed(item.EndpointType, "endpoint"),
 		nonEmptyTrimmed(item.CapabilityFingerprint, "capability"),
@@ -3540,6 +3636,7 @@ func modelGatewayUserRequestBillingInfoFromLog(log model.Log) *ModelGatewayUserR
 		DynamicBillingApplied:     modelGatewayBillingBool(other, "dynamic_billing_applied"),
 		DynamicBillingFallback:    modelGatewayBillingBool(other, "dynamic_billing_fallback"),
 		DynamicFallbackReason:     modelGatewayBillingString(other, "dynamic_fallback_reason"),
+		DynamicApplyReason:        modelGatewayBillingString(other, "dynamic_billing_apply_reason"),
 		DynamicBillingRatio:       modelGatewayBillingFloat(other, "dynamic_billing_ratio"),
 		DynamicBillingPricePerM:   modelGatewayBillingFloat(other, "dynamic_billing_price_per_m"),
 		DynamicBillingSampleCount: modelGatewayBillingInt(other, "dynamic_billing_sample_count"),

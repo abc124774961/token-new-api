@@ -58,6 +58,42 @@ func TestChannelSelectionWrapperActiveUsesSmartPlan(t *testing.T) {
 	require.Zero(t, h.Legacy.Calls)
 }
 
+func TestChannelSelectionWrapperSkipsDisabledSmartPlanAndRetries(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
+	facade := &sequenceFacade{
+		plans: []*core.DispatchPlan{
+			{
+				Channel:       &model.Channel{Id: 201, Name: "disabled-smart", Status: common.ChannelStatusManuallyDisabled},
+				SelectedGroup: "default",
+			},
+			{
+				Channel:       &model.Channel{Id: 202, Name: "healthy-smart", Status: common.ChannelStatusEnabled},
+				SelectedGroup: "default",
+			},
+		},
+	}
+	wrapper := integration.NewChannelSelectionWrapper(facade, nil)
+	ctx, _ := gin.CreateTestContext(nil)
+
+	result, apiErr := wrapper.SelectSmartOnly(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-4.1",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
+	require.Equal(t, 202, result.Channel.Id)
+	require.Equal(t, 2, facade.SelectCalls)
+	require.True(t, service.IsChannelSelectionSkipped(ctx, 201))
+	require.Equal(t, 1, service.GetChannelSelectionReservations(202))
+	service.ReleaseChannelSelectionReservations(ctx)
+}
+
 func TestChannelSelectionWrapperSmartPlanReservesRoutingSlotBeforeRelayAcquire(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service.ClearChannelConcurrencyForTest()

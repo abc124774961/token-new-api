@@ -345,6 +345,47 @@ func TestShouldRetryAllowsGeneric429FailoverWhenAlternativePeerChannelExists(t *
 	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
 }
 
+func TestSetupFailureFailoverSkipsBrokenChannelWhenAlternativeExists(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 481, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 482, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	err := types.NewError(errors.New("no enabled keys"), types.ErrorCodeChannelNoAvailableKey)
+
+	require.True(t, prepareModelGatewaySetupFailureRetry(ctx, &model.Channel{Id: 481}, err, param))
+	require.Equal(t, 1, param.GetExtraRetries())
+	require.Equal(t, modelgatewaycore.ErrorCategoryAuthConfigError, setupFailureErrorCategory(ctx, err))
+}
+
+func TestSetupFailureFailoverRejectsSpecificChannel(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 483, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 484, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Set("specific_channel_id", 483)
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	err := types.NewError(errors.New("credential disabled"), types.ErrorCodeChannelNoAvailableKey)
+
+	require.False(t, prepareModelGatewaySetupFailureRetry(ctx, &model.Channel{Id: 483}, err, param))
+	require.Equal(t, 0, param.GetExtraRetries())
+}
+
 func TestShouldRetryRejectsGeneric429ForSpecificChannel(t *testing.T) {
 	db := serviceSetupRelayRetryDB(t)
 	serviceSeedRelayRetryChannel(t, db, 463, "default", "gpt-5.5", 10)

@@ -167,6 +167,54 @@ function formatPercent(value, digits = 1) {
   return `${(numeric * 100).toFixed(digits)}%`;
 }
 
+function formatMultiplier(value, digits = 2) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '--';
+  return `${numeric.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}x`;
+}
+
+function formatProfitMarkupFormula(targetRate, markupMultiplier) {
+  const markupText = formatMultiplier(markupMultiplier);
+  if (markupText === '--') return '--';
+  const rateText = formatPercent(targetRate);
+  if (rateText === '--') return markupText;
+  return `1 + ${rateText} = ${markupText}`;
+}
+
+function resolveCostMarkupMultiplier(source, fallbackSummary) {
+  const direct = Number(source?.cost_markup_multiplier || 0);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const requiredRevenue = Number(source?.required_revenue_usd || 0);
+  const upstreamCost = Number(
+    source?.upstream_cost_usd || fallbackSummary?.upstream_cost_usd || 0,
+  );
+  if (
+    Number.isFinite(requiredRevenue) &&
+    Number.isFinite(upstreamCost) &&
+    requiredRevenue > 0 &&
+    upstreamCost > 0
+  ) {
+    return requiredRevenue / upstreamCost;
+  }
+  return 0;
+}
+
+function resolveCostMultiplier(source) {
+  const direct = Number(source?.cost_multiplier || 0);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const suggestedRatio = Number(source?.suggested_dynamic_ratio || 0);
+  const markup = resolveCostMarkupMultiplier(source);
+  if (
+    Number.isFinite(suggestedRatio) &&
+    Number.isFinite(markup) &&
+    suggestedRatio > 0 &&
+    markup > 0
+  ) {
+    return suggestedRatio / markup;
+  }
+  return 0;
+}
+
 function formatShare(value) {
   return formatPercent(value, 1);
 }
@@ -351,7 +399,7 @@ function labelForRecommendationReason(value, t) {
     case 'below_target':
       return t('当前毛利率低于目标，建议小幅上调并观察请求量变化。');
     case 'ok':
-      return t('建议已生成，请结合成本明细人工确认。');
+      return t('建议已生成，后台动态倍率会按配置自动应用并保留记录。');
     default:
       return value ? t(value) : '--';
   }
@@ -482,7 +530,7 @@ function ConfigModal({ visible, config, saving, onCancel, onSave, t }) {
           <span>{t('目标利润率')}</span>
           <InputNumber
             min={0}
-            max={0.95}
+            max={95}
             step={0.01}
             suffix='%'
             value={Number(form.target_profit_rate || 0) * 100}
@@ -542,7 +590,7 @@ function ConfigModal({ visible, config, saving, onCancel, onSave, t }) {
       <div className='ct-profit-help'>
         <AlertTriangle size={15} />
         <span>
-          {t('当前版本只把经营成本用于监控和建议，不会自动改写线上动态倍率。')}
+          {t('经营成本会进入后台动态倍率计算；启用动态计费后，请求链路只读取内存倍率快照。')}
         </span>
       </div>
     </Modal>
@@ -807,12 +855,23 @@ function RecommendationDetailModal({
           <strong>{formatPercent(safeSnapshot.current_margin)}</strong>
         </div>
         <div>
+          <span>{t('成本倍率')}</span>
+          <strong>{formatMultiplier(resolveCostMultiplier(safeSnapshot), 4)}</strong>
+        </div>
+        <div>
+          <span>{t('目标利润换算')}</span>
+          <strong>
+            {formatProfitMarkupFormula(
+              safeSnapshot.target_profit_rate,
+              resolveCostMarkupMultiplier(safeSnapshot),
+            )}
+          </strong>
+        </div>
+        <div>
           <span>{t('建议收入倍率')}</span>
           <strong>
             {Number(safeSnapshot.recommended_revenue_multiplier) > 0
-              ? `${Number(safeSnapshot.recommended_revenue_multiplier).toFixed(
-                  2,
-                )}x`
+              ? formatMultiplier(safeSnapshot.recommended_revenue_multiplier)
               : '--'}
           </strong>
         </div>
@@ -1273,6 +1332,11 @@ export default function ProfitMonitor() {
   const summary = data.summary || {};
   const resources = data.resources || { items: [] };
   const recommendation = data.recommendation || {};
+  const costMultiplier = resolveCostMultiplier(recommendation);
+  const profitMarkupMultiplier = resolveCostMarkupMultiplier(
+    recommendation,
+    summary,
+  );
   const trafficSummary = trafficData.summary || {};
 
   const metricCards = useMemo(
@@ -1352,16 +1416,31 @@ export default function ProfitMonitor() {
         label: t('建议最低收入'),
         value: formatUsd(recommendation.required_revenue_usd, 4),
         detail: recommendation.can_recommend
-          ? t('建议收入倍率 {{ratio}}x', {
-              ratio: Number(
-                recommendation.recommended_revenue_multiplier || 0,
-              ).toFixed(2),
-            })
+          ? `${t('目标利润率')} ${formatPercent(
+              recommendation.target_profit_rate,
+            )}`
           : t('样本不足，暂不建议'),
         tone: 'info',
       },
+      {
+        icon: Sparkles,
+        label: t('建议动态倍率'),
+        value:
+          Number(recommendation.suggested_dynamic_ratio || 0) > 0
+            ? `${Number(recommendation.suggested_dynamic_ratio).toFixed(4)}x`
+            : '--',
+        detail:
+          Number(recommendation.current_effective_dynamic_ratio || 0) > 0
+            ? t('当前生效 {{ratio}}x', {
+                ratio: Number(
+                  recommendation.current_effective_dynamic_ratio,
+                ).toFixed(4),
+              })
+            : t('尚未应用到动态倍率'),
+        tone: recommendation.dynamic_billing_applied ? 'success' : 'info',
+      },
     ],
-    [recommendation, summary, t],
+    [profitMarkupMultiplier, recommendation, summary, t],
   );
 
   const trafficMetricCards = useMemo(
@@ -1777,10 +1856,36 @@ export default function ProfitMonitor() {
       render: (value) => formatPercent(value),
     },
     {
+      title: t('成本倍率'),
+      dataIndex: 'cost_multiplier',
+      width: 120,
+      render: (value, record) =>
+        formatMultiplier(
+          resolveCostMultiplier({
+            ...record,
+            cost_multiplier: value,
+          }),
+          4,
+        ),
+    },
+    {
+      title: t('目标利润换算'),
+      dataIndex: 'cost_markup_multiplier',
+      width: 170,
+      render: (value, record) =>
+        formatProfitMarkupFormula(
+          record.target_profit_rate,
+          resolveCostMarkupMultiplier({
+            ...record,
+            cost_markup_multiplier: value,
+          }),
+        ),
+    },
+    {
       title: t('建议收入倍率'),
       dataIndex: 'recommended_revenue_multiplier',
       render: (value) =>
-        Number(value) > 0 ? `${Number(value).toFixed(2)}x` : '--',
+        Number(value) > 0 ? formatMultiplier(value) : '--',
     },
     {
       title: t('每百万 token 最低收入'),
@@ -2137,7 +2242,7 @@ export default function ProfitMonitor() {
                 <div className='ct-profit-panel-head'>
                   <div>
                     <h2>{t('动态倍率建议')}</h2>
-                    <p>{t('基于当前窗口总经营成本和目标利润率计算。')}</p>
+                    <p>{t('基于当前窗口上游 token 成本和目标利润率计算。')}</p>
                   </div>
                   <Button
                     type='primary'
@@ -2162,6 +2267,19 @@ export default function ProfitMonitor() {
                     </strong>
                   </div>
                   <div>
+                    <span>{t('成本倍率')}</span>
+                    <strong>{formatMultiplier(costMultiplier, 4)}</strong>
+                  </div>
+                  <div>
+                    <span>{t('目标利润换算')}</span>
+                    <strong>
+                      {formatProfitMarkupFormula(
+                        recommendation.target_profit_rate,
+                        profitMarkupMultiplier,
+                      )}
+                    </strong>
+                  </div>
+                  <div>
                     <span>{t('每百万 token 最低收入')}</span>
                     <strong>
                       {formatUsd(
@@ -2171,12 +2289,43 @@ export default function ProfitMonitor() {
                     </strong>
                   </div>
                   <div>
+                    <span>{t('每百万基础计费额度最低收入')}</span>
+                    <strong>
+                      {formatUsd(
+                        recommendation.minimum_revenue_per_m_base_quota_usd,
+                        4,
+                      )}
+                    </strong>
+                  </div>
+                  <div>
                     <span>{t('建议收入倍率')}</span>
                     <strong>
                       {recommendation.can_recommend
+                        ? formatMultiplier(
+                            recommendation.recommended_revenue_multiplier,
+                          )
+                        : '--'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>{t('建议动态倍率')}</span>
+                    <strong>
+                      {Number(recommendation.suggested_dynamic_ratio || 0) > 0
                         ? `${Number(
-                            recommendation.recommended_revenue_multiplier || 0,
-                          ).toFixed(2)}x`
+                            recommendation.suggested_dynamic_ratio,
+                          ).toFixed(4)}x`
+                        : '--'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>{t('当前生效动态倍率')}</span>
+                    <strong>
+                      {Number(
+                        recommendation.current_effective_dynamic_ratio || 0,
+                      ) > 0
+                        ? `${Number(
+                            recommendation.current_effective_dynamic_ratio,
+                          ).toFixed(4)}x`
                         : '--'}
                     </strong>
                   </div>
@@ -2199,7 +2348,7 @@ export default function ProfitMonitor() {
                     rowKey='id'
                     pagination={false}
                     empty={<Empty description={t('暂无建议快照')} />}
-                    scroll={{ x: 1120 }}
+                    scroll={{ x: 1240 }}
                   />
                 </div>
               </section>

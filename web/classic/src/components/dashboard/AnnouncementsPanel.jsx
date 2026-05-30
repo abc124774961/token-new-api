@@ -19,65 +19,58 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import { Tag, Timeline } from '@douyinfe/semi-ui';
-import { Bell } from 'lucide-react';
+import { PiMegaphoneDuotone } from 'react-icons/pi';
 import { marked } from 'marked';
 import ScrollableContainer from '../common/ui/ScrollableContainer';
-import DashboardCard from './DashboardCard';
 import DashboardEmptyState from './DashboardEmptyState';
 
 const AnnouncementsPanel = ({
   announcementData,
   announcementLegendData,
-  CARD_PROPS,
-  ILLUSTRATION_SIZE,
   t,
 }) => {
   return (
-    <DashboardCard
-      {...CARD_PROPS}
-      className='ct-dashboard-feed-card lg:col-span-2'
-      tone='notice'
-      title={
-        <div className='ct-dashboard-panel-title-row'>
-          <div className='ct-dashboard-panel-title'>
-            <Bell size={16} />
+    <section className='ct-command-feed-panel ct-command-announcement-panel'>
+      <div className='ct-command-panel-head'>
+        <div className='ct-command-panel-title-group'>
+          <div className='ct-command-panel-icon ct-command-panel-icon-notice'>
+            <PiMegaphoneDuotone size={20} />
+          </div>
+          <h3 className='ct-command-panel-title'>
             {t('系统公告')}
             <Tag color='green' shape='circle' className='ct-dashboard-soft-tag'>
               {t('显示最新20条')}
             </Tag>
-          </div>
-          {/* 图例 */}
-          <div className='ct-dashboard-legend-inline'>
-            {announcementLegendData.map((legend, index) => (
-              <div key={index} className='ct-dashboard-legend-item'>
-                <div
-                  className='w-2 h-2 rounded-full'
-                  style={{
-                    backgroundColor:
-                      legend.color === 'grey'
-                        ? '#8b9aa7'
-                        : legend.color === 'blue'
-                          ? '#3b82f6'
-                          : legend.color === 'green'
-                            ? '#10b981'
-                            : legend.color === 'orange'
-                              ? '#f59e0b'
-                              : legend.color === 'red'
-                                ? '#ef4444'
-                                : '#8b9aa7',
-                  }}
-                />
-                <span>{legend.label}</span>
-              </div>
-            ))}
-          </div>
+          </h3>
         </div>
-      }
-      bodyStyle={{ padding: 0 }}
-    >
-      <ScrollableContainer maxHeight='24rem'>
+        <div className='ct-command-legend-inline'>
+          {announcementLegendData.map((legend, index) => (
+            <div key={index} className='ct-command-legend-item'>
+              <div
+                className='ct-command-legend-dot'
+                style={{
+                  backgroundColor:
+                    legend.color === 'grey'
+                      ? '#8b9aa7'
+                      : legend.color === 'blue'
+                        ? '#3b82f6'
+                        : legend.color === 'green'
+                          ? '#10b981'
+                          : legend.color === 'orange'
+                            ? '#f59e0b'
+                            : legend.color === 'red'
+                              ? '#ef4444'
+                              : '#8b9aa7',
+                }}
+              />
+              <span>{legend.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <ScrollableContainer maxHeight='26rem'>
         {announcementData.length > 0 ? (
-          <Timeline mode='left'>
+          <Timeline mode='left' className='ct-command-timeline'>
             {announcementData.map((item, idx) => {
               const htmlExtra = item.extra ? marked.parse(item.extra) : '';
               return (
@@ -106,7 +99,7 @@ const AnnouncementsPanel = ({
             })}
           </Timeline>
         ) : (
-          <div className='ct-dashboard-empty-wrap'>
+          <div className='ct-command-empty-wrap'>
             <DashboardEmptyState
               title={t('暂无系统公告')}
               description={t('请联系管理员在系统设置中配置公告信息')}
@@ -114,7 +107,7 @@ const AnnouncementsPanel = ({
           </div>
         )}
       </ScrollableContainer>
-    </DashboardCard>
+    </section>
   );
 };
 
