@@ -79,6 +79,7 @@ const CHANNEL_ACCOUNT_IMPORT_FILE_LIMIT = 32 * 1024 * 1024;
 const CHANNEL_ACCOUNT_IMPORT_FILE_ACCEPT =
   '.zip,.json,.txt,.ndjson,application/zip,application/json,text/plain';
 const XAUTO_NEWAPI_PACKAGE_TYPE = 'newapi-channel-files';
+const CHANNEL_ACCOUNT_RECONCILE_CACHE_TTL_MS = 30 * 1000;
 
 function unwrapApiData(response) {
   return response?.data?.data || response?.data || {};
@@ -141,6 +142,139 @@ function shortRequestId(value) {
   if (!text) return '--';
   if (text.length <= 18) return text;
   return `${text.slice(0, 10)}...${text.slice(-6)}`;
+}
+
+function attemptDisplayIndex(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return 1;
+  return Math.floor(numeric) + 1;
+}
+
+function accountDisplayIndex(item) {
+  const explicit = Number(item?.account_display_index);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const credentialIndex = Number(item?.credential_index);
+  if (Number.isFinite(credentialIndex) && credentialIndex >= 0) {
+    return Math.floor(credentialIndex) + 1;
+  }
+  return '--';
+}
+
+function statisticsDiagnosticText(item, t) {
+  const diagnostic = item?.statistics_diagnostic || item?.statistics_status || '';
+  const labels = {
+    health_probe_excluded: t('探活不计入真实统计'),
+    missing_account_attribution: t('缺少账号归因'),
+    dispatch_record_only: t('仅调度记录'),
+    waiting_for_billing: t('等待结算数据'),
+    waiting_for_cost: t('等待成本计算'),
+    statistics_complete: t('统计完整'),
+    health_probe: t('探活不计入真实统计'),
+    attribution_missing: t('缺少账号归因'),
+    dispatch_only: t('仅调度记录'),
+    billing_pending: t('等待结算数据'),
+    cost_pending: t('等待成本计算'),
+    complete: t('统计完整'),
+  };
+  return labels[diagnostic] || (item?.statistics_recorded ? t('已有请求状态') : t('未写入统计'));
+}
+
+function statisticsDiagnosticColor(item) {
+  const status = item?.statistics_status || '';
+  if (status === 'complete') return 'green';
+  if (status === 'health_probe') return 'cyan';
+  if (status === 'billing_pending' || status === 'cost_pending') return 'orange';
+  if (status === 'attribution_missing') return 'red';
+  if (status === 'dispatch_only') return 'grey';
+  return item?.statistics_recorded ? 'green' : 'grey';
+}
+
+function reconcileCheckLabel(key, t) {
+  const labels = {
+    usage_event: t('用量事件'),
+    account_match: t('账号匹配'),
+    statistics: t('统计状态'),
+    user_request: t('最终请求摘要'),
+    samples: t('调度/评分样本'),
+    cost: t('成本摘要'),
+  };
+  return labels[key] || key || '--';
+}
+
+function reconcileCheckText(check, t) {
+  const detailLabels = {
+    usage_event_found: t('已找到'),
+    usage_event_missing: t('未找到'),
+    account_match: t('账号匹配'),
+    account_mismatch: t('账号不匹配'),
+    statistics_complete: t('统计完整'),
+    health_probe_excluded: t('探活不计入真实统计'),
+    missing_account_attribution: t('缺少账号归因'),
+    dispatch_record_only: t('仅调度记录'),
+    waiting_for_billing: t('等待结算数据'),
+    waiting_for_cost: t('等待成本计算'),
+    user_request_found: t('已找到'),
+    user_request_missing: t('未找到'),
+    attempt_samples_found: t('已找到'),
+    attempt_samples_missing: t('未找到'),
+    cost_summary_found: t('已找到'),
+    cost_summary_missing: t('等待成本计算'),
+  };
+  return detailLabels[check?.detail] || check?.detail || check?.status || '--';
+}
+
+function reconcileCheckColor(status) {
+  if (status === 'ok' || status === 'complete') return 'green';
+  if (status === 'warning' || status === 'billing_pending' || status === 'cost_pending') return 'orange';
+  if (status === 'missing' || status === 'attribution_missing') return 'red';
+  if (status === 'health_probe') return 'cyan';
+  return 'grey';
+}
+
+function reconcileDiagnosisTitle(key, t) {
+  const labels = {
+    trace_complete: t('统计链路完整'),
+    usage_event_missing_but_samples_exist: t('统计未写入，但存在调度或评分样本'),
+    request_trace_missing: t('请求链路缺失'),
+    account_mismatch: t('账号不匹配'),
+    health_probe_excluded: t('这是探活样本，不计入真实请求统计'),
+    account_attribution_missing: t('账号归因缺失，统计可能无法挂到账号'),
+    dispatch_only: t('只有调度记录，等待 attempt 或结算写入'),
+    billing_pending: t('等待结算数据写入'),
+    cost_pending: t('等待成本计算完成'),
+    user_request_summary_missing: t('最终请求摘要缺失'),
+    request_failed: t('请求最终失败'),
+    attempt_samples_missing: t('缺少调度或评分样本'),
+    cost_summary_pending: t('等待成本计算完成'),
+  };
+  return labels[key] || key || '--';
+}
+
+function reconcileDiagnosisSuggestion(key, t) {
+  const labels = {
+    trace_complete: t('这条请求的调度、统计和成本链路已经对齐。'),
+    usage_event_missing_but_samples_exist: t('检查 usage event 写入链路，重点看 request_id 归因和异步 recorder。'),
+    request_trace_missing: t('检查请求是否经过智能网关，以及 request_id 是否在各阶段传递。'),
+    account_mismatch: t('检查本次请求的账号索引与最终写入的 credential_index。'),
+    health_probe_excluded: t('无需处理；探活只影响健康状态，不计入真实用量统计。'),
+    account_attribution_missing: t('检查账号归因写入，尤其是 account_identity_key 和 credential_fingerprint。'),
+    dispatch_only: t('等待 attempt/billing 写入；若长期停留，检查 recorder 或请求中断路径。'),
+    billing_pending: t('检查 billing 写入链路和消费日志是否按 request_id 合并。'),
+    cost_pending: t('等待异步成本任务，或检查成本 worker 与成本配置。'),
+    user_request_summary_missing: t('检查最终请求摘要写入，确认 attempt 是否被标记为最终状态。'),
+    request_failed: t('优先查看失败错误、重试链路和上游状态。'),
+    attempt_samples_missing: t('检查调度/评分采样是否开启，以及该请求是否绕过智能调度。'),
+    cost_summary_pending: t('等待异步成本任务，或检查成本 worker 与成本配置。'),
+  };
+  return labels[key] || '';
+}
+
+function reconcileDiagnosisColor(severity) {
+  if (severity === 'ok') return 'green';
+  if (severity === 'error') return 'red';
+  if (severity === 'warning') return 'orange';
+  if (severity === 'info') return 'cyan';
+  return 'grey';
 }
 
 function pluralCount(value) {
@@ -678,6 +812,8 @@ function schedulingReasonMeta(value, t) {
       return { color: 'grey', label: t('暂无评分样本') };
     case 'no_runtime_snapshot':
       return { color: 'grey', label: t('暂无运行态') };
+    case 'proxy_unavailable':
+      return { color: 'red', label: t('代理不可用') };
     case 'proxy_disabled':
       return { color: 'orange', label: t('代理未启用') };
     default:
@@ -1649,6 +1785,35 @@ function buildColumns(
         const platformDiagnosing = capabilityLoadingKey === `${loadingKey}:platform`;
         return (
           <Space className='ct-channel-account-operation' spacing={6}>
+            <Popconfirm
+              title={
+                action === 'disable'
+                  ? t('确定禁用该账号？')
+                  : t('确定启用该账号？')
+              }
+              content={
+                action === 'disable'
+                  ? t('禁用后该账号不会参与智能调度')
+                  : t('启用后该账号可重新参与智能调度')
+              }
+              onConfirm={() => onToggleStatus(record)}
+            >
+              <Button
+                size='small'
+                type={action === 'disable' ? 'warning' : 'primary'}
+                theme={action === 'disable' ? 'light' : 'solid'}
+                loading={loading}
+                icon={
+                  action === 'disable' ? (
+                    <ToggleLeft size={14} />
+                  ) : (
+                    <ToggleRight size={14} />
+                  )
+                }
+              >
+                {action === 'disable' ? t('禁用账号') : t('启用账号')}
+              </Button>
+            </Popconfirm>
             <Tooltip content={t('测试账号')}>
               <Button
                 size='small'
@@ -1696,35 +1861,6 @@ function buildColumns(
                 aria-label={t('编辑账号')}
               />
             </Tooltip>
-            <Popconfirm
-              title={
-                action === 'disable'
-                  ? t('确定禁用该账号？')
-                  : t('确定启用该账号？')
-              }
-              content={
-                action === 'disable'
-                  ? t('禁用后该账号不会参与智能调度')
-                  : t('启用后该账号可重新参与智能调度')
-              }
-              onConfirm={() => onToggleStatus(record)}
-            >
-              <Button
-                size='small'
-                type={action === 'disable' ? 'warning' : 'primary'}
-                theme={action === 'disable' ? 'light' : 'solid'}
-                loading={loading}
-                icon={
-                  action === 'disable' ? (
-                    <ToggleLeft size={14} />
-                  ) : (
-                    <ToggleRight size={14} />
-                  )
-                }
-              >
-                {action === 'disable' ? t('禁用账号') : t('启用账号')}
-              </Button>
-            </Popconfirm>
             <Popconfirm
               title={t('确定删除该账号？')}
               content={t('删除后该凭证将从渠道中移除，此操作不可撤销')}
@@ -1835,15 +1971,6 @@ function buildStatsColumns(
         const loadingKey = `${record.channel_id}-${record.credential_index}`;
         return (
           <Space spacing={6}>
-            <Button
-              size='small'
-              type='tertiary'
-              theme='light'
-              icon={<FileText size={14} />}
-              onClick={() => onOpenDetail(record)}
-            >
-              {t('详情')}
-            </Button>
             <Popconfirm
               title={
                 action === 'disable'
@@ -1873,6 +2000,15 @@ function buildStatsColumns(
                 {action === 'disable' ? t('禁用') : t('启用')}
               </Button>
             </Popconfirm>
+            <Button
+              size='small'
+              type='tertiary'
+              theme='light'
+              icon={<FileText size={14} />}
+              onClick={() => onOpenDetail(record)}
+            >
+              {t('详情')}
+            </Button>
           </Space>
         );
       },
@@ -1906,11 +2042,176 @@ function DetailStatWindow({ title, window, t }) {
   );
 }
 
+function RequestReconcileModal({ visible, data, loading, onClose, t }) {
+  const usage = data?.usage_event || {};
+  const userRequest = data?.user_request || {};
+  const cost = data?.cost_summary || {};
+  const executionRecords = Array.isArray(data?.execution_records)
+    ? data.execution_records
+    : [];
+  const scoreEvents = Array.isArray(data?.score_events) ? data.score_events : [];
+  const checks = Array.isArray(data?.checks) ? data.checks : [];
+  const diagnoses = Array.isArray(data?.diagnoses) ? data.diagnoses : [];
+
+  return (
+    <Modal
+      title={t('请求链路对账')}
+      visible={visible}
+      onCancel={onClose}
+      footer={null}
+      width={760}
+      bodyStyle={{ padding: 0 }}
+    >
+      <div className='ct-channel-account-reconcile'>
+        {loading ? (
+          <Skeleton placeholder={<Skeleton.Paragraph rows={6} />} loading active />
+        ) : !data ? (
+          <Empty title={t('暂无请求记录')} />
+        ) : (
+          <>
+            <div className='ct-channel-account-reconcile-head'>
+              <div>
+                <span>{t('请求 ID')}</span>
+                <Tooltip content={data.request_id || '--'}>
+                  <strong>{shortRequestId(data.request_id)}</strong>
+                </Tooltip>
+              </div>
+              <Tag color='blue'>
+                {`${t('渠道')} #${data.channel_id || '--'} / ${t('账号')} #${data.account_display_index || '--'}`}
+              </Tag>
+            </div>
+            {diagnoses.length > 0 ? (
+              <div className='ct-channel-account-reconcile-diagnoses'>
+                <div className='ct-channel-account-detail-title'>{t('诊断结论')}</div>
+                {diagnoses.map((diagnosis) => (
+                  <div key={`${diagnosis.key}-${diagnosis.severity}`}>
+                    <Tag size='small' color={reconcileDiagnosisColor(diagnosis.severity)}>
+                      {reconcileDiagnosisTitle(diagnosis.key, t)}
+                    </Tag>
+                    <span>{reconcileDiagnosisSuggestion(diagnosis.key, t)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className='ct-channel-account-reconcile-checks'>
+              {checks.map((check) => (
+                <div key={`${check.key}-${check.status}`}>
+                  <span>{reconcileCheckLabel(check.key, t)}</span>
+                  <Tag size='small' color={reconcileCheckColor(check.status)}>
+                    {reconcileCheckText(check, t)}
+                  </Tag>
+                </div>
+              ))}
+            </div>
+            <div className='ct-channel-account-reconcile-section'>
+              <div className='ct-channel-account-detail-title'>{t('用量事件')}</div>
+              <div className='ct-channel-account-detail-grid'>
+                <span>{t('统计状态')}</span>
+                <strong>{usage.statistics_diagnostic ? statisticsDiagnosticText(usage, t) : t('未找到')}</strong>
+                <span>{t('请求类型')}</span>
+                <strong>{usage.is_health_probe ? t('探活样本') : t('真实请求')}</strong>
+                <span>Token</span>
+                <strong>{formatCompactNumber(usage.total_tokens)}</strong>
+                <span>{t('用户扣费')}</span>
+                <strong>{formatQuotaValue(usage.quota)}</strong>
+                <span>{t('首包/耗时')}</span>
+                <strong>{formatLatency(usage.ttft_ms)} / {formatLatency(usage.duration_ms)}</strong>
+                <span>{t('完成时间')}</span>
+                <strong>{formatTimestamp(usage.completed_at)}</strong>
+              </div>
+            </div>
+            <div className='ct-channel-account-reconcile-section'>
+              <div className='ct-channel-account-detail-title'>{t('最终请求摘要')}</div>
+              <div className='ct-channel-account-detail-grid'>
+                <span>{t('结果')}</span>
+                <strong>
+                  {data.user_request
+                    ? userRequest.final_success
+                      ? t('成功')
+                      : userRequest.final_error_category || userRequest.final_status_code || t('失败')
+                    : t('未找到')}
+                </strong>
+                <span>{t('尝试次数')}</span>
+                <strong>{formatNumber(userRequest.attempts)}</strong>
+                <span>{t('最终渠道')}</span>
+                <strong>{userRequest.final_channel_id ? `#${userRequest.final_channel_id}` : '--'}</strong>
+                <span>{t('恢复成功')}</span>
+                <strong>{userRequest.recovered ? t('是') : t('否')}</strong>
+              </div>
+            </div>
+            <div className='ct-channel-account-reconcile-section'>
+              <div className='ct-channel-account-detail-title'>{t('Attempt 样本')}</div>
+              {executionRecords.length === 0 ? (
+                <Empty title={t('未找到')} />
+              ) : (
+                <div className='ct-channel-account-reconcile-list'>
+                  {executionRecords.map((item) => (
+                    <div key={`${item.attempt_index}-${item.created_at}`}>
+                      <span>
+                        {t('第 {{index}} 次尝试', {
+                          index: attemptDisplayIndex(item.attempt_index),
+                        })}
+                      </span>
+                      <Tag size='small' color={item.success ? 'green' : 'red'}>
+                        {item.success ? t('成功') : item.error_category || item.status_code || t('失败')}
+                      </Tag>
+                      <span>{formatLatency(item.ttft_ms)} / {formatLatency(item.duration_ms)}</span>
+                      <span>{item.selected_reason || '--'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className='ct-channel-account-reconcile-section'>
+              <div className='ct-channel-account-detail-title'>{t('评分样本')}</div>
+              {scoreEvents.length === 0 ? (
+                <Empty title={t('未找到')} />
+              ) : (
+                <div className='ct-channel-account-reconcile-list'>
+                  {scoreEvents.map((item) => (
+                    <div key={`${item.attempt_index}-${item.created_at}`}>
+                      <span>
+                        {`${t('账号')} #${item.account_display_index || '--'}`}
+                      </span>
+                      <Tag size='small' color='teal'>
+                        {formatScore(item.after_total)}
+                      </Tag>
+                      <span>{item.switch_reason || item.failure_scope || '--'}</span>
+                      <span>{item.requested_model || '--'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className='ct-channel-account-reconcile-section'>
+              <div className='ct-channel-account-detail-title'>{t('成本摘要')}</div>
+              <div className='ct-channel-account-detail-grid'>
+                <span>{t('模型')}</span>
+                <strong>{cost.upstream_model || usage.requested_model || '--'}</strong>
+                <span>{t('账号成本')}</span>
+                <strong>{formatCost(cost.upstream_cost_total || usage.upstream_cost_total)}</strong>
+                <span>{t('来源')}</span>
+                <strong>{cost.cost_source || '--'}</strong>
+                <span>{t('精度')}</span>
+                <strong>{cost.cost_accuracy || '--'}</strong>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 function RecentRequestsBlock({ visible, record, onReload, t }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshResult, setRefreshResult] = useState(null);
+  const [reconcileVisible, setReconcileVisible] = useState(false);
+  const [reconcileLoading, setReconcileLoading] = useState(false);
+  const [reconcileData, setReconcileData] = useState(null);
+  const reconcileCacheRef = useRef(new Map());
   const channelID = Number(record?.channel_id || 0);
   const credentialIndex = Number(record?.credential_index ?? -1);
   const recentSummary = useMemo(() => {
@@ -1986,6 +2287,7 @@ function RecentRequestsBlock({ visible, record, onReload, t }) {
       const payload = unwrapApiData(response);
       setItems(Array.isArray(payload?.items) ? payload.items : []);
       setRefreshResult(payload?.refresh_result || null);
+      reconcileCacheRef.current.clear();
       showSuccess(t('归因已刷新'));
       onReload?.();
     } catch (err) {
@@ -1996,6 +2298,55 @@ function RecentRequestsBlock({ visible, record, onReload, t }) {
       setRefreshing(false);
     }
   }, [channelID, credentialIndex, onReload, t]);
+
+  const openReconcile = useCallback(
+    async (item) => {
+      const requestID = String(item?.request_id || '').trim();
+      if (channelID <= 0 || credentialIndex < 0 || !requestID) return;
+      const cacheKey = `${channelID}:${credentialIndex}:${requestID}`;
+      const cached = reconcileCacheRef.current.get(cacheKey);
+      if (
+        cached &&
+        Date.now() - Number(cached.cachedAt || 0) <
+          CHANNEL_ACCOUNT_RECONCILE_CACHE_TTL_MS
+      ) {
+        setReconcileVisible(true);
+        setReconcileLoading(false);
+        setReconcileData(cached.data);
+        return;
+      }
+      setReconcileVisible(true);
+      setReconcileLoading(true);
+      setReconcileData(null);
+      try {
+        const response = await API.get(
+          `/api/channel/${channelID}/accounts/${credentialIndex}/requests/${encodeURIComponent(requestID)}/reconcile`,
+          { disableDuplicate: true },
+        );
+        if (response?.data?.success === false) {
+          throw new Error(response?.data?.message || t('请求异常'));
+        }
+        const payload = unwrapApiData(response);
+        reconcileCacheRef.current.set(cacheKey, {
+          cachedAt: Date.now(),
+          data: payload,
+        });
+        if (reconcileCacheRef.current.size > 50) {
+          const firstKey = reconcileCacheRef.current.keys().next().value;
+          if (firstKey) reconcileCacheRef.current.delete(firstKey);
+        }
+        setReconcileData(payload);
+      } catch (err) {
+        const message =
+          err?.response?.data?.message || err?.message || t('请求异常');
+        showError(message);
+        setReconcileVisible(false);
+      } finally {
+        setReconcileLoading(false);
+      }
+    },
+    [channelID, credentialIndex, t],
+  );
 
   return (
     <div className='ct-channel-account-recent'>
@@ -2069,8 +2420,16 @@ function RecentRequestsBlock({ visible, record, onReload, t }) {
                   <span>{item.requested_model || '--'}</span>
                 </div>
                 <div className='ct-channel-account-recent-tags'>
+                  <Tag size='small' color={item.attempt_index > 0 ? 'orange' : 'grey'}>
+                    {t('第 {{index}} 次尝试', {
+                      index: attemptDisplayIndex(item.attempt_index),
+                    })}
+                  </Tag>
                   <Tag size='small' color={item.is_health_probe ? 'cyan' : 'green'}>
                     {item.is_health_probe ? t('探活样本') : t('真实请求')}
+                  </Tag>
+                  <Tag size='small' color='blue'>
+                    {`${t('渠道')} #${item.channel_id || '--'} / ${t('账号')} #${accountDisplayIndex(item)}`}
                   </Tag>
                   <Tag size='small' color={item.success ? 'green' : 'red'}>
                     {item.success ? t('成功') : item.error_category || item.status_code || t('失败')}
@@ -2081,6 +2440,13 @@ function RecentRequestsBlock({ visible, record, onReload, t }) {
                   >
                     {item.statistics_recorded ? t('写入统计') : t('未写入统计')}
                   </Tag>
+                  <Tooltip
+                    content={`${t('统计状态')}: ${statisticsDiagnosticText(item, t)}`}
+                  >
+                    <Tag size='small' color={statisticsDiagnosticColor(item)}>
+                      {statisticsDiagnosticText(item, t)}
+                    </Tag>
+                  </Tooltip>
                   <Tag
                     size='small'
                     color={item.attribution_complete ? 'green' : 'orange'}
@@ -2093,12 +2459,28 @@ function RecentRequestsBlock({ visible, record, onReload, t }) {
                   <span>{formatLatency(item.ttft_ms)} / {formatLatency(item.duration_ms)}</span>
                   <span>{formatCompactNumber(item.total_tokens)} Token</span>
                   <span>{formatQuotaValue(item.quota)}</span>
+                  <Tooltip content={t('请求链路对账')}>
+                    <Button
+                      size='small'
+                      theme='borderless'
+                      type='tertiary'
+                      icon={<ListChecks size={14} />}
+                      onClick={() => openReconcile(item)}
+                    />
+                  </Tooltip>
                 </div>
               </div>
             ))}
           </div>
         </>
       )}
+      <RequestReconcileModal
+        visible={reconcileVisible}
+        data={reconcileData}
+        loading={reconcileLoading}
+        onClose={() => setReconcileVisible(false)}
+        t={t}
+      />
     </div>
   );
 }

@@ -317,6 +317,9 @@ func candidateMatchesQuery(candidate core.Candidate, query Query) bool {
 	if query.EndpointType != "" && !service.ChannelSupportsRequiredCapabilities(candidate.Channel, candidate.RuntimeKey.RequestedModel, query.EndpointType, query.RequiresCodexImageTool) {
 		return false
 	}
+	if !candidateProxyAvailable(candidate) {
+		return false
+	}
 	if !candidateAccountSupportsRequiredCapabilities(candidate, query) {
 		return false
 	}
@@ -340,6 +343,19 @@ func candidateMatchesQuery(candidate core.Candidate, query Query) bool {
 		return false
 	}
 	return true
+}
+
+func candidateProxyAvailable(candidate core.Candidate) bool {
+	proxyID := candidate.ProxyRef.ProxyID
+	if proxyID <= 0 {
+		return true
+	}
+	proxy, err := model.GetModelGatewayProxyByID(proxyID)
+	if err != nil || proxy == nil || !proxy.Enabled {
+		return false
+	}
+	proxyURL, err := proxy.ProxyURL()
+	return err == nil && strings.TrimSpace(proxyURL) != ""
 }
 
 func candidateAccountSupportsRequiredCapabilities(candidate core.Candidate, query Query) bool {

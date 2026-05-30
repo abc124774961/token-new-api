@@ -235,7 +235,7 @@ const ChannelAffinityDiagnosticsModal = ({
             <Tag color='yellow'>{t('上游未返回缓存')}: {count(summary.upstream_no_cached_token_logs)}</Tag>
             <Tag color='grey'>{t('无亲和 Key')}: {count(summary.no_affinity_logs)}</Tag>
           </Space>
-          <Button icon={<IconRefresh />} onClick={load} loading={loading}>
+          <Button icon={<IconRefresh />} onClick={() => load()} loading={loading}>
             {t('刷新诊断')}
           </Button>
         </div>

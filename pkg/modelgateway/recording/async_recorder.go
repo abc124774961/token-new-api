@@ -392,6 +392,7 @@ func channelAccountUsageEventFromAttempt(result core.AttemptResult) model.Channe
 	}
 	event := model.ChannelAccountUsageEvent{
 		RequestId:       result.RequestID,
+		AttemptIndex:    result.AttemptIndex,
 		ChannelID:       result.ChannelID,
 		ChannelName:     result.ChannelName,
 		CredentialIndex: -1,

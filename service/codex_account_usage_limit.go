@@ -29,7 +29,12 @@ func MarkCodexAccountUsageLimitedWithCooldown(channelID int, credentialIndex int
 	}
 	return updateCodexAccountUsageLimit(channelID, credentialIndex, func(capability model.ChannelAccountCapability, now int64) (model.ChannelAccountCapability, bool) {
 		if capability.UsageLimitActiveAt(now) && now-capability.UsageLimitDetectedTime < codexAccountUsageLimitWriteThrottleSec {
-			return capability, false
+			next := applyCodexAccountUsageLimitWithCooldown(capability, message, now, cooldownSec, resetSource)
+			if next.UsageLimitExpiresAt <= capability.UsageLimitExpiresAt &&
+				(strings.TrimSpace(capability.UsageLimitResetSource) != "" || strings.TrimSpace(next.UsageLimitResetSource) == "") {
+				return capability, false
+			}
+			return next, true
 		}
 		return applyCodexAccountUsageLimitWithCooldown(capability, message, now, cooldownSec, resetSource), true
 	})

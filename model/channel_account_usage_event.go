@@ -1,12 +1,14 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/codexauth"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -29,6 +31,7 @@ const (
 type ChannelAccountUsageEvent struct {
 	Id                           int     `json:"id" gorm:"primaryKey"`
 	RequestId                    string  `json:"request_id" gorm:"type:varchar(64);uniqueIndex;not null"`
+	AttemptIndex                 int     `json:"attempt_index" gorm:"default:0;index"`
 	CreatedAt                    int64   `json:"created_at" gorm:"bigint;index"`
 	UpdatedAt                    int64   `json:"updated_at" gorm:"bigint;index"`
 	ChannelID                    int     `json:"channel_id" gorm:"index:idx_caue_channel_completed,priority:1;index:idx_caue_identity_completed,priority:1;index:idx_caue_credential_completed,priority:1;index:idx_caue_probe_completed,priority:1;default:0"`
@@ -112,12 +115,18 @@ func UpsertChannelAccountUsageDispatch(event ChannelAccountUsageEvent) error {
 
 func UpsertChannelAccountUsageAttempt(event ChannelAccountUsageEvent) error {
 	event = normalizeChannelAccountUsageEvent(event)
+	if stale, err := channelAccountUsageAttemptIsStale(event); err != nil {
+		common.SysLog(fmt.Sprintf("failed to check channel account usage attempt freshness: request_id=%s attempt_index=%d error=%v", event.RequestId, event.AttemptIndex, err))
+	} else if stale {
+		return nil
+	}
 	updates := baseChannelAccountUsageAssignments(event)
 	addChannelAccountUsageIdentityAssignments(updates, event)
 	addChannelAccountUsageRequestAssignments(updates, event)
 	if event.CompletedAt > 0 {
 		updates["completed_at"] = event.CompletedAt
 	}
+	updates["attempt_index"] = event.AttemptIndex
 	updates["success"] = event.Success
 	updates["status_code"] = event.StatusCode
 	updates["error_category"] = event.ErrorCategory
@@ -390,6 +399,9 @@ func normalizeChannelAccountUsageEvent(event ChannelAccountUsageEvent) ChannelAc
 	if event.CredentialIndex < 0 {
 		event.CredentialIndex = unknownChannelAccountCredentialIndex
 	}
+	if event.AttemptIndex < 0 {
+		event.AttemptIndex = 0
+	}
 	event = enrichChannelAccountUsageEventIdentity(event)
 	if event.AccountIdentityKey == "" {
 		event.AccountIdentityKey = event.AccountID
@@ -475,6 +487,44 @@ func channelAccountUsageAggregateKey(accountIdentityKey string, credentialIndex 
 		return "identity:" + accountIdentityKey
 	}
 	return fmt.Sprintf("credential:%d", credentialIndex)
+}
+
+func channelAccountUsageAttemptIsStale(event ChannelAccountUsageEvent) (bool, error) {
+	if DB == nil || event.RequestId == "" {
+		return false, nil
+	}
+	var existing ChannelAccountUsageEvent
+	err := DB.Model(&ChannelAccountUsageEvent{}).
+		Select("id, attempt_index, success, credential_index, account_identity_key, prompt_tokens, completion_tokens, total_tokens, quota").
+		Where("request_id = ?", event.RequestId).
+		First(&existing).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if existing.AttemptIndex > event.AttemptIndex {
+		return true, nil
+	}
+	if existing.AttemptIndex == event.AttemptIndex && existing.Success && !event.Success {
+		return true, nil
+	}
+	if channelAccountUsageHasBilling(existing) && !event.Success {
+		if existing.CredentialIndex >= 0 && event.CredentialIndex >= 0 && existing.CredentialIndex != event.CredentialIndex {
+			return true, nil
+		}
+		if strings.TrimSpace(existing.AccountIdentityKey) != "" &&
+			strings.TrimSpace(event.AccountIdentityKey) != "" &&
+			strings.TrimSpace(existing.AccountIdentityKey) != strings.TrimSpace(event.AccountIdentityKey) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func channelAccountUsageHasBilling(event ChannelAccountUsageEvent) bool {
+	return event.PromptTokens > 0 || event.CompletionTokens > 0 || event.TotalTokens > 0 || event.Quota != 0
 }
 
 func channelAccountUsageIdentityRefreshChanged(before ChannelAccountUsageEvent, after ChannelAccountUsageEvent) bool {

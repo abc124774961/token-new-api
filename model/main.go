@@ -875,6 +875,7 @@ func ensureChannelAccountUsageEventCodexColumns() error {
 		return nil
 	}
 	columns := []modelGatewayColumnSpec{
+		{"attempt_index", "AttemptIndex"},
 		{"usage_estimated", "UsageEstimated"},
 		{"provider_surface", "ProviderSurface"},
 		{"capability_classification", "CapabilityClassification"},

@@ -2,6 +2,7 @@ package candidateindex
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -10,7 +11,9 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestProIndexExpandsMultiKeyChannelIntoAccountCandidates(t *testing.T) {
@@ -191,6 +194,65 @@ func TestProIndexQueryFiltersUsageLimitedCodexAccount(t *testing.T) {
 
 	require.Len(t, candidates, 1)
 	require.Equal(t, 1, candidates[0].CredentialRef.CredentialIndex)
+}
+
+func TestProIndexQueryFiltersUnavailableAccountProxy(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelGatewayProxy{}))
+	oldDB := model.DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	model.DB = db
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		model.DB = oldDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	require.NoError(t, db.Create(&model.ModelGatewayProxy{
+		ID:       9101,
+		Name:     "disabled",
+		Protocol: model.ModelGatewayProxyProtocolSOCKS5,
+		Address:  "127.0.0.1:1080",
+		Enabled:  true,
+	}).Error)
+	require.NoError(t, db.Model(&model.ModelGatewayProxy{}).Where("id = ?", 9101).Update("enabled", false).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayProxy{
+		ID:       9102,
+		Name:     "enabled",
+		Protocol: model.ModelGatewayProxyProtocolSOCKS5,
+		Address:  "127.0.0.1:1081",
+		Enabled:  true,
+	}).Error)
+
+	index := New(account.NewRegistry(), nil)
+	channel := &model.Channel{
+		Id:     17,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-disabled-proxy\nsk-enabled-proxy",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "gpt-5.4",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:       true,
+			MultiKeyProxyIDs: map[int]int{0: 9101, 1: 9102},
+		},
+	}
+
+	index.Rebuild([]*model.Channel{channel})
+	candidates := index.Query(Query{
+		Groups:       []string{"default"},
+		ModelName:    "gpt-5.4",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Len(t, candidates, 1)
+	require.Equal(t, 1, candidates[0].CredentialRef.CredentialIndex)
+	require.Equal(t, 9102, candidates[0].ProxyRef.ProxyID)
 }
 
 func TestProIndexQueryFiltersSingleCodexAccountDeniedCapability(t *testing.T) {

@@ -20,7 +20,15 @@ func setupChannelAccountUsageEventTestDB(t *testing.T) *gorm.DB {
 
 	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&Channel{}, &ChannelAccountUsageEvent{}))
+	require.NoError(t, db.AutoMigrate(
+		&Channel{},
+		&ChannelAccountUsageEvent{},
+		&ModelExecutionRecord{},
+		&ModelGatewayScoreEvent{},
+		&ModelGatewayRequestCostSummary{},
+		&ModelGatewayUserRequestSummary{},
+	))
+	require.NoError(t, EnsureModelExecutionRecordRequestMetaCapacity(db))
 
 	oldDB := DB
 	DB = db
@@ -125,6 +133,57 @@ func TestChannelAccountUsageEventUpsertsMergeOutOfOrderRequestStages(t *testing.
 	require.InEpsilon(t, 0.03125, aggregates[0].UpstreamCostTotal, 0.0001)
 	require.InEpsilon(t, 1500, aggregates[0].AvgDurationMs, 0.0001)
 	require.InEpsilon(t, 360, aggregates[0].AvgTTFTMs, 0.0001)
+}
+
+func TestChannelAccountRequestReconcileQueriesOmitHeavyPayloads(t *testing.T) {
+	db := setupChannelAccountUsageEventTestDB(t)
+	requestID := "req-reconcile-light-query"
+	largeJSON := strings.Repeat(`{"payload":"x"}`, 128)
+
+	require.NoError(t, db.Create(&ModelExecutionRecord{
+		RequestId:       requestID,
+		AttemptIndex:    0,
+		ChannelId:       12,
+		Success:         true,
+		RequestMeta:     largeJSON,
+		ScoreBreakdown:  largeJSON,
+		CandidateGroups: largeJSON,
+	}).Error)
+	require.NoError(t, db.Create(&ModelGatewayScoreEvent{
+		TraceID:            "trace-light-query",
+		RequestID:          requestID,
+		ChannelID:          12,
+		CredentialIndex:    1,
+		SampleDecisionJSON: largeJSON,
+		ChangedItemsJSON:   largeJSON,
+		ContextJSON:        largeJSON,
+	}).Error)
+	require.NoError(t, db.Create(&ModelGatewayRequestCostSummary{
+		RequestId:     requestID,
+		ChannelID:     12,
+		BreakdownJSON: largeJSON,
+		CostSource:    "profile",
+		CostAccuracy:  "precise",
+	}).Error)
+
+	executionRecords, err := QueryModelExecutionRecordsByRequestId(requestID, 20)
+	require.NoError(t, err)
+	require.Len(t, executionRecords, 1)
+	require.Empty(t, executionRecords[0].RequestMeta)
+	require.Empty(t, executionRecords[0].ScoreBreakdown)
+	require.Empty(t, executionRecords[0].CandidateGroups)
+
+	scoreEvents, err := QueryModelGatewayScoreEventsByRequestId(requestID, 20)
+	require.NoError(t, err)
+	require.Len(t, scoreEvents, 1)
+	require.Empty(t, scoreEvents[0].SampleDecisionJSON)
+	require.Empty(t, scoreEvents[0].ChangedItemsJSON)
+	require.Empty(t, scoreEvents[0].ContextJSON)
+
+	costSummary, err := GetModelGatewayRequestCostSummaryByRequestId(requestID)
+	require.NoError(t, err)
+	require.NotNil(t, costSummary)
+	require.Empty(t, costSummary.BreakdownJSON)
 }
 
 func TestChannelAccountUsageBillingBackfillsIdentityFromChannelCredentialIndex(t *testing.T) {
@@ -272,6 +331,81 @@ func TestChannelAccountUsageAttemptDoesNotOverwritePositiveCompletedAtWithInvali
 	require.True(t, row.Success)
 	require.Equal(t, http.StatusOK, row.StatusCode)
 	require.Equal(t, int64(1500), row.DurationMs)
+}
+
+func TestChannelAccountUsageAttemptKeepsNewestSuccessfulAttribution(t *testing.T) {
+	db := setupChannelAccountUsageEventTestDB(t)
+	requestID := "req-account-usage-stale-attempt"
+
+	require.NoError(t, UpsertChannelAccountUsageAttempt(ChannelAccountUsageEvent{
+		RequestId:          requestID,
+		AttemptIndex:       1,
+		ChannelID:          42,
+		CredentialIndex:    1,
+		AccountIdentityKey: "account-final",
+		CompletedAt:        130,
+		Success:            true,
+		StatusCode:         http.StatusOK,
+		DurationMs:         900,
+	}))
+	require.NoError(t, UpsertChannelAccountUsageAttempt(ChannelAccountUsageEvent{
+		RequestId:          requestID,
+		AttemptIndex:       0,
+		ChannelID:          42,
+		CredentialIndex:    0,
+		AccountIdentityKey: "account-stale",
+		CompletedAt:        120,
+		Success:            false,
+		StatusCode:         http.StatusGatewayTimeout,
+		ErrorCategory:      "timeout",
+		DurationMs:         3000,
+	}))
+
+	var row ChannelAccountUsageEvent
+	require.NoError(t, db.First(&row, "request_id = ?", requestID).Error)
+	require.Equal(t, 1, row.AttemptIndex)
+	require.Equal(t, 1, row.CredentialIndex)
+	require.Equal(t, "account-final", row.AccountIdentityKey)
+	require.True(t, row.Success)
+	require.Equal(t, http.StatusOK, row.StatusCode)
+	require.Equal(t, int64(900), row.DurationMs)
+}
+
+func TestChannelAccountUsageAttemptDoesNotOverwriteBilledFinalAccount(t *testing.T) {
+	db := setupChannelAccountUsageEventTestDB(t)
+	requestID := "req-account-usage-billed-final"
+
+	require.NoError(t, UpsertChannelAccountUsageBilling(ChannelAccountUsageEvent{
+		RequestId:          requestID,
+		ChannelID:          42,
+		CredentialIndex:    1,
+		AccountIdentityKey: "account-final",
+		CompletedAt:        130,
+		PromptTokens:       10,
+		CompletionTokens:   20,
+		TotalTokens:        30,
+		Quota:              300,
+	}))
+	require.NoError(t, UpsertChannelAccountUsageAttempt(ChannelAccountUsageEvent{
+		RequestId:          requestID,
+		AttemptIndex:       0,
+		ChannelID:          42,
+		CredentialIndex:    0,
+		AccountIdentityKey: "account-stale",
+		CompletedAt:        120,
+		Success:            false,
+		StatusCode:         http.StatusGatewayTimeout,
+		ErrorCategory:      "timeout",
+	}))
+
+	var row ChannelAccountUsageEvent
+	require.NoError(t, db.First(&row, "request_id = ?", requestID).Error)
+	require.Equal(t, 1, row.CredentialIndex)
+	require.Equal(t, "account-final", row.AccountIdentityKey)
+	require.Equal(t, int64(30), row.TotalTokens)
+	require.Equal(t, int64(300), row.Quota)
+	require.False(t, row.Success)
+	require.Zero(t, row.StatusCode)
 }
 
 func TestChannelAccountUsageWindowAggregatesExcludeHealthProbes(t *testing.T) {

@@ -150,7 +150,8 @@ func TestCreateModelGatewayProxyWithSchemeAndAuthBuildsAuthenticatedURL(t *testi
 	require.True(t, payload.Success, recorder.Body.String())
 	require.Equal(t, "socks5://127.0.0.1:1080", payload.Data.MaskedAddress)
 	require.True(t, payload.Data.PasswordSet)
-	require.NotContains(t, recorder.Body.String(), "pass")
+	require.NotContains(t, recorder.Body.String(), `"password":"pass"`)
+	require.NotContains(t, recorder.Body.String(), "socks5://user:pass")
 
 	var created model.ModelGatewayProxy
 	require.NoError(t, db.First(&created, "id = ?", payload.Data.ID).Error)

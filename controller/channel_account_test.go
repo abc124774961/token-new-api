@@ -39,6 +39,12 @@ type channelAccountRecentRequestsAPIResponse struct {
 	Data    ChannelAccountRecentRequestsResponse `json:"data"`
 }
 
+type channelAccountRequestReconcileAPIResponse struct {
+	Success bool                                   `json:"success"`
+	Message string                                 `json:"message"`
+	Data    ChannelAccountRequestReconcileResponse `json:"data"`
+}
+
 func setupChannelAccountControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -54,8 +60,11 @@ func setupChannelAccountControllerTestDB(t *testing.T) *gorm.DB {
 		&model.Channel{},
 		&model.Ability{},
 		&model.ModelExecutionRecord{},
+		&model.ModelGatewayUserRequestSummary{},
 		&model.ModelGatewayChannelCostProfile{},
+		&model.ModelGatewayRequestCostSummary{},
 		&model.ModelGatewayRuntimeSnapshot{},
+		&model.ModelGatewayScoreEvent{},
 		&model.ModelGatewayProxy{},
 		&model.ModelGatewayProxyUsage{},
 		&model.ChannelAccountUsageEvent{},
@@ -334,6 +343,51 @@ func TestListChannelAccountsSupportsServerSidePaginationAndStatusFilter(t *testi
 	require.NotContains(t, recorder.Body.String(), "sk-four")
 }
 
+func TestListChannelAccountsDefaultSortsEnabledAccountsFirst(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     39,
+		Name:   "enabled first accounts",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-disabled-zero\nsk-enabled-one\nsk-disabled-two\nsk-enabled-three",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:         true,
+			MultiKeySize:       4,
+			MultiKeyStatusList: map[int]int{0: common.ChannelStatusManuallyDisabled, 2: common.ChannelStatusAutoDisabled},
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5.4",
+		ChannelId: 39,
+		Enabled:   true,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/channel/:id/accounts", ListChannelAccounts)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/channel/39/accounts?page=1&page_size=4", nil)
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Len(t, payload.Data.Items, 4)
+	require.Equal(t, []int{1, 3, 0, 2}, []int{
+		payload.Data.Items[0].CredentialIndex,
+		payload.Data.Items[1].CredentialIndex,
+		payload.Data.Items[2].CredentialIndex,
+		payload.Data.Items[3].CredentialIndex,
+	})
+	require.True(t, payload.Data.Items[0].KeyEnabled)
+	require.True(t, payload.Data.Items[1].KeyEnabled)
+	require.False(t, payload.Data.Items[2].KeyEnabled)
+	require.False(t, payload.Data.Items[3].KeyEnabled)
+}
+
 func TestListChannelAccountsStatsViewAggregatesUsageAndExcludesHealthProbes(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	channel := model.Channel{
@@ -484,6 +538,7 @@ func TestChannelAccountRecentRequestsAndAttributionRefresh(t *testing.T) {
 	now := time.Now().Unix()
 	require.NoError(t, db.Create(&model.ChannelAccountUsageEvent{
 		RequestId:       "req-recent-account",
+		AttemptIndex:    2,
 		ChannelID:       35,
 		CredentialIndex: 1,
 		RequestedModel:  "gpt-5.4",
@@ -506,7 +561,11 @@ func TestChannelAccountRecentRequestsAndAttributionRefresh(t *testing.T) {
 	require.True(t, getPayload.Success, getRecorder.Body.String())
 	require.Len(t, getPayload.Data.Items, 1)
 	require.Equal(t, "req-recent-account", getPayload.Data.Items[0].RequestID)
+	require.Equal(t, 2, getPayload.Data.Items[0].AttemptIndex)
+	require.Equal(t, 2, getPayload.Data.Items[0].AccountDisplayIndex)
 	require.True(t, getPayload.Data.Items[0].IsHealthProbe)
+	require.Equal(t, "health_probe", getPayload.Data.Items[0].StatisticsStatus)
+	require.Equal(t, "health_probe_excluded", getPayload.Data.Items[0].StatisticsDiagnostic)
 	require.False(t, getPayload.Data.Items[0].AttributionComplete)
 
 	refreshRecorder := httptest.NewRecorder()
@@ -520,6 +579,121 @@ func TestChannelAccountRecentRequestsAndAttributionRefresh(t *testing.T) {
 	require.Len(t, refreshPayload.Data.Items, 1)
 	require.True(t, refreshPayload.Data.Items[0].AttributionComplete)
 	require.NotEmpty(t, refreshPayload.Data.Items[0].AccountIdentityKey)
+}
+
+func TestChannelAccountRequestReconcileIncludesUsageSummaryAndSamples(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	now := time.Now().Unix()
+	requestID := "req-reconcile-account"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     36,
+		Name:   "reconcile-channel",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-a\nsk-b\nsk-c",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.5",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 3,
+		},
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelAccountUsageEvent{
+		RequestId:             requestID,
+		AttemptIndex:          1,
+		ChannelID:             36,
+		CredentialIndex:       2,
+		AccountIdentityKey:    "account:reconcile",
+		CredentialFingerprint: "cred-reconcile",
+		RequestedModel:        "gpt-5.5",
+		CompletedAt:           now,
+		Success:               true,
+		StatusCode:            http.StatusOK,
+		DurationMs:            1800,
+		TTFTMs:                320,
+		PromptTokens:          100,
+		CompletionTokens:      40,
+		TotalTokens:           140,
+		Quota:                 1500,
+		UpstreamCostTotal:     0.0025,
+		CostCalculatedAt:      now,
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		RequestId:        requestID,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		CompletedAt:      now,
+		RequestedModel:   "gpt-5.5",
+		RequestedGroup:   "default",
+		SelectedGroup:    "vip",
+		FinalChannelID:   36,
+		FinalChannelName: "reconcile-channel",
+		Attempts:         2,
+		LastAttemptIndex: 1,
+		FinalSuccess:     true,
+		DurationMs:       1800,
+		TTFTMs:           320,
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelExecutionRecord{
+		CreatedAt:      now,
+		RequestId:      requestID,
+		AttemptIndex:   1,
+		ChannelId:      36,
+		ChannelName:    "reconcile-channel",
+		Success:        true,
+		StatusCode:     http.StatusOK,
+		DurationMs:     1800,
+		TTFTMs:         320,
+		SmartHandled:   true,
+		ScoreTotal:     0.91,
+		SelectedReason: "score",
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayScoreEvent{
+		TraceID:         "trace-reconcile",
+		RequestID:       requestID,
+		AttemptIndex:    1,
+		ChannelID:       36,
+		CredentialIndex: 2,
+		RequestedModel:  "gpt-5.5",
+		Group:           "vip",
+		BeforeTotal:     0.8,
+		AfterTotal:      0.91,
+		Delta:           0.11,
+		CreatedAt:       now,
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayRequestCostSummary{
+		RequestId:         requestID,
+		ChannelID:         36,
+		UpstreamModel:     "gpt-5.5",
+		UpstreamCostTotal: 0.0025,
+		CostSource:        "profile",
+		CostAccuracy:      "precise",
+		CalculatedAt:      now,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/channel/:id/accounts/:credential_index/requests/:request_id/reconcile", GetChannelAccountRequestReconcile)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/channel/36/accounts/2/requests/"+requestID+"/reconcile", nil)
+	router.ServeHTTP(recorder, req)
+	payload := decodeChannelAccountRequestReconcileResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, requestID, payload.Data.RequestID)
+	require.Equal(t, 3, payload.Data.AccountDisplayIndex)
+	require.NotNil(t, payload.Data.UsageEvent)
+	require.Equal(t, "complete", payload.Data.UsageEvent.StatisticsStatus)
+	require.NotNil(t, payload.Data.UserRequest)
+	require.Equal(t, 2, payload.Data.UserRequest.Attempts)
+	require.Len(t, payload.Data.ExecutionRecords, 1)
+	require.Len(t, payload.Data.ScoreEvents, 1)
+	require.NotNil(t, payload.Data.CostSummary)
+	require.Contains(t, reconcileCheckStatuses(payload.Data.Checks), "usage_event:ok")
+	require.Contains(t, reconcileCheckStatuses(payload.Data.Checks), "account_match:ok")
+	require.Contains(t, reconcileCheckStatuses(payload.Data.Checks), "samples:ok")
+	require.Contains(t, reconcileDiagnosisKeys(payload.Data.Diagnoses), "trace_complete")
 }
 
 func TestUpdateChannelAccountStatusDisablesMultiKeyAccount(t *testing.T) {
@@ -880,9 +1054,13 @@ func TestUpdateChannelAccountsStatusBatchDisablesAndDeduplicatesIndexes(t *testi
 	require.Equal(t, 2, payload.Data.Operation.Affected)
 	require.Equal(t, 1, payload.Data.Enabled)
 	require.Equal(t, 2, payload.Data.Disabled)
-	require.False(t, payload.Data.Items[0].KeyEnabled)
-	require.True(t, payload.Data.Items[1].KeyEnabled)
-	require.False(t, payload.Data.Items[2].KeyEnabled)
+	itemsByIndex := map[int]ChannelAccountItem{}
+	for _, item := range payload.Data.Items {
+		itemsByIndex[item.CredentialIndex] = item
+	}
+	require.False(t, itemsByIndex[0].KeyEnabled)
+	require.True(t, itemsByIndex[1].KeyEnabled)
+	require.False(t, itemsByIndex[2].KeyEnabled)
 
 	updated, err := model.GetChannelById(12, true)
 	require.NoError(t, err)
@@ -2077,4 +2255,27 @@ func decodeChannelAccountRecentRequestsResponse(t *testing.T, recorder *httptest
 	var payload channelAccountRecentRequestsAPIResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
 	return payload
+}
+
+func decodeChannelAccountRequestReconcileResponse(t *testing.T, recorder *httptest.ResponseRecorder) channelAccountRequestReconcileAPIResponse {
+	t.Helper()
+	var payload channelAccountRequestReconcileAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	return payload
+}
+
+func reconcileCheckStatuses(checks []ChannelAccountRequestReconcileCheck) []string {
+	values := make([]string, 0, len(checks))
+	for _, check := range checks {
+		values = append(values, check.Key+":"+check.Status)
+	}
+	return values
+}
+
+func reconcileDiagnosisKeys(diagnoses []ChannelAccountRequestReconcileDiagnosis) []string {
+	values := make([]string, 0, len(diagnoses))
+	for _, diagnosis := range diagnoses {
+		values = append(values, diagnosis.Key)
+	}
+	return values
 }

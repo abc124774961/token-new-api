@@ -603,6 +603,9 @@ type ScoreItem struct {
 	ReferenceUnit     string             `json:"reference_unit,omitempty"`
 	FormulaParameters map[string]float64 `json:"formula_parameters,omitempty"`
 	Window            string             `json:"window,omitempty"`
+	BaseScore         *float64           `json:"base_score,omitempty"`
+	ScoreBoost        float64            `json:"score_boost,omitempty"`
+	ScoreAdjusted     bool               `json:"score_adjusted,omitempty"`
 	Score             float64            `json:"score"`
 	Weight            float64            `json:"weight"`
 	WeightedScore     float64            `json:"weighted_score"`

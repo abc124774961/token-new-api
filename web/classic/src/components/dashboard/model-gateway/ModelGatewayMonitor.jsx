@@ -32,6 +32,7 @@ import {
   Descriptions,
   Empty,
   Input,
+  InputNumber,
   Modal,
   Select,
   SideSheet,
@@ -121,6 +122,19 @@ const VIEW_MODES = {
   OPERATIONS: 'operations',
   ENGINEERING: 'engineering',
 };
+const SCORE_BOOST_ITEM_KEYS = [
+  'completion_rate',
+  'upstream_error_rate',
+  'ttft_latency',
+  'duration_latency',
+  'throughput',
+  'empty_output_rate',
+  'stream_interrupted_rate',
+  'concurrency_load',
+  'queue_pressure',
+  'first_byte_backlog',
+  'cost',
+];
 const CIRCUIT_ERROR_TYPE_OPTIONS = [
   'stream_interrupted',
   'rate_limit',
@@ -205,6 +219,12 @@ function formatBytes(value) {
 function formatScore(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return '--';
+  return numeric.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function formatScoreWithZero(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return '--';
   return numeric.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
 }
 
@@ -8837,6 +8857,19 @@ function ScoreItemsTable({
           item.change_kind === 'weighted'
             ? t('加权贡献变化，才会影响稳定评分总分')
             : t('原始子项变化，不等于总分直接加减');
+        const scoreBoosted =
+          item.score_adjusted === true && Number(item.score_boost || 0) > 0;
+        const baseScore =
+          item.base_score === undefined || item.base_score === null
+            ? item.score
+            : item.base_score;
+        const boostTitle = scoreBoosted
+          ? t('基础分 {{base}} + 加成 {{boost}} = 最终分 {{score}}', {
+              base: formatScoreWithZero(baseScore),
+              boost: formatScoreWithZero(item.score_boost),
+              score: formatScoreWithZero(item.score),
+            })
+          : '';
         return (
           <div className='ct-model-gateway-score-items-row' key={item.key}>
             <span
@@ -8851,9 +8884,20 @@ function ScoreItemsTable({
               {formatScoreItemRawValue(item, t)}
             </span>
             <span>{formatScoreItemSourceAndWindow(item, t)}</span>
-            <strong className='ct-model-gateway-score-item-number'>
-              {formatScore(item.score)}
-            </strong>
+            <span className='ct-model-gateway-score-item-score'>
+              <strong className='ct-model-gateway-score-item-number'>
+                {formatScore(item.score)}
+              </strong>
+              {scoreBoosted && (
+                <small
+                  className='ct-model-gateway-score-boost-badge'
+                  title={boostTitle}
+                >
+                  {formatScoreWithZero(baseScore)} +{' '}
+                  {formatScoreWithZero(item.score_boost)}
+                </small>
+              )}
+            </span>
             <span className='ct-model-gateway-score-item-number'>
               {item.weight > 0 ? formatPercent(item.weight) : '--'}
             </span>
@@ -11046,6 +11090,316 @@ function RecordDetailDrawer({
   );
 }
 
+function normalizeScoreBoostsForSave(boosts = {}) {
+  const out = {};
+  for (const [key, value] of Object.entries(boosts || {})) {
+    const numeric = Number(value);
+    if (!SCORE_BOOST_ITEM_KEYS.includes(key)) continue;
+    if (!Number.isFinite(numeric) || numeric <= 0) continue;
+    out[key] = Math.min(1, Math.max(0, numeric));
+  }
+  return out;
+}
+
+function channelOptionLabel(channel) {
+  if (!channel) return '--';
+  const id = channel.id || channel.channel_id;
+  const name = channel.name || channel.channel_name || '';
+  return name ? `${name} (#${id})` : `#${id}`;
+}
+
+function scoreBoostItemsForDisplay(allowedItems = [], t) {
+  const source =
+    Array.isArray(allowedItems) && allowedItems.length
+      ? allowedItems
+      : SCORE_BOOST_ITEM_KEYS.map((key) => ({ key }));
+  return source
+    .map((item) => {
+      const key = String(item?.key || '').trim();
+      if (!SCORE_BOOST_ITEM_KEYS.includes(key)) return null;
+      return {
+        key,
+        name: scoreMetricLabel(key, t),
+        description: scoreMetricDescription(key, t),
+        category: item?.category || '',
+      };
+    })
+    .filter(Boolean);
+}
+
+function ChannelScoreBoostModal({ visible, onCancel, onSaved, t }) {
+  const [channelKeyword, setChannelKeyword] = useState('');
+  const [channelOptions, setChannelOptions] = useState([]);
+  const [selectedChannelId, setSelectedChannelId] = useState(null);
+  const [selectedChannelName, setSelectedChannelName] = useState('');
+  const [allowedItems, setAllowedItems] = useState([]);
+  const [boosts, setBoosts] = useState({});
+  const [channelLoading, setChannelLoading] = useState(false);
+  const [boostLoading, setBoostLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const latestBoostChannelIdRef = useRef(null);
+
+  const loadChannels = useCallback(
+    async (keyword = '') => {
+      setChannelLoading(true);
+      try {
+        const response = await API.get('/api/channel/search', {
+          params: {
+            keyword: String(keyword || '').trim(),
+            page_size: 30,
+            p: 1,
+            id_sort: true,
+          },
+          disableDuplicate: true,
+          skipErrorHandler: true,
+        });
+        const payload = unwrapApiData(response);
+        setChannelOptions(Array.isArray(payload?.items) ? payload.items : []);
+      } catch (err) {
+        const message =
+          err?.response?.data?.message || err?.message || t('加载渠道列表失败');
+        showError(message);
+      } finally {
+        setChannelLoading(false);
+      }
+    },
+    [t],
+  );
+
+  const loadBoosts = useCallback(
+    async (channelId) => {
+      if (!channelId) return;
+      const requestChannelId = Number(channelId);
+      latestBoostChannelIdRef.current = requestChannelId;
+      setBoostLoading(true);
+      try {
+        const response = await API.get(
+          `/api/model_gateway/channels/${requestChannelId}/score_boosts`,
+          {
+            disableDuplicate: true,
+            skipErrorHandler: true,
+          },
+        );
+        if (latestBoostChannelIdRef.current !== requestChannelId) return;
+        const payload = unwrapApiData(response);
+        setBoosts(payload?.smart_score_boosts || {});
+        setAllowedItems(
+          Array.isArray(payload?.allowed_score_items)
+            ? payload.allowed_score_items
+            : [],
+        );
+        setSelectedChannelName(payload?.channel_name || '');
+      } catch (err) {
+        const message =
+          err?.response?.data?.message ||
+          err?.message ||
+          t('加载渠道分值加成失败');
+        showError(message);
+      } finally {
+        if (latestBoostChannelIdRef.current === requestChannelId) {
+          setBoostLoading(false);
+        }
+      }
+    },
+    [t],
+  );
+
+  useEffect(() => {
+    if (!visible) return;
+    setChannelKeyword('');
+    setSelectedChannelId(null);
+    setSelectedChannelName('');
+    setBoosts({});
+    setAllowedItems([]);
+    latestBoostChannelIdRef.current = null;
+    loadChannels('');
+  }, [loadChannels, visible]);
+
+  const items = useMemo(
+    () => scoreBoostItemsForDisplay(allowedItems, t),
+    [allowedItems, t],
+  );
+
+  const selectedChannel = useMemo(
+    () =>
+      channelOptions.find(
+        (channel) => Number(channel?.id) === Number(selectedChannelId),
+      ),
+    [channelOptions, selectedChannelId],
+  );
+
+  const updateBoost = useCallback((key, value) => {
+    const numeric = Number(value);
+    setBoosts((current) => ({
+      ...current,
+      [key]: Number.isFinite(numeric) ? Math.min(1, Math.max(0, numeric)) : 0,
+    }));
+  }, []);
+
+  const saveBoosts = useCallback(
+    async (nextBoosts = boosts, message = t('渠道分值加成已保存')) => {
+      if (!selectedChannelId) {
+        Toast.warning(t('请先选择渠道'));
+        return;
+      }
+      setSaving(true);
+      try {
+        const response = await API.patch(
+          `/api/model_gateway/channels/${selectedChannelId}/score_boosts`,
+          { smart_score_boosts: normalizeScoreBoostsForSave(nextBoosts) },
+          {
+            disableDuplicate: true,
+            skipErrorHandler: true,
+          },
+        );
+        const payload = unwrapApiData(response);
+        setBoosts(payload?.smart_score_boosts || {});
+        setAllowedItems(
+          Array.isArray(payload?.allowed_score_items)
+            ? payload.allowed_score_items
+            : allowedItems,
+        );
+        setSelectedChannelName(payload?.channel_name || selectedChannelName);
+        Toast.success(message);
+        if (typeof onSaved === 'function') onSaved();
+      } catch (err) {
+        const errorMessage =
+          err?.response?.data?.message ||
+          err?.message ||
+          t('保存渠道分值加成失败');
+        showError(errorMessage);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [allowedItems, boosts, onSaved, selectedChannelId, selectedChannelName, t],
+  );
+
+  const activeBoostCount = Object.values(normalizeScoreBoostsForSave(boosts))
+    .length;
+  const titleChannel = selectedChannelName || channelOptionLabel(selectedChannel);
+
+  return (
+    <Modal
+      title={t('渠道分值加成')}
+      visible={visible}
+      onCancel={onCancel}
+      width={780}
+      footer={
+        <div className='ct-model-gateway-score-boost-footer'>
+          <Button
+            type='danger'
+            theme='borderless'
+            disabled={!selectedChannelId || saving}
+            onClick={() => saveBoosts({}, t('渠道分值加成已清空'))}
+          >
+            {t('清空加成')}
+          </Button>
+          <div>
+            <Button onClick={onCancel} disabled={saving}>
+              {t('取消')}
+            </Button>
+            <Button
+              theme='solid'
+              type='primary'
+              loading={saving}
+              disabled={!selectedChannelId || boostLoading}
+              onClick={() => saveBoosts()}
+            >
+              {t('保存')}
+            </Button>
+          </div>
+        </div>
+      }
+    >
+      <div className='ct-model-gateway-score-boost-modal'>
+        <div className='ct-model-gateway-score-boost-search'>
+          <Input
+            value={channelKeyword}
+            onChange={setChannelKeyword}
+            onEnterPress={() => loadChannels(channelKeyword)}
+            prefix={t('渠道')}
+            placeholder={t('搜索渠道名称或 ID')}
+          />
+          <Button
+            icon={<Search size={14} />}
+            loading={channelLoading}
+            onClick={() => loadChannels(channelKeyword)}
+          >
+            {t('搜索')}
+          </Button>
+        </div>
+        <Select
+          value={selectedChannelId}
+          placeholder={t('请选择渠道')}
+          loading={channelLoading}
+          className='ct-model-gateway-score-boost-channel-select'
+          onChange={(value) => {
+            const channelId = Number(value);
+            setSelectedChannelId(channelId);
+            const channel = channelOptions.find(
+              (item) => Number(item?.id) === channelId,
+            );
+            setSelectedChannelName(channelOptionLabel(channel));
+            setBoosts({});
+            loadBoosts(channelId);
+          }}
+        >
+          {channelOptions.map((channel) => (
+            <Select.Option key={channel.id} value={channel.id}>
+              {channelOptionLabel(channel)}
+            </Select.Option>
+          ))}
+        </Select>
+
+        <div className='ct-model-gateway-score-boost-summary'>
+          <Tag color={selectedChannelId ? 'cyan' : 'grey'} type='light'>
+            {selectedChannelId
+              ? t('当前渠道：{{channel}}', { channel: titleChannel })
+              : t('未选择渠道')}
+          </Tag>
+          <Tag color={activeBoostCount > 0 ? 'green' : 'grey'} type='light'>
+            {t('已配置 {{count}} 项加成', { count: activeBoostCount })}
+          </Tag>
+        </div>
+
+        <Skeleton
+          active
+          loading={boostLoading}
+          placeholder={<Skeleton.Paragraph rows={7} />}
+        >
+          <div className='ct-model-gateway-score-boost-table'>
+            <div className='ct-model-gateway-score-boost-head'>
+              <span>{t('评分项')}</span>
+              <span>{t('说明')}</span>
+              <span>{t('加成值')}</span>
+            </div>
+            {items.map((item) => (
+              <div className='ct-model-gateway-score-boost-row' key={item.key}>
+                <div>
+                  <Typography.Text strong>{item.name}</Typography.Text>
+                  <small>{item.key}</small>
+                </div>
+                <Typography.Text type='secondary'>
+                  {item.description || '--'}
+                </Typography.Text>
+                <InputNumber
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  precision={2}
+                  value={Number(boosts[item.key] || 0)}
+                  onChange={(value) => updateBoost(item.key, value)}
+                />
+              </div>
+            ))}
+          </div>
+        </Skeleton>
+      </div>
+    </Modal>
+  );
+}
+
 function ReplayModal({ artifact, loading, visible, onCancel, requestId, t }) {
   const downloadUrl = `/api/model_gateway/replay/export?request_id=${encodeURIComponent(
     requestId || '',
@@ -11677,6 +12031,7 @@ export default function ModelGatewayMonitor() {
     EMPTY_REPLAY_BATCH_FILTERS,
   );
   const [replayBatchArtifact, setReplayBatchArtifact] = useState(null);
+  const [scoreBoostVisible, setScoreBoostVisible] = useState(false);
   const [scoreHistoryVisible, setScoreHistoryVisible] = useState(false);
   const [scoreHistoryLoading, setScoreHistoryLoading] = useState(false);
   const [scoreHistory, setScoreHistory] = useState(null);
@@ -12388,6 +12743,13 @@ export default function ModelGatewayMonitor() {
             ))}
           </Select>
           <Button
+            type='tertiary'
+            icon={<Gauge size={15} />}
+            onClick={() => setScoreBoostVisible(true)}
+          >
+            {t('渠道分值加成')}
+          </Button>
+          <Button
             theme='solid'
             type='primary'
             icon={<RefreshCw size={15} />}
@@ -12708,6 +13070,12 @@ export default function ModelGatewayMonitor() {
         />
       )}
 
+      <ChannelScoreBoostModal
+        visible={scoreBoostVisible}
+        onCancel={() => setScoreBoostVisible(false)}
+        onSaved={refreshDashboard}
+        t={t}
+      />
       <ReplayModal
         artifact={replayArtifact}
         loading={replayLoading}

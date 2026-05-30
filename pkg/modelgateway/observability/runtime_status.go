@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/service"
@@ -37,6 +38,7 @@ type RuntimeStatusDeps struct {
 	ScoreWeights         core.ScoreWeights
 	CostBaselineProvider core.CostBaselineProvider
 	PolicyForGroup       func(group string) core.GroupSmartPolicy
+	ChannelProvider      func(channelID int) (*model.Channel, bool)
 	Now                  func() time.Time
 }
 
@@ -392,7 +394,7 @@ func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem) {
 		snapshot.CircuitState = core.CircuitState(item.CircuitState)
 	}
 	candidate := core.Candidate{
-		Channel:       nil,
+		Channel:       s.channelForRuntimeStatusItem(item),
 		Group:         item.Group,
 		UpstreamModel: item.UpstreamModel,
 		RuntimeKey:    snapshot.Key,
@@ -417,6 +419,27 @@ func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem) {
 	item.RoutingScoreItems = roundRuntimeStatusScoreItems(score.RoutingItems)
 	item.StateTags = append([]string(nil), score.StateTags...)
 	item.CostReferenceMissing = score.CostReferenceMissing
+}
+
+func (s *RuntimeStatusService) channelForRuntimeStatusItem(item *RuntimeStatusItem) *model.Channel {
+	if s == nil || item == nil || item.ChannelID <= 0 {
+		return nil
+	}
+	if s.deps.ChannelProvider != nil {
+		channel, ok := s.deps.ChannelProvider(item.ChannelID)
+		if ok {
+			return channel
+		}
+		return nil
+	}
+	if model.DB == nil {
+		return nil
+	}
+	channel, err := model.CacheGetChannel(item.ChannelID)
+	if err != nil {
+		return nil
+	}
+	return channel
 }
 
 func (s *RuntimeStatusService) policyForRuntimeStatusItem(item *RuntimeStatusItem) core.GroupSmartPolicy {

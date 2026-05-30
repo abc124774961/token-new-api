@@ -1081,6 +1081,9 @@ func updateCodexAccountUsageLimitFromRelay(c *gin.Context, channel *model.Channe
 	if c == nil || channel == nil {
 		return
 	}
+	if !codexAccountUsageLimitRelayContext(c, channel) {
+		return
+	}
 	credentialIndex := common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
 	if apiErr == nil {
 		if _, err := service.ClearCodexAccountUsageLimit(channel.Id, credentialIndex); err != nil {
@@ -1096,6 +1099,13 @@ func updateCodexAccountUsageLimitFromRelay(c *gin.Context, channel *model.Channe
 	if _, err := service.MarkCodexAccountUsageLimitedWithCooldown(channel.Id, credentialIndex, message, cooldownSec, resetSource); err != nil {
 		logger.LogWarn(c, fmt.Sprintf("failed to mark codex account usage limit: channel_id=%d credential_index=%d error=%v", channel.Id, credentialIndex, err))
 	}
+}
+
+func codexAccountUsageLimitRelayContext(c *gin.Context, channel *model.Channel) bool {
+	if channel != nil && channel.Type == constant.ChannelTypeCodex {
+		return true
+	}
+	return common.GetContextKeyString(c, constant.ContextKeyProviderSurface) == "codex_backend"
 }
 
 func applyModelGatewayAttemptWarnings(c *gin.Context, info *relaycommon.RelayInfo, flow *modelGatewayAttemptFlow) {

@@ -19,6 +19,7 @@ type ScoringContext struct {
 	Strategy               string
 	RequiresCodexImageTool bool
 	ScoreWeights           core.ScoreWeights
+	ScoreBoosts            map[string]float64
 	RetryRoutingIntent     *core.RetryRoutingIntent
 	Now                    time.Time
 	ExplainEnabled         bool
@@ -160,6 +161,7 @@ func (s *CandidateScoringService) BuildScoreItems(snapshot core.RuntimeSnapshot,
 			}
 		}
 	}
+	values = NewScoreBoostService().ApplyScoreBoosts(values, ctx.ScoreBoosts)
 	return normalizeScoreItems(values)
 }
 
@@ -299,6 +301,9 @@ func (s *CandidateScoringService) score(candidate core.Candidate, snapshot core.
 	strategy := policy.Strategy
 	if strategy == "" {
 		strategy = ctx.Strategy
+	}
+	if len(ctx.ScoreBoosts) == 0 {
+		ctx.ScoreBoosts = NewScoreBoostService().BoostsForChannel(candidate.Channel)
 	}
 	items := s.BuildScoreItems(snapshot, policy, ctx, false)
 	routingItems := s.BuildScoreItems(snapshot, policy, ctx, true)

@@ -146,8 +146,10 @@ type ChannelAccountRecentRequestsResponse struct {
 
 type ChannelAccountRecentRequestItem struct {
 	RequestID                string  `json:"request_id"`
+	AttemptIndex             int     `json:"attempt_index"`
 	ChannelID                int     `json:"channel_id"`
 	CredentialIndex          int     `json:"credential_index"`
+	AccountDisplayIndex      int     `json:"account_display_index"`
 	AccountIdentityKey       string  `json:"account_identity_key,omitempty"`
 	RequestedModel           string  `json:"requested_model,omitempty"`
 	RequestedGroup           string  `json:"requested_group,omitempty"`
@@ -167,6 +169,8 @@ type ChannelAccountRecentRequestItem struct {
 	BillingRecorded          bool    `json:"billing_recorded"`
 	CostRecorded             bool    `json:"cost_recorded"`
 	AttributionComplete      bool    `json:"attribution_complete"`
+	StatisticsStatus         string  `json:"statistics_status,omitempty"`
+	StatisticsDiagnostic     string  `json:"statistics_diagnostic,omitempty"`
 	UsageEstimated           bool    `json:"usage_estimated,omitempty"`
 	ProviderSurface          string  `json:"provider_surface,omitempty"`
 	CapabilityClassification string  `json:"capability_classification,omitempty"`
@@ -177,6 +181,91 @@ type ChannelAccountAttributionResponse struct {
 	Scanned int   `json:"scanned"`
 	Updated int   `json:"updated"`
 	Skipped int   `json:"skipped"`
+}
+
+type ChannelAccountRequestReconcileResponse struct {
+	RequestID           string                                    `json:"request_id"`
+	ChannelID           int                                       `json:"channel_id"`
+	CredentialIndex     int                                       `json:"credential_index"`
+	AccountDisplayIndex int                                       `json:"account_display_index"`
+	Diagnoses           []ChannelAccountRequestReconcileDiagnosis `json:"diagnoses"`
+	UsageEvent          *ChannelAccountRecentRequestItem          `json:"usage_event,omitempty"`
+	UserRequest         *ChannelAccountUserRequestReconcile       `json:"user_request,omitempty"`
+	ExecutionRecords    []ChannelAccountExecutionRecordReconcile  `json:"execution_records"`
+	ScoreEvents         []ChannelAccountScoreEventReconcile       `json:"score_events"`
+	CostSummary         *ChannelAccountRequestCostReconcile       `json:"cost_summary,omitempty"`
+	Checks              []ChannelAccountRequestReconcileCheck     `json:"checks"`
+}
+
+type ChannelAccountUserRequestReconcile struct {
+	CompletedAt        int64  `json:"completed_at,omitempty"`
+	RequestedModel     string `json:"requested_model,omitempty"`
+	RequestedGroup     string `json:"requested_group,omitempty"`
+	SelectedGroup      string `json:"selected_group,omitempty"`
+	FinalChannelID     int    `json:"final_channel_id,omitempty"`
+	FinalChannelName   string `json:"final_channel_name,omitempty"`
+	Attempts           int    `json:"attempts,omitempty"`
+	LastAttemptIndex   int    `json:"last_attempt_index,omitempty"`
+	FinalSuccess       bool   `json:"final_success"`
+	Recovered          bool   `json:"recovered"`
+	FinalStatusCode    int    `json:"final_status_code,omitempty"`
+	FinalErrorCategory string `json:"final_error_category,omitempty"`
+	IsHealthProbe      bool   `json:"is_health_probe"`
+	ProbeReason        string `json:"probe_reason,omitempty"`
+	DurationMs         int64  `json:"duration_ms,omitempty"`
+	TTFTMs             int64  `json:"ttft_ms,omitempty"`
+}
+
+type ChannelAccountExecutionRecordReconcile struct {
+	CreatedAt       int64   `json:"created_at,omitempty"`
+	AttemptIndex    int     `json:"attempt_index"`
+	ChannelID       int     `json:"channel_id,omitempty"`
+	ChannelName     string  `json:"channel_name,omitempty"`
+	ActualChannelID int     `json:"actual_channel_id,omitempty"`
+	Success         bool    `json:"success"`
+	StatusCode      int     `json:"status_code,omitempty"`
+	ErrorCategory   string  `json:"error_category,omitempty"`
+	DurationMs      int64   `json:"duration_ms,omitempty"`
+	TTFTMs          int64   `json:"ttft_ms,omitempty"`
+	SmartHandled    bool    `json:"smart_handled"`
+	FallbackUsed    bool    `json:"fallback_used"`
+	ScoreTotal      float64 `json:"score_total,omitempty"`
+	SelectedReason  string  `json:"selected_reason,omitempty"`
+}
+
+type ChannelAccountScoreEventReconcile struct {
+	CreatedAt           int64   `json:"created_at,omitempty"`
+	AttemptIndex        int     `json:"attempt_index"`
+	ChannelID           int     `json:"channel_id,omitempty"`
+	CredentialIndex     int     `json:"credential_index"`
+	AccountDisplayIndex int     `json:"account_display_index"`
+	BeforeTotal         float64 `json:"before_total,omitempty"`
+	AfterTotal          float64 `json:"after_total,omitempty"`
+	Delta               float64 `json:"delta,omitempty"`
+	FailureScope        string  `json:"failure_scope,omitempty"`
+	SwitchReason        string  `json:"switch_reason,omitempty"`
+	RequestedModel      string  `json:"requested_model,omitempty"`
+	Group               string  `json:"group,omitempty"`
+	IsHealthProbe       bool    `json:"is_health_probe"`
+}
+
+type ChannelAccountRequestCostReconcile struct {
+	UpstreamModel     string  `json:"upstream_model,omitempty"`
+	UpstreamCostTotal float64 `json:"upstream_cost_total,omitempty"`
+	CostSource        string  `json:"cost_source,omitempty"`
+	CostAccuracy      string  `json:"cost_accuracy,omitempty"`
+	CalculatedAt      int64   `json:"calculated_at,omitempty"`
+}
+
+type ChannelAccountRequestReconcileCheck struct {
+	Key    string `json:"key"`
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type ChannelAccountRequestReconcileDiagnosis struct {
+	Key      string `json:"key"`
+	Severity string `json:"severity"`
 }
 
 type channelAccountsQuery struct {
@@ -357,6 +446,24 @@ func RefreshChannelAccountUsageAttribution(c *gin.Context) {
 		},
 		AttributionSince: result.Since,
 	})
+}
+
+func GetChannelAccountRequestReconcile(c *gin.Context) {
+	channelID, credentialIndex, ok := parseChannelAccountRequestTarget(c)
+	if !ok {
+		return
+	}
+	requestID := strings.TrimSpace(c.Param("request_id"))
+	if requestID == "" {
+		common.ApiErrorMsg(c, "请求 ID 不能为空")
+		return
+	}
+	response, err := buildChannelAccountRequestReconcileResponse(channelID, credentialIndex, requestID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, response)
 }
 
 func UpdateChannelAccountStatus(c *gin.Context) {
@@ -1186,11 +1293,7 @@ func sortChannelAccounts(accounts []modelgatewayaccount.ChannelAccount, query ch
 		less := false
 		switch query.Sort {
 		case "status":
-			if left.KeyEnabled != right.KeyEnabled {
-				less = left.KeyEnabled
-			} else {
-				less = left.CredentialIndex < right.CredentialIndex
-			}
+			less = channelAccountEnabledFirstLess(left, right)
 		case "today_requests":
 			less = channelAccountStatRequests(statsByAccount, left, "today") < channelAccountStatRequests(statsByAccount, right, "today")
 		case "last_5h_requests":
@@ -1203,7 +1306,9 @@ func sortChannelAccounts(accounts []modelgatewayaccount.ChannelAccount, query ch
 			less = channelAccountStatSuccessRate(statsByAccount, left) < channelAccountStatSuccessRate(statsByAccount, right)
 		case "score":
 			less = left.CredentialIndex < right.CredentialIndex
-		case "credential_index", "":
+		case "":
+			less = channelAccountEnabledFirstLess(left, right)
+		case "credential_index":
 			fallthrough
 		default:
 			less = left.CredentialIndex < right.CredentialIndex
@@ -1215,9 +1320,16 @@ func sortChannelAccounts(accounts []modelgatewayaccount.ChannelAccount, query ch
 	})
 }
 
+func channelAccountEnabledFirstLess(left, right modelgatewayaccount.ChannelAccount) bool {
+	if left.KeyEnabled != right.KeyEnabled {
+		return left.KeyEnabled
+	}
+	return left.CredentialIndex < right.CredentialIndex
+}
+
 func channelAccountSortEqual(left, right modelgatewayaccount.ChannelAccount, query channelAccountsQuery, statsByAccount map[string]*ChannelAccountStats) bool {
 	switch query.Sort {
-	case "status":
+	case "status", "":
 		return left.KeyEnabled == right.KeyEnabled && left.CredentialIndex == right.CredentialIndex
 	case "today_requests":
 		return channelAccountStatRequests(statsByAccount, left, "today") == channelAccountStatRequests(statsByAccount, right, "today")
@@ -1334,6 +1446,227 @@ func channelAccountStatsKey(account modelgatewayaccount.ChannelAccount) string {
 	return model.ChannelAccountUsageAggregateKey(account.AccountIdentity.AccountIdentityKey, account.CredentialIndex)
 }
 
+func buildChannelAccountRequestReconcileResponse(channelID int, credentialIndex int, requestID string) (ChannelAccountRequestReconcileResponse, error) {
+	response := ChannelAccountRequestReconcileResponse{
+		RequestID:           strings.TrimSpace(requestID),
+		ChannelID:           channelID,
+		CredentialIndex:     credentialIndex,
+		AccountDisplayIndex: channelAccountDisplayIndex(credentialIndex),
+		Diagnoses:           make([]ChannelAccountRequestReconcileDiagnosis, 0),
+		ExecutionRecords:    make([]ChannelAccountExecutionRecordReconcile, 0),
+		ScoreEvents:         make([]ChannelAccountScoreEventReconcile, 0),
+		Checks:              make([]ChannelAccountRequestReconcileCheck, 0, 6),
+	}
+
+	usageEvent, err := model.GetChannelAccountUsageEventByRequestId(requestID)
+	if err != nil {
+		return response, err
+	}
+	if usageEvent != nil {
+		items := buildChannelAccountRecentRequestItems([]model.ChannelAccountUsageEvent{*usageEvent})
+		if len(items) > 0 {
+			response.UsageEvent = &items[0]
+		}
+	}
+
+	userRequest, err := model.GetModelGatewayUserRequestSummaryByRequestId(requestID)
+	if err != nil {
+		return response, err
+	}
+	if userRequest != nil {
+		response.UserRequest = channelAccountUserRequestReconcile(*userRequest)
+	}
+
+	executionRecords, err := model.QueryModelExecutionRecordsByRequestId(requestID, 20)
+	if err != nil {
+		return response, err
+	}
+	response.ExecutionRecords = buildChannelAccountExecutionRecordReconcile(executionRecords)
+
+	scoreEvents, err := model.QueryModelGatewayScoreEventsByRequestId(requestID, 20)
+	if err != nil {
+		return response, err
+	}
+	response.ScoreEvents = buildChannelAccountScoreEventReconcile(scoreEvents)
+
+	costSummary, err := model.GetModelGatewayRequestCostSummaryByRequestId(requestID)
+	if err != nil {
+		return response, err
+	}
+	if costSummary != nil {
+		response.CostSummary = channelAccountRequestCostReconcile(*costSummary)
+	}
+	response.Checks = buildChannelAccountRequestReconcileChecks(channelID, credentialIndex, usageEvent, userRequest, executionRecords, scoreEvents, costSummary)
+	response.Diagnoses = buildChannelAccountRequestReconcileDiagnoses(channelID, credentialIndex, usageEvent, userRequest, executionRecords, scoreEvents, costSummary)
+	return response, nil
+}
+
+func channelAccountUserRequestReconcile(row model.ModelGatewayUserRequestSummary) *ChannelAccountUserRequestReconcile {
+	return &ChannelAccountUserRequestReconcile{
+		CompletedAt:        row.CompletedAt,
+		RequestedModel:     row.RequestedModel,
+		RequestedGroup:     row.RequestedGroup,
+		SelectedGroup:      row.SelectedGroup,
+		FinalChannelID:     row.FinalChannelID,
+		FinalChannelName:   row.FinalChannelName,
+		Attempts:           row.Attempts,
+		LastAttemptIndex:   row.LastAttemptIndex,
+		FinalSuccess:       row.FinalSuccess,
+		Recovered:          row.Recovered,
+		FinalStatusCode:    row.FinalStatusCode,
+		FinalErrorCategory: row.FinalErrorCategory,
+		IsHealthProbe:      row.IsHealthProbe,
+		ProbeReason:        row.ProbeReason,
+		DurationMs:         row.DurationMs,
+		TTFTMs:             row.TTFTMs,
+	}
+}
+
+func buildChannelAccountExecutionRecordReconcile(rows []model.ModelExecutionRecord) []ChannelAccountExecutionRecordReconcile {
+	items := make([]ChannelAccountExecutionRecordReconcile, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, ChannelAccountExecutionRecordReconcile{
+			CreatedAt:       row.CreatedAt,
+			AttemptIndex:    row.AttemptIndex,
+			ChannelID:       row.ChannelId,
+			ChannelName:     row.ChannelName,
+			ActualChannelID: row.ActualChannelId,
+			Success:         row.Success,
+			StatusCode:      row.StatusCode,
+			ErrorCategory:   row.ErrorCategory,
+			DurationMs:      row.DurationMs,
+			TTFTMs:          row.TTFTMs,
+			SmartHandled:    row.SmartHandled,
+			FallbackUsed:    row.FallbackUsed,
+			ScoreTotal:      row.ScoreTotal,
+			SelectedReason:  row.SelectedReason,
+		})
+	}
+	return items
+}
+
+func buildChannelAccountScoreEventReconcile(rows []model.ModelGatewayScoreEvent) []ChannelAccountScoreEventReconcile {
+	items := make([]ChannelAccountScoreEventReconcile, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, ChannelAccountScoreEventReconcile{
+			CreatedAt:           row.CreatedAt,
+			AttemptIndex:        row.AttemptIndex,
+			ChannelID:           row.ChannelID,
+			CredentialIndex:     row.CredentialIndex,
+			AccountDisplayIndex: channelAccountDisplayIndex(row.CredentialIndex),
+			BeforeTotal:         row.BeforeTotal,
+			AfterTotal:          row.AfterTotal,
+			Delta:               row.Delta,
+			FailureScope:        row.FailureScope,
+			SwitchReason:        row.SwitchReason,
+			RequestedModel:      row.RequestedModel,
+			Group:               row.Group,
+			IsHealthProbe:       row.IsHealthProbe,
+		})
+	}
+	return items
+}
+
+func channelAccountRequestCostReconcile(row model.ModelGatewayRequestCostSummary) *ChannelAccountRequestCostReconcile {
+	return &ChannelAccountRequestCostReconcile{
+		UpstreamModel:     row.UpstreamModel,
+		UpstreamCostTotal: row.UpstreamCostTotal,
+		CostSource:        row.CostSource,
+		CostAccuracy:      row.CostAccuracy,
+		CalculatedAt:      row.CalculatedAt,
+	}
+}
+
+func buildChannelAccountRequestReconcileChecks(channelID int, credentialIndex int, usageEvent *model.ChannelAccountUsageEvent, userRequest *model.ModelGatewayUserRequestSummary, executionRecords []model.ModelExecutionRecord, scoreEvents []model.ModelGatewayScoreEvent, costSummary *model.ModelGatewayRequestCostSummary) []ChannelAccountRequestReconcileCheck {
+	checks := make([]ChannelAccountRequestReconcileCheck, 0, 6)
+	if usageEvent == nil {
+		checks = append(checks, ChannelAccountRequestReconcileCheck{Key: "usage_event", Status: "missing", Detail: "usage_event_missing"})
+	} else {
+		checks = append(checks, ChannelAccountRequestReconcileCheck{Key: "usage_event", Status: "ok", Detail: "usage_event_found"})
+		if usageEvent.ChannelID == channelID && usageEvent.CredentialIndex == credentialIndex {
+			checks = append(checks, ChannelAccountRequestReconcileCheck{Key: "account_match", Status: "ok", Detail: "account_match"})
+		} else {
+			checks = append(checks, ChannelAccountRequestReconcileCheck{Key: "account_match", Status: "warning", Detail: "account_mismatch"})
+		}
+		if status, detail := channelAccountUsageStatisticsDiagnostic(*usageEvent, channelAccountUsageStatisticsRecorded(*usageEvent), usageEvent.TotalTokens > 0 || usageEvent.Quota != 0, usageEvent.CostCalculatedAt > 0 || usageEvent.UpstreamCostTotal != 0, usageEvent.CredentialIndex >= 0 && (strings.TrimSpace(usageEvent.AccountIdentityKey) != "" || strings.TrimSpace(usageEvent.CredentialFingerprint) != "")); status == "complete" {
+			checks = append(checks, ChannelAccountRequestReconcileCheck{Key: "statistics", Status: "ok", Detail: detail})
+		} else {
+			checks = append(checks, ChannelAccountRequestReconcileCheck{Key: "statistics", Status: status, Detail: detail})
+		}
+	}
+	if userRequest == nil {
+		checks = append(checks, ChannelAccountRequestReconcileCheck{Key: "user_request", Status: "missing", Detail: "user_request_missing"})
+	} else {
+		checks = append(checks, ChannelAccountRequestReconcileCheck{Key: "user_request", Status: "ok", Detail: "user_request_found"})
+	}
+	if len(executionRecords) == 0 && len(scoreEvents) == 0 {
+		checks = append(checks, ChannelAccountRequestReconcileCheck{Key: "samples", Status: "missing", Detail: "attempt_samples_missing"})
+	} else {
+		checks = append(checks, ChannelAccountRequestReconcileCheck{Key: "samples", Status: "ok", Detail: "attempt_samples_found"})
+	}
+	if costSummary == nil {
+		checks = append(checks, ChannelAccountRequestReconcileCheck{Key: "cost", Status: "pending", Detail: "cost_summary_missing"})
+	} else {
+		checks = append(checks, ChannelAccountRequestReconcileCheck{Key: "cost", Status: "ok", Detail: "cost_summary_found"})
+	}
+	return checks
+}
+
+func buildChannelAccountRequestReconcileDiagnoses(channelID int, credentialIndex int, usageEvent *model.ChannelAccountUsageEvent, userRequest *model.ModelGatewayUserRequestSummary, executionRecords []model.ModelExecutionRecord, scoreEvents []model.ModelGatewayScoreEvent, costSummary *model.ModelGatewayRequestCostSummary) []ChannelAccountRequestReconcileDiagnosis {
+	diagnoses := make([]ChannelAccountRequestReconcileDiagnosis, 0, 4)
+	add := func(key string, severity string) {
+		diagnoses = append(diagnoses, ChannelAccountRequestReconcileDiagnosis{Key: key, Severity: severity})
+	}
+
+	if usageEvent == nil {
+		if len(executionRecords) > 0 || len(scoreEvents) > 0 || userRequest != nil {
+			add("usage_event_missing_but_samples_exist", "error")
+		} else {
+			add("request_trace_missing", "error")
+		}
+		return diagnoses
+	}
+
+	if usageEvent.ChannelID != channelID || usageEvent.CredentialIndex != credentialIndex {
+		add("account_mismatch", "warning")
+	}
+	if usageEvent.IsHealthProbe {
+		add("health_probe_excluded", "info")
+	}
+
+	billingRecorded := usageEvent.TotalTokens > 0 || usageEvent.Quota != 0
+	costRecorded := usageEvent.CostCalculatedAt > 0 || usageEvent.UpstreamCostTotal != 0 || costSummary != nil
+	attributionComplete := usageEvent.CredentialIndex >= 0 && (strings.TrimSpace(usageEvent.AccountIdentityKey) != "" || strings.TrimSpace(usageEvent.CredentialFingerprint) != "")
+	statisticsRecorded := channelAccountUsageStatisticsRecorded(*usageEvent)
+	status, _ := channelAccountUsageStatisticsDiagnostic(*usageEvent, statisticsRecorded, billingRecorded, costRecorded, attributionComplete)
+	switch status {
+	case "attribution_missing":
+		add("account_attribution_missing", "error")
+	case "dispatch_only":
+		add("dispatch_only", "warning")
+	case "billing_pending":
+		add("billing_pending", "warning")
+	case "cost_pending":
+		add("cost_pending", "warning")
+	}
+
+	if userRequest == nil {
+		add("user_request_summary_missing", "warning")
+	} else if !userRequest.FinalSuccess && !userRequest.IsHealthProbe {
+		add("request_failed", "warning")
+	}
+	if len(executionRecords) == 0 && len(scoreEvents) == 0 {
+		add("attempt_samples_missing", "warning")
+	}
+	if costSummary == nil && billingRecorded {
+		add("cost_summary_pending", "warning")
+	}
+	if len(diagnoses) == 0 {
+		add("trace_complete", "ok")
+	}
+	return diagnoses
+}
+
 func buildChannelAccountRecentRequestItems(rows []model.ChannelAccountUsageEvent) []ChannelAccountRecentRequestItem {
 	items := make([]ChannelAccountRecentRequestItem, 0, len(rows))
 	for _, row := range rows {
@@ -1345,10 +1678,17 @@ func buildChannelAccountRecentRequestItems(rows []model.ChannelAccountUsageEvent
 				completedAt = row.CreatedAt
 			}
 		}
+		statisticsRecorded := channelAccountUsageStatisticsRecorded(row)
+		billingRecorded := row.TotalTokens > 0 || row.Quota != 0
+		costRecorded := row.CostCalculatedAt > 0 || row.UpstreamCostTotal != 0
+		attributionComplete := row.CredentialIndex >= 0 && (strings.TrimSpace(row.AccountIdentityKey) != "" || strings.TrimSpace(row.CredentialFingerprint) != "")
+		statisticsStatus, statisticsDiagnostic := channelAccountUsageStatisticsDiagnostic(row, statisticsRecorded, billingRecorded, costRecorded, attributionComplete)
 		items = append(items, ChannelAccountRecentRequestItem{
 			RequestID:                row.RequestId,
+			AttemptIndex:             row.AttemptIndex,
 			ChannelID:                row.ChannelID,
 			CredentialIndex:          row.CredentialIndex,
+			AccountDisplayIndex:      channelAccountDisplayIndex(row.CredentialIndex),
 			AccountIdentityKey:       row.AccountIdentityKey,
 			RequestedModel:           row.RequestedModel,
 			RequestedGroup:           row.RequestedGroup,
@@ -1364,16 +1704,25 @@ func buildChannelAccountRecentRequestItems(rows []model.ChannelAccountUsageEvent
 			TotalTokens:              row.TotalTokens,
 			Quota:                    row.Quota,
 			UpstreamCostTotal:        row.UpstreamCostTotal,
-			StatisticsRecorded:       channelAccountUsageStatisticsRecorded(row),
-			BillingRecorded:          row.TotalTokens > 0 || row.Quota != 0,
-			CostRecorded:             row.CostCalculatedAt > 0 || row.UpstreamCostTotal != 0,
-			AttributionComplete:      row.CredentialIndex >= 0 && (strings.TrimSpace(row.AccountIdentityKey) != "" || strings.TrimSpace(row.CredentialFingerprint) != ""),
+			StatisticsRecorded:       statisticsRecorded,
+			BillingRecorded:          billingRecorded,
+			CostRecorded:             costRecorded,
+			AttributionComplete:      attributionComplete,
+			StatisticsStatus:         statisticsStatus,
+			StatisticsDiagnostic:     statisticsDiagnostic,
 			UsageEstimated:           row.UsageEstimated,
 			ProviderSurface:          row.ProviderSurface,
 			CapabilityClassification: row.CapabilityClassification,
 		})
 	}
 	return items
+}
+
+func channelAccountDisplayIndex(credentialIndex int) int {
+	if credentialIndex < 0 {
+		return 0
+	}
+	return credentialIndex + 1
 }
 
 func channelAccountUsageStatisticsRecorded(row model.ChannelAccountUsageEvent) bool {
@@ -1384,6 +1733,25 @@ func channelAccountUsageStatisticsRecorded(row model.ChannelAccountUsageEvent) b
 		row.TotalTokens > 0 ||
 		row.Quota != 0 ||
 		strings.TrimSpace(row.ErrorCategory) != ""
+}
+
+func channelAccountUsageStatisticsDiagnostic(row model.ChannelAccountUsageEvent, statisticsRecorded bool, billingRecorded bool, costRecorded bool, attributionComplete bool) (string, string) {
+	if row.IsHealthProbe {
+		return "health_probe", "health_probe_excluded"
+	}
+	if !attributionComplete {
+		return "attribution_missing", "missing_account_attribution"
+	}
+	if !statisticsRecorded {
+		return "dispatch_only", "dispatch_record_only"
+	}
+	if !billingRecorded && row.Success {
+		return "billing_pending", "waiting_for_billing"
+	}
+	if !costRecorded && billingRecorded {
+		return "cost_pending", "waiting_for_cost"
+	}
+	return "complete", "statistics_complete"
 }
 
 func channelAccountUsageWindowFromAggregate(aggregate model.ChannelAccountUsageWindowAggregate) ChannelAccountUsageWindowResponse {
@@ -2635,7 +3003,10 @@ func buildChannelAccountSchedulingExplanation(item ChannelAccountItem) *ChannelA
 	}
 
 	if item.Proxy != nil && !item.Proxy.Enabled {
-		warnings = appendChannelAccountSchedulingReason(warnings, "proxy_disabled")
+		blocking = appendChannelAccountSchedulingReason(blocking, "proxy_unavailable")
+		if explanation.Detail == "" {
+			explanation.Detail = item.Proxy.Name
+		}
 	}
 
 	explanation.BlockingReasons = blocking

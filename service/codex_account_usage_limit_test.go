@@ -122,3 +122,39 @@ func TestMarkCodexAccountUsageLimitUsesParsedCooldown(t *testing.T) {
 	require.GreaterOrEqual(t, capability.UsageLimitExpiresAt, now+75)
 	require.LessOrEqual(t, capability.UsageLimitExpiresAt, now+76)
 }
+
+func TestMarkCodexAccountUsageLimitThrottleStillExtendsCooldown(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	streamAllowed := true
+	channel := &model.Channel{
+		Id:     9903,
+		Type:   constant.ChannelTypeCodex,
+		Key:    `{"access_token":"access","account_id":"acct"}`,
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CodexBackendResponsesStreamWrite: &streamAllowed,
+				},
+			},
+		},
+	}
+	require.NoError(t, db.Create(channel).Error)
+
+	changed, err := MarkCodexAccountUsageLimitedWithCooldown(channel.Id, 0, "usage limit has been reached", 30, "retry_after_seconds")
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	var saved model.Channel
+	require.NoError(t, db.First(&saved, "id = ?", channel.Id).Error)
+	firstExpiresAt := saved.ChannelInfo.MultiKeyCapabilities[0].UsageLimitExpiresAt
+
+	changed, err = MarkCodexAccountUsageLimitedWithCooldown(channel.Id, 0, "usage limit has been reached", 180, "rate_limit_reset_requests")
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	require.NoError(t, db.First(&saved, "id = ?", channel.Id).Error)
+	capability := saved.ChannelInfo.MultiKeyCapabilities[0]
+	require.Greater(t, capability.UsageLimitExpiresAt, firstExpiresAt)
+	require.Equal(t, "rate_limit_reset_requests", capability.UsageLimitResetSource)
+}

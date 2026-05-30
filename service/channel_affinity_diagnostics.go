@@ -299,6 +299,7 @@ func normalizeChannelAffinityDiagnosticsLimit(limit int) int {
 func queryChannelAffinityDiagnosticsLogs(query ChannelAffinityDiagnosticsQuery, limit int) ([]*model.Log, bool, error) {
 	tx := model.LOG_DB.Model(&model.Log{}).
 		Where("logs.type IN ?", []int{model.LogTypeConsume, model.LogTypeError})
+	logGroupColumn := "logs." + model.LogGroupColumn()
 	if query.StartTimestamp > 0 {
 		tx = tx.Where("logs.created_at >= ?", query.StartTimestamp)
 	}
@@ -315,7 +316,7 @@ func queryChannelAffinityDiagnosticsLogs(query ChannelAffinityDiagnosticsQuery, 
 		tx = tx.Where("logs.token_name = ?", query.TokenName)
 	}
 	if query.Group != "" {
-		tx = tx.Where("logs."+model.LogGroupColumn()+" = ?", query.Group)
+		tx = tx.Where(logGroupColumn+" = ?", query.Group)
 	}
 	if query.ChannelID > 0 {
 		tx = tx.Where("logs.channel_id = ?", query.ChannelID)
@@ -323,7 +324,7 @@ func queryChannelAffinityDiagnosticsLogs(query ChannelAffinityDiagnosticsQuery, 
 
 	rows := make([]*model.Log, 0, limit)
 	err := tx.
-		Select("logs.id, logs.created_at, logs.type, logs.username, logs.token_name, logs.model_name, logs.prompt_tokens, logs.completion_tokens, logs.channel_id, logs." + model.LogGroupColumn() + ", logs.other").
+		Select("logs.id, logs.created_at, logs.type, logs.username, logs.token_name, logs.model_name, logs.prompt_tokens, logs.completion_tokens, logs.channel_id, " + logGroupColumn + ", logs.other").
 		Order("logs.id asc").
 		Limit(limit + 1).
 		Find(&rows).Error
@@ -340,15 +341,28 @@ func queryChannelAffinityDiagnosticsLogs(query ChannelAffinityDiagnosticsQuery, 
 func channelNamesForDiagnostics(logs []*model.Log) map[int]string {
 	channelIDs := make([]int, 0)
 	seen := map[int]struct{}{}
+	addID := func(channelID int) {
+		if channelID <= 0 {
+			return
+		}
+		if _, ok := seen[channelID]; ok {
+			return
+		}
+		seen[channelID] = struct{}{}
+		channelIDs = append(channelIDs, channelID)
+	}
 	for _, log := range logs {
-		if log == nil || log.ChannelId <= 0 {
+		if log == nil {
 			continue
 		}
-		if _, ok := seen[log.ChannelId]; ok {
-			continue
+		addID(log.ChannelId)
+		other := channelAffinityDiagnosticsOtherMap(log.Other)
+		affinity := channelAffinityDiagnosticsAffinityInfo(other)
+		if len(affinity) > 0 {
+			addID(channelAffinityDiagnosticsInt(affinity, "channel_id"))
+			addID(channelAffinityDiagnosticsInt(affinity, "preferred_channel_id"))
+			addID(channelAffinityDiagnosticsInt(affinity, "selected_channel_id"))
 		}
-		seen[log.ChannelId] = struct{}{}
-		channelIDs = append(channelIDs, log.ChannelId)
 	}
 	if len(channelIDs) == 0 || model.DB == nil {
 		return nil
@@ -587,8 +601,26 @@ func channelAffinityDiagnosticsString(m map[string]interface{}, key string) stri
 		return strings.TrimSpace(typed)
 	case []byte:
 		return strings.TrimSpace(string(typed))
+	case bool:
+		return strconv.FormatBool(typed)
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(typed), 'f', -1, 32)
+	case int:
+		return strconv.Itoa(typed)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case int32:
+		return strconv.FormatInt(int64(typed), 10)
+	case uint:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint64:
+		return strconv.FormatUint(typed, 10)
+	case uint32:
+		return strconv.FormatUint(uint64(typed), 10)
 	default:
-		return strings.TrimSpace(strconv.FormatFloat(channelAffinityDiagnosticsFloat64(value), 'f', -1, 64))
+		return ""
 	}
 }
 
@@ -678,27 +710,4 @@ func channelAffinityDiagnosticsInt64(m map[string]interface{}, key string) int64
 		}
 	}
 	return 0
-}
-
-func channelAffinityDiagnosticsFloat64(value interface{}) float64 {
-	switch typed := value.(type) {
-	case float64:
-		return typed
-	case float32:
-		return float64(typed)
-	case int:
-		return float64(typed)
-	case int64:
-		return float64(typed)
-	case int32:
-		return float64(typed)
-	case uint:
-		return float64(typed)
-	case uint64:
-		return float64(typed)
-	case uint32:
-		return float64(typed)
-	default:
-		return 0
-	}
 }
