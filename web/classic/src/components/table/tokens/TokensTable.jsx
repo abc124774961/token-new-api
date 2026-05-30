@@ -103,6 +103,7 @@ const TokensTable = (tokensData) => {
     <CardTable
       columns={tableColumns}
       dataSource={tokens}
+      rowKey='id'
       scroll={compactMode ? undefined : { x: 'max-content' }}
       pagination={{
         currentPage: activePage,
@@ -127,7 +128,7 @@ const TokensTable = (tokensData) => {
           style={{ padding: 30 }}
         />
       }
-      className='rounded-xl overflow-hidden'
+      className='ct-token-table rounded-xl overflow-hidden'
       size='middle'
     />
   );

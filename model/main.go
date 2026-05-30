@@ -759,7 +759,7 @@ func ensureRuntimeSnapshotLatencySamplesColumn() error {
 	if DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, "latency_samples") {
 		return nil
 	}
-	return DB.Migrator().AddColumn(&ModelGatewayRuntimeSnapshot{}, "LatencySamples")
+	return addColumnIfMissing(&ModelGatewayRuntimeSnapshot{}, "latency_samples", "LatencySamples")
 }
 
 func ensureRuntimeSnapshotScoreStatsColumn() error {
@@ -769,7 +769,7 @@ func ensureRuntimeSnapshotScoreStatsColumn() error {
 	if DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, "score_stats_json") {
 		return nil
 	}
-	return DB.Migrator().AddColumn(&ModelGatewayRuntimeSnapshot{}, "ScoreStatsJSON")
+	return addColumnIfMissing(&ModelGatewayRuntimeSnapshot{}, "score_stats_json", "ScoreStatsJSON")
 }
 
 func ensureRuntimeSnapshotProbeColumns() error {
@@ -793,10 +793,7 @@ func ensureRuntimeSnapshotProbeColumns() error {
 		{"last_auth_config_error_at", "LastAuthConfigErrorAt"},
 	}
 	for _, column := range columns {
-		if DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, column.dbName) {
-			continue
-		}
-		if err := DB.Migrator().AddColumn(&ModelGatewayRuntimeSnapshot{}, column.fieldName); err != nil {
+		if err := addColumnIfMissing(&ModelGatewayRuntimeSnapshot{}, column.dbName, column.fieldName); err != nil {
 			return err
 		}
 	}
@@ -817,10 +814,7 @@ func ensureRuntimeSnapshotRecoveryColumns() error {
 		{"probe_trigger_reason", "ProbeTriggerReason"},
 	}
 	for _, column := range columns {
-		if DB.Migrator().HasColumn(&ModelGatewayRuntimeSnapshot{}, column.dbName) {
-			continue
-		}
-		if err := DB.Migrator().AddColumn(&ModelGatewayRuntimeSnapshot{}, column.fieldName); err != nil {
+		if err := addColumnIfMissing(&ModelGatewayRuntimeSnapshot{}, column.dbName, column.fieldName); err != nil {
 			return err
 		}
 	}
@@ -933,14 +927,35 @@ func ensureColumns(table any, columns []modelGatewayColumnSpec) error {
 		return nil
 	}
 	for _, column := range columns {
-		if DB.Migrator().HasColumn(table, column.dbName) {
-			continue
-		}
-		if err := DB.Migrator().AddColumn(table, column.fieldName); err != nil {
+		if err := addColumnIfMissing(table, column.dbName, column.fieldName); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func addColumnIfMissing(table any, dbName string, fieldName string) error {
+	if DB == nil || DB.Migrator().HasColumn(table, dbName) {
+		return nil
+	}
+	if err := DB.Migrator().AddColumn(table, fieldName); err != nil {
+		if isDuplicateColumnError(err) && DB.Migrator().HasColumn(table, dbName) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func isDuplicateColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "duplicate column") ||
+		strings.Contains(message, "already exists") ||
+		strings.Contains(message, "sqlstate 42701") ||
+		strings.Contains(message, "error 1060")
 }
 
 func deduplicateRuntimeSnapshotHashes() error {

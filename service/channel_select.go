@@ -627,6 +627,9 @@ func ChannelSupportsRequiredCapabilities(channel *model.Channel, modelName strin
 		return false
 	}
 	if channel != nil && channel.Type == constant.ChannelTypeCodex {
+		if !codexChannelHasSchedulableAccount(channel) {
+			return false
+		}
 		if endpointType == constant.EndpointTypeOpenAIResponseCompact && !codexChannelHasCompactCapableAccount(channel) {
 			return false
 		}
@@ -643,6 +646,29 @@ func ChannelSupportsRequiredCapabilities(channel *model.Channel, modelName strin
 		}
 	}
 	return ChannelSupportsRequiredEndpoint(channel, modelName, endpointType)
+}
+
+func codexChannelHasSchedulableAccount(channel *model.Channel) bool {
+	if channel == nil {
+		return false
+	}
+	keys := channel.GetKeys()
+	if len(keys) == 0 && strings.TrimSpace(channel.Key) != "" {
+		keys = []string{channel.Key}
+	}
+	if len(keys) == 0 {
+		return false
+	}
+	for index := range keys {
+		if channel.ChannelInfo.IsMultiKey && !channelKeyEnabledForCapability(channel, index) {
+			continue
+		}
+		capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]
+		if !ok || ChannelAccountCapabilityAllowsScheduling(capability) {
+			return true
+		}
+	}
+	return false
 }
 
 func codexChannelHasResponsesCapableAccount(channel *model.Channel) bool {

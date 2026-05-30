@@ -23,25 +23,74 @@ import {
   Button,
   Space,
   Toast,
-  Typography,
   Select,
+  Tag,
+  Tooltip,
 } from '@douyinfe/semi-ui';
+import {
+  Activity,
+  CheckCircle2,
+  Database,
+  KeyRound,
+  Layers3,
+  RefreshCw,
+  ShieldCheck,
+  SlidersHorizontal,
+} from 'lucide-react';
 import {
   API,
   showError,
   getModelCategories,
   selectFilter,
 } from '../../../helpers';
-import CardPro from '../../common/ui/CardPro';
 import TokensTable from './TokensTable';
 import TokensActions from './TokensActions';
 import TokensFilters from './TokensFilters';
-import TokensDescription from './TokensDescription';
 import EditTokenModal from './modals/EditTokenModal';
 import CCSwitchModal from './modals/CCSwitchModal';
 import { useTokensData } from '../../../hooks/tokens/useTokensData';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 import { createCardProPagination } from '../../../helpers/utils';
+import CompactModeToggle from '../../common/ui/CompactModeToggle';
+import './tokens.css';
+
+function getTokenStatusStats(tokens) {
+  const stats = {
+    enabled: 0,
+    disabled: 0,
+    expired: 0,
+    exhausted: 0,
+    limitedModels: 0,
+    unlimitedQuota: 0,
+  };
+
+  for (const token of tokens || []) {
+    if (token.status === 1) stats.enabled += 1;
+    else if (token.status === 2) stats.disabled += 1;
+    else if (token.status === 3) stats.expired += 1;
+    else if (token.status === 4) stats.exhausted += 1;
+
+    if (token.model_limits_enabled) stats.limitedModels += 1;
+    if (token.unlimited_quota) stats.unlimitedQuota += 1;
+  }
+
+  return stats;
+}
+
+function TokenMetricCard({ icon: Icon, label, value, detail, tone }) {
+  return (
+    <div className={`ct-token-metric-card ct-token-metric-${tone || 'teal'}`}>
+      <div>
+        <span>{label}</span>
+        <strong>{value}</strong>
+        <small>{detail}</small>
+      </div>
+      <div className='ct-token-metric-icon'>
+        <Icon size={20} />
+      </div>
+    </div>
+  );
+}
 
 function TokensPage() {
   // Define the function first, then pass it into the hook to avoid TDZ errors
@@ -369,13 +418,29 @@ function TokensPage() {
     // Description state
     compactMode,
     setCompactMode,
+    tokens,
+    tokenCount,
+    pageSize,
+    activePage,
 
     // Translation
     t,
   } = tokensData;
 
+  const tokenStats = getTokenStatusStats(tokensData.tokens);
+  const selectedCount = selectedKeys.length;
+  const pageStart = tokenCount > 0 ? (activePage - 1) * pageSize + 1 : 0;
+  const pageEnd =
+    tokenCount > 0 ? Math.min(activePage * pageSize, tokenCount) : 0;
+  const disabledLikeCount =
+    tokenStats.disabled + tokenStats.expired + tokenStats.exhausted;
+  const selectedLabel =
+    selectedCount > 0
+      ? t('已选择 {{count}} 个令牌', { count: selectedCount })
+      : t('未选择令牌');
+
   return (
-    <>
+    <div className='ct-token-page ct-console-page-shell'>
       <EditTokenModal
         refresh={refresh}
         editingToken={editingToken}
@@ -390,17 +455,105 @@ function TokensPage() {
         tokenId={ccSwitchTokenId}
       />
 
-      <CardPro
-        type='type1'
-        descriptionArea={
-          <TokensDescription
+      <div className='ct-console-page-header ct-token-hero'>
+        <div className='ct-console-page-heading'>
+          <div className='ct-console-page-eyebrow'>{t('API 访问控制台')}</div>
+          <div className='ct-console-page-title-row'>
+            <h1 className='ct-console-page-title'>{t('令牌管理')}</h1>
+            <Tag color='teal' shape='circle' type='light'>
+              {t('安全密钥资产')}
+            </Tag>
+          </div>
+          <p className='ct-console-page-subtitle'>
+            {t(
+              '统一管理 API 访问令牌、额度、分组和接入方式，快速识别可用状态并完成批量操作。',
+            )}
+          </p>
+        </div>
+
+        <div className='ct-console-page-actions ct-token-hero-actions'>
+          <Tooltip content={t('刷新令牌列表')}>
+            <Button
+              icon={<RefreshCw size={16} />}
+              type='tertiary'
+              theme='borderless'
+              loading={loading}
+              className='ct-token-icon-button'
+              onClick={() => refresh()}
+            />
+          </Tooltip>
+          <CompactModeToggle
             compactMode={compactMode}
             setCompactMode={setCompactMode}
             t={t}
           />
-        }
-        actionsArea={
-          <div className='flex flex-col md:flex-row justify-between items-center gap-2 w-full'>
+        </div>
+      </div>
+
+      <div className='ct-token-metrics-grid'>
+        <TokenMetricCard
+          icon={KeyRound}
+          tone='teal'
+          label={t('令牌总数')}
+          value={tokenCount}
+          detail={
+            tokenCount > 0
+              ? t('当前显示 {{start}}-{{end}} 条', {
+                  start: pageStart,
+                  end: pageEnd,
+                })
+              : t('暂无令牌')
+          }
+        />
+        <TokenMetricCard
+          icon={CheckCircle2}
+          tone='green'
+          label={t('当前页启用')}
+          value={`${tokenStats.enabled}/${tokens.length || 0}`}
+          detail={t('禁用或不可用 {{count}} 个', { count: disabledLikeCount })}
+        />
+        <TokenMetricCard
+          icon={ShieldCheck}
+          tone='blue'
+          label={t('模型限制')}
+          value={tokenStats.limitedModels}
+          detail={t('无限额度 {{count}} 个', {
+            count: tokenStats.unlimitedQuota,
+          })}
+        />
+        <TokenMetricCard
+          icon={Layers3}
+          tone='amber'
+          label={t('批量选择')}
+          value={selectedCount}
+          detail={selectedLabel}
+        />
+      </div>
+
+      <div className='ct-token-workbench'>
+        <div className='ct-token-workbench-head'>
+          <div className='ct-token-workbench-title'>
+            <div className='ct-token-workbench-icon'>
+              <Database size={18} />
+            </div>
+            <div>
+              <strong>{t('令牌清单')}</strong>
+              <span>
+                {searching
+                  ? t('正在筛选匹配令牌')
+                  : t('按状态、额度和接入方式扫描令牌')}
+              </span>
+            </div>
+          </div>
+
+          <div className='ct-token-workbench-status'>
+            <Activity size={15} />
+            <span>{loading ? t('同步中') : t('已同步')}</span>
+          </div>
+        </div>
+
+        <div className='ct-token-toolbar'>
+          <div className='ct-token-toolbar-actions'>
             <TokensActions
               selectedKeys={selectedKeys}
               setEditingToken={setEditingToken}
@@ -409,33 +562,47 @@ function TokensPage() {
               batchDeleteTokens={batchDeleteTokens}
               t={t}
             />
-
-            <div className='w-full md:w-full lg:w-auto order-1 md:order-2'>
-              <TokensFilters
-                formInitValues={formInitValues}
-                setFormApi={setFormApi}
-                searchTokens={searchTokens}
-                loading={loading}
-                searching={searching}
-                t={t}
-              />
-            </div>
           </div>
-        }
-        paginationArea={createCardProPagination({
-          currentPage: tokensData.activePage,
-          pageSize: tokensData.pageSize,
-          total: tokensData.tokenCount,
-          onPageChange: tokensData.handlePageChange,
-          onPageSizeChange: tokensData.handlePageSizeChange,
-          isMobile: isMobile,
-          t: tokensData.t,
-        })}
-        t={tokensData.t}
-      >
-        <TokensTable {...tokensData} />
-      </CardPro>
-    </>
+
+          <div className='ct-token-toolbar-search'>
+            <TokensFilters
+              formInitValues={formInitValues}
+              setFormApi={setFormApi}
+              searchTokens={searchTokens}
+              loading={loading}
+              searching={searching}
+              t={t}
+            />
+          </div>
+        </div>
+
+        {selectedCount > 0 && (
+          <div className='ct-token-selection-bar'>
+            <div>
+              <SlidersHorizontal size={16} />
+              <span>{selectedLabel}</span>
+            </div>
+            <span>{t('可复制或批量删除所选令牌')}</span>
+          </div>
+        )}
+
+        <div className='ct-token-table-shell'>
+          <TokensTable {...tokensData} />
+        </div>
+
+        <div className='ct-token-pagination'>
+          {createCardProPagination({
+            currentPage: tokensData.activePage,
+            pageSize: tokensData.pageSize,
+            total: tokensData.tokenCount,
+            onPageChange: tokensData.handlePageChange,
+            onPageSizeChange: tokensData.handlePageSizeChange,
+            isMobile: isMobile,
+            t: tokensData.t,
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
 

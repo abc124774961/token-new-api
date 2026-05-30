@@ -6,7 +6,9 @@ import (
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewaycredential "github.com/QuantumNous/new-api/pkg/modelgateway/credential"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
@@ -148,8 +150,12 @@ func validateSelectedSmartPlan(plan *core.DispatchPlan) (bool, string) {
 	if !dispatchPlanHasCredentialRef(plan) {
 		return true, ""
 	}
-	if _, apiErr := modelgatewaycredential.ResolveChannelCredential(plan.Channel, plan.CredentialRef); apiErr != nil {
+	resolved, apiErr := modelgatewaycredential.ResolveChannelCredential(plan.Channel, plan.CredentialRef)
+	if apiErr != nil {
 		return false, apiErr.Error()
+	}
+	if reason := selectedPlanUsageLimitRejectReason(plan, resolved); reason != "" {
+		return false, reason
 	}
 	return true, ""
 }
@@ -164,4 +170,32 @@ func dispatchPlanHasCredentialRef(plan *core.DispatchPlan) bool {
 	}
 	ref := plan.CredentialRef
 	return ref.ResourceID != "" || ref.AccountID != "" || ref.CredentialFingerprint != ""
+}
+
+func selectedPlanUsageLimitRejectReason(plan *core.DispatchPlan, resolved modelgatewaycredential.ResolvedCredential) string {
+	if plan == nil || plan.Channel == nil || !selectedPlanUsesCodexUsageLimitedCredential(plan.Channel, resolved) {
+		return ""
+	}
+	capability, ok := plan.Channel.ChannelInfo.AccountCapability(resolved.CredentialIndex)
+	if !ok || service.ChannelAccountCapabilityAllowsScheduling(capability) {
+		return ""
+	}
+	if reason := service.AccountUsageLimitedRejectReason(capability); reason != "" {
+		return reason
+	}
+	return "account_usage_limited"
+}
+
+func selectedPlanUsesCodexUsageLimitedCredential(channel *model.Channel, resolved modelgatewaycredential.ResolvedCredential) bool {
+	if channel == nil {
+		return false
+	}
+	switch channel.Type {
+	case constant.ChannelTypeCodex:
+		return true
+	case constant.ChannelTypeOpenAI:
+		return codexauth.IsOAuthJSONCredential(resolved.Key) || channel.GetOtherSettings().UsesCodexCompatibilityMode()
+	default:
+		return false
+	}
 }

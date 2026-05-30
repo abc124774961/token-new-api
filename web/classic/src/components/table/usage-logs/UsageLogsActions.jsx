@@ -18,84 +18,33 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Button, Tag, Space, Skeleton } from '@douyinfe/semi-ui';
-import { Activity } from 'lucide-react';
-import { renderQuota } from '../../../helpers';
+import { Button } from '@douyinfe/semi-ui';
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
-import { useMinimumLoadingTime } from '../../../hooks/common/useMinimumLoadingTime';
+import { PiPulseDuotone } from 'react-icons/pi';
 
 const LogsActions = ({
-  stat,
-  loadingStat,
-  showStat,
   compactMode,
   setCompactMode,
   isAdminUser,
   openChannelAffinityDiagnosticsModal,
   t,
 }) => {
-  const showSkeleton = useMinimumLoadingTime(loadingStat);
-  const needSkeleton = !showStat || showSkeleton;
-
-  const placeholder = (
-    <Space>
-      <Skeleton.Title style={{ width: 108, height: 21, borderRadius: 6 }} />
-      <Skeleton.Title style={{ width: 65, height: 21, borderRadius: 6 }} />
-      <Skeleton.Title style={{ width: 64, height: 21, borderRadius: 6 }} />
-    </Space>
-  );
-
   return (
-    <div className='flex flex-col md:flex-row justify-between items-start md:items-center gap-2 w-full'>
-      <Skeleton loading={needSkeleton} active placeholder={placeholder}>
-        <Space>
-          <Tag
-            color='blue'
-            style={{
-              fontWeight: 500,
-              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-              padding: 13,
-            }}
-            className='!rounded-lg'
-          >
-            {t('消耗额度')}: {renderQuota(stat.quota)}
-          </Tag>
-          <Tag
-            color='pink'
-            style={{
-              fontWeight: 500,
-              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-              padding: 13,
-            }}
-            className='!rounded-lg'
-          >
-            RPM: {stat.rpm}
-          </Tag>
-          <Tag
-            color='white'
-            style={{
-              border: 'none',
-              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-              fontWeight: 500,
-              padding: 13,
-            }}
-            className='!rounded-lg'
-          >
-            TPM: {stat.tpm}
-          </Tag>
-        </Space>
-      </Skeleton>
-
-      <CompactModeToggle
-        compactMode={compactMode}
-        setCompactMode={setCompactMode}
-        t={t}
-      />
+    <div className='ct-usage-logs-actions'>
+      <div className='ct-usage-logs-action-group'>
+        <span>{t('快速操作')}</span>
+        <CompactModeToggle
+          compactMode={compactMode}
+          setCompactMode={setCompactMode}
+          t={t}
+        />
+      </div>
       {isAdminUser ? (
         <Button
-          theme='light'
+          className='ct-usage-logs-diagnostics-button'
+          theme='borderless'
           type='tertiary'
-          icon={<Activity size={14} />}
+          icon={<PiPulseDuotone size={16} />}
           onClick={openChannelAffinityDiagnosticsModal}
         >
           {t('缓存诊断')}

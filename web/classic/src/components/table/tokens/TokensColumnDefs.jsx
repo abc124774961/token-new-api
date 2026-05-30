@@ -34,6 +34,15 @@ import {
   Modal,
 } from '@douyinfe/semi-ui';
 import {
+  Ban,
+  Edit3,
+  KeyRound,
+  MessageSquareText,
+  Power,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react';
+import {
   timestamp2string,
   renderGroup,
   renderQuota,
@@ -57,33 +66,66 @@ const getProgressColor = (pct) => {
 
 // Render functions
 function renderTimestamp(timestamp) {
-  return <>{timestamp2string(timestamp)}</>;
+  return <span className='ct-token-time'>{timestamp2string(timestamp)}</span>;
 }
 
 // Render status column only (no usage)
-const renderStatus = (text, record, t) => {
-  const enabled = text === 1;
-
-  let tagColor = 'black';
-  let tagText = t('未知状态');
-  if (enabled) {
-    tagColor = 'green';
-    tagText = t('已启用');
-  } else if (text === 2) {
-    tagColor = 'red';
-    tagText = t('已禁用');
-  } else if (text === 3) {
-    tagColor = 'yellow';
-    tagText = t('已过期');
-  } else if (text === 4) {
-    tagColor = 'grey';
-    tagText = t('已耗尽');
+const getStatusMeta = (status, t) => {
+  if (status === 1) {
+    return {
+      tone: 'enabled',
+      label: t('已启用'),
+    };
   }
+  if (status === 2) {
+    return {
+      tone: 'disabled',
+      label: t('已禁用'),
+    };
+  }
+  if (status === 3) {
+    return {
+      tone: 'expired',
+      label: t('已过期'),
+    };
+  }
+  if (status === 4) {
+    return {
+      tone: 'exhausted',
+      label: t('已耗尽'),
+    };
+  }
+  return {
+    tone: 'unknown',
+    label: t('未知状态'),
+  };
+};
+
+const renderName = (text, record, t) => {
+  const statusMeta = getStatusMeta(record?.status, t);
+  return (
+    <div className='ct-token-name-cell'>
+      <div className={`ct-token-name-icon is-${statusMeta.tone}`}>
+        <KeyRound size={16} />
+      </div>
+      <div className='ct-token-name-copy'>
+        <strong>{text || '-'}</strong>
+        <span>
+          {t('令牌 ID')} #{record?.id || '-'}
+        </span>
+      </div>
+    </div>
+  );
+};
+
+const renderStatus = (text, record, t) => {
+  const statusMeta = getStatusMeta(text, t);
 
   return (
-    <Tag color={tagColor} shape='circle' size='small'>
-      {tagText}
-    </Tag>
+    <span className={`ct-token-status-pill is-${statusMeta.tone}`}>
+      <span />
+      {statusMeta.label}
+    </span>
   );
 };
 
@@ -204,13 +246,14 @@ const renderTokenKey = (
   const displayedKey = keyValue ? `sk-${keyValue}` : '';
 
   return (
-    <div className='w-[200px]'>
+    <div className='ct-token-key-cell'>
       <Input
         readOnly
         value={displayedKey}
         size='small'
+        className='ct-token-key-input'
         suffix={
-          <div className='flex items-center'>
+          <div className='ct-token-key-actions'>
             <Button
               theme='borderless'
               size='small'
@@ -310,10 +353,15 @@ const renderModelLimits = (text, record, t) => {
       );
     }
 
-    return <AvatarGroup size='extra-extra-small'>{vendorAvatars}</AvatarGroup>;
+    return (
+      <div className='ct-token-model-limit'>
+        <AvatarGroup size='extra-extra-small'>{vendorAvatars}</AvatarGroup>
+        <span>{t('{{count}} 个模型', { count: models.length })}</span>
+      </div>
+    );
   } else {
     return (
-      <Tag color='white' shape='circle'>
+      <Tag color='white' shape='circle' className='ct-token-soft-tag'>
         {t('无限制')}
       </Tag>
     );
@@ -324,7 +372,7 @@ const renderModelLimits = (text, record, t) => {
 const renderAllowIps = (text, t) => {
   if (!text || text.trim() === '') {
     return (
-      <Tag color='white' shape='circle'>
+      <Tag color='white' shape='circle' className='ct-token-soft-tag'>
         {t('无限制')}
       </Tag>
     );
@@ -376,9 +424,13 @@ const renderQuotaUsage = (text, record, t) => {
     );
     return (
       <Popover content={popoverContent} position='top'>
-        <Tag color='white' shape='circle'>
-          {t('无限额度')}
-        </Tag>
+        <div className='ct-token-quota is-unlimited'>
+          <div>
+            <strong>{t('无限额度')}</strong>
+            <span>{t('已用 {{quota}}', { quota: renderQuota(used) })}</span>
+          </div>
+          <ShieldCheck size={15} />
+        </div>
       </Popover>
     );
   }
@@ -398,18 +450,22 @@ const renderQuotaUsage = (text, record, t) => {
   );
   return (
     <Popover content={popoverContent} position='top'>
-      <Tag color='white' shape='circle'>
-        <div className='flex flex-col items-end'>
-          <span className='text-xs leading-none'>{`${renderQuota(remain)} / ${renderQuota(total)}`}</span>
-          <Progress
-            percent={percent}
-            stroke={getProgressColor(percent)}
-            aria-label='quota usage'
-            format={() => `${percent.toFixed(0)}%`}
-            style={{ width: '100%', marginTop: '1px', marginBottom: 0 }}
-          />
+      <div className='ct-token-quota'>
+        <div className='ct-token-quota-head'>
+          <strong>{renderQuota(remain)}</strong>
+          <span>{percent.toFixed(0)}%</span>
         </div>
-      </Tag>
+        <Progress
+          percent={percent}
+          stroke={getProgressColor(percent)}
+          aria-label='quota usage'
+          format={() => ''}
+          className='ct-token-quota-progress'
+        />
+        <small>
+          {t('总额度')} {renderQuota(total)}
+        </small>
+      </div>
     </Popover>
   );
 };
@@ -448,14 +504,16 @@ const renderOperations = (
   }
 
   return (
-    <Space wrap>
+    <Space wrap className='ct-token-row-actions'>
       <SplitButtonGroup
-        className='overflow-hidden'
+        className='ct-token-chat-button'
         aria-label={t('项目操作按钮组')}
       >
         <Button
           size='small'
           type='tertiary'
+          theme='light'
+          icon={<MessageSquareText size={14} />}
           onClick={() => {
             if (chatsArray.length === 0) {
               showError(t('请联系管理员配置聊天链接'));
@@ -479,7 +537,9 @@ const renderOperations = (
       {record.status === 1 ? (
         <Button
           type='danger'
+          theme='light'
           size='small'
+          icon={<Ban size={14} />}
           onClick={async () => {
             await manageToken(record.id, 'disable', record);
             await refresh();
@@ -490,6 +550,9 @@ const renderOperations = (
       ) : (
         <Button
           size='small'
+          type='primary'
+          theme='light'
+          icon={<Power size={14} />}
           onClick={async () => {
             await manageToken(record.id, 'enable', record);
             await refresh();
@@ -501,7 +564,9 @@ const renderOperations = (
 
       <Button
         type='tertiary'
+        theme='light'
         size='small'
+        icon={<Edit3 size={14} />}
         onClick={() => {
           setEditingToken(record);
           setShowEdit(true);
@@ -512,7 +577,9 @@ const renderOperations = (
 
       <Button
         type='danger'
+        theme='borderless'
         size='small'
+        icon={<Trash2 size={14} />}
         onClick={() => {
           Modal.confirm({
             title: t('确定是否要删除此令牌？'),
@@ -551,27 +618,34 @@ export const getTokensColumns = ({
     {
       title: t('名称'),
       dataIndex: 'name',
+      key: 'name',
+      width: 210,
+      render: (text, record) => renderName(text, record, t),
     },
     {
       title: t('状态'),
       dataIndex: 'status',
       key: 'status',
+      width: 112,
       render: (text, record) => renderStatus(text, record, t),
     },
     {
       title: t('剩余额度/总额度'),
       key: 'quota_usage',
+      width: 170,
       render: (text, record) => renderQuotaUsage(text, record, t),
     },
     {
       title: t('分组'),
       dataIndex: 'group',
       key: 'group',
+      width: 210,
       render: (text, record) => renderGroupColumn(text, record, t, groupRatios),
     },
     {
       title: t('密钥'),
       key: 'token_key',
+      width: 260,
       render: (text, record) =>
         renderTokenKey(
           text,
@@ -588,16 +662,22 @@ export const getTokensColumns = ({
     {
       title: t('可用模型'),
       dataIndex: 'model_limits',
+      key: 'model_limits',
+      width: 120,
       render: (text, record) => renderModelLimits(text, record, t),
     },
     {
       title: t('IP限制'),
       dataIndex: 'allow_ips',
+      key: 'allow_ips',
+      width: 120,
       render: (text) => renderAllowIps(text, t),
     },
     {
       title: t('创建时间'),
       dataIndex: 'created_time',
+      key: 'created_time',
+      width: 170,
       render: (text, record, index) => {
         return <div>{renderTimestamp(text)}</div>;
       },
@@ -605,6 +685,8 @@ export const getTokensColumns = ({
     {
       title: t('最后使用时间'),
       dataIndex: 'accessed_time',
+      key: 'accessed_time',
+      width: 170,
       render: (text, record, index) => {
         return <div>{text ? renderTimestamp(text) : '-'}</div>;
       },
@@ -612,10 +694,16 @@ export const getTokensColumns = ({
     {
       title: t('过期时间'),
       dataIndex: 'expired_time',
+      key: 'expired_time',
+      width: 150,
       render: (text, record, index) => {
         return (
           <div>
-            {record.expired_time === -1 ? t('永不过期') : renderTimestamp(text)}
+            {record.expired_time === -1 ? (
+              <span className='ct-token-time is-forever'>{t('永不过期')}</span>
+            ) : (
+              renderTimestamp(text)
+            )}
           </div>
         );
       },
@@ -623,7 +711,9 @@ export const getTokensColumns = ({
     {
       title: '',
       dataIndex: 'operate',
+      key: 'operate',
       fixed: 'right',
+      width: 300,
       render: (text, record, index) =>
         renderOperations(
           text,

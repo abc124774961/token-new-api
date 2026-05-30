@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useRef } from 'react';
 import { Form, Button } from '@douyinfe/semi-ui';
-import { IconSearch } from '@douyinfe/semi-icons';
+import { RotateCcw, Search } from 'lucide-react';
 
 const TokensFilters = ({
   formInitValues,
@@ -53,13 +53,13 @@ const TokensFilters = ({
       layout='horizontal'
       trigger='change'
       stopValidateWithError={false}
-      className='w-full md:w-auto order-1 md:order-2'
+      className='ct-token-filter-form'
     >
-      <div className='flex flex-col md:flex-row items-center gap-2 w-full md:w-auto'>
-        <div className='relative w-full md:w-56'>
+      <div className='ct-token-filters'>
+        <div className='ct-token-filter-field'>
           <Form.Input
             field='searchKeyword'
-            prefix={<IconSearch />}
+            prefix={<Search size={15} />}
             placeholder={t('搜索关键字')}
             showClear
             pure
@@ -67,10 +67,10 @@ const TokensFilters = ({
           />
         </div>
 
-        <div className='relative w-full md:w-56'>
+        <div className='ct-token-filter-field'>
           <Form.Input
             field='searchToken'
-            prefix={<IconSearch />}
+            prefix={<Search size={15} />}
             placeholder={t('密钥')}
             showClear
             pure
@@ -78,12 +78,14 @@ const TokensFilters = ({
           />
         </div>
 
-        <div className='flex gap-2 w-full md:w-auto'>
+        <div className='ct-token-filter-buttons'>
           <Button
-            type='tertiary'
+            type='primary'
+            theme='light'
+            icon={<Search size={15} />}
             htmlType='submit'
             loading={loading || searching}
-            className='flex-1 md:flex-initial md:w-auto'
+            className='ct-token-filter-submit'
             size='small'
           >
             {t('查询')}
@@ -91,8 +93,10 @@ const TokensFilters = ({
 
           <Button
             type='tertiary'
+            theme='borderless'
+            icon={<RotateCcw size={15} />}
             onClick={handleReset}
-            className='flex-1 md:flex-initial md:w-auto'
+            className='ct-token-filter-reset'
             size='small'
           >
             {t('重置')}

@@ -401,13 +401,13 @@ func candidateUsesCodexBackendForEndpoint(candidate core.Candidate, endpointType
 	if channel == nil {
 		return false, false
 	}
+	if channel.Type == constant.ChannelTypeCodex {
+		return true, true
+	}
 	switch endpointType {
 	case constant.EndpointTypeOpenAIResponse, constant.EndpointTypeOpenAIResponseCompact:
 	default:
 		return false, false
-	}
-	if channel.Type == constant.ChannelTypeCodex {
-		return true, true
 	}
 	if channel.Type != constant.ChannelTypeOpenAI {
 		return false, false

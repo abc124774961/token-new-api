@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/QuantumNous/new-api/pkg/modelgateway"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/integration"
@@ -91,6 +92,85 @@ func TestChannelSelectionWrapperSkipsDisabledSmartPlanAndRetries(t *testing.T) {
 	require.Equal(t, 2, facade.SelectCalls)
 	require.True(t, service.IsChannelSelectionSkipped(ctx, 201))
 	require.Equal(t, 1, service.GetChannelSelectionReservations(202))
+	service.ReleaseChannelSelectionReservations(ctx)
+}
+
+func TestChannelSelectionWrapperSkipsUsageLimitedSmartPlan(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
+	now := common.GetTimestamp()
+	limited := &model.Channel{
+		Id:     211,
+		Type:   constant.ChannelTypeCodex,
+		Name:   "usage-limited",
+		Status: common.ChannelStatusEnabled,
+		Key:    `{"access_token":"limited","account_id":"limited"}`,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true,
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					UsageLimitStatus:    channelcapability.UsageLimitStatusLimited,
+					UsageLimitReason:    channelcapability.UsageLimitReasonReached,
+					UsageLimitExpiresAt: now + 1800,
+				},
+			},
+		},
+	}
+	healthy := &model.Channel{
+		Id:     212,
+		Type:   constant.ChannelTypeCodex,
+		Name:   "healthy",
+		Status: common.ChannelStatusEnabled,
+		Key:    `{"access_token":"healthy","account_id":"healthy"}`,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true,
+		},
+	}
+	facade := &sequenceFacade{
+		plans: []*core.DispatchPlan{
+			{
+				Channel:       limited,
+				SelectedGroup: "default",
+				RuntimeKey: core.RuntimeKey{
+					EndpointType: constant.EndpointTypeOpenAI,
+				},
+				CredentialRef: core.CredentialRef{
+					ResourceID:      "platform:channel:211",
+					CredentialIndex: 0,
+					Resolver:        "channel_key",
+				},
+			},
+			{
+				Channel:       healthy,
+				SelectedGroup: "default",
+				RuntimeKey: core.RuntimeKey{
+					EndpointType: constant.EndpointTypeOpenAI,
+				},
+				CredentialRef: core.CredentialRef{
+					ResourceID:      "platform:channel:212",
+					CredentialIndex: 0,
+					Resolver:        "channel_key",
+				},
+			},
+		},
+	}
+	wrapper := integration.NewChannelSelectionWrapper(facade, nil)
+	ctx, _ := gin.CreateTestContext(nil)
+
+	result, apiErr := wrapper.SelectSmartOnly(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-5.5",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
+	require.Equal(t, 212, result.Channel.Id)
+	require.Equal(t, 2, facade.SelectCalls)
+	require.True(t, service.IsChannelSelectionSkipped(ctx, 211))
 	service.ReleaseChannelSelectionReservations(ctx)
 }
 

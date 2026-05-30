@@ -395,6 +395,7 @@ func saveChannelAccountCapability(channelID int, credentialIndex int, capability
 		return err
 	}
 	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
 	return nil
 }
 

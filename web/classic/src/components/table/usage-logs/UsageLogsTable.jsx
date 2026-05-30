@@ -101,13 +101,13 @@ const LogsTable = (logsData) => {
       rowKey='key'
       loading={loading}
       scroll={compactMode ? undefined : { x: 'max-content' }}
-      className='rounded-xl overflow-hidden'
+      className='ct-usage-logs-table'
       size='small'
       empty={
         <Empty
-          image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
+          image={<IllustrationNoResult style={{ width: 118, height: 118 }} />}
           darkModeImage={
-            <IllustrationNoResultDark style={{ width: 150, height: 150 }} />
+            <IllustrationNoResultDark style={{ width: 118, height: 118 }} />
           }
           description={t('搜索无结果')}
           style={{ padding: 30 }}

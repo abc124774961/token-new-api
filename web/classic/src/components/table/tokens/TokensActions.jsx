@@ -18,7 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useState } from 'react';
-import { Button, Space } from '@douyinfe/semi-ui';
+import { Button } from '@douyinfe/semi-ui';
+import { Copy, Plus, Trash2 } from 'lucide-react';
 import { showError } from '../../../helpers';
 import CopyTokensModal from './modals/CopyTokensModal';
 import DeleteTokensModal from './modals/DeleteTokensModal';
@@ -61,10 +62,12 @@ const TokensActions = ({
 
   return (
     <>
-      <div className='flex flex-wrap gap-2 w-full md:w-auto order-2 md:order-1'>
+      <div className='ct-token-actions'>
         <Button
           type='primary'
-          className='flex-1 md:flex-initial'
+          theme='solid'
+          icon={<Plus size={15} />}
+          className='ct-token-action-primary'
           onClick={() => {
             setEditingToken({
               id: undefined,
@@ -78,7 +81,9 @@ const TokensActions = ({
 
         <Button
           type='tertiary'
-          className='flex-1 md:flex-initial'
+          theme='light'
+          icon={<Copy size={15} />}
+          className='ct-token-action-button'
           onClick={handleCopySelectedTokens}
           size='small'
         >
@@ -87,7 +92,9 @@ const TokensActions = ({
 
         <Button
           type='danger'
-          className='w-full md:w-auto'
+          theme='light'
+          icon={<Trash2 size={15} />}
+          className='ct-token-action-danger'
           onClick={handleDeleteSelectedTokens}
           size='small'
         >
