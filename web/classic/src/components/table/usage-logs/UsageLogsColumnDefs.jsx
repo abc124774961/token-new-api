@@ -75,7 +75,7 @@ function toFiniteNumber(value, fallback = 0) {
 function formatBillingRatio(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return '--';
-  return numeric.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+  return numeric.toFixed(4);
 }
 
 function formatCostRatio(value) {

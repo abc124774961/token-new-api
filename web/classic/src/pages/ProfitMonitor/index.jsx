@@ -178,7 +178,7 @@ function formatMultiplier(value, digits = 2) {
 function formatRatioNumber(value, digits = 4) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return '--';
-  return numeric.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
+  return numeric.toFixed(digits);
 }
 
 function formatRatioValue(value, digits = 4) {
@@ -1330,6 +1330,7 @@ export default function ProfitMonitor() {
     config: DEFAULT_CONFIG,
     summary: {},
     breakdown: [],
+    anomalies: [],
     resources: { items: [] },
     recommendation: {},
   });
@@ -1373,6 +1374,7 @@ export default function ProfitMonitor() {
         config: { ...DEFAULT_CONFIG, ...(payload.config || {}) },
         summary: payload.summary || {},
         breakdown: payload.breakdown || [],
+        anomalies: payload.anomalies || [],
         resources: payload.resources || { items: [] },
         recommendation: payload.recommendation || {},
         window: payload.window,
@@ -1820,6 +1822,61 @@ export default function ProfitMonitor() {
     {
       title: t('毛利率'),
       dataIndex: 'gross_margin',
+      render: (value) => formatPercent(value),
+    },
+  ];
+
+  const anomalyColumns = [
+    {
+      title: t('模型 / 渠道'),
+      dataIndex: 'requested_model',
+      width: 260,
+      render: (value, record) => (
+        <div className='ct-profit-name-cell'>
+          <strong>{value || '--'}</strong>
+          <span>
+            {record.channel_name || '--'}
+            {record.channel_id ? ` #${record.channel_id}` : ''}
+          </span>
+        </div>
+      ),
+    },
+    {
+      title: t('请求数'),
+      dataIndex: 'requests',
+      render: (value) => formatNumber(value),
+    },
+    {
+      title: t('收入'),
+      dataIndex: 'revenue_usd',
+      render: (value) => formatUsd(value, 4),
+    },
+    {
+      title: t('上游成本'),
+      dataIndex: 'upstream_cost_usd',
+      render: (value) => formatUsd(value, 4),
+    },
+    {
+      title: t('毛利率'),
+      dataIndex: 'gross_margin',
+      render: (value) => (
+        <Text type={Number(value) < 0 ? 'danger' : 'warning'}>
+          {formatPercent(value)}
+        </Text>
+      ),
+    },
+    {
+      title: t('利润吞噬'),
+      dataIndex: 'profit_drag_usd',
+      render: (value) => (
+        <Text type={Number(value) > 0 ? 'danger' : 'tertiary'}>
+          {formatUsd(value, 4)}
+        </Text>
+      ),
+    },
+    {
+      title: t('保护目标'),
+      dataIndex: 'target_gross_margin',
       render: (value) => formatPercent(value),
     },
   ];
@@ -2311,6 +2368,31 @@ export default function ProfitMonitor() {
                   pagination={{ pageSize: 10 }}
                   empty={<Empty description={t('暂无经营拆解数据')} />}
                   scroll={{ x: 1080 }}
+                />
+              </section>
+
+              <section className='ct-profit-panel ct-profit-panel-wide'>
+                <div className='ct-profit-panel-head'>
+                  <div>
+                    <h2>{t('利润异常榜')}</h2>
+                    <p>
+                      {t('按渠道和模型定位固定价、图片或按次模型的低毛利来源。')}
+                    </p>
+                  </div>
+                  <Tag color='orange' type='light'>
+                    {t('目标毛利 40%')}
+                  </Tag>
+                </div>
+                <Table
+                  size='small'
+                  columns={anomalyColumns}
+                  dataSource={data.anomalies || []}
+                  rowKey={(record, index) =>
+                    `${record.channel_id}-${record.requested_model}-${index}`
+                  }
+                  pagination={{ pageSize: 8 }}
+                  empty={<Empty description={t('暂无利润异常')} />}
+                  scroll={{ x: 960 }}
                 />
               </section>
 

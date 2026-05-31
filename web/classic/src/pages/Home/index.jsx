@@ -98,16 +98,20 @@ const formatPlanPrice = (amount) => {
 };
 
 const formatHeroDynamicRatio = (value) => {
+  const text = formatHeroDynamicRatioNumber(value);
+  return text === '--' ? '--' : `${text}x`;
+};
+
+const formatHeroDynamicRatioNumber = (value, fallback = '--') => {
   const number = Number(value);
-  if (!Number.isFinite(number) || number <= 0) return '--';
-  const digits = number < 0.1 ? 4 : number < 1 ? 3 : 2;
-  return `${number.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}x`;
+  if (!Number.isFinite(number) || number <= 0) return fallback;
+  return number.toFixed(4);
 };
 
 const formatHeroDynamicRatioTick = (value) => {
   const number = Number(value);
   if (!Number.isFinite(number)) return '--';
-  if (number === 0) return '0x';
+  if (number === 0) return '0.0000x';
   return formatHeroDynamicRatio(number);
 };
 
@@ -1836,7 +1840,7 @@ const PricingEstimator = ({
           precision={4}
           placeholder={
             hasDynamicBillingRatio
-              ? formatCompactNumber(dynamicBillingRatio, '1')
+              ? formatHeroDynamicRatioNumber(dynamicBillingRatio, '1.0000')
               : t('自定义')
           }
           suffix='x'
@@ -1848,7 +1852,7 @@ const PricingEstimator = ({
         <small>
           {t('计费系数 {{billingRatio}}x · 充值 {{rechargeRatio}}', {
             billingRatio: Number.isFinite(Number(effectiveBillingRatio))
-              ? formatCompactNumber(effectiveBillingRatio, '1')
+              ? formatHeroDynamicRatioNumber(effectiveBillingRatio, '1.0000')
               : '--',
             rechargeRatio: formatCompactNumber(selectedRechargeRatio, '1'),
           })}
@@ -2436,11 +2440,15 @@ const Home = () => {
       `${t('原始')} ${formatPerMillionPrice(calcRawTokenPrice(ratio))}`;
     const formatRawRatio = (ratio) =>
       `${t('原始')} ${formatCompactNumber(ratio, '1')}x`;
+    const formatPricingRatio = (ratio) =>
+      hasCustomDynamicRatio || hasDynamicBillingRatio
+        ? formatHeroDynamicRatio(ratio)
+        : `${formatCompactNumber(ratio, '1')}x`;
     const rows = [
       {
         key: 'dynamic-ratio',
         label: hasDynamicBillingRatio ? t('当前动态倍率') : t('分组倍率'),
-        value: `${formatCompactNumber(priceRatio, '1')}x`,
+        value: formatPricingRatio(priceRatio),
         detail: formatRawRatio(hasDynamicBillingRatio ? 1 : effectiveGroupRatio),
       },
     ];
@@ -2449,7 +2457,7 @@ const Home = () => {
       rows.push({
         key: 'dynamic',
         label: t('动态规则计费'),
-        value: `${formatCompactNumber(effectiveBillingRatio, '1')}x`,
+        value: formatPricingRatio(effectiveBillingRatio),
         detail: formatRawRatio(priceRatio),
       });
       return rows;

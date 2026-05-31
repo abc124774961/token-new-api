@@ -234,6 +234,7 @@ const COST_PROFILE_NUMERIC_FIELDS = [
   'recharge_multiplier',
   'recharge_paid_amount',
   'recharge_received_amount',
+  'fixed_price_margin_guard_target_margin',
 ];
 
 const COST_PROFILE_RECHARGE_METADATA_KEYS = {
@@ -242,8 +243,12 @@ const COST_PROFILE_RECHARGE_METADATA_KEYS = {
   source: 'recharge_multiplier_source',
 };
 const COST_PROFILE_RECHARGE_METADATA_SOURCE = 'paid_received_ratio';
+const COST_PROFILE_MARGIN_GUARD_METADATA_KEYS = {
+  enabled: 'fixed_price_margin_guard_enabled',
+  targetMargin: 'fixed_price_margin_guard_target_margin',
+};
 
-const createEmptyCostProfile = () => ({
+const createEmptyCostProfile = (overrides = {}) => ({
   id: 0,
   upstream_model: '*',
   currency: 'USD',
@@ -261,11 +266,14 @@ const createEmptyCostProfile = () => ({
   recharge_multiplier: 1,
   recharge_paid_amount: 1,
   recharge_received_amount: 1,
+  fixed_price_margin_guard_enabled: true,
+  fixed_price_margin_guard_target_margin: 40,
   pricing_mode: 'token',
   accuracy: 'estimated',
   metadata_json: '',
   tool_prices_json: '',
   source: 'system_ratio',
+  ...overrides,
 });
 
 const normalizeCostProfileModel = (value) => String(value || '').trim();
@@ -305,6 +313,31 @@ const resolveRechargeAmounts = (profile) => {
   return { paid, received };
 };
 
+const resolveMarginGuardSettings = (profile) => {
+  const metadata = parseCostProfileMetadata(profile?.metadata_json);
+  const rawEnabled =
+    metadata[COST_PROFILE_MARGIN_GUARD_METADATA_KEYS.enabled];
+  const rawTarget =
+    metadata[COST_PROFILE_MARGIN_GUARD_METADATA_KEYS.targetMargin];
+  const enabled =
+    typeof rawEnabled === 'boolean'
+      ? rawEnabled
+      : profile?.fixed_price_margin_guard_enabled !== false;
+  let targetMargin = Number(
+    profile?.fixed_price_margin_guard_target_margin || rawTarget || 40,
+  );
+  if (!Number.isFinite(targetMargin) || targetMargin <= 0) {
+    targetMargin = 40;
+  }
+  if (targetMargin > 0 && targetMargin < 1) {
+    targetMargin *= 100;
+  }
+  return {
+    enabled,
+    targetMargin: Math.min(95, Math.max(0, targetMargin)),
+  };
+};
+
 const calculateRechargeMultiplier = (profile) => {
   const paid = Number(profile?.recharge_paid_amount || 0);
   const received = Number(profile?.recharge_received_amount || 0);
@@ -324,6 +357,10 @@ const buildCostProfileMetadataJSON = (profile) => {
   );
   metadata[COST_PROFILE_RECHARGE_METADATA_KEYS.source] =
     COST_PROFILE_RECHARGE_METADATA_SOURCE;
+  metadata[COST_PROFILE_MARGIN_GUARD_METADATA_KEYS.enabled] =
+    profile?.fixed_price_margin_guard_enabled !== false;
+  metadata[COST_PROFILE_MARGIN_GUARD_METADATA_KEYS.targetMargin] =
+    Number(profile?.fixed_price_margin_guard_target_margin || 40) / 100;
   return JSON.stringify(metadata);
 };
 
@@ -646,6 +683,8 @@ const EditChannelModal = (props) => {
   const [costProfilesError, setCostProfilesError] = useState('');
   const [costQuote, setCostQuote] = useState({ models: [], quotes: {} });
   const [savingCostProfileId, setSavingCostProfileId] = useState(null);
+  const [recalculatingCostProfileId, setRecalculatingCostProfileId] =
+    useState(null);
   const costQuoteReloadKeyRef = useRef('');
   const [codexProbeState, setCodexProbeState] = useState(() =>
     buildCodexProbeState(),
@@ -1067,38 +1106,56 @@ const EditChannelModal = (props) => {
     return error?.message || fallbackMessage;
   };
 
-  const setCostProfileDraftFromSource = (sourceProfile) => {
+  const hydrateCostProfileDraft = (sourceProfile, fallbackModel = '*') => {
     const defaultProfile = sourceProfile || createEmptyCostProfile();
     const costCoefficient = resolveCostCoefficient(defaultProfile);
     const tokenMultiplier = resolveUnifiedTokenCostMultiplier(defaultProfile);
     const rechargeAmounts = resolveRechargeAmounts(defaultProfile);
+    const marginGuard = resolveMarginGuardSettings(defaultProfile);
     const rechargeMultiplier =
       rechargeAmounts.received > 0 && rechargeAmounts.paid > 0
         ? rechargeAmounts.received / rechargeAmounts.paid
         : normalizeCostProfileMultiplier(defaultProfile?.recharge_multiplier);
-    setCostProfiles([
-      {
-        ...createEmptyCostProfile(),
-        ...defaultProfile,
-        upstream_model: '*',
-        currency: defaultProfile?.currency || 'USD',
-        pricing_mode: defaultProfile?.pricing_mode || 'token',
-        accuracy: defaultProfile?.accuracy || 'estimated',
-        cost_coefficient: costCoefficient,
-        token_multiplier: tokenMultiplier,
-        input_cost_multiplier: tokenMultiplier,
-        output_cost_multiplier: tokenMultiplier,
-        cache_cost_multiplier: tokenMultiplier,
-        cache_read_multiplier: tokenMultiplier,
-        cache_write_multiplier: tokenMultiplier,
-        request_cost_multiplier: 1,
-        request_price: Math.max(0, Number(defaultProfile?.request_price || 0)),
-        recharge_multiplier: rechargeMultiplier,
-        recharge_paid_amount: rechargeAmounts.paid,
-        recharge_received_amount: rechargeAmounts.received,
-        source: defaultProfile?.source || COST_PROFILE_SYSTEM_RATIO_SOURCE,
-      },
-    ]);
+    const upstreamModel =
+      normalizeCostProfileModel(defaultProfile?.upstream_model) ||
+      normalizeCostProfileModel(fallbackModel) ||
+      '*';
+    const isModelSpecific = upstreamModel !== '*';
+    const pricingMode =
+      defaultProfile?.pricing_mode ||
+      (isModelSpecific && Number(defaultProfile?.request_price || 0) > 0
+        ? 'request'
+        : 'token');
+    return {
+      ...createEmptyCostProfile(),
+      ...defaultProfile,
+      upstream_model: upstreamModel,
+      currency: defaultProfile?.currency || 'USD',
+      pricing_mode: pricingMode,
+      accuracy:
+        defaultProfile?.accuracy || (isModelSpecific ? 'precise' : 'estimated'),
+      cost_coefficient: costCoefficient,
+      token_multiplier: tokenMultiplier,
+      input_cost_multiplier: tokenMultiplier,
+      output_cost_multiplier: tokenMultiplier,
+      cache_cost_multiplier: tokenMultiplier,
+      cache_read_multiplier: tokenMultiplier,
+      cache_write_multiplier: tokenMultiplier,
+      request_cost_multiplier: 1,
+      request_price: Math.max(0, Number(defaultProfile?.request_price || 0)),
+      recharge_multiplier: rechargeMultiplier,
+      recharge_paid_amount: rechargeAmounts.paid,
+      recharge_received_amount: rechargeAmounts.received,
+      fixed_price_margin_guard_enabled: marginGuard.enabled,
+      fixed_price_margin_guard_target_margin: marginGuard.targetMargin,
+      source:
+        defaultProfile?.source ||
+        (isModelSpecific ? 'manual' : COST_PROFILE_SYSTEM_RATIO_SOURCE),
+    };
+  };
+
+  const setCostProfileDraftFromSource = (sourceProfile) => {
+    setCostProfiles([hydrateCostProfileDraft(sourceProfile, '*')]);
   };
 
   const applyCostQuoteResponse = (
@@ -1187,8 +1244,21 @@ const EditChannelModal = (props) => {
       }
       if (res?.data?.success) {
         const rows = Array.isArray(res.data.data) ? res.data.data : [];
-        const defaultProfile = rows[0] || quoteRes?.data?.data?.default_profile;
-        setCostProfileDraftFromSource(defaultProfile);
+        const defaultProfile =
+          rows.find(
+            (row) => normalizeCostProfileModel(row?.upstream_model) === '*',
+          ) ||
+          quoteRes?.data?.data?.default_profile ||
+          createEmptyCostProfile();
+        const modelProfiles = rows.filter(
+          (row) => normalizeCostProfileModel(row?.upstream_model) !== '*',
+        );
+        setCostProfiles([
+          hydrateCostProfileDraft(defaultProfile, '*'),
+          ...modelProfiles.map((row) =>
+            hydrateCostProfileDraft(row, row?.upstream_model),
+          ),
+        ]);
       } else {
         setCostProfilesError(res?.data?.message || t('加载上游成本配置失败'));
         setCostProfileDraftFromSource(quoteRes?.data?.data?.default_profile);
@@ -1276,14 +1346,23 @@ const EditChannelModal = (props) => {
     );
     const costCoefficient = Math.max(0, Number(profile.cost_coefficient || 1));
     const rechargeMultiplier = calculateRechargeMultiplier(profile);
+    const upstreamModel = normalizeCostProfileModel(profile.upstream_model) || '*';
+    const isModelSpecific = upstreamModel !== '*';
+    const pricingMode =
+      isModelSpecific && String(profile.pricing_mode || '').trim() === 'request'
+        ? 'request'
+        : 'token';
+    if (isModelSpecific && pricingMode === 'request' && Number(profile.request_price || 0) <= 0) {
+      throw new Error(t('模型独立按次成本必须大于 0'));
+    }
     return {
       ...createEmptyCostProfile(),
       ...profile,
-      upstream_model: '*',
+      upstream_model: upstreamModel,
       currency: 'USD',
-      pricing_mode: 'token',
-      accuracy: 'estimated',
-      source: COST_PROFILE_SYSTEM_RATIO_SOURCE,
+      pricing_mode: pricingMode,
+      accuracy: isModelSpecific ? 'precise' : 'estimated',
+      source: isModelSpecific ? 'manual' : COST_PROFILE_SYSTEM_RATIO_SOURCE,
       effective_time: 0,
       version: 1,
       cost_coefficient: costCoefficient > 0 ? costCoefficient : 1,
@@ -1298,6 +1377,12 @@ const EditChannelModal = (props) => {
       recharge_multiplier: rechargeMultiplier,
       recharge_paid_amount: Number(profile.recharge_paid_amount || 0),
       recharge_received_amount: Number(profile.recharge_received_amount || 0),
+      fixed_price_margin_guard_enabled:
+        profile.fixed_price_margin_guard_enabled !== false,
+      fixed_price_margin_guard_target_margin: Math.min(
+        95,
+        Math.max(0, Number(profile.fixed_price_margin_guard_target_margin || 40)),
+      ),
       metadata_json: buildCostProfileMetadataJSON(profile),
       tool_prices_json: '',
     };
@@ -1313,6 +1398,7 @@ const EditChannelModal = (props) => {
     if (!payload) return false;
     if (Number(payload.id || 0) > 0) return true;
     return (
+      normalizeCostProfileModel(payload.upstream_model) !== '*' ||
       costProfileNumberChanged(payload.cost_coefficient, 1) ||
       costProfileNumberChanged(payload.token_multiplier, 1) ||
       costProfileNumberChanged(payload.input_cost_multiplier, 1) ||
@@ -1357,6 +1443,116 @@ const EditChannelModal = (props) => {
       showError(resolveCostProfileError(error, t('保存上游成本配置失败')));
     } finally {
       setSavingCostProfileId(null);
+    }
+  };
+
+  const costProfileModelCandidates = () => {
+    const models = (costQuote.models?.length ? costQuote.models : inputs.models || [])
+      .map((model) => normalizeCostProfileModel(model))
+      .filter(Boolean);
+    const existing = new Set(
+      costProfiles
+        .map((profile) => normalizeCostProfileModel(profile.upstream_model))
+        .filter((model) => model && model !== '*'),
+    );
+    const unique = Array.from(new Set(models)).filter((model) => !existing.has(model));
+    unique.sort((left, right) => {
+      const leftQuote = costQuote.quotes?.[left];
+      const rightQuote = costQuote.quotes?.[right];
+      const leftFixed =
+        leftQuote?.pricing_mode === 'request' || left.includes('image');
+      const rightFixed =
+        rightQuote?.pricing_mode === 'request' || right.includes('image');
+      if (leftFixed !== rightFixed) return leftFixed ? -1 : 1;
+      return left.localeCompare(right);
+    });
+    return unique;
+  };
+
+  const addModelSpecificCostProfileDraft = () => {
+    const candidate = costProfileModelCandidates()[0] || '';
+    if (!candidate) {
+      showInfo(t('当前渠道模型都已添加独立成本规则'));
+      return;
+    }
+    setCostProfiles((prev) => [
+      ...prev,
+      hydrateCostProfileDraft(
+        createEmptyCostProfile({
+          upstream_model: candidate,
+          pricing_mode: 'request',
+          source: 'manual',
+          accuracy: 'precise',
+          request_price: 0,
+        }),
+        candidate,
+      ),
+    ]);
+  };
+
+  const removeCostProfileDraft = async (index) => {
+    const profile = costProfiles[index];
+    if (!profile) return;
+    if (Number(profile.id || 0) <= 0) {
+      setCostProfiles((prev) => prev.filter((_, idx) => idx !== index));
+      return;
+    }
+    try {
+      const res = await API.delete(
+        `/api/channel/${channelId}/upstream_cost_profiles/${profile.id}`,
+        { skipErrorHandler: true },
+      );
+      if (!res?.data?.success) {
+        showError(res?.data?.message || t('删除上游成本配置失败'));
+        return;
+      }
+      showSuccess(t('上游成本配置已删除'));
+      await loadCostProfiles(inputs.models, inputs.model_mapping);
+      await props.refresh?.();
+    } catch (error) {
+      showError(resolveCostProfileError(error, t('删除上游成本配置失败')));
+    }
+  };
+
+  const recalculateCostProfileWindow = async (profile) => {
+    if (!isEdit || !channelId || !profile?.id) {
+      showInfo(t('请先保存成本规则'));
+      return;
+    }
+    const upstreamModel = normalizeCostProfileModel(profile.upstream_model);
+    if (!upstreamModel || upstreamModel === '*') {
+      showInfo(t('请在模型独立成本规则上执行重算'));
+      return;
+    }
+    const endTimestamp = Math.floor(Date.now() / 1000);
+    const startTimestamp = endTimestamp - 24 * 60 * 60;
+    setRecalculatingCostProfileId(profile.id);
+    try {
+      const res = await API.post(
+        `/api/channel/${channelId}/upstream_cost_recalculate`,
+        {
+          upstream_model: upstreamModel,
+          start_timestamp: startTimestamp,
+          end_timestamp: endTimestamp,
+          limit: 1000,
+        },
+        { skipErrorHandler: true },
+      );
+      if (!res?.data?.success) {
+        showError(res?.data?.message || t('成本重算失败'));
+        return;
+      }
+      const data = res.data.data || {};
+      showSuccess(
+        t('已重算 {{count}} 条成本，新的成本合计 {{cost}}', {
+          count: data.recalculated || 0,
+          cost: formatCostProfilePrice(data.after_cost_usd || 0),
+        }),
+      );
+    } catch (error) {
+      showError(resolveCostProfileError(error, t('成本重算失败')));
+    } finally {
+      setRecalculatingCostProfileId(null);
     }
   };
 
@@ -1432,7 +1628,9 @@ const EditChannelModal = (props) => {
   };
 
   const buildCostProfileDerivedPrices = (profile) => {
-    const model = firstConfiguredCostModel();
+    const profileModel = normalizeCostProfileModel(profile?.upstream_model);
+    const model =
+      profileModel && profileModel !== '*' ? profileModel : firstConfiguredCostModel();
     const quote = costQuote.quotes?.[model];
     const costCoefficient = costProfileMultiplier(
       profile,
@@ -1477,7 +1675,7 @@ const EditChannelModal = (props) => {
       actualTokenMultiplier,
       actualRequestPrice,
       configuredRequestPrice: requestPrice,
-      pricingMode: quote?.pricing_mode || 'token',
+      pricingMode: profile?.pricing_mode || quote?.pricing_mode || 'token',
       priceSource: quote?.price_source || 'missing',
       pricingModel: quote?.pricing_model || quote?.model || model,
       sourceInput: quotePrice(model, 'input_per_million'),
@@ -2323,6 +2521,8 @@ const EditChannelModal = (props) => {
   };
 
   const renderCostProfileInputs = (profile, index, derived) => {
+    const isModelSpecific =
+      normalizeCostProfileModel(profile?.upstream_model) !== '*';
     const isRequestMode = derived?.pricingMode === 'request';
     return (
       <>
@@ -2337,6 +2537,30 @@ const EditChannelModal = (props) => {
                 : t('Token 模型使用成本系数和费用计算倍率')}
             </Text>
           </div>
+          {isModelSpecific ? (
+            <div className='mb-3 grid grid-cols-[minmax(180px,1fr)_auto] items-end gap-2'>
+              <div>
+                <Text
+                  type='tertiary'
+                  size='small'
+                  className='mb-1 block whitespace-nowrap'
+                >
+                  {t('上游模型')}
+                </Text>
+                <Input
+                  value={profile.upstream_model}
+                  size='small'
+                  placeholder='gpt-image-2'
+                  onChange={(value) =>
+                    updateCostProfileDraft(index, 'upstream_model', value)
+                  }
+                />
+              </div>
+              <Tag color='orange' type='light' size='small'>
+                {t('模型独立成本')}
+              </Tag>
+            </div>
+          ) : null}
           <div className='grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-2'>
             {isRequestMode
               ? renderCostProfileNumberInput(
@@ -2367,6 +2591,16 @@ const EditChannelModal = (props) => {
                   )}
                 </>
               )}
+            {isModelSpecific && isRequestMode
+              ? renderCostProfileNumberInput(
+                  profile,
+                  index,
+                  'fixed_price_margin_guard_target_margin',
+                  t('保护毛利率'),
+                  1,
+                  '%',
+                )
+              : null}
             {renderCostProfileNumberInput(
               profile,
               index,
@@ -2396,6 +2630,21 @@ const EditChannelModal = (props) => {
               'cyan',
             )}
           </div>
+          {isModelSpecific && isRequestMode ? (
+            <Checkbox
+              className='mt-2'
+              checked={profile.fixed_price_margin_guard_enabled !== false}
+              onChange={(event) =>
+                updateCostProfileDraft(
+                  index,
+                  'fixed_price_margin_guard_enabled',
+                  Boolean(event.target.checked),
+                )
+              }
+            >
+              {t('启用固定价最低毛利保护')}
+            </Checkbox>
+          ) : null}
         </div>
       </>
     );
@@ -2591,20 +2840,30 @@ const EditChannelModal = (props) => {
             {t('基础价格来自配置价格设置；系统价格先乘成本系数，再乘费用计算倍率，充值倍率由充值成本和到账额度自动换算。')}
           </Text>
         </div>
-        <Tooltip content={t('刷新')}>
+        <Space>
           <Button
             size='small'
-            type='tertiary'
-            icon={<IconRefresh />}
-            loading={costProfilesLoading}
-            disabled={!isEdit}
-            onClick={() => {
-              costQuoteReloadKeyRef.current = '';
-              loadCostProfiles(inputs.models, inputs.model_mapping);
-              reloadSavedChannelCostQuote(inputs.models, inputs.model_mapping);
-            }}
-          />
-        </Tooltip>
+            type='secondary'
+            icon={<IconPriceTag />}
+            onClick={addModelSpecificCostProfileDraft}
+          >
+            {t('新增模型独立成本')}
+          </Button>
+          <Tooltip content={t('刷新')}>
+            <Button
+              size='small'
+              type='tertiary'
+              icon={<IconRefresh />}
+              loading={costProfilesLoading}
+              disabled={!isEdit}
+              onClick={() => {
+                costQuoteReloadKeyRef.current = '';
+                loadCostProfiles(inputs.models, inputs.model_mapping);
+                reloadSavedChannelCostQuote(inputs.models, inputs.model_mapping);
+              }}
+            />
+          </Tooltip>
+        </Space>
       </div>
 
       {!isEdit && (
@@ -2656,6 +2915,8 @@ const EditChannelModal = (props) => {
                 savingCostProfileId === profile.id ||
                 savingCostProfileId === `new-${index}`;
               const derived = buildCostProfileDerivedPrices(profile);
+              const isModelSpecific =
+                normalizeCostProfileModel(profile.upstream_model) !== '*';
               return (
                 <div
                   key={key}
@@ -2664,20 +2925,48 @@ const EditChannelModal = (props) => {
                   <div className='flex flex-wrap items-start justify-between gap-2'>
                     <div className='min-w-0 flex-1'>
                       <Text className='text-sm font-medium text-gray-700 block'>
-                        {derived.pricingMode === 'request'
-                          ? t('按次成本 / 充值换算')
-                          : t('费用计算 / 充值换算')}
+                        {isModelSpecific
+                          ? t('模型独立成本：{{model}}', {
+                              model: profile.upstream_model,
+                            })
+                          : derived.pricingMode === 'request'
+                            ? t('按次成本 / 充值换算')
+                            : t('费用计算 / 充值换算')}
                       </Text>
                     </div>
-                    <Button
-                      size='small'
-                      type='primary'
-                      icon={<IconSave />}
-                      loading={saving}
-                      onClick={() => saveCostProfileDraft(index)}
-                    >
-                      {isEdit ? t('保存') : t('随渠道保存')}
-                    </Button>
+                    <Space>
+                      {isModelSpecific && profile.id ? (
+                        <Button
+                          size='small'
+                          type='tertiary'
+                          icon={<IconRefresh />}
+                          loading={recalculatingCostProfileId === profile.id}
+                          onClick={() => recalculateCostProfileWindow(profile)}
+                        >
+                          {t('重算24h成本')}
+                        </Button>
+                      ) : null}
+                      {isModelSpecific ? (
+                        <Button
+                          size='small'
+                          type='danger'
+                          theme='borderless'
+                          icon={<IconClose />}
+                          onClick={() => removeCostProfileDraft(index)}
+                        >
+                          {t('删除')}
+                        </Button>
+                      ) : null}
+                      <Button
+                        size='small'
+                        type='primary'
+                        icon={<IconSave />}
+                        loading={saving}
+                        onClick={() => saveCostProfileDraft(index)}
+                      >
+                        {isEdit ? t('保存') : t('随渠道保存')}
+                      </Button>
+                    </Space>
                   </div>
 
                   <div className='mt-3 space-y-3'>
@@ -2687,8 +2976,12 @@ const EditChannelModal = (props) => {
                   <div className='mt-3'>{renderCostProfileDerivedCost(derived)}</div>
 
                   <div className='flex flex-wrap items-center gap-2 mt-2 text-xs text-gray-500'>
-                    <Tag color='cyan' type='light' size='small'>
-                      system_ratio
+                    <Tag
+                      color={isModelSpecific ? 'orange' : 'cyan'}
+                      type='light'
+                      size='small'
+                    >
+                      {isModelSpecific ? 'manual' : 'system_ratio'}
                     </Tag>
                     <span>USD</span>
                     <span>
@@ -3034,6 +3327,7 @@ const EditChannelModal = (props) => {
     costQuoteReloadKeyRef.current = '';
     setCostProfilesLoading(false);
     setSavingCostProfileId(null);
+    setRecalculatingCostProfileId(null);
     codexProbeRequestIdRef.current += 1;
     initialCodexProbeStateRef.current = buildCodexProbeState();
     latestCodexProbeStateRef.current = buildCodexProbeState();

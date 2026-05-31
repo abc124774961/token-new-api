@@ -280,6 +280,7 @@ func (c *RatioCache) Store(values map[string]RatioBaseline) {
 	defer c.mu.Unlock()
 	c.values = make(map[string]RatioBaseline, len(values))
 	for _, value := range values {
+		value = normalizeRatioBaseline(value)
 		key := groupCacheKey(value.Group)
 		if key == "" || value.Ratio <= 0 {
 			continue
@@ -338,6 +339,37 @@ func (c *RatioCache) restoreState(values map[string]RatioBaseline, loadedAt time
 	c.loadedAt = loadedAt
 }
 
+func normalizeRatioBaselineMap(values map[string]RatioBaseline) map[string]RatioBaseline {
+	if len(values) == 0 {
+		return values
+	}
+	normalized := make(map[string]RatioBaseline, len(values))
+	for key, value := range values {
+		value = normalizeRatioBaseline(value)
+		if value.Ratio <= 0 {
+			continue
+		}
+		normalized[key] = value
+	}
+	return normalized
+}
+
+func normalizeRatioBaseline(value RatioBaseline) RatioBaseline {
+	value.Ratio = RoundDynamicRatio(value.Ratio)
+	value.TargetRatio = RoundDynamicRatio(value.TargetRatio)
+	value.EffectiveRatio = RoundDynamicRatio(value.EffectiveRatio)
+	if value.Ratio > 0 {
+		referenceModel := strings.TrimSpace(value.ReferenceModel)
+		if referenceModel == "" {
+			referenceModel = strings.TrimSpace(value.RequestedModel)
+		}
+		if referenceModel != "" {
+			value.PricePerM = requestedModelPricePerMillion(referenceModel, value.Ratio)
+		}
+	}
+	return value
+}
+
 func (c *RatioCache) Loaded() bool {
 	if c == nil {
 		return false
@@ -391,8 +423,9 @@ func Apply(input ApplyInput) types.DynamicBillingSnapshot {
 		snapshot.FallbackReason = FallbackMissingKey
 		return snapshot
 	}
+	baseline = normalizeRatioBaseline(baseline)
 	snapshot.DynamicRatio = baseline.Ratio
-	snapshot.PricePerM = requestedModelPricePerMillion(snapshot.RequestedModel, baseline.Ratio)
+	snapshot.PricePerM = requestedModelPricePerMillion(snapshot.RequestedModel, snapshot.DynamicRatio)
 	snapshot.SampleCount = baseline.SampleCount
 	snapshot.CalculatedAt = baseline.CalculatedAt
 	snapshot.WindowStart = baseline.WindowStart
@@ -472,10 +505,17 @@ func BuildRatioBaselines(db *gorm.DB, logDB *gorm.DB, setting scheduler_setting.
 }
 
 func BuildRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, setting scheduler_setting.SchedulerSetting, now int64, filter SnapshotFilter) (map[string]RatioBaseline, error) {
+	var values map[string]RatioBaseline
+	var err error
 	if normalizeCostSource(setting.DynamicBillingCostSource) == scheduler_setting.DynamicBillingCostSourceProfit24h {
-		return buildProfit24hRatioBaselines(db, logDB, setting, now, filter)
+		values, err = buildProfit24hRatioBaselines(db, logDB, setting, now, filter)
+	} else {
+		values, err = buildSampleCostRatioBaselinesWithFilter(db, logDB, setting, now, filter)
 	}
-	return buildSampleCostRatioBaselinesWithFilter(db, logDB, setting, now, filter)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeRatioBaselineMap(values), nil
 }
 
 func buildSampleCostRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, setting scheduler_setting.SchedulerSetting, now int64, filter SnapshotFilter) (map[string]RatioBaseline, error) {
@@ -1217,7 +1257,7 @@ func loadPersistedBaselines(db *gorm.DB) map[string]RatioBaseline {
 		if group == "" || row.Ratio <= 0 {
 			continue
 		}
-		values[groupCacheKey(group)] = RatioBaseline{
+		values[groupCacheKey(group)] = normalizeRatioBaseline(RatioBaseline{
 			RequestedModel:       strings.TrimSpace(row.ReferenceModel),
 			ReferenceModel:       strings.TrimSpace(row.ReferenceModel),
 			Group:                group,
@@ -1250,7 +1290,7 @@ func loadPersistedBaselines(db *gorm.DB) map[string]RatioBaseline {
 			ServerCostUSD:        row.ServerCostUSD,
 			ResourceCostUSD:      row.ResourceCostUSD,
 			UpstreamCostUSD:      row.UpstreamCostUSD,
-		}
+		})
 	}
 	return values
 }
@@ -1263,6 +1303,7 @@ func persistBaselines(db *gorm.DB, values map[string]RatioBaseline) error {
 	groups := make([]string, 0, len(values))
 	now := common.GetTimestamp()
 	for _, value := range values {
+		value = normalizeRatioBaseline(value)
 		group := strings.TrimSpace(value.Group)
 		if group == "" || value.Ratio <= 0 {
 			continue

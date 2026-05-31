@@ -138,6 +138,14 @@ const formatGroupRatioValue = (ratio) => {
   return `${numericRatio.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}x`;
 };
 
+const formatDynamicGroupRatioValue = (ratio) => {
+  const numericRatio = Number(ratio);
+  if (!Number.isFinite(numericRatio) || numericRatio <= 0) {
+    return null;
+  }
+  return `${numericRatio.toFixed(4)}x`;
+};
+
 const getGroupBillingInfo = (groupRatioValue) => {
   if (
     groupRatioValue &&
@@ -159,7 +167,7 @@ const getDynamicBillingRatio = (dynamicBilling) => {
   if (!dynamicBilling) {
     return null;
   }
-  return formatGroupRatioValue(
+  return formatDynamicGroupRatioValue(
     dynamicBilling.current_ratio ||
       dynamicBilling.average_ratio_7d ||
       dynamicBilling.max_ratio_7d ||

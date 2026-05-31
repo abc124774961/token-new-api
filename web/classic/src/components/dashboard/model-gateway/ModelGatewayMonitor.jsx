@@ -2804,6 +2804,12 @@ function formatBillingRatio(value) {
   return numeric.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
 }
 
+function formatFixedBillingRatio(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '--';
+  return numeric.toFixed(4);
+}
+
 function formatRatioValue(value, digits = 4) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return '--';
@@ -2871,6 +2877,11 @@ function formatCostRatio(value) {
   return text === '--' ? '--' : `${text}x`;
 }
 
+function formatDynamicCostRatio(value) {
+  const text = formatFixedBillingRatio(value);
+  return text === '--' ? '--' : `${text}x`;
+}
+
 function formatBillingTokenCount(value) {
   const numeric = Number(value || 0);
   return numeric > 0 ? formatNumber(numeric) : '--';
@@ -2898,7 +2909,7 @@ function dynamicBillingSummaryLabel(billing, t) {
   if (!billing) return '';
   if (billing.dynamic_billing_applied) {
     return [
-      formatCostRatio(billing.dynamic_billing_ratio || billing.group_ratio),
+      formatDynamicCostRatio(billing.dynamic_billing_ratio || billing.group_ratio),
       billing.dynamic_billing_price_per_m > 0
         ? `${formatUsdCostAmount(billing.dynamic_billing_price_per_m)}/M`
         : '',
@@ -3040,26 +3051,26 @@ function formatDynamicBillingRatioRange(item) {
   const maxRatio = safeNumber(item.max_ratio);
   if (minRatio <= 0 && maxRatio <= 0) return '--';
   if (minRatio > 0 && maxRatio > 0 && Math.abs(minRatio - maxRatio) >= 0.0001) {
-    return `${formatCostRatio(minRatio)}-${formatCostRatio(maxRatio)}`;
+    return `${formatDynamicCostRatio(minRatio)}-${formatDynamicCostRatio(maxRatio)}`;
   }
-  return formatCostRatio(maxRatio || minRatio);
+  return formatDynamicCostRatio(maxRatio || minRatio);
 }
 
 function formatDynamicBillingRatioCurrent(item) {
   if (!item) return '--';
   const currentRatio = safeNumber(item.current_ratio);
-  if (currentRatio > 0) return formatCostRatio(currentRatio);
+  if (currentRatio > 0) return formatDynamicCostRatio(currentRatio);
   const blendedRatio = safeNumber(item.blended_ratio);
-  if (blendedRatio > 0) return formatCostRatio(blendedRatio);
+  if (blendedRatio > 0) return formatDynamicCostRatio(blendedRatio);
   return formatDynamicBillingRatioRange(item);
 }
 
 function formatDynamicBillingRatioAverage(item) {
   if (!item) return '--';
   const blendedRatio = safeNumber(item.blended_ratio);
-  if (blendedRatio > 0) return formatCostRatio(blendedRatio);
+  if (blendedRatio > 0) return formatDynamicCostRatio(blendedRatio);
   const averageRatio = safeNumber(item.average_ratio);
-  if (averageRatio > 0) return formatCostRatio(averageRatio);
+  if (averageRatio > 0) return formatDynamicCostRatio(averageRatio);
   return formatDynamicBillingRatioCurrent(item);
 }
 
@@ -3152,20 +3163,20 @@ function formatDynamicBillingCostRatioCurrent(item, overview) {
   if (!item) return '--';
   const costMultiplier = safeNumber(item.cost_multiplier);
   if (costMultiplier > 0) {
-    return formatCostRatio(costMultiplier);
+    return formatDynamicCostRatio(costMultiplier);
   }
   const factor = dynamicBillingCostFactor(overview, item);
   const currentRatio = safeNumber(item.current_ratio);
   if (currentRatio > 0) {
-    return formatCostRatio(currentRatio / factor);
+    return formatDynamicCostRatio(currentRatio / factor);
   }
   const blendedRatio = safeNumber(item.blended_ratio);
   if (blendedRatio > 0) {
-    return formatCostRatio(blendedRatio / factor);
+    return formatDynamicCostRatio(blendedRatio / factor);
   }
   const fallbackRatio = safeNumber(item.max_ratio || item.min_ratio);
   if (fallbackRatio <= 0) return '--';
-  return formatCostRatio(fallbackRatio / factor);
+  return formatDynamicCostRatio(fallbackRatio / factor);
 }
 
 function formatDynamicBillingCostPriceAverage(item, overview) {
@@ -3191,16 +3202,16 @@ function formatDynamicBillingCostRatioAverage(item, overview) {
   if (!item) return '--';
   const costMultiplier = safeNumber(item.cost_multiplier);
   if (costMultiplier > 0) {
-    return formatCostRatio(costMultiplier);
+    return formatDynamicCostRatio(costMultiplier);
   }
   const factor = dynamicBillingCostFactor(overview, item);
   const blendedRatio = safeNumber(item.blended_ratio);
   if (blendedRatio > 0) {
-    return formatCostRatio(blendedRatio / factor);
+    return formatDynamicCostRatio(blendedRatio / factor);
   }
   const averageRatio = safeNumber(item.average_ratio);
   if (averageRatio > 0) {
-    return formatCostRatio(averageRatio / factor);
+    return formatDynamicCostRatio(averageRatio / factor);
   }
   return formatDynamicBillingCostRatioCurrent(item, overview);
 }
@@ -3580,7 +3591,7 @@ function UserRequestCostTooltip({ billing, t }) {
     settlementRows.splice(2, 0, [
       t('动态收费'),
       [
-        `${formatCostRatio(billing.dynamic_billing_ratio || billing.group_ratio)}`,
+        `${formatDynamicCostRatio(billing.dynamic_billing_ratio || billing.group_ratio)}`,
         billing.dynamic_billing_price_per_m > 0
           ? `${formatUsdCostAmount(billing.dynamic_billing_price_per_m)}/M`
           : '',
@@ -4490,7 +4501,7 @@ function DynamicBillingMiniPanel({
             value:
               upstreamCost > 0
                 ? `${formatUsdCostAmount(upstreamCost)}${
-                    targetRatio > 0 ? ` · ${formatCostRatio(targetRatio)}` : ''
+                    targetRatio > 0 ? ` · ${formatDynamicCostRatio(targetRatio)}` : ''
                   }`
                 : '--',
           },

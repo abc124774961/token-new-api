@@ -173,6 +173,14 @@ const formatRatioValue = (value, digits = 4) => {
   return `${parseFloat(next.toFixed(digits))}x`;
 };
 
+const formatDynamicRatioValue = (value) => {
+  const next = Number(value);
+  if (!Number.isFinite(next)) {
+    return '-';
+  }
+  return `${next.toFixed(4)}x`;
+};
+
 const formatPricePerMillion = (value) => {
   const next = Number(value);
   if (!Number.isFinite(next) || next <= 0) {
@@ -1303,7 +1311,7 @@ export default function SettingsModelGatewayScheduler() {
         const dynamicInfo = resolveDynamicBillingInfo(row);
         const hasDynamic = !!dynamicInfo;
         const dynamicRatioText = hasDynamic
-          ? formatRatioValue(dynamicInfo.ratio)
+          ? formatDynamicRatioValue(dynamicInfo.ratio)
           : '-';
         const dynamicPriceText =
           hasDynamic && dynamicInfo.pricePerM > 0

@@ -416,9 +416,9 @@ func TestProfileCacheUsesDefaultRuleAndLatestEffectiveVersion(t *testing.T) {
 
 	exact := cache.Lookup(7, "gpt-5.5")
 	require.NotNil(t, exact)
-	require.Equal(t, "*", exact.UpstreamModel)
-	require.Equal(t, 1.0, exact.InputPerMillion)
-	require.Equal(t, 1, exact.Version)
+	require.Equal(t, "gpt-5.5", exact.UpstreamModel)
+	require.Equal(t, 4.0, exact.InputPerMillion)
+	require.Equal(t, 2, exact.Version)
 
 	defaultRule := cache.Lookup(7, "unconfigured-model")
 	require.NotNil(t, defaultRule)

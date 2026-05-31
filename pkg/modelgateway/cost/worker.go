@@ -31,9 +31,10 @@ type Worker struct {
 }
 
 type ProfileCache struct {
-	mu       sync.RWMutex
-	profiles map[string]model.ModelGatewayChannelCostProfile
-	loadedAt time.Time
+	mu        sync.RWMutex
+	refreshMu sync.Mutex
+	profiles  map[string]model.ModelGatewayChannelCostProfile
+	loadedAt  time.Time
 }
 
 var (
@@ -193,20 +194,8 @@ func (w *Worker) calculateLog(log model.Log) error {
 	if strings.TrimSpace(usage.RequestID) == "" {
 		return nil
 	}
-	profile := w.cache.Lookup(usage.ChannelID, usage.UpstreamModel)
-	if profile == nil {
-		profile = DefaultSystemRatioProfile(usage.ChannelID)
-	}
-	result := Calculate(usage, profile)
-	now := common.GetTimestamp()
-	summary := result.Summary(now)
-	if err := upsertCostSummary(summary); err != nil {
-		return err
-	}
-	if err := model.UpsertChannelAccountUsageCost(summary); err != nil {
-		common.SysLog(fmt.Sprintf("channel account usage cost upsert failed: request_id=%s error=%v", summary.RequestId, err))
-	}
-	return nil
+	_, err := calculateAndUpsertUsageSnapshot(usage, w.cache)
+	return err
 }
 
 type costLogResult struct {
@@ -405,9 +394,17 @@ func (c *ProfileCache) Refresh(ctx context.Context) error {
 	}
 	c.mu.RUnlock()
 
+	c.refreshMu.Lock()
+	defer c.refreshMu.Unlock()
+	c.mu.RLock()
+	if !c.loadedAt.IsZero() && time.Since(c.loadedAt) < 30*time.Second {
+		c.mu.RUnlock()
+		return nil
+	}
+	c.mu.RUnlock()
+
 	profiles := make([]model.ModelGatewayChannelCostProfile, 0)
 	err := model.DB.WithContext(ctx).
-		Where("upstream_model = ?", "*").
 		Find(&profiles).Error
 	if err != nil {
 		return err
@@ -589,6 +586,47 @@ func LookupCachedDefaultProfile(channelID int, upstreamModel string) *model.Mode
 
 func LookupDefaultProfile(channelID int, upstreamModel string) *model.ModelGatewayChannelCostProfile {
 	return LookupCachedDefaultProfile(channelID, upstreamModel)
+}
+
+func ResolveDefaultProfile(ctx context.Context, channelID int, upstreamModel string) *model.ModelGatewayChannelCostProfile {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_ = defaultCache.Refresh(ctx)
+	return defaultCache.Lookup(channelID, upstreamModel)
+}
+
+func RecalculateUsageSnapshot(ctx context.Context, usage UsageSnapshot) (model.ModelGatewayRequestCostSummary, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := defaultCache.Refresh(ctx); err != nil {
+		return model.ModelGatewayRequestCostSummary{}, err
+	}
+	return calculateAndUpsertUsageSnapshot(usage, defaultCache)
+}
+
+func calculateAndUpsertUsageSnapshot(usage UsageSnapshot, cache *ProfileCache) (model.ModelGatewayRequestCostSummary, error) {
+	if strings.TrimSpace(usage.RequestID) == "" {
+		return model.ModelGatewayRequestCostSummary{}, nil
+	}
+	var profile *model.ModelGatewayChannelCostProfile
+	if cache != nil {
+		profile = cache.Lookup(usage.ChannelID, usage.UpstreamModel)
+	}
+	if profile == nil {
+		profile = DefaultSystemRatioProfile(usage.ChannelID)
+	}
+	result := Calculate(usage, profile)
+	now := common.GetTimestamp()
+	summary := result.Summary(now)
+	if err := upsertCostSummary(summary); err != nil {
+		return summary, err
+	}
+	if err := model.UpsertChannelAccountUsageCost(summary); err != nil {
+		common.SysLog(fmt.Sprintf("channel account usage cost upsert failed: request_id=%s error=%v", summary.RequestId, err))
+	}
+	return summary, nil
 }
 
 func LookupCachedReferenceCostRatio(upstreamModel string, pricingMode string) (float64, bool) {

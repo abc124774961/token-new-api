@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -55,6 +57,17 @@ type textQuotaSummary struct {
 	AudioInputPrice          float64
 	ImageGenerationCallPrice float64
 	ToolCallSurchargeQuota   decimal.Decimal
+
+	FixedPriceMarginGuardApplied             bool
+	FixedPriceMarginGuardOriginalGroupRatio  float64
+	FixedPriceMarginGuardProtectedGroupRatio float64
+	FixedPriceMarginGuardCostUSD             float64
+	FixedPriceMarginGuardTargetMargin        float64
+	FixedPriceMarginGuardMinRevenueUSD       float64
+	FixedPriceMarginGuardProfileID           int
+	FixedPriceMarginGuardProfileModel        string
+	FixedPriceMarginGuardProfileSource       string
+	FixedPriceMarginGuardProfileAccuracy     string
 }
 
 func cacheWriteTokensTotal(summary textQuotaSummary) int {
@@ -155,6 +168,63 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 	return surcharge
 }
 
+func applyFixedPriceMarginGuard(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, summary *textQuotaSummary) {
+	if relayInfo == nil || summary == nil || !relayInfo.PriceData.UsePrice {
+		return
+	}
+	if relayInfo.ChannelId <= 0 || summary.ModelPrice <= 0 || summary.GroupRatio <= 0 {
+		return
+	}
+	upstreamModel := fixedPriceMarginGuardUpstreamModel(relayInfo, summary.ModelName)
+	if upstreamModel == "" {
+		return
+	}
+	requestContext := context.Background()
+	if ctx != nil && ctx.Request != nil {
+		requestContext = ctx.Request.Context()
+	}
+	profile := modelgatewaycost.ResolveDefaultProfile(requestContext, relayInfo.ChannelId, upstreamModel)
+	guard := modelgatewaycost.EvaluateFixedPriceMarginGuard(profile, upstreamModel, summary.ModelPrice, summary.GroupRatio)
+	if !guard.Applied {
+		return
+	}
+	summary.FixedPriceMarginGuardApplied = true
+	summary.FixedPriceMarginGuardOriginalGroupRatio = guard.OriginalGroupRatio
+	summary.FixedPriceMarginGuardProtectedGroupRatio = guard.ProtectedGroupRatio
+	summary.FixedPriceMarginGuardCostUSD = guard.CostUSD
+	summary.FixedPriceMarginGuardTargetMargin = guard.TargetMargin
+	summary.FixedPriceMarginGuardMinRevenueUSD = guard.MinRevenueUSD
+	summary.FixedPriceMarginGuardProfileID = guard.ProfileID
+	summary.FixedPriceMarginGuardProfileModel = guard.ProfileModel
+	summary.FixedPriceMarginGuardProfileSource = guard.ProfileSource
+	summary.FixedPriceMarginGuardProfileAccuracy = guard.ProfileAccuracy
+	summary.GroupRatio = guard.ProtectedGroupRatio
+	relayInfo.PriceData.GroupRatioInfo.GroupRatio = guard.ProtectedGroupRatio
+}
+
+func fixedPriceMarginGuardUpstreamModel(relayInfo *relaycommon.RelayInfo, fallback string) string {
+	if relayInfo == nil {
+		return strings.TrimSpace(fallback)
+	}
+	candidates := []string{
+		relayInfo.UpstreamModelName,
+		relayInfo.ResponseModelName,
+		relayInfo.OriginModelName,
+		relayInfo.LogModelName(),
+		fallback,
+	}
+	if relayInfo.ChannelMeta != nil {
+		candidates = append([]string{relayInfo.ChannelMeta.UpstreamModelName}, candidates...)
+	}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return ""
+}
+
 func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaSummary, tieredQuota int, tieredResult *billingexpr.TieredResult) int {
 	if summary.ToolCallSurchargeQuota.IsZero() {
 		return tieredQuota
@@ -224,6 +294,8 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		}
 		summary.PromptTokens -= summary.CacheCreationTokens
 	}
+
+	applyFixedPriceMarginGuard(ctx, relayInfo, &summary)
 
 	dPromptTokens := decimal.NewFromInt(int64(summary.PromptTokens))
 	dCacheTokens := decimal.NewFromInt(int64(summary.CacheTokens))
@@ -378,6 +450,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.ImageGenerationCallPrice > 0 {
 		extraContent = append(extraContent, fmt.Sprintf("Image Generation Call 花费 %s", decimal.NewFromFloat(summary.ImageGenerationCallPrice).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
 	}
+	if summary.FixedPriceMarginGuardApplied {
+		extraContent = append(extraContent, fmt.Sprintf("固定价毛利保护生效，倍率 %.6f -> %.6f", summary.FixedPriceMarginGuardOriginalGroupRatio, summary.FixedPriceMarginGuardProtectedGroupRatio))
+	}
 
 	if summary.TotalTokens == 0 {
 		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
@@ -469,6 +544,18 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other["image_generation_call_quality"] = quality
 		other["image_generation_call_size"] = size
 		other["billing_subtype"] = "image_generation"
+	}
+	if summary.FixedPriceMarginGuardApplied {
+		other["fixed_price_margin_guard"] = true
+		other["fixed_price_margin_guard_original_group_ratio"] = summary.FixedPriceMarginGuardOriginalGroupRatio
+		other["fixed_price_margin_guard_group_ratio"] = summary.FixedPriceMarginGuardProtectedGroupRatio
+		other["fixed_price_margin_guard_cost_usd"] = summary.FixedPriceMarginGuardCostUSD
+		other["fixed_price_margin_guard_target_margin"] = summary.FixedPriceMarginGuardTargetMargin
+		other["fixed_price_margin_guard_min_revenue_usd"] = summary.FixedPriceMarginGuardMinRevenueUSD
+		other["fixed_price_margin_guard_profile_id"] = summary.FixedPriceMarginGuardProfileID
+		other["fixed_price_margin_guard_profile_model"] = summary.FixedPriceMarginGuardProfileModel
+		other["fixed_price_margin_guard_profile_source"] = summary.FixedPriceMarginGuardProfileSource
+		other["fixed_price_margin_guard_profile_accuracy"] = summary.FixedPriceMarginGuardProfileAccuracy
 	}
 	if summary.CacheCreationTokens > 0 {
 		other["cache_creation_tokens"] = summary.CacheCreationTokens

@@ -22,7 +22,98 @@ const (
 	AccuracyPending = "pending"
 
 	claudeCacheCreation1hMultiplier = 6 / 3.75
+
+	FixedPriceMarginGuardDefaultTargetMargin = 0.40
 )
+
+type FixedPriceMarginGuardMetadata struct {
+	Enabled      *bool    `json:"fixed_price_margin_guard_enabled,omitempty"`
+	TargetMargin *float64 `json:"fixed_price_margin_guard_target_margin,omitempty"`
+}
+
+type FixedPriceMarginGuardResult struct {
+	Applied             bool
+	OriginalGroupRatio  float64
+	ProtectedGroupRatio float64
+	CostUSD             float64
+	TargetMargin        float64
+	MinRevenueUSD       float64
+	ProfileID           int
+	ProfileModel        string
+	ProfileSource       string
+	ProfileAccuracy     string
+}
+
+func EvaluateFixedPriceMarginGuard(profile *model.ModelGatewayChannelCostProfile, upstreamModel string, modelPrice float64, groupRatio float64) FixedPriceMarginGuardResult {
+	result := FixedPriceMarginGuardResult{}
+	if profile == nil || modelPrice <= 0 || groupRatio <= 0 {
+		return result
+	}
+	upstreamModel = strings.TrimSpace(upstreamModel)
+	profileModel := strings.TrimSpace(profile.UpstreamModel)
+	if upstreamModel == "" || profileModel == "" || profileModel == "*" || !strings.EqualFold(profileModel, upstreamModel) {
+		return result
+	}
+	if !strings.EqualFold(strings.TrimSpace(profile.PricingMode), "request") {
+		return result
+	}
+	source := strings.TrimSpace(profile.Source)
+	if source != SourceManual && source != SourceAutoSynced {
+		return result
+	}
+	costUSD := profile.RequestPrice
+	if costUSD <= 0 {
+		return result
+	}
+	enabled, targetMargin := FixedPriceMarginGuardConfig(*profile)
+	if !enabled {
+		return result
+	}
+	if targetMargin < 0 {
+		targetMargin = 0
+	}
+	if targetMargin >= 0.95 {
+		targetMargin = 0.95
+	}
+	minRevenueUSD := costUSD / (1 - targetMargin)
+	minGroupRatio := minRevenueUSD / modelPrice
+	if minGroupRatio <= groupRatio {
+		return result
+	}
+	result.Applied = true
+	result.OriginalGroupRatio = groupRatio
+	result.ProtectedGroupRatio = minGroupRatio
+	result.CostUSD = costUSD
+	result.TargetMargin = targetMargin
+	result.MinRevenueUSD = minRevenueUSD
+	result.ProfileID = profile.Id
+	result.ProfileModel = profile.UpstreamModel
+	result.ProfileSource = profile.Source
+	result.ProfileAccuracy = profile.Accuracy
+	return result
+}
+
+func FixedPriceMarginGuardConfig(profile model.ModelGatewayChannelCostProfile) (bool, float64) {
+	enabled := true
+	targetMargin := FixedPriceMarginGuardDefaultTargetMargin
+	if strings.TrimSpace(profile.MetadataJSON) == "" {
+		return enabled, targetMargin
+	}
+	var metadata FixedPriceMarginGuardMetadata
+	if err := common.UnmarshalJsonStr(profile.MetadataJSON, &metadata); err != nil {
+		return enabled, targetMargin
+	}
+	if metadata.Enabled != nil {
+		enabled = *metadata.Enabled
+	}
+	if metadata.TargetMargin != nil {
+		targetMargin = *metadata.TargetMargin
+	}
+	if targetMargin > 1 && targetMargin <= 95 {
+		targetMargin = targetMargin / 100
+	}
+	return enabled, targetMargin
+}
 
 type UsageNormalizer interface {
 	Normalize(log model.Log) UsageSnapshot

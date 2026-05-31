@@ -444,6 +444,18 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.Price
 	if priceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = priceData.GroupRatioInfo.GroupSpecialRatio
 	}
+	if guard := priceData.FixedPriceMarginGuard; guard != nil && guard.Applied {
+		other["fixed_price_margin_guard"] = true
+		other["fixed_price_margin_guard_original_group_ratio"] = guard.OriginalGroupRatio
+		other["fixed_price_margin_guard_group_ratio"] = guard.ProtectedGroupRatio
+		other["fixed_price_margin_guard_cost_usd"] = guard.CostUSD
+		other["fixed_price_margin_guard_target_margin"] = guard.TargetMargin
+		other["fixed_price_margin_guard_min_revenue_usd"] = guard.MinRevenueUSD
+		other["fixed_price_margin_guard_profile_id"] = guard.ProfileID
+		other["fixed_price_margin_guard_profile_model"] = guard.ProfileModel
+		other["fixed_price_margin_guard_profile_source"] = guard.ProfileSource
+		other["fixed_price_margin_guard_profile_accuracy"] = guard.ProfileAccuracy
+	}
 	appendRequestPath(nil, relayInfo, other)
 	return other
 }

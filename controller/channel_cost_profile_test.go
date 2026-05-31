@@ -40,6 +40,23 @@ type channelCostQuoteAPIResponse struct {
 	} `json:"data"`
 }
 
+type channelCostRecalculateAPIResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Data    struct {
+		ChannelID        int     `json:"channel_id"`
+		UpstreamModel    string  `json:"upstream_model"`
+		Scanned          int     `json:"scanned"`
+		Recalculated     int     `json:"recalculated"`
+		Skipped          int     `json:"skipped"`
+		BeforeCostUSD    float64 `json:"before_cost_usd"`
+		AfterCostUSD     float64 `json:"after_cost_usd"`
+		LastRequestID    string  `json:"last_request_id"`
+		LastCostSource   string  `json:"last_cost_source"`
+		LastCostAccuracy string  `json:"last_cost_accuracy"`
+	} `json:"data"`
+}
+
 type channelListAPIResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
@@ -101,7 +118,7 @@ func TestChannelUpstreamCostProfileCRUD(t *testing.T) {
 	router.POST("/api/channel/upstream_cost_quote", GetUnsavedChannelUpstreamCostQuote)
 
 	createBody, err := common.Marshal(model.ModelGatewayChannelCostProfile{
-		UpstreamModel:        " gpt-5.5 ",
+		UpstreamModel:        " ",
 		Currency:             "",
 		CostCoefficient:      0.5,
 		TokenMultiplier:      0.06,
@@ -143,7 +160,7 @@ func TestChannelUpstreamCostProfileCRUD(t *testing.T) {
 
 	updateBody, err := common.Marshal(model.ModelGatewayChannelCostProfile{
 		Id:                  createPayload.Data.Id,
-		UpstreamModel:       "gpt-5.5",
+		UpstreamModel:       " ",
 		Currency:            "usd",
 		CostCoefficient:     0.25,
 		InputCostMultiplier: 0.1,
@@ -217,6 +234,155 @@ func TestChannelUpstreamCostProfileCRUD(t *testing.T) {
 	var count int64
 	require.NoError(t, db.Model(&model.ModelGatewayChannelCostProfile{}).Count(&count).Error)
 	require.Equal(t, int64(0), count)
+}
+
+func TestChannelUpstreamCostProfileSupportsModelSpecificRequestCost(t *testing.T) {
+	db := setupChannelCostProfileControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{Id: 11, Name: "image", Key: "sk", Models: "gpt-image-2,gpt-5.5", Group: "default"}).Error)
+
+	router := gin.New()
+	router.GET("/api/channel/:id/upstream_cost_profiles", ListChannelUpstreamCostProfiles)
+	router.POST("/api/channel/:id/upstream_cost_profiles", SaveChannelUpstreamCostProfile)
+
+	defaultBody, err := common.Marshal(model.ModelGatewayChannelCostProfile{
+		UpstreamModel:      "*",
+		TokenMultiplier:    0.05,
+		CostCoefficient:    0.5,
+		RechargeMultiplier: 1,
+	})
+	require.NoError(t, err)
+	defaultRecorder := httptest.NewRecorder()
+	defaultReq := httptest.NewRequest(http.MethodPost, "/api/channel/11/upstream_cost_profiles", bytes.NewReader(defaultBody))
+	router.ServeHTTP(defaultRecorder, defaultReq)
+	defaultPayload := decodeChannelCostProfileResponse(t, defaultRecorder)
+	require.True(t, defaultPayload.Success, defaultRecorder.Body.String())
+	require.Equal(t, "*", defaultPayload.Data.UpstreamModel)
+	require.Equal(t, "system_ratio", defaultPayload.Data.Source)
+
+	modelBody, err := common.Marshal(model.ModelGatewayChannelCostProfile{
+		UpstreamModel: " gpt-image-2 ",
+		PricingMode:   "request",
+		RequestPrice:  0.02,
+		Source:        "manual",
+		Accuracy:      "precise",
+		MetadataJSON:  `{"fixed_price_margin_guard_target_margin":0.4}`,
+	})
+	require.NoError(t, err)
+	modelRecorder := httptest.NewRecorder()
+	modelReq := httptest.NewRequest(http.MethodPost, "/api/channel/11/upstream_cost_profiles", bytes.NewReader(modelBody))
+	router.ServeHTTP(modelRecorder, modelReq)
+	modelPayload := decodeChannelCostProfileResponse(t, modelRecorder)
+	require.True(t, modelPayload.Success, modelRecorder.Body.String())
+	require.Equal(t, "gpt-image-2", modelPayload.Data.UpstreamModel)
+	require.Equal(t, "request", modelPayload.Data.PricingMode)
+	require.Equal(t, "manual", modelPayload.Data.Source)
+	require.Equal(t, "precise", modelPayload.Data.Accuracy)
+	require.Equal(t, 0.02, modelPayload.Data.RequestPrice)
+
+	listRecorder := httptest.NewRecorder()
+	listReq := httptest.NewRequest(http.MethodGet, "/api/channel/11/upstream_cost_profiles", nil)
+	router.ServeHTTP(listRecorder, listReq)
+	listPayload := decodeChannelCostProfileListResponse(t, listRecorder)
+	require.True(t, listPayload.Success, listRecorder.Body.String())
+	require.Len(t, listPayload.Data, 2)
+	require.Equal(t, "*", listPayload.Data[0].UpstreamModel)
+	require.Equal(t, "gpt-image-2", listPayload.Data[1].UpstreamModel)
+}
+
+func TestRecalculateChannelUpstreamCostUsesModelSpecificProfile(t *testing.T) {
+	db := setupChannelCostProfileControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.ModelGatewayRequestCostSummary{}, &model.ChannelAccountUsageEvent{}))
+	oldLogDB := model.LOG_DB
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.LOG_DB = oldLogDB
+	})
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.Channel{Id: 12, Name: "image", Key: "sk", Models: "gpt-image-2", Group: "default"}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayChannelCostProfile{
+		ChannelID:          12,
+		UpstreamModel:      "*",
+		Currency:           "USD",
+		PricingMode:        "request",
+		Source:             "system_ratio",
+		Accuracy:           "estimated",
+		RequestPrice:       0.45,
+		CostCoefficient:    1,
+		TokenMultiplier:    1,
+		RechargeMultiplier: 1,
+		Version:            1,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayChannelCostProfile{
+		ChannelID:          12,
+		UpstreamModel:      "gpt-image-2",
+		Currency:           "USD",
+		PricingMode:        "request",
+		Source:             modelgatewaycost.SourceManual,
+		Accuracy:           modelgatewaycost.AccuracyPrecise,
+		RequestPrice:       0.02,
+		CostCoefficient:    1,
+		TokenMultiplier:    1,
+		RechargeMultiplier: 1,
+		Version:            1,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayRequestCostSummary{
+		RequestId:         "req-img",
+		ChannelID:         12,
+		UpstreamModel:     "gpt-image-2",
+		UpstreamCostTotal: 0.45054,
+		CostSource:        modelgatewaycost.SourceSystemRatio,
+		CostAccuracy:      "estimated",
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}).Error)
+	other, err := common.Marshal(map[string]interface{}{"upstream_model_name": "gpt-image-2"})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.Log{
+		Type:         model.LogTypeConsume,
+		ChannelId:    12,
+		RequestId:    "req-img",
+		ModelName:    "gpt-image-2",
+		CreatedAt:    now,
+		PromptTokens: 1,
+		Other:        string(other),
+	}).Error)
+
+	router := gin.New()
+	router.POST("/api/channel/:id/upstream_cost_recalculate", RecalculateChannelUpstreamCost)
+	body, err := common.Marshal(gin.H{
+		"upstream_model":  "gpt-image-2",
+		"start_timestamp": now - 60,
+		"end_timestamp":   now + 60,
+	})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/channel/12/upstream_cost_recalculate", bytes.NewReader(body))
+	router.ServeHTTP(recorder, req)
+	payload := decodeChannelCostRecalculateResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, 12, payload.Data.ChannelID)
+	require.Equal(t, "gpt-image-2", payload.Data.UpstreamModel)
+	require.Equal(t, 1, payload.Data.Scanned)
+	require.Equal(t, 1, payload.Data.Recalculated)
+	require.Equal(t, 0, payload.Data.Skipped)
+	require.InEpsilon(t, 0.45054, payload.Data.BeforeCostUSD, 0.000001)
+	require.InEpsilon(t, 0.02, payload.Data.AfterCostUSD, 0.000001)
+	require.Equal(t, "req-img", payload.Data.LastRequestID)
+	require.Equal(t, modelgatewaycost.SourceManual, payload.Data.LastCostSource)
+	require.Equal(t, modelgatewaycost.AccuracyPrecise, payload.Data.LastCostAccuracy)
+
+	var summary model.ModelGatewayRequestCostSummary
+	require.NoError(t, db.Where("request_id = ?", "req-img").First(&summary).Error)
+	require.InEpsilon(t, 0.02, summary.UpstreamCostTotal, 0.000001)
+	require.Equal(t, modelgatewaycost.SourceManual, summary.CostSource)
+
+	var usageEvent model.ChannelAccountUsageEvent
+	require.NoError(t, db.Where("request_id = ?", "req-img").First(&usageEvent).Error)
+	require.InEpsilon(t, 0.02, usageEvent.UpstreamCostTotal, 0.000001)
 }
 
 func TestChannelUpstreamCostProfileSystemRatioDerivation(t *testing.T) {
@@ -407,6 +573,13 @@ func decodeChannelCostProfileListResponse(t *testing.T, recorder *httptest.Respo
 func decodeChannelCostQuoteResponse(t *testing.T, recorder *httptest.ResponseRecorder) channelCostQuoteAPIResponse {
 	t.Helper()
 	var payload channelCostQuoteAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload), recorder.Body.String())
+	return payload
+}
+
+func decodeChannelCostRecalculateResponse(t *testing.T, recorder *httptest.ResponseRecorder) channelCostRecalculateAPIResponse {
+	t.Helper()
+	var payload channelCostRecalculateAPIResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload), recorder.Body.String())
 	return payload
 }

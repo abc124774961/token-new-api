@@ -874,7 +874,7 @@ function formatDynamicGroupRatio(ratio) {
   if (!Number.isFinite(numericRatio) || numericRatio <= 0) {
     return '--';
   }
-  return `${numericRatio.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}x`;
+  return `${numericRatio.toFixed(4)}x`;
 }
 
 function formatDynamicGroupPrice(pricePerM) {

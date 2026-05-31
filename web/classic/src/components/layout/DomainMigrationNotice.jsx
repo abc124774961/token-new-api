@@ -19,35 +19,29 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Modal } from '@douyinfe/semi-ui';
-import { ArrowRight, ExternalLink, ServerCog } from 'lucide-react';
+import { ArrowRight, Clock3, ExternalLink, ServerCog } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 const OLD_DOMAIN = 'https://api.codetoken.top';
 const NEW_DOMAIN = 'https://api.token-bits.com';
 const LEGACY_HOSTNAME = 'api.codetoken.top';
-const STORAGE_KEY = 'domain_migration_notice_api_codetoken_top_v1';
+const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
+
+const normalizeHostname = (hostname = '') =>
+  hostname.toLowerCase().replace(/\.$/, '');
+
+const isLocalHostname = (hostname) =>
+  LOCAL_HOSTNAMES.has(hostname) || hostname.endsWith('.local');
 
 const isLegacyDomain = () => {
   if (typeof window === 'undefined') {
     return false;
   }
-  return window.location.hostname === LEGACY_HOSTNAME;
-};
-
-const getDismissed = () => {
-  try {
-    return window.localStorage.getItem(STORAGE_KEY) === 'dismissed';
-  } catch (error) {
-    return false;
+  const hostname = normalizeHostname(window.location.hostname);
+  if (hostname === LEGACY_HOSTNAME) {
+    return true;
   }
-};
-
-const setDismissed = () => {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, 'dismissed');
-  } catch (error) {
-    // localStorage may be unavailable in strict privacy contexts.
-  }
+  return import.meta.env.DEV && isLocalHostname(hostname);
 };
 
 const getNewDomainTarget = () => {
@@ -61,22 +55,19 @@ const getNewDomainTarget = () => {
 const DomainMigrationNotice = () => {
   const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
-
   const shouldShow = useMemo(() => isLegacyDomain(), []);
 
   useEffect(() => {
-    if (shouldShow && !getDismissed()) {
+    if (shouldShow) {
       setVisible(true);
     }
   }, [shouldShow]);
 
   const handleClose = () => {
-    setDismissed();
     setVisible(false);
   };
 
   const handleGoNewDomain = () => {
-    setDismissed();
     window.location.assign(getNewDomainTarget());
   };
 
@@ -89,7 +80,7 @@ const DomainMigrationNotice = () => {
       className='ct-domain-migration-modal'
       visible={visible}
       onCancel={handleClose}
-      width={560}
+      width={720}
       centered
       maskClosable={false}
       title={
@@ -117,7 +108,7 @@ const DomainMigrationNotice = () => {
       }
     >
       <div className='ct-domain-migration-body'>
-        <p>
+        <p className='ct-domain-migration-lead'>
           {t(
             '当前访问的是旧域名 {{oldDomain}}。服务已迁移至 {{newDomain}}，后续请以新域名为准。',
             {
@@ -126,6 +117,12 @@ const DomainMigrationNotice = () => {
             },
           )}
         </p>
+        <div className='ct-domain-migration-deadline'>
+          <span className='ct-domain-migration-deadline-icon'>
+            <Clock3 size={18} />
+          </span>
+          <p>{t('旧域名将于北京时间 2026 年 6 月 2 日 00:00 停止服务，请尽快完成迁移。')}</p>
+        </div>
         <p>
           {t(
             '请尽快更新浏览器书签、客户端 Base URL 和相关集成配置，避免后续访问或调用受影响。',

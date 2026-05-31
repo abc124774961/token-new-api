@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -271,8 +273,10 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 
 	var quota int
 	freeModel := false
+	var fixedPriceMarginGuard *types.FixedPriceMarginGuardInfo
 
 	if usePrice {
+		fixedPriceMarginGuard = applyPerCallFixedPriceMarginGuard(c, info, modelPrice, &groupRatioInfo)
 		quota = int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 		if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
 			if groupRatioInfo.GroupRatio == 0 || modelPrice == 0 {
@@ -300,7 +304,62 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 		Quota:          quota,
 		GroupRatioInfo: groupRatioInfo,
 	}
+	priceData.FixedPriceMarginGuard = fixedPriceMarginGuard
 	return priceData, nil
+}
+
+func applyPerCallFixedPriceMarginGuard(c *gin.Context, info *relaycommon.RelayInfo, modelPrice float64, groupRatioInfo *types.GroupRatioInfo) *types.FixedPriceMarginGuardInfo {
+	if info == nil || groupRatioInfo == nil || info.ChannelId <= 0 || modelPrice <= 0 || groupRatioInfo.GroupRatio <= 0 {
+		return nil
+	}
+	upstreamModel := fixedPriceMarginGuardUpstreamModel(info)
+	if upstreamModel == "" {
+		return nil
+	}
+	requestContext := context.Background()
+	if c != nil && c.Request != nil {
+		requestContext = c.Request.Context()
+	}
+	profile := modelgatewaycost.ResolveDefaultProfile(requestContext, info.ChannelId, upstreamModel)
+	guard := modelgatewaycost.EvaluateFixedPriceMarginGuard(profile, upstreamModel, modelPrice, groupRatioInfo.GroupRatio)
+	if !guard.Applied {
+		return nil
+	}
+	groupRatioInfo.GroupRatio = guard.ProtectedGroupRatio
+	return &types.FixedPriceMarginGuardInfo{
+		Applied:             true,
+		OriginalGroupRatio:  guard.OriginalGroupRatio,
+		ProtectedGroupRatio: guard.ProtectedGroupRatio,
+		CostUSD:             guard.CostUSD,
+		TargetMargin:        guard.TargetMargin,
+		MinRevenueUSD:       guard.MinRevenueUSD,
+		ProfileID:           guard.ProfileID,
+		ProfileModel:        guard.ProfileModel,
+		ProfileSource:       guard.ProfileSource,
+		ProfileAccuracy:     guard.ProfileAccuracy,
+	}
+}
+
+func fixedPriceMarginGuardUpstreamModel(info *relaycommon.RelayInfo) string {
+	if info == nil {
+		return ""
+	}
+	candidates := []string{
+		info.UpstreamModelName,
+		info.ResponseModelName,
+		info.OriginModelName,
+		info.LogModelName(),
+	}
+	if info.ChannelMeta != nil {
+		candidates = append([]string{info.ChannelMeta.UpstreamModelName}, candidates...)
+	}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func HasModelBillingConfig(modelName string) bool {

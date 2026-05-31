@@ -8,8 +8,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -212,9 +214,9 @@ func TestModelPriceHelperUsesDynamicBillingForPreselectedPlan(t *testing.T) {
 	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "codex-plus")
 	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "codex-plus")
 	modelgatewayintegration.SetSelectedPlan(ctx, &core.DispatchPlan{
-		RequestedGroup:    "codex-plus",
-		SelectedGroup:     "codex-plus",
-		BillingRatioMode:  scheduler_setting.BillingRatioModeDynamic,
+		RequestedGroup:   "codex-plus",
+		SelectedGroup:    "codex-plus",
+		BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
 	})
 
 	info := &relaycommon.RelayInfo{
@@ -287,4 +289,53 @@ func TestApplySelectedGroupRatioUpdatesPreConsumeForDynamicRatio(t *testing.T) {
 	require.NotNil(t, info.DynamicBilling)
 	require.True(t, info.DynamicBilling.Applied)
 	require.Equal(t, 400, info.PriceData.QuotaToPreConsume)
+}
+
+func TestModelPriceHelperPerCallAppliesFixedPriceMarginGuard(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldDB := model.DB
+	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
+	oldModelPrice := ratio_setting.ModelPrice2JSONString()
+	model.DB = nil
+	modelgatewaycost.RemoveCachedDefaultProfilesForChannel(88)
+	modelgatewaycost.StoreCachedDefaultProfile(model.ModelGatewayChannelCostProfile{
+		Id:            808,
+		ChannelID:     88,
+		UpstreamModel: "fixed-asset",
+		PricingMode:   "request",
+		Source:        modelgatewaycost.SourceManual,
+		Accuracy:      modelgatewaycost.AccuracyPrecise,
+		RequestPrice:  0.02,
+		MetadataJSON:  `{"fixed_price_margin_guard_target_margin":40}`,
+	})
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":0.01}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"fixed-asset":0.9}`))
+	t.Cleanup(func() {
+		model.DB = oldDB
+		modelgatewaycost.RemoveCachedDefaultProfilesForChannel(88)
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroupRatio))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(oldModelPrice))
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mj/submit/imagine", nil)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "fixed-asset",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:         88,
+			UpstreamModelName: "fixed-asset",
+		},
+	}
+
+	priceData, err := ModelPriceHelperPerCall(ctx, info)
+	require.NoError(t, err)
+	expectedRatio := 0.02 / (1 - modelgatewaycost.FixedPriceMarginGuardDefaultTargetMargin) / 0.9
+	require.InEpsilon(t, expectedRatio, priceData.GroupRatioInfo.GroupRatio, 0.000001)
+	require.Equal(t, int(0.9*common.QuotaPerUnit*expectedRatio), priceData.Quota)
+	require.NotNil(t, priceData.FixedPriceMarginGuard)
+	require.True(t, priceData.FixedPriceMarginGuard.Applied)
+	require.Equal(t, 808, priceData.FixedPriceMarginGuard.ProfileID)
 }

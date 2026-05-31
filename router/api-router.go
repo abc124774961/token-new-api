@@ -240,6 +240,7 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.GET("/:id/upstream_cost_profiles", controller.ListChannelUpstreamCostProfiles)
 			channelRoute.POST("/:id/upstream_cost_profiles", controller.SaveChannelUpstreamCostProfile)
 			channelRoute.PUT("/:id/upstream_cost_profiles", controller.SaveChannelUpstreamCostProfile)
+			channelRoute.POST("/:id/upstream_cost_recalculate", controller.RecalculateChannelUpstreamCost)
 			channelRoute.DELETE("/:id/upstream_cost_profiles/:profile_id", controller.DeleteChannelUpstreamCostProfile)
 			channelRoute.GET("/:id/accounts", controller.ListChannelAccounts)
 			channelRoute.POST("/:id/accounts", controller.UpdateChannelAccountsStatus)

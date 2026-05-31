@@ -52,6 +52,51 @@ func TestApplyUsesDynamicRatioWhenBaselineReady(t *testing.T) {
 	require.Empty(t, snapshot.FallbackReason)
 }
 
+func TestApplyRoundsDynamicRatioToFourDecimals(t *testing.T) {
+	cache := NewRatioCache()
+	now := time.Now().Unix()
+	cache.Store(map[string]RatioBaseline{
+		cacheKey("gpt-test", "codex-plus"): {
+			RequestedModel: "gpt-test",
+			Group:          "codex-plus",
+			Ratio:          0.123456,
+			TargetRatio:    0.123456,
+			EffectiveRatio: 0.234567,
+			SampleCount:    5,
+			CalculatedAt:   now,
+			WindowStart:    now - 60,
+			WindowEnd:      now,
+			ProfitRate:     0.2,
+		},
+	})
+
+	cached, ok := cache.Lookup("gpt-test", "codex-plus")
+	require.True(t, ok)
+	require.Equal(t, 0.1235, cached.Ratio)
+	require.Equal(t, 0.1235, cached.TargetRatio)
+	require.Equal(t, 0.2346, cached.EffectiveRatio)
+
+	snapshot := Apply(ApplyInput{
+		RequestedModel:   "gpt-test",
+		Group:            "codex-plus",
+		StaticGroupRatio: 0.1,
+		Mode:             scheduler_setting.BillingRatioModeDynamic,
+		Now:              now,
+		Provider:         cache,
+		Setting: scheduler_setting.SchedulerSetting{
+			DynamicBillingEnabled:       true,
+			DynamicBillingProfitRate:    0.2,
+			DynamicBillingMinSamples:    2,
+			DynamicBillingMaxAgeSeconds: 300,
+		},
+	})
+
+	require.True(t, snapshot.Applied)
+	require.Equal(t, 0.1235, snapshot.DynamicRatio)
+	require.Equal(t, 0.1235, snapshot.TargetRatio)
+	require.Equal(t, 0.2346, snapshot.EffectiveRatio)
+}
+
 func TestApplyUsesGroupScopedBaselineAcrossModels(t *testing.T) {
 	cache := NewRatioCache()
 	now := time.Now().Unix()
@@ -456,7 +501,7 @@ func TestBuildRatioBaselinesUsesRequestCostUsageWeightedMultiplier(t *testing.T)
 	expectedCostMultiplier := (0.03*(0.003/0.03*common.QuotaPerUnit) + 0.1*(0.00001/0.1*common.QuotaPerUnit)) / expectedBaseQuota
 	require.InEpsilon(t, expectedBaseQuota, baseline.BaseQuotaAtRatio1, 0.000001)
 	require.InEpsilon(t, expectedCostMultiplier, baseline.CostMultiplier, 0.000001)
-	require.InEpsilon(t, expectedCostMultiplier/0.99, baseline.Ratio, 0.000001)
+	require.Equal(t, RoundDynamicRatio(expectedCostMultiplier/0.99), baseline.Ratio)
 	require.Greater(t, math.Abs(baseline.Ratio-(0.03+0.1)/2/0.99), 0.01)
 }
 

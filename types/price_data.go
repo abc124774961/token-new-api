@@ -43,24 +43,38 @@ type DynamicBillingSnapshot struct {
 	UpstreamCostUSD      float64 `json:"upstream_cost_usd,omitempty"`
 }
 
+type FixedPriceMarginGuardInfo struct {
+	Applied             bool    `json:"applied"`
+	OriginalGroupRatio  float64 `json:"original_group_ratio,omitempty"`
+	ProtectedGroupRatio float64 `json:"protected_group_ratio,omitempty"`
+	CostUSD             float64 `json:"cost_usd,omitempty"`
+	TargetMargin        float64 `json:"target_margin,omitempty"`
+	MinRevenueUSD       float64 `json:"min_revenue_usd,omitempty"`
+	ProfileID           int     `json:"profile_id,omitempty"`
+	ProfileModel        string  `json:"profile_model,omitempty"`
+	ProfileSource       string  `json:"profile_source,omitempty"`
+	ProfileAccuracy     string  `json:"profile_accuracy,omitempty"`
+}
+
 type PriceData struct {
-	FreeModel            bool
-	ModelPrice           float64
-	ModelRatio           float64
-	CompletionRatio      float64
-	CacheRatio           float64
-	CacheCreationRatio   float64
-	CacheCreation5mRatio float64
-	CacheCreation1hRatio float64
-	ImageRatio           float64
-	AudioRatio           float64
-	AudioCompletionRatio float64
-	OtherRatios          map[string]float64
-	UsePrice             bool
-	Quota                int // 按次计费的最终额度（MJ / Task）
-	QuotaToPreConsume    int // 按量计费的预消耗额度
-	QuotaBeforeGroup     float64
-	GroupRatioInfo       GroupRatioInfo
+	FreeModel             bool
+	ModelPrice            float64
+	ModelRatio            float64
+	CompletionRatio       float64
+	CacheRatio            float64
+	CacheCreationRatio    float64
+	CacheCreation5mRatio  float64
+	CacheCreation1hRatio  float64
+	ImageRatio            float64
+	AudioRatio            float64
+	AudioCompletionRatio  float64
+	OtherRatios           map[string]float64
+	UsePrice              bool
+	Quota                 int // 按次计费的最终额度（MJ / Task）
+	QuotaToPreConsume     int // 按量计费的预消耗额度
+	QuotaBeforeGroup      float64
+	GroupRatioInfo        GroupRatioInfo
+	FixedPriceMarginGuard *FixedPriceMarginGuardInfo
 }
 
 func (p *PriceData) AddOtherRatio(key string, ratio float64) {

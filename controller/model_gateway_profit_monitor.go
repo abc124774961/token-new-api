@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -71,6 +72,7 @@ type ModelGatewayProfitMonitorResponse struct {
 	Config         ModelGatewayProfitMonitorConfig      `json:"config"`
 	Summary        ModelGatewayProfitMonitorSummary     `json:"summary"`
 	Breakdown      []ModelGatewayProfitMonitorBreakdown `json:"breakdown"`
+	Anomalies      []ModelGatewayProfitAnomaly          `json:"anomalies"`
 	Resources      ModelGatewayProfitResourceSummary    `json:"resources"`
 	Recommendation ModelGatewayProfitRecommendation     `json:"recommendation"`
 }
@@ -185,6 +187,21 @@ type ModelGatewayProfitMonitorBreakdown struct {
 	GrossMargin               float64 `json:"gross_margin"`
 }
 
+type ModelGatewayProfitAnomaly struct {
+	ChannelID         int     `json:"channel_id"`
+	ChannelName       string  `json:"channel_name"`
+	RequestedModel    string  `json:"requested_model"`
+	Requests          int64   `json:"requests"`
+	TotalTokens       int64   `json:"total_tokens"`
+	BillingQuota      int64   `json:"billing_quota"`
+	RevenueUSD        float64 `json:"revenue_usd"`
+	UpstreamCostUSD   float64 `json:"upstream_cost_usd"`
+	ProfitUSD         float64 `json:"profit_usd"`
+	GrossMargin       float64 `json:"gross_margin"`
+	ProfitDragUSD     float64 `json:"profit_drag_usd"`
+	TargetGrossMargin float64 `json:"target_gross_margin"`
+}
+
 type ModelGatewayProfitResourceSummary struct {
 	EnabledCount     int                                    `json:"enabled_count"`
 	AmortizedCostUSD float64                                `json:"amortized_cost_usd"`
@@ -231,6 +248,16 @@ type modelGatewayProfitBreakdownRow struct {
 	DimensionName   string  `gorm:"column:dimension_name"`
 	Requests        int64   `gorm:"column:requests"`
 	SuccessRequests int64   `gorm:"column:success_requests"`
+	TotalTokens     int64   `gorm:"column:total_tokens"`
+	BillingQuota    int64   `gorm:"column:billing_quota"`
+	UpstreamCostUSD float64 `gorm:"column:upstream_cost_usd"`
+}
+
+type modelGatewayProfitAnomalyRow struct {
+	ChannelID       int     `gorm:"column:channel_id"`
+	ChannelName     string  `gorm:"column:channel_name"`
+	RequestedModel  string  `gorm:"column:requested_model"`
+	Requests        int64   `gorm:"column:requests"`
 	TotalTokens     int64   `gorm:"column:total_tokens"`
 	BillingQuota    int64   `gorm:"column:billing_quota"`
 	UpstreamCostUSD float64 `gorm:"column:upstream_cost_usd"`
@@ -542,6 +569,10 @@ func buildModelGatewayProfitMonitorResponse(window string, startTimestamp int64,
 		return ModelGatewayProfitMonitorResponse{}, err
 	}
 	allocateModelGatewayProfitMonitorBreakdownCosts(breakdown, summary, resources, config, dimension, hasTrafficBreakdown)
+	anomalies, err := queryModelGatewayProfitAnomalies(startTimestamp, endTimestamp, 0.40)
+	if err != nil {
+		return ModelGatewayProfitMonitorResponse{}, err
+	}
 
 	recommendation := buildModelGatewayProfitRecommendation(summary, config)
 	enrichModelGatewayProfitRecommendationWithDynamicBilling(&recommendation, config)
@@ -554,6 +585,7 @@ func buildModelGatewayProfitMonitorResponse(window string, startTimestamp int64,
 		Config:         config,
 		Summary:        summary,
 		Breakdown:      breakdown,
+		Anomalies:      anomalies,
 		Resources:      resources,
 		Recommendation: recommendation,
 	}, nil
@@ -908,6 +940,68 @@ func queryModelGatewayProfitMonitorBreakdown(startTimestamp int64, endTimestamp 
 		}
 		item.SuccessRate = ratioOrZero(float64(item.SuccessRequests), float64(item.Requests))
 		out = append(out, item)
+	}
+	return out, nil
+}
+
+func queryModelGatewayProfitAnomalies(startTimestamp int64, endTimestamp int64, targetGrossMargin float64) ([]ModelGatewayProfitAnomaly, error) {
+	if model.DB == nil {
+		return nil, nil
+	}
+	targetGrossMargin = modelgatewaydynamicbilling.SanitizeTargetGrossMargin(targetGrossMargin)
+	rows := make([]modelGatewayProfitAnomalyRow, 0)
+	query := modelGatewayProfitUsageBaseQuery(startTimestamp, endTimestamp)
+	err := query.Select(
+		"channel_id, MAX(channel_name) AS channel_name, requested_model, COUNT(*) AS requests, " +
+			"COALESCE(SUM(total_tokens), 0) AS total_tokens, COALESCE(SUM(quota), 0) AS billing_quota, " +
+			"COALESCE(SUM(upstream_cost_total), 0) AS upstream_cost_usd",
+	).
+		Group("channel_id, requested_model").
+		Order("upstream_cost_usd DESC").
+		Limit(50).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ModelGatewayProfitAnomaly, 0, len(rows))
+	for _, row := range rows {
+		item := ModelGatewayProfitAnomaly{
+			ChannelID:         row.ChannelID,
+			ChannelName:       strings.TrimSpace(row.ChannelName),
+			RequestedModel:    strings.TrimSpace(row.RequestedModel),
+			Requests:          row.Requests,
+			TotalTokens:       row.TotalTokens,
+			BillingQuota:      row.BillingQuota,
+			UpstreamCostUSD:   row.UpstreamCostUSD,
+			TargetGrossMargin: targetGrossMargin,
+		}
+		if item.ChannelName == "" && item.ChannelID > 0 {
+			item.ChannelName = "#" + strconv.Itoa(item.ChannelID)
+		}
+		if item.RequestedModel == "" {
+			item.RequestedModel = "未归类"
+		}
+		if common.QuotaPerUnit > 0 {
+			item.RevenueUSD = float64(item.BillingQuota) / common.QuotaPerUnit
+		}
+		item.ProfitUSD = item.RevenueUSD - item.UpstreamCostUSD
+		item.GrossMargin = ratioOrZero(item.ProfitUSD, item.RevenueUSD)
+		requiredRevenue := modelgatewaydynamicbilling.RequiredRevenueForGrossMargin(item.UpstreamCostUSD, targetGrossMargin)
+		if requiredRevenue > item.RevenueUSD {
+			item.ProfitDragUSD = requiredRevenue - item.RevenueUSD
+		}
+		if item.ProfitUSD < 0 || item.ProfitDragUSD > 0 {
+			out = append(out, item)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].ProfitDragUSD != out[j].ProfitDragUSD {
+			return out[i].ProfitDragUSD > out[j].ProfitDragUSD
+		}
+		return out[i].UpstreamCostUSD > out[j].UpstreamCostUSD
+	})
+	if len(out) > 20 {
+		out = out[:20]
 	}
 	return out, nil
 }

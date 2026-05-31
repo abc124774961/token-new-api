@@ -5,13 +5,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,6 +70,57 @@ func TestCalculateTextQuotaSummaryUnifiedForClaudeSemantic(t *testing.T) {
 	require.Equal(t, messageSummary.CacheCreationTokens1h, chatSummary.CacheCreationTokens1h)
 	require.True(t, chatSummary.IsClaudeUsageSemantic)
 	require.Equal(t, 1488, chatSummary.Quota)
+}
+
+func TestCalculateTextQuotaSummaryAppliesFixedPriceMarginGuard(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	oldDB := model.DB
+	model.DB = nil
+	modelgatewaycost.RemoveCachedDefaultProfilesForChannel(77)
+	modelgatewaycost.StoreCachedDefaultProfile(model.ModelGatewayChannelCostProfile{
+		Id:            901,
+		ChannelID:     77,
+		UpstreamModel: "gpt-image-2",
+		PricingMode:   "request",
+		Source:        modelgatewaycost.SourceManual,
+		Accuracy:      modelgatewaycost.AccuracyPrecise,
+		RequestPrice:  0.02,
+		MetadataJSON:  `{"fixed_price_margin_guard_target_margin":0.4}`,
+	})
+	t.Cleanup(func() {
+		model.DB = oldDB
+		modelgatewaycost.RemoveCachedDefaultProfilesForChannel(77)
+	})
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-image-2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:         77,
+			UpstreamModelName: "gpt-image-2",
+		},
+		PriceData: types.PriceData{
+			ModelPrice: 0.9,
+			UsePrice:   true,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 0.01,
+			},
+		},
+		StartTime: time.Now(),
+	}
+	summary := calculateTextQuotaSummary(ctx, relayInfo, &dto.Usage{
+		PromptTokens: 1,
+		TotalTokens:  1,
+	})
+
+	expectedRatio := 0.02 / (1 - modelgatewaycost.FixedPriceMarginGuardDefaultTargetMargin) / 0.9
+	require.True(t, summary.FixedPriceMarginGuardApplied)
+	require.InEpsilon(t, expectedRatio, summary.GroupRatio, 0.000001)
+	require.InEpsilon(t, expectedRatio, relayInfo.PriceData.GroupRatioInfo.GroupRatio, 0.000001)
+	require.Equal(t, 901, summary.FixedPriceMarginGuardProfileID)
+	require.Equal(t, int(decimal.NewFromFloat(0.9).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).Mul(decimal.NewFromFloat(expectedRatio)).Round(0).IntPart()), summary.Quota)
 }
 
 func TestCalculateTextQuotaSummaryUsesRequestedModelForLog(t *testing.T) {
