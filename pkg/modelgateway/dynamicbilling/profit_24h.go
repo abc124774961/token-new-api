@@ -20,6 +20,8 @@ type profit24hMonitorConfig struct {
 	TrafficEstimationEnabled      bool    `json:"traffic_estimation_enabled"`
 	TrafficEstimatedBytesPerToken int     `json:"traffic_estimated_bytes_per_token"`
 	ResourceCostEnabled           bool    `json:"resource_cost_enabled"`
+	DynamicRatioMinLimit          float64 `json:"dynamic_ratio_min_limit"`
+	DynamicRatioMaxLimit          float64 `json:"dynamic_ratio_max_limit"`
 }
 
 type profit24hGroupAccumulator struct {
@@ -108,7 +110,7 @@ func buildProfit24hRatioBaselines(db *gorm.DB, logDB *gorm.DB, setting scheduler
 			continue
 		}
 		groupKey := groupCacheKey(accumulator.Group)
-		finalizeProfit24hAccumulator(accumulator, setting, previous[groupKey])
+		finalizeProfit24hAccumulator(accumulator, setting, previous[groupKey], config)
 		ratio := accumulator.EffectiveRatio
 		if ratio <= 0 {
 			ratio = ratio_setting.GetGroupRatio(accumulator.Group)
@@ -309,7 +311,7 @@ func applyProfit24hOperatingCosts(db *gorm.DB, accumulators map[string]*profit24
 	}
 }
 
-func finalizeProfit24hAccumulator(accumulator *profit24hGroupAccumulator, setting scheduler_setting.SchedulerSetting, previous RatioBaseline) {
+func finalizeProfit24hAccumulator(accumulator *profit24hGroupAccumulator, setting scheduler_setting.SchedulerSetting, previous RatioBaseline, config profit24hMonitorConfig) {
 	if accumulator == nil {
 		return
 	}
@@ -319,7 +321,7 @@ func finalizeProfit24hAccumulator(accumulator *profit24hGroupAccumulator, settin
 	if accumulator.SuccessRequestCount <= 0 && accumulator.SampleCount > 0 {
 		accumulator.SuccessRequestCount = int64(accumulator.SampleCount)
 	}
-	profitRate := sanitizeProfitRate(setting.DynamicBillingProfitRate)
+	profitRate := SanitizeTargetGrossMargin(setting.DynamicBillingProfitRate)
 	minRatio := setting.DynamicBillingMinRatio
 	if minRatio <= 0 {
 		minRatio = scheduler_setting.DefaultSetting().DynamicBillingMinRatio
@@ -327,6 +329,15 @@ func finalizeProfit24hAccumulator(accumulator *profit24hGroupAccumulator, settin
 	maxRatio := setting.DynamicBillingMaxRatio
 	if maxRatio <= 0 {
 		maxRatio = scheduler_setting.DefaultSetting().DynamicBillingMaxRatio
+	}
+	if maxRatio < minRatio {
+		maxRatio = minRatio
+	}
+	if config.DynamicRatioMinLimit > 0 && config.DynamicRatioMinLimit > minRatio {
+		minRatio = config.DynamicRatioMinLimit
+	}
+	if config.DynamicRatioMaxLimit > 0 && config.DynamicRatioMaxLimit < maxRatio {
+		maxRatio = config.DynamicRatioMaxLimit
 	}
 	if maxRatio < minRatio {
 		maxRatio = minRatio
@@ -340,13 +351,12 @@ func finalizeProfit24hAccumulator(accumulator *profit24hGroupAccumulator, settin
 		accumulator.FallbackReason = FallbackNoCostData
 	case accumulator.BaseQuotaAtRatio1 <= 0:
 		accumulator.FallbackReason = FallbackMissingBaseQuota
-	case accumulator.CostMultiplier > 0:
-		accumulator.TargetRatio = accumulator.CostMultiplier * (1 + profitRate)
-		accumulator.RequiredRevenueUSD = accumulator.TargetRatio * accumulator.BaseQuotaAtRatio1 / common.QuotaPerUnit
-		accumulator.EffectiveRatio = clampFloat(accumulator.TargetRatio, minRatio, maxRatio)
-		accumulator.Clamped = math.Abs(accumulator.EffectiveRatio-accumulator.TargetRatio) > 0.0000001
 	default:
-		accumulator.RequiredRevenueUSD = accumulator.UpstreamCostUSD * (1 + profitRate)
+		costUSD := accumulator.OperatingCostUSD
+		if costUSD <= 0 {
+			costUSD = accumulator.UpstreamCostUSD
+		}
+		accumulator.RequiredRevenueUSD = RequiredRevenueForGrossMargin(costUSD, profitRate)
 		accumulator.TargetRatio = accumulator.RequiredRevenueUSD * common.QuotaPerUnit / accumulator.BaseQuotaAtRatio1
 		accumulator.EffectiveRatio = clampFloat(accumulator.TargetRatio, minRatio, maxRatio)
 		accumulator.Clamped = math.Abs(accumulator.EffectiveRatio-accumulator.TargetRatio) > 0.0000001
@@ -508,17 +518,26 @@ func loadProfit24hMonitorConfig() profit24hMonitorConfig {
 	if config.TrafficEstimatedBytesPerToken < 0 {
 		config.TrafficEstimatedBytesPerToken = 0
 	}
+	if config.DynamicRatioMinLimit < 0 {
+		config.DynamicRatioMinLimit = 0
+	}
+	if config.DynamicRatioMaxLimit < 0 {
+		config.DynamicRatioMaxLimit = 0
+	}
+	if config.DynamicRatioMinLimit > 100 {
+		config.DynamicRatioMinLimit = 100
+	}
+	if config.DynamicRatioMaxLimit > 100 {
+		config.DynamicRatioMaxLimit = 100
+	}
+	if config.DynamicRatioMaxLimit > 0 && config.DynamicRatioMinLimit > config.DynamicRatioMaxLimit {
+		config.DynamicRatioMaxLimit = config.DynamicRatioMinLimit
+	}
 	return config
 }
 
 func sanitizeProfitRate(value float64) float64 {
-	if value < 0 {
-		return 0
-	}
-	if value >= 0.95 {
-		return 0.95
-	}
-	return value
+	return SanitizeTargetGrossMargin(value)
 }
 
 func clampFloat(value float64, minValue float64, maxValue float64) float64 {

@@ -22,6 +22,7 @@ import { Layout } from '@douyinfe/semi-ui';
 import SiderBar from './SiderBar';
 import App from '../../App';
 import FooterBar from './Footer';
+import DomainMigrationNotice from './DomainMigrationNotice';
 import { ToastContainer } from 'react-toastify';
 import ErrorBoundary from '../common/ErrorBoundary';
 import React, { useContext, useEffect, useState } from 'react';
@@ -286,6 +287,7 @@ const PageLayout = () => {
         </Layout>
       </Layout>
       <ToastContainer />
+      <DomainMigrationNotice />
     </Layout>
   );
 };

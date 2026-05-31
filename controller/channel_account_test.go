@@ -254,6 +254,106 @@ func TestListChannelAccountsIncludesSchedulingExplanation(t *testing.T) {
 	require.Contains(t, second.Scheduling.BlockingReasons, "account_disabled")
 }
 
+func TestListChannelAccountsSummaryCountsAvailabilityStates(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     40,
+		Name:   "availability summary accounts",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-ok\nsk-disabled\nsk-recovery\nsk-circuit",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.5",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:             true,
+			MultiKeySize:           4,
+			MultiKeyStatusList:     map[int]int{1: common.ChannelStatusAutoDisabled},
+			MultiKeyDisabledReason: map[int]string{1: "manual disabled"},
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5.5",
+		ChannelId: 40,
+		Enabled:   true,
+	}).Error)
+	accounts := modelgatewayaccount.NewRegistry().AccountsForChannel(&channel)
+	require.Len(t, accounts, 4)
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	baseKey := modelgatewaycore.RuntimeKey{
+		RequestedModel: "gpt-5.5",
+		UpstreamModel:  "gpt-5.5",
+		Group:          "default",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	keyOK := modelgatewayaccount.RuntimeKeyForChannelAccount(baseKey, accounts[0])
+	keyRecovery := modelgatewayaccount.RuntimeKeyForChannelAccount(baseKey, accounts[2])
+	keyCircuit := modelgatewayaccount.RuntimeKeyForChannelAccount(baseKey, accounts[3])
+	runtimeDeps.SnapshotStore.Put(modelgatewaycore.RuntimeSnapshot{
+		Key:                       keyOK,
+		SuccessRate:               0.99,
+		EffectiveConcurrencyLimit: 10,
+		SampleCount:               12,
+	})
+	runtimeDeps.SnapshotStore.Put(modelgatewaycore.RuntimeSnapshot{
+		Key:                       keyRecovery,
+		SuccessRate:               0.98,
+		FailureAvoidance:          true,
+		ProbeRecoveryPending:      true,
+		ProbeTriggerReason:        "timeout_recovery",
+		ProbeRecoverySuccessCount: 1,
+		ProbeRecoveryRequired:     2,
+		EffectiveConcurrencyLimit: 10,
+		SampleCount:               10,
+	})
+	runtimeDeps.SnapshotStore.Put(modelgatewaycore.RuntimeSnapshot{
+		Key:                       keyCircuit,
+		SuccessRate:               0.97,
+		CircuitOpen:               true,
+		CircuitState:              modelgatewaycore.CircuitStateOpen,
+		EffectiveConcurrencyLimit: 10,
+		SampleCount:               9,
+	})
+
+	router := gin.New()
+	router.GET("/api/channel/:id/accounts", ListChannelAccounts)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/channel/40/accounts?page=1&page_size=20", nil)
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Len(t, payload.Data.Items, 4)
+	require.Equal(t, int64(3), payload.Data.Summary.Scored)
+	require.Equal(t, int64(1), payload.Data.Summary.SchedulableAccounts)
+	require.Equal(t, int64(3), payload.Data.Summary.BlockedAccounts)
+	require.Equal(t, int64(1), payload.Data.Summary.RecoveryAccounts)
+	require.Equal(t, int64(1), payload.Data.Summary.CircuitOpenAccounts)
+
+	itemsByIndex := map[int]ChannelAccountItem{}
+	for _, item := range payload.Data.Items {
+		itemsByIndex[item.CredentialIndex] = item
+	}
+	require.True(t, itemsByIndex[0].Scheduling.Schedulable)
+	require.False(t, itemsByIndex[2].Scheduling.Schedulable)
+	require.Contains(t, itemsByIndex[2].Scheduling.BlockingReasons, "probe_recovery_pending")
+	require.False(t, itemsByIndex[3].Scheduling.Schedulable)
+	require.Contains(t, itemsByIndex[3].Scheduling.BlockingReasons, "circuit_open")
+
+	pagedRecorder := httptest.NewRecorder()
+	pagedReq := httptest.NewRequest(http.MethodGet, "/api/channel/40/accounts?page=1&page_size=2&sort=credential_index&order=asc", nil)
+	router.ServeHTTP(pagedRecorder, pagedReq)
+	pagedPayload := decodeChannelAccountsResponse(t, pagedRecorder)
+	require.True(t, pagedPayload.Success, pagedRecorder.Body.String())
+	require.Len(t, pagedPayload.Data.Items, 2)
+	require.Equal(t, int64(3), pagedPayload.Data.Summary.Scored)
+	require.Equal(t, int64(1), pagedPayload.Data.Summary.SchedulableAccounts)
+	require.Equal(t, int64(3), pagedPayload.Data.Summary.BlockedAccounts)
+	require.Equal(t, int64(1), pagedPayload.Data.Summary.RecoveryAccounts)
+	require.Equal(t, int64(1), pagedPayload.Data.Summary.CircuitOpenAccounts)
+}
+
 func TestListChannelAccountsUsesSingleKeyChannelRuntimeFallback(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	channel := model.Channel{

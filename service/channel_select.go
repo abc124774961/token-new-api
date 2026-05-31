@@ -38,6 +38,8 @@ type channelAvoidanceEntry struct {
 
 var channelFailureAvoidance sync.Map
 var channelTimeoutDegradeEvents sync.Map
+var channelRuntimeFailureAvoidance sync.Map
+var channelRuntimeTimeoutDegradeEvents sync.Map
 
 const (
 	channelFailureAvoidancePauseDuration = 30 * time.Minute
@@ -211,12 +213,58 @@ func MarkChannelBalanceSkipped(ctx *gin.Context, channelID int) {
 	common.SetContextKey(ctx, constant.ContextKeyChannelBalanceSkipped, channelIDs)
 }
 
+func MarkChannelRuntimeBalanceSkipped(ctx *gin.Context, identity ChannelRuntimeIdentity) {
+	if ctx == nil {
+		return
+	}
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return
+	}
+	if !identity.HasAccountScope() {
+		MarkChannelBalanceSkipped(ctx, identity.ChannelID)
+		return
+	}
+	identities, _ := common.GetContextKeyType[[]ChannelRuntimeIdentity](ctx, constant.ContextKeyChannelRuntimeBalanceSkipped)
+	for _, existing := range identities {
+		if existing.Normalize().AccountScope() == identity.AccountScope() {
+			return
+		}
+	}
+	identities = append(identities, identity.AccountScope())
+	common.SetContextKey(ctx, constant.ContextKeyChannelRuntimeBalanceSkipped, identities)
+}
+
 func IsChannelBalanceSkipped(ctx *gin.Context, channelID int) bool {
 	if ctx == nil || channelID <= 0 {
 		return false
 	}
 	_, ok := getBalanceSkippedChannelSet(ctx)[channelID]
 	return ok
+}
+
+func IsChannelRuntimeBalanceSkipped(ctx *gin.Context, identity ChannelRuntimeIdentity) bool {
+	if ctx == nil {
+		return false
+	}
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return false
+	}
+	if !identity.HasAccountScope() {
+		return IsChannelBalanceSkipped(ctx, identity.ChannelID)
+	}
+	identities, ok := common.GetContextKeyType[[]ChannelRuntimeIdentity](ctx, constant.ContextKeyChannelRuntimeBalanceSkipped)
+	if !ok {
+		return false
+	}
+	accountScope := identity.AccountScope()
+	for _, existing := range identities {
+		if existing.Normalize().AccountScope() == accountScope {
+			return true
+		}
+	}
+	return false
 }
 
 func getAvoidedChannelSet() map[int]struct{} {
@@ -337,12 +385,78 @@ func GetChannelFailureAvoidanceStatus(channelID int) *ChannelFailureAvoidanceSta
 	}
 }
 
+func GetChannelRuntimeFailureAvoidanceStatus(identity ChannelRuntimeIdentity) *ChannelFailureAvoidanceStatus {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return nil
+	}
+	if identity.HasAccountScope() {
+		return getChannelRuntimeFailureAvoidanceStatus(identity)
+	}
+	return GetChannelFailureAvoidanceStatus(identity.ChannelID)
+}
+
+func getChannelRuntimeFailureAvoidanceStatus(identity ChannelRuntimeIdentity) *ChannelFailureAvoidanceStatus {
+	if !common.ChannelFailureAvoidanceEnabled || common.ChannelFailureAvoidanceTTLSeconds <= 0 {
+		return nil
+	}
+	value, ok := channelRuntimeFailureAvoidance.Load(identity.Normalize())
+	if !ok {
+		return nil
+	}
+	entry, ok := value.(channelAvoidanceEntry)
+	if !ok {
+		channelRuntimeFailureAvoidance.Delete(identity.Normalize())
+		return nil
+	}
+	now := time.Now()
+	if !entry.until.After(now) && !entry.probeRecoveryRequired {
+		channelRuntimeFailureAvoidance.Delete(identity.Normalize())
+		return nil
+	}
+	remaining := int64(0)
+	if entry.until.After(now) {
+		remaining = int64(entry.until.Sub(now).Seconds())
+	}
+	return &ChannelFailureAvoidanceStatus{
+		Active:                true,
+		Reason:                entry.reason,
+		Until:                 entry.until.Unix(),
+		RemainingSec:          remaining,
+		FailureCount:          entry.failureCount,
+		ProbeRecoveryRequired: entry.probeRecoveryRequired,
+	}
+}
+
 func RecordChannelTimeoutDegradeSuccess(channelID int, config ChannelTimeoutDegradeConfig) {
 	recordChannelTimeoutDegradeSample(channelID, "success", false, config, nil)
 }
 
+func RecordChannelRuntimeTimeoutDegradeSuccess(identity ChannelRuntimeIdentity, config ChannelTimeoutDegradeConfig) {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return
+	}
+	if !identity.HasAccountScope() {
+		RecordChannelTimeoutDegradeSuccess(identity.ChannelID, config)
+		return
+	}
+	recordChannelRuntimeTimeoutDegradeSample(identity, "success", false, config, nil)
+}
+
 func RecordChannelTimeoutDegradeSample(channelID int, kind string, config ChannelTimeoutDegradeConfig, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
 	return recordChannelTimeoutDegradeSample(channelID, kind, true, config, failureContext)
+}
+
+func RecordChannelRuntimeTimeoutDegradeSample(identity ChannelRuntimeIdentity, kind string, config ChannelTimeoutDegradeConfig, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return nil
+	}
+	if !identity.HasAccountScope() {
+		return RecordChannelTimeoutDegradeSample(identity.ChannelID, kind, config, failureContext)
+	}
+	return recordChannelRuntimeTimeoutDegradeSample(identity, kind, true, config, failureContext)
 }
 
 func recordChannelTimeoutDegradeSample(channelID int, kind string, timeoutSample bool, config ChannelTimeoutDegradeConfig, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
@@ -416,6 +530,78 @@ func recordChannelTimeoutDegradeSample(channelID int, kind string, timeoutSample
 	return record
 }
 
+func recordChannelRuntimeTimeoutDegradeSample(identity ChannelRuntimeIdentity, kind string, timeoutSample bool, config ChannelTimeoutDegradeConfig, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	identity = identity.Normalize()
+	if !identity.Valid() || !identity.HasAccountScope() || !config.Enabled {
+		return nil
+	}
+	if config.Window <= 0 {
+		config.Window = 10 * time.Minute
+	}
+	if config.MinSamples <= 0 {
+		config.MinSamples = 5
+	}
+	if config.Threshold <= 0 {
+		config.Threshold = 0.4
+	}
+	if config.Threshold > 1 {
+		config.Threshold = 1
+	}
+	if config.Consecutive <= 0 {
+		config.Consecutive = 3
+	}
+	stateValue, _ := channelRuntimeTimeoutDegradeEvents.LoadOrStore(identity, &channelTimeoutDegradeState{})
+	state, ok := stateValue.(*channelTimeoutDegradeState)
+	if !ok || state == nil {
+		state = &channelTimeoutDegradeState{}
+		channelRuntimeTimeoutDegradeEvents.Store(identity, state)
+	}
+	now := time.Now()
+	state.mu.Lock()
+	cutoff := now.Add(-config.Window)
+	events := state.events[:0]
+	for _, event := range state.events {
+		if event.at.After(cutoff) {
+			events = append(events, event)
+		}
+	}
+	events = append(events, channelTimeoutEvent{at: now, kind: strings.TrimSpace(kind), timeout: timeoutSample})
+	state.events = events
+	if timeoutSample {
+		state.consecutive++
+	} else {
+		state.consecutive = 0
+	}
+	samples := len(state.events)
+	consecutive := state.consecutive
+	timeoutCount := 0
+	for _, event := range state.events {
+		if event.timeout {
+			timeoutCount++
+		}
+	}
+	rate := 0.0
+	if samples > 0 {
+		rate = float64(timeoutCount) / float64(samples)
+	}
+	triggered := consecutive >= config.Consecutive || (samples >= config.MinSamples && rate >= config.Threshold)
+	state.mu.Unlock()
+	if !timeoutSample || !triggered {
+		return nil
+	}
+	if failureContext == nil {
+		failureContext = &ChannelFailureAvoidanceContext{}
+	}
+	failureContext.ErrorType = "timeout"
+	failureContext.ErrorCode = ChannelTimeoutRecoveryReason
+	failureContext.Message = strings.TrimSpace(fmt.Sprintf("%s samples=%d consecutive=%d rate=%.2f", kind, samples, consecutive, rate))
+	record := RecordChannelRuntimeTimeoutRecovery(identity, failureContext)
+	if record != nil {
+		common.SysLog(fmt.Sprintf("channel runtime #%d entered timeout recovery: kind=%s samples=%d consecutive=%d rate=%.2f", identity.ChannelID, kind, samples, consecutive, rate))
+	}
+	return record
+}
+
 func mergeChannelSets(sets ...map[int]struct{}) map[int]struct{} {
 	merged := make(map[int]struct{})
 	for _, set := range sets {
@@ -465,8 +651,69 @@ func RecordChannelFailureAvoidanceWithContext(channelID int, reason string, fail
 	return recordChannelAvoidance(channelID, reason, failureContext, true)
 }
 
+func RecordChannelRuntimeFailureAvoidanceWithContext(identity ChannelRuntimeIdentity, reason string, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return nil
+	}
+	if !identity.HasAccountScope() {
+		return RecordChannelFailureAvoidanceWithContext(identity.ChannelID, reason, failureContext)
+	}
+	return recordChannelRuntimeAvoidance(identity, reason, failureContext, true, false)
+}
+
 func recordChannelAvoidance(channelID int, reason string, failureContext *ChannelFailureAvoidanceContext, allowPause bool) *ChannelFailureAvoidanceRecord {
 	return recordChannelAvoidanceWithProbeRecovery(channelID, reason, failureContext, allowPause, false)
+}
+
+func recordChannelRuntimeAvoidance(identity ChannelRuntimeIdentity, reason string, failureContext *ChannelFailureAvoidanceContext, allowPause bool, probeRecoveryRequired bool) *ChannelFailureAvoidanceRecord {
+	if !common.ChannelFailureAvoidanceEnabled || common.ChannelFailureAvoidanceTTLSeconds <= 0 {
+		return nil
+	}
+	identity = identity.Normalize()
+	if !identity.Valid() || !identity.HasAccountScope() {
+		return nil
+	}
+	now := time.Now()
+	baseTTL := time.Duration(common.ChannelFailureAvoidanceTTLSeconds) * time.Second
+	failureCount := 1
+	if value, ok := channelRuntimeFailureAvoidance.Load(identity); ok {
+		if entry, ok := value.(channelAvoidanceEntry); ok {
+			failureCount = entry.failureCount + 1
+			if entry.probeRecoveryRequired && !probeRecoveryRequired {
+				probeRecoveryRequired = true
+				reason = entry.reason
+			}
+		}
+	}
+	ttl := baseTTL
+	if failureCount > 1 {
+		ttl += time.Duration((failureCount-1)*channelFailureAvoidanceStepSeconds) * time.Second
+	}
+	until := now.Add(ttl)
+	remaining := until.Sub(now)
+	shouldPause := allowPause && remaining >= channelFailureAvoidancePauseDuration
+	if shouldPause {
+		until = now.Add(channelFailureAvoidancePauseDuration)
+		remaining = channelFailureAvoidancePauseDuration
+	}
+	channelRuntimeFailureAvoidance.Store(identity, channelAvoidanceEntry{
+		until:                 until,
+		reason:                reason,
+		failureCount:          failureCount,
+		probeRecoveryRequired: probeRecoveryRequired,
+	})
+	common.SysLog(fmt.Sprintf("channel runtime #%d temporarily cooled for %s until %s after %d errors: %s", identity.ChannelID, remaining, until.Format(time.RFC3339), failureCount, reason))
+	recordChannelFailureAvoidanceEvent(identity.ChannelID, reason, until, remaining, failureCount, shouldPause, failureContext)
+	return &ChannelFailureAvoidanceRecord{
+		Active:                true,
+		Reason:                reason,
+		Until:                 until,
+		Remaining:             remaining,
+		FailureCount:          failureCount,
+		ShouldPause:           shouldPause,
+		ProbeRecoveryRequired: probeRecoveryRequired,
+	}
 }
 
 func recordChannelAvoidanceWithProbeRecovery(channelID int, reason string, failureContext *ChannelFailureAvoidanceContext, allowPause bool, probeRecoveryRequired bool) *ChannelFailureAvoidanceRecord {
@@ -552,6 +799,33 @@ func ClearChannelFailureAvoidance(channelID int) {
 	}
 	channelFailureAvoidance.Delete(channelID)
 	channelTimeoutDegradeEvents.Delete(channelID)
+	channelRuntimeFailureAvoidance.Range(func(key, value any) bool {
+		identity, ok := key.(ChannelRuntimeIdentity)
+		if ok && identity.ChannelID == channelID {
+			channelRuntimeFailureAvoidance.Delete(key)
+		}
+		return true
+	})
+	channelRuntimeTimeoutDegradeEvents.Range(func(key, value any) bool {
+		identity, ok := key.(ChannelRuntimeIdentity)
+		if ok && identity.ChannelID == channelID {
+			channelRuntimeTimeoutDegradeEvents.Delete(key)
+		}
+		return true
+	})
+}
+
+func ClearChannelRuntimeFailureAvoidance(identity ChannelRuntimeIdentity) {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return
+	}
+	if !identity.HasAccountScope() {
+		ClearChannelFailureAvoidance(identity.ChannelID)
+		return
+	}
+	channelRuntimeFailureAvoidance.Delete(identity)
+	channelRuntimeTimeoutDegradeEvents.Delete(identity)
 }
 
 func ClearChannelFailureAvoidanceOnRealSuccess(channelID int) bool {
@@ -574,8 +848,36 @@ func ClearChannelFailureAvoidanceOnRealSuccess(channelID int) bool {
 	return true
 }
 
+func ClearChannelRuntimeFailureAvoidanceOnRealSuccess(identity ChannelRuntimeIdentity) bool {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return false
+	}
+	if !identity.HasAccountScope() {
+		return ClearChannelFailureAvoidanceOnRealSuccess(identity.ChannelID)
+	}
+	value, ok := channelRuntimeFailureAvoidance.Load(identity)
+	if !ok {
+		return false
+	}
+	entry, ok := value.(channelAvoidanceEntry)
+	if !ok {
+		channelRuntimeFailureAvoidance.Delete(identity)
+		return true
+	}
+	if entry.probeRecoveryRequired || IsTimeoutRecoveryReason(entry.reason) {
+		return false
+	}
+	channelRuntimeFailureAvoidance.Delete(identity)
+	return true
+}
+
 func ClearChannelProbeRecoveryAvoidance(channelID int) {
 	ClearChannelFailureAvoidance(channelID)
+}
+
+func ClearChannelRuntimeProbeRecoveryAvoidance(identity ChannelRuntimeIdentity) {
+	ClearChannelRuntimeFailureAvoidance(identity)
 }
 
 func IsTimeoutRecoveryReason(reason string) bool {
@@ -590,6 +892,23 @@ func RecordChannelTimeoutRecovery(channelID int, failureContext *ChannelFailureA
 		failureContext.ErrorCode = ChannelTimeoutRecoveryReason
 	}
 	return recordChannelAvoidanceWithProbeRecovery(channelID, ChannelTimeoutRecoveryReason, failureContext, true, true)
+}
+
+func RecordChannelRuntimeTimeoutRecovery(identity ChannelRuntimeIdentity, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return nil
+	}
+	if !identity.HasAccountScope() {
+		return RecordChannelTimeoutRecovery(identity.ChannelID, failureContext)
+	}
+	if failureContext != nil {
+		if strings.TrimSpace(failureContext.ErrorType) == "" {
+			failureContext.ErrorType = "timeout"
+		}
+		failureContext.ErrorCode = ChannelTimeoutRecoveryReason
+	}
+	return recordChannelRuntimeAvoidance(identity, ChannelTimeoutRecoveryReason, failureContext, true, true)
 }
 
 func getChannelFailureAvoidanceForTest(channelID int) (channelAvoidanceEntry, bool) {
@@ -608,6 +927,14 @@ func clearAllChannelFailureAvoidanceForTest() {
 	})
 	channelTimeoutDegradeEvents.Range(func(key, value any) bool {
 		channelTimeoutDegradeEvents.Delete(key)
+		return true
+	})
+	channelRuntimeFailureAvoidance.Range(func(key, value any) bool {
+		channelRuntimeFailureAvoidance.Delete(key)
+		return true
+	})
+	channelRuntimeTimeoutDegradeEvents.Range(func(key, value any) bool {
+		channelRuntimeTimeoutDegradeEvents.Delete(key)
 		return true
 	})
 }

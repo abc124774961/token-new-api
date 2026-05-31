@@ -804,6 +804,12 @@ function schedulingReasonMeta(value, t) {
       return { color: 'red', label: t('配置异常隔离') };
     case 'probe_recovery_pending':
       return { color: 'orange', label: t('等待恢复探活') };
+    case 'failure_avoidance':
+      return { color: 'orange', label: t('近期失败恢复中') };
+    case 'circuit_open':
+      return { color: 'red', label: t('熔断打开') };
+    case 'cooldown':
+      return { color: 'orange', label: t('冷却') };
     case 'concurrency_full':
       return { color: 'orange', label: t('并发已满') };
     case 'queue_full':
@@ -1220,6 +1226,144 @@ function usageLimitActive(capabilities) {
     capabilities?.usage_limit_status === 'limited' &&
     (!capabilities.usage_limit_expires_at ||
       capabilities.usage_limit_expires_at > Math.floor(Date.now() / 1000))
+  );
+}
+
+function arrayValue(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function accountAvailabilityMeta(record, t) {
+  const scheduling = record?.scheduling || {};
+  const blockingReasons = arrayValue(scheduling.blocking_reasons);
+  const warningReasons = arrayValue(scheduling.warning_reasons);
+  const primaryReason =
+    scheduling.primary_reason ||
+    (scheduling.schedulable === false
+      ? blockingReasons[0] || 'no_runtime_snapshot'
+      : 'schedulable');
+  const primaryMeta = schedulingReasonMeta(primaryReason, t);
+  if (!record?.key_enabled) {
+    return {
+      color: 'red',
+      label: t('账号已禁用'),
+      blockingReasons,
+      warningReasons,
+      primaryReason,
+    };
+  }
+  if (scheduling.schedulable === false) {
+    return {
+      ...primaryMeta,
+      blockingReasons,
+      warningReasons,
+      primaryReason,
+    };
+  }
+  if (warningReasons.length > 0) {
+    return {
+      color: 'orange',
+      label: t('可调度但有提醒'),
+      blockingReasons,
+      warningReasons,
+      primaryReason,
+    };
+  }
+  return {
+    color: 'green',
+    label: t('可参与调度'),
+    blockingReasons,
+    warningReasons,
+    primaryReason,
+  };
+}
+
+function reasonLabels(reasons, t) {
+  return reasons
+    .map((reason) => schedulingReasonMeta(reason, t).label)
+    .filter(Boolean)
+    .join(' / ');
+}
+
+function AccountAvailabilityCell({ record, t }) {
+  const scheduling = record?.scheduling || {};
+  const score = record?.score || {};
+  const meta = accountAvailabilityMeta(record, t);
+  const healthMeta = score?.health_status
+    ? healthTagMeta(score.health_status, t)
+    : null;
+  const reasonPreview =
+    scheduling.detail ||
+    reasonLabels(meta.blockingReasons, t) ||
+    reasonLabels(meta.warningReasons, t) ||
+    (healthMeta ? healthMeta.label : t('无阻塞'));
+  const content = (
+    <div className='ct-channel-account-availability-tip'>
+      <div className='ct-channel-account-availability-tip-line'>
+        <span>{t('调度状态')}</span>
+        <Tag color={meta.color} size='small' type='light' shape='circle'>
+          {meta.label}
+        </Tag>
+      </div>
+      {meta.blockingReasons.length > 0 || meta.warningReasons.length > 0 ? (
+        <div className='ct-channel-account-availability-tip-stack'>
+          <span>{t('阻塞与提醒')}</span>
+          <div className='ct-channel-account-reason-tags'>
+            {[...meta.blockingReasons, ...meta.warningReasons].map((reason, index) => {
+              const reasonMeta = schedulingReasonMeta(reason, t);
+              return (
+                <Tag
+                  color={reasonMeta.color}
+                  key={`${reason}-${index}`}
+                  size='small'
+                  type='light'
+                  shape='circle'
+                >
+                  {reasonMeta.label}
+                </Tag>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+      {scheduling.detail ? (
+        <div className='ct-channel-account-availability-detail'>
+          {scheduling.detail}
+        </div>
+      ) : null}
+      {healthMeta ? (
+        <div className='ct-channel-account-availability-tip-line'>
+          <span>{t('健康状态')}</span>
+          <Tag color={healthMeta.color} size='small' type='light' shape='circle'>
+            {healthMeta.label}
+          </Tag>
+        </div>
+      ) : null}
+      {scheduling.recovery_at ? (
+        <div className='ct-channel-account-availability-tip-line'>
+          <span>{t('预计恢复')}</span>
+          <strong>{formatTimestamp(scheduling.recovery_at)}</strong>
+        </div>
+      ) : null}
+      {scheduling.recovery_source ? (
+        <div className='ct-channel-account-availability-tip-line'>
+          <span>{t('恢复来源')}</span>
+          <strong>{scheduling.recovery_source}</strong>
+        </div>
+      ) : null}
+    </div>
+  );
+  return (
+    <Tooltip content={content}>
+      <div className='ct-channel-account-availability-cell'>
+        <Tag color={meta.color} type='light' shape='circle'>
+          {meta.label}
+        </Tag>
+        <Text type='tertiary' ellipsis={{ showTooltip: false }}>
+          {reasonPreview}
+        </Text>
+      </div>
+    </Tooltip>
   );
 }
 
@@ -1803,6 +1947,12 @@ function buildColumns(
       render: (score) => <ScoreSummary score={score} t={t} />,
     },
     {
+      title: t('可用性'),
+      dataIndex: 'scheduling',
+      width: 230,
+      render: (_, record) => <AccountAvailabilityCell record={record} t={t} />,
+    },
+    {
       title: t('运行键'),
       dataIndex: 'runtime_keys',
       width: 380,
@@ -1993,6 +2143,12 @@ function buildStatsColumns(
       dataIndex: 'score',
       width: 230,
       render: (_, record) => <DispatchHealthBlock record={record} t={t} />,
+    },
+    {
+      title: t('可用性'),
+      dataIndex: 'scheduling',
+      width: 230,
+      render: (_, record) => <AccountAvailabilityCell record={record} t={t} />,
     },
     {
       title: t('今日统计'),
@@ -3633,7 +3789,7 @@ function ChannelAccount() {
   const isStatsView = view === 'stats';
   const summary = data?.summary || {};
   const tableColumns = isStatsView ? statsColumns : columns;
-  const tableScrollX = isStatsView ? 1660 : 2420;
+  const tableScrollX = isStatsView ? 1890 : 2650;
   const tablePagination = useMemo(
     () => ({
       currentPage: data?.page || page,
@@ -3710,16 +3866,28 @@ function ChannelAccount() {
           detail: t('可参与智能调度'),
         },
         {
-          icon: <Gauge size={18} />,
-          label: t('已有评分'),
-          value: formatNumber(summary.scored),
-          detail: t('当前页运行态快照'),
+          icon: <ShieldCheck size={18} />,
+          label: t('可调度账号'),
+          value: formatNumber(summary.schedulable_accounts),
+          detail: t('当前可进入候选池'),
+        },
+        {
+          icon: <XCircle size={18} />,
+          label: t('阻塞账号'),
+          value: formatNumber(summary.blocked_accounts),
+          detail: t('当前不可调度'),
         },
         {
           icon: <Clock3 size={18} />,
-          label: t('近30分钟真实样本'),
-          value: formatNumber(summary.real_sample_count_30m),
-          detail: t('当前页评分样本'),
+          label: t('恢复中账号'),
+          value: formatNumber(summary.recovery_accounts),
+          detail: t('等待探活恢复'),
+        },
+        {
+          icon: <AlertTriangle size={18} />,
+          label: t('熔断账号'),
+          value: formatNumber(summary.circuit_open_accounts),
+          detail: t('熔断保护已打开'),
         },
       ];
   const rowSelection = useMemo(

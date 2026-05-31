@@ -86,7 +86,7 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 			return nil, nil
 		}
 		if ok, reason := validateSelectedSmartPlan(plan); !ok {
-			service.MarkChannelSelectionSkipped(c, plan.Channel.Id)
+			markSelectedSmartPlanSkipped(c, plan, reason)
 			w.mu.Unlock()
 			common.SysLog(fmt.Sprintf("model gateway smart selection skipped stale candidate: channel_id=%d reason=%s", plan.Channel.Id, reason))
 			RefreshDefaultAccountCandidateIndex()
@@ -133,6 +133,43 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 		}, nil
 	}
 	return nil, nil
+}
+
+func markSelectedSmartPlanSkipped(c *gin.Context, plan *core.DispatchPlan, reason string) {
+	if plan == nil || plan.Channel == nil {
+		return
+	}
+	switch reason {
+	case "channel_disabled":
+		service.MarkChannelSelectionSkipped(c, plan.Channel.Id)
+	default:
+		service.MarkChannelRuntimeSelectionSkipped(c, serviceRuntimeIdentityFromPlan(plan))
+	}
+}
+
+func serviceRuntimeIdentityFromPlan(plan *core.DispatchPlan) service.ChannelRuntimeIdentity {
+	if plan == nil {
+		return service.ChannelRuntimeIdentity{}
+	}
+	key := plan.RuntimeKey
+	if key.ChannelID <= 0 && plan.Channel != nil {
+		key.ChannelID = plan.Channel.Id
+	}
+	identity := service.ChannelRuntimeIdentity{
+		ChannelID:           key.ChannelID,
+		RequestedModel:      key.RequestedModel,
+		SelectedGroup:       key.Group,
+		EndpointType:        key.EndpointType,
+		AccountID:           key.AccountID,
+		CredentialIndex:     key.CredentialIndex,
+		CredentialSubjectFP: key.CredentialSubjectFP,
+		CredentialFP:        key.CredentialFP,
+	}
+	if key.AccountID != "" || key.CredentialSubjectFP != "" || key.CredentialFP != "" || dispatchPlanHasCredentialRef(plan) {
+		identity.CredentialIndex = plan.CredentialRef.CredentialIndex
+		identity.CredentialIndexSet = true
+	}
+	return identity.Normalize()
 }
 
 func validateSelectedSmartPlan(plan *core.DispatchPlan) (bool, string) {

@@ -547,7 +547,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 			continue
 		}
-		firstByteLease := service.BeginChannelFirstByteWait(c, channel.Id, relayInfo.RequestId, relayInfo.RetryIndex)
+		runtimeIdentity := relayRuntimeIdentity(c, channel.Id)
+		firstByteLease := service.BeginChannelRuntimeFirstByteWait(c, runtimeIdentity, relayInfo.RequestId, relayInfo.RetryIndex)
 		upstreamConcurrencySample := concurrencyLease.ActiveAtHit()
 
 		addUsedChannel(c, channel.Id)
@@ -638,7 +639,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 					abortFlow.WillRetry = willRetry
 					abortFlow.RetryAction = retryActionForAttempt(c, abortErr, willRetry)
 					if willRetry {
-						service.MarkChannelSelectionSkipped(c, channel.Id)
+						service.MarkChannelRuntimeSelectionSkipped(c, relayRuntimeIdentity(c, channel.Id))
 						setChannelInducedRetryRoutingIntentIfNeeded(c, channel, relayInfo.RetryIndex, abortFlow.RetryAction)
 					} else {
 						finalAttemptReported = true
@@ -662,11 +663,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				return
 			}
 			relayInfo.LastError = nil
-			service.ClearChannelFailureAvoidanceOnRealSuccess(channel.Id)
+			service.ClearChannelRuntimeFailureAvoidanceOnRealSuccess(relayRuntimeIdentity(c, channel.Id))
 			if totalDurationAfterOutput {
 				recordRelayChannelTimeoutDegrade(c, channel, modelgatewaycore.RelayAttemptCancelReasonTotalDurationAfterOutput, nil, false)
 			} else {
-				recordRelayChannelTimeoutDegradeSuccess(channel.Id)
+				recordRelayChannelTimeoutDegradeSuccess(relayRuntimeIdentity(c, channel.Id))
 			}
 			recordRelayChannelConfigSuccess(c, channel.Id, relayInfo, retryParam)
 			service.RecordChannelConcurrencySuccess(channel.Id)
@@ -714,7 +715,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			flow.ClientAborted = false
 			clientAbort = false
 			terminalClientAbort = false
-			service.MarkChannelSelectionSkipped(c, channel.Id)
+			service.MarkChannelRuntimeSelectionSkipped(c, relayRuntimeIdentity(c, channel.Id))
 		}
 		if totalDurationTimeoutHit {
 			flow.ErrorCategory = modelgatewaycore.ErrorCategoryTimeout
@@ -722,10 +723,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			flow.ClientAborted = false
 			clientAbort = false
 			terminalClientAbort = false
-			service.MarkChannelSelectionSkipped(c, channel.Id)
+			service.MarkChannelRuntimeSelectionSkipped(c, relayRuntimeIdentity(c, channel.Id))
 		}
 		if (overloadSkip || service.IsUpstreamConcurrencyLimitError(newAPIError)) && !terminalClientAbort {
-			service.MarkChannelSelectionSkipped(c, channel.Id)
+			service.MarkChannelRuntimeSelectionSkipped(c, relayRuntimeIdentity(c, channel.Id))
 		}
 		if service.IsUpstreamConcurrencyLimitError(newAPIError) && !terminalClientAbort {
 			flow.ActiveConcurrency = upstreamConcurrencySample
@@ -740,8 +741,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 		}
 		if service.IsBalanceInsufficientError(newAPIError) && !terminalClientAbort {
-			service.MarkChannelBalanceSkipped(c, channel.Id)
-			service.MarkChannelBalanceInsufficient(channel.Id)
+			service.MarkChannelRuntimeBalanceSkipped(c, relayRuntimeIdentity(c, channel.Id))
+			service.MarkChannelRuntimeBalanceInsufficient(relayRuntimeIdentity(c, channel.Id))
 			flow.BalanceInsufficient = true
 		}
 		concurrencyLease.Release()
@@ -919,7 +920,7 @@ func prepareModelGatewaySetupFailureRetry(c *gin.Context, channel *model.Channel
 	if c == nil || channel == nil || retryParam == nil || !shouldFailoverOnModelGatewaySetupFailure(c, apiErr) {
 		return false
 	}
-	service.MarkChannelSelectionSkipped(c, channel.Id)
+	service.MarkChannelRuntimeSelectionSkipped(c, relayRuntimeIdentity(c, channel.Id))
 	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
 	canFailover, forceNextAutoGroup := service.GetChannelFailoverPlan(retryParam)
 	if !canFailover {
@@ -994,6 +995,35 @@ func selectedGroupPreConsumeTarget(info *relaycommon.RelayInfo) int {
 func selectedModelGatewayPlan(c *gin.Context) *modelgatewaycore.DispatchPlan {
 	plan, _ := modelgatewayintegration.GetSelectedPlan(c)
 	return plan
+}
+
+func relayRuntimeIdentity(c *gin.Context, channelID int) service.ChannelRuntimeIdentity {
+	if plan := selectedModelGatewayPlan(c); plan != nil {
+		key := plan.RuntimeKey
+		if key.ChannelID <= 0 {
+			key.ChannelID = channelID
+		}
+		identity := service.ChannelRuntimeIdentity{
+			ChannelID:           key.ChannelID,
+			RequestedModel:      key.RequestedModel,
+			SelectedGroup:       key.Group,
+			EndpointType:        key.EndpointType,
+			AccountID:           key.AccountID,
+			CredentialIndex:     key.CredentialIndex,
+			CredentialSubjectFP: key.CredentialSubjectFP,
+			CredentialFP:        key.CredentialFP,
+		}
+		ref := plan.CredentialRef
+		if key.AccountID != "" || key.CredentialSubjectFP != "" || key.CredentialFP != "" ||
+			ref.ResourceID != "" || ref.AccountID != "" || ref.CredentialFingerprint != "" || ref.CredentialSubjectFingerprint != "" {
+			if ref.CredentialIndex >= 0 {
+				identity.CredentialIndex = ref.CredentialIndex
+			}
+			identity.CredentialIndexSet = true
+		}
+		return identity.Normalize()
+	}
+	return service.ChannelOnlyRuntimeIdentity(channelID)
 }
 
 func relayQueueAcquireOptions(plan *modelgatewaycore.DispatchPlan) modelgatewayscheduler.QueueAcquireOptions {
@@ -1973,7 +2003,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	}
 	if errorCategory != modelgatewaycore.ErrorCategoryAuthConfigError {
 		if reason, ok := channelFailureAvoidanceReason(err); ok {
-			if avoidance := service.RecordChannelFailureAvoidanceWithContext(channelError.ChannelId, reason, buildChannelFailureAvoidanceContext(c, channelError, err, persistLog)); avoidance != nil && avoidance.ShouldPause {
+			if avoidance := service.RecordChannelRuntimeFailureAvoidanceWithContext(relayRuntimeIdentity(c, channelError.ChannelId), reason, buildChannelFailureAvoidanceContext(c, channelError, err, persistLog)); avoidance != nil && avoidance.ShouldPause {
 				gopool.Go(func() {
 					service.PauseChannelForError(channelError, avoidance.Until, avoidance.Reason)
 				})
@@ -2047,9 +2077,9 @@ func relayTimeoutDegradeKindFromError(err *types.NewAPIError) (string, bool) {
 	}
 }
 
-func recordRelayChannelTimeoutDegradeSuccess(channelID int) {
+func recordRelayChannelTimeoutDegradeSuccess(identity service.ChannelRuntimeIdentity) {
 	setting := scheduler_setting.GetSetting()
-	service.RecordChannelTimeoutDegradeSuccess(channelID, service.ChannelTimeoutDegradeConfig{
+	service.RecordChannelRuntimeTimeoutDegradeSuccess(identity, service.ChannelTimeoutDegradeConfig{
 		Enabled:     setting.ChannelTimeoutDegradeEnabled,
 		Window:      time.Duration(setting.ChannelTimeoutDegradeWindowSeconds) * time.Second,
 		MinSamples:  setting.ChannelTimeoutDegradeMinSamples,
@@ -2067,7 +2097,7 @@ func recordRelayChannelTimeoutDegrade(c *gin.Context, channel *model.Channel, ki
 
 func recordRelayChannelTimeoutDegradeForChannelError(c *gin.Context, channelError types.ChannelError, kind string, err *types.NewAPIError, finalFailure bool) {
 	setting := scheduler_setting.GetSetting()
-	service.RecordChannelTimeoutDegradeSample(channelError.ChannelId, kind, service.ChannelTimeoutDegradeConfig{
+	service.RecordChannelRuntimeTimeoutDegradeSample(relayRuntimeIdentity(c, channelError.ChannelId), kind, service.ChannelTimeoutDegradeConfig{
 		Enabled:     setting.ChannelTimeoutDegradeEnabled,
 		Window:      time.Duration(setting.ChannelTimeoutDegradeWindowSeconds) * time.Second,
 		MinSamples:  setting.ChannelTimeoutDegradeMinSamples,
@@ -2136,8 +2166,7 @@ func relayChannelConfigIsolationKey(c *gin.Context, channelID int, info *relayco
 	if endpointType == "" && info != nil {
 		endpointType = requiredEndpointTypeForRelay(info)
 	}
-
-	return service.NewChannelConfigIsolationKey(channelID, modelName, selectedGroup, endpointType)
+	return service.NewChannelRuntimeConfigIsolationKey(relayRuntimeIdentity(c, channelID), modelName, selectedGroup, endpointType)
 }
 
 func recordRelayChannelConfigAuthError(c *gin.Context, channelID int, err *types.NewAPIError) {

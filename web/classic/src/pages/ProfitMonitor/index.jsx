@@ -98,6 +98,8 @@ const DEFAULT_CONFIG = {
   traffic_estimated_bytes_per_token: 0,
   resource_cost_enabled: true,
   target_profit_rate: 0.2,
+  dynamic_ratio_min_limit: 0,
+  dynamic_ratio_max_limit: 0,
   dynamic_ratio_recommendation_mode: 'observe',
 };
 
@@ -173,12 +175,54 @@ function formatMultiplier(value, digits = 2) {
   return `${numeric.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')}x`;
 }
 
+function formatRatioNumber(value, digits = 4) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '--';
+  return numeric.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function formatRatioValue(value, digits = 4) {
+  const text = formatRatioNumber(value, digits);
+  return text === '--' ? '--' : `${text}x`;
+}
+
+function formatDynamicRatioLimitRange(recommendation, t) {
+  const min = Number(recommendation?.dynamic_ratio_limit_min || 0);
+  const max = Number(recommendation?.dynamic_ratio_limit_max || 0);
+  const minText = formatRatioNumber(min);
+  const maxText = formatRatioNumber(max);
+  if (min > 0 && max > 0) {
+    return t('{{min}}x - {{max}}x', { min: minText, max: maxText });
+  }
+  if (min > 0) {
+    return t('下限 {{ratio}}x', { ratio: minText });
+  }
+  if (max > 0) {
+    return t('上限 {{ratio}}x', { ratio: maxText });
+  }
+  return t('未额外限制');
+}
+
+function formatDynamicRatioLimitResult(recommendation, t) {
+  if (!recommendation?.dynamic_ratio_limit_applied) {
+    return t('未触发限制');
+  }
+  switch (recommendation?.dynamic_ratio_limit_reason) {
+    case 'min_limit':
+      return t('已按下限限制');
+    case 'max_limit':
+      return t('已按上限限制');
+    default:
+      return t('已应用倍率限制');
+  }
+}
+
 function formatProfitMarkupFormula(targetRate, markupMultiplier) {
   const markupText = formatMultiplier(markupMultiplier);
   if (markupText === '--') return '--';
   const rateText = formatPercent(targetRate);
   if (rateText === '--') return markupText;
-  return `1 + ${rateText} = ${markupText}`;
+  return `1 / (1 - ${rateText}) = ${markupText}`;
 }
 
 function resolveCostMarkupMultiplier(source, fallbackSummary) {
@@ -387,7 +431,7 @@ function labelForRecommendationReason(value, t) {
         '样本不足：至少需要 20 次真实请求、5 次成功请求和 1000 token 后再生成可信建议。',
       );
     case 'target_covered':
-      return t('当前毛利率已覆盖目标利润率，建议保持观察。');
+      return t('当前毛利率已覆盖目标毛利率，建议保持观察。');
     case 'high_gap':
       return t(
         '当前毛利率明显低于目标，请优先检查成本来源，再逐步上调动态倍率。',
@@ -527,7 +571,7 @@ function ConfigModal({ visible, config, saving, onCancel, onSave, t }) {
           />
         </label>
         <label className='ct-profit-field'>
-          <span>{t('目标利润率')}</span>
+          <span>{t('目标毛利率')}</span>
           <InputNumber
             min={0}
             max={95}
@@ -536,6 +580,32 @@ function ConfigModal({ visible, config, saving, onCancel, onSave, t }) {
             value={Number(form.target_profit_rate || 0) * 100}
             onChange={(value) =>
               update('target_profit_rate', numberOrDefault(value) / 100)
+            }
+          />
+        </label>
+        <label className='ct-profit-field'>
+          <span>{t('建议倍率下限')}</span>
+          <InputNumber
+            min={0}
+            max={100}
+            step={0.0001}
+            suffix='x'
+            value={form.dynamic_ratio_min_limit}
+            onChange={(value) =>
+              update('dynamic_ratio_min_limit', numberOrDefault(value))
+            }
+          />
+        </label>
+        <label className='ct-profit-field'>
+          <span>{t('建议倍率上限')}</span>
+          <InputNumber
+            min={0}
+            max={100}
+            step={0.0001}
+            suffix='x'
+            value={form.dynamic_ratio_max_limit}
+            onChange={(value) =>
+              update('dynamic_ratio_max_limit', numberOrDefault(value))
             }
           />
         </label>
@@ -590,7 +660,10 @@ function ConfigModal({ visible, config, saving, onCancel, onSave, t }) {
       <div className='ct-profit-help'>
         <AlertTriangle size={15} />
         <span>
-          {t('经营成本会进入后台动态倍率计算；启用动态计费后，请求链路只读取内存倍率快照。')}
+          {t(
+            '经营成本会进入后台动态倍率计算；启用动态计费后，请求链路只读取内存倍率快照。',
+          )}{' '}
+          {t('0 表示不额外限制，最终仍会受后台全局倍率上下限保护。')}
         </span>
       </div>
     </Modal>
@@ -859,7 +932,7 @@ function RecommendationDetailModal({
           <strong>{formatMultiplier(resolveCostMultiplier(safeSnapshot), 4)}</strong>
         </div>
         <div>
-          <span>{t('目标利润换算')}</span>
+          <span>{t('目标毛利换算')}</span>
           <strong>
             {formatProfitMarkupFormula(
               safeSnapshot.target_profit_rate,
@@ -1416,7 +1489,7 @@ export default function ProfitMonitor() {
         label: t('建议最低收入'),
         value: formatUsd(recommendation.required_revenue_usd, 4),
         detail: recommendation.can_recommend
-          ? `${t('目标利润率')} ${formatPercent(
+          ? `${t('目标毛利率')} ${formatPercent(
               recommendation.target_profit_rate,
             )}`
           : t('样本不足，暂不建议'),
@@ -1427,14 +1500,17 @@ export default function ProfitMonitor() {
         label: t('建议动态倍率'),
         value:
           Number(recommendation.suggested_dynamic_ratio || 0) > 0
-            ? `${Number(recommendation.suggested_dynamic_ratio).toFixed(4)}x`
+            ? formatRatioValue(recommendation.suggested_dynamic_ratio)
             : '--',
-        detail:
-          Number(recommendation.current_effective_dynamic_ratio || 0) > 0
+        detail: recommendation.dynamic_ratio_limit_applied
+          ? `${t('原始 {{raw}}x', {
+              raw: formatRatioNumber(recommendation.suggested_dynamic_ratio_raw),
+            })} · ${formatDynamicRatioLimitResult(recommendation, t)}`
+          : Number(recommendation.current_effective_dynamic_ratio || 0) > 0
             ? t('当前生效 {{ratio}}x', {
-                ratio: Number(
+                ratio: formatRatioNumber(
                   recommendation.current_effective_dynamic_ratio,
-                ).toFixed(4),
+                ),
               })
             : t('尚未应用到动态倍率'),
         tone: recommendation.dynamic_billing_applied ? 'success' : 'info',
@@ -1851,7 +1927,7 @@ export default function ProfitMonitor() {
       render: (value) => formatPercent(value),
     },
     {
-      title: t('目标利润率'),
+      title: t('目标毛利率'),
       dataIndex: 'target_profit_rate',
       render: (value) => formatPercent(value),
     },
@@ -1869,7 +1945,7 @@ export default function ProfitMonitor() {
         ),
     },
     {
-      title: t('目标利润换算'),
+      title: t('目标毛利换算'),
       dataIndex: 'cost_markup_multiplier',
       width: 170,
       render: (value, record) =>
@@ -2242,7 +2318,7 @@ export default function ProfitMonitor() {
                 <div className='ct-profit-panel-head'>
                   <div>
                     <h2>{t('动态倍率建议')}</h2>
-                    <p>{t('基于当前窗口上游 token 成本和目标利润率计算。')}</p>
+                    <p>{t('基于当前窗口总经营成本和目标毛利率计算。')}</p>
                   </div>
                   <Button
                     type='primary'
@@ -2255,7 +2331,7 @@ export default function ProfitMonitor() {
                 </div>
                 <div className='ct-profit-recommendation'>
                   <div>
-                    <span>{t('目标利润率')}</span>
+                    <span>{t('目标毛利率')}</span>
                     <strong>
                       {formatPercent(recommendation.target_profit_rate)}
                     </strong>
@@ -2271,7 +2347,7 @@ export default function ProfitMonitor() {
                     <strong>{formatMultiplier(costMultiplier, 4)}</strong>
                   </div>
                   <div>
-                    <span>{t('目标利润换算')}</span>
+                    <span>{t('目标毛利换算')}</span>
                     <strong>
                       {formatProfitMarkupFormula(
                         recommendation.target_profit_rate,
@@ -2311,10 +2387,31 @@ export default function ProfitMonitor() {
                     <span>{t('建议动态倍率')}</span>
                     <strong>
                       {Number(recommendation.suggested_dynamic_ratio || 0) > 0
-                        ? `${Number(
-                            recommendation.suggested_dynamic_ratio,
-                          ).toFixed(4)}x`
+                        ? formatRatioValue(recommendation.suggested_dynamic_ratio)
                         : '--'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>{t('原始建议动态倍率')}</span>
+                    <strong>
+                      {Number(recommendation.suggested_dynamic_ratio_raw || 0) >
+                      0
+                        ? formatRatioValue(
+                            recommendation.suggested_dynamic_ratio_raw,
+                          )
+                        : '--'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>{t('倍率限制')}</span>
+                    <strong>
+                      {formatDynamicRatioLimitRange(recommendation, t)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>{t('限制结果')}</span>
+                    <strong>
+                      {formatDynamicRatioLimitResult(recommendation, t)}
                     </strong>
                   </div>
                   <div>
@@ -2323,9 +2420,9 @@ export default function ProfitMonitor() {
                       {Number(
                         recommendation.current_effective_dynamic_ratio || 0,
                       ) > 0
-                        ? `${Number(
+                        ? formatRatioValue(
                             recommendation.current_effective_dynamic_ratio,
-                          ).toFixed(4)}x`
+                          )
                         : '--'}
                     </strong>
                   </div>

@@ -79,6 +79,8 @@ func TestModelGatewayProfitMonitorConfigPatchPersistsNormalizedConfig(t *testing
 	body, err := common.Marshal(UpdateModelGatewayProfitMonitorConfigRequest{
 		ServerDailyCostUSD:            floatPtr(-1),
 		TargetProfitRate:              floatPtr(120),
+		DynamicRatioMinLimit:          floatPtr(3),
+		DynamicRatioMaxLimit:          floatPtr(2),
 		TrafficEstimationEnabled:      boolPtr(true),
 		TrafficEstimatedBytesPerToken: intPtr(14),
 	})
@@ -93,12 +95,15 @@ func TestModelGatewayProfitMonitorConfigPatchPersistsNormalizedConfig(t *testing
 	require.True(t, payload.Success, recorder.Body.String())
 	require.Equal(t, 0.0, payload.Data.Config.ServerDailyCostUSD)
 	require.Equal(t, 0.95, payload.Data.Config.TargetProfitRate)
+	require.Equal(t, 3.0, payload.Data.Config.DynamicRatioMinLimit)
+	require.Equal(t, 3.0, payload.Data.Config.DynamicRatioMaxLimit)
 	require.True(t, payload.Data.Config.TrafficEstimationEnabled)
 	require.Equal(t, 14, payload.Data.Config.TrafficEstimatedBytesPerToken)
 
 	var option model.Option
 	require.NoError(t, db.First(&option, "key = ?", modelGatewayProfitMonitorConfigOptionKey).Error)
 	require.Contains(t, option.Value, `"target_profit_rate":0.95`)
+	require.Contains(t, option.Value, `"dynamic_ratio_min_limit":3`)
 }
 
 func TestModelGatewayProfitMonitorSummaryExcludesHealthProbeAndAddsResourceCost(t *testing.T) {
@@ -355,14 +360,14 @@ func TestModelGatewayProfitMonitorRecommendationSnapshotPersistsAndLists(t *test
 	require.Equal(t, "channel", payload.Data.Dimension)
 	require.InEpsilon(t, 20.0, payload.Data.RevenueUSD, 0.0001)
 	require.InEpsilon(t, 27.2, payload.Data.OperatingCostUSD, 0.0001)
-	require.InEpsilon(t, 7.2, payload.Data.RequiredRevenueUSD, 0.0001)
-	require.InEpsilon(t, 1.2, payload.Data.CostMarkupMultiplier, 0.0001)
-	require.InEpsilon(t, 0.36, payload.Data.RecommendedRevenueMultiplier, 0.0001)
+	require.InEpsilon(t, 34.0, payload.Data.RequiredRevenueUSD, 0.0001)
+	require.InEpsilon(t, 1.25, payload.Data.CostMarkupMultiplier, 0.0001)
+	require.InEpsilon(t, 1.7, payload.Data.RecommendedRevenueMultiplier, 0.0001)
 	require.Equal(t, "high", payload.Data.RiskLevel)
-	require.Equal(t, "target_covered", payload.Data.Reason)
+	require.Equal(t, "high_gap", payload.Data.Reason)
 	require.Contains(t, payload.Data.InputJSON, `"summary"`)
-	require.Contains(t, payload.Data.RecommendationJSON, `"cost_markup_multiplier":1.2`)
-	require.Contains(t, payload.Data.RecommendationJSON, `"reason_code":"target_covered"`)
+	require.Contains(t, payload.Data.RecommendationJSON, `"cost_markup_multiplier":1.25`)
+	require.Contains(t, payload.Data.RecommendationJSON, `"reason_code":"high_gap"`)
 	require.Contains(t, payload.Data.RecommendationJSON, `"constraint_codes"`)
 	require.Equal(t, configBefore, common.OptionMap[modelGatewayProfitMonitorConfigOptionKey])
 	require.NoError(t, db.Create(&model.ModelGatewayProfitRatioRecommendation{
@@ -535,9 +540,9 @@ func TestModelGatewayProfitMonitorRecommendationRequiresMinimumSamples(t *testin
 
 	require.False(t, recommendation.CanRecommend)
 	require.Equal(t, modelGatewayProfitRecommendationReasonLowSample, recommendation.Reason)
-	require.InEpsilon(t, 2.4, recommendation.RequiredRevenueUSD, 0.0001)
-	require.InEpsilon(t, 1.2, recommendation.CostMarkupMultiplier, 0.0001)
-	require.InEpsilon(t, 2.4, recommendation.RecommendedRevenueMultiplier, 0.0001)
+	require.InEpsilon(t, 2.5, recommendation.RequiredRevenueUSD, 0.0001)
+	require.InEpsilon(t, 1.25, recommendation.CostMarkupMultiplier, 0.0001)
+	require.InEpsilon(t, 2.5, recommendation.RecommendedRevenueMultiplier, 0.0001)
 }
 
 func TestModelGatewayProfitRecommendationUsesWeightedCostMultiplierAndMonitorMarkup(t *testing.T) {
@@ -548,7 +553,7 @@ func TestModelGatewayProfitRecommendationUsesWeightedCostMultiplierAndMonitorMar
 			CostSource:         scheduler_setting.DynamicBillingCostSourceProfit24h,
 			BaseQuotaAtRatio1:  100 * common.QuotaPerUnit,
 			CostMultiplier:     0.03,
-			RequiredRevenueUSD: 4.8,
+			RequiredRevenueUSD: 3 / 0.99,
 			EffectiveRatio:     0.048,
 			TotalTokens:        10_000_000,
 		},
@@ -558,7 +563,7 @@ func TestModelGatewayProfitRecommendationUsesWeightedCostMultiplierAndMonitorMar
 			CostSource:         scheduler_setting.DynamicBillingCostSourceProfit24h,
 			BaseQuotaAtRatio1:  common.QuotaPerUnit,
 			CostMultiplier:     0.1,
-			RequiredRevenueUSD: 0.16,
+			RequiredRevenueUSD: 0.1 / 0.99,
 			EffectiveRatio:     0.16,
 			TotalTokens:        10_000,
 		},
@@ -576,16 +581,19 @@ func TestModelGatewayProfitRecommendationUsesWeightedCostMultiplierAndMonitorMar
 		TargetProfitRate:               0.01,
 		DynamicRatioRecommendationMode: "observe",
 	})
-	enrichModelGatewayProfitRecommendationWithDynamicBilling(&recommendation)
+	enrichModelGatewayProfitRecommendationWithDynamicBilling(&recommendation, ModelGatewayProfitMonitorConfig{
+		TargetProfitRate:               0.01,
+		DynamicRatioRecommendationMode: "observe",
+	})
 
 	expectedCostMultiplier := (0.03*100 + 0.1) / 101
-	expectedSuggestedRatio := expectedCostMultiplier * 1.01
+	expectedSuggestedRatio := expectedCostMultiplier / 0.99
 	expectedRequiredRevenue := expectedSuggestedRatio * 101 * common.QuotaPerUnit / common.QuotaPerUnit
 	require.InEpsilon(t, expectedCostMultiplier, recommendation.CostMultiplier, 0.000001)
 	require.InEpsilon(t, expectedSuggestedRatio, recommendation.SuggestedDynamicRatio, 0.000001)
 	require.InEpsilon(t, expectedRequiredRevenue, recommendation.RequiredRevenueUSD, 0.000001)
-	baselineRequiredRevenueRatio := (4.8 + 0.16) * common.QuotaPerUnit / (101 * common.QuotaPerUnit)
-	require.Greater(t, math.Abs(baselineRequiredRevenueRatio-recommendation.SuggestedDynamicRatio), 0.01)
+	unweightedRatio := (0.03 + 0.1) / 2 / 0.99
+	require.Greater(t, math.Abs(unweightedRatio-recommendation.SuggestedDynamicRatio), 0.01)
 }
 
 func TestModelGatewayProfitRecommendationUsesDynamicBillingProfitRate(t *testing.T) {
@@ -601,7 +609,7 @@ func TestModelGatewayProfitRecommendationUsesDynamicBillingProfitRate(t *testing
 			CostSource:         scheduler_setting.DynamicBillingCostSourceProfit24h,
 			BaseQuotaAtRatio1:  100 * common.QuotaPerUnit,
 			CostMultiplier:     0.0284,
-			RequiredRevenueUSD: 2.87,
+			RequiredRevenueUSD: 2.84 / 0.4,
 			EffectiveRatio:     0.0287,
 			TotalTokens:        10_000_000,
 		},
@@ -620,11 +628,57 @@ func TestModelGatewayProfitRecommendationUsesDynamicBillingProfitRate(t *testing
 		RevenueUSD:      10,
 		UpstreamCostUSD: 2.84,
 	}, config)
-	enrichModelGatewayProfitRecommendationWithDynamicBilling(&recommendation)
+	enrichModelGatewayProfitRecommendationWithDynamicBilling(&recommendation, config)
 
 	require.InEpsilon(t, 0.6, recommendation.TargetProfitRate, 0.000001)
-	require.InEpsilon(t, 1.6, recommendation.CostMarkupMultiplier, 0.000001)
-	require.InEpsilon(t, 0.0284*1.6, recommendation.SuggestedDynamicRatio, 0.000001)
+	require.InEpsilon(t, 2.5, recommendation.CostMarkupMultiplier, 0.000001)
+	require.InEpsilon(t, 0.0284*2.5, recommendation.SuggestedDynamicRatio, 0.000001)
+}
+
+func TestModelGatewayProfitRecommendationAppliesDynamicRatioMaxLimit(t *testing.T) {
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		DynamicBillingMinRatio: 0.01,
+		DynamicBillingMaxRatio: 1,
+	})
+	defer restoreSetting()
+	restoreBaselines := modelgatewaydynamicbilling.StoreDefaultBaselinesForTest(map[string]modelgatewaydynamicbilling.RatioBaseline{
+		"codex-plus": {
+			Group:              "codex-plus",
+			Ratio:              0.071,
+			CostSource:         scheduler_setting.DynamicBillingCostSourceProfit24h,
+			BaseQuotaAtRatio1:  100 * common.QuotaPerUnit,
+			CostMultiplier:     0.0284,
+			RequiredRevenueUSD: 7.1,
+			EffectiveRatio:     0.071,
+			TotalTokens:        10_000_000,
+		},
+	})
+	defer restoreBaselines()
+
+	config := ModelGatewayProfitMonitorConfig{
+		Enabled:                        true,
+		TargetProfitRate:               0.2,
+		DynamicRatioMaxLimit:           0.05,
+		DynamicRatioRecommendationMode: "observe",
+	}
+	recommendation := buildModelGatewayProfitRecommendation(ModelGatewayProfitMonitorSummary{
+		Requests:        100,
+		SuccessRequests: 100,
+		TotalTokens:     10_000_000,
+		RevenueUSD:      4,
+		UpstreamCostUSD: 2.84,
+	}, config)
+	enrichModelGatewayProfitRecommendationWithDynamicBilling(&recommendation, config)
+
+	require.InEpsilon(t, 0.071, recommendation.SuggestedDynamicRatioRaw, 0.000001)
+	require.InEpsilon(t, 0.05, recommendation.SuggestedDynamicRatio, 0.000001)
+	require.InEpsilon(t, 0.01, recommendation.DynamicRatioLimitMin, 0.000001)
+	require.InEpsilon(t, 0.05, recommendation.DynamicRatioLimitMax, 0.000001)
+	require.True(t, recommendation.DynamicRatioLimitApplied)
+	require.Equal(t, "max_limit", recommendation.DynamicRatioLimitReason)
+	require.InEpsilon(t, 5, recommendation.RequiredRevenueUSD, 0.000001)
+	require.InEpsilon(t, 1, recommendation.RevenueGapUSD, 0.000001)
+	require.InEpsilon(t, 1.25, recommendation.RecommendedRevenueMultiplier, 0.000001)
 }
 
 func TestModelGatewayProfitMonitorConfigAcceptsPercentInput(t *testing.T) {

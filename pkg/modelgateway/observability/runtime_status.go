@@ -350,10 +350,11 @@ func (s *RuntimeStatusService) applyLiveState(item *RuntimeStatusItem, query Run
 	if s == nil || s.deps.StateProvider == nil || item == nil || item.ChannelID <= 0 {
 		return
 	}
-	if !runtimeStatusStrictAccountScope(query) {
-		if active := s.deps.StateProvider.ActiveConcurrency(item.ChannelID); active > item.ActiveConcurrency {
-			item.ActiveConcurrency = active
-		}
+	if runtimeStatusStrictAccountScope(query) {
+		return
+	}
+	if active := s.deps.StateProvider.ActiveConcurrency(item.ChannelID); active > item.ActiveConcurrency {
+		item.ActiveConcurrency = active
 	}
 	if cooldown := s.deps.StateProvider.ConcurrencyCooldownStatus(item.ChannelID); cooldown != nil && cooldown.Active {
 		item.Cooldown = true

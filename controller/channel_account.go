@@ -75,6 +75,10 @@ type ChannelAccountItem struct {
 
 type ChannelAccountSummary struct {
 	Scored              int64                             `json:"scored"`
+	SchedulableAccounts int64                             `json:"schedulable_accounts"`
+	BlockedAccounts     int64                             `json:"blocked_accounts"`
+	RecoveryAccounts    int64                             `json:"recovery_accounts"`
+	CircuitOpenAccounts int64                             `json:"circuit_open_accounts"`
 	RealSampleCount30m  int64                             `json:"real_sample_count_30m"`
 	Today               ChannelAccountUsageWindowResponse `json:"today"`
 	Last5h              ChannelAccountUsageWindowResponse `json:"last_5h"`
@@ -1096,12 +1100,19 @@ func buildChannelAccountsResponse(channel *model.Channel, query ...channelAccoun
 	filtered := filterChannelAccounts(accounts, params)
 	sortChannelAccounts(filtered, params, statsByAccount)
 	response.FilteredTotal = len(filtered)
-	pageAccounts := paginateChannelAccounts(filtered, params)
-	runtimeItems := runtimeItemsForChannelAccounts(channel.Id, pageAccounts, len(accounts) == 1)
-
-	proxiesByID := channelAccountProxiesByID(channel, pageAccounts)
+	runtimeItems := runtimeItemsForChannelAccounts(channel.Id, filtered, len(accounts) == 1)
+	proxiesByID := channelAccountProxiesByID(channel, filtered)
 	proxyUsagesByID := channelAccountProxyUsagesByID(proxiesByID)
-	for _, account := range pageAccounts {
+
+	start := (params.Page - 1) * params.PageSize
+	end := start + params.PageSize
+	if start > len(filtered) {
+		start = len(filtered)
+	}
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+	for idx, account := range filtered {
 		item := buildChannelAccountItem(account, runtimeItems, len(accounts) == 1)
 		item.Capabilities = keyStatusCapabilities(channel, account.CredentialIndex)
 		if item.Capabilities != nil {
@@ -1125,10 +1136,23 @@ func buildChannelAccountsResponse(channel *model.Channel, query ...channelAccoun
 		}
 		item.Scheduling = buildChannelAccountSchedulingExplanation(item)
 		response.Summary.Scored += boolToInt64(item.Score != nil)
+		if item.Scheduling != nil && item.Scheduling.Schedulable {
+			response.Summary.SchedulableAccounts++
+		} else {
+			response.Summary.BlockedAccounts++
+		}
+		if item.Score != nil && (item.Score.ProbeRecoveryPending || item.Score.HealthStatus == "failure_avoidance") {
+			response.Summary.RecoveryAccounts++
+		}
+		if item.Score != nil && item.Score.HealthStatus == "circuit_open" {
+			response.Summary.CircuitOpenAccounts++
+		}
 		if item.Score != nil {
 			response.Summary.RealSampleCount30m += int64(item.Score.RealSampleCount30m)
 		}
-		response.Items = append(response.Items, item)
+		if idx >= start && idx < end {
+			response.Items = append(response.Items, item)
+		}
 	}
 	return response
 }
@@ -2989,6 +3013,16 @@ func buildChannelAccountSchedulingExplanation(item ChannelAccountItem) *ChannelA
 			if explanation.Detail == "" {
 				explanation.Detail = score.ProbeTriggerReason
 			}
+		}
+		switch score.HealthStatus {
+		case "failure_avoidance":
+			if !score.ProbeRecoveryPending {
+				blocking = appendChannelAccountSchedulingReason(blocking, "failure_avoidance")
+			}
+		case "circuit_open":
+			blocking = appendChannelAccountSchedulingReason(blocking, "circuit_open")
+		case "cooldown":
+			blocking = appendChannelAccountSchedulingReason(blocking, "cooldown")
 		}
 		if score.EffectiveConcurrencyCap > 0 && score.ActiveConcurrency >= score.EffectiveConcurrencyCap {
 			blocking = appendChannelAccountSchedulingReason(blocking, "concurrency_full")

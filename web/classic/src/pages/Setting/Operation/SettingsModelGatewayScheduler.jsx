@@ -2300,7 +2300,7 @@ export default function SettingsModelGatewayScheduler() {
             <Col xs={24} sm={12} md={4}>
               <Form.InputNumber
                 field='dynamic_billing_profit_rate_percent'
-                label={t('目标利润率')}
+                label={t('目标毛利率')}
                 min={0}
                 max={95}
                 step={1}

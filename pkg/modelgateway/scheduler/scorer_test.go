@@ -72,6 +72,129 @@ func TestRuntimeSnapshotStorePutGetAndList(t *testing.T) {
 	require.Empty(t, candidates)
 }
 
+func TestSelectorKeepsPeerAccountAvailableWhenRuntimeAvoided(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 60
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(7001)
+	})
+
+	channel := &model.Channel{Id: 7001, Name: "pooled", Status: common.ChannelStatusEnabled}
+	accountA := core.RuntimeKey{
+		RequestedModel:      "gpt-5.5",
+		UpstreamModel:       "gpt-5.5",
+		ChannelID:           channel.Id,
+		Group:               "default",
+		EndpointType:        constant.EndpointTypeOpenAI,
+		AccountID:           "acct-a",
+		CredentialIndex:     0,
+		CredentialSubjectFP: "subject-a",
+		CredentialFP:        "credential-a",
+	}
+	accountB := accountA
+	accountB.AccountID = "acct-b"
+	accountB.CredentialIndex = 1
+	accountB.CredentialSubjectFP = "subject-b"
+	accountB.CredentialFP = "credential-b"
+
+	service.RecordChannelRuntimeFailureAvoidanceWithContext(service.ChannelRuntimeIdentity{
+		ChannelID:           accountA.ChannelID,
+		RequestedModel:      accountA.RequestedModel,
+		SelectedGroup:       accountA.Group,
+		EndpointType:        accountA.EndpointType,
+		AccountID:           accountA.AccountID,
+		CredentialIndex:     accountA.CredentialIndex,
+		CredentialIndexSet:  true,
+		CredentialSubjectFP: accountA.CredentialSubjectFP,
+		CredentialFP:        accountA.CredentialFP,
+	}, "upstream_error:502:bad_response_status_code", nil)
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	store.Put(core.RuntimeSnapshot{Key: accountA, SuccessRate: 0.99, TTFTMs: 100, DurationMs: 500, SampleCount: 20, GroupPriorityRatio: 1})
+	store.Put(core.RuntimeSnapshot{Key: accountB, SuccessRate: 0.95, TTFTMs: 300, DurationMs: 800, SampleCount: 20, GroupPriorityRatio: 1})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: channel, Group: "default", RuntimeKey: accountA},
+			{Channel: channel, Group: "default", RuntimeKey: accountB},
+		}),
+		store,
+		core.ScoreWeights{Success: 1, Speed: 0, Load: 0, Cost: 0, Group: 0},
+	).WithRuntimeSnapshotEnricher(scheduler.NewRuntimeSnapshotEnricher(scheduler.NewServiceRuntimeStateProvider(), 0, 0, 0))
+
+	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, "acct-b", plan.RuntimeKey.AccountID)
+	accountAExplanation := candidateExplanationByRuntimeAccount(t, plan.Candidates, "acct-a")
+	require.Equal(t, "failure_avoidance", accountAExplanation.RejectReason)
+}
+
+func TestSelectorSkipsOnlyFailedRuntimeAccountWithinRequest(t *testing.T) {
+	channel := &model.Channel{Id: 7002, Name: "pooled", Status: common.ChannelStatusEnabled}
+	accountA := core.RuntimeKey{
+		RequestedModel:      "gpt-5.5",
+		UpstreamModel:       "gpt-5.5",
+		ChannelID:           channel.Id,
+		Group:               "default",
+		EndpointType:        constant.EndpointTypeOpenAI,
+		AccountID:           "acct-a",
+		CredentialIndex:     0,
+		CredentialSubjectFP: "subject-a",
+		CredentialFP:        "credential-a",
+	}
+	accountB := accountA
+	accountB.AccountID = "acct-b"
+	accountB.CredentialIndex = 1
+	accountB.CredentialSubjectFP = "subject-b"
+	accountB.CredentialFP = "credential-b"
+	ctx, _ := gin.CreateTestContext(nil)
+	service.MarkChannelRuntimeSelectionSkipped(ctx, service.ChannelRuntimeIdentity{
+		ChannelID:           accountA.ChannelID,
+		RequestedModel:      accountA.RequestedModel,
+		SelectedGroup:       accountA.Group,
+		EndpointType:        accountA.EndpointType,
+		AccountID:           accountA.AccountID,
+		CredentialIndex:     accountA.CredentialIndex,
+		CredentialIndexSet:  true,
+		CredentialSubjectFP: accountA.CredentialSubjectFP,
+		CredentialFP:        accountA.CredentialFP,
+	})
+
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: channel, Group: "default", RuntimeKey: accountA},
+			{Channel: channel, Group: "default", RuntimeKey: accountB},
+		}),
+		nil,
+		core.ScoreWeights{Success: 1, Speed: 0, Load: 0, Cost: 0, Group: 0},
+	).WithRuntimeSnapshotEnricher(scheduler.NewRuntimeSnapshotEnricher(scheduler.NewServiceRuntimeStateProvider(), 0, 0, 0))
+
+	plan, handled, apiErr := selector.Select(ctx, nil, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, "acct-b", plan.RuntimeKey.AccountID)
+	accountAExplanation := candidateExplanationByRuntimeAccount(t, plan.Candidates, "acct-a")
+	require.Equal(t, "already_failed_in_request", accountAExplanation.RejectReason)
+}
+
 func TestBalancedScorerPrefersHealthyFastCandidate(t *testing.T) {
 	scorer := newTestScorer(scheduler.DefaultScoreWeights())
 	good := scorer.Score(core.Candidate{
@@ -1866,6 +1989,17 @@ func candidateExplanationByChannel(t *testing.T, candidates []core.CandidateExpl
 		}
 	}
 	require.Failf(t, "candidate explanation not found", "channel_id=%d", channelID)
+	return core.CandidateExplanation{}
+}
+
+func candidateExplanationByRuntimeAccount(t *testing.T, candidates []core.CandidateExplanation, accountID string) core.CandidateExplanation {
+	t.Helper()
+	for _, candidate := range candidates {
+		if candidate.RuntimeKey.AccountID == accountID || candidate.AccountID == accountID {
+			return candidate
+		}
+	}
+	require.Failf(t, "candidate explanation not found", "account_id=%s", accountID)
 	return core.CandidateExplanation{}
 }
 

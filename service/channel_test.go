@@ -137,6 +137,17 @@ func TestInsufficientUserQuotaOnlyPausesChannelWhenRetryable(t *testing.T) {
 	require.False(t, ShouldDisableChannel(localErr))
 }
 
+func TestOpenAIInsufficientQuotaMessageIsBalanceInsufficient(t *testing.T) {
+	err := types.WithOpenAIError(types.OpenAIError{
+		Message: "You exceeded your current quota, please check your plan and billing details.",
+		Type:    "insufficient_quota",
+		Code:    "insufficient_quota",
+	}, http.StatusTooManyRequests)
+
+	require.True(t, IsBalanceInsufficientError(err))
+	require.True(t, IsBalanceInsufficientMessage("insufficient_quota"))
+}
+
 func TestShouldResumeErrorPausedChannelWaitsForPauseUntilAndSuccess(t *testing.T) {
 	now := time.Now().Unix()
 	channel := &model.Channel{

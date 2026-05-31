@@ -14,10 +14,15 @@ const (
 )
 
 type ChannelConfigIsolationKey struct {
-	ChannelID      int                   `json:"channel_id"`
-	RequestedModel string                `json:"requested_model"`
-	SelectedGroup  string                `json:"selected_group"`
-	EndpointType   constant.EndpointType `json:"endpoint_type"`
+	ChannelID           int                   `json:"channel_id"`
+	RequestedModel      string                `json:"requested_model"`
+	SelectedGroup       string                `json:"selected_group"`
+	EndpointType        constant.EndpointType `json:"endpoint_type"`
+	AccountID           string                `json:"account_id,omitempty"`
+	CredentialIndex     int                   `json:"credential_index,omitempty"`
+	CredentialIndexSet  bool                  `json:"credential_index_set,omitempty"`
+	CredentialSubjectFP string                `json:"credential_subject_fingerprint,omitempty"`
+	CredentialFP        string                `json:"credential_fingerprint,omitempty"`
 }
 
 type ChannelConfigIsolationStatus struct {
@@ -53,6 +58,28 @@ func NewChannelConfigIsolationKey(channelID int, requestedModel, selectedGroup s
 		SelectedGroup:  strings.TrimSpace(selectedGroup),
 		EndpointType:   normalizeChannelConfigIsolationEndpoint(endpointType),
 	}
+}
+
+func NewChannelRuntimeConfigIsolationKey(identity ChannelRuntimeIdentity, requestedModel, selectedGroup string, endpointType constant.EndpointType) ChannelConfigIsolationKey {
+	identity = identity.Normalize()
+	key := NewChannelConfigIsolationKey(identity.ChannelID, requestedModel, selectedGroup, endpointType)
+	if strings.TrimSpace(key.RequestedModel) == "" {
+		key.RequestedModel = identity.RequestedModel
+	}
+	if strings.TrimSpace(key.SelectedGroup) == "" {
+		key.SelectedGroup = identity.SelectedGroup
+	}
+	if key.EndpointType == "" {
+		key.EndpointType = normalizeChannelConfigIsolationEndpoint(identity.EndpointType)
+	}
+	if identity.HasAccountScope() {
+		key.AccountID = identity.AccountID
+		key.CredentialIndex = identity.CredentialIndex
+		key.CredentialIndexSet = identity.CredentialIndexSet
+		key.CredentialSubjectFP = identity.CredentialSubjectFP
+		key.CredentialFP = identity.CredentialFP
+	}
+	return key
 }
 
 func NewChannelConfigIsolationManager() *ChannelConfigIsolationManager {

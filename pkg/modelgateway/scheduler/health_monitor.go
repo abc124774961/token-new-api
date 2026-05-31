@@ -81,7 +81,7 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	}
 	if result.BalanceInsufficient || isBalanceInsufficientAttempt(result) {
 		if result.ChannelID > 0 {
-			service.MarkChannelBalanceInsufficient(result.ChannelID)
+			service.MarkChannelRuntimeBalanceInsufficient(serviceRuntimeIdentityFromKey(result.RuntimeKey()))
 		}
 		return
 	}
@@ -261,7 +261,8 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 	if required <= 0 {
 		required = 2
 	}
-	avoidance := service.GetChannelFailureAvoidanceStatus(result.ChannelID)
+	identity := serviceRuntimeIdentityFromKey(result.RuntimeKey())
+	avoidance := service.GetChannelRuntimeFailureAvoidanceStatus(identity)
 	timeoutRecovery := (avoidance != nil && (avoidance.ProbeRecoveryRequired || service.IsTimeoutRecoveryReason(avoidance.Reason))) ||
 		strings.TrimSpace(snapshot.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason ||
 		strings.TrimSpace(result.ProbeReason) == service.ChannelTimeoutRecoveryReason
@@ -290,7 +291,7 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 	if result.IsHealthProbe && result.Success {
 		snapshot.ProbeRecoverySuccessCount++
 		if snapshot.ProbeRecoverySuccessCount >= required && avoidance != nil && (!avoidance.ProbeRecoveryRequired || timeoutRecovery) {
-			service.ClearChannelProbeRecoveryAvoidance(result.ChannelID)
+			service.ClearChannelRuntimeProbeRecoveryAvoidance(identity)
 			snapshot.FailureAvoidance = false
 			snapshot.ProbeRecoveryPending = false
 			snapshot.ProbeRecoverySuccessCount = required

@@ -26,6 +26,11 @@ type RuntimeStateProvider interface {
 	ConfigErrorIsolationStatus(key core.RuntimeKey) *service.ChannelConfigIsolationStatus
 }
 
+type RuntimeAccountStateProvider interface {
+	FailureAvoidanceStatusForIdentity(identity service.ChannelRuntimeIdentity) *service.ChannelFailureAvoidanceStatus
+	FirstBytePendingStatusForIdentity(identity service.ChannelRuntimeIdentity) *service.ChannelFirstBytePendingStatus
+}
+
 type CostProfileProvider interface {
 	CostRatio(channelID int, upstreamModel string) (float64, bool)
 }
@@ -60,13 +65,21 @@ func (p *ServiceRuntimeStateProvider) FailureAvoidanceStatus(channelID int) *ser
 	return service.GetChannelFailureAvoidanceStatus(channelID)
 }
 
+func (p *ServiceRuntimeStateProvider) FailureAvoidanceStatusForIdentity(identity service.ChannelRuntimeIdentity) *service.ChannelFailureAvoidanceStatus {
+	return service.GetChannelRuntimeFailureAvoidanceStatus(identity)
+}
+
 func (p *ServiceRuntimeStateProvider) FirstBytePendingStatus(channelID int) *service.ChannelFirstBytePendingStatus {
 	return service.GetChannelFirstBytePendingStatus(channelID)
 }
 
+func (p *ServiceRuntimeStateProvider) FirstBytePendingStatusForIdentity(identity service.ChannelRuntimeIdentity) *service.ChannelFirstBytePendingStatus {
+	return service.GetChannelRuntimeFirstBytePendingStatus(identity)
+}
+
 func (p *ServiceRuntimeStateProvider) ConfigErrorIsolationStatus(key core.RuntimeKey) *service.ChannelConfigIsolationStatus {
-	return service.GetChannelConfigIsolationStatus(service.NewChannelConfigIsolationKey(
-		key.ChannelID,
+	return service.GetChannelConfigIsolationStatus(service.NewChannelRuntimeConfigIsolationKey(
+		serviceRuntimeIdentityFromKey(key),
 		key.RequestedModel,
 		key.Group,
 		key.EndpointType,
@@ -162,18 +175,25 @@ func (e *RuntimeSnapshotEnricher) Enrich(candidate core.Candidate, snapshot core
 	channelID := candidate.Channel.Id
 	setting := candidate.Channel.GetSetting()
 	snapshot = e.applyConcurrency(snapshot, channelID, setting, policy)
-	snapshot = e.applyFirstBytePending(snapshot, channelID)
+	identity := serviceRuntimeIdentityFromCandidate(candidate, snapshot)
+	snapshot = e.applyFirstBytePending(snapshot, channelID, identity)
 	snapshot.Cooldown = snapshot.Cooldown || e.stateProvider.ConcurrencyCooldownActive(channelID)
-	snapshot = e.applyFailureAvoidance(snapshot, channelID)
+	snapshot = e.applyFailureAvoidance(snapshot, channelID, identity)
 	snapshot = e.applyConfigErrorIsolation(snapshot)
 	snapshot = e.applyCostSnapshot(candidate, snapshot, policy)
 	snapshot = e.applyCircuit(snapshot, policy)
 	return snapshot
 }
 
-func (e *RuntimeSnapshotEnricher) applyFailureAvoidance(snapshot core.RuntimeSnapshot, channelID int) core.RuntimeSnapshot {
+func (e *RuntimeSnapshotEnricher) applyFailureAvoidance(snapshot core.RuntimeSnapshot, channelID int, identity service.ChannelRuntimeIdentity) core.RuntimeSnapshot {
 	status := e.stateProvider.FailureAvoidanceStatus(channelID)
+	if accountProvider, ok := e.stateProvider.(RuntimeAccountStateProvider); ok && identity.HasAccountScope() {
+		status = accountProvider.FailureAvoidanceStatusForIdentity(identity)
+	}
 	if status == nil {
+		if identity.HasAccountScope() {
+			return snapshot
+		}
 		snapshot.FailureAvoidance = snapshot.FailureAvoidance || e.stateProvider.FailureAvoidanceActive(channelID)
 		return snapshot
 	}
@@ -207,8 +227,11 @@ func (e *RuntimeSnapshotEnricher) applyConfigErrorIsolation(snapshot core.Runtim
 	return snapshot
 }
 
-func (e *RuntimeSnapshotEnricher) applyFirstBytePending(snapshot core.RuntimeSnapshot, channelID int) core.RuntimeSnapshot {
+func (e *RuntimeSnapshotEnricher) applyFirstBytePending(snapshot core.RuntimeSnapshot, channelID int, identity service.ChannelRuntimeIdentity) core.RuntimeSnapshot {
 	status := e.stateProvider.FirstBytePendingStatus(channelID)
+	if accountProvider, ok := e.stateProvider.(RuntimeAccountStateProvider); ok && identity.HasAccountScope() {
+		status = accountProvider.FirstBytePendingStatusForIdentity(identity)
+	}
 	if status == nil {
 		return snapshot
 	}

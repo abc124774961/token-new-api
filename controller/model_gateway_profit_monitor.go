@@ -45,6 +45,8 @@ type ModelGatewayProfitMonitorConfig struct {
 	TrafficEstimatedBytesPerToken  int     `json:"traffic_estimated_bytes_per_token"`
 	ResourceCostEnabled            bool    `json:"resource_cost_enabled"`
 	TargetProfitRate               float64 `json:"target_profit_rate"`
+	DynamicRatioMinLimit           float64 `json:"dynamic_ratio_min_limit"`
+	DynamicRatioMaxLimit           float64 `json:"dynamic_ratio_max_limit"`
 	DynamicRatioRecommendationMode string  `json:"dynamic_ratio_recommendation_mode"`
 }
 
@@ -56,6 +58,8 @@ type UpdateModelGatewayProfitMonitorConfigRequest struct {
 	TrafficEstimatedBytesPerToken  *int     `json:"traffic_estimated_bytes_per_token,omitempty"`
 	ResourceCostEnabled            *bool    `json:"resource_cost_enabled,omitempty"`
 	TargetProfitRate               *float64 `json:"target_profit_rate,omitempty"`
+	DynamicRatioMinLimit           *float64 `json:"dynamic_ratio_min_limit,omitempty"`
+	DynamicRatioMaxLimit           *float64 `json:"dynamic_ratio_max_limit,omitempty"`
 	DynamicRatioRecommendationMode string   `json:"dynamic_ratio_recommendation_mode,omitempty"`
 }
 
@@ -200,6 +204,11 @@ type ModelGatewayProfitRecommendation struct {
 	BaseQuotaAtRatio1              float64 `json:"base_quota_at_ratio_1"`
 	MinimumRevenuePerMBaseQuotaUSD float64 `json:"minimum_revenue_per_m_base_quota_usd"`
 	SuggestedDynamicRatio          float64 `json:"suggested_dynamic_ratio"`
+	SuggestedDynamicRatioRaw       float64 `json:"suggested_dynamic_ratio_raw"`
+	DynamicRatioLimitMin           float64 `json:"dynamic_ratio_limit_min"`
+	DynamicRatioLimitMax           float64 `json:"dynamic_ratio_limit_max"`
+	DynamicRatioLimitApplied       bool    `json:"dynamic_ratio_limit_applied"`
+	DynamicRatioLimitReason        string  `json:"dynamic_ratio_limit_reason"`
 	CurrentEffectiveDynamicRatio   float64 `json:"current_effective_dynamic_ratio"`
 	DynamicBillingApplied          bool    `json:"dynamic_billing_applied"`
 	CanRecommend                   bool    `json:"can_recommend"`
@@ -322,6 +331,12 @@ func UpdateModelGatewayProfitMonitorConfig(c *gin.Context) {
 	}
 	if request.TargetProfitRate != nil {
 		config.TargetProfitRate = *request.TargetProfitRate
+	}
+	if request.DynamicRatioMinLimit != nil {
+		config.DynamicRatioMinLimit = *request.DynamicRatioMinLimit
+	}
+	if request.DynamicRatioMaxLimit != nil {
+		config.DynamicRatioMaxLimit = *request.DynamicRatioMaxLimit
 	}
 	if strings.TrimSpace(request.DynamicRatioRecommendationMode) != "" {
 		config.DynamicRatioRecommendationMode = strings.TrimSpace(request.DynamicRatioRecommendationMode)
@@ -529,7 +544,7 @@ func buildModelGatewayProfitMonitorResponse(window string, startTimestamp int64,
 	allocateModelGatewayProfitMonitorBreakdownCosts(breakdown, summary, resources, config, dimension, hasTrafficBreakdown)
 
 	recommendation := buildModelGatewayProfitRecommendation(summary, config)
-	enrichModelGatewayProfitRecommendationWithDynamicBilling(&recommendation)
+	enrichModelGatewayProfitRecommendationWithDynamicBilling(&recommendation, config)
 
 	return ModelGatewayProfitMonitorResponse{
 		Window:         window,
@@ -687,6 +702,8 @@ func defaultModelGatewayProfitMonitorConfig() ModelGatewayProfitMonitorConfig {
 		TrafficEstimatedBytesPerToken:  0,
 		ResourceCostEnabled:            true,
 		TargetProfitRate:               0.20,
+		DynamicRatioMinLimit:           0,
+		DynamicRatioMaxLimit:           0,
 		DynamicRatioRecommendationMode: "observe",
 	}
 }
@@ -731,6 +748,21 @@ func normalizeModelGatewayProfitMonitorConfig(config ModelGatewayProfitMonitorCo
 	}
 	if config.TargetProfitRate > 0.95 {
 		config.TargetProfitRate = 0.95
+	}
+	if config.DynamicRatioMinLimit < 0 {
+		config.DynamicRatioMinLimit = 0
+	}
+	if config.DynamicRatioMaxLimit < 0 {
+		config.DynamicRatioMaxLimit = 0
+	}
+	if config.DynamicRatioMinLimit > 100 {
+		config.DynamicRatioMinLimit = 100
+	}
+	if config.DynamicRatioMaxLimit > 100 {
+		config.DynamicRatioMaxLimit = 100
+	}
+	if config.DynamicRatioMaxLimit > 0 && config.DynamicRatioMinLimit > config.DynamicRatioMaxLimit {
+		config.DynamicRatioMaxLimit = config.DynamicRatioMinLimit
 	}
 	switch strings.TrimSpace(config.DynamicRatioRecommendationMode) {
 	case "off", "observe", "ai":
@@ -1124,21 +1156,19 @@ func buildModelGatewayProfitRecommendation(summary ModelGatewayProfitMonitorSumm
 		result.Reason = modelGatewayProfitRecommendationReasonDisabled
 		return result
 	}
-	if summary.UpstreamCostUSD <= 0 {
+	costUSD := summary.OperatingCostUSD
+	if costUSD <= 0 {
+		costUSD = summary.UpstreamCostUSD
+	}
+	if costUSD <= 0 {
 		result.Reason = modelGatewayProfitRecommendationReasonNoCost
 		return result
 	}
-	target := config.TargetProfitRate
-	if target >= 0.95 {
-		target = 0.95
-	}
-	if target < 0 {
-		target = 0
-	}
-	requiredRevenue := summary.UpstreamCostUSD * (1 + target)
+	target := modelgatewaydynamicbilling.SanitizeTargetGrossMargin(config.TargetProfitRate)
+	requiredRevenue := modelgatewaydynamicbilling.RequiredRevenueForGrossMargin(costUSD, target)
 	result.RequiredRevenueUSD = requiredRevenue
 	result.RevenueGapUSD = requiredRevenue - summary.RevenueUSD
-	result.CostMarkupMultiplier = requiredRevenue / summary.UpstreamCostUSD
+	result.CostMarkupMultiplier = modelgatewaydynamicbilling.RevenueMultiplierForGrossMargin(target)
 	if summary.RevenueUSD > 0 {
 		result.RecommendedRevenueMultiplier = requiredRevenue / summary.RevenueUSD
 	}
@@ -1162,7 +1192,7 @@ func buildModelGatewayProfitRecommendation(summary ModelGatewayProfitMonitorSumm
 	return result
 }
 
-func enrichModelGatewayProfitRecommendationWithDynamicBilling(recommendation *ModelGatewayProfitRecommendation) {
+func enrichModelGatewayProfitRecommendationWithDynamicBilling(recommendation *ModelGatewayProfitRecommendation, config ModelGatewayProfitMonitorConfig) {
 	if recommendation == nil {
 		return
 	}
@@ -1202,14 +1232,22 @@ func enrichModelGatewayProfitRecommendationWithDynamicBilling(recommendation *Mo
 	recommendation.BaseQuotaAtRatio1 = baseQuota
 	if costMultiplierWeight > 0 {
 		recommendation.CostMultiplier = costMultiplierSum / costMultiplierWeight
-		markupMultiplier := recommendation.CostMarkupMultiplier
-		if markupMultiplier <= 0 {
-			markupMultiplier = 1 + recommendation.TargetProfitRate
+		targetRequiredRevenue := requiredRevenue
+		if targetRequiredRevenue <= 0 {
+			targetRequiredRevenue = recommendation.RequiredRevenueUSD
 		}
-		if markupMultiplier <= 0 {
-			markupMultiplier = 1
+		if targetRequiredRevenue > 0 {
+			recommendation.SuggestedDynamicRatio = targetRequiredRevenue * common.QuotaPerUnit / baseQuota
+		} else {
+			recommendation.SuggestedDynamicRatio = recommendation.CostMultiplier *
+				modelgatewaydynamicbilling.RevenueMultiplierForGrossMargin(recommendation.TargetProfitRate)
 		}
-		recommendation.SuggestedDynamicRatio = recommendation.CostMultiplier * markupMultiplier
+		applyModelGatewayProfitDynamicRatioLimit(recommendation, config)
+	} else if requiredRevenue > 0 {
+		recommendation.SuggestedDynamicRatio = requiredRevenue * common.QuotaPerUnit / baseQuota
+		applyModelGatewayProfitDynamicRatioLimit(recommendation, config)
+	}
+	if recommendation.SuggestedDynamicRatio > 0 {
 		recommendation.RequiredRevenueUSD = recommendation.SuggestedDynamicRatio * baseQuota / common.QuotaPerUnit
 		if currentRevenue > 0 {
 			recommendation.RevenueGapUSD = recommendation.RequiredRevenueUSD - currentRevenue
@@ -1218,14 +1256,53 @@ func enrichModelGatewayProfitRecommendationWithDynamicBilling(recommendation *Mo
 		if totalTokens > 0 {
 			recommendation.RecommendedFloorPerMTokenUSD = recommendation.RequiredRevenueUSD / float64(totalTokens) * 1_000_000
 		}
-	} else if requiredRevenue > 0 {
-		recommendation.SuggestedDynamicRatio = requiredRevenue * common.QuotaPerUnit / baseQuota
-	}
-	if recommendation.SuggestedDynamicRatio > 0 {
 		recommendation.MinimumRevenuePerMBaseQuotaUSD = recommendation.SuggestedDynamicRatio * 1_000_000 / common.QuotaPerUnit
 	}
 	recommendation.CurrentEffectiveDynamicRatio = currentRatio
 	recommendation.DynamicBillingApplied = applied
+}
+
+func applyModelGatewayProfitDynamicRatioLimit(recommendation *ModelGatewayProfitRecommendation, config ModelGatewayProfitMonitorConfig) {
+	if recommendation == nil || recommendation.SuggestedDynamicRatio <= 0 {
+		return
+	}
+	minLimit, maxLimit := modelGatewayProfitEffectiveDynamicRatioLimits(config)
+	rawRatio := recommendation.SuggestedDynamicRatio
+	limitedRatio := rawRatio
+	reason := ""
+	if minLimit > 0 && limitedRatio < minLimit {
+		limitedRatio = minLimit
+		reason = "min_limit"
+	}
+	if maxLimit > 0 && limitedRatio > maxLimit {
+		limitedRatio = maxLimit
+		reason = "max_limit"
+	}
+	recommendation.SuggestedDynamicRatioRaw = rawRatio
+	recommendation.DynamicRatioLimitMin = minLimit
+	recommendation.DynamicRatioLimitMax = maxLimit
+	if math.Abs(limitedRatio-rawRatio) > 0.0000001 {
+		recommendation.SuggestedDynamicRatio = limitedRatio
+		recommendation.DynamicRatioLimitApplied = true
+		recommendation.DynamicRatioLimitReason = reason
+	}
+}
+
+func modelGatewayProfitEffectiveDynamicRatioLimits(config ModelGatewayProfitMonitorConfig) (float64, float64) {
+	config = normalizeModelGatewayProfitMonitorConfig(config)
+	setting := scheduler_setting.GetSetting()
+	minLimit := config.DynamicRatioMinLimit
+	if setting.DynamicBillingMinRatio > minLimit {
+		minLimit = setting.DynamicBillingMinRatio
+	}
+	maxLimit := config.DynamicRatioMaxLimit
+	if setting.DynamicBillingMaxRatio > 0 && (maxLimit <= 0 || setting.DynamicBillingMaxRatio < maxLimit) {
+		maxLimit = setting.DynamicBillingMaxRatio
+	}
+	if maxLimit > 0 && minLimit > maxLimit {
+		maxLimit = minLimit
+	}
+	return minLimit, maxLimit
 }
 
 func modelGatewayProfitRecommendationHasEnoughSamples(summary ModelGatewayProfitMonitorSummary) bool {
@@ -1269,6 +1346,11 @@ func buildModelGatewayProfitRecommendationSnapshot(payload ModelGatewayProfitMon
 			"cost_markup_multiplier":            recommendation.CostMarkupMultiplier,
 			"recommended_revenue_multiplier":    recommendation.RecommendedRevenueMultiplier,
 			"recommended_floor_per_m_token_usd": recommendation.RecommendedFloorPerMTokenUSD,
+			"suggested_dynamic_ratio":           recommendation.SuggestedDynamicRatio,
+			"suggested_dynamic_ratio_raw":       recommendation.SuggestedDynamicRatioRaw,
+			"dynamic_ratio_limit_min":           recommendation.DynamicRatioLimitMin,
+			"dynamic_ratio_limit_max":           recommendation.DynamicRatioLimitMax,
+			"dynamic_ratio_limit_applied":       boolToProfitMonitorFloat(recommendation.DynamicRatioLimitApplied),
 			"traffic_cost_usd":                  summary.TrafficCostUSD,
 			"resource_cost_usd":                 resourceCost,
 			"server_cost_usd":                   summary.ServerCostUSD,

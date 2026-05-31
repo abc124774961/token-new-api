@@ -493,10 +493,7 @@ func buildSampleCostRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, settin
 			windowMinutes = scheduler_setting.DefaultSetting().DynamicBillingWindowMinutes
 		}
 	}
-	profitRate := setting.DynamicBillingProfitRate
-	if profitRate < 0 {
-		profitRate = 0
-	}
+	profitRate := SanitizeTargetGrossMargin(setting.DynamicBillingProfitRate)
 	rows, windowStart, err := loadBaselineRows(db, logDB, now, windowSamples, windowMinutes, filter)
 	if err != nil {
 		return nil, err
@@ -549,11 +546,13 @@ func buildSampleCostRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, settin
 		if accumulator == nil || accumulator.TotalCost <= 0 || accumulator.TotalBaseQuota <= 0 {
 			continue
 		}
-		ratio := accumulator.TotalCost * (1 + profitRate) * common.QuotaPerUnit / accumulator.TotalBaseQuota
+		requiredRevenue := RequiredRevenueForGrossMargin(accumulator.TotalCost, profitRate)
+		ratio := requiredRevenue * common.QuotaPerUnit / accumulator.TotalBaseQuota
 		costMultiplier := 0.0
 		if accumulator.CostRatioWeight > 0 {
 			costMultiplier = accumulator.CostRatioSum / accumulator.CostRatioWeight
-			ratio = costMultiplier * (1 + profitRate)
+			ratio = costMultiplier * RevenueMultiplierForGrossMargin(profitRate)
+			requiredRevenue = ratio * accumulator.TotalBaseQuota / common.QuotaPerUnit
 		}
 		if ratio <= 0 {
 			continue
@@ -563,25 +562,26 @@ func buildSampleCostRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, settin
 			referenceModel = strings.TrimSpace(accumulator.ReferenceRow.ModelName)
 		}
 		baseline := RatioBaseline{
-			RequestedModel:    referenceModel,
-			ReferenceModel:    referenceModel,
-			Group:             accumulator.Group,
-			Ratio:             ratio,
-			PricePerM:         requestedModelPricePerMillion(referenceModel, ratio),
-			SampleCount:       accumulator.SampleCount,
-			ModelCount:        accumulator.ModelCount,
-			CalculatedAt:      now,
-			WindowStart:       windowStart,
-			WindowEnd:         now,
-			ProfitRate:        profitRate,
-			CostSource:        scheduler_setting.DynamicBillingCostSourceSampleCost,
-			ApplyMode:         normalizeApplyMode(setting.DynamicBillingApplyMode),
-			ApplyReason:       applyReasonForConfiguredMode(setting.DynamicBillingApplyMode),
-			UpstreamCostUSD:   accumulator.TotalCost,
-			BaseQuotaAtRatio1: accumulator.TotalBaseQuota,
-			CostMultiplier:    costMultiplier,
-			TargetRatio:       ratio,
-			EffectiveRatio:    ratio,
+			RequestedModel:     referenceModel,
+			ReferenceModel:     referenceModel,
+			Group:              accumulator.Group,
+			Ratio:              ratio,
+			PricePerM:          requestedModelPricePerMillion(referenceModel, ratio),
+			SampleCount:        accumulator.SampleCount,
+			ModelCount:         accumulator.ModelCount,
+			CalculatedAt:       now,
+			WindowStart:        windowStart,
+			WindowEnd:          now,
+			ProfitRate:         profitRate,
+			CostSource:         scheduler_setting.DynamicBillingCostSourceSampleCost,
+			ApplyMode:          normalizeApplyMode(setting.DynamicBillingApplyMode),
+			ApplyReason:        applyReasonForConfiguredMode(setting.DynamicBillingApplyMode),
+			UpstreamCostUSD:    accumulator.TotalCost,
+			RequiredRevenueUSD: requiredRevenue,
+			BaseQuotaAtRatio1:  accumulator.TotalBaseQuota,
+			CostMultiplier:     costMultiplier,
+			TargetRatio:        ratio,
+			EffectiveRatio:     ratio,
 		}
 		result[groupCacheKey(accumulator.Group)] = baseline
 	}

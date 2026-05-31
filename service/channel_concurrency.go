@@ -186,6 +186,28 @@ func MarkChannelSelectionSkipped(ctx *gin.Context, channelID int) {
 	common.SetContextKey(ctx, constant.ContextKeyChannelSelectionSkipped, channelIDs)
 }
 
+func MarkChannelRuntimeSelectionSkipped(ctx *gin.Context, identity ChannelRuntimeIdentity) {
+	if ctx == nil {
+		return
+	}
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return
+	}
+	if !identity.HasAccountScope() {
+		MarkChannelSelectionSkipped(ctx, identity.ChannelID)
+		return
+	}
+	identities, _ := common.GetContextKeyType[[]ChannelRuntimeIdentity](ctx, constant.ContextKeyChannelRuntimeSelectionSkipped)
+	for _, existing := range identities {
+		if existing.Normalize() == identity {
+			return
+		}
+	}
+	identities = append(identities, identity)
+	common.SetContextKey(ctx, constant.ContextKeyChannelRuntimeSelectionSkipped, identities)
+}
+
 func IsChannelSelectionSkipped(ctx *gin.Context, channelID int) bool {
 	if ctx == nil || channelID <= 0 {
 		return false
@@ -196,6 +218,32 @@ func IsChannelSelectionSkipped(ctx *gin.Context, channelID int) bool {
 	}
 	for _, existing := range channelIDs {
 		if existing == channelID {
+			return true
+		}
+	}
+	return false
+}
+
+func IsChannelRuntimeSelectionSkipped(ctx *gin.Context, identity ChannelRuntimeIdentity) bool {
+	if ctx == nil {
+		return false
+	}
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return false
+	}
+	if IsChannelSelectionSkipped(ctx, identity.ChannelID) {
+		return true
+	}
+	if !identity.HasAccountScope() {
+		return false
+	}
+	identities, ok := common.GetContextKeyType[[]ChannelRuntimeIdentity](ctx, constant.ContextKeyChannelRuntimeSelectionSkipped)
+	if !ok {
+		return false
+	}
+	for _, existing := range identities {
+		if existing.Normalize() == identity {
 			return true
 		}
 	}

@@ -3115,15 +3115,22 @@ function formatDynamicBillingPriceAverage(item) {
   return formatDynamicBillingPriceCompact(item);
 }
 
-function dynamicBillingCostFactor(overview) {
-  const profitRate = safeNumber(overview?.profit_rate);
-  const factor = 1 + profitRate;
-  return factor > 0 ? factor : 1;
+function dynamicBillingCostFactor(overview, item) {
+  const upstreamCost = safeNumber(item?.upstream_cost_usd);
+  const requiredRevenue = safeNumber(item?.required_revenue_usd);
+  if (upstreamCost > 0 && requiredRevenue > 0) {
+    return requiredRevenue / upstreamCost;
+  }
+  const profitRate = Math.min(
+    Math.max(safeNumber(overview?.profit_rate), 0),
+    0.95,
+  );
+  return 1 / (1 - profitRate);
 }
 
 function formatDynamicBillingCostPriceCompact(item, overview) {
   if (!item) return '--';
-  const factor = dynamicBillingCostFactor(overview);
+  const factor = dynamicBillingCostFactor(overview, item);
   const currentPrice = safeNumber(item.current_price_per_m);
   if (currentPrice > 0) {
     const costPrice = currentPrice / factor;
@@ -3147,7 +3154,7 @@ function formatDynamicBillingCostRatioCurrent(item, overview) {
   if (costMultiplier > 0) {
     return formatCostRatio(costMultiplier);
   }
-  const factor = dynamicBillingCostFactor(overview);
+  const factor = dynamicBillingCostFactor(overview, item);
   const currentRatio = safeNumber(item.current_ratio);
   if (currentRatio > 0) {
     return formatCostRatio(currentRatio / factor);
@@ -3163,7 +3170,7 @@ function formatDynamicBillingCostRatioCurrent(item, overview) {
 
 function formatDynamicBillingCostPriceAverage(item, overview) {
   if (!item) return '--';
-  const factor = dynamicBillingCostFactor(overview);
+  const factor = dynamicBillingCostFactor(overview, item);
   const blendedPrice = safeNumber(item.blended_price_per_m);
   if (blendedPrice > 0) {
     const costPrice = blendedPrice / factor;
@@ -3186,7 +3193,7 @@ function formatDynamicBillingCostRatioAverage(item, overview) {
   if (costMultiplier > 0) {
     return formatCostRatio(costMultiplier);
   }
-  const factor = dynamicBillingCostFactor(overview);
+  const factor = dynamicBillingCostFactor(overview, item);
   const blendedRatio = safeNumber(item.blended_ratio);
   if (blendedRatio > 0) {
     return formatCostRatio(blendedRatio / factor);
@@ -4458,10 +4465,10 @@ function DynamicBillingMiniPanel({
   const upstreamCost = safeNumber(primary?.upstream_cost_usd);
   const requiredRevenue = safeNumber(primary?.required_revenue_usd);
   const costMultiplierRatio = safeNumber(primary?.cost_multiplier);
-  const profitMarkupRatio =
+  const grossMarginMultiplier =
     upstreamCost > 0 && requiredRevenue > 0
       ? requiredRevenue / upstreamCost
-      : dynamicBillingCostFactor(overview);
+      : dynamicBillingCostFactor(overview, primary);
   const targetRatio = safeNumber(
     primary?.effective_ratio || primary?.target_ratio,
   );
@@ -4495,9 +4502,11 @@ function DynamicBillingMiniPanel({
                 : '--',
           },
           {
-            label: t('利润加成'),
+            label: t('毛利换算'),
             value:
-              profitMarkupRatio > 0 ? formatCostRatio(profitMarkupRatio) : '--',
+              grossMarginMultiplier > 0
+                ? formatCostRatio(grossMarginMultiplier)
+                : '--',
           },
         ]
       : [];

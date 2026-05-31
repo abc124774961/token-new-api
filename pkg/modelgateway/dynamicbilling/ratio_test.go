@@ -273,7 +273,7 @@ func TestBuildRatioBaselinesSkipsInvalidRowsUntilTargetValidSamples(t *testing.T
 	require.Equal(t, now-20, baseline.WindowStart)
 }
 
-func TestBuildRatioBaselinesProfit24hUsesTokenCostMarkupAndBaseQuota(t *testing.T) {
+func TestBuildRatioBaselinesProfit24hUsesGrossMarginAndBaseQuota(t *testing.T) {
 	db := newDynamicBillingTestDB(t)
 	oldModelRatio := ratio_setting.ModelRatio2JSONString()
 	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
@@ -336,9 +336,76 @@ func TestBuildRatioBaselinesProfit24hUsesTokenCostMarkupAndBaseQuota(t *testing.
 	require.InEpsilon(t, 0.03, baseline.CostMultiplier, 0.000001)
 	require.InEpsilon(t, 10000, baseline.BaseQuotaAtRatio1, 0.000001)
 	require.InEpsilon(t, 0.0006, baseline.OperatingCostUSD, 0.000001)
-	require.InEpsilon(t, 0.00072, baseline.RequiredRevenueUSD, 0.000001)
-	require.InEpsilon(t, 0.036, baseline.TargetRatio, 0.000001)
-	require.InEpsilon(t, 0.036, baseline.Ratio, 0.000001)
+	require.InEpsilon(t, 0.00075, baseline.RequiredRevenueUSD, 0.000001)
+	require.InEpsilon(t, 0.0375, baseline.TargetRatio, 0.000001)
+	require.InEpsilon(t, 0.0375, baseline.Ratio, 0.000001)
+	require.Empty(t, baseline.FallbackReason)
+}
+
+func TestBuildRatioBaselinesProfit24hAppliesProfitMonitorRatioLimit(t *testing.T) {
+	db := newDynamicBillingTestDB(t)
+	oldModelRatio := ratio_setting.ModelRatio2JSONString()
+	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-test":2}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"codex-plus":0.1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldModelRatio))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroupRatio))
+	})
+	setProfit24hMonitorConfigForTest(t, profit24hMonitorConfig{
+		DynamicRatioMaxLimit: 0.03,
+		ResourceCostEnabled:  true,
+	})
+
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&model.ModelGatewayRequestCostSummary{
+		RequestId:         "req-profit-24h-limit",
+		UpstreamCostTotal: 0.0006,
+		BreakdownJSON:     `{"token_multiplier":0.03}`,
+		CalculatedAt:      now,
+	}).Error)
+	require.NoError(t, db.Create(&model.Log{
+		Type:             model.LogTypeConsume,
+		CreatedAt:        now,
+		RequestId:        "req-profit-24h-limit",
+		ModelName:        "gpt-test",
+		Group:            "codex-plus",
+		PromptTokens:     100,
+		CompletionTokens: 100,
+		Quota:            100,
+		Other:            `{"group_ratio":0.1,"model_ratio":2,"completion_ratio":4}`,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelAccountUsageEvent{
+		RequestId:      "req-profit-24h-limit",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		CompletedAt:    now,
+		RequestedModel: "gpt-test",
+		SelectedGroup:  "codex-plus",
+		Success:        true,
+		TotalTokens:    200,
+		Quota:          100,
+	}).Error)
+
+	baselines, err := BuildRatioBaselines(db, db, scheduler_setting.SchedulerSetting{
+		DynamicBillingCostSource:         scheduler_setting.DynamicBillingCostSourceProfit24h,
+		DynamicBillingApplyMode:          scheduler_setting.DynamicBillingApplyModeAuto,
+		DynamicBillingProfitRate:         0.2,
+		DynamicBillingProfitWindowHours:  24,
+		DynamicBillingMinTokens:          1,
+		DynamicBillingMinRequests:        1,
+		DynamicBillingMinSuccessRequests: 1,
+		DynamicBillingMinRatio:           0.01,
+		DynamicBillingMaxRatio:           2,
+		DynamicBillingMaxStepChange:      10,
+	}, now)
+
+	require.NoError(t, err)
+	baseline, ok := baselines[cacheKey("gpt-test", "codex-plus")]
+	require.True(t, ok)
+	require.InEpsilon(t, 0.0375, baseline.TargetRatio, 0.000001)
+	require.InEpsilon(t, 0.03, baseline.Ratio, 0.000001)
+	require.True(t, baseline.Clamped)
 	require.Empty(t, baseline.FallbackReason)
 }
 
@@ -389,8 +456,8 @@ func TestBuildRatioBaselinesUsesRequestCostUsageWeightedMultiplier(t *testing.T)
 	expectedCostMultiplier := (0.03*(0.003/0.03*common.QuotaPerUnit) + 0.1*(0.00001/0.1*common.QuotaPerUnit)) / expectedBaseQuota
 	require.InEpsilon(t, expectedBaseQuota, baseline.BaseQuotaAtRatio1, 0.000001)
 	require.InEpsilon(t, expectedCostMultiplier, baseline.CostMultiplier, 0.000001)
-	require.InEpsilon(t, expectedCostMultiplier*1.01, baseline.Ratio, 0.000001)
-	require.Greater(t, math.Abs(baseline.Ratio-(0.03+0.1)/2*1.01), 0.01)
+	require.InEpsilon(t, expectedCostMultiplier/0.99, baseline.Ratio, 0.000001)
+	require.Greater(t, math.Abs(baseline.Ratio-(0.03+0.1)/2/0.99), 0.01)
 }
 
 func TestBuildRatioBaselinesProfit24hUsesEstimatedTrafficCost(t *testing.T) {

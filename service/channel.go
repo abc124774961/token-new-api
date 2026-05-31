@@ -20,6 +20,7 @@ const ChannelStatusReasonErrorPaused = "error_paused"
 const channelBalanceInsufficientRuntimeTTL = 10 * time.Minute
 
 var channelBalanceInsufficientRuntime sync.Map // channel_id -> time.Time
+var channelRuntimeBalanceInsufficient sync.Map // ChannelRuntimeIdentity/account scope -> time.Time
 
 func formatNotifyType(channelId int, status int) string {
 	return fmt.Sprintf("%s_%d_%d", dto.NotifyTypeChannelUpdate, channelId, status)
@@ -124,11 +125,35 @@ func MarkChannelBalanceInsufficient(channelID int) {
 	channelBalanceInsufficientRuntime.Store(channelID, time.Now().Add(channelBalanceInsufficientRuntimeTTL))
 }
 
+func MarkChannelRuntimeBalanceInsufficient(identity ChannelRuntimeIdentity) {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return
+	}
+	if !identity.HasAccountScope() {
+		MarkChannelBalanceInsufficient(identity.ChannelID)
+		return
+	}
+	channelRuntimeBalanceInsufficient.Store(identity.AccountScope(), time.Now().Add(channelBalanceInsufficientRuntimeTTL))
+}
+
 func ClearChannelBalanceInsufficient(channelID int) {
 	if channelID <= 0 {
 		return
 	}
 	channelBalanceInsufficientRuntime.Delete(channelID)
+}
+
+func ClearChannelRuntimeBalanceInsufficient(identity ChannelRuntimeIdentity) {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return
+	}
+	if !identity.HasAccountScope() {
+		ClearChannelBalanceInsufficient(identity.ChannelID)
+		return
+	}
+	channelRuntimeBalanceInsufficient.Delete(identity.AccountScope())
 }
 
 func IsRuntimeBalanceInsufficientChannelID(channelID int) bool {
@@ -142,6 +167,30 @@ func IsRuntimeBalanceInsufficientChannelID(channelID int) bool {
 	until, ok := value.(time.Time)
 	if !ok || !until.After(time.Now()) {
 		channelBalanceInsufficientRuntime.Delete(channelID)
+		return false
+	}
+	return true
+}
+
+func IsRuntimeBalanceInsufficientIdentity(identity ChannelRuntimeIdentity) bool {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return false
+	}
+	if identity.HasAccountScope() {
+		return runtimeBalanceEntryActive(identity.AccountScope())
+	}
+	return IsRuntimeBalanceInsufficientChannelID(identity.ChannelID)
+}
+
+func runtimeBalanceEntryActive(identity ChannelRuntimeIdentity) bool {
+	value, ok := channelRuntimeBalanceInsufficient.Load(identity.Normalize().AccountScope())
+	if !ok {
+		return false
+	}
+	until, ok := value.(time.Time)
+	if !ok || !until.After(time.Now()) {
+		channelRuntimeBalanceInsufficient.Delete(identity.Normalize().AccountScope())
 		return false
 	}
 	return true
@@ -213,10 +262,13 @@ func IsBalanceInsufficientMessage(message string) bool {
 	for _, keyword := range []string{
 		"balance_insufficient",
 		"insufficient_user_quota",
+		"insufficient_quota",
 		"insufficient account balance",
 		"insufficient balance",
 		"insufficient credit",
 		"insufficient credits",
+		"exceeded your current quota",
+		"check your plan and billing",
 		"credit balance is too low",
 		"balance is too low",
 		"not enough balance",

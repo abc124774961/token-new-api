@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -92,6 +93,53 @@ func TestRelayTotalDurationWatchdogCanCancelOnlyBeforeOutput(t *testing.T) {
 
 	common.SetContextKey(ctx, constant.ContextKeyRelayResponseStarted, true)
 	require.False(t, relayTotalDurationWatchdogCanCancel(ctx, info))
+}
+
+func TestRelayRuntimeIdentityFallsBackToChannelScopeWithoutSelectedPlan(t *testing.T) {
+	ctx := newRelayRetryContext()
+	common.SetContextKey(ctx, constant.ContextKeyChannelId, 9021)
+	common.SetContextKey(ctx, constant.ContextKeyChannelIsMultiKey, true)
+	common.SetContextKey(ctx, constant.ContextKeyChannelMultiKeyIndex, 3)
+	ctx.Set("original_model", "gpt-5.5")
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "default")
+
+	identity := relayRuntimeIdentity(ctx, 9021)
+
+	require.Equal(t, 9021, identity.ChannelID)
+	require.False(t, identity.HasAccountScope())
+	require.False(t, identity.CredentialIndexSet)
+}
+
+func TestRelayRuntimeIdentityPrefersSelectedPlanAccountScope(t *testing.T) {
+	ctx := newRelayRetryContext()
+	plan := &modelgatewaycore.DispatchPlan{
+		RuntimeKey: modelgatewaycore.RuntimeKey{
+			ChannelID:           9022,
+			RequestedModel:      "gpt-5.5",
+			Group:               "default",
+			EndpointType:        constant.EndpointTypeOpenAI,
+			AccountID:           "acct-1",
+			CredentialIndex:     1,
+			CredentialSubjectFP: "subject-1",
+			CredentialFP:        "credential-1",
+		},
+		CredentialRef: modelgatewaycore.CredentialRef{
+			ResourceID:                   "platform:channel:9022",
+			AccountID:                    "acct-1",
+			CredentialIndex:              1,
+			CredentialSubjectFingerprint: "subject-1",
+			CredentialFingerprint:        "credential-1",
+		},
+	}
+	modelgatewayintegration.SetSelectedPlan(ctx, plan)
+
+	identity := relayRuntimeIdentity(ctx, 9022)
+
+	require.Equal(t, 9022, identity.ChannelID)
+	require.True(t, identity.HasAccountScope())
+	require.True(t, identity.CredentialIndexSet)
+	require.Equal(t, "acct-1", identity.AccountID)
+	require.Equal(t, 1, identity.CredentialIndex)
 }
 
 func TestSelectedRelayGroupForTracePrefersActualGroupOverAuto(t *testing.T) {
@@ -342,6 +390,19 @@ func TestShouldRetryAllowsGeneric429FailoverWhenAlternativePeerChannelExists(t *
 	require.True(t, shouldRetry(ctx, err, param, 0))
 	require.Equal(t, 1, param.GetExtraRetries())
 	require.Equal(t, "overload_skip", classifyRelayAttemptError(ctx, err))
+	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
+}
+
+func TestOpenAIInsufficientQuota429ClassifiesAsBalanceOrQuota(t *testing.T) {
+	ctx := newRelayRetryContext()
+	err := types.WithOpenAIError(types.OpenAIError{
+		Message: "You exceeded your current quota, please check your plan and billing details.",
+		Type:    "insufficient_quota",
+		Code:    "insufficient_quota",
+	}, http.StatusTooManyRequests)
+
+	require.True(t, service.IsBalanceInsufficientError(err))
+	require.Equal(t, modelgatewaycore.ErrorCategoryBalanceOrQuota, classifyRelayAttemptError(ctx, err))
 	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
 }
 

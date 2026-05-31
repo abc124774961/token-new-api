@@ -320,7 +320,7 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	setting.CostCalculationIntervalSeconds = normalizeModelGatewayConfigMin(setting.CostCalculationIntervalSeconds, 1, defaults.CostCalculationIntervalSeconds)
 	setting.CostCalculationWorkerCount = normalizeModelGatewayConfigMin(setting.CostCalculationWorkerCount, 1, defaults.CostCalculationWorkerCount)
 	setting.CostCalculationBatchSize = normalizeModelGatewayConfigMin(setting.CostCalculationBatchSize, 1, defaults.CostCalculationBatchSize)
-	setting.DynamicBillingProfitRate = clampModelGatewayConfigFloat(defaultFloat(setting.DynamicBillingProfitRate, defaults.DynamicBillingProfitRate), 0, 10)
+	setting.DynamicBillingProfitRate = clampModelGatewayConfigFloat(defaultFloat(setting.DynamicBillingProfitRate, defaults.DynamicBillingProfitRate), 0, 0.95)
 	setting.DynamicBillingWindowSamples = normalizeModelGatewayConfigMin(setting.DynamicBillingWindowSamples, 1, defaults.DynamicBillingWindowSamples)
 	setting.DynamicBillingWindowMinutes = normalizeModelGatewayConfigMin(setting.DynamicBillingWindowMinutes, 1, defaults.DynamicBillingWindowMinutes)
 	setting.DynamicBillingMinSamples = normalizeModelGatewayConfigMin(setting.DynamicBillingMinSamples, 1, defaults.DynamicBillingMinSamples)

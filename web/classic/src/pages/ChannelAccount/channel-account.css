@@ -372,6 +372,61 @@
   gap: 8px;
 }
 
+.ct-channel-account-availability-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.ct-channel-account-availability-cell .semi-typography {
+  max-width: 100%;
+  font-size: 12px;
+}
+
+.ct-channel-account-availability-tip {
+  display: flex;
+  max-width: min(360px, 76vw);
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ct-channel-account-availability-tip-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ct-channel-account-availability-tip-line span,
+.ct-channel-account-availability-tip-stack > span {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+}
+
+.ct-channel-account-availability-tip-line strong {
+  min-width: 0;
+  color: #fff;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.ct-channel-account-availability-tip-stack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ct-channel-account-availability-detail {
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .ct-channel-account-window-row {
   display: grid;
   align-items: center;

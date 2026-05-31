@@ -1483,22 +1483,23 @@ func sameRoutingCandidate(left core.Candidate, right core.Candidate) bool {
 }
 
 func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) string {
+	identity := serviceRuntimeIdentityFromCandidate(candidate, snapshot)
 	if snapshot.ConfigErrorIsolated {
 		return "config_error_isolated"
 	}
-	if candidate.Channel != nil && service.IsChannelBalanceSkipped(c, candidate.Channel.Id) {
+	if service.IsChannelRuntimeBalanceSkipped(c, identity) {
 		return service.ChannelStatusReasonBalanceInsufficient
 	}
 	if candidate.Channel != nil && service.IsKnownBalanceInsufficientChannel(candidate.Channel) {
 		return service.ChannelStatusReasonBalanceInsufficient
 	}
-	if candidate.Channel != nil && service.IsRuntimeBalanceInsufficientChannelID(candidate.Channel.Id) {
+	if service.IsRuntimeBalanceInsufficientIdentity(identity) {
 		return service.ChannelStatusReasonBalanceInsufficient
 	}
 	if candidate.Channel != nil && candidate.Channel.Status != 0 && candidate.Channel.Status != common.ChannelStatusEnabled {
 		return "channel_disabled"
 	}
-	if candidate.Channel != nil && service.IsChannelSelectionSkipped(c, candidate.Channel.Id) {
+	if service.IsChannelRuntimeSelectionSkipped(c, identity) {
 		return "already_failed_in_request"
 	}
 	if snapshot.CircuitOpen {

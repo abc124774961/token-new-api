@@ -170,7 +170,13 @@ func TestChannelSelectionWrapperSkipsUsageLimitedSmartPlan(t *testing.T) {
 	require.NotNil(t, result)
 	require.Equal(t, 212, result.Channel.Id)
 	require.Equal(t, 2, facade.SelectCalls)
-	require.True(t, service.IsChannelSelectionSkipped(ctx, 211))
+	require.False(t, service.IsChannelSelectionSkipped(ctx, 211))
+	require.True(t, service.IsChannelRuntimeSelectionSkipped(ctx, service.ChannelRuntimeIdentity{
+		ChannelID:          211,
+		EndpointType:       constant.EndpointTypeOpenAI,
+		CredentialIndex:    0,
+		CredentialIndexSet: true,
+	}))
 	service.ReleaseChannelSelectionReservations(ctx)
 }
 
