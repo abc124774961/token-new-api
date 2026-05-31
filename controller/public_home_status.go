@@ -492,9 +492,9 @@ func buildPublicHomeDynamicBillingTrend(now int64, policyGroup string, modelName
 
 func loadPublicHomeDynamicBillingTrendSamples(startTime int64, policyGroup string, modelName string) ([]publicHomeDynamicBillingTrendSample, error) {
 	setting := scheduler_setting.GetSetting()
-	if setting.DynamicBillingEnabledAt > 0 && setting.DynamicBillingEnabledAt > startTime {
-		startTime = setting.DynamicBillingEnabledAt
-	}
+	// The public homepage is a historical display. Reconfiguring dynamic billing
+	// refreshes DynamicBillingEnabledAt for runtime safety, but should not hide
+	// already-recorded real request samples from the 7-day public trend.
 	policyTargets := make(map[string]map[string]struct{})
 	for groupName, policy := range setting.GroupPolicies {
 		if strings.TrimSpace(policy.BillingRatioMode) != scheduler_setting.BillingRatioModeDynamic {

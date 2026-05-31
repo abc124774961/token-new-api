@@ -388,6 +388,7 @@ func TestPublicHomeDynamicBillingTrendAggregatesDisplayBuckets(t *testing.T) {
 	now := nowTime.Unix()
 	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
 		DynamicBillingEnabled:        true,
+		DynamicBillingEnabledAt:      now - 30*60,
 		DynamicBillingMinSamples:     1,
 		DynamicBillingRefreshSeconds: 30,
 		DynamicBillingMaxAgeSeconds:  7 * 24 * 3600,
