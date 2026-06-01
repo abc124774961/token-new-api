@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/channelcapability"
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
@@ -2475,6 +2476,7 @@ func parseJSONCredentialInput(value string) ([]string, bool) {
 		if parsed, ok := parseJSONCredentialContainer(payload); ok {
 			return parsed, true
 		}
+		codexauth.NormalizeOAuthJSONCredentialMap(payload)
 		compacted, err := common.Marshal(payload)
 		if err != nil {
 			return nil, false
@@ -2534,6 +2536,7 @@ func compactJSONCredential(value string) (string, bool) {
 	if err := common.Unmarshal([]byte(value), &payload); err != nil {
 		return "", false
 	}
+	codexauth.NormalizeOAuthJSONCredentialMap(payload)
 	compacted, err := common.Marshal(payload)
 	if err != nil {
 		return "", false

@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
@@ -1149,15 +1150,25 @@ func validateCodexChannelCredential(key string) error {
 	if !strings.HasPrefix(trimmedKey, "{") {
 		return fmt.Errorf("Codex channel only supports OAuth JSON credentials. Use OpenAI channel for standard API keys")
 	}
-	var keyMap map[string]any
+	var keyMap map[string]interface{}
 	if err := common.Unmarshal([]byte(trimmedKey), &keyMap); err != nil {
 		return fmt.Errorf("Codex key must be a valid OAuth JSON object")
 	}
+	codexauth.NormalizeOAuthJSONCredentialMap(keyMap)
 	if v, ok := keyMap["access_token"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
 		return fmt.Errorf("Codex key JSON must include access_token")
 	}
-	if v, ok := keyMap["account_id"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
-		return fmt.Errorf("Codex key JSON must include account_id")
+	accountID := ""
+	for _, key := range []string{"account_id", "chatgpt_account_id"} {
+		if v, ok := keyMap[key]; ok && v != nil {
+			accountID = strings.TrimSpace(fmt.Sprintf("%v", v))
+			if accountID != "" {
+				break
+			}
+		}
+	}
+	if accountID == "" {
+		return fmt.Errorf("Codex key JSON must include account_id or chatgpt_account_id")
 	}
 	return nil
 }

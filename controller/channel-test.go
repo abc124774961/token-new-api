@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/channelcapability"
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	"github.com/QuantumNous/new-api/relay"
@@ -152,7 +153,7 @@ func probeChannelAccountCapabilities(c *gin.Context, channel *model.Channel, cre
 	if channel.Type != constant.ChannelTypeOpenAI && channel.Type != constant.ChannelTypeCodex {
 		return accountCapabilityProbeResult{}, errors.New("该渠道暂不支持账号权限检测")
 	}
-	if isOAuthJSONAccountKey(keys[credentialIndex]) {
+	if isOAuthJSONAccountKey(keys[credentialIndex]) || codexauth.LooksLikeOAuthJSONCredential(keys[credentialIndex]) {
 		result, err := service.ProbeCodexOAuthAccountCapabilities(c.Request.Context(), channel, credentialIndex, service.CodexCapabilityProbeOptions{})
 		if err != nil {
 			return accountCapabilityProbeResult{}, err
@@ -238,7 +239,7 @@ func probePlatformAccountCapabilities(c *gin.Context, channel *model.Channel, cr
 	if channel.Type != constant.ChannelTypeOpenAI && channel.Type != constant.ChannelTypeCodex {
 		return accountCapabilityProbeResult{}, errors.New("该渠道暂不支持 Platform API 诊断")
 	}
-	if isOAuthJSONAccountKey(keys[credentialIndex]) {
+	if isOAuthJSONAccountKey(keys[credentialIndex]) || codexauth.LooksLikeOAuthJSONCredential(keys[credentialIndex]) {
 		result, err := service.ProbeCodexOAuthPlatformCapabilities(c.Request.Context(), channel, credentialIndex)
 		if err != nil {
 			return accountCapabilityProbeResult{}, err

@@ -641,14 +641,14 @@ func channelAccountUsageBrandForChannel(channel *Channel) string {
 }
 
 func channelAccountUsageProviderForChannelKey(channel *Channel, rawKey string) string {
-	if channel != nil && channel.Type == constant.ChannelTypeOpenAI && codexauth.IsOAuthJSONCredential(rawKey) {
+	if channel != nil && channel.Type == constant.ChannelTypeOpenAI && codexauth.LooksLikeOAuthJSONCredential(rawKey) {
 		return channelAccountUsageProviderCodexOAuth
 	}
 	return channelAccountUsageProviderForChannel(channel)
 }
 
 func channelAccountUsageBrandForChannelKey(channel *Channel, rawKey string) string {
-	if channel != nil && channel.Type == constant.ChannelTypeOpenAI && codexauth.IsOAuthJSONCredential(rawKey) {
+	if channel != nil && channel.Type == constant.ChannelTypeOpenAI && codexauth.LooksLikeOAuthJSONCredential(rawKey) {
 		return "codex"
 	}
 	return channelAccountUsageBrandForChannel(channel)
@@ -664,7 +664,7 @@ func channelAccountUsageAccountTypeForChannelKey(channel *Channel, credentialInd
 		}
 	}
 	key := strings.TrimSpace(rawKey)
-	if channel.Type == constant.ChannelTypeCodex || codexauth.IsOAuthJSONCredential(key) {
+	if channel.Type == constant.ChannelTypeCodex || codexauth.LooksLikeOAuthJSONCredential(key) {
 		return channelAccountUsageTypeOAuthAccount
 	}
 	if accountType := channelAccountUsageAccountTypeFromJSONCredential(key); accountType != "" {
@@ -740,7 +740,7 @@ func channelAccountUsageHasAnyNonEmpty(payload map[string]interface{}, keys ...s
 func channelAccountUsageSubjectSourceForChannelKey(channel *Channel, rawKey string) string {
 	key := strings.TrimSpace(rawKey)
 	if channel != nil && (channel.Type == constant.ChannelTypeCodex || channel.Type == constant.ChannelTypeOpenAI) && strings.HasPrefix(key, "{") {
-		if oauthKey, ok := codexauth.ParseOAuthJSONCredential(key); ok {
+		if oauthKey, ok := codexauth.ParseOAuthJSONCredentialLoose(key); ok {
 			if accountID := strings.TrimSpace(oauthKey.AccountID); accountID != "" {
 				return "codex:account_id:" + accountID
 			}

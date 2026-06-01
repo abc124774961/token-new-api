@@ -27,11 +27,12 @@ type CodexOAuthKey struct {
 	AccessToken  string `json:"access_token,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 
-	AccountID   string `json:"account_id,omitempty"`
-	LastRefresh string `json:"last_refresh,omitempty"`
-	Email       string `json:"email,omitempty"`
-	Type        string `json:"type,omitempty"`
-	Expired     string `json:"expired,omitempty"`
+	AccountID        string `json:"account_id,omitempty"`
+	ChatGPTAccountID string `json:"chatgpt_account_id,omitempty"`
+	LastRefresh      string `json:"last_refresh,omitempty"`
+	Email            string `json:"email,omitempty"`
+	Type             string `json:"type,omitempty"`
+	Expired          string `json:"expired,omitempty"`
 }
 
 func parseCodexOAuthKey(raw string) (*CodexOAuthKey, error) {
@@ -41,6 +42,11 @@ func parseCodexOAuthKey(raw string) (*CodexOAuthKey, error) {
 	var key CodexOAuthKey
 	if err := common.Unmarshal([]byte(raw), &key); err != nil {
 		return nil, errors.New("codex channel: invalid oauth key json")
+	}
+	key.AccountID = strings.TrimSpace(key.AccountID)
+	key.ChatGPTAccountID = strings.TrimSpace(key.ChatGPTAccountID)
+	if key.AccountID == "" {
+		key.AccountID = key.ChatGPTAccountID
 	}
 	return &key, nil
 }
@@ -89,6 +95,9 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 		if accountID, ok := ExtractCodexAccountIDFromJWT(oauthKey.AccessToken); ok {
 			oauthKey.AccountID = accountID
 		}
+	}
+	if strings.TrimSpace(oauthKey.ChatGPTAccountID) == "" {
+		oauthKey.ChatGPTAccountID = strings.TrimSpace(oauthKey.AccountID)
 	}
 	if strings.TrimSpace(oauthKey.Email) == "" {
 		if email, ok := ExtractEmailFromJWT(oauthKey.AccessToken); ok {
@@ -162,6 +171,9 @@ func RefreshCodexAccountCredential(ctx context.Context, channelID int, opts Code
 		if accountID, ok := ExtractCodexAccountIDFromJWT(oauthKey.AccessToken); ok {
 			oauthKey.AccountID = accountID
 		}
+	}
+	if strings.TrimSpace(oauthKey.ChatGPTAccountID) == "" {
+		oauthKey.ChatGPTAccountID = strings.TrimSpace(oauthKey.AccountID)
 	}
 	if strings.TrimSpace(oauthKey.Email) == "" {
 		if email, ok := ExtractEmailFromJWT(oauthKey.AccessToken); ok {

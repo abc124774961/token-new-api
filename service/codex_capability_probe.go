@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/channelcapability"
+	"github.com/QuantumNous/new-api/pkg/codexauth"
 )
 
 const (
@@ -32,8 +33,34 @@ type CodexCapabilityProbeResult struct {
 }
 
 type codexProbeCredential struct {
-	AccessToken string `json:"access_token,omitempty"`
-	AccountID   string `json:"account_id,omitempty"`
+	AccessToken      string `json:"access_token,omitempty"`
+	AccountID        string `json:"account_id,omitempty"`
+	ChatGPTAccountID string `json:"chatgpt_account_id,omitempty"`
+	IDToken          string `json:"id_token,omitempty"`
+}
+
+func parseCodexProbeCredential(raw string) (codexProbeCredential, error) {
+	var credential codexProbeCredential
+	raw = strings.TrimSpace(raw)
+	if err := common.Unmarshal([]byte(raw), &credential); err != nil {
+		return credential, errors.New("codex oauth key json invalid")
+	}
+	credential.AccessToken = strings.TrimSpace(credential.AccessToken)
+	credential.AccountID = strings.TrimSpace(credential.AccountID)
+	credential.ChatGPTAccountID = strings.TrimSpace(credential.ChatGPTAccountID)
+	credential.IDToken = strings.TrimSpace(credential.IDToken)
+	if credential.AccountID == "" {
+		credential.AccountID = credential.ChatGPTAccountID
+	}
+	if loose, ok := codexauth.ParseOAuthJSONCredentialLoose(raw); ok {
+		if credential.AccountID == "" {
+			credential.AccountID = strings.TrimSpace(loose.AccountID)
+		}
+		if credential.AccessToken == "" {
+			credential.AccessToken = strings.TrimSpace(loose.AccessToken)
+		}
+	}
+	return credential, nil
 }
 
 func ProbeCodexOAuthAccountCapabilities(ctx context.Context, channel *model.Channel, credentialIndex int, options CodexCapabilityProbeOptions) (CodexCapabilityProbeResult, error) {
@@ -44,14 +71,15 @@ func ProbeCodexOAuthAccountCapabilities(ctx context.Context, channel *model.Chan
 	if credentialIndex < 0 || credentialIndex >= len(keys) {
 		return CodexCapabilityProbeResult{}, errors.New("账号索引超出范围")
 	}
-	var credential codexProbeCredential
-	if err := common.Unmarshal([]byte(strings.TrimSpace(keys[credentialIndex])), &credential); err != nil {
-		return CodexCapabilityProbeResult{}, errors.New("codex oauth key json invalid")
+	credential, err := parseCodexProbeCredential(keys[credentialIndex])
+	if err != nil {
+		return CodexCapabilityProbeResult{}, err
 	}
-	credential.AccessToken = strings.TrimSpace(credential.AccessToken)
-	credential.AccountID = strings.TrimSpace(credential.AccountID)
-	if credential.AccessToken == "" || credential.AccountID == "" {
-		return CodexCapabilityProbeResult{}, errors.New("codex oauth key missing access_token or account_id")
+	if credential.AccessToken == "" {
+		return CodexCapabilityProbeResult{}, errors.New("Codex OAuth 凭证缺少 access_token")
+	}
+	if credential.AccountID == "" {
+		return CodexCapabilityProbeResult{}, errors.New("Codex OAuth 凭证缺少 account_id/chatgpt_account_id，无法生成 chatgpt-account-id 请求头；请重新导出完整账号或重新登录导入")
 	}
 
 	capability := model.ChannelAccountCapability{
@@ -166,14 +194,12 @@ func ProbeCodexOAuthPlatformCapabilities(ctx context.Context, channel *model.Cha
 	if credentialIndex < 0 || credentialIndex >= len(keys) {
 		return CodexCapabilityProbeResult{}, errors.New("账号索引超出范围")
 	}
-	var credential codexProbeCredential
-	if err := common.Unmarshal([]byte(strings.TrimSpace(keys[credentialIndex])), &credential); err != nil {
-		return CodexCapabilityProbeResult{}, errors.New("codex oauth key json invalid")
+	credential, err := parseCodexProbeCredential(keys[credentialIndex])
+	if err != nil {
+		return CodexCapabilityProbeResult{}, err
 	}
-	credential.AccessToken = strings.TrimSpace(credential.AccessToken)
-	credential.AccountID = strings.TrimSpace(credential.AccountID)
-	if credential.AccessToken == "" || credential.AccountID == "" {
-		return CodexCapabilityProbeResult{}, errors.New("codex oauth key missing access_token or account_id")
+	if credential.AccessToken == "" {
+		return CodexCapabilityProbeResult{}, errors.New("Codex OAuth 凭证缺少 access_token")
 	}
 	capability := model.ChannelAccountCapability{
 		CheckedTime:            common.GetTimestamp(),
@@ -342,7 +368,9 @@ func doCodexBackendProbe(ctx context.Context, client *http.Client, credential co
 		return codexHTTPProbeResult{Message: err.Error()}
 	}
 	req.Header.Set("Authorization", "Bearer "+credential.AccessToken)
-	req.Header.Set("chatgpt-account-id", credential.AccountID)
+	if credential.AccountID != "" {
+		req.Header.Set("chatgpt-account-id", credential.AccountID)
+	}
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
 	req.Header.Set("originator", "codex_cli_rs")
 	req.Header.Set("Content-Type", "application/json")

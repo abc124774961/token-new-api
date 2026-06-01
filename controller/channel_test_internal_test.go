@@ -121,6 +121,7 @@ func TestResolveChannelTestEndpointUsesResponsesForOpenAIOAuthJSON(t *testing.T)
 func TestOAuthJSONAccountKeyDetectionForCodexPayload(t *testing.T) {
 	require.True(t, isOAuthJSONAccountKey(`{"access_token":"access-token","refresh_token":"refresh-token","account_id":"account-id"}`))
 	require.True(t, isOAuthJSONAccountKey(`{"refresh_token":"refresh-token","account_id":"account-id"}`))
+	require.True(t, isOAuthJSONAccountKey(`{"access_token":"access-token","chatgpt_account_id":"account-id"}`))
 	require.False(t, isOAuthJSONAccountKey(`{"access_token":"access-token"}`))
 	require.False(t, isOAuthJSONAccountKey(`sk-normal`))
 }

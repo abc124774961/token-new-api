@@ -189,6 +189,24 @@ func TestRegistryOpenAIOAuthJSONAccountUsesCodexIdentity(t *testing.T) {
 	require.NotEqual(t, accountA[0].AccountIdentity.CredentialFingerprint, accountB[0].AccountIdentity.CredentialFingerprint)
 }
 
+func TestRegistryOpenAIOAuthJSONWithoutAccountIDStillUsesCodexIdentity(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	channel := &model.Channel{
+		Id:     21,
+		Type:   constant.ChannelTypeOpenAI,
+		Status: common.ChannelStatusEnabled,
+		Key:    `{"access_token":"access-a","email":"missing-account@example.com","chatgpt_user_id":"user-a"}`,
+	}
+
+	accounts := NewRegistry().AccountsForChannel(channel)
+
+	require.Len(t, accounts, 1)
+	require.Equal(t, ProviderCodexOAuth, accounts[0].AccountIdentity.Provider)
+	require.Equal(t, "codex", accounts[0].AccountIdentity.Brand)
+	require.Equal(t, core.AccountTypeOAuthAccount, accounts[0].AccountIdentity.AccountType)
+	require.Equal(t, "codex", accounts[0].ResourceRef.Brand)
+}
+
 func TestRuntimeKeyForChannelAccountAddsAccountScope(t *testing.T) {
 	common.CryptoSecret = "test-secret"
 	channel := &model.Channel{
