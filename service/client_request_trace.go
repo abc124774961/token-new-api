@@ -357,7 +357,9 @@ func (d *responsesImageGenerationRequirementDetector) RecentIntentSources() map[
 }
 
 func (d *responsesImageGenerationRequirementDetector) RecentIntentTextParts() []responsesRequestInputTextPart {
-	parts := d.RecentInputTextParts()
+	// Keep the public trace field names stable, but only let the current
+	// trailing user turn drive routing requirements.
+	parts := d.CurrentUserInputTextParts()
 	filtered := make([]responsesRequestInputTextPart, 0, len(parts))
 	for _, part := range parts {
 		if part.Source != responsesImageGenerationKeywordSourceInputText {
@@ -369,6 +371,42 @@ func (d *responsesImageGenerationRequirementDetector) RecentIntentTextParts() []
 		filtered = append(filtered, part)
 	}
 	return filtered
+}
+
+func (d *responsesImageGenerationRequirementDetector) CurrentUserInputTextParts() []responsesRequestInputTextPart {
+	if d == nil || d.req == nil {
+		return nil
+	}
+	parts := d.inputTextPartsFromRaw()
+	if len(parts) == 0 {
+		return nil
+	}
+	lastUserIndex := -1
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := parts[i]
+		if part.Source != responsesImageGenerationKeywordSourceInputText {
+			continue
+		}
+		if responsesInputRoleAllowsUserIntent(part.Role) {
+			lastUserIndex = i
+			break
+		}
+		if responsesInputRoleIsConversationBoundary(part.Role) {
+			return nil
+		}
+	}
+	if lastUserIndex < 0 {
+		return nil
+	}
+	start := lastUserIndex
+	for start > 0 {
+		prev := parts[start-1]
+		if prev.Source != responsesImageGenerationKeywordSourceInputText || !responsesInputRoleAllowsUserIntent(prev.Role) {
+			break
+		}
+		start--
+	}
+	return parts[start : lastUserIndex+1]
 }
 
 func (d *responsesImageGenerationRequirementDetector) RecentInputTextParts() []responsesRequestInputTextPart {
@@ -492,6 +530,15 @@ func normalizeResponsesInputRole(role string, fallback string) string {
 func responsesInputRoleAllowsUserIntent(role string) bool {
 	role = normalizeResponsesInputRole(role, responsesInputRoleUser)
 	return role == responsesInputRoleUser
+}
+
+func responsesInputRoleIsConversationBoundary(role string) bool {
+	switch normalizeResponsesInputRole(role, "") {
+	case "assistant", "tool", "function":
+		return true
+	default:
+		return false
+	}
 }
 
 func addImageGenerationSourceHits(sources map[string][]string, source string, hits []string) {

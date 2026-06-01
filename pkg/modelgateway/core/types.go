@@ -346,12 +346,28 @@ type RuntimeSnapshot struct {
 	GroupPriorityRatio         float64
 	CircuitState               CircuitState
 	CircuitOpen                bool
+	CircuitOpenUntil           int64
+	CircuitOpenReason          string
+	CircuitFailureCount        int
+	CircuitFailureRate         float64
+	CircuitSampleCount         int
+	CircuitErrorCounts         map[string]int
+	CircuitHalfOpenProbeUsed   int
+	CircuitHalfOpenProbeMax    int
 	Cooldown                   bool
 	FailureAvoidance           bool
+	RecoverableQualityScore    float64
+	RecoverableQualityBaseline float64
+	RecoverableQualityBaselineSamples int
+	RecoverableQualityDropRatio       float64
+	RecoverableQualityItemBaselines   map[string]float64
 	ProbeRecoveryPending       bool
 	ProbeRecoverySuccessCount  int
 	ProbeRecoveryRequired      int
 	ProbeTriggerReason         string
+	ProbeRecoveryPhase         string
+	ProbeFastRecoveryAttempts  int
+	ProbeAnomalyTriggerItems   []string
 	ConfigErrorIsolated        bool
 	IsolationReason            string
 	IsolationUntil             int64
@@ -562,12 +578,29 @@ type CandidateExplanation struct {
 	CostReferenceRatio         float64            `json:"cost_reference_ratio,omitempty"`
 	CostPricingMode            string             `json:"cost_pricing_mode,omitempty"`
 	GroupPriorityRatio         float64            `json:"group_priority_ratio,omitempty"`
+	CircuitState               CircuitState       `json:"circuit_state,omitempty"`
+	CircuitOpen                bool               `json:"circuit_open,omitempty"`
+	CircuitOpenUntil           int64              `json:"circuit_open_until,omitempty"`
+	CircuitOpenReason          string             `json:"circuit_open_reason,omitempty"`
+	CircuitFailureCount        int                `json:"circuit_failure_count,omitempty"`
+	CircuitFailureRate         float64            `json:"circuit_failure_rate,omitempty"`
+	CircuitSampleCount         int                `json:"circuit_sample_count,omitempty"`
+	CircuitErrorCounts         map[string]int     `json:"circuit_error_counts,omitempty"`
+	CircuitHalfOpenProbeUsed   int                `json:"circuit_half_open_probe_used,omitempty"`
+	CircuitHalfOpenProbeMax    int                `json:"circuit_half_open_probe_max,omitempty"`
 	EmptyOutputRate            float64            `json:"empty_output_rate,omitempty"`
 	ExperienceIssueRate        float64            `json:"experience_issue_rate,omitempty"`
+	RecoverableQualityScore    float64            `json:"recoverable_quality_score,omitempty"`
+	RecoverableQualityBaseline float64            `json:"recoverable_quality_baseline,omitempty"`
+	RecoverableQualityBaselineSamples int          `json:"recoverable_quality_baseline_samples,omitempty"`
+	RecoverableQualityDropRatio       float64      `json:"recoverable_quality_drop_ratio,omitempty"`
 	ProbeRecoveryPending       bool               `json:"probe_recovery_pending,omitempty"`
 	ProbeRecoverySuccessCount  int                `json:"probe_recovery_success_count,omitempty"`
 	ProbeRecoveryRequired      int                `json:"probe_recovery_required,omitempty"`
 	ProbeTriggerReason         string             `json:"probe_trigger_reason,omitempty"`
+	ProbeRecoveryPhase         string             `json:"probe_recovery_phase,omitempty"`
+	ProbeFastRecoveryAttempts  int                `json:"probe_fast_recovery_attempts,omitempty"`
+	ProbeAnomalyTriggerItems   []string           `json:"probe_anomaly_trigger_items,omitempty"`
 	ConfigErrorIsolated        bool               `json:"config_error_isolated,omitempty"`
 	IsolationReason            string             `json:"isolation_reason,omitempty"`
 	IsolationUntil             int64              `json:"isolation_until,omitempty"`

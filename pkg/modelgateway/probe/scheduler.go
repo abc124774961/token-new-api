@@ -376,7 +376,7 @@ func (s *ProbeScheduler) applyProbeScore(plan *core.DispatchPlan, candidate Prob
 	if candidate.Reason == reasonTimeoutRecovery {
 		snapshot.ProbeRecoveryRequired = normalizeProbeConfig(s.config).TimeoutRecoverySuccessesRequired
 	}
-	if candidate.Reason == reasonLowScore || candidate.Reason == reasonFailureAvoidance || candidate.Reason == reasonTimeoutRecovery || snapshot.FailureAvoidance {
+	if candidate.Reason == reasonLowScore || candidate.Reason == reasonFailureAvoidance || candidate.Reason == reasonTimeoutRecovery || candidate.Reason == reasonCircuitProbe || snapshot.FailureAvoidance {
 		snapshot.ProbeRecoveryPending = true
 	}
 	score := scored.Score

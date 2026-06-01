@@ -59,6 +59,7 @@ const (
 	modelGatewayHealthCheckQueueTypeLowTraffic        = "low_traffic"
 	modelGatewayHealthCheckQueueTypeRecovery          = "recovery"
 	modelGatewayHealthCheckQueueTypeIsolated          = "isolated"
+	modelGatewayHealthCheckQueueTypeCircuitHalfOpen   = "circuit_half_open"
 	modelGatewayHealthCheckSuccessRateThreshold       = 0.80
 	modelGatewayHealthCheckOutputRateThreshold        = 0.02
 )
@@ -170,6 +171,21 @@ type ModelGatewayStickyClearResponse struct {
 	ChannelID int    `json:"channel_id,omitempty"`
 	Cleared   bool   `json:"cleared"`
 	Deleted   int    `json:"deleted"`
+}
+
+type ModelGatewayRuntimeCircuitClearRequest struct {
+	ChannelID             int                    `json:"channel_id"`
+	RuntimeKey            ModelGatewayRuntimeKey `json:"runtime_key,omitempty"`
+	ClearFailureAvoidance *bool                  `json:"clear_failure_avoidance,omitempty"`
+}
+
+type ModelGatewayRuntimeCircuitClearResponse struct {
+	ChannelID               int                      `json:"channel_id"`
+	RuntimeCircuitsCleared  int                      `json:"runtime_circuits_cleared"`
+	RuntimeSnapshotsUpdated int                      `json:"runtime_snapshots_updated"`
+	FailureAvoidanceCleared int                      `json:"failure_avoidance_cleared"`
+	MatchedRuntimeKeys      []ModelGatewayRuntimeKey `json:"matched_runtime_keys,omitempty"`
+	ClearFailureAvoidance   bool                     `json:"clear_failure_avoidance"`
 }
 
 type ModelGatewayHealthCheckQueueResponse struct {
@@ -786,6 +802,16 @@ type ModelGatewayCandidateExplanation struct {
 	CostReferenceRatio           float64                      `json:"cost_reference_ratio,omitempty"`
 	CostPricingMode              string                       `json:"cost_pricing_mode,omitempty"`
 	GroupPriorityRatio           float64                      `json:"group_priority_ratio,omitempty"`
+	CircuitState                 string                       `json:"circuit_state,omitempty"`
+	CircuitOpen                  bool                         `json:"circuit_open,omitempty"`
+	CircuitOpenUntil             int64                        `json:"circuit_open_until,omitempty"`
+	CircuitOpenReason            string                       `json:"circuit_open_reason,omitempty"`
+	CircuitFailureCount          int                          `json:"circuit_failure_count,omitempty"`
+	CircuitFailureRate           float64                      `json:"circuit_failure_rate,omitempty"`
+	CircuitSampleCount           int                          `json:"circuit_sample_count,omitempty"`
+	CircuitErrorCounts           map[string]int               `json:"circuit_error_counts,omitempty"`
+	CircuitHalfOpenProbeUsed     int                          `json:"circuit_half_open_probe_used,omitempty"`
+	CircuitHalfOpenProbeMax      int                          `json:"circuit_half_open_probe_max,omitempty"`
 	EmptyOutputRate              float64                      `json:"empty_output_rate,omitempty"`
 	ExperienceIssueRate          float64                      `json:"experience_issue_rate,omitempty"`
 	ProbeRecoveryPending         bool                         `json:"probe_recovery_pending,omitempty"`
@@ -1097,6 +1123,72 @@ func ClearModelGatewayStickyStore(c *gin.Context) {
 	})
 }
 
+func ClearModelGatewayRuntimeCircuit(c *gin.Context) {
+	var request ModelGatewayRuntimeCircuitClearRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if request.ChannelID <= 0 {
+		common.ApiErrorMsg(c, "missing channel_id")
+		return
+	}
+	if _, err := model.GetChannelById(request.ChannelID, false); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	clearFailureAvoidance := true
+	if request.ClearFailureAvoidance != nil {
+		clearFailureAvoidance = *request.ClearFailureAvoidance
+	}
+	filter := request.RuntimeKey
+	if filter.ChannelID == 0 {
+		filter.ChannelID = request.ChannelID
+	}
+	if filter.CredentialIndex > 0 {
+		filter.CredentialIndexSet = true
+	}
+	if filter.ChannelID != request.ChannelID {
+		common.ApiErrorMsg(c, "runtime_key channel_id must match channel_id")
+		return
+	}
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	matchedKeys := modelGatewayRuntimeCircuitClearKeys(runtimeDeps, request.ChannelID, filter)
+	circuitsCleared := 0
+	if runtimeDeps != nil && runtimeDeps.CircuitBreaker != nil {
+		if modelGatewayRuntimeKeyIsEmpty(filter) || modelGatewayRuntimeKeyOnlyChannel(filter, request.ChannelID) {
+			circuitsCleared = runtimeDeps.CircuitBreaker.ResetChannel(request.ChannelID)
+		} else {
+			for _, key := range matchedKeys {
+				if runtimeDeps.CircuitBreaker.Reset(key) {
+					circuitsCleared++
+				}
+			}
+		}
+	}
+	snapshotsUpdated := modelGatewayClearRuntimeCircuitSnapshots(runtimeDeps, matchedKeys, clearFailureAvoidance)
+	failureAvoidanceCleared := 0
+	if clearFailureAvoidance {
+		if modelGatewayRuntimeKeyIsEmpty(filter) || modelGatewayRuntimeKeyOnlyChannel(filter, request.ChannelID) {
+			service.ClearChannelFailureAvoidance(request.ChannelID)
+			failureAvoidanceCleared = 1
+		} else {
+			for _, key := range matchedKeys {
+				service.ClearChannelRuntimeFailureAvoidance(modelGatewayRuntimeIdentityFromCoreKey(key))
+				failureAvoidanceCleared++
+			}
+		}
+	}
+	common.ApiSuccess(c, ModelGatewayRuntimeCircuitClearResponse{
+		ChannelID:               request.ChannelID,
+		RuntimeCircuitsCleared:  circuitsCleared,
+		RuntimeSnapshotsUpdated: snapshotsUpdated,
+		FailureAvoidanceCleared: failureAvoidanceCleared,
+		MatchedRuntimeKeys:      modelGatewayRuntimeKeysFromCore(matchedKeys),
+		ClearFailureAvoidance:   clearFailureAvoidance,
+	})
+}
+
 func parseModelGatewayObservabilityOptions(c *gin.Context) (ModelGatewayObservabilityOptions, error) {
 	channelID := 0
 	if raw := strings.TrimSpace(c.Query("channel_id")); raw != "" {
@@ -1156,7 +1248,8 @@ func parseModelGatewayHealthCheckQueueType(raw string) (string, error) {
 		modelGatewayHealthCheckQueueTypeLowScore,
 		modelGatewayHealthCheckQueueTypeLowTraffic,
 		modelGatewayHealthCheckQueueTypeRecovery,
-		modelGatewayHealthCheckQueueTypeIsolated:
+		modelGatewayHealthCheckQueueTypeIsolated,
+		modelGatewayHealthCheckQueueTypeCircuitHalfOpen:
 		return queueType, nil
 	default:
 		return "", errors.New("invalid queue_type")
@@ -2577,6 +2670,9 @@ func modelGatewayHealthCheckQueueReasons(item modelgatewayobservability.RuntimeS
 	if item.CircuitOpen {
 		addReason("circuit_open", 96, "critical")
 	}
+	if strings.TrimSpace(item.CircuitState) == string(modelgatewaycore.CircuitStateHalfOpen) {
+		addReason(modelGatewayHealthCheckQueueTypeCircuitHalfOpen, 94, "warning")
+	}
 	if item.Cooldown {
 		addReason("cooldown", 90, "warning")
 	}
@@ -2621,6 +2717,8 @@ func modelGatewayHealthCheckReasonLabel(key string) string {
 		return "配置异常"
 	case "circuit_open":
 		return "熔断中"
+	case modelGatewayHealthCheckQueueTypeCircuitHalfOpen:
+		return "熔断半开"
 	case "cooldown":
 		return "冷却中"
 	case service.ChannelTimeoutRecoveryReason:
@@ -2685,6 +2783,10 @@ func modelGatewayHealthCheckProbeSkipReason(item modelgatewayobservability.Runti
 	if !setting.ProbeSkipRecentRealRequestEnabled || item.LastRealAttemptAt <= 0 {
 		return ""
 	}
+	if strings.TrimSpace(item.CircuitState) == string(modelgatewaycore.CircuitStateHalfOpen) ||
+		strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason {
+		return ""
+	}
 	window := setting.ProbeRecentRealRequestWindowSeconds
 	if window <= 0 {
 		window = 1800
@@ -2706,7 +2808,12 @@ func modelGatewayHealthCheckNextProbeSchedule(item modelgatewayobservability.Run
 	if item.LastProbeAt > 0 {
 		nextAt = item.LastProbeAt + int64(minInterval)
 	}
-	if setting.ProbeSkipRecentRealRequestEnabled && item.LastRealAttemptAt > 0 {
+	if strings.TrimSpace(item.CircuitState) == string(modelgatewaycore.CircuitStateOpen) && item.CircuitOpenUntil > now && item.CircuitOpenUntil > nextAt {
+		nextAt = item.CircuitOpenUntil
+	}
+	bypassRecentRequestSkip := strings.TrimSpace(item.CircuitState) == string(modelgatewaycore.CircuitStateHalfOpen) ||
+		strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason
+	if !bypassRecentRequestSkip && setting.ProbeSkipRecentRealRequestEnabled && item.LastRealAttemptAt > 0 {
 		window := setting.ProbeRecentRealRequestWindowSeconds
 		if window <= 0 {
 			window = 1800
@@ -2730,7 +2837,7 @@ func modelGatewayHealthCheckQueueAccumulateSummary(summary *ModelGatewayHealthCh
 	if modelGatewayHealthCheckReasonsContain(reasons, "low_score") {
 		summary.LowScoreCount++
 	}
-	if item.ProbeRecoveryPending || item.FailureAvoidance || modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") || modelGatewayHealthCheckReasonsContain(reasons, service.ChannelTimeoutRecoveryReason) || modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") {
+	if item.ProbeRecoveryPending || item.FailureAvoidance || modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") || modelGatewayHealthCheckReasonsContain(reasons, service.ChannelTimeoutRecoveryReason) || modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") || modelGatewayHealthCheckReasonsContain(reasons, modelGatewayHealthCheckQueueTypeCircuitHalfOpen) {
 		summary.RecoveryCount++
 	}
 	if item.CircuitOpen || item.Cooldown || item.ConfigErrorIsolated || modelGatewayHealthCheckReasonsContain(reasons, "circuit_open") || modelGatewayHealthCheckReasonsContain(reasons, "cooldown") || modelGatewayHealthCheckReasonsContain(reasons, "config_error") {
@@ -2745,10 +2852,14 @@ func modelGatewayHealthCheckQueueItemType(item modelgatewayobservability.Runtime
 		modelGatewayHealthCheckReasonsContain(reasons, "config_error") {
 		return modelGatewayHealthCheckQueueTypeIsolated
 	}
+	if modelGatewayHealthCheckReasonsContain(reasons, modelGatewayHealthCheckQueueTypeCircuitHalfOpen) {
+		return modelGatewayHealthCheckQueueTypeCircuitHalfOpen
+	}
 	if item.ProbeRecoveryPending || item.FailureAvoidance ||
 		modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") ||
 		modelGatewayHealthCheckReasonsContain(reasons, service.ChannelTimeoutRecoveryReason) ||
-		modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") {
+		modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") ||
+		modelGatewayHealthCheckReasonsContain(reasons, modelGatewayHealthCheckQueueTypeCircuitHalfOpen) {
 		return modelGatewayHealthCheckQueueTypeRecovery
 	}
 	if modelGatewayHealthCheckReasonsContain(reasons, "low_score") {
@@ -2769,9 +2880,11 @@ func modelGatewayHealthCheckQueueItemMatchesType(itemQueueType string, item mode
 	case modelGatewayHealthCheckQueueTypeLowTraffic:
 		return false
 	case modelGatewayHealthCheckQueueTypeRecovery:
-		return itemQueueType == modelGatewayHealthCheckQueueTypeRecovery || item.ProbeRecoveryPending || item.FailureAvoidance
+		return itemQueueType == modelGatewayHealthCheckQueueTypeRecovery || item.ProbeRecoveryPending || item.FailureAvoidance || modelGatewayHealthCheckReasonsContain(reasons, modelGatewayHealthCheckQueueTypeCircuitHalfOpen)
 	case modelGatewayHealthCheckQueueTypeIsolated:
 		return itemQueueType == modelGatewayHealthCheckQueueTypeIsolated || item.CircuitOpen || item.Cooldown || item.ConfigErrorIsolated
+	case modelGatewayHealthCheckQueueTypeCircuitHalfOpen:
+		return modelGatewayHealthCheckReasonsContain(reasons, modelGatewayHealthCheckQueueTypeCircuitHalfOpen)
 	default:
 		return true
 	}
@@ -2813,6 +2926,23 @@ func modelGatewayHealthCheckRuntimeRowKey(item modelgatewayobservability.Runtime
 		nonEmptyTrimmed(item.Group, "group"),
 		nonEmptyTrimmed(item.EndpointType, "endpoint"),
 		nonEmptyTrimmed(item.CapabilityFingerprint, "capability"),
+	}
+	return strings.Join(parts, ":")
+}
+
+func modelGatewayHealthCheckRuntimeRowKeyFromRuntimeKey(key ModelGatewayRuntimeKey) string {
+	parts := []string{
+		nonEmptyTrimmed(key.RequestedModel, "model"),
+		nonEmptyTrimmed(key.UpstreamModel, "upstream"),
+		strconv.Itoa(key.ChannelID),
+		nonEmptyTrimmed(key.ResourceID, "resource"),
+		nonEmptyTrimmed(key.AccountID, "account"),
+		strconv.Itoa(key.CredentialIndex),
+		nonEmptyTrimmed(key.CredentialSubjectFP, "subject"),
+		nonEmptyTrimmed(key.CredentialFP, "credential"),
+		nonEmptyTrimmed(key.Group, "group"),
+		nonEmptyTrimmed(key.EndpointType, "endpoint"),
+		nonEmptyTrimmed(key.CapabilityFingerprint, "capability"),
 	}
 	return strings.Join(parts, ":")
 }
@@ -4993,6 +5123,103 @@ func modelGatewayRuntimeKeyMatchesFilter(candidate ModelGatewayRuntimeKey, filte
 	return true
 }
 
+func modelGatewayRuntimeCircuitClearKeys(runtimeDeps *modelgatewayintegration.DefaultRuntimeObservability, channelID int, filter ModelGatewayRuntimeKey) []modelgatewaycore.RuntimeKey {
+	keys := map[modelgatewaycore.RuntimeKey]struct{}{}
+	addKey := func(key modelgatewaycore.RuntimeKey) {
+		key = normalizeModelGatewayCoreRuntimeKey(key)
+		if key.ChannelID != channelID {
+			return
+		}
+		if !modelGatewayRuntimeKeyOnlyChannel(filter, channelID) && !modelGatewayRuntimeKeyMatchesFilter(modelGatewayRuntimeKeyFromCore(key), filter) {
+			return
+		}
+		keys[key] = struct{}{}
+	}
+	if runtimeDeps != nil {
+		if runtimeDeps.CircuitBreaker != nil {
+			for _, snapshot := range runtimeDeps.CircuitBreaker.ListSnapshots() {
+				addKey(snapshot.Key)
+			}
+		}
+		if runtimeDeps.SnapshotStore != nil {
+			for _, snapshot := range runtimeDeps.SnapshotStore.ListCandidates(nil) {
+				addKey(snapshot.Key)
+			}
+		}
+	}
+	if len(keys) == 0 && !modelGatewayRuntimeKeyOnlyChannel(filter, channelID) {
+		addKey(modelGatewayRuntimeKeyToCore(filter, channelID))
+	}
+	out := make([]modelgatewaycore.RuntimeKey, 0, len(keys))
+	for key := range keys {
+		out = append(out, key)
+	}
+	sort.SliceStable(out, func(i int, j int) bool {
+		left := modelGatewayRuntimeKeyFromCore(out[i])
+		right := modelGatewayRuntimeKeyFromCore(out[j])
+		return modelGatewayHealthCheckRuntimeRowKeyFromRuntimeKey(left) < modelGatewayHealthCheckRuntimeRowKeyFromRuntimeKey(right)
+	})
+	return out
+}
+
+func modelGatewayClearRuntimeCircuitSnapshots(runtimeDeps *modelgatewayintegration.DefaultRuntimeObservability, keys []modelgatewaycore.RuntimeKey, clearFailureAvoidance bool) int {
+	if runtimeDeps == nil || runtimeDeps.SnapshotStore == nil || len(keys) == 0 {
+		return 0
+	}
+	updated := 0
+	for _, key := range keys {
+		snapshot, ok := runtimeDeps.SnapshotStore.Get(key)
+		if !ok {
+			continue
+		}
+		snapshot.CircuitState = modelgatewaycore.CircuitStateClosed
+		snapshot.CircuitOpen = false
+		snapshot.CircuitOpenUntil = 0
+		snapshot.CircuitOpenReason = ""
+		snapshot.CircuitFailureCount = 0
+		snapshot.CircuitFailureRate = 0
+		snapshot.CircuitSampleCount = 0
+		snapshot.CircuitErrorCounts = nil
+		snapshot.CircuitHalfOpenProbeUsed = 0
+		snapshot.CircuitHalfOpenProbeMax = 0
+		if clearFailureAvoidance {
+			wasRecovery := snapshot.FailureAvoidance ||
+				strings.TrimSpace(snapshot.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason ||
+				strings.TrimSpace(snapshot.ProbeTriggerReason) == "failure_avoidance"
+			snapshot.FailureAvoidance = false
+			if wasRecovery {
+				snapshot.ProbeRecoveryPending = false
+				snapshot.ProbeRecoverySuccessCount = 0
+				snapshot.ProbeRecoveryRequired = 0
+				snapshot.ProbeTriggerReason = ""
+			}
+		}
+		runtimeDeps.SnapshotStore.Put(snapshot)
+		updated++
+	}
+	return updated
+}
+
+func modelGatewayRuntimeKeyOnlyChannel(key ModelGatewayRuntimeKey, channelID int) bool {
+	key.ChannelID = channelID
+	return key.RequestedModel == "" &&
+		key.UpstreamModel == "" &&
+		key.ChannelID == channelID &&
+		key.ResourceID == "" &&
+		key.ResourceType == "" &&
+		key.AccountID == "" &&
+		key.AccountType == "" &&
+		key.Brand == "" &&
+		key.Provider == "" &&
+		!key.CredentialIndexSet &&
+		key.CredentialIndex == 0 &&
+		key.CredentialSubjectFP == "" &&
+		key.CredentialFP == "" &&
+		key.Group == "" &&
+		key.EndpointType == "" &&
+		key.CapabilityFingerprint == ""
+}
+
 func modelGatewayRuntimeKeyIsEmpty(key ModelGatewayRuntimeKey) bool {
 	return key.RequestedModel == "" &&
 		key.UpstreamModel == "" &&
@@ -5009,6 +5236,75 @@ func modelGatewayRuntimeKeyIsEmpty(key ModelGatewayRuntimeKey) bool {
 		key.Group == "" &&
 		key.EndpointType == "" &&
 		key.CapabilityFingerprint == ""
+}
+
+func modelGatewayRuntimeKeyToCore(key ModelGatewayRuntimeKey, channelID int) modelgatewaycore.RuntimeKey {
+	if key.ChannelID <= 0 {
+		key.ChannelID = channelID
+	}
+	return normalizeModelGatewayCoreRuntimeKey(modelgatewaycore.RuntimeKey{
+		RequestedModel:        key.RequestedModel,
+		UpstreamModel:         key.UpstreamModel,
+		ChannelID:             key.ChannelID,
+		ResourceID:            key.ResourceID,
+		ResourceType:          key.ResourceType,
+		AccountID:             key.AccountID,
+		AccountType:           key.AccountType,
+		Brand:                 key.Brand,
+		Provider:              key.Provider,
+		CredentialIndex:       key.CredentialIndex,
+		CredentialSubjectFP:   key.CredentialSubjectFP,
+		CredentialFP:          key.CredentialFP,
+		Group:                 key.Group,
+		EndpointType:          constant.EndpointType(key.EndpointType),
+		CapabilityFingerprint: key.CapabilityFingerprint,
+	})
+}
+
+func normalizeModelGatewayCoreRuntimeKey(key modelgatewaycore.RuntimeKey) modelgatewaycore.RuntimeKey {
+	key.RequestedModel = strings.TrimSpace(key.RequestedModel)
+	key.UpstreamModel = strings.TrimSpace(key.UpstreamModel)
+	key.ResourceID = strings.TrimSpace(key.ResourceID)
+	key.ResourceType = strings.TrimSpace(key.ResourceType)
+	key.AccountID = strings.TrimSpace(key.AccountID)
+	key.AccountType = strings.TrimSpace(key.AccountType)
+	key.Brand = strings.TrimSpace(key.Brand)
+	key.Provider = strings.TrimSpace(key.Provider)
+	key.CredentialSubjectFP = strings.TrimSpace(key.CredentialSubjectFP)
+	key.CredentialFP = strings.TrimSpace(key.CredentialFP)
+	key.Group = strings.TrimSpace(key.Group)
+	key.EndpointType = constant.EndpointType(strings.TrimSpace(string(key.EndpointType)))
+	key.CapabilityFingerprint = strings.TrimSpace(key.CapabilityFingerprint)
+	if key.EndpointType == "" {
+		key.EndpointType = constant.EndpointTypeOpenAI
+	}
+	return key
+}
+
+func modelGatewayRuntimeIdentityFromCoreKey(key modelgatewaycore.RuntimeKey) service.ChannelRuntimeIdentity {
+	key = normalizeModelGatewayCoreRuntimeKey(key)
+	return service.NormalizeChannelRuntimeIdentity(service.ChannelRuntimeIdentity{
+		ChannelID:           key.ChannelID,
+		RequestedModel:      key.RequestedModel,
+		SelectedGroup:       key.Group,
+		EndpointType:        key.EndpointType,
+		AccountID:           key.AccountID,
+		CredentialIndex:     key.CredentialIndex,
+		CredentialIndexSet:  key.CredentialIndex > 0,
+		CredentialSubjectFP: key.CredentialSubjectFP,
+		CredentialFP:        key.CredentialFP,
+	})
+}
+
+func modelGatewayRuntimeKeysFromCore(keys []modelgatewaycore.RuntimeKey) []ModelGatewayRuntimeKey {
+	if len(keys) == 0 {
+		return nil
+	}
+	out := make([]ModelGatewayRuntimeKey, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, modelGatewayRuntimeKeyFromCore(normalizeModelGatewayCoreRuntimeKey(key)))
+	}
+	return out
 }
 
 func modelGatewayScoreHistoryItem(record model.ModelExecutionRecord, candidate ModelGatewayCandidateExplanation) ModelGatewayScoreHistoryItem {
@@ -5231,6 +5527,16 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			CostReferenceRatio:         roundModelGatewayObservabilityFloat(candidate.CostReferenceRatio),
 			CostPricingMode:            strings.TrimSpace(candidate.CostPricingMode),
 			GroupPriorityRatio:         roundModelGatewayObservabilityFloat(candidate.GroupPriorityRatio),
+			CircuitState:               strings.TrimSpace(string(candidate.CircuitState)),
+			CircuitOpen:                candidate.CircuitOpen,
+			CircuitOpenUntil:           candidate.CircuitOpenUntil,
+			CircuitOpenReason:          strings.TrimSpace(candidate.CircuitOpenReason),
+			CircuitFailureCount:        candidate.CircuitFailureCount,
+			CircuitFailureRate:         roundModelGatewayObservabilityFloat(candidate.CircuitFailureRate),
+			CircuitSampleCount:         candidate.CircuitSampleCount,
+			CircuitErrorCounts:         copyModelGatewayCircuitErrorCounts(candidate.CircuitErrorCounts),
+			CircuitHalfOpenProbeUsed:   candidate.CircuitHalfOpenProbeUsed,
+			CircuitHalfOpenProbeMax:    candidate.CircuitHalfOpenProbeMax,
 			EmptyOutputRate:            roundModelGatewayObservabilityFloat(candidate.EmptyOutputRate),
 			ExperienceIssueRate:        roundModelGatewayObservabilityFloat(candidate.ExperienceIssueRate),
 			ProbeRecoveryPending:       candidate.ProbeRecoveryPending,
@@ -5297,6 +5603,17 @@ func modelGatewayRuntimeKeyFromCore(key modelgatewaycore.RuntimeKey) ModelGatewa
 		EndpointType:          string(key.EndpointType),
 		CapabilityFingerprint: key.CapabilityFingerprint,
 	}
+}
+
+func copyModelGatewayCircuitErrorCounts(src map[string]int) map[string]int {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
 }
 
 func roundModelGatewayScoreMap(values map[string]float64) map[string]float64 {

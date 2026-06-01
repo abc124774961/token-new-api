@@ -164,6 +164,44 @@ func (b *CircuitBreaker) Report(result core.AttemptResult) {
 	b.reportFailureLocked(state, kind)
 }
 
+func (b *CircuitBreaker) Reset(key core.RuntimeKey) bool {
+	if b == nil {
+		return false
+	}
+	key = normalizeRuntimeKey(key)
+	if key.ChannelID <= 0 {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state, ok := b.states[key]
+	if !ok {
+		return false
+	}
+	changed := circuitStateNeedsReset(state)
+	delete(b.states, key)
+	return changed
+}
+
+func (b *CircuitBreaker) ResetChannel(channelID int) int {
+	if b == nil || channelID <= 0 {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	cleared := 0
+	for key, state := range b.states {
+		if key.ChannelID != channelID {
+			continue
+		}
+		if circuitStateNeedsReset(state) {
+			cleared++
+		}
+		delete(b.states, key)
+	}
+	return cleared
+}
+
 func (b *CircuitBreaker) stateForLocked(key core.RuntimeKey) *circuitState {
 	state, ok := b.states[key]
 	if ok {
@@ -275,6 +313,39 @@ func (b *CircuitBreaker) snapshotLocked(key core.RuntimeKey, state *circuitState
 	}
 }
 
+func (b *CircuitBreaker) applySnapshot(snapshot core.CircuitSnapshot) bool {
+	if b == nil {
+		return false
+	}
+	snapshot = normalizeCircuitSnapshot(snapshot)
+	if snapshot.Key.ChannelID <= 0 || snapshot.State == core.CircuitStateClosed {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.stateForLocked(snapshot.Key)
+	b.advanceLocked(state, b.now())
+	if state.state == core.CircuitStateOpen && snapshot.State != core.CircuitStateOpen {
+		return false
+	}
+	if circuitSeverity(snapshot.State) < circuitSeverity(state.state) {
+		return false
+	}
+	state.state = snapshot.State
+	state.failureCount = snapshot.FailureCount
+	state.successCount = snapshot.SuccessCount
+	state.sampleCount = snapshot.SampleCount
+	state.openReason = snapshot.OpenReason
+	state.errorCounts = copyCircuitErrorCounts(snapshot.ErrorCounts)
+	state.openUntil = snapshot.OpenUntil
+	state.halfOpenProbeIn = snapshot.HalfOpenProbeUsed
+	state.halfOpenProbeMax = snapshot.HalfOpenProbeMax
+	if state.halfOpenProbeMax <= 0 {
+		state.halfOpenProbeMax = b.options.HalfOpenProbeCount
+	}
+	return true
+}
+
 func resetCircuitState(state *circuitState) {
 	state.state = core.CircuitStateClosed
 	state.failureCount = 0
@@ -285,6 +356,20 @@ func resetCircuitState(state *circuitState) {
 	state.openUntil = time.Time{}
 	state.halfOpenProbeIn = 0
 	state.halfOpenProbeMax = 0
+}
+
+func circuitStateNeedsReset(state *circuitState) bool {
+	if state == nil {
+		return false
+	}
+	return state.state != core.CircuitStateClosed ||
+		state.failureCount > 0 ||
+		state.successCount > 0 ||
+		state.sampleCount > 0 ||
+		state.openReason != "" ||
+		len(state.errorCounts) > 0 ||
+		!state.openUntil.IsZero() ||
+		state.halfOpenProbeIn > 0
 }
 
 func failureRate(state *circuitState) float64 {

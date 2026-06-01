@@ -1135,6 +1135,9 @@ function formatChannelStatusReason(reason, t) {
   if (normalized === 'circuit_open') {
     return t('熔断打开');
   }
+  if (normalized === 'circuit_half_open') {
+    return t('熔断半开');
+  }
   if (normalized === 'cooldown') {
     return t('临时冷却');
   }
@@ -10364,8 +10367,10 @@ function CandidateExplanationCard({
   index,
   record,
   onOpenScoreHistory,
+  onRuntimeCircuitCleared,
   t,
 }) {
+  const [clearingCircuit, setClearingCircuit] = useState(false);
   const sampleCount = Number(candidate?.sample_count || 0);
   const hasRealSamples = sampleCount > 0;
   const allScoreItems = normalizeScoreItemsForDisplay(candidate?.score_items);
@@ -10389,6 +10394,25 @@ function CandidateExplanationCard({
   const unavailableReason = String(candidate?.reject_reason || '')
     .trim()
     .toLowerCase();
+  const stateTags = Array.isArray(candidate?.state_tags)
+    ? candidate.state_tags
+    : [];
+  const circuitState = String(candidate?.circuit_state || '')
+    .trim()
+    .toLowerCase();
+  const circuitOpen =
+    candidate?.circuit_open === true ||
+    unavailableReason === 'circuit_open' ||
+    stateTags.includes('circuit_open') ||
+    circuitState === 'open';
+  const circuitHalfOpen =
+    circuitState === 'half_open' ||
+    candidate?.probe_trigger_reason === 'circuit_half_open';
+  const circuitActive = circuitOpen || circuitHalfOpen;
+  const circuitOpenReason = String(candidate?.circuit_open_reason || '').trim();
+  const circuitOpenUntil = normalizeTimestamp(candidate?.circuit_open_until);
+  const circuitProbeUsed = Number(candidate?.circuit_half_open_probe_used || 0);
+  const circuitProbeMax = Number(candidate?.circuit_half_open_probe_max || 0);
   const routingScoreItems = allRoutingScoreItems.length
     ? allRoutingScoreItems
     : allScoreItems;
@@ -10445,7 +10469,7 @@ function CandidateExplanationCard({
   const timeoutRecovery =
     unavailableReason === 'timeout_recovery' ||
     candidate?.probe_trigger_reason === 'timeout_recovery' ||
-    (candidate?.state_tags || []).includes('timeout_recovery');
+    stateTags.includes('timeout_recovery');
   const alreadyFailedInRequest =
     unavailableReason === 'already_failed_in_request' ||
     unavailableReason === 'routing_slot_reserved';
@@ -10487,6 +10511,34 @@ function CandidateExplanationCard({
       value: routingScore > 0 ? formatScore(routingScore) : '--',
     },
   ];
+
+  const clearRuntimeCircuit = async () => {
+    const channelID = Number(
+      candidate?.channel_id || candidate?.runtime_key?.channel_id || 0,
+    );
+    if (!channelID || clearingCircuit) return;
+    setClearingCircuit(true);
+    try {
+      const res = await API.post(
+        '/api/model_gateway/observability/runtime/clear_circuit',
+        {
+          channel_id: channelID,
+          runtime_key: candidate?.runtime_key || { channel_id: channelID },
+          clear_failure_avoidance: true,
+        },
+      );
+      if (res?.data?.success) {
+        Toast.success(t('熔断已恢复'));
+        onRuntimeCircuitCleared?.();
+      } else {
+        showError(res?.data?.message || t('恢复熔断失败'));
+      }
+    } catch (error) {
+      showError(error);
+    } finally {
+      setClearingCircuit(false);
+    }
+  };
 
   return (
     <div
@@ -10542,6 +10594,36 @@ function CandidateExplanationCard({
             <Tag color='orange' type='light' size='small'>
               {t('等待恢复探活')}
             </Tag>
+          ) : null}
+          {circuitOpen ? (
+            <Tag color='red' type='light' size='small'>
+              {t('熔断打开')}
+            </Tag>
+          ) : null}
+          {circuitHalfOpen ? (
+            <Tag color='orange' type='light' size='small'>
+              {t('半开探测')}
+            </Tag>
+          ) : null}
+          {circuitHalfOpen && circuitProbeMax > 0 ? (
+            <Tag color='cyan' type='light' size='small'>
+              {t('探针 {{count}}/{{required}}', {
+                count: circuitProbeUsed,
+                required: circuitProbeMax,
+              })}
+            </Tag>
+          ) : null}
+          {circuitActive ? (
+            <Button
+              icon={<RotateCcw size={13} />}
+              size='small'
+              theme='borderless'
+              type='tertiary'
+              loading={clearingCircuit}
+              onClick={clearRuntimeCircuit}
+            >
+              {t('恢复')}
+            </Button>
           ) : null}
           {timeoutRecovery && recoveryRequired > 0 ? (
             <Tag color='cyan' type='light' size='small'>
@@ -10708,6 +10790,40 @@ function CandidateExplanationCard({
               {formatScoreSampleSource(candidate?.score_sample_source, t)}
             </strong>
           </div>
+          <div>
+            <span>{t('熔断状态')}</span>
+            <strong>
+              {circuitHalfOpen
+                ? t('半开探测')
+                : circuitOpen
+                  ? t('熔断打开')
+                  : t('正常')}
+            </strong>
+          </div>
+          <div>
+            <span>{t('熔断原因')}</span>
+            <strong>
+              {circuitOpenReason
+                ? formatCircuitErrorType(circuitOpenReason, t)
+                : '--'}
+            </strong>
+          </div>
+          <div>
+            <span>{t('预计恢复')}</span>
+            <strong>
+              {circuitOpenUntil ? formatTimestamp(circuitOpenUntil) : '--'}
+            </strong>
+          </div>
+          <div>
+            <span>{t('半开探针')}</span>
+            <strong>
+              {circuitProbeMax > 0
+                ? `${formatNumber(circuitProbeUsed)} / ${formatNumber(
+                    circuitProbeMax,
+                  )}`
+                : '--'}
+            </strong>
+          </div>
         </div>
         <div className='ct-model-gateway-candidate-score-row'>
           <Tooltip content={t('查看评分变更记录')}>
@@ -10790,6 +10906,7 @@ function RecordDetailDrawer({
   onClose,
   onExportReplay,
   onOpenScoreHistory,
+  onRuntimeCircuitCleared,
   scoreHistory,
   scoreHistoryLoading = false,
   t,
@@ -11163,6 +11280,7 @@ function RecordDetailDrawer({
                     index={index}
                     record={record}
                     onOpenScoreHistory={onOpenScoreHistory}
+                    onRuntimeCircuitCleared={onRuntimeCircuitCleared}
                     t={t}
                   />
                 ))}
@@ -13263,6 +13381,7 @@ export default function ModelGatewayMonitor() {
         onClose={() => setDetailRecord(null)}
         onExportReplay={exportReplay}
         onOpenScoreHistory={openScoreHistory}
+        onRuntimeCircuitCleared={refreshDashboard}
         scoreHistory={detailScoreHistory}
         scoreHistoryLoading={detailScoreHistoryLoading}
         t={t}

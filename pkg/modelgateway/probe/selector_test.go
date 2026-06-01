@@ -294,6 +294,14 @@ func TestProbeSelectorSkipsWhenRecentRealRequestExistsForRuntime(t *testing.T) {
 		SkipRecentRealRequestEnabled: true,
 		RecentRealRequestWindow:      30 * time.Minute,
 	}, store, now))
+	require.False(t, skipRecentRealRequestProbe(ProbeCandidate{Key: key, Channel: channel, Model: "gpt-4.1", Group: "default", Reason: reasonCircuitProbe}, ProbeConfig{
+		SkipRecentRealRequestEnabled: true,
+		RecentRealRequestWindow:      30 * time.Minute,
+	}, store, now))
+	require.False(t, skipRecentRealRequestProbe(ProbeCandidate{Key: key, Channel: channel, Model: "gpt-4.1", Group: "default", Reason: reasonTimeoutRecovery}, ProbeConfig{
+		SkipRecentRealRequestEnabled: true,
+		RecentRealRequestWindow:      30 * time.Minute,
+	}, store, now))
 }
 
 func TestProbeSelectorGoodBaselineRequiresRecentHistoricalSuccess(t *testing.T) {

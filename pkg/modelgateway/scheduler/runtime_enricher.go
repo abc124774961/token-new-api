@@ -316,14 +316,35 @@ func (e *RuntimeSnapshotEnricher) applyCircuit(snapshot core.RuntimeSnapshot, po
 		return snapshot
 	}
 	circuit := e.circuitBreaker.Snapshot(snapshot.Key)
+	applyCircuitToRuntimeSnapshot(&snapshot, circuit)
+	return snapshot
+}
+
+func applyCircuitToRuntimeSnapshot(snapshot *core.RuntimeSnapshot, circuit core.CircuitSnapshot) {
+	if snapshot == nil {
+		return
+	}
+	circuit = normalizeCircuitSnapshot(circuit)
+	if circuit.State == "" {
+		circuit.State = core.CircuitStateClosed
+	}
 	snapshot.CircuitState = circuit.State
-	switch circuit.State {
-	case core.CircuitStateOpen:
-		snapshot.CircuitOpen = true
-	case core.CircuitStateHalfOpen:
+	snapshot.CircuitOpen = circuit.State == core.CircuitStateOpen
+	if circuit.State == core.CircuitStateHalfOpen {
 		snapshot.CircuitOpen = circuit.HalfOpenProbeMax > 0 && circuit.HalfOpenProbeUsed >= circuit.HalfOpenProbeMax
 	}
-	return snapshot
+	if !circuit.OpenUntil.IsZero() {
+		snapshot.CircuitOpenUntil = circuit.OpenUntil.Unix()
+	} else {
+		snapshot.CircuitOpenUntil = 0
+	}
+	snapshot.CircuitOpenReason = circuit.OpenReason
+	snapshot.CircuitFailureCount = circuit.FailureCount
+	snapshot.CircuitFailureRate = circuit.FailureRate
+	snapshot.CircuitSampleCount = circuit.SampleCount
+	snapshot.CircuitErrorCounts = copyCircuitErrorCounts(circuit.ErrorCounts)
+	snapshot.CircuitHalfOpenProbeUsed = circuit.HalfOpenProbeUsed
+	snapshot.CircuitHalfOpenProbeMax = circuit.HalfOpenProbeMax
 }
 
 func appendCapabilityPart(fingerprint string, part string) string {

@@ -29,10 +29,18 @@ type ModelGatewayRuntimeSnapshot struct {
 	TokensPerSecond           float64 `json:"tokens_per_second" gorm:"default:0"`
 	EmptyOutputRate           float64 `json:"empty_output_rate" gorm:"default:0"`
 	ExperienceIssueRate       float64 `json:"experience_issue_rate" gorm:"default:0"`
+	RecoverableQualityScore   float64 `json:"recoverable_quality_score" gorm:"default:0"`
+	RecoverableQualityBaseline float64 `json:"recoverable_quality_baseline" gorm:"default:0"`
+	RecoverableQualityBaselineSamples int `json:"recoverable_quality_baseline_samples" gorm:"default:0"`
+	RecoverableQualityDropRatio       float64 `json:"recoverable_quality_drop_ratio" gorm:"default:0"`
+	RecoverableQualityItemBaselines   string  `json:"recoverable_quality_item_baselines" gorm:"type:text"`
 	ProbeRecoveryPending      bool    `json:"probe_recovery_pending" gorm:"default:false;index"`
 	ProbeRecoverySuccessCount int     `json:"probe_recovery_success_count" gorm:"default:0"`
 	ProbeRecoveryRequired     int     `json:"probe_recovery_required" gorm:"default:0"`
 	ProbeTriggerReason        string  `json:"probe_trigger_reason" gorm:"type:varchar(64);default:'';index"`
+	ProbeRecoveryPhase        string  `json:"probe_recovery_phase" gorm:"type:varchar(64);default:'';index"`
+	ProbeFastRecoveryAttempts int     `json:"probe_fast_recovery_attempts" gorm:"default:0"`
+	ProbeAnomalyTriggerItems  string  `json:"probe_anomaly_trigger_items" gorm:"type:text"`
 	LastRealAttemptAt         int64   `json:"last_real_attempt_at" gorm:"bigint;index;default:0"`
 	LastRealSuccessAt         int64   `json:"last_real_success_at" gorm:"bigint;default:0"`
 	LastRealFailureAt         int64   `json:"last_real_failure_at" gorm:"bigint;default:0"`

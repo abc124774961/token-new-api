@@ -407,7 +407,6 @@ func buildProbeRequest(modelName string, endpointType constant.EndpointType) dto
 
 func buildProbeRequestWithCategory(modelName string, endpointType constant.EndpointType, category string) dto.Request {
 	stream := true
-	streamOptions := &dto.StreamOptions{IncludeUsage: true}
 	prompt := probePromptForCategory(category)
 	switch endpointType {
 	case constant.EndpointTypeOpenAIResponse:
@@ -416,7 +415,6 @@ func buildProbeRequestWithCategory(modelName string, endpointType constant.Endpo
 			Model:           modelName,
 			Input:           []byte(fmt.Sprintf(`[{"role":"user","content":%q}]`, prompt.Content)),
 			Stream:          &stream,
-			StreamOptions:   streamOptions,
 			MaxOutputTokens: &maxTokens,
 		}
 	case constant.EndpointTypeAnthropic:
@@ -446,9 +444,8 @@ func buildProbeRequestWithCategory(modelName string, endpointType constant.Endpo
 	case constant.EndpointTypeOpenAI:
 		maxTokens := prompt.MaxOutputTokens
 		return &dto.GeneralOpenAIRequest{
-			Model:         modelName,
-			Stream:        &stream,
-			StreamOptions: streamOptions,
+			Model:  modelName,
+			Stream: &stream,
 			Messages: []dto.Message{{
 				Role:    "user",
 				Content: prompt.Content,

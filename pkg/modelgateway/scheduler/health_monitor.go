@@ -177,8 +177,7 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	}
 	if m.breaker != nil {
 		circuit := m.breaker.Snapshot(key)
-		snapshot.CircuitState = circuit.State
-		snapshot.CircuitOpen = circuit.State == core.CircuitStateOpen
+		applyCircuitToRuntimeSnapshot(&snapshot, circuit)
 	}
 	afterScore := m.scoreSnapshot(result, snapshot)
 	if m.scoreEvents != nil {

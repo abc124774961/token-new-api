@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -3056,6 +3057,83 @@ func TestGetModelGatewayRuntimeStatusReturnsInjectedState(t *testing.T) {
 	require.Equal(t, 2, payload.Data.QueueSnapshot.Summary.TotalQueued)
 	require.Equal(t, 808, payload.Data.QueueSnapshot.Channels[0].ChannelID)
 	require.Equal(t, "vip", payload.Data.QueueSnapshot.Groups[0].Group)
+}
+
+func TestClearModelGatewayRuntimeCircuitClearsCircuitAndFailureAvoidance(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(func() {
+		service.ClearChannelFailureAvoidance(909)
+		modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	})
+
+	channel := model.Channel{
+		Id:     909,
+		Name:   "runtime-circuit",
+		Type:   1,
+		Key:    "sk-test",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.5",
+		Group:  "pro",
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	require.NotNil(t, runtimeDeps)
+	require.NotNil(t, runtimeDeps.CircuitBreaker)
+	require.NotNil(t, runtimeDeps.SnapshotStore)
+
+	key := core.RuntimeKey{
+		RequestedModel: "gpt-5.5",
+		UpstreamModel:  "gpt-5.5",
+		ChannelID:      channel.Id,
+		Group:          "pro",
+		EndpointType:   constant.EndpointTypeOpenAI,
+		AccountID:      "acct-a",
+	}
+	for i := 0; i < 10; i++ {
+		runtimeDeps.CircuitBreaker.Report(core.AttemptResult{
+			Key:        key,
+			ChannelID:  key.ChannelID,
+			StatusCode: http.StatusInternalServerError,
+		})
+	}
+	require.Equal(t, core.CircuitStateOpen, runtimeDeps.CircuitBreaker.Snapshot(key).State)
+	runtimeDeps.SnapshotStore.Put(core.RuntimeSnapshot{
+		Key:                  key,
+		CircuitState:         core.CircuitStateOpen,
+		CircuitOpen:          true,
+		CircuitOpenReason:    scheduler.CircuitErrorServer,
+		FailureAvoidance:     true,
+		ProbeRecoveryPending: true,
+		ProbeTriggerReason:   service.ChannelTimeoutRecoveryReason,
+	})
+	service.RecordChannelRuntimeTimeoutRecovery(modelGatewayRuntimeIdentityFromCoreKey(key), nil)
+	require.NotNil(t, service.GetChannelRuntimeFailureAvoidanceStatus(modelGatewayRuntimeIdentityFromCoreKey(key)))
+
+	router := gin.New()
+	router.POST("/api/model_gateway/observability/runtime/clear_circuit", ClearModelGatewayRuntimeCircuit)
+	body := `{"channel_id":909,"runtime_key":{"requested_model":"gpt-5.5","upstream_model":"gpt-5.5","group":"pro","account_id":"acct-a"},"clear_failure_avoidance":true}`
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/model_gateway/observability/runtime/clear_circuit", strings.NewReader(body))
+	router.ServeHTTP(resp, req)
+
+	var payload struct {
+		Success bool                                    `json:"success"`
+		Message string                                  `json:"message"`
+		Data    ModelGatewayRuntimeCircuitClearResponse `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &payload), resp.Body.String())
+	require.True(t, payload.Success, payload.Message)
+	require.Equal(t, 1, payload.Data.RuntimeCircuitsCleared)
+	require.Equal(t, 1, payload.Data.RuntimeSnapshotsUpdated)
+	require.Equal(t, 1, payload.Data.FailureAvoidanceCleared)
+	require.Equal(t, core.CircuitStateClosed, runtimeDeps.CircuitBreaker.Snapshot(key).State)
+	snapshot, ok := runtimeDeps.SnapshotStore.Get(key)
+	require.True(t, ok)
+	require.False(t, snapshot.CircuitOpen)
+	require.False(t, snapshot.FailureAvoidance)
+	require.False(t, snapshot.ProbeRecoveryPending)
+	require.Nil(t, service.GetChannelRuntimeFailureAvoidanceStatus(modelGatewayRuntimeIdentityFromCoreKey(key)))
 }
 
 func TestGetModelGatewayRuntimeStatusRejectsInvalidChannelID(t *testing.T) {

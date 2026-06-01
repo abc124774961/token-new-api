@@ -33,8 +33,7 @@ func TestBuildProbeRequestUsesStreaming(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, openAIRequest.Stream)
 	require.True(t, *openAIRequest.Stream)
-	require.NotNil(t, openAIRequest.StreamOptions)
-	require.True(t, openAIRequest.StreamOptions.IncludeUsage)
+	require.Nil(t, openAIRequest.StreamOptions)
 	openAICtx, _ := newProbeGinContext(context.Background(), "probe-stream-openai", requestPathForEndpoint(constant.EndpointTypeOpenAI, "gpt-4.1"))
 	require.True(t, openAIRequest.IsStream(openAICtx))
 
@@ -42,8 +41,7 @@ func TestBuildProbeRequestUsesStreaming(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, responsesRequest.Stream)
 	require.True(t, *responsesRequest.Stream)
-	require.NotNil(t, responsesRequest.StreamOptions)
-	require.True(t, responsesRequest.StreamOptions.IncludeUsage)
+	require.Nil(t, responsesRequest.StreamOptions)
 	responsesCtx, _ := newProbeGinContext(context.Background(), "probe-stream-responses", requestPathForEndpoint(constant.EndpointTypeOpenAIResponse, "gpt-4.1"))
 	require.True(t, responsesRequest.IsStream(responsesCtx))
 

@@ -405,7 +405,16 @@ func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem) {
 		GroupPriorityRatio:         item.GroupPriorityRatio,
 		EmptyOutputRate:            item.EmptyOutputRate,
 		ExperienceIssueRate:        item.ExperienceIssueRate,
+		CircuitState:               core.CircuitState(item.CircuitState),
 		CircuitOpen:                item.CircuitOpen,
+		CircuitOpenUntil:           item.CircuitOpenUntil,
+		CircuitOpenReason:          item.CircuitOpenReason,
+		CircuitFailureCount:        item.CircuitFailureCount,
+		CircuitFailureRate:         item.CircuitFailureRate,
+		CircuitSampleCount:         item.CircuitSampleCount,
+		CircuitErrorCounts:         copyRuntimeStatusCircuitErrorCounts(item.CircuitErrorCounts),
+		CircuitHalfOpenProbeUsed:   item.CircuitHalfOpenProbeUsed,
+		CircuitHalfOpenProbeMax:    item.CircuitHalfOpenProbeMax,
 		Cooldown:                   item.Cooldown,
 		FailureAvoidance:           item.FailureAvoidance,
 		ProbeRecoveryPending:       item.ProbeRecoveryPending,
@@ -630,6 +639,14 @@ func applyRuntimeSnapshot(item *RuntimeStatusItem, snapshot core.RuntimeSnapshot
 		item.CircuitState = string(snapshot.CircuitState)
 	}
 	item.CircuitOpen = snapshot.CircuitOpen || snapshot.CircuitState == core.CircuitStateOpen
+	item.CircuitOpenUntil = snapshot.CircuitOpenUntil
+	item.CircuitOpenReason = snapshot.CircuitOpenReason
+	item.CircuitFailureCount = snapshot.CircuitFailureCount
+	item.CircuitFailureRate = snapshot.CircuitFailureRate
+	item.CircuitSampleCount = snapshot.CircuitSampleCount
+	item.CircuitErrorCounts = copyRuntimeStatusCircuitErrorCounts(snapshot.CircuitErrorCounts)
+	item.CircuitHalfOpenProbeUsed = snapshot.CircuitHalfOpenProbeUsed
+	item.CircuitHalfOpenProbeMax = snapshot.CircuitHalfOpenProbeMax
 	item.Cooldown = snapshot.Cooldown
 	item.FailureAvoidance = snapshot.FailureAvoidance
 	item.EmptyOutputRate = snapshot.EmptyOutputRate
@@ -743,6 +760,17 @@ func applyCircuitSnapshot(item *RuntimeStatusItem, snapshot core.CircuitSnapshot
 	item.CircuitErrorCounts = snapshot.ErrorCounts
 	item.CircuitHalfOpenProbeUsed = snapshot.HalfOpenProbeUsed
 	item.CircuitHalfOpenProbeMax = snapshot.HalfOpenProbeMax
+}
+
+func copyRuntimeStatusCircuitErrorCounts(src map[string]int) map[string]int {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
 }
 
 func runtimeStatusMatchesQuery(key core.RuntimeKey, query RuntimeStatusQuery) bool {

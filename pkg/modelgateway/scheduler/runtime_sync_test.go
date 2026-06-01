@@ -93,6 +93,90 @@ func TestSyncedCircuitBreakerSharesOpenCircuitState(t *testing.T) {
 	require.Len(t, reader.ListSnapshots(), 1)
 }
 
+func TestSyncedCircuitBreakerAdvancesExpiredRemoteOpenAndPersistsRecovery(t *testing.T) {
+	syncStore := scheduler.NewHybridRuntimeSyncStore(scheduler.RuntimeSyncStoreOptions{
+		TTL: time.Minute,
+	})
+	now := time.Unix(1700000000, 0)
+	key := core.RuntimeKey{
+		RequestedModel: "gpt-5.5",
+		ChannelID:      313,
+		Group:          "pro",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	options := scheduler.CircuitBreakerOptions{
+		FailureThreshold:   0.5,
+		MinSamples:         2,
+		OpenDuration:       time.Minute,
+		HalfOpenProbeCount: 1,
+	}
+	syncStore.PutCircuit(core.CircuitSnapshot{
+		Key:               key,
+		State:             core.CircuitStateOpen,
+		FailureCount:      2,
+		SampleCount:       2,
+		FailureRate:       1,
+		OpenReason:        scheduler.CircuitErrorServer,
+		OpenUntil:         now.Add(-time.Second),
+		HalfOpenProbeMax:  1,
+		HalfOpenProbeUsed: 0,
+	})
+
+	breaker := scheduler.NewSyncedCircuitBreaker(
+		scheduler.NewCircuitBreakerForTest(options, func() time.Time { return now }),
+		syncStore,
+	)
+
+	snapshot := breaker.Snapshot(key)
+	require.Equal(t, core.CircuitStateHalfOpen, snapshot.State)
+	remote, ok := syncStore.GetCircuit(key)
+	require.True(t, ok)
+	require.Equal(t, core.CircuitStateHalfOpen, remote.State)
+
+	require.True(t, breaker.AllowProbe(key))
+	remote, ok = syncStore.GetCircuit(key)
+	require.True(t, ok)
+	require.Equal(t, 1, remote.HalfOpenProbeUsed)
+
+	breaker.Report(core.AttemptResult{Key: key, ChannelID: key.ChannelID, Success: true})
+	require.Equal(t, core.CircuitStateClosed, breaker.Snapshot(key).State)
+	remote, ok = syncStore.GetCircuit(key)
+	require.True(t, ok)
+	require.Equal(t, core.CircuitStateClosed, remote.State)
+}
+
+func TestSyncedCircuitBreakerResetChannelClearsLocalAndRemoteRuntimeKeys(t *testing.T) {
+	syncStore := scheduler.NewHybridRuntimeSyncStore(scheduler.RuntimeSyncStoreOptions{
+		TTL: time.Minute,
+	})
+	keyLocal := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 414, Group: "pro", EndpointType: constant.EndpointTypeOpenAI}
+	keyRemote := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 414, Group: "pro", EndpointType: constant.EndpointTypeOpenAI}
+	keyOther := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 415, Group: "pro", EndpointType: constant.EndpointTypeOpenAI}
+	options := scheduler.CircuitBreakerOptions{
+		FailureThreshold:   0.5,
+		MinSamples:         2,
+		OpenDuration:       time.Minute,
+		HalfOpenProbeCount: 1,
+	}
+	breaker := scheduler.NewSyncedCircuitBreaker(scheduler.NewCircuitBreaker(options), syncStore)
+	for i := 0; i < 2; i++ {
+		breaker.Report(core.AttemptResult{Key: keyLocal, ChannelID: keyLocal.ChannelID, StatusCode: http.StatusInternalServerError})
+		breaker.Report(core.AttemptResult{Key: keyOther, ChannelID: keyOther.ChannelID, StatusCode: http.StatusInternalServerError})
+	}
+	syncStore.PutCircuit(core.CircuitSnapshot{
+		Key:          keyRemote,
+		State:        core.CircuitStateOpen,
+		FailureCount: 2,
+		SampleCount:  2,
+		OpenUntil:    time.Now().Add(time.Minute),
+	})
+
+	require.Equal(t, 2, breaker.ResetChannel(414))
+	require.Equal(t, core.CircuitStateClosed, breaker.Snapshot(keyLocal).State)
+	require.Equal(t, core.CircuitStateClosed, breaker.Snapshot(keyRemote).State)
+	require.Equal(t, core.CircuitStateOpen, breaker.Snapshot(keyOther).State)
+}
+
 func TestRuntimeQueueSnapshotSyncAggregatesNodesAndRuntimeKeys(t *testing.T) {
 	syncStore := scheduler.NewHybridRuntimeSyncStore(scheduler.RuntimeSyncStoreOptions{
 		TTL: time.Minute,

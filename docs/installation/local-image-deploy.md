@@ -4,6 +4,8 @@
 
 脚本不会复制或覆盖服务器上的 `.env.pro`、`data/`、`logs/`。生产配置仍然以服务器 `/www/wwwroot/token-new-api/.env.pro` 为准。
 
+如果采用服务器直接 `git pull` 并在服务器构建镜像，请看 `docs/installation/server-git-deploy.md`。
+
 ## 本地文件
 
 - 构建脚本：`scripts/build-pro-image-archive.sh`

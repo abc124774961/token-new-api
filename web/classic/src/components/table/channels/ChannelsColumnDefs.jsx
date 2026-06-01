@@ -302,16 +302,24 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
   );
   const circuitActive =
     failureAvoidance?.active === true && circuitRemaining > 0;
+  const runtimeCircuit = record?.runtime_circuit || {};
+  const runtimeCircuitOpen = Number(runtimeCircuit.open_runtime_keys || 0);
+  const runtimeCircuitHalfOpen = Number(
+    runtimeCircuit.half_open_runtime_keys || 0,
+  );
+  const runtimeCircuitActive =
+    runtimeCircuitOpen > 0 || runtimeCircuitHalfOpen > 0;
+  const anyCircuitActive = circuitActive || runtimeCircuitActive;
   const cooldownActive =
     concurrencyCooldown?.active === true && cooldownRemaining > 0;
 
   React.useEffect(() => {
-    if (!circuitActive && !cooldownActive) return undefined;
+    if (!anyCircuitActive && !cooldownActive) return undefined;
     const timer = window.setInterval(() => {
       setNowSeconds(Math.floor(Date.now() / 1000));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [circuitActive, cooldownActive]);
+  }, [anyCircuitActive, cooldownActive]);
 
   const otherInfo = parseChannelOtherInfo(record?.other_info);
   const reason = renderStatusReason(
@@ -338,13 +346,17 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
     setClearingCircuit(true);
     try {
       const res = await API.post(
-        `/api/channel/${record.id}/clear_failure_avoidance`,
+        '/api/model_gateway/observability/runtime/clear_circuit',
+        {
+          channel_id: record.id,
+          clear_failure_avoidance: true,
+        },
       );
       if (res?.data?.success) {
-        showSuccess(t('熔断已解除'));
+        showSuccess(t('熔断已恢复'));
         refresh?.();
       } else {
-        showError(res?.data?.message || t('解除熔断失败'));
+        showError(res?.data?.message || t('恢复熔断失败'));
       }
     } catch (error) {
       showError(error);
@@ -357,7 +369,7 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
     <Tag color='red' shape='circle'>
       {t('余额不足')}
     </Tag>
-  ) : cooldownActive || circuitActive ? (
+  ) : cooldownActive || anyCircuitActive ? (
     <Space spacing={4} wrap>
       {cooldownActive && (
         <Tag color='yellow' shape='circle'>
@@ -369,7 +381,14 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
           {t('熔断中')} {circuitLabel}
         </Tag>
       )}
-      {circuitActive && (
+      {runtimeCircuitActive && (
+        <Tag color='red' shape='circle'>
+          {t('运行态熔断 {{count}}', {
+            count: runtimeCircuitOpen + runtimeCircuitHalfOpen,
+          })}
+        </Tag>
+      )}
+      {anyCircuitActive && (
         <Button
           size='small'
           type='tertiary'
@@ -396,6 +415,12 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
   }
   if (circuitUntil) {
     tooltipLines.push(`${t('熔断到')}: ${circuitUntil}`);
+  }
+  if (runtimeCircuitOpen > 0) {
+    tooltipLines.push(`${t('运行态熔断')}: ${runtimeCircuitOpen}`);
+  }
+  if (runtimeCircuitHalfOpen > 0) {
+    tooltipLines.push(`${t('半开探测')}: ${runtimeCircuitHalfOpen}`);
   }
   if (reason) {
     tooltipLines.push(`${t('原因：')}${reason}`);

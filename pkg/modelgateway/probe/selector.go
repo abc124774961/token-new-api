@@ -322,7 +322,7 @@ func (s *ProbeSelector) markProbeSelectionLocked(key core.RuntimeKey, reason str
 	if reason == reasonTimeoutRecovery {
 		snapshot.ProbeRecoveryRequired = config.TimeoutRecoverySuccessesRequired
 	}
-	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || reason == reasonLowScore || reason == reasonFailureAvoidance || reason == reasonTimeoutRecovery
+	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || reason == reasonLowScore || reason == reasonFailureAvoidance || reason == reasonTimeoutRecovery || reason == reasonCircuitProbe
 	snapshot.LastProbeAt = s.now().Unix()
 	s.store.Put(snapshot)
 	enrichedKey := normalizeProbeRuntimeKey(key)
@@ -484,6 +484,10 @@ func probeGoodBaselineEligible(snapshot core.RuntimeSnapshot, now time.Time, con
 func skipRecentRealRequestProbe(candidate ProbeCandidate, config ProbeConfig, store core.RuntimeSnapshotStore, now time.Time) bool {
 	config = normalizeProbeConfig(config)
 	if !config.SkipRecentRealRequestEnabled {
+		return false
+	}
+	switch strings.TrimSpace(candidate.Reason) {
+	case reasonCircuitProbe, reasonTimeoutRecovery:
 		return false
 	}
 	window := config.RecentRealRequestWindow

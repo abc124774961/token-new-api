@@ -78,9 +78,16 @@ type channelResponse struct {
 	*model.Channel
 	FailureAvoidance    *service.ChannelFailureAvoidanceStatus   `json:"failure_avoidance,omitempty"`
 	ConcurrencyCooldown *service.ChannelConcurrencyControlStatus `json:"concurrency_cooldown,omitempty"`
+	RuntimeCircuit      *channelRuntimeCircuitStatus             `json:"runtime_circuit,omitempty"`
 	StatusReason        string                                   `json:"status_reason,omitempty"`
 	BalanceInsufficient bool                                     `json:"balance_insufficient"`
 	UpstreamCostDisplay *channelUpstreamCostDisplay              `json:"upstream_cost_display,omitempty"`
+}
+
+type channelRuntimeCircuitStatus struct {
+	OpenRuntimeKeys     int            `json:"open_runtime_keys"`
+	HalfOpenRuntimeKeys int            `json:"half_open_runtime_keys"`
+	OpenReasons         map[string]int `json:"open_reasons,omitempty"`
 }
 
 type channelUpstreamCostDisplay struct {
@@ -122,10 +129,11 @@ func buildChannelResponse(channel *model.Channel) *channelResponse {
 		return nil
 	}
 	costDisplays := buildChannelCostDisplays([]*model.Channel{channel})
-	return buildChannelResponseWithCostDisplay(channel, costDisplays[channel.Id])
+	circuitDisplays := buildChannelRuntimeCircuitDisplays([]*model.Channel{channel})
+	return buildChannelResponseWithDisplays(channel, costDisplays[channel.Id], circuitDisplays[channel.Id])
 }
 
-func buildChannelResponseWithCostDisplay(channel *model.Channel, costDisplay *channelUpstreamCostDisplay) *channelResponse {
+func buildChannelResponseWithDisplays(channel *model.Channel, costDisplay *channelUpstreamCostDisplay, circuitStatus *channelRuntimeCircuitStatus) *channelResponse {
 	if channel == nil {
 		return nil
 	}
@@ -136,6 +144,7 @@ func buildChannelResponseWithCostDisplay(channel *model.Channel, costDisplay *ch
 		Channel:             channel,
 		FailureAvoidance:    service.GetChannelFailureAvoidanceStatus(channel.Id),
 		ConcurrencyCooldown: service.GetChannelConcurrencyCooldownStatus(channel.Id),
+		RuntimeCircuit:      circuitStatus,
 		StatusReason:        statusReason,
 		BalanceInsufficient: service.IsKnownBalanceInsufficientChannel(channel),
 		UpstreamCostDisplay: costDisplay,
@@ -145,10 +154,59 @@ func buildChannelResponseWithCostDisplay(channel *model.Channel, costDisplay *ch
 func buildChannelResponses(channels []*model.Channel) []*channelResponse {
 	responses := make([]*channelResponse, 0, len(channels))
 	costDisplays := buildChannelCostDisplays(channels)
+	circuitDisplays := buildChannelRuntimeCircuitDisplays(channels)
 	for _, channel := range channels {
-		responses = append(responses, buildChannelResponseWithCostDisplay(channel, costDisplays[channel.Id]))
+		responses = append(responses, buildChannelResponseWithDisplays(channel, costDisplays[channel.Id], circuitDisplays[channel.Id]))
 	}
 	return responses
+}
+
+func buildChannelRuntimeCircuitDisplays(channels []*model.Channel) map[int]*channelRuntimeCircuitStatus {
+	displays := make(map[int]*channelRuntimeCircuitStatus, len(channels))
+	if len(channels) == 0 {
+		return displays
+	}
+	channelIDs := make(map[int]struct{}, len(channels))
+	for _, channel := range channels {
+		if channel == nil || channel.Id <= 0 {
+			continue
+		}
+		channelIDs[channel.Id] = struct{}{}
+	}
+	if len(channelIDs) == 0 {
+		return displays
+	}
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	if runtimeDeps == nil || runtimeDeps.CircuitBreaker == nil {
+		return displays
+	}
+	for _, snapshot := range runtimeDeps.CircuitBreaker.ListSnapshots() {
+		if _, ok := channelIDs[snapshot.Key.ChannelID]; !ok {
+			continue
+		}
+		if snapshot.State != "open" && snapshot.State != "half_open" {
+			continue
+		}
+		status := displays[snapshot.Key.ChannelID]
+		if status == nil {
+			status = &channelRuntimeCircuitStatus{}
+			displays[snapshot.Key.ChannelID] = status
+		}
+		switch snapshot.State {
+		case "open":
+			status.OpenRuntimeKeys++
+			reason := strings.TrimSpace(snapshot.OpenReason)
+			if reason != "" {
+				if status.OpenReasons == nil {
+					status.OpenReasons = map[string]int{}
+				}
+				status.OpenReasons[reason]++
+			}
+		case "half_open":
+			status.HalfOpenRuntimeKeys++
+		}
+	}
+	return displays
 }
 
 func buildChannelCostDisplays(channels []*model.Channel) map[int]*channelUpstreamCostDisplay {

@@ -40,6 +40,8 @@ type CircuitBreaker interface {
 	Snapshot(key RuntimeKey) CircuitSnapshot
 	AllowProbe(key RuntimeKey) bool
 	Report(result AttemptResult)
+	Reset(key RuntimeKey) bool
+	ResetChannel(channelID int) int
 }
 
 type GroupPermissionService interface {
