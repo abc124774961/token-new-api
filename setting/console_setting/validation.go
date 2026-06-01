@@ -1,13 +1,15 @@
 package console_setting
 
 import (
-	"encoding/json"
 	"fmt"
+	"net/mail"
 	"net/url"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 var (
@@ -24,7 +26,7 @@ var (
 
 func parseJSONArray(jsonStr string, typeName string) ([]map[string]interface{}, error) {
 	var list []map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &list); err != nil {
+	if err := common.UnmarshalJsonStr(jsonStr, &list); err != nil {
 		return nil, fmt.Errorf("%s格式错误：%s", typeName, err.Error())
 	}
 	return list, nil
@@ -55,7 +57,7 @@ func getJSONList(jsonStr string) []map[string]interface{} {
 		return []map[string]interface{}{}
 	}
 	var list []map[string]interface{}
-	json.Unmarshal([]byte(jsonStr), &list)
+	_ = common.UnmarshalJsonStr(jsonStr, &list)
 	return list
 }
 
@@ -73,6 +75,8 @@ func ValidateConsoleSettings(settingsStr string, settingType string) error {
 		return validateFAQ(settingsStr)
 	case "UptimeKumaGroups":
 		return validateUptimeKumaGroups(settingsStr)
+	case "SupportContacts":
+		return validateSupportContacts(settingsStr)
 	default:
 		return fmt.Errorf("未知的设置类型：%s", settingType)
 	}
@@ -301,4 +305,209 @@ func validateUptimeKumaGroups(groupsStr string) error {
 
 func GetUptimeKumaGroups() []map[string]interface{} {
 	return getJSONList(GetConsoleSetting().UptimeKumaGroups)
+}
+
+type SupportContact struct {
+	ID          int    `json:"id"`
+	Type        string `json:"type"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	Value       string `json:"value,omitempty"`
+	URL         string `json:"url,omitempty"`
+	QRCode      string `json:"qrcode,omitempty"`
+	Priority    int    `json:"priority"`
+	Enabled     bool   `json:"enabled"`
+}
+
+type supportContactConfig struct {
+	ID          int    `json:"id"`
+	Type        string `json:"type"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Value       string `json:"value"`
+	URL         string `json:"url"`
+	QRCode      string `json:"qrcode"`
+	Priority    int    `json:"priority"`
+	Enabled     *bool  `json:"enabled"`
+}
+
+var validSupportContactTypes = map[string]bool{
+	"telegram": true,
+	"email":    true,
+	"wechat":   true,
+	"qq":       true,
+	"discord":  true,
+	"docs":     true,
+	"custom":   true,
+}
+
+func parseSupportContacts(contactsStr string) ([]SupportContact, error) {
+	if contactsStr == "" {
+		return []SupportContact{}, nil
+	}
+
+	var raw []supportContactConfig
+	if err := common.UnmarshalJsonStr(contactsStr, &raw); err != nil {
+		return nil, fmt.Errorf("客服联系方式格式错误：%s", err.Error())
+	}
+
+	contacts := make([]SupportContact, 0, len(raw))
+	for _, item := range raw {
+		enabled := true
+		if item.Enabled != nil {
+			enabled = *item.Enabled
+		}
+		contacts = append(contacts, SupportContact{
+			ID:          item.ID,
+			Type:        strings.ToLower(strings.TrimSpace(item.Type)),
+			Title:       strings.TrimSpace(item.Title),
+			Description: strings.TrimSpace(item.Description),
+			Value:       strings.TrimSpace(item.Value),
+			URL:         strings.TrimSpace(item.URL),
+			QRCode:      strings.TrimSpace(item.QRCode),
+			Priority:    item.Priority,
+			Enabled:     enabled,
+		})
+	}
+
+	return contacts, nil
+}
+
+func validateSupportContactURL(urlStr string, index int, field string) error {
+	parsed, err := url.Parse(urlStr)
+	if err != nil {
+		return fmt.Errorf("第%d个联系方式的%s无法解析：%s", index, field, err.Error())
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme == "" {
+		return fmt.Errorf("第%d个联系方式的%s缺少安全协议", index, field)
+	}
+	if field == "二维码" {
+		if scheme != "http" && scheme != "https" {
+			return fmt.Errorf("第%d个联系方式的二维码仅支持 http 或 https 地址", index)
+		}
+		if parsed.Host == "" {
+			return fmt.Errorf("第%d个联系方式的二维码地址缺少域名", index)
+		}
+		return nil
+	}
+	switch scheme {
+	case "http", "https":
+		if parsed.Host == "" {
+			return fmt.Errorf("第%d个联系方式的%s缺少域名", index, field)
+		}
+	case "mailto":
+		if parsed.Opaque == "" && parsed.Path == "" {
+			return fmt.Errorf("第%d个联系方式的邮箱链接缺少地址", index)
+		}
+		address := parsed.Opaque
+		if address == "" {
+			address = parsed.Path
+		}
+		if idx := strings.IndexAny(address, "?#"); idx >= 0 {
+			address = address[:idx]
+		}
+		if _, err := mail.ParseAddress(address); err != nil {
+			return fmt.Errorf("第%d个联系方式的邮箱链接格式不正确", index)
+		}
+	default:
+		return fmt.Errorf("第%d个联系方式的%s仅支持 http、https 或 mailto 地址", index, field)
+	}
+	return nil
+}
+
+func validateSupportContacts(contactsStr string) error {
+	contacts, err := parseSupportContacts(contactsStr)
+	if err != nil {
+		return err
+	}
+	if len(contacts) > 20 {
+		return fmt.Errorf("客服联系方式数量不能超过20个")
+	}
+
+	for i, contact := range contacts {
+		index := i + 1
+		if contact.Type == "" {
+			return fmt.Errorf("第%d个联系方式缺少类型字段", index)
+		}
+		if !validSupportContactTypes[contact.Type] {
+			return fmt.Errorf("第%d个联系方式的类型值不合法", index)
+		}
+		if contact.Title == "" {
+			return fmt.Errorf("第%d个联系方式缺少标题字段", index)
+		}
+		if contact.Value == "" && contact.URL == "" && contact.QRCode == "" {
+			return fmt.Errorf("第%d个联系方式至少需要填写值、链接或二维码之一", index)
+		}
+		if len(contact.Title) > 100 {
+			return fmt.Errorf("第%d个联系方式的标题长度不能超过100字符", index)
+		}
+		if len(contact.Description) > 300 {
+			return fmt.Errorf("第%d个联系方式的描述长度不能超过300字符", index)
+		}
+		if len(contact.Value) > 500 {
+			return fmt.Errorf("第%d个联系方式的值长度不能超过500字符", index)
+		}
+		if len(contact.URL) > 800 {
+			return fmt.Errorf("第%d个联系方式的链接长度不能超过800字符", index)
+		}
+		if len(contact.QRCode) > 800 {
+			return fmt.Errorf("第%d个联系方式的二维码地址长度不能超过800字符", index)
+		}
+		for _, field := range []struct {
+			name  string
+			value string
+		}{
+			{name: "标题", value: contact.Title},
+			{name: "描述", value: contact.Description},
+			{name: "值", value: contact.Value},
+		} {
+			if field.value == "" {
+				continue
+			}
+			if err := checkDangerousContent(field.value, index, "联系方式"+field.name); err != nil {
+				return err
+			}
+		}
+		if contact.URL != "" {
+			if err := checkDangerousContent(contact.URL, index, "联系方式链接"); err != nil {
+				return err
+			}
+			if err := validateSupportContactURL(contact.URL, index, "链接"); err != nil {
+				return err
+			}
+		}
+		if contact.QRCode != "" {
+			if err := checkDangerousContent(contact.QRCode, index, "联系方式二维码"); err != nil {
+				return err
+			}
+			if err := validateSupportContactURL(contact.QRCode, index, "二维码"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func GetSupportContacts() []SupportContact {
+	contacts, err := parseSupportContacts(GetConsoleSetting().SupportContacts)
+	if err != nil {
+		return []SupportContact{}
+	}
+
+	visible := make([]SupportContact, 0, len(contacts))
+	for _, contact := range contacts {
+		if contact.Enabled {
+			visible = append(visible, contact)
+		}
+	}
+
+	sort.SliceStable(visible, func(i, j int) bool {
+		if visible[i].Priority != visible[j].Priority {
+			return visible[i].Priority < visible[j].Priority
+		}
+		return visible[i].ID < visible[j].ID
+	})
+
+	return visible
 }

@@ -12,6 +12,7 @@ const (
 	ErrorCategoryRateLimit                 = "upstream_rate_limit"
 	ErrorCategoryBalanceOrQuota            = "balance_or_quota"
 	ErrorCategoryUnsupportedCapability     = "unsupported_capability"
+	ErrorCategoryClientRequestError        = "client_request_error"
 	ErrorCategoryUpstreamError             = "upstream_error"
 	ErrorCategoryServerError               = "server_error"
 	ErrorCategoryTimeout                   = "timeout"

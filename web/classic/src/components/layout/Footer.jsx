@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next';
 import { Typography } from '@douyinfe/semi-ui';
 import { getFooterHTML, getLogo, getSystemName } from '../../helpers';
 import { StatusContext } from '../../context/Status';
+import { SupportContactsFooterSummary } from './SupportContacts';
 
 const FooterBar = () => {
   const { t } = useTranslation();
@@ -195,18 +196,21 @@ const FooterBar = () => {
             </Typography.Text>
           </div>
 
-          <div className='text-sm'>
-            <span className='!text-semi-color-text-1'>
-              {t('设计与开发由')}{' '}
-            </span>
-            <a
-              href='https://github.com/QuantumNous/new-api'
-              target='_blank'
-              rel='noopener noreferrer'
-              className='!text-semi-color-primary font-medium'
-            >
-              New API
-            </a>
+          <div className='flex flex-col md:flex-row items-center gap-4'>
+            <SupportContactsFooterSummary />
+            <div className='text-sm'>
+              <span className='!text-semi-color-text-1'>
+                {t('设计与开发由')}{' '}
+              </span>
+              <a
+                href='https://github.com/QuantumNous/new-api'
+                target='_blank'
+                rel='noopener noreferrer'
+                className='!text-semi-color-primary font-medium'
+              >
+                New API
+              </a>
+            </div>
           </div>
         </div>
       </footer>
@@ -227,18 +231,21 @@ const FooterBar = () => {
               className='custom-footer na-cb6feafeb3990c78 text-sm !text-semi-color-text-1'
               dangerouslySetInnerHTML={{ __html: footer }}
             ></div>
-            <div className='text-sm flex-shrink-0'>
-              <span className='!text-semi-color-text-1'>
-                {t('设计与开发由')}{' '}
-              </span>
-              <a
-                href='https://github.com/QuantumNous/new-api'
-                target='_blank'
-                rel='noopener noreferrer'
-                className='!text-semi-color-primary font-medium'
-              >
-                New API
-              </a>
+            <div className='flex flex-col md:flex-row items-center gap-4 flex-shrink-0'>
+              <SupportContactsFooterSummary />
+              <div className='text-sm'>
+                <span className='!text-semi-color-text-1'>
+                  {t('设计与开发由')}{' '}
+                </span>
+                <a
+                  href='https://github.com/QuantumNous/new-api'
+                  target='_blank'
+                  rel='noopener noreferrer'
+                  className='!text-semi-color-primary font-medium'
+                >
+                  New API
+                </a>
+              </div>
             </div>
           </div>
         </footer>

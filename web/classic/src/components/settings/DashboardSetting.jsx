@@ -25,6 +25,7 @@ import SettingsAnnouncements from '../../pages/Setting/Dashboard/SettingsAnnounc
 import SettingsFAQ from '../../pages/Setting/Dashboard/SettingsFAQ';
 import SettingsUptimeKuma from '../../pages/Setting/Dashboard/SettingsUptimeKuma';
 import SettingsDataDashboard from '../../pages/Setting/Dashboard/SettingsDataDashboard';
+import SettingsSupportContacts from '../../pages/Setting/Dashboard/SettingsSupportContacts';
 
 const DashboardSetting = () => {
   let [inputs, setInputs] = useState({
@@ -32,10 +33,12 @@ const DashboardSetting = () => {
     'console_setting.announcements': '',
     'console_setting.faq': '',
     'console_setting.uptime_kuma_groups': '',
+    'console_setting.support_contacts': '',
     'console_setting.api_info_enabled': '',
     'console_setting.announcements_enabled': '',
     'console_setting.faq_enabled': '',
     'console_setting.uptime_kuma_enabled': '',
+    'console_setting.support_contacts_enabled': '',
 
     // 用于迁移检测的旧键，下个版本会删除
     ApiInfo: '',
@@ -149,6 +152,11 @@ const DashboardSetting = () => {
         {/* 系统公告管理 */}
         <Card style={{ marginTop: '10px' }}>
           <SettingsAnnouncements options={inputs} refresh={onRefresh} />
+        </Card>
+
+        {/* 客服联系方式管理 */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsSupportContacts options={inputs} refresh={onRefresh} />
         </Card>
 
         {/* API信息管理 */}

@@ -23,6 +23,7 @@ import SiderBar from './SiderBar';
 import App from '../../App';
 import FooterBar from './Footer';
 import DomainMigrationNotice from './DomainMigrationNotice';
+import { SupportContactsFloatingButton } from './SupportContacts';
 import { ToastContainer } from 'react-toastify';
 import ErrorBoundary from '../common/ErrorBoundary';
 import React, { useContext, useEffect, useState } from 'react';
@@ -288,6 +289,7 @@ const PageLayout = () => {
       </Layout>
       <ToastContainer />
       <DomainMigrationNotice />
+      <SupportContactsFloatingButton />
     </Layout>
   );
 };

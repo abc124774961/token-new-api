@@ -1265,6 +1265,9 @@ func modelGatewayAttemptFailureScope(result modelgatewaycore.AttemptResult) stri
 	if result.ClientAborted || result.ErrorCategory == modelgatewaycore.ErrorCategoryClientAborted {
 		return modelgatewaycore.FailureScopeClient
 	}
+	if result.ErrorCategory == modelgatewaycore.ErrorCategoryClientRequestError {
+		return modelgatewaycore.FailureScopeClient
+	}
 	if result.Success {
 		return ""
 	}
@@ -1329,6 +1332,9 @@ func classifyRelayAttemptError(c *gin.Context, apiErr *types.NewAPIError) string
 	if service.IsBalanceInsufficientError(apiErr) {
 		return modelgatewaycore.ErrorCategoryBalanceOrQuota
 	}
+	if isInvalidEncryptedContentError(apiErr) {
+		return modelgatewaycore.ErrorCategoryClientRequestError
+	}
 	if isRelayOverloadSkipError(apiErr) {
 		return modelgatewaycore.ErrorCategoryOverloadSkip
 	}
@@ -1362,6 +1368,9 @@ func retryActionForAttempt(c *gin.Context, apiErr *types.NewAPIError, willRetry 
 	}
 	if relayClientAborted(c, nil, apiErr) {
 		return "client_aborted"
+	}
+	if isInvalidEncryptedContentError(apiErr) {
+		return "stop"
 	}
 	if !willRetry {
 		return "stop"
@@ -1710,6 +1719,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *servi
 	if types.IsSkipRetryError(openaiErr) {
 		return false
 	}
+	if isInvalidEncryptedContentError(openaiErr) {
+		return false
+	}
 	if retryParam != nil && shouldFailoverToAlternativeChannel(c, openaiErr) {
 		canFailover, forceNextAutoGroup := service.GetChannelFailoverPlan(retryParam)
 		if !canFailover {
@@ -1829,6 +1841,9 @@ func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIE
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
+	if isInvalidEncryptedContentError(openaiErr) {
+		return false
+	}
 	if shouldFailoverOnConcurrencyLimit(c, openaiErr) {
 		return true
 	}
@@ -1911,6 +1926,9 @@ func isUpstreamFailoverCandidate(openaiErr *types.NewAPIError) bool {
 	if openaiErr == nil {
 		return false
 	}
+	if isInvalidEncryptedContentError(openaiErr) {
+		return false
+	}
 	code := openaiErr.StatusCode
 	if code >= http.StatusOK && code < http.StatusMultipleChoices {
 		return false
@@ -1957,6 +1975,31 @@ func isUpstreamRateLimitLikeError(openaiErr *types.NewAPIError) bool {
 		strings.Contains(message, "速率") ||
 		strings.Contains(message, "配额限制") ||
 		strings.Contains(message, "限速规则")
+}
+
+func isInvalidEncryptedContentError(openaiErr *types.NewAPIError) bool {
+	if openaiErr == nil {
+		return false
+	}
+	switch openaiErr.StatusCode {
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+	default:
+		return false
+	}
+	oaiErr := openaiErr.ToOpenAIError()
+	label := strings.ToLower(strings.Join([]string{
+		fmt.Sprint(oaiErr.Code),
+		oaiErr.Type,
+		oaiErr.Message,
+		openaiErr.Error(),
+	}, " "))
+	if strings.Contains(label, "invalid_encrypted_content") {
+		return true
+	}
+	return strings.Contains(label, "encrypted content") &&
+		(strings.Contains(label, "could not be decrypted") ||
+			strings.Contains(label, "could not be parsed") ||
+			strings.Contains(label, "could not be verified"))
 }
 
 func isRelayOverloadSkipError(apiErr *types.NewAPIError) bool {
@@ -2246,6 +2289,9 @@ func shouldTemporarilyAvoidChannel(err *types.NewAPIError) bool {
 
 func channelFailureAvoidanceReason(err *types.NewAPIError) (string, bool) {
 	if err == nil || types.IsSkipRetryError(err) {
+		return "", false
+	}
+	if isInvalidEncryptedContentError(err) {
 		return "", false
 	}
 	if service.IsBalanceInsufficientError(err) {

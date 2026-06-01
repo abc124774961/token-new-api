@@ -527,6 +527,36 @@ func TestShouldRetryAllowsGenericUpstreamBadRequestFailover(t *testing.T) {
 	require.Equal(t, 1, param.GetExtraRetries())
 }
 
+func TestShouldRetryRejectsInvalidEncryptedContent(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 473, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 474, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Set("use_channel", []string{"473"})
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	err := types.WithOpenAIError(types.OpenAIError{
+		Message: "The encrypted content 我先查一下 could not be verified. Reason: Encrypted content could not be decrypted or parsed.",
+		Type:    "openai_error",
+		Code:    "invalid_encrypted_content",
+	}, http.StatusBadRequest)
+
+	require.False(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, 0, param.GetExtraRetries())
+	require.False(t, shouldFailoverToAlternativeChannel(ctx, err))
+	require.Equal(t, modelgatewaycore.ErrorCategoryClientRequestError, classifyRelayAttemptError(ctx, err))
+	require.Equal(t, "stop", retryActionForAttempt(ctx, err, true))
+	_, avoid := channelFailureAvoidanceReason(err)
+	require.False(t, avoid)
+}
+
 func TestShouldRetryRejectsLocalBadRequestWhenNoRetryBudget(t *testing.T) {
 	ctx := newRelayRetryContext()
 
