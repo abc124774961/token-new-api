@@ -72,3 +72,12 @@ func TestEffectiveClassificationPrefersActiveUsageLimitOverCapability(t *testing
 	cleared := capability.ClearUsageLimit()
 	require.Empty(t, cleared.UsageLimitResetSource)
 }
+
+func TestEffectiveClassificationKeepsAuthErrorAheadOfProxyExitError(t *testing.T) {
+	capability := AccountCapability{
+		CapabilityClassification: ClassificationAuthError,
+		ProxyLastError:           "invalid character 'P' looking for beginning of value",
+	}
+
+	require.Equal(t, ClassificationAuthError, capability.EffectiveClassification())
+}

@@ -24,6 +24,7 @@ const (
 const (
 	DispatchRequiredToolCodexImageGeneration        = "image_generation"
 	DispatchFilterConditionCodexImageGenerationTool = "codex_image_generation_tool"
+	DispatchFilterConditionResponsesPreviousID      = "responses_previous_id"
 )
 
 const (
@@ -104,22 +105,23 @@ type ProxyRef struct {
 }
 
 type DispatchRequest struct {
-	RequestID                string
-	UserID                   int
-	TokenID                  int
-	RequestedGroup           string
-	UserGroup                string
-	ModelName                string
-	EndpointType             constant.EndpointType
-	RequiresCodexImageTool   bool
-	Retry                    int
-	ExtraRetries             int
-	CrossGroupRetry          bool
-	ForceNextAutoGroup       bool
-	CurrentAutoGroup         string
-	CurrentAutoGroupIndex    int
-	HasCurrentAutoGroupIndex bool
-	RetryRoutingIntent       *RetryRoutingIntent
+	RequestID                   string
+	UserID                      int
+	TokenID                     int
+	RequestedGroup              string
+	UserGroup                   string
+	ModelName                   string
+	EndpointType                constant.EndpointType
+	RequiresCodexImageTool      bool
+	RequiresResponsesPreviousID bool
+	Retry                       int
+	ExtraRetries                int
+	CrossGroupRetry             bool
+	ForceNextAutoGroup          bool
+	CurrentAutoGroup            string
+	CurrentAutoGroupIndex       int
+	HasCurrentAutoGroupIndex    bool
+	RetryRoutingIntent          *RetryRoutingIntent
 }
 
 type GroupSmartPolicy struct {
@@ -159,49 +161,50 @@ type AutoGroupPlan struct {
 }
 
 type DispatchPlan struct {
-	Channel                   *model.Channel
-	ResourceRef               ResourceRef
-	AccountIdentity           AccountIdentity
-	CredentialRef             CredentialRef
-	ProxyRef                  ProxyRef
-	SelectedGroup             string
-	RequestedGroup            string
-	BillingRatioMode          string
-	RuntimeKey                RuntimeKey
-	ProviderProfile           string
-	ProxyMode                 string
-	ScoreTotal                float64
-	ScoreBreakdown            map[string]float64
-	RoutingScoreTotal         float64
-	RoutingScoreBreakdown     map[string]float64
-	QueueWaitMs               int
-	QueueEnabled              bool
-	QueueDepth                int
-	QueueCapacity             int
-	QueuePriority             int
-	SelectedReason            string
-	StickySource              string
-	StickyKeyFP               string
-	StickyRetained            bool
-	StickyBreak               string
-	StickyDecision            *StickyDecision
-	CacheAffinity             bool
-	FallbackUsed              bool
-	PolicyMode                string
-	AutoMode                  string
-	Strategy                  string
-	RequiresCodexImageTool    bool
-	RequiredTools             []string
-	CandidateFilterConditions []string
-	Candidates                []CandidateExplanation
-	IsHealthProbe             bool
-	ProbeReason               string
-	PoolLevel                 string
-	SwitchReason              string
-	RetryRoutingIntent        *RetryRoutingIntent
-	RetryIntentApplied        bool
-	RetryQueuePriorityBoost   bool
-	CostGuardDecision         *CostGuardDecision
+	Channel                     *model.Channel
+	ResourceRef                 ResourceRef
+	AccountIdentity             AccountIdentity
+	CredentialRef               CredentialRef
+	ProxyRef                    ProxyRef
+	SelectedGroup               string
+	RequestedGroup              string
+	BillingRatioMode            string
+	RuntimeKey                  RuntimeKey
+	ProviderProfile             string
+	ProxyMode                   string
+	ScoreTotal                  float64
+	ScoreBreakdown              map[string]float64
+	RoutingScoreTotal           float64
+	RoutingScoreBreakdown       map[string]float64
+	QueueWaitMs                 int
+	QueueEnabled                bool
+	QueueDepth                  int
+	QueueCapacity               int
+	QueuePriority               int
+	SelectedReason              string
+	StickySource                string
+	StickyKeyFP                 string
+	StickyRetained              bool
+	StickyBreak                 string
+	StickyDecision              *StickyDecision
+	CacheAffinity               bool
+	FallbackUsed                bool
+	PolicyMode                  string
+	AutoMode                    string
+	Strategy                    string
+	RequiresCodexImageTool      bool
+	RequiresResponsesPreviousID bool
+	RequiredTools               []string
+	CandidateFilterConditions   []string
+	Candidates                  []CandidateExplanation
+	IsHealthProbe               bool
+	ProbeReason                 string
+	PoolLevel                   string
+	SwitchReason                string
+	RetryRoutingIntent          *RetryRoutingIntent
+	RetryIntentApplied          bool
+	RetryQueuePriorityBoost     bool
+	CostGuardDecision           *CostGuardDecision
 }
 
 type RetryRoutingIntent struct {
@@ -317,69 +320,69 @@ type RuntimeKey struct {
 }
 
 type RuntimeSnapshot struct {
-	Key                        RuntimeKey
-	MatchedRuntimeKey          RuntimeKey
-	SampleSource               string
-	ScoreStatsJSON             string
-	RecentLatencySamples       []RuntimeLatencySample
-	SuccessRate                float64
-	TTFTMs                     float64
-	DurationMs                 float64
-	TokensPerSecond            float64
-	EmptyOutputRate            float64
-	ExperienceIssueRate        float64
-	ActiveConcurrency          int
-	MaxConcurrency             int
-	ConfiguredConcurrencyLimit int
-	LearnedConcurrencyLimit    int
-	EffectiveConcurrencyLimit  int
-	QueueDepth                 int
-	QueueCapacity              int
-	QueueTimeoutMs             int
-	EstimatedQueueWaitMs       float64
-	FirstBytePending           int
-	SlowFirstBytePending       int
-	OldestFirstByteWaitMs      float64
-	CostRatio                  float64
-	CostReferenceRatio         float64
-	CostPricingMode            string
-	GroupPriorityRatio         float64
-	CircuitState               CircuitState
-	CircuitOpen                bool
-	CircuitOpenUntil           int64
-	CircuitOpenReason          string
-	CircuitFailureCount        int
-	CircuitFailureRate         float64
-	CircuitSampleCount         int
-	CircuitErrorCounts         map[string]int
-	CircuitHalfOpenProbeUsed   int
-	CircuitHalfOpenProbeMax    int
-	Cooldown                   bool
-	FailureAvoidance           bool
-	RecoverableQualityScore    float64
-	RecoverableQualityBaseline float64
+	Key                               RuntimeKey
+	MatchedRuntimeKey                 RuntimeKey
+	SampleSource                      string
+	ScoreStatsJSON                    string
+	RecentLatencySamples              []RuntimeLatencySample
+	SuccessRate                       float64
+	TTFTMs                            float64
+	DurationMs                        float64
+	TokensPerSecond                   float64
+	EmptyOutputRate                   float64
+	ExperienceIssueRate               float64
+	ActiveConcurrency                 int
+	MaxConcurrency                    int
+	ConfiguredConcurrencyLimit        int
+	LearnedConcurrencyLimit           int
+	EffectiveConcurrencyLimit         int
+	QueueDepth                        int
+	QueueCapacity                     int
+	QueueTimeoutMs                    int
+	EstimatedQueueWaitMs              float64
+	FirstBytePending                  int
+	SlowFirstBytePending              int
+	OldestFirstByteWaitMs             float64
+	CostRatio                         float64
+	CostReferenceRatio                float64
+	CostPricingMode                   string
+	GroupPriorityRatio                float64
+	CircuitState                      CircuitState
+	CircuitOpen                       bool
+	CircuitOpenUntil                  int64
+	CircuitOpenReason                 string
+	CircuitFailureCount               int
+	CircuitFailureRate                float64
+	CircuitSampleCount                int
+	CircuitErrorCounts                map[string]int
+	CircuitHalfOpenProbeUsed          int
+	CircuitHalfOpenProbeMax           int
+	Cooldown                          bool
+	FailureAvoidance                  bool
+	RecoverableQualityScore           float64
+	RecoverableQualityBaseline        float64
 	RecoverableQualityBaselineSamples int
 	RecoverableQualityDropRatio       float64
 	RecoverableQualityItemBaselines   map[string]float64
-	ProbeRecoveryPending       bool
-	ProbeRecoverySuccessCount  int
-	ProbeRecoveryRequired      int
-	ProbeTriggerReason         string
-	ProbeRecoveryPhase         string
-	ProbeFastRecoveryAttempts  int
-	ProbeAnomalyTriggerItems   []string
-	ConfigErrorIsolated        bool
-	IsolationReason            string
-	IsolationUntil             int64
-	AuthConfigErrorCount       int
-	LastAuthConfigErrorAt      int64
-	SampleCount                int
-	LastRealAttemptAt          int64
-	LastRealSuccessAt          int64
-	LastRealFailureAt          int64
-	RealSampleCount30m         int
-	LastProbeAt                int64
-	LastProbeSuccessAt         int64
+	ProbeRecoveryPending              bool
+	ProbeRecoverySuccessCount         int
+	ProbeRecoveryRequired             int
+	ProbeTriggerReason                string
+	ProbeRecoveryPhase                string
+	ProbeFastRecoveryAttempts         int
+	ProbeAnomalyTriggerItems          []string
+	ConfigErrorIsolated               bool
+	IsolationReason                   string
+	IsolationUntil                    int64
+	AuthConfigErrorCount              int
+	LastAuthConfigErrorAt             int64
+	SampleCount                       int
+	LastRealAttemptAt                 int64
+	LastRealSuccessAt                 int64
+	LastRealFailureAt                 int64
+	RealSampleCount30m                int
+	LastProbeAt                       int64
+	LastProbeSuccessAt                int64
 }
 
 type RuntimeLatencySample struct {
@@ -524,96 +527,96 @@ type Candidate struct {
 }
 
 type CandidateExplanation struct {
-	ChannelID                  int                `json:"channel_id"`
-	ChannelName                string             `json:"channel_name,omitempty"`
-	ResourceID                 string             `json:"resource_id,omitempty"`
-	ResourceType               string             `json:"resource_type,omitempty"`
-	AccountID                  string             `json:"account_id,omitempty"`
-	AccountType                string             `json:"account_type,omitempty"`
-	Brand                      string             `json:"brand,omitempty"`
-	Provider                   string             `json:"provider,omitempty"`
-	CredentialIndex            int                `json:"credential_index,omitempty"`
-	CredentialSubjectFP        string             `json:"credential_subject_fingerprint,omitempty"`
-	CredentialFP               string             `json:"credential_fingerprint,omitempty"`
-	ProxyID                    int                `json:"proxy_id,omitempty"`
-	PoolLevel                  string             `json:"pool_level,omitempty"`
-	SwitchReason               string             `json:"switch_reason,omitempty"`
-	FailureScope               string             `json:"failure_scope,omitempty"`
-	Group                      string             `json:"group,omitempty"`
-	UpstreamModel              string             `json:"upstream_model,omitempty"`
-	ProviderProfile            string             `json:"provider_profile,omitempty"`
-	ProxyMode                  string             `json:"proxy_mode,omitempty"`
-	RuntimeKey                 RuntimeKey         `json:"runtime_key"`
-	Available                  bool               `json:"available"`
-	RejectReason               string             `json:"reject_reason,omitempty"`
-	SelectionSkipReason        string             `json:"selection_skip_reason,omitempty"`
-	ChannelStatus              int                `json:"channel_status,omitempty"`
-	StatusReason               string             `json:"status_reason,omitempty"`
-	BalanceInsufficient        bool               `json:"balance_insufficient,omitempty"`
-	ScoreTotal                 float64            `json:"score_total,omitempty"`
-	ScoreBreakdown             map[string]float64 `json:"score_breakdown,omitempty"`
-	ScoreItems                 []ScoreItem        `json:"score_items,omitempty"`
-	RoutingScoreTotal          float64            `json:"routing_score_total,omitempty"`
-	RoutingScoreBreakdown      map[string]float64 `json:"routing_score_breakdown,omitempty"`
-	RoutingScoreItems          []ScoreItem        `json:"routing_score_items,omitempty"`
-	StateTags                  []string           `json:"state_tags,omitempty"`
-	CostReferenceMissing       bool               `json:"cost_reference_missing,omitempty"`
-	SuccessRate                float64            `json:"success_rate,omitempty"`
-	TTFTMs                     float64            `json:"ttft_ms,omitempty"`
-	DurationMs                 float64            `json:"duration_ms,omitempty"`
-	TokensPerSecond            float64            `json:"tokens_per_second,omitempty"`
-	SampleCount                int                `json:"sample_count,omitempty"`
-	ActiveConcurrency          int                `json:"active_concurrency,omitempty"`
-	MaxConcurrency             int                `json:"max_concurrency,omitempty"`
-	ConfiguredConcurrencyLimit int                `json:"configured_concurrency_limit,omitempty"`
-	LearnedConcurrencyLimit    int                `json:"learned_concurrency_limit,omitempty"`
-	EffectiveConcurrencyLimit  int                `json:"effective_concurrency_limit,omitempty"`
-	QueueDepth                 int                `json:"queue_depth,omitempty"`
-	QueueCapacity              int                `json:"queue_capacity,omitempty"`
-	EstimatedQueueWaitMs       float64            `json:"estimated_queue_wait_ms,omitempty"`
-	FirstBytePending           int                `json:"first_byte_pending,omitempty"`
-	SlowFirstBytePending       int                `json:"slow_first_byte_pending,omitempty"`
-	OldestFirstByteWaitMs      float64            `json:"oldest_first_byte_wait_ms,omitempty"`
-	CostRatio                  float64            `json:"cost_ratio,omitempty"`
-	CostReferenceRatio         float64            `json:"cost_reference_ratio,omitempty"`
-	CostPricingMode            string             `json:"cost_pricing_mode,omitempty"`
-	GroupPriorityRatio         float64            `json:"group_priority_ratio,omitempty"`
-	CircuitState               CircuitState       `json:"circuit_state,omitempty"`
-	CircuitOpen                bool               `json:"circuit_open,omitempty"`
-	CircuitOpenUntil           int64              `json:"circuit_open_until,omitempty"`
-	CircuitOpenReason          string             `json:"circuit_open_reason,omitempty"`
-	CircuitFailureCount        int                `json:"circuit_failure_count,omitempty"`
-	CircuitFailureRate         float64            `json:"circuit_failure_rate,omitempty"`
-	CircuitSampleCount         int                `json:"circuit_sample_count,omitempty"`
-	CircuitErrorCounts         map[string]int     `json:"circuit_error_counts,omitempty"`
-	CircuitHalfOpenProbeUsed   int                `json:"circuit_half_open_probe_used,omitempty"`
-	CircuitHalfOpenProbeMax    int                `json:"circuit_half_open_probe_max,omitempty"`
-	EmptyOutputRate            float64            `json:"empty_output_rate,omitempty"`
-	ExperienceIssueRate        float64            `json:"experience_issue_rate,omitempty"`
-	RecoverableQualityScore    float64            `json:"recoverable_quality_score,omitempty"`
-	RecoverableQualityBaseline float64            `json:"recoverable_quality_baseline,omitempty"`
-	RecoverableQualityBaselineSamples int          `json:"recoverable_quality_baseline_samples,omitempty"`
-	RecoverableQualityDropRatio       float64      `json:"recoverable_quality_drop_ratio,omitempty"`
-	ProbeRecoveryPending       bool               `json:"probe_recovery_pending,omitempty"`
-	ProbeRecoverySuccessCount  int                `json:"probe_recovery_success_count,omitempty"`
-	ProbeRecoveryRequired      int                `json:"probe_recovery_required,omitempty"`
-	ProbeTriggerReason         string             `json:"probe_trigger_reason,omitempty"`
-	ProbeRecoveryPhase         string             `json:"probe_recovery_phase,omitempty"`
-	ProbeFastRecoveryAttempts  int                `json:"probe_fast_recovery_attempts,omitempty"`
-	ProbeAnomalyTriggerItems   []string           `json:"probe_anomaly_trigger_items,omitempty"`
-	ConfigErrorIsolated        bool               `json:"config_error_isolated,omitempty"`
-	IsolationReason            string             `json:"isolation_reason,omitempty"`
-	IsolationUntil             int64              `json:"isolation_until,omitempty"`
-	AuthConfigErrorCount       int                `json:"auth_config_error_count,omitempty"`
-	LastAuthConfigErrorAt      int64              `json:"last_auth_config_error_at,omitempty"`
-	StickyMatched              bool               `json:"sticky_matched,omitempty"`
-	Selected                   bool               `json:"selected,omitempty"`
-	CostGuardReason            string             `json:"cost_guard_reason,omitempty"`
-	CostGuardDecision          string             `json:"cost_guard_decision,omitempty"`
-	ScoreSampleSource          string             `json:"score_sample_source,omitempty"`
-	MatchedRuntimeKey          RuntimeKey         `json:"matched_runtime_key,omitempty"`
-	RetryIntentApplied         bool               `json:"retry_intent_applied,omitempty"`
-	RetryIntentReason          string             `json:"retry_intent_reason,omitempty"`
+	ChannelID                         int                `json:"channel_id"`
+	ChannelName                       string             `json:"channel_name,omitempty"`
+	ResourceID                        string             `json:"resource_id,omitempty"`
+	ResourceType                      string             `json:"resource_type,omitempty"`
+	AccountID                         string             `json:"account_id,omitempty"`
+	AccountType                       string             `json:"account_type,omitempty"`
+	Brand                             string             `json:"brand,omitempty"`
+	Provider                          string             `json:"provider,omitempty"`
+	CredentialIndex                   int                `json:"credential_index,omitempty"`
+	CredentialSubjectFP               string             `json:"credential_subject_fingerprint,omitempty"`
+	CredentialFP                      string             `json:"credential_fingerprint,omitempty"`
+	ProxyID                           int                `json:"proxy_id,omitempty"`
+	PoolLevel                         string             `json:"pool_level,omitempty"`
+	SwitchReason                      string             `json:"switch_reason,omitempty"`
+	FailureScope                      string             `json:"failure_scope,omitempty"`
+	Group                             string             `json:"group,omitempty"`
+	UpstreamModel                     string             `json:"upstream_model,omitempty"`
+	ProviderProfile                   string             `json:"provider_profile,omitempty"`
+	ProxyMode                         string             `json:"proxy_mode,omitempty"`
+	RuntimeKey                        RuntimeKey         `json:"runtime_key"`
+	Available                         bool               `json:"available"`
+	RejectReason                      string             `json:"reject_reason,omitempty"`
+	SelectionSkipReason               string             `json:"selection_skip_reason,omitempty"`
+	ChannelStatus                     int                `json:"channel_status,omitempty"`
+	StatusReason                      string             `json:"status_reason,omitempty"`
+	BalanceInsufficient               bool               `json:"balance_insufficient,omitempty"`
+	ScoreTotal                        float64            `json:"score_total,omitempty"`
+	ScoreBreakdown                    map[string]float64 `json:"score_breakdown,omitempty"`
+	ScoreItems                        []ScoreItem        `json:"score_items,omitempty"`
+	RoutingScoreTotal                 float64            `json:"routing_score_total,omitempty"`
+	RoutingScoreBreakdown             map[string]float64 `json:"routing_score_breakdown,omitempty"`
+	RoutingScoreItems                 []ScoreItem        `json:"routing_score_items,omitempty"`
+	StateTags                         []string           `json:"state_tags,omitempty"`
+	CostReferenceMissing              bool               `json:"cost_reference_missing,omitempty"`
+	SuccessRate                       float64            `json:"success_rate,omitempty"`
+	TTFTMs                            float64            `json:"ttft_ms,omitempty"`
+	DurationMs                        float64            `json:"duration_ms,omitempty"`
+	TokensPerSecond                   float64            `json:"tokens_per_second,omitempty"`
+	SampleCount                       int                `json:"sample_count,omitempty"`
+	ActiveConcurrency                 int                `json:"active_concurrency,omitempty"`
+	MaxConcurrency                    int                `json:"max_concurrency,omitempty"`
+	ConfiguredConcurrencyLimit        int                `json:"configured_concurrency_limit,omitempty"`
+	LearnedConcurrencyLimit           int                `json:"learned_concurrency_limit,omitempty"`
+	EffectiveConcurrencyLimit         int                `json:"effective_concurrency_limit,omitempty"`
+	QueueDepth                        int                `json:"queue_depth,omitempty"`
+	QueueCapacity                     int                `json:"queue_capacity,omitempty"`
+	EstimatedQueueWaitMs              float64            `json:"estimated_queue_wait_ms,omitempty"`
+	FirstBytePending                  int                `json:"first_byte_pending,omitempty"`
+	SlowFirstBytePending              int                `json:"slow_first_byte_pending,omitempty"`
+	OldestFirstByteWaitMs             float64            `json:"oldest_first_byte_wait_ms,omitempty"`
+	CostRatio                         float64            `json:"cost_ratio,omitempty"`
+	CostReferenceRatio                float64            `json:"cost_reference_ratio,omitempty"`
+	CostPricingMode                   string             `json:"cost_pricing_mode,omitempty"`
+	GroupPriorityRatio                float64            `json:"group_priority_ratio,omitempty"`
+	CircuitState                      CircuitState       `json:"circuit_state,omitempty"`
+	CircuitOpen                       bool               `json:"circuit_open,omitempty"`
+	CircuitOpenUntil                  int64              `json:"circuit_open_until,omitempty"`
+	CircuitOpenReason                 string             `json:"circuit_open_reason,omitempty"`
+	CircuitFailureCount               int                `json:"circuit_failure_count,omitempty"`
+	CircuitFailureRate                float64            `json:"circuit_failure_rate,omitempty"`
+	CircuitSampleCount                int                `json:"circuit_sample_count,omitempty"`
+	CircuitErrorCounts                map[string]int     `json:"circuit_error_counts,omitempty"`
+	CircuitHalfOpenProbeUsed          int                `json:"circuit_half_open_probe_used,omitempty"`
+	CircuitHalfOpenProbeMax           int                `json:"circuit_half_open_probe_max,omitempty"`
+	EmptyOutputRate                   float64            `json:"empty_output_rate,omitempty"`
+	ExperienceIssueRate               float64            `json:"experience_issue_rate,omitempty"`
+	RecoverableQualityScore           float64            `json:"recoverable_quality_score,omitempty"`
+	RecoverableQualityBaseline        float64            `json:"recoverable_quality_baseline,omitempty"`
+	RecoverableQualityBaselineSamples int                `json:"recoverable_quality_baseline_samples,omitempty"`
+	RecoverableQualityDropRatio       float64            `json:"recoverable_quality_drop_ratio,omitempty"`
+	ProbeRecoveryPending              bool               `json:"probe_recovery_pending,omitempty"`
+	ProbeRecoverySuccessCount         int                `json:"probe_recovery_success_count,omitempty"`
+	ProbeRecoveryRequired             int                `json:"probe_recovery_required,omitempty"`
+	ProbeTriggerReason                string             `json:"probe_trigger_reason,omitempty"`
+	ProbeRecoveryPhase                string             `json:"probe_recovery_phase,omitempty"`
+	ProbeFastRecoveryAttempts         int                `json:"probe_fast_recovery_attempts,omitempty"`
+	ProbeAnomalyTriggerItems          []string           `json:"probe_anomaly_trigger_items,omitempty"`
+	ConfigErrorIsolated               bool               `json:"config_error_isolated,omitempty"`
+	IsolationReason                   string             `json:"isolation_reason,omitempty"`
+	IsolationUntil                    int64              `json:"isolation_until,omitempty"`
+	AuthConfigErrorCount              int                `json:"auth_config_error_count,omitempty"`
+	LastAuthConfigErrorAt             int64              `json:"last_auth_config_error_at,omitempty"`
+	StickyMatched                     bool               `json:"sticky_matched,omitempty"`
+	Selected                          bool               `json:"selected,omitempty"`
+	CostGuardReason                   string             `json:"cost_guard_reason,omitempty"`
+	CostGuardDecision                 string             `json:"cost_guard_decision,omitempty"`
+	ScoreSampleSource                 string             `json:"score_sample_source,omitempty"`
+	MatchedRuntimeKey                 RuntimeKey         `json:"matched_runtime_key,omitempty"`
+	RetryIntentApplied                bool               `json:"retry_intent_applied,omitempty"`
+	RetryIntentReason                 string             `json:"retry_intent_reason,omitempty"`
 }
 
 type ScoreWeights struct {
@@ -784,6 +787,11 @@ type AttemptResult struct {
 	BalanceInsufficient            bool
 	EmptyOutput                    bool
 	ExperienceIssue                string
+	UpstreamStatus                 int
+	DownstreamWriteStatus          string
+	KeepAliveCount                 int
+	ClientReceivedStarted          bool
+	FinalClassification            string
 	ActiveConcurrency              int
 	ConfiguredConcurrencyLimit     int
 	LearnedConcurrencyLimit        int

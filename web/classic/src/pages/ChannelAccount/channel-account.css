@@ -226,6 +226,22 @@
   color: var(--ca-muted);
 }
 
+.ct-channel-account-uid {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+}
+
+.ct-channel-account-uid span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ct-channel-account-warning {
   color: var(--ca-red);
 }
@@ -362,6 +378,132 @@
 
 .ct-channel-account-money {
   color: #059669 !important;
+}
+
+.ct-channel-account-stat-compact,
+.ct-channel-account-last-active {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  color: var(--ca-muted);
+  font-size: 12px;
+}
+
+.ct-channel-account-stat-compact strong,
+.ct-channel-account-last-active strong {
+  max-width: 100%;
+  color: var(--ca-text);
+  font-size: 14px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-channel-account-window-compact {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ct-channel-account-window-compact > div {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  grid-template-columns: 42px minmax(48px, 1fr) minmax(44px, auto);
+  color: var(--ca-muted);
+  font-size: 12px;
+}
+
+.ct-channel-account-window-compact strong {
+  color: var(--ca-text);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.ct-channel-account-batch-tags {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ct-channel-account-score-chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(15, 118, 110, 0.18);
+  border-radius: 999px;
+  padding: 6px 9px;
+  color: var(--ca-muted);
+  background: linear-gradient(135deg, #ffffff 0%, #f0fdfa 100%);
+  box-shadow: 0 5px 14px rgba(15, 23, 42, 0.06);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+
+.ct-channel-account-score-chip:hover {
+  border-color: rgba(15, 118, 110, 0.36);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.09);
+  transform: translateY(-1px);
+}
+
+.ct-channel-account-score-chip strong {
+  color: var(--ca-text);
+  font-size: 16px;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
+.ct-channel-account-score-chip > span:not(.ct-channel-account-score-dot) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-channel-account-score-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #94a3b8;
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.16);
+}
+
+.ct-channel-account-score-dot-green {
+  background: var(--ca-green);
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.16);
+}
+
+.ct-channel-account-score-dot-orange,
+.ct-channel-account-score-dot-yellow {
+  background: var(--ca-orange);
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.16);
+}
+
+.ct-channel-account-score-dot-red {
+  background: var(--ca-red);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.16);
+}
+
+.ct-channel-account-score-dot-cyan,
+.ct-channel-account-score-dot-blue,
+.ct-channel-account-score-dot-violet {
+  background: var(--ca-teal);
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.16);
 }
 
 .ct-channel-account-window-stack,
@@ -1077,14 +1219,17 @@
   background: linear-gradient(180deg, rgba(240, 253, 250, 0.78), #fff);
 }
 
-.ct-channel-account-reconcile-diagnoses > div:not(.ct-channel-account-detail-title) {
+.ct-channel-account-reconcile-diagnoses
+  > div:not(.ct-channel-account-detail-title) {
   display: grid;
   grid-template-columns: minmax(150px, auto) minmax(0, 1fr);
   gap: 8px;
   align-items: center;
 }
 
-.ct-channel-account-reconcile-diagnoses > div:not(.ct-channel-account-detail-title) > span:last-child {
+.ct-channel-account-reconcile-diagnoses
+  > div:not(.ct-channel-account-detail-title)
+  > span:last-child {
   min-width: 0;
   overflow: hidden;
   color: var(--ca-muted);
@@ -1132,7 +1277,10 @@
 
 .ct-channel-account-reconcile-list > div {
   display: grid;
-  grid-template-columns: minmax(90px, 1fr) auto minmax(90px, 1fr) minmax(90px, 1fr);
+  grid-template-columns: minmax(90px, 1fr) auto minmax(90px, 1fr) minmax(
+      90px,
+      1fr
+    );
   gap: 8px;
   align-items: center;
   border: 1px solid var(--ca-border);
@@ -1204,7 +1352,8 @@
   }
 
   .ct-channel-account-reconcile-checks,
-  .ct-channel-account-reconcile-diagnoses > div:not(.ct-channel-account-detail-title),
+  .ct-channel-account-reconcile-diagnoses
+    > div:not(.ct-channel-account-detail-title),
   .ct-channel-account-reconcile-list > div {
     grid-template-columns: 1fr;
   }

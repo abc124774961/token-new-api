@@ -126,6 +126,27 @@ func TestOAuthJSONAccountKeyDetectionForCodexPayload(t *testing.T) {
 	require.False(t, isOAuthJSONAccountKey(`sk-normal`))
 }
 
+func TestChannelTestOAuthJSONCredentialNeedsAccessRefresh(t *testing.T) {
+	index := 1
+	channel := &model.Channel{
+		Type: constant.ChannelTypeOpenAI,
+		Key:  `{"access_token":"access-token","refresh_token":"refresh-token","account_id":"account-id"}` + "\n" + `{"account_id":"acct-card","chatgpt_account_id":"acct-card","email":"user@example.com","refresh_token":"refresh-token","type":"codex"}`,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+
+	credentialIndex, needed := channelTestOAuthJSONCredentialNeedsAccessRefresh(channel, channelTestOptions{CredentialIndex: &index})
+
+	require.True(t, needed)
+	require.Equal(t, index, credentialIndex)
+
+	index = 0
+	_, needed = channelTestOAuthJSONCredentialNeedsAccessRefresh(channel, channelTestOptions{CredentialIndex: &index})
+	require.False(t, needed)
+}
+
 func TestResolveChannelTestEndpointUsesChatForOpenAIOAuthJSONWhenResponsesDenied(t *testing.T) {
 	index := 1
 	denied := false
@@ -229,6 +250,9 @@ func TestShouldRefreshOAuthJSONAccountAfterChannelTest(t *testing.T) {
 	}))
 	require.True(t, shouldRefreshOAuthJSONAccountAfterChannelTest(testResult{
 		newAPIError: types.NewOpenAIError(errors.New("bad response status code 401, message: token_invalidated"), types.ErrorCodeBadResponseStatusCode, 401),
+	}))
+	require.True(t, shouldRefreshOAuthJSONAccountAfterChannelTest(testResult{
+		newAPIError: types.NewOpenAIError(errors.New("Encountered invalidated oauth token for user, failing request token_revoked"), types.ErrorCodeBadResponseStatusCode, 401),
 	}))
 	require.False(t, shouldRefreshOAuthJSONAccountAfterChannelTest(testResult{
 		newAPIError: types.NewOpenAIError(errors.New("invalid api key"), types.ErrorCodeChannelInvalidKey, 401),

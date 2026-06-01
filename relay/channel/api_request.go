@@ -15,6 +15,7 @@ import (
 	common2 "github.com/QuantumNous/new-api/common"
 	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/codexauth"
 	modelgatewayprovider "github.com/QuantumNous/new-api/pkg/modelgateway/provider"
 	"github.com/QuantumNous/new-api/relay/common"
@@ -326,6 +327,26 @@ func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]s
 	}
 }
 
+func applyCodexApplicationEnvironmentHeaders(c *gin.Context, header *http.Header) {
+	if c == nil || header == nil {
+		return
+	}
+	environmentID := common2.GetContextKeyInt(c, appconstant.ContextKeyChannelAccountCodexEnvironmentID)
+	if environmentID <= 0 {
+		return
+	}
+	env, err := model.GetCodexApplicationEnvironmentByID(environmentID)
+	if err != nil || env == nil {
+		return
+	}
+	for key, value := range env.BuildHeaders() {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		header.Set(key, value)
+	}
+}
+
 const defaultCodexUserAgent = "codex_cli_rs/0.0.0"
 
 func isCodexLikeUpstreamRequest(c *gin.Context, info *common.RelayInfo) bool {
@@ -404,6 +425,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
+	applyCodexApplicationEnvironmentHeaders(c, &req.Header)
 	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
 	// 这样可以覆盖默认的 Authorization header 设置
 	headerOverride, err := processHeaderOverride(info, c)
@@ -439,6 +461,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
+	applyCodexApplicationEnvironmentHeaders(c, &req.Header)
 	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
 	// 这样可以覆盖默认的 Authorization header 设置
 	headerOverride, err := processHeaderOverride(info, c)
@@ -446,6 +469,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 		return nil, err
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
+	applyDefaultUpstreamHeaders(c, req, info)
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
@@ -463,6 +487,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
+	applyCodexApplicationEnvironmentHeaders(c, &targetHeader)
 	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
 	// 这样可以覆盖默认的 Authorization header 设置
 	headerOverride, err := processHeaderOverride(info, c)
@@ -473,28 +498,8 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		targetHeader.Set(key, value)
 	}
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
-	if isCodexLikeUpstreamRequest(c, info) {
-		if targetHeader.Get("User-Agent") == "" {
-			userAgent := ""
-			if c != nil && c.Request != nil {
-				userAgent = strings.TrimSpace(c.Request.UserAgent())
-			}
-			if !strings.Contains(strings.ToLower(userAgent), "codex") {
-				userAgent = defaultCodexUserAgent
-			}
-			targetHeader.Set("User-Agent", userAgent)
-		}
-		if targetHeader.Get("originator") == "" {
-			originator := ""
-			if c != nil && c.Request != nil {
-				originator = strings.TrimSpace(c.Request.Header.Get("Originator"))
-			}
-			if originator == "" {
-				originator = "codex_cli_rs"
-			}
-			targetHeader.Set("originator", originator)
-		}
-	}
+	targetReq := &http.Request{Header: targetHeader}
+	applyDefaultUpstreamHeaders(c, targetReq, info)
 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
 	if err != nil {
 		return nil, fmt.Errorf("dial failed to %s: %w", fullRequestURL, err)
@@ -505,7 +510,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	return targetConn, nil
 }
 
-func startPingKeepAlive(c *gin.Context, pingInterval time.Duration) context.CancelFunc {
+func startPingKeepAlive(c *gin.Context, pingInterval time.Duration, downstreamKeepAlive bool) context.CancelFunc {
 	pingerCtx, stopPinger := context.WithCancel(context.Background())
 
 	gopool.Go(func() {
@@ -548,7 +553,7 @@ func startPingKeepAlive(c *gin.Context, pingInterval time.Duration) context.Canc
 			select {
 			// 发送 ping 数据
 			case <-ticker.C:
-				if err := sendPingData(c, &pingMutex); err != nil {
+				if err := sendPingData(c, &pingMutex, downstreamKeepAlive); err != nil {
 					if common2.DebugEnabled {
 						println("SSE ping error, stopping goroutine:", err.Error())
 					}
@@ -573,14 +578,19 @@ func startPingKeepAlive(c *gin.Context, pingInterval time.Duration) context.Canc
 	return stopPinger
 }
 
-func sendPingData(c *gin.Context, mutex *sync.Mutex) error {
+func sendPingData(c *gin.Context, mutex *sync.Mutex, downstreamKeepAlive bool) error {
 	// 增加超时控制，防止锁死等待
 	done := make(chan error, 1)
 	go func() {
 		mutex.Lock()
 		defer mutex.Unlock()
 
-		err := helper.PingData(c)
+		var err error
+		if downstreamKeepAlive {
+			err = helper.DownstreamKeepAliveData(c)
+		} else {
+			err = helper.PingData(c)
+		}
 		if err != nil {
 			logger.LogError(c, "SSE ping error: "+err.Error())
 			done <- err
@@ -606,6 +616,23 @@ func sendPingData(c *gin.Context, mutex *sync.Mutex) error {
 
 func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	return doRequest(c, req, info)
+}
+
+func shouldStartJSONKeepAliveBeforeHeader(info *common.RelayInfo) bool {
+	if info == nil || info.IsStream || !service.DownstreamKeepAliveEnabled() {
+		return false
+	}
+	switch info.RelayMode {
+	case constant.RelayModeChatCompletions,
+		constant.RelayModeCompletions,
+		constant.RelayModeImagesGenerations,
+		constant.RelayModeImagesEdits,
+		constant.RelayModeResponses,
+		constant.RelayModeResponsesCompact:
+		return true
+	default:
+		return false
+	}
 }
 
 func upstreamRequestInfo(req *http.Request, info *common.RelayInfo, duration time.Duration, err error) map[string]interface{} {
@@ -701,13 +728,21 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 
 	var stopPinger context.CancelFunc
+	var jsonKeepAlive *service.DownstreamKeepAlive
 	if info.IsStream {
 		helper.SetEventStreamHeaders(c)
 		// 处理流式请求的 ping 保活
 		generalSettings := operation_setting.GetGeneralSetting()
-		if generalSettings.PingIntervalEnabled && !info.DisablePing {
-			pingInterval := time.Duration(generalSettings.PingIntervalSeconds) * time.Second
-			stopPinger = startPingKeepAlive(c, pingInterval)
+		if service.DownstreamKeepAliveEnabled() && !info.DisablePing {
+			stopPinger = startPingKeepAlive(c, service.DownstreamKeepAliveInterval(), true)
+		} else if generalSettings.PingIntervalEnabled && !info.DisablePing {
+			pingInterval := helper.DefaultPingInterval
+			if generalSettings.PingIntervalSeconds > 0 {
+				pingInterval = time.Duration(generalSettings.PingIntervalSeconds) * time.Second
+			}
+			stopPinger = startPingKeepAlive(c, pingInterval, false)
+		}
+		if stopPinger != nil {
 			// 使用defer确保在任何情况下都能停止ping goroutine
 			defer func() {
 				if stopPinger != nil {
@@ -718,6 +753,9 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 				}
 			}()
 		}
+	} else if shouldStartJSONKeepAliveBeforeHeader(info) {
+		jsonKeepAlive = service.StartJSONDownstreamKeepAlive(c, nil)
+		defer jsonKeepAlive.Stop()
 	}
 
 	startTime := time.Now()
@@ -777,6 +815,8 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
+	applyCodexApplicationEnvironmentHeaders(c, &req.Header)
+	applyDefaultUpstreamHeaders(c, req, info)
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)

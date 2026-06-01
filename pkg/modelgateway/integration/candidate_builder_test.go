@@ -127,6 +127,31 @@ func TestAccountCandidatePrimaryBuilderFallsBackWhenIndexEmpty(t *testing.T) {
 	require.Equal(t, []core.Candidate{primaryCandidate}, candidates)
 }
 
+func TestAccountCandidatePrimaryBuilderDoesNotFallbackForPreviousResponseID(t *testing.T) {
+	primaryCandidate := core.Candidate{
+		Channel: &model.Channel{Id: 21},
+		Group:   "default",
+		RuntimeKey: core.RuntimeKey{
+			ChannelID: 21,
+			Group:     "default",
+		},
+	}
+	builder := integration.NewAccountCandidatePrimaryBuilder(
+		staticCandidateBuilder{},
+		staticCandidateBuilder{candidates: []core.Candidate{primaryCandidate}},
+		integration.AccountCandidateIndexOptions{},
+	)
+
+	candidates := builder.Build(&core.DispatchRequest{
+		RequestedGroup:              "default",
+		ModelName:                   "gpt-5.4",
+		EndpointType:                constant.EndpointTypeOpenAI,
+		RequiresResponsesPreviousID: true,
+	}, core.GroupSmartPolicy{})
+
+	require.Empty(t, candidates)
+}
+
 type staticCandidateBuilder struct {
 	candidates []core.Candidate
 }

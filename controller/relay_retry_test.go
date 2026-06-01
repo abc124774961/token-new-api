@@ -393,6 +393,49 @@ func TestShouldRetryAllowsGeneric429FailoverWhenAlternativePeerChannelExists(t *
 	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
 }
 
+func TestSwitchChannelRetryMarksRuntimeAccountSkipped(t *testing.T) {
+	ctx := newRelayRetryContext()
+	channel := &model.Channel{Id: 464, Name: "retry-account", Status: common.ChannelStatusEnabled}
+	modelgatewayintegration.SetSelectedPlan(ctx, &modelgatewaycore.DispatchPlan{
+		Channel:       channel,
+		SelectedGroup: "default",
+		RuntimeKey: modelgatewaycore.RuntimeKey{
+			ChannelID:           channel.Id,
+			RequestedModel:      "gpt-5.5",
+			Group:               "default",
+			EndpointType:        constant.EndpointTypeOpenAI,
+			AccountID:           "acct-retry",
+			CredentialIndex:     0,
+			CredentialSubjectFP: "subject-retry",
+			CredentialFP:        "credential-retry",
+		},
+		CredentialRef: modelgatewaycore.CredentialRef{
+			AccountID:                    "acct-retry",
+			CredentialIndex:              0,
+			CredentialSubjectFingerprint: "subject-retry",
+			CredentialFingerprint:        "credential-retry",
+		},
+	})
+
+	marked := markModelGatewayRuntimeSelectionSkippedForRetry(ctx, channel, modelGatewayAttemptFlow{
+		WillRetry:   true,
+		RetryAction: "switch_channel",
+	})
+
+	require.True(t, marked)
+	require.True(t, service.IsChannelRuntimeSelectionSkipped(ctx, service.ChannelRuntimeIdentity{
+		ChannelID:           channel.Id,
+		RequestedModel:      "gpt-5.5",
+		SelectedGroup:       "pro",
+		EndpointType:        constant.EndpointTypeOpenAIResponse,
+		AccountID:           "acct-retry",
+		CredentialIndex:     0,
+		CredentialIndexSet:  true,
+		CredentialSubjectFP: "subject-retry",
+		CredentialFP:        "credential-retry",
+	}))
+}
+
 func TestOpenAIInsufficientQuota429ClassifiesAsBalanceOrQuota(t *testing.T) {
 	ctx := newRelayRetryContext()
 	err := types.WithOpenAIError(types.OpenAIError{
@@ -875,10 +918,13 @@ func TestRelayFirstByteWatchdogAppliesOnlySafeStreamingSmartRequests(t *testing.
 
 	plan.PolicyMode = modelgatewaycore.ModeActive
 	helper.MarkRelayDownstreamStarted(ctx)
+	require.True(t, relayFirstByteWatchdogApplies(ctx, info, plan))
+
+	helper.MarkRelayResponseStarted(ctx)
 	require.False(t, relayFirstByteWatchdogApplies(ctx, info, plan))
 }
 
-func TestRelayFirstByteWatchdogCanCancelRequiresNoDownstreamWrite(t *testing.T) {
+func TestRelayFirstByteWatchdogCanCancelRequiresNoEffectiveResponse(t *testing.T) {
 	ctx := newRelayRetryContext()
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	start := time.Now()
@@ -896,7 +942,30 @@ func TestRelayFirstByteWatchdogCanCancelRequiresNoDownstreamWrite(t *testing.T) 
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	ctx.Status(http.StatusOK)
 	ctx.Writer.WriteHeaderNow()
-	require.False(t, relayFirstByteWatchdogCanCancel(ctx, info))
+	require.True(t, relayFirstByteWatchdogCanCancel(ctx, info))
+}
+
+func TestWriteRelayErrorAfterJSONKeepAliveAppendsParseableError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", nil)
+	ctx.Writer.Header().Set("Content-Type", "application/json")
+	ctx.Writer.WriteHeader(http.StatusOK)
+	_, err := ctx.Writer.Write([]byte("\n"))
+	require.NoError(t, err)
+	common.SetContextKey(ctx, constant.ContextKeyRelayJSONKeepAliveStarted, true)
+	common.SetContextKey(ctx, constant.ContextKeyRelayClientReceivedStarted, true)
+
+	apiErr := types.NewErrorWithStatusCode(errors.New("upstream unavailable"), types.ErrorCodeDoRequestFailed, http.StatusBadGateway)
+	apiErr.SetMessage("upstream unavailable (request id: test)")
+	require.True(t, writeRelayErrorAfterDownstreamKeepAlive(ctx, apiErr, types.RelayFormatOpenAI))
+
+	body := strings.TrimSpace(recorder.Body.String())
+	require.Contains(t, body, `"error"`)
+	require.Contains(t, body, "upstream unavailable")
+	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyRelayResponseStarted))
+	require.Equal(t, "ok", common.GetContextKeyString(ctx, constant.ContextKeyRelayDownstreamWriteStatus))
 }
 
 func TestRelayRequestContextCanceledDetectsQueueWaitAbort(t *testing.T) {

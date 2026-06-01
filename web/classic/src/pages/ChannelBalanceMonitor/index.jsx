@@ -402,7 +402,7 @@ export default function ChannelBalanceMonitor() {
               icon={<Eye size={14} />}
               size='small'
               onClick={() => {
-                window.location.href = `/console/channel/${record.channel_id}/accounts`;
+                window.location.href = `/console/channel/accounts?channel_id=${record.channel_id}`;
               }}
             />
           </Tooltip>

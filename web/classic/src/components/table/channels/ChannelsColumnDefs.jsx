@@ -1118,7 +1118,7 @@ export const getChannelsColumns = ({
               name: t('账号管理'),
               type: 'tertiary',
               onClick: () => {
-                window.location.href = `/console/channel/${record.id}/accounts`;
+                window.location.href = `/console/channel/accounts?channel_id=${record.id}`;
               },
             },
             {

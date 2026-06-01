@@ -13,6 +13,8 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/observability/userrequest"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
@@ -85,8 +87,51 @@ func MarkRelayResponseStarted(c *gin.Context) {
 		return
 	}
 	MarkRelayDownstreamStarted(c)
-	service.MarkChannelFirstByteObserved(c)
+	MarkRelayFirstResponseObserved(c, nil)
 	common.SetContextKey(c, constant.ContextKeyRelayResponseStarted, true)
+}
+
+func MarkRelayFirstResponseObserved(c *gin.Context, info *relaycommon.RelayInfo) {
+	if c == nil {
+		return
+	}
+	if info == nil {
+		if relayInfo, ok := common.GetContextKeyType[*relaycommon.RelayInfo](c, constant.ContextKeyRelayInfo); ok {
+			info = relayInfo
+		}
+	}
+	markRelayFirstResponseObserved(c, info, false)
+}
+
+func ForceMarkRelayFirstResponseObserved(c *gin.Context, info *relaycommon.RelayInfo) {
+	if c == nil {
+		return
+	}
+	if info == nil {
+		if relayInfo, ok := common.GetContextKeyType[*relaycommon.RelayInfo](c, constant.ContextKeyRelayInfo); ok {
+			info = relayInfo
+		}
+	}
+	markRelayFirstResponseObserved(c, info, true)
+}
+
+func markRelayFirstResponseObserved(c *gin.Context, info *relaycommon.RelayInfo, force bool) {
+	first := false
+	if info != nil {
+		if force {
+			first = info.ForceSetFirstResponseTime()
+		} else {
+			first = info.SetFirstResponseTime()
+		}
+	}
+	service.MarkChannelFirstByteObserved(c)
+	if first && info != nil && info.FirstResponseTime.After(info.StartTime) {
+		userrequest.ObserveFirstByte(userrequest.FirstByteObservation{
+			RequestID:  info.RequestId,
+			ObservedAt: info.FirstResponseTime,
+			TTFT:       info.FirstResponseTime.Sub(info.StartTime),
+		})
+	}
 }
 
 func MarkRelayDownstreamStarted(c *gin.Context) {
@@ -245,6 +290,31 @@ func PingData(c *gin.Context) error {
 	if _, err := c.Writer.Write([]byte(": PING\n\n")); err != nil {
 		return fmt.Errorf("write ping data failed: %w", err)
 	}
+	MarkRelayDownstreamStarted(c)
+	return FlushWriter(c)
+}
+
+func DownstreamKeepAliveData(c *gin.Context) error {
+	if c == nil || c.Writer == nil {
+		return errors.New("context or writer is nil")
+	}
+	if c.Request != nil && c.Request.Context().Err() != nil {
+		common.SetContextKey(c, constant.ContextKeyRelayDownstreamWriteStatus, "client_aborted")
+		common.SetContextKey(c, constant.ContextKeyRelayFinalClassification, "client_aborted")
+		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
+	}
+	if _, err := c.Writer.Write([]byte(": keep-alive\n\n")); err != nil {
+		status := "downstream_write_error"
+		if c.Request != nil && c.Request.Context().Err() != nil {
+			status = "client_aborted"
+		}
+		common.SetContextKey(c, constant.ContextKeyRelayDownstreamWriteStatus, status)
+		common.SetContextKey(c, constant.ContextKeyRelayFinalClassification, status)
+		return fmt.Errorf("write downstream keepalive failed: %w", err)
+	}
+	count := common.GetContextKeyInt(c, constant.ContextKeyRelayDownstreamKeepAliveCount) + 1
+	common.SetContextKey(c, constant.ContextKeyRelayDownstreamKeepAliveCount, count)
+	common.SetContextKey(c, constant.ContextKeyRelayClientReceivedStarted, true)
 	MarkRelayDownstreamStarted(c)
 	return FlushWriter(c)
 }

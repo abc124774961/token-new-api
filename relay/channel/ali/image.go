@@ -281,6 +281,10 @@ func aliImageHandler(a *Adaptor, c *gin.Context, resp *http.Response, info *rela
 	responseFormat := c.GetString("response_format")
 
 	var aliTaskResponse AliResponse
+	keepAlive := service.StartJSONDownstreamKeepAlive(c, resp)
+	if keepAlive != nil {
+		defer keepAlive.Stop()
+	}
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError), nil
@@ -337,7 +341,10 @@ func aliImageHandler(a *Adaptor, c *gin.Context, resp *http.Response, info *rela
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeBadResponseBody), nil
 	}
-	service.IOCopyBytesGracefully(c, resp, jsonResponse)
+	if keepAlive != nil {
+		keepAlive.Stop()
+	}
+	service.IOCopyBytesWithJSONKeepAliveGracefully(c, resp, jsonResponse)
 
 	return nil, &dto.Usage{}
 }

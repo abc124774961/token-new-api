@@ -55,13 +55,17 @@ func (b *ModelCandidatePoolBuilder) buildGroupCandidates(req *core.DispatchReque
 		}
 		upstreamModel := channel.ResolveMappedModelName(req.ModelName)
 		profile := b.providerProfile(channel, req.ModelName)
+		proxyMode := profile.ProxyMode(channel, req.ModelName)
+		if req.RequiresResponsesPreviousID && !service.ChannelSupportsResponsesPreviousID(channel, proxyMode, nil) {
+			continue
+		}
 		capability := profile.Capabilities(channel, req.ModelName)
 		candidates = append(candidates, core.Candidate{
 			Channel:                channel,
 			Group:                  group,
 			UpstreamModel:          upstreamModel,
 			ProviderProfile:        profile.Name(),
-			ProxyMode:              profile.ProxyMode(channel, req.ModelName),
+			ProxyMode:              proxyMode,
 			RequiresCodexImageTool: req.RequiresCodexImageTool,
 			RuntimeKey: core.RuntimeKey{
 				RequestedModel:        req.ModelName,

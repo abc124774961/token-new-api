@@ -198,9 +198,10 @@ func MarkChannelRuntimeSelectionSkipped(ctx *gin.Context, identity ChannelRuntim
 		MarkChannelSelectionSkipped(ctx, identity.ChannelID)
 		return
 	}
+	identity = identity.AccountScope()
 	identities, _ := common.GetContextKeyType[[]ChannelRuntimeIdentity](ctx, constant.ContextKeyChannelRuntimeSelectionSkipped)
 	for _, existing := range identities {
-		if existing.Normalize() == identity {
+		if runtimeSelectionSkipMatches(existing, identity) {
 			return
 		}
 	}
@@ -243,11 +244,35 @@ func IsChannelRuntimeSelectionSkipped(ctx *gin.Context, identity ChannelRuntimeI
 		return false
 	}
 	for _, existing := range identities {
-		if existing.Normalize() == identity {
+		if runtimeSelectionSkipMatches(existing, identity) {
 			return true
 		}
 	}
 	return false
+}
+
+func runtimeSelectionSkipMatches(existing ChannelRuntimeIdentity, identity ChannelRuntimeIdentity) bool {
+	existing = existing.Normalize()
+	identity = identity.Normalize()
+	if existing.ChannelID <= 0 || identity.ChannelID <= 0 || existing.ChannelID != identity.ChannelID {
+		return false
+	}
+	if !existing.HasAccountScope() || !identity.HasAccountScope() {
+		return false
+	}
+	if existing.CredentialIndexSet && identity.CredentialIndexSet && existing.CredentialIndex == identity.CredentialIndex {
+		return true
+	}
+	if existing.AccountID != "" && identity.AccountID != "" && existing.AccountID == identity.AccountID {
+		return true
+	}
+	if existing.CredentialSubjectFP != "" && identity.CredentialSubjectFP != "" && existing.CredentialSubjectFP == identity.CredentialSubjectFP {
+		return true
+	}
+	if existing.CredentialFP != "" && identity.CredentialFP != "" && existing.CredentialFP == identity.CredentialFP {
+		return true
+	}
+	return existing.AccountScope() == identity.AccountScope()
 }
 
 func ReleaseChannelSelectionReservation(ctx *gin.Context, channelID int) {

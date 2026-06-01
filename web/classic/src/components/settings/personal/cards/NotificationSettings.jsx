@@ -89,6 +89,7 @@ const NotificationSettings = ({
     admin: {
       enabled: true,
       channel: true,
+      channel_account: true,
       channel_balance_monitor: true,
       channel_health_check: true,
       channel_proxy: true,
@@ -184,6 +185,7 @@ const NotificationSettings = ({
       admin: {
         enabled: true,
         channel: true,
+        channel_account: true,
         channel_balance_monitor: true,
         channel_health_check: true,
         channel_proxy: true,
@@ -335,6 +337,11 @@ const NotificationSettings = ({
       description: t('系统管理功能'),
       modules: [
         { key: 'channel', title: t('渠道管理'), description: t('API渠道配置') },
+        {
+          key: 'channel_account',
+          title: t('账号池管理'),
+          description: t('全渠道账号与归档池'),
+        },
         {
           key: 'channel_balance_monitor',
           title: t('渠道余额监控'),

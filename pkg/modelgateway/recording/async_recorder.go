@@ -193,6 +193,11 @@ type attemptRequestMeta struct {
 	BalanceInsufficient            bool               `json:"balance_insufficient,omitempty"`
 	EmptyOutput                    bool               `json:"empty_output,omitempty"`
 	ExperienceIssue                string             `json:"experience_issue,omitempty"`
+	UpstreamStatus                 int                `json:"upstream_status,omitempty"`
+	DownstreamWriteStatus          string             `json:"downstream_write_status,omitempty"`
+	KeepAliveCount                 int                `json:"keepalive_count,omitempty"`
+	ClientReceivedStarted          bool               `json:"client_received_started,omitempty"`
+	FinalClassification            string             `json:"final_classification,omitempty"`
 	ActiveConcurrency              int                `json:"active_concurrency,omitempty"`
 	ConfiguredConcurrencyLimit     int                `json:"configured_concurrency_limit,omitempty"`
 	LearnedConcurrencyLimit        int                `json:"learned_concurrency_limit,omitempty"`
@@ -561,6 +566,11 @@ func attemptRequestMetaFromResult(result core.AttemptResult) attemptRequestMeta 
 		BalanceInsufficient:            result.BalanceInsufficient,
 		EmptyOutput:                    result.EmptyOutput,
 		ExperienceIssue:                result.ExperienceIssue,
+		UpstreamStatus:                 result.UpstreamStatus,
+		DownstreamWriteStatus:          result.DownstreamWriteStatus,
+		KeepAliveCount:                 result.KeepAliveCount,
+		ClientReceivedStarted:          result.ClientReceivedStarted,
+		FinalClassification:            result.FinalClassification,
 		ActiveConcurrency:              result.ActiveConcurrency,
 		ConfiguredConcurrencyLimit:     result.ConfiguredConcurrencyLimit,
 		LearnedConcurrencyLimit:        result.LearnedConcurrencyLimit,
@@ -587,6 +597,11 @@ func emptyAttemptRequestMeta(meta attemptRequestMeta) bool {
 		!meta.BalanceInsufficient &&
 		!meta.EmptyOutput &&
 		meta.ExperienceIssue == "" &&
+		meta.UpstreamStatus == 0 &&
+		meta.DownstreamWriteStatus == "" &&
+		meta.KeepAliveCount == 0 &&
+		!meta.ClientReceivedStarted &&
+		meta.FinalClassification == "" &&
 		meta.ActiveConcurrency <= 0 &&
 		meta.ConfiguredConcurrencyLimit <= 0 &&
 		meta.LearnedConcurrencyLimit <= 0 &&

@@ -477,6 +477,7 @@ func userRequestRecordFromRealtimeRecord(record userrequest.Record) controller.M
 	return controller.ModelGatewayUserRequestRecord{
 		ID:                        record.ID,
 		CreatedAt:                 record.CreatedAt,
+		UpdatedAt:                 userRequestRecordUpdatedAt(record),
 		CompletedAt:               record.CompletedAt,
 		RequestID:                 record.RequestID,
 		RequestedModel:            record.RequestedModel,
@@ -556,6 +557,19 @@ func mergeUserRequestRealtimeRecords(completed []controller.ModelGatewayUserRequ
 }
 
 func userRequestSortTime(record controller.ModelGatewayUserRequestRecord) int64 {
+	if record.UpdatedAt > 0 {
+		return record.UpdatedAt
+	}
+	if record.CompletedAt > 0 {
+		return record.CompletedAt
+	}
+	return record.CreatedAt
+}
+
+func userRequestRecordUpdatedAt(record userrequest.Record) int64 {
+	if record.UpdatedAt > 0 {
+		return record.UpdatedAt
+	}
 	if record.CompletedAt > 0 {
 		return record.CompletedAt
 	}

@@ -27,7 +27,66 @@ func TestTrackerStartSnapshotsProcessingWithoutDatabase(t *testing.T) {
 	require.Equal(t, "req-live", items[0].RequestID)
 	require.Equal(t, StatusProcessing, items[0].Status)
 	require.Equal(t, now.Unix(), items[0].CreatedAt)
+	require.Equal(t, now.Unix(), items[0].UpdatedAt)
 	require.Zero(t, items[0].CompletedAt)
+}
+
+func TestTrackerObserveFirstByteUpdatesProcessingRecord(t *testing.T) {
+	tracker := NewTracker(10, time.Minute)
+	events := make([]Event, 0)
+	tracker.AddObserver(func(event Event) {
+		events = append(events, event)
+	})
+	now := time.Now()
+	tracker.Start(core.DispatchRecord{
+		Request: core.DispatchRequest{
+			RequestID:      "req-first-byte-live",
+			RequestedGroup: "auto",
+			ModelName:      "gpt-5.5",
+		},
+		Plan:       &core.DispatchPlan{SelectedGroup: "codex-plus"},
+		RecordedAt: now,
+	})
+
+	tracker.ObserveFirstByte(FirstByteObservation{
+		RequestID:  "req-first-byte-live",
+		ObservedAt: now.Add(5 * time.Second),
+		TTFT:       1200 * time.Millisecond,
+	})
+
+	items := tracker.Snapshot(5, Filters{})
+	require.Len(t, items, 1)
+	require.Equal(t, now.Add(5*time.Second).Unix(), items[0].UpdatedAt)
+	require.Equal(t, int64(1200), items[0].TTFTMs)
+	require.Equal(t, StatusProcessing, items[0].Status)
+	require.Len(t, events, 2)
+	require.Equal(t, EventStarted, events[1].Kind)
+	require.Equal(t, int64(1200), events[1].Record.TTFTMs)
+}
+
+func TestTrackerAppliesEarlyFirstByteWhenStartArrivesLater(t *testing.T) {
+	tracker := NewTracker(10, time.Minute)
+	now := time.Now()
+
+	tracker.ObserveFirstByte(FirstByteObservation{
+		RequestID:  "req-early-first-byte",
+		ObservedAt: now.Add(2 * time.Second),
+		TTFT:       800 * time.Millisecond,
+	})
+	tracker.Start(core.DispatchRecord{
+		Request: core.DispatchRequest{
+			RequestID:      "req-early-first-byte",
+			RequestedGroup: "auto",
+			ModelName:      "gpt-5.5",
+		},
+		Plan:       &core.DispatchPlan{SelectedGroup: "codex-plus"},
+		RecordedAt: now,
+	})
+
+	items := tracker.Snapshot(5, Filters{})
+	require.Len(t, items, 1)
+	require.Equal(t, int64(800), items[0].TTFTMs)
+	require.Equal(t, now.Add(2*time.Second).Unix(), items[0].UpdatedAt)
 }
 
 func TestTrackerFinishRemovesProcessingAndPublishesFinalSummary(t *testing.T) {

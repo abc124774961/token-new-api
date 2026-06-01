@@ -132,7 +132,10 @@ func ChannelAccountCapabilityUsageLimited(capability model.ChannelAccountCapabil
 }
 
 func ChannelAccountCapabilityAllowsScheduling(capability model.ChannelAccountCapability) bool {
-	return !ChannelAccountCapabilityUsageLimited(capability)
+	if ChannelAccountCapabilityUsageLimited(capability) {
+		return false
+	}
+	return strings.TrimSpace(capability.CapabilityClassification) != channelcapability.ClassificationAuthError
 }
 
 func AccountUsageLimitedRejectReason(capability model.ChannelAccountCapability) string {

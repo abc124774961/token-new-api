@@ -51,6 +51,7 @@ export const DEFAULT_ADMIN_CONFIG = {
   admin: {
     enabled: true,
     channel: true,
+    channel_account: true,
     channel_balance_monitor: true,
     channel_health_check: true,
     channel_proxy: true,

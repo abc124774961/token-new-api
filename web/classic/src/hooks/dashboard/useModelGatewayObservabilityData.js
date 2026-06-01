@@ -62,23 +62,39 @@ function mergeDelta(current, delta) {
 }
 
 function userRequestSortTime(record) {
-  const processing =
-    record?.status === 'processing' || !Number(record?.completed_at || 0);
-  return processing
-    ? Number(record?.created_at || 0) + 1_000_000_000
-    : Number(record?.completed_at || record?.created_at || 0);
+  return Number(
+    record?.updated_at || record?.completed_at || record?.created_at || 0,
+  );
 }
 
 function userRequestKey(record) {
-  return record?.request_id || `${record?.id || ''}:${record?.created_at || ''}`;
+  return (
+    record?.request_id || `${record?.id || ''}:${record?.created_at || ''}`
+  );
 }
 
 function mergeUserRequestRecord(existing, incoming) {
   if (!existing) return incoming;
   if (!incoming) return existing;
+  const existingTTFT = Number(existing.ttft_ms || 0);
+  const incomingTTFT = Number(incoming.ttft_ms || 0);
   return {
     ...existing,
     ...incoming,
+    updated_at: Math.max(
+      Number(existing.updated_at || 0),
+      Number(incoming.updated_at || 0),
+      Number(existing.completed_at || 0),
+      Number(incoming.completed_at || 0),
+      Number(existing.created_at || 0),
+      Number(incoming.created_at || 0),
+    ),
+    ttft_ms:
+      incomingTTFT > 0
+        ? incoming.ttft_ms
+        : existingTTFT > 0
+          ? existing.ttft_ms
+          : incoming.ttft_ms,
     billing: incoming.billing || existing.billing,
     dispatch_record: incoming.dispatch_record || existing.dispatch_record,
     actual_group: incoming.actual_group || existing.actual_group,
@@ -94,7 +110,11 @@ function mergeUserRequestRecord(existing, incoming) {
 }
 
 function mergeUserRequestDelta(userRequests, recentDelta) {
-  if (!userRequests || !Array.isArray(recentDelta) || recentDelta.length === 0) {
+  if (
+    !userRequests ||
+    !Array.isArray(recentDelta) ||
+    recentDelta.length === 0
+  ) {
     return userRequests;
   }
   const mergedByKey = new Map();
@@ -112,7 +132,9 @@ function mergeUserRequestDelta(userRequests, recentDelta) {
     .sort((left, right) => {
       const timeDiff = userRequestSortTime(right) - userRequestSortTime(left);
       if (timeDiff !== 0) return timeDiff;
-      return String(right?.request_id || '').localeCompare(left?.request_id || '');
+      return String(right?.request_id || '').localeCompare(
+        left?.request_id || '',
+      );
     })
     .slice(0, RECENT_USER_REQUEST_LIMIT);
   return {
@@ -163,7 +185,10 @@ export function useModelGatewayObservabilityData({
       viewMode,
     ],
   );
-  const requestKey = useMemo(() => JSON.stringify(requestParams), [requestParams]);
+  const requestKey = useMemo(
+    () => JSON.stringify(requestParams),
+    [requestParams],
+  );
   const latestRequestKeyRef = useRef(requestKey);
   const hasSnapshotRef = useRef(false);
   const activeRequestRef = useRef(null);
@@ -216,7 +241,8 @@ export function useModelGatewayObservabilityData({
           },
         );
         if (!isActiveRequest()) return;
-        if (source === FALLBACK_REFRESH_SOURCE && hasSnapshotRef.current) return;
+        if (source === FALLBACK_REFRESH_SOURCE && hasSnapshotRef.current)
+          return;
         setData(unwrapApiData(response));
         setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
       })();
@@ -230,7 +256,8 @@ export function useModelGatewayObservabilityData({
       } catch (err) {
         if (isAbortError(err)) return;
         if (!isActiveRequest()) return;
-        if (source === FALLBACK_REFRESH_SOURCE && hasSnapshotRef.current) return;
+        if (source === FALLBACK_REFRESH_SOURCE && hasSnapshotRef.current)
+          return;
         const message =
           err?.response?.data?.message || err?.message || t('加载观测数据失败');
         setError(message);
@@ -260,20 +287,14 @@ export function useModelGatewayObservabilityData({
     setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
   }, []);
 
-  const handleDelta = useCallback(
-    (payload) => {
-      setData((current) => mergeDelta(current, payload));
-    },
-    [],
-  );
+  const handleDelta = useCallback((payload) => {
+    setData((current) => mergeDelta(current, payload));
+  }, []);
 
-  const handleRealtimeError = useCallback(
-    (message) => {
-      if (!message) return;
-      setError(message);
-    },
-    [],
-  );
+  const handleRealtimeError = useCallback((message) => {
+    if (!message) return;
+    setError(message);
+  }, []);
 
   const handleDisconnect = useCallback(() => {
     setFallbackMode(true);

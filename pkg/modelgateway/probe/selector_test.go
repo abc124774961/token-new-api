@@ -69,6 +69,48 @@ func TestProbeSelectorSelectsLowScoreRuntimeWithRecentTraffic(t *testing.T) {
 	require.Equal(t, "default", candidates[0].Group)
 }
 
+func TestProbeSelectorSkipsDisabledMultiKeyAccount(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-disabled-account", "gpt-4.1", "default", "default", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "disabled-account", "default", "gpt-4.1", 1)
+	channel.Key = "sk-enabled\nsk-disabled"
+	channel.ChannelInfo.IsMultiKey = true
+	channel.ChannelInfo.MultiKeyStatusList = map[int]int{1: common.ChannelStatusManuallyDisabled}
+	require.NoError(t, db.Save(channel).Error)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	disabledKey := core.RuntimeKey{
+		RequestedModel:        "gpt-4.1",
+		UpstreamModel:         "gpt-4.1",
+		ChannelID:             channel.Id,
+		Group:                 "default",
+		EndpointType:          constant.EndpointTypeOpenAI,
+		CredentialIndex:       1,
+		CredentialFP:          common.GenerateHMAC("sk-disabled"),
+		CredentialSubjectFP:   common.GenerateHMAC("sk-disabled"),
+		AccountID:             "openai:openai:" + common.GenerateHMAC("sk-disabled"),
+		Provider:              "openai",
+		Brand:                 "openai",
+		ResourceID:            fmt.Sprintf("platform:channel:%d", channel.Id),
+		ResourceType:          core.ResourceTypePlatformOwned,
+		CapabilityFingerprint: modelgatewayprovider.ProfileStandardOpenAICompatible + ":native",
+	}
+	store.Put(core.RuntimeSnapshot{
+		Key:                disabledKey,
+		SampleCount:        8,
+		SuccessRate:        0.2,
+		LastRealAttemptAt:  now.Unix(),
+		RealSampleCount30m: 1,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: time.Second, LowScoreThreshold: 0.7})
+	require.NoError(t, err)
+	require.Empty(t, candidates)
+}
+
 func TestProbeSelectorTimeoutRecoveryHasPriorityAndRequiredSamples(t *testing.T) {
 	db := setupProbeSelectorTestDB(t)
 	now := time.Now()
@@ -302,6 +344,224 @@ func TestProbeSelectorSkipsWhenRecentRealRequestExistsForRuntime(t *testing.T) {
 		SkipRecentRealRequestEnabled: true,
 		RecentRealRequestWindow:      30 * time.Minute,
 	}, store, now))
+}
+
+func TestProbeSelectorScoreAnomalyBypassesRecentRealRequestSkip(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-score-anomaly", "gpt-5.5", "default", "default", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "score-anomaly", "default", "gpt-5.5", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                               key,
+		SampleCount:                       10,
+		SuccessRate:                       1,
+		TTFTMs:                            900,
+		DurationMs:                        1800,
+		LastRealAttemptAt:                 now.Unix(),
+		LastRealSuccessAt:                 now.Unix(),
+		RealSampleCount30m:                3,
+		RecoverableQualityScore:           0.68,
+		RecoverableQualityBaseline:        0.86,
+		RecoverableQualityBaselineSamples: 5,
+		RecoverableQualityDropRatio:       0.21,
+		ProbeRecoveryPending:              true,
+		ProbeTriggerReason:                core.ProbeReasonScoreAnomalyFastProbe,
+		ProbeRecoveryPhase:                core.ProbeRecoveryPhaseFastProbe,
+		ProbeAnomalyTriggerItems:          []string{"recoverable_quality_score", ScoreItemTTFTLatency},
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:           5 * time.Minute,
+		SkipRecentRealRequestEnabled: true,
+		RecentRealRequestWindow:      30 * time.Minute,
+		MaxPerTick:                   5,
+	})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, reasonScoreAnomaly, candidates[0].Reason)
+	require.False(t, skipRecentRealRequestProbe(ProbeCandidate{Key: key, Channel: channel, Model: "gpt-5.5", Group: "default", Reason: reasonScoreAnomaly}, ProbeConfig{
+		SkipRecentRealRequestEnabled: true,
+		RecentRealRequestWindow:      30 * time.Minute,
+	}, store, now))
+}
+
+func TestProbeSelectorLimitsScoreAnomalyFastProbeQuota(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	for channelID := 1; channelID <= 3; channelID++ {
+		modelName := fmt.Sprintf("gpt-5.%d", channelID)
+		seedProbeSelectorRecentRequestForChannel(t, db, fmt.Sprintf("req-score-anomaly-%d", channelID), modelName, "default", "default", channelID, now.Unix(), true)
+		channel := seedProbeSelectorChannel(t, db, channelID, fmt.Sprintf("score-anomaly-%d", channelID), "default", modelName, 1)
+		key := core.RuntimeKey{RequestedModel: modelName, UpstreamModel: modelName, ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+		store.Put(core.RuntimeSnapshot{
+			Key:                               key,
+			SampleCount:                       10,
+			SuccessRate:                       1,
+			LastRealAttemptAt:                 now.Unix(),
+			LastRealSuccessAt:                 now.Unix(),
+			RealSampleCount30m:                1,
+			RecoverableQualityScore:           0.68,
+			RecoverableQualityBaseline:        0.86,
+			RecoverableQualityBaselineSamples: 5,
+			ProbeRecoveryPending:              true,
+			ProbeTriggerReason:                core.ProbeReasonScoreAnomalyFastProbe,
+			ProbeRecoveryPhase:                core.ProbeRecoveryPhaseFastProbe,
+			ProbeAnomalyTriggerItems:          []string{"recoverable_quality_score"},
+		})
+	}
+	model.InitChannelCache()
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:           time.Second,
+		SkipRecentRealRequestEnabled: true,
+		MaxPerTick:                   5,
+	})
+	require.NoError(t, err)
+	require.Len(t, candidates, 2)
+	require.Equal(t, []string{reasonScoreAnomaly, reasonScoreAnomaly}, probeCandidateReasons(candidates))
+}
+
+func TestProbeSelectorLimitsScoreAnomalyByCredentialSubject(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	for channelID := 1; channelID <= 2; channelID++ {
+		modelName := fmt.Sprintf("gpt-5.subject-%d", channelID)
+		seedProbeSelectorRecentRequestForChannel(t, db, fmt.Sprintf("req-score-anomaly-subject-%d", channelID), modelName, "default", "default", channelID, now.Unix(), true)
+		channel := seedProbeSelectorChannel(t, db, channelID, fmt.Sprintf("score-anomaly-subject-%d", channelID), "default", modelName, 1)
+		key := core.RuntimeKey{
+			RequestedModel:      modelName,
+			UpstreamModel:       modelName,
+			ChannelID:           channel.Id,
+			Group:               "default",
+			EndpointType:        constant.EndpointTypeOpenAI,
+			CredentialSubjectFP: "shared-subject",
+		}
+		store.Put(core.RuntimeSnapshot{
+			Key:                               key,
+			SampleCount:                       10,
+			SuccessRate:                       1,
+			LastRealAttemptAt:                 now.Unix(),
+			LastRealSuccessAt:                 now.Unix(),
+			RealSampleCount30m:                1,
+			RecoverableQualityScore:           0.68,
+			RecoverableQualityBaseline:        0.86,
+			RecoverableQualityBaselineSamples: 5,
+			ProbeRecoveryPending:              true,
+			ProbeTriggerReason:                core.ProbeReasonScoreAnomalyFastProbe,
+			ProbeRecoveryPhase:                core.ProbeRecoveryPhaseFastProbe,
+			ProbeAnomalyTriggerItems:          []string{"recoverable_quality_score"},
+		})
+	}
+	model.InitChannelCache()
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:           time.Second,
+		SkipRecentRealRequestEnabled: true,
+		MaxPerTick:                   5,
+	})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, reasonScoreAnomaly, candidates[0].Reason)
+	require.Equal(t, "shared-subject", candidates[0].Key.CredentialSubjectFP)
+}
+
+func TestProbeSelectorLimitsScoreAnomalyByProxy(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	for channelID := 1; channelID <= 2; channelID++ {
+		modelName := fmt.Sprintf("gpt-5.proxy-%d", channelID)
+		seedProbeSelectorRecentRequestForChannel(t, db, fmt.Sprintf("req-score-anomaly-proxy-%d", channelID), modelName, "default", "default", channelID, now.Unix(), true)
+		channel := seedProbeSelectorChannel(t, db, channelID, fmt.Sprintf("score-anomaly-proxy-%d", channelID), "default", modelName, 1)
+		channel.ChannelInfo.MultiKeyProxyIDs = map[int]int{1: 88}
+		require.NoError(t, db.Save(channel).Error)
+		key := core.RuntimeKey{
+			RequestedModel:  modelName,
+			UpstreamModel:   modelName,
+			ChannelID:       channel.Id,
+			Group:           "default",
+			EndpointType:    constant.EndpointTypeOpenAI,
+			CredentialIndex: 1,
+		}
+		store.Put(core.RuntimeSnapshot{
+			Key:                               key,
+			SampleCount:                       10,
+			SuccessRate:                       1,
+			LastRealAttemptAt:                 now.Unix(),
+			LastRealSuccessAt:                 now.Unix(),
+			RealSampleCount30m:                1,
+			RecoverableQualityScore:           0.68,
+			RecoverableQualityBaseline:        0.86,
+			RecoverableQualityBaselineSamples: 5,
+			ProbeRecoveryPending:              true,
+			ProbeTriggerReason:                core.ProbeReasonScoreAnomalyFastProbe,
+			ProbeRecoveryPhase:                core.ProbeRecoveryPhaseFastProbe,
+			ProbeAnomalyTriggerItems:          []string{"recoverable_quality_score"},
+		})
+	}
+	model.InitChannelCache()
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:           time.Second,
+		SkipRecentRealRequestEnabled: true,
+		MaxPerTick:                   5,
+	})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, reasonScoreAnomaly, candidates[0].Reason)
+}
+
+func TestProbeSelectorStopsScoreAnomalyFastLoopAfterAttemptLimit(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-score-anomaly-exhausted", "gpt-5.5", "default", "default", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "score-anomaly-exhausted", "default", "gpt-5.5", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                               key,
+		SampleCount:                       10,
+		SuccessRate:                       1,
+		TTFTMs:                            500,
+		DurationMs:                        1200,
+		LastRealAttemptAt:                 now.Unix(),
+		LastRealSuccessAt:                 now.Unix(),
+		RealSampleCount30m:                3,
+		RecoverableQualityScore:           0.68,
+		RecoverableQualityBaseline:        0.86,
+		RecoverableQualityBaselineSamples: 5,
+		ProbeRecoveryPending:              true,
+		ProbeTriggerReason:                core.ProbeReasonScoreAnomalyFastProbe,
+		ProbeRecoveryPhase:                core.ProbeRecoveryPhaseFastProbe,
+		ProbeFastRecoveryAttempts:         scheduler.ScoreAnomalyFastProbeMaxAttempts(),
+		ProbeAnomalyTriggerItems:          []string{"recoverable_quality_score"},
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:           time.Second,
+		SkipRecentRealRequestEnabled: false,
+		MaxPerTick:                   5,
+	})
+	require.NoError(t, err)
+	require.NotContains(t, probeCandidateReasons(candidates), reasonScoreAnomaly)
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.NotEqual(t, core.ProbeReasonScoreAnomalyFastProbe, snapshot.ProbeTriggerReason)
+	require.False(t, snapshot.ProbeRecoveryPending)
 }
 
 func TestProbeSelectorGoodBaselineRequiresRecentHistoricalSuccess(t *testing.T) {

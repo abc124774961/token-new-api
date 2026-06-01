@@ -79,6 +79,21 @@ func TestRuntimeBalanceAndSelectionSkipScope(t *testing.T) {
 	MarkChannelRuntimeSelectionSkipped(ctx, accountA)
 	require.True(t, IsChannelRuntimeSelectionSkipped(ctx, accountA))
 	require.False(t, IsChannelRuntimeSelectionSkipped(ctx, accountB))
+	sameAccountDifferentRoute := accountA
+	sameAccountDifferentRoute.RequestedModel = "gpt-6"
+	sameAccountDifferentRoute.SelectedGroup = "pro"
+	sameAccountDifferentRoute.EndpointType = constant.EndpointTypeOpenAIResponse
+	require.True(t, IsChannelRuntimeSelectionSkipped(ctx, sameAccountDifferentRoute))
+	require.True(t, IsChannelRuntimeSelectionSkipped(ctx, ChannelRuntimeIdentity{
+		ChannelID:          accountA.ChannelID,
+		CredentialIndex:    accountA.CredentialIndex,
+		CredentialIndexSet: true,
+	}))
+	require.False(t, IsChannelRuntimeSelectionSkipped(ctx, ChannelRuntimeIdentity{
+		ChannelID:          accountA.ChannelID,
+		CredentialIndex:    accountB.CredentialIndex,
+		CredentialIndexSet: true,
+	}))
 
 	MarkChannelRuntimeSelectionSkipped(ctx, ChannelOnlyRuntimeIdentity(8102))
 	require.True(t, IsChannelRuntimeSelectionSkipped(ctx, accountB))

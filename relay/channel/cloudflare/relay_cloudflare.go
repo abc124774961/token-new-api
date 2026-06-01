@@ -64,8 +64,7 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 		err = helper.ObjectData(c, response)
 		if isFirst {
 			isFirst = false
-			info.ForceSetFirstResponseTime()
-			service.MarkChannelFirstByteObserved(c)
+			helper.ForceMarkRelayFirstResponseObserved(c, info)
 		}
 		if err != nil {
 			logger.LogError(c, "error_rendering_stream_response: "+err.Error())

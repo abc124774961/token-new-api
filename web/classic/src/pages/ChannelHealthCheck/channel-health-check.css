@@ -403,8 +403,31 @@
   padding: 2px 8px;
   background: #f0f9ff;
   color: #0369a1;
+  cursor: pointer;
   font-size: 11px;
+  font: inherit;
   line-height: 18px;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease,
+    color 0.15s ease;
+}
+
+.ct-channel-health-countdown:hover {
+  border-color: #38bdf8;
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.ct-channel-health-countdown:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.18);
+}
+
+.ct-channel-health-countdown:disabled {
+  cursor: wait;
+  opacity: 0.78;
 }
 
 .ct-channel-health-countdown svg {
@@ -430,6 +453,26 @@
   border-color: #bbf7d0;
   background: #f0fdf4;
   color: #047857;
+}
+
+.ct-channel-health-countdown-ready:hover {
+  border-color: #34d399;
+  background: #dcfce7;
+  color: #065f46;
+}
+
+.ct-channel-health-spin {
+  animation: ct-channel-health-spin 0.9s linear infinite;
+}
+
+@keyframes ct-channel-health-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .ct-channel-health-score-change {

@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayprovider "github.com/QuantumNous/new-api/pkg/modelgateway/provider"
@@ -509,7 +510,7 @@ func buildProbeDispatchPlan(result ProbeRunResult, endpointType constant.Endpoin
 	if group == "" {
 		group = strings.TrimSpace(runtimeKey.Group)
 	}
-	return &core.DispatchPlan{
+	plan := &core.DispatchPlan{
 		Channel:         result.Channel,
 		SelectedGroup:   group,
 		RequestedGroup:  group,
@@ -517,6 +518,15 @@ func buildProbeDispatchPlan(result ProbeRunResult, endpointType constant.Endpoin
 		ProviderProfile: profile.Name(),
 		ProxyMode:       profile.ProxyMode(result.Channel, result.Model),
 	}
+	if accountRef, ok := ProbeAccountForRuntimeKey(result.Channel, runtimeKey); ok {
+		plan.ResourceRef = accountRef.ResourceRef
+		plan.AccountIdentity = accountRef.AccountIdentity
+		plan.CredentialRef = accountRef.CredentialRef
+		plan.ProxyRef = accountRef.ProxyRef
+		plan.PoolLevel = core.CandidatePoolPro
+		plan.RuntimeKey = modelgatewayaccount.RuntimeKeyForChannelAccount(plan.RuntimeKey, accountRef)
+	}
+	return plan
 }
 
 func endpointTypeForProbe(channel *model.Channel, modelName string) constant.EndpointType {

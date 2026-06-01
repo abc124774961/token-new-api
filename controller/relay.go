@@ -141,6 +141,7 @@ func logRelayRequestTrace(c *gin.Context, info *relaycommon.RelayInfo) {
 		trace["is_stream"] = info.IsStream
 		trace["required_endpoint_type"] = string(requiredEndpointTypeForRelay(info))
 		trace["requires_codex_image_tool"] = requiresCodexImageToolForRelay(info)
+		trace["requires_responses_previous_id"] = common.GetContextKeyBool(c, constant.ContextKeyResponsesPreviousID)
 		if req := responsesRequestForEndpointDetection(info.Request); req != nil {
 			trace["responses_tools"] = service.BuildResponsesRequestToolTraceForLog(req)
 		}
@@ -283,6 +284,24 @@ func responsesRequestForEndpointDetection(request dto.Request) *dto.OpenAIRespon
 	}
 }
 
+func markResponsesPreviousIDRequirement(c *gin.Context, request dto.Request) {
+	if c == nil {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyResponsesPreviousID, requestHasResponsesPreviousID(request))
+}
+
+func requestHasResponsesPreviousID(request dto.Request) bool {
+	switch req := request.(type) {
+	case *dto.OpenAIResponsesRequest:
+		return strings.TrimSpace(req.PreviousResponseID) != ""
+	case *dto.OpenAIResponsesCompactionRequest:
+		return strings.TrimSpace(req.PreviousResponseID) != ""
+	default:
+		return false
+	}
+}
+
 func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	var err *types.NewAPIError
 	if strings.Contains(c.Request.URL.Path, "embed") {
@@ -291,6 +310,66 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 		err = relay.GeminiHelper(c, info)
 	}
 	return err
+}
+
+func writeRelayErrorAfterDownstreamKeepAlive(c *gin.Context, apiErr *types.NewAPIError, relayFormat types.RelayFormat) bool {
+	if c == nil || c.Writer == nil || apiErr == nil || !c.Writer.Written() {
+		return false
+	}
+	switch relayFormat {
+	case types.RelayFormatOpenAIRealtime:
+		return false
+	case types.RelayFormatClaude:
+		body, err := common.Marshal(gin.H{
+			"type":  "error",
+			"error": apiErr.ToClaudeError(),
+		})
+		if err != nil {
+			return true
+		}
+		_, writeErr := c.Writer.Write(body)
+		if writeErr != nil {
+			common.SetContextKey(c, constant.ContextKeyRelayDownstreamWriteStatus, "downstream_write_error")
+			common.SetContextKey(c, constant.ContextKeyRelayFinalClassification, "downstream_write_error")
+			return true
+		}
+	default:
+		openAIError := apiErr.ToOpenAIError()
+		if common.GetContextKeyBool(c, constant.ContextKeyRelayJSONKeepAliveStarted) {
+			body, err := common.Marshal(gin.H{"error": openAIError})
+			if err != nil {
+				return true
+			}
+			_, writeErr := c.Writer.Write(body)
+			if writeErr != nil {
+				common.SetContextKey(c, constant.ContextKeyRelayDownstreamWriteStatus, "downstream_write_error")
+				common.SetContextKey(c, constant.ContextKeyRelayFinalClassification, "downstream_write_error")
+				return true
+			}
+		} else if helper.RelayDownstreamStarted(c) {
+			body, err := common.Marshal(openAIError)
+			if err != nil {
+				return true
+			}
+			_, writeErr := c.Writer.Write([]byte("data: {\"error\":"))
+			if writeErr == nil {
+				_, writeErr = c.Writer.Write(body)
+			}
+			if writeErr == nil {
+				_, writeErr = c.Writer.Write([]byte("}\n\ndata: [DONE]\n\n"))
+			}
+			if writeErr != nil {
+				common.SetContextKey(c, constant.ContextKeyRelayDownstreamWriteStatus, "downstream_write_error")
+				common.SetContextKey(c, constant.ContextKeyRelayFinalClassification, "downstream_write_error")
+				return true
+			}
+		} else {
+			return false
+		}
+	}
+	common.SetContextKey(c, constant.ContextKeyRelayDownstreamWriteStatus, "ok")
+	helper.MarkRelayResponseStarted(c)
+	return true
 }
 
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
@@ -323,6 +402,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				return
 			}
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			if writeRelayErrorAfterDownstreamKeepAlive(c, newAPIError, relayFormat) {
+				return
+			}
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
@@ -356,6 +438,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 	common.SetContextKey(c, constant.ContextKeyRelayInfo, relayInfo)
+	markResponsesPreviousIDRequirement(c, request)
 	if common.GetContextKeyBool(c, constant.ContextKeyHealthProbe) {
 		relayInfo.IsChannelTest = true
 	}
@@ -639,7 +722,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 					abortFlow.WillRetry = willRetry
 					abortFlow.RetryAction = retryActionForAttempt(c, abortErr, willRetry)
 					if willRetry {
-						service.MarkChannelRuntimeSelectionSkipped(c, relayRuntimeIdentity(c, channel.Id))
+						markModelGatewayRuntimeSelectionSkippedForRetry(c, channel, abortFlow)
 						setChannelInducedRetryRoutingIntentIfNeeded(c, channel, relayInfo.RetryIndex, abortFlow.RetryAction)
 					} else {
 						finalAttemptReported = true
@@ -705,6 +788,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			ConcurrencyLimited: overloadSkip || service.IsUpstreamConcurrencyLimitError(newAPIError),
 			ClientAborted:      clientAbort,
 		}
+		if learnRelayCapabilityFromError(c, channel, newAPIError) {
+			service.MarkChannelRuntimeSelectionSkipped(c, relayRuntimeIdentity(c, channel.Id))
+			modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+		}
 		if channelInducedAbort {
 			flow.ErrorCategory = modelgatewaycore.ErrorCategoryChannelInducedClientAbort
 			flow.RetryReason = modelgatewaycore.RelayAttemptCancelReasonChannelInducedClientAbort
@@ -750,6 +837,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		willRetry := shouldRetry(c, newAPIError, retryParam, common.RetryTimes-retryParam.GetRetry()) && !terminalClientAbort
 		flow.WillRetry = willRetry
 		flow.RetryAction = retryActionForAttempt(c, newAPIError, willRetry)
+		markModelGatewayRuntimeSelectionSkippedForRetry(c, channel, flow)
 		if channelInducedAbort && willRetry {
 			setChannelInducedRetryRoutingIntentIfNeeded(c, channel, relayInfo.RetryIndex, flow.RetryAction)
 		}
@@ -1159,6 +1247,24 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 	result.BalanceInsufficient = flow.BalanceInsufficient
 	result.EmptyOutput = flow.EmptyOutput || relayEmptyOutput(c)
 	result.ExperienceIssue = relayExperienceIssue(c, flow.ExperienceIssue)
+	result.UpstreamStatus = common.GetContextKeyInt(c, constant.ContextKeyRelayUpstreamStatus)
+	result.DownstreamWriteStatus = common.GetContextKeyString(c, constant.ContextKeyRelayDownstreamWriteStatus)
+	result.KeepAliveCount = common.GetContextKeyInt(c, constant.ContextKeyRelayDownstreamKeepAliveCount)
+	result.ClientReceivedStarted = common.GetContextKeyBool(c, constant.ContextKeyRelayClientReceivedStarted)
+	result.FinalClassification = common.GetContextKeyString(c, constant.ContextKeyRelayFinalClassification)
+	if result.DownstreamWriteStatus == "" && relayResponseAlreadyStarted(c) {
+		result.DownstreamWriteStatus = "ok"
+	}
+	if result.DownstreamWriteStatus == "client_aborted" || result.DownstreamWriteStatus == "downstream_write_error" {
+		result.Success = false
+		result.StreamInterrupted = true
+		result.ClientAborted = result.DownstreamWriteStatus == "client_aborted"
+		result.ErrorCategory = result.DownstreamWriteStatus
+		result.RetryAction = result.DownstreamWriteStatus
+	}
+	if result.FinalClassification == "" {
+		result.FinalClassification = result.ErrorCategory
+	}
 	result.ActiveConcurrency = flow.ActiveConcurrency
 	result.ConfiguredConcurrencyLimit = flow.ConfiguredConcurrencyLimit
 	result.LearnedConcurrencyLimit = flow.LearnedConcurrencyLimit
@@ -1310,6 +1416,36 @@ func relayExperienceIssue(c *gin.Context, fallback string) string {
 	return strings.TrimSpace(fallback)
 }
 
+func learnRelayCapabilityFromError(c *gin.Context, channel *model.Channel, apiErr *types.NewAPIError) bool {
+	if c == nil || channel == nil || apiErr == nil {
+		return false
+	}
+	credentialIndex := common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
+	changed := false
+	if isUnsupportedStreamOptionsError(apiErr) {
+		if updated, err := service.MarkChannelAccountStreamOptionsCapability(channel.Id, credentialIndex, false, apiErr.Error()); err != nil {
+			logger.LogWarn(c, fmt.Sprintf("failed to mark stream_options unsupported: channel_id=%d credential_index=%d error=%v", channel.Id, credentialIndex, err))
+		} else if updated {
+			changed = true
+		}
+	}
+	if isResponsesPreviousIDCompatibilityError(apiErr) {
+		if updated, err := service.MarkChannelAccountResponsesPreviousIDCapability(channel.Id, credentialIndex, false, apiErr.Error()); err != nil {
+			logger.LogWarn(c, fmt.Sprintf("failed to mark previous_response_id unsupported: channel_id=%d credential_index=%d error=%v", channel.Id, credentialIndex, err))
+		} else if updated {
+			changed = true
+		}
+	}
+	if isTokenRevokedAuthError(apiErr) {
+		if updated, err := service.MarkChannelAccountAuthErrorCandidate(channel.Id, credentialIndex, apiErr.Error()); err != nil {
+			logger.LogWarn(c, fmt.Sprintf("failed to mark account auth error: channel_id=%d credential_index=%d error=%v", channel.Id, credentialIndex, err))
+		} else if updated {
+			changed = true
+		}
+	}
+	return changed
+}
+
 func classifyRelayAttemptError(c *gin.Context, apiErr *types.NewAPIError) string {
 	if apiErr == nil {
 		return ""
@@ -1331,6 +1467,9 @@ func classifyRelayAttemptError(c *gin.Context, apiErr *types.NewAPIError) string
 	}
 	if service.IsBalanceInsufficientError(apiErr) {
 		return modelgatewaycore.ErrorCategoryBalanceOrQuota
+	}
+	if isResponsesPreviousIDCompatibilityError(apiErr) || isUnsupportedStreamOptionsError(apiErr) {
+		return modelgatewaycore.ErrorCategoryUnsupportedCapability
 	}
 	if isInvalidEncryptedContentError(apiErr) {
 		return modelgatewaycore.ErrorCategoryClientRequestError
@@ -1354,6 +1493,39 @@ func classifyRelayAttemptError(c *gin.Context, apiErr *types.NewAPIError) string
 		return modelgatewaycore.ErrorCategoryUpstreamError
 	}
 	return modelgatewaycore.ErrorCategoryUnknown
+}
+
+func isUnsupportedStreamOptionsError(apiErr *types.NewAPIError) bool {
+	if apiErr == nil {
+		return false
+	}
+	message := strings.ToLower(apiErr.Error())
+	return strings.Contains(message, "stream_options") &&
+		(strings.Contains(message, "unsupported parameter") ||
+			strings.Contains(message, "unknown parameter") ||
+			strings.Contains(message, "not supported"))
+}
+
+func isResponsesPreviousIDCompatibilityError(apiErr *types.NewAPIError) bool {
+	if apiErr == nil {
+		return false
+	}
+	message := strings.ToLower(apiErr.Error())
+	return strings.Contains(message, "previous_response_id") &&
+		(strings.Contains(message, "websocket v2") ||
+			strings.Contains(message, "only supported") ||
+			strings.Contains(message, "not supported"))
+}
+
+func isTokenRevokedAuthError(apiErr *types.NewAPIError) bool {
+	if apiErr == nil {
+		return false
+	}
+	message := strings.ToLower(apiErr.Error())
+	return strings.Contains(message, "token_invalidated") ||
+		strings.Contains(message, "invalidated oauth token") ||
+		strings.Contains(message, "oauth token") && strings.Contains(message, "revoked") ||
+		strings.Contains(message, "authentication token has been invalidated")
 }
 
 func retryActionForAttempt(c *gin.Context, apiErr *types.NewAPIError, willRetry bool) string {
@@ -1382,6 +1554,14 @@ func retryActionForAttempt(c *gin.Context, apiErr *types.NewAPIError, willRetry 
 		return "switch_channel"
 	}
 	return "retry"
+}
+
+func markModelGatewayRuntimeSelectionSkippedForRetry(c *gin.Context, channel *model.Channel, flow modelGatewayAttemptFlow) bool {
+	if c == nil || channel == nil || !flow.WillRetry || flow.RetryAction != "switch_channel" {
+		return false
+	}
+	service.MarkChannelRuntimeSelectionSkipped(c, relayRuntimeIdentity(c, channel.Id))
+	return true
 }
 
 func setFirstByteRetryRoutingIntentIfNeeded(c *gin.Context, channel *model.Channel, attemptIndex int, firstByteTimeoutHit bool, willRetry bool, retryAction string) bool {
@@ -1719,6 +1899,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *servi
 	if types.IsSkipRetryError(openaiErr) {
 		return false
 	}
+	if openaiErr.GetErrorCode() == types.ErrorCodeInsufficientUserQuota {
+		return false
+	}
 	if isInvalidEncryptedContentError(openaiErr) {
 		return false
 	}
@@ -1763,10 +1946,7 @@ func relayDownstreamAlreadyStarted(c *gin.Context) bool {
 	if c == nil {
 		return false
 	}
-	if relayResponseAlreadyStarted(c) || helper.RelayDownstreamStarted(c) {
-		return true
-	}
-	return c.Writer != nil && c.Writer.Written()
+	return relayResponseAlreadyStarted(c)
 }
 
 func relayStreamInterrupted(c *gin.Context) bool {
@@ -1891,6 +2071,9 @@ func shouldFailoverOnUnsupportedCapability(c *gin.Context, openaiErr *types.NewA
 		return false
 	}
 	message := strings.ToLower(openaiErr.Error())
+	if isResponsesPreviousIDCompatibilityError(openaiErr) || isUnsupportedStreamOptionsError(openaiErr) {
+		return true
+	}
 	return strings.Contains(message, "unknown parameter") ||
 		strings.Contains(message, "unsupported parameter") ||
 		strings.Contains(message, "unsupported tool") ||
@@ -2011,6 +2194,9 @@ func isRelayOverloadSkipError(apiErr *types.NewAPIError) bool {
 func isRelayAuthConfigError(apiErr *types.NewAPIError) bool {
 	if apiErr == nil || service.IsBalanceInsufficientError(apiErr) {
 		return false
+	}
+	if isTokenRevokedAuthError(apiErr) {
+		return true
 	}
 	if apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden {
 		return true

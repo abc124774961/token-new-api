@@ -84,88 +84,95 @@ type RuntimeStatusSummary struct {
 }
 
 type RuntimeStatusItem struct {
-	RequestedModel                   string                      `json:"requested_model,omitempty"`
-	UpstreamModel                    string                      `json:"upstream_model,omitempty"`
-	ChannelID                        int                         `json:"channel_id,omitempty"`
-	ChannelName                      string                      `json:"channel_name,omitempty"`
-	ResourceID                       string                      `json:"resource_id,omitempty"`
-	ResourceType                     string                      `json:"resource_type,omitempty"`
-	AccountID                        string                      `json:"account_id,omitempty"`
-	AccountType                      string                      `json:"account_type,omitempty"`
-	Brand                            string                      `json:"brand,omitempty"`
-	Provider                         string                      `json:"provider,omitempty"`
-	CredentialIndex                  int                         `json:"credential_index,omitempty"`
-	CredentialSubjectFP              string                      `json:"credential_subject_fingerprint,omitempty"`
-	CredentialFP                     string                      `json:"credential_fingerprint,omitempty"`
-	Group                            string                      `json:"group,omitempty"`
-	EndpointType                     string                      `json:"endpoint_type,omitempty"`
-	CapabilityFingerprint            string                      `json:"capability_fingerprint,omitempty"`
-	SuccessRate                      float64                     `json:"success_rate"`
-	TTFTMs                           float64                     `json:"ttft_ms"`
-	DurationMs                       float64                     `json:"duration_ms"`
-	TokensPerSecond                  float64                     `json:"tokens_per_second"`
-	ActiveConcurrency                int                         `json:"active_concurrency"`
-	MaxConcurrency                   int                         `json:"max_concurrency"`
-	ConfiguredConcurrencyLimit       int                         `json:"configured_concurrency_limit,omitempty"`
-	LearnedConcurrencyLimit          int                         `json:"learned_concurrency_limit,omitempty"`
-	EffectiveConcurrencyLimit        int                         `json:"effective_concurrency_limit,omitempty"`
-	QueueDepth                       int                         `json:"queue_depth"`
-	QueueCapacity                    int                         `json:"queue_capacity"`
-	QueueTimeoutMs                   int                         `json:"queue_timeout_ms"`
-	EstimatedQueueWaitMs             float64                     `json:"estimated_queue_wait_ms"`
-	FirstBytePending                 int                         `json:"first_byte_pending,omitempty"`
-	SlowFirstBytePending             int                         `json:"slow_first_byte_pending,omitempty"`
-	OldestFirstByteWaitMs            float64                     `json:"oldest_first_byte_wait_ms,omitempty"`
-	CostRatio                        float64                     `json:"cost_ratio"`
-	CostReferenceRatio               float64                     `json:"cost_reference_ratio,omitempty"`
-	CostPricingMode                  string                      `json:"cost_pricing_mode,omitempty"`
-	GroupPriorityRatio               float64                     `json:"group_priority_ratio"`
-	CircuitState                     string                      `json:"circuit_state,omitempty"`
-	CircuitOpen                      bool                        `json:"circuit_open"`
-	CircuitOpenUntil                 int64                       `json:"circuit_open_until,omitempty"`
-	CircuitOpenReason                string                      `json:"circuit_open_reason,omitempty"`
-	CircuitFailureCount              int                         `json:"circuit_failure_count,omitempty"`
-	CircuitFailureRate               float64                     `json:"circuit_failure_rate,omitempty"`
-	CircuitSampleCount               int                         `json:"circuit_sample_count,omitempty"`
-	CircuitErrorCounts               map[string]int              `json:"circuit_error_counts,omitempty"`
-	CircuitHalfOpenProbeUsed         int                         `json:"circuit_half_open_probe_used,omitempty"`
-	CircuitHalfOpenProbeMax          int                         `json:"circuit_half_open_probe_max,omitempty"`
-	Cooldown                         bool                        `json:"cooldown"`
-	CooldownRemainingSeconds         int64                       `json:"cooldown_remaining_seconds,omitempty"`
-	CooldownReason                   string                      `json:"cooldown_reason,omitempty"`
-	CooldownFailureCount             int                         `json:"cooldown_failure_count,omitempty"`
-	FailureAvoidance                 bool                        `json:"failure_avoidance"`
-	FailureAvoidanceRemainingSeconds int64                       `json:"failure_avoidance_remaining_seconds,omitempty"`
-	FailureAvoidanceReason           string                      `json:"failure_avoidance_reason,omitempty"`
-	FailureAvoidanceCount            int                         `json:"failure_avoidance_count,omitempty"`
-	ScoreTotal                       float64                     `json:"score_total,omitempty"`
-	ScoreBreakdown                   map[string]float64          `json:"score_breakdown,omitempty"`
-	ScoreItems                       []core.ScoreItem            `json:"score_items,omitempty"`
-	RoutingScoreTotal                float64                     `json:"routing_score_total,omitempty"`
-	RoutingScoreBreakdown            map[string]float64          `json:"routing_score_breakdown,omitempty"`
-	RoutingScoreItems                []core.ScoreItem            `json:"routing_score_items,omitempty"`
-	StateTags                        []string                    `json:"state_tags,omitempty"`
-	CostReferenceMissing             bool                        `json:"cost_reference_missing,omitempty"`
-	EmptyOutputRate                  float64                     `json:"empty_output_rate,omitempty"`
-	ExperienceIssueRate              float64                     `json:"experience_issue_rate,omitempty"`
-	ProbeRecoveryPending             bool                        `json:"probe_recovery_pending,omitempty"`
-	ProbeRecoverySuccessCount        int                         `json:"probe_recovery_success_count,omitempty"`
-	ProbeRecoveryRequired            int                         `json:"probe_recovery_required,omitempty"`
-	ProbeTriggerReason               string                      `json:"probe_trigger_reason,omitempty"`
-	ConfigErrorIsolated              bool                        `json:"config_error_isolated,omitempty"`
-	IsolationReason                  string                      `json:"isolation_reason,omitempty"`
-	IsolationUntil                   int64                       `json:"isolation_until,omitempty"`
-	AuthConfigErrorCount             int                         `json:"auth_config_error_count,omitempty"`
-	LastAuthConfigErrorAt            int64                       `json:"last_auth_config_error_at,omitempty"`
-	SampleCount                      int                         `json:"sample_count"`
-	LastRealAttemptAt                int64                       `json:"last_real_attempt_at,omitempty"`
-	LastRealSuccessAt                int64                       `json:"last_real_success_at,omitempty"`
-	LastRealFailureAt                int64                       `json:"last_real_failure_at,omitempty"`
-	RealSampleCount30m               int                         `json:"real_sample_count_30m,omitempty"`
-	LastProbeAt                      int64                       `json:"last_probe_at,omitempty"`
-	LastProbeSuccessAt               int64                       `json:"last_probe_success_at,omitempty"`
-	RecentLatencySamples             []core.RuntimeLatencySample `json:"-"`
-	HealthStatus                     string                      `json:"health_status"`
+	RequestedModel                    string                      `json:"requested_model,omitempty"`
+	UpstreamModel                     string                      `json:"upstream_model,omitempty"`
+	ChannelID                         int                         `json:"channel_id,omitempty"`
+	ChannelName                       string                      `json:"channel_name,omitempty"`
+	ResourceID                        string                      `json:"resource_id,omitempty"`
+	ResourceType                      string                      `json:"resource_type,omitempty"`
+	AccountID                         string                      `json:"account_id,omitempty"`
+	AccountType                       string                      `json:"account_type,omitempty"`
+	Brand                             string                      `json:"brand,omitempty"`
+	Provider                          string                      `json:"provider,omitempty"`
+	CredentialIndex                   int                         `json:"credential_index,omitempty"`
+	CredentialSubjectFP               string                      `json:"credential_subject_fingerprint,omitempty"`
+	CredentialFP                      string                      `json:"credential_fingerprint,omitempty"`
+	Group                             string                      `json:"group,omitempty"`
+	EndpointType                      string                      `json:"endpoint_type,omitempty"`
+	CapabilityFingerprint             string                      `json:"capability_fingerprint,omitempty"`
+	SuccessRate                       float64                     `json:"success_rate"`
+	TTFTMs                            float64                     `json:"ttft_ms"`
+	DurationMs                        float64                     `json:"duration_ms"`
+	TokensPerSecond                   float64                     `json:"tokens_per_second"`
+	ActiveConcurrency                 int                         `json:"active_concurrency"`
+	MaxConcurrency                    int                         `json:"max_concurrency"`
+	ConfiguredConcurrencyLimit        int                         `json:"configured_concurrency_limit,omitempty"`
+	LearnedConcurrencyLimit           int                         `json:"learned_concurrency_limit,omitempty"`
+	EffectiveConcurrencyLimit         int                         `json:"effective_concurrency_limit,omitempty"`
+	QueueDepth                        int                         `json:"queue_depth"`
+	QueueCapacity                     int                         `json:"queue_capacity"`
+	QueueTimeoutMs                    int                         `json:"queue_timeout_ms"`
+	EstimatedQueueWaitMs              float64                     `json:"estimated_queue_wait_ms"`
+	FirstBytePending                  int                         `json:"first_byte_pending,omitempty"`
+	SlowFirstBytePending              int                         `json:"slow_first_byte_pending,omitempty"`
+	OldestFirstByteWaitMs             float64                     `json:"oldest_first_byte_wait_ms,omitempty"`
+	CostRatio                         float64                     `json:"cost_ratio"`
+	CostReferenceRatio                float64                     `json:"cost_reference_ratio,omitempty"`
+	CostPricingMode                   string                      `json:"cost_pricing_mode,omitempty"`
+	GroupPriorityRatio                float64                     `json:"group_priority_ratio"`
+	CircuitState                      string                      `json:"circuit_state,omitempty"`
+	CircuitOpen                       bool                        `json:"circuit_open"`
+	CircuitOpenUntil                  int64                       `json:"circuit_open_until,omitempty"`
+	CircuitOpenReason                 string                      `json:"circuit_open_reason,omitempty"`
+	CircuitFailureCount               int                         `json:"circuit_failure_count,omitempty"`
+	CircuitFailureRate                float64                     `json:"circuit_failure_rate,omitempty"`
+	CircuitSampleCount                int                         `json:"circuit_sample_count,omitempty"`
+	CircuitErrorCounts                map[string]int              `json:"circuit_error_counts,omitempty"`
+	CircuitHalfOpenProbeUsed          int                         `json:"circuit_half_open_probe_used,omitempty"`
+	CircuitHalfOpenProbeMax           int                         `json:"circuit_half_open_probe_max,omitempty"`
+	Cooldown                          bool                        `json:"cooldown"`
+	CooldownRemainingSeconds          int64                       `json:"cooldown_remaining_seconds,omitempty"`
+	CooldownReason                    string                      `json:"cooldown_reason,omitempty"`
+	CooldownFailureCount              int                         `json:"cooldown_failure_count,omitempty"`
+	FailureAvoidance                  bool                        `json:"failure_avoidance"`
+	FailureAvoidanceRemainingSeconds  int64                       `json:"failure_avoidance_remaining_seconds,omitempty"`
+	FailureAvoidanceReason            string                      `json:"failure_avoidance_reason,omitempty"`
+	FailureAvoidanceCount             int                         `json:"failure_avoidance_count,omitempty"`
+	ScoreTotal                        float64                     `json:"score_total,omitempty"`
+	ScoreBreakdown                    map[string]float64          `json:"score_breakdown,omitempty"`
+	ScoreItems                        []core.ScoreItem            `json:"score_items,omitempty"`
+	RoutingScoreTotal                 float64                     `json:"routing_score_total,omitempty"`
+	RoutingScoreBreakdown             map[string]float64          `json:"routing_score_breakdown,omitempty"`
+	RoutingScoreItems                 []core.ScoreItem            `json:"routing_score_items,omitempty"`
+	RecoverableQualityScore           float64                     `json:"recoverable_quality_score,omitempty"`
+	RecoverableQualityBaseline        float64                     `json:"recoverable_quality_baseline,omitempty"`
+	RecoverableQualityBaselineSamples int                         `json:"recoverable_quality_baseline_samples,omitempty"`
+	RecoverableQualityDropRatio       float64                     `json:"recoverable_quality_drop_ratio,omitempty"`
+	StateTags                         []string                    `json:"state_tags,omitempty"`
+	CostReferenceMissing              bool                        `json:"cost_reference_missing,omitempty"`
+	EmptyOutputRate                   float64                     `json:"empty_output_rate,omitempty"`
+	ExperienceIssueRate               float64                     `json:"experience_issue_rate,omitempty"`
+	ProbeRecoveryPending              bool                        `json:"probe_recovery_pending,omitempty"`
+	ProbeRecoverySuccessCount         int                         `json:"probe_recovery_success_count,omitempty"`
+	ProbeRecoveryRequired             int                         `json:"probe_recovery_required,omitempty"`
+	ProbeTriggerReason                string                      `json:"probe_trigger_reason,omitempty"`
+	ProbeRecoveryPhase                string                      `json:"probe_recovery_phase,omitempty"`
+	ProbeFastRecoveryAttempts         int                         `json:"probe_fast_recovery_attempts,omitempty"`
+	ProbeAnomalyTriggerItems          []string                    `json:"probe_anomaly_trigger_items,omitempty"`
+	ConfigErrorIsolated               bool                        `json:"config_error_isolated,omitempty"`
+	IsolationReason                   string                      `json:"isolation_reason,omitempty"`
+	IsolationUntil                    int64                       `json:"isolation_until,omitempty"`
+	AuthConfigErrorCount              int                         `json:"auth_config_error_count,omitempty"`
+	LastAuthConfigErrorAt             int64                       `json:"last_auth_config_error_at,omitempty"`
+	SampleCount                       int                         `json:"sample_count"`
+	LastRealAttemptAt                 int64                       `json:"last_real_attempt_at,omitempty"`
+	LastRealSuccessAt                 int64                       `json:"last_real_success_at,omitempty"`
+	LastRealFailureAt                 int64                       `json:"last_real_failure_at,omitempty"`
+	RealSampleCount30m                int                         `json:"real_sample_count_30m,omitempty"`
+	LastProbeAt                       int64                       `json:"last_probe_at,omitempty"`
+	LastProbeSuccessAt                int64                       `json:"last_probe_success_at,omitempty"`
+	RecentLatencySamples              []core.RuntimeLatencySample `json:"-"`
+	HealthStatus                      string                      `json:"health_status"`
 }
 
 type ServiceRuntimeStateProvider struct{}
@@ -421,6 +428,9 @@ func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem) {
 		ProbeRecoverySuccessCount:  item.ProbeRecoverySuccessCount,
 		ProbeRecoveryRequired:      item.ProbeRecoveryRequired,
 		ProbeTriggerReason:         item.ProbeTriggerReason,
+		ProbeRecoveryPhase:         item.ProbeRecoveryPhase,
+		ProbeFastRecoveryAttempts:  item.ProbeFastRecoveryAttempts,
+		ProbeAnomalyTriggerItems:   append([]string(nil), item.ProbeAnomalyTriggerItems...),
 		ConfigErrorIsolated:        item.ConfigErrorIsolated,
 		IsolationReason:            item.IsolationReason,
 		IsolationUntil:             item.IsolationUntil,
@@ -466,6 +476,15 @@ func (s *RuntimeStatusService) applyScore(item *RuntimeStatusItem) {
 	item.RoutingScoreTotal = roundRuntimeStatusFloat(score.RoutingTotal)
 	item.RoutingScoreBreakdown = roundRuntimeStatusScoreMap(score.RoutingBreakdown)
 	item.RoutingScoreItems = roundRuntimeStatusScoreItems(score.RoutingItems)
+	if item.RecoverableQualityScore > 0 {
+		item.RecoverableQualityScore = roundRuntimeStatusFloat(item.RecoverableQualityScore)
+	}
+	if item.RecoverableQualityBaseline > 0 {
+		item.RecoverableQualityBaseline = roundRuntimeStatusFloat(item.RecoverableQualityBaseline)
+	}
+	if item.RecoverableQualityDropRatio > 0 {
+		item.RecoverableQualityDropRatio = roundRuntimeStatusFloat(item.RecoverableQualityDropRatio)
+	}
 	item.StateTags = append([]string(nil), score.StateTags...)
 	item.CostReferenceMissing = score.CostReferenceMissing
 }
@@ -651,10 +670,17 @@ func applyRuntimeSnapshot(item *RuntimeStatusItem, snapshot core.RuntimeSnapshot
 	item.FailureAvoidance = snapshot.FailureAvoidance
 	item.EmptyOutputRate = snapshot.EmptyOutputRate
 	item.ExperienceIssueRate = snapshot.ExperienceIssueRate
+	item.RecoverableQualityScore = snapshot.RecoverableQualityScore
+	item.RecoverableQualityBaseline = snapshot.RecoverableQualityBaseline
+	item.RecoverableQualityBaselineSamples = snapshot.RecoverableQualityBaselineSamples
+	item.RecoverableQualityDropRatio = snapshot.RecoverableQualityDropRatio
 	item.ProbeRecoveryPending = snapshot.ProbeRecoveryPending
 	item.ProbeRecoverySuccessCount = snapshot.ProbeRecoverySuccessCount
 	item.ProbeRecoveryRequired = snapshot.ProbeRecoveryRequired
 	item.ProbeTriggerReason = snapshot.ProbeTriggerReason
+	item.ProbeRecoveryPhase = snapshot.ProbeRecoveryPhase
+	item.ProbeFastRecoveryAttempts = snapshot.ProbeFastRecoveryAttempts
+	item.ProbeAnomalyTriggerItems = append([]string(nil), snapshot.ProbeAnomalyTriggerItems...)
 	item.ConfigErrorIsolated = snapshot.ConfigErrorIsolated
 	item.IsolationReason = snapshot.IsolationReason
 	item.IsolationUntil = snapshot.IsolationUntil

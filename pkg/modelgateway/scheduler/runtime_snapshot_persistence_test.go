@@ -35,18 +35,26 @@ func TestRuntimeSnapshotPersistenceFlushAndRestore(t *testing.T) {
 			{ObservedAt: 101, TTFTMs: 700, DurationMs: 2400},
 			{ObservedAt: 102, TTFTMs: 840, DurationMs: 2600},
 		},
-		SuccessRate:           0.96,
-		TTFTMs:                680,
-		DurationMs:            2400,
-		EmptyOutputRate:       0.01,
-		ExperienceIssueRate:   0.02,
-		ScoreStatsJSON:        runtimeSnapshotPersistenceMustMarshal(t, map[string]any{"version": 1, "samples": 37, "rates": map[string]any{"completion": map[string]any{"success": 36, "total": 37, "ewma": 0.97}}}),
-		ConfigErrorIsolated:   true,
-		IsolationReason:       core.ErrorCategoryAuthConfigError,
-		IsolationUntil:        1770000000,
-		AuthConfigErrorCount:  2,
-		LastAuthConfigErrorAt: 1769999900,
-		SampleCount:           37,
+		SuccessRate:                       0.96,
+		TTFTMs:                            680,
+		DurationMs:                        2400,
+		EmptyOutputRate:                   0.01,
+		ExperienceIssueRate:               0.02,
+		ScoreStatsJSON:                    runtimeSnapshotPersistenceMustMarshal(t, map[string]any{"version": 1, "samples": 37, "rates": map[string]any{"completion": map[string]any{"success": 36, "total": 37, "ewma": 0.97}}}),
+		RecoverableQualityScore:           0.72,
+		RecoverableQualityBaseline:        0.91,
+		RecoverableQualityBaselineSamples: 7,
+		RecoverableQualityDropRatio:       0.21,
+		RecoverableQualityItemBaselines:   map[string]float64{"ttft_latency": 0.93},
+		ProbeRecoveryPhase:                core.ProbeRecoveryPhaseFastProbe,
+		ProbeFastRecoveryAttempts:         2,
+		ProbeAnomalyTriggerItems:          []string{"ttft_latency"},
+		ConfigErrorIsolated:               true,
+		IsolationReason:                   core.ErrorCategoryAuthConfigError,
+		IsolationUntil:                    1770000000,
+		AuthConfigErrorCount:              2,
+		LastAuthConfigErrorAt:             1769999900,
+		SampleCount:                       37,
 	})
 
 	persistence := scheduler.NewRuntimeSnapshotPersistence(store, scheduler.RuntimeSnapshotPersistenceOptions{Batch: 2})
@@ -71,6 +79,14 @@ func TestRuntimeSnapshotPersistenceFlushAndRestore(t *testing.T) {
 	require.Equal(t, core.ErrorCategoryAuthConfigError, snapshot.IsolationReason)
 	require.Contains(t, snapshot.ScoreStatsJSON, `"samples":37`)
 	require.Contains(t, snapshot.ScoreStatsJSON, `"completion"`)
+	require.Equal(t, 0.72, snapshot.RecoverableQualityScore)
+	require.Equal(t, 0.91, snapshot.RecoverableQualityBaseline)
+	require.Equal(t, 7, snapshot.RecoverableQualityBaselineSamples)
+	require.Equal(t, 0.21, snapshot.RecoverableQualityDropRatio)
+	require.Equal(t, 0.93, snapshot.RecoverableQualityItemBaselines["ttft_latency"])
+	require.Equal(t, core.ProbeRecoveryPhaseFastProbe, snapshot.ProbeRecoveryPhase)
+	require.Equal(t, 2, snapshot.ProbeFastRecoveryAttempts)
+	require.Equal(t, []string{"ttft_latency"}, snapshot.ProbeAnomalyTriggerItems)
 	require.EqualValues(t, 1770000000, snapshot.IsolationUntil)
 	require.Equal(t, 2, snapshot.AuthConfigErrorCount)
 	require.EqualValues(t, 1769999900, snapshot.LastAuthConfigErrorAt)

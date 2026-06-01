@@ -34,6 +34,7 @@ type CodexCapabilityProbeResult struct {
 
 type codexProbeCredential struct {
 	AccessToken      string `json:"access_token,omitempty"`
+	RefreshToken     string `json:"refresh_token,omitempty"`
 	AccountID        string `json:"account_id,omitempty"`
 	ChatGPTAccountID string `json:"chatgpt_account_id,omitempty"`
 	IDToken          string `json:"id_token,omitempty"`
@@ -46,6 +47,7 @@ func parseCodexProbeCredential(raw string) (codexProbeCredential, error) {
 		return credential, errors.New("codex oauth key json invalid")
 	}
 	credential.AccessToken = strings.TrimSpace(credential.AccessToken)
+	credential.RefreshToken = strings.TrimSpace(credential.RefreshToken)
 	credential.AccountID = strings.TrimSpace(credential.AccountID)
 	credential.ChatGPTAccountID = strings.TrimSpace(credential.ChatGPTAccountID)
 	credential.IDToken = strings.TrimSpace(credential.IDToken)
@@ -59,8 +61,41 @@ func parseCodexProbeCredential(raw string) (codexProbeCredential, error) {
 		if credential.AccessToken == "" {
 			credential.AccessToken = strings.TrimSpace(loose.AccessToken)
 		}
+		if credential.RefreshToken == "" {
+			credential.RefreshToken = strings.TrimSpace(loose.RefreshToken)
+		}
 	}
 	return credential, nil
+}
+
+func refreshCodexProbeCredentialIfNeeded(ctx context.Context, channel *model.Channel, credentialIndex int, credential codexProbeCredential) (*model.Channel, codexProbeCredential, error) {
+	if strings.TrimSpace(credential.AccessToken) != "" || strings.TrimSpace(credential.RefreshToken) == "" {
+		return channel, credential, nil
+	}
+	_, proxyURL, proxyErr := codexProbeCredentialProxy(channel, credentialIndex)
+	if proxyErr != nil {
+		return channel, credential, fmt.Errorf("Codex OAuth 凭证缺少 access_token，自动刷新失败: %w", proxyErr)
+	}
+	_, refreshedChannel, err := RefreshCodexAccountCredential(ctx, channel.Id, CodexAccountCredentialRefreshOptions{
+		CredentialIndex: credentialIndex,
+		ProxyURL:        proxyURL,
+		ResetCaches:     true,
+	})
+	if err != nil {
+		return channel, credential, fmt.Errorf("Codex OAuth 凭证缺少 access_token，自动刷新失败: %w", err)
+	}
+	if refreshedChannel == nil {
+		return channel, credential, errors.New("Codex OAuth 凭证缺少 access_token，自动刷新失败: refreshed channel is empty")
+	}
+	keys := refreshedChannel.GetKeys()
+	if credentialIndex < 0 || credentialIndex >= len(keys) {
+		return refreshedChannel, credential, errors.New("Codex OAuth 凭证缺少 access_token，自动刷新失败: refreshed credential index out of range")
+	}
+	refreshedCredential, err := parseCodexProbeCredential(keys[credentialIndex])
+	if err != nil {
+		return refreshedChannel, credential, fmt.Errorf("Codex OAuth 凭证缺少 access_token，自动刷新失败: %w", err)
+	}
+	return refreshedChannel, refreshedCredential, nil
 }
 
 func ProbeCodexOAuthAccountCapabilities(ctx context.Context, channel *model.Channel, credentialIndex int, options CodexCapabilityProbeOptions) (CodexCapabilityProbeResult, error) {
@@ -72,6 +107,10 @@ func ProbeCodexOAuthAccountCapabilities(ctx context.Context, channel *model.Chan
 		return CodexCapabilityProbeResult{}, errors.New("账号索引超出范围")
 	}
 	credential, err := parseCodexProbeCredential(keys[credentialIndex])
+	if err != nil {
+		return CodexCapabilityProbeResult{}, err
+	}
+	channel, credential, err = refreshCodexProbeCredentialIfNeeded(ctx, channel, credentialIndex, credential)
 	if err != nil {
 		return CodexCapabilityProbeResult{}, err
 	}
@@ -195,6 +234,10 @@ func ProbeCodexOAuthPlatformCapabilities(ctx context.Context, channel *model.Cha
 		return CodexCapabilityProbeResult{}, errors.New("账号索引超出范围")
 	}
 	credential, err := parseCodexProbeCredential(keys[credentialIndex])
+	if err != nil {
+		return CodexCapabilityProbeResult{}, err
+	}
+	channel, credential, err = refreshCodexProbeCredentialIfNeeded(ctx, channel, credentialIndex, credential)
 	if err != nil {
 		return CodexCapabilityProbeResult{}, err
 	}
@@ -488,7 +531,7 @@ func applyCodexAccountUsageLimitWithCooldown(capability model.ChannelAccountCapa
 }
 
 func codexProbeCredentialProxy(channel *model.Channel, credentialIndex int) (int, string, error) {
-	if channel == nil || channel.ChannelInfo.MultiKeyProxyIDs == nil {
+	if channel == nil || channel.ChannelInfo.MultiKeyProxyIDs == nil || credentialIndex < 0 || credentialIndex >= len(channel.ChannelInfo.MultiKeyProxyIDs) {
 		return 0, "", nil
 	}
 	proxyID := channel.ChannelInfo.MultiKeyProxyIDs[credentialIndex]

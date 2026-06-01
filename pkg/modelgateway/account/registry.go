@@ -31,6 +31,7 @@ type ChannelAccount struct {
 	AccountIdentity core.AccountIdentity `json:"account_identity"`
 	CredentialRef   core.CredentialRef   `json:"credential_ref"`
 	ProxyRef        core.ProxyRef        `json:"proxy_ref,omitempty"`
+	CodexEnvironmentID int                `json:"codex_environment_id,omitempty"`
 	ChannelID       int                  `json:"channel_id"`
 	CredentialIndex int                  `json:"credential_index"`
 	KeyEnabled      bool                 `json:"key_enabled"`
@@ -77,6 +78,7 @@ func (r *Registry) AccountsForChannel(channel *model.Channel) []ChannelAccount {
 			AccountIdentity: identity,
 			CredentialRef:   credentialRef,
 			ProxyRef:        proxyRefForChannelKey(channel, idx),
+			CodexEnvironmentID: codexEnvironmentIDForChannelKey(channel, idx),
 			ChannelID:       channel.Id,
 			CredentialIndex: idx,
 			KeyEnabled:      enabled,
@@ -162,6 +164,17 @@ func proxyRefForChannelKey(channel *model.Channel, index int) core.ProxyRef {
 		return core.ProxyRef{}
 	}
 	return core.ProxyRef{ProxyID: proxyID}
+}
+
+func codexEnvironmentIDForChannelKey(channel *model.Channel, index int) int {
+	if channel == nil || channel.ChannelInfo.MultiKeyCodexEnvironmentIDs == nil {
+		return 0
+	}
+	environmentID := channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[index]
+	if environmentID <= 0 {
+		return 0
+	}
+	return environmentID
 }
 
 func providerForChannel(channel *model.Channel) string {

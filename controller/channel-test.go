@@ -142,6 +142,25 @@ func isOAuthJSONAccountKey(raw string) bool {
 	return strings.TrimSpace(oauthKey.AccessToken) != "" || strings.TrimSpace(oauthKey.RefreshToken) != ""
 }
 
+func channelTestOAuthJSONCredentialNeedsAccessRefresh(channel *model.Channel, options channelTestOptions) (int, bool) {
+	credentialIndex, ok := channelTestOAuthJSONCredentialIndex(channel, options)
+	if !ok {
+		return 0, false
+	}
+	keys := channel.GetKeys()
+	if credentialIndex < 0 || credentialIndex >= len(keys) {
+		return 0, false
+	}
+	oauthKey, err := service.ParseCodexOAuthKey(strings.TrimSpace(keys[credentialIndex]))
+	if err != nil || oauthKey == nil {
+		return 0, false
+	}
+	if strings.TrimSpace(oauthKey.AccessToken) != "" {
+		return credentialIndex, false
+	}
+	return credentialIndex, strings.TrimSpace(oauthKey.RefreshToken) != ""
+}
+
 func probeChannelAccountCapabilities(c *gin.Context, channel *model.Channel, credentialIndex int, testModel string) (accountCapabilityProbeResult, error) {
 	if channel == nil {
 		return accountCapabilityProbeResult{}, errors.New("渠道不存在")
@@ -311,7 +330,24 @@ func probePlatformAccountCapabilities(c *gin.Context, channel *model.Channel, cr
 }
 
 func runChannelCapabilityProbeTest(c *gin.Context, channel *model.Channel, testModel string, endpointType string, isStream bool, options channelTestOptions) (*model.Channel, testResult) {
+	preRefreshed := false
+	if refreshedChannel, refreshed, refreshErr := refreshOAuthJSONAccountBeforeChannelTestIfNeeded(c, channel, options); refreshErr != nil {
+		return channel, testResult{
+			localErr:   refreshErr,
+			refreshErr: refreshErr,
+		}
+	} else if refreshed {
+		channel = refreshedChannel
+		preRefreshed = true
+	}
 	result := testChannel(channel, testModel, endpointType, isStream, options)
+	if retriedChannel, retriedResult, ok := retryChannelTestWithoutStreamOptions(channel, result, testModel, endpointType, isStream, options); ok {
+		channel = retriedChannel
+		result = retriedResult
+	}
+	if preRefreshed {
+		result.refreshed = true
+	}
 	if result.newAPIError == nil || !channelTestUsesOAuthJSONCredential(channel, options) || !shouldRefreshOAuthJSONAccountAfterChannelTest(result) {
 		return channel, result
 	}
@@ -583,6 +619,7 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 
 	info.IsChannelTest = true
 	info.InitChannelMeta(c)
+	applyChannelTestStreamOptionsSupport(info, request, isStream)
 
 	if capability, ok := channelTestAccountCapability(channel, testOptions); ok {
 		common.SysLog(fmt.Sprintf(
@@ -915,6 +952,38 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		localErr:    nil,
 		newAPIError: nil,
 	}
+}
+
+func applyChannelTestStreamOptionsSupport(info *relaycommon.RelayInfo, request dto.Request, isStream bool) {
+	req, ok := request.(*dto.GeneralOpenAIRequest)
+	if !ok || req == nil {
+		return
+	}
+	if !isStream || info == nil || !info.SupportStreamOptions {
+		req.StreamOptions = nil
+	}
+}
+
+func retryChannelTestWithoutStreamOptions(channel *model.Channel, result testResult, testModel string, endpointType string, isStream bool, options channelTestOptions) (*model.Channel, testResult, bool) {
+	if channel == nil || result.newAPIError == nil || !isUnsupportedStreamOptionsError(result.newAPIError) {
+		return channel, result, false
+	}
+	credentialIndex := 0
+	if result.context != nil {
+		credentialIndex = common.GetContextKeyInt(result.context, constant.ContextKeyChannelMultiKeyIndex)
+	} else if options.CredentialIndex != nil {
+		credentialIndex = *options.CredentialIndex
+	}
+	updated, err := service.MarkChannelAccountStreamOptionsCapability(channel.Id, credentialIndex, false, result.newAPIError.Error())
+	if err != nil || !updated {
+		return channel, result, false
+	}
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	refreshed, err := model.GetChannelById(channel.Id, true)
+	if err != nil {
+		return channel, result, false
+	}
+	return refreshed, testChannel(refreshed, testModel, endpointType, isStream, options), true
 }
 
 func firstChannelTestOptions(options []channelTestOptions) channelTestOptions {
@@ -1296,8 +1365,37 @@ func TestChannel(c *gin.Context) {
 	if !ok {
 		return
 	}
+	preRefreshed := false
+	if refreshedChannel, refreshed, refreshErr := refreshOAuthJSONAccountBeforeChannelTestIfNeeded(c, channel, testOptions); refreshErr != nil {
+		common.SysError(fmt.Sprintf(
+			"channel test oauth json pre-refresh failed: channel_id=%d name=%s err=%v",
+			channel.Id,
+			channel.Name,
+			refreshErr,
+		))
+		result := testResult{
+			localErr:   refreshErr,
+			refreshErr: refreshErr,
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": friendlyChannelTestErrorMessage(result),
+			"time":    0.0,
+		})
+		return
+	} else if refreshed {
+		channel = refreshedChannel
+		preRefreshed = true
+	}
 	tik := time.Now()
 	result := testChannel(channel, testModel, endpointType, isStream, testOptions)
+	if retriedChannel, retriedResult, ok := retryChannelTestWithoutStreamOptions(channel, result, testModel, endpointType, isStream, testOptions); ok {
+		channel = retriedChannel
+		result = retriedResult
+	}
+	if preRefreshed {
+		result.refreshed = true
+	}
 	if result.newAPIError != nil &&
 		channelTestUsesOAuthJSONCredential(channel, testOptions) &&
 		shouldRefreshOAuthJSONAccountAfterChannelTest(result) {
@@ -1381,7 +1479,7 @@ func friendlyChannelTestErrorMessage(result testResult) string {
 		if strings.Contains(refreshText, "status=401") || strings.Contains(refreshText, "unauthorized") {
 			return "账号授权已失效，自动刷新也失败了。refresh_token 可能已失效，请重新从 xauto 下载账号数据后导入。"
 		}
-		return "账号授权已失效，自动刷新失败。请检查账号代理是否可用，或重新从 xauto 下载账号数据后导入。"
+		return "账号凭证需要刷新，但自动刷新失败。请检查账号代理是否可用，或重新从 xauto 下载账号数据后导入。"
 	}
 
 	if strings.Contains(lower, "api.responses.write") || strings.Contains(lower, "missing scopes") || strings.Contains(lower, "insufficient permissions") {
@@ -1390,7 +1488,7 @@ func friendlyChannelTestErrorMessage(result testResult) string {
 	if strings.Contains(lower, "insufficient_quota") || strings.Contains(lower, "exceeded your current quota") {
 		return "Platform API 额度不足或未开通计费；这不影响 Codex backend 调度。请使用“检测 Codex 能力”确认账号可用性。"
 	}
-	if strings.Contains(lower, "token_invalidated") || strings.Contains(lower, "authentication token has been invalidated") {
+	if isOAuthTokenInvalidatedText(lower) {
 		if result.refreshed {
 			return "账号授权已失效，自动刷新后仍不可用。请重新从 xauto 下载账号数据后导入。"
 		}
@@ -1449,8 +1547,14 @@ func shouldRefreshOAuthJSONAccountAfterChannelTest(result testResult) bool {
 		return true
 	}
 	message := strings.ToLower(result.newAPIError.Error())
-	return strings.Contains(message, "token_invalidated") ||
-		strings.Contains(message, "authentication token has been invalidated")
+	return isOAuthTokenInvalidatedText(message)
+}
+
+func isOAuthTokenInvalidatedText(lower string) bool {
+	return strings.Contains(lower, "token_invalidated") ||
+		strings.Contains(lower, "token_revoked") ||
+		strings.Contains(lower, "authentication token has been invalidated") ||
+		strings.Contains(lower, "invalidated oauth token")
 }
 
 func refreshOAuthJSONAccountAfterChannelTest(c *gin.Context, channel *model.Channel, options channelTestOptions) (*model.Channel, error) {
@@ -1477,6 +1581,17 @@ func refreshOAuthJSONAccountAfterChannelTest(c *gin.Context, channel *model.Chan
 		return nil, errors.New("refreshed channel is empty")
 	}
 	return refreshedChannel, nil
+}
+
+func refreshOAuthJSONAccountBeforeChannelTestIfNeeded(c *gin.Context, channel *model.Channel, options channelTestOptions) (*model.Channel, bool, error) {
+	if _, needed := channelTestOAuthJSONCredentialNeedsAccessRefresh(channel, options); !needed {
+		return channel, false, nil
+	}
+	refreshedChannel, err := refreshOAuthJSONAccountAfterChannelTest(c, channel, options)
+	if err != nil {
+		return channel, false, err
+	}
+	return refreshedChannel, true, nil
 }
 
 func channelTestCredentialProxyURL(channel *model.Channel, credentialIndex int) (string, error) {

@@ -96,7 +96,7 @@ func handleProxyBridgeResponse(c *gin.Context, info *relaycommon.RelayInfo, resp
 		return handleProxyBridgeStreamResponse(c, info, resp, bridge, decision)
 	}
 	defer service.CloseResponseBodyGracefully(resp)
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := service.ReadAllWithJSONKeepAlive(c, resp)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
@@ -120,7 +120,7 @@ func handleProxyBridgeResponse(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 		result.DownstreamBody = body
 	}
-	service.IOCopyBytesGracefully(c, resp, result.DownstreamBody)
+	service.IOCopyBytesWithJSONKeepAliveGracefully(c, resp, result.DownstreamBody)
 	return response.Usage, nil
 }
 

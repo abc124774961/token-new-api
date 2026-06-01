@@ -306,6 +306,9 @@ func migrateDB() error {
 	if err := ensureRuntimeSnapshotRecoveryColumns(); err != nil {
 		return err
 	}
+	if err := ensureRuntimeSnapshotScoreAnomalyColumns(); err != nil {
+		return err
+	}
 	if err := ensureModelGatewayAccountScopeColumns(); err != nil {
 		return err
 	}
@@ -328,6 +331,8 @@ func migrateDB() error {
 		&ModelGatewayChannelCostProfile{},
 		&ModelGatewayRequestCostSummary{},
 		&ChannelAccountUsageEvent{},
+		&ChannelInvalidAccount{},
+		&ChannelDiscardedAccount{},
 		&ModelGatewayDynamicBillingBaseline{},
 		&ModelGatewayRuntimeSnapshot{},
 		&ModelGatewayScoreEvent{},
@@ -361,6 +366,7 @@ func migrateDB() error {
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
 		&PerfMetric{},
+		&CodexApplicationEnvironment{},
 	)
 	if err != nil {
 		return err
@@ -379,6 +385,9 @@ func migrateDB() error {
 		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
 			return err
 		}
+	}
+	if err := SeedDefaultCodexApplicationEnvironments(); err != nil {
+		return err
 	}
 	if err := dropDeprecatedModelGatewayCostProfileIndex(); err != nil {
 		return err
@@ -408,6 +417,8 @@ func migrateDBFast() error {
 		{&ModelGatewayChannelCostProfile{}, "ModelGatewayChannelCostProfile"},
 		{&ModelGatewayRequestCostSummary{}, "ModelGatewayRequestCostSummary"},
 		{&ChannelAccountUsageEvent{}, "ChannelAccountUsageEvent"},
+		{&ChannelInvalidAccount{}, "ChannelInvalidAccount"},
+		{&ChannelDiscardedAccount{}, "ChannelDiscardedAccount"},
 		{&ModelGatewayDynamicBillingBaseline{}, "ModelGatewayDynamicBillingBaseline"},
 		{&ModelGatewayRuntimeSnapshot{}, "ModelGatewayRuntimeSnapshot"},
 		{&ModelGatewayScoreEvent{}, "ModelGatewayScoreEvent"},
@@ -441,6 +452,7 @@ func migrateDBFast() error {
 		{&CustomOAuthProvider{}, "CustomOAuthProvider"},
 		{&UserOAuthBinding{}, "UserOAuthBinding"},
 		{&PerfMetric{}, "PerfMetric"},
+		{&CodexApplicationEnvironment{}, "CodexApplicationEnvironment"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
@@ -479,6 +491,9 @@ func migrateDBFast() error {
 		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
 			return err
 		}
+	}
+	if err := SeedDefaultCodexApplicationEnvironments(); err != nil {
+		return err
 	}
 	if err := dropDeprecatedModelGatewayCostProfileIndex(); err != nil {
 		return err
@@ -812,6 +827,31 @@ func ensureRuntimeSnapshotRecoveryColumns() error {
 		{"probe_recovery_success_count", "ProbeRecoverySuccessCount"},
 		{"probe_recovery_required", "ProbeRecoveryRequired"},
 		{"probe_trigger_reason", "ProbeTriggerReason"},
+	}
+	for _, column := range columns {
+		if err := addColumnIfMissing(&ModelGatewayRuntimeSnapshot{}, column.dbName, column.fieldName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureRuntimeSnapshotScoreAnomalyColumns() error {
+	if DB == nil || !DB.Migrator().HasTable(&ModelGatewayRuntimeSnapshot{}) {
+		return nil
+	}
+	columns := []struct {
+		dbName    string
+		fieldName string
+	}{
+		{"recoverable_quality_score", "RecoverableQualityScore"},
+		{"recoverable_quality_baseline", "RecoverableQualityBaseline"},
+		{"recoverable_quality_baseline_samples", "RecoverableQualityBaselineSamples"},
+		{"recoverable_quality_drop_ratio", "RecoverableQualityDropRatio"},
+		{"recoverable_quality_item_baselines", "RecoverableQualityItemBaselines"},
+		{"probe_recovery_phase", "ProbeRecoveryPhase"},
+		{"probe_fast_recovery_attempts", "ProbeFastRecoveryAttempts"},
+		{"probe_anomaly_trigger_items", "ProbeAnomalyTriggerItems"},
 	}
 	for _, column := range columns {
 		if err := addColumnIfMissing(&ModelGatewayRuntimeSnapshot{}, column.dbName, column.fieldName); err != nil {

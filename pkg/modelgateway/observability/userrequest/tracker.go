@@ -36,6 +36,7 @@ type Event struct {
 type Record struct {
 	ID                        int      `json:"id"`
 	CreatedAt                 int64    `json:"created_at"`
+	UpdatedAt                 int64    `json:"updated_at"`
 	CompletedAt               int64    `json:"completed_at"`
 	RequestID                 string   `json:"request_id"`
 	RequestedModel            string   `json:"requested_model"`
@@ -62,12 +63,19 @@ type Record struct {
 	Status                    string   `json:"status,omitempty"`
 }
 
+type FirstByteObservation struct {
+	RequestID  string
+	ObservedAt time.Time
+	TTFT       time.Duration
+}
+
 type Observer func(Event)
 
 type Tracker struct {
 	mu         sync.RWMutex
 	pending    map[string]Record
 	finished   map[string]int64
+	firstBytes map[string]FirstByteObservation
 	maxPending int
 	ttl        time.Duration
 	observerMu sync.RWMutex
@@ -86,6 +94,7 @@ func NewTracker(maxPending int, ttl time.Duration) *Tracker {
 	return &Tracker{
 		pending:    map[string]Record{},
 		finished:   map[string]int64{},
+		firstBytes: map[string]FirstByteObservation{},
 		maxPending: maxPending,
 		ttl:        ttl,
 	}
@@ -101,6 +110,10 @@ func Start(record core.DispatchRecord) {
 
 func Finish(result core.AttemptResult, summary *model.ModelGatewayUserRequestSummary) {
 	DefaultTracker.Finish(result, summary)
+}
+
+func ObserveFirstByte(observation FirstByteObservation) {
+	DefaultTracker.ObserveFirstByte(observation)
 }
 
 func Snapshot(limit int, filters Filters) []Record {
@@ -136,6 +149,7 @@ func (t *Tracker) Start(record core.DispatchRecord) {
 	}
 	item := Record{
 		CreatedAt:        now,
+		UpdatedAt:        now,
 		CompletedAt:      0,
 		RequestID:        strings.TrimSpace(record.Request.RequestID),
 		RequestedModel:   strings.TrimSpace(record.Request.ModelName),
@@ -157,6 +171,10 @@ func (t *Tracker) Start(record core.DispatchRecord) {
 		t.mu.Unlock()
 		return
 	}
+	if observation, ok := t.firstBytes[item.RequestID]; ok {
+		applyFirstByteObservation(&item, observation)
+		delete(t.firstBytes, item.RequestID)
+	}
 	t.pending[item.RequestID] = item
 	t.pruneOverflowLocked()
 	t.mu.Unlock()
@@ -173,9 +191,12 @@ func (t *Tracker) Finish(result core.AttemptResult, summary *model.ModelGatewayU
 	pending, hadPending := t.pending[requestID]
 	if modelGatewayAttemptFinalized(result) {
 		delete(t.pending, requestID)
+		delete(t.firstBytes, requestID)
 		t.finished[requestID] = time.Now().Unix()
 	} else {
 		if hadPending {
+			now := time.Now().Unix()
+			pending.UpdatedAt = now
 			pending.Attempts = maxInt(pending.Attempts, result.AttemptIndex+1)
 			if pending.RequestedModel == "" {
 				pending.RequestedModel = strings.TrimSpace(result.ModelName)
@@ -206,6 +227,36 @@ func (t *Tracker) Finish(result core.AttemptResult, summary *model.ModelGatewayU
 	t.notify(Event{Kind: EventFinished, Record: record})
 }
 
+func (t *Tracker) ObserveFirstByte(observation FirstByteObservation) {
+	if t == nil || strings.TrimSpace(observation.RequestID) == "" {
+		return
+	}
+	requestID := strings.TrimSpace(observation.RequestID)
+	observedAt := observation.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+	ttftMs := observation.TTFT.Milliseconds()
+	if ttftMs <= 0 {
+		return
+	}
+
+	t.mu.Lock()
+	pending, hadPending := t.pending[requestID]
+	if !hadPending {
+		if _, done := t.finished[requestID]; !done {
+			t.firstBytes[requestID] = observation
+		}
+		t.mu.Unlock()
+		return
+	}
+	applyFirstByteObservation(&pending, observation)
+	t.pending[requestID] = pending
+	t.mu.Unlock()
+
+	t.notify(Event{Kind: EventStarted, Record: pending})
+}
+
 func (t *Tracker) Snapshot(limit int, filters Filters) []Record {
 	if t == nil {
 		return []Record{}
@@ -221,8 +272,10 @@ func (t *Tracker) Snapshot(limit int, filters Filters) []Record {
 	}
 	t.mu.Unlock()
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].CreatedAt != items[j].CreatedAt {
-			return items[i].CreatedAt > items[j].CreatedAt
+		left := recordUpdatedAt(items[i])
+		right := recordUpdatedAt(items[j])
+		if left != right {
+			return left > right
 		}
 		return items[i].RequestID > items[j].RequestID
 	})
@@ -256,6 +309,16 @@ func (t *Tracker) pruneLocked(now time.Time) {
 			delete(t.finished, requestID)
 		}
 	}
+	for requestID, observation := range t.firstBytes {
+		observedAt := observation.ObservedAt
+		if observedAt.IsZero() {
+			delete(t.firstBytes, requestID)
+			continue
+		}
+		if observedAt.Unix() < cutoff {
+			delete(t.firstBytes, requestID)
+		}
+	}
 }
 
 func (t *Tracker) pruneOverflowLocked() {
@@ -267,8 +330,10 @@ func (t *Tracker) pruneOverflowLocked() {
 		items = append(items, item)
 	}
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].CreatedAt != items[j].CreatedAt {
-			return items[i].CreatedAt > items[j].CreatedAt
+		left := recordUpdatedAt(items[i])
+		right := recordUpdatedAt(items[j])
+		if left != right {
+			return left > right
 		}
 		return items[i].RequestID > items[j].RequestID
 	})
@@ -310,9 +375,17 @@ func (f Filters) Match(record Record) bool {
 func userRequestRecordFromResult(result core.AttemptResult, summary *model.ModelGatewayUserRequestSummary, pending Record) Record {
 	if summary != nil {
 		clientAborted := userRequestSummaryClientAborted(summary)
+		updatedAt := summary.UpdatedAt
+		if updatedAt <= 0 {
+			updatedAt = summary.CompletedAt
+		}
+		if updatedAt <= 0 {
+			updatedAt = summary.CreatedAt
+		}
 		return Record{
 			ID:                        summary.Id,
 			CreatedAt:                 summary.CreatedAt,
+			UpdatedAt:                 updatedAt,
 			CompletedAt:               summary.CompletedAt,
 			RequestID:                 summary.RequestId,
 			RequestedModel:            summary.RequestedModel,
@@ -344,6 +417,7 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 	completedAt := time.Now().Unix()
 	record := Record{
 		CreatedAt:                 pending.CreatedAt,
+		UpdatedAt:                 completedAt,
 		CompletedAt:               completedAt,
 		RequestID:                 strings.TrimSpace(result.RequestID),
 		RequestedModel:            strings.TrimSpace(result.ModelName),
@@ -403,6 +477,32 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 		record.FinalChannelName = pending.FinalChannelName
 	}
 	return record
+}
+
+func recordUpdatedAt(record Record) int64 {
+	if record.UpdatedAt > 0 {
+		return record.UpdatedAt
+	}
+	if record.CompletedAt > 0 {
+		return record.CompletedAt
+	}
+	return record.CreatedAt
+}
+
+func applyFirstByteObservation(record *Record, observation FirstByteObservation) {
+	if record == nil {
+		return
+	}
+	observedAt := observation.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+	ttftMs := observation.TTFT.Milliseconds()
+	if ttftMs <= 0 {
+		return
+	}
+	record.UpdatedAt = observedAt.Unix()
+	record.TTFTMs = ttftMs
 }
 
 func userRequestResultDuration(result core.AttemptResult) time.Duration {

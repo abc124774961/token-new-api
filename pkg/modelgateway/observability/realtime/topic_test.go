@@ -185,6 +185,44 @@ func TestTopicPublishesProcessingUserRequestDelta(t *testing.T) {
 	require.Equal(t, "low_score", delta.UserRequestsRecent[0].ProbeReason)
 }
 
+func TestMergeUserRequestRealtimeRecordsSortsByUpdatedAt(t *testing.T) {
+	merged := mergeUserRequestRealtimeRecords(
+		[]controller.ModelGatewayUserRequestRecord{
+			{
+				RequestID:   "req-completed-newer",
+				CreatedAt:   100,
+				UpdatedAt:   120,
+				CompletedAt: 120,
+				Status:      "success",
+			},
+			{
+				RequestID:   "req-completed-older",
+				CreatedAt:   100,
+				UpdatedAt:   110,
+				CompletedAt: 110,
+				Status:      "success",
+			},
+		},
+		[]userrequest.Record{
+			{
+				RequestID: "req-processing-first-byte",
+				CreatedAt: 100,
+				UpdatedAt: 125,
+				TTFTMs:    1200,
+				Status:    userrequest.StatusProcessing,
+			},
+		},
+		10,
+	)
+
+	require.Len(t, merged, 3)
+	require.Equal(t, "req-processing-first-byte", merged[0].RequestID)
+	require.Equal(t, int64(125), merged[0].UpdatedAt)
+	require.Equal(t, int64(1200), merged[0].TTFTMs)
+	require.Equal(t, "req-completed-newer", merged[1].RequestID)
+	require.Equal(t, "req-completed-older", merged[2].RequestID)
+}
+
 func TestTopicPublishesHealthProbeUserRequestDeltaByDefault(t *testing.T) {
 	topic := NewTopic()
 	defer topic.Close()

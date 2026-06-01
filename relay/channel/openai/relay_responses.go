@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -26,7 +25,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 
 	// read response body
 	var responsesResponse dto.OpenAIResponsesResponse
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := service.ReadAllWithJSONKeepAlive(c, resp)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
@@ -47,7 +46,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	responseBody = normalizeOpenAIJSONBodyModel(info, responseBody)
 
 	// 写入新的 response body
-	service.IOCopyBytesGracefully(c, resp, responseBody)
+	service.IOCopyBytesWithJSONKeepAliveGracefully(c, resp, responseBody)
 
 	// compute usage
 	usage := dto.Usage{}
@@ -286,7 +285,7 @@ func OaiResponsesStreamAsNonStreamHandler(c *gin.Context, info *relaycommon.Rela
 	}
 	resp.Header.Set("Content-Type", "application/json")
 	resp.Header.Del("Transfer-Encoding")
-	service.IOCopyBytesGracefully(c, resp, responseBody)
+	service.IOCopyBytesWithJSONKeepAliveGracefully(c, resp, responseBody)
 	markRelayEmptyOutput(c, info, usage, outputText.String())
 	return usage, nil
 }

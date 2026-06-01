@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -673,6 +674,19 @@ func TestPingDataSuppressesPreFirstByteDuringAttemptWatchdog(t *testing.T) {
 	MarkRelayResponseStarted(c)
 	require.NoError(t, PingData(c))
 	assert.Contains(t, recorder.Body.String(), ": PING")
+}
+
+func TestDownstreamKeepAliveDataDoesNotSuppressPreFirstByte(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	SetRelayAttemptControl(c, NewRelayAttemptControl(context.Background()))
+	t.Cleanup(func() { ClearRelayAttemptControl(c) })
+
+	require.NoError(t, DownstreamKeepAliveData(c))
+	assert.Contains(t, recorder.Body.String(), ": keep-alive")
+	assert.True(t, RelayDownstreamStarted(c))
+	assert.Equal(t, 1, common.GetContextKeyInt(c, constant.ContextKeyRelayDownstreamKeepAliveCount))
 }
 
 func TestStreamScannerHandler_StreamStatus_SoftErrors(t *testing.T) {

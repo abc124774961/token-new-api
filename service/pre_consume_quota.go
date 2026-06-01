@@ -3,6 +3,8 @@ package service
 import (
 	"fmt"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -13,6 +15,10 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 )
+
+const insufficientUserQuotaTokenCooldown = 30 * time.Second
+
+var insufficientUserQuotaTokenCooldowns sync.Map // token_id -> time.Time
 
 func ReturnPreConsumedQuota(c *gin.Context, relayInfo *relaycommon.RelayInfo) {
 	if relayInfo.FinalPreConsumedQuota != 0 {
@@ -31,16 +37,27 @@ func ReturnPreConsumedQuota(c *gin.Context, relayInfo *relaycommon.RelayInfo) {
 // PreConsumeQuota checks if the user has enough quota to pre-consume.
 // It returns the pre-consumed quota if successful, or an error if not.
 func PreConsumeQuota(c *gin.Context, preConsumedQuota int, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
+	if relayInfo != nil && relayInfo.TokenId > 0 {
+		if untilValue, ok := insufficientUserQuotaTokenCooldowns.Load(relayInfo.TokenId); ok {
+			if until, ok := untilValue.(time.Time); ok && until.After(time.Now()) {
+				return types.NewErrorWithStatusCode(fmt.Errorf("用户额度不足，请充值后重试（短时间内已拦截重复请求）"), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			}
+			insufficientUserQuotaTokenCooldowns.Delete(relayInfo.TokenId)
+		}
+	}
 	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 	}
 	if userQuota <= 0 {
-		return types.NewErrorWithStatusCode(fmt.Errorf("用户额度不足, 剩余额度: %s", logger.FormatQuota(userQuota)), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+		markInsufficientUserQuotaTokenCooldown(relayInfo)
+		return types.NewErrorWithStatusCode(fmt.Errorf("用户额度不足，请充值后重试，剩余额度: %s", logger.FormatQuota(userQuota)), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 	}
 	if userQuota-preConsumedQuota < 0 {
-		return types.NewErrorWithStatusCode(fmt.Errorf("预扣费额度失败, 用户剩余额度: %s, 需要预扣费额度: %s", logger.FormatQuota(userQuota), logger.FormatQuota(preConsumedQuota)), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+		markInsufficientUserQuotaTokenCooldown(relayInfo)
+		return types.NewErrorWithStatusCode(fmt.Errorf("用户额度不足，请充值后重试，剩余额度: %s, 需要预扣费额度: %s", logger.FormatQuota(userQuota), logger.FormatQuota(preConsumedQuota)), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 	}
+	clearInsufficientUserQuotaTokenCooldown(relayInfo)
 
 	trustQuota := common.GetTrustQuota()
 
@@ -76,4 +93,18 @@ func PreConsumeQuota(c *gin.Context, preConsumedQuota int, relayInfo *relaycommo
 	}
 	relayInfo.FinalPreConsumedQuota = preConsumedQuota
 	return nil
+}
+
+func markInsufficientUserQuotaTokenCooldown(relayInfo *relaycommon.RelayInfo) {
+	if relayInfo == nil || relayInfo.TokenId <= 0 {
+		return
+	}
+	insufficientUserQuotaTokenCooldowns.Store(relayInfo.TokenId, time.Now().Add(insufficientUserQuotaTokenCooldown))
+}
+
+func clearInsufficientUserQuotaTokenCooldown(relayInfo *relaycommon.RelayInfo) {
+	if relayInfo == nil || relayInfo.TokenId <= 0 {
+		return
+	}
+	insufficientUserQuotaTokenCooldowns.Delete(relayInfo.TokenId)
 }

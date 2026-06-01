@@ -345,6 +345,73 @@ function getProbeCountdownSeconds(record, nowTick, generatedAt) {
   return 0;
 }
 
+function buildProbeRuntimeKey(record = {}) {
+  const runtimeKey = getRuntimeKey(record);
+  const credentialIndex = Number(
+    record.credential_index ?? runtimeKey.credential_index,
+  );
+  const payload = {
+    requested_model: normalizedIdentityValue(
+      record.requested_model,
+      runtimeKey.requested_model,
+    ),
+    upstream_model: normalizedIdentityValue(record.upstream_model, runtimeKey.upstream_model),
+    channel_id: Number(record.channel_id || runtimeKey.channel_id || 0),
+    resource_id: normalizedIdentityValue(record.resource_id, runtimeKey.resource_id),
+    resource_type: normalizedIdentityValue(record.resource_type, runtimeKey.resource_type),
+    account_id: normalizedIdentityValue(record.account_id, runtimeKey.account_id),
+    account_type: normalizedIdentityValue(record.account_type, runtimeKey.account_type),
+    brand: normalizedIdentityValue(record.brand, runtimeKey.brand),
+    provider: normalizedIdentityValue(record.provider, runtimeKey.provider),
+    group: normalizedIdentityValue(record.group, runtimeKey.group),
+    endpoint_type: normalizedIdentityValue(record.endpoint_type, runtimeKey.endpoint_type),
+    capability_fingerprint: normalizedIdentityValue(
+      record.capability_fingerprint,
+      runtimeKey.capability_fingerprint,
+    ),
+    credential_subject_fingerprint: normalizedIdentityValue(
+      record.credential_subject_fingerprint,
+      runtimeKey.credential_subject_fingerprint,
+    ),
+    credential_fingerprint: normalizedIdentityValue(
+      record.credential_fingerprint,
+      runtimeKey.credential_fingerprint,
+    ),
+  };
+  if (Number.isFinite(credentialIndex) && credentialIndex >= 0) {
+    payload.credential_index = Math.floor(credentialIndex);
+  }
+  return Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== '' && value !== 0),
+  );
+}
+
+function primaryProbeReason(record = {}) {
+  const reason = String(record.probe_trigger_reason || '').trim();
+  if (reason) return reason;
+  if (Array.isArray(record.reasons) && record.reasons.length > 0) {
+    return String(record.reasons[0]?.key || record.reasons[0] || '').trim();
+  }
+  if (record.circuit_state === 'half_open') return 'circuit_half_open';
+  if (record.failure_avoidance) return 'failure_avoidance';
+  if (record.probe_recovery_pending) return 'low_score';
+  return 'low_score';
+}
+
+function isRecoveryProbeRecord(record = {}) {
+  const reason = primaryProbeReason(record);
+  return Boolean(
+    record.probe_recovery_pending ||
+      record.failure_avoidance ||
+      record.probe_recovery_phase ||
+      record.circuit_state === 'half_open' ||
+      reason === 'failure_avoidance' ||
+      reason === 'timeout_recovery' ||
+      reason === 'circuit_half_open' ||
+      reason === 'score_anomaly_fast_probe',
+  );
+}
+
 function getRuntimeHealthMeta(status, t) {
   switch (status) {
     case 'circuit_open':
@@ -390,6 +457,7 @@ function getReasonMeta(reason, t) {
       cooldown: 'orange',
       failure_avoidance: 'orange',
       probe_recovery_pending: 'cyan',
+      score_anomaly_fast_probe: 'orange',
       low_score: 'orange',
       missing_samples: 'grey',
       success_rate: 'orange',
@@ -404,6 +472,7 @@ function getReasonMeta(reason, t) {
       cooldown: t('冷却恢复探测'),
       failure_avoidance: t('近期失败恢复中'),
       probe_recovery_pending: t('恢复确认中'),
+      score_anomaly_fast_probe: t('分数异常快速恢复'),
       low_score: t('低评分'),
       missing_samples: t('历史样本不足'),
       success_rate: t('成功率偏低'),
@@ -436,6 +505,8 @@ function formatProbeReason(value, t) {
       return t('低访问激活探测');
     case 'failure_avoidance':
       return t('近期失败恢复中');
+    case 'score_anomaly_fast_probe':
+      return t('分数异常快速恢复');
     case 'cooldown':
       return t('冷却恢复探测');
     case 'long_no_success':
@@ -687,6 +758,8 @@ function scoreMetricLabel(key, t) {
       return t('成本');
     case 'group_priority':
       return t('分组');
+    case 'recoverable_quality_score':
+      return t('质量分');
     default:
       return String(key || '').trim() || t('未知');
   }
@@ -945,6 +1018,9 @@ function ScopeCell({ record, t }) {
 }
 
 function ScoreCompactCell({ record, t }) {
+  const qualityScore = Number(record.recoverable_quality_score || 0);
+  const qualityBaseline = Number(record.recoverable_quality_baseline || 0);
+  const qualityDrop = Number(record.recoverable_quality_drop_ratio || 0);
   return (
     <div className='ct-channel-health-score-stack'>
       <strong>{formatScore(record.score_total)}</strong>
@@ -956,6 +1032,17 @@ function ScoreCompactCell({ record, t }) {
           tone='blue'
           mono
         />
+        {(qualityScore > 0 || qualityBaseline > 0) && (
+          <IconBadge
+            icon={<Gauge size={12} />}
+            label={`${formatScore(qualityScore)} / ${formatScore(qualityBaseline)}`}
+            tooltip={`${t('质量分')} / ${t('历史基线')}${
+              qualityDrop > 0 ? ` · ${t('下降')} ${formatPercent(qualityDrop)}` : ''
+            }`}
+            tone={qualityDrop > 0.1 ? 'orange' : 'cyan'}
+            mono
+          />
+        )}
         <IconBadge
           icon={<CheckCircle2 size={12} />}
           label={formatScore(record.score_breakdown?.completion_rate)}
@@ -1308,6 +1395,7 @@ function ChannelHealthCheck() {
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [probeRunningKeys, setProbeRunningKeys] = useState({});
   const [probeConfig, setProbeConfig] = useState(DEFAULT_PROBE_CONFIG);
   const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
   const [filters, setFilters] = useState({
@@ -1460,6 +1548,64 @@ function ChannelHealthCheck() {
     }
   }, [loadData, probeConfig, t]);
 
+  const runImmediateProbe = useCallback(
+    async (record) => {
+      const rowKey = record?.row_key || record?.rowKey || `${record?.channel_id || 0}`;
+      const runtimeKey = buildProbeRuntimeKey(record);
+      const channelID = Number(record?.channel_id || runtimeKey.channel_id || 0);
+      if (!channelID) {
+        showError(t('渠道 ID 缺失，无法立即探活'));
+        return;
+      }
+      setProbeRunningKeys((prev) => ({ ...prev, [rowKey]: true }));
+      try {
+        const res = await API.post(
+          '/api/model_gateway/observability/health-check/probe',
+          {
+            channel_id: channelID,
+            runtime_key: runtimeKey,
+            requested_model: record?.requested_model || runtimeKey.requested_model,
+            group: record?.group || runtimeKey.group,
+            reason: primaryProbeReason(record),
+            trigger_score_items: record?.probe_trigger_score_items || [],
+          },
+          {
+            disableDuplicate: true,
+            skipErrorHandler: true,
+          },
+        );
+        const { success, message, data } = res.data || {};
+        if (!success) {
+          showError(t(message || '立即探活失败'));
+          return;
+        }
+        if (data?.success) {
+          showSuccess(
+            `${t('立即探活成功')} · ${t('首包')} ${formatLatency(data.ttft_ms)} · ${t(
+              '耗时',
+            )} ${formatLatency(data.duration_ms)}`,
+          );
+        } else {
+          showError(
+            `${t('立即探活完成但未恢复')}: ${
+              data?.error || `${t('状态码')} ${data?.status_code || '--'}`
+            }`,
+          );
+        }
+        loadData(true);
+      } catch (err) {
+        showError(`${t('立即探活失败')}: ${err?.message || ''}`);
+      } finally {
+        setProbeRunningKeys((prev) => {
+          const next = { ...prev };
+          delete next[rowKey];
+          return next;
+        });
+      }
+    },
+    [loadData, t],
+  );
+
   const pendingRows = queueData?.items || [];
   const visiblePendingRows = useMemo(
     () =>
@@ -1486,6 +1632,7 @@ function ChannelHealthCheck() {
   ).length;
   const lowScoreCount = queueData?.summary?.low_score_count || 0;
   const recoveryCount = queueData?.summary?.recovery_count || 0;
+  const scoreAnomalyCount = queueData?.summary?.score_anomaly_count || 0;
   const isolatedCount = queueData?.summary?.isolated_count || 0;
   const enabledScoreLabels = (probeConfig.probe_recoverable_score_items || [])
     .map((item) => scoreMetricLabel(item, t))
@@ -1567,6 +1714,13 @@ function ChannelHealthCheck() {
                 <div>
                   {t('当前探活原因')}: {formatProbeReason(record.probe_trigger_reason, t)}
                 </div>
+                {record.probe_trigger_reason === 'score_anomaly_fast_probe' && (
+                  <div>
+                    {t('质量分')}: {formatScore(record.recoverable_quality_score)} /{' '}
+                    {t('历史基线')}: {formatScore(record.recoverable_quality_baseline)} ·{' '}
+                    {t('下降')}: {formatPercent(record.recoverable_quality_drop_ratio)}
+                  </div>
+                )}
                 {record.probe_skip_reason === 'recent_real_request' && (
                   <div>{t('已有真实请求，跳过体检')}</div>
                 )}
@@ -1600,7 +1754,7 @@ function ChannelHealthCheck() {
       {
         title: t('探活状态'),
         dataIndex: 'last_probe_at',
-        width: 230,
+        width: 260,
         render: (_, record) => {
           const countdownSeconds = getProbeCountdownSeconds(
             record,
@@ -1608,17 +1762,23 @@ function ChannelHealthCheck() {
             queueGeneratedAt,
           );
           const countdownReady = countdownSeconds <= 0;
+          const rowKey = record?.row_key || record?.rowKey || `${record?.channel_id || 0}`;
+          const recoveryProbe = isRecoveryProbeRecord(record);
+          const running = Boolean(probeRunningKeys[rowKey]);
           return (
             <div className='ct-channel-health-stack'>
-              <div
+              <button
+                type='button'
                 className={`ct-channel-health-countdown ${
                   countdownReady ? 'ct-channel-health-countdown-ready' : ''
                 }`}
+                disabled={running}
+                onClick={() => runImmediateProbe(record)}
               >
-                <Clock3 size={12} />
-                <span>{t('下一次探测')}</span>
+                {running ? <RefreshCw size={12} className='ct-channel-health-spin' /> : <Clock3 size={12} />}
+                <span>{recoveryProbe ? t('立即恢复') : t('下一次探测')}</span>
                 <strong>{formatCountdownDuration(countdownSeconds, t)}</strong>
-              </div>
+              </button>
               <Typography.Text>
                 {t('上次探活')} {formatRelativeTime(record.last_probe_at, t)}
               </Typography.Text>
@@ -1629,6 +1789,14 @@ function ChannelHealthCheck() {
                 <Tag color='cyan' size='small' type='light'>
                   {t('恢复')} {formatNumber(record.probe_recovery_success_count)}/
                   {formatNumber(record.probe_recovery_required)}
+                </Tag>
+              )}
+              {record.probe_recovery_phase && (
+                <Tag color='orange' size='small' type='light'>
+                  {record.probe_recovery_phase === 'pending_real_confirmation'
+                    ? t('待真实请求确认')
+                    : t('快速校准中')}{' '}
+                  {formatNumber(record.probe_fast_recovery_attempts)}/5
                 </Tag>
               )}
             </div>
@@ -1642,7 +1810,7 @@ function ChannelHealthCheck() {
         render: (_, record) => <PerformanceCell record={record} t={t} />,
       },
     ],
-    [nowTick, queueGeneratedAt, t],
+    [nowTick, probeRunningKeys, queueGeneratedAt, runImmediateProbe, t],
   );
 
   const historyColumns = useMemo(
@@ -1847,15 +2015,17 @@ function ChannelHealthCheck() {
             label={t('待检查队列')}
             value={formatNumber(queueData?.summary?.pending_count)}
             detail={`${formatNumber(lowScoreCount)} ${t('低评分')} · ${formatNumber(
-              recoveryCount,
-            )} ${t('恢复中')}`}
+              scoreAnomalyCount,
+            )} ${t('分数异常')}`}
             icon={<ListChecks size={18} />}
             tone={Number(queueData?.summary?.pending_count || 0) > 0 ? 'warning' : 'success'}
           />
           <MetricCard
             label={t('恢复确认中')}
             value={formatNumber(recoveryCount)}
-            detail={`${formatNumber(isolatedCount)} ${t('隔离或冷却')}`}
+            detail={`${formatNumber(scoreAnomalyCount)} ${t('快速校准')} · ${formatNumber(
+              isolatedCount,
+            )} ${t('隔离或冷却')}`}
             icon={<ShieldCheck size={18} />}
             tone={recoveryCount > 0 ? 'info' : 'success'}
           />
@@ -1915,6 +2085,9 @@ function ChannelHealthCheck() {
           >
             <Select.Option value={ALL_STATUSES}>{t('全部')}</Select.Option>
             <Select.Option value='low_score'>{t('低评分')}</Select.Option>
+            <Select.Option value='score_anomaly_fast_probe'>
+              {t('分数异常')}
+            </Select.Option>
             <Select.Option value='recovery'>{t('恢复中')}</Select.Option>
             <Select.Option value='isolated'>{t('隔离或冷却')}</Select.Option>
           </Select>
@@ -1954,7 +2127,7 @@ function ChannelHealthCheck() {
                     pageSizeOpts: [12, 24, 48],
                   }}
                   empty={<Empty description={t('暂无待检查渠道')} />}
-                  scroll={{ x: 1775 }}
+                  scroll={{ x: 1810 }}
                 />
               </TabPane>
               <TabPane

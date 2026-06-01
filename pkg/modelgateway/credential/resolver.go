@@ -30,6 +30,7 @@ type ResolvedCredential struct {
 	Key                          string
 	CredentialIndex              int
 	ChannelIsMultiKey            bool
+	CodexEnvironmentID           int
 	CredentialSubjectFingerprint string
 	CredentialFingerprint        string
 	ProxyID                      int
@@ -120,12 +121,17 @@ func ResolveChannelCredential(channel *model.Channel, ref core.CredentialRef) (R
 	if proxyErr != nil {
 		return ResolvedCredential{}, resolverError(proxyErr, types.ErrorCodeGetChannelFailed)
 	}
+	envID := 0
+	if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {
+		envID = channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[index]
+	}
 	return ResolvedCredential{
 		Ref:                          ref,
 		ChannelID:                    channel.Id,
 		Key:                          key,
 		CredentialIndex:              index,
 		ChannelIsMultiKey:            channel.ChannelInfo.IsMultiKey,
+		CodexEnvironmentID:           envID,
 		CredentialSubjectFingerprint: ref.CredentialSubjectFingerprint,
 		CredentialFingerprint:        credentialFP,
 		ProxyID:                      proxyID,
@@ -138,6 +144,7 @@ func ApplyResolvedCredentialToContext(c *gin.Context, resolved ResolvedCredentia
 		return
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelKey, resolved.Key)
+	common.SetContextKey(c, constant.ContextKeyChannelAccountCodexEnvironmentID, resolved.CodexEnvironmentID)
 	if resolved.ProxyID > 0 && resolved.ProxyURL != "" {
 		common.SetContextKey(c, constant.ContextKeyChannelAccountProxyID, resolved.ProxyID)
 		common.SetContextKey(c, constant.ContextKeyChannelAccountProxyURL, resolved.ProxyURL)

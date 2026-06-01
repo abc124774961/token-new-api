@@ -114,8 +114,7 @@ func cohereStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		case data := <-dataChan:
 			if isFirst {
 				isFirst = false
-				info.ForceSetFirstResponseTime()
-				service.MarkChannelFirstByteObserved(c)
+				helper.ForceMarkRelayFirstResponseObserved(c, info)
 			}
 			data = strings.TrimSuffix(data, "\r")
 			var cohereResp CohereResponse

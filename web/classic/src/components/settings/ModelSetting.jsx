@@ -44,6 +44,8 @@ const ModelSetting = () => {
     'global.chat_completions_to_responses_policy': '{}',
     'general_setting.ping_interval_enabled': false,
     'general_setting.ping_interval_seconds': 60,
+    'general_setting.downstream_keepalive_enabled': true,
+    'general_setting.downstream_keepalive_interval_seconds': 55,
     'gemini.thinking_adapter_enabled': false,
     'gemini.thinking_adapter_budget_tokens_percentage': 0.6,
     'grok.violation_deduction_enabled': true,

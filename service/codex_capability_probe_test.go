@@ -21,3 +21,12 @@ func TestProbeCodexOAuthAccountCapabilitiesRequiresAccountIDForBackend(t *testin
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "account_id/chatgpt_account_id")
 }
+
+func TestParseCodexProbeCredentialKeepsRefreshTokenOnlyCardPayload(t *testing.T) {
+	credential, err := parseCodexProbeCredential(`{"account_id":"acct-card","chatgpt_account_id":"acct-card","email":"user@example.com","refresh_token":"refresh-token","type":"codex"}`)
+
+	require.NoError(t, err)
+	require.Equal(t, "acct-card", credential.AccountID)
+	require.Empty(t, credential.AccessToken)
+	require.Equal(t, "refresh-token", credential.RefreshToken)
+}

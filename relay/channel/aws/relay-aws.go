@@ -275,8 +275,7 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 	for event := range stream.Events() {
 		switch v := event.(type) {
 		case *bedrockruntimeTypes.ResponseStreamMemberChunk:
-			info.SetFirstResponseTime()
-			service.MarkChannelFirstByteObserved(c)
+			helper.MarkRelayFirstResponseObserved(c, info)
 			respErr := claude.HandleStreamResponseData(c, info, claudeInfo, string(v.Value.Bytes))
 			if respErr != nil {
 				return respErr, nil

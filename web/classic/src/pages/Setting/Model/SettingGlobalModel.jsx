@@ -72,6 +72,8 @@ const defaultGlobalSettingInputs = {
   'global.chat_completions_to_responses_policy': '{}',
   'general_setting.ping_interval_enabled': false,
   'general_setting.ping_interval_seconds': 60,
+  'general_setting.downstream_keepalive_enabled': true,
+  'general_setting.downstream_keepalive_interval_seconds': 55,
 };
 
 export default function SettingGlobalModel(props) {
@@ -398,6 +400,41 @@ export default function SettingGlobalModel(props) {
                     }
                     min={1}
                     disabled={!inputs['general_setting.ping_interval_enabled']}
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                  <Form.Switch
+                    label={t('启用CDN下游保活')}
+                    field={'general_setting.downstream_keepalive_enabled'}
+                    onChange={(value) =>
+                      setInputs({
+                        ...inputs,
+                        'general_setting.downstream_keepalive_enabled': value,
+                      })
+                    }
+                    extraText={t(
+                      '开启后，长时间无数据的流式或JSON响应会定期向客户端投递空包',
+                    )}
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                  <Form.InputNumber
+                    label={t('CDN下游保活间隔（秒）')}
+                    field={
+                      'general_setting.downstream_keepalive_interval_seconds'
+                    }
+                    onChange={(value) =>
+                      setInputs({
+                        ...inputs,
+                        'general_setting.downstream_keepalive_interval_seconds':
+                          value,
+                      })
+                    }
+                    min={5}
+                    disabled={
+                      !inputs['general_setting.downstream_keepalive_enabled']
+                    }
+                    extraText={t('建议小于CDN空闲超时时间，默认55秒')}
                   />
                 </Col>
               </Row>

@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/dto"
@@ -22,11 +23,39 @@ const (
 	reasonCircuitProbe      = "circuit_half_open"
 	reasonFailureAvoidance  = "failure_avoidance"
 	reasonTimeoutRecovery   = "timeout_recovery"
+	reasonScoreAnomaly      = core.ProbeReasonScoreAnomalyFastProbe
 	reasonCooldown          = "cooldown"
 	reasonSampling          = "sampling"
 	reasonLowTraffic        = "low_traffic"
 	reasonRecentRealRequest = "recent_real_request"
 )
+
+func NormalizeProbeReason(reason string) string {
+	switch strings.TrimSpace(reason) {
+	case reasonNoSamples:
+		return reasonNoSamples
+	case reasonLowScore:
+		return reasonLowScore
+	case reasonLongNoSuccess:
+		return reasonLongNoSuccess
+	case reasonCircuitProbe:
+		return reasonCircuitProbe
+	case reasonFailureAvoidance:
+		return reasonFailureAvoidance
+	case reasonTimeoutRecovery:
+		return reasonTimeoutRecovery
+	case reasonScoreAnomaly:
+		return reasonScoreAnomaly
+	case reasonCooldown:
+		return reasonCooldown
+	case reasonSampling:
+		return reasonSampling
+	case reasonLowTraffic:
+		return reasonLowTraffic
+	default:
+		return ""
+	}
+}
 
 type ProbeConfig struct {
 	Enabled                          bool

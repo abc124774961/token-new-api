@@ -13,6 +13,8 @@ type AccountCapability struct {
 	ResponsesWrite        *bool `json:"responses_write,omitempty"`
 	ResponsesCompactWrite *bool `json:"responses_compact_write,omitempty"`
 	ChatCompletionsWrite  *bool `json:"chat_completions_write,omitempty"`
+	StreamOptions         *bool `json:"stream_options,omitempty"`
+	ResponsesPreviousID   *bool `json:"responses_previous_id,omitempty"`
 
 	CodexBackendResponsesStreamWrite *bool `json:"codex_backend_responses_stream_write,omitempty"`
 	CodexBackendCompactWrite         *bool `json:"codex_backend_compact_write,omitempty"`
@@ -49,6 +51,7 @@ const (
 	ClassificationProxyError                 = "proxy_error"
 	ClassificationAuthError                  = "auth_error"
 	ClassificationRegionError                = "region_error"
+	ClassificationUnsupportedCapability      = "unsupported_capability"
 	ClassificationUnknown                    = "unknown"
 	ProbeSurfaceCodexBackend                 = "codex_backend"
 	ProbeSurfacePlatformAPI                  = "platform_api"
@@ -71,6 +74,18 @@ func (cap AccountCapability) HasResponsesWriteAllowed() bool {
 
 func (cap AccountCapability) HasResponsesCompactWriteAllowed() bool {
 	return cap.ResponsesCompactWrite != nil && *cap.ResponsesCompactWrite
+}
+
+func (cap AccountCapability) HasStreamOptionsDenied() bool {
+	return cap.StreamOptions != nil && !*cap.StreamOptions
+}
+
+func (cap AccountCapability) HasResponsesPreviousIDAllowed() bool {
+	return cap.ResponsesPreviousID != nil && *cap.ResponsesPreviousID
+}
+
+func (cap AccountCapability) HasResponsesPreviousIDDenied() bool {
+	return cap.ResponsesPreviousID != nil && !*cap.ResponsesPreviousID
 }
 
 func (cap AccountCapability) HasCodexBackendResponsesStreamAllowed() bool {
@@ -108,11 +123,11 @@ func (cap AccountCapability) EffectiveClassification() string {
 		}
 		return ClassificationCodexBackendAvailable
 	}
-	if strings.TrimSpace(cap.ProxyLastError) != "" {
-		return ClassificationProxyError
-	}
 	if classification := strings.TrimSpace(cap.CapabilityClassification); classification != "" {
 		return classification
+	}
+	if strings.TrimSpace(cap.ProxyLastError) != "" {
+		return ClassificationProxyError
 	}
 	return ""
 }

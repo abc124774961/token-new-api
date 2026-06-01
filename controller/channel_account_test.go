@@ -254,6 +254,22 @@ func TestListChannelAccountsIncludesSchedulingExplanation(t *testing.T) {
 	require.Contains(t, second.Scheduling.BlockingReasons, "account_disabled")
 }
 
+func TestBuildChannelAccountSchedulingExplanationKeepsAuthAheadOfProxyExitError(t *testing.T) {
+	item := ChannelAccountItem{
+		KeyEnabled: true,
+		Capabilities: &model.ChannelAccountCapability{
+			CapabilityClassification: channelcapability.ClassificationAuthError,
+			ProxyLastError:           "invalid character 'P' looking for beginning of value",
+		},
+	}
+
+	explanation := buildChannelAccountSchedulingExplanation(item)
+	require.False(t, explanation.Schedulable)
+	require.Equal(t, channelcapability.ClassificationAuthError, explanation.PrimaryReason)
+	require.Contains(t, explanation.BlockingReasons, channelcapability.ClassificationAuthError)
+	require.NotContains(t, explanation.BlockingReasons, channelcapability.ClassificationProxyError)
+}
+
 func TestListChannelAccountsSummaryCountsAvailabilityStates(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	channel := model.Channel{
@@ -479,6 +495,49 @@ func TestListChannelAccountsStatsViewUsesAccountScopedRuntime(t *testing.T) {
 	require.Equal(t, 0, items[0].Score.QueueDepth)
 	require.Equal(t, 0, items[1].Score.ActiveConcurrency)
 	require.Equal(t, 0, items[1].Score.QueueDepth)
+}
+
+func TestChannelAccountCredentialUIDDoesNotDependOnCredentialIndex(t *testing.T) {
+	account := modelgatewayaccount.ChannelAccount{
+		ChannelID:       42,
+		CredentialIndex: 0,
+		AccountIdentity: modelgatewaycore.AccountIdentity{
+			Brand:                        "openai",
+			CredentialSubjectFingerprint: "abcdef0123456789",
+			CredentialFingerprint:        "1234567890abcdef",
+		},
+		CredentialRef: modelgatewaycore.CredentialRef{
+			CredentialIndex:              0,
+			CredentialSubjectFingerprint: "abcdef0123456789",
+			CredentialFingerprint:        "1234567890abcdef",
+		},
+	}
+
+	uid := channelAccountCredentialUID(account)
+	label := channelAccountCredentialLabel(account)
+	account.CredentialIndex = 8
+	account.CredentialRef.CredentialIndex = 8
+
+	require.Equal(t, "acct-abcdef01", uid)
+	require.Equal(t, uid, channelAccountCredentialUID(account))
+	require.Equal(t, "openai-acct-abcdef01", label)
+}
+
+func TestChannelAccountCredentialUIDHashesFallbackIdentity(t *testing.T) {
+	account := modelgatewayaccount.ChannelAccount{
+		ChannelID:       42,
+		CredentialIndex: 0,
+		AccountIdentity: modelgatewaycore.AccountIdentity{
+			Brand:              "codex",
+			AccountIdentityKey: "codex:codex:user@example.com",
+		},
+	}
+
+	uid := channelAccountCredentialUID(account)
+
+	require.Regexp(t, `^acct-[0-9a-f]{8}$`, uid)
+	require.NotContains(t, uid, "example")
+	require.NotContains(t, uid, "codex:")
 }
 
 func TestListChannelAccountsSupportsServerSidePaginationAndStatusFilter(t *testing.T) {
@@ -1330,7 +1389,7 @@ func TestUpdateChannelAccountsStatusBatchAllDisabledAutoDisablesAndRestores(t *t
 	require.True(t, ability.Enabled)
 }
 
-func TestImportChannelAccountsAppendsOnlyNewAndRestoresAllDisabledChannel(t *testing.T) {
+func TestImportChannelAccountsAppendsOnlyNewAndKeepsAllDisabledChannel(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	channel := model.Channel{
 		Id:     14,
@@ -1375,26 +1434,74 @@ func TestImportChannelAccountsAppendsOnlyNewAndRestoresAllDisabledChannel(t *tes
 	require.Equal(t, 2, payload.Data.Operation.Skipped)
 	require.Equal(t, 1, payload.Data.Operation.SkippedExisting)
 	require.Equal(t, 1, payload.Data.Operation.SkippedDuplicate)
-	require.True(t, payload.Data.Operation.ChannelRestored)
+	require.False(t, payload.Data.Operation.ChannelRestored)
 	require.Equal(t, 3, payload.Data.Total)
-	require.Equal(t, 2, payload.Data.Enabled)
-	require.Equal(t, 1, payload.Data.Disabled)
+	require.Equal(t, 0, payload.Data.Enabled)
+	require.Equal(t, 3, payload.Data.Disabled)
 	require.NotContains(t, recorder.Body.String(), "sk-one")
 	require.NotContains(t, recorder.Body.String(), "sk-two")
 	require.NotContains(t, recorder.Body.String(), "sk-three")
 
 	updated, err := model.GetChannelById(14, true)
 	require.NoError(t, err)
-	require.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	require.Equal(t, common.ChannelStatusAutoDisabled, updated.Status)
 	require.True(t, updated.ChannelInfo.IsMultiKey)
 	require.Equal(t, 3, updated.ChannelInfo.MultiKeySize)
 	require.Equal(t, constant.MultiKeyModeRandom, updated.ChannelInfo.MultiKeyMode)
 	require.Equal(t, "sk-one\nsk-two\nsk-three", updated.Key)
 	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.ChannelInfo.MultiKeyStatusList[0])
-	require.Empty(t, updated.GetOtherInfo()["status_reason"])
+	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.ChannelInfo.MultiKeyStatusList[1])
+	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.ChannelInfo.MultiKeyStatusList[2])
+	require.Equal(t, channelAccountAllKeysDisabledReason, updated.GetOtherInfo()["status_reason"])
 	var ability model.Ability
 	require.NoError(t, db.First(&ability, "channel_id = ?", 14).Error)
-	require.True(t, ability.Enabled)
+	require.False(t, ability.Enabled)
+}
+
+func TestImportChannelAccountsDisablesSingleImportedAccount(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     140,
+		Name:   "import single disabled",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5.4",
+		ChannelId: 140,
+		Enabled:   true,
+	}).Error)
+
+	router := gin.New()
+	router.PUT("/api/channel/:id/accounts", ImportChannelAccounts)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/channel/140/accounts", bytes.NewBufferString(`{"credentials":"sk-new","only_new":true}`))
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.NotNil(t, payload.Data.Operation)
+	require.Equal(t, "import", payload.Data.Operation.Type)
+	require.Equal(t, 1, payload.Data.Operation.Added)
+	require.False(t, payload.Data.Operation.ChannelRestored)
+	require.Equal(t, 1, payload.Data.Total)
+	require.Equal(t, 0, payload.Data.Enabled)
+	require.Equal(t, 1, payload.Data.Disabled)
+
+	updated, err := model.GetChannelById(140, true)
+	require.NoError(t, err)
+	require.Equal(t, "sk-new", updated.Key)
+	require.False(t, updated.ChannelInfo.IsMultiKey)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.Status)
+	require.Equal(t, channelAccountManualDisabledReason, updated.GetOtherInfo()["status_reason"])
+	var ability model.Ability
+	require.NoError(t, db.First(&ability, "channel_id = ?", 140).Error)
+	require.False(t, ability.Enabled)
 }
 
 func TestImportChannelAccountsRejectsDuplicateWithoutOnlyNew(t *testing.T) {
@@ -1503,6 +1610,56 @@ func TestImportChannelAccountsExpandsJSONCredentialArray(t *testing.T) {
 	require.JSONEq(t, `{"account_id":"acct-json","refresh_token":"rt-json"}`, keys[2])
 }
 
+func TestImportChannelAccountsAcceptsCardCredentialExportLine(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     74,
+		Name:   "card export import",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.5",
+		Group:  "default",
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5.5",
+		ChannelId: 74,
+		Enabled:   true,
+	}).Error)
+
+	line := "User@Example.com----pass-123----acct-card----refresh-token"
+	bodyBytes, err := common.Marshal(map[string]interface{}{
+		"credentials": line,
+		"only_new":    true,
+	})
+	require.NoError(t, err)
+
+	router := gin.New()
+	router.PUT("/api/channel/:id/accounts", ImportChannelAccounts)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/channel/74/accounts", bytes.NewReader(bodyBytes))
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, 1, payload.Data.Operation.Added)
+	require.Equal(t, 1, payload.Data.Total)
+	require.Equal(t, 0, payload.Data.Enabled)
+	require.Equal(t, 1, payload.Data.Disabled)
+
+	updated, err := model.GetChannelById(74, true)
+	require.NoError(t, err)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.Status)
+	keys := updated.GetKeys()
+	require.Len(t, keys, 1)
+	require.JSONEq(t, `{"account_id":"acct-card","chatgpt_account_id":"acct-card","email":"user@example.com","password":"pass-123","refresh_token":"refresh-token","type":"codex"}`, keys[0])
+	var ability model.Ability
+	require.NoError(t, db.First(&ability, "channel_id = ?", 74).Error)
+	require.False(t, ability.Enabled)
+}
+
 func TestImportChannelAccountsAcceptsSub2APIAccountExport(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	channel := model.Channel{
@@ -1587,18 +1744,22 @@ func TestImportChannelAccountsAcceptsSub2APIAccountExport(t *testing.T) {
 	require.True(t, response.Success, recorder.Body.String())
 	require.Equal(t, 2, response.Data.Operation.Added)
 	require.Equal(t, 2, response.Data.Total)
-	require.Equal(t, 2, response.Data.Enabled)
-	require.True(t, response.Data.Operation.ChannelRestored)
+	require.Equal(t, 0, response.Data.Enabled)
+	require.Equal(t, 2, response.Data.Disabled)
+	require.False(t, response.Data.Operation.ChannelRestored)
 	require.NotContains(t, recorder.Body.String(), "access-one")
 	require.NotContains(t, recorder.Body.String(), "refresh-two")
 
 	updated, err := model.GetChannelById(72, true)
 	require.NoError(t, err)
-	require.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	require.Equal(t, common.ChannelStatusAutoDisabled, updated.Status)
+	require.Equal(t, channelAccountAllKeysDisabledReason, updated.GetOtherInfo()["status_reason"])
 	keys := updated.GetKeys()
 	require.Len(t, keys, 2)
 	require.JSONEq(t, `{"access_token":"access-one","refresh_token":"refresh-one","id_token":"id-one","email":"first@example.com","account_id":"acct-one","chatgpt_account_id":"acct-one","chatgpt_user_id":"user-one","expires_at":"2026-06-08T11:51:36Z"}`, keys[0])
 	require.JSONEq(t, `{"access_token":"access-two","refresh_token":"refresh-two","id_token":"id-two","email":"second@example.com","account_id":"acct-two","chatgpt_account_id":"acct-two","chatgpt_user_id":"user-two","expires_at":"2026-06-08T11:53:12Z"}`, keys[1])
+	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.ChannelInfo.MultiKeyStatusList[0])
+	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.ChannelInfo.MultiKeyStatusList[1])
 
 	fileChannel := model.Channel{
 		Id:     73,
@@ -1628,9 +1789,15 @@ func TestImportChannelAccountsAcceptsSub2APIAccountExport(t *testing.T) {
 	require.True(t, fileResponse.Success, fileRecorder.Body.String())
 	require.Equal(t, 2, fileResponse.Data.Operation.Added)
 	require.Equal(t, 2, fileResponse.Data.Total)
+	require.Equal(t, 0, fileResponse.Data.Enabled)
+	require.Equal(t, 2, fileResponse.Data.Disabled)
+	require.False(t, fileResponse.Data.Operation.ChannelRestored)
 	updatedFromFile, err := model.GetChannelById(73, true)
 	require.NoError(t, err)
 	require.Len(t, updatedFromFile.GetKeys(), 2)
+	require.Equal(t, common.ChannelStatusAutoDisabled, updatedFromFile.Status)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, updatedFromFile.ChannelInfo.MultiKeyStatusList[0])
+	require.Equal(t, common.ChannelStatusManuallyDisabled, updatedFromFile.ChannelInfo.MultiKeyStatusList[1])
 }
 
 func TestImportChannelAccountsRefreshesAccountCandidateIndex(t *testing.T) {
@@ -1661,7 +1828,7 @@ func TestImportChannelAccountsRefreshesAccountCandidateIndex(t *testing.T) {
 	payload := decodeChannelAccountsResponse(t, recorder)
 	require.True(t, payload.Success, recorder.Body.String())
 	after := runtimeDeps.AccountCandidateIndex.Index().Stats()
-	require.Equal(t, 2, after.Candidates)
+	require.Equal(t, 1, after.Candidates)
 }
 
 func TestImportChannelAccountsAcceptsXAutoNewAPIZip(t *testing.T) {
@@ -1705,25 +1872,29 @@ func TestImportChannelAccountsAcceptsXAutoNewAPIZip(t *testing.T) {
 	require.Equal(t, 3, payload.Data.Operation.TotalInput)
 	require.Equal(t, 2, payload.Data.Operation.Added)
 	require.Equal(t, 1, payload.Data.Operation.SkippedDuplicate)
-	require.True(t, payload.Data.Operation.ChannelRestored)
+	require.False(t, payload.Data.Operation.ChannelRestored)
 	require.Equal(t, 2, payload.Data.Total)
-	require.Equal(t, 2, payload.Data.Enabled)
+	require.Equal(t, 0, payload.Data.Enabled)
+	require.Equal(t, 2, payload.Data.Disabled)
 	require.NotContains(t, recorder.Body.String(), "access-one")
 	require.NotContains(t, recorder.Body.String(), "refresh-one")
 
 	updated, err := model.GetChannelById(71, true)
 	require.NoError(t, err)
-	require.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	require.Equal(t, common.ChannelStatusAutoDisabled, updated.Status)
 	require.True(t, updated.ChannelInfo.IsMultiKey)
 	require.Equal(t, 2, updated.ChannelInfo.MultiKeySize)
 	keys := updated.GetKeys()
 	require.Len(t, keys, 2)
 	require.JSONEq(t, `{"access_token":"access-one","refresh_token":"refresh-one","account_id":"acct-one"}`, keys[0])
 	require.JSONEq(t, `{"access_token":"access-two","refresh_token":"refresh-two","account_id":"acct-two"}`, keys[1])
+	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.ChannelInfo.MultiKeyStatusList[0])
+	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.ChannelInfo.MultiKeyStatusList[1])
+	require.Equal(t, channelAccountAllKeysDisabledReason, updated.GetOtherInfo()["status_reason"])
 
 	var ability model.Ability
 	require.NoError(t, db.First(&ability, "channel_id = ?", 71).Error)
-	require.True(t, ability.Enabled)
+	require.False(t, ability.Enabled)
 }
 
 func TestDeleteChannelAccountsReindexesStatusAndKeepsRawKeysHidden(t *testing.T) {

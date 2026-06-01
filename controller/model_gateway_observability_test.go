@@ -17,7 +17,9 @@ import (
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
+	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
@@ -3239,6 +3241,343 @@ func TestGetModelGatewayHealthCheckQueueReturnsPendingReasons(t *testing.T) {
 	require.Nil(t, payload.Data.QueueSnapshot)
 }
 
+func TestRunModelGatewayHealthCheckProbeRunsImmediateProbe(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupModelGatewayReplayControllerTestDB(t)
+	restoreMemoryCache := enableModelGatewayControllerChannelCache(t)
+	require.NoError(t, db.AutoMigrate(&model.Ability{}))
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		ProbeTimeoutSeconds:            2,
+		ProbeRecoverySuccessesRequired: 2,
+		ProbeRecoverableScoreItems:     []string{"completion_rate", "ttft_latency"},
+	})
+	t.Cleanup(restoreSetting)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1,
+		Username: "root",
+		Role:     common.RoleRootUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "vip",
+		Quota:    100000,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     8801,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-test",
+		Name:   "probe-now",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.5",
+		Group:  "vip",
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "vip",
+		Model:     "gpt-5.5",
+		ChannelId: 8801,
+		Enabled:   true,
+	}).Error)
+	model.InitChannelCache()
+	t.Cleanup(restoreMemoryCache)
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	require.NotNil(t, runtimeDeps)
+	require.NotNil(t, runtimeDeps.LocalSnapshotStore)
+	runtimeDeps.LocalSnapshotStore.Put(core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			RequestedModel: "gpt-5.5",
+			UpstreamModel:  "gpt-5.5",
+			ChannelID:      8801,
+			Group:          "vip",
+			EndpointType:   constant.EndpointTypeOpenAI,
+		},
+		SuccessRate:           0.25,
+		TTFTMs:                12000,
+		DurationMs:            18000,
+		CostRatio:             1,
+		GroupPriorityRatio:    1,
+		SampleCount:           8,
+		ProbeRecoveryPending:  true,
+		ProbeTriggerReason:    "low_score",
+		ProbeRecoveryRequired: 2,
+	})
+
+	modelgatewayprobe.RegisterRelayInvoker(func(c *gin.Context, relayFormat types.RelayFormat) {
+		require.Equal(t, types.RelayFormatOpenAI, relayFormat)
+		require.True(t, common.GetContextKeyBool(c, constant.ContextKeyHealthProbe))
+		start := time.Now().Add(-80 * time.Millisecond)
+		info := &relaycommon.RelayInfo{
+			RequestId:         c.GetString(common.RequestIdKey),
+			UserId:            1,
+			UsingGroup:        "vip",
+			UserGroup:         "vip",
+			RequestModelName:  "gpt-5.5",
+			OriginModelName:   "gpt-5.5",
+			ContextModelName:  "gpt-5.5",
+			StartTime:         start,
+			FirstResponseTime: start.Add(30 * time.Millisecond),
+			IsStream:          true,
+			IsChannelTest:     true,
+			RelayFormat:       types.RelayFormatOpenAI,
+			ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelId:         8801,
+				ChannelType:       constant.ChannelTypeOpenAI,
+				UpstreamModelName: "gpt-5.5",
+			},
+			PriceData: types.PriceData{
+				ModelRatio:      1,
+				CompletionRatio: 1,
+				GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+			},
+		}
+		info.SetEstimatePromptTokens(4)
+		common.SetContextKey(c, constant.ContextKeyRelayInfo, info)
+		c.Status(http.StatusOK)
+	})
+	t.Cleanup(func() {
+		modelgatewayprobe.RegisterRelayInvoker(nil)
+	})
+
+	body, err := common.Marshal(ModelGatewayHealthCheckProbeRequest{
+		ChannelID:      8801,
+		RequestedModel: "gpt-5.5",
+		Group:          "vip",
+		Reason:         "low_score",
+		RuntimeKey: ModelGatewayRuntimeKey{
+			RequestedModel: "gpt-5.5",
+			UpstreamModel:  "gpt-5.5",
+			ChannelID:      8801,
+			Group:          "vip",
+			EndpointType:   string(constant.EndpointTypeOpenAI),
+		},
+	})
+	require.NoError(t, err)
+	router := gin.New()
+	router.POST("/api/model_gateway/observability/health-check/probe", RunModelGatewayHealthCheckProbe)
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/model_gateway/observability/health-check/probe", strings.NewReader(string(body)))
+	router.ServeHTTP(resp, req)
+
+	var payload modelGatewayHealthCheckProbeAPIResponse
+	require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &payload), resp.Body.String())
+	require.True(t, payload.Success, payload.Message)
+	require.True(t, payload.Data.Success)
+	require.Equal(t, 8801, payload.Data.ChannelID)
+	require.Equal(t, "low_score", payload.Data.Reason)
+	require.Equal(t, "gpt-5.5", payload.Data.RuntimeKey.RequestedModel)
+	require.Greater(t, payload.Data.TTFTMs, int64(0))
+}
+
+func TestRunModelGatewayHealthCheckProbeRejectsDisabledMultiKeyAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupModelGatewayReplayControllerTestDB(t)
+	restoreMemoryCache := enableModelGatewayControllerChannelCache(t)
+	require.NoError(t, db.AutoMigrate(&model.Ability{}))
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+	channel := &model.Channel{
+		Id:     8802,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-enabled\nsk-disabled",
+		Name:   "probe-disabled-account",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.5",
+		Group:  "vip",
+	}
+	channel.ChannelInfo.IsMultiKey = true
+	channel.ChannelInfo.MultiKeyStatusList = map[int]int{1: common.ChannelStatusManuallyDisabled}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "vip",
+		Model:     "gpt-5.5",
+		ChannelId: channel.Id,
+		Enabled:   true,
+	}).Error)
+	model.InitChannelCache()
+	t.Cleanup(restoreMemoryCache)
+
+	modelgatewayprobe.RegisterRelayInvoker(func(c *gin.Context, relayFormat types.RelayFormat) {
+		require.Fail(t, "disabled account should not reach relay invoker")
+	})
+	t.Cleanup(func() {
+		modelgatewayprobe.RegisterRelayInvoker(nil)
+	})
+
+	body, err := common.Marshal(ModelGatewayHealthCheckProbeRequest{
+		ChannelID:      channel.Id,
+		RequestedModel: "gpt-5.5",
+		Group:          "vip",
+		Reason:         "low_score",
+		RuntimeKey: ModelGatewayRuntimeKey{
+			RequestedModel:      "gpt-5.5",
+			UpstreamModel:       "gpt-5.5",
+			ChannelID:           channel.Id,
+			Group:               "vip",
+			EndpointType:        string(constant.EndpointTypeOpenAI),
+			CredentialIndex:     1,
+			CredentialIndexSet:  true,
+			CredentialFP:        common.GenerateHMAC("sk-disabled"),
+			CredentialSubjectFP: common.GenerateHMAC("sk-disabled"),
+			AccountID:           "openai:openai:" + common.GenerateHMAC("sk-disabled"),
+			Provider:            "openai",
+			Brand:               "openai",
+			ResourceID:          fmt.Sprintf("platform:channel:%d", channel.Id),
+			ResourceType:        core.ResourceTypePlatformOwned,
+		},
+	})
+	require.NoError(t, err)
+	router := gin.New()
+	router.POST("/api/model_gateway/observability/health-check/probe", RunModelGatewayHealthCheckProbe)
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/model_gateway/observability/health-check/probe", strings.NewReader(string(body)))
+	router.ServeHTTP(resp, req)
+
+	var payload modelGatewayHealthCheckProbeAPIResponse
+	require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &payload), resp.Body.String())
+	require.False(t, payload.Success)
+	require.Contains(t, payload.Message, "not eligible")
+}
+
+func TestGetModelGatewayHealthCheckQueueSkipsDisabledMultiKeyAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupModelGatewayReplayControllerTestDB(t)
+	restoreMemoryCache := enableModelGatewayControllerChannelCache(t)
+	require.NoError(t, db.AutoMigrate(&model.Ability{}))
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		ProbeLowScoreThreshold:      0.7,
+		ProbeMissingSampleThreshold: 3,
+	})
+	t.Cleanup(restoreSetting)
+	channel := &model.Channel{
+		Id:     8803,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-enabled\nsk-disabled",
+		Name:   "queue-disabled-account",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.5",
+		Group:  "vip",
+	}
+	channel.ChannelInfo.IsMultiKey = true
+	channel.ChannelInfo.MultiKeyStatusList = map[int]int{1: common.ChannelStatusManuallyDisabled}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "vip",
+		Model:     "gpt-5.5",
+		ChannelId: channel.Id,
+		Enabled:   true,
+	}).Error)
+	model.InitChannelCache()
+	t.Cleanup(restoreMemoryCache)
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	require.NotNil(t, runtimeDeps)
+	require.NotNil(t, runtimeDeps.LocalSnapshotStore)
+	runtimeDeps.LocalSnapshotStore.Put(core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			RequestedModel:      "gpt-5.5",
+			UpstreamModel:       "gpt-5.5",
+			ChannelID:           channel.Id,
+			Group:               "vip",
+			EndpointType:        constant.EndpointTypeOpenAI,
+			CredentialIndex:     1,
+			CredentialFP:        common.GenerateHMAC("sk-disabled"),
+			CredentialSubjectFP: common.GenerateHMAC("sk-disabled"),
+			AccountID:           "openai:openai:" + common.GenerateHMAC("sk-disabled"),
+			Provider:            "openai",
+			Brand:               "openai",
+			ResourceID:          fmt.Sprintf("platform:channel:%d", channel.Id),
+			ResourceType:        core.ResourceTypePlatformOwned,
+		},
+		SuccessRate:        0.2,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        8,
+		RealSampleCount30m: 1,
+		LastRealAttemptAt:  common.GetTimestamp(),
+	})
+
+	router := gin.New()
+	router.GET("/api/model_gateway/observability/health-check/queue", GetModelGatewayHealthCheckQueue)
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/observability/health-check/queue?model=gpt-5.5&group=vip", nil)
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayHealthCheckQueueResponse(t, resp)
+	require.True(t, payload.Success)
+	require.Equal(t, 0, payload.Data.Summary.PendingCount)
+	require.Empty(t, payload.Data.Items)
+}
+
+func TestGetModelGatewayHealthCheckQueueShowsScoreAnomalyFastRecovery(t *testing.T) {
+	now := common.GetTimestamp()
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		ProbeMinChannelIntervalSeconds:      300,
+		ProbeLowScoreThreshold:              0.62,
+		ProbeMissingSampleThreshold:         3,
+		ProbeSkipRecentRealRequestEnabled:   true,
+		ProbeRecentRealRequestWindowSeconds: 1800,
+	})
+	t.Cleanup(restoreSetting)
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	require.NotNil(t, runtimeDeps)
+	require.NotNil(t, runtimeDeps.LocalSnapshotStore)
+
+	runtimeDeps.LocalSnapshotStore.Put(core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			RequestedModel: "gpt-5.5",
+			UpstreamModel:  "gpt-5.5",
+			ChannelID:      811,
+			Group:          "vip",
+			EndpointType:   constant.EndpointTypeOpenAI,
+		},
+		SuccessRate:                       1,
+		TTFTMs:                            1200,
+		DurationMs:                        2400,
+		CostRatio:                         1,
+		GroupPriorityRatio:                1,
+		SampleCount:                       8,
+		RealSampleCount30m:                2,
+		LastRealAttemptAt:                 now - 60,
+		LastRealSuccessAt:                 now - 60,
+		LastProbeAt:                       now - 120,
+		RecoverableQualityScore:           0.68,
+		RecoverableQualityBaseline:        0.86,
+		RecoverableQualityBaselineSamples: 5,
+		RecoverableQualityDropRatio:       0.21,
+		ProbeRecoveryPending:              true,
+		ProbeTriggerReason:                core.ProbeReasonScoreAnomalyFastProbe,
+		ProbeRecoveryPhase:                core.ProbeRecoveryPhaseFastProbe,
+		ProbeFastRecoveryAttempts:         1,
+		ProbeAnomalyTriggerItems:          []string{"recoverable_quality_score", "ttft_latency"},
+		ProbeRecoveryRequired:             2,
+	})
+
+	router := gin.New()
+	router.GET("/api/model_gateway/observability/health-check/queue", GetModelGatewayHealthCheckQueue)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/observability/health-check/queue?queue_type=score_anomaly_fast_probe&model=gpt-5.5&group=vip", nil)
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayHealthCheckQueueResponse(t, resp)
+	require.True(t, payload.Success)
+	require.Equal(t, 1, payload.Data.Summary.PendingCount)
+	require.Equal(t, 1, payload.Data.Summary.ScoreAnomalyCount)
+	require.Len(t, payload.Data.Items, 1)
+	item := payload.Data.Items[0]
+	require.Equal(t, 811, item.ChannelID)
+	require.Equal(t, "score_anomaly_fast_probe", item.QueueType)
+	require.Empty(t, item.ProbeSkipReason)
+	require.Equal(t, []string{"recoverable_quality_score", "ttft_latency"}, item.ProbeTriggerScoreItems)
+	require.Equal(t, core.ProbeRecoveryPhaseFastProbe, item.ProbeRecoveryPhase)
+	require.Equal(t, 1, item.ProbeFastRecoveryAttempts)
+	require.InDelta(t, common.GetTimestamp(), item.NextProbeAt, 2)
+	require.Equal(t, int64(0), item.NextProbeRemainingSeconds)
+	require.True(t, modelGatewayHealthCheckTestReasonsContain(item.Reasons, "score_anomaly_fast_probe"))
+}
+
 func TestGetModelGatewayHealthCheckQueueReturnsNextProbeCountdown(t *testing.T) {
 	now := common.GetTimestamp()
 	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
@@ -3760,6 +4099,12 @@ type modelGatewayHealthCheckQueueAPIResponse struct {
 	Data    ModelGatewayHealthCheckQueueResponse `json:"data"`
 }
 
+type modelGatewayHealthCheckProbeAPIResponse struct {
+	Success bool                                 `json:"success"`
+	Message string                               `json:"message"`
+	Data    ModelGatewayHealthCheckProbeResponse `json:"data"`
+}
+
 func decodeModelGatewayRuntimeStatusResponse(t *testing.T, recorder *httptest.ResponseRecorder) modelGatewayRuntimeStatusAPIResponse {
 	t.Helper()
 	var payload modelGatewayRuntimeStatusAPIResponse
@@ -3772,6 +4117,18 @@ func decodeModelGatewayHealthCheckQueueResponse(t *testing.T, recorder *httptest
 	var payload modelGatewayHealthCheckQueueAPIResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload), recorder.Body.String())
 	return payload
+}
+
+func enableModelGatewayControllerChannelCache(t *testing.T) func() {
+	t.Helper()
+	oldMemoryCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	return func() {
+		common.MemoryCacheEnabled = oldMemoryCache
+		if oldMemoryCache && model.DB != nil {
+			model.InitChannelCache()
+		}
+	}
 }
 
 func modelGatewayHealthCheckTestReasonsContain(reasons []ModelGatewayHealthCheckQueueReason, key string) bool {

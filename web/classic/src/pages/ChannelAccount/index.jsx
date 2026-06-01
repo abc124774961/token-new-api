@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { unzipSync, strFromU8 } from 'fflate';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -50,7 +56,6 @@ import {
   FileArchive,
   FileText,
   FileUp,
-  Fingerprint,
   Gauge,
   KeyRound,
   ListChecks,
@@ -69,7 +74,13 @@ import {
   UserRoundCog,
   XCircle,
 } from 'lucide-react';
-import { API, showError, showInfo, showSuccess, timestamp2string } from '../../helpers';
+import {
+  API,
+  showError,
+  showInfo,
+  showSuccess,
+  timestamp2string,
+} from '../../helpers';
 import { renderQuota } from '../../helpers/render';
 import ProxyEditorModal from '../../components/model-gateway/ProxyEditorModal';
 import './channel-account.css';
@@ -150,6 +161,30 @@ function attemptDisplayIndex(value) {
   return Math.floor(numeric) + 1;
 }
 
+function groupAccountTargetsByChannel(targets) {
+  const groups = new Map();
+  (targets || []).forEach((target) => {
+    const channelID = Number(target.channel_id || 0);
+    const credentialIndex = Number(target.credential_index);
+    if (
+      !Number.isInteger(channelID) ||
+      channelID <= 0 ||
+      !Number.isInteger(credentialIndex) ||
+      credentialIndex < 0
+    ) {
+      return;
+    }
+    if (!groups.has(channelID)) {
+      groups.set(channelID, {
+        channel_id: channelID,
+        credential_indexes: [],
+      });
+    }
+    groups.get(channelID).credential_indexes.push(credentialIndex);
+  });
+  return Array.from(groups.values());
+}
+
 function accountDisplayIndex(item) {
   const explicit = Number(item?.account_display_index);
   if (Number.isFinite(explicit) && explicit > 0) return explicit;
@@ -160,8 +195,55 @@ function accountDisplayIndex(item) {
   return '--';
 }
 
+function compactIdentityPart(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const tail = text.includes(':')
+    ? text.split(':').filter(Boolean).pop()
+    : text;
+  if (!tail) return '';
+  return tail.length <= 8 ? tail : tail.slice(0, 8);
+}
+
+function accountCredentialUID(record) {
+  const explicit = String(record?.credential_uid || '').trim();
+  if (explicit) return explicit;
+  const identity = record?.account_identity || {};
+  const credentialRef = record?.credential_ref || {};
+  const short =
+    record?.subject_short ||
+    compactIdentityPart(identity.credential_subject_fingerprint) ||
+    compactIdentityPart(credentialRef.credential_subject_fingerprint) ||
+    record?.credential_short ||
+    compactIdentityPart(identity.credential_fingerprint) ||
+    compactIdentityPart(credentialRef.credential_fingerprint) ||
+    compactIdentityPart(identity.account_unique_key) ||
+    compactIdentityPart(identity.account_identity_key) ||
+    compactIdentityPart(identity.account_id);
+  return short ? `acct-${short}` : '--';
+}
+
+function accountCredentialLabel(record) {
+  const explicit = String(record?.credential_label || '').trim();
+  if (explicit) return explicit;
+  const identity = record?.account_identity || {};
+  const brand = identity.brand || record?.resource_ref?.brand || '';
+  const uid = accountCredentialUID(record);
+  return [brand, uid].filter(Boolean).join(' · ') || uid;
+}
+
+function accountPrimaryName(record, t) {
+  const identity = record?.account_identity || {};
+  const displayName = String(identity.display_name || '').trim();
+  if (displayName && !/#\d+\s*$/.test(displayName)) {
+    return displayName;
+  }
+  return identity.brand || record?.resource_ref?.brand || t('账号');
+}
+
 function statisticsDiagnosticText(item, t) {
-  const diagnostic = item?.statistics_diagnostic || item?.statistics_status || '';
+  const diagnostic =
+    item?.statistics_diagnostic || item?.statistics_status || '';
   const labels = {
     health_probe_excluded: t('探活不计入真实统计'),
     missing_account_attribution: t('缺少账号归因'),
@@ -176,14 +258,18 @@ function statisticsDiagnosticText(item, t) {
     cost_pending: t('等待成本计算'),
     complete: t('统计完整'),
   };
-  return labels[diagnostic] || (item?.statistics_recorded ? t('已有请求状态') : t('未写入统计'));
+  return (
+    labels[diagnostic] ||
+    (item?.statistics_recorded ? t('已有请求状态') : t('未写入统计'))
+  );
 }
 
 function statisticsDiagnosticColor(item) {
   const status = item?.statistics_status || '';
   if (status === 'complete') return 'green';
   if (status === 'health_probe') return 'cyan';
-  if (status === 'billing_pending' || status === 'cost_pending') return 'orange';
+  if (status === 'billing_pending' || status === 'cost_pending')
+    return 'orange';
   if (status === 'attribution_missing') return 'red';
   if (status === 'dispatch_only') return 'grey';
   return item?.statistics_recorded ? 'green' : 'grey';
@@ -225,7 +311,12 @@ function reconcileCheckText(check, t) {
 
 function reconcileCheckColor(status) {
   if (status === 'ok' || status === 'complete') return 'green';
-  if (status === 'warning' || status === 'billing_pending' || status === 'cost_pending') return 'orange';
+  if (
+    status === 'warning' ||
+    status === 'billing_pending' ||
+    status === 'cost_pending'
+  )
+    return 'orange';
   if (status === 'missing' || status === 'attribution_missing') return 'red';
   if (status === 'health_probe') return 'cyan';
   return 'grey';
@@ -234,7 +325,8 @@ function reconcileCheckColor(status) {
 function reconcileDiagnosisTitle(key, t) {
   const labels = {
     trace_complete: t('统计链路完整'),
-    usage_event_missing_but_samples_exist: t('统计未写入，但存在调度或评分样本'),
+    usage_event_missing_but_samples_exist:
+      t('统计未写入，但存在调度或评分样本'),
     request_trace_missing: t('请求链路缺失'),
     account_mismatch: t('账号不匹配'),
     health_probe_excluded: t('这是探活样本，不计入真实请求统计'),
@@ -253,17 +345,35 @@ function reconcileDiagnosisTitle(key, t) {
 function reconcileDiagnosisSuggestion(key, t) {
   const labels = {
     trace_complete: t('这条请求的调度、统计和成本链路已经对齐。'),
-    usage_event_missing_but_samples_exist: t('检查 usage event 写入链路，重点看 request_id 归因和异步 recorder。'),
-    request_trace_missing: t('检查请求是否经过智能网关，以及 request_id 是否在各阶段传递。'),
-    account_mismatch: t('检查本次请求的账号索引与最终写入的 credential_index。'),
-    health_probe_excluded: t('无需处理；探活只影响健康状态，不计入真实用量统计。'),
-    account_attribution_missing: t('检查账号归因写入，尤其是 account_identity_key 和 credential_fingerprint。'),
-    dispatch_only: t('等待 attempt/billing 写入；若长期停留，检查 recorder 或请求中断路径。'),
-    billing_pending: t('检查 billing 写入链路和消费日志是否按 request_id 合并。'),
+    usage_event_missing_but_samples_exist: t(
+      '检查 usage event 写入链路，重点看 request_id 归因和异步 recorder。',
+    ),
+    request_trace_missing: t(
+      '检查请求是否经过智能网关，以及 request_id 是否在各阶段传递。',
+    ),
+    account_mismatch: t(
+      '检查本次请求的账号索引与最终写入的 credential_index。',
+    ),
+    health_probe_excluded: t(
+      '无需处理；探活只影响健康状态，不计入真实用量统计。',
+    ),
+    account_attribution_missing: t(
+      '检查账号归因写入，尤其是 account_identity_key 和 credential_fingerprint。',
+    ),
+    dispatch_only: t(
+      '等待 attempt/billing 写入；若长期停留，检查 recorder 或请求中断路径。',
+    ),
+    billing_pending: t(
+      '检查 billing 写入链路和消费日志是否按 request_id 合并。',
+    ),
     cost_pending: t('等待异步成本任务，或检查成本 worker 与成本配置。'),
-    user_request_summary_missing: t('检查最终请求摘要写入，确认 attempt 是否被标记为最终状态。'),
+    user_request_summary_missing: t(
+      '检查最终请求摘要写入，确认 attempt 是否被标记为最终状态。',
+    ),
     request_failed: t('优先查看失败错误、重试链路和上游状态。'),
-    attempt_samples_missing: t('检查调度/评分采样是否开启，以及该请求是否绕过智能调度。'),
+    attempt_samples_missing: t(
+      '检查调度/评分采样是否开启，以及该请求是否绕过智能调度。',
+    ),
     cost_summary_pending: t('等待异步成本任务，或检查成本 worker 与成本配置。'),
   };
   return labels[key] || '';
@@ -397,8 +507,9 @@ function isXAutoNewAPIZipEntries(entries) {
   try {
     const manifest = parseImportJSON(strFromU8(entries[manifestName]));
     return (
-      String(manifest?.type || '').trim().toLowerCase() ===
-      XAUTO_NEWAPI_PACKAGE_TYPE
+      String(manifest?.type || '')
+        .trim()
+        .toLowerCase() === XAUTO_NEWAPI_PACKAGE_TYPE
     );
   } catch (err) {
     return false;
@@ -583,7 +694,9 @@ function stringsTrim(value) {
 function operationMessage(operation, t, fallback) {
   if (!operation) return fallback;
   if (operation.type === 'proxy') {
-    return operation.action === 'clear' ? t('账号代理已解绑') : t('账号代理已绑定');
+    return operation.action === 'clear'
+      ? t('账号代理已解绑')
+      : t('账号代理已绑定');
   }
   if (operation.type === 'credential') {
     return t('账号凭证已更新');
@@ -841,10 +954,11 @@ function effectiveCapabilityClassification(capabilities) {
       ? 'codex_compact_available'
       : 'codex_backend_available';
   }
-  if (capabilities.proxy_last_error) {
-    return 'proxy_error';
+  const classification = capabilities.capability_classification || '';
+  if (classification) {
+    return classification;
   }
-  return capabilities.capability_classification || '';
+  return capabilities.proxy_last_error ? 'proxy_error' : '';
 }
 
 function CapabilitiesCell({ capabilities, t }) {
@@ -892,11 +1006,13 @@ function CapabilitiesCell({ capabilities, t }) {
       {capabilities.usage_limit_status === 'limited' ? (
         <>
           <div>
-            {t('限流')}: {capabilities.usage_limit_reason || t('账号用量限制中')}
+            {t('限流')}:{' '}
+            {capabilities.usage_limit_reason || t('账号用量限制中')}
           </div>
           {capabilities.usage_limit_expires_at ? (
             <div>
-              {t('预计恢复')}: {timestamp2string(capabilities.usage_limit_expires_at)}
+              {t('预计恢复')}:{' '}
+              {timestamp2string(capabilities.usage_limit_expires_at)}
             </div>
           ) : null}
           {capabilities.usage_limit_message ? (
@@ -910,23 +1026,40 @@ function CapabilitiesCell({ capabilities, t }) {
   return (
     <Tooltip content={content}>
       <div className='ct-channel-account-capability-stack'>
-        <Tag color={classification.color} type='light' shape='circle' size='small'>
+        <Tag
+          color={classification.color}
+          type='light'
+          shape='circle'
+          size='small'
+        >
           {classification.label}
         </Tag>
         <div className='ct-channel-account-capability-group'>
           <span>{t('Codex')}</span>
           <div className='ct-channel-account-capability-tags'>
-            {capabilityTag('Stream', capabilities.codex_backend_responses_stream_write)}
+            {capabilityTag(
+              'Stream',
+              capabilities.codex_backend_responses_stream_write,
+            )}
             {capabilityTag('Compact', capabilities.codex_backend_compact_write)}
-            {capabilityTag('Stream Only', capabilities.codex_backend_requires_stream)}
+            {capabilityTag(
+              'Stream Only',
+              capabilities.codex_backend_requires_stream,
+            )}
           </div>
         </div>
         <div className='ct-channel-account-capability-group'>
           <span>{t('Platform')}</span>
           <div className='ct-channel-account-capability-tags'>
-            {capabilityTag('Chat', capabilities.platform_chat_completions_write)}
+            {capabilityTag(
+              'Chat',
+              capabilities.platform_chat_completions_write,
+            )}
             {capabilityTag('Responses', capabilities.platform_responses_write)}
-            {capabilityTag('Compact', capabilities.platform_responses_compact_write)}
+            {capabilityTag(
+              'Compact',
+              capabilities.platform_responses_compact_write,
+            )}
           </div>
         </div>
       </div>
@@ -940,7 +1073,9 @@ function proxyAddress(proxy) {
 }
 
 function normalizeBrand(value) {
-  return String(value || '').trim().toLowerCase();
+  return String(value || '')
+    .trim()
+    .toLowerCase();
 }
 
 function proxyReuseRisks(proxy) {
@@ -979,7 +1114,13 @@ function reuseRiskText(risk, t) {
   if (!risk) return '';
   return t('同品牌 {{brand}} 已有 {{total}} 个账号使用该代理', {
     brand: risk.brand || risk.provider || t('未知品牌'),
-    total: Number(risk.distinct_subject_count || risk.distinctSubjectCount || risk.account_count || risk.usageCount || 0),
+    total: Number(
+      risk.distinct_subject_count ||
+        risk.distinctSubjectCount ||
+        risk.account_count ||
+        risk.usageCount ||
+        0,
+    ),
   });
 }
 
@@ -1021,7 +1162,9 @@ function summarizeAccountCapabilityError(message, t) {
     lower.includes('insufficient_quota') ||
     lower.includes('exceeded your current quota')
   ) {
-    return t('Platform API 额度不足或未开通计费；这不影响 Codex backend 调度。');
+    return t(
+      'Platform API 额度不足或未开通计费；这不影响 Codex backend 调度。',
+    );
   }
   if (
     lower.includes('api.responses.write') ||
@@ -1199,7 +1342,9 @@ function WindowUsagePill({ label, window, t }) {
         {label}
       </Tag>
       <div className='ct-channel-account-window-bar'>
-        <span style={{ width: `${Math.min(100, Math.max(0, successRate * 100))}%` }} />
+        <span
+          style={{ width: `${Math.min(100, Math.max(0, successRate * 100))}%` }}
+        />
       </div>
       <strong>{formatPercent(successRate, 0)}</strong>
       <span>{formatCompactNumber(requests)} req</span>
@@ -1217,6 +1362,46 @@ function UsageWindowsBlock({ stats, t }) {
     <div className='ct-channel-account-window-stack'>
       <WindowUsagePill label='5h' window={stats?.last_5h || {}} t={t} />
       <WindowUsagePill label='7d' window={stats?.last_7d || {}} t={t} />
+    </div>
+  );
+}
+
+function AccountStatsCompact({ stats, t }) {
+  const today = stats?.today || {};
+  if (!today.requests) {
+    return <Text type='tertiary'>{t('无统计数据')}</Text>;
+  }
+  return (
+    <div className='ct-channel-account-stat-compact'>
+      <strong>{formatCompactNumber(today.requests)}</strong>
+      <span>
+        {t('成功率')} {formatPercent(today.success_rate, 0)}
+      </span>
+      <span>Token {formatCompactNumber(today.total_tokens)}</span>
+    </div>
+  );
+}
+
+function UsageWindowsCompact({ stats, t }) {
+  const windows = [
+    ['5h', stats?.last_5h || {}],
+    ['7d', stats?.last_7d || {}],
+  ];
+  return (
+    <div className='ct-channel-account-window-compact'>
+      {windows.map(([label, window]) => (
+        <div key={label}>
+          <Tag
+            color={label === '5h' ? 'violet' : 'teal'}
+            size='small'
+            type='light'
+          >
+            {label}
+          </Tag>
+          <strong>{formatCompactNumber(window.requests)}</strong>
+          <span>{formatPercent(window.success_rate, 0)}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1285,6 +1470,137 @@ function reasonLabels(reasons, t) {
     .join(' / ');
 }
 
+function pushAccountTag(tags, next) {
+  if (!next?.label) return;
+  if (tags.some((tag) => tag.label === next.label)) return;
+  tags.push(next);
+}
+
+function accountBatchTags(record, t) {
+  const tags = [];
+  const score = record?.score || {};
+  const scheduling = record?.scheduling || {};
+  const capabilities = record?.capabilities || {};
+  const blockingReasons = arrayValue(scheduling.blocking_reasons);
+  const warningReasons = arrayValue(scheduling.warning_reasons);
+  const primaryReason =
+    scheduling.primary_reason || blockingReasons[0] || warningReasons[0] || '';
+
+  if (!record?.key_enabled) {
+    pushAccountTag(tags, { color: 'red', label: t('账号已禁用') });
+  }
+  if (primaryReason) {
+    pushAccountTag(tags, schedulingReasonMeta(primaryReason, t));
+  }
+  [...blockingReasons, ...warningReasons].slice(0, 4).forEach((reason) => {
+    pushAccountTag(tags, schedulingReasonMeta(reason, t));
+  });
+  if (score.health_status && score.health_status !== 'healthy') {
+    pushAccountTag(tags, healthTagMeta(score.health_status, t));
+  }
+  if (
+    Number(score.score_total || 0) > 0 &&
+    Number(score.score_total || 0) < 0.65
+  ) {
+    pushAccountTag(tags, { color: 'orange', label: t('低健康分') });
+  }
+  if (score.probe_recovery_pending) {
+    pushAccountTag(tags, {
+      color: 'orange',
+      label: t('恢复样本 {{current}}/{{required}}', {
+        current: score.probe_recovery_success_count || 0,
+        required: score.probe_recovery_required || 0,
+      }),
+    });
+  }
+  if (!score.sample_count && !score.real_sample_count_30m) {
+    pushAccountTag(tags, { color: 'grey', label: t('暂无评分样本') });
+  }
+  if (usageLimitActive(capabilities)) {
+    pushAccountTag(tags, { color: 'orange', label: t('账号用量限制中') });
+  }
+  const classification = effectiveCapabilityClassification(capabilities);
+  if (
+    classification &&
+    !['codex_compact_available', 'codex_backend_available'].includes(
+      classification,
+    )
+  ) {
+    pushAccountTag(tags, classificationMeta(classification, t));
+  }
+  if (record?.stats?.main_error_category) {
+    pushAccountTag(tags, {
+      color: 'red',
+      label: record.stats.main_error_category,
+    });
+  }
+  return tags;
+}
+
+function AccountBatchTagsCell({ record, t }) {
+  const tags = accountBatchTags(record, t);
+  if (tags.length === 0) {
+    return (
+      <Tag color='green' size='small' type='light' shape='circle'>
+        {t('无阻塞')}
+      </Tag>
+    );
+  }
+  const visibleTags = tags.slice(0, 5);
+  const hiddenCount = tags.length - visibleTags.length;
+  return (
+    <div className='ct-channel-account-batch-tags'>
+      {visibleTags.map((tag, index) => (
+        <Tag
+          key={`${tag.label}-${index}`}
+          color={tag.color || 'grey'}
+          size='small'
+          type='light'
+          shape='circle'
+        >
+          {tag.label}
+        </Tag>
+      ))}
+      {hiddenCount > 0 ? (
+        <Tag color='grey' size='small' type='light' shape='circle'>
+          +{hiddenCount}
+        </Tag>
+      ) : null}
+    </div>
+  );
+}
+
+function DispatchScoreChip({ record, t, onOpenDetail }) {
+  const score = record?.score;
+  const meta = score ? healthTagMeta(score.health_status, t) : null;
+  const recoveryPending = Boolean(score?.probe_recovery_pending);
+  return (
+    <Tooltip content={t('查看详情')}>
+      <button
+        type='button'
+        className='ct-channel-account-score-chip'
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenDetail?.(record);
+        }}
+      >
+        <span
+          className={`ct-channel-account-score-dot ct-channel-account-score-dot-${meta?.color || 'grey'}`}
+        />
+        <strong className={metricClass(score?.score_total)}>
+          {score ? formatScore(score.score_total) : '--'}
+        </strong>
+        <span>{meta?.label || t('暂无运行态')}</span>
+        {recoveryPending ? (
+          <Tag color='orange' size='small' type='light' shape='circle'>
+            {t('等待恢复探活')}
+          </Tag>
+        ) : null}
+      </button>
+    </Tooltip>
+  );
+}
+
 function AccountAvailabilityCell({ record, t }) {
   const scheduling = record?.scheduling || {};
   const score = record?.score || {};
@@ -1309,20 +1625,22 @@ function AccountAvailabilityCell({ record, t }) {
         <div className='ct-channel-account-availability-tip-stack'>
           <span>{t('阻塞与提醒')}</span>
           <div className='ct-channel-account-reason-tags'>
-            {[...meta.blockingReasons, ...meta.warningReasons].map((reason, index) => {
-              const reasonMeta = schedulingReasonMeta(reason, t);
-              return (
-                <Tag
-                  color={reasonMeta.color}
-                  key={`${reason}-${index}`}
-                  size='small'
-                  type='light'
-                  shape='circle'
-                >
-                  {reasonMeta.label}
-                </Tag>
-              );
-            })}
+            {[...meta.blockingReasons, ...meta.warningReasons].map(
+              (reason, index) => {
+                const reasonMeta = schedulingReasonMeta(reason, t);
+                return (
+                  <Tag
+                    color={reasonMeta.color}
+                    key={`${reason}-${index}`}
+                    size='small'
+                    type='light'
+                    shape='circle'
+                  >
+                    {reasonMeta.label}
+                  </Tag>
+                );
+              },
+            )}
           </div>
         </div>
       ) : null}
@@ -1334,7 +1652,12 @@ function AccountAvailabilityCell({ record, t }) {
       {healthMeta ? (
         <div className='ct-channel-account-availability-tip-line'>
           <span>{t('健康状态')}</span>
-          <Tag color={healthMeta.color} size='small' type='light' shape='circle'>
+          <Tag
+            color={healthMeta.color}
+            size='small'
+            type='light'
+            shape='circle'
+          >
             {healthMeta.label}
           </Tag>
         </div>
@@ -1432,7 +1755,9 @@ function AccountDiagnosisBlock({ record, t }) {
   const probeState = record?.stats?.probe_recovery_state || {};
   const limited = usageLimitActive(capabilities);
   const disabled = record && !record.key_enabled;
-  const probePending = Boolean(score.probe_recovery_pending || probeState.pending);
+  const probePending = Boolean(
+    score.probe_recovery_pending || probeState.pending,
+  );
   const fallbackBlockingReasons = [
     disabled ? 'account_disabled' : '',
     limited ? 'account_usage_limited' : '',
@@ -1448,7 +1773,8 @@ function AccountDiagnosisBlock({ record, t }) {
     probe_recovery_pending: probePending,
     probe_recovery_successes:
       score.probe_recovery_success_count ?? probeState.success_count ?? 0,
-    probe_recovery_required: score.probe_recovery_required ?? probeState.required ?? 0,
+    probe_recovery_required:
+      score.probe_recovery_required ?? probeState.required ?? 0,
     active_concurrency: score.active_concurrency,
     effective_concurrency_limit: score.effective_concurrency_limit,
     queue_depth: score.queue_depth,
@@ -1509,9 +1835,9 @@ function AccountDiagnosisBlock({ record, t }) {
         </div>
         <small>
           {scheduling.detail ||
-          (score.health_status
-            ? `${t('健康状态')}: ${healthTagMeta(score.health_status, t).label}`
-            : t('暂无运行态'))}
+            (score.health_status
+              ? `${t('健康状态')}: ${healthTagMeta(score.health_status, t).label}`
+              : t('暂无运行态'))}
         </small>
       </div>
       <div className='ct-channel-account-diagnosis-card'>
@@ -1841,7 +2167,9 @@ function ProxyBindingEditor({
         </div>
       )}
       <Text type='tertiary' size='small'>
-        {t('代理会作为独立资源记录使用品牌和账号，后续可用于避免同品牌重复使用同一出口')}
+        {t(
+          '代理会作为独立资源记录使用品牌和账号，后续可用于避免同品牌重复使用同一出口',
+        )}
       </Text>
     </div>
   );
@@ -1851,6 +2179,8 @@ function buildColumns(
   t,
   onToggleStatus,
   onDeleteAccount,
+  onArchiveInvalid,
+  onArchiveDiscarded,
   onOpenEdit,
   onOpenProxy,
   onOpenProxyEdit,
@@ -1871,27 +2201,32 @@ function buildColumns(
       render: (_, record) => {
         const identity = record?.account_identity || {};
         return (
-        <div className='ct-channel-account-identity'>
-          <div className='ct-channel-account-avatar'>
-            <UserRoundCog size={17} />
-          </div>
-          <div>
-            <div className='ct-channel-account-name'>
-              {identity.display_name ||
-                `${t('账号')} #${record.credential_index + 1}`}
-              {statusTag(record, t)}
-              <AccountUsageLimitTag record={record} t={t} />
+          <div className='ct-channel-account-identity'>
+            <div className='ct-channel-account-avatar'>
+              <UserRoundCog size={17} />
             </div>
-            <div className='ct-channel-account-sub'>
-              {t('凭证序号')} #{record.credential_index + 1}
-            </div>
-            {record.disabled_reason ? (
-              <div className='ct-channel-account-warning'>
-                {record.disabled_reason}
+            <div>
+              <div className='ct-channel-account-name'>
+                {accountPrimaryName(record, t)}
+                {statusTag(record, t)}
+                <AccountUsageLimitTag record={record} t={t} />
               </div>
-            ) : null}
+              <div className='ct-channel-account-sub ct-channel-account-uid'>
+                <KeyRound size={12} />
+                <span>{accountCredentialUID(record)}</span>
+              </div>
+              {record.channel_name ? (
+                <div className='ct-channel-account-sub'>
+                  {record.channel_name} #{record.channel_id}
+                </div>
+              ) : null}
+              {record.disabled_reason ? (
+                <div className='ct-channel-account-warning'>
+                  {record.disabled_reason}
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
         );
       },
     },
@@ -1912,11 +2247,8 @@ function buildColumns(
               </Tag>
             </Space>
             <div className='ct-channel-account-fp'>
-              <Fingerprint size={13} />
-              <span>{record.subject_short || '--'}</span>
-              <span>/</span>
               <KeyRound size={13} />
-              <span>{record.credential_short || '--'}</span>
+              <span>{accountCredentialLabel(record)}</span>
             </div>
             <Text type='tertiary' ellipsis={{ showTooltip: true }}>
               {identity.account_id || '--'}
@@ -1990,7 +2322,7 @@ function buildColumns(
     {
       title: t('操作'),
       dataIndex: 'operation',
-      width: 330,
+      width: 390,
       fixed: 'right',
       render: (_, record) => {
         const action = record?.key_enabled ? 'disable' : 'enable';
@@ -1998,7 +2330,8 @@ function buildColumns(
         const loading = statusLoadingKey === loadingKey;
         const testing = testingAccountKey === loadingKey;
         const probing = capabilityLoadingKey === loadingKey;
-        const platformDiagnosing = capabilityLoadingKey === `${loadingKey}:platform`;
+        const platformDiagnosing =
+          capabilityLoadingKey === `${loadingKey}:platform`;
         return (
           <Space className='ct-channel-account-operation' spacing={6}>
             <Popconfirm
@@ -2037,7 +2370,6 @@ function buildColumns(
                 theme='light'
                 icon={<Activity size={14} />}
                 loading={testing}
-                disabled={!record?.key_enabled}
                 onClick={() => onTestAccount(record)}
                 aria-label={t('测试账号')}
               >
@@ -2078,6 +2410,34 @@ function buildColumns(
               />
             </Tooltip>
             <Popconfirm
+              title={t('移入失效账号池？')}
+              content={t('失效账号会从运行账号移除，可人工恢复')}
+              onConfirm={() => onArchiveInvalid(record)}
+            >
+              <Button
+                size='small'
+                type='warning'
+                theme='borderless'
+                icon={<FileArchive size={14} />}
+                loading={loading}
+                aria-label={t('移入失效账号池')}
+              />
+            </Popconfirm>
+            <Popconfirm
+              title={t('移入废弃账号池？')}
+              content={t('废弃账号会从运行账号移除并作为不再调度的归档')}
+              onConfirm={() => onArchiveDiscarded(record)}
+            >
+              <Button
+                size='small'
+                type='danger'
+                theme='borderless'
+                icon={<XCircle size={14} />}
+                loading={loading}
+                aria-label={t('移入废弃账号池')}
+              />
+            </Popconfirm>
+            <Popconfirm
               title={t('确定删除该账号？')}
               content={t('删除后该凭证将从渠道中移除，此操作不可撤销')}
               onConfirm={() => onDeleteAccount(record)}
@@ -2098,12 +2458,7 @@ function buildColumns(
   ];
 }
 
-function buildStatsColumns(
-  t,
-  onToggleStatus,
-  onOpenDetail,
-  statusLoadingKey,
-) {
+function buildStatsColumns(t, onToggleStatus, onOpenDetail, statusLoadingKey) {
   return [
     {
       title: t('状态'),
@@ -2113,58 +2468,65 @@ function buildStatsColumns(
       render: (_, record) => {
         const identity = record?.account_identity || {};
         return (
-        <div className='ct-channel-account-identity'>
-          <div className='ct-channel-account-avatar'>
-            <BarChart3 size={17} />
-          </div>
-          <div>
-            <div className='ct-channel-account-name'>
-              {identity.display_name ||
-                `${t('账号')} #${record.credential_index + 1}`}
-              {statusTag(record, t)}
-              <AccountUsageLimitTag record={record} t={t} />
+          <div className='ct-channel-account-identity'>
+            <div className='ct-channel-account-avatar'>
+              <BarChart3 size={17} />
             </div>
-            <div className='ct-channel-account-sub'>
-              {identity.brand || record?.resource_ref?.brand || '--'} ·{' '}
-              {t('凭证序号')} #{record.credential_index + 1}
-            </div>
-            {record.disabled_reason ? (
-              <div className='ct-channel-account-warning'>
-                {record.disabled_reason}
+            <div>
+              <div className='ct-channel-account-name'>
+                {accountPrimaryName(record, t)}
+                {statusTag(record, t)}
+                <AccountUsageLimitTag record={record} t={t} />
               </div>
-            ) : null}
+              <div className='ct-channel-account-sub ct-channel-account-uid'>
+                <KeyRound size={12} />
+                <span>{accountCredentialUID(record)}</span>
+              </div>
+              {record.disabled_reason ? (
+                <div className='ct-channel-account-warning'>
+                  {record.disabled_reason}
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
         );
       },
     },
     {
       title: t('调度'),
       dataIndex: 'score',
-      width: 230,
-      render: (_, record) => <DispatchHealthBlock record={record} t={t} />,
+      key: 'score',
+      sorter: true,
+      width: 185,
+      render: (_, record) => (
+        <DispatchScoreChip record={record} t={t} onOpenDetail={onOpenDetail} />
+      ),
     },
     {
-      title: t('可用性'),
+      title: t('标签'),
       dataIndex: 'scheduling',
-      width: 230,
-      render: (_, record) => <AccountAvailabilityCell record={record} t={t} />,
+      width: 330,
+      render: (_, record) => <AccountBatchTagsCell record={record} t={t} />,
     },
     {
       title: t('今日统计'),
       dataIndex: 'today_requests',
       key: 'today_requests',
       sorter: true,
-      width: 260,
-      render: (_, record) => <AccountStatsBlock stats={record?.stats} t={t} />,
+      width: 170,
+      render: (_, record) => (
+        <AccountStatsCompact stats={record?.stats} t={t} />
+      ),
     },
     {
       title: t('用量窗口'),
       dataIndex: 'last_7d_requests',
       key: 'last_7d_requests',
       sorter: true,
-      width: 470,
-      render: (_, record) => <UsageWindowsBlock stats={record?.stats} t={t} />,
+      width: 230,
+      render: (_, record) => (
+        <UsageWindowsCompact stats={record?.stats} t={t} />
+      ),
     },
     {
       title: t('最近活跃'),
@@ -2175,12 +2537,17 @@ function buildStatsColumns(
       render: (_, record) => {
         const stats = record?.stats || {};
         return (
-        <div className='ct-channel-account-time-grid'>
-          <span>{t('请求')}</span>
-          <strong>{formatTimestamp(stats?.last_active_at)}</strong>
-          <span>{t('主要异常')}</span>
-          <strong>{stats?.main_error_category || t('无异常')}</strong>
-        </div>
+          <div className='ct-channel-account-last-active'>
+            <strong>{formatTimestamp(stats?.last_active_at)}</strong>
+            <Tag
+              color={stats?.main_error_category ? 'red' : 'green'}
+              size='small'
+              type='light'
+              shape='circle'
+            >
+              {stats?.main_error_category || t('无异常')}
+            </Tag>
+          </div>
         );
       },
     },
@@ -2239,6 +2606,152 @@ function buildStatsColumns(
   ];
 }
 
+function buildPoolColumns(t, poolView, onRestore, onDiscard, onDelete) {
+  return [
+    {
+      title: t('账号'),
+      dataIndex: 'account_id',
+      width: 280,
+      render: (_, record) => (
+        <div className='ct-channel-account-identity'>
+          <div className='ct-channel-account-avatar'>
+            <UserRoundCog size={17} />
+          </div>
+          <div>
+            <div className='ct-channel-account-name'>
+              {record.brand || record.provider || t('账号')}
+              <Tag
+                color={poolView === 'invalid' ? 'orange' : 'grey'}
+                type='light'
+                shape='circle'
+              >
+                {poolView === 'invalid' ? t('失效池') : t('废弃池')}
+              </Tag>
+            </div>
+            <div className='ct-channel-account-sub ct-channel-account-uid'>
+              <KeyRound size={12} />
+              <span>
+                {record.subject_short || record.credential_short || '--'}
+              </span>
+            </div>
+            {record.reason ? (
+              <div className='ct-channel-account-warning'>{record.reason}</div>
+            ) : null}
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: t('来源渠道'),
+      dataIndex: 'channel_name',
+      width: 220,
+      render: (_, record) => (
+        <div className='ct-channel-account-meta-stack'>
+          <Text strong ellipsis={{ showTooltip: true }}>
+            {record.channel_name || t('渠道')} #{record.channel_id || '--'}
+          </Text>
+          <Text type='tertiary'>
+            {t('原索引')} #{Number(record.credential_index || 0) + 1}
+          </Text>
+        </div>
+      ),
+    },
+    {
+      title: t('品牌与凭证'),
+      dataIndex: 'brand',
+      width: 260,
+      render: (_, record) => (
+        <div className='ct-channel-account-meta-stack'>
+          <Space spacing={6}>
+            <Tag color='cyan' type='light' shape='circle'>
+              {record.brand || '--'}
+            </Tag>
+            <Tag color='blue' type='light' shape='circle'>
+              {record.account_type || '--'}
+            </Tag>
+          </Space>
+          <div className='ct-channel-account-fp'>
+            <KeyRound size={13} />
+            <span>{record.credential_masked || '--'}</span>
+          </div>
+          <Text type='tertiary' ellipsis={{ showTooltip: true }}>
+            {record.account_identity_key || record.account_id || '--'}
+          </Text>
+        </div>
+      ),
+    },
+    {
+      title: t('归档信息'),
+      dataIndex: 'archived_at',
+      width: 280,
+      render: (_, record) => (
+        <div className='ct-channel-account-time-grid'>
+          <span>{t('归档时间')}</span>
+          <strong>{formatTimestamp(record.archived_at)}</strong>
+          <span>{t('备注')}</span>
+          <Text type='tertiary' ellipsis={{ showTooltip: true }}>
+            {record.note || '--'}
+          </Text>
+        </div>
+      ),
+    },
+    {
+      title: t('操作'),
+      dataIndex: 'operation',
+      width: poolView === 'invalid' ? 230 : 110,
+      fixed: 'right',
+      render: (_, record) => (
+        <Space spacing={6}>
+          {poolView === 'invalid' ? (
+            <>
+              <Popconfirm
+                title={t('恢复账号？')}
+                content={t('恢复后账号默认禁用，需要确认后再启用调度')}
+                onConfirm={() => onRestore(record)}
+              >
+                <Button
+                  size='small'
+                  type='primary'
+                  theme='light'
+                  icon={<RefreshCw size={14} />}
+                >
+                  {t('恢复')}
+                </Button>
+              </Popconfirm>
+              <Popconfirm
+                title={t('移入废弃账号池？')}
+                content={t('废弃后仍保留归档信息，但不再作为可恢复账号处理')}
+                onConfirm={() => onDiscard(record)}
+              >
+                <Button
+                  size='small'
+                  type='warning'
+                  theme='borderless'
+                  icon={<FileArchive size={14} />}
+                  aria-label={t('移入废弃账号池')}
+                />
+              </Popconfirm>
+            </>
+          ) : null}
+          <Popconfirm
+            title={t('删除归档记录？')}
+            content={t('此操作只删除归档池记录，不会恢复账号')}
+            onConfirm={() => onDelete(record)}
+          >
+            <Button
+              size='small'
+              type='danger'
+              theme='borderless'
+              icon={<Trash2 size={14} />}
+              aria-label={t('删除归档记录')}
+            />
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+}
+
 function DetailStatWindow({ title, window, t }) {
   return (
     <div className='ct-channel-account-detail-window'>
@@ -2272,7 +2785,9 @@ function RequestReconcileModal({ visible, data, loading, onClose, t }) {
   const executionRecords = Array.isArray(data?.execution_records)
     ? data.execution_records
     : [];
-  const scoreEvents = Array.isArray(data?.score_events) ? data.score_events : [];
+  const scoreEvents = Array.isArray(data?.score_events)
+    ? data.score_events
+    : [];
   const checks = Array.isArray(data?.checks) ? data.checks : [];
   const diagnoses = Array.isArray(data?.diagnoses) ? data.diagnoses : [];
 
@@ -2287,7 +2802,11 @@ function RequestReconcileModal({ visible, data, loading, onClose, t }) {
     >
       <div className='ct-channel-account-reconcile'>
         {loading ? (
-          <Skeleton placeholder={<Skeleton.Paragraph rows={6} />} loading active />
+          <Skeleton
+            placeholder={<Skeleton.Paragraph rows={6} />}
+            loading
+            active
+          />
         ) : !data ? (
           <Empty title={t('暂无请求记录')} />
         ) : (
@@ -2305,13 +2824,20 @@ function RequestReconcileModal({ visible, data, loading, onClose, t }) {
             </div>
             {diagnoses.length > 0 ? (
               <div className='ct-channel-account-reconcile-diagnoses'>
-                <div className='ct-channel-account-detail-title'>{t('诊断结论')}</div>
+                <div className='ct-channel-account-detail-title'>
+                  {t('诊断结论')}
+                </div>
                 {diagnoses.map((diagnosis) => (
                   <div key={`${diagnosis.key}-${diagnosis.severity}`}>
-                    <Tag size='small' color={reconcileDiagnosisColor(diagnosis.severity)}>
+                    <Tag
+                      size='small'
+                      color={reconcileDiagnosisColor(diagnosis.severity)}
+                    >
                       {reconcileDiagnosisTitle(diagnosis.key, t)}
                     </Tag>
-                    <span>{reconcileDiagnosisSuggestion(diagnosis.key, t)}</span>
+                    <span>
+                      {reconcileDiagnosisSuggestion(diagnosis.key, t)}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -2327,43 +2853,64 @@ function RequestReconcileModal({ visible, data, loading, onClose, t }) {
               ))}
             </div>
             <div className='ct-channel-account-reconcile-section'>
-              <div className='ct-channel-account-detail-title'>{t('用量事件')}</div>
+              <div className='ct-channel-account-detail-title'>
+                {t('用量事件')}
+              </div>
               <div className='ct-channel-account-detail-grid'>
                 <span>{t('统计状态')}</span>
-                <strong>{usage.statistics_diagnostic ? statisticsDiagnosticText(usage, t) : t('未找到')}</strong>
+                <strong>
+                  {usage.statistics_diagnostic
+                    ? statisticsDiagnosticText(usage, t)
+                    : t('未找到')}
+                </strong>
                 <span>{t('请求类型')}</span>
-                <strong>{usage.is_health_probe ? t('探活样本') : t('真实请求')}</strong>
+                <strong>
+                  {usage.is_health_probe ? t('探活样本') : t('真实请求')}
+                </strong>
                 <span>Token</span>
                 <strong>{formatCompactNumber(usage.total_tokens)}</strong>
                 <span>{t('用户扣费')}</span>
                 <strong>{formatQuotaValue(usage.quota)}</strong>
                 <span>{t('首包/耗时')}</span>
-                <strong>{formatLatency(usage.ttft_ms)} / {formatLatency(usage.duration_ms)}</strong>
+                <strong>
+                  {formatLatency(usage.ttft_ms)} /{' '}
+                  {formatLatency(usage.duration_ms)}
+                </strong>
                 <span>{t('完成时间')}</span>
                 <strong>{formatTimestamp(usage.completed_at)}</strong>
               </div>
             </div>
             <div className='ct-channel-account-reconcile-section'>
-              <div className='ct-channel-account-detail-title'>{t('最终请求摘要')}</div>
+              <div className='ct-channel-account-detail-title'>
+                {t('最终请求摘要')}
+              </div>
               <div className='ct-channel-account-detail-grid'>
                 <span>{t('结果')}</span>
                 <strong>
                   {data.user_request
                     ? userRequest.final_success
                       ? t('成功')
-                      : userRequest.final_error_category || userRequest.final_status_code || t('失败')
+                      : userRequest.final_error_category ||
+                        userRequest.final_status_code ||
+                        t('失败')
                     : t('未找到')}
                 </strong>
                 <span>{t('尝试次数')}</span>
                 <strong>{formatNumber(userRequest.attempts)}</strong>
                 <span>{t('最终渠道')}</span>
-                <strong>{userRequest.final_channel_id ? `#${userRequest.final_channel_id}` : '--'}</strong>
+                <strong>
+                  {userRequest.final_channel_id
+                    ? `#${userRequest.final_channel_id}`
+                    : '--'}
+                </strong>
                 <span>{t('恢复成功')}</span>
                 <strong>{userRequest.recovered ? t('是') : t('否')}</strong>
               </div>
             </div>
             <div className='ct-channel-account-reconcile-section'>
-              <div className='ct-channel-account-detail-title'>{t('Attempt 样本')}</div>
+              <div className='ct-channel-account-detail-title'>
+                {t('Attempt 样本')}
+              </div>
               {executionRecords.length === 0 ? (
                 <Empty title={t('未找到')} />
               ) : (
@@ -2376,9 +2923,16 @@ function RequestReconcileModal({ visible, data, loading, onClose, t }) {
                         })}
                       </span>
                       <Tag size='small' color={item.success ? 'green' : 'red'}>
-                        {item.success ? t('成功') : item.error_category || item.status_code || t('失败')}
+                        {item.success
+                          ? t('成功')
+                          : item.error_category ||
+                            item.status_code ||
+                            t('失败')}
                       </Tag>
-                      <span>{formatLatency(item.ttft_ms)} / {formatLatency(item.duration_ms)}</span>
+                      <span>
+                        {formatLatency(item.ttft_ms)} /{' '}
+                        {formatLatency(item.duration_ms)}
+                      </span>
                       <span>{item.selected_reason || '--'}</span>
                     </div>
                   ))}
@@ -2386,7 +2940,9 @@ function RequestReconcileModal({ visible, data, loading, onClose, t }) {
               )}
             </div>
             <div className='ct-channel-account-reconcile-section'>
-              <div className='ct-channel-account-detail-title'>{t('评分样本')}</div>
+              <div className='ct-channel-account-detail-title'>
+                {t('评分样本')}
+              </div>
               {scoreEvents.length === 0 ? (
                 <Empty title={t('未找到')} />
               ) : (
@@ -2399,7 +2955,9 @@ function RequestReconcileModal({ visible, data, loading, onClose, t }) {
                       <Tag size='small' color='teal'>
                         {formatScore(item.after_total)}
                       </Tag>
-                      <span>{item.switch_reason || item.failure_scope || '--'}</span>
+                      <span>
+                        {item.switch_reason || item.failure_scope || '--'}
+                      </span>
                       <span>{item.requested_model || '--'}</span>
                     </div>
                   ))}
@@ -2407,12 +2965,20 @@ function RequestReconcileModal({ visible, data, loading, onClose, t }) {
               )}
             </div>
             <div className='ct-channel-account-reconcile-section'>
-              <div className='ct-channel-account-detail-title'>{t('成本摘要')}</div>
+              <div className='ct-channel-account-detail-title'>
+                {t('成本摘要')}
+              </div>
               <div className='ct-channel-account-detail-grid'>
                 <span>{t('模型')}</span>
-                <strong>{cost.upstream_model || usage.requested_model || '--'}</strong>
+                <strong>
+                  {cost.upstream_model || usage.requested_model || '--'}
+                </strong>
                 <span>{t('账号成本')}</span>
-                <strong>{formatCost(cost.upstream_cost_total || usage.upstream_cost_total)}</strong>
+                <strong>
+                  {formatCost(
+                    cost.upstream_cost_total || usage.upstream_cost_total,
+                  )}
+                </strong>
                 <span>{t('来源')}</span>
                 <strong>{cost.cost_source || '--'}</strong>
                 <span>{t('精度')}</span>
@@ -2453,7 +3019,8 @@ function RecentRequestsBlock({ visible, record, onReload, t }) {
         summary.errors += 1;
         if (!summary.latestError) summary.latestError = item;
       }
-      const errorText = `${item.error_category || ''} ${item.status_code || ''}`.toLowerCase();
+      const errorText =
+        `${item.error_category || ''} ${item.status_code || ''}`.toLowerCase();
       if (item.status_code === 429 || errorText.includes('rate_limit')) {
         summary.rateLimited += 1;
       }
@@ -2575,11 +3142,13 @@ function RecentRequestsBlock({ visible, record, onReload, t }) {
     <div className='ct-channel-account-recent'>
       <div className='ct-channel-account-recent-head'>
         <div>
-          <div className='ct-channel-account-detail-title'>{t('最近10条请求')}</div>
+          <div className='ct-channel-account-detail-title'>
+            {t('最近10条请求')}
+          </div>
           {refreshResult ? (
             <p>
-              {t('已处理')} {formatNumber(refreshResult.scanned)} · {t('已更新')}{' '}
-              {formatNumber(refreshResult.updated)}
+              {t('已处理')} {formatNumber(refreshResult.scanned)} ·{' '}
+              {t('已更新')} {formatNumber(refreshResult.updated)}
             </p>
           ) : (
             <p>{t('仅重算最近6小时的统计归因')}</p>
@@ -2597,7 +3166,11 @@ function RecentRequestsBlock({ visible, record, onReload, t }) {
         </Button>
       </div>
       {loading ? (
-        <Skeleton placeholder={<Skeleton.Paragraph rows={3} />} loading active />
+        <Skeleton
+          placeholder={<Skeleton.Paragraph rows={3} />}
+          loading
+          active
+        />
       ) : items.length === 0 ? (
         <Empty title={t('暂无请求记录')} />
       ) : (
@@ -2634,7 +3207,9 @@ function RecentRequestsBlock({ visible, record, onReload, t }) {
             {items.map((item) => (
               <div
                 className='ct-channel-account-recent-item'
-                key={item.request_id || `${item.completed_at}-${item.status_code}`}
+                key={
+                  item.request_id || `${item.completed_at}-${item.status_code}`
+                }
               >
                 <div className='ct-channel-account-recent-main'>
                   <Tooltip content={item.request_id || '--'}>
@@ -2643,19 +3218,27 @@ function RecentRequestsBlock({ visible, record, onReload, t }) {
                   <span>{item.requested_model || '--'}</span>
                 </div>
                 <div className='ct-channel-account-recent-tags'>
-                  <Tag size='small' color={item.attempt_index > 0 ? 'orange' : 'grey'}>
+                  <Tag
+                    size='small'
+                    color={item.attempt_index > 0 ? 'orange' : 'grey'}
+                  >
                     {t('第 {{index}} 次尝试', {
                       index: attemptDisplayIndex(item.attempt_index),
                     })}
                   </Tag>
-                  <Tag size='small' color={item.is_health_probe ? 'cyan' : 'green'}>
+                  <Tag
+                    size='small'
+                    color={item.is_health_probe ? 'cyan' : 'green'}
+                  >
                     {item.is_health_probe ? t('探活样本') : t('真实请求')}
                   </Tag>
                   <Tag size='small' color='blue'>
                     {`${t('渠道')} #${item.channel_id || '--'} / ${t('账号')} #${accountDisplayIndex(item)}`}
                   </Tag>
                   <Tag size='small' color={item.success ? 'green' : 'red'}>
-                    {item.success ? t('成功') : item.error_category || item.status_code || t('失败')}
+                    {item.success
+                      ? t('成功')
+                      : item.error_category || item.status_code || t('失败')}
                   </Tag>
                   <Tag
                     size='small'
@@ -2679,7 +3262,10 @@ function RecentRequestsBlock({ visible, record, onReload, t }) {
                 </div>
                 <div className='ct-channel-account-recent-meta'>
                   <span>{formatTimestamp(item.completed_at)}</span>
-                  <span>{formatLatency(item.ttft_ms)} / {formatLatency(item.duration_ms)}</span>
+                  <span>
+                    {formatLatency(item.ttft_ms)} /{' '}
+                    {formatLatency(item.duration_ms)}
+                  </span>
                   <span>{formatCompactNumber(item.total_tokens)} Token</span>
                   <span>{formatQuotaValue(item.quota)}</span>
                   <Tooltip content={t('请求链路对账')}>
@@ -2722,10 +3308,7 @@ function AccountDetailSideSheet({ visible, record, onClose, onReload, t }) {
       <div className='ct-channel-account-detail-sheet'>
         <div className='ct-channel-account-detail-head'>
           <div>
-            <h3>
-              {identity.display_name ||
-                `${t('账号')} #${Number(record?.credential_index || 0) + 1}`}
-            </h3>
+            <h3>{accountCredentialLabel(record)}</h3>
             <p>
               {identity.brand || record?.resource_ref?.brand || '--'} ·{' '}
               {identity.account_type || '--'}
@@ -2740,6 +3323,8 @@ function AccountDetailSideSheet({ visible, record, onClose, onReload, t }) {
         <div className='ct-channel-account-detail-section'>
           <div className='ct-channel-account-detail-title'>{t('凭证身份')}</div>
           <div className='ct-channel-account-detail-grid'>
+            <span>{t('凭证身份')}</span>
+            <strong>{accountCredentialUID(record)}</strong>
             <span>{t('凭证序号')}</span>
             <strong>#{Number(record?.credential_index || 0) + 1}</strong>
             <span>{t('账号标识')}</span>
@@ -2759,9 +3344,21 @@ function AccountDetailSideSheet({ visible, record, onClose, onReload, t }) {
         <div className='ct-channel-account-detail-section'>
           <div className='ct-channel-account-detail-title'>{t('用量统计')}</div>
           <div className='ct-channel-account-detail-windows'>
-            <DetailStatWindow title={t('今日统计')} window={stats.today || {}} t={t} />
-            <DetailStatWindow title={t('近5小时')} window={stats.last_5h || {}} t={t} />
-            <DetailStatWindow title={t('近7天')} window={stats.last_7d || {}} t={t} />
+            <DetailStatWindow
+              title={t('今日统计')}
+              window={stats.today || {}}
+              t={t}
+            />
+            <DetailStatWindow
+              title={t('近5小时')}
+              window={stats.last_5h || {}}
+              t={t}
+            />
+            <DetailStatWindow
+              title={t('近7天')}
+              window={stats.last_7d || {}}
+              t={t}
+            />
           </div>
         </div>
         <div className='ct-channel-account-detail-section'>
@@ -2790,6 +3387,10 @@ function ChannelAccount() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const scopedChannelID = Math.max(
+    0,
+    Number.parseInt(searchParams.get('channel_id') || id || '0', 10) || 0,
+  );
   const importFileInputRef = useRef(null);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -2802,6 +3403,10 @@ function ChannelAccount() {
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [poolView, setPoolViewState] = useState(() => {
+    const value = searchParams.get('pool');
+    return ['invalid', 'discarded'].includes(value) ? value : 'running';
+  });
   const [view, setViewState] = useState(
     searchParams.get('view') === 'stats' ? 'stats' : 'manage',
   );
@@ -2809,7 +3414,10 @@ function ChannelAccount() {
     Math.max(1, Number.parseInt(searchParams.get('page') || '1', 10) || 1),
   );
   const [pageSize, setPageSize] = useState(
-    Math.max(1, Number.parseInt(searchParams.get('page_size') || '20', 10) || 20),
+    Math.max(
+      1,
+      Number.parseInt(searchParams.get('page_size') || '20', 10) || 20,
+    ),
   );
   const [sortConfig, setSortConfig] = useState({ sort: '', order: '' });
   const [detailRecord, setDetailRecord] = useState(null);
@@ -2855,13 +3463,33 @@ function ChannelAccount() {
     password: '',
     remark: '',
   });
-  const selectedIndexes = useMemo(
+  const selectedTargets = useMemo(
     () =>
       selectedRowKeys
-        .map((key) => Number(String(key).split('-')[1]))
-        .filter((value) => Number.isInteger(value) && value >= 0),
+        .map((key) => {
+          const [channelID, credentialIndex] = String(key)
+            .split('-')
+            .map((value) => Number(value));
+          return { channel_id: channelID, credential_index: credentialIndex };
+        })
+        .filter(
+          (target) =>
+            Number.isInteger(target.channel_id) &&
+            target.channel_id > 0 &&
+            Number.isInteger(target.credential_index) &&
+            target.credential_index >= 0,
+        ),
     [selectedRowKeys],
   );
+
+  const setPoolView = useCallback((nextPool) => {
+    const normalized = ['invalid', 'discarded'].includes(nextPool)
+      ? nextPool
+      : 'running';
+    setPoolViewState(normalized);
+    setSelectedRowKeys([]);
+    setPage(1);
+  }, []);
 
   const resetProxyEditorState = useCallback((record = null) => {
     setSelectedProxyID(Number(record?.proxy?.id || 0));
@@ -2880,15 +3508,22 @@ function ChannelAccount() {
     setLoading(true);
     setError('');
     try {
-      const response = await API.get(`/api/channel/${id}/accounts`, {
+      const endpoint =
+        poolView === 'invalid'
+          ? '/api/channel/account-pools/invalid'
+          : poolView === 'discarded'
+            ? '/api/channel/account-pools/discarded'
+            : '/api/channel/accounts';
+      const response = await API.get(endpoint, {
         params: {
-          view,
+          view: poolView === 'running' ? view : undefined,
           page,
           page_size: pageSize,
           keyword: keyword.trim(),
-          status: statusFilter,
-          sort: sortConfig.sort,
-          order: sortConfig.order,
+          status: poolView === 'running' ? statusFilter : undefined,
+          channel_id: scopedChannelID || undefined,
+          sort: poolView === 'running' ? sortConfig.sort : undefined,
+          order: poolView === 'running' ? sortConfig.order : undefined,
         },
         disableDuplicate: true,
       });
@@ -2905,11 +3540,25 @@ function ChannelAccount() {
     } finally {
       setLoading(false);
     }
-  }, [id, keyword, page, pageSize, sortConfig.order, sortConfig.sort, statusFilter, t, view]);
+  }, [
+    keyword,
+    page,
+    pageSize,
+    poolView,
+    scopedChannelID,
+    sortConfig.order,
+    sortConfig.sort,
+    statusFilter,
+    t,
+    view,
+  ]);
 
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
-    next.set('view', view);
+    if (poolView !== 'running') next.set('pool', poolView);
+    else next.delete('pool');
+    if (poolView === 'running') next.set('view', view);
+    else next.delete('view');
     if (page > 1) next.set('page', String(page));
     else next.delete('page');
     if (pageSize !== 20) next.set('page_size', String(pageSize));
@@ -2917,7 +3566,7 @@ function ChannelAccount() {
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
     }
-  }, [page, pageSize, searchParams, setSearchParams, view]);
+  }, [page, pageSize, poolView, searchParams, setSearchParams, view]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -2965,7 +3614,7 @@ function ChannelAccount() {
 
   useEffect(() => {
     setSelectedRowKeys([]);
-  }, [id, keyword, page, pageSize, statusFilter, view]);
+  }, [keyword, page, pageSize, poolView, scopedChannelID, statusFilter, view]);
 
   const toggleAccountStatus = useCallback(
     async (record) => {
@@ -2974,7 +3623,7 @@ function ChannelAccount() {
       setStatusLoadingKey(loadingKey);
       try {
         const response = await API.post(
-          `/api/channel/${id}/accounts/${record.credential_index}/status`,
+          `/api/channel/${record.channel_id}/accounts/${record.credential_index}/status`,
           {
             enabled,
             reason: enabled ? '' : 'manual_disabled',
@@ -3000,26 +3649,33 @@ function ChannelAccount() {
         setStatusLoadingKey('');
       }
     },
-    [id, loadAccounts, t],
+    [loadAccounts, t],
   );
 
   const batchUpdateAccountStatus = useCallback(
     async (enabled) => {
-      if (selectedIndexes.length === 0) {
+      if (selectedTargets.length === 0) {
         showError(t('请先选择账号'));
         return;
       }
       setBatchLoading(true);
       try {
-        const response = await API.post(`/api/channel/${id}/accounts`, {
-          enabled,
-          reason: enabled ? '' : 'manual_disabled',
-          credential_indexes: selectedIndexes,
-        });
-        if (response?.data?.success === false) {
-          throw new Error(response?.data?.message || t('操作失败'));
+        const groups = groupAccountTargetsByChannel(selectedTargets);
+        let payload = null;
+        for (const group of groups) {
+          const response = await API.post(
+            `/api/channel/${group.channel_id}/accounts`,
+            {
+              enabled,
+              reason: enabled ? '' : 'manual_disabled',
+              credential_indexes: group.credential_indexes,
+            },
+          );
+          if (response?.data?.success === false) {
+            throw new Error(response?.data?.message || t('操作失败'));
+          }
+          payload = unwrapApiData(response);
         }
-        const payload = unwrapApiData(response);
         await loadAccounts();
         setSelectedRowKeys([]);
         showSuccess(
@@ -3028,10 +3684,10 @@ function ChannelAccount() {
             t,
             enabled
               ? t('已批量启用 {{total}} 个账号', {
-                  total: selectedIndexes.length,
+                  total: selectedTargets.length,
                 })
               : t('已批量禁用 {{total}} 个账号', {
-                  total: selectedIndexes.length,
+                  total: selectedTargets.length,
                 }),
           ),
         );
@@ -3043,22 +3699,18 @@ function ChannelAccount() {
         setBatchLoading(false);
       }
     },
-    [id, loadAccounts, selectedIndexes, t],
+    [loadAccounts, selectedTargets, t],
   );
 
   const testAccount = useCallback(
     async (record) => {
-      if (!record?.key_enabled) {
-        showError(t('请先启用账号'));
-        return;
-      }
       const loadingKey = `${record.channel_id}-${record.credential_index}`;
       if (accountIsCodexOAuth(record)) {
         setTestingAccountKey(loadingKey);
         setCapabilityLoadingKey(loadingKey);
         try {
           const response = await API.post('/api/channel/multi_key/manage', {
-            channel_id: Number(id),
+            channel_id: Number(record.channel_id),
             action: 'probe_key_capabilities',
             key_index: record.credential_index,
           });
@@ -3085,12 +3737,15 @@ function ChannelAccount() {
       }
       setTestingAccountKey(loadingKey);
       try {
-        const response = await API.get(`/api/channel/test/${id}`, {
-          params: {
-            credential_index: record.credential_index,
+        const response = await API.get(
+          `/api/channel/test/${record.channel_id}`,
+          {
+            params: {
+              credential_index: record.credential_index,
+            },
+            disableDuplicate: true,
           },
-          disableDuplicate: true,
-        });
+        );
         const payload = response?.data || {};
         if (!payload.success) {
           throw new Error(payload.message || t('测试失败'));
@@ -3109,7 +3764,7 @@ function ChannelAccount() {
         setTestingAccountKey('');
       }
     },
-    [id, loadAccounts, t],
+    [loadAccounts, t],
   );
 
   const probeAccountCapability = useCallback(
@@ -3118,7 +3773,7 @@ function ChannelAccount() {
       setCapabilityLoadingKey(loadingKey);
       try {
         const response = await API.post('/api/channel/multi_key/manage', {
-          channel_id: Number(id),
+          channel_id: Number(record.channel_id),
           action: 'probe_key_capabilities',
           key_index: record.credential_index,
         });
@@ -3133,15 +3788,13 @@ function ChannelAccount() {
         await loadAccounts();
       } catch (err) {
         const message =
-          err?.response?.data?.message ||
-          err?.message ||
-          t('账号权限检测失败');
+          err?.response?.data?.message || err?.message || t('账号权限检测失败');
         showError(summarizeAccountCapabilityError(message, t));
       } finally {
         setCapabilityLoadingKey('');
       }
     },
-    [id, loadAccounts, t],
+    [loadAccounts, t],
   );
 
   const diagnosePlatformCapability = useCallback(
@@ -3150,12 +3803,14 @@ function ChannelAccount() {
       setCapabilityLoadingKey(loadingKey);
       try {
         const response = await API.post('/api/channel/multi_key/manage', {
-          channel_id: Number(id),
+          channel_id: Number(record.channel_id),
           action: 'diagnose_platform_key_capabilities',
           key_index: record.credential_index,
         });
         if (response?.data?.success === false) {
-          throw new Error(response?.data?.message || t('Platform API 诊断失败'));
+          throw new Error(
+            response?.data?.message || t('Platform API 诊断失败'),
+          );
         }
         const capabilityMessage =
           response?.data?.data?.capabilities?.last_message ||
@@ -3173,14 +3828,18 @@ function ChannelAccount() {
         setCapabilityLoadingKey('');
       }
     },
-    [id, loadAccounts, t],
+    [loadAccounts, t],
   );
 
   const probeAllAccountCapabilities = useCallback(async () => {
+    if (!scopedChannelID) {
+      showError(t('请先筛选单个渠道'));
+      return;
+    }
     setCapabilityBatchLoading(true);
     try {
       const response = await API.post('/api/channel/multi_key/manage', {
-        channel_id: Number(id),
+        channel_id: Number(scopedChannelID),
         action: 'probe_all_key_capabilities',
       });
       if (response?.data?.success === false) {
@@ -3190,42 +3849,56 @@ function ChannelAccount() {
       await loadAccounts();
     } catch (err) {
       const message =
-        err?.response?.data?.message ||
-        err?.message ||
-        t('账号权限检测失败');
+        err?.response?.data?.message || err?.message || t('账号权限检测失败');
       showError(message);
     } finally {
       setCapabilityBatchLoading(false);
     }
-  }, [id, loadAccounts, t]);
+  }, [loadAccounts, scopedChannelID, t]);
 
   const deleteAccounts = useCallback(
-    async (indexes) => {
-      const normalizedIndexes = [...new Set(indexes)]
-        .map((value) => Number(value))
-        .filter((value) => Number.isInteger(value) && value >= 0);
-      if (normalizedIndexes.length === 0) {
+    async (targets) => {
+      const normalizedTargets = (targets || [])
+        .map((target) => ({
+          channel_id: Number(target.channel_id || 0),
+          credential_index: Number(target.credential_index),
+        }))
+        .filter(
+          (target) =>
+            Number.isInteger(target.channel_id) &&
+            target.channel_id > 0 &&
+            Number.isInteger(target.credential_index) &&
+            target.credential_index >= 0,
+        );
+      if (normalizedTargets.length === 0) {
         showError(t('请先选择账号'));
         return;
       }
       setDeleteLoading(true);
       try {
-        const response = await API.delete(`/api/channel/${id}/accounts`, {
-          data: {
-            credential_indexes: normalizedIndexes,
-          },
-        });
-        if (response?.data?.success === false) {
-          throw new Error(response?.data?.message || t('操作失败'));
+        const groups = groupAccountTargetsByChannel(normalizedTargets);
+        let payload = null;
+        for (const group of groups) {
+          const response = await API.delete(
+            `/api/channel/${group.channel_id}/accounts`,
+            {
+              data: {
+                credential_indexes: group.credential_indexes,
+              },
+            },
+          );
+          if (response?.data?.success === false) {
+            throw new Error(response?.data?.message || t('操作失败'));
+          }
+          payload = unwrapApiData(response);
         }
-        const payload = unwrapApiData(response);
         await loadAccounts();
         setSelectedRowKeys([]);
         showSuccess(
           operationMessage(
             payload.operation,
             t,
-            t('已删除 {{total}} 个账号', { total: normalizedIndexes.length }),
+            t('已删除 {{total}} 个账号', { total: normalizedTargets.length }),
           ),
         );
       } catch (err) {
@@ -3236,17 +3909,158 @@ function ChannelAccount() {
         setDeleteLoading(false);
       }
     },
-    [id, loadAccounts, t],
+    [loadAccounts, t],
   );
 
   const deleteSingleAccount = useCallback(
-    (record) => deleteAccounts([record.credential_index]),
+    (record) =>
+      deleteAccounts([
+        {
+          channel_id: record.channel_id,
+          credential_index: record.credential_index,
+        },
+      ]),
     [deleteAccounts],
   );
 
   const batchDeleteAccounts = useCallback(() => {
-    return deleteAccounts(selectedIndexes);
-  }, [deleteAccounts, selectedIndexes]);
+    return deleteAccounts(selectedTargets);
+  }, [deleteAccounts, selectedTargets]);
+
+  const archiveAccounts = useCallback(
+    async (targets, pool) => {
+      const normalizedTargets = (targets || [])
+        .map((target) => ({
+          channel_id: Number(target.channel_id || 0),
+          credential_index: Number(target.credential_index),
+        }))
+        .filter(
+          (target) =>
+            Number.isInteger(target.channel_id) &&
+            target.channel_id > 0 &&
+            Number.isInteger(target.credential_index) &&
+            target.credential_index >= 0,
+        );
+      if (normalizedTargets.length === 0) {
+        showError(t('请先选择账号'));
+        return;
+      }
+      setDeleteLoading(true);
+      try {
+        const response = await API.post(
+          `/api/channel/account-pools/${pool}/archive`,
+          {
+            targets: normalizedTargets,
+            reason:
+              pool === 'discarded' ? 'manual_discarded' : 'manual_invalid',
+          },
+        );
+        if (response?.data?.success === false) {
+          throw new Error(response?.data?.message || t('操作失败'));
+        }
+        const payload = unwrapApiData(response);
+        await loadAccounts();
+        setSelectedRowKeys([]);
+        showSuccess(
+          operationMessage(
+            payload.operation,
+            t,
+            pool === 'discarded'
+              ? t('已移入废弃账号池')
+              : t('已移入失效账号池'),
+          ),
+        );
+      } catch (err) {
+        const message =
+          err?.response?.data?.message || err?.message || t('操作失败');
+        showError(message);
+      } finally {
+        setDeleteLoading(false);
+      }
+    },
+    [loadAccounts, t],
+  );
+
+  const archiveSingleAccount = useCallback(
+    (record, pool) =>
+      archiveAccounts(
+        [
+          {
+            channel_id: record.channel_id,
+            credential_index: record.credential_index,
+          },
+        ],
+        pool,
+      ),
+    [archiveAccounts],
+  );
+
+  const batchArchiveAccounts = useCallback(
+    (pool) => archiveAccounts(selectedTargets, pool),
+    [archiveAccounts, selectedTargets],
+  );
+
+  const restorePoolAccount = useCallback(
+    async (record) => {
+      try {
+        const response = await API.post(
+          `/api/channel/account-pools/invalid/${record.id}/restore`,
+          { channel_id: record.channel_id },
+        );
+        if (response?.data?.success === false) {
+          throw new Error(response?.data?.message || t('操作失败'));
+        }
+        await loadAccounts();
+        showSuccess(t('账号已恢复，默认保持禁用'));
+      } catch (err) {
+        const message =
+          err?.response?.data?.message || err?.message || t('操作失败');
+        showError(message);
+      }
+    },
+    [loadAccounts, t],
+  );
+
+  const discardPoolAccount = useCallback(
+    async (record) => {
+      try {
+        const response = await API.post(
+          `/api/channel/account-pools/invalid/${record.id}/discard`,
+        );
+        if (response?.data?.success === false) {
+          throw new Error(response?.data?.message || t('操作失败'));
+        }
+        await loadAccounts();
+        showSuccess(t('已移入废弃账号池'));
+      } catch (err) {
+        const message =
+          err?.response?.data?.message || err?.message || t('操作失败');
+        showError(message);
+      }
+    },
+    [loadAccounts, t],
+  );
+
+  const deletePoolAccount = useCallback(
+    async (record) => {
+      try {
+        const pool = poolView === 'discarded' ? 'discarded' : 'invalid';
+        const response = await API.delete(
+          `/api/channel/account-pools/${pool}/${record.id}`,
+        );
+        if (response?.data?.success === false) {
+          throw new Error(response?.data?.message || t('操作失败'));
+        }
+        await loadAccounts();
+        showSuccess(t('归档记录已删除'));
+      } catch (err) {
+        const message =
+          err?.response?.data?.message || err?.message || t('操作失败');
+        showError(message);
+      }
+    },
+    [loadAccounts, poolView, t],
+  );
 
   const resetImportModal = useCallback(() => {
     setImportVisible(false);
@@ -3278,8 +4092,9 @@ function ChannelAccount() {
       if (validQueue.items.length === 0) {
         return;
       }
-      setImportFileList((prev) =>
-        new ChannelAccountImportFileQueue(prev).append(validQueue).items,
+      setImportFileList(
+        (prev) =>
+          new ChannelAccountImportFileQueue(prev).append(validQueue).items,
       );
     },
     [t],
@@ -3312,6 +4127,10 @@ function ChannelAccount() {
   }, []);
 
   const importAccounts = useCallback(async () => {
+    if (!scopedChannelID) {
+      showError(t('请先筛选单个渠道'));
+      return;
+    }
     const submission = new ChannelAccountImportSubmission({
       credentials: importCredentials,
       files: importFileList,
@@ -3325,7 +4144,7 @@ function ChannelAccount() {
     try {
       const { body, config } = await submission.payload();
       const response = await API.put(
-        `/api/channel/${id}/accounts`,
+        `/api/channel/${scopedChannelID}/accounts`,
         body,
         config,
       );
@@ -3345,12 +4164,12 @@ function ChannelAccount() {
       setImportLoading(false);
     }
   }, [
-    id,
     importCredentials,
     importFileList,
     importOnlyNew,
     loadAccounts,
     resetImportModal,
+    scopedChannelID,
     t,
   ]);
 
@@ -3389,7 +4208,7 @@ function ChannelAccount() {
   );
 
   const openBatchProxyModal = useCallback(() => {
-    if (selectedIndexes.length === 0) {
+    if (selectedTargets.length === 0) {
       showError(t('请先选择账号'));
       return;
     }
@@ -3402,7 +4221,7 @@ function ChannelAccount() {
     loadProxies,
     loadSchedulerConfig,
     resetProxyEditorState,
-    selectedIndexes.length,
+    selectedTargets.length,
     t,
   ]);
 
@@ -3417,14 +4236,11 @@ function ChannelAccount() {
     resetProxyEditorState();
   }, [resetProxyEditorState]);
 
-  const openProxyEditModal = useCallback(
-    (proxy) => {
-      if (!proxy?.id) return;
-      setEditingProxy(proxy);
-      setProxyEditorVisible(true);
-    },
-    [],
-  );
+  const openProxyEditModal = useCallback((proxy) => {
+    if (!proxy?.id) return;
+    setEditingProxy(proxy);
+    setProxyEditorVisible(true);
+  }, []);
 
   const closeProxyEditModal = useCallback(() => {
     setProxyEditorVisible(false);
@@ -3475,190 +4291,214 @@ function ChannelAccount() {
     return proxyID;
   }, [createProxyInline, proxyForm, selectedProxyID, t]);
 
-  const submitProxyBinding = useCallback(async (record, allowReuseRisk = false) => {
-    if (!record) return null;
-    const proxyID = await createOrResolveProxyID();
-    const response = await API.post(
-      `/api/channel/${id}/accounts/${record.credential_index}/proxy`,
-      {
-        proxy_id: proxyID,
-        allow_reuse_risk: allowReuseRisk,
-      },
-    );
-    if (response?.data?.success === false) {
-      throw new Error(response?.data?.message || t('操作失败'));
-    }
-    return {
-      payload: unwrapApiData(response),
-      proxyID,
-    };
-  }, [createOrResolveProxyID, id, t]);
+  const submitProxyBinding = useCallback(
+    async (record, allowReuseRisk = false) => {
+      if (!record) return null;
+      const proxyID = await createOrResolveProxyID();
+      const response = await API.post(
+        `/api/channel/${record.channel_id}/accounts/${record.credential_index}/proxy`,
+        {
+          proxy_id: proxyID,
+          allow_reuse_risk: allowReuseRisk,
+        },
+      );
+      if (response?.data?.success === false) {
+        throw new Error(response?.data?.message || t('操作失败'));
+      }
+      return {
+        payload: unwrapApiData(response),
+        proxyID,
+      };
+    },
+    [createOrResolveProxyID, t],
+  );
 
-  const submitBatchProxyBinding = useCallback(async (allowReuseRisk = false) => {
-    const proxyID = await createOrResolveProxyID();
-    const response = await API.post(`/api/channel/${id}/account-proxies`, {
-      proxy_id: proxyID,
-      credential_indexes: selectedIndexes,
-      allow_reuse_risk: allowReuseRisk,
-    });
-    if (response?.data?.success === false) {
-      throw new Error(response?.data?.message || t('操作失败'));
-    }
-    return {
-      payload: unwrapApiData(response),
-      proxyID,
-    };
-  }, [createOrResolveProxyID, id, selectedIndexes, t]);
-
-  const saveAccountCredential = useCallback(async (allowReuseRisk = false) => {
-    if (!editRecord) return;
-    const confirmedReuse = allowReuseRisk === true;
-    const credential = editCredential.trim();
-    const shouldUpdateCredential = credential.length > 0;
-    const shouldUpdateProxy = proxyBindingChanged(editRecord);
-    if (!shouldUpdateCredential && !shouldUpdateProxy) {
-      closeEditModal();
-      return;
-    }
-    if (
-      shouldUpdateProxy &&
-      !confirmedReuse &&
-      !createProxyInline &&
-      proxyReusePolicy === 'confirm' &&
-      selectedProxyRisk
-    ) {
-      Modal.confirm({
-        title: t('确认同品牌代理复用'),
-        content: reuseRiskText(selectedProxyRisk, t),
-        okText: t('确认绑定'),
-        cancelText: t('取消'),
-        onOk: () => saveAccountCredential(true),
-      });
-      return;
-    }
-    setEditLoading(true);
-    try {
+  const submitBatchProxyBinding = useCallback(
+    async (allowReuseRisk = false) => {
+      const proxyID = await createOrResolveProxyID();
+      const groups = groupAccountTargetsByChannel(selectedTargets);
       let payload = null;
-      const messages = [];
-      if (shouldUpdateCredential) {
-        const response = await API.put(
-          `/api/channel/${id}/accounts/${editRecord.credential_index}`,
+      for (const group of groups) {
+        const response = await API.post(
+          `/api/channel/${group.channel_id}/account-proxies`,
           {
-            credential,
-            credential_type: editCredentialType,
+            proxy_id: proxyID,
+            credential_indexes: group.credential_indexes,
+            allow_reuse_risk: allowReuseRisk,
           },
         );
         if (response?.data?.success === false) {
-          throw new Error(response?.data?.message || t('保存失败'));
+          throw new Error(response?.data?.message || t('操作失败'));
         }
         payload = unwrapApiData(response);
-        messages.push(operationMessage(payload.operation, t, t('账号凭证已更新')));
       }
-      if (shouldUpdateProxy) {
-        const bindingRecord = findAccountItem(payload, editRecord);
-        const result = await submitProxyBinding(bindingRecord, confirmedReuse);
-        payload = result?.payload || payload;
-        messages.push(
-          operationMessage(
-            result?.payload?.operation,
-            t,
-            Number(result?.proxyID || 0) > 0
-              ? t('账号代理已绑定')
-              : t('账号代理已解绑'),
-          ),
-        );
+      return {
+        payload,
+        proxyID,
+      };
+    },
+    [createOrResolveProxyID, selectedTargets, t],
+  );
+
+  const saveAccountCredential = useCallback(
+    async (allowReuseRisk = false) => {
+      if (!editRecord) return;
+      const confirmedReuse = allowReuseRisk === true;
+      const credential = editCredential.trim();
+      const shouldUpdateCredential = credential.length > 0;
+      const shouldUpdateProxy = proxyBindingChanged(editRecord);
+      if (!shouldUpdateCredential && !shouldUpdateProxy) {
+        closeEditModal();
+        return;
       }
-      if (payload) await loadAccounts();
-      closeEditModal();
-      showSuccess(messages.filter(Boolean).join(t('、')) || t('保存成功'));
-    } catch (err) {
-      const message =
-        err?.response?.data?.message || err?.message || t('保存失败');
       if (
-        !confirmedReuse &&
         shouldUpdateProxy &&
+        !confirmedReuse &&
         !createProxyInline &&
-        isProxyReuseConfirmRequiredMessage(message)
+        proxyReusePolicy === 'confirm' &&
+        selectedProxyRisk
       ) {
         Modal.confirm({
           title: t('确认同品牌代理复用'),
-          content: selectedProxyRisk
-            ? reuseRiskText(selectedProxyRisk, t)
-            : message,
+          content: reuseRiskText(selectedProxyRisk, t),
           okText: t('确认绑定'),
           cancelText: t('取消'),
           onOk: () => saveAccountCredential(true),
         });
         return;
       }
-      showError(message);
-    } finally {
-      setEditLoading(false);
-    }
-  }, [
-    closeEditModal,
-    createProxyInline,
-    editCredential,
-    editCredentialType,
-    editRecord,
-    id,
-    proxyBindingChanged,
-    loadAccounts,
-    proxyReusePolicy,
-    selectedProxyRisk,
-    submitProxyBinding,
-    t,
-  ]);
-
-  const saveProxyBindingRequest = useCallback(async (allowReuseRisk = false) => {
-    if (!proxyRecord) return;
-    setProxySaving(true);
-    try {
-      const result = await submitProxyBinding(proxyRecord, allowReuseRisk);
-      const payload = result?.payload;
-      await loadAccounts();
-      closeProxyModal();
-      showSuccess(
-        operationMessage(
-          payload?.operation,
-          t,
-          Number(result?.proxyID || 0) > 0
-            ? t('账号代理已绑定')
-            : t('账号代理已解绑'),
-        ),
-      );
-    } catch (err) {
-      const message =
-        err?.response?.data?.message || err?.message || t('操作失败');
-      if (
-        !allowReuseRisk &&
-        !createProxyInline &&
-        isProxyReuseConfirmRequiredMessage(message)
-      ) {
-        Modal.confirm({
-          title: t('确认同品牌代理复用'),
-          content: selectedProxyRisk
-            ? reuseRiskText(selectedProxyRisk, t)
-            : message,
-          okText: t('确认绑定'),
-          cancelText: t('取消'),
-          onOk: () => saveProxyBindingRequest(true),
-        });
-        return;
+      setEditLoading(true);
+      try {
+        let payload = null;
+        const messages = [];
+        if (shouldUpdateCredential) {
+          const response = await API.put(
+            `/api/channel/${editRecord.channel_id}/accounts/${editRecord.credential_index}`,
+            {
+              credential,
+              credential_type: editCredentialType,
+            },
+          );
+          if (response?.data?.success === false) {
+            throw new Error(response?.data?.message || t('保存失败'));
+          }
+          payload = unwrapApiData(response);
+          messages.push(
+            operationMessage(payload.operation, t, t('账号凭证已更新')),
+          );
+        }
+        if (shouldUpdateProxy) {
+          const bindingRecord = findAccountItem(payload, editRecord);
+          const result = await submitProxyBinding(
+            bindingRecord,
+            confirmedReuse,
+          );
+          payload = result?.payload || payload;
+          messages.push(
+            operationMessage(
+              result?.payload?.operation,
+              t,
+              Number(result?.proxyID || 0) > 0
+                ? t('账号代理已绑定')
+                : t('账号代理已解绑'),
+            ),
+          );
+        }
+        if (payload) await loadAccounts();
+        closeEditModal();
+        showSuccess(messages.filter(Boolean).join(t('、')) || t('保存成功'));
+      } catch (err) {
+        const message =
+          err?.response?.data?.message || err?.message || t('保存失败');
+        if (
+          !confirmedReuse &&
+          shouldUpdateProxy &&
+          !createProxyInline &&
+          isProxyReuseConfirmRequiredMessage(message)
+        ) {
+          Modal.confirm({
+            title: t('确认同品牌代理复用'),
+            content: selectedProxyRisk
+              ? reuseRiskText(selectedProxyRisk, t)
+              : message,
+            okText: t('确认绑定'),
+            cancelText: t('取消'),
+            onOk: () => saveAccountCredential(true),
+          });
+          return;
+        }
+        showError(message);
+      } finally {
+        setEditLoading(false);
       }
-      showError(message);
-    } finally {
-      setProxySaving(false);
-    }
-  }, [
-    closeProxyModal,
-    createProxyInline,
-    loadAccounts,
-    proxyRecord,
-    selectedProxyRisk,
-    submitProxyBinding,
-    t,
-  ]);
+    },
+    [
+      closeEditModal,
+      createProxyInline,
+      editCredential,
+      editCredentialType,
+      editRecord,
+      proxyBindingChanged,
+      loadAccounts,
+      proxyReusePolicy,
+      selectedProxyRisk,
+      submitProxyBinding,
+      t,
+    ],
+  );
+
+  const saveProxyBindingRequest = useCallback(
+    async (allowReuseRisk = false) => {
+      if (!proxyRecord) return;
+      setProxySaving(true);
+      try {
+        const result = await submitProxyBinding(proxyRecord, allowReuseRisk);
+        const payload = result?.payload;
+        await loadAccounts();
+        closeProxyModal();
+        showSuccess(
+          operationMessage(
+            payload?.operation,
+            t,
+            Number(result?.proxyID || 0) > 0
+              ? t('账号代理已绑定')
+              : t('账号代理已解绑'),
+          ),
+        );
+      } catch (err) {
+        const message =
+          err?.response?.data?.message || err?.message || t('操作失败');
+        if (
+          !allowReuseRisk &&
+          !createProxyInline &&
+          isProxyReuseConfirmRequiredMessage(message)
+        ) {
+          Modal.confirm({
+            title: t('确认同品牌代理复用'),
+            content: selectedProxyRisk
+              ? reuseRiskText(selectedProxyRisk, t)
+              : message,
+            okText: t('确认绑定'),
+            cancelText: t('取消'),
+            onOk: () => saveProxyBindingRequest(true),
+          });
+          return;
+        }
+        showError(message);
+      } finally {
+        setProxySaving(false);
+      }
+    },
+    [
+      closeProxyModal,
+      createProxyInline,
+      loadAccounts,
+      proxyRecord,
+      selectedProxyRisk,
+      submitProxyBinding,
+      t,
+    ],
+  );
 
   const saveProxyBinding = useCallback(async () => {
     if (
@@ -3684,60 +4524,63 @@ function ChannelAccount() {
     t,
   ]);
 
-  const saveBatchProxyBindingRequest = useCallback(async (allowReuseRisk = false) => {
-    if (selectedIndexes.length === 0) {
-      showError(t('请先选择账号'));
-      return;
-    }
-    setProxySaving(true);
-    try {
-      const result = await submitBatchProxyBinding(allowReuseRisk);
-      const payload = result?.payload;
-      await loadAccounts();
-      setSelectedRowKeys([]);
-      closeBatchProxyModal();
-      showSuccess(
-        operationMessage(
-          payload?.operation,
-          t,
-          Number(result?.proxyID || 0) > 0
-            ? t('已设置 {{total}} 个账号代理', {
-                total: selectedIndexes.length,
-              })
-            : t('已解绑 {{total}} 个账号代理', {
-                total: selectedIndexes.length,
-              }),
-        ),
-      );
-    } catch (err) {
-      const message =
-        err?.response?.data?.message || err?.message || t('操作失败');
-      if (
-        !allowReuseRisk &&
-        !createProxyInline &&
-        isProxyReuseConfirmRequiredMessage(message)
-      ) {
-        Modal.confirm({
-          title: t('确认同品牌代理复用'),
-          content: message,
-          okText: t('确认绑定'),
-          cancelText: t('取消'),
-          onOk: () => saveBatchProxyBindingRequest(true),
-        });
+  const saveBatchProxyBindingRequest = useCallback(
+    async (allowReuseRisk = false) => {
+      if (selectedTargets.length === 0) {
+        showError(t('请先选择账号'));
         return;
       }
-      showError(message);
-    } finally {
-      setProxySaving(false);
-    }
-  }, [
-    closeBatchProxyModal,
-    createProxyInline,
-    loadAccounts,
-    selectedIndexes,
-    submitBatchProxyBinding,
-    t,
-  ]);
+      setProxySaving(true);
+      try {
+        const result = await submitBatchProxyBinding(allowReuseRisk);
+        const payload = result?.payload;
+        await loadAccounts();
+        setSelectedRowKeys([]);
+        closeBatchProxyModal();
+        showSuccess(
+          operationMessage(
+            payload?.operation,
+            t,
+            Number(result?.proxyID || 0) > 0
+              ? t('已设置 {{total}} 个账号代理', {
+                  total: selectedTargets.length,
+                })
+              : t('已解绑 {{total}} 个账号代理', {
+                  total: selectedTargets.length,
+                }),
+          ),
+        );
+      } catch (err) {
+        const message =
+          err?.response?.data?.message || err?.message || t('操作失败');
+        if (
+          !allowReuseRisk &&
+          !createProxyInline &&
+          isProxyReuseConfirmRequiredMessage(message)
+        ) {
+          Modal.confirm({
+            title: t('确认同品牌代理复用'),
+            content: message,
+            okText: t('确认绑定'),
+            cancelText: t('取消'),
+            onOk: () => saveBatchProxyBindingRequest(true),
+          });
+          return;
+        }
+        showError(message);
+      } finally {
+        setProxySaving(false);
+      }
+    },
+    [
+      closeBatchProxyModal,
+      createProxyInline,
+      loadAccounts,
+      selectedTargets,
+      submitBatchProxyBinding,
+      t,
+    ],
+  );
 
   const saveBatchProxyBinding = useCallback(async () => {
     await saveBatchProxyBindingRequest(false);
@@ -3749,6 +4592,8 @@ function ChannelAccount() {
         t,
         toggleAccountStatus,
         deleteSingleAccount,
+        (record) => archiveSingleAccount(record, 'invalid'),
+        (record) => archiveSingleAccount(record, 'discarded'),
         openEditModal,
         openProxyModal,
         openProxyEditModal,
@@ -3763,6 +4608,7 @@ function ChannelAccount() {
       t,
       toggleAccountStatus,
       deleteSingleAccount,
+      archiveSingleAccount,
       openEditModal,
       openProxyModal,
       openProxyEditModal,
@@ -3784,12 +4630,28 @@ function ChannelAccount() {
       ),
     [t, toggleAccountStatus, statusLoadingKey],
   );
+  const poolColumns = useMemo(
+    () =>
+      buildPoolColumns(
+        t,
+        poolView,
+        restorePoolAccount,
+        discardPoolAccount,
+        deletePoolAccount,
+      ),
+    [deletePoolAccount, discardPoolAccount, poolView, restorePoolAccount, t],
+  );
   const items = data?.items || [];
   const selectedCount = selectedRowKeys.length;
-  const isStatsView = view === 'stats';
+  const isRunningView = poolView === 'running';
+  const isStatsView = isRunningView && view === 'stats';
   const summary = data?.summary || {};
-  const tableColumns = isStatsView ? statsColumns : columns;
-  const tableScrollX = isStatsView ? 1890 : 2650;
+  const tableColumns = !isRunningView
+    ? poolColumns
+    : isStatsView
+      ? statsColumns
+      : columns;
+  const tableScrollX = !isRunningView ? 1100 : isStatsView ? 1585 : 2750;
   const tablePagination = useMemo(
     () => ({
       currentPage: data?.page || page,
@@ -3803,11 +4665,19 @@ function ChannelAccount() {
         setPage(1);
       },
     }),
-    [data?.filtered_total, data?.page, data?.page_size, data?.total, page, pageSize],
+    [
+      data?.filtered_total,
+      data?.page,
+      data?.page_size,
+      data?.total,
+      page,
+      pageSize,
+    ],
   );
   const handleTableChange = useCallback((changeInfo = {}) => {
     const sorter = changeInfo?.sorter || {};
-    const sortOrder = sorter.sortOrder || sorter.order || sorter.sorter?.sortOrder || '';
+    const sortOrder =
+      sorter.sortOrder || sorter.order || sorter.sorter?.sortOrder || '';
     const sortKey =
       sorter.dataIndex ||
       sorter.key ||
@@ -3825,71 +4695,97 @@ function ChannelAccount() {
     });
     setPage(1);
   }, []);
-  const metricCards = isStatsView
+  const metricCards = !isRunningView
     ? [
         {
-          icon: <KeyRound size={18} />,
-          label: t('账号总数'),
+          icon: <FileArchive size={18} />,
+          label: poolView === 'invalid' ? t('失效账号') : t('废弃账号'),
           value: formatNumber(data?.total),
-          detail: t('当前渠道可识别凭证'),
+          detail: scopedChannelID ? t('当前渠道归档') : t('全渠道归档'),
         },
         {
-          icon: <BarChart3 size={18} />,
-          label: t('今日请求'),
-          value: formatCompactNumber(summary.today?.requests),
-          detail: t('默认排除健康探活'),
-        },
-        {
-          icon: <Gauge size={18} />,
-          label: t('近5小时请求'),
-          value: formatCompactNumber(summary.last_5h?.requests),
-          detail: `${t('成功率')} ${formatPercent(summary.last_5h?.success_rate)}`,
+          icon: <KeyRound size={18} />,
+          label: t('当前页'),
+          value: formatNumber(items.length),
+          detail: t('不回显完整凭证'),
         },
         {
           icon: <Clock3 size={18} />,
-          label: t('近7天扣费'),
-          value: formatQuotaValue(summary.last_7d?.quota),
-          detail: `${t('账号成本')} ${formatCost(summary.last_7d?.upstream_cost_total)}`,
+          label: t('归档池'),
+          value: poolView === 'invalid' ? t('可恢复') : t('不再调度'),
+          detail:
+            poolView === 'invalid' ? t('恢复后默认禁用') : t('仅保留归档记录'),
         },
       ]
-    : [
-        {
-          icon: <KeyRound size={18} />,
-          label: t('账号总数'),
-          value: formatNumber(data?.total),
-          detail: t('当前渠道可识别凭证'),
-        },
-        {
-          icon: <BadgeCheck size={18} />,
-          label: t('启用账号'),
-          value: formatNumber(data?.enabled),
-          detail: t('可参与智能调度'),
-        },
-        {
-          icon: <ShieldCheck size={18} />,
-          label: t('可调度账号'),
-          value: formatNumber(summary.schedulable_accounts),
-          detail: t('当前可进入候选池'),
-        },
-        {
-          icon: <XCircle size={18} />,
-          label: t('阻塞账号'),
-          value: formatNumber(summary.blocked_accounts),
-          detail: t('当前不可调度'),
-        },
-        {
-          icon: <Clock3 size={18} />,
-          label: t('恢复中账号'),
-          value: formatNumber(summary.recovery_accounts),
-          detail: t('等待探活恢复'),
-        },
-        {
-          icon: <AlertTriangle size={18} />,
-          label: t('熔断账号'),
-          value: formatNumber(summary.circuit_open_accounts),
-          detail: t('熔断保护已打开'),
-        },
-      ];
+    : isStatsView
+      ? [
+          {
+            icon: <KeyRound size={18} />,
+            label: t('账号总数'),
+            value: formatNumber(data?.total),
+            detail: scopedChannelID
+              ? t('当前渠道可识别凭证')
+              : t('全渠道可识别凭证'),
+          },
+          {
+            icon: <BarChart3 size={18} />,
+            label: t('今日请求'),
+            value: formatCompactNumber(summary.today?.requests),
+            detail: t('默认排除健康探活'),
+          },
+          {
+            icon: <Gauge size={18} />,
+            label: t('近5小时请求'),
+            value: formatCompactNumber(summary.last_5h?.requests),
+            detail: `${t('成功率')} ${formatPercent(summary.last_5h?.success_rate)}`,
+          },
+          {
+            icon: <Clock3 size={18} />,
+            label: t('近7天扣费'),
+            value: formatQuotaValue(summary.last_7d?.quota),
+            detail: `${t('账号成本')} ${formatCost(summary.last_7d?.upstream_cost_total)}`,
+          },
+        ]
+      : [
+          {
+            icon: <KeyRound size={18} />,
+            label: t('账号总数'),
+            value: formatNumber(data?.total),
+            detail: scopedChannelID
+              ? t('当前渠道可识别凭证')
+              : t('全渠道可识别凭证'),
+          },
+          {
+            icon: <BadgeCheck size={18} />,
+            label: t('启用账号'),
+            value: formatNumber(data?.enabled),
+            detail: t('可参与智能调度'),
+          },
+          {
+            icon: <ShieldCheck size={18} />,
+            label: t('可调度账号'),
+            value: formatNumber(summary.schedulable_accounts),
+            detail: t('当前可进入候选池'),
+          },
+          {
+            icon: <XCircle size={18} />,
+            label: t('阻塞账号'),
+            value: formatNumber(summary.blocked_accounts),
+            detail: t('当前不可调度'),
+          },
+          {
+            icon: <Clock3 size={18} />,
+            label: t('恢复中账号'),
+            value: formatNumber(summary.recovery_accounts),
+            detail: t('等待探活恢复'),
+          },
+          {
+            icon: <AlertTriangle size={18} />,
+            label: t('熔断账号'),
+            value: formatNumber(summary.circuit_open_accounts),
+            detail: t('熔断保护已打开'),
+          },
+        ];
   const rowSelection = useMemo(
     () => ({
       selectedRowKeys,
@@ -3907,12 +4803,14 @@ function ChannelAccount() {
             </div>
             <div>
               <div className='ct-channel-account-eyebrow'>
-                {t('渠道账号管理')}
+                {t('全渠道账号管理')}
               </div>
               <h2>
-                {data?.channel_name || t('渠道')} #{data?.channel_id || id}
+                {scopedChannelID
+                  ? `${data?.channel_name || t('渠道')} #${scopedChannelID}`
+                  : t('所有渠道账号')}
               </h2>
-              <p>{t('渠道账号以渠道、品牌、凭证主体形成唯一调度身份')}</p>
+              <p>{t('运行账号、失效账号池和废弃账号池分开管理')}</p>
             </div>
           </div>
           <Space className='ct-channel-account-actions' spacing={8}>
@@ -3927,6 +4825,7 @@ function ChannelAccount() {
               icon={<Plus size={15} />}
               type='primary'
               theme='light'
+              disabled={!isRunningView || !scopedChannelID}
               onClick={() => setImportVisible(true)}
             >
               {t('导入账号')}
@@ -3946,32 +4845,71 @@ function ChannelAccount() {
         <div className='ct-channel-account-viewbar'>
           <Tabs
             type='button'
-            activeKey={view}
-            onChange={(key) => setView(key)}
+            activeKey={poolView}
+            onChange={(key) => setPoolView(key)}
           >
             <Tabs.TabPane
-              itemKey='manage'
+              itemKey='running'
               tab={
                 <span className='ct-channel-account-view-tab'>
-                  <SlidersHorizontal size={14} />
-                  {t('管理视图')}
+                  <ShieldCheck size={14} />
+                  {t('运行账号')}
                 </span>
               }
             />
             <Tabs.TabPane
-              itemKey='stats'
+              itemKey='invalid'
               tab={
                 <span className='ct-channel-account-view-tab'>
-                  <BarChart3 size={14} />
-                  {t('统计视图')}
+                  <AlertTriangle size={14} />
+                  {t('失效账号池')}
+                </span>
+              }
+            />
+            <Tabs.TabPane
+              itemKey='discarded'
+              tab={
+                <span className='ct-channel-account-view-tab'>
+                  <FileArchive size={14} />
+                  {t('废弃账号池')}
                 </span>
               }
             />
           </Tabs>
+          {isRunningView ? (
+            <Tabs
+              type='button'
+              activeKey={view}
+              onChange={(key) => setView(key)}
+            >
+              <Tabs.TabPane
+                itemKey='manage'
+                tab={
+                  <span className='ct-channel-account-view-tab'>
+                    <SlidersHorizontal size={14} />
+                    {t('管理视图')}
+                  </span>
+                }
+              />
+              <Tabs.TabPane
+                itemKey='stats'
+                tab={
+                  <span className='ct-channel-account-view-tab'>
+                    <BarChart3 size={14} />
+                    {t('统计视图')}
+                  </span>
+                }
+              />
+            </Tabs>
+          ) : null}
           <Text type='tertiary'>
-            {isStatsView
-              ? t('统计从上线后开始累计，默认排除健康探活')
-              : t('Codex 能力和 Platform API 诊断分开展示，Platform 失败不影响 Codex 调度')}
+            {!isRunningView
+              ? t('归档池使用独立表保存，不参与运行账号调度')
+              : isStatsView
+                ? t('统计从上线后开始累计，默认排除健康探活')
+                : t(
+                    'Codex 能力和 Platform API 诊断分开展示，Platform 失败不影响 Codex 调度',
+                  )}
           </Text>
         </div>
 
@@ -4007,27 +4945,35 @@ function ChannelAccount() {
                   setKeyword(value);
                   setPage(1);
                 }}
-                placeholder={t('搜索账号、品牌、凭证或运行键')}
+                placeholder={
+                  isRunningView
+                    ? t('搜索账号、品牌、凭证或运行键')
+                    : t('搜索账号、渠道、原因或备注')
+                }
                 className='ct-channel-account-search'
               />
-              <Select
-                value={statusFilter}
-                onChange={(value) => {
-                  setStatusFilter(value);
-                  setPage(1);
-                }}
-                prefix={t('状态')}
-                className='ct-channel-account-status-select'
-              >
-                <Select.Option value='all'>{t('全部')}</Select.Option>
-                <Select.Option value='enabled'>{t('已启用')}</Select.Option>
-                <Select.Option value='disabled'>{t('已禁用')}</Select.Option>
-              </Select>
+              {isRunningView ? (
+                <Select
+                  value={statusFilter}
+                  onChange={(value) => {
+                    setStatusFilter(value);
+                    setPage(1);
+                  }}
+                  prefix={t('状态')}
+                  className='ct-channel-account-status-select'
+                >
+                  <Select.Option value='all'>{t('全部')}</Select.Option>
+                  <Select.Option value='enabled'>{t('已启用')}</Select.Option>
+                  <Select.Option value='disabled'>{t('已禁用')}</Select.Option>
+                </Select>
+              ) : null}
             </div>
             <Space
               className='ct-channel-account-batch-actions'
               spacing={8}
-              style={{ display: isStatsView ? 'none' : undefined }}
+              style={{
+                display: !isRunningView || isStatsView ? 'none' : undefined,
+              }}
             >
               <Text type='tertiary'>
                 {t('已选 {{total}} 个账号', { total: selectedCount })}
@@ -4070,11 +5016,45 @@ function ChannelAccount() {
                 theme='light'
                 icon={<Search size={14} />}
                 loading={capabilityBatchLoading}
-                disabled={items.length === 0}
+                disabled={items.length === 0 || !scopedChannelID}
                 onClick={probeAllAccountCapabilities}
               >
                 {t('检测全部权限')}
               </Button>
+              <Popconfirm
+                title={t('移入失效账号池？')}
+                content={t('所选账号会从运行账号中移除，可从失效池恢复')}
+                onConfirm={() => batchArchiveAccounts('invalid')}
+                disabled={selectedCount === 0}
+              >
+                <Button
+                  size='small'
+                  type='warning'
+                  theme='light'
+                  icon={<FileArchive size={14} />}
+                  loading={deleteLoading}
+                  disabled={selectedCount === 0}
+                >
+                  {t('移入失效池')}
+                </Button>
+              </Popconfirm>
+              <Popconfirm
+                title={t('移入废弃账号池？')}
+                content={t('所选账号会从运行账号中移除并归档为不再调度')}
+                onConfirm={() => batchArchiveAccounts('discarded')}
+                disabled={selectedCount === 0}
+              >
+                <Button
+                  size='small'
+                  type='danger'
+                  theme='light'
+                  icon={<XCircle size={14} />}
+                  loading={deleteLoading}
+                  disabled={selectedCount === 0}
+                >
+                  {t('移入废弃池')}
+                </Button>
+              </Popconfirm>
               <Button
                 size='small'
                 icon={<PlugZap size={14} />}
@@ -4111,9 +5091,13 @@ function ChannelAccount() {
               columns={tableColumns}
               dataSource={items}
               rowKey={(record) =>
-                `${record.channel_id}-${record.credential_index}`
+                isRunningView
+                  ? `${record.channel_id}-${record.credential_index}`
+                  : `${poolView}-${record.id}`
               }
-              rowSelection={isStatsView ? undefined : rowSelection}
+              rowSelection={
+                !isRunningView || isStatsView ? undefined : rowSelection
+              }
               pagination={tablePagination}
               onChange={handleTableChange}
               empty={<Empty description={t('暂无账号数据')} />}
@@ -4142,13 +5126,10 @@ function ChannelAccount() {
           <div className='ct-channel-account-edit-modal'>
             <div className='ct-channel-account-edit-target'>
               <div>
-                <Text strong>
-                  {editRecord?.account_identity?.display_name ||
-                    `${t('账号')} #${Number(editRecord?.credential_index || 0) + 1}`}
-                </Text>
+                <Text strong>{accountCredentialLabel(editRecord)}</Text>
                 <div>
                   <Text type='tertiary'>
-                    {t('凭证序号')} #{Number(editRecord?.credential_index || 0) + 1}
+                    {t('凭证身份')} {accountCredentialUID(editRecord)}
                   </Text>
                 </div>
               </div>
@@ -4192,12 +5173,16 @@ function ChannelAccount() {
                   value={editCredential}
                   onChange={setEditCredential}
                   autosize={{ minRows: 7, maxRows: 14 }}
-                  placeholder={t('留空则不修改凭证；粘贴新凭证后会替换当前凭证')}
+                  placeholder={t(
+                    '留空则不修改凭证；粘贴新凭证后会替换当前凭证',
+                  )}
                   showClear
                 />
               </label>
               <Text type='tertiary' size='small'>
-                {t('JSON 类型会在保存前压缩为单行，并只在列表展示账号类型和短指纹。')}
+                {t(
+                  'JSON 类型会在保存前压缩为单行，并只在列表展示账号类型和短指纹。',
+                )}
               </Text>
             </div>
             <div className='ct-channel-account-edit-section'>
@@ -4245,13 +5230,10 @@ function ChannelAccount() {
           <div className='ct-channel-account-proxy-modal'>
             <div className='ct-channel-account-proxy-target'>
               <div>
-                <Text strong>
-                  {proxyRecord?.account_identity?.display_name ||
-                    `${t('账号')} #${Number(proxyRecord?.credential_index || 0) + 1}`}
-                </Text>
+                <Text strong>{accountCredentialLabel(proxyRecord)}</Text>
                 <div>
                   <Text type='tertiary'>
-                    {t('凭证序号')} #{Number(proxyRecord?.credential_index || 0) + 1}
+                    {t('凭证身份')} {accountCredentialUID(proxyRecord)}
                   </Text>
                 </div>
               </div>
@@ -4450,7 +5432,9 @@ function ChannelAccount() {
                   value={importCredentials}
                   onChange={setImportCredentials}
                   autosize={{ minRows: 8, maxRows: 14 }}
-                  placeholder={t('每行一个账号凭证，也支持 JSON 对象或 JSON 数组')}
+                  placeholder={t(
+                    '每行一个账号凭证，也支持 JSON 对象或 JSON 数组',
+                  )}
                   showClear
                 />
               </Tabs.TabPane>
@@ -4462,7 +5446,9 @@ function ChannelAccount() {
               {t('只导入新增账号')}
             </Checkbox>
             <Text type='tertiary' size='small'>
-              {t('可同时上传文件并粘贴凭证；导入后会追加到当前渠道账号池，不会在列表中展示完整凭证')}
+              {t(
+                '可同时上传文件并粘贴凭证；导入后默认禁用，测试和功能检查仍可使用',
+              )}
             </Text>
           </div>
         </Modal>

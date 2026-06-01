@@ -353,6 +353,42 @@ func TestProIndexQueryFiltersOpenAICodexOAuthAccountCapabilities(t *testing.T) {
 	require.Equal(t, "codex", candidates[0].AccountIdentity.Brand)
 }
 
+func TestProIndexQueryFiltersResponsesPreviousIDCapability(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	previousIDDenied := false
+	previousIDAllowed := true
+	index := New(account.NewRegistry(), nil)
+	channel := &model.Channel{
+		Id:     18,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-denied\nsk-allowed",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "gpt-5.4",
+		OtherSettings: `{
+			"codex_compatibility_mode": true
+		}`,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true,
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {ResponsesPreviousID: &previousIDDenied},
+				1: {ResponsesPreviousID: &previousIDAllowed},
+			},
+		},
+	}
+
+	index.Rebuild([]*model.Channel{channel})
+	candidates := index.Query(Query{
+		Groups:                      []string{"default"},
+		ModelName:                   "gpt-5.4",
+		EndpointType:                constant.EndpointTypeOpenAIResponse,
+		RequiresResponsesPreviousID: true,
+	})
+
+	require.Len(t, candidates, 1)
+	require.Equal(t, 1, candidates[0].CredentialRef.CredentialIndex)
+}
+
 func TestProIndexFallsBackToNormalizedModelButKeepsRequestedRuntimeModel(t *testing.T) {
 	common.CryptoSecret = "test-secret"
 	index := New(account.NewRegistry(), nil)

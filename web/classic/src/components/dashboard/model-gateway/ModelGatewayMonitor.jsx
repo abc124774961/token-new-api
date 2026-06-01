@@ -288,6 +288,8 @@ function scoreMetricLabel(key, t) {
       return t('本次调度评分');
     case 'cost':
       return t('成本分');
+    case 'recoverable_quality_score':
+      return t('质量分');
     default:
       return normalized || t('未知指标');
   }
@@ -322,6 +324,8 @@ function scoreMetricDescription(key, t) {
       return t('用于调度选择，会叠加当前压力和排队状态');
     case 'cost':
       return t('由参考单位成本换算，成本越低这项越高');
+    case 'recoverable_quality_score':
+      return t('只由可通过探活修复的质量评分项换算');
     default:
       return '';
   }
@@ -1144,6 +1148,9 @@ function formatChannelStatusReason(reason, t) {
   if (normalized === 'timeout_recovery') {
     return t('频繁超时降级中');
   }
+  if (normalized === 'score_anomaly_fast_probe') {
+    return t('分数异常快速恢复');
+  }
   if (normalized === 'failure_avoidance') {
     return t('近期失败恢复中');
   }
@@ -1185,6 +1192,8 @@ function formatProbeReason(value, t) {
       return t('近期失败恢复中');
     case 'timeout_recovery':
       return t('等待恢复探活');
+    case 'score_anomaly_fast_probe':
+      return t('分数异常快速恢复');
     case 'cooldown':
       return t('冷却恢复探测');
     case 'long_no_success':
@@ -3417,6 +3426,7 @@ function HoverCard({ content, children, className = '' }) {
 
 function UserRequestEventTooltip({ record, meta, processing, durationMs, t }) {
   const attempts = Math.max(1, Number(record?.attempts || 0));
+  const hasTTFT = Number(record?.ttft_ms || 0) > 0;
   const firstByteTimeoutAttempts = Array.isArray(record?.attempt_records)
     ? record.attempt_records.filter((attempt) =>
         isFirstByteTimeoutAttempt(attempt),
@@ -3445,7 +3455,10 @@ function UserRequestEventTooltip({ record, meta, processing, durationMs, t }) {
     ],
     [t('尝试次数'), processing ? '--' : formatNumber(attempts)],
     [t('总耗时'), formatLatency(durationMs)],
-    [t('首包延迟'), processing ? '--' : formatLatency(record?.ttft_ms)],
+    [
+      t('首包延迟'),
+      processing && !hasTTFT ? '--' : formatLatency(record?.ttft_ms),
+    ],
   ];
 
   if (firstByteTimeoutAttempts > 0 && !processing) {
@@ -4083,20 +4096,17 @@ function UserRequestScoreSummaryCell({ record, t, onOpenScoreHistory }) {
 
 function userRequestSortTimestamp(record) {
   return (
-    normalizeTimestamp(record?.created_at) ||
-    normalizeTimestamp(record?.completed_at) ||
     normalizeTimestamp(record?.updated_at) ||
+    normalizeTimestamp(record?.completed_at) ||
+    normalizeTimestamp(record?.created_at) ||
     0
   );
 }
 
 function compareUserRequestsForDisplay(a, b) {
-  const aProcessing = isUserRequestProcessing(a);
-  const bProcessing = isUserRequestProcessing(b);
-  if (aProcessing !== bProcessing) {
-    return aProcessing ? -1 : 1;
-  }
-  return userRequestSortTimestamp(b) - userRequestSortTimestamp(a);
+  const timeDiff = userRequestSortTimestamp(b) - userRequestSortTimestamp(a);
+  if (timeDiff !== 0) return timeDiff;
+  return String(b?.request_id || '').localeCompare(String(a?.request_id || ''));
 }
 
 function compactUserRequestId(requestId) {
@@ -4795,8 +4805,8 @@ function UserRequestRecentTable({
     <DashboardCard bodyClassName='ct-model-gateway-user-request-list-body'>
       <div className='ct-model-gateway-user-request-list-head'>
         <div>
-          <h3>{t('最近客户端请求')}</h3>
-          <p>{t('按时间倒序展示最近的请求记录')}</p>
+          <h3>{t('进行中的请求数据统计')}</h3>
+          <p>{t('按最后更新时间倒序展示最近的请求记录')}</p>
         </div>
         <div className='ct-model-gateway-user-request-list-actions'>
           <label className='ct-model-gateway-user-request-probe-toggle'>
@@ -4907,6 +4917,7 @@ function UserRequestRecentTable({
                   record.ttft_ms,
                   LATENCY_THRESHOLDS.ttftMs,
                 );
+                const hasTTFT = Number(record.ttft_ms || 0) > 0;
 
                 return (
                   <div
@@ -5020,9 +5031,11 @@ function UserRequestRecentTable({
                       className={`ct-model-gateway-user-request-value-col ct-model-gateway-user-request-value-${ttftTone}`}
                     >
                       <strong>
-                        {processing ? '--' : formatLatency(record.ttft_ms)}
+                        {hasTTFT ? formatLatency(record.ttft_ms) : '--'}
                       </strong>
-                      <span>{processing ? t('等待完成') : t('首包延迟')}</span>
+                      <span>
+                        {processing && !hasTTFT ? t('等待完成') : t('首包延迟')}
+                      </span>
                     </div>
 
                     <div className='ct-model-gateway-user-request-complete-col'>
@@ -10470,6 +10483,11 @@ function CandidateExplanationCard({
     unavailableReason === 'timeout_recovery' ||
     candidate?.probe_trigger_reason === 'timeout_recovery' ||
     stateTags.includes('timeout_recovery');
+  const scoreAnomalyRecovery =
+    candidate?.probe_trigger_reason === 'score_anomaly_fast_probe' ||
+    candidate?.probe_recovery_phase === 'fast_probe' ||
+    candidate?.probe_recovery_phase === 'pending_real_confirmation' ||
+    stateTags.includes('score_anomaly_fast_probe');
   const alreadyFailedInRequest =
     unavailableReason === 'already_failed_in_request' ||
     unavailableReason === 'routing_slot_reserved';
@@ -10477,6 +10495,18 @@ function CandidateExplanationCard({
     candidate?.probe_recovery_success_count || 0,
   );
   const recoveryRequired = Number(candidate?.probe_recovery_required || 0);
+  const fastRecoveryAttempts = Number(
+    candidate?.probe_fast_recovery_attempts || 0,
+  );
+  const recoverableQualityScore = Number(
+    candidate?.recoverable_quality_score || 0,
+  );
+  const recoverableQualityBaseline = Number(
+    candidate?.recoverable_quality_baseline || 0,
+  );
+  const recoverableQualityDrop = Number(
+    candidate?.recoverable_quality_drop_ratio || 0,
+  );
   const candidateSummaryMetrics = [
     {
       key: 'ttft',
@@ -10595,6 +10625,13 @@ function CandidateExplanationCard({
               {t('等待恢复探活')}
             </Tag>
           ) : null}
+          {scoreAnomalyRecovery ? (
+            <Tag color='orange' type='light' size='small'>
+              {candidate?.probe_recovery_phase === 'pending_real_confirmation'
+                ? t('待真实请求确认')
+                : t('快速校准中')}
+            </Tag>
+          ) : null}
           {circuitOpen ? (
             <Tag color='red' type='light' size='small'>
               {t('熔断打开')}
@@ -10630,6 +10667,13 @@ function CandidateExplanationCard({
               {t('恢复样本 {{count}}/{{required}}', {
                 count: recoverySuccessCount,
                 required: recoveryRequired,
+              })}
+            </Tag>
+          ) : null}
+          {scoreAnomalyRecovery ? (
+            <Tag color='cyan' type='light' size='small'>
+              {t('快速探活 {{count}}/5', {
+                count: fastRecoveryAttempts,
               })}
             </Tag>
           ) : null}
@@ -10788,6 +10832,30 @@ function CandidateExplanationCard({
             <span>{t('样本来源')}</span>
             <strong>
               {formatScoreSampleSource(candidate?.score_sample_source, t)}
+            </strong>
+          </div>
+          <div>
+            <span>{t('质量分')}</span>
+            <strong>
+              {recoverableQualityScore > 0
+                ? formatScore(recoverableQualityScore)
+                : '--'}
+            </strong>
+          </div>
+          <div>
+            <span>{t('质量基线')}</span>
+            <strong>
+              {recoverableQualityBaseline > 0
+                ? formatScore(recoverableQualityBaseline)
+                : '--'}
+            </strong>
+          </div>
+          <div>
+            <span>{t('相对下降')}</span>
+            <strong>
+              {recoverableQualityDrop > 0
+                ? formatPercent(recoverableQualityDrop)
+                : '--'}
             </strong>
           </div>
           <div>
@@ -11548,9 +11616,11 @@ function ChannelScoreBoostModal({ visible, onCancel, onSaved, t }) {
     [allowedItems, boosts, onSaved, selectedChannelId, selectedChannelName, t],
   );
 
-  const activeBoostCount = Object.values(normalizeScoreBoostsForSave(boosts))
-    .length;
-  const titleChannel = selectedChannelName || channelOptionLabel(selectedChannel);
+  const activeBoostCount = Object.values(
+    normalizeScoreBoostsForSave(boosts),
+  ).length;
+  const titleChannel =
+    selectedChannelName || channelOptionLabel(selectedChannel);
 
   return (
     <Modal

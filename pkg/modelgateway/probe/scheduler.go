@@ -34,6 +34,7 @@ type ProbeScheduler struct {
 var (
 	defaultProbeSchedulerMu sync.Mutex
 	defaultProbeScheduler   *ProbeScheduler
+	immediateProbeRecorder  = recording.NewAsyncExecutionRecorder(64)
 )
 
 func NewProbeScheduler(config ProbeConfig, selector *ProbeSelector, executor *ProbeExecutor, recorder *recording.AsyncExecutionRecorder) *ProbeScheduler {
@@ -260,6 +261,138 @@ func StartDefaultProbeScheduler() *ProbeScheduler {
 	return SyncDefaultProbeSchedulerLifecycle()
 }
 
+type ImmediateProbeOptions struct {
+	Channel           *model.Channel
+	RuntimeKey        core.RuntimeKey
+	Model             string
+	Group             string
+	Reason            string
+	TriggerScoreItems []string
+}
+
+func RunImmediateProbe(ctx context.Context, options ImmediateProbeOptions) (ProbeRunResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	channel := options.Channel
+	if channel == nil && options.RuntimeKey.ChannelID > 0 {
+		loaded, err := model.CacheGetChannel(options.RuntimeKey.ChannelID)
+		if err != nil {
+			return ProbeRunResult{}, err
+		}
+		channel = loaded
+	}
+	if channel == nil || channel.Id <= 0 {
+		return ProbeRunResult{}, fmt.Errorf("probe channel is nil")
+	}
+	if !probeChannelEligible(channel) {
+		return ProbeRunResult{}, fmt.Errorf("channel %d is not eligible for health probe", channel.Id)
+	}
+	setting := scheduler_setting.GetSetting()
+	config := ProbeConfig{
+		Enabled:                          true,
+		Interval:                         time.Duration(setting.ProbeIntervalSeconds) * time.Second,
+		WorkerCount:                      setting.ProbeWorkerCount,
+		Timeout:                          time.Duration(setting.ProbeTimeoutSeconds) * time.Second,
+		MaxPerTick:                       setting.ProbeMaxPerTick,
+		MinChannelInterval:               time.Duration(setting.ProbeMinChannelIntervalSeconds) * time.Second,
+		LowScoreThreshold:                setting.ProbeLowScoreThreshold,
+		MissingSampleThreshold:           setting.ProbeMissingSampleThreshold,
+		LongNoSuccessThreshold:           time.Duration(setting.ProbeLongNoSuccessSeconds) * time.Second,
+		RecoverySuccessesRequired:        setting.ProbeRecoverySuccessesRequired,
+		TimeoutRecoverySuccessesRequired: setting.ChannelTimeoutRecoveryProbeSuccesses,
+		FirstByteTimeout:                 20 * time.Second,
+		TotalTimeout:                     time.Duration(setting.RelayTotalTimeoutSeconds) * time.Second,
+		FailureAvoidancePriorityEnabled:  setting.ProbeFailureAvoidancePriorityEnabled,
+		RecoverableScoreItems:            setting.ProbeRecoverableScoreItems,
+		SkipRecentRealRequestEnabled:     setting.ProbeSkipRecentRealRequestEnabled,
+		RecentRealRequestWindow:          time.Duration(setting.ProbeRecentRealRequestWindowSeconds) * time.Second,
+		GoodBaselineEnabled:              setting.ProbeGoodBaselineEnabled,
+		GoodBaselineMinSamples:           setting.ProbeGoodBaselineMinSamples,
+		GoodBaselineWindow:               time.Duration(setting.ProbeGoodBaselineWindowSeconds) * time.Second,
+		PromptLibraryEnabled:             setting.ProbePromptLibraryEnabled,
+		PromptCategories:                 setting.ProbePromptCategories,
+	}
+	config = normalizeProbeConfig(config)
+	key := normalizeProbeRuntimeKey(options.RuntimeKey)
+	key.ChannelID = channel.Id
+	modelName := strings.TrimSpace(options.Model)
+	if modelName == "" {
+		modelName = strings.TrimSpace(key.RequestedModel)
+	}
+	if modelName == "" {
+		modelName = strings.TrimSpace(key.UpstreamModel)
+	}
+	if modelName == "" {
+		modelName = selectProbeModel(channel)
+	}
+	if modelName == "" {
+		return ProbeRunResult{}, fmt.Errorf("probe model is empty")
+	}
+	group := strings.TrimSpace(options.Group)
+	if group == "" {
+		group = strings.TrimSpace(key.Group)
+	}
+	if key.RequestedModel == "" {
+		key.RequestedModel = modelName
+	}
+	if key.UpstreamModel == "" {
+		key.UpstreamModel = channel.ResolveMappedModelName(modelName)
+	}
+	if key.Group == "" {
+		key.Group = group
+	}
+	if key.EndpointType == "" {
+		key.EndpointType = probeEndpointType(channel, modelName, "")
+	}
+	key = probeRuntimeKeyForChannel(channel, modelName, key.Group, key.EndpointType, key)
+	if !ProbeRuntimeKeyEligible(channel, key) {
+		return ProbeRunResult{}, fmt.Errorf("channel %d runtime key is not eligible for health probe", channel.Id)
+	}
+	reason := NormalizeProbeReason(options.Reason)
+	if reason == "" {
+		reason = reasonLowScore
+	}
+	deps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	var snapshotStore core.RuntimeSnapshotStore
+	var enricher core.RuntimeSnapshotEnricher
+	var costBaseline core.CostBaselineProvider
+	var breaker core.CircuitBreaker
+	if deps != nil {
+		snapshotStore = deps.SnapshotStore
+		enricher = deps.RuntimeEnricher
+		costBaseline = deps.CostBaselineCache
+		breaker = deps.CircuitBreaker
+	}
+	healthMonitor := scheduler.NewRuntimeHealthMonitor(snapshotStore, breaker).
+		WithScoringService(scheduler.NewCandidateScoringService().WithCostBaselineProvider(costBaseline)).
+		WithScoreWeights(modelgatewayintegration.RuntimePolicySetting().ScoreWeights)
+	executor := NewProbeExecutor(config.Timeout, NewProbeBillingRecorder()).
+		WithTimeoutRecoveryThresholds(config.FirstByteTimeout, config.TotalTimeout)
+	schedulerRunner := NewProbeScheduler(config, nil, executor, immediateProbeRecorder).
+		WithSnapshotStore(snapshotStore).
+		WithRuntimeSnapshotEnricher(enricher).
+		WithCostBaselineProvider(costBaseline).
+		WithScoreWeights(modelgatewayintegration.RuntimePolicySetting().ScoreWeights)
+	candidate := ProbeCandidate{
+		Channel:           channel,
+		Model:             modelName,
+		Group:             key.Group,
+		Key:               key,
+		Reason:            reason,
+		TriggerScoreItems: append([]string(nil), options.TriggerScoreItems...),
+		PromptCategories:  config.PromptCategories,
+	}
+	candidate.Plan = schedulerRunner.buildDispatchPlan(candidate)
+	result := executor.Execute(ctx, candidate)
+	healthMonitor.Record(context.Background(), result.DispatchRecord())
+	healthMonitor.Report(context.Background(), result.AttemptResult())
+	immediateProbeRecorder.Record(context.Background(), result.DispatchRecord())
+	immediateProbeRecorder.Report(context.Background(), result.AttemptResult())
+	logProbeResult(result)
+	return result, nil
+}
+
 func StopDefaultProbeScheduler() {
 	defaultProbeSchedulerMu.Lock()
 	defer defaultProbeSchedulerMu.Unlock()
@@ -376,7 +509,10 @@ func (s *ProbeScheduler) applyProbeScore(plan *core.DispatchPlan, candidate Prob
 	if candidate.Reason == reasonTimeoutRecovery {
 		snapshot.ProbeRecoveryRequired = normalizeProbeConfig(s.config).TimeoutRecoverySuccessesRequired
 	}
-	if candidate.Reason == reasonLowScore || candidate.Reason == reasonFailureAvoidance || candidate.Reason == reasonTimeoutRecovery || candidate.Reason == reasonCircuitProbe || snapshot.FailureAvoidance {
+	if candidate.Reason == reasonScoreAnomaly {
+		snapshot.ProbeRecoveryPhase = core.ProbeRecoveryPhaseFastProbe
+	}
+	if candidate.Reason == reasonLowScore || candidate.Reason == reasonFailureAvoidance || candidate.Reason == reasonTimeoutRecovery || candidate.Reason == reasonCircuitProbe || candidate.Reason == reasonScoreAnomaly || snapshot.FailureAvoidance {
 		snapshot.ProbeRecoveryPending = true
 	}
 	score := scored.Score
@@ -387,6 +523,9 @@ func (s *ProbeScheduler) applyProbeScore(plan *core.DispatchPlan, candidate Prob
 	explanation.ProbeRecoveryRequired = snapshot.ProbeRecoveryRequired
 	explanation.ProbeRecoverySuccessCount = snapshot.ProbeRecoverySuccessCount
 	explanation.ProbeTriggerReason = snapshot.ProbeTriggerReason
+	explanation.ProbeRecoveryPhase = snapshot.ProbeRecoveryPhase
+	explanation.ProbeFastRecoveryAttempts = snapshot.ProbeFastRecoveryAttempts
+	explanation.ProbeAnomalyTriggerItems = append([]string(nil), snapshot.ProbeAnomalyTriggerItems...)
 	plan.ScoreTotal = score.Total
 	plan.ScoreBreakdown = score.Breakdown
 	plan.RoutingScoreTotal = score.RoutingTotal

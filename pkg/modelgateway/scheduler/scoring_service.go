@@ -828,6 +828,10 @@ func stateTagsForSnapshot(snapshot core.RuntimeSnapshot) []string {
 	if snapshot.ProbeRecoveryPending {
 		tags = append(tags, "probe_recovery_pending")
 	}
+	if strings.TrimSpace(snapshot.ProbeTriggerReason) == core.ProbeReasonScoreAnomalyFastProbe ||
+		strings.TrimSpace(snapshot.ProbeRecoveryPhase) == core.ProbeRecoveryPhaseFastProbe {
+		tags = append(tags, core.ProbeReasonScoreAnomalyFastProbe)
+	}
 	if snapshot.ConfigErrorIsolated {
 		tags = append(tags, "config_error_isolated")
 	}

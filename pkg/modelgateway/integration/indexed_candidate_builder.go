@@ -51,11 +51,12 @@ func (b *IndexedCandidatePoolBuilder) Build(req *core.DispatchRequest, policy co
 		return nil
 	}
 	return b.index.Query(candidateindex.Query{
-		Groups:                 groups,
-		ModelName:              req.ModelName,
-		EndpointType:           req.EndpointType,
-		RequiresCodexImageTool: req.RequiresCodexImageTool,
-		MaxCandidates:          b.maxCandidates,
+		Groups:                      groups,
+		ModelName:                   req.ModelName,
+		EndpointType:                req.EndpointType,
+		RequiresCodexImageTool:      req.RequiresCodexImageTool,
+		RequiresResponsesPreviousID: req.RequiresResponsesPreviousID,
+		MaxCandidates:               b.maxCandidates,
 	})
 }
 
@@ -119,6 +120,9 @@ func (b *AccountCandidatePrimaryBuilder) Build(req *core.DispatchRequest, policy
 		return indexedCandidates
 	}
 	if b.fallback == nil {
+		return nil
+	}
+	if req != nil && req.RequiresResponsesPreviousID {
 		return nil
 	}
 	fallbackCandidates := b.fallback.Build(req, policy)

@@ -15,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -74,8 +73,16 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	)
 
 	generalSettings := operation_setting.GetGeneralSetting()
-	pingEnabled := generalSettings.PingIntervalEnabled && !info.DisablePing
-	pingInterval := time.Duration(generalSettings.PingIntervalSeconds) * time.Second
+	downstreamKeepaliveEnabled := generalSettings.DownstreamKeepaliveEnabled && !info.DisablePing
+	pingEnabled := (generalSettings.PingIntervalEnabled || downstreamKeepaliveEnabled) && !info.DisablePing
+	pingIntervalSeconds := generalSettings.PingIntervalSeconds
+	if downstreamKeepaliveEnabled {
+		pingIntervalSeconds = generalSettings.DownstreamKeepaliveIntervalSeconds
+		if generalSettings.PingIntervalEnabled && generalSettings.PingIntervalSeconds > 0 && generalSettings.PingIntervalSeconds < pingIntervalSeconds {
+			pingIntervalSeconds = generalSettings.PingIntervalSeconds
+		}
+	}
+	pingInterval := time.Duration(pingIntervalSeconds) * time.Second
 	if pingInterval <= 0 {
 		pingInterval = DefaultPingInterval
 	}
@@ -160,7 +167,11 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 					gopool.Go(func() {
 						writeMutex.Lock()
 						defer writeMutex.Unlock()
-						done <- PingData(c)
+						if generalSettings.PingIntervalEnabled {
+							done <- PingData(c)
+						} else {
+							done <- DownstreamKeepAliveData(c)
+						}
 					})
 
 					select {
@@ -280,8 +291,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				continue
 			}
 			if !strings.HasPrefix(data, "[DONE]") {
-				info.SetFirstResponseTime()
-				service.MarkChannelFirstByteObserved(c)
+				MarkRelayFirstResponseObserved(c, info)
 				info.ReceivedResponseCount++
 
 				select {
@@ -319,6 +329,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		closeBodyOnce.Do(closeBody)
 	case <-stopChan:
 		// EndReason already set by the goroutine that triggered stopChan
+		closeBodyOnce.Do(closeBody)
 	case <-c.Request.Context().Done():
 		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
 		closeBodyOnce.Do(closeBody)

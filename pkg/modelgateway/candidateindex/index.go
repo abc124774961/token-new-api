@@ -23,17 +23,18 @@ type Registry interface {
 }
 
 type Query struct {
-	Groups                 []string
-	ModelName              string
-	EndpointType           constant.EndpointType
-	RequiresCodexImageTool bool
-	MaxCandidates          int
-	ExcludedChannelIDs     map[int]struct{}
-	ExcludedAccountIDs     map[string]struct{}
-	ExcludedRuntimeKeyIDs  map[string]struct{}
-	Provider               string
-	Brand                  string
-	CapabilityFingerprint  string
+	Groups                      []string
+	ModelName                   string
+	EndpointType                constant.EndpointType
+	RequiresCodexImageTool      bool
+	RequiresResponsesPreviousID bool
+	MaxCandidates               int
+	ExcludedChannelIDs          map[int]struct{}
+	ExcludedAccountIDs          map[string]struct{}
+	ExcludedRuntimeKeyIDs       map[string]struct{}
+	Provider                    string
+	Brand                       string
+	CapabilityFingerprint       string
 }
 
 type IndexStats struct {
@@ -333,6 +334,9 @@ func candidateMatchesQuery(candidate core.Candidate, query Query) bool {
 	if !candidateAccountSupportsRequiredCapabilities(candidate, query) {
 		return false
 	}
+	if query.RequiresResponsesPreviousID && !candidateSupportsResponsesPreviousID(candidate) {
+		return false
+	}
 	if len(query.ExcludedChannelIDs) > 0 {
 		if _, excluded := query.ExcludedChannelIDs[candidate.RuntimeKey.ChannelID]; excluded {
 			return false
@@ -353,6 +357,16 @@ func candidateMatchesQuery(candidate core.Candidate, query Query) bool {
 		return false
 	}
 	return true
+}
+
+func candidateSupportsResponsesPreviousID(candidate core.Candidate) bool {
+	var capability *model.ChannelAccountCapability
+	if candidate.Channel != nil && len(candidate.Channel.ChannelInfo.MultiKeyCapabilities) > 0 {
+		if capValue, ok := candidate.Channel.ChannelInfo.MultiKeyCapabilities[candidate.CredentialRef.CredentialIndex]; ok {
+			capability = &capValue
+		}
+	}
+	return service.ChannelSupportsResponsesPreviousID(candidate.Channel, candidate.ProxyMode, capability)
 }
 
 func candidateProxyAvailable(candidate core.Candidate) bool {

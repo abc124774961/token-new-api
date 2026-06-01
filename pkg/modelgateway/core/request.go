@@ -30,6 +30,7 @@ func NewDispatchRequestFromGin(c *gin.Context, param *service.RetryParam) Dispat
 	req.CrossGroupRetry = common.GetContextKeyBool(c, constant.ContextKeyTokenCrossGroupRetry)
 	req.ForceNextAutoGroup = common.GetContextKeyBool(c, constant.ContextKeyForceNextAutoGroup)
 	req.CurrentAutoGroup = common.GetContextKeyString(c, constant.ContextKeyAutoGroup)
+	req.RequiresResponsesPreviousID = common.GetContextKeyBool(c, constant.ContextKeyResponsesPreviousID)
 	if intent, ok := GetRetryRoutingIntent(c); ok {
 		req.RetryRoutingIntent = intent.Clone()
 	}

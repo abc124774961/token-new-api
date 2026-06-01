@@ -86,6 +86,11 @@ function DynamicOAuth2Callback() {
   return <OAuth2Callback type={provider} />;
 }
 
+function ChannelAccountLegacyRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/console/channel/accounts?channel_id=${id}`} replace />;
+}
+
 function App() {
   const location = useLocation();
   const [statusState] = useContext(StatusContext);
@@ -159,10 +164,18 @@ function App() {
             }
           />
           <Route
-            path='/console/channel/:id/accounts'
+            path='/console/channel/accounts'
             element={
               <AdminRoute>
                 <ChannelAccount />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path='/console/channel/:id/accounts'
+            element={
+              <AdminRoute>
+                <ChannelAccountLegacyRedirect />
               </AdminRoute>
             }
           />

@@ -254,8 +254,12 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 		channelMeta.ChannelAccountCapability = &capability
 	}
 
-	if streamSupportedChannels[channelMeta.ChannelType] {
-		channelMeta.SupportStreamOptions = true
+	channelMeta.SupportStreamOptions = streamSupportedChannels[channelMeta.ChannelType]
+	if channelMeta.ChannelOtherSettings.SupportStreamOptions != nil {
+		channelMeta.SupportStreamOptions = *channelMeta.ChannelOtherSettings.SupportStreamOptions
+	}
+	if channelMeta.ChannelAccountCapability != nil && channelMeta.ChannelAccountCapability.StreamOptions != nil {
+		channelMeta.SupportStreamOptions = *channelMeta.ChannelAccountCapability.StreamOptions
 	}
 
 	info.ChannelMeta = channelMeta
@@ -829,28 +833,32 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
 	return info.estimatePromptTokens
 }
 
-func (info *RelayInfo) SetFirstResponseTime() {
+func (info *RelayInfo) SetFirstResponseTime() bool {
 	if info == nil {
-		return
+		return false
 	}
 	info.firstResponseMu.Lock()
 	defer info.firstResponseMu.Unlock()
 	if info.isFirstResponse {
 		info.FirstResponseTime = time.Now()
 		info.isFirstResponse = false
+		return true
 	}
+	return false
 }
 
-func (info *RelayInfo) ForceSetFirstResponseTime() {
+func (info *RelayInfo) ForceSetFirstResponseTime() bool {
 	if info == nil {
-		return
+		return false
 	}
 	info.firstResponseMu.Lock()
 	defer info.firstResponseMu.Unlock()
+	first := info.isFirstResponse || !info.FirstResponseTime.After(info.StartTime)
 	if info.isFirstResponse {
 		info.isFirstResponse = false
 	}
 	info.FirstResponseTime = time.Now()
+	return first
 }
 
 func (info *RelayInfo) HasSendResponse() bool {

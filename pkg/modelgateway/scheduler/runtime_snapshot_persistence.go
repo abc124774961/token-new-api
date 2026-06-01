@@ -223,10 +223,18 @@ func runtimeSnapshotPersistenceUpdateColumns() []string {
 		"tokens_per_second",
 		"empty_output_rate",
 		"experience_issue_rate",
+		"recoverable_quality_score",
+		"recoverable_quality_baseline",
+		"recoverable_quality_baseline_samples",
+		"recoverable_quality_drop_ratio",
+		"recoverable_quality_item_baselines",
 		"probe_recovery_pending",
 		"probe_recovery_success_count",
 		"probe_recovery_required",
 		"probe_trigger_reason",
+		"probe_recovery_phase",
+		"probe_fast_recovery_attempts",
+		"probe_anomaly_trigger_items",
 		"last_real_attempt_at",
 		"last_real_success_at",
 		"last_real_failure_at",
@@ -337,10 +345,18 @@ func runtimeSnapshotRowSignature(row model.ModelGatewayRuntimeSnapshot) string {
 		strconv.FormatFloat(row.TokensPerSecond, 'g', -1, 64),
 		strconv.FormatFloat(row.EmptyOutputRate, 'g', -1, 64),
 		strconv.FormatFloat(row.ExperienceIssueRate, 'g', -1, 64),
+		strconv.FormatFloat(row.RecoverableQualityScore, 'g', -1, 64),
+		strconv.FormatFloat(row.RecoverableQualityBaseline, 'g', -1, 64),
+		strconv.Itoa(row.RecoverableQualityBaselineSamples),
+		strconv.FormatFloat(row.RecoverableQualityDropRatio, 'g', -1, 64),
+		row.RecoverableQualityItemBaselines,
 		strconv.FormatBool(row.ProbeRecoveryPending),
 		strconv.Itoa(row.ProbeRecoverySuccessCount),
 		strconv.Itoa(row.ProbeRecoveryRequired),
 		row.ProbeTriggerReason,
+		row.ProbeRecoveryPhase,
+		strconv.Itoa(row.ProbeFastRecoveryAttempts),
+		row.ProbeAnomalyTriggerItems,
 		strconv.FormatInt(row.LastRealAttemptAt, 10),
 		strconv.FormatInt(row.LastRealSuccessAt, 10),
 		strconv.FormatInt(row.LastRealFailureAt, 10),
@@ -400,49 +416,69 @@ func runtimeSnapshotToDB(snapshot core.RuntimeSnapshot, updatedAt int64) (model.
 		snapshot.DurationMs = 0
 		snapshot.TTFTMs = 0
 	}
+	recoverableQualityItemBaselines := ""
+	if len(snapshot.RecoverableQualityItemBaselines) > 0 {
+		if data, err := common.Marshal(snapshot.RecoverableQualityItemBaselines); err == nil {
+			recoverableQualityItemBaselines = string(data)
+		}
+	}
+	probeAnomalyTriggerItems := ""
+	if len(snapshot.ProbeAnomalyTriggerItems) > 0 {
+		if data, err := common.Marshal(snapshot.ProbeAnomalyTriggerItems); err == nil {
+			probeAnomalyTriggerItems = string(data)
+		}
+	}
 	return model.ModelGatewayRuntimeSnapshot{
-		RuntimeKeyHash:            runtimeSnapshotKeyHash(snapshot.Key),
-		RuntimeKey:                string(keyJSON),
-		UpdatedAt:                 updatedAt,
-		RequestedModel:            snapshot.Key.RequestedModel,
-		UpstreamModel:             snapshot.Key.UpstreamModel,
-		ChannelID:                 snapshot.Key.ChannelID,
-		ResourceID:                snapshot.Key.ResourceID,
-		ResourceType:              snapshot.Key.ResourceType,
-		AccountID:                 snapshot.Key.AccountID,
-		AccountType:               snapshot.Key.AccountType,
-		Brand:                     snapshot.Key.Brand,
-		Provider:                  snapshot.Key.Provider,
-		CredentialIndex:           snapshot.Key.CredentialIndex,
-		CredentialSubjectFP:       snapshot.Key.CredentialSubjectFP,
-		CredentialFP:              snapshot.Key.CredentialFP,
-		Group:                     snapshot.Key.Group,
-		EndpointType:              string(snapshot.Key.EndpointType),
-		CapabilityFingerprint:     snapshot.Key.CapabilityFingerprint,
-		ScoreStatsJSON:            snapshot.ScoreStatsJSON,
-		LatencySamples:            latencySamples,
-		SampleCount:               snapshot.SampleCount,
-		SuccessRate:               snapshot.SuccessRate,
-		TTFTMs:                    snapshot.TTFTMs,
-		DurationMs:                snapshot.DurationMs,
-		TokensPerSecond:           snapshot.TokensPerSecond,
-		EmptyOutputRate:           snapshot.EmptyOutputRate,
-		ExperienceIssueRate:       snapshot.ExperienceIssueRate,
-		ProbeRecoveryPending:      snapshot.ProbeRecoveryPending,
-		ProbeRecoverySuccessCount: snapshot.ProbeRecoverySuccessCount,
-		ProbeRecoveryRequired:     snapshot.ProbeRecoveryRequired,
-		ProbeTriggerReason:        snapshot.ProbeTriggerReason,
-		LastRealAttemptAt:         snapshot.LastRealAttemptAt,
-		LastRealSuccessAt:         snapshot.LastRealSuccessAt,
-		LastRealFailureAt:         snapshot.LastRealFailureAt,
-		RealSampleCount30m:        snapshot.RealSampleCount30m,
-		LastProbeAt:               snapshot.LastProbeAt,
-		LastProbeSuccessAt:        snapshot.LastProbeSuccessAt,
-		ConfigErrorIsolated:       snapshot.ConfigErrorIsolated,
-		IsolationReason:           snapshot.IsolationReason,
-		IsolationUntil:            snapshot.IsolationUntil,
-		AuthConfigErrorCount:      snapshot.AuthConfigErrorCount,
-		LastAuthConfigErrorAt:     snapshot.LastAuthConfigErrorAt,
+		RuntimeKeyHash:                    runtimeSnapshotKeyHash(snapshot.Key),
+		RuntimeKey:                        string(keyJSON),
+		UpdatedAt:                         updatedAt,
+		RequestedModel:                    snapshot.Key.RequestedModel,
+		UpstreamModel:                     snapshot.Key.UpstreamModel,
+		ChannelID:                         snapshot.Key.ChannelID,
+		ResourceID:                        snapshot.Key.ResourceID,
+		ResourceType:                      snapshot.Key.ResourceType,
+		AccountID:                         snapshot.Key.AccountID,
+		AccountType:                       snapshot.Key.AccountType,
+		Brand:                             snapshot.Key.Brand,
+		Provider:                          snapshot.Key.Provider,
+		CredentialIndex:                   snapshot.Key.CredentialIndex,
+		CredentialSubjectFP:               snapshot.Key.CredentialSubjectFP,
+		CredentialFP:                      snapshot.Key.CredentialFP,
+		Group:                             snapshot.Key.Group,
+		EndpointType:                      string(snapshot.Key.EndpointType),
+		CapabilityFingerprint:             snapshot.Key.CapabilityFingerprint,
+		ScoreStatsJSON:                    snapshot.ScoreStatsJSON,
+		LatencySamples:                    latencySamples,
+		SampleCount:                       snapshot.SampleCount,
+		SuccessRate:                       snapshot.SuccessRate,
+		TTFTMs:                            snapshot.TTFTMs,
+		DurationMs:                        snapshot.DurationMs,
+		TokensPerSecond:                   snapshot.TokensPerSecond,
+		EmptyOutputRate:                   snapshot.EmptyOutputRate,
+		ExperienceIssueRate:               snapshot.ExperienceIssueRate,
+		RecoverableQualityScore:           snapshot.RecoverableQualityScore,
+		RecoverableQualityBaseline:        snapshot.RecoverableQualityBaseline,
+		RecoverableQualityBaselineSamples: snapshot.RecoverableQualityBaselineSamples,
+		RecoverableQualityDropRatio:       snapshot.RecoverableQualityDropRatio,
+		RecoverableQualityItemBaselines:   recoverableQualityItemBaselines,
+		ProbeRecoveryPending:              snapshot.ProbeRecoveryPending,
+		ProbeRecoverySuccessCount:         snapshot.ProbeRecoverySuccessCount,
+		ProbeRecoveryRequired:             snapshot.ProbeRecoveryRequired,
+		ProbeTriggerReason:                snapshot.ProbeTriggerReason,
+		ProbeRecoveryPhase:                snapshot.ProbeRecoveryPhase,
+		ProbeFastRecoveryAttempts:         snapshot.ProbeFastRecoveryAttempts,
+		ProbeAnomalyTriggerItems:          probeAnomalyTriggerItems,
+		LastRealAttemptAt:                 snapshot.LastRealAttemptAt,
+		LastRealSuccessAt:                 snapshot.LastRealSuccessAt,
+		LastRealFailureAt:                 snapshot.LastRealFailureAt,
+		RealSampleCount30m:                snapshot.RealSampleCount30m,
+		LastProbeAt:                       snapshot.LastProbeAt,
+		LastProbeSuccessAt:                snapshot.LastProbeSuccessAt,
+		ConfigErrorIsolated:               snapshot.ConfigErrorIsolated,
+		IsolationReason:                   snapshot.IsolationReason,
+		IsolationUntil:                    snapshot.IsolationUntil,
+		AuthConfigErrorCount:              snapshot.AuthConfigErrorCount,
+		LastAuthConfigErrorAt:             snapshot.LastAuthConfigErrorAt,
 	}, true
 }
 
@@ -506,39 +542,55 @@ func runtimeSnapshotFromDB(row model.ModelGatewayRuntimeSnapshot) (core.RuntimeS
 		_ = common.UnmarshalJsonStr(row.LatencySamples, &latencySamples)
 	}
 	latencySamples = normalizeRuntimeLatencySamples(latencySamples)
+	recoverableQualityItemBaselines := map[string]float64{}
+	if row.RecoverableQualityItemBaselines != "" {
+		_ = common.UnmarshalJsonStr(row.RecoverableQualityItemBaselines, &recoverableQualityItemBaselines)
+	}
+	probeAnomalyTriggerItems := make([]string, 0)
+	if row.ProbeAnomalyTriggerItems != "" {
+		_ = common.UnmarshalJsonStr(row.ProbeAnomalyTriggerItems, &probeAnomalyTriggerItems)
+	}
 	ttftMs := 0.0
 	durationMs := 0.0
 	if len(latencySamples) > 0 {
 		durationMs, ttftMs, _ = runtimeLatencyStats(latencySamples)
 	}
 	return core.RuntimeSnapshot{
-		Key:                       key,
-		ScoreStatsJSON:            row.ScoreStatsJSON,
-		RecentLatencySamples:      latencySamples,
-		SuccessRate:               row.SuccessRate,
-		TTFTMs:                    ttftMs,
-		DurationMs:                durationMs,
-		TokensPerSecond:           row.TokensPerSecond,
-		EmptyOutputRate:           row.EmptyOutputRate,
-		ExperienceIssueRate:       row.ExperienceIssueRate,
-		ProbeRecoveryPending:      row.ProbeRecoveryPending,
-		ProbeRecoverySuccessCount: row.ProbeRecoverySuccessCount,
-		ProbeRecoveryRequired:     row.ProbeRecoveryRequired,
-		ProbeTriggerReason:        row.ProbeTriggerReason,
-		LastRealAttemptAt:         row.LastRealAttemptAt,
-		LastRealSuccessAt:         row.LastRealSuccessAt,
-		LastRealFailureAt:         row.LastRealFailureAt,
-		RealSampleCount30m:        row.RealSampleCount30m,
-		LastProbeAt:               row.LastProbeAt,
-		LastProbeSuccessAt:        row.LastProbeSuccessAt,
-		ConfigErrorIsolated:       row.ConfigErrorIsolated,
-		IsolationReason:           row.IsolationReason,
-		IsolationUntil:            row.IsolationUntil,
-		AuthConfigErrorCount:      row.AuthConfigErrorCount,
-		LastAuthConfigErrorAt:     row.LastAuthConfigErrorAt,
-		GroupPriorityRatio:        1,
-		CircuitState:              core.CircuitStateClosed,
-		SampleCount:               row.SampleCount,
+		Key:                               key,
+		ScoreStatsJSON:                    row.ScoreStatsJSON,
+		RecentLatencySamples:              latencySamples,
+		SuccessRate:                       row.SuccessRate,
+		TTFTMs:                            ttftMs,
+		DurationMs:                        durationMs,
+		TokensPerSecond:                   row.TokensPerSecond,
+		EmptyOutputRate:                   row.EmptyOutputRate,
+		ExperienceIssueRate:               row.ExperienceIssueRate,
+		RecoverableQualityScore:           row.RecoverableQualityScore,
+		RecoverableQualityBaseline:        row.RecoverableQualityBaseline,
+		RecoverableQualityBaselineSamples: row.RecoverableQualityBaselineSamples,
+		RecoverableQualityDropRatio:       row.RecoverableQualityDropRatio,
+		RecoverableQualityItemBaselines:   recoverableQualityItemBaselines,
+		ProbeRecoveryPending:              row.ProbeRecoveryPending,
+		ProbeRecoverySuccessCount:         row.ProbeRecoverySuccessCount,
+		ProbeRecoveryRequired:             row.ProbeRecoveryRequired,
+		ProbeTriggerReason:                row.ProbeTriggerReason,
+		ProbeRecoveryPhase:                row.ProbeRecoveryPhase,
+		ProbeFastRecoveryAttempts:         row.ProbeFastRecoveryAttempts,
+		ProbeAnomalyTriggerItems:          probeAnomalyTriggerItems,
+		LastRealAttemptAt:                 row.LastRealAttemptAt,
+		LastRealSuccessAt:                 row.LastRealSuccessAt,
+		LastRealFailureAt:                 row.LastRealFailureAt,
+		RealSampleCount30m:                row.RealSampleCount30m,
+		LastProbeAt:                       row.LastProbeAt,
+		LastProbeSuccessAt:                row.LastProbeSuccessAt,
+		ConfigErrorIsolated:               row.ConfigErrorIsolated,
+		IsolationReason:                   row.IsolationReason,
+		IsolationUntil:                    row.IsolationUntil,
+		AuthConfigErrorCount:              row.AuthConfigErrorCount,
+		LastAuthConfigErrorAt:             row.LastAuthConfigErrorAt,
+		GroupPriorityRatio:                1,
+		CircuitState:                      core.CircuitStateClosed,
+		SampleCount:                       row.SampleCount,
 	}, true
 }
 
@@ -654,6 +706,13 @@ func mergeRuntimeSnapshotRows(left, right model.ModelGatewayRuntimeSnapshot) mod
 	left.EmptyOutputRate = weightedRuntimeSnapshotAverage(left.EmptyOutputRate, left.SampleCount, right.EmptyOutputRate, right.SampleCount)
 	left.ExperienceIssueRate = weightedRuntimeSnapshotAverage(left.ExperienceIssueRate, left.SampleCount, right.ExperienceIssueRate, right.SampleCount)
 	left.ScoreStatsJSON = mergeRuntimeSnapshotScoreStats(left.ScoreStatsJSON, right.ScoreStatsJSON)
+	if right.RecoverableQualityBaselineSamples > left.RecoverableQualityBaselineSamples || right.UpdatedAt >= left.UpdatedAt {
+		left.RecoverableQualityScore = right.RecoverableQualityScore
+		left.RecoverableQualityBaseline = right.RecoverableQualityBaseline
+		left.RecoverableQualityBaselineSamples = right.RecoverableQualityBaselineSamples
+		left.RecoverableQualityDropRatio = right.RecoverableQualityDropRatio
+		left.RecoverableQualityItemBaselines = right.RecoverableQualityItemBaselines
+	}
 	left.LastRealAttemptAt = maxInt64(left.LastRealAttemptAt, right.LastRealAttemptAt)
 	left.LastRealSuccessAt = maxInt64(left.LastRealSuccessAt, right.LastRealSuccessAt)
 	left.LastRealFailureAt = maxInt64(left.LastRealFailureAt, right.LastRealFailureAt)
@@ -665,6 +724,9 @@ func mergeRuntimeSnapshotRows(left, right model.ModelGatewayRuntimeSnapshot) mod
 		left.ProbeRecoverySuccessCount = right.ProbeRecoverySuccessCount
 		left.ProbeRecoveryRequired = right.ProbeRecoveryRequired
 		left.ProbeTriggerReason = right.ProbeTriggerReason
+		left.ProbeRecoveryPhase = right.ProbeRecoveryPhase
+		left.ProbeFastRecoveryAttempts = right.ProbeFastRecoveryAttempts
+		left.ProbeAnomalyTriggerItems = right.ProbeAnomalyTriggerItems
 	}
 	if right.ConfigErrorIsolated || right.LastAuthConfigErrorAt > left.LastAuthConfigErrorAt {
 		left.ConfigErrorIsolated = right.ConfigErrorIsolated

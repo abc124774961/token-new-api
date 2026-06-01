@@ -24,6 +24,7 @@ import (
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const channelAccountManualDisabledReason = "manual_disabled"
@@ -58,6 +59,7 @@ type ChannelAccountsResponse struct {
 
 type ChannelAccountItem struct {
 	ChannelID       int                                  `json:"channel_id"`
+	ChannelName     string                               `json:"channel_name,omitempty"`
 	CredentialIndex int                                  `json:"credential_index"`
 	KeyEnabled      bool                                 `json:"key_enabled"`
 	DisabledReason  string                               `json:"disabled_reason,omitempty"`
@@ -65,9 +67,12 @@ type ChannelAccountItem struct {
 	AccountIdentity modelgatewaycore.AccountIdentity     `json:"account_identity"`
 	CredentialRef   modelgatewaycore.CredentialRef       `json:"credential_ref"`
 	Proxy           *ModelGatewayProxyResponse           `json:"proxy,omitempty"`
+	CodexEnvironmentID int                               `json:"codex_environment_id,omitempty"`
 	Capabilities    *model.ChannelAccountCapability      `json:"capabilities,omitempty"`
 	SubjectShort    string                               `json:"subject_short,omitempty"`
 	CredentialShort string                               `json:"credential_short,omitempty"`
+	CredentialUID   string                               `json:"credential_uid,omitempty"`
+	CredentialLabel string                               `json:"credential_label,omitempty"`
 	Score           *ChannelAccountScoreSummary          `json:"score,omitempty"`
 	RuntimeKeys     []ChannelAccountRuntimeScoreSnapshot `json:"runtime_keys,omitempty"`
 	Stats           *ChannelAccountStats                 `json:"stats,omitempty"`
@@ -274,13 +279,17 @@ type ChannelAccountRequestReconcileDiagnosis struct {
 }
 
 type channelAccountsQuery struct {
-	View     string
-	Page     int
-	PageSize int
-	Keyword  string
-	Status   string
-	Sort     string
-	Order    string
+	View        string
+	Page        int
+	PageSize    int
+	Keyword     string
+	Status      string
+	ChannelID   int
+	AccountType string
+	Brand       string
+	Provider    string
+	Sort        string
+	Order       string
 }
 
 type UpdateChannelAccountStatusRequest struct {
@@ -292,6 +301,7 @@ type UpdateChannelAccountStatusRequest struct {
 type UpdateChannelAccountCredentialRequest struct {
 	Credential     string `json:"credential"`
 	CredentialType string `json:"credential_type,omitempty"`
+	CodexEnvironmentID *int `json:"codex_environment_id,omitempty"`
 }
 
 type UpdateChannelAccountsStatusRequest struct {
@@ -318,6 +328,24 @@ type DeleteChannelAccountsRequest struct {
 	CredentialIndexes []int `json:"credential_indexes"`
 }
 
+type ChannelAccountArchiveTarget struct {
+	ChannelID       int `json:"channel_id"`
+	CredentialIndex int `json:"credential_index"`
+}
+
+type ArchiveChannelAccountsRequest struct {
+	Targets           []ChannelAccountArchiveTarget `json:"targets"`
+	ChannelID         int                           `json:"channel_id,omitempty"`
+	CredentialIndexes []int                         `json:"credential_indexes,omitempty"`
+	Reason            string                        `json:"reason,omitempty"`
+	Note              string                        `json:"note,omitempty"`
+}
+
+type RestoreChannelInvalidAccountRequest struct {
+	ChannelID int    `json:"channel_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 type UpdateChannelAccountProxyRequest struct {
 	ProxyID        *int `json:"proxy_id"`
 	AllowReuseRisk bool `json:"allow_reuse_risk,omitempty"`
@@ -342,6 +370,40 @@ type ChannelAccountOperation struct {
 	TotalInput       int    `json:"total_input,omitempty"`
 	ChannelRestored  bool   `json:"channel_restored,omitempty"`
 	ChannelDisabled  bool   `json:"channel_disabled,omitempty"`
+}
+
+type ChannelAccountPoolResponse struct {
+	Page          int                      `json:"page"`
+	PageSize      int                      `json:"page_size"`
+	Total         int64                    `json:"total"`
+	FilteredTotal int64                    `json:"filtered_total"`
+	Items         []ChannelAccountPoolItem `json:"items"`
+}
+
+type ChannelAccountPoolItem struct {
+	ID                           int    `json:"id"`
+	Pool                         string `json:"pool"`
+	ChannelID                    int    `json:"channel_id"`
+	ChannelName                  string `json:"channel_name,omitempty"`
+	CredentialIndex              int    `json:"credential_index"`
+	AccountID                    string `json:"account_id,omitempty"`
+	AccountIdentityKey           string `json:"account_identity_key,omitempty"`
+	CredentialSubjectFingerprint string `json:"credential_subject_fingerprint,omitempty"`
+	CredentialFingerprint        string `json:"credential_fingerprint,omitempty"`
+	SubjectShort                 string `json:"subject_short,omitempty"`
+	CredentialShort              string `json:"credential_short,omitempty"`
+	CredentialMasked             string `json:"credential_masked,omitempty"`
+	AccountType                  string `json:"account_type,omitempty"`
+	Brand                        string `json:"brand,omitempty"`
+	Provider                     string `json:"provider,omitempty"`
+	ResourceID                   string `json:"resource_id,omitempty"`
+	ResourceType                 string `json:"resource_type,omitempty"`
+	ProxyID                      int    `json:"proxy_id,omitempty"`
+	CodexEnvironmentID           int    `json:"codex_environment_id,omitempty"`
+	Reason                       string `json:"reason,omitempty"`
+	Note                         string `json:"note,omitempty"`
+	ArchivedAt                   int64  `json:"archived_at,omitempty"`
+	UpdatedAt                    int64  `json:"updated_at,omitempty"`
 }
 
 type ChannelAccountScoreSummary struct {
@@ -404,6 +466,56 @@ func ListChannelAccounts(c *gin.Context) {
 	}
 
 	common.ApiSuccess(c, buildChannelAccountsResponse(channel, parseChannelAccountsQuery(c)))
+}
+
+func ListAllChannelAccounts(c *gin.Context) {
+	params := parseChannelAccountsQuery(c)
+	channels, err := model.GetAllChannels(0, 0, true, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, buildAllChannelAccountsResponse(channels, params))
+}
+
+func ListChannelInvalidAccountPool(c *gin.Context) {
+	query := parseChannelAccountPoolQuery(c)
+	records, total, err := model.ListChannelInvalidAccounts(query)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	items := make([]ChannelAccountPoolItem, 0, len(records))
+	for _, record := range records {
+		items = append(items, buildChannelAccountPoolItem(model.ChannelAccountPoolInvalid, record.ChannelAccountArchiveFields))
+	}
+	common.ApiSuccess(c, ChannelAccountPoolResponse{
+		Page:          query.Page,
+		PageSize:      query.PageSize,
+		Total:         total,
+		FilteredTotal: total,
+		Items:         items,
+	})
+}
+
+func ListChannelDiscardedAccountPool(c *gin.Context) {
+	query := parseChannelAccountPoolQuery(c)
+	records, total, err := model.ListChannelDiscardedAccounts(query)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	items := make([]ChannelAccountPoolItem, 0, len(records))
+	for _, record := range records {
+		items = append(items, buildChannelAccountPoolItem(model.ChannelAccountPoolDiscarded, record.ChannelAccountArchiveFields))
+	}
+	common.ApiSuccess(c, ChannelAccountPoolResponse{
+		Page:          query.Page,
+		PageSize:      query.PageSize,
+		Total:         total,
+		FilteredTotal: total,
+		Items:         items,
+	})
 }
 
 func ListChannelAccountRecentRequests(c *gin.Context) {
@@ -524,7 +636,7 @@ func UpdateChannelAccountCredential(c *gin.Context) {
 		return
 	}
 
-	operation, err := updateChannelAccountCredential(channelID, credentialIndex, request.Credential, request.CredentialType)
+	operation, err := updateChannelAccountCredential(channelID, credentialIndex, request.Credential, request.CredentialType, request.CodexEnvironmentID)
 	if err != nil {
 		common.ApiErrorMsg(c, err.Error())
 		return
@@ -627,6 +739,92 @@ func DeleteChannelAccounts(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, buildChannelAccountsResponseWithOperation(channel, operation))
+}
+
+func ArchiveChannelAccountsToInvalidPool(c *gin.Context) {
+	var request ArchiveChannelAccountsRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	operation, err := archiveChannelAccounts(model.ChannelAccountPoolInvalid, request)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	common.ApiSuccess(c, gin.H{"operation": operation})
+}
+
+func ArchiveChannelAccountsToDiscardedPool(c *gin.Context) {
+	var request ArchiveChannelAccountsRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	operation, err := archiveChannelAccounts(model.ChannelAccountPoolDiscarded, request)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	common.ApiSuccess(c, gin.H{"operation": operation})
+}
+
+func RestoreChannelInvalidAccount(c *gin.Context) {
+	poolID, ok := parsePositiveIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var request RestoreChannelInvalidAccountRequest
+	_ = c.ShouldBindJSON(&request)
+	operation, err := restoreChannelInvalidAccount(poolID, request.ChannelID)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	common.ApiSuccess(c, gin.H{"operation": operation})
+}
+
+func DiscardChannelInvalidAccount(c *gin.Context) {
+	poolID, ok := parsePositiveIDParam(c, "id")
+	if !ok {
+		return
+	}
+	operation, err := discardChannelInvalidAccount(poolID)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	common.ApiSuccess(c, gin.H{"operation": operation})
+}
+
+func DeleteChannelInvalidAccountPoolItem(c *gin.Context) {
+	poolID, ok := parsePositiveIDParam(c, "id")
+	if !ok {
+		return
+	}
+	if err := model.DB.Delete(&model.ChannelInvalidAccount{}, poolID).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"operation": ChannelAccountOperation{Type: "pool", Action: "delete", Requested: 1, Affected: 1, Deleted: 1}})
+}
+
+func DeleteChannelDiscardedAccountPoolItem(c *gin.Context) {
+	poolID, ok := parsePositiveIDParam(c, "id")
+	if !ok {
+		return
+	}
+	if err := model.DB.Delete(&model.ChannelDiscardedAccount{}, poolID).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"operation": ChannelAccountOperation{Type: "pool", Action: "delete", Requested: 1, Affected: 1, Deleted: 1}})
 }
 
 func UpdateChannelAccountProxy(c *gin.Context) {
@@ -1048,6 +1246,15 @@ func parseChannelAccountCredentialIndexParam(c *gin.Context) (int, bool) {
 	return credentialIndex, true
 }
 
+func parsePositiveIDParam(c *gin.Context, name string) (int, bool) {
+	value, err := strconv.Atoi(c.Param(name))
+	if err != nil || value <= 0 {
+		common.ApiError(c, fmt.Errorf("ID 无效"))
+		return 0, false
+	}
+	return value, true
+}
+
 func parseChannelAccountRequestTarget(c *gin.Context) (int, int, bool) {
 	channelID, ok := parseChannelIDParam(c)
 	if !ok {
@@ -1115,6 +1322,7 @@ func buildChannelAccountsResponse(channel *model.Channel, query ...channelAccoun
 	}
 	for idx, account := range filtered {
 		item := buildChannelAccountItem(account, runtimeItems, len(accounts) == 1)
+		item.ChannelName = channel.Name
 		item.Capabilities = keyStatusCapabilities(channel, account.CredentialIndex)
 		if item.Capabilities != nil {
 			item.Capabilities.CapabilityClassification = item.Capabilities.EffectiveClassification()
@@ -1134,6 +1342,121 @@ func buildChannelAccountsResponse(channel *model.Channel, query ...channelAccoun
 					PasswordMasked: true,
 				}
 			}
+		}
+		item.Scheduling = buildChannelAccountSchedulingExplanation(item)
+		response.Summary.Scored += boolToInt64(item.Score != nil)
+		if item.Scheduling != nil && item.Scheduling.Schedulable {
+			response.Summary.SchedulableAccounts++
+		} else {
+			response.Summary.BlockedAccounts++
+		}
+		if item.Score != nil && (item.Score.ProbeRecoveryPending || item.Score.HealthStatus == "failure_avoidance") {
+			response.Summary.RecoveryAccounts++
+		}
+		if item.Score != nil && item.Score.HealthStatus == "circuit_open" {
+			response.Summary.CircuitOpenAccounts++
+		}
+		if item.Score != nil {
+			response.Summary.RealSampleCount30m += int64(item.Score.RealSampleCount30m)
+		}
+		if idx >= start && idx < end {
+			response.Items = append(response.Items, item)
+		}
+	}
+	return response
+}
+
+func buildAllChannelAccountsResponse(channels []*model.Channel, params channelAccountsQuery) ChannelAccountsResponse {
+	params = normalizeChannelAccountsQuery(params)
+	registry := modelgatewayaccount.NewRegistry()
+	allAccounts := make([]modelgatewayaccount.ChannelAccount, 0)
+	channelByID := make(map[int]*model.Channel, len(channels))
+	statsByAccount := make(map[string]*ChannelAccountStats)
+	runtimeItemsByChannel := make(map[int][]modelgatewayobservability.RuntimeStatusItem)
+	proxiesByChannel := make(map[int]map[int]model.ModelGatewayProxy)
+	proxyUsagesByChannel := make(map[int]map[int][]model.ModelGatewayProxyUsage)
+	response := ChannelAccountsResponse{
+		ResourceRef: modelgatewaycore.ResourceRef{
+			ResourceID:   "platform:channels:all",
+			ResourceType: modelgatewaycore.ResourceTypePlatformOwned,
+		},
+		View:     params.View,
+		Page:     params.Page,
+		PageSize: params.PageSize,
+		Items:    make([]ChannelAccountItem, 0, params.PageSize),
+		Summary:  ChannelAccountSummary{HealthProbeExcluded: true},
+	}
+	for _, channel := range channels {
+		if channel == nil || channel.Id <= 0 {
+			continue
+		}
+		if params.ChannelID > 0 && channel.Id != params.ChannelID {
+			continue
+		}
+		accounts := registry.AccountsForChannel(channel)
+		channelByID[channel.Id] = channel
+		response.Total += len(accounts)
+		for _, account := range accounts {
+			if account.KeyEnabled {
+				response.Enabled++
+			} else {
+				response.Disabled++
+			}
+			allAccounts = append(allAccounts, account)
+		}
+		channelStats, channelSummary := channelAccountStatsForAccounts(channel.Id, accounts)
+		for key, stats := range channelStats {
+			statsByAccount[key] = stats
+		}
+		response.Summary.Today = addChannelAccountUsageWindow(response.Summary.Today, channelSummary.Today)
+		response.Summary.Last5h = addChannelAccountUsageWindow(response.Summary.Last5h, channelSummary.Last5h)
+		response.Summary.Last7d = addChannelAccountUsageWindow(response.Summary.Last7d, channelSummary.Last7d)
+		filteredForRuntime := filterChannelAccounts(accounts, params)
+		runtimeItemsByChannel[channel.Id] = runtimeItemsForChannelAccounts(channel.Id, filteredForRuntime, len(accounts) == 1)
+		proxiesByID := channelAccountProxiesByID(channel, filteredForRuntime)
+		proxiesByChannel[channel.Id] = proxiesByID
+		proxyUsagesByChannel[channel.Id] = channelAccountProxyUsagesByID(proxiesByID)
+	}
+	response.Summary.Today = finalizeChannelAccountUsageWindow(response.Summary.Today)
+	response.Summary.Last5h = finalizeChannelAccountUsageWindow(response.Summary.Last5h)
+	response.Summary.Last7d = finalizeChannelAccountUsageWindow(response.Summary.Last7d)
+
+	filtered := filterChannelAccounts(allAccounts, params)
+	sortChannelAccounts(filtered, params, statsByAccount)
+	response.FilteredTotal = len(filtered)
+	start := (params.Page - 1) * params.PageSize
+	end := start + params.PageSize
+	if start > len(filtered) {
+		start = len(filtered)
+	}
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+	for idx, account := range filtered {
+		channel := channelByID[account.ChannelID]
+		item := buildChannelAccountItem(account, runtimeItemsByChannel[account.ChannelID], len(registry.AccountsForChannel(channel)) == 1)
+		if channel != nil {
+			item.ChannelName = channel.Name
+			item.Capabilities = keyStatusCapabilities(channel, account.CredentialIndex)
+			if item.Capabilities != nil {
+				item.Capabilities.CapabilityClassification = item.Capabilities.EffectiveClassification()
+			}
+			if account.ProxyRef.ProxyID > 0 {
+				if proxyConfig, ok := proxiesByChannel[account.ChannelID][account.ProxyRef.ProxyID]; ok {
+					proxyResponse := buildModelGatewayProxyResponse(proxyConfig, proxyUsagesByChannel[account.ChannelID][account.ProxyRef.ProxyID])
+					item.Proxy = &proxyResponse
+				} else {
+					item.Proxy = &ModelGatewayProxyResponse{
+						ID:             account.ProxyRef.ProxyID,
+						Name:           fmt.Sprintf("Proxy #%d", account.ProxyRef.ProxyID),
+						Enabled:        false,
+						PasswordMasked: true,
+					}
+				}
+			}
+		}
+		if stats, ok := statsByAccount[channelAccountStatsKey(account)]; ok {
+			item.Stats = stats
 		}
 		item.Scheduling = buildChannelAccountSchedulingExplanation(item)
 		response.Summary.Scored += boolToInt64(item.Score != nil)
@@ -1215,14 +1538,34 @@ func parseChannelAccountsQuery(c *gin.Context) channelAccountsQuery {
 		return normalizeChannelAccountsQuery(channelAccountsQuery{})
 	}
 	return normalizeChannelAccountsQuery(channelAccountsQuery{
-		View:     c.DefaultQuery("view", channelAccountViewManage),
-		Page:     parsePositiveQueryInt(c, "page", 1),
-		PageSize: parsePositiveQueryInt(c, "page_size", channelAccountDefaultPageSize),
-		Keyword:  c.Query("keyword"),
-		Status:   c.DefaultQuery("status", "all"),
-		Sort:     c.Query("sort"),
-		Order:    c.Query("order"),
+		View:        c.DefaultQuery("view", channelAccountViewManage),
+		Page:        parsePositiveQueryInt(c, "page", 1),
+		PageSize:    parsePositiveQueryInt(c, "page_size", channelAccountDefaultPageSize),
+		Keyword:     c.Query("keyword"),
+		Status:      c.DefaultQuery("status", "all"),
+		ChannelID:   parsePositiveQueryInt(c, "channel_id", 0),
+		AccountType: c.Query("account_type"),
+		Brand:       c.Query("brand"),
+		Provider:    c.Query("provider"),
+		Sort:        c.Query("sort"),
+		Order:       c.Query("order"),
 	})
+}
+
+func parseChannelAccountPoolQuery(c *gin.Context) model.ChannelAccountPoolQuery {
+	query := model.ChannelAccountPoolQuery{
+		ChannelID:   parsePositiveQueryInt(c, "channel_id", 0),
+		Keyword:     c.Query("keyword"),
+		AccountType: c.Query("account_type"),
+		Brand:       c.Query("brand"),
+		Provider:    c.Query("provider"),
+		Page:        parsePositiveQueryInt(c, "page", 1),
+		PageSize:    parsePositiveQueryInt(c, "page_size", channelAccountDefaultPageSize),
+	}
+	if query.PageSize > channelAccountMaxPageSize {
+		query.PageSize = channelAccountMaxPageSize
+	}
+	return query
 }
 
 func parsePositiveQueryInt(c *gin.Context, key string, fallback int) int {
@@ -1252,6 +1595,9 @@ func normalizeChannelAccountsQuery(query channelAccountsQuery) channelAccountsQu
 	}
 	query.Keyword = strings.ToLower(strings.TrimSpace(query.Keyword))
 	query.Status = strings.ToLower(strings.TrimSpace(query.Status))
+	query.AccountType = strings.ToLower(strings.TrimSpace(query.AccountType))
+	query.Brand = strings.ToLower(strings.TrimSpace(query.Brand))
+	query.Provider = strings.ToLower(strings.TrimSpace(query.Provider))
 	if query.Status != "enabled" && query.Status != "disabled" {
 		query.Status = "all"
 	}
@@ -1272,6 +1618,18 @@ func normalizeChannelAccountsQuery(query channelAccountsQuery) channelAccountsQu
 func filterChannelAccounts(accounts []modelgatewayaccount.ChannelAccount, query channelAccountsQuery) []modelgatewayaccount.ChannelAccount {
 	filtered := make([]modelgatewayaccount.ChannelAccount, 0, len(accounts))
 	for _, account := range accounts {
+		if query.ChannelID > 0 && account.ChannelID != query.ChannelID {
+			continue
+		}
+		if query.AccountType != "" && strings.ToLower(strings.TrimSpace(account.AccountIdentity.AccountType)) != query.AccountType {
+			continue
+		}
+		if query.Brand != "" && strings.ToLower(strings.TrimSpace(account.AccountIdentity.Brand)) != query.Brand && strings.ToLower(strings.TrimSpace(account.ResourceRef.Brand)) != query.Brand {
+			continue
+		}
+		if query.Provider != "" && strings.ToLower(strings.TrimSpace(account.AccountIdentity.Provider)) != query.Provider && strings.ToLower(strings.TrimSpace(account.ResourceRef.Provider)) != query.Provider {
+			continue
+		}
 		if query.Status == "enabled" && !account.KeyEnabled {
 			continue
 		}
@@ -1299,6 +1657,7 @@ func channelAccountSearchText(account modelgatewayaccount.ChannelAccount) string
 		identity.Provider,
 		resource.Brand,
 		resource.Provider,
+		strconv.Itoa(account.ChannelID),
 		account.DisabledReason,
 		modelgatewayaccount.ShortFingerprint(identity.CredentialSubjectFingerprint),
 		modelgatewayaccount.ShortFingerprint(identity.CredentialFingerprint),
@@ -1469,7 +1828,7 @@ func channelAccountStatsForAccounts(channelID int, accounts []modelgatewayaccoun
 }
 
 func channelAccountStatsKey(account modelgatewayaccount.ChannelAccount) string {
-	return model.ChannelAccountUsageAggregateKey(account.AccountIdentity.AccountIdentityKey, account.CredentialIndex)
+	return fmt.Sprintf("%d:%s", account.ChannelID, model.ChannelAccountUsageAggregateKey(account.AccountIdentity.AccountIdentityKey, account.CredentialIndex))
 }
 
 func buildChannelAccountRequestReconcileResponse(channelID int, credentialIndex int, requestID string) (ChannelAccountRequestReconcileResponse, error) {
@@ -1896,11 +2255,346 @@ func roundChannelAccountFloat(value float64) float64 {
 	return math.Round(value*10000) / 10000
 }
 
+func archiveChannelAccounts(pool string, request ArchiveChannelAccountsRequest) (*ChannelAccountOperation, error) {
+	targets := normalizeArchiveChannelAccountTargets(request)
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("请先选择账号")
+	}
+	grouped := make(map[int][]int)
+	for _, target := range targets {
+		if target.ChannelID <= 0 || target.CredentialIndex < 0 {
+			return nil, fmt.Errorf("账号目标无效")
+		}
+		grouped[target.ChannelID] = append(grouped[target.ChannelID], target.CredentialIndex)
+	}
+	operation := &ChannelAccountOperation{
+		Type:      "pool",
+		Action:    "archive_" + pool,
+		Requested: len(targets),
+	}
+	for channelID, indexes := range grouped {
+		deleteOperation, err := archiveChannelAccountsForChannel(pool, channelID, indexes, request.Reason, request.Note)
+		if err != nil {
+			return nil, err
+		}
+		if deleteOperation == nil {
+			continue
+		}
+		operation.Affected += deleteOperation.Affected
+		operation.Deleted += deleteOperation.Deleted
+		operation.ChannelDisabled = operation.ChannelDisabled || deleteOperation.ChannelDisabled
+		operation.ChannelRestored = operation.ChannelRestored || deleteOperation.ChannelRestored
+	}
+	return operation, nil
+}
+
+func archiveChannelAccountsForChannel(pool string, channelID int, credentialIndexes []int, reason string, note string) (*ChannelAccountOperation, error) {
+	lock := model.GetChannelPollingLock(channelID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	var deleteOperation *ChannelAccountOperation
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		channel, err := getChannelByIDTx(tx, channelID)
+		if err != nil {
+			return fmt.Errorf("渠道不存在")
+		}
+		keys := channel.GetKeys()
+		indexes, err := normalizeChannelAccountIndexes(credentialIndexes, len(keys))
+		if err != nil {
+			return err
+		}
+		records, err := buildChannelAccountArchiveRecordsFromChannel(channel, indexes, reason, note)
+		if err != nil {
+			return err
+		}
+		if len(records) == 0 {
+			return nil
+		}
+		if pool == model.ChannelAccountPoolDiscarded {
+			discarded := make([]model.ChannelDiscardedAccount, 0, len(records))
+			for _, record := range records {
+				discarded = append(discarded, model.ChannelDiscardedAccount{ChannelAccountArchiveFields: record})
+			}
+			if err := tx.Create(&discarded).Error; err != nil {
+				return err
+			}
+		} else {
+			invalid := make([]model.ChannelInvalidAccount, 0, len(records))
+			for _, record := range records {
+				invalid = append(invalid, model.ChannelInvalidAccount{ChannelAccountArchiveFields: record})
+			}
+			if err := tx.Create(&invalid).Error; err != nil {
+				return err
+			}
+		}
+		deleteOperation, err = deleteChannelAccountsLockedTx(tx, channel, indexes, len(credentialIndexes))
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	model.InvalidatePricingCache()
+	return deleteOperation, nil
+}
+
+func normalizeArchiveChannelAccountTargets(request ArchiveChannelAccountsRequest) []ChannelAccountArchiveTarget {
+	targets := make([]ChannelAccountArchiveTarget, 0, len(request.Targets)+len(request.CredentialIndexes))
+	seen := make(map[string]struct{})
+	appendTarget := func(target ChannelAccountArchiveTarget) {
+		key := fmt.Sprintf("%d:%d", target.ChannelID, target.CredentialIndex)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		targets = append(targets, target)
+	}
+	for _, target := range request.Targets {
+		appendTarget(target)
+	}
+	if request.ChannelID > 0 {
+		for _, credentialIndex := range request.CredentialIndexes {
+			appendTarget(ChannelAccountArchiveTarget{
+				ChannelID:       request.ChannelID,
+				CredentialIndex: credentialIndex,
+			})
+		}
+	}
+	return targets
+}
+
+func buildChannelAccountArchiveRecords(channelID int, credentialIndexes []int, reason string, note string) ([]model.ChannelAccountArchiveFields, error) {
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		return nil, fmt.Errorf("渠道不存在")
+	}
+	keys := channel.GetKeys()
+	indexes, err := normalizeChannelAccountIndexes(credentialIndexes, len(keys))
+	if err != nil {
+		return nil, err
+	}
+	return buildChannelAccountArchiveRecordsFromChannel(channel, indexes, reason, note)
+}
+
+func buildChannelAccountArchiveRecordsFromChannel(channel *model.Channel, indexes []int, reason string, note string) ([]model.ChannelAccountArchiveFields, error) {
+	if channel == nil {
+		return nil, fmt.Errorf("渠道不存在")
+	}
+	keys := channel.GetKeys()
+	accounts := modelgatewayaccount.NewRegistry().AccountsForChannel(channel)
+	accountByIndex := make(map[int]modelgatewayaccount.ChannelAccount, len(accounts))
+	for _, account := range accounts {
+		accountByIndex[account.CredentialIndex] = account
+	}
+	records := make([]model.ChannelAccountArchiveFields, 0, len(indexes))
+	for _, credentialIndex := range indexes {
+		if credentialIndex < 0 || credentialIndex >= len(keys) {
+			return nil, fmt.Errorf("账号索引超出范围")
+		}
+		account, ok := accountByIndex[credentialIndex]
+		if !ok {
+			return nil, fmt.Errorf("账号不存在")
+		}
+		capabilitySnapshot := ""
+		if capability := keyStatusCapabilities(channel, credentialIndex); capability != nil {
+			if data, err := common.Marshal(capability); err == nil {
+				capabilitySnapshot = string(data)
+			}
+		}
+		records = append(records, model.ChannelAccountArchiveFields{
+			ChannelID:                    channel.Id,
+			ChannelName:                  channel.Name,
+			CredentialIndex:              credentialIndex,
+			Credential:                   strings.TrimSpace(keys[credentialIndex]),
+			AccountID:                    account.AccountIdentity.AccountID,
+			AccountIdentityKey:           account.AccountIdentity.AccountIdentityKey,
+			CredentialSubjectFingerprint: account.AccountIdentity.CredentialSubjectFingerprint,
+			CredentialFingerprint:        account.AccountIdentity.CredentialFingerprint,
+			AccountType:                  account.AccountIdentity.AccountType,
+			Brand:                        account.AccountIdentity.Brand,
+			Provider:                     account.AccountIdentity.Provider,
+			ResourceID:                   account.ResourceRef.ResourceID,
+			ResourceType:                 account.ResourceRef.ResourceType,
+			ProxyID:                      account.ProxyRef.ProxyID,
+			CodexEnvironmentID:           channelAccountCodexEnvironmentID(channel, credentialIndex),
+			CapabilitySnapshot:           capabilitySnapshot,
+			Reason:                       strings.TrimSpace(reason),
+			Note:                         strings.TrimSpace(note),
+		})
+	}
+	return records, nil
+}
+
+func restoreChannelInvalidAccount(poolID int, targetChannelID int) (*ChannelAccountOperation, error) {
+	var record model.ChannelInvalidAccount
+	if err := model.DB.First(&record, poolID).Error; err != nil {
+		return nil, fmt.Errorf("失效账号不存在")
+	}
+	if targetChannelID <= 0 {
+		targetChannelID = record.ChannelID
+	}
+	if targetChannelID <= 0 {
+		return nil, fmt.Errorf("恢复目标渠道无效")
+	}
+	lock := model.GetChannelPollingLock(targetChannelID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	channel, err := model.GetChannelById(targetChannelID, true)
+	if err != nil {
+		return nil, fmt.Errorf("渠道不存在")
+	}
+	credential := strings.TrimSpace(record.Credential)
+	if credential == "" {
+		return nil, fmt.Errorf("归档凭证为空，无法恢复")
+	}
+	if err := validateChannelAccountCredentialsForChannel(channel, []string{credential}); err != nil {
+		return nil, err
+	}
+	keys := channel.GetKeys()
+	for _, key := range keys {
+		if strings.TrimSpace(key) == credential {
+			return nil, fmt.Errorf("账号凭证已存在")
+		}
+	}
+	keys = append(keys, credential)
+	newIndex := len(keys) - 1
+	channel.Key = strings.Join(keys, "\n")
+	channel.ChannelInfo.IsMultiKey = len(keys) > 1
+	channel.ChannelInfo.MultiKeySize = len(keys)
+	if channel.ChannelInfo.IsMultiKey && channel.ChannelInfo.MultiKeyMode == "" {
+		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyModeRandom
+	}
+	cleanupChannelAccountStatusMaps(channel, len(keys))
+	if channel.ChannelInfo.IsMultiKey {
+		if channel.ChannelInfo.MultiKeyStatusList == nil {
+			channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
+		}
+		if channel.ChannelInfo.MultiKeyDisabledReason == nil {
+			channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
+		}
+		if channel.ChannelInfo.MultiKeyDisabledTime == nil {
+			channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
+		}
+		channel.ChannelInfo.MultiKeyStatusList[newIndex] = common.ChannelStatusManuallyDisabled
+		channel.ChannelInfo.MultiKeyDisabledReason[newIndex] = "restored_from_invalid_pool"
+		channel.ChannelInfo.MultiKeyDisabledTime[newIndex] = common.GetTimestamp()
+	} else {
+		channel.Status = common.ChannelStatusManuallyDisabled
+		setChannelAccountStatusReason(channel, "restored_from_invalid_pool")
+	}
+	if accountType := strings.ToLower(strings.TrimSpace(record.AccountType)); isKnownChannelAccountType(accountType) {
+		if channel.ChannelInfo.MultiKeyAccountTypes == nil {
+			channel.ChannelInfo.MultiKeyAccountTypes = make(map[int]string)
+		}
+		channel.ChannelInfo.MultiKeyAccountTypes[newIndex] = accountType
+	}
+	if record.ProxyID > 0 {
+		if channel.ChannelInfo.MultiKeyProxyIDs == nil {
+			channel.ChannelInfo.MultiKeyProxyIDs = make(map[int]int)
+		}
+		channel.ChannelInfo.MultiKeyProxyIDs[newIndex] = record.ProxyID
+	}
+	if record.CodexEnvironmentID > 0 {
+		if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs == nil {
+			channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = make(map[int]int)
+		}
+		channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[newIndex] = record.CodexEnvironmentID
+	}
+	if strings.TrimSpace(record.CapabilitySnapshot) != "" {
+		var capability model.ChannelAccountCapability
+		if err := common.UnmarshalJsonStr(record.CapabilitySnapshot, &capability); err == nil {
+			if channel.ChannelInfo.MultiKeyCapabilities == nil {
+				channel.ChannelInfo.MultiKeyCapabilities = make(map[int]model.ChannelAccountCapability)
+			}
+			channel.ChannelInfo.MultiKeyCapabilities[newIndex] = capability
+		}
+	}
+	if err := channel.Update(); err != nil {
+		return nil, err
+	}
+	if err := model.UpdateAbilityStatus(channel.Id, channel.Status == common.ChannelStatusEnabled); err != nil {
+		return nil, err
+	}
+	if err := model.DB.Delete(&model.ChannelInvalidAccount{}, poolID).Error; err != nil {
+		return nil, err
+	}
+	return &ChannelAccountOperation{
+		Type:      "pool",
+		Action:    "restore",
+		Requested: 1,
+		Affected:  1,
+		Added:     1,
+	}, nil
+}
+
+func discardChannelInvalidAccount(poolID int) (*ChannelAccountOperation, error) {
+	var record model.ChannelInvalidAccount
+	if err := model.DB.First(&record, poolID).Error; err != nil {
+		return nil, fmt.Errorf("失效账号不存在")
+	}
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		discarded := model.ChannelDiscardedAccount{ChannelAccountArchiveFields: record.ChannelAccountArchiveFields}
+		discarded.ID = 0
+		if err := tx.Create(&discarded).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.ChannelInvalidAccount{}, poolID).Error
+	}); err != nil {
+		return nil, err
+	}
+	return &ChannelAccountOperation{
+		Type:      "pool",
+		Action:    "discard",
+		Requested: 1,
+		Affected:  1,
+		Deleted:   1,
+	}, nil
+}
+
+func buildChannelAccountPoolItem(pool string, record model.ChannelAccountArchiveFields) ChannelAccountPoolItem {
+	return ChannelAccountPoolItem{
+		ID:                           record.ID,
+		Pool:                         pool,
+		ChannelID:                    record.ChannelID,
+		ChannelName:                  record.ChannelName,
+		CredentialIndex:              record.CredentialIndex,
+		AccountID:                    record.AccountID,
+		AccountIdentityKey:           record.AccountIdentityKey,
+		CredentialSubjectFingerprint: record.CredentialSubjectFingerprint,
+		CredentialFingerprint:        record.CredentialFingerprint,
+		SubjectShort:                 modelgatewayaccount.ShortFingerprint(record.CredentialSubjectFingerprint),
+		CredentialShort:              modelgatewayaccount.ShortFingerprint(record.CredentialFingerprint),
+		CredentialMasked:             maskChannelAccountCredential(record.Credential),
+		AccountType:                  record.AccountType,
+		Brand:                        record.Brand,
+		Provider:                     record.Provider,
+		ResourceID:                   record.ResourceID,
+		ResourceType:                 record.ResourceType,
+		ProxyID:                      record.ProxyID,
+		CodexEnvironmentID:           record.CodexEnvironmentID,
+		Reason:                       record.Reason,
+		Note:                         record.Note,
+		ArchivedAt:                   record.ArchivedAt,
+		UpdatedAt:                    record.UpdatedAt,
+	}
+}
+
+func maskChannelAccountCredential(credential string) string {
+	credential = strings.TrimSpace(credential)
+	if credential == "" {
+		return ""
+	}
+	if len(credential) <= 8 {
+		return "****"
+	}
+	return credential[:4] + "..." + credential[len(credential)-4:]
+}
+
 func updateChannelAccountStatus(channelID int, credentialIndex int, enabled bool, reason string) (*ChannelAccountOperation, error) {
 	return updateChannelAccountsStatus(channelID, []int{credentialIndex}, enabled, reason)
 }
 
-func updateChannelAccountCredential(channelID int, credentialIndex int, credential string, credentialType string) (*ChannelAccountOperation, error) {
+func updateChannelAccountCredential(channelID int, credentialIndex int, credential string, credentialType string, codexEnvironmentID *int) (*ChannelAccountOperation, error) {
 	if channelID <= 0 {
 		return nil, fmt.Errorf("渠道不存在")
 	}
@@ -1946,6 +2640,19 @@ func updateChannelAccountCredential(channelID int, credentialIndex int, credenti
 		if len(channel.ChannelInfo.MultiKeyAccountTypes) == 0 {
 			channel.ChannelInfo.MultiKeyAccountTypes = nil
 		}
+	}
+	if codexEnvironmentID != nil {
+		environmentID := *codexEnvironmentID
+		if environmentID > 0 {
+			env, err := model.GetCodexApplicationEnvironmentByID(environmentID)
+			if err != nil {
+				return nil, fmt.Errorf("Codex使用环境不存在")
+			}
+			if env != nil && !env.Enabled {
+				return nil, fmt.Errorf("Codex使用环境已禁用")
+			}
+		}
+		setChannelAccountCodexEnvironmentID(channel, credentialIndex, environmentID)
 	}
 	cleanupChannelAccountStatusMaps(channel, len(keys))
 	if err := saveChannelAccountsAfterDelete(channel); err != nil {
@@ -2285,6 +2992,32 @@ func channelAccountProxyAction(proxyID int) string {
 	return "clear"
 }
 
+func channelAccountCodexEnvironmentID(channel *model.Channel, credentialIndex int) int {
+	if channel == nil || credentialIndex < 0 || channel.ChannelInfo.MultiKeyCodexEnvironmentIDs == nil {
+		return 0
+	}
+	return channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[credentialIndex]
+}
+
+func setChannelAccountCodexEnvironmentID(channel *model.Channel, credentialIndex int, environmentID int) {
+	if channel == nil || credentialIndex < 0 {
+		return
+	}
+	if environmentID <= 0 {
+		if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {
+			delete(channel.ChannelInfo.MultiKeyCodexEnvironmentIDs, credentialIndex)
+			if len(channel.ChannelInfo.MultiKeyCodexEnvironmentIDs) == 0 {
+				channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = nil
+			}
+		}
+		return
+	}
+	if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs == nil {
+		channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = make(map[int]int)
+	}
+	channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[credentialIndex] = environmentID
+}
+
 func normalizeChannelAccountEditableCredential(credential string, credentialType string) (string, string, error) {
 	credential = strings.TrimSpace(credential)
 	if credential == "" {
@@ -2377,6 +3110,7 @@ func importChannelAccounts(channelID int, credentials string, credentialList []s
 	}
 	nextKeys := make([]string, 0, len(existingKeys)+len(normalizedCredentials.Keys))
 	nextKeys = append(nextKeys, existingKeys...)
+	addedIndexes := make([]int, 0, len(normalizedCredentials.Keys))
 	added := 0
 	skippedExisting := 0
 	for _, key := range normalizedCredentials.Keys {
@@ -2389,6 +3123,7 @@ func importChannelAccounts(channelID int, credentials string, credentialList []s
 		}
 		existingSet[key] = struct{}{}
 		nextKeys = append(nextKeys, key)
+		addedIndexes = append(addedIndexes, len(nextKeys)-1)
 		added++
 	}
 	if added == 0 {
@@ -2403,10 +3138,10 @@ func importChannelAccounts(channelID int, credentials string, credentialList []s
 		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyModeRandom
 	}
 	cleanupChannelAccountStatusMaps(channel, len(nextKeys))
-	if wasAutoDisabledByAllKeys {
-		channel.Status = common.ChannelStatusEnabled
-		clearChannelAccountStatusReason(channel)
+	if err := model.AssignCodexApplicationEnvironments(channel, addedIndexes); err != nil {
+		return nil, err
 	}
+	reconcileImportedChannelAccountStatus(channel, len(existingKeys), len(nextKeys), addedIndexes)
 	if err := channel.Update(); err != nil {
 		return nil, err
 	}
@@ -2425,6 +3160,67 @@ func importChannelAccounts(channelID int, credentials string, credentialList []s
 		SkippedDuplicate: skippedDuplicate,
 		ChannelRestored:  wasAutoDisabledByAllKeys && channel.Status == common.ChannelStatusEnabled,
 	}, nil
+}
+
+func reconcileImportedChannelAccountStatus(channel *model.Channel, previousKeyCount int, keyCount int, addedIndexes []int) {
+	if channel == nil || keyCount <= 0 {
+		return
+	}
+	now := common.GetTimestamp()
+
+	if keyCount == 1 {
+		channel.ChannelInfo.MultiKeyStatusList = nil
+		channel.ChannelInfo.MultiKeyDisabledReason = nil
+		channel.ChannelInfo.MultiKeyDisabledTime = nil
+		channel.Status = common.ChannelStatusManuallyDisabled
+		setChannelAccountStatusReason(channel, channelAccountManualDisabledReason)
+		return
+	}
+
+	if channel.ChannelInfo.MultiKeyStatusList == nil {
+		channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
+	}
+	if channel.ChannelInfo.MultiKeyDisabledReason == nil {
+		channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
+	}
+	if channel.ChannelInfo.MultiKeyDisabledTime == nil {
+		channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
+	}
+
+	if keyCount > 1 && previousKeyCount == 1 && channel.Status != common.ChannelStatusEnabled {
+		channel.ChannelInfo.MultiKeyStatusList[0] = common.ChannelStatusManuallyDisabled
+		channel.ChannelInfo.MultiKeyDisabledReason[0] = normalizeChannelAccountDisabledReason(channelAccountStatusReason(channel))
+		if channel.ChannelInfo.MultiKeyDisabledTime[0] == 0 {
+			channel.ChannelInfo.MultiKeyDisabledTime[0] = now
+		}
+	}
+
+	for _, index := range addedIndexes {
+		if index < 0 || index >= keyCount {
+			continue
+		}
+		channel.ChannelInfo.MultiKeyStatusList[index] = common.ChannelStatusManuallyDisabled
+		channel.ChannelInfo.MultiKeyDisabledReason[index] = channelAccountManualDisabledReason
+		channel.ChannelInfo.MultiKeyDisabledTime[index] = now
+	}
+
+	if channelAccountEnabledCount(channel, keyCount) == 0 {
+		channel.Status = common.ChannelStatusAutoDisabled
+		setChannelAccountStatusReason(channel, channelAccountAllKeysDisabledReason)
+		return
+	}
+	if channel.Status == common.ChannelStatusAutoDisabled && channelAccountStatusReasonIsAllKeysDisabled(channel) {
+		channel.Status = common.ChannelStatusEnabled
+		clearChannelAccountStatusReason(channel)
+	}
+}
+
+func channelAccountStatusReason(channel *model.Channel) string {
+	if channel == nil {
+		return ""
+	}
+	reason, _ := channel.GetOtherInfo()["status_reason"].(string)
+	return reason
 }
 
 func normalizeChannelAccountCredentialLines(credentials string, credentialList []string) normalizedChannelAccountCredentials {
@@ -2449,6 +3245,9 @@ func normalizeChannelAccountCredentialLines(credentials string, credentialList [
 			result.SkippedBlankInput++
 			continue
 		}
+		if cardCredential, ok := compactCardCredentialExportLine(key); ok {
+			key = cardCredential
+		}
 		if compacted, ok := compactJSONCredential(key); ok {
 			key = compacted
 		}
@@ -2461,6 +3260,39 @@ func normalizeChannelAccountCredentialLines(credentials string, credentialList [
 		result.Keys = append(result.Keys, key)
 	}
 	return result
+}
+
+func compactCardCredentialExportLine(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || !strings.Contains(value, "----") {
+		return "", false
+	}
+	parts := strings.Split(value, "----")
+	if len(parts) != 4 {
+		return "", false
+	}
+	email := strings.ToLower(strings.TrimSpace(parts[0]))
+	password := strings.TrimSpace(parts[1])
+	accountID := strings.TrimSpace(parts[2])
+	refreshToken := strings.TrimSpace(parts[3])
+	if email == "" || accountID == "" || refreshToken == "" {
+		return "", false
+	}
+	payload := map[string]interface{}{
+		"account_id":         accountID,
+		"chatgpt_account_id": accountID,
+		"email":              email,
+		"refresh_token":      refreshToken,
+		"type":               "codex",
+	}
+	if password != "" {
+		payload["password"] = password
+	}
+	compacted, err := common.Marshal(payload)
+	if err != nil {
+		return "", false
+	}
+	return string(compacted), true
 }
 
 func parseJSONCredentialInput(value string) ([]string, bool) {
@@ -2552,18 +3384,39 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 	lock.Lock()
 	defer lock.Unlock()
 
-	channel, err := model.GetChannelById(channelID, true)
-	if err != nil {
+	var operation *ChannelAccountOperation
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		channel, err := getChannelByIDTx(tx, channelID)
+		if err != nil {
+			return fmt.Errorf("渠道不存在")
+		}
+		keys := channel.GetKeys()
+		indexes, err := normalizeChannelAccountIndexes(credentialIndexes, len(keys))
+		if err != nil {
+			return err
+		}
+		operation, err = deleteChannelAccountsLockedTx(tx, channel, indexes, len(credentialIndexes))
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	model.InvalidatePricingCache()
+	return operation, nil
+}
+
+func deleteChannelAccountsLockedTx(tx *gorm.DB, channel *model.Channel, indexes []int, requested int) (*ChannelAccountOperation, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("数据库事务不存在")
+	}
+	if channel == nil {
 		return nil, fmt.Errorf("渠道不存在")
 	}
 	keys := channel.GetKeys()
-	indexes, err := normalizeChannelAccountIndexes(credentialIndexes, len(keys))
-	if err != nil {
-		return nil, err
-	}
-
 	deleteSet := make(map[int]struct{}, len(indexes))
 	for _, index := range indexes {
+		if index < 0 || index >= len(keys) {
+			return nil, fmt.Errorf("账号索引超出范围")
+		}
 		deleteSet[index] = struct{}{}
 	}
 	beforeStatus := channel.Status
@@ -2574,6 +3427,7 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 	newDisabledReason := make(map[int]string)
 	newProxyIDs := make(map[int]int)
 	newAccountTypes := make(map[int]string)
+	newCodexEnvironmentIDs := make(map[int]int)
 	newCapabilities := make(map[int]model.ChannelAccountCapability)
 	newIndex := 0
 	for oldIndex, key := range keys {
@@ -2606,6 +3460,11 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 				newAccountTypes[newIndex] = strings.ToLower(strings.TrimSpace(accountType))
 			}
 		}
+		if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {
+			if environmentID, exists := channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[oldIndex]; exists && environmentID > 0 {
+				newCodexEnvironmentIDs[newIndex] = environmentID
+			}
+		}
 		if channel.ChannelInfo.MultiKeyCapabilities != nil {
 			if capability, exists := channel.ChannelInfo.MultiKeyCapabilities[oldIndex]; exists {
 				newCapabilities[newIndex] = capability
@@ -2614,7 +3473,7 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 		newIndex++
 	}
 
-	if err := deleteChannelAccountBoundProxyUsages(channel.Id, indexes); err != nil {
+	if err := deleteChannelAccountBoundProxyUsagesTx(tx, channel.Id, indexes); err != nil {
 		return nil, err
 	}
 
@@ -2626,6 +3485,7 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 	channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
 	channel.ChannelInfo.MultiKeyProxyIDs = newProxyIDs
 	channel.ChannelInfo.MultiKeyAccountTypes = newAccountTypes
+	channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = newCodexEnvironmentIDs
 	channel.ChannelInfo.MultiKeyCapabilities = newCapabilities
 	if !channel.ChannelInfo.IsMultiKey {
 		channel.ChannelInfo.MultiKeyStatusList = nil
@@ -2637,6 +3497,9 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 	}
 	if len(channel.ChannelInfo.MultiKeyAccountTypes) == 0 {
 		channel.ChannelInfo.MultiKeyAccountTypes = nil
+	}
+	if len(channel.ChannelInfo.MultiKeyCodexEnvironmentIDs) == 0 {
+		channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = nil
 	}
 	if len(channel.ChannelInfo.MultiKeyCapabilities) == 0 {
 		channel.ChannelInfo.MultiKeyCapabilities = nil
@@ -2657,15 +3520,15 @@ func deleteChannelAccounts(channelID int, credentialIndexes []int) (*ChannelAcco
 		clearChannelAccountStatusReason(channel)
 	}
 
-	if err := saveChannelAccountsAfterDelete(channel); err != nil {
+	if err := saveChannelAccountsAfterDeleteTx(tx, channel); err != nil {
 		return nil, err
 	}
-	if err := model.UpdateAbilityStatus(channel.Id, channel.Status == common.ChannelStatusEnabled); err != nil {
+	if err := updateChannelAbilityStatusTx(tx, channel.Id, channel.Status == common.ChannelStatusEnabled); err != nil {
 		return nil, err
 	}
 	return &ChannelAccountOperation{
 		Type:            "delete",
-		Requested:       len(credentialIndexes),
+		Requested:       requested,
 		Affected:        len(indexes),
 		Deleted:         len(indexes),
 		ChannelRestored: beforeAllKeysDisabled && channel.Status == common.ChannelStatusEnabled,
@@ -2677,22 +3540,60 @@ func saveChannelAccountsAfterDelete(channel *model.Channel) error {
 	if channel == nil {
 		return fmt.Errorf("渠道不存在")
 	}
-	if strings.TrimSpace(channel.Key) != "" {
-		return channel.Update()
+	if err := saveChannelAccountsAfterDeleteTx(model.DB, channel); err != nil {
+		return err
 	}
-	return model.DB.Model(&model.Channel{}).
+	return model.UpdateAbilityStatus(channel.Id, channel.Status == common.ChannelStatusEnabled)
+}
+
+func saveChannelAccountsAfterDeleteTx(tx *gorm.DB, channel *model.Channel) error {
+	if tx == nil {
+		return fmt.Errorf("数据库事务不存在")
+	}
+	if channel == nil {
+		return fmt.Errorf("渠道不存在")
+	}
+	return tx.Model(&model.Channel{}).
 		Where("id = ?", channel.Id).
 		Select("key", "status", "channel_info", "other_info").
 		Updates(channel).Error
 }
 
 func deleteChannelAccountBoundProxyUsages(channelID int, credentialIndexes []int) error {
+	return deleteChannelAccountBoundProxyUsagesTx(model.DB, channelID, credentialIndexes)
+}
+
+func deleteChannelAccountBoundProxyUsagesTx(tx *gorm.DB, channelID int, credentialIndexes []int) error {
 	if len(credentialIndexes) == 0 {
 		return nil
 	}
-	return model.DB.
+	if tx == nil {
+		return fmt.Errorf("数据库事务不存在")
+	}
+	return tx.
 		Where("channel_id = ? AND credential_index IN ? AND last_status = ?", channelID, credentialIndexes, model.ModelGatewayProxyUsageStatusBound).
 		Delete(&model.ModelGatewayProxyUsage{}).Error
+}
+
+func updateChannelAbilityStatusTx(tx *gorm.DB, channelID int, enabled bool) error {
+	if tx == nil {
+		return fmt.Errorf("数据库事务不存在")
+	}
+	return tx.Model(&model.Ability{}).
+		Where("channel_id = ?", channelID).
+		Select("enabled").
+		Update("enabled", enabled).Error
+}
+
+func getChannelByIDTx(tx *gorm.DB, channelID int) (*model.Channel, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("数据库事务不存在")
+	}
+	channel := &model.Channel{Id: channelID}
+	if err := tx.First(channel, "id = ?", channelID).Error; err != nil {
+		return nil, err
+	}
+	return channel, nil
 }
 
 func channelAccountStatusAction(enabled bool) string {
@@ -2828,6 +3729,16 @@ func cleanupChannelAccountStatusMaps(channel *model.Channel, keyCount int) {
 			channel.ChannelInfo.MultiKeyAccountTypes = nil
 		}
 	}
+	if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {
+		for index, environmentID := range channel.ChannelInfo.MultiKeyCodexEnvironmentIDs {
+			if index < 0 || index >= keyCount || environmentID <= 0 {
+				delete(channel.ChannelInfo.MultiKeyCodexEnvironmentIDs, index)
+			}
+		}
+		if len(channel.ChannelInfo.MultiKeyCodexEnvironmentIDs) == 0 {
+			channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = nil
+		}
+	}
 	if channel.ChannelInfo.MultiKeyCapabilities != nil {
 		for index := range channel.ChannelInfo.MultiKeyCapabilities {
 			if index < 0 || index >= keyCount {
@@ -2920,8 +3831,11 @@ func buildChannelAccountItem(account modelgatewayaccount.ChannelAccount, runtime
 		ResourceRef:     account.ResourceRef,
 		AccountIdentity: account.AccountIdentity,
 		CredentialRef:   account.CredentialRef,
+		CodexEnvironmentID: account.CodexEnvironmentID,
 		SubjectShort:    modelgatewayaccount.ShortFingerprint(account.AccountIdentity.CredentialSubjectFingerprint),
 		CredentialShort: modelgatewayaccount.ShortFingerprint(account.AccountIdentity.CredentialFingerprint),
+		CredentialUID:   channelAccountCredentialUID(account),
+		CredentialLabel: channelAccountCredentialLabel(account),
 		RuntimeKeys:     make([]ChannelAccountRuntimeScoreSnapshot, 0, min(len(matches), 5)),
 	}
 	for _, match := range matches {
@@ -2949,6 +3863,51 @@ func buildChannelAccountItem(account modelgatewayaccount.ChannelAccount, runtime
 	return item
 }
 
+func channelAccountCredentialUID(account modelgatewayaccount.ChannelAccount) string {
+	for _, fingerprint := range []string{
+		account.AccountIdentity.CredentialSubjectFingerprint,
+		account.CredentialRef.CredentialSubjectFingerprint,
+		account.AccountIdentity.CredentialFingerprint,
+		account.CredentialRef.CredentialFingerprint,
+	} {
+		if short := modelgatewayaccount.ShortFingerprint(fingerprint); short != "" {
+			return "acct-" + short
+		}
+	}
+	for _, source := range []string{
+		account.AccountIdentity.AccountUniqueKey,
+		account.AccountIdentity.AccountIdentityKey,
+		account.AccountIdentity.AccountID,
+		account.CredentialRef.AccountID,
+		account.CredentialRef.ResourceID,
+		account.ResourceRef.ResourceID,
+	} {
+		source = strings.TrimSpace(source)
+		if source != "" {
+			return "acct-" + modelgatewayaccount.ShortFingerprint(common.GenerateHMAC(source))
+		}
+	}
+	if account.ChannelID > 0 {
+		return fmt.Sprintf("acct-ch%d", account.ChannelID)
+	}
+	return ""
+}
+
+func channelAccountCredentialLabel(account modelgatewayaccount.ChannelAccount) string {
+	uid := channelAccountCredentialUID(account)
+	if uid == "" {
+		return ""
+	}
+	brand := strings.TrimSpace(account.AccountIdentity.Brand)
+	if brand == "" {
+		brand = strings.TrimSpace(account.ResourceRef.Brand)
+	}
+	if brand == "" {
+		return uid
+	}
+	return strings.ToLower(brand) + "-" + uid
+}
+
 func ensureChannelAccountStats(stats *ChannelAccountStats) *ChannelAccountStats {
 	if stats != nil {
 		return stats
@@ -2971,7 +3930,8 @@ func buildChannelAccountSchedulingExplanation(item ChannelAccountItem) *ChannelA
 	}
 
 	if capability := item.Capabilities; capability != nil {
-		explanation.CapabilityClassification = capability.EffectiveClassification()
+		effectiveClassification := capability.EffectiveClassification()
+		explanation.CapabilityClassification = effectiveClassification
 		if capability.UsageLimitActiveAt(common.GetTimestamp()) {
 			blocking = appendChannelAccountSchedulingReason(blocking, channelcapability.ClassificationAccountUsageLimited)
 			explanation.RecoveryAt = capability.UsageLimitExpiresAt
@@ -2980,7 +3940,7 @@ func buildChannelAccountSchedulingExplanation(item ChannelAccountItem) *ChannelA
 				explanation.Detail = capability.UsageLimitMessage
 			}
 		}
-		if strings.TrimSpace(capability.ProxyLastError) != "" {
+		if effectiveClassification == channelcapability.ClassificationProxyError && strings.TrimSpace(capability.ProxyLastError) != "" {
 			blocking = appendChannelAccountSchedulingReason(blocking, channelcapability.ClassificationProxyError)
 			if explanation.Detail == "" {
 				explanation.Detail = capability.ProxyLastError
@@ -2992,7 +3952,7 @@ func buildChannelAccountSchedulingExplanation(item ChannelAccountItem) *ChannelA
 		if capability.CodexBackendCompactWrite != nil && !capability.HasCodexBackendCompactAllowed() {
 			warnings = appendChannelAccountSchedulingReason(warnings, "codex_compact_unavailable")
 		}
-		if capability.CapabilityClassification == channelcapability.ClassificationAuthError {
+		if effectiveClassification == channelcapability.ClassificationAuthError {
 			blocking = appendChannelAccountSchedulingReason(blocking, channelcapability.ClassificationAuthError)
 		}
 	}

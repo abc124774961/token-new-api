@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayprovider "github.com/QuantumNous/new-api/pkg/modelgateway/provider"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
@@ -115,7 +116,7 @@ func (s *ProbeSelector) Select(config ProbeConfig) ([]ProbeCandidate, error) {
 	for _, candidate := range candidateByKey {
 		candidates = append(candidates, candidate)
 	}
-	candidates = collapseProbeCandidatesByChannel(candidates)
+	candidates = collapseProbeCandidatesByChannel(candidates, config)
 	sort.SliceStable(candidates, func(i, j int) bool {
 		return compareProbeCandidates(candidates[i], candidates[j]) < 0
 	})
@@ -129,12 +130,17 @@ func (s *ProbeSelector) Select(config ProbeConfig) ([]ProbeCandidate, error) {
 	return candidates, nil
 }
 
-func collapseProbeCandidatesByChannel(candidates []ProbeCandidate) []ProbeCandidate {
+func collapseProbeCandidatesByChannel(candidates []ProbeCandidate, config ProbeConfig) []ProbeCandidate {
 	if len(candidates) <= 1 {
 		return candidates
 	}
 	bestByChannel := make(map[int]ProbeCandidate, len(candidates))
+	fastCandidates := make([]ProbeCandidate, 0)
 	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate.Reason) == reasonScoreAnomaly {
+			fastCandidates = append(fastCandidates, candidate)
+			continue
+		}
 		channelID := 0
 		if candidate.Channel != nil {
 			channelID = candidate.Channel.Id
@@ -151,7 +157,85 @@ func collapseProbeCandidatesByChannel(candidates []ProbeCandidate) []ProbeCandid
 	for _, candidate := range bestByChannel {
 		collapsed = append(collapsed, candidate)
 	}
+	collapsed = append(collapsed, limitScoreAnomalyCandidates(fastCandidates, config)...)
 	return collapsed
+}
+
+func limitScoreAnomalyCandidates(candidates []ProbeCandidate, config ProbeConfig) []ProbeCandidate {
+	if len(candidates) == 0 {
+		return nil
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return compareProbeCandidates(candidates[i], candidates[j]) < 0
+	})
+	limit := scheduler.ScoreAnomalyFastProbeQuota(config.MaxPerTick)
+	byChannel := map[int]int{}
+	bySubject := map[string]struct{}{}
+	byProxy := map[int]struct{}{}
+	out := make([]ProbeCandidate, 0, limit)
+	for _, candidate := range candidates {
+		if len(out) >= limit {
+			break
+		}
+		channelID := 0
+		if candidate.Channel != nil {
+			channelID = candidate.Channel.Id
+		}
+		if channelID <= 0 {
+			continue
+		}
+		if byChannel[channelID] >= 2 {
+			continue
+		}
+		subjectKey := scoreAnomalySubjectKey(candidate.Key)
+		if subjectKey != "" {
+			if _, exists := bySubject[subjectKey]; exists {
+				continue
+			}
+			bySubject[subjectKey] = struct{}{}
+		}
+		if proxyID := scoreAnomalyProxyID(candidate); proxyID > 0 {
+			if _, exists := byProxy[proxyID]; exists {
+				continue
+			}
+			byProxy[proxyID] = struct{}{}
+		}
+		byChannel[channelID]++
+		out = append(out, candidate)
+	}
+	return out
+}
+
+func scoreAnomalyProxyID(candidate ProbeCandidate) int {
+	if candidate.Channel == nil || len(candidate.Channel.ChannelInfo.MultiKeyProxyIDs) == 0 {
+		return 0
+	}
+	key := normalizeProbeRuntimeKey(candidate.Key)
+	if proxyID := candidate.Channel.ChannelInfo.MultiKeyProxyIDs[key.CredentialIndex]; proxyID > 0 {
+		return proxyID
+	}
+	if key.CredentialIndex == 0 {
+		return candidate.Channel.ChannelInfo.MultiKeyProxyIDs[0]
+	}
+	return 0
+}
+
+func scoreAnomalySubjectKey(key core.RuntimeKey) string {
+	key = normalizeProbeRuntimeKey(key)
+	if subject := strings.TrimSpace(key.CredentialSubjectFP); subject != "" {
+		return "subject:" + subject
+	}
+	if credential := strings.TrimSpace(key.CredentialFP); credential != "" {
+		return "credential:" + credential
+	}
+	accountID := strings.TrimSpace(key.AccountID)
+	if accountID != "" {
+		if provider := strings.TrimSpace(key.Provider); provider != "" {
+			return "account:" + provider + ":" + accountID
+		}
+		return "account:" + accountID
+	}
+	return ""
 }
 
 func compareProbeCandidates(left ProbeCandidate, right ProbeCandidate) int {
@@ -236,7 +320,7 @@ func (s *ProbeSelector) lowHealthCandidatesLocked(channelByID map[int]*model.Cha
 			continue
 		}
 		channel := channelByID[key.ChannelID]
-		if channel == nil || !probeRuntimeKeyModelSupported(key) || !probeChannelSupportsKey(channel, key) {
+		if channel == nil || !probeRuntimeKeyModelSupported(key) || !ProbeRuntimeKeyEligible(channel, key) {
 			continue
 		}
 		reason, triggerItems := s.probeReasonForSnapshotLocked(snapshot, recent, now, config)
@@ -246,7 +330,7 @@ func (s *ProbeSelector) lowHealthCandidatesLocked(channelByID map[int]*model.Cha
 		candidate := probeCandidateFromSnapshot(channel, snapshot, reason)
 		candidate.TriggerScoreItems = triggerItems
 		candidate.PromptCategories = config.PromptCategories
-		if !s.probeIntervalPassedLocked(candidate.Key, snapshot, now, config) {
+		if !s.probeIntervalPassedLocked(candidate.Key, snapshot, now, config, reason) {
 			continue
 		}
 		candidates = append(candidates, candidate)
@@ -293,6 +377,12 @@ func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapsh
 		if snapshot.Cooldown {
 			return reasonCooldown, nil
 		}
+		if scoreAnomalyFastProbeExhausted(snapshot) {
+			snapshot = s.clearScoreAnomalyProbeLocked(snapshot)
+		}
+		if reason, triggerItems := s.scoreAnomalyProbeReason(snapshot); reason != "" {
+			return reason, triggerItems
+		}
 		var triggerItems []string
 		reason, triggerItems = s.probeReason(snapshot, true, now, s.lastOKTimeLocked(key, snapshot), config)
 		if reason == reasonLongNoSuccess && recent.RealSuccessWithin(key, now, config.LongNoSuccessThreshold) {
@@ -301,6 +391,35 @@ func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapsh
 		return reason, triggerItems
 	}
 	return reason, nil
+}
+
+func scoreAnomalyFastProbeExhausted(snapshot core.RuntimeSnapshot) bool {
+	return strings.TrimSpace(snapshot.ProbeTriggerReason) == reasonScoreAnomaly &&
+		strings.TrimSpace(snapshot.ProbeRecoveryPhase) == core.ProbeRecoveryPhaseFastProbe &&
+		snapshot.ProbeFastRecoveryAttempts >= scheduler.ScoreAnomalyFastProbeMaxAttempts()
+}
+
+func (s *ProbeSelector) clearScoreAnomalyProbeLocked(snapshot core.RuntimeSnapshot) core.RuntimeSnapshot {
+	if s == nil || s.store == nil {
+		return snapshot
+	}
+	snapshot.ProbeTriggerReason = ""
+	snapshot.ProbeRecoveryPhase = ""
+	snapshot.ProbeRecoveryPending = false
+	snapshot.ProbeAnomalyTriggerItems = nil
+	s.store.Put(snapshot)
+	return snapshot
+}
+
+func (s *ProbeSelector) scoreAnomalyProbeReason(snapshot core.RuntimeSnapshot) (string, []string) {
+	if !scheduler.ScoreAnomalyFastProbePending(snapshot) {
+		return "", nil
+	}
+	if snapshot.ProbeFastRecoveryAttempts >= scheduler.ScoreAnomalyFastProbeMaxAttempts() {
+		return "", nil
+	}
+	triggerItems := append([]string(nil), snapshot.ProbeAnomalyTriggerItems...)
+	return reasonScoreAnomaly, triggerItems
 }
 
 func (s *ProbeSelector) markProbeSelectionLocked(key core.RuntimeKey, reason string, config ProbeConfig) {
@@ -322,7 +441,11 @@ func (s *ProbeSelector) markProbeSelectionLocked(key core.RuntimeKey, reason str
 	if reason == reasonTimeoutRecovery {
 		snapshot.ProbeRecoveryRequired = config.TimeoutRecoverySuccessesRequired
 	}
-	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || reason == reasonLowScore || reason == reasonFailureAvoidance || reason == reasonTimeoutRecovery || reason == reasonCircuitProbe
+	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || reason == reasonLowScore || reason == reasonFailureAvoidance || reason == reasonTimeoutRecovery || reason == reasonCircuitProbe || reason == reasonScoreAnomaly
+	if reason == reasonScoreAnomaly {
+		snapshot.ProbeRecoveryPhase = core.ProbeRecoveryPhaseFastProbe
+		snapshot.ProbeFastRecoveryAttempts++
+	}
 	snapshot.LastProbeAt = s.now().Unix()
 	s.store.Put(snapshot)
 	enrichedKey := normalizeProbeRuntimeKey(key)
@@ -339,16 +462,25 @@ func normalizeProbeSelectionSnapshot(snapshot core.RuntimeSnapshot) core.Runtime
 	return snapshot
 }
 
-func (s *ProbeSelector) probeIntervalPassedLocked(key core.RuntimeKey, snapshot core.RuntimeSnapshot, now time.Time, config ProbeConfig) bool {
+func (s *ProbeSelector) probeIntervalPassedLocked(key core.RuntimeKey, snapshot core.RuntimeSnapshot, now time.Time, config ProbeConfig, reason string) bool {
+	minInterval := config.MinChannelInterval
+	if strings.TrimSpace(reason) == reasonScoreAnomaly {
+		fastInterval := scheduler.ScoreAnomalyFastProbeInterval()
+		if fastInterval > 0 && fastInterval < minInterval {
+			minInterval = fastInterval
+		} else if fastInterval > 0 {
+			minInterval = fastInterval
+		}
+	}
 	for _, probeKey := range probeIntervalKeys(key) {
-		if last := s.lastProbe[probeKey]; !last.IsZero() && now.Sub(last) < config.MinChannelInterval {
+		if last := s.lastProbe[probeKey]; !last.IsZero() && now.Sub(last) < minInterval {
 			return false
 		}
 	}
-	if stored, ok := s.snapshotForKey(key); ok && stored.LastProbeAt > 0 && now.Unix()-stored.LastProbeAt < int64(config.MinChannelInterval.Seconds()) {
+	if stored, ok := s.snapshotForKey(key); ok && stored.LastProbeAt > 0 && now.Unix()-stored.LastProbeAt < int64(minInterval.Seconds()) {
 		return false
 	}
-	if snapshot.LastProbeAt > 0 && now.Unix()-snapshot.LastProbeAt < int64(config.MinChannelInterval.Seconds()) {
+	if snapshot.LastProbeAt > 0 && now.Unix()-snapshot.LastProbeAt < int64(minInterval.Seconds()) {
 		return false
 	}
 	return true
@@ -487,7 +619,7 @@ func skipRecentRealRequestProbe(candidate ProbeCandidate, config ProbeConfig, st
 		return false
 	}
 	switch strings.TrimSpace(candidate.Reason) {
-	case reasonCircuitProbe, reasonTimeoutRecovery:
+	case reasonCircuitProbe, reasonTimeoutRecovery, reasonScoreAnomaly:
 		return false
 	}
 	window := config.RecentRealRequestWindow
@@ -579,16 +711,18 @@ func probeReasonPriority(reason string) int {
 		return 3
 	case reasonCooldown:
 		return 4
-	case reasonLowScore:
+	case reasonScoreAnomaly:
 		return 5
-	case reasonLongNoSuccess:
+	case reasonLowScore:
 		return 6
-	case reasonNoSamples:
+	case reasonLongNoSuccess:
 		return 7
-	case reasonLowTraffic:
+	case reasonNoSamples:
 		return 8
-	case reasonSampling:
+	case reasonLowTraffic:
 		return 9
+	case reasonSampling:
+		return 10
 	default:
 		return 99
 	}
@@ -820,6 +954,104 @@ func probeChannelSupportsKey(channel *model.Channel, key core.RuntimeKey) bool {
 		return false
 	}
 	return model.IsChannelEnabledForGroupModel(group, modelName, channel.Id)
+}
+
+// ProbeRuntimeKeyEligible returns whether the current channel/account runtime key is safe to probe.
+// It uses the latest channel state and rejects disabled multikey accounts so stale runtime snapshots
+// cannot keep scheduling probes after an operator disables an account.
+func ProbeRuntimeKeyEligible(channel *model.Channel, key core.RuntimeKey) bool {
+	if !probeChannelEligible(channel) || !probeChannelSupportsKey(channel, key) {
+		return false
+	}
+	if !channel.ChannelInfo.IsMultiKey {
+		return true
+	}
+	if !probeRuntimeKeyHasAccountScope(key) {
+		return probeChannelHasEnabledAccount(channel)
+	}
+	accountRef, ok := ProbeAccountForRuntimeKey(channel, key)
+	return ok && accountRef.KeyEnabled
+}
+
+func ProbeAccountForRuntimeKey(channel *model.Channel, key core.RuntimeKey) (modelgatewayaccount.ChannelAccount, bool) {
+	if channel == nil || !channel.ChannelInfo.IsMultiKey {
+		return modelgatewayaccount.ChannelAccount{}, false
+	}
+	key = normalizeProbeRuntimeKey(key)
+	accounts := modelgatewayaccount.NewRegistry().AccountsForChannel(channel)
+	if len(accounts) == 0 {
+		return modelgatewayaccount.ChannelAccount{}, false
+	}
+	if key.CredentialFP != "" || key.CredentialSubjectFP != "" || key.AccountID != "" {
+		for _, accountRef := range accounts {
+			if probeAccountMatchesRuntimeKey(accountRef, key) {
+				return accountRef, true
+			}
+		}
+		return modelgatewayaccount.ChannelAccount{}, false
+	}
+	if key.CredentialIndex > 0 && key.CredentialIndex < len(accounts) {
+		for _, accountRef := range accounts {
+			if accountRef.CredentialIndex == key.CredentialIndex {
+				return accountRef, true
+			}
+		}
+	}
+	return modelgatewayaccount.ChannelAccount{}, false
+}
+
+func probeRuntimeKeyHasAccountScope(key core.RuntimeKey) bool {
+	return key.AccountID != "" ||
+		key.CredentialSubjectFP != "" ||
+		key.CredentialFP != "" ||
+		key.CredentialIndex > 0
+}
+
+func probeChannelHasEnabledAccount(channel *model.Channel) bool {
+	for _, accountRef := range modelgatewayaccount.NewRegistry().AccountsForChannel(channel) {
+		if accountRef.KeyEnabled {
+			return true
+		}
+	}
+	return false
+}
+
+func probeAccountMatchesRuntimeKey(accountRef modelgatewayaccount.ChannelAccount, key core.RuntimeKey) bool {
+	if key.ChannelID > 0 && accountRef.ChannelID != key.ChannelID {
+		return false
+	}
+	hasAccountIdentity := key.AccountID != "" || key.CredentialSubjectFP != "" || key.CredentialFP != ""
+	if key.CredentialIndex > 0 && accountRef.CredentialIndex != key.CredentialIndex {
+		return false
+	}
+	if !hasAccountIdentity && key.CredentialIndex >= 0 && accountRef.CredentialIndex != key.CredentialIndex {
+		return false
+	}
+	if key.ResourceID != "" && accountRef.ResourceRef.ResourceID != key.ResourceID {
+		return false
+	}
+	if key.ResourceType != "" && accountRef.ResourceRef.ResourceType != key.ResourceType {
+		return false
+	}
+	if key.AccountID != "" && accountRef.AccountIdentity.AccountID != key.AccountID {
+		return false
+	}
+	if key.AccountType != "" && accountRef.AccountIdentity.AccountType != key.AccountType {
+		return false
+	}
+	if key.Brand != "" && accountRef.AccountIdentity.Brand != key.Brand && accountRef.ResourceRef.Brand != key.Brand {
+		return false
+	}
+	if key.Provider != "" && accountRef.AccountIdentity.Provider != key.Provider && accountRef.ResourceRef.Provider != key.Provider {
+		return false
+	}
+	if key.CredentialSubjectFP != "" && accountRef.AccountIdentity.CredentialSubjectFingerprint != key.CredentialSubjectFP {
+		return false
+	}
+	if key.CredentialFP != "" && accountRef.AccountIdentity.CredentialFingerprint != key.CredentialFP {
+		return false
+	}
+	return true
 }
 
 func normalizeProbeConfig(config ProbeConfig) ProbeConfig {

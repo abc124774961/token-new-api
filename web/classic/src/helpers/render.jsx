@@ -154,6 +154,8 @@ export function getLucideIcon(key, selected = false) {
       return <CalendarClock {...commonProps} color={iconColor} />;
     case 'channel':
       return <Layers {...commonProps} color={iconColor} />;
+    case 'channel_account':
+      return <Key {...commonProps} color={iconColor} />;
     case 'channel_balance_monitor':
       return <WalletCards {...commonProps} color={iconColor} />;
     case 'channel_health_check':
