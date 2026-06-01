@@ -6,6 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type ModelGatewayProfitRatioRecommendationFilter struct {
@@ -414,12 +415,23 @@ func ListModelGatewayProfitRatioRecommendations(limit int, filter ModelGatewayPr
 		limit = 20
 	}
 	rows := make([]ModelGatewayProfitRatioRecommendation, 0, limit)
-	query := DB.Model(&ModelGatewayProfitRatioRecommendation{})
+	query := applyModelGatewayProfitRatioRecommendationFilter(DB.Model(&ModelGatewayProfitRatioRecommendation{}), filter)
+	err := query.
+		Order("created_at DESC, id DESC").
+		Limit(limit).
+		Find(&rows).Error
+	return rows, err
+}
+
+func applyModelGatewayProfitRatioRecommendationFilter(query *gorm.DB, filter ModelGatewayProfitRatioRecommendationFilter) *gorm.DB {
+	if query == nil {
+		return query
+	}
 	if window := strings.ToLower(strings.TrimSpace(filter.Window)); window != "" {
-		query = query.Where("window = ?", window)
+		query = query.Where(clause.Eq{Column: clause.Column{Name: "window"}, Value: window})
 	}
 	if dimension := strings.ToLower(strings.TrimSpace(filter.Dimension)); dimension != "" {
-		query = query.Where("dimension = ?", dimension)
+		query = query.Where(clause.Eq{Column: clause.Column{Name: "dimension"}, Value: dimension})
 	}
 	if filter.StartTimestamp > 0 {
 		query = query.Where("start_timestamp >= ?", filter.StartTimestamp)
@@ -427,11 +439,7 @@ func ListModelGatewayProfitRatioRecommendations(limit int, filter ModelGatewayPr
 	if filter.EndTimestamp > 0 {
 		query = query.Where("end_timestamp <= ?", filter.EndTimestamp)
 	}
-	err := query.
-		Order("created_at DESC, id DESC").
-		Limit(limit).
-		Find(&rows).Error
-	return rows, err
+	return query
 }
 
 func GetModelGatewayProfitCanaryTask(id int) (*ModelGatewayProfitCanaryTask, error) {
