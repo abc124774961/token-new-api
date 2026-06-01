@@ -58,25 +58,26 @@ type ChannelAccountsResponse struct {
 }
 
 type ChannelAccountItem struct {
-	ChannelID       int                                  `json:"channel_id"`
-	ChannelName     string                               `json:"channel_name,omitempty"`
-	CredentialIndex int                                  `json:"credential_index"`
-	KeyEnabled      bool                                 `json:"key_enabled"`
-	DisabledReason  string                               `json:"disabled_reason,omitempty"`
-	ResourceRef     modelgatewaycore.ResourceRef         `json:"resource_ref"`
-	AccountIdentity modelgatewaycore.AccountIdentity     `json:"account_identity"`
-	CredentialRef   modelgatewaycore.CredentialRef       `json:"credential_ref"`
-	Proxy           *ModelGatewayProxyResponse           `json:"proxy,omitempty"`
-	CodexEnvironmentID int                               `json:"codex_environment_id,omitempty"`
-	Capabilities    *model.ChannelAccountCapability      `json:"capabilities,omitempty"`
-	SubjectShort    string                               `json:"subject_short,omitempty"`
-	CredentialShort string                               `json:"credential_short,omitempty"`
-	CredentialUID   string                               `json:"credential_uid,omitempty"`
-	CredentialLabel string                               `json:"credential_label,omitempty"`
-	Score           *ChannelAccountScoreSummary          `json:"score,omitempty"`
-	RuntimeKeys     []ChannelAccountRuntimeScoreSnapshot `json:"runtime_keys,omitempty"`
-	Stats           *ChannelAccountStats                 `json:"stats,omitempty"`
-	Scheduling      *ChannelAccountSchedulingExplanation `json:"scheduling,omitempty"`
+	ChannelID          int                                        `json:"channel_id"`
+	ChannelName        string                                     `json:"channel_name,omitempty"`
+	CredentialIndex    int                                        `json:"credential_index"`
+	KeyEnabled         bool                                       `json:"key_enabled"`
+	DisabledReason     string                                     `json:"disabled_reason,omitempty"`
+	ResourceRef        modelgatewaycore.ResourceRef               `json:"resource_ref"`
+	AccountIdentity    modelgatewaycore.AccountIdentity           `json:"account_identity"`
+	CredentialRef      modelgatewaycore.CredentialRef             `json:"credential_ref"`
+	Proxy              *ModelGatewayProxyResponse                 `json:"proxy,omitempty"`
+	CodexEnvironmentID int                                        `json:"codex_environment_id,omitempty"`
+	CodexEnvironment   *model.CodexApplicationEnvironmentResponse `json:"codex_environment,omitempty"`
+	Capabilities       *model.ChannelAccountCapability            `json:"capabilities,omitempty"`
+	SubjectShort       string                                     `json:"subject_short,omitempty"`
+	CredentialShort    string                                     `json:"credential_short,omitempty"`
+	CredentialUID      string                                     `json:"credential_uid,omitempty"`
+	CredentialLabel    string                                     `json:"credential_label,omitempty"`
+	Score              *ChannelAccountScoreSummary                `json:"score,omitempty"`
+	RuntimeKeys        []ChannelAccountRuntimeScoreSnapshot       `json:"runtime_keys,omitempty"`
+	Stats              *ChannelAccountStats                       `json:"stats,omitempty"`
+	Scheduling         *ChannelAccountSchedulingExplanation       `json:"scheduling,omitempty"`
 }
 
 type ChannelAccountSummary struct {
@@ -299,9 +300,9 @@ type UpdateChannelAccountStatusRequest struct {
 }
 
 type UpdateChannelAccountCredentialRequest struct {
-	Credential     string `json:"credential"`
-	CredentialType string `json:"credential_type,omitempty"`
-	CodexEnvironmentID *int `json:"codex_environment_id,omitempty"`
+	Credential         string `json:"credential"`
+	CredentialType     string `json:"credential_type,omitempty"`
+	CodexEnvironmentID *int   `json:"codex_environment_id,omitempty"`
 }
 
 type UpdateChannelAccountsStatusRequest struct {
@@ -454,6 +455,11 @@ type ChannelAccountRuntimeScoreSnapshot struct {
 	ConfigErrorIsolated bool                        `json:"config_error_isolated,omitempty"`
 }
 
+type CodexApplicationEnvironmentListResponse struct {
+	Total int                                         `json:"total"`
+	Items []model.CodexApplicationEnvironmentResponse `json:"items"`
+}
+
 func ListChannelAccounts(c *gin.Context) {
 	channelID, ok := parseChannelIDParam(c)
 	if !ok {
@@ -476,6 +482,23 @@ func ListAllChannelAccounts(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, buildAllChannelAccountsResponse(channels, params))
+}
+
+func ListCodexApplicationEnvironments(c *gin.Context) {
+	includeDisabled := parseChannelAccountBoolQuery(c.Query("include_disabled"))
+	envs, err := model.ListCodexApplicationEnvironments(includeDisabled)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	items := make([]model.CodexApplicationEnvironmentResponse, 0, len(envs))
+	for i := range envs {
+		items = append(items, envs[i].ToResponse())
+	}
+	common.ApiSuccess(c, CodexApplicationEnvironmentListResponse{
+		Total: len(items),
+		Items: items,
+	})
 }
 
 func ListChannelInvalidAccountPool(c *gin.Context) {
@@ -1195,6 +1218,11 @@ func channelAccountImportBool(value string) bool {
 	return err == nil && parsed
 }
 
+func parseChannelAccountBoolQuery(value string) bool {
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	return err == nil && parsed
+}
+
 func channelAccountImportLooksLikeZip(name string, data []byte) bool {
 	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(name)), ".zip") {
 		return true
@@ -1311,6 +1339,7 @@ func buildChannelAccountsResponse(channel *model.Channel, query ...channelAccoun
 	runtimeItems := runtimeItemsForChannelAccounts(channel.Id, filtered, len(accounts) == 1)
 	proxiesByID := channelAccountProxiesByID(channel, filtered)
 	proxyUsagesByID := channelAccountProxyUsagesByID(proxiesByID)
+	codexEnvironmentsByID := channelAccountCodexEnvironmentsByID(filtered)
 
 	start := (params.Page - 1) * params.PageSize
 	end := start + params.PageSize
@@ -1323,6 +1352,10 @@ func buildChannelAccountsResponse(channel *model.Channel, query ...channelAccoun
 	for idx, account := range filtered {
 		item := buildChannelAccountItem(account, runtimeItems, len(accounts) == 1)
 		item.ChannelName = channel.Name
+		if env, ok := codexEnvironmentsByID[item.CodexEnvironmentID]; ok {
+			envResponse := env.ToResponse()
+			item.CodexEnvironment = &envResponse
+		}
 		item.Capabilities = keyStatusCapabilities(channel, account.CredentialIndex)
 		if item.Capabilities != nil {
 			item.Capabilities.CapabilityClassification = item.Capabilities.EffectiveClassification()
@@ -1375,6 +1408,7 @@ func buildAllChannelAccountsResponse(channels []*model.Channel, params channelAc
 	runtimeItemsByChannel := make(map[int][]modelgatewayobservability.RuntimeStatusItem)
 	proxiesByChannel := make(map[int]map[int]model.ModelGatewayProxy)
 	proxyUsagesByChannel := make(map[int]map[int][]model.ModelGatewayProxyUsage)
+	codexEnvironmentsByID := make(map[int]model.CodexApplicationEnvironment)
 	response := ChannelAccountsResponse{
 		ResourceRef: modelgatewaycore.ResourceRef{
 			ResourceID:   "platform:channels:all",
@@ -1416,6 +1450,9 @@ func buildAllChannelAccountsResponse(channels []*model.Channel, params channelAc
 		proxiesByID := channelAccountProxiesByID(channel, filteredForRuntime)
 		proxiesByChannel[channel.Id] = proxiesByID
 		proxyUsagesByChannel[channel.Id] = channelAccountProxyUsagesByID(proxiesByID)
+		for envID, env := range channelAccountCodexEnvironmentsByID(accounts) {
+			codexEnvironmentsByID[envID] = env
+		}
 	}
 	response.Summary.Today = finalizeChannelAccountUsageWindow(response.Summary.Today)
 	response.Summary.Last5h = finalizeChannelAccountUsageWindow(response.Summary.Last5h)
@@ -1437,6 +1474,10 @@ func buildAllChannelAccountsResponse(channels []*model.Channel, params channelAc
 		item := buildChannelAccountItem(account, runtimeItemsByChannel[account.ChannelID], len(registry.AccountsForChannel(channel)) == 1)
 		if channel != nil {
 			item.ChannelName = channel.Name
+			if env, ok := codexEnvironmentsByID[item.CodexEnvironmentID]; ok {
+				envResponse := env.ToResponse()
+				item.CodexEnvironment = &envResponse
+			}
 			item.Capabilities = keyStatusCapabilities(channel, account.CredentialIndex)
 			if item.Capabilities != nil {
 				item.Capabilities.CapabilityClassification = item.Capabilities.EffectiveClassification()
@@ -1531,6 +1572,26 @@ func buildChannelAccountsResponseWithOperation(channel *model.Channel, operation
 	response := buildChannelAccountsResponse(channel)
 	response.Operation = operation
 	return response
+}
+
+func channelAccountCodexEnvironmentsByID(accounts []modelgatewayaccount.ChannelAccount) map[int]model.CodexApplicationEnvironment {
+	result := make(map[int]model.CodexApplicationEnvironment)
+	for _, account := range accounts {
+		environmentID := account.CodexEnvironmentID
+		if environmentID <= 0 {
+			continue
+		}
+		if _, exists := result[environmentID]; exists {
+			continue
+		}
+		env, err := model.GetCodexApplicationEnvironmentByID(environmentID)
+		if err != nil || env == nil {
+			common.SysLog(fmt.Sprintf("failed to load codex environment: id=%d error=%v", environmentID, err))
+			continue
+		}
+		result[environmentID] = *env
+	}
+	return result
 }
 
 func parseChannelAccountsQuery(c *gin.Context) channelAccountsQuery {
@@ -2606,10 +2667,6 @@ func updateChannelAccountCredential(channelID int, credentialIndex int, credenti
 	if err != nil {
 		return nil, fmt.Errorf("渠道不存在")
 	}
-	normalizedCredential, accountType, err := normalizeChannelAccountEditableCredentialForChannel(channel, credential, credentialType)
-	if err != nil {
-		return nil, err
-	}
 	keys := channel.GetKeys()
 	if len(keys) == 0 {
 		return nil, fmt.Errorf("渠道没有可管理的账号")
@@ -2617,28 +2674,39 @@ func updateChannelAccountCredential(channelID int, credentialIndex int, credenti
 	if credentialIndex < 0 || credentialIndex >= len(keys) {
 		return nil, fmt.Errorf("账号索引超出范围")
 	}
-	for index, key := range keys {
-		if index == credentialIndex {
-			continue
-		}
-		if strings.TrimSpace(key) == normalizedCredential {
-			return nil, fmt.Errorf("账号凭证已存在")
-		}
+	credential = strings.TrimSpace(credential)
+	credentialUpdated := credential != ""
+	if !credentialUpdated && codexEnvironmentID == nil {
+		return nil, fmt.Errorf("请填写账号凭证")
 	}
-
-	keys[credentialIndex] = normalizedCredential
-	channel.Key = strings.Join(keys, "\n")
-	channel.ChannelInfo.IsMultiKey = len(keys) > 1
-	channel.ChannelInfo.MultiKeySize = len(keys)
-	if accountType != "" {
-		if channel.ChannelInfo.MultiKeyAccountTypes == nil {
-			channel.ChannelInfo.MultiKeyAccountTypes = make(map[int]string)
+	if credentialUpdated {
+		normalizedCredential, accountType, err := normalizeChannelAccountEditableCredentialForChannel(channel, credential, credentialType)
+		if err != nil {
+			return nil, err
 		}
-		channel.ChannelInfo.MultiKeyAccountTypes[credentialIndex] = accountType
-	} else if channel.ChannelInfo.MultiKeyAccountTypes != nil {
-		delete(channel.ChannelInfo.MultiKeyAccountTypes, credentialIndex)
-		if len(channel.ChannelInfo.MultiKeyAccountTypes) == 0 {
-			channel.ChannelInfo.MultiKeyAccountTypes = nil
+		for index, key := range keys {
+			if index == credentialIndex {
+				continue
+			}
+			if strings.TrimSpace(key) == normalizedCredential {
+				return nil, fmt.Errorf("账号凭证已存在")
+			}
+		}
+
+		keys[credentialIndex] = normalizedCredential
+		channel.Key = strings.Join(keys, "\n")
+		channel.ChannelInfo.IsMultiKey = len(keys) > 1
+		channel.ChannelInfo.MultiKeySize = len(keys)
+		if accountType != "" {
+			if channel.ChannelInfo.MultiKeyAccountTypes == nil {
+				channel.ChannelInfo.MultiKeyAccountTypes = make(map[int]string)
+			}
+			channel.ChannelInfo.MultiKeyAccountTypes[credentialIndex] = accountType
+		} else if channel.ChannelInfo.MultiKeyAccountTypes != nil {
+			delete(channel.ChannelInfo.MultiKeyAccountTypes, credentialIndex)
+			if len(channel.ChannelInfo.MultiKeyAccountTypes) == 0 {
+				channel.ChannelInfo.MultiKeyAccountTypes = nil
+			}
 		}
 	}
 	if codexEnvironmentID != nil {
@@ -3824,19 +3892,19 @@ func buildChannelAccountItem(account modelgatewayaccount.ChannelAccount, runtime
 	})
 
 	item := ChannelAccountItem{
-		ChannelID:       account.ChannelID,
-		CredentialIndex: account.CredentialIndex,
-		KeyEnabled:      account.KeyEnabled,
-		DisabledReason:  account.DisabledReason,
-		ResourceRef:     account.ResourceRef,
-		AccountIdentity: account.AccountIdentity,
-		CredentialRef:   account.CredentialRef,
+		ChannelID:          account.ChannelID,
+		CredentialIndex:    account.CredentialIndex,
+		KeyEnabled:         account.KeyEnabled,
+		DisabledReason:     account.DisabledReason,
+		ResourceRef:        account.ResourceRef,
+		AccountIdentity:    account.AccountIdentity,
+		CredentialRef:      account.CredentialRef,
 		CodexEnvironmentID: account.CodexEnvironmentID,
-		SubjectShort:    modelgatewayaccount.ShortFingerprint(account.AccountIdentity.CredentialSubjectFingerprint),
-		CredentialShort: modelgatewayaccount.ShortFingerprint(account.AccountIdentity.CredentialFingerprint),
-		CredentialUID:   channelAccountCredentialUID(account),
-		CredentialLabel: channelAccountCredentialLabel(account),
-		RuntimeKeys:     make([]ChannelAccountRuntimeScoreSnapshot, 0, min(len(matches), 5)),
+		SubjectShort:       modelgatewayaccount.ShortFingerprint(account.AccountIdentity.CredentialSubjectFingerprint),
+		CredentialShort:    modelgatewayaccount.ShortFingerprint(account.AccountIdentity.CredentialFingerprint),
+		CredentialUID:      channelAccountCredentialUID(account),
+		CredentialLabel:    channelAccountCredentialLabel(account),
+		RuntimeKeys:        make([]ChannelAccountRuntimeScoreSnapshot, 0, min(len(matches), 5)),
 	}
 	for _, match := range matches {
 		if item.Score == nil {

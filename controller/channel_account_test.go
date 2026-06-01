@@ -45,6 +45,12 @@ type channelAccountRequestReconcileAPIResponse struct {
 	Data    ChannelAccountRequestReconcileResponse `json:"data"`
 }
 
+type codexApplicationEnvironmentListAPIResponse struct {
+	Success bool                                    `json:"success"`
+	Message string                                  `json:"message"`
+	Data    CodexApplicationEnvironmentListResponse `json:"data"`
+}
+
 func setupChannelAccountControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -68,6 +74,7 @@ func setupChannelAccountControllerTestDB(t *testing.T) *gorm.DB {
 		&model.ModelGatewayProxy{},
 		&model.ModelGatewayProxyUsage{},
 		&model.ChannelAccountUsageEvent{},
+		&model.CodexApplicationEnvironment{},
 	))
 	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
 
@@ -91,6 +98,19 @@ func setupChannelAccountControllerTestDB(t *testing.T) *gorm.DB {
 
 func TestListChannelAccountsHidesRawKeysAndCarriesScoreSummary(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
+	env := model.CodexApplicationEnvironment{
+		Id:           7007,
+		Name:         "codex-env-test",
+		Platform:     "macOS",
+		AppVersion:   "0.135.0",
+		UserAgent:    "Codex Desktop/0.135.0",
+		Originator:   "Codex Desktop",
+		SessionID:    "session-test",
+		WindowID:     "window-test",
+		BetaFeatures: "responses_compact",
+		Enabled:      true,
+	}
+	require.NoError(t, db.Create(&env).Error)
 	channel := model.Channel{
 		Id:     7,
 		Name:   "codex accounts",
@@ -113,6 +133,7 @@ func TestListChannelAccountsHidesRawKeysAndCarriesScoreSummary(t *testing.T) {
 					LastMessage:          "ok",
 				},
 			},
+			MultiKeyCodexEnvironmentIDs: map[int]int{0: env.Id},
 		},
 	}
 	require.NoError(t, db.Create(&channel).Error)
@@ -190,6 +211,10 @@ func TestListChannelAccountsHidesRawKeysAndCarriesScoreSummary(t *testing.T) {
 	require.NotNil(t, payload.Data.Items[0].Capabilities)
 	require.Equal(t, int64(1700000003), payload.Data.Items[0].Capabilities.CheckedTime)
 	require.True(t, *payload.Data.Items[0].Capabilities.ResponsesWrite)
+	require.Equal(t, env.Id, payload.Data.Items[0].CodexEnvironmentID)
+	require.NotNil(t, payload.Data.Items[0].CodexEnvironment)
+	require.Equal(t, "codex-env-test", payload.Data.Items[0].CodexEnvironment.Name)
+	require.Equal(t, "Codex Desktop/0.135.0", payload.Data.Items[0].CodexEnvironment.Headers["User-Agent"])
 	require.NotNil(t, payload.Data.Items[0].Score)
 	require.Equal(t, 9, payload.Data.Items[0].Score.SampleCount)
 	require.Equal(t, "gpt-5.4", payload.Data.Items[0].Score.RuntimeKey.RequestedModel)
@@ -197,6 +222,55 @@ func TestListChannelAccountsHidesRawKeysAndCarriesScoreSummary(t *testing.T) {
 	require.False(t, payload.Data.Items[1].KeyEnabled)
 	require.Equal(t, "auth failed", payload.Data.Items[1].DisabledReason)
 	require.Nil(t, payload.Data.Items[1].Score)
+}
+
+func TestListCodexApplicationEnvironmentsReturnsHeaderSummary(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	envs := []model.CodexApplicationEnvironment{
+		{
+			Id:           7101,
+			Name:         "codex-env-enabled",
+			Platform:     "Windows",
+			AppVersion:   "0.135.0",
+			UserAgent:    "Codex Desktop/0.135.0",
+			Originator:   "Codex Desktop",
+			SessionID:    "session-enabled",
+			WindowID:     "window-enabled",
+			BetaFeatures: "terminal_resize_reflow",
+			HeadersJSON:  `{"x-extra-feature":"enabled"}`,
+			Enabled:      true,
+		},
+		{
+			Id:         7102,
+			Name:       "codex-env-disabled",
+			Platform:   "Linux",
+			UserAgent:  "Codex CLI/0.45.0",
+			Originator: "codex_cli_rs",
+			Enabled:    true,
+		},
+	}
+	require.NoError(t, db.Create(&envs).Error)
+	require.NoError(t, db.Model(&model.CodexApplicationEnvironment{}).Where("id = ?", 7102).Update("enabled", false).Error)
+
+	router := gin.New()
+	router.GET("/api/channel/codex-environments", ListCodexApplicationEnvironments)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/channel/codex-environments", nil)
+	router.ServeHTTP(recorder, req)
+	payload := decodeCodexApplicationEnvironmentListResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, 1, payload.Data.Total)
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, "codex-env-enabled", payload.Data.Items[0].Name)
+	require.Equal(t, "enabled", payload.Data.Items[0].Headers["x-extra-feature"])
+
+	includeRecorder := httptest.NewRecorder()
+	includeReq := httptest.NewRequest(http.MethodGet, "/api/channel/codex-environments?include_disabled=true", nil)
+	router.ServeHTTP(includeRecorder, includeReq)
+	includePayload := decodeCodexApplicationEnvironmentListResponse(t, includeRecorder)
+	require.True(t, includePayload.Success, includeRecorder.Body.String())
+	require.Equal(t, 2, includePayload.Data.Total)
 }
 
 func TestListChannelAccountsIncludesSchedulingExplanation(t *testing.T) {
@@ -1154,6 +1228,53 @@ func TestUpdateChannelAccountCredentialReplacesOneKeyAndHidesRawCredential(t *te
 	require.Equal(t, "sk-new\nsk-keep", updated.Key)
 	require.Equal(t, modelgatewaycore.AccountTypeAPIKey, updated.ChannelInfo.MultiKeyAccountTypes[0])
 	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.ChannelInfo.MultiKeyStatusList[1])
+}
+
+func TestUpdateChannelAccountCredentialCanOnlyChangeCodexEnvironment(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	env := model.CodexApplicationEnvironment{
+		Id:         7037,
+		Name:       "codex-env-update",
+		UserAgent:  "Codex Desktop/0.136.0",
+		Originator: "Codex Desktop",
+		Enabled:    true,
+	}
+	require.NoError(t, db.Create(&env).Error)
+	channel := model.Channel{
+		Id:     37,
+		Name:   "environment update",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-old\nsk-keep",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	router := gin.New()
+	router.PUT("/api/channel/:id/accounts/:credential_index", UpdateChannelAccountCredential)
+	recorder := httptest.NewRecorder()
+	bodyBytes, err := common.Marshal(map[string]interface{}{
+		"codex_environment_id": env.Id,
+	})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, "/api/channel/37/accounts/0", bytes.NewReader(bodyBytes))
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, env.Id, payload.Data.Items[0].CodexEnvironmentID)
+	require.NotNil(t, payload.Data.Items[0].CodexEnvironment)
+	require.Equal(t, "codex-env-update", payload.Data.Items[0].CodexEnvironment.Name)
+
+	updated, err := model.GetChannelById(37, true)
+	require.NoError(t, err)
+	require.Equal(t, "sk-old\nsk-keep", updated.Key)
+	require.Equal(t, env.Id, updated.ChannelInfo.MultiKeyCodexEnvironmentIDs[0])
 }
 
 func TestUpdateChannelAccountCredentialSupportsOAuthJSONType(t *testing.T) {
@@ -2617,6 +2738,13 @@ func decodeChannelAccountRecentRequestsResponse(t *testing.T, recorder *httptest
 func decodeChannelAccountRequestReconcileResponse(t *testing.T, recorder *httptest.ResponseRecorder) channelAccountRequestReconcileAPIResponse {
 	t.Helper()
 	var payload channelAccountRequestReconcileAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	return payload
+}
+
+func decodeCodexApplicationEnvironmentListResponse(t *testing.T, recorder *httptest.ResponseRecorder) codexApplicationEnvironmentListAPIResponse {
+	t.Helper()
+	var payload codexApplicationEnvironmentListAPIResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
 	return payload
 }

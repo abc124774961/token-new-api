@@ -53,6 +53,7 @@ import {
   ArrowLeft,
   BadgeCheck,
   Clock3,
+  Copy,
   FileArchive,
   FileText,
   FileUp,
@@ -239,6 +240,55 @@ function accountPrimaryName(record, t) {
     return displayName;
   }
   return identity.brand || record?.resource_ref?.brand || t('账号');
+}
+
+function codexEnvironmentLabel(environment, environmentID, t) {
+  const name = String(environment?.name || '').trim();
+  if (name) return name;
+  const id = Number(environmentID || environment?.id || 0);
+  return id > 0 ? `${t('Codex 环境')} #${id}` : t('未绑定环境');
+}
+
+function codexEnvironmentSubtitle(environment, t) {
+  const parts = [
+    environment?.platform,
+    environment?.app_version,
+    environment?.originator,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join(' · ') : t('暂无环境特征');
+}
+
+function codexEnvironmentHeaderEntries(environment) {
+  const headers = environment?.headers || {};
+  return Object.entries(headers)
+    .filter(([key, value]) => String(key || '').trim() && value != null)
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function codexEnvironmentHeaderPreview(environment, t) {
+  const entries = codexEnvironmentHeaderEntries(environment);
+  if (entries.length === 0) return t('暂无请求头特征');
+  return entries
+    .slice(0, 3)
+    .map(([key, value]) => `${key}: ${String(value || '').slice(0, 42)}`)
+    .join(' · ');
+}
+
+async function copyCodexEnvironmentHeaders(environment, t) {
+  const entries = codexEnvironmentHeaderEntries(environment);
+  if (entries.length === 0) {
+    showInfo(t('暂无请求头特征'));
+    return;
+  }
+  const text = entries.map(([key, value]) => `${key}: ${value}`).join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    showSuccess(t('复制成功'));
+  } catch (err) {
+    showError(t('复制失败'));
+  }
 }
 
 function statisticsDiagnosticText(item, t) {
@@ -791,17 +841,11 @@ function runtimeKeyLabel(runtimeKey, t) {
   return parts.length > 0 ? parts.join(' / ') : t('渠道级快照');
 }
 
-function runtimeCapabilitySummary(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  const parts = [];
-  if (raw.includes('openai_codex')) parts.push('openai_codex');
-  if (raw.includes('native_responses')) parts.push('native');
-  if (raw.includes('"responses_compact":true')) parts.push('compact');
-  if (raw.includes('"codex_image_tool":true')) parts.push('image');
-  if (raw.includes('"codex_image_tool":false')) parts.push('no-image');
-  if (parts.length > 0) return parts.join(' / ');
-  return raw.length > 18 ? `${raw.slice(0, 18)}...` : raw;
+function runtimeKeyCompactLabel(runtimeKey, t) {
+  if (!runtimeKey) return '--';
+  return (
+    runtimeKey.requested_model || runtimeKey.upstream_model || t('渠道级快照')
+  );
 }
 
 function healthTagMeta(status, t) {
@@ -1971,46 +2015,348 @@ function DispatchHealthBlock({ record, t }) {
 }
 
 function RuntimeKeysCell({ record, t }) {
-  const keys = record?.runtime_keys || [];
+  const [selectedItem, setSelectedItem] = useState(null);
+  const keys = Array.isArray(record?.runtime_keys) ? record.runtime_keys : [];
   if (keys.length === 0) {
     return <Text type='tertiary'>{t('暂无运行态')}</Text>;
   }
+  const selectedRuntimeKey = selectedItem?.runtime_key || {};
+  const selectedMeta = selectedItem
+    ? healthTagMeta(selectedItem.health_status, t)
+    : null;
+  const selectedCapability = selectedRuntimeKey.capability_fingerprint || '';
+  const selectedChannelID = selectedRuntimeKey.channel_id || record?.channel_id;
+  const selectedCredentialIndex = Number.isFinite(
+    Number(selectedRuntimeKey.credential_index),
+  )
+    ? Number(selectedRuntimeKey.credential_index)
+    : Number(record?.credential_index);
+  const selectedRows = selectedItem
+    ? [
+        [t('模型'), selectedRuntimeKey.requested_model || '--'],
+        [t('上游模型'), selectedRuntimeKey.upstream_model || '--'],
+        [t('分组'), selectedRuntimeKey.group || '--'],
+        [t('端点'), selectedRuntimeKey.endpoint_type || '--'],
+        [t('渠道'), selectedChannelID ? `#${selectedChannelID}` : '--'],
+        [
+          t('凭证序号'),
+          Number.isFinite(selectedCredentialIndex)
+            ? `#${selectedCredentialIndex + 1}`
+            : '--',
+        ],
+        [
+          t('账号标识'),
+          selectedRuntimeKey.account_id ||
+            record?.account_identity?.account_id ||
+            '--',
+        ],
+        [
+          t('主体指纹'),
+          selectedRuntimeKey.credential_subject_fingerprint ||
+            record?.account_identity?.credential_subject_fingerprint ||
+            '--',
+        ],
+        [
+          t('凭证指纹'),
+          selectedRuntimeKey.credential_fingerprint ||
+            record?.account_identity?.credential_fingerprint ||
+            '--',
+        ],
+        [t('能力'), selectedCapability || '--'],
+      ]
+    : [];
+
   return (
-    <div className='ct-channel-account-runtime-list'>
-      {keys.map((item, index) => {
-        const meta = healthTagMeta(item.health_status, t);
-        const runtimeKey = item.runtime_key || {};
-        const capability = runtimeCapabilitySummary(
-          runtimeKey.capability_fingerprint,
-        );
-        return (
-          <div
-            className='ct-channel-account-runtime-item'
-            key={`${runtimeKey.requested_model || 'channel'}-${runtimeKey.group || 'default'}-${runtimeKey.endpoint_type || 'endpoint'}-${runtimeKey.capability_fingerprint || index}`}
-          >
-            <div>
-              <div className='ct-channel-account-runtime-title'>
-                {runtimeKeyLabel(runtimeKey, t)}
+    <>
+      <div className='ct-channel-account-runtime-list'>
+        {keys.map((item, index) => {
+          const meta = healthTagMeta(item.health_status, t);
+          const runtimeKey = item.runtime_key || {};
+          return (
+            <Tooltip
+              content={runtimeKeyLabel(runtimeKey, t)}
+              key={`${runtimeKey.requested_model || 'channel'}-${runtimeKey.group || 'default'}-${runtimeKey.endpoint_type || 'endpoint'}-${runtimeKey.capability_fingerprint || 'capability'}-${index}`}
+            >
+              <button
+                type='button'
+                className={`ct-channel-account-runtime-chip ct-channel-account-runtime-chip-${meta.color || 'grey'}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setSelectedItem(item);
+                }}
+                aria-label={`${runtimeKeyCompactLabel(runtimeKey, t)} ${t('查看详情')}`}
+              >
+                <span>{runtimeKeyCompactLabel(runtimeKey, t)}</span>
+                <strong>{formatScore(item.score_total)}</strong>
+              </button>
+            </Tooltip>
+          );
+        })}
+      </div>
+      {selectedItem ? (
+        <Modal
+          title={`${t('运行键')} · ${t('详情')}`}
+          visible={Boolean(selectedItem)}
+          onCancel={() => setSelectedItem(null)}
+          footer={null}
+          width={640}
+          bodyStyle={{ padding: 0 }}
+        >
+          <div className='ct-channel-account-runtime-modal'>
+            <div className='ct-channel-account-runtime-modal-head'>
+              <div>
+                <span>{t('运行键')}</span>
+                <strong>{runtimeKeyLabel(selectedRuntimeKey, t)}</strong>
               </div>
-              <div className='ct-channel-account-runtime-meta'>
-                {t('成功率')} {formatPercent(item.success_rate)} · {t('首包')}{' '}
-                {formatLatency(item.ttft_ms)} · {t('样本')}{' '}
-                {formatNumber(item.sample_count)}
-              </div>
-              {capability ? (
-                <Tooltip content={runtimeKey.capability_fingerprint}>
-                  <div className='ct-channel-account-runtime-detail'>
-                    {t('能力')} {capability}
-                  </div>
-                </Tooltip>
+              {selectedMeta ? (
+                <Tag
+                  color={selectedMeta.color}
+                  size='small'
+                  type='light'
+                  shape='circle'
+                >
+                  {selectedMeta.label}
+                </Tag>
               ) : null}
             </div>
-            <Tag color={meta.color} size='small' type='light' shape='circle'>
-              {formatScore(item.score_total)}
-            </Tag>
+            <div className='ct-channel-account-runtime-metrics'>
+              <div>
+                <span>{t('评分')}</span>
+                <strong>{formatScore(selectedItem.score_total)}</strong>
+              </div>
+              <div>
+                <span>{t('成功率')}</span>
+                <strong>{formatPercent(selectedItem.success_rate)}</strong>
+              </div>
+              <div>
+                <span>{t('首包')}</span>
+                <strong>{formatLatency(selectedItem.ttft_ms)}</strong>
+              </div>
+              <div>
+                <span>{t('样本')}</span>
+                <strong>{formatNumber(selectedItem.sample_count)}</strong>
+              </div>
+            </div>
+            <div className='ct-channel-account-runtime-detail-grid'>
+              {selectedRows.map(([label, value]) => (
+                <React.Fragment key={label}>
+                  <span>{label}</span>
+                  <strong>{value}</strong>
+                </React.Fragment>
+              ))}
+            </div>
           </div>
-        );
-      })}
+        </Modal>
+      ) : null}
+    </>
+  );
+}
+
+function CodexEnvironmentDetailModal({
+  visible,
+  environment,
+  environmentID,
+  onClose,
+  t,
+}) {
+  const headerEntries = codexEnvironmentHeaderEntries(environment);
+  const detailRows = [
+    [t('环境名称'), codexEnvironmentLabel(environment, environmentID, t)],
+    [t('平台'), environment?.platform || '--'],
+    [t('应用版本'), environment?.app_version || '--'],
+    [t('User-Agent'), environment?.user_agent || '--'],
+    [t('Originator'), environment?.originator || '--'],
+    [t('Session ID'), environment?.session_id || '--'],
+    [t('Window ID'), environment?.window_id || '--'],
+    [t('Beta Features'), environment?.beta_features || '--'],
+  ];
+  return (
+    <Modal
+      title={`${t('Codex 使用环境')} · ${codexEnvironmentLabel(
+        environment,
+        environmentID,
+        t,
+      )}`}
+      visible={visible}
+      onCancel={onClose}
+      footer={null}
+      width={720}
+      bodyStyle={{ padding: 0 }}
+    >
+      <div className='ct-channel-account-env-modal'>
+        <div className='ct-channel-account-env-modal-head'>
+          <div>
+            <span>{t('请求头特征')}</span>
+            <strong>{codexEnvironmentHeaderPreview(environment, t)}</strong>
+          </div>
+          <Button
+            size='small'
+            type='primary'
+            theme='light'
+            icon={<Copy size={14} />}
+            onClick={() => copyCodexEnvironmentHeaders(environment, t)}
+          >
+            {t('复制请求头')}
+          </Button>
+        </div>
+        <div className='ct-channel-account-runtime-detail-grid'>
+          {detailRows.map(([label, value]) => (
+            <React.Fragment key={label}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </React.Fragment>
+          ))}
+        </div>
+        <div className='ct-channel-account-env-headers'>
+          <div className='ct-channel-account-detail-title'>
+            {t('完整请求头')}
+          </div>
+          {headerEntries.length === 0 ? (
+            <Empty title={t('暂无请求头特征')} />
+          ) : (
+            headerEntries.map(([key, value]) => (
+              <div className='ct-channel-account-env-header-row' key={key}>
+                <span>{key}</span>
+                <strong>{String(value || '')}</strong>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function CodexEnvironmentCell({ record, t }) {
+  const [detailVisible, setDetailVisible] = useState(false);
+  const environment = record?.codex_environment || null;
+  const environmentID = Number(record?.codex_environment_id || 0);
+  if (environmentID <= 0) {
+    return <Text type='tertiary'>{t('未绑定环境')}</Text>;
+  }
+  return (
+    <>
+      <button
+        type='button'
+        className='ct-channel-account-env-cell'
+        onClick={() => setDetailVisible(true)}
+      >
+        <div className='ct-channel-account-env-main'>
+          <Server size={14} />
+          <strong>
+            {codexEnvironmentLabel(environment, environmentID, t)}
+          </strong>
+          <Tag
+            size='small'
+            color={environment?.enabled === false ? 'grey' : 'teal'}
+          >
+            #{environmentID}
+          </Tag>
+        </div>
+        <div className='ct-channel-account-env-tags'>
+          <Tag size='small' color='cyan' type='light'>
+            {environment?.platform || t('未知平台')}
+          </Tag>
+          <Tag size='small' color='blue' type='light'>
+            {environment?.app_version || t('未知版本')}
+          </Tag>
+        </div>
+        <small>{codexEnvironmentHeaderPreview(environment, t)}</small>
+      </button>
+      <CodexEnvironmentDetailModal
+        visible={detailVisible}
+        environment={environment}
+        environmentID={environmentID}
+        onClose={() => setDetailVisible(false)}
+        t={t}
+      />
+    </>
+  );
+}
+
+function CodexEnvironmentSelector({
+  t,
+  environments,
+  environmentsLoading,
+  selectedEnvironmentID,
+  setSelectedEnvironmentID,
+  currentEnvironment,
+  loadCodexEnvironments,
+}) {
+  const environmentOptions = useMemo(() => {
+    const seen = new Set();
+    const options = [];
+    if (currentEnvironment?.id) {
+      options.push(currentEnvironment);
+      seen.add(Number(currentEnvironment.id));
+    }
+    (environments || []).forEach((environment) => {
+      const id = Number(environment?.id || 0);
+      if (id > 0 && !seen.has(id)) {
+        options.push(environment);
+        seen.add(id);
+      }
+    });
+    return options;
+  }, [currentEnvironment, environments]);
+  const selectedEnvironment =
+    environmentOptions.find(
+      (environment) =>
+        Number(environment.id) === Number(selectedEnvironmentID || 0),
+    ) || null;
+
+  return (
+    <div className='ct-channel-account-env-editor'>
+      <div className='ct-channel-account-env-select-row'>
+        <Select
+          value={Number(selectedEnvironmentID || 0)}
+          onChange={(value) => setSelectedEnvironmentID(Number(value || 0))}
+          loading={environmentsLoading}
+          filter
+          style={{ width: '100%' }}
+          placeholder={t('选择 Codex 使用环境')}
+        >
+          <Select.Option value={0}>{t('不绑定 Codex 使用环境')}</Select.Option>
+          {environmentOptions.map((environment) => (
+            <Select.Option
+              key={environment.id}
+              value={environment.id}
+              disabled={environment.enabled === false}
+            >
+              {codexEnvironmentLabel(environment, environment.id, t)} ·{' '}
+              {codexEnvironmentSubtitle(environment, t)}
+            </Select.Option>
+          ))}
+        </Select>
+        <Button
+          type='tertiary'
+          theme='borderless'
+          icon={<RefreshCw size={14} />}
+          loading={environmentsLoading}
+          onClick={loadCodexEnvironments}
+        >
+          {t('刷新环境')}
+        </Button>
+      </div>
+      {selectedEnvironment ? (
+        <div className='ct-channel-account-env-selected'>
+          <div>
+            <strong>
+              {codexEnvironmentLabel(
+                selectedEnvironment,
+                selectedEnvironmentID,
+                t,
+              )}
+            </strong>
+            <span>{codexEnvironmentSubtitle(selectedEnvironment, t)}</span>
+          </div>
+          <small>{codexEnvironmentHeaderPreview(selectedEnvironment, t)}</small>
+        </div>
+      ) : (
+        <Text type='tertiary' size='small'>
+          {t('不绑定时将使用请求原始 Header 或系统默认 Codex Header')}
+        </Text>
+      )}
     </div>
   );
 }
@@ -2269,6 +2615,12 @@ function buildColumns(
           onOpenProxyEdit={onOpenProxyEdit}
         />
       ),
+    },
+    {
+      title: t('Codex 使用环境'),
+      dataIndex: 'codex_environment_id',
+      width: 320,
+      render: (_, record) => <CodexEnvironmentCell record={record} t={t} />,
     },
     {
       title: t('当前评分'),
@@ -3342,6 +3694,12 @@ function AccountDetailSideSheet({ visible, record, onClose, onReload, t }) {
           <DispatchHealthBlock record={record} t={t} />
         </div>
         <div className='ct-channel-account-detail-section'>
+          <div className='ct-channel-account-detail-title'>
+            {t('Codex 使用环境')}
+          </div>
+          <CodexEnvironmentCell record={record} t={t} />
+        </div>
+        <div className='ct-channel-account-detail-section'>
           <div className='ct-channel-account-detail-title'>{t('用量统计')}</div>
           <div className='ct-channel-account-detail-windows'>
             <DetailStatWindow
@@ -3439,6 +3797,8 @@ function ChannelAccount() {
   const [editRecord, setEditRecord] = useState(null);
   const [editCredentialType, setEditCredentialType] = useState('auto');
   const [editCredential, setEditCredential] = useState('');
+  const [selectedCodexEnvironmentID, setSelectedCodexEnvironmentID] =
+    useState(0);
   const [editLoading, setEditLoading] = useState(false);
   const [proxyVisible, setProxyVisible] = useState(false);
   const [batchProxyVisible, setBatchProxyVisible] = useState(false);
@@ -3446,6 +3806,9 @@ function ChannelAccount() {
   const [editingProxy, setEditingProxy] = useState(null);
   const [proxyEditorVisible, setProxyEditorVisible] = useState(false);
   const [proxies, setProxies] = useState([]);
+  const [codexEnvironments, setCodexEnvironments] = useState([]);
+  const [codexEnvironmentsLoading, setCodexEnvironmentsLoading] =
+    useState(false);
   const [proxyReusePolicy, setProxyReusePolicy] = useState('warn');
   const [proxiesLoading, setProxiesLoading] = useState(false);
   const [proxySaving, setProxySaving] = useState(false);
@@ -3592,6 +3955,27 @@ function ChannelAccount() {
       showError(message);
     } finally {
       setProxiesLoading(false);
+    }
+  }, [t]);
+
+  const loadCodexEnvironments = useCallback(async () => {
+    setCodexEnvironmentsLoading(true);
+    try {
+      const response = await API.get('/api/channel/codex-environments', {
+        params: { include_disabled: true },
+        disableDuplicate: true,
+      });
+      if (response?.data?.success === false) {
+        throw new Error(response?.data?.message || t('请求异常'));
+      }
+      const payload = unwrapApiData(response);
+      setCodexEnvironments(Array.isArray(payload?.items) ? payload.items : []);
+    } catch (err) {
+      const message =
+        err?.response?.data?.message || err?.message || t('请求异常');
+      showError(message);
+    } finally {
+      setCodexEnvironmentsLoading(false);
     }
   }, [t]);
 
@@ -4179,12 +4563,19 @@ function ChannelAccount() {
       setProxyRecord(record);
       setEditCredentialType(record?.account_identity?.account_type || 'auto');
       setEditCredential('');
+      setSelectedCodexEnvironmentID(Number(record?.codex_environment_id || 0));
       resetProxyEditorState(record);
       setEditVisible(true);
+      loadCodexEnvironments();
       loadProxies();
       loadSchedulerConfig();
     },
-    [loadProxies, loadSchedulerConfig, resetProxyEditorState],
+    [
+      loadCodexEnvironments,
+      loadProxies,
+      loadSchedulerConfig,
+      resetProxyEditorState,
+    ],
   );
 
   const closeEditModal = useCallback(() => {
@@ -4193,6 +4584,7 @@ function ChannelAccount() {
     setProxyRecord(null);
     setEditCredentialType('auto');
     setEditCredential('');
+    setSelectedCodexEnvironmentID(0);
     resetProxyEditorState();
   }, [resetProxyEditorState]);
 
@@ -4347,7 +4739,14 @@ function ChannelAccount() {
       const credential = editCredential.trim();
       const shouldUpdateCredential = credential.length > 0;
       const shouldUpdateProxy = proxyBindingChanged(editRecord);
-      if (!shouldUpdateCredential && !shouldUpdateProxy) {
+      const shouldUpdateCodexEnvironment =
+        Number(selectedCodexEnvironmentID || 0) !==
+        Number(editRecord?.codex_environment_id || 0);
+      if (
+        !shouldUpdateCredential &&
+        !shouldUpdateProxy &&
+        !shouldUpdateCodexEnvironment
+      ) {
         closeEditModal();
         return;
       }
@@ -4371,21 +4770,36 @@ function ChannelAccount() {
       try {
         let payload = null;
         const messages = [];
-        if (shouldUpdateCredential) {
+        if (shouldUpdateCredential || shouldUpdateCodexEnvironment) {
+          const requestBody = {
+            credential: shouldUpdateCredential ? credential : '',
+            credential_type: editCredentialType,
+          };
+          if (shouldUpdateCodexEnvironment) {
+            requestBody.codex_environment_id = Number(
+              selectedCodexEnvironmentID || 0,
+            );
+          }
           const response = await API.put(
             `/api/channel/${editRecord.channel_id}/accounts/${editRecord.credential_index}`,
-            {
-              credential,
-              credential_type: editCredentialType,
-            },
+            requestBody,
           );
           if (response?.data?.success === false) {
             throw new Error(response?.data?.message || t('保存失败'));
           }
           payload = unwrapApiData(response);
           messages.push(
-            operationMessage(payload.operation, t, t('账号凭证已更新')),
+            operationMessage(
+              payload.operation,
+              t,
+              shouldUpdateCredential
+                ? t('账号凭证已更新')
+                : t('Codex 使用环境已更新'),
+            ),
           );
+          if (shouldUpdateCredential && shouldUpdateCodexEnvironment) {
+            messages.push(t('Codex 使用环境已更新'));
+          }
         }
         if (shouldUpdateProxy) {
           const bindingRecord = findAccountItem(payload, editRecord);
@@ -4442,6 +4856,7 @@ function ChannelAccount() {
       loadAccounts,
       proxyReusePolicy,
       selectedProxyRisk,
+      selectedCodexEnvironmentID,
       submitProxyBinding,
       t,
     ],
@@ -4651,7 +5066,7 @@ function ChannelAccount() {
     : isStatsView
       ? statsColumns
       : columns;
-  const tableScrollX = !isRunningView ? 1100 : isStatsView ? 1585 : 2750;
+  const tableScrollX = !isRunningView ? 1100 : isStatsView ? 1585 : 3070;
   const tablePagination = useMemo(
     () => ({
       currentPage: data?.page || page,
@@ -5184,6 +5599,34 @@ function ChannelAccount() {
                   'JSON 类型会在保存前压缩为单行，并只在列表展示账号类型和短指纹。',
                 )}
               </Text>
+            </div>
+            <div className='ct-channel-account-edit-section'>
+              <div className='ct-channel-account-edit-section-title'>
+                <Server size={15} />
+                <span>{t('Codex 使用环境')}</span>
+                {editRecord?.codex_environment_id ? (
+                  <Tag color='teal' type='light' shape='circle'>
+                    {codexEnvironmentLabel(
+                      editRecord?.codex_environment,
+                      editRecord?.codex_environment_id,
+                      t,
+                    )}
+                  </Tag>
+                ) : (
+                  <Tag color='grey' type='light' shape='circle'>
+                    {t('未绑定环境')}
+                  </Tag>
+                )}
+              </div>
+              <CodexEnvironmentSelector
+                t={t}
+                environments={codexEnvironments}
+                environmentsLoading={codexEnvironmentsLoading}
+                selectedEnvironmentID={selectedCodexEnvironmentID}
+                setSelectedEnvironmentID={setSelectedCodexEnvironmentID}
+                currentEnvironment={editRecord?.codex_environment}
+                loadCodexEnvironments={loadCodexEnvironments}
+              />
             </div>
             <div className='ct-channel-account-edit-section'>
               <div className='ct-channel-account-edit-section-title'>

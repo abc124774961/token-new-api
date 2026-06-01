@@ -235,6 +235,7 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.GET("/models", controller.ChannelListModels)
 			channelRoute.GET("/models_enabled", controller.EnabledListModels)
 			channelRoute.GET("/group_summary", controller.GetChannelGroupSummary)
+			channelRoute.GET("/codex-environments", controller.ListCodexApplicationEnvironments)
 			channelRoute.GET("/accounts", controller.ListAllChannelAccounts)
 			channelRoute.GET("/account-pools/invalid", controller.ListChannelInvalidAccountPool)
 			channelRoute.GET("/account-pools/discarded", controller.ListChannelDiscardedAccountPool)
