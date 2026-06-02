@@ -137,12 +137,16 @@ const EditTokenModal = (props) => {
     let res = await API.get(`/api/user/self/groups?include_dynamic_billing=true`);
     const { success, message, data } = res.data;
     if (success) {
-      let localGroupOptions = Object.entries(data).map(([group, info]) => ({
-        label: info.desc,
-        value: group,
-        ratio: info.ratio,
-        dynamic_billing: info.dynamic_billing || null,
-      }));
+      let localGroupOptions = Object.entries(data).map(([group, info]) => {
+        const description = String(info?.desc || '').trim();
+        return {
+          label: description || group,
+          value: group,
+          ratio: info.ratio,
+          fullLabel: description,
+          dynamic_billing: info.dynamic_billing || null,
+        };
+      });
       if (statusState?.status?.default_use_auto_group) {
         if (localGroupOptions.some((group) => group.value === 'auto')) {
           localGroupOptions.sort((a, b) => (a.value === 'auto' ? -1 : 1));

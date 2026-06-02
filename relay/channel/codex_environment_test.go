@@ -36,13 +36,14 @@ func TestApplyCodexApplicationEnvironmentHeaders(t *testing.T) {
 
 	applyCodexApplicationEnvironmentHeaders(ctx, &req.Header)
 
-	require.Equal(t, env.UserAgent, req.Header.Get("User-Agent"))
+	require.Equal(t, "client-ua", req.Header.Get("User-Agent"))
 	require.Equal(t, env.Originator, req.Header.Get("originator"))
-	require.Equal(t, env.SessionID, req.Header.Get("session_id"))
-	require.Equal(t, env.WindowID, req.Header.Get("X-Codex-Window-Id"))
 	require.Equal(t, env.BetaFeatures, req.Header.Get("X-Codex-Beta-Features"))
-	require.Equal(t, "trace-42", req.Header.Get("X-Codex-Trace"))
-	require.Contains(t, req.Header.Get("X-Codex-Turn-Metadata"), "\"environment_name\":\"test-env\"")
+	require.Equal(t, "responses=v1", req.Header.Get("OpenAI-Beta"))
+	require.Empty(t, req.Header.Get("session_id"))
+	require.Empty(t, req.Header.Get("X-Codex-Window-Id"))
+	require.Empty(t, req.Header.Get("X-Codex-Trace"))
+	require.Empty(t, req.Header.Get("X-Codex-Turn-Metadata"))
 }
 
 func TestDoApiRequestAppliesCodexEnvironmentHeaders(t *testing.T) {
@@ -83,8 +84,9 @@ func TestDoApiRequestAppliesCodexEnvironmentHeaders(t *testing.T) {
 	case headers := <-serverHeaders:
 		require.Equal(t, "override-ua", headers.Get("User-Agent"))
 		require.Equal(t, env.Originator, headers.Get("originator"))
-		require.Equal(t, env.SessionID, headers.Get("session_id"))
-		require.Equal(t, "trace-42", headers.Get("X-Codex-Trace"))
+		require.Equal(t, "responses=v1", headers.Get("OpenAI-Beta"))
+		require.Empty(t, headers.Get("session_id"))
+		require.Empty(t, headers.Get("X-Codex-Trace"))
 		require.Equal(t, "setup-value", headers.Get("X-Setup"))
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for upstream headers")
@@ -122,7 +124,7 @@ func setupCodexApplicationEnvironmentTestDB(t *testing.T) (*gorm.DB, *model.Code
 		SessionID:    "sess-123",
 		WindowID:     "win-123",
 		BetaFeatures: "terminal_resize_reflow",
-		HeadersJSON:  `{"X-Codex-Trace":"trace-42"}`,
+		HeadersJSON:  `{"OpenAI-Beta":"responses=v1","X-Codex-Trace":"trace-42"}`,
 		Enabled:      true,
 		Source:       "custom",
 		Remark:       "test environment",

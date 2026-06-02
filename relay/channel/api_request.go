@@ -343,6 +343,9 @@ func applyCodexApplicationEnvironmentHeaders(c *gin.Context, header *http.Header
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
 			continue
 		}
+		if header.Get(key) != "" {
+			continue
+		}
 		header.Set(key, value)
 	}
 }

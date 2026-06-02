@@ -229,19 +229,27 @@ type ModelGatewayHealthCheckQueueResponse struct {
 }
 
 type ModelGatewayHealthCheckQueueSummary struct {
-	UpdatedAt         int64  `json:"updated_at"`
-	PendingCount      int    `json:"pending_count"`
-	ReturnedCount     int    `json:"returned_count"`
-	LowScoreCount     int    `json:"low_score_count"`
-	LowTrafficCount   int    `json:"low_traffic_count"`
-	RecoveryCount     int    `json:"recovery_count"`
-	ScoreAnomalyCount int    `json:"score_anomaly_count"`
-	IsolatedCount     int    `json:"isolated_count"`
-	RuntimeKeys       int    `json:"runtime_keys"`
-	Channels          int    `json:"channels"`
-	ActiveConcurrency int    `json:"active_concurrency"`
-	QueuedRequests    int    `json:"queued_requests"`
-	FilteredQueueType string `json:"filtered_queue_type,omitempty"`
+	UpdatedAt                          int64  `json:"updated_at"`
+	PendingCount                       int    `json:"pending_count"`
+	ReturnedCount                      int    `json:"returned_count"`
+	LowScoreCount                      int    `json:"low_score_count"`
+	LowTrafficCount                    int    `json:"low_traffic_count"`
+	RecoveryCount                      int    `json:"recovery_count"`
+	ScoreAnomalyCount                  int    `json:"score_anomaly_count"`
+	IsolatedCount                      int    `json:"isolated_count"`
+	RuntimeKeys                        int    `json:"runtime_keys"`
+	Channels                           int    `json:"channels"`
+	ActiveConcurrency                  int    `json:"active_concurrency"`
+	QueuedRequests                     int    `json:"queued_requests"`
+	ProbeEnabled                       bool   `json:"probe_enabled"`
+	SchedulerRunning                   bool   `json:"scheduler_running"`
+	SchedulerMasterNode                bool   `json:"scheduler_master_node"`
+	SchedulerRelayInvokerRegistered    bool   `json:"scheduler_relay_invoker_registered"`
+	ProbeIntervalSeconds               int64  `json:"probe_interval_seconds,omitempty"`
+	LastSchedulerProbeAt               int64  `json:"last_scheduler_probe_at,omitempty"`
+	NextSchedulerProbeAt               int64  `json:"next_scheduler_probe_at,omitempty"`
+	NextSchedulerProbeRemainingSeconds int64  `json:"next_scheduler_probe_remaining_seconds,omitempty"`
+	FilteredQueueType                  string `json:"filtered_queue_type,omitempty"`
 }
 
 type ModelGatewayHealthCheckQueueThresholds struct {
@@ -2684,15 +2692,24 @@ func BuildModelGatewayHealthCheckQueue(query modelgatewayobservability.RuntimeSt
 	}
 	runtimeStatus := defaultModelGatewayRuntimeStatusService().Build(query)
 	thresholds := modelGatewayHealthCheckQueueThresholds()
+	schedulerStatus := modelgatewayprobe.DefaultProbeSchedulerStatus()
 	items := make([]ModelGatewayHealthCheckQueueItem, 0)
 	reasonCounts := map[string]int{}
 	summary := ModelGatewayHealthCheckQueueSummary{
-		UpdatedAt:         runtimeStatus.Summary.UpdatedAt,
-		RuntimeKeys:       runtimeStatus.Summary.RuntimeKeys,
-		Channels:          runtimeStatus.Summary.Channels,
-		ActiveConcurrency: runtimeStatus.Summary.ActiveConcurrency,
-		QueuedRequests:    runtimeStatus.Summary.QueuedRequests,
-		FilteredQueueType: queueType,
+		UpdatedAt:                          runtimeStatus.Summary.UpdatedAt,
+		RuntimeKeys:                        runtimeStatus.Summary.RuntimeKeys,
+		Channels:                           runtimeStatus.Summary.Channels,
+		ActiveConcurrency:                  runtimeStatus.Summary.ActiveConcurrency,
+		QueuedRequests:                     runtimeStatus.Summary.QueuedRequests,
+		ProbeEnabled:                       schedulerStatus.Enabled,
+		SchedulerRunning:                   schedulerStatus.Running,
+		SchedulerMasterNode:                schedulerStatus.MasterNode,
+		SchedulerRelayInvokerRegistered:    schedulerStatus.RelayInvokerRegistered,
+		ProbeIntervalSeconds:               schedulerStatus.ProbeIntervalSeconds,
+		LastSchedulerProbeAt:               schedulerStatus.LastTickAt,
+		NextSchedulerProbeAt:               schedulerStatus.NextTickAt,
+		NextSchedulerProbeRemainingSeconds: schedulerStatus.RemainingSeconds,
+		FilteredQueueType:                  queueType,
 	}
 	for _, runtimeItem := range runtimeStatus.Items {
 		if !modelGatewayHealthCheckRuntimeItemProbeEligible(runtimeItem) {
@@ -2752,6 +2769,9 @@ func BuildModelGatewayHealthCheckQueue(query modelgatewayobservability.RuntimeSt
 func modelGatewayHealthCheckRuntimeItemProbeEligible(item modelgatewayobservability.RuntimeStatusItem) bool {
 	if item.ChannelID <= 0 {
 		return false
+	}
+	if model.DB == nil && !common.MemoryCacheEnabled {
+		return true
 	}
 	channel, err := model.CacheGetChannel(item.ChannelID)
 	if err != nil || channel == nil {

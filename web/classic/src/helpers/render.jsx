@@ -1009,6 +1009,7 @@ export const renderGroupOption = (item) => {
     className,
     style,
     onMouseEnter,
+    onSelect,
     onClick,
     empty,
     emptyContent,
@@ -1041,6 +1042,9 @@ export const renderGroupOption = (item) => {
     dynamicMetaParts.push(`${i18next.t('7天倍率')} ${dynamicRatioRange}`);
   }
   const dynamicMetaText = dynamicMetaParts.join(' · ');
+  const description = String(
+    item.fullLabel || item.description || (label !== value ? label : '') || '',
+  ).trim();
   const optionClassName = [
     'token-group-option',
     selected ? 'token-group-option--selected' : '',
@@ -1052,9 +1056,16 @@ export const renderGroupOption = (item) => {
     .filter(Boolean)
     .join(' ');
 
-  const handleClick = () => {
-    if (!disabled && onClick) {
-      onClick();
+  const handleClick = (e) => {
+    if (disabled) {
+      return;
+    }
+    if (onClick) {
+      onClick(e);
+      return;
+    }
+    if (onSelect) {
+      onSelect(item, e);
     }
   };
 
@@ -1107,7 +1118,11 @@ export const renderGroupOption = (item) => {
           size='small'
           className='token-group-option__description'
         >
-          <span className='token-group-option__description-text'>{label}</span>
+          {description ? (
+            <span className='token-group-option__description-text'>
+              {description}
+            </span>
+          ) : null}
           {showDynamicBillingMetrics && dynamicMetaText ? (
             <span className='token-group-option__meta-summary'>
               {dynamicMetaText}

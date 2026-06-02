@@ -21,10 +21,12 @@ const (
 	codexBackendCompactURL                   = "https://chatgpt.com/backend-api/codex/responses/compact"
 	codexCapabilityProbeTime                 = 30 * time.Second
 	codexAccountUsageLimitDefaultCooldownSec = int64((30 * time.Minute) / time.Second)
+	codexCapabilityProbeDefaultModel         = "gpt-5.5"
 )
 
 type CodexCapabilityProbeOptions struct {
 	ProbePlatformAPI bool
+	Model            string
 }
 
 type CodexCapabilityProbeResult struct {
@@ -174,13 +176,14 @@ func ProbeCodexOAuthAccountCapabilities(ctx context.Context, channel *model.Chan
 	requiresStream := true
 	capability.CodexBackendRequiresStream = &requiresStream
 
-	nonStreamResult := probeCodexBackendResponses(ctx, client, credential, false)
+	testModel := normalizeCodexCapabilityProbeModel(options.Model)
+	nonStreamResult := probeCodexBackendResponses(ctx, client, credential, testModel, false)
 	if strings.Contains(strings.ToLower(nonStreamResult.Message), "stream must be set to true") {
 		capability.CodexBackendRequiresStream = &requiresStream
 		messages = append(messages, "Codex Responses: requires stream=true")
 	}
 
-	streamResult := probeCodexBackendResponses(ctx, client, credential, true)
+	streamResult := probeCodexBackendResponses(ctx, client, credential, testModel, true)
 	streamUsageLimited := codexHTTPProbeUsageLimited(streamResult)
 	if !streamUsageLimited || streamResult.Success {
 		capability.CodexBackendResponsesStreamWrite = capabilityBool(streamResult.Success)
@@ -192,7 +195,7 @@ func ProbeCodexOAuthAccountCapabilities(ctx context.Context, channel *model.Chan
 		messages = append(messages, "Codex Stream: "+streamResult.Message)
 	}
 
-	compactResult := probeCodexBackendCompact(ctx, client, credential)
+	compactResult := probeCodexBackendCompact(ctx, client, credential, testModel)
 	usageLimited := streamUsageLimited || codexHTTPProbeUsageLimited(compactResult)
 	if !usageLimited || compactResult.Success {
 		capability.CodexBackendCompactWrite = capabilityBool(compactResult.Success)
@@ -225,7 +228,7 @@ func ProbeCodexOAuthAccountCapabilities(ctx context.Context, channel *model.Chan
 	return CodexCapabilityProbeResult{Capability: capability, OAuthJSON: true}, nil
 }
 
-func ProbeCodexOAuthPlatformCapabilities(ctx context.Context, channel *model.Channel, credentialIndex int) (CodexCapabilityProbeResult, error) {
+func ProbeCodexOAuthPlatformCapabilities(ctx context.Context, channel *model.Channel, credentialIndex int, options CodexCapabilityProbeOptions) (CodexCapabilityProbeResult, error) {
 	if channel == nil {
 		return CodexCapabilityProbeResult{}, errors.New("渠道不存在")
 	}
@@ -278,20 +281,21 @@ func ProbeCodexOAuthPlatformCapabilities(ctx context.Context, channel *model.Cha
 	client = &clientCopy
 
 	messages := make([]string, 0, 3)
-	chatResult := probePlatformChatCompletions(ctx, client, credential, false)
+	testModel := normalizeCodexCapabilityProbeModel(options.Model)
+	chatResult := probePlatformChatCompletions(ctx, client, credential, testModel, false)
 	capability.PlatformChatCompletionsWrite = capabilityBool(chatResult.Success)
 	capability.ChatCompletionsWrite = capability.PlatformChatCompletionsWrite
 	if !chatResult.Success {
 		messages = append(messages, "Platform Chat: "+chatResult.Message)
 	}
 
-	responsesResult := probePlatformResponses(ctx, client, credential, false)
+	responsesResult := probePlatformResponses(ctx, client, credential, testModel, false)
 	capability.PlatformResponsesWrite = capabilityBool(responsesResult.Success)
 	if !responsesResult.Success {
 		messages = append(messages, "Platform Responses: "+responsesResult.Message)
 	}
 
-	compactResult := probePlatformResponsesCompact(ctx, client, credential)
+	compactResult := probePlatformResponsesCompact(ctx, client, credential, testModel)
 	capability.PlatformResponsesCompactWrite = capabilityBool(compactResult.Success)
 	if !compactResult.Success {
 		messages = append(messages, "Platform Compact: "+compactResult.Message)
@@ -349,9 +353,16 @@ type codexHTTPProbeResult struct {
 	Message    string
 }
 
-func probeCodexBackendResponses(ctx context.Context, client *http.Client, credential codexProbeCredential, stream bool) codexHTTPProbeResult {
+func normalizeCodexCapabilityProbeModel(modelName string) string {
+	if normalized := strings.TrimSpace(modelName); normalized != "" {
+		return normalized
+	}
+	return codexCapabilityProbeDefaultModel
+}
+
+func probeCodexBackendResponses(ctx context.Context, client *http.Client, credential codexProbeCredential, modelName string, stream bool) codexHTTPProbeResult {
 	body := map[string]any{
-		"model":        "gpt-5.4",
+		"model":        normalizeCodexCapabilityProbeModel(modelName),
 		"input":        []map[string]string{{"role": "user", "content": "Reply with only: ok"}},
 		"instructions": "",
 		"store":        false,
@@ -360,18 +371,18 @@ func probeCodexBackendResponses(ctx context.Context, client *http.Client, creden
 	return doCodexBackendProbe(ctx, client, credential, codexBackendResponsesURL, body, stream)
 }
 
-func probeCodexBackendCompact(ctx context.Context, client *http.Client, credential codexProbeCredential) codexHTTPProbeResult {
+func probeCodexBackendCompact(ctx context.Context, client *http.Client, credential codexProbeCredential, modelName string) codexHTTPProbeResult {
 	body := map[string]any{
-		"model":        "gpt-5.4",
+		"model":        normalizeCodexCapabilityProbeModel(modelName),
 		"input":        []map[string]string{{"role": "user", "content": "hi"}},
 		"instructions": "",
 	}
 	return doCodexBackendProbe(ctx, client, credential, codexBackendCompactURL, body, false)
 }
 
-func probePlatformChatCompletions(ctx context.Context, client *http.Client, credential codexProbeCredential, stream bool) codexHTTPProbeResult {
+func probePlatformChatCompletions(ctx context.Context, client *http.Client, credential codexProbeCredential, modelName string, stream bool) codexHTTPProbeResult {
 	body := map[string]any{
-		"model":      "gpt-4o-mini",
+		"model":      normalizeCodexCapabilityProbeModel(modelName),
 		"messages":   []map[string]string{{"role": "user", "content": "Reply with only: ok"}},
 		"max_tokens": 8,
 		"stream":     stream,
@@ -379,9 +390,9 @@ func probePlatformChatCompletions(ctx context.Context, client *http.Client, cred
 	return doCodexBackendProbe(ctx, client, credential, "https://api.openai.com/v1/chat/completions", body, stream)
 }
 
-func probePlatformResponses(ctx context.Context, client *http.Client, credential codexProbeCredential, stream bool) codexHTTPProbeResult {
+func probePlatformResponses(ctx context.Context, client *http.Client, credential codexProbeCredential, modelName string, stream bool) codexHTTPProbeResult {
 	body := map[string]any{
-		"model":             "gpt-4o-mini",
+		"model":             normalizeCodexCapabilityProbeModel(modelName),
 		"input":             "Reply with only: ok",
 		"store":             false,
 		"stream":            stream,
@@ -390,9 +401,9 @@ func probePlatformResponses(ctx context.Context, client *http.Client, credential
 	return doCodexBackendProbe(ctx, client, credential, "https://api.openai.com/v1/responses", body, stream)
 }
 
-func probePlatformResponsesCompact(ctx context.Context, client *http.Client, credential codexProbeCredential) codexHTTPProbeResult {
+func probePlatformResponsesCompact(ctx context.Context, client *http.Client, credential codexProbeCredential, modelName string) codexHTTPProbeResult {
 	body := map[string]any{
-		"model":        "gpt-5.4",
+		"model":        normalizeCodexCapabilityProbeModel(modelName),
 		"input":        []map[string]string{{"role": "user", "content": "hi"}},
 		"instructions": "",
 	}

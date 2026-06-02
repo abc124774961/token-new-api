@@ -223,14 +223,20 @@ export const processModelsData = (data, currentModel) => {
 
 // 处理分组数据
 export const processGroupsData = (data, userGroup) => {
-  let groupOptions = Object.entries(data).map(([group, info]) => ({
-    label:
-      info.desc.length > 20 ? info.desc.substring(0, 20) + '...' : info.desc,
-    value: group,
-    ratio: info.ratio,
-    fullLabel: info.desc,
-    dynamic_billing: info.dynamic_billing || null,
-  }));
+  let groupOptions = Object.entries(data).map(([group, info]) => {
+    const description = String(info?.desc || '').trim();
+    const shortDescription =
+      description.length > 20
+        ? description.substring(0, 20) + '...'
+        : description;
+    return {
+      label: shortDescription || group,
+      value: group,
+      ratio: info.ratio,
+      fullLabel: description,
+      dynamic_billing: info.dynamic_billing || null,
+    };
+  });
 
   if (groupOptions.length === 0) {
     groupOptions = [

@@ -3,6 +3,7 @@ package controller
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -203,6 +204,11 @@ func TestListChannelAccountsHidesRawKeysAndCarriesScoreSummary(t *testing.T) {
 	require.Equal(t, 2, payload.Data.Total)
 	require.Equal(t, 1, payload.Data.Enabled)
 	require.Equal(t, 1, payload.Data.Disabled)
+	require.Len(t, payload.Data.Channels, 1)
+	require.Equal(t, 7, payload.Data.Channels[0].ChannelID)
+	require.Equal(t, "codex accounts", payload.Data.Channels[0].ChannelName)
+	require.Equal(t, 2, payload.Data.Channels[0].AccountTotal)
+	require.Equal(t, 1, payload.Data.Channels[0].EnabledAccounts)
 	require.Len(t, payload.Data.Items, 2)
 	require.NotContains(t, recorder.Body.String(), "sk-primary")
 	require.NotContains(t, recorder.Body.String(), "sk-disabled")
@@ -224,6 +230,62 @@ func TestListChannelAccountsHidesRawKeysAndCarriesScoreSummary(t *testing.T) {
 	require.Nil(t, payload.Data.Items[1].Score)
 }
 
+func TestListAllChannelAccountsCarriesSwitcherChannelsWhenScoped(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{
+			Id:     101,
+			Name:   "codex scoped",
+			Type:   constant.ChannelTypeOpenAI,
+			Key:    "sk-scoped-a\nsk-scoped-b",
+			Status: common.ChannelStatusEnabled,
+			Models: "gpt-5.5",
+			Group:  "default",
+			ChannelInfo: model.ChannelInfo{
+				IsMultiKey:         true,
+				MultiKeySize:       2,
+				MultiKeyStatusList: map[int]int{1: common.ChannelStatusManuallyDisabled},
+			},
+		},
+		{
+			Id:     102,
+			Name:   "codex sibling",
+			Type:   constant.ChannelTypeOpenAI,
+			Key:    "sk-sibling",
+			Status: common.ChannelStatusAutoDisabled,
+			Models: "gpt-5.5",
+			Group:  "default",
+		},
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/channel/accounts", ListAllChannelAccounts)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/channel/accounts?channel_id=101&page=1&page_size=20", nil)
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, 2, payload.Data.Total)
+	require.Len(t, payload.Data.Items, 2)
+	for _, item := range payload.Data.Items {
+		require.Equal(t, 101, item.ChannelID)
+	}
+	require.Len(t, payload.Data.Channels, 2)
+	channelsByID := map[int]ChannelAccountChannelItem{}
+	for _, channel := range payload.Data.Channels {
+		channelsByID[channel.ChannelID] = channel
+	}
+	require.Equal(t, "codex scoped", channelsByID[101].ChannelName)
+	require.Equal(t, 2, channelsByID[101].AccountTotal)
+	require.Equal(t, 1, channelsByID[101].EnabledAccounts)
+	require.Equal(t, "codex sibling", channelsByID[102].ChannelName)
+	require.Equal(t, common.ChannelStatusAutoDisabled, channelsByID[102].Status)
+	require.Equal(t, 1, channelsByID[102].AccountTotal)
+	require.NotContains(t, recorder.Body.String(), "sk-scoped-a")
+	require.NotContains(t, recorder.Body.String(), "sk-sibling")
+}
+
 func TestListCodexApplicationEnvironmentsReturnsHeaderSummary(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	envs := []model.CodexApplicationEnvironment{
@@ -237,7 +299,7 @@ func TestListCodexApplicationEnvironmentsReturnsHeaderSummary(t *testing.T) {
 			SessionID:    "session-enabled",
 			WindowID:     "window-enabled",
 			BetaFeatures: "terminal_resize_reflow",
-			HeadersJSON:  `{"x-extra-feature":"enabled"}`,
+			HeadersJSON:  `{"openai-beta":"enabled"}`,
 			Enabled:      true,
 		},
 		{
@@ -263,7 +325,7 @@ func TestListCodexApplicationEnvironmentsReturnsHeaderSummary(t *testing.T) {
 	require.Equal(t, 1, payload.Data.Total)
 	require.Len(t, payload.Data.Items, 1)
 	require.Equal(t, "codex-env-enabled", payload.Data.Items[0].Name)
-	require.Equal(t, "enabled", payload.Data.Items[0].Headers["x-extra-feature"])
+	require.Equal(t, "enabled", payload.Data.Items[0].Headers["openai-beta"])
 
 	includeRecorder := httptest.NewRecorder()
 	includeReq := httptest.NewRequest(http.MethodGet, "/api/channel/codex-environments?include_disabled=true", nil)
@@ -342,6 +404,32 @@ func TestBuildChannelAccountSchedulingExplanationKeepsAuthAheadOfProxyExitError(
 	require.Equal(t, channelcapability.ClassificationAuthError, explanation.PrimaryReason)
 	require.Contains(t, explanation.BlockingReasons, channelcapability.ClassificationAuthError)
 	require.NotContains(t, explanation.BlockingReasons, channelcapability.ClassificationProxyError)
+}
+
+func TestBuildChannelAccountSchedulingExplanationTreatsHealthyScoreAnomalyRecoveryAsWarning(t *testing.T) {
+	setting := scheduler_setting.DefaultSetting()
+	setting.ProbeLowScoreThreshold = 0.62
+	restoreSetting := scheduler_setting.SetSettingForTest(setting)
+	t.Cleanup(restoreSetting)
+
+	item := ChannelAccountItem{
+		KeyEnabled: true,
+		Score: &ChannelAccountScoreSummary{
+			HealthStatus:              "healthy",
+			ScoreTotal:                0.91,
+			ProbeRecoveryPending:      true,
+			ProbeTriggerReason:        modelgatewaycore.ProbeReasonScoreAnomalyFastProbe,
+			ProbeRecoverySuccessCount: 1,
+			ProbeRecoveryRequired:     2,
+		},
+	}
+
+	explanation := buildChannelAccountSchedulingExplanation(item)
+	require.True(t, explanation.Schedulable)
+	require.Equal(t, channelAccountScoreAnomalyRecoveryObservingReason, explanation.PrimaryReason)
+	require.Contains(t, explanation.WarningReasons, channelAccountScoreAnomalyRecoveryObservingReason)
+	require.NotContains(t, explanation.BlockingReasons, "probe_recovery_pending")
+	require.True(t, explanation.ProbeRecoveryPending)
 }
 
 func TestListChannelAccountsSummaryCountsAvailabilityStates(t *testing.T) {
@@ -1279,6 +1367,59 @@ func TestUpdateChannelAccountCredentialCanOnlyChangeCodexEnvironment(t *testing.
 	require.Nil(t, updated.ChannelInfo.MultiKeyCodexEnvironmentIDs)
 }
 
+func TestUpdateChannelAccountCredentialCanOnlyChangeMaxConcurrency(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     76,
+		Name:   "account concurrency update",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-old\nsk-keep",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	router := gin.New()
+	router.PUT("/api/channel/:id/accounts/:credential_index", UpdateChannelAccountCredential)
+	bodyBytes, err := common.Marshal(map[string]interface{}{
+		"max_concurrency": 4,
+	})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/channel/76/accounts/0", bytes.NewReader(bodyBytes))
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, 4, payload.Data.Items[0].MaxConcurrency)
+	require.Zero(t, payload.Data.Items[1].MaxConcurrency)
+
+	updated, err := model.GetChannelById(76, true)
+	require.NoError(t, err)
+	require.Equal(t, 4, updated.ChannelInfo.MultiKeyMaxConcurrency[0])
+
+	clearBytes, err := common.Marshal(map[string]interface{}{
+		"max_concurrency": 0,
+	})
+	require.NoError(t, err)
+	clearRecorder := httptest.NewRecorder()
+	clearReq := httptest.NewRequest(http.MethodPut, "/api/channel/76/accounts/0", bytes.NewReader(clearBytes))
+	router.ServeHTTP(clearRecorder, clearReq)
+
+	clearPayload := decodeChannelAccountsResponse(t, clearRecorder)
+	require.True(t, clearPayload.Success, clearRecorder.Body.String())
+	require.Zero(t, clearPayload.Data.Items[0].MaxConcurrency)
+
+	updated, err = model.GetChannelById(76, true)
+	require.NoError(t, err)
+	require.Nil(t, updated.ChannelInfo.MultiKeyMaxConcurrency)
+}
+
 func TestUpdateChannelAccountCredentialSupportsOAuthJSONType(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	channel := model.Channel{
@@ -1733,6 +1874,121 @@ func TestImportChannelAccountsExpandsJSONCredentialArray(t *testing.T) {
 	require.JSONEq(t, `{"account_id":"acct-json","refresh_token":"rt-json"}`, keys[2])
 }
 
+func TestImportChannelAccountsDoesNotBindCodexEnvironmentWithoutRealSamples(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     921,
+		Name:   "codex import without env",
+		Type:   constant.ChannelTypeCodex,
+		Key:    "",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.5",
+		Group:  "default",
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	router := gin.New()
+	router.PUT("/api/channel/:id/accounts", ImportChannelAccounts)
+	recorder := httptest.NewRecorder()
+	bodyBytes, err := common.Marshal(map[string]interface{}{
+		"credentials": `[
+			{"access_token":"access-one","refresh_token":"refresh-one","account_id":"acct-one"},
+			{"access_token":"access-two","refresh_token":"refresh-two","account_id":"acct-two"}
+		]`,
+		"only_new": true,
+	})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, "/api/channel/921/accounts", bytes.NewReader(bodyBytes))
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, 2, payload.Data.Operation.Added)
+
+	updated, err := model.GetChannelById(921, true)
+	require.NoError(t, err)
+	require.Len(t, updated.GetKeys(), 2)
+	require.Nil(t, updated.ChannelInfo.MultiKeyCodexEnvironmentIDs)
+	require.Nil(t, updated.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys)
+}
+
+func TestImportChannelAccountsBindsRealCodexEnvironmentsByUniqueKeyWithRepeat(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	envs := []model.CodexApplicationEnvironment{
+		{
+			Id:         8301,
+			Name:       "codex-real-import-one",
+			UserAgent:  "Codex Desktop/0.135.0",
+			Originator: "codex_cli_rs",
+			Enabled:    true,
+			Source:     model.CodexApplicationEnvironmentRealRequestSource,
+		},
+		{
+			Id:         8302,
+			Name:       "codex-real-import-two",
+			UserAgent:  "Codex Desktop/0.136.0",
+			Originator: "codex_cli_rs",
+			Enabled:    true,
+			Source:     model.CodexApplicationEnvironmentRealRequestSource,
+		},
+		{
+			Id:         8303,
+			Name:       "codex-env-system-seed",
+			UserAgent:  "codex_cli_rs/0.0.0",
+			Originator: "codex_cli_rs",
+			Enabled:    true,
+			Source:     model.CodexApplicationEnvironmentSystemSource,
+		},
+	}
+	require.NoError(t, db.Create(&envs).Error)
+	channel := model.Channel{
+		Id:     922,
+		Name:   "codex import with real env",
+		Type:   constant.ChannelTypeCodex,
+		Key:    "",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.5",
+		Group:  "default",
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	router := gin.New()
+	router.PUT("/api/channel/:id/accounts", ImportChannelAccounts)
+	recorder := httptest.NewRecorder()
+	bodyBytes, err := common.Marshal(map[string]interface{}{
+		"credentials": `[
+			{"access_token":"access-one","refresh_token":"refresh-one","account_id":"acct-one"},
+			{"access_token":"access-two","refresh_token":"refresh-two","account_id":"acct-two"},
+			{"access_token":"access-three","refresh_token":"refresh-three","account_id":"acct-three"}
+		]`,
+		"only_new": true,
+	})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, "/api/channel/922/accounts", bytes.NewReader(bodyBytes))
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, 3, payload.Data.Operation.Added)
+	require.Len(t, payload.Data.Items, 3)
+	require.Equal(t, []int{8301, 8302, 8301}, []int{
+		payload.Data.Items[0].CodexEnvironmentID,
+		payload.Data.Items[1].CodexEnvironmentID,
+		payload.Data.Items[2].CodexEnvironmentID,
+	})
+
+	updated, err := model.GetChannelById(922, true)
+	require.NoError(t, err)
+	require.Nil(t, updated.ChannelInfo.MultiKeyCodexEnvironmentIDs)
+	require.Len(t, updated.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys, 3)
+	for index, key := range updated.GetKeys() {
+		identity := modelgatewayaccount.AccountIdentityForChannelKey(updated, index, key)
+		require.NotEmpty(t, identity.AccountUniqueKey)
+		expected := []int{8301, 8302, 8301}[index]
+		require.Equal(t, expected, updated.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys[identity.AccountUniqueKey])
+	}
+}
+
 func TestImportChannelAccountsAcceptsCardCredentialExportLine(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	channel := model.Channel{
@@ -1781,6 +2037,78 @@ func TestImportChannelAccountsAcceptsCardCredentialExportLine(t *testing.T) {
 	var ability model.Ability
 	require.NoError(t, db.First(&ability, "channel_id = ?", 74).Error)
 	require.False(t, ability.Enabled)
+}
+
+func TestImportChannelAccountsAcceptsCodexTeamOAuthJWTClaims(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     75,
+		Name:   "codex team import",
+		Type:   constant.ChannelTypeCodex,
+		Key:    "",
+		Status: common.ChannelStatusAutoDisabled,
+		Models: "gpt-5.5",
+		Group:  "default",
+	}
+	channel.SetOtherInfo(map[string]interface{}{"status_reason": channelAccountAllKeysDisabledReason})
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5.5",
+		ChannelId: 75,
+		Enabled:   false,
+	}).Error)
+
+	accessToken := testChannelAccountJWT(t, map[string]interface{}{
+		"iss": "https://auth.openai.com",
+		"exp": float64(1781221788),
+		"https://api.openai.com/auth": map[string]interface{}{
+			"chatgpt_account_id":        "acct-team-123",
+			"chatgpt_account_user_id":   "user-fake__acct-team-123",
+			"chatgpt_compute_residency": "no_constraint",
+			"chatgpt_plan_type":         "team",
+			"chatgpt_user_id":           "user-fake",
+			"localhost":                 true,
+			"user_id":                   "user-fake",
+		},
+		"https://api.openai.com/profile": map[string]interface{}{
+			"email":          "TEAM-USER@example.com",
+			"email_verified": true,
+		},
+	})
+	credentialBytes, err := common.Marshal(map[string]interface{}{
+		"type":          "codex",
+		"access_token":  accessToken,
+		"refresh_token": "rt_fake_refresh",
+	})
+	require.NoError(t, err)
+	bodyBytes, err := common.Marshal(map[string]interface{}{
+		"credentials": string(credentialBytes),
+		"only_new":    true,
+	})
+	require.NoError(t, err)
+
+	router := gin.New()
+	router.PUT("/api/channel/:id/accounts", ImportChannelAccounts)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/channel/75/accounts", bytes.NewReader(bodyBytes))
+	router.ServeHTTP(recorder, req)
+
+	response := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, response.Success, recorder.Body.String())
+	require.Equal(t, 1, response.Data.Operation.Added)
+	require.Equal(t, 1, response.Data.Total)
+	require.Len(t, response.Data.Items, 1)
+	require.Equal(t, modelgatewaycore.AccountTypeOAuthAccount, response.Data.Items[0].AccountIdentity.AccountType)
+	require.Equal(t, "team", response.Data.Items[0].AccountIdentity.PlanType)
+	require.NotContains(t, recorder.Body.String(), accessToken)
+	require.NotContains(t, recorder.Body.String(), "rt_fake_refresh")
+
+	updated, err := model.GetChannelById(75, true)
+	require.NoError(t, err)
+	keys := updated.GetKeys()
+	require.Len(t, keys, 1)
+	require.JSONEq(t, `{"type":"codex","access_token":"`+accessToken+`","refresh_token":"rt_fake_refresh","account_id":"acct-team-123","chatgpt_account_id":"acct-team-123","email":"team-user@example.com","chatgpt_user_id":"user-fake","chatgpt_plan_type":"team","expires_at":"2026-06-11T23:49:48Z"}`, keys[0])
 }
 
 func TestImportChannelAccountsAcceptsSub2APIAccountExport(t *testing.T) {
@@ -2787,6 +3115,16 @@ func decodeChannelAccountsResponse(t *testing.T, recorder *httptest.ResponseReco
 	var payload channelAccountsAPIResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
 	return payload
+}
+
+func testChannelAccountJWT(t *testing.T, claims map[string]interface{}) string {
+	t.Helper()
+	header, err := common.Marshal(map[string]interface{}{"alg": "none"})
+	require.NoError(t, err)
+	payload, err := common.Marshal(claims)
+	require.NoError(t, err)
+	return base64.RawURLEncoding.EncodeToString(header) + "." +
+		base64.RawURLEncoding.EncodeToString(payload) + ".sig"
 }
 
 func decodeChannelAccountRecentRequestsResponse(t *testing.T, recorder *httptest.ResponseRecorder) channelAccountRecentRequestsAPIResponse {

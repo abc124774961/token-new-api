@@ -83,6 +83,58 @@ func TestRuntimeSnapshotEnricherKeepsSnapshotLimitWhenLearnedLimitUnset(t *testi
 	require.Equal(t, 46, snapshot.EffectiveConcurrencyLimit)
 }
 
+func TestRuntimeSnapshotEnricherAppliesAccountMaxConcurrency(t *testing.T) {
+	identity := service.ChannelRuntimeIdentity{
+		ChannelID:           77,
+		AccountID:           "acct-a",
+		CredentialIndex:     1,
+		CredentialIndexSet:  true,
+		CredentialSubjectFP: "subject-a",
+		CredentialFP:        "credential-a",
+	}
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{
+		ActiveConcurrencyByChannel: map[int]int{77: 12},
+		ActiveConcurrencyByAccount: map[string]int{
+			service.ChannelRuntimeConcurrencyScopeKey(identity): 3,
+		},
+	}, 1500, 64, 2)
+
+	snapshot := enricher.Enrich(core.Candidate{
+		Channel: &model.Channel{
+			Id:      77,
+			Setting: common.GetPointer(`{"max_concurrency":40}`),
+			ChannelInfo: model.ChannelInfo{
+				IsMultiKey:             true,
+				MultiKeySize:           2,
+				MultiKeyMaxConcurrency: map[int]int{1: 4},
+			},
+		},
+		AccountIdentity: core.AccountIdentity{
+			AccountID:                    identity.AccountID,
+			CredentialIndex:              identity.CredentialIndex,
+			CredentialSubjectFingerprint: identity.CredentialSubjectFP,
+			CredentialFingerprint:        identity.CredentialFP,
+		},
+		CredentialRef: core.CredentialRef{
+			AccountID:                    identity.AccountID,
+			CredentialIndex:              identity.CredentialIndex,
+			CredentialSubjectFingerprint: identity.CredentialSubjectFP,
+			CredentialFingerprint:        identity.CredentialFP,
+			Resolver:                     "channel_key",
+		},
+		Group: "codex-plus",
+	}, core.RuntimeSnapshot{
+		MaxConcurrency: 40,
+	}, core.GroupSmartPolicy{QueueEnabled: true})
+
+	require.Equal(t, 3, snapshot.ActiveConcurrency)
+	require.Equal(t, 4, snapshot.MaxConcurrency)
+	require.Equal(t, 4, snapshot.ConfiguredConcurrencyLimit)
+	require.Equal(t, 4, snapshot.LearnedConcurrencyLimit)
+	require.Equal(t, 4, snapshot.EffectiveConcurrencyLimit)
+	require.Equal(t, 8, snapshot.QueueCapacity)
+}
+
 func TestRuntimeSnapshotEnricherAppliesCircuitBreakerState(t *testing.T) {
 	setting, err := common.Marshal(map[string]any{"max_concurrency": 2})
 	require.NoError(t, err)

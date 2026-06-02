@@ -307,8 +307,10 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
   const runtimeCircuitHalfOpen = Number(
     runtimeCircuit.half_open_runtime_keys || 0,
   );
+  const runtimeCircuitOpenActive = runtimeCircuitOpen > 0;
+  const runtimeCircuitHalfOpenActive = runtimeCircuitHalfOpen > 0;
   const runtimeCircuitActive =
-    runtimeCircuitOpen > 0 || runtimeCircuitHalfOpen > 0;
+    runtimeCircuitOpenActive || runtimeCircuitHalfOpenActive;
   const anyCircuitActive = circuitActive || runtimeCircuitActive;
   const cooldownActive =
     concurrencyCooldown?.active === true && cooldownRemaining > 0;
@@ -381,11 +383,14 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
           {t('熔断中')} {circuitLabel}
         </Tag>
       )}
-      {runtimeCircuitActive && (
+      {runtimeCircuitOpenActive && (
         <Tag color='red' shape='circle'>
-          {t('运行态熔断 {{count}}', {
-            count: runtimeCircuitOpen + runtimeCircuitHalfOpen,
-          })}
+          {t('运行态熔断 {{count}}', { count: runtimeCircuitOpen })}
+        </Tag>
+      )}
+      {runtimeCircuitHalfOpenActive && (
+        <Tag color='cyan' shape='circle'>
+          {t('半开探测')} {runtimeCircuitHalfOpen}
         </Tag>
       )}
       {anyCircuitActive && (

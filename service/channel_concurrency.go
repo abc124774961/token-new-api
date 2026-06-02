@@ -19,6 +19,7 @@ import (
 )
 
 var channelConcurrency sync.Map           // channel_id -> *channelConcurrencyCounter
+var accountConcurrency sync.Map           // account concurrency scope -> *channelConcurrencyCounter
 var channelSelectionReservation sync.Map  // channel_id -> *channelConcurrencyCounter
 var channelConcurrencyLearnLocks sync.Map // channel_id -> *sync.Mutex
 var channelConcurrencyControl sync.Map    // channel_id -> *channelConcurrencyControlState
@@ -39,8 +40,11 @@ type channelConcurrencyCounter struct {
 type ChannelConcurrencyLease struct {
 	ChannelID   int
 	Limit       int
+	ScopeKey    string
 	activeAtHit int
 	counter     *channelConcurrencyCounter
+	accountHeld *channelConcurrencyCounter
+	channelHeld *channelConcurrencyCounter
 	released    bool
 }
 
@@ -70,6 +74,11 @@ type ChannelConcurrencyLearnResult struct {
 
 func getChannelConcurrencyCounter(channelID int) *channelConcurrencyCounter {
 	actual, _ := channelConcurrency.LoadOrStore(channelID, &channelConcurrencyCounter{})
+	return actual.(*channelConcurrencyCounter)
+}
+
+func getAccountConcurrencyCounter(scopeKey string) *channelConcurrencyCounter {
+	actual, _ := accountConcurrency.LoadOrStore(scopeKey, &channelConcurrencyCounter{})
 	return actual.(*channelConcurrencyCounter)
 }
 
@@ -122,7 +131,63 @@ func GetChannelEffectiveActiveConcurrency(channelID int) int {
 	return active + reserved
 }
 
+func ChannelRuntimeConcurrencyScopeKey(identity ChannelRuntimeIdentity) string {
+	identity = identity.AccountScope().Normalize()
+	if identity.ChannelID <= 0 || !identity.HasAccountScope() {
+		return ""
+	}
+	parts := []string{fmt.Sprintf("channel:%d", identity.ChannelID)}
+	if identity.AccountID != "" {
+		parts = append(parts, "account:"+identity.AccountID)
+	}
+	if identity.CredentialSubjectFP != "" {
+		parts = append(parts, "subject:"+identity.CredentialSubjectFP)
+	}
+	if identity.CredentialFP != "" {
+		parts = append(parts, "credential:"+identity.CredentialFP)
+	}
+	if identity.CredentialIndexSet {
+		parts = append(parts, fmt.Sprintf("index:%d", identity.CredentialIndex))
+	}
+	return strings.Join(parts, "|")
+}
+
+func GetChannelRuntimeActiveConcurrency(identity ChannelRuntimeIdentity) int {
+	scopeKey := ChannelRuntimeConcurrencyScopeKey(identity)
+	if scopeKey == "" {
+		return GetChannelActiveConcurrency(identity.ChannelID)
+	}
+	value, ok := accountConcurrency.Load(scopeKey)
+	if !ok {
+		return 0
+	}
+	counter := value.(*channelConcurrencyCounter)
+	counter.mu.Lock()
+	defer counter.mu.Unlock()
+	return counter.active
+}
+
+func GetChannelRuntimeEffectiveActiveConcurrency(identity ChannelRuntimeIdentity) int {
+	scopeKey := ChannelRuntimeConcurrencyScopeKey(identity)
+	if scopeKey == "" {
+		return GetChannelEffectiveActiveConcurrency(identity.ChannelID)
+	}
+	return GetChannelRuntimeActiveConcurrency(identity)
+}
+
 func IsChannelConcurrencyFull(channelID int, setting dto.ChannelSettings) bool {
+	if setting.AccountMaxConcurrency > 0 && strings.TrimSpace(setting.AccountConcurrencyKey) != "" {
+		value, ok := accountConcurrency.Load(strings.TrimSpace(setting.AccountConcurrencyKey))
+		if ok {
+			counter := value.(*channelConcurrencyCounter)
+			counter.mu.Lock()
+			full := counter.active >= setting.AccountMaxConcurrency
+			counter.mu.Unlock()
+			if full {
+				return true
+			}
+		}
+	}
 	limit := setting.MaxConcurrency
 	if channelID <= 0 || limit <= 0 {
 		return false
@@ -317,27 +382,66 @@ func ReleaseChannelSelectionReservations(ctx *gin.Context) {
 }
 
 func TryAcquireChannelConcurrency(channelID int, setting dto.ChannelSettings) (*ChannelConcurrencyLease, bool) {
-	limit := setting.MaxConcurrency
+	channelLimit := setting.MaxConcurrency
+	accountLimit := setting.AccountMaxConcurrency
+	accountScopeKey := strings.TrimSpace(setting.AccountConcurrencyKey)
 	if channelID <= 0 {
-		return &ChannelConcurrencyLease{ChannelID: channelID, Limit: limit}, true
+		return &ChannelConcurrencyLease{ChannelID: channelID, Limit: channelLimit}, true
 	}
-	counter := getChannelConcurrencyCounter(channelID)
-	counter.mu.Lock()
-	defer counter.mu.Unlock()
-	if limit > 0 && counter.active >= limit {
+	channelCounter := getChannelConcurrencyCounter(channelID)
+	channelCounter.mu.Lock()
+	if channelLimit > 0 && channelCounter.active >= channelLimit {
+		active := channelCounter.active
+		channelCounter.mu.Unlock()
 		return &ChannelConcurrencyLease{
 			ChannelID:   channelID,
-			Limit:       limit,
-			activeAtHit: counter.active,
-			counter:     counter,
+			Limit:       channelLimit,
+			activeAtHit: active,
+			counter:     channelCounter,
 		}, false
 	}
-	counter.active++
+
+	var accountCounter *channelConcurrencyCounter
+	if accountLimit > 0 && accountScopeKey != "" {
+		accountCounter = getAccountConcurrencyCounter(accountScopeKey)
+		accountCounter.mu.Lock()
+		if accountCounter.active >= accountLimit {
+			active := accountCounter.active
+			accountCounter.mu.Unlock()
+			channelCounter.mu.Unlock()
+			return &ChannelConcurrencyLease{
+				ChannelID:   channelID,
+				Limit:       accountLimit,
+				ScopeKey:    accountScopeKey,
+				activeAtHit: active,
+				counter:     accountCounter,
+			}, false
+		}
+		accountCounter.active++
+		accountActive := accountCounter.active
+		channelCounter.active++
+		accountCounter.mu.Unlock()
+		channelCounter.mu.Unlock()
+		return &ChannelConcurrencyLease{
+			ChannelID:   channelID,
+			Limit:       accountLimit,
+			ScopeKey:    accountScopeKey,
+			activeAtHit: accountActive,
+			counter:     accountCounter,
+			accountHeld: accountCounter,
+			channelHeld: channelCounter,
+		}, true
+	}
+
+	channelCounter.active++
+	active := channelCounter.active
+	channelCounter.mu.Unlock()
 	return &ChannelConcurrencyLease{
 		ChannelID:   channelID,
-		Limit:       limit,
-		activeAtHit: counter.active,
-		counter:     counter,
+		Limit:       channelLimit,
+		activeAtHit: active,
+		counter:     channelCounter,
+		channelHeld: channelCounter,
 	}, true
 }
 
@@ -346,8 +450,28 @@ func TrackChannelConcurrency(channelID int, setting dto.ChannelSettings) *Channe
 	if channelID <= 0 {
 		return &ChannelConcurrencyLease{ChannelID: channelID, Limit: limit}
 	}
+	accountLimit := setting.AccountMaxConcurrency
+	accountScopeKey := strings.TrimSpace(setting.AccountConcurrencyKey)
 	counter := getChannelConcurrencyCounter(channelID)
 	counter.mu.Lock()
+	if accountLimit > 0 && accountScopeKey != "" {
+		accountCounter := getAccountConcurrencyCounter(accountScopeKey)
+		accountCounter.mu.Lock()
+		accountCounter.active++
+		active := accountCounter.active
+		counter.active++
+		accountCounter.mu.Unlock()
+		counter.mu.Unlock()
+		return &ChannelConcurrencyLease{
+			ChannelID:   channelID,
+			Limit:       accountLimit,
+			ScopeKey:    accountScopeKey,
+			activeAtHit: active,
+			counter:     accountCounter,
+			accountHeld: accountCounter,
+			channelHeld: counter,
+		}
+	}
 	counter.active++
 	active := counter.active
 	counter.mu.Unlock()
@@ -356,18 +480,31 @@ func TrackChannelConcurrency(channelID int, setting dto.ChannelSettings) *Channe
 		Limit:       limit,
 		activeAtHit: active,
 		counter:     counter,
+		channelHeld: counter,
 	}
 }
 
 func (lease *ChannelConcurrencyLease) Release() {
-	if lease == nil || lease.released || lease.counter == nil {
+	if lease == nil || lease.released {
 		return
 	}
-	lease.counter.mu.Lock()
-	if lease.counter.active > 0 {
-		lease.counter.active--
+	for _, counter := range []*channelConcurrencyCounter{lease.channelHeld, lease.accountHeld} {
+		if counter == nil {
+			continue
+		}
+		counter.mu.Lock()
+		if counter.active > 0 {
+			counter.active--
+		}
+		counter.mu.Unlock()
 	}
-	lease.counter.mu.Unlock()
+	if lease.accountHeld == nil && lease.channelHeld == nil && lease.counter != nil {
+		lease.counter.mu.Lock()
+		if lease.counter.active > 0 {
+			lease.counter.active--
+		}
+		lease.counter.mu.Unlock()
+	}
 	lease.released = true
 }
 
@@ -741,6 +878,10 @@ func logChannelConcurrencyInfo(ctx *gin.Context, message string) {
 func ClearChannelConcurrencyForTest() {
 	channelConcurrency.Range(func(key, value any) bool {
 		channelConcurrency.Delete(key)
+		return true
+	})
+	accountConcurrency.Range(func(key, value any) bool {
+		accountConcurrency.Delete(key)
 		return true
 	})
 	channelSelectionReservation.Range(func(key, value any) bool {

@@ -1,10 +1,12 @@
 package openai
 
 import (
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -121,6 +123,44 @@ func TestSetupRequestHeaderUsesOAuthJSONCredentialForOpenAIChannel(t *testing.T)
 	require.Equal(t, "codex_cli_rs", header.Get("originator"))
 }
 
+func TestSetupRequestHeaderUsesTeamOAuthJWTClaimsForAccountID(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	accessToken := testOpenAITeamJWT(t, map[string]interface{}{
+		"iss": "https://auth.openai.com",
+		"exp": float64(1781221788),
+		"https://api.openai.com/auth": map[string]interface{}{
+			"chatgpt_account_id": "acct-team-123",
+			"chatgpt_plan_type":  "team",
+			"chatgpt_user_id":    "user-fake",
+		},
+		"https://api.openai.com/profile": map[string]interface{}{
+			"email": "team-user@example.com",
+		},
+	})
+	adaptor := &Adaptor{}
+	header := http.Header{}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeOpenAI,
+			ApiKey:      `{"type":"codex","access_token":"` + accessToken + `","refresh_token":"rt_fake_refresh"}`,
+		},
+	}
+
+	err := adaptor.SetupRequestHeader(ctx, &header, info)
+
+	require.NoError(t, err)
+	require.Equal(t, "Bearer "+accessToken, header.Get("Authorization"))
+	require.Equal(t, "acct-team-123", header.Get("chatgpt-account-id"))
+	require.Equal(t, "responses=experimental", header.Get("OpenAI-Beta"))
+	require.Equal(t, "codex_cli_rs", header.Get("originator"))
+}
+
 func TestConvertOpenAIResponsesRequestTracksUpstreamSuffixEffort(t *testing.T) {
 	t.Parallel()
 
@@ -168,6 +208,16 @@ func TestNormalizeOpenAIResponseModelUsesRequestedModel(t *testing.T) {
 	require.Equal(t, "gpt-5.5", resp.Model)
 	require.Equal(t, "gpt-5.4", info.ResponseModelName)
 	require.Equal(t, "gpt-5.5", info.DownstreamModelName)
+}
+
+func testOpenAITeamJWT(t *testing.T, claims map[string]interface{}) string {
+	t.Helper()
+	header, err := common.Marshal(map[string]interface{}{"alg": "none"})
+	require.NoError(t, err)
+	payload, err := common.Marshal(claims)
+	require.NoError(t, err)
+	return base64.RawURLEncoding.EncodeToString(header) + "." +
+		base64.RawURLEncoding.EncodeToString(payload) + ".sig"
 }
 
 func TestNormalizeOpenAIStreamResponseModelUsesRequestedModel(t *testing.T) {

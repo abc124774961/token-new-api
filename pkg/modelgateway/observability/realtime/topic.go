@@ -480,6 +480,8 @@ func userRequestRecordFromRealtimeRecord(record userrequest.Record) controller.M
 		UpdatedAt:                 userRequestRecordUpdatedAt(record),
 		CompletedAt:               record.CompletedAt,
 		RequestID:                 record.RequestID,
+		UserID:                    record.UserID,
+		Username:                  strings.TrimSpace(record.Username),
 		RequestedModel:            record.RequestedModel,
 		RequestedGroup:            record.RequestedGroup,
 		SelectedGroup:             record.SelectedGroup,

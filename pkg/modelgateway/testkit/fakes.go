@@ -168,6 +168,7 @@ func normalizeRuntimeKeyForTest(key core.RuntimeKey) core.RuntimeKey {
 
 type FakeRuntimeStateProvider struct {
 	ActiveConcurrencyByChannel      map[int]int
+	ActiveConcurrencyByAccount      map[string]int
 	CooldownByChannel               map[int]bool
 	FailureAvoidanceByChannel       map[int]bool
 	FailureAvoidanceStatusByChannel map[int]*service.ChannelFailureAvoidanceStatus
@@ -180,6 +181,13 @@ func (p *FakeRuntimeStateProvider) ActiveConcurrency(channelID int) int {
 		return 0
 	}
 	return p.ActiveConcurrencyByChannel[channelID]
+}
+
+func (p *FakeRuntimeStateProvider) ActiveConcurrencyForIdentity(identity service.ChannelRuntimeIdentity) int {
+	if p == nil {
+		return 0
+	}
+	return p.ActiveConcurrencyByAccount[service.ChannelRuntimeConcurrencyScopeKey(identity)]
 }
 
 func (p *FakeRuntimeStateProvider) ConcurrencyCooldownActive(channelID int) bool {

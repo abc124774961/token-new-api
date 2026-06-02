@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
@@ -191,10 +192,15 @@ func appendClientRequestTraceInfo(relayInfo *relaycommon.RelayInfo, adminInfo ma
 		clientTrace["metadata_header_present"] = true
 	}
 	adminInfo["client_request"] = clientTrace
+	if codexLikeClient && len(traceHeaders) > 0 {
+		if _, _, err := model.UpsertCodexApplicationEnvironmentFromRequestHeaders(traceHeaders); err != nil {
+			common.SysLog("failed to collect real codex environment from request headers: " + err.Error())
+		}
+	}
 }
 
 func isSafeClientTraceHeader(key string) bool {
-	if key == "user-agent" || key == "content-type" || key == "openai-beta" {
+	if key == "user-agent" || key == "originator" || key == "content-type" || key == "openai-beta" {
 		return true
 	}
 	return strings.HasPrefix(key, "x-stainless-") ||

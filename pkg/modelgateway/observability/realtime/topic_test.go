@@ -160,6 +160,7 @@ func TestTopicPublishesProcessingUserRequestDelta(t *testing.T) {
 		Record: userrequest.Record{
 			CreatedAt:      time.Now().Unix(),
 			RequestID:      "req-ws-processing",
+			UserID:         42,
 			RequestedModel: "gpt-5.5",
 			RequestedGroup: "auto",
 			SelectedGroup:  "codex-plus",
@@ -178,6 +179,7 @@ func TestTopicPublishesProcessingUserRequestDelta(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, delta.UserRequestsRecent, 1)
 	require.Equal(t, "req-ws-processing", delta.UserRequestsRecent[0].RequestID)
+	require.Equal(t, 42, delta.UserRequestsRecent[0].UserID)
 	require.Equal(t, "processing", delta.UserRequestsRecent[0].Status)
 	require.Equal(t, "codex-plus", delta.UserRequestsRecent[0].ActualGroup)
 	require.Zero(t, delta.UserRequestsRecent[0].ActualGroupRatio)

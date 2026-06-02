@@ -1196,7 +1196,11 @@ function ChannelStatusContent({ data, windowDays }) {
           }
           detail={
             hasSmartRuntime
-              ? `${t('熔断')} ${formatNumber(runtime.circuit_open_runtime_keys)} / ${t('冷却')} ${formatNumber(runtime.cooldown_runtime_keys)}`
+              ? [
+                  `${t('熔断')} ${formatNumber(runtime.circuit_open_runtime_keys)}`,
+                  `${t('冷却')} ${formatNumber(runtime.cooldown_runtime_keys)}`,
+                  `${t('恢复观察')} ${formatNumber(runtime.probe_recovery_pending_runtime_keys)}`,
+                ].join(' / ')
               : `429 ${formatNumber(summary.recent_error_429)} / 5xx ${formatNumber(summary.recent_error_5xx)}`
           }
           tone={

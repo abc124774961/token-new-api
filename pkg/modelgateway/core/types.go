@@ -77,6 +77,7 @@ type ResourceRef struct {
 type AccountIdentity struct {
 	AccountID                    string `json:"account_id,omitempty"`
 	AccountType                  string `json:"account_type,omitempty"`
+	PlanType                     string `json:"plan_type,omitempty"`
 	Brand                        string `json:"brand,omitempty"`
 	Provider                     string `json:"provider,omitempty"`
 	CredentialIndex              int    `json:"credential_index,omitempty"`

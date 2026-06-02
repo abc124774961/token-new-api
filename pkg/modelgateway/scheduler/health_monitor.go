@@ -358,7 +358,7 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 		snapshot.FailureAvoidance = snapshot.FailureAvoidance || avoidance != nil
 	}
 	snapshot.FailureAvoidance = snapshot.FailureAvoidance || avoidance != nil
-	if !result.IsHealthProbe && result.Success && strings.TrimSpace(snapshot.ProbeRecoveryPhase) == core.ProbeRecoveryPhasePendingRealConfirmation {
+	if shouldClearScoreAnomalyRecoveryAfterRealSuccess(*snapshot, result, score, lowScoreThreshold) {
 		clearScoreAnomalyRecovery(snapshot)
 	}
 	scoreAnomalyPending := ScoreAnomalyFastProbePending(*snapshot)
@@ -479,9 +479,49 @@ func clearScoreAnomalyRecovery(snapshot *core.RuntimeSnapshot) {
 	if strings.TrimSpace(snapshot.ProbeTriggerReason) == core.ProbeReasonScoreAnomalyFastProbe {
 		snapshot.ProbeTriggerReason = ""
 	}
+	snapshot.ProbeRecoveryPending = false
 	snapshot.ProbeRecoveryPhase = ""
 	snapshot.ProbeFastRecoveryAttempts = 0
 	snapshot.ProbeAnomalyTriggerItems = nil
+}
+
+func shouldClearScoreAnomalyRecoveryAfterRealSuccess(snapshot core.RuntimeSnapshot, result core.AttemptResult, score core.ScoreResult, lowScoreThreshold float64) bool {
+	if result.IsHealthProbe || !result.Success || result.EmptyOutput || result.StreamInterrupted {
+		return false
+	}
+	if strings.TrimSpace(result.ExperienceIssue) != "" || attemptHasUpstreamFailureSignal(result) {
+		return false
+	}
+	if snapshot.FailureAvoidance || snapshot.CircuitOpen || snapshot.Cooldown || snapshot.ConfigErrorIsolated {
+		return false
+	}
+	if score.Total <= lowScoreThreshold {
+		return false
+	}
+	return scoreAnomalyRecoveryActive(snapshot)
+}
+
+func scoreAnomalyRecoveryActive(snapshot core.RuntimeSnapshot) bool {
+	switch strings.TrimSpace(snapshot.ProbeRecoveryPhase) {
+	case core.ProbeRecoveryPhaseFastProbe, core.ProbeRecoveryPhasePendingRealConfirmation:
+		return true
+	}
+	return strings.TrimSpace(snapshot.ProbeTriggerReason) == core.ProbeReasonScoreAnomalyFastProbe
+}
+
+func attemptHasUpstreamFailureSignal(result core.AttemptResult) bool {
+	if strings.TrimSpace(result.ErrorCategory) != "" ||
+		strings.TrimSpace(result.ErrorCode) != "" ||
+		strings.TrimSpace(result.ErrorType) != "" {
+		return true
+	}
+	if result.UpstreamStatus >= 400 {
+		return true
+	}
+	if result.StatusCode >= 500 {
+		return true
+	}
+	return false
 }
 
 func ewma(current float64, next float64) float64 {

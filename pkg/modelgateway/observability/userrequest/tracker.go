@@ -39,6 +39,8 @@ type Record struct {
 	UpdatedAt                 int64    `json:"updated_at"`
 	CompletedAt               int64    `json:"completed_at"`
 	RequestID                 string   `json:"request_id"`
+	UserID                    int      `json:"user_id,omitempty"`
+	Username                  string   `json:"username,omitempty"`
 	RequestedModel            string   `json:"requested_model"`
 	RequestedGroup            string   `json:"requested_group"`
 	SelectedGroup             string   `json:"selected_group,omitempty"`
@@ -152,6 +154,7 @@ func (t *Tracker) Start(record core.DispatchRecord) {
 		UpdatedAt:        now,
 		CompletedAt:      0,
 		RequestID:        strings.TrimSpace(record.Request.RequestID),
+		UserID:           record.Request.UserID,
 		RequestedModel:   strings.TrimSpace(record.Request.ModelName),
 		RequestedGroup:   strings.TrimSpace(record.Request.RequestedGroup),
 		SelectedGroup:    selectedGroup,
@@ -378,6 +381,8 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 			UpdatedAt:                 updatedAt,
 			CompletedAt:               summary.CompletedAt,
 			RequestID:                 summary.RequestId,
+			UserID:                    firstPositiveInt(pending.UserID, result.UserID),
+			Username:                  strings.TrimSpace(pending.Username),
 			RequestedModel:            summary.RequestedModel,
 			RequestedGroup:            summary.RequestedGroup,
 			SelectedGroup:             summary.SelectedGroup,
@@ -410,6 +415,8 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 		UpdatedAt:                 completedAt,
 		CompletedAt:               completedAt,
 		RequestID:                 strings.TrimSpace(result.RequestID),
+		UserID:                    firstPositiveInt(pending.UserID, result.UserID),
+		Username:                  strings.TrimSpace(pending.Username),
 		RequestedModel:            strings.TrimSpace(result.ModelName),
 		RequestedGroup:            strings.TrimSpace(result.RequestedGroup),
 		SelectedGroup:             strings.TrimSpace(result.SelectedGroup),
@@ -560,6 +567,15 @@ func maxInt(left int, right int) int {
 		return left
 	}
 	return right
+}
+
+func firstPositiveInt(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func firstNonEmpty(values ...string) string {

@@ -566,6 +566,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if plan != nil {
 			lastModelGatewayPlan = plan
 			lastModelGatewayChannel = channel
+			channelSetting = channelAccountScopedConcurrencySetting(c, channel, channelSetting)
 		}
 		concurrencyResult := currentRelayQueueManager().AcquireWithOptions(c.Request.Context(), plan, channel.Id, channelSetting, relayQueueAcquireOptions(plan))
 		queueWait := concurrencyResult.WaitTime
@@ -1079,6 +1080,27 @@ func selectedGroupPreConsumeTarget(info *relaycommon.RelayInfo) int {
 func selectedModelGatewayPlan(c *gin.Context) *modelgatewaycore.DispatchPlan {
 	plan, _ := modelgatewayintegration.GetSelectedPlan(c)
 	return plan
+}
+
+func channelAccountScopedConcurrencySetting(c *gin.Context, channel *model.Channel, setting dto.ChannelSettings) dto.ChannelSettings {
+	if channel == nil {
+		return setting
+	}
+	identity := relayRuntimeIdentity(c, channel.Id)
+	if !identity.HasAccountScope() || !identity.CredentialIndexSet {
+		return setting
+	}
+	limit := channel.ChannelInfo.AccountMaxConcurrency(identity.CredentialIndex)
+	if limit <= 0 {
+		return setting
+	}
+	scopeKey := service.ChannelRuntimeConcurrencyScopeKey(identity)
+	if scopeKey == "" {
+		return setting
+	}
+	setting.AccountMaxConcurrency = limit
+	setting.AccountConcurrencyKey = scopeKey
+	return setting
 }
 
 func relayRuntimeIdentity(c *gin.Context, channelID int) service.ChannelRuntimeIdentity {

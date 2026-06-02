@@ -16,6 +16,7 @@ type OAuthJSONCredential struct {
 	RefreshToken     string `json:"refresh_token,omitempty"`
 	IDToken          string `json:"id_token,omitempty"`
 	ChatGPTUserID    string `json:"chatgpt_user_id,omitempty"`
+	ChatGPTPlanType  string `json:"chatgpt_plan_type,omitempty"`
 	ExpiresAt        string `json:"expires_at,omitempty"`
 }
 
@@ -47,6 +48,7 @@ func ParseOAuthJSONCredentialLoose(raw string) (OAuthJSONCredential, bool) {
 		RefreshToken:     stringClaim(payload, "refresh_token"),
 		IDToken:          stringClaim(payload, "id_token"),
 		ChatGPTUserID:    stringClaim(payload, "chatgpt_user_id"),
+		ChatGPTPlanType:  stringClaim(payload, "chatgpt_plan_type"),
 		ExpiresAt:        expiresAtClaim(payload, "expires_at"),
 	}
 	credential.AccessToken = strings.TrimSpace(credential.AccessToken)
@@ -59,6 +61,7 @@ func ParseOAuthJSONCredentialLoose(raw string) (OAuthJSONCredential, bool) {
 	credential.RefreshToken = strings.TrimSpace(credential.RefreshToken)
 	credential.IDToken = strings.TrimSpace(credential.IDToken)
 	credential.ChatGPTUserID = strings.TrimSpace(credential.ChatGPTUserID)
+	credential.ChatGPTPlanType = strings.TrimSpace(strings.ToLower(credential.ChatGPTPlanType))
 	credential.ExpiresAt = strings.TrimSpace(credential.ExpiresAt)
 	enrichOAuthJSONCredential(&credential)
 	if credential.AccessToken == "" && credential.RefreshToken == "" && credential.IDToken == "" {
@@ -97,11 +100,19 @@ func NormalizeOAuthJSONCredentialMap(payload map[string]interface{}) bool {
 			payload["account_id"] = credential.AccountID
 		}
 	}
+	if credential.ChatGPTAccountID != "" {
+		if _, ok := payload["chatgpt_account_id"]; !ok || strings.TrimSpace(anyToString(payload["chatgpt_account_id"])) == "" {
+			payload["chatgpt_account_id"] = credential.ChatGPTAccountID
+		}
+	}
 	if credential.Email != "" {
 		payload["email"] = credential.Email
 	}
 	if credential.ChatGPTUserID != "" {
 		payload["chatgpt_user_id"] = credential.ChatGPTUserID
+	}
+	if credential.ChatGPTPlanType != "" {
+		payload["chatgpt_plan_type"] = credential.ChatGPTPlanType
 	}
 	if credential.ExpiresAt != "" {
 		payload["expires_at"] = credential.ExpiresAt
@@ -133,6 +144,11 @@ func enrichOAuthJSONCredential(credential *OAuthJSONCredential) {
 				credential.ChatGPTUserID = userID
 			} else if userID := stringClaim(auth, "user_id"); userID != "" {
 				credential.ChatGPTUserID = userID
+			}
+		}
+		if credential.ChatGPTPlanType == "" {
+			if planType := stringClaim(auth, "chatgpt_plan_type"); planType != "" {
+				credential.ChatGPTPlanType = strings.ToLower(planType)
 			}
 		}
 		if credential.Email == "" {

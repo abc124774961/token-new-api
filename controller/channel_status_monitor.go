@@ -152,43 +152,44 @@ type ChannelStatusMonitorSummary struct {
 }
 
 type ChannelStatusMonitorRuntimeStats struct {
-	RuntimeKeys                 int     `json:"runtime_keys"`
-	Channels                    int     `json:"channels"`
-	AvailableRuntimeKeys        int     `json:"available_runtime_keys"`
-	HealthyRuntimeKeys          int     `json:"healthy_runtime_keys"`
-	RiskRuntimeKeys             int     `json:"risk_runtime_keys"`
-	CircuitOpenRuntimeKeys      int     `json:"circuit_open_runtime_keys"`
-	CircuitHalfOpenRuntimeKeys  int     `json:"circuit_half_open_runtime_keys"`
-	CooldownRuntimeKeys         int     `json:"cooldown_runtime_keys"`
-	FailureAvoidanceRuntimeKeys int     `json:"failure_avoidance_runtime_keys"`
-	HighPressureRuntimeKeys     int     `json:"high_pressure_runtime_keys"`
-	ConfigIsolatedRuntimeKeys   int     `json:"config_isolated_runtime_keys"`
-	AvgScore                    float64 `json:"avg_score"`
-	AvgRoutingScore             float64 `json:"avg_routing_score"`
-	AvgSuccessRate              float64 `json:"avg_success_rate"`
-	AvgTTFTMs                   float64 `json:"avg_ttft_ms"`
-	AvgDurationMs               float64 `json:"avg_duration_ms"`
-	AvgCostItemScore            float64 `json:"avg_cost_item_score"`
-	AvgCostRatio                float64 `json:"avg_cost_ratio"`
-	CostPricingMode             string  `json:"cost_pricing_mode,omitempty"`
-	AvgGroupPriorityRatio       float64 `json:"avg_group_priority_ratio"`
-	AvgEmptyOutputRate          float64 `json:"avg_empty_output_rate"`
-	AvgExperienceIssueRate      float64 `json:"avg_experience_issue_rate"`
-	SampleCount                 int     `json:"sample_count"`
-	RealSampleCount30m          int     `json:"real_sample_count_30m"`
-	ActiveConcurrency           int     `json:"active_concurrency"`
-	MaxConcurrency              int     `json:"max_concurrency"`
-	QueueDepth                  int     `json:"queue_depth"`
-	QueueCapacity               int     `json:"queue_capacity"`
-	FirstBytePending            int     `json:"first_byte_pending"`
-	SlowFirstBytePending        int     `json:"slow_first_byte_pending"`
-	OldestFirstByteWaitMs       float64 `json:"oldest_first_byte_wait_ms"`
-	LastRealAttemptAt           int64   `json:"last_real_attempt_at,omitempty"`
-	LastRealSuccessAt           int64   `json:"last_real_success_at,omitempty"`
-	LastRealFailureAt           int64   `json:"last_real_failure_at,omitempty"`
-	LastProbeAt                 int64   `json:"last_probe_at,omitempty"`
-	LastProbeSuccessAt          int64   `json:"last_probe_success_at,omitempty"`
-	HealthStatus                string  `json:"health_status"`
+	RuntimeKeys                     int     `json:"runtime_keys"`
+	Channels                        int     `json:"channels"`
+	AvailableRuntimeKeys            int     `json:"available_runtime_keys"`
+	HealthyRuntimeKeys              int     `json:"healthy_runtime_keys"`
+	RiskRuntimeKeys                 int     `json:"risk_runtime_keys"`
+	CircuitOpenRuntimeKeys          int     `json:"circuit_open_runtime_keys"`
+	CircuitHalfOpenRuntimeKeys      int     `json:"circuit_half_open_runtime_keys"`
+	CooldownRuntimeKeys             int     `json:"cooldown_runtime_keys"`
+	FailureAvoidanceRuntimeKeys     int     `json:"failure_avoidance_runtime_keys"`
+	ProbeRecoveryPendingRuntimeKeys int     `json:"probe_recovery_pending_runtime_keys"`
+	HighPressureRuntimeKeys         int     `json:"high_pressure_runtime_keys"`
+	ConfigIsolatedRuntimeKeys       int     `json:"config_isolated_runtime_keys"`
+	AvgScore                        float64 `json:"avg_score"`
+	AvgRoutingScore                 float64 `json:"avg_routing_score"`
+	AvgSuccessRate                  float64 `json:"avg_success_rate"`
+	AvgTTFTMs                       float64 `json:"avg_ttft_ms"`
+	AvgDurationMs                   float64 `json:"avg_duration_ms"`
+	AvgCostItemScore                float64 `json:"avg_cost_item_score"`
+	AvgCostRatio                    float64 `json:"avg_cost_ratio"`
+	CostPricingMode                 string  `json:"cost_pricing_mode,omitempty"`
+	AvgGroupPriorityRatio           float64 `json:"avg_group_priority_ratio"`
+	AvgEmptyOutputRate              float64 `json:"avg_empty_output_rate"`
+	AvgExperienceIssueRate          float64 `json:"avg_experience_issue_rate"`
+	SampleCount                     int     `json:"sample_count"`
+	RealSampleCount30m              int     `json:"real_sample_count_30m"`
+	ActiveConcurrency               int     `json:"active_concurrency"`
+	MaxConcurrency                  int     `json:"max_concurrency"`
+	QueueDepth                      int     `json:"queue_depth"`
+	QueueCapacity                   int     `json:"queue_capacity"`
+	FirstBytePending                int     `json:"first_byte_pending"`
+	SlowFirstBytePending            int     `json:"slow_first_byte_pending"`
+	OldestFirstByteWaitMs           float64 `json:"oldest_first_byte_wait_ms"`
+	LastRealAttemptAt               int64   `json:"last_real_attempt_at,omitempty"`
+	LastRealSuccessAt               int64   `json:"last_real_success_at,omitempty"`
+	LastRealFailureAt               int64   `json:"last_real_failure_at,omitempty"`
+	LastProbeAt                     int64   `json:"last_probe_at,omitempty"`
+	LastProbeSuccessAt              int64   `json:"last_probe_success_at,omitempty"`
+	HealthStatus                    string  `json:"health_status"`
 }
 
 type ChannelStatusMonitorResponse struct {
@@ -680,6 +681,9 @@ func (a *channelStatusRuntimeAgg) add(item modelgatewayobservability.RuntimeStat
 	}
 	if item.FailureAvoidance {
 		a.stats.FailureAvoidanceRuntimeKeys++
+	}
+	if item.ProbeRecoveryPending {
+		a.stats.ProbeRecoveryPendingRuntimeKeys++
 	}
 	if item.HealthStatus == "high_pressure" || runtimeMonitorPressureRatio(item) >= 0.9 {
 		a.stats.HighPressureRuntimeKeys++

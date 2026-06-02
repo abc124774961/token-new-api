@@ -473,6 +473,39 @@ func TestChannelMonitorRuntimeDoesNotFillUserRequestHistory(t *testing.T) {
 	require.Empty(t, response.Groups[0].RecentStatus)
 }
 
+func TestChannelMonitorRuntimeCountsProbeRecoveryPending(t *testing.T) {
+	channel := &model.Channel{
+		Id:     32,
+		Name:   "runtime-recovery-channel",
+		Status: common.ChannelStatusEnabled,
+		Group:  "codex-pro",
+		Models: "gpt-5.5",
+	}
+	response := buildChannelStatusMonitorFromRowsWithChannels(24, []*model.Channel{channel}, nil, nil)
+
+	applyChannelStatusMonitorRuntimeStatus(&response, modelgatewayobservability.RuntimeStatusResponse{
+		Items: []modelgatewayobservability.RuntimeStatusItem{
+			{
+				ChannelID:            32,
+				Group:                "codex-pro",
+				HealthStatus:         "healthy",
+				ProbeRecoveryPending: true,
+				SampleCount:          2,
+				SuccessRate:          1,
+				ScoreTotal:           0.9,
+			},
+		},
+	})
+
+	require.NotNil(t, response.Summary.Runtime)
+	require.Equal(t, 1, response.Summary.Runtime.ProbeRecoveryPendingRuntimeKeys)
+	require.Len(t, response.Groups, 1)
+	require.NotNil(t, response.Groups[0].Runtime)
+	require.Equal(t, 1, response.Groups[0].Runtime.ProbeRecoveryPendingRuntimeKeys)
+	require.NotNil(t, response.Groups[0].Channels[0].Runtime)
+	require.Equal(t, 1, response.Groups[0].Channels[0].Runtime.ProbeRecoveryPendingRuntimeKeys)
+}
+
 func TestChannelMonitorRuntimeRecentStatusDoesNotOverrideUserRequests(t *testing.T) {
 	channel := &model.Channel{
 		Id:     31,

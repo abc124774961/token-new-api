@@ -15,6 +15,7 @@ func TestTrackerStartSnapshotsProcessingWithoutDatabase(t *testing.T) {
 	tracker.Start(core.DispatchRecord{
 		Request: core.DispatchRequest{
 			RequestID:      "req-live",
+			UserID:         42,
 			RequestedGroup: "auto",
 			ModelName:      "gpt-5.5",
 		},
@@ -25,6 +26,7 @@ func TestTrackerStartSnapshotsProcessingWithoutDatabase(t *testing.T) {
 	items := tracker.Snapshot(5, Filters{Model: "gpt-5.5", Group: "codex-plus"})
 	require.Len(t, items, 1)
 	require.Equal(t, "req-live", items[0].RequestID)
+	require.Equal(t, 42, items[0].UserID)
 	require.Equal(t, StatusProcessing, items[0].Status)
 	require.Equal(t, now.Unix(), items[0].CreatedAt)
 	require.Equal(t, now.Unix(), items[0].UpdatedAt)
@@ -120,7 +122,7 @@ func TestTrackerFinishRemovesProcessingAndPublishesFinalSummary(t *testing.T) {
 		events = append(events, event)
 	})
 	tracker.Start(core.DispatchRecord{
-		Request:    core.DispatchRequest{RequestID: "req-final", RequestedGroup: "auto", ModelName: "gpt-5.5"},
+		Request:    core.DispatchRequest{RequestID: "req-final", UserID: 88, RequestedGroup: "auto", ModelName: "gpt-5.5"},
 		Plan:       &core.DispatchPlan{SelectedGroup: "codex-plus"},
 		RecordedAt: time.Unix(100, 0),
 	})
@@ -155,6 +157,7 @@ func TestTrackerFinishRemovesProcessingAndPublishesFinalSummary(t *testing.T) {
 	require.Equal(t, EventFinished, events[1].Kind)
 	require.Equal(t, StatusSuccess, events[1].Record.Status)
 	require.True(t, events[1].Record.Recovered)
+	require.Equal(t, 88, events[1].Record.UserID)
 	require.Equal(t, 2, events[1].Record.Attempts)
 	require.Equal(t, 18, events[1].Record.FinalChannelID)
 	require.Equal(t, "codex-fast", events[1].Record.FinalChannelName)
@@ -290,6 +293,32 @@ func TestTrackerClientAbortOverridesStreamInterruptedCategory(t *testing.T) {
 	require.Equal(t, "client_aborted", events[0].Record.Status)
 	require.True(t, events[0].Record.ClientAborted)
 	require.Equal(t, "client_aborted", events[0].Record.FinalErrorCategory)
+}
+
+func TestTrackerFinishWithoutPendingCarriesResultUserID(t *testing.T) {
+	tracker := NewTracker(10, time.Minute)
+	var finished Event
+	tracker.AddObserver(func(event Event) {
+		if event.Kind == EventFinished {
+			finished = event
+		}
+	})
+
+	tracker.Finish(core.AttemptResult{
+		RequestID:      "req-result-user",
+		UserID:         99,
+		AttemptIndex:   0,
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		ModelName:      "gpt-5.5",
+		Success:        true,
+		Duration:       time.Second,
+	}, nil)
+
+	require.Equal(t, EventFinished, finished.Kind)
+	require.Equal(t, "req-result-user", finished.Record.RequestID)
+	require.Equal(t, 99, finished.Record.UserID)
+	require.Equal(t, StatusSuccess, finished.Record.Status)
 }
 
 func TestTrackerPrunesExpiredProcessingRequests(t *testing.T) {

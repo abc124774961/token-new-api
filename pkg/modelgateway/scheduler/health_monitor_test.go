@@ -826,6 +826,103 @@ func TestRuntimeHealthMonitorScoreAnomalyRecoveryRequiresTriggeredItems(t *testi
 	require.True(t, snapshot.ProbeRecoveryPending)
 }
 
+func TestRuntimeHealthMonitorClearsScoreAnomalyRecoveryAfterHealthyRealSuccess(t *testing.T) {
+	setting := scheduler_setting.DefaultSetting()
+	setting.ProbeRecoverableScoreItems = []string{"completion_rate", "ttft_latency", "duration_latency"}
+	setting.ProbeLowScoreThreshold = 0.62
+	restoreSetting := scheduler_setting.SetSettingForTest(setting)
+	t.Cleanup(restoreSetting)
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 133, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                               key,
+		SampleCount:                       8,
+		SuccessRate:                       1,
+		CostRatio:                         1,
+		CostReferenceRatio:                1,
+		GroupPriorityRatio:                1,
+		RecoverableQualityBaseline:        0.86,
+		RecoverableQualityBaselineSamples: 5,
+		RecoverableQualityItemBaselines: map[string]float64{
+			"ttft_latency": 0.95,
+		},
+		ProbeRecoveryPending:      true,
+		ProbeTriggerReason:        core.ProbeReasonScoreAnomalyFastProbe,
+		ProbeRecoveryPhase:        core.ProbeRecoveryPhaseFastProbe,
+		ProbeFastRecoveryAttempts: 1,
+		ProbeAnomalyTriggerItems:  []string{"ttft_latency"},
+	})
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:        key,
+		ChannelID:  133,
+		ModelName:  "gpt-5.5",
+		Success:    true,
+		StatusCode: http.StatusOK,
+		Duration:   1200 * time.Millisecond,
+		TTFT:       4 * time.Second,
+		ObservedAt: time.Now(),
+	})
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.False(t, snapshot.ProbeRecoveryPending)
+	require.Empty(t, snapshot.ProbeTriggerReason)
+	require.Empty(t, snapshot.ProbeRecoveryPhase)
+	require.Zero(t, snapshot.ProbeFastRecoveryAttempts)
+	require.Empty(t, snapshot.ProbeAnomalyTriggerItems)
+}
+
+func TestRuntimeHealthMonitorKeepsScoreAnomalyRecoveryWhenRealSuccessHasEmptyOutput(t *testing.T) {
+	setting := scheduler_setting.DefaultSetting()
+	setting.ProbeRecoverableScoreItems = []string{"completion_rate", "ttft_latency", "duration_latency", "empty_output_rate"}
+	setting.ProbeLowScoreThreshold = 0.62
+	restoreSetting := scheduler_setting.SetSettingForTest(setting)
+	t.Cleanup(restoreSetting)
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: 135, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                               key,
+		SampleCount:                       8,
+		SuccessRate:                       1,
+		CostRatio:                         1,
+		CostReferenceRatio:                1,
+		GroupPriorityRatio:                1,
+		RecoverableQualityBaseline:        0.86,
+		RecoverableQualityBaselineSamples: 5,
+		RecoverableQualityItemBaselines: map[string]float64{
+			"ttft_latency": 0.95,
+		},
+		ProbeRecoveryPending:      true,
+		ProbeTriggerReason:        core.ProbeReasonScoreAnomalyFastProbe,
+		ProbeRecoveryPhase:        core.ProbeRecoveryPhaseFastProbe,
+		ProbeFastRecoveryAttempts: 1,
+		ProbeAnomalyTriggerItems:  []string{"ttft_latency"},
+	})
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:         key,
+		ChannelID:   135,
+		ModelName:   "gpt-5.5",
+		Success:     true,
+		StatusCode:  http.StatusOK,
+		Duration:    1200 * time.Millisecond,
+		TTFT:        4 * time.Second,
+		EmptyOutput: true,
+		ObservedAt:  time.Now(),
+	})
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.True(t, snapshot.ProbeRecoveryPending)
+	require.Equal(t, core.ProbeReasonScoreAnomalyFastProbe, snapshot.ProbeTriggerReason)
+	require.Equal(t, core.ProbeRecoveryPhaseFastProbe, snapshot.ProbeRecoveryPhase)
+}
+
 func TestRuntimeHealthMonitorMissingSamplesRequireCurrentRealSuccess(t *testing.T) {
 	setting := scheduler_setting.DefaultSetting()
 	setting.ProbeRecoverableScoreItems = []string{"completion_rate", "ttft_latency", "duration_latency"}

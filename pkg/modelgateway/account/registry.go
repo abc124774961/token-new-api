@@ -32,6 +32,7 @@ type ChannelAccount struct {
 	CredentialRef      core.CredentialRef   `json:"credential_ref"`
 	ProxyRef           core.ProxyRef        `json:"proxy_ref,omitempty"`
 	CodexEnvironmentID int                  `json:"codex_environment_id,omitempty"`
+	MaxConcurrency     int                  `json:"max_concurrency,omitempty"`
 	ChannelID          int                  `json:"channel_id"`
 	CredentialIndex    int                  `json:"credential_index"`
 	KeyEnabled         bool                 `json:"key_enabled"`
@@ -79,6 +80,7 @@ func (r *Registry) AccountsForChannel(channel *model.Channel) []ChannelAccount {
 			CredentialRef:      credentialRef,
 			ProxyRef:           proxyRefForChannelKey(channel, idx),
 			CodexEnvironmentID: CodexEnvironmentIDForChannelKey(channel, idx, key),
+			MaxConcurrency:     channel.ChannelInfo.AccountMaxConcurrency(idx),
 			ChannelID:          channel.Id,
 			CredentialIndex:    idx,
 			KeyEnabled:         enabled,
@@ -108,6 +110,7 @@ func AccountIdentityForChannelKey(channel *model.Channel, credentialIndex int, r
 	provider := providerForChannelKey(channel, rawKey)
 	brand := brandForChannelKey(channel, rawKey)
 	accountType := accountTypeForChannelKey(channel, credentialIndex, rawKey)
+	planType := planTypeForChannelKey(channel, rawKey)
 	subjectSource := subjectSourceForChannelKey(channel, rawKey)
 	subjectFP := fingerprint(subjectSource)
 	credentialFP := fingerprint(credentialSourceForKey(rawKey))
@@ -116,6 +119,7 @@ func AccountIdentityForChannelKey(channel *model.Channel, credentialIndex int, r
 	return core.AccountIdentity{
 		AccountID:                    accountIdentityKey,
 		AccountType:                  accountType,
+		PlanType:                     planType,
 		Brand:                        brand,
 		Provider:                     provider,
 		CredentialIndex:              credentialIndex,
@@ -126,6 +130,35 @@ func AccountIdentityForChannelKey(channel *model.Channel, credentialIndex int, r
 		DisplayName:                  fmt.Sprintf("%s #%d", brand, credentialIndex+1),
 		Status:                       statusForChannelKey(channel, credentialIndex),
 	}
+}
+
+func planTypeForChannelKey(channel *model.Channel, rawKey string) string {
+	if channel == nil {
+		return ""
+	}
+	key := strings.TrimSpace(rawKey)
+	if !strings.HasPrefix(key, "{") {
+		return ""
+	}
+	if channel.Type == constant.ChannelTypeCodex || channel.Type == constant.ChannelTypeOpenAI {
+		if oauthKey, ok := codexauth.ParseOAuthJSONCredentialLoose(key); ok {
+			if planType := strings.ToLower(strings.TrimSpace(oauthKey.ChatGPTPlanType)); planType != "" {
+				return planType
+			}
+		}
+	}
+	var payload map[string]interface{}
+	if err := common.Unmarshal([]byte(key), &payload); err != nil {
+		return ""
+	}
+	for _, field := range []string{"plan_type", "chatgpt_plan_type", "account_plan_type"} {
+		if value, ok := payload[field].(string); ok {
+			if planType := strings.ToLower(strings.TrimSpace(value)); planType != "" {
+				return planType
+			}
+		}
+	}
+	return ""
 }
 
 func RuntimeKeyForChannelAccount(base core.RuntimeKey, account ChannelAccount) core.RuntimeKey {

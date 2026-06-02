@@ -29,6 +29,10 @@ type ProbeScheduler struct {
 	stop          chan struct{}
 	cancel        context.CancelFunc
 	once          sync.Once
+	stateMu       sync.RWMutex
+	startedAt     int64
+	lastTickAt    int64
+	nextTickAt    int64
 }
 
 var (
@@ -36,6 +40,20 @@ var (
 	defaultProbeScheduler   *ProbeScheduler
 	immediateProbeRecorder  = recording.NewAsyncExecutionRecorder(64)
 )
+
+type SchedulerStatus struct {
+	Enabled                bool  `json:"enabled"`
+	Running                bool  `json:"running"`
+	StartedAt              int64 `json:"started_at,omitempty"`
+	LastTickAt             int64 `json:"last_tick_at,omitempty"`
+	NextTickAt             int64 `json:"next_tick_at,omitempty"`
+	RemainingSeconds       int64 `json:"remaining_seconds,omitempty"`
+	ProbeIntervalSeconds   int64 `json:"probe_interval_seconds,omitempty"`
+	ProbeWorkerCount       int   `json:"probe_worker_count,omitempty"`
+	ProbeMaxPerTick        int   `json:"probe_max_per_tick,omitempty"`
+	MasterNode             bool  `json:"master_node"`
+	RelayInvokerRegistered bool  `json:"relay_invoker_registered"`
+}
 
 func NewProbeScheduler(config ProbeConfig, selector *ProbeSelector, executor *ProbeExecutor, recorder *recording.AsyncExecutionRecorder) *ProbeScheduler {
 	config = normalizeProbeConfig(config)
@@ -121,6 +139,8 @@ func (s *ProbeScheduler) run(ctx context.Context) {
 	defer ticker.Stop()
 	common.SysLog(fmt.Sprintf("model gateway probe scheduler started: interval=%s workers=%d max_per_tick=%d timeout=%s",
 		s.config.Interval, s.config.WorkerCount, s.config.MaxPerTick, s.config.Timeout))
+	now := time.Now()
+	s.markTickSchedule(now, now.Add(s.config.Interval))
 	s.tick(ctx)
 	for {
 		select {
@@ -128,10 +148,55 @@ func (s *ProbeScheduler) run(ctx context.Context) {
 			return
 		case <-s.stop:
 			return
-		case <-ticker.C:
+		case tickAt := <-ticker.C:
+			nextTickAt := tickAt.Add(s.config.Interval)
+			for !nextTickAt.After(time.Now()) {
+				nextTickAt = nextTickAt.Add(s.config.Interval)
+			}
+			s.markTickSchedule(time.Now(), nextTickAt)
 			s.tick(ctx)
 		}
 	}
+}
+
+func (s *ProbeScheduler) markTickSchedule(tickAt time.Time, nextTickAt time.Time) {
+	if s == nil {
+		return
+	}
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if s.startedAt <= 0 {
+		s.startedAt = tickAt.Unix()
+	}
+	s.lastTickAt = tickAt.Unix()
+	s.nextTickAt = nextTickAt.Unix()
+}
+
+func (s *ProbeScheduler) Status() SchedulerStatus {
+	if s == nil {
+		return SchedulerStatus{}
+	}
+	config := normalizeProbeConfig(s.config)
+	status := SchedulerStatus{
+		Enabled:              config.Enabled,
+		Running:              true,
+		ProbeIntervalSeconds: int64(config.Interval.Seconds()),
+		ProbeWorkerCount:     config.WorkerCount,
+		ProbeMaxPerTick:      config.MaxPerTick,
+		MasterNode:           common.IsMasterNode,
+	}
+	s.stateMu.RLock()
+	status.StartedAt = s.startedAt
+	status.LastTickAt = s.lastTickAt
+	status.NextTickAt = s.nextTickAt
+	s.stateMu.RUnlock()
+	if status.NextTickAt > 0 {
+		status.RemainingSeconds = status.NextTickAt - common.GetTimestamp()
+		if status.RemainingSeconds < 0 {
+			status.RemainingSeconds = 0
+		}
+	}
+	return status
 }
 
 func (s *ProbeScheduler) tick(ctx context.Context) {
@@ -403,6 +468,34 @@ func DefaultProbeSchedulerRunning() bool {
 	defaultProbeSchedulerMu.Lock()
 	defer defaultProbeSchedulerMu.Unlock()
 	return defaultProbeScheduler != nil
+}
+
+func DefaultProbeSchedulerStatus() SchedulerStatus {
+	setting := scheduler_setting.GetSetting()
+	config := normalizeProbeConfig(ProbeConfig{
+		Enabled:     setting.ProbeEnabled,
+		Interval:    time.Duration(setting.ProbeIntervalSeconds) * time.Second,
+		WorkerCount: setting.ProbeWorkerCount,
+		MaxPerTick:  setting.ProbeMaxPerTick,
+	})
+	status := SchedulerStatus{
+		Enabled:                config.Enabled,
+		Running:                false,
+		ProbeIntervalSeconds:   int64(config.Interval.Seconds()),
+		ProbeWorkerCount:       config.WorkerCount,
+		ProbeMaxPerTick:        config.MaxPerTick,
+		MasterNode:             common.IsMasterNode,
+		RelayInvokerRegistered: relayInvoker != nil,
+	}
+	defaultProbeSchedulerMu.Lock()
+	scheduler := defaultProbeScheduler
+	defaultProbeSchedulerMu.Unlock()
+	if scheduler == nil {
+		return status
+	}
+	status = scheduler.Status()
+	status.RelayInvokerRegistered = relayInvoker != nil
+	return status
 }
 
 func stopDefaultProbeSchedulerLocked() {

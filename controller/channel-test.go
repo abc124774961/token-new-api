@@ -60,6 +60,8 @@ type accountCapabilityProbeResult struct {
 	OAuthJSON    bool                           `json:"oauth_json"`
 }
 
+const channelAccountCapabilityProbeDefaultModel = "gpt-5.5"
+
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
 	normalized := strings.TrimSpace(endpointType)
 	if normalized != "" {
@@ -162,6 +164,7 @@ func channelTestOAuthJSONCredentialNeedsAccessRefresh(channel *model.Channel, op
 }
 
 func probeChannelAccountCapabilities(c *gin.Context, channel *model.Channel, credentialIndex int, testModel string) (accountCapabilityProbeResult, error) {
+	testModel = normalizeChannelAccountCapabilityProbeModel(testModel)
 	if channel == nil {
 		return accountCapabilityProbeResult{}, errors.New("渠道不存在")
 	}
@@ -173,7 +176,7 @@ func probeChannelAccountCapabilities(c *gin.Context, channel *model.Channel, cre
 		return accountCapabilityProbeResult{}, errors.New("该渠道暂不支持账号权限检测")
 	}
 	if isOAuthJSONAccountKey(keys[credentialIndex]) || codexauth.LooksLikeOAuthJSONCredential(keys[credentialIndex]) {
-		result, err := service.ProbeCodexOAuthAccountCapabilities(c.Request.Context(), channel, credentialIndex, service.CodexCapabilityProbeOptions{})
+		result, err := service.ProbeCodexOAuthAccountCapabilities(c.Request.Context(), channel, credentialIndex, service.CodexCapabilityProbeOptions{Model: testModel})
 		if err != nil {
 			return accountCapabilityProbeResult{}, err
 		}
@@ -248,6 +251,7 @@ func probeChannelAccountCapabilities(c *gin.Context, channel *model.Channel, cre
 }
 
 func probePlatformAccountCapabilities(c *gin.Context, channel *model.Channel, credentialIndex int, testModel string) (accountCapabilityProbeResult, error) {
+	testModel = normalizeChannelAccountCapabilityProbeModel(testModel)
 	if channel == nil {
 		return accountCapabilityProbeResult{}, errors.New("渠道不存在")
 	}
@@ -259,7 +263,7 @@ func probePlatformAccountCapabilities(c *gin.Context, channel *model.Channel, cr
 		return accountCapabilityProbeResult{}, errors.New("该渠道暂不支持 Platform API 诊断")
 	}
 	if isOAuthJSONAccountKey(keys[credentialIndex]) || codexauth.LooksLikeOAuthJSONCredential(keys[credentialIndex]) {
-		result, err := service.ProbeCodexOAuthPlatformCapabilities(c.Request.Context(), channel, credentialIndex)
+		result, err := service.ProbeCodexOAuthPlatformCapabilities(c.Request.Context(), channel, credentialIndex, service.CodexCapabilityProbeOptions{Model: testModel})
 		if err != nil {
 			return accountCapabilityProbeResult{}, err
 		}
@@ -327,6 +331,13 @@ func probePlatformAccountCapabilities(c *gin.Context, channel *model.Channel, cr
 		Capabilities: capability,
 		OAuthJSON:    isOAuthJSONAccountKey(keys[credentialIndex]),
 	}, nil
+}
+
+func normalizeChannelAccountCapabilityProbeModel(testModel string) string {
+	if normalized := strings.TrimSpace(testModel); normalized != "" {
+		return normalized
+	}
+	return channelAccountCapabilityProbeDefaultModel
 }
 
 func runChannelCapabilityProbeTest(c *gin.Context, channel *model.Channel, testModel string, endpointType string, isStream bool, options channelTestOptions) (*model.Channel, testResult) {

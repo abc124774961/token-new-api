@@ -33,6 +33,7 @@ import {
   Checkbox,
   Empty,
   Input,
+  InputNumber,
   SideSheet,
   Modal,
   Popconfirm,
@@ -92,6 +93,7 @@ const CHANNEL_ACCOUNT_IMPORT_FILE_ACCEPT =
   '.zip,.json,.txt,.ndjson,application/zip,application/json,text/plain';
 const XAUTO_NEWAPI_PACKAGE_TYPE = 'newapi-channel-files';
 const CHANNEL_ACCOUNT_RECONCILE_CACHE_TTL_MS = 30 * 1000;
+const CHANNEL_ACCOUNT_TEST_MODEL = 'gpt-5.5';
 
 function unwrapApiData(response) {
   return response?.data?.data || response?.data || {};
@@ -258,6 +260,30 @@ function codexEnvironmentSubtitle(environment, t) {
     .map((value) => String(value || '').trim())
     .filter(Boolean);
   return parts.length > 0 ? parts.join(' · ') : t('暂无环境特征');
+}
+
+function codexEnvironmentSourceLabel(environment, t) {
+  const source = String(environment?.source || '').trim();
+  if (source === 'real_request') return t('真实请求样本');
+  if (source === 'system_seed') return t('模拟环境');
+  if (source === 'custom') return t('自定义环境');
+  return source || t('未知来源');
+}
+
+function codexEnvironmentSourceColor(environment) {
+  const source = String(environment?.source || '').trim();
+  if (environment?.enabled === false) return 'grey';
+  if (source === 'real_request') return 'teal';
+  if (source === 'system_seed') return 'orange';
+  if (source === 'custom') return 'blue';
+  return 'grey';
+}
+
+function codexEnvironmentSelectable(environment) {
+  return (
+    environment?.enabled !== false &&
+    String(environment?.source || '').trim() === 'real_request'
+  );
 }
 
 function codexEnvironmentHeaderEntries(environment) {
@@ -451,6 +477,93 @@ function buildCredentialTypeOptions(t) {
     { value: 'session_cookie', label: t('Session Cookie') },
     { value: 'composite', label: t('组合凭证') },
   ];
+}
+
+function accountCredentialTypeLabel(value, t) {
+  switch (String(value || '').toLowerCase()) {
+    case 'api_key':
+      return t('API Key');
+    case 'json_auth':
+      return t('JSON 授权');
+    case 'oauth_account':
+      return t('OAuth 账号');
+    case 'token_key':
+      return t('Token Key');
+    case 'session_cookie':
+      return t('Session Cookie');
+    case 'composite':
+      return t('组合凭证');
+    default:
+      return value || '--';
+  }
+}
+
+function normalizeAccountPlanType(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function accountPlanTypeLabel(value) {
+  switch (normalizeAccountPlanType(value)) {
+    case 'free':
+      return 'Free';
+    case 'plus':
+      return 'Plus';
+    case 'pro':
+      return 'Pro';
+    case 'team':
+      return 'Team';
+    case 'enterprise':
+      return 'Enterprise';
+    default:
+      return String(value || '').trim();
+  }
+}
+
+function accountPlanTypeColor(value) {
+  switch (normalizeAccountPlanType(value)) {
+    case 'enterprise':
+      return 'green';
+    case 'team':
+      return 'cyan';
+    case 'pro':
+      return 'blue';
+    case 'plus':
+      return 'violet';
+    case 'free':
+      return 'amber';
+    default:
+      return 'grey';
+  }
+}
+
+function AccountTypeTags({ record, t, showBrand = false }) {
+  const identity = record?.account_identity || {};
+  const resource = record?.resource_ref || {};
+  const brand = identity.brand || resource.brand || record?.brand || '';
+  const accountType = identity.account_type || record?.account_type || '';
+  const planType = identity.plan_type || record?.plan_type || '';
+  return (
+    <Space spacing={6} wrap>
+      {showBrand ? (
+        <Tag color='cyan' type='light' shape='circle' size='small'>
+          {brand || '--'}
+        </Tag>
+      ) : null}
+      <Tag color='blue' type='light' shape='circle' size='small'>
+        {accountCredentialTypeLabel(accountType, t)}
+      </Tag>
+      {planType ? (
+        <Tag
+          color={accountPlanTypeColor(planType)}
+          type='light'
+          shape='circle'
+          size='small'
+        >
+          {accountPlanTypeLabel(planType)}
+        </Tag>
+      ) : null}
+    </Space>
+  );
 }
 
 function formatFileSize(bytes) {
@@ -961,6 +1074,8 @@ function schedulingReasonMeta(value, t) {
       return { color: 'red', label: t('配置异常隔离') };
     case 'probe_recovery_pending':
       return { color: 'orange', label: t('等待恢复探活') };
+    case 'score_anomaly_recovery_observing':
+      return { color: 'orange', label: t('恢复观察中') };
     case 'failure_avoidance':
       return { color: 'orange', label: t('近期失败恢复中') };
     case 'circuit_open':
@@ -1514,6 +1629,20 @@ function reasonLabels(reasons, t) {
     .join(' / ');
 }
 
+function scoreAnomalyRecoveryObserving(score = {}, scheduling = {}) {
+  score = score || {};
+  const warnings = arrayValue(scheduling?.warning_reasons);
+  if (warnings.includes('score_anomaly_recovery_observing')) {
+    return true;
+  }
+  return (
+    score.probe_recovery_pending === true &&
+    score.probe_trigger_reason === 'score_anomaly_fast_probe' &&
+    score.health_status === 'healthy' &&
+    Number(score.score_total || 0) > 0.62
+  );
+}
+
 function pushAccountTag(tags, next) {
   if (!next?.label) return;
   if (tags.some((tag) => tag.label === next.label)) return;
@@ -1549,13 +1678,17 @@ function accountBatchTags(record, t) {
     pushAccountTag(tags, { color: 'orange', label: t('低健康分') });
   }
   if (score.probe_recovery_pending) {
-    pushAccountTag(tags, {
-      color: 'orange',
-      label: t('恢复样本 {{current}}/{{required}}', {
-        current: score.probe_recovery_success_count || 0,
-        required: score.probe_recovery_required || 0,
-      }),
-    });
+    if (scoreAnomalyRecoveryObserving(score, scheduling)) {
+      pushAccountTag(tags, { color: 'orange', label: t('恢复观察中') });
+    } else {
+      pushAccountTag(tags, {
+        color: 'orange',
+        label: t('恢复样本 {{current}}/{{required}}', {
+          current: score.probe_recovery_success_count || 0,
+          required: score.probe_recovery_required || 0,
+        }),
+      });
+    }
   }
   if (!score.sample_count && !score.real_sample_count_30m) {
     pushAccountTag(tags, { color: 'grey', label: t('暂无评分样本') });
@@ -1802,16 +1935,21 @@ function AccountDiagnosisBlock({ record, t }) {
   const probePending = Boolean(
     score.probe_recovery_pending || probeState.pending,
   );
+  const fallbackRecoveryObserving = scoreAnomalyRecoveryObserving(score);
   const fallbackBlockingReasons = [
     disabled ? 'account_disabled' : '',
     limited ? 'account_usage_limited' : '',
-    probePending ? 'probe_recovery_pending' : '',
+    probePending && !fallbackRecoveryObserving ? 'probe_recovery_pending' : '',
+  ].filter(Boolean);
+  const fallbackWarningReasons = [
+    fallbackRecoveryObserving ? 'score_anomaly_recovery_observing' : '',
+    score.sample_count === 0 ? 'no_score_sample' : '',
   ].filter(Boolean);
   const scheduling = record?.scheduling || {
     schedulable: fallbackBlockingReasons.length === 0,
     primary_reason: fallbackBlockingReasons[0] || 'schedulable',
     blocking_reasons: fallbackBlockingReasons,
-    warning_reasons: score.sample_count === 0 ? ['no_score_sample'] : [],
+    warning_reasons: fallbackWarningReasons,
     recovery_at: capabilities.usage_limit_expires_at,
     recovery_source: capabilities.usage_limit_reset_source,
     probe_recovery_pending: probePending,
@@ -1867,6 +2005,16 @@ function AccountDiagnosisBlock({ record, t }) {
     scheduling.recovery_at || capabilities.usage_limit_expires_at || 0;
   const recoverySource =
     scheduling.recovery_source || capabilities.usage_limit_reset_source || '';
+  const observingRecovery = scoreAnomalyRecoveryObserving(score, scheduling);
+  const diagnosisDetail = observingRecovery
+    ? t('等待真实请求确认')
+    : scheduling.detail ||
+      (score.health_status
+        ? `${t('健康状态')}: ${healthTagMeta(score.health_status, t).label}`
+        : t('暂无运行态'));
+  const recoveryHint = observingRecovery
+    ? t('等待真实请求确认')
+    : score.probe_trigger_reason || probeState.reason || '--';
   return (
     <div className='ct-channel-account-diagnosis'>
       <div className='ct-channel-account-diagnosis-card'>
@@ -1877,12 +2025,7 @@ function AccountDiagnosisBlock({ record, t }) {
           </Tag>
           <strong>{conclusion}</strong>
         </div>
-        <small>
-          {scheduling.detail ||
-            (score.health_status
-              ? `${t('健康状态')}: ${healthTagMeta(score.health_status, t).label}`
-              : t('暂无运行态'))}
-        </small>
+        <small>{diagnosisDetail}</small>
       </div>
       <div className='ct-channel-account-diagnosis-card'>
         <span>{t('阻塞与提醒')}</span>
@@ -1942,12 +2085,14 @@ function AccountDiagnosisBlock({ record, t }) {
         <span>{t('恢复与限制')}</span>
         <strong>
           {scheduling.probe_recovery_pending
-            ? `${formatNumber(probeCurrent)} / ${formatNumber(probeRequired)}`
+            ? observingRecovery
+              ? t('恢复观察中')
+              : `${formatNumber(probeCurrent)} / ${formatNumber(probeRequired)}`
             : recoveryAt
               ? formatTimestamp(recoveryAt)
               : t('无需恢复探活')}
         </strong>
-        <small>{score.probe_trigger_reason || probeState.reason || '--'}</small>
+        <small>{recoveryHint}</small>
         {recoverySource ? (
           <small>
             {t('恢复来源')}: {recoverySource}
@@ -1981,6 +2126,10 @@ function DispatchHealthBlock({ record, t }) {
     );
   }
   const meta = healthTagMeta(score.health_status, t);
+  const observingRecovery = scoreAnomalyRecoveryObserving(
+    score,
+    record?.scheduling,
+  );
   return (
     <div className='ct-channel-account-dispatch-cell'>
       <div className='ct-channel-account-dispatch-head'>
@@ -2003,10 +2152,12 @@ function DispatchHealthBlock({ record, t }) {
       </div>
       {score.probe_recovery_pending ? (
         <Tag color='orange' size='small' type='light' shape='circle'>
-          {t('恢复样本 {{current}}/{{required}}', {
-            current: score.probe_recovery_success_count || 0,
-            required: score.probe_recovery_required || 0,
-          })}
+          {observingRecovery
+            ? t('恢复观察中')
+            : t('恢复样本 {{current}}/{{required}}', {
+                current: score.probe_recovery_success_count || 0,
+                required: score.probe_recovery_required || 0,
+              })}
         </Tag>
       ) : null}
       <AccountUsageLimitTag record={record} t={t} />
@@ -2162,12 +2313,11 @@ function CodexEnvironmentDetailModal({
   const headerEntries = codexEnvironmentHeaderEntries(environment);
   const detailRows = [
     [t('环境名称'), codexEnvironmentLabel(environment, environmentID, t)],
+    [t('环境来源'), codexEnvironmentSourceLabel(environment, t)],
     [t('平台'), environment?.platform || '--'],
     [t('应用版本'), environment?.app_version || '--'],
     [t('User-Agent'), environment?.user_agent || '--'],
     [t('Originator'), environment?.originator || '--'],
-    [t('Session ID'), environment?.session_id || '--'],
-    [t('Window ID'), environment?.window_id || '--'],
     [t('Beta Features'), environment?.beta_features || '--'],
   ];
   return (
@@ -2188,6 +2338,11 @@ function CodexEnvironmentDetailModal({
           <div>
             <span>{t('请求头特征')}</span>
             <strong>{codexEnvironmentHeaderPreview(environment, t)}</strong>
+            <small>
+              {t(
+                '仅补齐缺失的稳定 Header；不会复用历史 Session、Window 或 Turn Metadata',
+              )}
+            </small>
           </div>
           <Button
             size='small'
@@ -2248,12 +2403,22 @@ function CodexEnvironmentCell({ record, t }) {
           </strong>
           <Tag
             size='small'
-            color={environment?.enabled === false ? 'grey' : 'teal'}
+            color={codexEnvironmentSourceColor(environment)}
           >
-            #{environmentID}
+            {codexEnvironmentSourceLabel(environment, t)}
           </Tag>
+          {!environment ||
+          environment?.enabled === false ||
+          String(environment?.source || '').trim() === 'system_seed' ? (
+            <Tag size='small' color='orange' type='light'>
+              {t('需重新绑定')}
+            </Tag>
+          ) : null}
         </div>
         <div className='ct-channel-account-env-tags'>
+          <Tag size='small' color='grey' type='light'>
+            #{environmentID}
+          </Tag>
           <Tag size='small' color='cyan' type='light'>
             {environment?.platform || t('未知平台')}
           </Tag>
@@ -2292,7 +2457,7 @@ function CodexEnvironmentSelector({
     }
     (environments || []).forEach((environment) => {
       const id = Number(environment?.id || 0);
-      if (id > 0 && !seen.has(id)) {
+      if (id > 0 && !seen.has(id) && codexEnvironmentSelectable(environment)) {
         options.push(environment);
         seen.add(id);
       }
@@ -2321,9 +2486,10 @@ function CodexEnvironmentSelector({
             <Select.Option
               key={environment.id}
               value={environment.id}
-              disabled={environment.enabled === false}
+              disabled={!codexEnvironmentSelectable(environment)}
             >
               {codexEnvironmentLabel(environment, environment.id, t)} ·{' '}
+              {codexEnvironmentSourceLabel(environment, t)} ·{' '}
               {codexEnvironmentSubtitle(environment, t)}
             </Select.Option>
           ))}
@@ -2349,12 +2515,15 @@ function CodexEnvironmentSelector({
               )}
             </strong>
             <span>{codexEnvironmentSubtitle(selectedEnvironment, t)}</span>
+            <small>{codexEnvironmentSourceLabel(selectedEnvironment, t)}</small>
           </div>
           <small>{codexEnvironmentHeaderPreview(selectedEnvironment, t)}</small>
         </div>
       ) : (
         <Text type='tertiary' size='small'>
-          {t('不绑定时将使用请求原始 Header 或系统默认 Codex Header')}
+          {t(
+            '不绑定时将优先使用当前请求 Header，缺失时使用系统默认 Codex Header',
+          )}
         </Text>
       )}
     </div>
@@ -2556,6 +2725,11 @@ function buildColumns(
                 {accountPrimaryName(record, t)}
                 {statusTag(record, t)}
                 <AccountUsageLimitTag record={record} t={t} />
+                {Number(record?.max_concurrency || 0) > 0 ? (
+                  <Tag color='teal' type='light' shape='circle'>
+                    {t('并发')} {formatNumber(record.max_concurrency)}
+                  </Tag>
+                ) : null}
               </div>
               <div className='ct-channel-account-sub ct-channel-account-uid'>
                 <KeyRound size={12} />
@@ -2584,14 +2758,7 @@ function buildColumns(
         const identity = record.account_identity || {};
         return (
           <div className='ct-channel-account-meta-stack'>
-            <Space spacing={6}>
-              <Tag color='cyan' type='light' shape='circle'>
-                {identity.brand || resource.brand || '--'}
-              </Tag>
-              <Tag color='blue' type='light' shape='circle'>
-                {identity.account_type || '--'}
-              </Tag>
-            </Space>
+            <AccountTypeTags record={record} t={t} showBrand />
             <div className='ct-channel-account-fp'>
               <KeyRound size={13} />
               <span>{accountCredentialLabel(record)}</span>
@@ -2845,6 +3012,12 @@ function buildStatsColumns(t, onToggleStatus, onOpenDetail, statusLoadingKey) {
       },
     },
     {
+      title: t('账号类型'),
+      dataIndex: 'account_identity',
+      width: 185,
+      render: (_, record) => <AccountTypeTags record={record} t={t} showBrand />,
+    },
+    {
       title: t('调度'),
       dataIndex: 'score',
       key: 'score',
@@ -3014,14 +3187,7 @@ function buildPoolColumns(t, poolView, onRestore, onDiscard, onDelete) {
       width: 260,
       render: (_, record) => (
         <div className='ct-channel-account-meta-stack'>
-          <Space spacing={6}>
-            <Tag color='cyan' type='light' shape='circle'>
-              {record.brand || '--'}
-            </Tag>
-            <Tag color='blue' type='light' shape='circle'>
-              {record.account_type || '--'}
-            </Tag>
-          </Space>
+          <AccountTypeTags record={record} t={t} showBrand />
           <div className='ct-channel-account-fp'>
             <KeyRound size={13} />
             <span>{record.credential_masked || '--'}</span>
@@ -3797,6 +3963,7 @@ function ChannelAccount() {
   const [editRecord, setEditRecord] = useState(null);
   const [editCredentialType, setEditCredentialType] = useState('auto');
   const [editCredential, setEditCredential] = useState('');
+  const [editMaxConcurrency, setEditMaxConcurrency] = useState(0);
   const [selectedCodexEnvironmentID, setSelectedCodexEnvironmentID] =
     useState(0);
   const [editLoading, setEditLoading] = useState(false);
@@ -3826,6 +3993,12 @@ function ChannelAccount() {
     password: '',
     remark: '',
   });
+  useEffect(() => {
+    document.body.classList.add('ct-channel-account-route');
+    return () => {
+      document.body.classList.remove('ct-channel-account-route');
+    };
+  }, []);
   const selectedTargets = useMemo(
     () =>
       selectedRowKeys
@@ -4097,6 +4270,7 @@ function ChannelAccount() {
             channel_id: Number(record.channel_id),
             action: 'probe_key_capabilities',
             key_index: record.credential_index,
+            model: CHANNEL_ACCOUNT_TEST_MODEL,
           });
           if (response?.data?.success === false) {
             throw new Error(response?.data?.message || t('账号权限检测失败'));
@@ -4126,6 +4300,7 @@ function ChannelAccount() {
           {
             params: {
               credential_index: record.credential_index,
+              model: CHANNEL_ACCOUNT_TEST_MODEL,
             },
             disableDuplicate: true,
           },
@@ -4160,6 +4335,7 @@ function ChannelAccount() {
           channel_id: Number(record.channel_id),
           action: 'probe_key_capabilities',
           key_index: record.credential_index,
+          model: CHANNEL_ACCOUNT_TEST_MODEL,
         });
         if (response?.data?.success === false) {
           throw new Error(response?.data?.message || t('账号权限检测失败'));
@@ -4190,6 +4366,7 @@ function ChannelAccount() {
           channel_id: Number(record.channel_id),
           action: 'diagnose_platform_key_capabilities',
           key_index: record.credential_index,
+          model: CHANNEL_ACCOUNT_TEST_MODEL,
         });
         if (response?.data?.success === false) {
           throw new Error(
@@ -4225,6 +4402,7 @@ function ChannelAccount() {
       const response = await API.post('/api/channel/multi_key/manage', {
         channel_id: Number(scopedChannelID),
         action: 'probe_all_key_capabilities',
+        model: CHANNEL_ACCOUNT_TEST_MODEL,
       });
       if (response?.data?.success === false) {
         throw new Error(response?.data?.message || t('账号权限检测失败'));
@@ -4563,6 +4741,7 @@ function ChannelAccount() {
       setProxyRecord(record);
       setEditCredentialType(record?.account_identity?.account_type || 'auto');
       setEditCredential('');
+      setEditMaxConcurrency(Number(record?.max_concurrency || 0));
       setSelectedCodexEnvironmentID(Number(record?.codex_environment_id || 0));
       resetProxyEditorState(record);
       setEditVisible(true);
@@ -4584,6 +4763,7 @@ function ChannelAccount() {
     setProxyRecord(null);
     setEditCredentialType('auto');
     setEditCredential('');
+    setEditMaxConcurrency(0);
     setSelectedCodexEnvironmentID(0);
     resetProxyEditorState();
   }, [resetProxyEditorState]);
@@ -4742,10 +4922,17 @@ function ChannelAccount() {
       const shouldUpdateCodexEnvironment =
         Number(selectedCodexEnvironmentID || 0) !==
         Number(editRecord?.codex_environment_id || 0);
+      const normalizedMaxConcurrency = Math.max(
+        0,
+        Number(editMaxConcurrency || 0),
+      );
+      const shouldUpdateMaxConcurrency =
+        normalizedMaxConcurrency !== Number(editRecord?.max_concurrency || 0);
       if (
         !shouldUpdateCredential &&
         !shouldUpdateProxy &&
-        !shouldUpdateCodexEnvironment
+        !shouldUpdateCodexEnvironment &&
+        !shouldUpdateMaxConcurrency
       ) {
         closeEditModal();
         return;
@@ -4770,7 +4957,11 @@ function ChannelAccount() {
       try {
         let payload = null;
         const messages = [];
-        if (shouldUpdateCredential || shouldUpdateCodexEnvironment) {
+        if (
+          shouldUpdateCredential ||
+          shouldUpdateCodexEnvironment ||
+          shouldUpdateMaxConcurrency
+        ) {
           const requestBody = {
             credential: shouldUpdateCredential ? credential : '',
             credential_type: editCredentialType,
@@ -4779,6 +4970,9 @@ function ChannelAccount() {
             requestBody.codex_environment_id = Number(
               selectedCodexEnvironmentID || 0,
             );
+          }
+          if (shouldUpdateMaxConcurrency) {
+            requestBody.max_concurrency = normalizedMaxConcurrency;
           }
           const response = await API.put(
             `/api/channel/${editRecord.channel_id}/accounts/${editRecord.credential_index}`,
@@ -4794,11 +4988,19 @@ function ChannelAccount() {
               t,
               shouldUpdateCredential
                 ? t('账号凭证已更新')
-                : t('Codex 使用环境已更新'),
+                : shouldUpdateCodexEnvironment
+                  ? t('Codex 使用环境已更新')
+                  : t('账号并发已更新'),
             ),
           );
           if (shouldUpdateCredential && shouldUpdateCodexEnvironment) {
             messages.push(t('Codex 使用环境已更新'));
+          }
+          if (
+            shouldUpdateMaxConcurrency &&
+            (shouldUpdateCredential || shouldUpdateCodexEnvironment)
+          ) {
+            messages.push(t('账号并发已更新'));
           }
         }
         if (shouldUpdateProxy) {
@@ -4851,6 +5053,7 @@ function ChannelAccount() {
       createProxyInline,
       editCredential,
       editCredentialType,
+      editMaxConcurrency,
       editRecord,
       proxyBindingChanged,
       loadAccounts,
@@ -5066,7 +5269,7 @@ function ChannelAccount() {
     : isStatsView
       ? statsColumns
       : columns;
-  const tableScrollX = !isRunningView ? 1100 : isStatsView ? 1585 : 3070;
+  const tableScrollX = !isRunningView ? 1100 : isStatsView ? 1770 : 3070;
   const tablePagination = useMemo(
     () => ({
       currentPage: data?.page || page,
@@ -5201,6 +5404,70 @@ function ChannelAccount() {
             detail: t('熔断保护已打开'),
           },
         ];
+  const channelSwitcherItems = useMemo(() => {
+    const rawItems = Array.isArray(data?.channels) ? data.channels : [];
+    const seen = new Set();
+    const normalized = rawItems
+      .map((item) => {
+        const channelID = Number(item?.channel_id || item?.id || 0);
+        if (!Number.isInteger(channelID) || channelID <= 0) return null;
+        const channelName = String(
+          item?.channel_name || item?.name || '',
+        ).trim();
+        return {
+          channel_id: channelID,
+          channel_name: channelName,
+          status: Number(item?.status || 0),
+          account_total: Number(item?.account_total || 0),
+          enabled_accounts: Number(item?.enabled_accounts || 0),
+        };
+      })
+      .filter(Boolean)
+      .filter((item) => {
+        if (seen.has(item.channel_id)) return false;
+        seen.add(item.channel_id);
+        return true;
+      });
+    if (scopedChannelID > 0 && !seen.has(scopedChannelID)) {
+      normalized.unshift({
+        channel_id: scopedChannelID,
+        channel_name: String(data?.channel_name || '').trim(),
+        status: 0,
+        account_total: Number(data?.total || 0),
+        enabled_accounts: Number(data?.enabled || 0),
+      });
+    }
+    return normalized;
+  }, [
+    data?.channel_name,
+    data?.channels,
+    data?.enabled,
+    data?.total,
+    scopedChannelID,
+  ]);
+  const selectedChannelSwitcherItem = useMemo(
+    () =>
+      channelSwitcherItems.find(
+        (item) => Number(item.channel_id) === Number(scopedChannelID),
+      ),
+    [channelSwitcherItems, scopedChannelID],
+  );
+  const selectChannelScope = useCallback(
+    (channelID) => {
+      const normalized = Number(channelID || 0);
+      const next = new URLSearchParams(searchParams);
+      if (normalized > 0) {
+        next.set('channel_id', String(normalized));
+      } else {
+        next.delete('channel_id');
+      }
+      next.delete('page');
+      setPage(1);
+      setSelectedRowKeys([]);
+      setSearchParams(next, { replace: false });
+    },
+    [searchParams, setSearchParams],
+  );
   const rowSelection = useMemo(
     () => ({
       selectedRowKeys,
@@ -5211,121 +5478,191 @@ function ChannelAccount() {
   return (
     <div className='ct-console-content-wrap'>
       <div className='ct-channel-account-page'>
-        <div className='ct-channel-account-hero'>
-          <div className='ct-channel-account-title-block'>
-            <div className='ct-channel-account-title-icon'>
-              <ShieldCheck size={22} />
-            </div>
-            <div>
-              <div className='ct-channel-account-eyebrow'>
-                {t('全渠道账号管理')}
+        <div className='ct-channel-account-sticky'>
+          <div className='ct-channel-account-hero'>
+            <div className='ct-channel-account-title-block'>
+              <div className='ct-channel-account-title-icon'>
+                <ShieldCheck size={22} />
               </div>
-              <h2>
-                {scopedChannelID
-                  ? `${data?.channel_name || t('渠道')} #${scopedChannelID}`
-                  : t('所有渠道账号')}
-              </h2>
-              <p>{t('运行账号、失效账号池和废弃账号池分开管理')}</p>
+              <div className='ct-channel-account-title-content'>
+                <div className='ct-channel-account-eyebrow'>
+                  {t('全渠道账号管理')}
+                </div>
+                <div className='ct-channel-account-title-row'>
+                  <h2>
+                    {scopedChannelID
+                      ? `${
+                          selectedChannelSwitcherItem?.channel_name ||
+                          data?.channel_name ||
+                          t('渠道')
+                        } #${scopedChannelID}`
+                      : t('所有渠道账号')}
+                  </h2>
+                  <div
+                    className='ct-channel-account-channel-strip'
+                    role='tablist'
+                    aria-label={t('渠道')}
+                  >
+                    <button
+                      type='button'
+                      className={`ct-channel-account-channel-chip ${
+                        scopedChannelID ? '' : 'ct-channel-account-channel-chip-active'
+                      }`}
+                      onClick={() => selectChannelScope(0)}
+                      role='tab'
+                      aria-selected={!scopedChannelID}
+                    >
+                      <span>{t('全部')}</span>
+                      {channelSwitcherItems.length > 0 ? (
+                        <span className='ct-channel-account-channel-count'>
+                          {formatNumber(channelSwitcherItems.length)}
+                        </span>
+                      ) : null}
+                    </button>
+                    {channelSwitcherItems.map((channel) => {
+                      const active =
+                        Number(channel.channel_id) === Number(scopedChannelID);
+                      const enabled =
+                        Number(channel.status || 0) === 1 ||
+                        Number(channel.enabled_accounts || 0) > 0;
+                      return (
+                        <button
+                          key={channel.channel_id}
+                          type='button'
+                          className={`ct-channel-account-channel-chip ${
+                            active
+                              ? 'ct-channel-account-channel-chip-active'
+                              : ''
+                          } ${
+                            enabled
+                              ? ''
+                              : 'ct-channel-account-channel-chip-muted'
+                          }`}
+                          onClick={() =>
+                            selectChannelScope(channel.channel_id)
+                          }
+                          role='tab'
+                          aria-selected={active}
+                        >
+                          <span className='ct-channel-account-channel-dot' />
+                          <span className='ct-channel-account-channel-name'>
+                            {channel.channel_name || t('渠道')}
+                          </span>
+                          <span className='ct-channel-account-channel-id'>
+                            #{channel.channel_id}
+                          </span>
+                          {Number(channel.account_total || 0) > 0 ? (
+                            <span className='ct-channel-account-channel-count'>
+                              {formatNumber(channel.account_total)}
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <p>{t('运行账号、失效账号池和废弃账号池分开管理')}</p>
+              </div>
             </div>
+            <Space className='ct-channel-account-actions' spacing={8}>
+              <Button
+                icon={<ArrowLeft size={16} />}
+                type='tertiary'
+                onClick={() => navigate('/console/channel')}
+              >
+                {t('返回渠道列表')}
+              </Button>
+              <Button
+                icon={<Plus size={15} />}
+                type='primary'
+                theme='light'
+                disabled={!isRunningView || !scopedChannelID}
+                onClick={() => setImportVisible(true)}
+              >
+                {t('导入账号')}
+              </Button>
+              <Button
+                icon={<RefreshCw size={15} />}
+                type='primary'
+                theme='solid'
+                loading={loading}
+                onClick={loadAccounts}
+              >
+                {t('刷新')}
+              </Button>
+            </Space>
           </div>
-          <Space className='ct-channel-account-actions' spacing={8}>
-            <Button
-              icon={<ArrowLeft size={16} />}
-              type='tertiary'
-              onClick={() => navigate('/console/channel')}
-            >
-              {t('返回渠道列表')}
-            </Button>
-            <Button
-              icon={<Plus size={15} />}
-              type='primary'
-              theme='light'
-              disabled={!isRunningView || !scopedChannelID}
-              onClick={() => setImportVisible(true)}
-            >
-              {t('导入账号')}
-            </Button>
-            <Button
-              icon={<RefreshCw size={15} />}
-              type='primary'
-              theme='solid'
-              loading={loading}
-              onClick={loadAccounts}
-            >
-              {t('刷新')}
-            </Button>
-          </Space>
-        </div>
 
-        <div className='ct-channel-account-viewbar'>
-          <Tabs
-            type='button'
-            activeKey={poolView}
-            onChange={(key) => setPoolView(key)}
-          >
-            <Tabs.TabPane
-              itemKey='running'
-              tab={
-                <span className='ct-channel-account-view-tab'>
-                  <ShieldCheck size={14} />
-                  {t('运行账号')}
-                </span>
-              }
-            />
-            <Tabs.TabPane
-              itemKey='invalid'
-              tab={
-                <span className='ct-channel-account-view-tab'>
-                  <AlertTriangle size={14} />
-                  {t('失效账号池')}
-                </span>
-              }
-            />
-            <Tabs.TabPane
-              itemKey='discarded'
-              tab={
-                <span className='ct-channel-account-view-tab'>
-                  <FileArchive size={14} />
-                  {t('废弃账号池')}
-                </span>
-              }
-            />
-          </Tabs>
-          {isRunningView ? (
+          <div className='ct-channel-account-viewbar'>
             <Tabs
               type='button'
-              activeKey={view}
-              onChange={(key) => setView(key)}
+              activeKey={poolView}
+              onChange={(key) => setPoolView(key)}
             >
               <Tabs.TabPane
-                itemKey='manage'
+                itemKey='running'
                 tab={
                   <span className='ct-channel-account-view-tab'>
-                    <SlidersHorizontal size={14} />
-                    {t('管理视图')}
+                    <ShieldCheck size={14} />
+                    {t('运行账号')}
                   </span>
                 }
               />
               <Tabs.TabPane
-                itemKey='stats'
+                itemKey='invalid'
                 tab={
                   <span className='ct-channel-account-view-tab'>
-                    <BarChart3 size={14} />
-                    {t('统计视图')}
+                    <AlertTriangle size={14} />
+                    {t('失效账号池')}
+                  </span>
+                }
+              />
+              <Tabs.TabPane
+                itemKey='discarded'
+                tab={
+                  <span className='ct-channel-account-view-tab'>
+                    <FileArchive size={14} />
+                    {t('废弃账号池')}
                   </span>
                 }
               />
             </Tabs>
-          ) : null}
-          <Text type='tertiary'>
-            {!isRunningView
-              ? t('归档池使用独立表保存，不参与运行账号调度')
-              : isStatsView
-                ? t('统计从上线后开始累计，默认排除健康探活')
-                : t(
-                    'Codex 能力和 Platform API 诊断分开展示，Platform 失败不影响 Codex 调度',
-                  )}
-          </Text>
+            {isRunningView ? (
+              <Tabs
+                type='button'
+                activeKey={view}
+                onChange={(key) => setView(key)}
+              >
+                <Tabs.TabPane
+                  itemKey='manage'
+                  tab={
+                    <span className='ct-channel-account-view-tab'>
+                      <SlidersHorizontal size={14} />
+                      {t('管理视图')}
+                    </span>
+                  }
+                />
+                <Tabs.TabPane
+                  itemKey='stats'
+                  tab={
+                    <span className='ct-channel-account-view-tab'>
+                      <BarChart3 size={14} />
+                      {t('统计视图')}
+                    </span>
+                  }
+                />
+              </Tabs>
+            ) : null}
+            <Text type='tertiary'>
+              {!isRunningView
+                ? t('归档池使用独立表保存，不参与运行账号调度')
+                : isStatsView
+                  ? t('统计从上线后开始累计，默认排除健康探活')
+                  : t(
+                      'Codex 能力和 Platform API 诊断分开展示，Platform 失败不影响 Codex 调度',
+                    )}
+            </Text>
+          </div>
         </div>
 
         {error ? (
@@ -5627,6 +5964,38 @@ function ChannelAccount() {
                 currentEnvironment={editRecord?.codex_environment}
                 loadCodexEnvironments={loadCodexEnvironments}
               />
+            </div>
+            <div className='ct-channel-account-edit-section'>
+              <div className='ct-channel-account-edit-section-title'>
+                <Gauge size={15} />
+                <span>{t('账号并发')}</span>
+                {Number(editMaxConcurrency || 0) > 0 ? (
+                  <Tag color='teal' type='light' shape='circle'>
+                    {formatNumber(editMaxConcurrency)}
+                  </Tag>
+                ) : (
+                  <Tag color='grey' type='light' shape='circle'>
+                    {t('跟随渠道')}
+                  </Tag>
+                )}
+              </div>
+              <label className='ct-channel-account-edit-label'>
+                <span>{t('账号并发上限')}</span>
+                <InputNumber
+                  value={editMaxConcurrency}
+                  min={0}
+                  step={1}
+                  precision={0}
+                  onChange={(value) =>
+                    setEditMaxConcurrency(Math.max(0, Number(value || 0)))
+                  }
+                  style={{ width: '100%' }}
+                  placeholder={t('0 表示不单独限制')}
+                />
+              </label>
+              <Text type='tertiary' size='small'>
+                {t('设置后仅限制当前账号的同时请求数，0 表示继续使用渠道级并发。')}
+              </Text>
             </div>
             <div className='ct-channel-account-edit-section'>
               <div className='ct-channel-account-edit-section-title'>

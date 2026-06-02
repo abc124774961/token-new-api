@@ -3581,6 +3581,8 @@ func TestGetModelGatewayHealthCheckQueueShowsScoreAnomalyFastRecovery(t *testing
 func TestGetModelGatewayHealthCheckQueueReturnsNextProbeCountdown(t *testing.T) {
 	now := common.GetTimestamp()
 	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		ProbeEnabled:                        true,
+		ProbeIntervalSeconds:                60,
 		ProbeMinChannelIntervalSeconds:      300,
 		ProbeLowScoreThreshold:              0.8,
 		ProbeMissingSampleThreshold:         3,
@@ -3624,6 +3626,9 @@ func TestGetModelGatewayHealthCheckQueueReturnsNextProbeCountdown(t *testing.T) 
 
 	payload := decodeModelGatewayHealthCheckQueueResponse(t, resp)
 	require.True(t, payload.Success)
+	require.False(t, payload.Data.Summary.SchedulerRunning)
+	require.True(t, payload.Data.Summary.ProbeEnabled)
+	require.EqualValues(t, 60, payload.Data.Summary.ProbeIntervalSeconds)
 	require.Len(t, payload.Data.Items, 1)
 	item := payload.Data.Items[0]
 	expectedNextProbeAt := lastRealAttemptAt + 1800

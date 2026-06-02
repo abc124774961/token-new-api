@@ -329,6 +329,29 @@ function formatCountdownDuration(seconds, t) {
   });
 }
 
+function formatDurationAmount(seconds, t) {
+  const totalSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (totalSeconds < 60) {
+    return t('{{seconds}}秒', { seconds: totalSeconds });
+  }
+  if (totalSeconds < 3600) {
+    return t('{{minutes}}分{{seconds}}秒', {
+      minutes: Math.floor(totalSeconds / 60),
+      seconds: totalSeconds % 60,
+    });
+  }
+  if (totalSeconds < 86400) {
+    return t('{{hours}}小时{{minutes}}分钟', {
+      hours: Math.floor(totalSeconds / 3600),
+      minutes: Math.floor((totalSeconds % 3600) / 60),
+    });
+  }
+  return t('{{days}}天{{hours}}小时', {
+    days: Math.floor(totalSeconds / 86400),
+    hours: Math.floor((totalSeconds % 86400) / 3600),
+  });
+}
+
 function getProbeCountdownSeconds(record, nowTick, generatedAt) {
   const remaining = Number(record?.next_probe_remaining_seconds);
   const generated = Number(generatedAt || 0);
@@ -343,6 +366,53 @@ function getProbeCountdownSeconds(record, nowTick, generatedAt) {
     return Math.floor(remaining);
   }
   return 0;
+}
+
+function getSchedulerCountdownSeconds(summary, nowTick, generatedAt) {
+  const remaining = Number(summary?.next_scheduler_probe_remaining_seconds);
+  const generated = Number(generatedAt || 0);
+  if (Number.isFinite(remaining) && remaining >= 0 && generated > 0) {
+    return Math.max(0, Math.floor(generated + remaining - nowTick));
+  }
+  const nextProbeAt = Number(summary?.next_scheduler_probe_at || 0);
+  if (nextProbeAt > 0) {
+    return Math.max(0, Math.floor(nextProbeAt - nowTick));
+  }
+  if (Number.isFinite(remaining) && remaining > 0) {
+    return Math.floor(remaining);
+  }
+  return 0;
+}
+
+function formatSchedulerCountdownValue(summary, seconds, t) {
+  if (!summary) return '--';
+  if (summary?.probe_enabled === false) return t('未启用');
+  if (summary?.scheduler_master_node === false) return t('非主节点');
+  if (summary?.scheduler_relay_invoker_registered === false) return t('未就绪');
+  if (summary?.scheduler_running === false) return t('未运行');
+  return formatCountdownDuration(seconds, t);
+}
+
+function formatSchedulerCountdownDetail(summary, t) {
+  if (!summary) return '--';
+  const intervalSeconds =
+    Number(summary?.probe_interval_seconds) ||
+    DEFAULT_PROBE_CONFIG.probe_interval_seconds;
+  const parts = [
+    `${t('扫描间隔')} ${formatDurationAmount(intervalSeconds, t)}`,
+  ];
+  if (summary?.scheduler_running) {
+    parts.push(`${t('上次整体探测')} ${formatRelativeTime(summary?.last_scheduler_probe_at, t)}`);
+  } else if (summary?.probe_enabled === false) {
+    parts.push(t('健康探活已关闭'));
+  } else if (summary?.scheduler_master_node === false) {
+    parts.push(t('仅主节点执行探活'));
+  } else if (summary?.scheduler_relay_invoker_registered === false) {
+    parts.push(t('等待网关转发器就绪'));
+  } else {
+    parts.push(t('等待调度器启动'));
+  }
+  return parts.join(' · ');
 }
 
 function buildProbeRuntimeKey(record = {}) {
@@ -1645,6 +1715,27 @@ function ChannelHealthCheck() {
   const queueGeneratedAt = Number(
     queueData?.local_generated_at || queueData?.generated_at || 0,
   );
+  const schedulerCountdownSeconds = getSchedulerCountdownSeconds(
+    queueData?.summary,
+    nowTick,
+    queueGeneratedAt,
+  );
+  const schedulerCountdownValue = formatSchedulerCountdownValue(
+    queueData?.summary,
+    schedulerCountdownSeconds,
+    t,
+  );
+  const schedulerCountdownDetail = formatSchedulerCountdownDetail(
+    queueData?.summary,
+    t,
+  );
+  const schedulerMetricTone =
+    queueData?.summary?.probe_enabled === false ||
+    queueData?.summary?.scheduler_running === false
+      ? 'warning'
+      : schedulerCountdownSeconds <= 0
+        ? 'success'
+        : 'info';
 
   const applyFilters = () => {
     setAppliedFilters({
@@ -2028,6 +2119,13 @@ function ChannelHealthCheck() {
             )} ${t('隔离或冷却')}`}
             icon={<ShieldCheck size={18} />}
             tone={recoveryCount > 0 ? 'info' : 'success'}
+          />
+          <MetricCard
+            label={t('下次整体探测')}
+            value={schedulerCountdownValue}
+            detail={schedulerCountdownDetail}
+            icon={<Timer size={18} />}
+            tone={schedulerMetricTone}
           />
           <MetricCard
             label={t('检测历史')}

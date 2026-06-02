@@ -71,6 +71,7 @@ type ChannelInfo struct {
 	MultiKeyDisabledTime                      map[int]int64                    `json:"multi_key_disabled_time,omitempty"`                         // key禁用时间列表，key index -> time
 	MultiKeyProxyIDs                          map[int]int                      `json:"multi_key_proxy_ids,omitempty"`                             // key 绑定的代理资源，key index -> proxy id
 	MultiKeyAccountTypes                      map[int]string                   `json:"multi_key_account_types,omitempty"`                         // key 账号凭证类型，key index -> account type
+	MultiKeyMaxConcurrency                    map[int]int                      `json:"multi_key_max_concurrency,omitempty"`                       // key 并发上限，key index -> max concurrency
 	MultiKeyCodexEnvironmentIDs               map[int]int                      `json:"multi_key_codex_environment_ids,omitempty"`                 // legacy: key index -> environment id
 	MultiKeyCodexEnvironmentAccountUniqueKeys map[string]int                   `json:"multi_key_codex_environment_account_unique_keys,omitempty"` // account_unique_key -> environment id
 	MultiKeyCapabilities                      map[int]ChannelAccountCapability `json:"multi_key_capabilities,omitempty"`                          // key 功能权限检测结果，key index -> capability
@@ -86,6 +87,17 @@ func (info ChannelInfo) AccountCapability(index int) (ChannelAccountCapability, 
 	}
 	capability, ok := info.MultiKeyCapabilities[index]
 	return capability, ok
+}
+
+func (info ChannelInfo) AccountMaxConcurrency(index int) int {
+	if info.MultiKeyMaxConcurrency == nil || index < 0 {
+		return 0
+	}
+	limit := info.MultiKeyMaxConcurrency[index]
+	if limit < 0 {
+		return 0
+	}
+	return limit
 }
 
 type ChannelSortOptions struct {
@@ -675,6 +687,16 @@ func (channel *Channel) Update() error {
 			}
 			if len(channel.ChannelInfo.MultiKeyAccountTypes) == 0 {
 				channel.ChannelInfo.MultiKeyAccountTypes = nil
+			}
+		}
+		if channel.ChannelInfo.MultiKeyMaxConcurrency != nil {
+			for idx, limit := range channel.ChannelInfo.MultiKeyMaxConcurrency {
+				if idx < 0 || idx >= channel.ChannelInfo.MultiKeySize || limit <= 0 {
+					delete(channel.ChannelInfo.MultiKeyMaxConcurrency, idx)
+				}
+			}
+			if len(channel.ChannelInfo.MultiKeyMaxConcurrency) == 0 {
+				channel.ChannelInfo.MultiKeyMaxConcurrency = nil
 			}
 		}
 		if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {

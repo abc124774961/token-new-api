@@ -31,6 +31,10 @@ type RuntimeAccountStateProvider interface {
 	FirstBytePendingStatusForIdentity(identity service.ChannelRuntimeIdentity) *service.ChannelFirstBytePendingStatus
 }
 
+type RuntimeAccountConcurrencyProvider interface {
+	ActiveConcurrencyForIdentity(identity service.ChannelRuntimeIdentity) int
+}
+
 type CostProfileProvider interface {
 	CostRatio(channelID int, upstreamModel string) (float64, bool)
 }
@@ -51,6 +55,10 @@ func NewServiceRuntimeStateProvider() *ServiceRuntimeStateProvider {
 
 func (p *ServiceRuntimeStateProvider) ActiveConcurrency(channelID int) int {
 	return service.GetChannelEffectiveActiveConcurrency(channelID)
+}
+
+func (p *ServiceRuntimeStateProvider) ActiveConcurrencyForIdentity(identity service.ChannelRuntimeIdentity) int {
+	return service.GetChannelRuntimeEffectiveActiveConcurrency(identity)
 }
 
 func (p *ServiceRuntimeStateProvider) ConcurrencyCooldownActive(channelID int) bool {
@@ -174,8 +182,8 @@ func (e *RuntimeSnapshotEnricher) Enrich(candidate core.Candidate, snapshot core
 	}
 	channelID := candidate.Channel.Id
 	setting := candidate.Channel.GetSetting()
-	snapshot = e.applyConcurrency(snapshot, channelID, setting, policy)
 	identity := serviceRuntimeIdentityFromCandidate(candidate, snapshot)
+	snapshot = e.applyConcurrency(snapshot, channelID, setting, policy, identity, accountMaxConcurrencyForCandidate(candidate))
 	snapshot = e.applyFirstBytePending(snapshot, channelID, identity)
 	snapshot.Cooldown = snapshot.Cooldown || e.stateProvider.ConcurrencyCooldownActive(channelID)
 	snapshot = e.applyFailureAvoidance(snapshot, channelID, identity)
@@ -248,8 +256,19 @@ func (e *RuntimeSnapshotEnricher) applyFirstBytePending(snapshot core.RuntimeSna
 	return snapshot
 }
 
-func (e *RuntimeSnapshotEnricher) applyConcurrency(snapshot core.RuntimeSnapshot, channelID int, setting dto.ChannelSettings, policy core.GroupSmartPolicy) core.RuntimeSnapshot {
+func (e *RuntimeSnapshotEnricher) applyConcurrency(snapshot core.RuntimeSnapshot, channelID int, setting dto.ChannelSettings, policy core.GroupSmartPolicy, identity service.ChannelRuntimeIdentity, accountMaxConcurrency int) core.RuntimeSnapshot {
 	active := e.stateProvider.ActiveConcurrency(channelID)
+	if accountMaxConcurrency > 0 && identity.HasAccountScope() {
+		if provider, ok := e.stateProvider.(RuntimeAccountConcurrencyProvider); ok {
+			active = provider.ActiveConcurrencyForIdentity(identity)
+		}
+		setting.MaxConcurrency = accountMaxConcurrency
+		setting.MaxConcurrencyCeiling = accountMaxConcurrency
+		snapshot.MaxConcurrency = accountMaxConcurrency
+		snapshot.ConfiguredConcurrencyLimit = accountMaxConcurrency
+		snapshot.LearnedConcurrencyLimit = accountMaxConcurrency
+		snapshot.EffectiveConcurrencyLimit = accountMaxConcurrency
+	}
 	if active > snapshot.ActiveConcurrency {
 		snapshot.ActiveConcurrency = active
 	}
@@ -309,6 +328,20 @@ func (e *RuntimeSnapshotEnricher) queueCapacity(maxConcurrency int) int {
 		capacity = 1
 	}
 	return int(math.Min(float64(capacity), float64(e.queueMaxDepth)))
+}
+
+func accountMaxConcurrencyForCandidate(candidate core.Candidate) int {
+	if candidate.Channel == nil {
+		return 0
+	}
+	index := candidate.CredentialRef.CredentialIndex
+	if index == 0 && candidate.AccountIdentity.CredentialIndex != 0 {
+		index = candidate.AccountIdentity.CredentialIndex
+	}
+	if index < 0 || !candidateHasCredentialScope(candidate) {
+		return 0
+	}
+	return candidate.Channel.ChannelInfo.AccountMaxConcurrency(index)
 }
 
 func (e *RuntimeSnapshotEnricher) applyCircuit(snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) core.RuntimeSnapshot {

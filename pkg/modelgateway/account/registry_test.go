@@ -1,6 +1,7 @@
 package account
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -207,6 +208,34 @@ func TestRegistryOpenAIOAuthJSONWithoutAccountIDStillUsesCodexIdentity(t *testin
 	require.Equal(t, "codex", accounts[0].ResourceRef.Brand)
 }
 
+func TestRegistryOpenAIOAuthJWTClaimsExposePlanType(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	accessToken := testRegistryJWT(t, map[string]interface{}{
+		"iss": "https://auth.openai.com",
+		"https://api.openai.com/auth": map[string]interface{}{
+			"chatgpt_account_id": "acct-team-123",
+			"chatgpt_plan_type":  "team",
+			"chatgpt_user_id":    "user-fake",
+		},
+		"https://api.openai.com/profile": map[string]interface{}{
+			"email": "team-user@example.com",
+		},
+	})
+	channel := &model.Channel{
+		Id:     22,
+		Type:   constant.ChannelTypeOpenAI,
+		Status: common.ChannelStatusEnabled,
+		Key:    `{"type":"codex","access_token":"` + accessToken + `","refresh_token":"rt_fake_refresh"}`,
+	}
+
+	accounts := NewRegistry().AccountsForChannel(channel)
+
+	require.Len(t, accounts, 1)
+	require.Equal(t, ProviderCodexOAuth, accounts[0].AccountIdentity.Provider)
+	require.Equal(t, core.AccountTypeOAuthAccount, accounts[0].AccountIdentity.AccountType)
+	require.Equal(t, "team", accounts[0].AccountIdentity.PlanType)
+}
+
 func TestRuntimeKeyForChannelAccountAddsAccountScope(t *testing.T) {
 	common.CryptoSecret = "test-secret"
 	channel := &model.Channel{
@@ -226,4 +255,14 @@ func TestRuntimeKeyForChannelAccountAddsAccountScope(t *testing.T) {
 	require.Equal(t, core.AccountTypeAPIKey, key.AccountType)
 	require.Equal(t, "openai", key.Brand)
 	require.Equal(t, accounts[0].AccountIdentity.CredentialFingerprint, key.CredentialFP)
+}
+
+func testRegistryJWT(t *testing.T, claims map[string]interface{}) string {
+	t.Helper()
+	header, err := common.Marshal(map[string]interface{}{"alg": "none"})
+	require.NoError(t, err)
+	payload, err := common.Marshal(claims)
+	require.NoError(t, err)
+	return base64.RawURLEncoding.EncodeToString(header) + "." +
+		base64.RawURLEncoding.EncodeToString(payload) + ".sig"
 }
