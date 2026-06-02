@@ -283,23 +283,105 @@ function normalizeCredentialIndex(value) {
   return Number.isInteger(numeric) && numeric >= 0 ? numeric : null;
 }
 
-function buildMultiKeyAccountTooltip(record, credentialIndex, t) {
+function normalizeAccountText(value) {
+  return String(value || '').trim();
+}
+
+function shortCredentialFingerprint(value) {
+  const text = normalizeAccountText(value);
+  if (!text) return '';
+  return text.length <= 8 ? text : text.slice(0, 8);
+}
+
+function buildUsageLogAccountInfo(record, adminInfo, credentialIndex) {
+  const uid = normalizeAccountText(
+    adminInfo?.account_uid ||
+      adminInfo?.credential_uid ||
+      adminInfo?.account_credential_uid ||
+      record?.account_uid ||
+      record?.credential_uid,
+  );
+  const label = normalizeAccountText(
+    adminInfo?.account_label ||
+      adminInfo?.credential_label ||
+      record?.account_label ||
+      record?.credential_label,
+  );
+  const subjectFP = normalizeAccountText(
+    adminInfo?.credential_subject_fingerprint ||
+      adminInfo?.account_credential_subject_fingerprint ||
+      record?.credential_subject_fingerprint,
+  );
+  const credentialFP = normalizeAccountText(
+    adminInfo?.credential_fingerprint ||
+      adminInfo?.account_credential_fingerprint ||
+      record?.credential_fingerprint,
+  );
+  const fingerprintUID =
+    shortCredentialFingerprint(subjectFP) ||
+    shortCredentialFingerprint(credentialFP);
+  const display = uid || (fingerprintUID ? `acct-${fingerprintUID}` : '');
+  const identityKey = normalizeAccountText(
+    adminInfo?.account_identity_key || record?.account_identity_key,
+  );
+  const accountUniqueKey = normalizeAccountText(adminInfo?.account_unique_key);
+  const accountID = normalizeAccountText(
+    adminInfo?.account_id || record?.account_id,
+  );
+
+  return {
+    display,
+    label,
+    credentialIndex,
+    identityKey,
+    accountUniqueKey,
+    accountID,
+    accountType: normalizeAccountText(adminInfo?.account_type),
+    brand: normalizeAccountText(adminInfo?.account_brand || adminInfo?.brand),
+    provider: normalizeAccountText(
+      adminInfo?.account_provider || adminInfo?.provider,
+    ),
+    subjectFP,
+    credentialFP,
+  };
+}
+
+function buildMultiKeyAccountTooltip(record, accountInfo, t) {
+  const credentialIndex = accountInfo?.credentialIndex;
   const accountNumber =
     credentialIndex === null || credentialIndex === undefined
       ? null
       : credentialIndex + 1;
   const rows = [
     [t('渠道 ID'), record?.channel || record?.channel_id || '--'],
-    [t('账号'), accountNumber ? `#${accountNumber}` : '--'],
+    [t('账号唯一 key'), accountInfo?.display || '--'],
+    accountInfo?.label ? [t('账号标签'), accountInfo.label] : null,
+    accountInfo?.accountID ? ['account_id', accountInfo.accountID] : null,
+    accountInfo?.identityKey
+      ? ['account_identity_key', accountInfo.identityKey]
+      : null,
+    accountInfo?.accountUniqueKey
+      ? ['account_unique_key', accountInfo.accountUniqueKey]
+      : null,
+    accountInfo?.accountType ? ['account_type', accountInfo.accountType] : null,
+    accountInfo?.brand ? ['brand', accountInfo.brand] : null,
+    accountInfo?.provider ? ['provider', accountInfo.provider] : null,
+    accountInfo?.subjectFP
+      ? ['credential_subject_fingerprint', accountInfo.subjectFP]
+      : null,
+    accountInfo?.credentialFP
+      ? ['credential_fingerprint', accountInfo.credentialFP]
+      : null,
+    [t('原索引'), accountNumber ? `#${accountNumber}` : '--'],
     ['credential_index', credentialIndex ?? '--'],
-  ];
+  ].filter(Boolean);
 
   return (
-    <div style={{ lineHeight: 1.6, minWidth: 180 }}>
+    <div style={{ lineHeight: 1.6, minWidth: 220, maxWidth: 360 }}>
       {rows.map(([label, value]) => (
         <div key={label}>
           <span style={{ color: 'var(--semi-color-text-2)' }}>{label}：</span>
-          <span>{value}</span>
+          <span style={{ wordBreak: 'break-all' }}>{value}</span>
         </div>
       ))}
     </div>
@@ -911,12 +993,18 @@ export const getLogsColumns = ({
         let channelFailures = [];
         let showMarker = false;
         let other = getLogOther(record.other);
+        let accountInfo = buildUsageLogAccountInfo(record, null, null);
         if (other?.admin_info) {
           let adminInfo = other.admin_info;
           if (adminInfo?.is_multi_key) {
             isMultiKey = true;
             multiKeyIndex = normalizeCredentialIndex(adminInfo.multi_key_index);
           }
+          accountInfo = buildUsageLogAccountInfo(
+            record,
+            adminInfo,
+            multiKeyIndex,
+          );
           if (
             Array.isArray(adminInfo.use_channel) &&
             adminInfo.use_channel.length > 0
@@ -1005,16 +1093,13 @@ export const getLogsColumns = ({
             </span>
             {isMultiKey && (
               <Tooltip
-                content={buildMultiKeyAccountTooltip(
-                  record,
-                  multiKeyIndex,
-                  t,
-                )}
+                content={buildMultiKeyAccountTooltip(record, accountInfo, t)}
               >
                 <Tag color='white' shape='circle'>
-                  {multiKeyIndex === null
-                    ? '--'
-                    : `${t('账号')} #${multiKeyIndex + 1}`}
+                  {accountInfo?.display ||
+                    (multiKeyIndex === null
+                      ? '--'
+                      : `${t('账号')} #${multiKeyIndex + 1}`)}
                 </Tag>
               </Tooltip>
             )}

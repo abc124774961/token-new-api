@@ -86,7 +86,7 @@ func TestProIndexSkipsDisabledChannelAccounts(t *testing.T) {
 	require.Empty(t, candidates)
 }
 
-func TestProIndexQueryAppliesEndpointToolAndExclusionFilters(t *testing.T) {
+func TestProIndexQueryAppliesEndpointAndExclusionFilters(t *testing.T) {
 	common.CryptoSecret = "test-secret"
 	settingsBytes, err := common.Marshal(dto.ChannelOtherSettings{
 		CodexCompatibilityMode:            true,
@@ -122,7 +122,7 @@ func TestProIndexQueryAppliesEndpointToolAndExclusionFilters(t *testing.T) {
 
 	require.Len(t, candidates, 1)
 	require.Equal(t, imageToolChannel.Id, candidates[0].RuntimeKey.ChannelID)
-	require.True(t, candidates[0].RequiresCodexImageTool)
+	require.False(t, candidates[0].RequiresCodexImageTool)
 
 	excluded := index.Query(Query{
 		Groups:                 []string{"codex"},

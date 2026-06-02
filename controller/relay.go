@@ -268,11 +268,7 @@ func requiredEndpointTypeForRelay(info *relaycommon.RelayInfo) constant.Endpoint
 }
 
 func requiresCodexImageToolForRelay(info *relaycommon.RelayInfo) bool {
-	if info == nil || info.RelayMode != relayconstant.RelayModeResponses {
-		return false
-	}
-	req := responsesRequestForEndpointDetection(info.Request)
-	return service.ResponsesRequestRequiresCodexImageGenerationTool(req)
+	return false
 }
 
 func responsesRequestForEndpointDetection(request dto.Request) *dto.OpenAIResponsesRequest {
@@ -2278,6 +2274,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			adminInfo["is_multi_key"] = true
 			adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
 		}
+		service.AppendSelectedChannelAccountAdminInfo(c, adminInfo)
 		service.AppendChannelAffinityAdminInfo(c, adminInfo)
 		appendChannelFailureTraceAdminInfo(c, adminInfo)
 		other["admin_info"] = adminInfo

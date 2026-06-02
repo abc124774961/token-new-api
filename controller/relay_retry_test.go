@@ -254,7 +254,7 @@ func TestRequiresCodexImageToolForRelayIgnoresToolChoiceDeclaration(t *testing.T
 	require.False(t, requiresCodexImageToolForRelay(info))
 }
 
-func TestRequiresCodexImageToolForRelayDetectsCodexSkillIntent(t *testing.T) {
+func TestRequiresCodexImageToolForRelayIgnoresCodexSkillIntent(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		RelayMode: relayconstant.RelayModeResponses,
 		Request: &dto.OpenAIResponsesRequest{
@@ -268,7 +268,7 @@ func TestRequiresCodexImageToolForRelayDetectsCodexSkillIntent(t *testing.T) {
 		},
 	}
 
-	require.True(t, requiresCodexImageToolForRelay(info))
+	require.False(t, requiresCodexImageToolForRelay(info))
 }
 
 func withAutoGroupsForRelayTest(t *testing.T, groups []string) {

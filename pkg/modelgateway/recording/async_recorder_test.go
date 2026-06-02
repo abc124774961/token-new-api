@@ -104,9 +104,9 @@ func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 	require.Contains(t, record.RequestMeta, "mimo-v1")
 	var requestMeta dispatchRequestMeta
 	require.NoError(t, common.UnmarshalJsonStr(record.RequestMeta, &requestMeta))
-	require.True(t, requestMeta.RequiresCodexImageTool)
-	require.Equal(t, []string{core.DispatchRequiredToolCodexImageGeneration}, requestMeta.RequiredTools)
-	require.Equal(t, []string{core.DispatchFilterConditionCodexImageGenerationTool}, requestMeta.CandidateFilterConditions)
+	require.False(t, requestMeta.RequiresCodexImageTool)
+	require.Empty(t, requestMeta.RequiredTools)
+	require.Empty(t, requestMeta.CandidateFilterConditions)
 }
 
 func TestChannelAccountUsageEventFromAttemptUsesCurrentTimeWhenObservedAtUnset(t *testing.T) {

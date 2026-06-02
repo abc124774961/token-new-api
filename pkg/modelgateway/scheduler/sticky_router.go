@@ -671,7 +671,6 @@ func (r *MemoryStickyRouter) userStickyKey(c *gin.Context, req *core.DispatchReq
 		group,
 		req.ModelName,
 		string(endpointType),
-		fmt.Sprintf("codex_image=%t", req.RequiresCodexImageTool),
 		sessionKey,
 	}
 	return strings.Join(parts, "\n")

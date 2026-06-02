@@ -38,11 +38,9 @@ func TestBuildResponsesRequestToolTraceForLogDetectsImageGeneration(t *testing.T
 	require.Equal(t, true, trace["has_image_generation_tool"])
 	require.Equal(t, []string{"image_generation"}, trace["tool_types"])
 	require.Contains(t, trace["tools_raw"], "image_generation")
-	require.Empty(t, trace["imagegen_keyword_hits"])
-	require.Equal(t, map[string][]string{
-		"tools":       {"image_generation"},
-		"tool_choice": {"image_generation"},
-	}, trace["imagegen_keyword_sources"])
+	require.False(t, trace["requires_codex_image_tool"].(bool))
+	require.NotContains(t, trace, "imagegen_keyword_hits")
+	require.NotContains(t, trace, "imagegen_keyword_sources")
 }
 
 func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresDeclaredImageGenerationTool(t *testing.T) {
@@ -62,12 +60,11 @@ func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresDeclaredImageGen
 	require.True(t, trace["has_image_generation_tool"].(bool))
 	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
 	require.Empty(t, ResponsesRequestImageGenerationKeywordHits(req))
-	require.Empty(t, trace["imagegen_keyword_hits"])
-	require.Contains(t, trace["imagegen_keyword_sources"], "tools")
-	require.Contains(t, trace["imagegen_keyword_sources"], "tool_choice")
+	require.NotContains(t, trace, "imagegen_keyword_hits")
+	require.NotContains(t, trace, "imagegen_keyword_sources")
 }
 
-func TestResponsesRequestRequiresCodexImageGenerationToolDetectsCodexSkillIntent(t *testing.T) {
+func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresCodexSkillIntent(t *testing.T) {
 	req := &dto.OpenAIResponsesRequest{
 		Model: "gpt-5.5",
 		Input: []byte(`[
@@ -78,12 +75,10 @@ func TestResponsesRequestRequiresCodexImageGenerationToolDetectsCodexSkillIntent
 		ToolChoice: []byte(`"auto"`),
 	}
 
-	require.True(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
-	require.True(t, ResponsesRequestHasImageGenerationKeywordHits(req))
-	require.Contains(t, ResponsesRequestImageGenerationKeywordHits(req), "$imagegen")
-	require.Equal(t, map[string][]string{
-		"input_text": {"$imagegen"},
-	}, ResponsesRequestRecentInputImageGenerationKeywordSources(req))
+	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
+	require.False(t, ResponsesRequestHasImageGenerationKeywordHits(req))
+	require.Empty(t, ResponsesRequestImageGenerationKeywordHits(req))
+	require.Empty(t, ResponsesRequestRecentInputImageGenerationKeywordSources(req))
 }
 
 func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresPreviousTurnImagegenMarker(t *testing.T) {
@@ -108,10 +103,10 @@ func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresPreviousTurnImag
 	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
 	require.Empty(t, ResponsesRequestImageGenerationKeywordHits(req))
 	require.False(t, trace["requires_codex_image_tool"].(bool))
-	require.Empty(t, trace["imagegen_keyword_hits"])
+	require.NotContains(t, trace, "imagegen_keyword_hits")
 }
 
-func TestResponsesRequestRequiresCodexImageGenerationToolDetectsCurrentTurnAfterHistory(t *testing.T) {
+func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresCurrentTurnAfterHistory(t *testing.T) {
 	req := &dto.OpenAIResponsesRequest{
 		Model: "gpt-5.5",
 		Input: []byte(`[
@@ -128,10 +123,8 @@ func TestResponsesRequestRequiresCodexImageGenerationToolDetectsCurrentTurnAfter
 		ToolChoice: []byte(`"auto"`),
 	}
 
-	require.True(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
-	require.Equal(t, map[string][]string{
-		"input_text": {"$imagegen"},
-	}, ResponsesRequestRecentInputImageGenerationKeywordSources(req))
+	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
+	require.Empty(t, ResponsesRequestRecentInputImageGenerationKeywordSources(req))
 }
 
 func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresSystemImagegenKeyword(t *testing.T) {
@@ -153,7 +146,7 @@ func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresSystemImagegenKe
 	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
 	require.Empty(t, ResponsesRequestImageGenerationKeywordHits(req))
 	require.False(t, trace["requires_codex_image_tool"].(bool))
-	require.Empty(t, trace["imagegen_keyword_hits"])
+	require.NotContains(t, trace, "imagegen_keyword_hits")
 }
 
 func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresPlainImagegenWord(t *testing.T) {
@@ -172,6 +165,7 @@ func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresPlainImagegenWor
 	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
 	require.Empty(t, ResponsesRequestImageGenerationKeywordHits(req))
 	require.False(t, trace["requires_codex_image_tool"].(bool))
+	require.NotContains(t, trace, "imagegen_keyword_hits")
 }
 
 func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresInlineSkillDefinitionBlock(t *testing.T) {
@@ -191,8 +185,8 @@ func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresInlineSkillDefin
 	trace := BuildResponsesRequestToolTraceForLog(req)
 
 	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
-	require.Empty(t, trace["imagegen_keyword_hits"])
-	require.Contains(t, trace["imagegen_keyword_sources"], "tools")
+	require.NotContains(t, trace, "imagegen_keyword_hits")
+	require.NotContains(t, trace, "imagegen_keyword_sources")
 }
 
 func TestResponsesRequestRequiresCodexImageGenerationToolDetectsSkillCatalogKeywordHit(t *testing.T) {
@@ -212,7 +206,7 @@ func TestResponsesRequestRequiresCodexImageGenerationToolDetectsSkillCatalogKeyw
 	trace := BuildResponsesRequestToolTraceForLog(req)
 
 	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
-	require.Empty(t, trace["imagegen_keyword_hits"])
+	require.NotContains(t, trace, "imagegen_keyword_hits")
 }
 
 func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresPlainChineseImagePromptWithoutKeywordHit(t *testing.T) {
@@ -229,7 +223,7 @@ func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresPlainChineseImag
 	trace := BuildResponsesRequestToolTraceForLog(req)
 
 	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
-	require.Empty(t, trace["imagegen_keyword_hits"])
+	require.NotContains(t, trace, "imagegen_keyword_hits")
 }
 
 func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresOldSessionImagegenKeyword(t *testing.T) {
@@ -250,7 +244,7 @@ func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresOldSessionImageg
 	trace := BuildResponsesRequestToolTraceForLog(req)
 
 	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
-	require.Empty(t, trace["imagegen_keyword_hits"])
+	require.NotContains(t, trace, "imagegen_keyword_hits")
 }
 
 func TestShouldLogClientRequestTrace(t *testing.T) {

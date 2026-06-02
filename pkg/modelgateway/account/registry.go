@@ -27,15 +27,15 @@ func NewRegistry() *Registry {
 }
 
 type ChannelAccount struct {
-	ResourceRef     core.ResourceRef     `json:"resource_ref"`
-	AccountIdentity core.AccountIdentity `json:"account_identity"`
-	CredentialRef   core.CredentialRef   `json:"credential_ref"`
-	ProxyRef        core.ProxyRef        `json:"proxy_ref,omitempty"`
-	CodexEnvironmentID int                `json:"codex_environment_id,omitempty"`
-	ChannelID       int                  `json:"channel_id"`
-	CredentialIndex int                  `json:"credential_index"`
-	KeyEnabled      bool                 `json:"key_enabled"`
-	DisabledReason  string               `json:"disabled_reason,omitempty"`
+	ResourceRef        core.ResourceRef     `json:"resource_ref"`
+	AccountIdentity    core.AccountIdentity `json:"account_identity"`
+	CredentialRef      core.CredentialRef   `json:"credential_ref"`
+	ProxyRef           core.ProxyRef        `json:"proxy_ref,omitempty"`
+	CodexEnvironmentID int                  `json:"codex_environment_id,omitempty"`
+	ChannelID          int                  `json:"channel_id"`
+	CredentialIndex    int                  `json:"credential_index"`
+	KeyEnabled         bool                 `json:"key_enabled"`
+	DisabledReason     string               `json:"disabled_reason,omitempty"`
 }
 
 func (r *Registry) AccountsForChannel(channel *model.Channel) []ChannelAccount {
@@ -74,15 +74,15 @@ func (r *Registry) AccountsForChannel(channel *model.Channel) []ChannelAccount {
 		}
 		enabled, reason := channelKeyEnabled(channel, idx)
 		accounts = append(accounts, ChannelAccount{
-			ResourceRef:     accountResourceRef,
-			AccountIdentity: identity,
-			CredentialRef:   credentialRef,
-			ProxyRef:        proxyRefForChannelKey(channel, idx),
-			CodexEnvironmentID: codexEnvironmentIDForChannelKey(channel, idx),
-			ChannelID:       channel.Id,
-			CredentialIndex: idx,
-			KeyEnabled:      enabled,
-			DisabledReason:  reason,
+			ResourceRef:        accountResourceRef,
+			AccountIdentity:    identity,
+			CredentialRef:      credentialRef,
+			ProxyRef:           proxyRefForChannelKey(channel, idx),
+			CodexEnvironmentID: CodexEnvironmentIDForChannelKey(channel, idx, key),
+			ChannelID:          channel.Id,
+			CredentialIndex:    idx,
+			KeyEnabled:         enabled,
+			DisabledReason:     reason,
 		})
 	}
 	return accounts
@@ -166,15 +166,25 @@ func proxyRefForChannelKey(channel *model.Channel, index int) core.ProxyRef {
 	return core.ProxyRef{ProxyID: proxyID}
 }
 
-func codexEnvironmentIDForChannelKey(channel *model.Channel, index int) int {
-	if channel == nil || channel.ChannelInfo.MultiKeyCodexEnvironmentIDs == nil {
+func CodexEnvironmentIDForChannelKey(channel *model.Channel, index int, rawKey string) int {
+	if channel == nil || index < 0 {
 		return 0
 	}
-	environmentID := channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[index]
-	if environmentID <= 0 {
-		return 0
+	if strings.TrimSpace(rawKey) != "" && channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys != nil {
+		identity := AccountIdentityForChannelKey(channel, index, rawKey)
+		accountUniqueKey := strings.TrimSpace(identity.AccountUniqueKey)
+		if accountUniqueKey != "" {
+			if environmentID := channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys[accountUniqueKey]; environmentID > 0 {
+				return environmentID
+			}
+		}
 	}
-	return environmentID
+	if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {
+		if environmentID := channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[index]; environmentID > 0 {
+			return environmentID
+		}
+	}
+	return 0
 }
 
 func providerForChannel(channel *model.Channel) string {

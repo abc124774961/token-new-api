@@ -50,7 +50,7 @@ func (b *ModelCandidatePoolBuilder) buildGroupCandidates(req *core.DispatchReque
 			break
 		}
 		excluded[channel.Id] = struct{}{}
-		if !service.ChannelSupportsRequiredCapabilities(channel, req.ModelName, req.EndpointType, req.RequiresCodexImageTool) {
+		if !service.ChannelSupportsRequiredCapabilities(channel, req.ModelName, req.EndpointType, false) {
 			continue
 		}
 		upstreamModel := channel.ResolveMappedModelName(req.ModelName)
@@ -61,12 +61,11 @@ func (b *ModelCandidatePoolBuilder) buildGroupCandidates(req *core.DispatchReque
 		}
 		capability := profile.Capabilities(channel, req.ModelName)
 		candidates = append(candidates, core.Candidate{
-			Channel:                channel,
-			Group:                  group,
-			UpstreamModel:          upstreamModel,
-			ProviderProfile:        profile.Name(),
-			ProxyMode:              proxyMode,
-			RequiresCodexImageTool: req.RequiresCodexImageTool,
+			Channel:         channel,
+			Group:           group,
+			UpstreamModel:   upstreamModel,
+			ProviderProfile: profile.Name(),
+			ProxyMode:       proxyMode,
 			RuntimeKey: core.RuntimeKey{
 				RequestedModel:        req.ModelName,
 				UpstreamModel:         upstreamModel,

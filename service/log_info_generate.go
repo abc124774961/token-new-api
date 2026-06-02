@@ -72,6 +72,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 		adminInfo["is_multi_key"] = true
 		adminInfo["multi_key_index"] = common.GetContextKeyInt(ctx, constant.ContextKeyChannelMultiKeyIndex)
 	}
+	AppendSelectedChannelAccountAdminInfo(ctx, adminInfo)
 
 	isLocalCountTokens := common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens)
 	if isLocalCountTokens {
@@ -101,6 +102,28 @@ func appendChannelFailureTrace(ctx *gin.Context, adminInfo map[string]interface{
 		return
 	}
 	adminInfo["channel_failures"] = trace
+}
+
+func AppendSelectedChannelAccountAdminInfo(ctx *gin.Context, adminInfo map[string]interface{}) {
+	if ctx == nil || adminInfo == nil {
+		return
+	}
+	setString := func(name string, key constant.ContextKey) {
+		value := strings.TrimSpace(common.GetContextKeyString(ctx, key))
+		if value != "" {
+			adminInfo[name] = value
+		}
+	}
+	setString("account_uid", constant.ContextKeyChannelAccountCredentialUID)
+	setString("account_label", constant.ContextKeyChannelAccountCredentialLabel)
+	setString("account_id", constant.ContextKeyChannelAccountID)
+	setString("account_identity_key", constant.ContextKeyChannelAccountIdentityKey)
+	setString("account_unique_key", constant.ContextKeyChannelAccountUniqueKey)
+	setString("account_type", constant.ContextKeyChannelAccountType)
+	setString("account_brand", constant.ContextKeyChannelAccountBrand)
+	setString("account_provider", constant.ContextKeyChannelAccountProvider)
+	setString("credential_subject_fingerprint", constant.ContextKeyChannelAccountCredentialSubjectFP)
+	setString("credential_fingerprint", constant.ContextKeyChannelAccountCredentialFP)
 }
 
 func appendModelTraceInfo(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {

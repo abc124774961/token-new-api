@@ -189,6 +189,28 @@ func TestGenerateTextOtherInfoIncludesModelTrace(t *testing.T) {
 	require.Equal(t, "medium", other["upstream_reasoning_effort"])
 }
 
+func TestGenerateTextOtherInfoIncludesSelectedAccountIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	common.SetContextKey(ctx, constant.ContextKeyChannelIsMultiKey, true)
+	common.SetContextKey(ctx, constant.ContextKeyChannelMultiKeyIndex, 2)
+	common.SetContextKey(ctx, constant.ContextKeyChannelAccountCredentialUID, "acct-abcdef12")
+	common.SetContextKey(ctx, constant.ContextKeyChannelAccountCredentialLabel, "codex-acct-abcdef12")
+	common.SetContextKey(ctx, constant.ContextKeyChannelAccountIdentityKey, "codex:codex:subject")
+	common.SetContextKey(ctx, constant.ContextKeyChannelAccountCredentialSubjectFP, "abcdef1234567890")
+
+	other := GenerateTextOtherInfo(ctx, &relaycommon.RelayInfo{StartTime: time.Now()}, 1, 1, 1, 0, 1, -1, -1)
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, true, adminInfo["is_multi_key"])
+	require.Equal(t, 2, adminInfo["multi_key_index"])
+	require.Equal(t, "acct-abcdef12", adminInfo["account_uid"])
+	require.Equal(t, "codex-acct-abcdef12", adminInfo["account_label"])
+	require.Equal(t, "codex:codex:subject", adminInfo["account_identity_key"])
+	require.Equal(t, "abcdef1234567890", adminInfo["credential_subject_fingerprint"])
+}
+
 func TestGenerateTextOtherInfoIncludesDynamicBillingSnapshot(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

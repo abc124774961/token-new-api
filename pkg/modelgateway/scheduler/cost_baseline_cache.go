@@ -13,7 +13,6 @@ import (
 	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
-	"github.com/QuantumNous/new-api/service"
 )
 
 const defaultCostBaselineRefreshInterval = 500 * time.Millisecond
@@ -142,11 +141,6 @@ func buildCostBaselines(bindings []model.EnabledChannelBinding) map[core.CostBas
 				EndpointType:   endpointType,
 			}
 			storeCostBaseline(out, base, ratio)
-			if service.ChannelSupportsCodexImageGenerationTool(channel) {
-				imageScope := base
-				imageScope.RequiresCodexImageTool = true
-				storeCostBaseline(out, imageScope, ratio)
-			}
 		}
 	}
 	return out

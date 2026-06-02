@@ -64,6 +64,30 @@ func TestTrackerObserveFirstByteUpdatesProcessingRecord(t *testing.T) {
 	require.Equal(t, int64(1200), events[1].Record.TTFTMs)
 }
 
+func TestTrackerSnapshotSortsProcessingByCreatedAtNotUpdatedAt(t *testing.T) {
+	tracker := NewTracker(10, time.Minute)
+	now := time.Now()
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-older", ModelName: "gpt-5.5"},
+		RecordedAt: now,
+	})
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-newer", ModelName: "gpt-5.5"},
+		RecordedAt: now.Add(20 * time.Second),
+	})
+	tracker.ObserveFirstByte(FirstByteObservation{
+		RequestID:  "req-older",
+		ObservedAt: now.Add(40 * time.Second),
+		TTFT:       time.Second,
+	})
+
+	items := tracker.Snapshot(10, Filters{})
+	require.Len(t, items, 2)
+	require.Equal(t, "req-newer", items[0].RequestID)
+	require.Equal(t, "req-older", items[1].RequestID)
+	require.Equal(t, now.Add(40*time.Second).Unix(), items[1].UpdatedAt)
+}
+
 func TestTrackerAppliesEarlyFirstByteWhenStartArrivesLater(t *testing.T) {
 	tracker := NewTracker(10, time.Minute)
 	now := time.Now()

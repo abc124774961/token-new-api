@@ -950,9 +950,6 @@ func ChannelSupportsRequiredEndpoint(channel *model.Channel, modelName string, e
 }
 
 func ChannelSupportsRequiredCapabilities(channel *model.Channel, modelName string, endpointType constant.EndpointType, requiresCodexImageTool bool) bool {
-	if requiresCodexImageTool && !ChannelSupportsCodexImageGenerationTool(channel) {
-		return false
-	}
 	if channel != nil && channel.Type == constant.ChannelTypeCodex {
 		if !codexChannelHasSchedulableAccount(channel) {
 			return false

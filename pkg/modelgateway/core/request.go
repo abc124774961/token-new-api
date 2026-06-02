@@ -13,7 +13,6 @@ func NewDispatchRequestFromGin(c *gin.Context, param *service.RetryParam) Dispat
 		req.RequestedGroup = param.TokenGroup
 		req.ModelName = param.ModelName
 		req.EndpointType = param.EndpointType
-		req.RequiresCodexImageTool = param.RequiresCodexImageTool
 		req.Retry = param.GetRetry()
 		req.ExtraRetries = param.GetExtraRetries()
 	}

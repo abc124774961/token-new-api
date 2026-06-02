@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -31,8 +32,16 @@ type ResolvedCredential struct {
 	CredentialIndex              int
 	ChannelIsMultiKey            bool
 	CodexEnvironmentID           int
+	AccountID                    string
+	AccountIdentityKey           string
+	AccountUniqueKey             string
+	AccountType                  string
+	Brand                        string
+	Provider                     string
 	CredentialSubjectFingerprint string
 	CredentialFingerprint        string
+	CredentialUID                string
+	CredentialLabel              string
 	ProxyID                      int
 	ProxyURL                     string
 }
@@ -113,17 +122,33 @@ func ResolveChannelCredential(channel *model.Channel, ref core.CredentialRef) (R
 	if channel.ChannelInfo.IsMultiKey && !channelKeyEnabled(channel, index) {
 		return ResolvedCredential{}, resolverError(fmt.Errorf("%w: index=%d", ErrCredentialDisabled, index), types.ErrorCodeChannelNoAvailableKey)
 	}
+	identity := modelgatewayaccount.AccountIdentityForChannelKey(channel, index, key)
+	resourceRef := modelgatewayaccount.ResourceRefForChannel(channel)
 	credentialFP := fingerprint(key)
 	if ref.CredentialFingerprint != "" && ref.CredentialFingerprint != credentialFP {
 		return ResolvedCredential{}, resolverError(ErrCredentialFingerprint, types.ErrorCodeChannelInvalidKey)
+	}
+	subjectFP := strings.TrimSpace(ref.CredentialSubjectFingerprint)
+	if subjectFP == "" {
+		subjectFP = identity.CredentialSubjectFingerprint
 	}
 	proxyID, proxyURL, proxyErr := resolveChannelCredentialProxy(channel, index)
 	if proxyErr != nil {
 		return ResolvedCredential{}, resolverError(proxyErr, types.ErrorCodeGetChannelFailed)
 	}
-	envID := 0
-	if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {
-		envID = channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[index]
+	envID := modelgatewayaccount.CodexEnvironmentIDForChannelKey(channel, index, key)
+	credentialRef := ref
+	if credentialRef.ResourceID == "" {
+		credentialRef.ResourceID = resourceRef.ResourceID
+	}
+	if credentialRef.AccountID == "" {
+		credentialRef.AccountID = identity.AccountID
+	}
+	credentialRef.CredentialIndex = index
+	credentialRef.CredentialSubjectFingerprint = subjectFP
+	credentialRef.CredentialFingerprint = credentialFP
+	if credentialRef.Resolver == "" {
+		credentialRef.Resolver = modelgatewayaccount.ResolverChannelKey
 	}
 	return ResolvedCredential{
 		Ref:                          ref,
@@ -132,8 +157,16 @@ func ResolveChannelCredential(channel *model.Channel, ref core.CredentialRef) (R
 		CredentialIndex:              index,
 		ChannelIsMultiKey:            channel.ChannelInfo.IsMultiKey,
 		CodexEnvironmentID:           envID,
-		CredentialSubjectFingerprint: ref.CredentialSubjectFingerprint,
+		AccountID:                    identity.AccountID,
+		AccountIdentityKey:           identity.AccountIdentityKey,
+		AccountUniqueKey:             identity.AccountUniqueKey,
+		AccountType:                  identity.AccountType,
+		Brand:                        identity.Brand,
+		Provider:                     identity.Provider,
+		CredentialSubjectFingerprint: subjectFP,
 		CredentialFingerprint:        credentialFP,
+		CredentialUID:                modelgatewayaccount.CredentialUID(identity, credentialRef, resourceRef, channel.Id),
+		CredentialLabel:              modelgatewayaccount.CredentialLabel(identity, credentialRef, resourceRef, channel.Id),
 		ProxyID:                      proxyID,
 		ProxyURL:                     proxyURL,
 	}, nil
@@ -145,6 +178,7 @@ func ApplyResolvedCredentialToContext(c *gin.Context, resolved ResolvedCredentia
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelKey, resolved.Key)
 	common.SetContextKey(c, constant.ContextKeyChannelAccountCodexEnvironmentID, resolved.CodexEnvironmentID)
+	applyAccountIdentityToContext(c, resolved)
 	if resolved.ProxyID > 0 && resolved.ProxyURL != "" {
 		common.SetContextKey(c, constant.ContextKeyChannelAccountProxyID, resolved.ProxyID)
 		common.SetContextKey(c, constant.ContextKeyChannelAccountProxyURL, resolved.ProxyURL)
@@ -156,6 +190,63 @@ func ApplyResolvedCredentialToContext(c *gin.Context, resolved ResolvedCredentia
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
 	common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, 0)
+}
+
+func ApplyChannelCredentialIdentityToContext(c *gin.Context, channel *model.Channel, credentialIndex int, rawKey string) {
+	if c == nil || channel == nil || credentialIndex < 0 {
+		return
+	}
+	key := strings.TrimSpace(rawKey)
+	if key == "" {
+		return
+	}
+	identity := modelgatewayaccount.AccountIdentityForChannelKey(channel, credentialIndex, key)
+	resourceRef := modelgatewayaccount.ResourceRefForChannel(channel)
+	credentialFP := fingerprint(key)
+	credentialRef := core.CredentialRef{
+		ResourceID:                   resourceRef.ResourceID,
+		AccountID:                    identity.AccountID,
+		CredentialIndex:              credentialIndex,
+		CredentialSubjectFingerprint: identity.CredentialSubjectFingerprint,
+		CredentialFingerprint:        credentialFP,
+		Resolver:                     modelgatewayaccount.ResolverChannelKey,
+	}
+	applyAccountIdentityToContext(c, ResolvedCredential{
+		ChannelID:                    channel.Id,
+		CredentialIndex:              credentialIndex,
+		AccountID:                    identity.AccountID,
+		AccountIdentityKey:           identity.AccountIdentityKey,
+		AccountUniqueKey:             identity.AccountUniqueKey,
+		AccountType:                  identity.AccountType,
+		Brand:                        identity.Brand,
+		Provider:                     identity.Provider,
+		CredentialSubjectFingerprint: identity.CredentialSubjectFingerprint,
+		CredentialFingerprint:        credentialFP,
+		CredentialUID:                modelgatewayaccount.CredentialUID(identity, credentialRef, resourceRef, channel.Id),
+		CredentialLabel:              modelgatewayaccount.CredentialLabel(identity, credentialRef, resourceRef, channel.Id),
+	})
+}
+
+func applyAccountIdentityToContext(c *gin.Context, resolved ResolvedCredential) {
+	if c == nil {
+		return
+	}
+	setString := func(key constant.ContextKey, value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			common.SetContextKey(c, key, value)
+		}
+	}
+	setString(constant.ContextKeyChannelAccountID, resolved.AccountID)
+	setString(constant.ContextKeyChannelAccountIdentityKey, resolved.AccountIdentityKey)
+	setString(constant.ContextKeyChannelAccountUniqueKey, resolved.AccountUniqueKey)
+	setString(constant.ContextKeyChannelAccountType, resolved.AccountType)
+	setString(constant.ContextKeyChannelAccountBrand, resolved.Brand)
+	setString(constant.ContextKeyChannelAccountProvider, resolved.Provider)
+	setString(constant.ContextKeyChannelAccountCredentialSubjectFP, resolved.CredentialSubjectFingerprint)
+	setString(constant.ContextKeyChannelAccountCredentialFP, resolved.CredentialFingerprint)
+	setString(constant.ContextKeyChannelAccountCredentialUID, resolved.CredentialUID)
+	setString(constant.ContextKeyChannelAccountCredentialLabel, resolved.CredentialLabel)
 }
 
 func channelIDFromResourceID(resourceID string) int {

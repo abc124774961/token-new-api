@@ -185,42 +185,50 @@ func TestTopicPublishesProcessingUserRequestDelta(t *testing.T) {
 	require.Equal(t, "low_score", delta.UserRequestsRecent[0].ProbeReason)
 }
 
-func TestMergeUserRequestRealtimeRecordsSortsByUpdatedAt(t *testing.T) {
+func TestMergeUserRequestRealtimeRecordsSortsByProcessingCreatedAndCompletedAt(t *testing.T) {
 	merged := mergeUserRequestRealtimeRecords(
 		[]controller.ModelGatewayUserRequestRecord{
 			{
-				RequestID:   "req-completed-newer",
-				CreatedAt:   100,
-				UpdatedAt:   120,
-				CompletedAt: 120,
+				RequestID:   "req-completed-newer-created",
+				CreatedAt:   130,
+				UpdatedAt:   10,
+				CompletedAt: 100,
 				Status:      "success",
 			},
 			{
-				RequestID:   "req-completed-older",
+				RequestID:   "req-completed-later-finished",
 				CreatedAt:   100,
-				UpdatedAt:   110,
-				CompletedAt: 110,
+				UpdatedAt:   140,
+				CompletedAt: 140,
 				Status:      "success",
 			},
 		},
 		[]userrequest.Record{
 			{
-				RequestID: "req-processing-first-byte",
-				CreatedAt: 100,
+				RequestID: "req-processing-newer-created",
+				CreatedAt: 120,
 				UpdatedAt: 125,
 				TTFTMs:    1200,
+				Status:    userrequest.StatusProcessing,
+			},
+			{
+				RequestID: "req-processing-older-created",
+				CreatedAt: 110,
+				UpdatedAt: 999,
 				Status:    userrequest.StatusProcessing,
 			},
 		},
 		10,
 	)
 
-	require.Len(t, merged, 3)
-	require.Equal(t, "req-processing-first-byte", merged[0].RequestID)
+	require.Len(t, merged, 4)
+	require.Equal(t, "req-processing-newer-created", merged[0].RequestID)
 	require.Equal(t, int64(125), merged[0].UpdatedAt)
 	require.Equal(t, int64(1200), merged[0].TTFTMs)
-	require.Equal(t, "req-completed-newer", merged[1].RequestID)
-	require.Equal(t, "req-completed-older", merged[2].RequestID)
+	require.Equal(t, "req-processing-older-created", merged[1].RequestID)
+	require.Equal(t, int64(999), merged[1].UpdatedAt)
+	require.Equal(t, "req-completed-newer-created", merged[2].RequestID)
+	require.Equal(t, "req-completed-later-finished", merged[3].RequestID)
 }
 
 func TestTopicPublishesHealthProbeUserRequestDeltaByDefault(t *testing.T) {

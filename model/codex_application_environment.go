@@ -298,16 +298,28 @@ func AssignCodexApplicationEnvironments(channel *Channel, credentialIndexes []in
 }
 
 func CleanupCodexApplicationEnvironmentIDs(info *ChannelInfo, maxSize int) {
-	if info == nil || info.MultiKeyCodexEnvironmentIDs == nil {
+	if info == nil {
 		return
 	}
-	for idx := range info.MultiKeyCodexEnvironmentIDs {
-		if idx < 0 || idx >= maxSize {
-			delete(info.MultiKeyCodexEnvironmentIDs, idx)
+	if info.MultiKeyCodexEnvironmentIDs != nil {
+		for idx := range info.MultiKeyCodexEnvironmentIDs {
+			if idx < 0 || idx >= maxSize {
+				delete(info.MultiKeyCodexEnvironmentIDs, idx)
+			}
+		}
+		if len(info.MultiKeyCodexEnvironmentIDs) == 0 {
+			info.MultiKeyCodexEnvironmentIDs = nil
 		}
 	}
-	if len(info.MultiKeyCodexEnvironmentIDs) == 0 {
-		info.MultiKeyCodexEnvironmentIDs = nil
+	if info.MultiKeyCodexEnvironmentAccountUniqueKeys != nil {
+		for accountUniqueKey, environmentID := range info.MultiKeyCodexEnvironmentAccountUniqueKeys {
+			if strings.TrimSpace(accountUniqueKey) == "" || environmentID <= 0 {
+				delete(info.MultiKeyCodexEnvironmentAccountUniqueKeys, accountUniqueKey)
+			}
+		}
+		if len(info.MultiKeyCodexEnvironmentAccountUniqueKeys) == 0 {
+			info.MultiKeyCodexEnvironmentAccountUniqueKeys = nil
+		}
 	}
 }
 
@@ -361,13 +373,13 @@ func buildDefaultCodexApplicationEnvironments() []CodexApplicationEnvironment {
 		originator := originators[i%len(originators)]
 		betaFeature := betaFeatures[i%len(betaFeatures)]
 		turnMetadata := map[string]any{
-			"environment_id": idx,
+			"environment_id":   idx,
 			"environment_name": fmt.Sprintf("codex-env-%03d", idx),
-			"platform": platform,
-			"app_version": appVersion,
-			"session_id": sessionID,
-			"window_id": windowID,
-			"originator": originator,
+			"platform":         platform,
+			"app_version":      appVersion,
+			"session_id":       sessionID,
+			"window_id":        windowID,
+			"originator":       originator,
 		}
 		turnMetadataJSON, _ := common.Marshal(turnMetadata)
 		envs = append(envs, CodexApplicationEnvironment{

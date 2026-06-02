@@ -543,12 +543,7 @@ func mergeUserRequestRealtimeRecords(completed []controller.ModelGatewayUserRequ
 		merged = append(merged, record)
 	}
 	sort.Slice(merged, func(i, j int) bool {
-		left := userRequestSortTime(merged[i])
-		right := userRequestSortTime(merged[j])
-		if left != right {
-			return left > right
-		}
-		return merged[i].RequestID > merged[j].RequestID
+		return userRequestRecordLess(merged[i], merged[j])
 	})
 	if limit > 0 && len(merged) > limit {
 		return merged[:limit]
@@ -556,14 +551,26 @@ func mergeUserRequestRealtimeRecords(completed []controller.ModelGatewayUserRequ
 	return merged
 }
 
-func userRequestSortTime(record controller.ModelGatewayUserRequestRecord) int64 {
-	if record.UpdatedAt > 0 {
-		return record.UpdatedAt
+func userRequestRecordLess(left, right controller.ModelGatewayUserRequestRecord) bool {
+	leftProcessing := userRequestRecordProcessing(left)
+	rightProcessing := userRequestRecordProcessing(right)
+	if leftProcessing != rightProcessing {
+		return leftProcessing
 	}
-	if record.CompletedAt > 0 {
-		return record.CompletedAt
+	if left.CreatedAt != right.CreatedAt {
+		return left.CreatedAt > right.CreatedAt
 	}
-	return record.CreatedAt
+	if left.CompletedAt != right.CompletedAt {
+		return left.CompletedAt > right.CompletedAt
+	}
+	if left.ID != right.ID {
+		return left.ID > right.ID
+	}
+	return left.RequestID > right.RequestID
+}
+
+func userRequestRecordProcessing(record controller.ModelGatewayUserRequestRecord) bool {
+	return record.Status == userrequest.StatusProcessing || record.CompletedAt <= 0
 }
 
 func userRequestRecordUpdatedAt(record userrequest.Record) int64 {

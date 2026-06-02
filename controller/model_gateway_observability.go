@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
@@ -794,6 +795,8 @@ type ModelGatewayCandidateExplanation struct {
 	CredentialIndex              int                          `json:"credential_index,omitempty"`
 	CredentialSubjectFP          string                       `json:"credential_subject_fingerprint,omitempty"`
 	CredentialFP                 string                       `json:"credential_fingerprint,omitempty"`
+	CredentialUID                string                       `json:"credential_uid,omitempty"`
+	CredentialLabel              string                       `json:"credential_label,omitempty"`
 	PoolLevel                    string                       `json:"pool_level,omitempty"`
 	SwitchReason                 string                       `json:"switch_reason,omitempty"`
 	FailureScope                 string                       `json:"failure_scope,omitempty"`
@@ -3173,7 +3176,7 @@ func buildModelGatewayUserRequestObservability(startTime int64, endTime int64, o
 	} else {
 		queryLimit = options.ScanLimit + 1
 	}
-	if err := base.Order("updated_at desc, completed_at desc, id desc").Limit(queryLimit).Find(&userRequests).Error; err != nil {
+	if err := base.Order("created_at desc, completed_at desc, id desc").Limit(queryLimit).Find(&userRequests).Error; err != nil {
 		return ModelGatewayUserRequestObservabilityResponse{}, err
 	}
 	if !options.IncludeTotal {
@@ -5841,9 +5844,48 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			ScoreSampleSource:          candidate.ScoreSampleSource,
 			MatchedRuntimeKey:          modelGatewayRuntimeKeyFromCore(candidate.MatchedRuntimeKey),
 		}
+		item.CredentialUID, item.CredentialLabel = modelGatewayCandidateCredentialDisplay(item)
 		out = append(out, item)
 	}
 	return out
+}
+
+func modelGatewayCandidateCredentialDisplay(candidate ModelGatewayCandidateExplanation) (string, string) {
+	runtimeKey := candidate.RuntimeKey
+	subjectFP := firstModelGatewayObservabilityString(candidate.CredentialSubjectFP, runtimeKey.CredentialSubjectFP)
+	credentialFP := firstModelGatewayObservabilityString(candidate.CredentialFP, runtimeKey.CredentialFP)
+	accountID := firstModelGatewayObservabilityString(candidate.AccountID, runtimeKey.AccountID)
+	resourceID := firstModelGatewayObservabilityString(candidate.ResourceID, runtimeKey.ResourceID)
+	channelID := candidate.ChannelID
+	if channelID <= 0 {
+		channelID = runtimeKey.ChannelID
+	}
+	uid := modelgatewayaccount.CredentialUIDFromParts(modelgatewayaccount.CredentialUIDParts{
+		CredentialSubjectFingerprint: subjectFP,
+		CredentialFingerprint:        credentialFP,
+		AccountID:                    accountID,
+		CredentialResourceID:         resourceID,
+		ResourceID:                   resourceID,
+		ChannelID:                    channelID,
+	})
+	if uid == "" {
+		return "", ""
+	}
+	brand := firstModelGatewayObservabilityString(candidate.Brand, runtimeKey.Brand)
+	if brand == "" {
+		return uid, uid
+	}
+	return uid, strings.ToLower(brand) + "-" + uid
+}
+
+func firstModelGatewayObservabilityString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func modelGatewayRejectReasonsFromRequestMeta(requestMeta map[string]any) []string {

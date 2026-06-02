@@ -54,7 +54,6 @@ func (b *IndexedCandidatePoolBuilder) Build(req *core.DispatchRequest, policy co
 		Groups:                      groups,
 		ModelName:                   req.ModelName,
 		EndpointType:                req.EndpointType,
-		RequiresCodexImageTool:      req.RequiresCodexImageTool,
 		RequiresResponsesPreviousID: req.RequiresResponsesPreviousID,
 		MaxCandidates:               b.maxCandidates,
 	})

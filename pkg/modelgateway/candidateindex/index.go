@@ -325,7 +325,7 @@ func (b *snapshotBuilder) sort() {
 }
 
 func candidateMatchesQuery(candidate core.Candidate, query Query) bool {
-	if query.EndpointType != "" && !service.ChannelSupportsRequiredCapabilities(candidate.Channel, candidate.RuntimeKey.RequestedModel, query.EndpointType, query.RequiresCodexImageTool) {
+	if query.EndpointType != "" && !service.ChannelSupportsRequiredCapabilities(candidate.Channel, candidate.RuntimeKey.RequestedModel, query.EndpointType, false) {
 		return false
 	}
 	if !candidateProxyAvailable(candidate) {
@@ -451,7 +451,7 @@ func candidateUsesCodexBackendForEndpoint(candidate core.Candidate, endpointType
 }
 
 func prepareCandidateForQuery(candidate core.Candidate, query Query) core.Candidate {
-	candidate.RequiresCodexImageTool = query.RequiresCodexImageTool
+	candidate.RequiresCodexImageTool = false
 	candidate.RuntimeKey.EndpointType = query.EndpointType
 	requestedModel := strings.TrimSpace(query.ModelName)
 	if requestedModel != "" {

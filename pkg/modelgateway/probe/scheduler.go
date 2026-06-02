@@ -489,7 +489,7 @@ func (s *ProbeScheduler) applyProbeScore(plan *core.DispatchPlan, candidate Prob
 		UpstreamModel:          plan.RuntimeKey.UpstreamModel,
 		ProviderProfile:        plan.ProviderProfile,
 		ProxyMode:              plan.ProxyMode,
-		RequiresCodexImageTool: plan.RequiresCodexImageTool,
+		RequiresCodexImageTool: false,
 		RuntimeKey:             plan.RuntimeKey,
 	}
 	weights := s.scoreWeights

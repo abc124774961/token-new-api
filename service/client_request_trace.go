@@ -161,8 +161,6 @@ func BuildResponsesRequestToolTraceForLog(req *dto.OpenAIResponsesRequest) map[s
 	trace["tool_choice_bytes"] = len(req.ToolChoice)
 	trace["has_image_generation_tool"] = req.HasTool(dto.BuildInToolImageGeneration)
 	trace["requires_codex_image_tool"] = ResponsesRequestRequiresCodexImageGenerationTool(req)
-	trace["imagegen_keyword_hits"] = ResponsesRequestImageGenerationKeywordHits(req)
-	trace["imagegen_keyword_sources"] = ResponsesRequestImageGenerationKeywordSources(req)
 	if len(req.Tools) > 0 {
 		trace["tool_types"] = toolTypesFromRawForTrace(req.Tools)
 		trace["tools_raw"] = truncateTraceValue(string(req.Tools), clientRequestTraceMaxValueLen)
@@ -205,29 +203,27 @@ func BuildResponsesInputTextProbeForLog(req *dto.OpenAIResponsesRequest) map[str
 		snippets = append(snippets, truncateTraceValue(text, 800))
 	}
 	probe["last_text_snippets"] = snippets
-	probe["imagegen_keyword_hits"] = ResponsesRequestImageGenerationKeywordHits(req)
-	probe["imagegen_keyword_sources"] = ResponsesRequestRecentInputImageGenerationKeywordSources(req)
 	return probe
 }
 
 func ResponsesRequestRequiresCodexImageGenerationTool(req *dto.OpenAIResponsesRequest) bool {
-	return newResponsesImageGenerationRequirementDetector(req).RequiresCodexImageGenerationTool()
+	return false
 }
 
 func ResponsesRequestHasImageGenerationKeywordHits(req *dto.OpenAIResponsesRequest) bool {
-	return len(ResponsesRequestImageGenerationKeywordHits(req)) > 0
+	return false
 }
 
 func ResponsesRequestImageGenerationKeywordHits(req *dto.OpenAIResponsesRequest) []string {
-	return newResponsesImageGenerationRequirementDetector(req).IntentHits()
+	return nil
 }
 
 func ResponsesRequestImageGenerationKeywordSources(req *dto.OpenAIResponsesRequest) map[string][]string {
-	return newResponsesImageGenerationRequirementDetector(req).KeywordSources()
+	return nil
 }
 
 func ResponsesRequestRecentInputImageGenerationKeywordSources(req *dto.OpenAIResponsesRequest) map[string][]string {
-	return newResponsesImageGenerationRequirementDetector(req).RecentIntentSources()
+	return nil
 }
 
 func imageGenerationKeywordHitsFromText(text string) []string {

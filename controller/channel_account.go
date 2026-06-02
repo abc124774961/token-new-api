@@ -2556,10 +2556,7 @@ func restoreChannelInvalidAccount(poolID int, targetChannelID int) (*ChannelAcco
 		channel.ChannelInfo.MultiKeyProxyIDs[newIndex] = record.ProxyID
 	}
 	if record.CodexEnvironmentID > 0 {
-		if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs == nil {
-			channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = make(map[int]int)
-		}
-		channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[newIndex] = record.CodexEnvironmentID
+		setChannelAccountCodexEnvironmentID(channel, newIndex, record.CodexEnvironmentID)
 	}
 	if strings.TrimSpace(record.CapabilitySnapshot) != "" {
 		var capability model.ChannelAccountCapability
@@ -2674,6 +2671,7 @@ func updateChannelAccountCredential(channelID int, credentialIndex int, credenti
 	if credentialIndex < 0 || credentialIndex >= len(keys) {
 		return nil, fmt.Errorf("账号索引超出范围")
 	}
+	cleanupChannelAccountCodexEnvironmentMappings(channel, len(keys))
 	credential = strings.TrimSpace(credential)
 	credentialUpdated := credential != ""
 	if !credentialUpdated && codexEnvironmentID == nil {
@@ -3060,30 +3058,141 @@ func channelAccountProxyAction(proxyID int) string {
 	return "clear"
 }
 
+func channelAccountUniqueKey(channel *model.Channel, credentialIndex int) string {
+	if channel == nil || credentialIndex < 0 {
+		return ""
+	}
+	keys := channel.GetKeys()
+	if credentialIndex >= len(keys) {
+		return ""
+	}
+	identity := modelgatewayaccount.AccountIdentityForChannelKey(channel, credentialIndex, keys[credentialIndex])
+	return strings.TrimSpace(identity.AccountUniqueKey)
+}
+
 func channelAccountCodexEnvironmentID(channel *model.Channel, credentialIndex int) int {
-	if channel == nil || credentialIndex < 0 || channel.ChannelInfo.MultiKeyCodexEnvironmentIDs == nil {
+	if channel == nil || credentialIndex < 0 {
 		return 0
 	}
-	return channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[credentialIndex]
+	accountUniqueKey := channelAccountUniqueKey(channel, credentialIndex)
+	if accountUniqueKey != "" && channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys != nil {
+		if environmentID := channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys[accountUniqueKey]; environmentID > 0 {
+			return environmentID
+		}
+	}
+	if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {
+		if environmentID := channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[credentialIndex]; environmentID > 0 {
+			return environmentID
+		}
+	}
+	return 0
 }
 
 func setChannelAccountCodexEnvironmentID(channel *model.Channel, credentialIndex int, environmentID int) {
 	if channel == nil || credentialIndex < 0 {
 		return
 	}
+	accountUniqueKey := channelAccountUniqueKey(channel, credentialIndex)
 	if environmentID <= 0 {
+		if channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys != nil && accountUniqueKey != "" {
+			delete(channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys, accountUniqueKey)
+		}
 		if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {
 			delete(channel.ChannelInfo.MultiKeyCodexEnvironmentIDs, credentialIndex)
-			if len(channel.ChannelInfo.MultiKeyCodexEnvironmentIDs) == 0 {
-				channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = nil
-			}
 		}
+		cleanupChannelAccountCodexEnvironmentMappings(channel, len(channel.GetKeys()))
+		return
+	}
+	if accountUniqueKey != "" {
+		if channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys == nil {
+			channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys = make(map[string]int)
+		}
+		channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys[accountUniqueKey] = environmentID
+		if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {
+			delete(channel.ChannelInfo.MultiKeyCodexEnvironmentIDs, credentialIndex)
+		}
+		cleanupChannelAccountCodexEnvironmentMappings(channel, len(channel.GetKeys()))
 		return
 	}
 	if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs == nil {
 		channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = make(map[int]int)
 	}
 	channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[credentialIndex] = environmentID
+}
+
+func cleanupChannelAccountCodexEnvironmentMappings(channel *model.Channel, keyCount int) {
+	if channel == nil {
+		return
+	}
+	if keyCount < 0 {
+		keyCount = 0
+	}
+	if keyCount == 0 {
+		keyCount = len(channel.GetKeys())
+	}
+	uniqueByIndex := make(map[int]string, keyCount)
+	validUniqueKeys := make(map[string]struct{}, keyCount)
+	for index := 0; index < keyCount; index++ {
+		accountUniqueKey := channelAccountUniqueKey(channel, index)
+		if accountUniqueKey == "" {
+			continue
+		}
+		uniqueByIndex[index] = accountUniqueKey
+		validUniqueKeys[accountUniqueKey] = struct{}{}
+	}
+	if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {
+		if channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys == nil {
+			channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys = make(map[string]int)
+		}
+		for index, environmentID := range channel.ChannelInfo.MultiKeyCodexEnvironmentIDs {
+			if index < 0 || index >= keyCount || environmentID <= 0 {
+				continue
+			}
+			accountUniqueKey := uniqueByIndex[index]
+			if accountUniqueKey == "" {
+				continue
+			}
+			if channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys[accountUniqueKey] <= 0 {
+				channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys[accountUniqueKey] = environmentID
+			}
+		}
+		channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = nil
+	}
+	if channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys != nil {
+		for accountUniqueKey, environmentID := range channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys {
+			if strings.TrimSpace(accountUniqueKey) == "" || environmentID <= 0 {
+				delete(channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys, accountUniqueKey)
+				continue
+			}
+			if _, ok := validUniqueKeys[accountUniqueKey]; !ok {
+				delete(channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys, accountUniqueKey)
+			}
+		}
+		if len(channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys) == 0 {
+			channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys = nil
+		}
+	}
+}
+
+func assignCodexApplicationEnvironments(channel *model.Channel, credentialIndexes []int) error {
+	if channel == nil || len(credentialIndexes) == 0 {
+		return nil
+	}
+	envs, err := model.ListCodexApplicationEnvironments(false)
+	if err != nil {
+		return err
+	}
+	if len(envs) == 0 {
+		return nil
+	}
+	for _, credentialIndex := range credentialIndexes {
+		if credentialIndex < 0 {
+			continue
+		}
+		env := envs[credentialIndex%len(envs)]
+		setChannelAccountCodexEnvironmentID(channel, credentialIndex, env.Id)
+	}
+	return nil
 }
 
 func normalizeChannelAccountEditableCredential(credential string, credentialType string) (string, string, error) {
@@ -3206,7 +3315,7 @@ func importChannelAccounts(channelID int, credentials string, credentialList []s
 		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyModeRandom
 	}
 	cleanupChannelAccountStatusMaps(channel, len(nextKeys))
-	if err := model.AssignCodexApplicationEnvironments(channel, addedIndexes); err != nil {
+	if err := assignCodexApplicationEnvironments(channel, addedIndexes); err != nil {
 		return nil, err
 	}
 	reconcileImportedChannelAccountStatus(channel, len(existingKeys), len(nextKeys), addedIndexes)
@@ -3487,6 +3596,7 @@ func deleteChannelAccountsLockedTx(tx *gorm.DB, channel *model.Channel, indexes 
 		}
 		deleteSet[index] = struct{}{}
 	}
+	cleanupChannelAccountCodexEnvironmentMappings(channel, len(keys))
 	beforeStatus := channel.Status
 	beforeAllKeysDisabled := beforeStatus == common.ChannelStatusAutoDisabled && channelAccountStatusReasonIsAllKeysDisabled(channel)
 	remainingKeys := make([]string, 0, len(keys)-len(indexes))
@@ -3495,7 +3605,6 @@ func deleteChannelAccountsLockedTx(tx *gorm.DB, channel *model.Channel, indexes 
 	newDisabledReason := make(map[int]string)
 	newProxyIDs := make(map[int]int)
 	newAccountTypes := make(map[int]string)
-	newCodexEnvironmentIDs := make(map[int]int)
 	newCapabilities := make(map[int]model.ChannelAccountCapability)
 	newIndex := 0
 	for oldIndex, key := range keys {
@@ -3528,11 +3637,6 @@ func deleteChannelAccountsLockedTx(tx *gorm.DB, channel *model.Channel, indexes 
 				newAccountTypes[newIndex] = strings.ToLower(strings.TrimSpace(accountType))
 			}
 		}
-		if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {
-			if environmentID, exists := channel.ChannelInfo.MultiKeyCodexEnvironmentIDs[oldIndex]; exists && environmentID > 0 {
-				newCodexEnvironmentIDs[newIndex] = environmentID
-			}
-		}
 		if channel.ChannelInfo.MultiKeyCapabilities != nil {
 			if capability, exists := channel.ChannelInfo.MultiKeyCapabilities[oldIndex]; exists {
 				newCapabilities[newIndex] = capability
@@ -3553,8 +3657,8 @@ func deleteChannelAccountsLockedTx(tx *gorm.DB, channel *model.Channel, indexes 
 	channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
 	channel.ChannelInfo.MultiKeyProxyIDs = newProxyIDs
 	channel.ChannelInfo.MultiKeyAccountTypes = newAccountTypes
-	channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = newCodexEnvironmentIDs
 	channel.ChannelInfo.MultiKeyCapabilities = newCapabilities
+	cleanupChannelAccountCodexEnvironmentMappings(channel, len(remainingKeys))
 	if !channel.ChannelInfo.IsMultiKey {
 		channel.ChannelInfo.MultiKeyStatusList = nil
 		channel.ChannelInfo.MultiKeyDisabledTime = nil
@@ -3565,9 +3669,6 @@ func deleteChannelAccountsLockedTx(tx *gorm.DB, channel *model.Channel, indexes 
 	}
 	if len(channel.ChannelInfo.MultiKeyAccountTypes) == 0 {
 		channel.ChannelInfo.MultiKeyAccountTypes = nil
-	}
-	if len(channel.ChannelInfo.MultiKeyCodexEnvironmentIDs) == 0 {
-		channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = nil
 	}
 	if len(channel.ChannelInfo.MultiKeyCapabilities) == 0 {
 		channel.ChannelInfo.MultiKeyCapabilities = nil
@@ -3797,16 +3898,7 @@ func cleanupChannelAccountStatusMaps(channel *model.Channel, keyCount int) {
 			channel.ChannelInfo.MultiKeyAccountTypes = nil
 		}
 	}
-	if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {
-		for index, environmentID := range channel.ChannelInfo.MultiKeyCodexEnvironmentIDs {
-			if index < 0 || index >= keyCount || environmentID <= 0 {
-				delete(channel.ChannelInfo.MultiKeyCodexEnvironmentIDs, index)
-			}
-		}
-		if len(channel.ChannelInfo.MultiKeyCodexEnvironmentIDs) == 0 {
-			channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = nil
-		}
-	}
+	cleanupChannelAccountCodexEnvironmentMappings(channel, keyCount)
 	if channel.ChannelInfo.MultiKeyCapabilities != nil {
 		for index := range channel.ChannelInfo.MultiKeyCapabilities {
 			if index < 0 || index >= keyCount {
@@ -3932,48 +4024,11 @@ func buildChannelAccountItem(account modelgatewayaccount.ChannelAccount, runtime
 }
 
 func channelAccountCredentialUID(account modelgatewayaccount.ChannelAccount) string {
-	for _, fingerprint := range []string{
-		account.AccountIdentity.CredentialSubjectFingerprint,
-		account.CredentialRef.CredentialSubjectFingerprint,
-		account.AccountIdentity.CredentialFingerprint,
-		account.CredentialRef.CredentialFingerprint,
-	} {
-		if short := modelgatewayaccount.ShortFingerprint(fingerprint); short != "" {
-			return "acct-" + short
-		}
-	}
-	for _, source := range []string{
-		account.AccountIdentity.AccountUniqueKey,
-		account.AccountIdentity.AccountIdentityKey,
-		account.AccountIdentity.AccountID,
-		account.CredentialRef.AccountID,
-		account.CredentialRef.ResourceID,
-		account.ResourceRef.ResourceID,
-	} {
-		source = strings.TrimSpace(source)
-		if source != "" {
-			return "acct-" + modelgatewayaccount.ShortFingerprint(common.GenerateHMAC(source))
-		}
-	}
-	if account.ChannelID > 0 {
-		return fmt.Sprintf("acct-ch%d", account.ChannelID)
-	}
-	return ""
+	return modelgatewayaccount.CredentialUID(account.AccountIdentity, account.CredentialRef, account.ResourceRef, account.ChannelID)
 }
 
 func channelAccountCredentialLabel(account modelgatewayaccount.ChannelAccount) string {
-	uid := channelAccountCredentialUID(account)
-	if uid == "" {
-		return ""
-	}
-	brand := strings.TrimSpace(account.AccountIdentity.Brand)
-	if brand == "" {
-		brand = strings.TrimSpace(account.ResourceRef.Brand)
-	}
-	if brand == "" {
-		return uid
-	}
-	return strings.ToLower(brand) + "-" + uid
+	return modelgatewayaccount.CredentialLabel(account.AccountIdentity, account.CredentialRef, account.ResourceRef, account.ChannelID)
 }
 
 func ensureChannelAccountStats(stats *ChannelAccountStats) *ChannelAccountStats {

@@ -446,21 +446,11 @@ func detectRequiredEndpointType(c *gin.Context) constant.EndpointType {
 }
 
 func responsesRequestHasImageGenerationTool(c *gin.Context) bool {
-	if c == nil || c.Request == nil || !strings.HasPrefix(c.Request.URL.Path, "/v1/responses") {
-		return false
-	}
-	req := dto.OpenAIResponsesRequest{}
-	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
-		return false
-	}
-	return service.ResponsesRequestRequiresCodexImageGenerationTool(&req)
+	return false
 }
 
 func channelSupportsModelRequest(channel *model.Channel, request ModelRequest) bool {
 	if !service.ChannelSupportsRequiredEndpoint(channel, request.Model, request.EndpointType) {
-		return false
-	}
-	if request.RequiresCodexImageTool && !service.ChannelSupportsCodexImageGenerationTool(channel) {
 		return false
 	}
 	return true
@@ -681,6 +671,7 @@ func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		}
 		// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
 		common.SetContextKey(c, constant.ContextKeyChannelKey, key)
+		modelgatewaycredential.ApplyChannelCredentialIdentityToContext(c, channel, index, key)
 		applySelectedAccountCapability(c, channel, index)
 		applyLegacySelectedKeyProxy(c, channel, index)
 	} else {

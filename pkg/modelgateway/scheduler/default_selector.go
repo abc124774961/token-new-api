@@ -445,7 +445,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		PolicyMode:                  policy.Mode,
 		AutoMode:                    policy.AutoMode,
 		Strategy:                    policy.Strategy,
-		RequiresCodexImageTool:      req.RequiresCodexImageTool,
+		RequiresCodexImageTool:      false,
 		RequiresResponsesPreviousID: req.RequiresResponsesPreviousID,
 		RequiredTools:               requiredToolsForDispatchRequest(req),
 		CandidateFilterConditions:   candidateFilterConditionsForDispatchRequest(req),
@@ -505,7 +505,7 @@ func scoringContextForPolicy(selector *DefaultSmartChannelSelector, policy core.
 		CandidateGroups:        append([]string(nil), policy.CandidateGroups...),
 		AutoMode:               policy.AutoMode,
 		Strategy:               policy.Strategy,
-		RequiresCodexImageTool: candidate.RequiresCodexImageTool,
+		RequiresCodexImageTool: false,
 		ScoreWeights:           scoreWeightsForSelector(selector),
 		RetryRoutingIntent:     retryIntent.Clone(),
 		ExplainEnabled:         true,
@@ -545,18 +545,11 @@ func scoreWeightsForSelector(selector *DefaultSmartChannelSelector) core.ScoreWe
 }
 
 func requiredToolsForDispatchRequest(req core.DispatchRequest) []string {
-	tools := make([]string, 0, 1)
-	if req.RequiresCodexImageTool {
-		tools = append(tools, core.DispatchRequiredToolCodexImageGeneration)
-	}
-	return tools
+	return nil
 }
 
 func candidateFilterConditionsForDispatchRequest(req core.DispatchRequest) []string {
 	conditions := make([]string, 0, 2)
-	if req.RequiresCodexImageTool {
-		conditions = append(conditions, core.DispatchFilterConditionCodexImageGenerationTool)
-	}
 	if req.RequiresResponsesPreviousID {
 		conditions = append(conditions, core.DispatchFilterConditionResponsesPreviousID)
 	}
@@ -591,7 +584,7 @@ func (s *DefaultSmartChannelSelector) costReferenceForCandidate(candidate core.C
 			RequestedModel:         requestedModel,
 			Group:                  group,
 			EndpointType:           endpointType,
-			RequiresCodexImageTool: candidate.RequiresCodexImageTool,
+			RequiresCodexImageTool: false,
 		}
 		if value, ok := s.costBaselineProvider.Baseline(scope); ok && value > 0 && (best <= 0 || value < best) {
 			best = value

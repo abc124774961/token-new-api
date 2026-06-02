@@ -64,17 +64,18 @@ type Channel struct {
 }
 
 type ChannelInfo struct {
-	IsMultiKey             bool                             `json:"is_multi_key"`                        // 是否多Key模式
-	MultiKeySize           int                              `json:"multi_key_size"`                      // 多Key模式下的Key数量
-	MultiKeyStatusList          map[int]int                      `json:"multi_key_status_list"`                   // key状态列表，key index -> status
-	MultiKeyDisabledReason      map[int]string                   `json:"multi_key_disabled_reason,omitempty"`     // key禁用原因列表，key index -> reason
-	MultiKeyDisabledTime        map[int]int64                    `json:"multi_key_disabled_time,omitempty"`       // key禁用时间列表，key index -> time
-	MultiKeyProxyIDs            map[int]int                      `json:"multi_key_proxy_ids,omitempty"`           // key 绑定的代理资源，key index -> proxy id
-	MultiKeyAccountTypes        map[int]string                   `json:"multi_key_account_types,omitempty"`       // key 账号凭证类型，key index -> account type
-	MultiKeyCodexEnvironmentIDs map[int]int                      `json:"multi_key_codex_environment_ids,omitempty"` // key 绑定的 Codex 应用环境，key index -> environment id
-	MultiKeyCapabilities        map[int]ChannelAccountCapability `json:"multi_key_capabilities,omitempty"`        // key 功能权限检测结果，key index -> capability
-	MultiKeyPollingIndex        int                              `json:"multi_key_polling_index"`                 // 多Key模式下轮询的key索引
-	MultiKeyMode                constant.MultiKeyMode            `json:"multi_key_mode"`
+	IsMultiKey                                bool                             `json:"is_multi_key"`                                              // 是否多Key模式
+	MultiKeySize                              int                              `json:"multi_key_size"`                                            // 多Key模式下的Key数量
+	MultiKeyStatusList                        map[int]int                      `json:"multi_key_status_list"`                                     // key状态列表，key index -> status
+	MultiKeyDisabledReason                    map[int]string                   `json:"multi_key_disabled_reason,omitempty"`                       // key禁用原因列表，key index -> reason
+	MultiKeyDisabledTime                      map[int]int64                    `json:"multi_key_disabled_time,omitempty"`                         // key禁用时间列表，key index -> time
+	MultiKeyProxyIDs                          map[int]int                      `json:"multi_key_proxy_ids,omitempty"`                             // key 绑定的代理资源，key index -> proxy id
+	MultiKeyAccountTypes                      map[int]string                   `json:"multi_key_account_types,omitempty"`                         // key 账号凭证类型，key index -> account type
+	MultiKeyCodexEnvironmentIDs               map[int]int                      `json:"multi_key_codex_environment_ids,omitempty"`                 // legacy: key index -> environment id
+	MultiKeyCodexEnvironmentAccountUniqueKeys map[string]int                   `json:"multi_key_codex_environment_account_unique_keys,omitempty"` // account_unique_key -> environment id
+	MultiKeyCapabilities                      map[int]ChannelAccountCapability `json:"multi_key_capabilities,omitempty"`                          // key 功能权限检测结果，key index -> capability
+	MultiKeyPollingIndex                      int                              `json:"multi_key_polling_index"`                                   // 多Key模式下轮询的key索引
+	MultiKeyMode                              constant.MultiKeyMode            `json:"multi_key_mode"`
 }
 
 type ChannelAccountCapability = channelcapability.AccountCapability
@@ -684,6 +685,16 @@ func (channel *Channel) Update() error {
 			}
 			if len(channel.ChannelInfo.MultiKeyCodexEnvironmentIDs) == 0 {
 				channel.ChannelInfo.MultiKeyCodexEnvironmentIDs = nil
+			}
+		}
+		if channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys != nil {
+			for accountUniqueKey, environmentID := range channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys {
+				if strings.TrimSpace(accountUniqueKey) == "" || environmentID <= 0 {
+					delete(channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys, accountUniqueKey)
+				}
+			}
+			if len(channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys) == 0 {
+				channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys = nil
 			}
 		}
 		if channel.ChannelInfo.MultiKeyCapabilities != nil {

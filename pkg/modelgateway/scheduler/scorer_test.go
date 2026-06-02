@@ -1023,7 +1023,7 @@ func TestSelectorRecordsCandidateExplanations(t *testing.T) {
 	require.Equal(t, selectedKey, selected.RuntimeKey)
 }
 
-func TestSelectorRecordsDispatchRequirements(t *testing.T) {
+func TestSelectorIgnoresCodexImageToolDispatchRequirement(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	key := core.RuntimeKey{
 		RequestedModel:        "gpt-5.5",
@@ -1074,9 +1074,9 @@ func TestSelectorRecordsDispatchRequirements(t *testing.T) {
 	require.Nil(t, apiErr)
 	require.True(t, handled)
 	require.NotNil(t, plan)
-	require.True(t, plan.RequiresCodexImageTool)
-	require.Equal(t, []string{core.DispatchRequiredToolCodexImageGeneration}, plan.RequiredTools)
-	require.Equal(t, []string{core.DispatchFilterConditionCodexImageGenerationTool}, plan.CandidateFilterConditions)
+	require.False(t, plan.RequiresCodexImageTool)
+	require.Empty(t, plan.RequiredTools)
+	require.Empty(t, plan.CandidateFilterConditions)
 }
 
 func TestSelectorReadsSnapshotStoredUnderEnrichedRuntimeKey(t *testing.T) {

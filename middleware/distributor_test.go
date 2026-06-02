@@ -65,7 +65,7 @@ func TestResponsesRequestHasImageGenerationToolIgnoresNestedToolChoice(t *testin
 	require.False(t, responsesRequestHasImageGenerationTool(ctx))
 }
 
-func TestResponsesRequestHasImageGenerationToolDetectsCodexSkillIntent(t *testing.T) {
+func TestResponsesRequestHasImageGenerationToolIgnoresCodexSkillIntent(t *testing.T) {
 	ctx := newResponsesCapabilityTestContext(`{
 		"model": "gpt-5.5",
 		"input": [
@@ -79,7 +79,7 @@ func TestResponsesRequestHasImageGenerationToolDetectsCodexSkillIntent(t *testin
 		"tool_choice": "auto"
 	}`)
 
-	require.True(t, responsesRequestHasImageGenerationTool(ctx))
+	require.False(t, responsesRequestHasImageGenerationTool(ctx))
 }
 
 func TestResponsesRequestHasImageGenerationToolIgnoresOtherTools(t *testing.T) {

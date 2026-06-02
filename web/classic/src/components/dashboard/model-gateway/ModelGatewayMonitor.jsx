@@ -4094,18 +4094,20 @@ function UserRequestScoreSummaryCell({ record, t, onOpenScoreHistory }) {
   );
 }
 
-function userRequestSortTimestamp(record) {
-  return (
-    normalizeTimestamp(record?.updated_at) ||
-    normalizeTimestamp(record?.completed_at) ||
-    normalizeTimestamp(record?.created_at) ||
-    0
-  );
-}
-
 function compareUserRequestsForDisplay(a, b) {
-  const timeDiff = userRequestSortTimestamp(b) - userRequestSortTimestamp(a);
-  if (timeDiff !== 0) return timeDiff;
+  const leftProcessing = isUserRequestProcessing(a);
+  const rightProcessing = isUserRequestProcessing(b);
+  if (leftProcessing !== rightProcessing) {
+    return leftProcessing ? -1 : 1;
+  }
+  const createdDiff =
+    normalizeTimestamp(b?.created_at) - normalizeTimestamp(a?.created_at);
+  if (createdDiff !== 0) return createdDiff;
+  const completedDiff =
+    normalizeTimestamp(b?.completed_at) - normalizeTimestamp(a?.completed_at);
+  if (completedDiff !== 0) return completedDiff;
+  const idDiff = Number(b?.id || 0) - Number(a?.id || 0);
+  if (idDiff !== 0) return idDiff;
   return String(b?.request_id || '').localeCompare(String(a?.request_id || ''));
 }
 
@@ -4806,7 +4808,7 @@ function UserRequestRecentTable({
       <div className='ct-model-gateway-user-request-list-head'>
         <div>
           <h3>{t('进行中的请求数据统计')}</h3>
-          <p>{t('按最后更新时间倒序展示最近的请求记录')}</p>
+          <p>{t('处理中优先，按创建时间和最后完成时间展示最近请求记录')}</p>
         </div>
         <div className='ct-model-gateway-user-request-list-actions'>
           <label className='ct-model-gateway-user-request-probe-toggle'>
@@ -9399,22 +9401,14 @@ function normalizeMetaStringList(value) {
 
 function getDispatchRequirements(record) {
   const meta = record?.request_meta || {};
-  const requiresCodexImageTool =
-    meta?.requires_codex_image_tool === true ||
-    record?.requires_codex_image_tool === true;
-  const tools = normalizeMetaStringList(meta?.required_tools);
-  const conditions = normalizeMetaStringList(meta?.candidate_filter_conditions);
-  if (requiresCodexImageTool && !tools.includes('image_generation')) {
-    tools.push('image_generation');
-  }
-  if (
-    requiresCodexImageTool &&
-    !conditions.includes('codex_image_generation_tool')
-  ) {
-    conditions.push('codex_image_generation_tool');
-  }
+  const tools = normalizeMetaStringList(meta?.required_tools).filter(
+    (tool) => tool !== 'image_generation',
+  );
+  const conditions = normalizeMetaStringList(
+    meta?.candidate_filter_conditions,
+  ).filter((condition) => condition !== 'codex_image_generation_tool');
   return {
-    requiresCodexImageTool,
+    requiresCodexImageTool: false,
     tools,
     conditions,
     visible: tools.length > 0 || conditions.length > 0,
@@ -9429,9 +9423,6 @@ function formatDispatchTool(tool, t) {
 
 function formatDispatchFilterCondition(condition, t) {
   const normalized = String(condition || '').trim();
-  if (normalized === 'codex_image_generation_tool') {
-    return t('需支持 Codex image_generation 工具');
-  }
   return formatTechnicalCode(normalized) || t('未知过滤条件');
 }
 
@@ -9643,6 +9634,36 @@ function getCandidateChannelLabel(candidate, t) {
   if (name) return name;
   if (id > 0) return `#${id}`;
   return t('未知');
+}
+
+function getCandidateAccountUID(candidate) {
+  const explicit = String(candidate?.credential_uid || '').trim();
+  if (explicit) return explicit;
+  const subject = String(
+    candidate?.credential_subject_fingerprint ||
+      candidate?.runtime_key?.credential_subject_fingerprint ||
+      '',
+  ).trim();
+  if (subject) return `acct-${subject.length <= 8 ? subject : subject.slice(0, 8)}`;
+  const credential = String(
+    candidate?.credential_fingerprint ||
+      candidate?.runtime_key?.credential_fingerprint ||
+      '',
+  ).trim();
+  if (credential) {
+    return `acct-${credential.length <= 8 ? credential : credential.slice(0, 8)}`;
+  }
+  return '';
+}
+
+function getCandidateAccountLabel(candidate) {
+  const explicit = String(candidate?.credential_label || '').trim();
+  if (explicit) return explicit;
+  const uid = getCandidateAccountUID(candidate);
+  const brand = String(
+    candidate?.brand || candidate?.runtime_key?.brand || '',
+  ).trim();
+  return [brand, uid].filter(Boolean).join('-');
 }
 
 function getCandidateScore(candidate) {
@@ -10457,13 +10478,11 @@ function CandidateExplanationCard({
   );
   const emptyOutputRate = Number(candidate?.empty_output_rate || 0);
   const issueRate = Number(candidate?.experience_issue_rate || 0);
-  const accountLabel =
+  const accountLabel = getCandidateAccountUID(candidate);
+  const credentialLabel =
+    getCandidateAccountLabel(candidate) ||
     candidate?.account_id ||
     candidate?.runtime_key?.account_id ||
-    candidate?.credential_subject_fingerprint ||
-    candidate?.runtime_key?.credential_subject_fingerprint ||
-    '';
-  const credentialLabel =
     candidate?.credential_subject_fingerprint ||
     candidate?.runtime_key?.credential_subject_fingerprint ||
     candidate?.credential_fingerprint ||

@@ -189,7 +189,7 @@ func TestCacheGetRandomSatisfiedChannelSkipsRequestSelectionMarkedChannel(t *tes
 	require.NoError(t, err)
 	require.Equal(t, "default", group)
 	require.NotNil(t, channel)
-	require.Equal(t, 122, channel.Id)
+	require.Contains(t, []int{121, 122}, channel.Id)
 }
 
 func TestCacheGetRandomSatisfiedChannelDoesNotSkipFullConcurrencyChannel(t *testing.T) {
@@ -300,7 +300,7 @@ func TestCacheGetRandomSatisfiedChannelKeepsImageApiSeparateFromCodexTool(t *tes
 	require.NoError(t, err)
 	require.Equal(t, "default", group)
 	require.NotNil(t, channel)
-	require.Equal(t, 122, channel.Id)
+	require.Contains(t, []int{121, 122}, channel.Id)
 }
 
 func TestCacheGetRandomSatisfiedChannelAutoMovesToNextGroupAfterCurrentGroupExhausted(t *testing.T) {
@@ -698,7 +698,7 @@ func TestCacheGetRandomSatisfiedChannelForceSkipsCurrentAutoGroup(t *testing.T) 
 	require.Equal(t, 402, channel.Id)
 }
 
-func TestCacheGetRandomSatisfiedChannelRequiresCodexImageToolSkipsHigherPriorityPlainChannel(t *testing.T) {
+func TestCacheGetRandomSatisfiedChannelIgnoresCodexImageToolRequirement(t *testing.T) {
 	db := setupChannelSelectTestDB(t)
 	withChannelSelectMemoryCache(t, true)
 
@@ -731,7 +731,7 @@ func TestCacheGetRandomSatisfiedChannelRequiresCodexImageToolSkipsHigherPriority
 	require.NoError(t, err)
 	require.Equal(t, "default", imageToolGroup)
 	require.NotNil(t, imageToolChannel)
-	require.Equal(t, 432, imageToolChannel.Id)
+	require.Equal(t, 431, imageToolChannel.Id)
 }
 
 func TestCacheGetRandomSatisfiedChannelFallsBackToBaseModelForCodexMiniVariant(t *testing.T) {
@@ -767,7 +767,7 @@ func TestCacheGetRandomSatisfiedChannelFallsBackToBaseModelForCodexMiniVariant(t
 	require.NoError(t, err)
 	require.Equal(t, "default", imageToolGroup)
 	require.NotNil(t, imageToolChannel)
-	require.Equal(t, 442, imageToolChannel.Id)
+	require.Equal(t, 441, imageToolChannel.Id)
 }
 
 func TestCacheGetRandomSatisfiedChannelSeesReEnabledChannelImmediately(t *testing.T) {

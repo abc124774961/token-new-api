@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -19,6 +20,7 @@ func TestResolveChannelCredentialSelectsSpecificMultiKeyWithoutAdvancingPolling(
 	common.CryptoSecret = "test-secret"
 	channel := &model.Channel{
 		Id:     7,
+		Type:   constant.ChannelTypeOpenAI,
 		Key:    "sk-a\nsk-b\nsk-c",
 		Status: common.ChannelStatusEnabled,
 		ChannelInfo: model.ChannelInfo{
@@ -40,6 +42,8 @@ func TestResolveChannelCredentialSelectsSpecificMultiKeyWithoutAdvancingPolling(
 	require.Equal(t, 1, resolved.CredentialIndex)
 	require.True(t, resolved.ChannelIsMultiKey)
 	require.Equal(t, 2, channel.ChannelInfo.MultiKeyPollingIndex)
+	require.Equal(t, "acct-"+common.GenerateHMAC("sk-b")[:8], resolved.CredentialUID)
+	require.Equal(t, "openai-acct-"+common.GenerateHMAC("sk-b")[:8], resolved.CredentialLabel)
 }
 
 func TestResolveChannelCredentialRejectsDisabledMultiKey(t *testing.T) {
@@ -133,16 +137,24 @@ func TestApplyResolvedCredentialToContext(t *testing.T) {
 	ctx := &gin.Context{}
 
 	ApplyResolvedCredentialToContext(ctx, ResolvedCredential{
-		Key:                "sk-context",
-		CredentialIndex:    3,
-		ChannelIsMultiKey:  true,
-		CodexEnvironmentID: 42,
+		Key:                          "sk-context",
+		CredentialIndex:              3,
+		ChannelIsMultiKey:            true,
+		CodexEnvironmentID:           42,
+		AccountIdentityKey:           "openai:openai:subject",
+		CredentialSubjectFingerprint: "abcdef1234567890",
+		CredentialUID:                "acct-abcdef12",
+		CredentialLabel:              "openai-acct-abcdef12",
 	})
 
 	require.Equal(t, "sk-context", common.GetContextKeyString(ctx, constant.ContextKeyChannelKey))
 	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyChannelIsMultiKey))
 	require.Equal(t, 3, common.GetContextKeyInt(ctx, constant.ContextKeyChannelMultiKeyIndex))
 	require.Equal(t, 42, common.GetContextKeyInt(ctx, constant.ContextKeyChannelAccountCodexEnvironmentID))
+	require.Equal(t, "acct-abcdef12", common.GetContextKeyString(ctx, constant.ContextKeyChannelAccountCredentialUID))
+	require.Equal(t, "openai-acct-abcdef12", common.GetContextKeyString(ctx, constant.ContextKeyChannelAccountCredentialLabel))
+	require.Equal(t, "openai:openai:subject", common.GetContextKeyString(ctx, constant.ContextKeyChannelAccountIdentityKey))
+	require.Equal(t, "abcdef1234567890", common.GetContextKeyString(ctx, constant.ContextKeyChannelAccountCredentialSubjectFP))
 }
 
 func TestResolveChannelCredentialCarriesCodexEnvironmentID(t *testing.T) {
@@ -152,10 +164,11 @@ func TestResolveChannelCredentialCarriesCodexEnvironmentID(t *testing.T) {
 		Key:    "sk-a\nsk-b",
 		Status: common.ChannelStatusEnabled,
 		ChannelInfo: model.ChannelInfo{
-			IsMultiKey:                  true,
-			MultiKeyCodexEnvironmentIDs: map[int]int{1: 77},
+			IsMultiKey: true,
 		},
 	}
+	accountUniqueKey := modelgatewayaccount.AccountIdentityForChannelKey(channel, 1, "sk-b").AccountUniqueKey
+	channel.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys = map[string]int{accountUniqueKey: 77}
 
 	resolved, apiErr := ResolveChannelCredential(channel, core.CredentialRef{
 		ResourceID:      "platform:channel:16",
@@ -165,6 +178,28 @@ func TestResolveChannelCredentialCarriesCodexEnvironmentID(t *testing.T) {
 
 	require.Nil(t, apiErr)
 	require.Equal(t, 77, resolved.CodexEnvironmentID)
+}
+
+func TestResolveChannelCredentialFallsBackToLegacyCodexEnvironmentIndex(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	channel := &model.Channel{
+		Id:     17,
+		Key:    "sk-a\nsk-b",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:                  true,
+			MultiKeyCodexEnvironmentIDs: map[int]int{1: 88},
+		},
+	}
+
+	resolved, apiErr := ResolveChannelCredential(channel, core.CredentialRef{
+		ResourceID:      "platform:channel:17",
+		CredentialIndex: 1,
+		Resolver:        "channel_key",
+	})
+
+	require.Nil(t, apiErr)
+	require.Equal(t, 88, resolved.CodexEnvironmentID)
 }
 
 func TestResolveChannelCredentialAppliesAccountProxy(t *testing.T) {

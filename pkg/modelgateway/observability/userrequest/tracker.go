@@ -272,12 +272,7 @@ func (t *Tracker) Snapshot(limit int, filters Filters) []Record {
 	}
 	t.mu.Unlock()
 	sort.Slice(items, func(i, j int) bool {
-		left := recordUpdatedAt(items[i])
-		right := recordUpdatedAt(items[j])
-		if left != right {
-			return left > right
-		}
-		return items[i].RequestID > items[j].RequestID
+		return recordSortLess(items[i], items[j])
 	})
 	if limit > 0 && len(items) > limit {
 		items = items[:limit]
@@ -330,12 +325,7 @@ func (t *Tracker) pruneOverflowLocked() {
 		items = append(items, item)
 	}
 	sort.Slice(items, func(i, j int) bool {
-		left := recordUpdatedAt(items[i])
-		right := recordUpdatedAt(items[j])
-		if left != right {
-			return left > right
-		}
-		return items[i].RequestID > items[j].RequestID
+		return recordSortLess(items[i], items[j])
 	})
 	for idx := t.maxPending; idx < len(items); idx++ {
 		delete(t.pending, items[idx].RequestID)
@@ -479,14 +469,17 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 	return record
 }
 
-func recordUpdatedAt(record Record) int64 {
-	if record.UpdatedAt > 0 {
-		return record.UpdatedAt
+func recordSortLess(left, right Record) bool {
+	if left.CreatedAt != right.CreatedAt {
+		return left.CreatedAt > right.CreatedAt
 	}
-	if record.CompletedAt > 0 {
-		return record.CompletedAt
+	if left.CompletedAt != right.CompletedAt {
+		return left.CompletedAt > right.CompletedAt
 	}
-	return record.CreatedAt
+	if left.ID != right.ID {
+		return left.ID > right.ID
+	}
+	return left.RequestID > right.RequestID
 }
 
 func applyFirstByteObservation(record *Record, observation FirstByteObservation) {

@@ -1274,7 +1274,9 @@ func TestUpdateChannelAccountCredentialCanOnlyChangeCodexEnvironment(t *testing.
 	updated, err := model.GetChannelById(37, true)
 	require.NoError(t, err)
 	require.Equal(t, "sk-old\nsk-keep", updated.Key)
-	require.Equal(t, env.Id, updated.ChannelInfo.MultiKeyCodexEnvironmentIDs[0])
+	accountUniqueKey := modelgatewayaccount.AccountIdentityForChannelKey(updated, 0, "sk-old").AccountUniqueKey
+	require.Equal(t, env.Id, updated.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys[accountUniqueKey])
+	require.Nil(t, updated.ChannelInfo.MultiKeyCodexEnvironmentIDs)
 }
 
 func TestUpdateChannelAccountCredentialSupportsOAuthJSONType(t *testing.T) {
@@ -2136,6 +2138,65 @@ func TestDeleteChannelAccountsReindexesAccountTypes(t *testing.T) {
 		0: modelgatewaycore.AccountTypeAPIKey,
 		1: modelgatewaycore.AccountTypeOAuthAccount,
 	}, updated.ChannelInfo.MultiKeyAccountTypes)
+}
+
+func TestDeleteChannelAccountsKeepsCodexEnvironmentBoundByAccountUniqueKey(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	envOne := model.CodexApplicationEnvironment{
+		Id:        7101,
+		Name:      "codex-env-one",
+		UserAgent: "Codex Desktop/0.136.0",
+		Enabled:   true,
+	}
+	envThree := model.CodexApplicationEnvironment{
+		Id:        7103,
+		Name:      "codex-env-three",
+		UserAgent: "codex_cli_rs/0.36.0",
+		Enabled:   true,
+	}
+	require.NoError(t, db.Create(&envOne).Error)
+	require.NoError(t, db.Create(&envThree).Error)
+	channel := model.Channel{
+		Id:     38,
+		Name:   "delete codex env",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-one\nsk-two\nsk-three",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:                  true,
+			MultiKeySize:                3,
+			MultiKeyCodexEnvironmentIDs: map[int]int{0: envOne.Id, 2: envThree.Id},
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5.4",
+		ChannelId: 38,
+		Enabled:   true,
+	}).Error)
+
+	router := gin.New()
+	router.DELETE("/api/channel/:id/accounts", DeleteChannelAccounts)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/channel/38/accounts", bytes.NewBufferString(`{"credential_indexes":[0]}`))
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, 2, payload.Data.Total)
+	require.Equal(t, 0, payload.Data.Items[0].CodexEnvironmentID)
+	require.Equal(t, envThree.Id, payload.Data.Items[1].CodexEnvironmentID)
+
+	updated, err := model.GetChannelById(38, true)
+	require.NoError(t, err)
+	require.Equal(t, "sk-two\nsk-three", updated.Key)
+	require.Nil(t, updated.ChannelInfo.MultiKeyCodexEnvironmentIDs)
+	require.Len(t, updated.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys, 1)
+	accountUniqueKey := modelgatewayaccount.AccountIdentityForChannelKey(updated, 1, "sk-three").AccountUniqueKey
+	require.Equal(t, envThree.Id, updated.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys[accountUniqueKey])
 }
 
 func TestUpdateChannelAccountProxyBindsAndClearsProxy(t *testing.T) {

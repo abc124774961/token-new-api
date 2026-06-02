@@ -227,26 +227,25 @@ func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
 		return dispatchRequestMeta{}
 	}
 	return dispatchRequestMeta{
-		ProviderProfile:        plan.ProviderProfile,
-		ProxyMode:              plan.ProxyMode,
-		QueueWaitMs:            plan.QueueWaitMs,
-		QueueEnabled:           plan.QueueEnabled,
-		QueueDepth:             plan.QueueDepth,
-		QueueCapacity:          plan.QueueCapacity,
-		QueuePriority:          plan.QueuePriority,
-		BillingRatioMode:       plan.BillingRatioMode,
-		Strategy:               plan.Strategy,
-		AutoMode:               plan.AutoMode,
-		StickySource:           plan.StickySource,
-		StickyKeyFP:            plan.StickyKeyFP,
-		StickyRetained:         plan.StickyRetained,
-		StickyBreak:            plan.StickyBreak,
-		StickyDecision:         plan.StickyDecision,
-		CacheAffinity:          plan.CacheAffinity,
-		RequiresCodexImageTool: plan.RequiresCodexImageTool,
-		RequiredTools:          append([]string(nil), plan.RequiredTools...),
-		CandidateFilterConditions: append([]string(nil),
-			plan.CandidateFilterConditions...),
+		ProviderProfile:           plan.ProviderProfile,
+		ProxyMode:                 plan.ProxyMode,
+		QueueWaitMs:               plan.QueueWaitMs,
+		QueueEnabled:              plan.QueueEnabled,
+		QueueDepth:                plan.QueueDepth,
+		QueueCapacity:             plan.QueueCapacity,
+		QueuePriority:             plan.QueuePriority,
+		BillingRatioMode:          plan.BillingRatioMode,
+		Strategy:                  plan.Strategy,
+		AutoMode:                  plan.AutoMode,
+		StickySource:              plan.StickySource,
+		StickyKeyFP:               plan.StickyKeyFP,
+		StickyRetained:            plan.StickyRetained,
+		StickyBreak:               plan.StickyBreak,
+		StickyDecision:            plan.StickyDecision,
+		CacheAffinity:             plan.CacheAffinity,
+		RequiresCodexImageTool:    false,
+		RequiredTools:             dispatchRequiredToolsForRecord(plan.RequiredTools),
+		CandidateFilterConditions: dispatchFilterConditionsForRecord(plan.CandidateFilterConditions),
 		CandidateExplanations: append([]core.CandidateExplanation(nil),
 			plan.Candidates...),
 		IsHealthProbe:           plan.IsHealthProbe,
@@ -256,6 +255,34 @@ func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
 		RetryQueuePriorityBoost: plan.RetryQueuePriorityBoost,
 		CostGuardDecision:       plan.CostGuardDecision,
 	}
+}
+
+func dispatchRequiredToolsForRecord(tools []string) []string {
+	if len(tools) == 0 {
+		return nil
+	}
+	filtered := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		if tool == core.DispatchRequiredToolCodexImageGeneration {
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+	return filtered
+}
+
+func dispatchFilterConditionsForRecord(conditions []string) []string {
+	if len(conditions) == 0 {
+		return nil
+	}
+	filtered := make([]string, 0, len(conditions))
+	for _, condition := range conditions {
+		if condition == core.DispatchFilterConditionCodexImageGenerationTool {
+			continue
+		}
+		filtered = append(filtered, condition)
+	}
+	return filtered
 }
 
 func modelExecutionRecordFromAttempt(result core.AttemptResult) *model.ModelExecutionRecord {
