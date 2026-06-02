@@ -177,6 +177,9 @@ func TestRelayRuntimeIdentityPrefersSelectedPlanAccountScope(t *testing.T) {
 			Group:               "default",
 			EndpointType:        constant.EndpointTypeOpenAI,
 			AccountID:           "acct-1",
+			AccountType:         modelgatewaycore.AccountTypeOAuthAccount,
+			Brand:               "codex",
+			Provider:            "codex_oauth",
 			CredentialIndex:     1,
 			CredentialSubjectFP: "subject-1",
 			CredentialFP:        "credential-1",
@@ -197,6 +200,9 @@ func TestRelayRuntimeIdentityPrefersSelectedPlanAccountScope(t *testing.T) {
 	require.True(t, identity.HasAccountScope())
 	require.True(t, identity.CredentialIndexSet)
 	require.Equal(t, "acct-1", identity.AccountID)
+	require.Equal(t, modelgatewaycore.AccountTypeOAuthAccount, identity.AccountType)
+	require.Equal(t, "codex", identity.Brand)
+	require.Equal(t, "codex_oauth", identity.Provider)
 	require.Equal(t, 1, identity.CredentialIndex)
 }
 
@@ -1520,4 +1526,49 @@ func TestRelayChannelConfigSuccessClearsIsolation(t *testing.T) {
 	})
 
 	require.Nil(t, service.GetChannelConfigIsolationStatus(key))
+}
+
+func TestBuildTokenAccountAutomationAuthInvalidEventUsesAccountRuntimeIdentity(t *testing.T) {
+	ctx := newRelayRetryContext()
+	ctx.Set("original_model", "gpt-5.5")
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "codex-plus")
+	common.SetContextKey(ctx, constant.ContextKeyChannelAccountIdentityKey, "codex_oauth:codex:subject-fp")
+	common.SetContextKey(ctx, constant.ContextKeyChannelAccountUniqueKey, "9022:codex:subject-fp")
+	common.SetContextKey(ctx, constant.ContextKeyChannelAccountCredentialLabel, "codex #2")
+	modelgatewayintegration.SetSelectedPlan(ctx, &modelgatewaycore.DispatchPlan{
+		RuntimeKey: modelgatewaycore.RuntimeKey{
+			ChannelID:           9022,
+			RequestedModel:      "gpt-5.5",
+			Group:               "codex-plus",
+			EndpointType:        constant.EndpointTypeOpenAIResponse,
+			AccountID:           "codex_oauth:codex:subject-fp",
+			AccountType:         modelgatewaycore.AccountTypeOAuthAccount,
+			Brand:               "codex",
+			Provider:            "codex_oauth",
+			CredentialIndex:     1,
+			CredentialSubjectFP: "subject-fp",
+			CredentialFP:        "credential-fp",
+		},
+		CredentialRef: modelgatewaycore.CredentialRef{
+			AccountID:                    "codex_oauth:codex:subject-fp",
+			CredentialIndex:              1,
+			CredentialSubjectFingerprint: "subject-fp",
+			CredentialFingerprint:        "credential-fp",
+		},
+	})
+	err := types.NewOpenAIError(errors.New("invalid API key"), types.ErrorCodeBadResponseStatusCode, http.StatusUnauthorized)
+
+	event := buildTokenAccountAutomationAuthInvalidEvent(ctx, relayRuntimeIdentity(ctx, 9022), err)
+
+	require.Equal(t, 9022, event.ChannelID)
+	require.Equal(t, 1, event.CredentialIndex)
+	require.Equal(t, "codex_oauth", event.Provider)
+	require.Equal(t, "codex_oauth:codex:subject-fp", event.SubjectKey)
+	require.Equal(t, "codex #2", event.DisplayName)
+	require.Equal(t, "relay", event.Source)
+	require.Equal(t, modelgatewaycore.ErrorCategoryAuthConfigError, event.Reason)
+	require.Equal(t, "codex-plus", event.Context["group"])
+	require.Equal(t, "codex", event.Context["account_brand"])
+	require.Equal(t, "credential-fp", event.Context["credential_fingerprint"])
+	require.Equal(t, http.StatusUnauthorized, event.Context["status_code"])
 }

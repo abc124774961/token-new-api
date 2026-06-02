@@ -16,6 +16,9 @@ type ChannelRuntimeIdentity struct {
 	SelectedGroup       string
 	EndpointType        constant.EndpointType
 	AccountID           string
+	AccountType         string
+	Brand               string
+	Provider            string
 	CredentialIndex     int
 	CredentialIndexSet  bool
 	CredentialSubjectFP string
@@ -27,6 +30,9 @@ func NormalizeChannelRuntimeIdentity(identity ChannelRuntimeIdentity) ChannelRun
 	identity.SelectedGroup = strings.TrimSpace(identity.SelectedGroup)
 	identity.EndpointType = constant.EndpointType(strings.TrimSpace(string(identity.EndpointType)))
 	identity.AccountID = strings.TrimSpace(identity.AccountID)
+	identity.AccountType = strings.TrimSpace(identity.AccountType)
+	identity.Brand = strings.TrimSpace(identity.Brand)
+	identity.Provider = strings.TrimSpace(identity.Provider)
 	identity.CredentialSubjectFP = strings.TrimSpace(identity.CredentialSubjectFP)
 	identity.CredentialFP = strings.TrimSpace(identity.CredentialFP)
 	if identity.EndpointType == "" {
@@ -91,5 +97,8 @@ func (identity ChannelRuntimeIdentity) AccountScope() ChannelRuntimeIdentity {
 	identity.RequestedModel = ""
 	identity.SelectedGroup = ""
 	identity.EndpointType = ""
+	identity.AccountType = ""
+	identity.Brand = ""
+	identity.Provider = ""
 	return identity
 }

@@ -396,29 +396,30 @@ type ChannelAccountPoolResponse struct {
 }
 
 type ChannelAccountPoolItem struct {
-	ID                           int    `json:"id"`
-	Pool                         string `json:"pool"`
-	ChannelID                    int    `json:"channel_id"`
-	ChannelName                  string `json:"channel_name,omitempty"`
-	CredentialIndex              int    `json:"credential_index"`
-	AccountID                    string `json:"account_id,omitempty"`
-	AccountIdentityKey           string `json:"account_identity_key,omitempty"`
-	CredentialSubjectFingerprint string `json:"credential_subject_fingerprint,omitempty"`
-	CredentialFingerprint        string `json:"credential_fingerprint,omitempty"`
-	SubjectShort                 string `json:"subject_short,omitempty"`
-	CredentialShort              string `json:"credential_short,omitempty"`
-	CredentialMasked             string `json:"credential_masked,omitempty"`
-	AccountType                  string `json:"account_type,omitempty"`
-	Brand                        string `json:"brand,omitempty"`
-	Provider                     string `json:"provider,omitempty"`
-	ResourceID                   string `json:"resource_id,omitempty"`
-	ResourceType                 string `json:"resource_type,omitempty"`
-	ProxyID                      int    `json:"proxy_id,omitempty"`
-	CodexEnvironmentID           int    `json:"codex_environment_id,omitempty"`
-	Reason                       string `json:"reason,omitempty"`
-	Note                         string `json:"note,omitempty"`
-	ArchivedAt                   int64  `json:"archived_at,omitempty"`
-	UpdatedAt                    int64  `json:"updated_at,omitempty"`
+	ID                           int                             `json:"id"`
+	Pool                         string                          `json:"pool"`
+	ChannelID                    int                             `json:"channel_id"`
+	ChannelName                  string                          `json:"channel_name,omitempty"`
+	CredentialIndex              int                             `json:"credential_index"`
+	AccountID                    string                          `json:"account_id,omitempty"`
+	AccountIdentityKey           string                          `json:"account_identity_key,omitempty"`
+	CredentialSubjectFingerprint string                          `json:"credential_subject_fingerprint,omitempty"`
+	CredentialFingerprint        string                          `json:"credential_fingerprint,omitempty"`
+	SubjectShort                 string                          `json:"subject_short,omitempty"`
+	CredentialShort              string                          `json:"credential_short,omitempty"`
+	CredentialMasked             string                          `json:"credential_masked,omitempty"`
+	AccountType                  string                          `json:"account_type,omitempty"`
+	Brand                        string                          `json:"brand,omitempty"`
+	Provider                     string                          `json:"provider,omitempty"`
+	ResourceID                   string                          `json:"resource_id,omitempty"`
+	ResourceType                 string                          `json:"resource_type,omitempty"`
+	ProxyID                      int                             `json:"proxy_id,omitempty"`
+	CodexEnvironmentID           int                             `json:"codex_environment_id,omitempty"`
+	Capabilities                 *model.ChannelAccountCapability `json:"capabilities,omitempty"`
+	Reason                       string                          `json:"reason,omitempty"`
+	Note                         string                          `json:"note,omitempty"`
+	ArchivedAt                   int64                           `json:"archived_at,omitempty"`
+	UpdatedAt                    int64                           `json:"updated_at,omitempty"`
 }
 
 type ChannelAccountScoreSummary struct {
@@ -2670,6 +2671,13 @@ func discardChannelInvalidAccount(poolID int) (*ChannelAccountOperation, error) 
 }
 
 func buildChannelAccountPoolItem(pool string, record model.ChannelAccountArchiveFields) ChannelAccountPoolItem {
+	var capabilities *model.ChannelAccountCapability
+	if strings.TrimSpace(record.CapabilitySnapshot) != "" {
+		var snapshot model.ChannelAccountCapability
+		if err := common.UnmarshalJsonStr(record.CapabilitySnapshot, &snapshot); err == nil {
+			capabilities = &snapshot
+		}
+	}
 	return ChannelAccountPoolItem{
 		ID:                           record.ID,
 		Pool:                         pool,
@@ -2690,6 +2698,7 @@ func buildChannelAccountPoolItem(pool string, record model.ChannelAccountArchive
 		ResourceType:                 record.ResourceType,
 		ProxyID:                      record.ProxyID,
 		CodexEnvironmentID:           record.CodexEnvironmentID,
+		Capabilities:                 capabilities,
 		Reason:                       record.Reason,
 		Note:                         record.Note,
 		ArchivedAt:                   record.ArchivedAt,

@@ -128,6 +128,10 @@ func ClearChannelConfigIsolationForChannel(channelID int) {
 	defaultChannelConfigIsolationManager.ClearForChannel(channelID)
 }
 
+func ClearChannelConfigIsolationForAccountIndex(channelID int, credentialIndex int) {
+	defaultChannelConfigIsolationManager.ClearForAccountIndex(channelID, credentialIndex)
+}
+
 func (m *ChannelConfigIsolationManager) RecordAuthError(key ChannelConfigIsolationKey, reason string) *ChannelConfigIsolationStatus {
 	if m == nil || !key.valid() {
 		return nil
@@ -198,6 +202,19 @@ func (m *ChannelConfigIsolationManager) ClearForChannel(channelID int) {
 	defer m.mu.Unlock()
 	for key := range m.entries {
 		if key.ChannelID == channelID {
+			delete(m.entries, key)
+		}
+	}
+}
+
+func (m *ChannelConfigIsolationManager) ClearForAccountIndex(channelID int, credentialIndex int) {
+	if m == nil || channelID <= 0 || credentialIndex < 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key := range m.entries {
+		if key.ChannelID == channelID && key.CredentialIndexSet && key.CredentialIndex == credentialIndex {
 			delete(m.entries, key)
 		}
 	}

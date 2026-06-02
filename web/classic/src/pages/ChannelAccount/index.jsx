@@ -3134,37 +3134,45 @@ function buildStatsColumns(t, onToggleStatus, onOpenDetail, statusLoadingKey) {
 function buildPoolColumns(t, poolView, onRestore, onDiscard, onDelete) {
   return [
     {
-      title: t('账号'),
+      title: t('账号状态'),
       dataIndex: 'account_id',
-      width: 280,
-      render: (_, record) => (
-        <div className='ct-channel-account-identity'>
-          <div className='ct-channel-account-avatar'>
-            <UserRoundCog size={17} />
-          </div>
-          <div>
-            <div className='ct-channel-account-name'>
-              {record.brand || record.provider || t('账号')}
-              <Tag
-                color={poolView === 'invalid' ? 'orange' : 'grey'}
-                type='light'
-                shape='circle'
-              >
-                {poolView === 'invalid' ? t('失效池') : t('废弃池')}
-              </Tag>
+      width: 310,
+      render: (_, record) => {
+        const primaryName =
+          record.account_id || record.brand || record.provider || t('账号');
+        const shortID =
+          record.subject_short || record.credential_short || record.id || '--';
+        return (
+          <div className='ct-channel-account-identity'>
+            <div className='ct-channel-account-avatar'>
+              <UserRoundCog size={17} />
             </div>
-            <div className='ct-channel-account-sub ct-channel-account-uid'>
-              <KeyRound size={12} />
-              <span>
-                {record.subject_short || record.credential_short || '--'}
-              </span>
+            <div className='ct-channel-account-pool-main'>
+              <div className='ct-channel-account-name'>
+                <Text strong ellipsis={{ showTooltip: true }}>
+                  {primaryName}
+                </Text>
+                <Tag
+                  color={poolView === 'invalid' ? 'orange' : 'grey'}
+                  type='light'
+                  shape='circle'
+                >
+                  {poolView === 'invalid' ? t('失效池') : t('废弃池')}
+                </Tag>
+              </div>
+              <div className='ct-channel-account-sub ct-channel-account-uid'>
+                <KeyRound size={12} />
+                <span>{shortID}</span>
+              </div>
+              {record.reason ? (
+                <div className='ct-channel-account-warning'>
+                  {record.reason}
+                </div>
+              ) : null}
             </div>
-            {record.reason ? (
-              <div className='ct-channel-account-warning'>{record.reason}</div>
-            ) : null}
           </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       title: t('来源渠道'),
@@ -3182,31 +3190,120 @@ function buildPoolColumns(t, poolView, onRestore, onDiscard, onDelete) {
       ),
     },
     {
-      title: t('品牌与凭证'),
+      title: t('账号身份'),
       dataIndex: 'brand',
-      width: 260,
+      width: 390,
       render: (_, record) => (
         <div className='ct-channel-account-meta-stack'>
           <AccountTypeTags record={record} t={t} showBrand />
-          <div className='ct-channel-account-fp'>
-            <KeyRound size={13} />
-            <span>{record.credential_masked || '--'}</span>
+          <div className='ct-channel-account-kv-grid'>
+            <span>{t('账号 ID')}</span>
+            <Text ellipsis={{ showTooltip: true }}>
+              {record.account_id || '--'}
+            </Text>
+            <span>{t('身份键')}</span>
+            <Text ellipsis={{ showTooltip: true }}>
+              {record.account_identity_key || '--'}
+            </Text>
+            <span>{t('主体指纹')}</span>
+            <Text ellipsis={{ showTooltip: true }}>
+              {record.credential_subject_fingerprint ||
+                record.subject_short ||
+                '--'}
+            </Text>
+            <span>{t('凭证指纹')}</span>
+            <Text ellipsis={{ showTooltip: true }}>
+              {record.credential_fingerprint || record.credential_short || '--'}
+            </Text>
+            <span>{t('凭证')}</span>
+            <Text ellipsis={{ showTooltip: true }}>
+              {record.credential_masked || '--'}
+            </Text>
           </div>
-          <Text type='tertiary' ellipsis={{ showTooltip: true }}>
-            {record.account_identity_key || record.account_id || '--'}
+        </div>
+      ),
+    },
+    {
+      title: t('状态快照'),
+      dataIndex: 'capabilities',
+      width: 360,
+      render: (_, record) => {
+        const capabilities = record.capabilities || null;
+        const statusMessage =
+          capabilities?.usage_limit_message ||
+          capabilities?.proxy_last_error ||
+          capabilities?.last_message ||
+          '';
+        return (
+          <div className='ct-channel-account-pool-status'>
+            <CapabilitiesCell capabilities={capabilities} t={t} />
+            <div className='ct-channel-account-kv-grid'>
+              <span>{t('检测时间')}</span>
+              <strong>{formatTimestamp(capabilities?.checked_time)}</strong>
+              <span>{t('最后检测端点')}</span>
+              <Text ellipsis={{ showTooltip: true }}>
+                {capabilities?.last_endpoint || '--'}
+              </Text>
+              <span>{t('预计恢复')}</span>
+              <strong>
+                {formatTimestamp(capabilities?.usage_limit_expires_at)}
+              </strong>
+            </div>
+            {statusMessage ? (
+              <Text
+                type='tertiary'
+                className='ct-channel-account-pool-message'
+                ellipsis={{ showTooltip: true }}
+              >
+                {statusMessage}
+              </Text>
+            ) : null}
+          </div>
+        );
+      },
+    },
+    {
+      title: t('资源配置'),
+      dataIndex: 'resource_id',
+      width: 270,
+      render: (_, record) => (
+        <div className='ct-channel-account-kv-grid'>
+          <span>{t('资源类型')}</span>
+          <strong>{record.resource_type || '--'}</strong>
+          <span>{t('资源标识')}</span>
+          <Text ellipsis={{ showTooltip: true }}>
+            {record.resource_id || '--'}
           </Text>
+          <span>{t('代理')}</span>
+          <strong>
+            {Number(record.proxy_id || 0) > 0
+              ? `Proxy #${record.proxy_id}`
+              : t('未绑定')}
+          </strong>
+          <span>{t('环境')}</span>
+          <strong>
+            {Number(record.codex_environment_id || 0) > 0
+              ? `#${record.codex_environment_id}`
+              : t('未绑定')}
+          </strong>
         </div>
       ),
     },
     {
       title: t('归档信息'),
       dataIndex: 'archived_at',
-      width: 280,
+      width: 320,
       render: (_, record) => (
         <div className='ct-channel-account-time-grid'>
+          <span>{t('归档原因')}</span>
+          <Text type='tertiary' ellipsis={{ showTooltip: true }}>
+            {record.reason || '--'}
+          </Text>
           <span>{t('归档时间')}</span>
           <strong>{formatTimestamp(record.archived_at)}</strong>
-          <span>{t('备注')}</span>
+          <span>{t('更新时间')}</span>
+          <strong>{formatTimestamp(record.updated_at)}</strong>
+          <span>{t('归档备注')}</span>
           <Text type='tertiary' ellipsis={{ showTooltip: true }}>
             {record.note || '--'}
           </Text>
@@ -5269,7 +5366,7 @@ function ChannelAccount() {
     : isStatsView
       ? statsColumns
       : columns;
-  const tableScrollX = !isRunningView ? 1100 : isStatsView ? 1770 : 3070;
+  const tableScrollX = !isRunningView ? 1870 : isStatsView ? 1770 : 3070;
   const tablePagination = useMemo(
     () => ({
       currentPage: data?.page || page,

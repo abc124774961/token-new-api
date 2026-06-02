@@ -1120,6 +1120,9 @@ func relayRuntimeIdentity(c *gin.Context, channelID int) service.ChannelRuntimeI
 			SelectedGroup:       key.Group,
 			EndpointType:        key.EndpointType,
 			AccountID:           key.AccountID,
+			AccountType:         key.AccountType,
+			Brand:               key.Brand,
+			Provider:            key.Provider,
 			CredentialIndex:     key.CredentialIndex,
 			CredentialSubjectFP: key.CredentialSubjectFP,
 			CredentialFP:        key.CredentialFP,
@@ -2518,6 +2521,7 @@ func recordRelayChannelConfigAuthError(c *gin.Context, channelID int, err *types
 	}
 	key := relayChannelConfigIsolationKey(c, channelID, nil, nil)
 	service.RecordChannelConfigAuthError(key, err.MaskSensitiveError())
+	notifyTokenAccountAutomationAuthInvalid(c, channelID, err)
 }
 
 func recordRelayChannelConfigSuccess(c *gin.Context, channelID int, info *relaycommon.RelayInfo, retryParam *service.RetryParam) {
@@ -2526,6 +2530,101 @@ func recordRelayChannelConfigSuccess(c *gin.Context, channelID int, info *relayc
 	}
 	key := relayChannelConfigIsolationKey(c, channelID, info, retryParam)
 	service.RecordChannelConfigSuccess(key)
+}
+
+func notifyTokenAccountAutomationAuthInvalid(c *gin.Context, channelID int, err *types.NewAPIError) {
+	if c == nil || err == nil || !service.TokenAccountAutomationConfigured() {
+		return
+	}
+	identity := relayRuntimeIdentity(c, channelID)
+	if !identity.HasAccountScope() || !identity.CredentialIndexSet {
+		return
+	}
+	event := buildTokenAccountAutomationAuthInvalidEvent(c, identity, err)
+	gopool.Go(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if notifyErr := service.NotifyTokenAccountAutomationAuthInvalid(ctx, event); notifyErr != nil {
+			common.SysLog(fmt.Sprintf("token account automation auth invalid notify failed: channel_id=%d credential_index=%d error=%v", event.ChannelID, event.CredentialIndex, notifyErr))
+		}
+	})
+}
+
+func buildTokenAccountAutomationAuthInvalidEvent(c *gin.Context, identity service.ChannelRuntimeIdentity, err *types.NewAPIError) service.TokenAccountAutomationAuthInvalidEvent {
+	identity = identity.Normalize()
+	provider := relayFirstNonEmptyString(
+		identity.Provider,
+		common.GetContextKeyString(c, constant.ContextKeyChannelAccountProvider),
+	)
+	brand := relayFirstNonEmptyString(
+		identity.Brand,
+		common.GetContextKeyString(c, constant.ContextKeyChannelAccountBrand),
+	)
+	subjectKey := relayFirstNonEmptyString(
+		common.GetContextKeyString(c, constant.ContextKeyChannelAccountIdentityKey),
+		identity.AccountID,
+		identity.CredentialSubjectFP,
+	)
+	displayName := relayFirstNonEmptyString(
+		common.GetContextKeyString(c, constant.ContextKeyChannelAccountCredentialLabel),
+		common.GetContextKeyString(c, constant.ContextKeyChannelAccountCredentialUID),
+	)
+	contextPayload := map[string]any{
+		"request_id":                     c.GetString(common.RequestIdKey),
+		"model":                          c.GetString("original_model"),
+		"group":                          currentRelayLogGroup(c),
+		"endpoint_type":                  string(identity.EndpointType),
+		"account_id":                     identity.AccountID,
+		"account_type":                   identity.AccountType,
+		"account_brand":                  brand,
+		"account_provider":               provider,
+		"account_identity_key":           common.GetContextKeyString(c, constant.ContextKeyChannelAccountIdentityKey),
+		"account_unique_key":             common.GetContextKeyString(c, constant.ContextKeyChannelAccountUniqueKey),
+		"credential_subject_fingerprint": identity.CredentialSubjectFP,
+		"credential_fingerprint":         identity.CredentialFP,
+		"error_code":                     string(err.GetErrorCode()),
+		"status_code":                    err.StatusCode,
+	}
+	return service.TokenAccountAutomationAuthInvalidEvent{
+		ChannelID:       identity.ChannelID,
+		CredentialIndex: identity.CredentialIndex,
+		Provider:        provider,
+		SubjectKey:      subjectKey,
+		DisplayName:     displayName,
+		Source:          "relay",
+		Reason:          modelgatewaycore.ErrorCategoryAuthConfigError,
+		Context:         compactAutomationEventContext(contextPayload),
+	}
+}
+
+func compactAutomationEventContext(values map[string]any) map[string]any {
+	result := make(map[string]any, len(values))
+	for key, value := range values {
+		switch typed := value.(type) {
+		case string:
+			if strings.TrimSpace(typed) != "" {
+				result[key] = strings.TrimSpace(typed)
+			}
+		case int:
+			if typed != 0 {
+				result[key] = typed
+			}
+		default:
+			if value != nil {
+				result[key] = value
+			}
+		}
+	}
+	return result
+}
+
+func relayFirstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func appendChannelFailureTraceAdminInfo(c *gin.Context, adminInfo map[string]interface{}) {

@@ -320,6 +320,10 @@ html.dark body.ct-channel-account-route main.semi-layout-content {
   gap: 10px;
 }
 
+.ct-channel-account-pool-main {
+  min-width: 0;
+}
+
 .ct-channel-account-avatar {
   display: grid;
   width: 34px;
@@ -385,6 +389,39 @@ html.dark body.ct-channel-account-route main.semi-layout-content {
   color: var(--ca-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     'Liberation Mono', 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.ct-channel-account-kv-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 9px;
+  color: var(--ca-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.ct-channel-account-kv-grid > span {
+  white-space: nowrap;
+}
+
+.ct-channel-account-kv-grid strong {
+  min-width: 0;
+  color: var(--ca-text);
+  font-weight: 720;
+}
+
+.ct-channel-account-pool-status {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ct-channel-account-pool-message {
+  display: block;
+  max-width: 100%;
   font-size: 12px;
 }
 

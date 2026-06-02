@@ -828,6 +828,26 @@ func ClearChannelRuntimeFailureAvoidance(identity ChannelRuntimeIdentity) {
 	channelRuntimeTimeoutDegradeEvents.Delete(identity)
 }
 
+func ClearChannelRuntimeFailureAvoidanceForAccountIndex(channelID int, credentialIndex int) {
+	if channelID <= 0 || credentialIndex < 0 {
+		return
+	}
+	channelRuntimeFailureAvoidance.Range(func(key, value any) bool {
+		identity, ok := key.(ChannelRuntimeIdentity)
+		if ok && identity.ChannelID == channelID && identity.CredentialIndexSet && identity.CredentialIndex == credentialIndex {
+			channelRuntimeFailureAvoidance.Delete(key)
+		}
+		return true
+	})
+	channelRuntimeTimeoutDegradeEvents.Range(func(key, value any) bool {
+		identity, ok := key.(ChannelRuntimeIdentity)
+		if ok && identity.ChannelID == channelID && identity.CredentialIndexSet && identity.CredentialIndex == credentialIndex {
+			channelRuntimeTimeoutDegradeEvents.Delete(key)
+		}
+		return true
+	})
+}
+
 func ClearChannelFailureAvoidanceOnRealSuccess(channelID int) bool {
 	if channelID <= 0 {
 		return false

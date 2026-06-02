@@ -167,8 +167,8 @@ const ChannelsTable = (channelsData) => {
           style={{ padding: 30 }}
         />
       }
-      className='rounded-xl overflow-hidden'
-      size='middle'
+      className='ct-channel-table rounded-xl overflow-hidden'
+      size='small'
       loading={loading || searching}
     />
   );

@@ -60,11 +60,11 @@ const ChannelsActions = ({
   t,
 }) => {
   return (
-    <div className='flex flex-col gap-2'>
+    <div className='ct-channel-actions flex flex-col gap-2'>
       {/* 第一行：批量操作按钮 + 设置开关 */}
       <div className='flex flex-col md:flex-row justify-between gap-2'>
         {/* 左侧：批量操作按钮 */}
-        <div className='flex flex-wrap md:flex-nowrap items-center gap-2 w-full md:w-auto order-2 md:order-1'>
+        <div className='ct-channel-action-group flex flex-wrap md:flex-nowrap items-center gap-2 w-full md:w-auto order-2 md:order-1'>
           <Button
             size='small'
             disabled={!enableBatchDelete}
@@ -242,9 +242,9 @@ const ChannelsActions = ({
         </div>
 
         {/* 右侧：设置开关区域 */}
-        <div className='flex flex-col md:flex-row items-start md:items-center gap-2 w-full md:w-auto order-1 md:order-2'>
-          <div className='flex items-center justify-between w-full md:w-auto'>
-            <Typography.Text strong className='mr-2'>
+        <div className='ct-channel-switch-group flex flex-col md:flex-row items-start md:items-center gap-2 w-full md:w-auto order-1 md:order-2'>
+          <div className='ct-channel-switch-item flex items-center justify-between w-full md:w-auto'>
+            <Typography.Text strong className='ct-channel-action-label mr-2'>
               {t('使用ID排序')}
             </Typography.Text>
             <Switch
@@ -275,8 +275,8 @@ const ChannelsActions = ({
             />
           </div>
 
-          <div className='flex items-center justify-between w-full md:w-auto'>
-            <Typography.Text strong className='mr-2'>
+          <div className='ct-channel-switch-item flex items-center justify-between w-full md:w-auto'>
+            <Typography.Text strong className='ct-channel-action-label mr-2'>
               {t('开启批量操作')}
             </Typography.Text>
             <Switch
@@ -289,8 +289,8 @@ const ChannelsActions = ({
             />
           </div>
 
-          <div className='flex items-center justify-between w-full md:w-auto'>
-            <Typography.Text strong className='mr-2'>
+          <div className='ct-channel-switch-item flex items-center justify-between w-full md:w-auto'>
+            <Typography.Text strong className='ct-channel-action-label mr-2'>
               {t('标签聚合模式')}
             </Typography.Text>
             <Switch
@@ -305,13 +305,14 @@ const ChannelsActions = ({
             />
           </div>
 
-          <div className='flex items-center justify-between w-full md:w-auto'>
-            <Typography.Text strong className='mr-2'>
+          <div className='ct-channel-switch-item flex items-center justify-between w-full md:w-auto'>
+            <Typography.Text strong className='ct-channel-action-label mr-2'>
               {t('状态筛选')}
             </Typography.Text>
             <Select
               size='small'
               value={statusFilter}
+              style={{ minWidth: 116 }}
               onChange={(v) => {
                 localStorage.setItem('channel-status-filter', v);
                 setStatusFilter(v);
@@ -326,9 +327,9 @@ const ChannelsActions = ({
                 );
               }}
             >
-              <Select.Option value='all'>{t('全部')}</Select.Option>
               <Select.Option value='enabled'>{t('已启用')}</Select.Option>
               <Select.Option value='disabled'>{t('已禁用')}</Select.Option>
+              <Select.Option value='all'>{t('全部含禁用')}</Select.Option>
             </Select>
           </div>
         </div>

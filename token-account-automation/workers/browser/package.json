@@ -1,0 +1,13 @@
+{
+  "name": "token-account-automation-browser-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/worker.mjs",
+    "check": "node --check src/worker.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.53.0"
+  }
+}

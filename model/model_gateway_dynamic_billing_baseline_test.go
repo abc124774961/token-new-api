@@ -71,3 +71,30 @@ func TestEnsureDynamicBillingBaselineColumnsAddsCostMultiplierFields(t *testing.
 		require.True(t, db.Migrator().HasColumn(&ModelGatewayDynamicBillingBaseline{}, column), column)
 	}
 }
+
+func TestEnsureModelGatewayProfitRecommendationColumnsAddsScopeFields(t *testing.T) {
+	db := setupDynamicBillingBaselineMigrationTestDB(t)
+	require.NoError(t, db.Exec(`CREATE TABLE model_gateway_profit_ratio_recommendations (
+		id integer primary key autoincrement,
+		window varchar(32) default '24h',
+		dimension varchar(32) default 'group',
+		start_timestamp bigint,
+		end_timestamp bigint,
+		target_profit_rate decimal(18,8) default 0,
+		revenue_usd decimal(18,8) default 0,
+		operating_cost_usd decimal(18,8) default 0,
+		created_at bigint,
+		updated_at bigint
+	)`).Error)
+
+	require.NoError(t, ensureModelGatewayProfitRecommendationColumns())
+
+	for _, column := range []string{
+		"scope_type",
+		"scope_id",
+		"scope_key",
+		"scope_name",
+	} {
+		require.True(t, db.Migrator().HasColumn(&ModelGatewayProfitRatioRecommendation{}, column), column)
+	}
+}

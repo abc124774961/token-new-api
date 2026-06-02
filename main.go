@@ -328,8 +328,12 @@ func InitResources() error {
 	if err != nil {
 		return err
 	}
-	if err := model.SyncCodexApplicationEnvironments(); err != nil {
-		return err
+	if common.GetEnvOrDefaultBool("SKIP_CODEX_APPLICATION_ENVIRONMENT_SYNC", false) {
+		common.SysLog("codex application environment sync skipped by SKIP_CODEX_APPLICATION_ENVIRONMENT_SYNC")
+	} else {
+		if err := model.SyncCodexApplicationEnvironments(); err != nil {
+			return err
+		}
 	}
 
 	// Initialize Redis

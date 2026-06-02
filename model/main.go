@@ -232,12 +232,16 @@ func InitDB() (err error) {
 		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
 		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
 
-		if !common.IsMasterNode {
-			return nil
-		}
-		if common.UsingMySQL {
-			//_, _ = sqlDB.Exec("ALTER TABLE channels MODIFY model_mapping TEXT;") // TODO: delete this line when most users have upgraded
-		}
+			if !common.IsMasterNode {
+				return nil
+			}
+			if common.GetEnvOrDefaultBool("SKIP_DB_AUTO_MIGRATE", false) {
+				common.SysLog("database migration skipped by SKIP_DB_AUTO_MIGRATE")
+				return nil
+			}
+			if common.UsingMySQL {
+				//_, _ = sqlDB.Exec("ALTER TABLE channels MODIFY model_mapping TEXT;") // TODO: delete this line when most users have upgraded
+			}
 		common.SysLog("database migration started")
 		err = migrateDB()
 		return err
@@ -374,6 +378,9 @@ func migrateDB() error {
 	if err := ensureDynamicBillingBaselineColumns(); err != nil {
 		return err
 	}
+	if err := ensureModelGatewayProfitRecommendationColumns(); err != nil {
+		return err
+	}
 	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
 		return err
 	}
@@ -478,6 +485,9 @@ func migrateDBFast() error {
 		}
 	}
 	if err := ensureDynamicBillingBaselineColumns(); err != nil {
+		return err
+	}
+	if err := ensureModelGatewayProfitRecommendationColumns(); err != nil {
 		return err
 	}
 	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
@@ -960,6 +970,19 @@ func ensureDynamicBillingBaselineColumns() error {
 		{"upstream_cost_usd", "UpstreamCostUSD"},
 	}
 	return ensureColumns(&ModelGatewayDynamicBillingBaseline{}, columns)
+}
+
+func ensureModelGatewayProfitRecommendationColumns() error {
+	if DB == nil || !DB.Migrator().HasTable(&ModelGatewayProfitRatioRecommendation{}) {
+		return nil
+	}
+	columns := []modelGatewayColumnSpec{
+		{"scope_type", "ScopeType"},
+		{"scope_id", "ScopeID"},
+		{"scope_key", "ScopeKey"},
+		{"scope_name", "ScopeName"},
+	}
+	return ensureColumns(&ModelGatewayProfitRatioRecommendation{}, columns)
 }
 
 func ensureColumns(table any, columns []modelGatewayColumnSpec) error {

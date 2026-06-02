@@ -49,7 +49,7 @@ const ChannelsTabs = ({
       type='card'
       collapsible
       onChange={handleTabChange}
-      className='mb-2'
+      className='ct-channel-tabs mb-2'
     >
       <TabPane
         itemKey='all'

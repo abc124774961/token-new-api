@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewaytraffic "github.com/QuantumNous/new-api/pkg/modelgateway/traffic"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -65,16 +66,19 @@ type UpdateModelGatewayProfitMonitorConfigRequest struct {
 }
 
 type ModelGatewayProfitMonitorResponse struct {
-	Window         string                               `json:"window"`
-	Dimension      string                               `json:"dimension"`
-	StartTimestamp int64                                `json:"start_timestamp"`
-	EndTimestamp   int64                                `json:"end_timestamp"`
-	Config         ModelGatewayProfitMonitorConfig      `json:"config"`
-	Summary        ModelGatewayProfitMonitorSummary     `json:"summary"`
-	Breakdown      []ModelGatewayProfitMonitorBreakdown `json:"breakdown"`
-	Anomalies      []ModelGatewayProfitAnomaly          `json:"anomalies"`
-	Resources      ModelGatewayProfitResourceSummary    `json:"resources"`
-	Recommendation ModelGatewayProfitRecommendation     `json:"recommendation"`
+	Window              string                                `json:"window"`
+	Dimension           string                                `json:"dimension"`
+	BreakdownDimension  string                                `json:"breakdown_dimension"`
+	StartTimestamp      int64                                 `json:"start_timestamp"`
+	EndTimestamp        int64                                 `json:"end_timestamp"`
+	Config              ModelGatewayProfitMonitorConfig       `json:"config"`
+	Summary             ModelGatewayProfitMonitorSummary      `json:"summary"`
+	Breakdown           []ModelGatewayProfitMonitorBreakdown  `json:"breakdown"`
+	DynamicRatioGroups  []ModelGatewayProfitDynamicRatioGroup `json:"dynamic_ratio_groups"`
+	DynamicRatioSummary ModelGatewayProfitDynamicRatioSummary `json:"dynamic_ratio_summary"`
+	Anomalies           []ModelGatewayProfitAnomaly           `json:"anomalies"`
+	Resources           ModelGatewayProfitResourceSummary     `json:"resources"`
+	Recommendation      ModelGatewayProfitRecommendation      `json:"recommendation"`
 }
 
 type ModelGatewayProfitTrafficResponse struct {
@@ -91,6 +95,10 @@ type ModelGatewayProfitTrafficResponse struct {
 type ModelGatewayProfitRecommendationSnapshotInput struct {
 	Window         string                            `json:"window"`
 	Dimension      string                            `json:"dimension"`
+	ScopeType      string                            `json:"scope_type,omitempty"`
+	ScopeID        int                               `json:"scope_id,omitempty"`
+	ScopeKey       string                            `json:"scope_key,omitempty"`
+	ScopeName      string                            `json:"scope_name,omitempty"`
 	StartTimestamp int64                             `json:"start_timestamp"`
 	EndTimestamp   int64                             `json:"end_timestamp"`
 	Config         ModelGatewayProfitMonitorConfig   `json:"config"`
@@ -102,6 +110,10 @@ type ModelGatewayProfitRecommendationSnapshotInput struct {
 type ModelGatewayProfitRecommendationPackage struct {
 	Mode                 string             `json:"mode"`
 	GeneratedBy          string             `json:"generated_by"`
+	ScopeType            string             `json:"scope_type,omitempty"`
+	ScopeID              int                `json:"scope_id,omitempty"`
+	ScopeKey             string             `json:"scope_key,omitempty"`
+	ScopeName            string             `json:"scope_name,omitempty"`
 	RiskLevel            string             `json:"risk_level"`
 	Confidence           float64            `json:"confidence"`
 	ReasonCode           string             `json:"reason_code"`
@@ -185,6 +197,58 @@ type ModelGatewayProfitMonitorBreakdown struct {
 	AllocatedOperatingCostUSD float64 `json:"allocated_operating_cost_usd"`
 	ProfitUSD                 float64 `json:"profit_usd"`
 	GrossMargin               float64 `json:"gross_margin"`
+}
+
+type ModelGatewayProfitDynamicRatioGroup struct {
+	Group                string  `json:"group"`
+	BillingRatioMode     string  `json:"billing_ratio_mode"`
+	StaticRatio          float64 `json:"static_ratio"`
+	TargetRatio          float64 `json:"target_ratio"`
+	EffectiveRatio       float64 `json:"effective_ratio"`
+	DynamicRatio         float64 `json:"dynamic_ratio"`
+	ActualRatio          float64 `json:"actual_ratio"`
+	Applied              bool    `json:"applied"`
+	FallbackReason       string  `json:"fallback_reason"`
+	ApplyReason          string  `json:"apply_reason"`
+	Clamped              bool    `json:"clamped"`
+	PendingManualConfirm bool    `json:"pending_manual_confirm"`
+	SampleCount          int     `json:"sample_count"`
+	ModelCount           int     `json:"model_count"`
+	RequestCount         int64   `json:"request_count"`
+	SuccessRequestCount  int64   `json:"success_request_count"`
+	TotalTokens          int64   `json:"total_tokens"`
+	CurrentRevenueUSD    float64 `json:"current_revenue_usd"`
+	RequiredRevenueUSD   float64 `json:"required_revenue_usd"`
+	RevenueGapUSD        float64 `json:"revenue_gap_usd"`
+	UpstreamCostUSD      float64 `json:"upstream_cost_usd"`
+	TrafficCostUSD       float64 `json:"traffic_cost_usd"`
+	ServerCostUSD        float64 `json:"server_cost_usd"`
+	ResourceCostUSD      float64 `json:"resource_cost_usd"`
+	OperatingCostUSD     float64 `json:"operating_cost_usd"`
+	BaseQuotaAtRatio1    float64 `json:"base_quota_at_ratio_1"`
+	CostMultiplier       float64 `json:"cost_multiplier"`
+	CostMarkupMultiplier float64 `json:"cost_markup_multiplier"`
+	ReferenceModel       string  `json:"reference_model"`
+	CostSource           string  `json:"cost_source"`
+	ApplyMode            string  `json:"apply_mode"`
+	ProfitRate           float64 `json:"profit_rate"`
+	TrafficEstimated     bool    `json:"traffic_estimated"`
+	TrafficDataReady     bool    `json:"traffic_data_ready"`
+	WindowStart          int64   `json:"window_start"`
+	WindowEnd            int64   `json:"window_end"`
+	CalculatedAt         int64   `json:"calculated_at"`
+	UpdatedAt            int64   `json:"updated_at"`
+}
+
+type ModelGatewayProfitDynamicRatioSummary struct {
+	TotalGroups                int     `json:"total_groups"`
+	ActiveGroups               int     `json:"active_groups"`
+	FallbackGroups             int     `json:"fallback_groups"`
+	ClampedGroups              int     `json:"clamped_groups"`
+	PendingManualConfirmGroups int     `json:"pending_manual_confirm_groups"`
+	OperatingCostUSD           float64 `json:"operating_cost_usd"`
+	RequiredRevenueUSD         float64 `json:"required_revenue_usd"`
+	RevenueGapUSD              float64 `json:"revenue_gap_usd"`
 }
 
 type ModelGatewayProfitAnomaly struct {
@@ -279,6 +343,13 @@ type UpsertModelGatewayProfitResourceRequest struct {
 	Enabled         *bool                  `json:"enabled,omitempty"`
 	Remark          *string                `json:"remark,omitempty"`
 	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type CreateModelGatewayProfitRecommendationRequest struct {
+	ScopeType string `json:"scope_type,omitempty"`
+	ScopeID   int    `json:"scope_id,omitempty"`
+	ScopeKey  string `json:"scope_key,omitempty"`
+	ScopeName string `json:"scope_name,omitempty"`
 }
 
 type UpdateModelGatewayProfitRecommendationDecisionRequest struct {
@@ -381,9 +452,9 @@ func UpdateModelGatewayProfitMonitorConfig(c *gin.Context) {
 func GetModelGatewayProfitMonitorSummary(c *gin.Context) {
 	config := loadModelGatewayProfitMonitorConfig()
 	window, startTimestamp, endTimestamp := parseModelGatewayProfitMonitorWindow(c)
-	dimension := normalizeModelGatewayProfitMonitorDimension(c.Query("dimension"))
+	breakdownDimension := parseModelGatewayProfitMonitorBreakdownDimension(c)
 
-	payload, err := buildModelGatewayProfitMonitorResponse(window, startTimestamp, endTimestamp, dimension, config)
+	payload, err := buildModelGatewayProfitMonitorResponse(window, startTimestamp, endTimestamp, breakdownDimension, config)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -394,14 +465,19 @@ func GetModelGatewayProfitMonitorSummary(c *gin.Context) {
 func CreateModelGatewayProfitMonitorRecommendation(c *gin.Context) {
 	config := loadModelGatewayProfitMonitorConfig()
 	window, startTimestamp, endTimestamp := parseModelGatewayProfitMonitorWindow(c)
-	dimension := normalizeModelGatewayProfitMonitorDimension(c.Query("dimension"))
+	breakdownDimension := parseModelGatewayProfitMonitorBreakdownDimension(c)
+	request, err := parseModelGatewayProfitRecommendationRequest(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的参数"})
+		return
+	}
 
-	payload, err := buildModelGatewayProfitMonitorResponse(window, startTimestamp, endTimestamp, dimension, config)
+	payload, err := buildModelGatewayProfitMonitorResponse(window, startTimestamp, endTimestamp, breakdownDimension, config)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	snapshot, err := buildModelGatewayProfitRecommendationSnapshot(payload)
+	snapshot, err := buildModelGatewayProfitRecommendationSnapshot(payload, request)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -538,8 +614,9 @@ func UpdateModelGatewayProfitMonitorCanaryTask(c *gin.Context) {
 	common.ApiSuccess(c, row)
 }
 
-func buildModelGatewayProfitMonitorResponse(window string, startTimestamp int64, endTimestamp int64, dimension string, config ModelGatewayProfitMonitorConfig) (ModelGatewayProfitMonitorResponse, error) {
+func buildModelGatewayProfitMonitorResponse(window string, startTimestamp int64, endTimestamp int64, breakdownDimension string, config ModelGatewayProfitMonitorConfig) (ModelGatewayProfitMonitorResponse, error) {
 	config = effectiveModelGatewayProfitMonitorRecommendationConfig(config)
+	breakdownDimension = normalizeModelGatewayProfitMonitorDimension(breakdownDimension)
 	summary, err := queryModelGatewayProfitMonitorSummary(startTimestamp, endTimestamp, config)
 	if err != nil {
 		return ModelGatewayProfitMonitorResponse{}, err
@@ -560,15 +637,16 @@ func buildModelGatewayProfitMonitorResponse(window string, startTimestamp int64,
 		summary.CostCoverageFloorPerMToken = summary.OperatingCostUSD / float64(summary.TotalTokens) * 1_000_000
 	}
 
-	breakdown, err := queryModelGatewayProfitMonitorBreakdown(startTimestamp, endTimestamp, dimension)
+	breakdown, err := queryModelGatewayProfitMonitorBreakdown(startTimestamp, endTimestamp, breakdownDimension)
 	if err != nil {
 		return ModelGatewayProfitMonitorResponse{}, err
 	}
-	hasTrafficBreakdown, err := applyModelGatewayProfitMonitorTrafficBreakdown(breakdown, startTimestamp, endTimestamp, dimension, summary)
+	hasTrafficBreakdown, err := applyModelGatewayProfitMonitorTrafficBreakdown(breakdown, startTimestamp, endTimestamp, breakdownDimension, summary)
 	if err != nil {
 		return ModelGatewayProfitMonitorResponse{}, err
 	}
-	allocateModelGatewayProfitMonitorBreakdownCosts(breakdown, summary, resources, config, dimension, hasTrafficBreakdown)
+	allocateModelGatewayProfitMonitorBreakdownCosts(breakdown, summary, resources, config, breakdownDimension, hasTrafficBreakdown)
+	dynamicRatioGroups, dynamicRatioSummary := buildModelGatewayProfitDynamicRatioGroups(config)
 	anomalies, err := queryModelGatewayProfitAnomalies(startTimestamp, endTimestamp, 0.40)
 	if err != nil {
 		return ModelGatewayProfitMonitorResponse{}, err
@@ -578,16 +656,19 @@ func buildModelGatewayProfitMonitorResponse(window string, startTimestamp int64,
 	enrichModelGatewayProfitRecommendationWithDynamicBilling(&recommendation, config)
 
 	return ModelGatewayProfitMonitorResponse{
-		Window:         window,
-		Dimension:      dimension,
-		StartTimestamp: startTimestamp,
-		EndTimestamp:   endTimestamp,
-		Config:         config,
-		Summary:        summary,
-		Breakdown:      breakdown,
-		Anomalies:      anomalies,
-		Resources:      resources,
-		Recommendation: recommendation,
+		Window:              window,
+		Dimension:           breakdownDimension,
+		BreakdownDimension:  breakdownDimension,
+		StartTimestamp:      startTimestamp,
+		EndTimestamp:        endTimestamp,
+		Config:              config,
+		Summary:             summary,
+		Breakdown:           breakdown,
+		DynamicRatioGroups:  dynamicRatioGroups,
+		DynamicRatioSummary: dynamicRatioSummary,
+		Anomalies:           anomalies,
+		Resources:           resources,
+		Recommendation:      recommendation,
 	}, nil
 }
 
@@ -853,6 +934,47 @@ func normalizeModelGatewayProfitMonitorDimension(value string) string {
 	default:
 		return "group"
 	}
+}
+
+func parseModelGatewayProfitMonitorBreakdownDimension(c *gin.Context) string {
+	if c == nil {
+		return "channel"
+	}
+	if value := strings.TrimSpace(c.Query("breakdown_dimension")); value != "" {
+		return normalizeModelGatewayProfitMonitorDimension(value)
+	}
+	if value := strings.TrimSpace(c.Query("dimension")); value != "" {
+		return normalizeModelGatewayProfitMonitorDimension(value)
+	}
+	return "channel"
+}
+
+func parseModelGatewayProfitRecommendationRequest(c *gin.Context) (CreateModelGatewayProfitRecommendationRequest, error) {
+	request := CreateModelGatewayProfitRecommendationRequest{}
+	if c == nil {
+		return request, nil
+	}
+	if c.Request != nil && c.Request.Body != nil && c.Request.ContentLength != 0 {
+		if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+			return request, err
+		}
+	}
+	if value := strings.TrimSpace(c.Query("scope_type")); value != "" {
+		request.ScopeType = value
+	}
+	if value := strings.TrimSpace(c.Query("scope_key")); value != "" {
+		request.ScopeKey = value
+	}
+	if value := strings.TrimSpace(c.Query("scope_name")); value != "" {
+		request.ScopeName = value
+	}
+	if value, err := strconv.Atoi(strings.TrimSpace(c.Query("scope_id"))); err == nil && value > 0 {
+		request.ScopeID = value
+	}
+	request.ScopeType = model.NormalizeModelGatewayProfitResourceScope(request.ScopeType)
+	request.ScopeKey = strings.TrimSpace(request.ScopeKey)
+	request.ScopeName = strings.TrimSpace(request.ScopeName)
+	return request, nil
 }
 
 func queryModelGatewayProfitMonitorSummary(startTimestamp int64, endTimestamp int64, config ModelGatewayProfitMonitorConfig) (ModelGatewayProfitMonitorSummary, error) {
@@ -1242,6 +1364,223 @@ func modelGatewayProfitAllocationRatio(row ModelGatewayProfitMonitorBreakdown, s
 	}
 }
 
+func buildModelGatewayProfitDynamicRatioGroups(config ModelGatewayProfitMonitorConfig) ([]ModelGatewayProfitDynamicRatioGroup, ModelGatewayProfitDynamicRatioSummary) {
+	setting := scheduler_setting.GetSetting()
+	ratioMap := ratio_setting.GetGroupRatioCopy()
+	baselines := modelgatewaydynamicbilling.DefaultBaselineSnapshots()
+	baselineByGroup := make(map[string]modelgatewaydynamicbilling.RatioBaseline, len(baselines))
+	groupNames := make(map[string]string)
+	for group := range ratioMap {
+		trimmed := strings.TrimSpace(group)
+		if trimmed != "" {
+			groupNames[strings.ToLower(trimmed)] = trimmed
+		}
+	}
+	for group := range setting.GroupPolicies {
+		trimmed := strings.TrimSpace(group)
+		if trimmed != "" {
+			groupNames[strings.ToLower(trimmed)] = trimmed
+		}
+	}
+	for _, baseline := range baselines {
+		group := strings.TrimSpace(baseline.Group)
+		if group == "" {
+			continue
+		}
+		key := strings.ToLower(group)
+		baselineByGroup[key] = baseline
+		groupNames[key] = group
+	}
+
+	groups := make([]string, 0, len(groupNames))
+	for _, group := range groupNames {
+		groups = append(groups, group)
+	}
+	sort.Strings(groups)
+
+	provider := modelgatewaydynamicbilling.DefaultRatioProvider()
+	now := common.GetTimestamp()
+	items := make([]ModelGatewayProfitDynamicRatioGroup, 0, len(groups))
+	summary := ModelGatewayProfitDynamicRatioSummary{}
+	for _, group := range groups {
+		key := strings.ToLower(strings.TrimSpace(group))
+		baseline := baselineByGroup[key]
+		staticRatio := modelGatewayProfitStaticGroupRatio(group, ratioMap)
+		billingMode := scheduler_setting.BillingRatioModeStatic
+		if policy, ok := modelGatewayProfitGroupPolicy(setting.GroupPolicies, group); ok {
+			billingMode = strings.TrimSpace(policy.BillingRatioMode)
+		}
+		if billingMode != scheduler_setting.BillingRatioModeDynamic {
+			billingMode = scheduler_setting.BillingRatioModeStatic
+		}
+		referenceModel := strings.TrimSpace(baseline.ReferenceModel)
+		if referenceModel == "" {
+			referenceModel = strings.TrimSpace(baseline.RequestedModel)
+		}
+		applied := modelgatewaydynamicbilling.Apply(modelgatewaydynamicbilling.ApplyInput{
+			RequestedModel:   referenceModel,
+			Group:            group,
+			StaticGroupRatio: staticRatio,
+			Mode:             billingMode,
+			Setting:          setting,
+			Provider:         provider,
+			Now:              now,
+		})
+		actualRatio := staticRatio
+		if applied.Applied && applied.DynamicRatio > 0 {
+			actualRatio = applied.DynamicRatio
+		}
+		profitRate := baseline.ProfitRate
+		if profitRate <= 0 {
+			profitRate = config.TargetProfitRate
+		}
+		profitRate = modelgatewaydynamicbilling.SanitizeTargetGrossMargin(profitRate)
+		requiredRevenue := baseline.RequiredRevenueUSD
+		if requiredRevenue <= 0 && baseline.OperatingCostUSD > 0 {
+			requiredRevenue = modelgatewaydynamicbilling.RequiredRevenueForGrossMargin(baseline.OperatingCostUSD, profitRate)
+		}
+		currentRevenue := 0.0
+		if baseline.BaseQuotaAtRatio1 > 0 && common.QuotaPerUnit > 0 && actualRatio > 0 {
+			currentRevenue = actualRatio * baseline.BaseQuotaAtRatio1 / common.QuotaPerUnit
+		}
+		dynamicRatio := baseline.Ratio
+		if dynamicRatio <= 0 {
+			dynamicRatio = applied.DynamicRatio
+		}
+		effectiveRatio := baseline.EffectiveRatio
+		if effectiveRatio <= 0 {
+			effectiveRatio = dynamicRatio
+		}
+		fallbackReason := strings.TrimSpace(applied.FallbackReason)
+		if fallbackReason == "" {
+			fallbackReason = strings.TrimSpace(baseline.FallbackReason)
+		}
+		applyReason := strings.TrimSpace(applied.ApplyReason)
+		if applyReason == "" {
+			applyReason = strings.TrimSpace(baseline.ApplyReason)
+		}
+		item := ModelGatewayProfitDynamicRatioGroup{
+			Group:                group,
+			BillingRatioMode:     billingMode,
+			StaticRatio:          staticRatio,
+			TargetRatio:          baseline.TargetRatio,
+			EffectiveRatio:       effectiveRatio,
+			DynamicRatio:         dynamicRatio,
+			ActualRatio:          actualRatio,
+			Applied:              applied.Applied,
+			FallbackReason:       fallbackReason,
+			ApplyReason:          applyReason,
+			Clamped:              baseline.Clamped,
+			PendingManualConfirm: baseline.PendingManualConfirm,
+			SampleCount:          baseline.SampleCount,
+			ModelCount:           baseline.ModelCount,
+			RequestCount:         baseline.RequestCount,
+			SuccessRequestCount:  baseline.SuccessRequestCount,
+			TotalTokens:          baseline.TotalTokens,
+			CurrentRevenueUSD:    currentRevenue,
+			RequiredRevenueUSD:   requiredRevenue,
+			RevenueGapUSD:        requiredRevenue - currentRevenue,
+			UpstreamCostUSD:      baseline.UpstreamCostUSD,
+			TrafficCostUSD:       baseline.TrafficCostUSD,
+			ServerCostUSD:        baseline.ServerCostUSD,
+			ResourceCostUSD:      baseline.ResourceCostUSD,
+			OperatingCostUSD:     baseline.OperatingCostUSD,
+			BaseQuotaAtRatio1:    baseline.BaseQuotaAtRatio1,
+			CostMultiplier:       baseline.CostMultiplier,
+			CostMarkupMultiplier: modelgatewaydynamicbilling.RevenueMultiplierForGrossMargin(profitRate),
+			ReferenceModel:       referenceModel,
+			CostSource:           strings.TrimSpace(baseline.CostSource),
+			ApplyMode:            strings.TrimSpace(applied.ApplyMode),
+			ProfitRate:           profitRate,
+			TrafficEstimated:     baseline.TrafficEstimated,
+			TrafficDataReady:     baseline.TrafficDataReady,
+			WindowStart:          baseline.WindowStart,
+			WindowEnd:            baseline.WindowEnd,
+			CalculatedAt:         baseline.CalculatedAt,
+			UpdatedAt:            baseline.CalculatedAt,
+		}
+		items = append(items, item)
+		summary.TotalGroups++
+		if item.Applied {
+			summary.ActiveGroups++
+		} else if item.FallbackReason != "" && item.FallbackReason != modelgatewaydynamicbilling.FallbackStaticMode {
+			summary.FallbackGroups++
+		}
+		if item.Clamped {
+			summary.ClampedGroups++
+		}
+		if item.PendingManualConfirm {
+			summary.PendingManualConfirmGroups++
+		}
+		summary.OperatingCostUSD += item.OperatingCostUSD
+		summary.RequiredRevenueUSD += item.RequiredRevenueUSD
+		summary.RevenueGapUSD += item.RevenueGapUSD
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if math.Abs(items[i].RevenueGapUSD-items[j].RevenueGapUSD) > 0.0000001 {
+			return items[i].RevenueGapUSD > items[j].RevenueGapUSD
+		}
+		if math.Abs(items[i].OperatingCostUSD-items[j].OperatingCostUSD) > 0.0000001 {
+			return items[i].OperatingCostUSD > items[j].OperatingCostUSD
+		}
+		return strings.TrimSpace(items[i].Group) < strings.TrimSpace(items[j].Group)
+	})
+	return items, summary
+}
+
+func modelGatewayProfitStaticGroupRatio(group string, ratioMap map[string]float64) float64 {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return 1
+	}
+	if ratio, ok := ratioMap[group]; ok && ratio > 0 {
+		return ratio
+	}
+	lowerGroup := strings.ToLower(group)
+	for key, ratio := range ratioMap {
+		if strings.EqualFold(strings.TrimSpace(key), lowerGroup) && ratio > 0 {
+			return ratio
+		}
+	}
+	return 1
+}
+
+func modelGatewayProfitGroupPolicy(policies map[string]scheduler_setting.GroupPolicySetting, group string) (scheduler_setting.GroupPolicySetting, bool) {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return scheduler_setting.GroupPolicySetting{}, false
+	}
+	if policy, ok := policies[group]; ok {
+		return policy, true
+	}
+	lowerGroup := strings.ToLower(group)
+	if policy, ok := policies[lowerGroup]; ok {
+		return policy, true
+	}
+	for key, policy := range policies {
+		if strings.EqualFold(strings.TrimSpace(key), group) {
+			return policy, true
+		}
+	}
+	return scheduler_setting.GroupPolicySetting{}, false
+}
+
+func modelGatewayProfitDynamicRatioGroupByScope(payload ModelGatewayProfitMonitorResponse, request CreateModelGatewayProfitRecommendationRequest) (ModelGatewayProfitDynamicRatioGroup, bool) {
+	if request.ScopeType != model.ModelGatewayProfitResourceScopeGroup {
+		return ModelGatewayProfitDynamicRatioGroup{}, false
+	}
+	scopeKey := strings.TrimSpace(request.ScopeKey)
+	if scopeKey == "" {
+		return ModelGatewayProfitDynamicRatioGroup{}, false
+	}
+	for _, item := range payload.DynamicRatioGroups {
+		if strings.EqualFold(strings.TrimSpace(item.Group), scopeKey) {
+			return item, true
+		}
+	}
+	return ModelGatewayProfitDynamicRatioGroup{}, false
+}
+
 func buildModelGatewayProfitRecommendation(summary ModelGatewayProfitMonitorSummary, config ModelGatewayProfitMonitorConfig) ModelGatewayProfitRecommendation {
 	result := ModelGatewayProfitRecommendation{
 		TargetProfitRate: config.TargetProfitRate,
@@ -1405,7 +1744,11 @@ func modelGatewayProfitRecommendationHasEnoughSamples(summary ModelGatewayProfit
 		summary.TotalTokens >= modelGatewayProfitRecommendationMinTotalTokens
 }
 
-func buildModelGatewayProfitRecommendationSnapshot(payload ModelGatewayProfitMonitorResponse) (model.ModelGatewayProfitRatioRecommendation, error) {
+func buildModelGatewayProfitRecommendationSnapshot(payload ModelGatewayProfitMonitorResponse, request CreateModelGatewayProfitRecommendationRequest) (model.ModelGatewayProfitRatioRecommendation, error) {
+	request = normalizeModelGatewayProfitRecommendationScopeRequest(request)
+	if item, ok := modelGatewayProfitDynamicRatioGroupByScope(payload, request); ok {
+		return buildModelGatewayProfitGroupRecommendationSnapshot(payload, request, item)
+	}
 	summary := payload.Summary
 	recommendation := payload.Recommendation
 	confidence, riskLevel := modelGatewayProfitRecommendationConfidence(summary, recommendation)
@@ -1414,6 +1757,10 @@ func buildModelGatewayProfitRecommendationSnapshot(payload ModelGatewayProfitMon
 	input := ModelGatewayProfitRecommendationSnapshotInput{
 		Window:         payload.Window,
 		Dimension:      payload.Dimension,
+		ScopeType:      request.ScopeType,
+		ScopeID:        request.ScopeID,
+		ScopeKey:       request.ScopeKey,
+		ScopeName:      request.ScopeName,
 		StartTimestamp: payload.StartTimestamp,
 		EndTimestamp:   payload.EndTimestamp,
 		Config:         payload.Config,
@@ -1424,6 +1771,10 @@ func buildModelGatewayProfitRecommendationSnapshot(payload ModelGatewayProfitMon
 	packagePayload := ModelGatewayProfitRecommendationPackage{
 		Mode:                 payload.Config.DynamicRatioRecommendationMode,
 		GeneratedBy:          "profit_monitor",
+		ScopeType:            request.ScopeType,
+		ScopeID:              request.ScopeID,
+		ScopeKey:             request.ScopeKey,
+		ScopeName:            request.ScopeName,
 		RiskLevel:            riskLevel,
 		Confidence:           confidence,
 		ReasonCode:           reasonCode,
@@ -1466,6 +1817,10 @@ func buildModelGatewayProfitRecommendationSnapshot(payload ModelGatewayProfitMon
 	return model.ModelGatewayProfitRatioRecommendation{
 		Window:                       payload.Window,
 		Dimension:                    payload.Dimension,
+		ScopeType:                    request.ScopeType,
+		ScopeID:                      request.ScopeID,
+		ScopeKey:                     request.ScopeKey,
+		ScopeName:                    request.ScopeName,
 		StartTimestamp:               payload.StartTimestamp,
 		EndTimestamp:                 payload.EndTimestamp,
 		TargetProfitRate:             recommendation.TargetProfitRate,
@@ -1488,6 +1843,170 @@ func buildModelGatewayProfitRecommendationSnapshot(payload ModelGatewayProfitMon
 		InputJSON:                    string(inputJSON),
 		RecommendationJSON:           string(recommendationJSON),
 	}, nil
+}
+
+func buildModelGatewayProfitGroupRecommendationSnapshot(payload ModelGatewayProfitMonitorResponse, request CreateModelGatewayProfitRecommendationRequest, item ModelGatewayProfitDynamicRatioGroup) (model.ModelGatewayProfitRatioRecommendation, error) {
+	if request.ScopeKey == "" {
+		request.ScopeKey = item.Group
+	}
+	if request.ScopeName == "" {
+		request.ScopeName = item.Group
+	}
+	summary := ModelGatewayProfitMonitorSummary{
+		Requests:                 item.RequestCount,
+		SuccessRequests:          item.SuccessRequestCount,
+		SuccessRate:              ratioOrZero(float64(item.SuccessRequestCount), float64(item.RequestCount)),
+		TotalTokens:              item.TotalTokens,
+		RevenueUSD:               item.CurrentRevenueUSD,
+		UpstreamCostUSD:          item.UpstreamCostUSD,
+		TrafficCostUSD:           item.TrafficCostUSD,
+		TrafficEstimated:         item.TrafficEstimated,
+		TrafficDataReady:         item.TrafficDataReady,
+		ServerCostUSD:            item.ServerCostUSD,
+		ResourceAmortizedCostUSD: item.ResourceCostUSD,
+		OperatingCostUSD:         item.OperatingCostUSD,
+	}
+	summary.ProfitUSD = summary.RevenueUSD - summary.OperatingCostUSD
+	summary.GrossMargin = ratioOrZero(summary.ProfitUSD, summary.RevenueUSD)
+	summary.UpstreamOnlyProfitUSD = summary.RevenueUSD - summary.UpstreamCostUSD
+	summary.UpstreamOnlyMargin = ratioOrZero(summary.UpstreamOnlyProfitUSD, summary.RevenueUSD)
+	recommendation := ModelGatewayProfitRecommendation{
+		TargetProfitRate:               item.ProfitRate,
+		RequiredRevenueUSD:             item.RequiredRevenueUSD,
+		RevenueGapUSD:                  item.RevenueGapUSD,
+		CostMultiplier:                 item.CostMultiplier,
+		CostMarkupMultiplier:           item.CostMarkupMultiplier,
+		BaseQuotaAtRatio1:              item.BaseQuotaAtRatio1,
+		SuggestedDynamicRatio:          item.EffectiveRatio,
+		SuggestedDynamicRatioRaw:       item.TargetRatio,
+		CurrentEffectiveDynamicRatio:   item.ActualRatio,
+		DynamicBillingApplied:          item.Applied,
+		DynamicRatioLimitApplied:       item.Clamped,
+		DynamicRatioLimitReason:        modelGatewayProfitDynamicRatioLimitReason(item),
+		MinimumRevenuePerMBaseQuotaUSD: ratioOrZero(item.RequiredRevenueUSD, item.BaseQuotaAtRatio1) * 1_000_000,
+		CanRecommend:                   item.RequiredRevenueUSD > 0 && item.BaseQuotaAtRatio1 > 0,
+		Reason:                         modelGatewayProfitRecommendationReasonOK,
+	}
+	if recommendation.TargetProfitRate <= 0 {
+		recommendation.TargetProfitRate = payload.Config.TargetProfitRate
+	}
+	recommendation.TargetProfitRate = modelgatewaydynamicbilling.SanitizeTargetGrossMargin(recommendation.TargetProfitRate)
+	recommendation.RecommendedRevenueMultiplier = ratioOrZero(item.RequiredRevenueUSD, item.CurrentRevenueUSD)
+	if item.TotalTokens > 0 {
+		recommendation.RecommendedFloorPerMTokenUSD = item.RequiredRevenueUSD / float64(item.TotalTokens) * 1_000_000
+	}
+	if !recommendation.CanRecommend {
+		recommendation.Reason = modelGatewayProfitRecommendationReasonNoRevenue
+	} else if item.FallbackReason == modelgatewaydynamicbilling.FallbackNoCostData {
+		recommendation.Reason = modelGatewayProfitRecommendationReasonNoCost
+	}
+	confidence, riskLevel := modelGatewayProfitRecommendationConfidence(summary, recommendation)
+	reasonCode := modelGatewayProfitRecommendationReasonCode(summary, recommendation, riskLevel)
+	input := ModelGatewayProfitRecommendationSnapshotInput{
+		Window:         payload.Window,
+		Dimension:      model.ModelGatewayProfitResourceScopeGroup,
+		ScopeType:      request.ScopeType,
+		ScopeID:        request.ScopeID,
+		ScopeKey:       request.ScopeKey,
+		ScopeName:      request.ScopeName,
+		StartTimestamp: payload.StartTimestamp,
+		EndTimestamp:   payload.EndTimestamp,
+		Config:         payload.Config,
+		Summary:        summary,
+		Resources:      payload.Resources,
+		Recommendation: recommendation,
+	}
+	packagePayload := ModelGatewayProfitRecommendationPackage{
+		Mode:                 payload.Config.DynamicRatioRecommendationMode,
+		GeneratedBy:          "profit_monitor",
+		ScopeType:            request.ScopeType,
+		ScopeID:              request.ScopeID,
+		ScopeKey:             request.ScopeKey,
+		ScopeName:            request.ScopeName,
+		RiskLevel:            riskLevel,
+		Confidence:           confidence,
+		ReasonCode:           reasonCode,
+		ConstraintCodes:      modelGatewayProfitRecommendationConstraintCodes(),
+		SuggestedActionCodes: modelGatewayProfitRecommendationActionCodes(summary, recommendation, riskLevel),
+		Metrics: map[string]float64{
+			"current_margin":                    summary.GrossMargin,
+			"target_profit_rate":                recommendation.TargetProfitRate,
+			"revenue_usd":                       summary.RevenueUSD,
+			"operating_cost_usd":                summary.OperatingCostUSD,
+			"required_revenue_usd":              recommendation.RequiredRevenueUSD,
+			"revenue_gap_usd":                   recommendation.RevenueGapUSD,
+			"cost_multiplier":                   recommendation.CostMultiplier,
+			"cost_markup_multiplier":            recommendation.CostMarkupMultiplier,
+			"recommended_revenue_multiplier":    recommendation.RecommendedRevenueMultiplier,
+			"recommended_floor_per_m_token_usd": recommendation.RecommendedFloorPerMTokenUSD,
+			"suggested_dynamic_ratio":           recommendation.SuggestedDynamicRatio,
+			"suggested_dynamic_ratio_raw":       recommendation.SuggestedDynamicRatioRaw,
+			"current_effective_dynamic_ratio":   recommendation.CurrentEffectiveDynamicRatio,
+			"dynamic_ratio_limit_applied":       boolToProfitMonitorFloat(recommendation.DynamicRatioLimitApplied),
+			"request_count":                     float64(summary.Requests),
+			"success_rate":                      summary.SuccessRate,
+			"confidence":                        confidence,
+		},
+	}
+	inputJSON, err := common.Marshal(input)
+	if err != nil {
+		return model.ModelGatewayProfitRatioRecommendation{}, err
+	}
+	recommendationJSON, err := common.Marshal(packagePayload)
+	if err != nil {
+		return model.ModelGatewayProfitRatioRecommendation{}, err
+	}
+	return model.ModelGatewayProfitRatioRecommendation{
+		Window:                       payload.Window,
+		Dimension:                    model.ModelGatewayProfitResourceScopeGroup,
+		ScopeType:                    request.ScopeType,
+		ScopeID:                      request.ScopeID,
+		ScopeKey:                     request.ScopeKey,
+		ScopeName:                    request.ScopeName,
+		StartTimestamp:               payload.StartTimestamp,
+		EndTimestamp:                 payload.EndTimestamp,
+		TargetProfitRate:             recommendation.TargetProfitRate,
+		RevenueUSD:                   summary.RevenueUSD,
+		OperatingCostUSD:             summary.OperatingCostUSD,
+		UpstreamCostUSD:              summary.UpstreamCostUSD,
+		TrafficCostUSD:               summary.TrafficCostUSD,
+		ServerCostUSD:                summary.ServerCostUSD,
+		ResourceCostUSD:              summary.ResourceAmortizedCostUSD,
+		CurrentMargin:                summary.GrossMargin,
+		RequiredRevenueUSD:           recommendation.RequiredRevenueUSD,
+		RevenueGapUSD:                recommendation.RevenueGapUSD,
+		CostMultiplier:               recommendation.CostMultiplier,
+		CostMarkupMultiplier:         recommendation.CostMarkupMultiplier,
+		RecommendedRevenueMultiplier: recommendation.RecommendedRevenueMultiplier,
+		RecommendedFloorPerMTokenUSD: recommendation.RecommendedFloorPerMTokenUSD,
+		Confidence:                   confidence,
+		RiskLevel:                    riskLevel,
+		Reason:                       reasonCode,
+		InputJSON:                    string(inputJSON),
+		RecommendationJSON:           string(recommendationJSON),
+	}, nil
+}
+
+func normalizeModelGatewayProfitRecommendationScopeRequest(request CreateModelGatewayProfitRecommendationRequest) CreateModelGatewayProfitRecommendationRequest {
+	request.ScopeType = model.NormalizeModelGatewayProfitResourceScope(request.ScopeType)
+	request.ScopeKey = strings.TrimSpace(request.ScopeKey)
+	request.ScopeName = strings.TrimSpace(request.ScopeName)
+	return request
+}
+
+func modelGatewayProfitDynamicRatioLimitReason(item ModelGatewayProfitDynamicRatioGroup) string {
+	if !item.Clamped {
+		return ""
+	}
+	if item.TargetRatio > 0 && item.EffectiveRatio > 0 {
+		if item.EffectiveRatio < item.TargetRatio {
+			return "max_limit"
+		}
+		if item.EffectiveRatio > item.TargetRatio {
+			return "min_limit"
+		}
+	}
+	return "ratio_limit"
 }
 
 func modelGatewayProfitRecommendationConfidence(summary ModelGatewayProfitMonitorSummary, recommendation ModelGatewayProfitRecommendation) (float64, string) {
@@ -1591,6 +2110,10 @@ func recordModelGatewayProfitRecommendationDecisionLog(c *gin.Context, row *mode
 		"recommended_floor_per_m_token_usd": row.RecommendedFloorPerMTokenUSD,
 		"recommendation_window":             row.Window,
 		"recommendation_dimension":          row.Dimension,
+		"recommendation_scope_type":         row.ScopeType,
+		"recommendation_scope_id":           row.ScopeID,
+		"recommendation_scope_key":          row.ScopeKey,
+		"recommendation_scope_name":         row.ScopeName,
 		"recommendation_risk_level":         row.RiskLevel,
 		"recommendation_reason":             row.Reason,
 		"decision_operator_id":              row.DecisionOperatorID,
@@ -1632,11 +2155,17 @@ func applyModelGatewayProfitCanaryTaskRequest(row *model.ModelGatewayProfitCanar
 		}
 		row.ScopeType = normalizedScope
 	} else if creating && recommendation != nil {
-		switch recommendation.Dimension {
-		case model.ModelGatewayProfitResourceScopeChannel,
-			model.ModelGatewayProfitResourceScopeGroup,
-			model.ModelGatewayProfitResourceScopeModel:
-			row.ScopeType = recommendation.Dimension
+		if recommendation.ScopeType != "" && recommendation.ScopeType != model.ModelGatewayProfitResourceScopeGlobal {
+			row.ScopeType = recommendation.ScopeType
+			row.ScopeID = recommendation.ScopeID
+			row.ScopeKey = recommendation.ScopeKey
+		} else {
+			switch recommendation.Dimension {
+			case model.ModelGatewayProfitResourceScopeChannel,
+				model.ModelGatewayProfitResourceScopeGroup,
+				model.ModelGatewayProfitResourceScopeModel:
+				row.ScopeType = recommendation.Dimension
+			}
 		}
 	}
 	if request.ScopeID != nil {

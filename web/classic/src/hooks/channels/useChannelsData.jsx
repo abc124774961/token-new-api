@@ -40,6 +40,12 @@ import { parseUpstreamUpdateMeta } from './upstreamUpdateUtils';
 import { Modal, Button } from '@douyinfe/semi-ui';
 import { openCodexUsageModal } from '../../components/table/channels/modals/CodexUsageModal';
 
+const DEFAULT_CHANNEL_STATUS_FILTER = 'enabled';
+
+const buildChannelSortQuery = (idSort) => {
+  return idSort ? '&id_sort=true' : '&sort_by=name&sort_order=asc';
+};
+
 export const useChannelsData = () => {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
@@ -75,7 +81,7 @@ export const useChannelsData = () => {
 
   // Status filter
   const [statusFilter, setStatusFilter] = useState(
-    localStorage.getItem('channel-status-filter') || 'all',
+    DEFAULT_CHANNEL_STATUS_FILTER,
   );
 
   // Type tabs states
@@ -150,7 +156,7 @@ export const useChannelsData = () => {
 
   // Initialize from localStorage
   useEffect(() => {
-    const localIdSort = localStorage.getItem('id-sort') === 'true';
+    const localIdSort = false;
     const localPageSize =
       parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
     const localEnableTagMode =
@@ -162,8 +168,17 @@ export const useChannelsData = () => {
     setPageSize(localPageSize);
     setEnableTagMode(localEnableTagMode);
     setEnableBatchDelete(localEnableBatchDelete);
+    localStorage.setItem('id-sort', 'false');
+    localStorage.setItem('channel-status-filter', DEFAULT_CHANNEL_STATUS_FILTER);
 
-    loadChannels(1, localPageSize, localIdSort, localEnableTagMode)
+    loadChannels(
+      1,
+      localPageSize,
+      localIdSort,
+      localEnableTagMode,
+      activeTypeKey,
+      DEFAULT_CHANNEL_STATUS_FILTER,
+    )
       .then()
       .catch((reason) => {
         showError(reason);
@@ -353,8 +368,9 @@ export const useChannelsData = () => {
     setLoading(true);
     const typeParam = typeKey !== 'all' ? `&type=${typeKey}` : '';
     const statusParam = statusF !== 'all' ? `&status=${statusF}` : '';
+    const sortParam = buildChannelSortQuery(idSort);
     const res = await API.get(
-      `/api/channel/?p=${page}&page_size=${pageSize}&id_sort=${idSort}&tag_mode=${enableTagMode}${typeParam}${statusParam}`,
+      `/api/channel/?p=${page}&page_size=${pageSize}${sortParam}&tag_mode=${enableTagMode}${typeParam}${statusParam}`,
     );
 
     if (res === undefined || reqId !== requestCounter.current) {
@@ -405,8 +421,9 @@ export const useChannelsData = () => {
 
       const typeParam = typeKey !== 'all' ? `&type=${typeKey}` : '';
       const statusParam = statusF !== 'all' ? `&status=${statusF}` : '';
+      const sortParam = buildChannelSortQuery(sortFlag);
       const res = await API.get(
-        `/api/channel/search?keyword=${searchKeyword}&group=${searchGroup}&model=${searchModel}&id_sort=${sortFlag}&tag_mode=${enableTagMode}&p=${page}&page_size=${pageSz}${typeParam}${statusParam}`,
+        `/api/channel/search?keyword=${searchKeyword}&group=${searchGroup}&model=${searchModel}${sortParam}&tag_mode=${enableTagMode}&p=${page}&page_size=${pageSz}${typeParam}${statusParam}`,
       );
       const { success, message, data } = res.data;
       if (success) {
@@ -729,7 +746,7 @@ export const useChannelsData = () => {
     if (record.status !== 1) {
       return {
         style: {
-          background: 'var(--semi-color-disabled-border)',
+          background: 'rgba(148, 163, 184, 0.08)',
         },
       };
     } else {

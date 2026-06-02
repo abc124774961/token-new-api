@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Token Account Automation Operator</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --panel-soft: #f8fbfc;
+      --border: #dbe4ea;
+      --border-strong: #c8d5dd;
+      --text: #17212b;
+      --muted: #60717e;
+      --accent: #0f8f8c;
+      --accent-strong: #08726f;
+      --amber: #b06a00;
+      --red: #c33838;
+      --green: #147b4b;
+      --shadow: 0 10px 32px rgba(29, 48, 66, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    button, input, select {
+      font: inherit;
+    }
+    button {
+      min-height: 34px;
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      padding: 0 12px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); color: var(--accent-strong); }
+    button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+    button.primary:hover { background: var(--accent-strong); color: #fff; }
+    button.danger { border-color: #e1b1b1; color: var(--red); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    input, select {
+      min-height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      padding: 0 10px;
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(15, 143, 140, 0.14);
+    }
+    .shell {
+      width: min(1440px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 22px 0 28px;
+    }
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+    .brand p {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .tokenbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: min(620px, 100%);
+    }
+    .tokenbar input {
+      width: 320px;
+      max-width: 48vw;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--panel-soft);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .status.ok { color: var(--green); border-color: rgba(20, 123, 75, 0.28); }
+    .status.warn { color: var(--amber); border-color: rgba(176, 106, 0, 0.28); }
+    .status.error { color: var(--red); border-color: rgba(195, 56, 56, 0.28); }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(120px, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .metric {
+      min-height: 76px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      padding: 12px;
+    }
+    .metric .label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .metric .value {
+      margin-top: 6px;
+      font-size: 24px;
+      font-weight: 720;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      gap: 16px;
+      align-items: start;
+    }
+    .panel {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 56px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel-soft);
+    }
+    .panel-head h2 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 680;
+      letter-spacing: 0;
+    }
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .filters input { width: 240px; }
+    .table-wrap {
+      overflow: auto;
+      max-height: calc(100vh - 250px);
+    }
+    table {
+      width: 100%;
+      min-width: 760px;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      text-align: left;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #fbfdfe;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    tr:hover td { background: #fbfefe; }
+    tr.selected td { background: #eef8f7; }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+    .clip {
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sub {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 0 9px;
+      border: 1px solid rgba(176, 106, 0, 0.25);
+      color: var(--amber);
+      background: #fff8eb;
+      font-size: 12px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+    .empty {
+      padding: 40px 16px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .detail {
+      position: sticky;
+      top: 16px;
+    }
+    .detail-body {
+      padding: 14px;
+    }
+    .kv {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr);
+      gap: 8px 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .kv:last-child { border-bottom: 0; }
+    .kv .k {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .kv .v {
+      min-width: 0;
+      word-break: break-word;
+    }
+    .kv input {
+      width: 100%;
+    }
+    .history {
+      display: grid;
+      gap: 10px;
+    }
+    .history-item {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fbfdfe;
+      padding: 10px;
+    }
+    .history-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .history-meta {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    pre {
+      max-height: 300px;
+      overflow: auto;
+      margin: 0;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fbfdfe;
+      color: #26323c;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+      background: var(--panel-soft);
+    }
+    .pager-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    @media (max-width: 1080px) {
+      .topbar, .layout { grid-template-columns: 1fr; }
+      .tokenbar { justify-content: stretch; flex-wrap: wrap; }
+      .tokenbar input { width: 100%; max-width: none; }
+      .metrics { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+      .detail { position: static; }
+    }
+    @media (max-width: 680px) {
+      .shell { width: min(100vw - 20px, 1440px); padding-top: 14px; }
+      .metrics { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+      .panel-head { align-items: flex-start; flex-direction: column; }
+      .filters, .filters input, .filters select, .filters button { width: 100%; }
+      .pager { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="topbar">
+      <div class="brand">
+        <h1>Token Account Automation</h1>
+        <p>Operator console</p>
+      </div>
+      <div class="tokenbar">
+        <input id="tokenInput" type="password" autocomplete="off" placeholder="AUTOMATION_API_TOKEN">
+        <button id="saveTokenBtn">Save</button>
+        <button id="refreshBtn" class="primary">Refresh</button>
+        <span id="statusText" class="status warn">Token required</span>
+      </div>
+    </section>
+
+    <section class="metrics" id="metrics"></section>
+
+    <section class="layout">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Waiting Human</h2>
+          <div class="filters">
+            <input id="targetFilter" placeholder="target_ref">
+            <select id="taskFilter">
+              <option value="">All tasks</option>
+              <option value="auth_browser_login">auth_browser_login</option>
+              <option value="auth_token_refresh">auth_token_refresh</option>
+              <option value="auth_recover">auth_recover</option>
+            </select>
+            <select id="pageSize">
+              <option value="10">10</option>
+              <option value="20" selected>20</option>
+              <option value="50">50</option>
+            </select>
+            <button id="applyFilterBtn">Apply</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>Account</th>
+                <th>Reason</th>
+                <th>Updated</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="queueBody"></tbody>
+          </table>
+          <div id="emptyState" class="empty" hidden>No waiting jobs</div>
+        </div>
+        <div class="pager">
+          <span id="pageInfo" class="sub"></span>
+          <div class="pager-controls">
+            <button id="prevBtn">Previous</button>
+            <button id="nextBtn">Next</button>
+          </div>
+        </div>
+      </div>
+
+      <aside class="panel detail">
+        <div class="panel-head">
+          <h2>Detail</h2>
+          <span id="detailStatus" class="status">Idle</span>
+        </div>
+        <div class="detail-body" id="detailBody">
+          <div class="empty">Select a row</div>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      token: localStorage.getItem('automation_operator_token') || '',
+      page: 1,
+      pageSize: 20,
+      total: 0,
+      items: [],
+      selectedJobId: '',
+      details: new Map(),
+      detailLoadingJobId: '',
+      loading: false,
+    };
+
+    const el = {
+      tokenInput: document.getElementById('tokenInput'),
+      saveTokenBtn: document.getElementById('saveTokenBtn'),
+      refreshBtn: document.getElementById('refreshBtn'),
+      statusText: document.getElementById('statusText'),
+      metrics: document.getElementById('metrics'),
+      targetFilter: document.getElementById('targetFilter'),
+      taskFilter: document.getElementById('taskFilter'),
+      pageSize: document.getElementById('pageSize'),
+      applyFilterBtn: document.getElementById('applyFilterBtn'),
+      queueBody: document.getElementById('queueBody'),
+      emptyState: document.getElementById('emptyState'),
+      pageInfo: document.getElementById('pageInfo'),
+      prevBtn: document.getElementById('prevBtn'),
+      nextBtn: document.getElementById('nextBtn'),
+      detailBody: document.getElementById('detailBody'),
+      detailStatus: document.getElementById('detailStatus'),
+    };
+
+    el.tokenInput.value = state.token;
+    el.pageSize.value = String(state.pageSize);
+
+    el.saveTokenBtn.addEventListener('click', () => {
+      state.token = el.tokenInput.value.trim();
+      localStorage.setItem('automation_operator_token', state.token);
+      setStatus(state.token ? 'Token saved' : 'Token required', state.token ? 'ok' : 'warn');
+      load();
+    });
+    el.refreshBtn.addEventListener('click', load);
+    el.applyFilterBtn.addEventListener('click', () => {
+      state.page = 1;
+      state.pageSize = Number(el.pageSize.value) || 20;
+      load();
+    });
+    el.prevBtn.addEventListener('click', () => {
+      if (state.page > 1) {
+        state.page -= 1;
+        load();
+      }
+    });
+    el.nextBtn.addEventListener('click', () => {
+      if (state.page * state.pageSize < state.total) {
+        state.page += 1;
+        load();
+      }
+    });
+
+    renderMetrics(null);
+    renderQueue();
+    if (state.token) {
+      load();
+    }
+
+    async function load() {
+      if (!state.token) {
+        setStatus('Token required', 'warn');
+        return;
+      }
+      state.loading = true;
+      syncButtons();
+      setStatus('Loading', '');
+      try {
+        const query = new URLSearchParams({
+          page: String(state.page),
+          page_size: String(state.pageSize),
+        });
+        const targetRef = el.targetFilter.value.trim();
+        const taskType = el.taskFilter.value.trim();
+        if (targetRef) query.set('target_ref', targetRef);
+        if (taskType) query.set('task_type', taskType);
+        const [stats, waiting] = await Promise.all([
+          apiGet('/api/stats/jobs'),
+          apiGet(`/api/operator/waiting-human?${query.toString()}`),
+        ]);
+        renderMetrics(stats);
+        state.items = waiting.items || [];
+        state.total = Number(waiting.total || 0);
+        state.page = Number(waiting.page || state.page);
+        state.pageSize = Number(waiting.page_size || state.pageSize);
+        renderQueue();
+        setStatus('Live', 'ok');
+      } catch (error) {
+        setStatus(error.message || 'Request failed', 'error');
+      } finally {
+        state.loading = false;
+        syncButtons();
+      }
+    }
+
+    async function resumeJob(item) {
+      const reason = actionReason('operator completed browser authorization');
+      await mutate(item.resume_path, { reason });
+    }
+
+    async function cancelJob(item) {
+      const reason = actionReason('operator canceled waiting-human job');
+      await mutate(item.cancel_path, { reason });
+    }
+
+    function actionReason(fallback) {
+      const input = document.getElementById('detailReason');
+      const value = input?.value?.trim();
+      return value || fallback;
+    }
+
+    async function mutate(path, body) {
+      state.loading = true;
+      syncButtons();
+      try {
+        await apiPost(path, body);
+        await load();
+      } catch (error) {
+        setStatus(error.message || 'Action failed', 'error');
+      } finally {
+        state.loading = false;
+        syncButtons();
+      }
+    }
+
+    function renderMetrics(stats) {
+      const counts = stats?.status_counts || {};
+      const metrics = [
+        ['Total', stats?.total ?? 0],
+        ['Active', stats?.active_total ?? 0],
+        ['Waiting', counts.WAITING_HUMAN ?? 0],
+        ['Pending', counts.PENDING ?? 0],
+        ['Running', counts.RUNNING ?? 0],
+        ['Failed', counts.FAILED ?? 0],
+      ];
+      el.metrics.innerHTML = metrics.map(([label, value]) => `
+        <div class="metric">
+          <div class="label">${escapeHtml(label)}</div>
+          <div class="value">${escapeHtml(String(value))}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderQueue() {
+      el.emptyState.hidden = state.items.length > 0;
+      el.queueBody.innerHTML = state.items.map((item) => {
+        const job = item.job || {};
+        const locator = item.locator || {};
+        const target = item.target || {};
+        const selected = job.job_id === state.selectedJobId ? ' class="selected"' : '';
+        const account = locator.channel_id
+          ? `channel #${locator.channel_id} / account #${locator.credential_index}`
+          : 'unbound';
+        const display = target.display_name || target.subject_key || target.target_ref || job.target_ref || '';
+        return `
+          <tr data-job-id="${escapeAttr(job.job_id || '')}"${selected}>
+            <td>
+              <div class="mono clip" title="${escapeAttr(job.job_id || '')}">${escapeHtml(shortId(job.job_id))}</div>
+              <div class="sub">${escapeHtml(job.task_type || '')}</div>
+              <span class="badge">${escapeHtml(job.status || '')}</span>
+            </td>
+            <td>
+              <div>${escapeHtml(account)}</div>
+              <div class="sub clip" title="${escapeAttr(display)}">${escapeHtml(display)}</div>
+            </td>
+            <td>
+              <div class="clip" title="${escapeAttr(item.reason || '')}">${escapeHtml(item.reason || '')}</div>
+              <div class="sub">${escapeHtml(formatEventData(item.event_data))}</div>
+            </td>
+            <td>
+              <div>${escapeHtml(formatTime(job.updated_at))}</div>
+              <div class="sub">attempt ${escapeHtml(String(job.attempt_count || 0))}/${escapeHtml(String(job.max_attempts || 0))}</div>
+            </td>
+            <td>
+              <div class="actions">
+                <button data-action="detail">Detail</button>
+                <button data-action="resume" class="primary">Resume</button>
+                <button data-action="cancel" class="danger">Cancel</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+      el.queueBody.querySelectorAll('tr').forEach((row) => {
+        const item = state.items.find((candidate) => candidate.job?.job_id === row.dataset.jobId);
+        row.addEventListener('click', (event) => {
+          const action = event.target?.dataset?.action;
+          if (action === 'resume') {
+            event.stopPropagation();
+            resumeJob(item);
+            return;
+          }
+          if (action === 'cancel') {
+            event.stopPropagation();
+            cancelJob(item);
+            return;
+          }
+          selectItem(item);
+        });
+      });
+      const start = state.total === 0 ? 0 : (state.page - 1) * state.pageSize + 1;
+      const end = Math.min(state.total, state.page * state.pageSize);
+      el.pageInfo.textContent = `${start}-${end} of ${state.total}`;
+      el.prevBtn.disabled = state.loading || state.page <= 1;
+      el.nextBtn.disabled = state.loading || state.page * state.pageSize >= state.total;
+      const selected = state.items.find((item) => item.job?.job_id === state.selectedJobId);
+      if (selected) {
+        renderDetail(selected);
+      } else if (!state.selectedJobId && state.items[0]) {
+        selectItem(state.items[0]);
+      } else if (!state.items.length) {
+        state.selectedJobId = '';
+        el.detailBody.innerHTML = '<div class="empty">Select a row</div>';
+        el.detailStatus.textContent = 'Idle';
+      }
+    }
+
+    function selectItem(item) {
+      if (!item) return;
+      state.selectedJobId = item.job?.job_id || '';
+      renderQueue();
+      renderDetail(item);
+      loadJobDetail(item);
+    }
+
+    async function loadJobDetail(item) {
+      const jobId = item?.job?.job_id || '';
+      if (!jobId || state.details.has(jobId)) {
+        return;
+      }
+      state.detailLoadingJobId = jobId;
+      renderDetail(item);
+      try {
+        const detail = await apiGet(`/api/jobs/${encodeURIComponent(jobId)}`);
+        state.details.set(jobId, detail);
+        if (state.selectedJobId === jobId) {
+          renderDetail(item);
+        }
+      } catch (error) {
+        if (state.selectedJobId === jobId) {
+          setStatus(error.message || 'Detail failed', 'error');
+        }
+      } finally {
+        if (state.detailLoadingJobId === jobId) {
+          state.detailLoadingJobId = '';
+        }
+        if (state.selectedJobId === jobId) {
+          renderDetail(item);
+        }
+      }
+    }
+
+    function renderDetail(item) {
+      const job = item.job || {};
+      const locator = item.locator || {};
+      const target = item.target || {};
+      const detail = state.details.get(job.job_id);
+      const detailLoading = state.detailLoadingJobId === job.job_id;
+      el.detailStatus.textContent = job.status || 'Unknown';
+      el.detailStatus.className = 'status warn';
+      el.detailBody.innerHTML = `
+        ${kv('Job ID', `<span class="mono">${escapeHtml(job.job_id || '')}</span>`)}
+        ${kv('Task', escapeHtml(job.task_type || ''))}
+        ${kv('Target', `<span class="mono">${escapeHtml(job.target_ref || '')}</span>`)}
+        ${kv('Account', escapeHtml(locator.channel_id ? `channel #${locator.channel_id} / account #${locator.credential_index}` : 'unbound'))}
+        ${kv('Display', escapeHtml(target.display_name || target.subject_key || ''))}
+        ${kv('Reason', escapeHtml(item.reason || ''))}
+        ${kv('Updated', escapeHtml(formatTime(job.updated_at)))}
+        ${kv('Note', '<input id="detailReason" value="operator completed browser authorization">')}
+        ${kv('Actions', `
+          <div class="actions">
+            <button id="detailResume" class="primary">Resume</button>
+            <button id="detailCancel" class="danger">Cancel</button>
+          </div>
+        `)}
+        <div class="kv">
+          <div class="k">Event Data</div>
+          <div class="v"><pre>${escapeHtml(JSON.stringify(item.event_data || {}, null, 2))}</pre></div>
+        </div>
+        <div class="kv">
+          <div class="k">History</div>
+          <div class="v">${renderHistory(detail, detailLoading)}</div>
+        </div>
+      `;
+      document.getElementById('detailResume')?.addEventListener('click', () => resumeJob(item));
+      document.getElementById('detailCancel')?.addEventListener('click', () => cancelJob(item));
+    }
+
+    function kv(key, value) {
+      return `<div class="kv"><div class="k">${escapeHtml(key)}</div><div class="v">${value}</div></div>`;
+    }
+
+    function renderHistory(detail, loading) {
+      if (loading) {
+        return '<div class="sub">Loading history</div>';
+      }
+      if (!detail) {
+        return '<div class="sub">History not loaded</div>';
+      }
+      const attempts = detail.attempts || [];
+      const events = detail.events || [];
+      const attemptHTML = attempts.slice(0, 5).map((attempt) => `
+        <div class="history-item">
+          <div class="history-title">
+            <span>Attempt ${escapeHtml(String(attempt.attempt_no || ''))}</span>
+            <span class="badge">${escapeHtml(attempt.status || '')}</span>
+          </div>
+          <div class="history-meta">
+            ${escapeHtml(attempt.worker_id || 'unassigned')} · ${escapeHtml(attempt.stage || 'no stage')} · ${escapeHtml(formatTime(attempt.started_at))}
+          </div>
+          ${attempt.sanitized_error ? `<div class="sub">${escapeHtml(attempt.sanitized_error)}</div>` : ''}
+        </div>
+      `).join('');
+      const eventHTML = events.slice(0, 8).map((event) => `
+        <div class="history-item">
+          <div class="history-title">
+            <span>${escapeHtml(event.event_type || '')}</span>
+            <span>${escapeHtml(formatTime(event.created_at))}</span>
+          </div>
+          <div class="history-meta">
+            ${escapeHtml(event.stage || 'no stage')} · ${escapeHtml(event.status || '')}
+          </div>
+          ${event.message ? `<div class="sub">${escapeHtml(event.message)}</div>` : ''}
+          ${event.data_json ? `<pre>${escapeHtml(formatJSONText(event.data_json))}</pre>` : ''}
+        </div>
+      `).join('');
+      return `
+        <div class="history">
+          <div>
+            <div class="sub">Attempts</div>
+            ${attemptHTML || '<div class="sub">No attempts</div>'}
+          </div>
+          <div>
+            <div class="sub">Events</div>
+            ${eventHTML || '<div class="sub">No events</div>'}
+          </div>
+        </div>
+      `;
+    }
+
+    async function apiGet(path) {
+      const response = await fetch(path, {
+        headers: { Authorization: `Bearer ${state.token}`, Accept: 'application/json' },
+      });
+      return parseResponse(response);
+    }
+
+    async function apiPost(path, body) {
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${state.token}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body || {}),
+      });
+      return parseResponse(response);
+    }
+
+    async function parseResponse(response) {
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.message || `HTTP ${response.status}`);
+      }
+      return payload.data || {};
+    }
+
+    function syncButtons() {
+      el.refreshBtn.disabled = state.loading;
+      el.saveTokenBtn.disabled = state.loading;
+      el.applyFilterBtn.disabled = state.loading;
+      el.prevBtn.disabled = state.loading || state.page <= 1;
+      el.nextBtn.disabled = state.loading || state.page * state.pageSize >= state.total;
+    }
+
+    function setStatus(text, type) {
+      el.statusText.textContent = text;
+      el.statusText.className = `status ${type || ''}`.trim();
+    }
+
+    function shortId(value) {
+      if (!value) return '';
+      return value.length > 18 ? `${value.slice(0, 10)}...${value.slice(-6)}` : value;
+    }
+
+    function formatTime(value) {
+      const seconds = Number(value || 0);
+      if (!seconds) return '';
+      return new Date(seconds * 1000).toLocaleString();
+    }
+
+    function formatEventData(value) {
+      if (!value || typeof value !== 'object') return '';
+      const parts = [];
+      if (value.callback_port) parts.push(`port ${value.callback_port}`);
+      if (value.headless !== undefined) parts.push(`headless ${value.headless}`);
+      if (value.auth_method) parts.push(String(value.auth_method));
+      return parts.join(' · ');
+    }
+
+    function formatJSONText(value) {
+      try {
+        return JSON.stringify(JSON.parse(value), null, 2);
+      } catch {
+        return value;
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      }[char]));
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replace(/`/g, '&#96;');
+    }
+  </script>
+</body>
+</html>

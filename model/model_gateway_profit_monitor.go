@@ -77,6 +77,10 @@ type ModelGatewayProfitRatioRecommendation struct {
 	Id                           int     `json:"id" gorm:"primaryKey"`
 	Window                       string  `json:"window" gorm:"type:varchar(32);index;default:'24h'"`
 	Dimension                    string  `json:"dimension" gorm:"type:varchar(32);index;default:'group'"`
+	ScopeType                    string  `json:"scope_type" gorm:"type:varchar(32);index;default:'global'"`
+	ScopeID                      int     `json:"scope_id" gorm:"index;default:0"`
+	ScopeKey                     string  `json:"scope_key" gorm:"type:varchar(191);index;default:''"`
+	ScopeName                    string  `json:"scope_name" gorm:"type:varchar(191);default:''"`
 	StartTimestamp               int64   `json:"start_timestamp" gorm:"bigint;index"`
 	EndTimestamp                 int64   `json:"end_timestamp" gorm:"bigint;index"`
 	TargetProfitRate             float64 `json:"target_profit_rate" gorm:"type:decimal(18,8);default:0"`
@@ -232,6 +236,9 @@ func (r *ModelGatewayProfitRatioRecommendation) Normalize() {
 	if r.Dimension == "" {
 		r.Dimension = ModelGatewayProfitResourceScopeGroup
 	}
+	r.ScopeType = NormalizeModelGatewayProfitResourceScope(r.ScopeType)
+	r.ScopeKey = strings.TrimSpace(r.ScopeKey)
+	r.ScopeName = strings.TrimSpace(r.ScopeName)
 	r.RiskLevel = strings.ToLower(strings.TrimSpace(r.RiskLevel))
 	if r.RiskLevel == "" {
 		r.RiskLevel = "medium"

@@ -19,10 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import ChannelsTable from '../../components/table/channels';
+import './channel.css';
 
 const File = () => {
   return (
-    <div className='ct-console-content-wrap'>
+    <div className='ct-console-content-wrap ct-channel-page'>
       <ChannelsTable />
     </div>
   );

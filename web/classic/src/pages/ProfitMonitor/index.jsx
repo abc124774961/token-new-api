@@ -334,6 +334,42 @@ function labelForDimension(value, t) {
   return labels[value] || value || '--';
 }
 
+function labelForBillingRatioMode(value, t) {
+  const labels = {
+    dynamic: t('动态倍率'),
+    static: t('静态倍率'),
+  };
+  return labels[value] || labels.static;
+}
+
+function labelForDynamicRatioFallback(value, t) {
+  const labels = {
+    baseline_expired: t('基线过期'),
+    cache_not_loaded: t('缓存未加载'),
+    disabled: t('动态计费关闭'),
+    insufficient_samples: t('样本不足'),
+    insufficient_usage: t('用量不足'),
+    manual_confirm_required: t('等待人工确认'),
+    base_quota_missing: t('缺少基础额度'),
+    missing_group: t('缺少分组'),
+    missing_key: t('缺少分组基线'),
+    no_cost_data: t('缺少成本数据'),
+    observe_mode: t('观测模式'),
+    static_mode: t('静态倍率模式'),
+    step_change_too_large: t('变动过大'),
+    traffic_not_ready: t('流量数据未就绪'),
+  };
+  return labels[value] || value || t('无回退');
+}
+
+function colorForDynamicRatioGroup(record) {
+  if (record?.applied) return 'green';
+  if (record?.fallback_reason === 'static_mode') return 'grey';
+  if (record?.pending_manual_confirm) return 'orange';
+  if (record?.fallback_reason) return 'red';
+  return 'blue';
+}
+
 function labelForRecommendationRisk(value, t) {
   const labels = {
     low: t('低风险'),
@@ -924,6 +960,13 @@ function RecommendationDetailModal({
           </strong>
         </div>
         <div>
+          <span>{t('作用范围')}</span>
+          <strong>
+            {labelForScope(safeSnapshot.scope_type, t)}
+            {safeSnapshot.scope_key ? ` · ${safeSnapshot.scope_key}` : ''}
+          </strong>
+        </div>
+        <div>
           <span>{t('当前毛利率')}</span>
           <strong>{formatPercent(safeSnapshot.current_margin)}</strong>
         </div>
@@ -1310,7 +1353,7 @@ function CanaryTaskModal({ visible, task, saving, onCancel, onSave, t }) {
 export default function ProfitMonitor() {
   const { t } = useTranslation();
   const [windowKey, setWindowKey] = useState('24h');
-  const [dimension, setDimension] = useState('group');
+  const [trafficDimension, setTrafficDimension] = useState('channel');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [resourceSaving, setResourceSaving] = useState(false);
@@ -1330,6 +1373,8 @@ export default function ProfitMonitor() {
     config: DEFAULT_CONFIG,
     summary: {},
     breakdown: [],
+    dynamic_ratio_groups: [],
+    dynamic_ratio_summary: {},
     anomalies: [],
     resources: { items: [] },
     recommendation: {},
@@ -1350,15 +1395,15 @@ export default function ProfitMonitor() {
         canaryTaskResponse,
       ] = await Promise.all([
         API.get('/api/model_gateway/profit_monitor/summary', {
-          params: { window: windowKey, dimension },
+          params: { window: windowKey, breakdown_dimension: 'channel' },
           disableDuplicate: true,
         }),
         API.get('/api/model_gateway/profit_monitor/traffic', {
-          params: { window: windowKey, dimension },
+          params: { window: windowKey, dimension: trafficDimension },
           disableDuplicate: true,
         }),
         API.get('/api/model_gateway/profit_monitor/recommendations', {
-          params: { limit: 8, window: windowKey, dimension },
+          params: { limit: 8, window: windowKey },
           disableDuplicate: true,
         }),
         API.get('/api/model_gateway/profit_monitor/canary_tasks', {
@@ -1374,6 +1419,8 @@ export default function ProfitMonitor() {
         config: { ...DEFAULT_CONFIG, ...(payload.config || {}) },
         summary: payload.summary || {},
         breakdown: payload.breakdown || [],
+        dynamic_ratio_groups: payload.dynamic_ratio_groups || [],
+        dynamic_ratio_summary: payload.dynamic_ratio_summary || {},
         anomalies: payload.anomalies || [],
         resources: payload.resources || { items: [] },
         recommendation: payload.recommendation || {},
@@ -1398,20 +1445,15 @@ export default function ProfitMonitor() {
     } finally {
       setLoading(false);
     }
-  }, [dimension, t, windowKey]);
+  }, [t, trafficDimension, windowKey]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
   const summary = data.summary || {};
+  const dynamicRatioSummary = data.dynamic_ratio_summary || {};
   const resources = data.resources || { items: [] };
-  const recommendation = data.recommendation || {};
-  const costMultiplier = resolveCostMultiplier(recommendation);
-  const profitMarkupMultiplier = resolveCostMarkupMultiplier(
-    recommendation,
-    summary,
-  );
   const trafficSummary = trafficData.summary || {};
 
   const metricCards = useMemo(
@@ -1488,37 +1530,28 @@ export default function ProfitMonitor() {
       },
       {
         icon: BarChart3,
-        label: t('建议最低收入'),
-        value: formatUsd(recommendation.required_revenue_usd, 4),
-        detail: recommendation.can_recommend
-          ? `${t('目标毛利率')} ${formatPercent(
-              recommendation.target_profit_rate,
-            )}`
-          : t('样本不足，暂不建议'),
+        label: t('分组收入缺口'),
+        value: formatUsd(dynamicRatioSummary.revenue_gap_usd, 4),
+        detail: t('{{count}} 个动态分组', {
+          count: formatNumber(dynamicRatioSummary.total_groups),
+        }),
         tone: 'info',
       },
       {
         icon: Sparkles,
-        label: t('建议动态倍率'),
-        value:
-          Number(recommendation.suggested_dynamic_ratio || 0) > 0
-            ? formatRatioValue(recommendation.suggested_dynamic_ratio)
-            : '--',
-        detail: recommendation.dynamic_ratio_limit_applied
-          ? `${t('原始 {{raw}}x', {
-              raw: formatRatioNumber(recommendation.suggested_dynamic_ratio_raw),
-            })} · ${formatDynamicRatioLimitResult(recommendation, t)}`
-          : Number(recommendation.current_effective_dynamic_ratio || 0) > 0
-            ? t('当前生效 {{ratio}}x', {
-                ratio: formatRatioNumber(
-                  recommendation.current_effective_dynamic_ratio,
-                ),
-              })
-            : t('尚未应用到动态倍率'),
-        tone: recommendation.dynamic_billing_applied ? 'success' : 'info',
+        label: t('动态倍率状态'),
+        value: t('{{active}} / {{total}} 生效', {
+          active: formatNumber(dynamicRatioSummary.active_groups),
+          total: formatNumber(dynamicRatioSummary.total_groups),
+        }),
+        detail: t('{{fallback}} 个回退 · {{clamped}} 个受限', {
+          fallback: formatNumber(dynamicRatioSummary.fallback_groups),
+          clamped: formatNumber(dynamicRatioSummary.clamped_groups),
+        }),
+        tone: Number(dynamicRatioSummary.fallback_groups || 0) > 0 ? 'warning' : 'success',
       },
     ],
-    [profitMarkupMultiplier, recommendation, summary, t],
+    [dynamicRatioSummary, summary, t],
   );
 
   const trafficMetricCards = useMemo(
@@ -1573,14 +1606,22 @@ export default function ProfitMonitor() {
     }
   };
 
-  const generateRecommendationSnapshot = async () => {
+  const generateRecommendationSnapshot = async (scope = {}) => {
     setRecommendationGenerating(true);
     try {
+      const params = {
+        window: windowKey,
+        breakdown_dimension: 'channel',
+      };
+      if (scope.scope_type) params.scope_type = scope.scope_type;
+      if (scope.scope_key) params.scope_key = scope.scope_key;
+      if (scope.scope_name) params.scope_name = scope.scope_name;
+      if (scope.scope_id) params.scope_id = scope.scope_id;
       await API.post(
         '/api/model_gateway/profit_monitor/recommendations',
         null,
         {
-          params: { window: windowKey, dimension },
+          params,
           disableDuplicate: true,
         },
       );
@@ -1637,9 +1678,11 @@ export default function ProfitMonitor() {
     }
 
     const snapshot = source || {};
-    const scopeType = SCOPE_TYPES.includes(snapshot.dimension)
-      ? snapshot.dimension
-      : 'global';
+    const scopeType = SCOPE_TYPES.includes(snapshot.scope_type)
+      ? snapshot.scope_type
+      : SCOPE_TYPES.includes(snapshot.dimension)
+        ? snapshot.dimension
+        : 'global';
     const recommendedMultiplier = numberOrDefault(
       snapshot.recommended_revenue_multiplier,
     );
@@ -1652,9 +1695,11 @@ export default function ProfitMonitor() {
       ...DEFAULT_CANARY_FORM,
       recommendation_id: numberOrDefault(snapshot.id),
       title: snapshot.id
-        ? t('盈利建议 #{{id}} 灰度任务', { id: snapshot.id })
+        ? t('盈利建议 #{{id}} 分组倍率灰度任务', { id: snapshot.id })
         : '',
       scope_type: scopeType,
+      scope_id: numberOrDefault(snapshot.scope_id),
+      scope_key: snapshot.scope_key || '',
       baseline_revenue_multiplier: 0,
       planned_revenue_multiplier:
         plannedMultiplier > 0 ? plannedMultiplier : recommendedMultiplier,
@@ -1761,17 +1806,13 @@ export default function ProfitMonitor() {
 
   const breakdownColumns = [
     {
-      title: t('维度'),
+      title: t('渠道'),
       dataIndex: 'dimension_name',
       width: 220,
       render: (value, record) => (
         <div className='ct-profit-name-cell'>
           <strong>{value || record.dimension_key || '--'}</strong>
-          <span>
-            {dimension === 'channel' && record.dimension_id
-              ? `#${record.dimension_id}`
-              : record.dimension_key || ''}
-          </span>
+          <span>{record.dimension_id ? `#${record.dimension_id}` : ''}</span>
         </div>
       ),
     },
@@ -1881,6 +1922,169 @@ export default function ProfitMonitor() {
     },
   ];
 
+  const dynamicRatioGroupColumns = [
+    {
+      title: t('分组'),
+      dataIndex: 'group',
+      width: 220,
+      render: (value, record) => (
+        <div className='ct-profit-name-cell'>
+          <strong>{value || '--'}</strong>
+          <span>
+            {labelForBillingRatioMode(record.billing_ratio_mode, t)}
+            {record.reference_model ? ` · ${record.reference_model}` : ''}
+          </span>
+        </div>
+      ),
+    },
+    {
+      title: t('状态'),
+      dataIndex: 'fallback_reason',
+      width: 150,
+      render: (value, record) => (
+        <Tag color={colorForDynamicRatioGroup(record)} type='light'>
+          {record.applied
+            ? t('动态生效')
+            : labelForDynamicRatioFallback(value, t)}
+        </Tag>
+      ),
+    },
+    {
+      title: t('当前实际倍率'),
+      dataIndex: 'actual_ratio',
+      width: 150,
+      render: (value, record) => (
+        <div className='ct-profit-name-cell'>
+          <strong>{formatRatioValue(value)}</strong>
+          <span>
+            {t('静态 {{ratio}}', {
+              ratio: formatRatioValue(record.static_ratio),
+            })}
+          </span>
+        </div>
+      ),
+    },
+    {
+      title: t('目标 / 有效倍率'),
+      dataIndex: 'target_ratio',
+      width: 170,
+      render: (value, record) => (
+        <div className='ct-profit-name-cell'>
+          <strong>{formatRatioValue(value)}</strong>
+          <span>
+            {t('有效 {{ratio}}', {
+              ratio: formatRatioValue(record.effective_ratio),
+            })}
+          </span>
+        </div>
+      ),
+    },
+    {
+      title: t('收入缺口'),
+      dataIndex: 'revenue_gap_usd',
+      width: 120,
+      render: (value) => (
+        <Text type={Number(value) > 0 ? 'danger' : 'success'}>
+          {formatUsd(value, 4)}
+        </Text>
+      ),
+    },
+    {
+      title: t('当前收入'),
+      dataIndex: 'current_revenue_usd',
+      width: 120,
+      render: (value) => formatUsd(value, 4),
+    },
+    {
+      title: t('所需收入'),
+      dataIndex: 'required_revenue_usd',
+      width: 120,
+      render: (value) => formatUsd(value, 4),
+    },
+    {
+      title: t('经营成本'),
+      dataIndex: 'operating_cost_usd',
+      width: 170,
+      render: (value, record) => (
+        <div className='ct-profit-name-cell'>
+          <strong>{formatUsd(value, 4)}</strong>
+          <span>
+            {t('上游 {{cost}}', {
+              cost: formatUsd(record.upstream_cost_usd, 4),
+            })}
+          </span>
+        </div>
+      ),
+    },
+    {
+      title: t('流量 / 资源'),
+      dataIndex: 'traffic_cost_usd',
+      width: 170,
+      render: (value, record) => (
+        <div className='ct-profit-name-cell'>
+          <strong>{formatUsd(value, 4)}</strong>
+          <span>
+            {t('资源 {{cost}}', {
+              cost: formatUsd(
+                Number(record.resource_cost_usd || 0) +
+                  Number(record.server_cost_usd || 0),
+                4,
+              ),
+            })}
+          </span>
+        </div>
+      ),
+    },
+    {
+      title: t('样本 / 请求'),
+      dataIndex: 'sample_count',
+      width: 150,
+      render: (value, record) => (
+        <div className='ct-profit-name-cell'>
+          <strong>{formatNumber(value)}</strong>
+          <span>
+            {formatNumber(record.success_request_count)} /{' '}
+            {formatNumber(record.request_count)}
+          </span>
+        </div>
+      ),
+    },
+    {
+      title: t('Token'),
+      dataIndex: 'total_tokens',
+      width: 120,
+      render: (value) => formatNumber(value),
+    },
+    {
+      title: t('更新时间'),
+      dataIndex: 'updated_at',
+      width: 160,
+      render: (value) => formatTimestamp(value),
+    },
+    {
+      title: t('操作'),
+      dataIndex: 'operate',
+      fixed: 'right',
+      width: 150,
+      render: (_, record) => (
+        <Button
+          size='small'
+          icon={<Sparkles size={14} />}
+          loading={recommendationGenerating}
+          onClick={() =>
+            generateRecommendationSnapshot({
+              scope_type: 'group',
+              scope_key: record.group,
+              scope_name: record.group,
+            })
+          }
+        >
+          {t('生成分组快照')}
+        </Button>
+      ),
+    },
+  ];
+
   const trafficBreakdownColumns = [
     {
       title: t('维度'),
@@ -1973,10 +2177,15 @@ export default function ProfitMonitor() {
       render: (value) => value || '--',
     },
     {
-      title: t('维度'),
-      dataIndex: 'dimension',
-      width: 100,
-      render: (value) => labelForDimension(value, t),
+      title: t('作用范围'),
+      dataIndex: 'scope_type',
+      width: 170,
+      render: (value, record) => (
+        <div className='ct-profit-name-cell'>
+          <strong>{labelForScope(value, t)}</strong>
+          <span>{record.scope_key || labelForDimension(record.dimension, t)}</span>
+        </div>
+      ),
     },
     {
       title: t('当前毛利率'),
@@ -2312,14 +2521,6 @@ export default function ProfitMonitor() {
               value,
             }))}
           />
-          <Select
-            value={dimension}
-            onChange={setDimension}
-            optionList={DIMENSION_OPTIONS.map((value) => ({
-              label: labelForDimension(value, t),
-              value,
-            }))}
-          />
           <Button
             icon={<RefreshCw size={16} />}
             onClick={fetchData}
@@ -2337,21 +2538,23 @@ export default function ProfitMonitor() {
       </div>
 
       <Spin spinning={loading}>
-        <div className='ct-profit-metrics'>
-          {metricCards.map((card) => (
-            <MetricCard key={card.label} {...card} />
-          ))}
-        </div>
-
         <Tabs type='button' className='ct-profit-tabs' keepDOM={false}>
-          <Tabs.TabPane tab={t('利润总览')} itemKey='overview'>
+          <Tabs.TabPane tab={t('指标卡')} itemKey='metrics'>
+            <div className='ct-profit-metrics'>
+              {metricCards.map((card) => (
+                <MetricCard key={card.label} {...card} />
+              ))}
+            </div>
+          </Tabs.TabPane>
+
+          <Tabs.TabPane tab={t('渠道经营拆解')} itemKey='channel-breakdown'>
             <div className='ct-profit-panels'>
               <section className='ct-profit-panel ct-profit-panel-wide'>
                 <div className='ct-profit-panel-head'>
                   <div>
-                    <h2>{t('经营拆解')}</h2>
+                    <h2>{t('渠道经营拆解')}</h2>
                     <p>
-                      {t('分摊成本用于定位哪些分组、渠道或模型正在吞噬利润。')}
+                      {t('按渠道分摊经营成本，用于定位正在吞噬利润的上游渠道。')}
                     </p>
                   </div>
                   <Tag color='teal' type='light'>
@@ -2366,11 +2569,51 @@ export default function ProfitMonitor() {
                     `${record.dimension_id}-${record.dimension_key}-${index}`
                   }
                   pagination={{ pageSize: 10 }}
-                  empty={<Empty description={t('暂无经营拆解数据')} />}
+                  empty={<Empty description={t('暂无渠道经营拆解数据')} />}
                   scroll={{ x: 1080 }}
                 />
               </section>
+            </div>
+          </Tabs.TabPane>
 
+          <Tabs.TabPane tab={t('分组动态倍率')} itemKey='dynamic-ratio'>
+            <div className='ct-profit-panels'>
+              <section className='ct-profit-panel ct-profit-panel-wide'>
+                <div className='ct-profit-panel-head'>
+                  <div>
+                    <h2>{t('分组动态倍率')}</h2>
+                    <p>
+                      {t('每个分组独立展示目标倍率、实际倍率和回退原因。')}
+                    </p>
+                  </div>
+                  <Tag color='teal' type='light'>
+                    {t('{{active}} / {{total}} 生效', {
+                      active: formatNumber(dynamicRatioSummary.active_groups),
+                      total: formatNumber(dynamicRatioSummary.total_groups),
+                    })}
+                  </Tag>
+                </div>
+                <Table
+                  size='small'
+                  columns={dynamicRatioGroupColumns}
+                  dataSource={data.dynamic_ratio_groups || []}
+                  rowKey={(record, index) => `${record.group}-${index}`}
+                  pagination={{ pageSize: 10 }}
+                  empty={<Empty description={t('暂无分组动态倍率数据')} />}
+                  scroll={{ x: 1680 }}
+                />
+                <div className='ct-profit-help compact'>
+                  <Save size={15} />
+                  <span>
+                    {t('分组快照只保存当前矩阵数据，不会自动调整线上倍率。')}
+                  </span>
+                </div>
+              </section>
+            </div>
+          </Tabs.TabPane>
+
+          <Tabs.TabPane tab={t('利润异常榜')} itemKey='anomalies'>
+            <div className='ct-profit-panels'>
               <section className='ct-profit-panel ct-profit-panel-wide'>
                 <div className='ct-profit-panel-head'>
                   <div>
@@ -2395,144 +2638,37 @@ export default function ProfitMonitor() {
                   scroll={{ x: 960 }}
                 />
               </section>
+            </div>
+          </Tabs.TabPane>
 
-              <section className='ct-profit-panel'>
+          <Tabs.TabPane tab={t('建议快照')} itemKey='recommendations'>
+            <div className='ct-profit-panels'>
+              <section className='ct-profit-panel ct-profit-panel-wide'>
                 <div className='ct-profit-panel-head'>
                   <div>
-                    <h2>{t('动态倍率建议')}</h2>
-                    <p>{t('基于当前窗口总经营成本和目标毛利率计算。')}</p>
+                    <h2>{t('建议快照记录')}</h2>
+                    <p>
+                      {t('分组动态倍率行生成的快照会保存在这里，方便人工复盘和灰度。')}
+                    </p>
                   </div>
-                  <Button
-                    type='primary'
-                    icon={<Sparkles size={16} />}
-                    loading={recommendationGenerating}
-                    onClick={generateRecommendationSnapshot}
-                  >
-                    {t('生成建议快照')}
-                  </Button>
+                  <Tag color='blue' type='light'>
+                    {t('按分组作用域')}
+                  </Tag>
                 </div>
-                <div className='ct-profit-recommendation'>
-                  <div>
-                    <span>{t('目标毛利率')}</span>
-                    <strong>
-                      {formatPercent(recommendation.target_profit_rate)}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>{t('收入缺口')}</span>
-                    <strong>
-                      {formatUsd(recommendation.revenue_gap_usd, 4)}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>{t('成本倍率')}</span>
-                    <strong>{formatMultiplier(costMultiplier, 4)}</strong>
-                  </div>
-                  <div>
-                    <span>{t('目标毛利换算')}</span>
-                    <strong>
-                      {formatProfitMarkupFormula(
-                        recommendation.target_profit_rate,
-                        profitMarkupMultiplier,
-                      )}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>{t('每百万 token 最低收入')}</span>
-                    <strong>
-                      {formatUsd(
-                        recommendation.recommended_floor_per_m_token_usd,
-                        4,
-                      )}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>{t('每百万基础计费额度最低收入')}</span>
-                    <strong>
-                      {formatUsd(
-                        recommendation.minimum_revenue_per_m_base_quota_usd,
-                        4,
-                      )}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>{t('建议收入倍率')}</span>
-                    <strong>
-                      {recommendation.can_recommend
-                        ? formatMultiplier(
-                            recommendation.recommended_revenue_multiplier,
-                          )
-                        : '--'}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>{t('建议动态倍率')}</span>
-                    <strong>
-                      {Number(recommendation.suggested_dynamic_ratio || 0) > 0
-                        ? formatRatioValue(recommendation.suggested_dynamic_ratio)
-                        : '--'}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>{t('原始建议动态倍率')}</span>
-                    <strong>
-                      {Number(recommendation.suggested_dynamic_ratio_raw || 0) >
-                      0
-                        ? formatRatioValue(
-                            recommendation.suggested_dynamic_ratio_raw,
-                          )
-                        : '--'}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>{t('倍率限制')}</span>
-                    <strong>
-                      {formatDynamicRatioLimitRange(recommendation, t)}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>{t('限制结果')}</span>
-                    <strong>
-                      {formatDynamicRatioLimitResult(recommendation, t)}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>{t('当前生效动态倍率')}</span>
-                    <strong>
-                      {Number(
-                        recommendation.current_effective_dynamic_ratio || 0,
-                      ) > 0
-                        ? formatRatioValue(
-                            recommendation.current_effective_dynamic_ratio,
-                          )
-                        : '--'}
-                    </strong>
-                  </div>
-                </div>
-                <div className='ct-profit-help compact'>
-                  <Save size={15} />
-                  <span>{t('生成建议只保存快照，不会自动调整线上倍率。')}</span>
-                </div>
-                <div className='ct-profit-snapshot-list'>
-                  <div className='ct-profit-subhead'>
-                    <strong>{t('建议快照记录')}</strong>
-                    <span>
-                      {t('保留最近生成的建议，方便人工复盘和后续接入 AI。')}
-                    </span>
-                  </div>
-                  <Table
-                    size='small'
-                    columns={recommendationColumns}
-                    dataSource={recommendations}
-                    rowKey='id'
-                    pagination={false}
-                    empty={<Empty description={t('暂无建议快照')} />}
-                    scroll={{ x: 1240 }}
-                  />
-                </div>
+                <Table
+                  size='small'
+                  columns={recommendationColumns}
+                  dataSource={recommendations}
+                  rowKey='id'
+                  pagination={false}
+                  empty={<Empty description={t('暂无建议快照')} />}
+                  scroll={{ x: 1320 }}
+                />
               </section>
             </div>
+          </Tabs.TabPane>
 
+          <Tabs.TabPane tab={t('灰度任务')} itemKey='canary-tasks'>
             <section className='ct-profit-panel'>
               <div className='ct-profit-panel-head'>
                 <div>
@@ -2561,7 +2697,9 @@ export default function ProfitMonitor() {
                 scroll={{ x: 1480 }}
               />
             </section>
+          </Tabs.TabPane>
 
+          <Tabs.TabPane tab={t('资源成本')} itemKey='resources'>
             <section className='ct-profit-panel'>
               <div className='ct-profit-panel-head'>
                 <div>
@@ -2592,7 +2730,7 @@ export default function ProfitMonitor() {
             </section>
           </Tabs.TabPane>
 
-          <Tabs.TabPane tab={t('流量统计')} itemKey='traffic'>
+          <Tabs.TabPane tab={t('流量拆解')} itemKey='traffic'>
             <div className='ct-profit-metrics ct-profit-traffic-metrics'>
               {trafficMetricCards.map((card) => (
                 <MetricCard key={card.label} {...card} />
@@ -2605,11 +2743,21 @@ export default function ProfitMonitor() {
                     <h2>{t('真实流量明细')}</h2>
                     <p>{t('按所选维度拆分真实入站、出站和成本。')}</p>
                   </div>
-                  <Tag color='green' type='light'>
-                    {trafficSummary.data_ready
-                      ? t('真实流量')
-                      : t('暂无真实流量')}
-                  </Tag>
+                  <Space>
+                    <Select
+                      value={trafficDimension}
+                      onChange={setTrafficDimension}
+                      optionList={DIMENSION_OPTIONS.map((value) => ({
+                        label: labelForDimension(value, t),
+                        value,
+                      }))}
+                    />
+                    <Tag color='green' type='light'>
+                      {trafficSummary.data_ready
+                        ? t('真实流量')
+                        : t('暂无真实流量')}
+                    </Tag>
+                  </Space>
                 </div>
                 <Table
                   size='small'

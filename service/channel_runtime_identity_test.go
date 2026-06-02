@@ -99,6 +99,16 @@ func TestRuntimeBalanceAndSelectionSkipScope(t *testing.T) {
 	require.True(t, IsChannelRuntimeSelectionSkipped(ctx, accountB))
 }
 
+func TestChannelRuntimeAccountScopeIgnoresDisplayMetadata(t *testing.T) {
+	base := testRuntimeIdentity(8104, "acct-a", 0)
+	withMetadata := base
+	withMetadata.AccountType = "oauth_account"
+	withMetadata.Brand = "codex"
+	withMetadata.Provider = "codex_oauth"
+
+	require.Equal(t, base.AccountScope(), withMetadata.AccountScope())
+}
+
 func testRuntimeIdentity(channelID int, accountID string, credentialIndex int) ChannelRuntimeIdentity {
 	return ChannelRuntimeIdentity{
 		ChannelID:           channelID,

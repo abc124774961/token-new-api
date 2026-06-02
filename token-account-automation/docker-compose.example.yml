@@ -1,0 +1,56 @@
+name: token-account-automation
+
+services:
+  automation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: token-account-automation:latest
+    restart: unless-stopped
+    ports:
+      - "${AUTOMATION_PORT:-8091}:8091"
+    volumes:
+      - ./data:/app/data
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      AUTOMATION_LISTEN_ADDR: "${AUTOMATION_LISTEN_ADDR:-:8091}"
+      AUTOMATION_DB_DRIVER: ${AUTOMATION_DB_DRIVER:-sqlite}
+      AUTOMATION_DB_DSN: ${AUTOMATION_DB_DSN:-/app/data/token-account-automation.db}
+      AUTOMATION_API_TOKEN: ${AUTOMATION_API_TOKEN:?set AUTOMATION_API_TOKEN}
+      AUTOMATION_WORKER_TOKEN: ${AUTOMATION_WORKER_TOKEN:?set AUTOMATION_WORKER_TOKEN}
+      AUTOMATION_SECRET_KEY: ${AUTOMATION_SECRET_KEY:?set AUTOMATION_SECRET_KEY}
+      AUTOMATION_RUN_MIGRATIONS: ${AUTOMATION_RUN_MIGRATIONS:-true}
+      AUTOMATION_INTERNAL_EXECUTOR: ${AUTOMATION_INTERNAL_EXECUTOR:-true}
+      AUTOMATION_INTERNAL_WORKER_ID: ${AUTOMATION_INTERNAL_WORKER_ID:-internal-api-1}
+      AUTOMATION_INTERNAL_POLL_INTERVAL: ${AUTOMATION_INTERNAL_POLL_INTERVAL:-2}
+      AUTOMATION_INTERNAL_LEASE_SECONDS: ${AUTOMATION_INTERNAL_LEASE_SECONDS:-60}
+      AUTOMATION_GATEWAY_CALLBACK_URL: ${AUTOMATION_GATEWAY_CALLBACK_URL:-}
+      AUTOMATION_GATEWAY_CALLBACK_TOKEN: ${AUTOMATION_GATEWAY_CALLBACK_TOKEN:-}
+      AUTOMATION_GATEWAY_CALLBACK_TIMEOUT_SECONDS: ${AUTOMATION_GATEWAY_CALLBACK_TIMEOUT_SECONDS:-5}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8091/health | grep -o '\"success\":true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  browser-worker:
+    build:
+      context: ./workers/browser
+      dockerfile: Dockerfile
+    image: token-account-automation-browser-worker:latest
+    restart: unless-stopped
+    depends_on:
+      automation:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      AUTOMATION_BASE_URL: http://automation:8091
+      AUTOMATION_WORKER_TOKEN: ${AUTOMATION_WORKER_TOKEN:?set AUTOMATION_WORKER_TOKEN}
+      BROWSER_WORKER_ID: ${BROWSER_WORKER_ID:-browser-worker-1}
+      BROWSER_HEADLESS: ${BROWSER_HEADLESS:-true}
+      BROWSER_POLL_INTERVAL_SECONDS: ${BROWSER_POLL_INTERVAL_SECONDS:-2}
+      BROWSER_CALLBACK_PORT: ${BROWSER_CALLBACK_PORT:-1455}
+      BROWSER_LOGIN_TIMEOUT_SECONDS: ${BROWSER_LOGIN_TIMEOUT_SECONDS:-900}
+      BROWSER_PROFILE_DIR: ${BROWSER_PROFILE_DIR:-}
+    volumes:
+      - ./browser-profiles:/worker/profiles

@@ -156,7 +156,7 @@ func TestModelGatewayProfitMonitorSummaryExcludesHealthProbeAndAddsResourceCost(
 	router := gin.New()
 	router.GET("/api/model_gateway/profit_monitor/summary", GetModelGatewayProfitMonitorSummary)
 	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/profit_monitor/summary?start_timestamp=100&end_timestamp=3700&dimension=channel", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/profit_monitor/summary?start_timestamp=100&end_timestamp=3700&breakdown_dimension=channel", nil)
 	router.ServeHTTP(recorder, req)
 
 	var payload modelGatewayProfitMonitorAPIResponse
@@ -170,6 +170,7 @@ func TestModelGatewayProfitMonitorSummaryExcludesHealthProbeAndAddsResourceCost(
 	require.InEpsilon(t, 3.6, payload.Data.Summary.ResourceAmortizedCostUSD, 0.0001)
 	require.InEpsilon(t, 4.9, payload.Data.Summary.OperatingCostUSD, 0.0001)
 	require.Len(t, payload.Data.Breakdown, 1)
+	require.Equal(t, "channel", payload.Data.BreakdownDimension)
 	require.Equal(t, 12, payload.Data.Breakdown[0].DimensionID)
 }
 
@@ -306,6 +307,139 @@ func TestModelGatewayProfitMonitorTrafficEndpointReturnsSeriesAndBreakdown(t *te
 	require.Len(t, payload.Data.Breakdown, 2)
 	require.Equal(t, "default", payload.Data.Breakdown[0].DimensionName)
 	require.InEpsilon(t, 0.8, payload.Data.Breakdown[0].Share, 0.0001)
+}
+
+func TestModelGatewayProfitMonitorDynamicRatioGroupsArePerGroup(t *testing.T) {
+	_ = setupModelGatewayProfitMonitorTestDB(t)
+	seedProfitMonitorDynamicBillingBaselines(t, scheduler_setting.DynamicBillingApplyModeAuto)
+
+	groups, summary := buildModelGatewayProfitDynamicRatioGroups(ModelGatewayProfitMonitorConfig{
+		TargetProfitRate: 0.2,
+	})
+	plus := findProfitMonitorDynamicRatioGroup(t, groups, "codex-plus")
+	pro := findProfitMonitorDynamicRatioGroup(t, groups, "codex-pro")
+
+	require.GreaterOrEqual(t, summary.TotalGroups, 2)
+	require.True(t, plus.Applied)
+	require.True(t, pro.Applied)
+	require.InEpsilon(t, 0.20, plus.ActualRatio, 0.0001)
+	require.InEpsilon(t, 0.55, pro.ActualRatio, 0.0001)
+	require.NotEqual(t, plus.TargetRatio, pro.TargetRatio)
+	require.Greater(t, pro.RevenueGapUSD, plus.RevenueGapUSD)
+	require.Equal(t, "codex-pro", groups[0].Group)
+}
+
+func TestModelGatewayProfitMonitorDynamicRatioGroupPolicyMatchesCaseInsensitive(t *testing.T) {
+	_ = setupModelGatewayProfitMonitorTestDB(t)
+	setting := scheduler_setting.DefaultSetting()
+	setting.DynamicBillingEnabled = true
+	setting.DynamicBillingCostSource = scheduler_setting.DynamicBillingCostSourceProfit24h
+	setting.DynamicBillingApplyMode = scheduler_setting.DynamicBillingApplyModeAuto
+	setting.DynamicBillingMinSamples = 1
+	setting.DynamicBillingMinRequests = 1
+	setting.DynamicBillingMinSuccessRequests = 1
+	setting.DynamicBillingMinTokens = 1
+	setting.DynamicBillingMaxAgeSeconds = 3600
+	setting.GroupPolicies = map[string]scheduler_setting.GroupPolicySetting{
+		"CODEX-PLUS": {
+			BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+		},
+	}
+	restoreSetting := scheduler_setting.SetSettingForTest(setting)
+	t.Cleanup(restoreSetting)
+
+	now := common.GetTimestamp()
+	restoreBaselines := modelgatewaydynamicbilling.StoreDefaultBaselinesForTest(map[string]modelgatewaydynamicbilling.RatioBaseline{
+		"codex-plus": {
+			Group:               "codex-plus",
+			ReferenceModel:      "gpt-test",
+			Ratio:               0.33,
+			TargetRatio:         0.33,
+			EffectiveRatio:      0.33,
+			SampleCount:         1,
+			CalculatedAt:        now,
+			ProfitRate:          0.2,
+			CostSource:          scheduler_setting.DynamicBillingCostSourceProfit24h,
+			ApplyMode:           scheduler_setting.DynamicBillingApplyModeAuto,
+			OperatingCostUSD:    0.20,
+			RequiredRevenueUSD:  0.25,
+			BaseQuotaAtRatio1:   float64(common.QuotaPerUnit),
+			RequestCount:        1,
+			SuccessRequestCount: 1,
+			TotalTokens:         1000,
+		},
+	})
+	t.Cleanup(restoreBaselines)
+
+	groups, _ := buildModelGatewayProfitDynamicRatioGroups(ModelGatewayProfitMonitorConfig{
+		TargetProfitRate: 0.2,
+	})
+	plus := findProfitMonitorDynamicRatioGroup(t, groups, "codex-plus")
+
+	require.Equal(t, scheduler_setting.BillingRatioModeDynamic, plus.BillingRatioMode)
+	require.True(t, plus.Applied)
+	require.InEpsilon(t, 0.33, plus.ActualRatio, 0.0001)
+}
+
+func TestModelGatewayProfitMonitorDynamicRatioGroupShowsObserveFallback(t *testing.T) {
+	_ = setupModelGatewayProfitMonitorTestDB(t)
+	seedProfitMonitorDynamicBillingBaselines(t, scheduler_setting.DynamicBillingApplyModeObserve)
+
+	groups, _ := buildModelGatewayProfitDynamicRatioGroups(ModelGatewayProfitMonitorConfig{
+		TargetProfitRate: 0.2,
+	})
+	plus := findProfitMonitorDynamicRatioGroup(t, groups, "codex-plus")
+
+	require.False(t, plus.Applied)
+	require.Equal(t, modelgatewaydynamicbilling.FallbackObserveMode, plus.FallbackReason)
+	require.InEpsilon(t, 1.0, plus.ActualRatio, 0.0001)
+	require.InEpsilon(t, 0.20, plus.DynamicRatio, 0.0001)
+}
+
+func TestModelGatewayProfitMonitorGroupRecommendationScopePersistsAndCanaryInherits(t *testing.T) {
+	db := setupModelGatewayProfitMonitorTestDB(t)
+	seedProfitMonitorDynamicBillingBaselines(t, scheduler_setting.DynamicBillingApplyModeAuto)
+
+	router := gin.New()
+	router.POST("/api/model_gateway/profit_monitor/recommendations", CreateModelGatewayProfitMonitorRecommendation)
+	router.POST("/api/model_gateway/profit_monitor/canary_tasks", func(c *gin.Context) {
+		c.Set("id", 9)
+		c.Set("username", "tester")
+		CreateModelGatewayProfitMonitorCanaryTask(c)
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/model_gateway/profit_monitor/recommendations?window=24h&breakdown_dimension=channel&scope_type=group&scope_key=codex-pro", nil)
+	router.ServeHTTP(recorder, req)
+
+	var payload modelGatewayProfitRecommendationAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success, recorder.Body.String())
+	require.NotZero(t, payload.Data.Id)
+	require.Equal(t, model.ModelGatewayProfitResourceScopeGroup, payload.Data.Dimension)
+	require.Equal(t, model.ModelGatewayProfitResourceScopeGroup, payload.Data.ScopeType)
+	require.Equal(t, "codex-pro", payload.Data.ScopeKey)
+	require.Greater(t, payload.Data.RecommendedRevenueMultiplier, 1.0)
+	require.Contains(t, payload.Data.InputJSON, `"scope_key":"codex-pro"`)
+
+	body, err := common.Marshal(UpsertModelGatewayProfitCanaryTaskRequest{
+		RecommendationID: intPtr(payload.Data.Id),
+		Title:            stringPtr("codex-pro group canary"),
+	})
+	require.NoError(t, err)
+	canaryRecorder := httptest.NewRecorder()
+	canaryReq := httptest.NewRequest(http.MethodPost, "/api/model_gateway/profit_monitor/canary_tasks", bytes.NewReader(body))
+	router.ServeHTTP(canaryRecorder, canaryReq)
+
+	var canaryPayload modelGatewayProfitCanaryTaskAPIResponse
+	require.NoError(t, common.Unmarshal(canaryRecorder.Body.Bytes(), &canaryPayload))
+	require.True(t, canaryPayload.Success, canaryRecorder.Body.String())
+	require.Equal(t, model.ModelGatewayProfitResourceScopeGroup, canaryPayload.Data.ScopeType)
+	require.Equal(t, "codex-pro", canaryPayload.Data.ScopeKey)
+
+	var row model.ModelGatewayProfitRatioRecommendation
+	require.NoError(t, db.First(&row, "id = ?", payload.Data.Id).Error)
+	require.Equal(t, "codex-pro", row.ScopeKey)
 }
 
 func TestModelGatewayProfitMonitorRecommendationSnapshotPersistsAndLists(t *testing.T) {
@@ -688,6 +822,102 @@ func TestModelGatewayProfitMonitorConfigAcceptsPercentInput(t *testing.T) {
 	})
 
 	require.InEpsilon(t, 0.6, config.TargetProfitRate, 0.000001)
+}
+
+func seedProfitMonitorDynamicBillingBaselines(t *testing.T, applyMode string) {
+	t.Helper()
+	setting := scheduler_setting.DefaultSetting()
+	setting.DynamicBillingEnabled = true
+	setting.DynamicBillingCostSource = scheduler_setting.DynamicBillingCostSourceProfit24h
+	setting.DynamicBillingApplyMode = applyMode
+	setting.DynamicBillingMinSamples = 1
+	setting.DynamicBillingMinRequests = 1
+	setting.DynamicBillingMinSuccessRequests = 1
+	setting.DynamicBillingMinTokens = 1
+	setting.DynamicBillingMaxAgeSeconds = 3600
+	setting.DynamicBillingMinRatio = 0.01
+	setting.DynamicBillingMaxRatio = 2
+	setting.GroupPolicies = map[string]scheduler_setting.GroupPolicySetting{
+		"codex-plus": {
+			BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+		},
+		"codex-pro": {
+			BillingRatioMode: scheduler_setting.BillingRatioModeDynamic,
+		},
+	}
+	restoreSetting := scheduler_setting.SetSettingForTest(setting)
+	t.Cleanup(restoreSetting)
+	now := common.GetTimestamp()
+	restoreBaselines := modelgatewaydynamicbilling.StoreDefaultBaselinesForTest(map[string]modelgatewaydynamicbilling.RatioBaseline{
+		"codex-plus": {
+			Group:               "codex-plus",
+			ReferenceModel:      "gpt-test",
+			Ratio:               0.20,
+			TargetRatio:         0.30,
+			EffectiveRatio:      0.20,
+			Clamped:             true,
+			SampleCount:         8,
+			ModelCount:          1,
+			CalculatedAt:        now,
+			WindowStart:         now - 3600,
+			WindowEnd:           now,
+			ProfitRate:          0.2,
+			CostSource:          scheduler_setting.DynamicBillingCostSourceProfit24h,
+			ApplyMode:           applyMode,
+			OperatingCostUSD:    0.24,
+			RequiredRevenueUSD:  0.30,
+			BaseQuotaAtRatio1:   float64(common.QuotaPerUnit),
+			CostMultiplier:      0.24,
+			RequestCount:        20,
+			SuccessRequestCount: 20,
+			TotalTokens:         10_000,
+			UpstreamCostUSD:     0.18,
+			TrafficCostUSD:      0.01,
+			ServerCostUSD:       0.02,
+			ResourceCostUSD:     0.03,
+			TrafficDataReady:    true,
+		},
+		"codex-pro": {
+			Group:               "codex-pro",
+			ReferenceModel:      "gpt-test",
+			Ratio:               0.55,
+			TargetRatio:         0.70,
+			EffectiveRatio:      0.55,
+			Clamped:             true,
+			SampleCount:         12,
+			ModelCount:          1,
+			CalculatedAt:        now,
+			WindowStart:         now - 3600,
+			WindowEnd:           now,
+			ProfitRate:          0.2,
+			CostSource:          scheduler_setting.DynamicBillingCostSourceProfit24h,
+			ApplyMode:           applyMode,
+			OperatingCostUSD:    0.56,
+			RequiredRevenueUSD:  0.70,
+			BaseQuotaAtRatio1:   float64(common.QuotaPerUnit),
+			CostMultiplier:      0.56,
+			RequestCount:        24,
+			SuccessRequestCount: 24,
+			TotalTokens:         20_000,
+			UpstreamCostUSD:     0.42,
+			TrafficCostUSD:      0.02,
+			ServerCostUSD:       0.04,
+			ResourceCostUSD:     0.08,
+			TrafficDataReady:    true,
+		},
+	})
+	t.Cleanup(restoreBaselines)
+}
+
+func findProfitMonitorDynamicRatioGroup(t *testing.T, groups []ModelGatewayProfitDynamicRatioGroup, name string) ModelGatewayProfitDynamicRatioGroup {
+	t.Helper()
+	for _, group := range groups {
+		if group.Group == name {
+			return group
+		}
+	}
+	require.Failf(t, "missing dynamic ratio group", "group=%s", name)
+	return ModelGatewayProfitDynamicRatioGroup{}
 }
 
 func boolPtr(value bool) *bool {

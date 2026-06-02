@@ -575,12 +575,23 @@ const formatChannelCostPrice = (value) => {
   return `$${trimFixedNumber(numberValue, numberValue < 1 ? 6 : 4)}`;
 };
 
-const channelCostMetricTone = {
-  input: 'border-sky-100 bg-sky-50/70 text-sky-700',
-  output: 'border-emerald-100 bg-emerald-50/70 text-emerald-700',
-  cache_read: 'border-amber-100 bg-amber-50/70 text-amber-700',
-  cache_write: 'border-violet-100 bg-violet-50/70 text-violet-700',
-  request: 'border-cyan-100 bg-cyan-50/70 text-cyan-700',
+const getPrimaryChannelCostRatio = (display) => {
+  if (!display) return 0;
+  const candidates = [
+    display.actual_token_multiplier,
+    display.cost_coefficient,
+    display.fee_multiplier,
+    display.token_multiplier,
+    display.base_cost_multiplier,
+    display.recharge_multiplier,
+  ];
+  for (const value of candidates) {
+    const numberValue = Number(value || 0);
+    if (Number.isFinite(numberValue) && numberValue > 0) {
+      return numberValue;
+    }
+  }
+  return 0;
 };
 
 const buildChannelCostPriceRows = (display, t) => {
@@ -638,11 +649,8 @@ const renderChannelCostDisplay = (record, t) => {
 
   const rows = buildChannelCostPriceRows(display, t);
   const hasPrices = display.price_configured && rows.length > 0;
-  const actualRatio = Number(display.actual_token_multiplier || 0);
-  const ratioText =
-    display.pricing_mode === 'request'
-      ? formatChannelCostPrice(display.request_price)
-      : formatChannelCostRatio(actualRatio);
+  const primaryRatio = getPrimaryChannelCostRatio(display);
+  const ratioText = formatChannelCostRatio(primaryRatio);
 
   const tooltipContent = (
     <div className='flex flex-col gap-1 min-w-[180px] text-xs'>
@@ -658,7 +666,7 @@ const renderChannelCostDisplay = (record, t) => {
       ) : null}
       {display.pricing_mode === 'request' ? (
         <div>
-          {t('1:1 实际按次成本')}: {ratioText}
+          {t('1:1 实际成本倍率')}: {ratioText}
         </div>
       ) : (
         <>
@@ -686,40 +694,11 @@ const renderChannelCostDisplay = (record, t) => {
 
   return (
     <Tooltip content={tooltipContent} position='topLeft'>
-      <div className='inline-flex min-w-[164px] max-w-[210px] cursor-default flex-col gap-1.5 rounded-md border border-cyan-100 bg-gradient-to-br from-white to-cyan-50/50 px-2.5 py-1.5 shadow-[0_1px_0_rgba(15,118,110,0.08)] leading-none'>
-        <div className='flex items-baseline gap-1.5'>
-          <span className='rounded bg-cyan-100 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700'>
-            1:1
-          </span>
-          <span className='text-[14px] font-semibold tabular-nums text-cyan-900'>
-            {ratioText}
-          </span>
-          <span className='text-[10px] text-[var(--semi-color-text-2)]'>
-            {display.pricing_mode === 'request' ? t('按次') : t('实际倍率')}
-          </span>
-        </div>
-        {hasPrices ? (
-          <div className='grid grid-cols-3 gap-1'>
-            {rows.slice(0, 3).map((row) => (
-              <div
-                key={row.key}
-                className={`rounded border px-1.5 py-1 ${channelCostMetricTone[row.key] || 'border-gray-100 bg-gray-50 text-gray-600'}`}
-              >
-                <div className='text-[10px] font-semibold leading-none'>
-                  {row.shortLabel || row.label}
-                </div>
-                <div className='mt-0.5 whitespace-nowrap text-[10px] font-medium leading-none tabular-nums'>
-                  {formatChannelCostPrice(row.value)}
-                  {row.suffix === '' ? '' : '/M'}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <span className='text-[11px] text-[var(--semi-color-text-2)]'>
-            {t('未配置')}
-          </span>
-        )}
+      <div
+        className={`ct-channel-cost-ratio ${hasPrices ? '' : 'ct-channel-cost-ratio-muted'}`}
+      >
+        <span className='ct-channel-cost-ratio-badge'>1:1</span>
+        <span className='ct-channel-cost-ratio-value'>{ratioText}</span>
       </div>
     </Tooltip>
   );
@@ -911,9 +890,9 @@ export const getChannelsColumns = ({
     },
     {
       key: COLUMN_KEYS.COST,
-      title: t('成本'),
+      title: t('倍率'),
       dataIndex: 'upstream_cost_display',
-      width: 220,
+      width: 108,
       render: (text, record) => renderChannelCostDisplay(record, t),
     },
     {

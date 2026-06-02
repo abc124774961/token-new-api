@@ -37,8 +37,8 @@ const ChannelsFilters = ({
   t,
 }) => {
   return (
-    <div className='flex flex-col md:flex-row justify-between items-center gap-2 w-full'>
-      <div className='flex gap-2 w-full md:w-auto order-2 md:order-1'>
+    <div className='ct-channel-filters flex flex-col md:flex-row justify-between items-center gap-2 w-full'>
+      <div className='ct-channel-filter-actions flex gap-2 w-full md:w-auto order-2 md:order-1'>
         <Button
           size='small'
           theme='light'
@@ -73,7 +73,7 @@ const ChannelsFilters = ({
         </Button>
       </div>
 
-      <div className='flex flex-col md:flex-row items-center gap-2 w-full md:w-auto order-1 md:order-2'>
+      <div className='ct-channel-filter-form flex flex-col md:flex-row items-center gap-2 w-full md:w-auto order-1 md:order-2'>
         <Form
           initValues={formInitValues}
           getFormApi={(api) => setFormApi(api)}
