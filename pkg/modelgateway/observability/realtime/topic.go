@@ -559,16 +559,31 @@ func userRequestRecordLess(left, right controller.ModelGatewayUserRequestRecord)
 	if leftProcessing != rightProcessing {
 		return leftProcessing
 	}
-	if left.CreatedAt != right.CreatedAt {
-		return left.CreatedAt > right.CreatedAt
+	leftTime := userRequestRecordSortTime(left)
+	rightTime := userRequestRecordSortTime(right)
+	if leftTime != rightTime {
+		return leftTime > rightTime
 	}
 	if left.CompletedAt != right.CompletedAt {
 		return left.CompletedAt > right.CompletedAt
+	}
+	if left.CreatedAt != right.CreatedAt {
+		return left.CreatedAt > right.CreatedAt
 	}
 	if left.ID != right.ID {
 		return left.ID > right.ID
 	}
 	return left.RequestID > right.RequestID
+}
+
+func userRequestRecordSortTime(record controller.ModelGatewayUserRequestRecord) int64 {
+	if userRequestRecordProcessing(record) {
+		return record.CreatedAt
+	}
+	if record.CompletedAt > 0 {
+		return record.CompletedAt
+	}
+	return record.CreatedAt
 }
 
 func userRequestRecordProcessing(record controller.ModelGatewayUserRequestRecord) bool {

@@ -2149,7 +2149,7 @@
     "增长中心": "Trung tâm tăng trưởng",
     "处理上游模型更新": "",
     "处理中": "Processing",
-    "处理中优先，按创建时间和最后完成时间展示最近请求记录": "Ưu tiên yêu cầu đang xử lý, rồi hiển thị yêu cầu gần đây theo thời gian tạo và lần hoàn tất cuối",
+    "处理中优先，完成请求按最后完成时间排序，未完成请求按创建时间排序": "Ưu tiên yêu cầu đang xử lý; yêu cầu đã hoàn tất sắp theo lần hoàn tất cuối, yêu cầu chưa hoàn tất theo thời gian tạo",
     "处理全部渠道上游更新": "",
     "处理建议": "Đề xuất xử lý",
     "备份支持": "Hỗ trợ sao lưu",

@@ -1106,6 +1106,44 @@ func TestBuildModelGatewayObservabilitySummaryIncludesUserRequests(t *testing.T)
 	require.Equal(t, int64(520), trend.P95TTFTMs)
 }
 
+func TestBuildModelGatewayUserRequestsOrdersRecentByCompletionTime(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&[]model.ModelGatewayUserRequestSummary{
+		{
+			CreatedAt:      now - 3500,
+			UpdatedAt:      now - 5,
+			CompletedAt:    now - 5,
+			RequestId:      "req-completed-latest",
+			RequestedGroup: "default",
+			RequestedModel: "gpt-5.5",
+			FinalSuccess:   true,
+			Attempts:       1,
+		},
+		{
+			CreatedAt:      now - 10,
+			UpdatedAt:      now - 300,
+			CompletedAt:    now - 300,
+			RequestId:      "req-created-latest",
+			RequestedGroup: "default",
+			RequestedModel: "gpt-5.5",
+			FinalSuccess:   true,
+			Attempts:       1,
+		},
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 1,
+		TopN:        1,
+		ScanLimit:   1,
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	require.Equal(t, "req-completed-latest", response.UserRequests.RecentRequests[0].RequestID)
+}
+
 func TestBuildModelGatewayUserRequestObservabilityReconcilesLatestClientAbortAttempt(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()

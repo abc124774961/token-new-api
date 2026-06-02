@@ -229,8 +229,8 @@ func TestMergeUserRequestRealtimeRecordsSortsByProcessingCreatedAndCompletedAt(t
 	require.Equal(t, int64(1200), merged[0].TTFTMs)
 	require.Equal(t, "req-processing-older-created", merged[1].RequestID)
 	require.Equal(t, int64(999), merged[1].UpdatedAt)
-	require.Equal(t, "req-completed-newer-created", merged[2].RequestID)
-	require.Equal(t, "req-completed-later-finished", merged[3].RequestID)
+	require.Equal(t, "req-completed-later-finished", merged[2].RequestID)
+	require.Equal(t, "req-completed-newer-created", merged[3].RequestID)
 }
 
 func TestTopicPublishesHealthProbeUserRequestDeltaByDefault(t *testing.T) {

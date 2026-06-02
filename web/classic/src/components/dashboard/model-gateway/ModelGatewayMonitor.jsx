@@ -4100,12 +4100,20 @@ function compareUserRequestsForDisplay(a, b) {
   if (leftProcessing !== rightProcessing) {
     return leftProcessing ? -1 : 1;
   }
-  const createdDiff =
-    normalizeTimestamp(b?.created_at) - normalizeTimestamp(a?.created_at);
-  if (createdDiff !== 0) return createdDiff;
+  const leftTime = leftProcessing
+    ? normalizeTimestamp(a?.created_at)
+    : normalizeTimestamp(a?.completed_at) || normalizeTimestamp(a?.created_at);
+  const rightTime = rightProcessing
+    ? normalizeTimestamp(b?.created_at)
+    : normalizeTimestamp(b?.completed_at) || normalizeTimestamp(b?.created_at);
+  const timeDiff = rightTime - leftTime;
+  if (timeDiff !== 0) return timeDiff;
   const completedDiff =
     normalizeTimestamp(b?.completed_at) - normalizeTimestamp(a?.completed_at);
   if (completedDiff !== 0) return completedDiff;
+  const createdDiff =
+    normalizeTimestamp(b?.created_at) - normalizeTimestamp(a?.created_at);
+  if (createdDiff !== 0) return createdDiff;
   const idDiff = Number(b?.id || 0) - Number(a?.id || 0);
   if (idDiff !== 0) return idDiff;
   return String(b?.request_id || '').localeCompare(String(a?.request_id || ''));
@@ -4808,7 +4816,9 @@ function UserRequestRecentTable({
       <div className='ct-model-gateway-user-request-list-head'>
         <div>
           <h3>{t('进行中的请求数据统计')}</h3>
-          <p>{t('处理中优先，按创建时间和最后完成时间展示最近请求记录')}</p>
+          <p>
+            {t('处理中优先，完成请求按最后完成时间排序，未完成请求按创建时间排序')}
+          </p>
         </div>
         <div className='ct-model-gateway-user-request-list-actions'>
           <label className='ct-model-gateway-user-request-probe-toggle'>

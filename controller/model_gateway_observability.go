@@ -3196,7 +3196,7 @@ func buildModelGatewayUserRequestObservability(startTime int64, endTime int64, o
 	} else {
 		queryLimit = options.ScanLimit + 1
 	}
-	if err := base.Order("created_at desc, completed_at desc, id desc").Limit(queryLimit).Find(&userRequests).Error; err != nil {
+	if err := base.Order("completed_at desc, created_at desc, id desc").Limit(queryLimit).Find(&userRequests).Error; err != nil {
 		return ModelGatewayUserRequestObservabilityResponse{}, err
 	}
 	if !options.IncludeTotal {

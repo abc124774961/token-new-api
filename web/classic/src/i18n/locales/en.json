@@ -2184,7 +2184,7 @@
     "增长中心": "Growth Center",
     "处理上游模型更新": "",
     "处理中": "Processing",
-    "处理中优先，按创建时间和最后完成时间展示最近请求记录": "Processing requests first, then recent requests by creation time and last completion time",
+    "处理中优先，完成请求按最后完成时间排序，未完成请求按创建时间排序": "Processing requests first; completed requests sort by last completion time, unfinished requests by creation time",
     "处理全部渠道上游更新": "",
     "处理建议": "Remediation suggestions",
     "备份支持": "Backup support",

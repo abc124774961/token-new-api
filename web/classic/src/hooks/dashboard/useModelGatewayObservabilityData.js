@@ -61,9 +61,30 @@ function mergeDelta(current, delta) {
   };
 }
 
-function userRequestSortTime(record) {
-  return Number(
-    record?.updated_at || record?.completed_at || record?.created_at || 0,
+function isUserRequestProcessingRecord(record) {
+  return record?.status === 'processing' || !Number(record?.completed_at || 0);
+}
+
+function userRequestDisplaySortTime(record) {
+  if (isUserRequestProcessingRecord(record)) {
+    return Number(record?.created_at || 0);
+  }
+  return Number(record?.completed_at || record?.created_at || 0);
+}
+
+function compareUserRequestRecordsForDisplay(left, right) {
+  const leftProcessing = isUserRequestProcessingRecord(left);
+  const rightProcessing = isUserRequestProcessingRecord(right);
+  if (leftProcessing !== rightProcessing) {
+    return leftProcessing ? -1 : 1;
+  }
+  const timeDiff =
+    userRequestDisplaySortTime(right) - userRequestDisplaySortTime(left);
+  if (timeDiff !== 0) return timeDiff;
+  const idDiff = Number(right?.id || 0) - Number(left?.id || 0);
+  if (idDiff !== 0) return idDiff;
+  return String(right?.request_id || '').localeCompare(
+    String(left?.request_id || ''),
   );
 }
 
@@ -129,13 +150,7 @@ function mergeUserRequestDelta(userRequests, recentDelta) {
     mergedByKey.set(key, mergeUserRequestRecord(mergedByKey.get(key), record));
   });
   const recentRequests = [...mergedByKey.values()]
-    .sort((left, right) => {
-      const timeDiff = userRequestSortTime(right) - userRequestSortTime(left);
-      if (timeDiff !== 0) return timeDiff;
-      return String(right?.request_id || '').localeCompare(
-        left?.request_id || '',
-      );
-    })
+    .sort(compareUserRequestRecordsForDisplay)
     .slice(0, RECENT_USER_REQUEST_LIMIT);
   return {
     ...userRequests,
