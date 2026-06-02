@@ -11,6 +11,7 @@ const (
 	ErrorCategoryAuthConfigError           = "auth_config_error"
 	ErrorCategoryRateLimit                 = "upstream_rate_limit"
 	ErrorCategoryBalanceOrQuota            = "balance_or_quota"
+	ErrorCategoryUserQuotaExhausted        = "user_quota_exhausted"
 	ErrorCategoryUnsupportedCapability     = "unsupported_capability"
 	ErrorCategoryClientRequestError        = "client_request_error"
 	ErrorCategoryUpstreamError             = "upstream_error"

@@ -209,6 +209,11 @@ func TestCircuitBreakerIgnoresBalanceInsufficient(t *testing.T) {
 		ErrorCategory:       "balance_or_quota",
 		BalanceInsufficient: true,
 	}))
+	require.Empty(t, scheduler.ClassifyCircuitError(core.AttemptResult{
+		StatusCode:    http.StatusForbidden,
+		ErrorCode:     "insufficient_user_quota",
+		ErrorCategory: core.ErrorCategoryUserQuotaExhausted,
+	}))
 }
 
 func TestCircuitBreakerDoesNotCountAuthWithoutErrorPolicy(t *testing.T) {

@@ -257,6 +257,12 @@ func IsBalanceInsufficientError(err *types.NewAPIError) bool {
 	return IsBalanceInsufficientMessage(err.Error())
 }
 
+func IsLocalUserQuotaError(err *types.NewAPIError) bool {
+	return err != nil &&
+		err.GetErrorCode() == types.ErrorCodeInsufficientUserQuota &&
+		types.IsSkipRetryError(err)
+}
+
 func IsBalanceInsufficientMessage(message string) bool {
 	message = strings.ToLower(strings.TrimSpace(message))
 	for _, keyword := range []string{

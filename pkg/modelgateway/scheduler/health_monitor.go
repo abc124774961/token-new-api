@@ -80,6 +80,9 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	if result.ClientAborted {
 		return
 	}
+	if strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted {
+		return
+	}
 	if result.BalanceInsufficient || isBalanceInsufficientAttempt(result) {
 		if result.ChannelID > 0 {
 			service.MarkChannelRuntimeBalanceInsufficient(serviceRuntimeIdentityFromKey(result.RuntimeKey()))
@@ -558,6 +561,9 @@ func nonEmptyOutputExperienceIssue(result core.AttemptResult) bool {
 }
 
 func isBalanceInsufficientAttempt(result core.AttemptResult) bool {
+	if strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted {
+		return false
+	}
 	if strings.TrimSpace(result.ErrorCategory) == "balance_or_quota" {
 		return true
 	}

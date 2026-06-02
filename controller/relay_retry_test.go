@@ -87,7 +87,7 @@ func TestReportModelGatewayEarlyFailureRecordsSelectedPlanTerminalError(t *testi
 	require.True(t, reportModelGatewayEarlyFailureIfNeeded(ctx, info, nil, apiErr, false))
 	require.Equal(t, channel, capturedChannel)
 	require.Equal(t, apiErr, capturedAPIError)
-	require.Equal(t, modelgatewaycore.ErrorCategoryBalanceOrQuota, capturedFlow.ErrorCategory)
+	require.Equal(t, modelgatewaycore.ErrorCategoryUserQuotaExhausted, capturedFlow.ErrorCategory)
 	require.Equal(t, "stop", capturedFlow.RetryAction)
 	require.False(t, capturedFlow.WillRetry)
 	require.False(t, capturedFlow.BalanceInsufficient)

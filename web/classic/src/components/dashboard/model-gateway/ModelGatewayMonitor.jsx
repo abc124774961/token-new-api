@@ -1094,7 +1094,35 @@ function getStatusMeta(record, t) {
   return { color: 'red', label: t('失败') };
 }
 
+function isUserQuotaExhaustedRecord(record) {
+  const category = String(
+    record?.error_category || record?.final_error_category || '',
+  )
+    .trim()
+    .toLowerCase();
+  const status = String(record?.status || '').trim().toLowerCase();
+  const errorCode = String(
+    record?.error_code || record?.dispatch_record?.error_code || '',
+  )
+    .trim()
+    .toLowerCase();
+  const dispatchCategory = String(record?.dispatch_record?.error_category || '')
+    .trim()
+    .toLowerCase();
+  const balanceMarked =
+    record?.balance_insufficient === true ||
+    record?.request_meta?.balance_insufficient === true ||
+    record?.dispatch_record?.balance_insufficient === true;
+  return (
+    category === 'user_quota_exhausted' ||
+    status === 'user_quota_exhausted' ||
+    dispatchCategory === 'user_quota_exhausted' ||
+    (errorCode === 'insufficient_user_quota' && !balanceMarked)
+  );
+}
+
 function isBalanceInsufficientStatus(record) {
+  if (isUserQuotaExhaustedRecord(record)) return false;
   const reason = String(record?.status_reason || record?.reject_reason || '')
     .trim()
     .toLowerCase();
@@ -2595,7 +2623,9 @@ function getUserRequestHealth(data) {
   const requests = Number(summary.user_requests || 0);
   const completedRequests = Math.max(
     0,
-    requests - Number(summary.client_aborted || 0),
+    requests -
+      Number(summary.client_aborted || 0) -
+      Number(summary.user_quota_exhausted || 0),
   );
   const successRate =
     completedRequests > 0 ? Number(summary.user_success_rate || 0) : 1;
@@ -2664,6 +2694,9 @@ function getUserRequestStatusMeta(record, t) {
   if (record?.status === 'processing') {
     return { color: 'blue', label: t('处理中'), tone: 'processing' };
   }
+  if (isUserQuotaExhaustedRecord(record)) {
+    return { color: 'grey', label: t('用户额度不足'), tone: 'quota' };
+  }
   if (hasModelGatewayWarning(record)) {
     return {
       color: modelGatewayWarningColor(record),
@@ -2708,6 +2741,8 @@ function formatUserRequestErrorCategory(category, t) {
       return t('用户主动终止');
     case 'balance_or_quota':
       return t('余额或额度');
+    case 'user_quota_exhausted':
+      return t('用户额度不足');
     case 'server_error':
       return t('最终失败类型：server_error');
     default:
@@ -3666,6 +3701,8 @@ function UserRequestCostTooltip({ billing, t }) {
 }
 
 function upstreamCostSourceLabel(source, accuracy, t) {
+  if (source === 'not_applicable' || accuracy === 'not_applicable')
+    return t('未发生');
   if (source === 'pending' || accuracy === 'pending') return t('计算中');
   if (source === 'missing' || accuracy === 'missing') return t('未配置');
   if (source === 'auto_synced') return t('自动同步');
@@ -3674,6 +3711,9 @@ function upstreamCostSourceLabel(source, accuracy, t) {
 }
 
 function upstreamCostStatus(record) {
+  if (isUserQuotaExhaustedRecord(record)) {
+    return { source: 'not_applicable', accuracy: 'not_applicable', amount: 0 };
+  }
   const source = String(record?.upstream_cost_source || '').trim();
   const accuracy = String(record?.upstream_cost_accuracy || '').trim();
   const total = safeNumber(record?.upstream_cost_total);
@@ -4916,7 +4956,7 @@ function UserRequestRecentTable({
                 const StatusIcon =
                   meta.tone === 'processing'
                     ? RadioTower
-                    : meta.tone === 'aborted'
+                    : meta.tone === 'aborted' || meta.tone === 'quota'
                       ? Ban
                       : meta.tone === 'failed' || meta.tone === 'probe-warning'
                         ? Info
@@ -5073,6 +5113,8 @@ function UserRequestRecentTable({
                           ? t('进行中')
                           : meta.tone === 'aborted'
                             ? t('客户端中断')
+                            : meta.tone === 'quota'
+                              ? t('业务拦截')
                             : meta.tone === 'probe' ||
                                 meta.tone === 'probe-warning'
                               ? t('探活请求')
@@ -5229,7 +5271,8 @@ function UserRequestDashboard({
               Math.max(
                 0,
                 Number(summary.user_requests || 0) -
-                  Number(summary.client_aborted || 0),
+                  Number(summary.client_aborted || 0) -
+                  Number(summary.user_quota_exhausted || 0),
               ),
             )}`}
             tone={getSuccessTone(

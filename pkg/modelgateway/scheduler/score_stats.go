@@ -227,6 +227,8 @@ func scoreSampleDecision(result core.AttemptResult) core.ScoreSampleDecision {
 	switch {
 	case result.ClientAborted:
 		return skippedScoreSample("client_aborted")
+	case strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted:
+		return skippedScoreSample("user_quota_exhausted")
 	case result.BalanceInsufficient || isBalanceInsufficientAttempt(result):
 		return skippedScoreSample("balance_insufficient")
 	case result.ConcurrencyLimited:

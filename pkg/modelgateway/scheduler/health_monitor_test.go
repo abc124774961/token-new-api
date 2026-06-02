@@ -122,6 +122,34 @@ func TestRuntimeHealthMonitorSkipsBalanceInsufficientForSuccessRate(t *testing.T
 	service.ClearChannelBalanceInsufficient(84)
 }
 
+func TestRuntimeHealthMonitorDoesNotMarkUserQuotaAsChannelBalance(t *testing.T) {
+	service.ClearChannelBalanceInsufficient(85)
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	breaker := scheduler.NewCircuitBreaker(scheduler.CircuitBreakerOptions{
+		FailureThreshold:   1,
+		MinSamples:         1,
+		OpenDuration:       time.Minute,
+		HalfOpenProbeCount: 1,
+	})
+	monitor := scheduler.NewRuntimeHealthMonitor(store, breaker)
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 85, Group: "default"}
+
+	monitor.Report(context.Background(), core.AttemptResult{
+		Key:           key,
+		ChannelID:     85,
+		StatusCode:    http.StatusForbidden,
+		ErrorCode:     "insufficient_user_quota",
+		ErrorCategory: core.ErrorCategoryUserQuotaExhausted,
+		Duration:      80 * time.Millisecond,
+	})
+
+	_, ok := store.Get(key)
+	require.False(t, ok)
+	circuit := breaker.Snapshot(key)
+	require.Equal(t, core.CircuitStateClosed, circuit.State)
+	require.False(t, service.IsRuntimeBalanceInsufficientChannelID(85))
+}
+
 func TestRuntimeHealthMonitorFirstByteTimeoutRetryIsNeutralForScore(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	monitor := scheduler.NewRuntimeHealthMonitor(store, nil)

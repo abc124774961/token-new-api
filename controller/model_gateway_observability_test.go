@@ -1144,6 +1144,39 @@ func TestBuildModelGatewayUserRequestsOrdersRecentByCompletionTime(t *testing.T)
 	require.Equal(t, "req-completed-latest", response.UserRequests.RecentRequests[0].RequestID)
 }
 
+func TestBuildModelGatewayUserRequestsTreatsUserQuotaExhaustedAsBusinessBlock(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&[]model.ModelGatewayUserRequestSummary{
+		{
+			CreatedAt:          now - 30,
+			UpdatedAt:          now - 20,
+			CompletedAt:        now - 20,
+			RequestId:          "req-user-quota",
+			RequestedGroup:     "default",
+			RequestedModel:     "gpt-5.5",
+			FinalSuccess:       false,
+			FinalStatusCode:    http.StatusForbidden,
+			FinalErrorCategory: model.ModelGatewayUserRequestErrorUserQuotaExhausted,
+			DurationMs:         0,
+			TTFTMs:             0,
+		},
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ScanLimit:   10,
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), response.UserRequests.Summary.UserQuotaExhausted)
+	require.Zero(t, response.UserRequests.Summary.FinalFailures)
+	require.Equal(t, model.ModelGatewayUserRequestErrorUserQuotaExhausted, response.UserRequests.RecentRequests[0].FinalErrorCategory)
+	require.Equal(t, model.ModelGatewayUserRequestErrorUserQuotaExhausted, response.UserRequests.RecentRequests[0].Status)
+}
+
 func TestBuildModelGatewayUserRequestObservabilityReconcilesLatestClientAbortAttempt(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()

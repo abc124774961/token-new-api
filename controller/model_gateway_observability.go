@@ -26,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
@@ -444,6 +445,7 @@ type ModelGatewayUserRequestSummary struct {
 	Truncated          bool    `json:"truncated"`
 	Successes          int64   `json:"successes"`
 	FinalFailures      int64   `json:"final_failures"`
+	UserQuotaExhausted int64   `json:"user_quota_exhausted"`
 	ClientAborted      int64   `json:"client_aborted"`
 	HealthProbes       int64   `json:"health_probes"`
 	Recovered          int64   `json:"recovered"`
@@ -457,41 +459,43 @@ type ModelGatewayUserRequestSummary struct {
 }
 
 type ModelGatewayUserRequestTrendPoint struct {
-	BucketStart      int64   `json:"bucket_start"`
-	BucketEnd        int64   `json:"bucket_end"`
-	Requests         int64   `json:"requests"`
-	UserRequests     int64   `json:"user_requests"`
-	Successes        int64   `json:"successes"`
-	FinalFailures    int64   `json:"final_failures"`
-	ClientAborted    int64   `json:"client_aborted"`
-	HealthProbes     int64   `json:"health_probes"`
-	Recovered        int64   `json:"recovered"`
-	EmptyOutputs     int64   `json:"empty_outputs"`
-	ExperienceIssues int64   `json:"experience_issues"`
-	UserSuccessRate  float64 `json:"user_success_rate"`
-	AvgDurationMs    int64   `json:"avg_duration_ms"`
-	P95DurationMs    int64   `json:"p95_duration_ms"`
-	AvgTTFTMs        int64   `json:"avg_ttft_ms"`
-	P95TTFTMs        int64   `json:"p95_ttft_ms"`
+	BucketStart        int64   `json:"bucket_start"`
+	BucketEnd          int64   `json:"bucket_end"`
+	Requests           int64   `json:"requests"`
+	UserRequests       int64   `json:"user_requests"`
+	Successes          int64   `json:"successes"`
+	FinalFailures      int64   `json:"final_failures"`
+	UserQuotaExhausted int64   `json:"user_quota_exhausted"`
+	ClientAborted      int64   `json:"client_aborted"`
+	HealthProbes       int64   `json:"health_probes"`
+	Recovered          int64   `json:"recovered"`
+	EmptyOutputs       int64   `json:"empty_outputs"`
+	ExperienceIssues   int64   `json:"experience_issues"`
+	UserSuccessRate    float64 `json:"user_success_rate"`
+	AvgDurationMs      int64   `json:"avg_duration_ms"`
+	P95DurationMs      int64   `json:"p95_duration_ms"`
+	AvgTTFTMs          int64   `json:"avg_ttft_ms"`
+	P95TTFTMs          int64   `json:"p95_ttft_ms"`
 }
 
 type ModelGatewayUserRequestAggregate struct {
-	Key              string  `json:"key"`
-	Requests         int64   `json:"requests"`
-	UserRequests     int64   `json:"user_requests"`
-	Successes        int64   `json:"successes"`
-	FinalFailures    int64   `json:"final_failures"`
-	ClientAborted    int64   `json:"client_aborted"`
-	HealthProbes     int64   `json:"health_probes"`
-	Recovered        int64   `json:"recovered"`
-	EmptyOutputs     int64   `json:"empty_outputs"`
-	ExperienceIssues int64   `json:"experience_issues"`
-	UserSuccessRate  float64 `json:"user_success_rate"`
-	AvgDurationMs    int64   `json:"avg_duration_ms"`
-	P95DurationMs    int64   `json:"p95_duration_ms"`
-	AvgTTFTMs        int64   `json:"avg_ttft_ms"`
-	P95TTFTMs        int64   `json:"p95_ttft_ms"`
-	LastRequestAt    int64   `json:"last_request_at"`
+	Key                string  `json:"key"`
+	Requests           int64   `json:"requests"`
+	UserRequests       int64   `json:"user_requests"`
+	Successes          int64   `json:"successes"`
+	FinalFailures      int64   `json:"final_failures"`
+	UserQuotaExhausted int64   `json:"user_quota_exhausted"`
+	ClientAborted      int64   `json:"client_aborted"`
+	HealthProbes       int64   `json:"health_probes"`
+	Recovered          int64   `json:"recovered"`
+	EmptyOutputs       int64   `json:"empty_outputs"`
+	ExperienceIssues   int64   `json:"experience_issues"`
+	UserSuccessRate    float64 `json:"user_success_rate"`
+	AvgDurationMs      int64   `json:"avg_duration_ms"`
+	P95DurationMs      int64   `json:"p95_duration_ms"`
+	AvgTTFTMs          int64   `json:"avg_ttft_ms"`
+	P95TTFTMs          int64   `json:"p95_ttft_ms"`
+	LastRequestAt      int64   `json:"last_request_at"`
 }
 
 type ModelGatewayUserRequestRecord struct {
@@ -3394,12 +3398,13 @@ func persistModelGatewayUserRequestClientAbortReconcile(userRequest model.ModelG
 
 type modelGatewayUserRequestAccumulator struct {
 	ModelGatewayUserRequestAggregate
-	durationSum     int64
-	durationSamples int64
-	durationValues  []int64
-	ttftSum         int64
-	ttftSamples     int64
-	ttftValues      []int64
+	durationSum        int64
+	durationSamples    int64
+	durationValues     []int64
+	ttftSum            int64
+	ttftSamples        int64
+	ttftValues         []int64
+	userQuotaExhausted int64
 }
 
 type modelGatewayUserRequestTrendAccumulator struct {
@@ -3465,6 +3470,7 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 		attachModelGatewayUserRequestDispatchRecords(response.RecentRequests)
 	}
 	attachModelGatewayUserRequestWarningDispatchFallback(response.RecentRequests)
+	normalizeModelGatewayUserRequestBusinessRecords(response.RecentRequests)
 	normalizeModelGatewayUserRequestHealthProbeRecords(response.RecentRequests)
 	if !options.Lite {
 		attachModelGatewayUserRequestExecutionUsers(response.RecentRequests)
@@ -3716,6 +3722,40 @@ func modelGatewayObservabilityRecordHasWarning(record ModelGatewayObservabilityR
 
 func AttachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequestRecord) {
 	attachModelGatewayUserRequestDispatchRecords(records)
+}
+
+func normalizeModelGatewayUserRequestBusinessRecords(records []ModelGatewayUserRequestRecord) {
+	for idx := range records {
+		if !modelGatewayUserRequestRecordUserQuotaExhausted(records[idx]) {
+			continue
+		}
+		records[idx].FinalErrorCategory = model.ModelGatewayUserRequestErrorUserQuotaExhausted
+		if strings.TrimSpace(records[idx].Status) == "" || records[idx].Status == "failed" {
+			records[idx].Status = model.ModelGatewayUserRequestErrorUserQuotaExhausted
+		}
+		if records[idx].UpstreamCostSource == "" {
+			records[idx].UpstreamCostSource = "not_applicable"
+		}
+		if records[idx].UpstreamCostAccuracy == "" {
+			records[idx].UpstreamCostAccuracy = "not_applicable"
+		}
+	}
+}
+
+func modelGatewayUserRequestRecordUserQuotaExhausted(record ModelGatewayUserRequestRecord) bool {
+	category := strings.ToLower(strings.TrimSpace(record.FinalErrorCategory))
+	if category == model.ModelGatewayUserRequestErrorUserQuotaExhausted || strings.Contains(category, "user_quota") {
+		return true
+	}
+	if record.DispatchRecord == nil {
+		return false
+	}
+	dispatch := record.DispatchRecord
+	dispatchCategory := strings.ToLower(strings.TrimSpace(dispatch.ErrorCategory))
+	dispatchCode := strings.ToLower(strings.TrimSpace(dispatch.ErrorCode))
+	return dispatchCategory == modelgatewaycore.ErrorCategoryUserQuotaExhausted ||
+		strings.Contains(dispatchCategory, "user_quota") ||
+		(dispatchCode == strings.ToLower(string(types.ErrorCodeInsufficientUserQuota)) && !dispatch.BalanceInsufficient)
 }
 
 func modelGatewayDispatchRecordBetterForUserRequest(left ModelGatewayObservabilityRecord, right ModelGatewayObservabilityRecord) bool {
@@ -4122,27 +4162,32 @@ func applyModelGatewayUserRequestAccumulator(accumulator *modelGatewayUserReques
 		accumulator.Recovered++
 	}
 	clientAborted := modelGatewayUserRequestClientAborted(userRequest)
+	userQuotaExhausted := modelGatewayUserRequestUserQuotaExhausted(userRequest)
+	if userQuotaExhausted && !isHealthProbe {
+		accumulator.userQuotaExhausted++
+		accumulator.UserQuotaExhausted++
+	}
 	if clientAborted {
 		if !isHealthProbe {
 			accumulator.ClientAborted++
 		}
 	} else if userRequest.FinalSuccess && !isHealthProbe {
 		accumulator.Successes++
-	} else if !isHealthProbe {
+	} else if !isHealthProbe && !userQuotaExhausted {
 		accumulator.FinalFailures++
 	}
-	if userRequest.EmptyOutput && !clientAborted && !isHealthProbe {
+	if userRequest.EmptyOutput && !clientAborted && !userQuotaExhausted && !isHealthProbe {
 		accumulator.EmptyOutputs++
 	}
-	if strings.TrimSpace(userRequest.ExperienceIssue) != "" && !clientAborted && !isHealthProbe {
+	if strings.TrimSpace(userRequest.ExperienceIssue) != "" && !clientAborted && !userQuotaExhausted && !isHealthProbe {
 		accumulator.ExperienceIssues++
 	}
-	if userRequest.DurationMs > 0 && !clientAborted {
+	if userRequest.DurationMs > 0 && !clientAborted && !userQuotaExhausted {
 		accumulator.durationSum += userRequest.DurationMs
 		accumulator.durationSamples++
 		accumulator.durationValues = append(accumulator.durationValues, userRequest.DurationMs)
 	}
-	if userRequest.TTFTMs > 0 && !clientAborted {
+	if userRequest.TTFTMs > 0 && !clientAborted && !userQuotaExhausted {
 		accumulator.ttftSum += userRequest.TTFTMs
 		accumulator.ttftSamples++
 		accumulator.ttftValues = append(accumulator.ttftValues, userRequest.TTFTMs)
@@ -4160,12 +4205,13 @@ func modelGatewayUserRequestSummaryFromAccumulator(summary ModelGatewayUserReque
 	if userRequests < 0 {
 		userRequests = 0
 	}
-	userCompletedRequests := userRequests - accumulator.ClientAborted
+	userCompletedRequests := userRequests - accumulator.ClientAborted - accumulator.userQuotaExhausted
 	if userCompletedRequests < 0 {
 		userCompletedRequests = 0
 	}
 	summary.Successes = accumulator.Successes
 	summary.FinalFailures = accumulator.FinalFailures
+	summary.UserQuotaExhausted = accumulator.userQuotaExhausted
 	summary.ClientAborted = accumulator.ClientAborted
 	summary.HealthProbes = accumulator.HealthProbes
 	summary.UserRequests = userRequests
@@ -4188,7 +4234,7 @@ func finalizeModelGatewayUserRequestAggregates(accumulators map[string]*modelGat
 		if item.UserRequests < 0 {
 			item.UserRequests = 0
 		}
-		userCompletedRequests := item.UserRequests - item.ClientAborted
+		userCompletedRequests := item.UserRequests - item.ClientAborted - item.UserQuotaExhausted
 		if userCompletedRequests < 0 {
 			userCompletedRequests = 0
 		}
@@ -4252,12 +4298,13 @@ func modelGatewayUserRequestTrendPointFromAccumulator(bucketStart int64, bucketE
 	}
 	point.Successes = accumulator.Successes
 	point.FinalFailures = accumulator.FinalFailures
+	point.UserQuotaExhausted = accumulator.UserQuotaExhausted
 	point.ClientAborted = accumulator.ClientAborted
 	point.HealthProbes = accumulator.HealthProbes
 	point.Recovered = accumulator.Recovered
 	point.EmptyOutputs = accumulator.EmptyOutputs
 	point.ExperienceIssues = accumulator.ExperienceIssues
-	userCompletedRequests := point.UserRequests - point.ClientAborted
+	userCompletedRequests := point.UserRequests - point.ClientAborted - point.UserQuotaExhausted
 	if userCompletedRequests < 0 {
 		userCompletedRequests = 0
 	}
@@ -4355,6 +4402,12 @@ func modelGatewayUserRequestClientAborted(userRequest model.ModelGatewayUserRequ
 		category == model.ModelGatewayUserRequestErrorClientAborted ||
 		strings.Contains(category, "client_abort") ||
 		strings.Contains(category, "client_gone")
+}
+
+func modelGatewayUserRequestUserQuotaExhausted(userRequest model.ModelGatewayUserRequestSummary) bool {
+	category := strings.ToLower(strings.TrimSpace(userRequest.FinalErrorCategory))
+	return category == model.ModelGatewayUserRequestErrorUserQuotaExhausted ||
+		strings.Contains(category, "user_quota")
 }
 
 func modelGatewayUserRequestModelKey(userRequest model.ModelGatewayUserRequestSummary) string {

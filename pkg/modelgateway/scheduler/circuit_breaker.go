@@ -399,7 +399,7 @@ func (b *CircuitBreaker) classifyFailure(result core.AttemptResult) (string, boo
 // mean the failure is counted by the circuit breaker; policies still decide
 // that in classifyFailure.
 func ClassifyCircuitError(result core.AttemptResult) string {
-	if result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) {
+	if result.ClientAborted || strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) {
 		return ""
 	}
 	if result.StreamInterrupted {
@@ -434,7 +434,7 @@ func ClassifyCircuitError(result core.AttemptResult) string {
 }
 
 func isDefaultCircuitFailure(result core.AttemptResult) bool {
-	if result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) {
+	if result.ClientAborted || strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) {
 		return false
 	}
 	if result.StreamInterrupted {
@@ -471,6 +471,9 @@ func isCircuitConcurrencyLimitResult(result core.AttemptResult) bool {
 }
 
 func isCircuitBalanceInsufficientResult(result core.AttemptResult) bool {
+	if strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted {
+		return false
+	}
 	if strings.TrimSpace(result.ErrorCategory) == "balance_or_quota" {
 		return true
 	}

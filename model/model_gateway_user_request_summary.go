@@ -11,15 +11,16 @@ import (
 )
 
 const (
-	ModelGatewayUserRequestErrorRateLimit         = "rate_limit"
-	ModelGatewayUserRequestErrorTimeout           = "timeout"
-	ModelGatewayUserRequestErrorUpstream          = "upstream_error"
-	ModelGatewayUserRequestErrorStreamInterrupted = "stream_interrupted"
-	ModelGatewayUserRequestErrorServer            = "server_error"
-	ModelGatewayUserRequestErrorClientAborted     = "client_aborted"
-	ModelGatewayUserRequestErrorBalanceOrQuota    = "balance_or_quota"
-	ModelGatewayUserRequestErrorAuthConfig        = "auth_config_error"
-	ModelGatewayUserRequestErrorUnknown           = "unknown"
+	ModelGatewayUserRequestErrorRateLimit          = "rate_limit"
+	ModelGatewayUserRequestErrorTimeout            = "timeout"
+	ModelGatewayUserRequestErrorUpstream           = "upstream_error"
+	ModelGatewayUserRequestErrorStreamInterrupted  = "stream_interrupted"
+	ModelGatewayUserRequestErrorServer             = "server_error"
+	ModelGatewayUserRequestErrorClientAborted      = "client_aborted"
+	ModelGatewayUserRequestErrorBalanceOrQuota     = "balance_or_quota"
+	ModelGatewayUserRequestErrorUserQuotaExhausted = "user_quota_exhausted"
+	ModelGatewayUserRequestErrorAuthConfig         = "auth_config_error"
+	ModelGatewayUserRequestErrorUnknown            = "unknown"
 )
 
 type ModelGatewayUserRequestSummary struct {
@@ -361,6 +362,8 @@ func NormalizeModelGatewayUserRequestErrorCategory(category string, errorCode st
 		return ModelGatewayUserRequestErrorStreamInterrupted
 	case strings.Contains(normalizedCategory, "timeout") || strings.Contains(normalizedCode, "timeout") || statusCode == http.StatusRequestTimeout || statusCode == http.StatusGatewayTimeout:
 		return ModelGatewayUserRequestErrorTimeout
+	case strings.Contains(normalizedCategory, "user_quota"):
+		return ModelGatewayUserRequestErrorUserQuotaExhausted
 	case strings.Contains(normalizedCategory, "balance_or_quota") ||
 		strings.Contains(normalizedCode, "insufficient_user_quota") ||
 		strings.Contains(normalizedCode, "balance_not_enough") ||

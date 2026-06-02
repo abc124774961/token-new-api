@@ -829,7 +829,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				flow.ConfiguredConcurrencyLimit = learned.PreviousLimit
 			}
 		}
-		if service.IsBalanceInsufficientError(newAPIError) && !terminalClientAbort {
+		if service.IsBalanceInsufficientError(newAPIError) && !service.IsLocalUserQuotaError(newAPIError) && !terminalClientAbort {
 			service.MarkChannelRuntimeBalanceSkipped(c, relayRuntimeIdentity(c, channel.Id))
 			service.MarkChannelRuntimeBalanceInsufficient(relayRuntimeIdentity(c, channel.Id))
 			flow.BalanceInsufficient = true
@@ -1481,6 +1481,9 @@ func modelGatewayAttemptFailureScope(result modelgatewaycore.AttemptResult) stri
 	if result.ErrorCategory == modelgatewaycore.ErrorCategoryClientRequestError {
 		return modelgatewaycore.FailureScopeClient
 	}
+	if result.ErrorCategory == modelgatewaycore.ErrorCategoryUserQuotaExhausted {
+		return modelgatewaycore.FailureScopeClient
+	}
 	if result.Success {
 		return ""
 	}
@@ -1571,6 +1574,9 @@ func classifyRelayAttemptError(c *gin.Context, apiErr *types.NewAPIError) string
 	}
 	if apiErr.GetErrorCode() == types.ErrorCodeChannelResponseTimeExceeded {
 		return modelgatewaycore.ErrorCategoryTimeout
+	}
+	if service.IsLocalUserQuotaError(apiErr) {
+		return modelgatewaycore.ErrorCategoryUserQuotaExhausted
 	}
 	if service.IsBalanceInsufficientError(apiErr) {
 		return modelgatewaycore.ErrorCategoryBalanceOrQuota
