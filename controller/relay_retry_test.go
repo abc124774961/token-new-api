@@ -37,6 +37,64 @@ func newRelayRetryContext() *gin.Context {
 	return ctx
 }
 
+func TestReportModelGatewayEarlyFailureRecordsSelectedPlanTerminalError(t *testing.T) {
+	var capturedChannel *model.Channel
+	var capturedAPIError *types.NewAPIError
+	var capturedFlow modelGatewayAttemptFlow
+	oldReporter := reportModelGatewayEarlyFailureAttempt
+	reportModelGatewayEarlyFailureAttempt = func(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, channel *model.Channel, apiErr *types.NewAPIError, flow modelGatewayAttemptFlow) {
+		capturedChannel = channel
+		capturedAPIError = apiErr
+		capturedFlow = flow
+	}
+	t.Cleanup(func() {
+		reportModelGatewayEarlyFailureAttempt = oldReporter
+	})
+
+	ctx := newRelayRetryContext()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	channel := &model.Channel{Id: 22, Name: "plus", Type: constant.ChannelTypeOpenAI}
+	plan := &modelgatewaycore.DispatchPlan{
+		PolicyMode:    modelgatewaycore.ModeActive,
+		SelectedGroup: "codex-plus",
+		Channel:       channel,
+		RuntimeKey: modelgatewaycore.RuntimeKey{
+			ChannelID:      channel.Id,
+			RequestedModel: "gpt-5.5",
+			Group:          "codex-plus",
+			EndpointType:   constant.EndpointTypeOpenAIResponse,
+		},
+	}
+	modelgatewayintegration.SetSelectedPlan(ctx, plan)
+	info := &relaycommon.RelayInfo{
+		RequestId:       "req-early-quota",
+		UserId:          96,
+		TokenId:         33,
+		TokenGroup:      "auto",
+		UsingGroup:      "codex-plus",
+		OriginModelName: "gpt-5.5",
+		RelayMode:       relayconstant.RelayModeResponses,
+		RelayFormat:     types.RelayFormatOpenAI,
+		StartTime:       time.Now().Add(-20 * time.Millisecond),
+	}
+	apiErr := types.NewErrorWithStatusCode(
+		errors.New("用户额度不足"),
+		types.ErrorCodeInsufficientUserQuota,
+		http.StatusForbidden,
+		types.ErrOptionWithSkipRetry(),
+	)
+
+	require.True(t, reportModelGatewayEarlyFailureIfNeeded(ctx, info, nil, apiErr, false))
+	require.Equal(t, channel, capturedChannel)
+	require.Equal(t, apiErr, capturedAPIError)
+	require.Equal(t, modelgatewaycore.ErrorCategoryBalanceOrQuota, capturedFlow.ErrorCategory)
+	require.Equal(t, "stop", capturedFlow.RetryAction)
+	require.False(t, capturedFlow.WillRetry)
+	require.False(t, capturedFlow.BalanceInsufficient)
+	require.Contains(t, capturedFlow.UsedChannels, "22")
+	require.Greater(t, capturedFlow.RelayTotal, time.Duration(0))
+}
+
 func TestRelayTotalDurationWatchdogAppliesOnlySmartStreamingNonSpecificRequests(t *testing.T) {
 	setting := scheduler_setting.DefaultSetting()
 	setting.RelayTotalTimeoutEnabled = true

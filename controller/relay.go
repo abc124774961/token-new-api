@@ -376,8 +376,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer service.ReleaseChannelSelectionReservations(c)
 
 	var (
-		newAPIError *types.NewAPIError
-		ws          *websocket.Conn
+		newAPIError          *types.NewAPIError
+		ws                   *websocket.Conn
+		relayInfo            *relaycommon.RelayInfo
+		retryParam           *service.RetryParam
+		finalAttemptReported bool
 	)
 
 	if relayFormat == types.RelayFormatOpenAIRealtime {
@@ -392,6 +395,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	defer func() {
 		if newAPIError != nil {
+			if reportModelGatewayEarlyFailureIfNeeded(c, relayInfo, retryParam, newAPIError, finalAttemptReported) {
+				finalAttemptReported = true
+			}
 			newAPIError = service.SanitizeClientRelayError(newAPIError)
 			logger.LogError(c, fmt.Sprintf("relay error: %s", newAPIError.Error()))
 			if relayResponseAlreadyStarted(c) {
@@ -428,7 +434,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
-	relayInfo, err := relaycommon.GenRelayInfo(c, relayFormat, request, ws)
+	relayInfo, err = relaycommon.GenRelayInfo(c, relayFormat, request, ws)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
@@ -502,7 +508,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}()
 
-	retryParam := &service.RetryParam{
+	retryParam = &service.RetryParam{
 		Ctx:                    c,
 		TokenGroup:             relayInfo.TokenGroup,
 		ModelName:              relayInfo.OriginModelName,
@@ -513,7 +519,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	logRelayRetryParamTrace(c, relayInfo, retryParam)
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
-	var finalAttemptReported bool
 	var lastModelGatewayPlan *modelgatewaycore.DispatchPlan
 	var lastModelGatewayChannel *model.Channel
 	var lastConcurrencyLimitError *types.NewAPIError
@@ -1185,6 +1190,8 @@ type modelGatewayAttemptFlow struct {
 	RequestBodyStorage             string
 }
 
+var reportModelGatewayEarlyFailureAttempt = reportModelGatewayAttempt
+
 func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, channel *model.Channel, apiErr *types.NewAPIError, flow modelGatewayAttemptFlow) {
 	if c == nil || info == nil || channel == nil {
 		return
@@ -1292,6 +1299,88 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 	result.SwitchReason = modelGatewayAttemptSwitchReason(*result)
 	updateCodexAccountUsageLimitFromRelay(c, channel, apiErr)
 	wrapper.Facade.Report(c, result)
+}
+
+func reportModelGatewayEarlyFailureIfNeeded(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, apiErr *types.NewAPIError, finalAlreadyReported bool) bool {
+	if c == nil || info == nil || apiErr == nil || finalAlreadyReported {
+		return false
+	}
+	plan := selectedModelGatewayPlan(c)
+	if plan == nil {
+		return false
+	}
+	channel := relayEarlyFailureChannel(c, plan)
+	if channel == nil {
+		return false
+	}
+	if retryParam == nil {
+		retryParam = &service.RetryParam{
+			Ctx:                    c,
+			TokenGroup:             info.TokenGroup,
+			ModelName:              info.OriginModelName,
+			EndpointType:           requiredEndpointTypeForRelay(info),
+			RequiresCodexImageTool: requiresCodexImageToolForRelay(info),
+			Retry:                  common.GetPointer(info.RetryIndex),
+		}
+	}
+	clientAbort := relayClientAborted(c, info, apiErr)
+	errorCategory := classifyRelayAttemptError(c, apiErr)
+	retryAction := "stop"
+	if clientAbort {
+		retryAction = "client_aborted"
+	}
+	reportModelGatewayEarlyFailureAttempt(c, info, retryParam, channel, apiErr, modelGatewayAttemptFlow{
+		ErrorCategory: errorCategory,
+		RetryAction:   retryAction,
+		ClientAborted: clientAbort,
+		UsedChannels:  relayEarlyFailureUsedChannels(c, channel),
+		RelayTotal:    modelGatewayRequestDuration(info),
+	})
+	return true
+}
+
+func relayEarlyFailureChannel(c *gin.Context, plan *modelgatewaycore.DispatchPlan) *model.Channel {
+	if plan != nil && plan.Channel != nil {
+		return plan.Channel
+	}
+	if c == nil {
+		return nil
+	}
+	channelID := c.GetInt("channel_id")
+	if channelID <= 0 {
+		channelID = common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+	}
+	if channelID <= 0 {
+		return nil
+	}
+	autoBan := c.GetBool("auto_ban")
+	autoBanInt := 1
+	if !autoBan {
+		autoBanInt = 0
+	}
+	return &model.Channel{
+		Id:      channelID,
+		Type:    c.GetInt("channel_type"),
+		Name:    c.GetString("channel_name"),
+		AutoBan: &autoBanInt,
+	}
+}
+
+func relayEarlyFailureUsedChannels(c *gin.Context, channel *model.Channel) []string {
+	usedChannels := []string{}
+	if c != nil {
+		usedChannels = append(usedChannels, c.GetStringSlice("use_channel")...)
+	}
+	if channel == nil || channel.Id <= 0 {
+		return usedChannels
+	}
+	channelID := fmt.Sprintf("%d", channel.Id)
+	for _, used := range usedChannels {
+		if strings.TrimSpace(used) == channelID {
+			return usedChannels
+		}
+	}
+	return append(usedChannels, channelID)
 }
 
 func updateCodexAccountUsageLimitFromRelay(c *gin.Context, channel *model.Channel, apiErr *types.NewAPIError) {
