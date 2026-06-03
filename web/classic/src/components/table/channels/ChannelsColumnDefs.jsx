@@ -52,6 +52,7 @@ import {
   IconAlertTriangle,
 } from '@douyinfe/semi-icons';
 import { FaRandom } from 'react-icons/fa';
+import { RotateCcw } from 'lucide-react';
 
 // Render functions
 const renderType = (type, record = {}, t) => {
@@ -290,8 +291,14 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
     Math.floor(Date.now() / 1000),
   );
   const [clearingCircuit, setClearingCircuit] = React.useState(false);
+  const [recoveringHealth, setRecoveringHealth] = React.useState(false);
   const failureAvoidance = record?.failure_avoidance;
   const concurrencyCooldown = record?.concurrency_cooldown;
+  const runtimeBalanceCount = Number(
+    record?.runtime_balance_insufficient_count || 0,
+  );
+  const balanceInsufficient =
+    isBalanceInsufficientChannel(record) || runtimeBalanceCount > 0;
   const circuitRemaining = getPauseRemainingSeconds(
     failureAvoidance,
     nowSeconds,
@@ -367,12 +374,32 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
     }
   };
 
-  const statusNode = isBalanceInsufficientChannel(record) ? (
-    <Tag color='red' shape='circle'>
-      {t('余额不足')}
-    </Tag>
-  ) : cooldownActive || anyCircuitActive ? (
+  const recoverHealth = async (event) => {
+    event.stopPropagation();
+    if (recoveringHealth || !record?.id) return;
+    setRecoveringHealth(true);
+    try {
+      const res = await API.post(`/api/channel/${record.id}/recover_health`);
+      if (res?.data?.success) {
+        showSuccess(t('渠道健康状态已恢复'));
+        refresh?.();
+      } else {
+        showError(res?.data?.message || t('恢复健康失败'));
+      }
+    } catch (error) {
+      showError(error);
+    } finally {
+      setRecoveringHealth(false);
+    }
+  };
+
+  const statusNode = balanceInsufficient || cooldownActive || anyCircuitActive ? (
     <Space spacing={4} wrap>
+      {balanceInsufficient && (
+        <Tag color='red' shape='circle'>
+          {t('余额不足')}
+        </Tag>
+      )}
       {cooldownActive && (
         <Tag color='yellow' shape='circle'>
           {t('冷却中')} {cooldownLabel}
@@ -403,6 +430,17 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
           {t('解除')}
         </Button>
       )}
+      {balanceInsufficient && (
+        <Button
+          size='small'
+          type='tertiary'
+          icon={<RotateCcw size={13} />}
+          loading={recoveringHealth}
+          onClick={recoverHealth}
+        >
+          {t('恢复健康')}
+        </Button>
+      )}
     </Space>
   ) : (
     renderStatus(record?.status, record?.channel_info, t)
@@ -426,6 +464,9 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
   }
   if (runtimeCircuitHalfOpen > 0) {
     tooltipLines.push(`${t('半开探测')}: ${runtimeCircuitHalfOpen}`);
+  }
+  if (runtimeBalanceCount > 0) {
+    tooltipLines.push(`${t('运行态余额不足')}: ${runtimeBalanceCount}`);
   }
   if (reason) {
     tooltipLines.push(`${t('原因：')}${reason}`);
@@ -1096,6 +1137,21 @@ export const getChannelsColumns = ({
       render: (text, record, index) => {
         if (record.children === undefined) {
           const upstreamUpdateMeta = getUpstreamUpdateMeta(record);
+          const recoverChannelHealth = async () => {
+            try {
+              const res = await API.post(
+                `/api/channel/${record.id}/recover_health`,
+              );
+              if (res?.data?.success) {
+                showSuccess(t('渠道健康状态已恢复'));
+                refresh?.();
+              } else {
+                showError(res?.data?.message || t('恢复健康失败'));
+              }
+            } catch (error) {
+              showError(error);
+            }
+          };
           const moreMenuItems = [
             {
               node: 'item',
@@ -1104,6 +1160,12 @@ export const getChannelsColumns = ({
               onClick: () => {
                 window.location.href = `/console/channel/accounts?channel_id=${record.id}`;
               },
+            },
+            {
+              node: 'item',
+              name: t('恢复健康'),
+              type: 'tertiary',
+              onClick: recoverChannelHealth,
             },
             {
               node: 'item',

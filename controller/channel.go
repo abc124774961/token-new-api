@@ -76,12 +76,13 @@ func clearChannelInfo(channel *model.Channel) {
 
 type channelResponse struct {
 	*model.Channel
-	FailureAvoidance    *service.ChannelFailureAvoidanceStatus   `json:"failure_avoidance,omitempty"`
-	ConcurrencyCooldown *service.ChannelConcurrencyControlStatus `json:"concurrency_cooldown,omitempty"`
-	RuntimeCircuit      *channelRuntimeCircuitStatus             `json:"runtime_circuit,omitempty"`
-	StatusReason        string                                   `json:"status_reason,omitempty"`
-	BalanceInsufficient bool                                     `json:"balance_insufficient"`
-	UpstreamCostDisplay *channelUpstreamCostDisplay              `json:"upstream_cost_display,omitempty"`
+	FailureAvoidance                *service.ChannelFailureAvoidanceStatus   `json:"failure_avoidance,omitempty"`
+	ConcurrencyCooldown             *service.ChannelConcurrencyControlStatus `json:"concurrency_cooldown,omitempty"`
+	RuntimeCircuit                  *channelRuntimeCircuitStatus             `json:"runtime_circuit,omitempty"`
+	StatusReason                    string                                   `json:"status_reason,omitempty"`
+	BalanceInsufficient             bool                                     `json:"balance_insufficient"`
+	RuntimeBalanceInsufficientCount int                                      `json:"runtime_balance_insufficient_count,omitempty"`
+	UpstreamCostDisplay             *channelUpstreamCostDisplay              `json:"upstream_cost_display,omitempty"`
 }
 
 type channelRuntimeCircuitStatus struct {
@@ -130,10 +131,11 @@ func buildChannelResponse(channel *model.Channel) *channelResponse {
 	}
 	costDisplays := buildChannelCostDisplays([]*model.Channel{channel})
 	circuitDisplays := buildChannelRuntimeCircuitDisplays([]*model.Channel{channel})
-	return buildChannelResponseWithDisplays(channel, costDisplays[channel.Id], circuitDisplays[channel.Id])
+	balanceCounts := service.RuntimeBalanceInsufficientChannelCounts()
+	return buildChannelResponseWithDisplays(channel, costDisplays[channel.Id], circuitDisplays[channel.Id], balanceCounts[channel.Id])
 }
 
-func buildChannelResponseWithDisplays(channel *model.Channel, costDisplay *channelUpstreamCostDisplay, circuitStatus *channelRuntimeCircuitStatus) *channelResponse {
+func buildChannelResponseWithDisplays(channel *model.Channel, costDisplay *channelUpstreamCostDisplay, circuitStatus *channelRuntimeCircuitStatus, runtimeBalanceCount int) *channelResponse {
 	if channel == nil {
 		return nil
 	}
@@ -141,13 +143,14 @@ func buildChannelResponseWithDisplays(channel *model.Channel, costDisplay *chann
 	channel.CostPerMillion = nil
 	statusReason := service.ChannelStatusReason(channel)
 	return &channelResponse{
-		Channel:             channel,
-		FailureAvoidance:    service.GetChannelFailureAvoidanceStatus(channel.Id),
-		ConcurrencyCooldown: service.GetChannelConcurrencyCooldownStatus(channel.Id),
-		RuntimeCircuit:      circuitStatus,
-		StatusReason:        statusReason,
-		BalanceInsufficient: service.IsKnownBalanceInsufficientChannel(channel),
-		UpstreamCostDisplay: costDisplay,
+		Channel:                         channel,
+		FailureAvoidance:                service.GetChannelFailureAvoidanceStatus(channel.Id),
+		ConcurrencyCooldown:             service.GetChannelConcurrencyCooldownStatus(channel.Id),
+		RuntimeCircuit:                  circuitStatus,
+		StatusReason:                    statusReason,
+		BalanceInsufficient:             service.IsKnownBalanceInsufficientChannel(channel) || runtimeBalanceCount > 0,
+		RuntimeBalanceInsufficientCount: runtimeBalanceCount,
+		UpstreamCostDisplay:             costDisplay,
 	}
 }
 
@@ -155,8 +158,9 @@ func buildChannelResponses(channels []*model.Channel) []*channelResponse {
 	responses := make([]*channelResponse, 0, len(channels))
 	costDisplays := buildChannelCostDisplays(channels)
 	circuitDisplays := buildChannelRuntimeCircuitDisplays(channels)
+	balanceCounts := service.RuntimeBalanceInsufficientChannelCounts()
 	for _, channel := range channels {
-		responses = append(responses, buildChannelResponseWithDisplays(channel, costDisplays[channel.Id], circuitDisplays[channel.Id]))
+		responses = append(responses, buildChannelResponseWithDisplays(channel, costDisplays[channel.Id], circuitDisplays[channel.Id], balanceCounts[channel.Id]))
 	}
 	return responses
 }
@@ -176,7 +180,7 @@ func buildChannelRuntimeCircuitDisplays(channels []*model.Channel) map[int]*chan
 	if len(channelIDs) == 0 {
 		return displays
 	}
-	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	runtimeDeps := modelgatewayintegration.CurrentDefaultRuntimeObservabilityDeps()
 	if runtimeDeps == nil || runtimeDeps.CircuitBreaker == nil {
 		return displays
 	}
@@ -969,6 +973,170 @@ func ClearChannelFailureAvoidance(c *gin.Context) {
 	service.ClearChannelFailureAvoidance(id)
 	common.ApiSuccess(c, gin.H{
 		"id": id,
+	})
+}
+
+type ChannelHealthRecoverResponse struct {
+	ChannelID                       int  `json:"channel_id"`
+	ChannelStatus                   int  `json:"channel_status"`
+	RuntimeCircuitsCleared          int  `json:"runtime_circuits_cleared"`
+	RuntimeSnapshotsUpdated         int  `json:"runtime_snapshots_updated"`
+	RuntimeCooldownSnapshotsUpdated int  `json:"runtime_cooldown_snapshots_updated"`
+	FailureAvoidanceCleared         int  `json:"failure_avoidance_cleared"`
+	ConcurrencyCooldownCleared      bool `json:"concurrency_cooldown_cleared"`
+	RuntimeBalanceCleared           int  `json:"runtime_balance_cleared"`
+	BalanceMarkerCleared            bool `json:"balance_marker_cleared"`
+	MultiKeyBalanceCleared          int  `json:"multi_key_balance_cleared"`
+	StatusUpdated                   bool `json:"status_updated"`
+}
+
+func clearChannelMultiKeyBalanceInsufficient(channel *model.Channel) (int, bool, error) {
+	if channel == nil || !channel.ChannelInfo.IsMultiKey {
+		return 0, false, nil
+	}
+	lock := model.GetChannelPollingLock(channel.Id)
+	lock.Lock()
+	defer lock.Unlock()
+
+	keys := channel.GetKeys()
+	if len(keys) == 0 {
+		return 0, false, nil
+	}
+	if channel.ChannelInfo.MultiKeyStatusList == nil {
+		channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
+	}
+	changed := false
+	cleared := 0
+	if channel.ChannelInfo.MultiKeyDisabledReason != nil {
+		for credentialIndex, reason := range channel.ChannelInfo.MultiKeyDisabledReason {
+			if !service.IsBalanceInsufficientStatusReason(reason) {
+				continue
+			}
+			delete(channel.ChannelInfo.MultiKeyStatusList, credentialIndex)
+			delete(channel.ChannelInfo.MultiKeyDisabledReason, credentialIndex)
+			if channel.ChannelInfo.MultiKeyDisabledTime != nil {
+				delete(channel.ChannelInfo.MultiKeyDisabledTime, credentialIndex)
+			}
+			changed = true
+			cleared++
+		}
+	}
+	if !changed {
+		return 0, false, nil
+	}
+
+	enabledCount := 0
+	for i := range keys {
+		status := common.ChannelStatusEnabled
+		if value, ok := channel.ChannelInfo.MultiKeyStatusList[i]; ok {
+			status = value
+		}
+		if status == common.ChannelStatusEnabled {
+			enabledCount++
+		}
+	}
+
+	statusUpdated := false
+	info := channel.GetOtherInfo()
+	statusReason, _ := info["status_reason"].(string)
+	if enabledCount > 0 && channel.Status == common.ChannelStatusAutoDisabled &&
+		(strings.TrimSpace(statusReason) == "" ||
+			service.IsBalanceInsufficientStatusReason(statusReason) ||
+			strings.TrimSpace(statusReason) == channelBalanceAllAccountsDisabledReason) {
+		channel.Status = common.ChannelStatusEnabled
+		delete(info, "status_reason")
+		delete(info, "status_time")
+		channel.SetOtherInfo(info)
+		statusUpdated = true
+	}
+
+	if err := channel.SaveWithoutKey(); err != nil {
+		common.SysLog(fmt.Sprintf("failed to clear channel balance insufficient state: channel_id=%d, error=%s", channel.Id, err.Error()))
+		return 0, false, err
+	}
+	if common.MemoryCacheEnabled {
+		model.CacheUpdateChannel(channel)
+	}
+	if statusUpdated {
+		_ = model.UpdateAbilityStatus(channel.Id, true)
+	}
+	return cleared, statusUpdated, nil
+}
+
+func RecoverChannelHealth(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	channel, err := model.GetChannelById(id, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	wasBalancePaused := service.IsBalanceInsufficientPausedChannel(channel)
+	wasBalanceReason := service.IsBalanceInsufficientStatusReason(service.ChannelStatusReason(channel))
+	wasConfirmedBalance := service.IsConfirmedBalanceInsufficientChannel(channel)
+
+	runtimeDeps := modelgatewayintegration.CurrentDefaultRuntimeObservabilityDeps()
+	filter := ModelGatewayRuntimeKey{ChannelID: id}
+	matchedKeys := modelGatewayRuntimeCircuitClearKeys(runtimeDeps, id, filter)
+	circuitsCleared := 0
+	if runtimeDeps != nil && runtimeDeps.CircuitBreaker != nil {
+		circuitsCleared = runtimeDeps.CircuitBreaker.ResetChannel(id)
+	}
+	runtimeSnapshotsUpdated := modelGatewayClearRuntimeCircuitSnapshots(runtimeDeps, matchedKeys, true)
+	runtimeCooldownSnapshotsUpdated := modelGatewayClearRuntimeCooldownSnapshots(runtimeDeps, matchedKeys)
+	concurrencyCooldownCleared := service.ClearChannelConcurrencyCooldown(id)
+	service.ClearChannelFailureAvoidance(id)
+	runtimeBalanceCleared := service.ClearChannelBalanceInsufficientForChannel(id)
+	balanceMarkerCleared := false
+	if wasConfirmedBalance {
+		balanceMarkerCleared = model.ClearChannelBalanceInsufficientMarker(id)
+		if balanceMarkerCleared {
+			channel.BalanceUpdatedTime = 0
+		}
+	}
+
+	multiKeyBalanceCleared := 0
+	statusUpdated := false
+	if channel.ChannelInfo.IsMultiKey {
+		multiKeyBalanceCleared, statusUpdated, err = clearChannelMultiKeyBalanceInsufficient(channel)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+
+	if wasBalancePaused {
+		if model.UpdateChannelStatusWholeChannelWithInfo(id, common.ChannelStatusEnabled, "", nil) {
+			statusUpdated = true
+		}
+		channel.Status = common.ChannelStatusEnabled
+	} else if wasBalanceReason {
+		if model.UpdateChannelStatusWholeChannelWithInfo(id, channel.Status, "", nil) {
+			statusUpdated = true
+		}
+	}
+
+	if statusUpdated || balanceMarkerCleared || runtimeBalanceCleared > 0 || concurrencyCooldownCleared || circuitsCleared > 0 || runtimeSnapshotsUpdated > 0 || runtimeCooldownSnapshotsUpdated > 0 || multiKeyBalanceCleared > 0 {
+		model.InitChannelCache()
+		modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	}
+
+	common.ApiSuccess(c, ChannelHealthRecoverResponse{
+		ChannelID:                       id,
+		ChannelStatus:                   channel.Status,
+		RuntimeCircuitsCleared:          circuitsCleared,
+		RuntimeSnapshotsUpdated:         runtimeSnapshotsUpdated,
+		RuntimeCooldownSnapshotsUpdated: runtimeCooldownSnapshotsUpdated,
+		FailureAvoidanceCleared:         1,
+		ConcurrencyCooldownCleared:      concurrencyCooldownCleared,
+		RuntimeBalanceCleared:           runtimeBalanceCleared,
+		BalanceMarkerCleared:            balanceMarkerCleared,
+		MultiKeyBalanceCleared:          multiKeyBalanceCleared,
+		StatusUpdated:                   statusUpdated,
 	})
 }
 

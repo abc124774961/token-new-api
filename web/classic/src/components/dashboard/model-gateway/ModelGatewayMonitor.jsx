@@ -94,7 +94,8 @@ import './model-gateway.css';
 
 const DEFAULT_HOURS = 24;
 const RECENT_LIMIT = 50;
-const USER_REQUEST_PAGE_SIZE = 20;
+const DEFAULT_USER_REQUEST_PAGE_SIZE = 50;
+const USER_REQUEST_PAGE_SIZE_OPTIONS = [20, 50, 100, 200];
 const TOP_N = 10;
 const STICKY_STORE_LIMIT = 100;
 const WINDOW_OPTIONS = [1, 6, 24, 72, 168];
@@ -4793,6 +4794,8 @@ function UserRequestRecentTable({
   onOpenDispatchDetail,
   onOpenScoreHistory,
   dispatchDetailLoading,
+  pageSize = DEFAULT_USER_REQUEST_PAGE_SIZE,
+  onPageSizeChange,
 }) {
   const [nowSeconds, setNowSeconds] = useState(() =>
     Math.floor(Date.now() / 1000),
@@ -4822,14 +4825,11 @@ function UserRequestRecentTable({
         .sort(compareUserRequestsForDisplay),
     [query, records, showHealthProbes],
   );
-  const totalPages = Math.max(
-    1,
-    Math.ceil(filteredItems.length / USER_REQUEST_PAGE_SIZE),
-  );
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageItems = filteredItems.slice(
-    (currentPage - 1) * USER_REQUEST_PAGE_SIZE,
-    currentPage * USER_REQUEST_PAGE_SIZE,
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
   );
 
   useEffect(() => {
@@ -4845,6 +4845,15 @@ function UserRequestRecentTable({
       setPage(Math.min(totalPages, Math.max(1, nextPage)));
     },
     [totalPages],
+  );
+  const handlePageSizeChange = useCallback(
+    (value) => {
+      const nextPageSize = Number(value);
+      if (!Number.isFinite(nextPageSize) || nextPageSize <= 0) return;
+      onPageSizeChange(nextPageSize);
+      setPage(1);
+    },
+    [onPageSizeChange],
   );
   const submitJumpPage = useCallback(() => {
     const nextPage = Number(jumpPage);
@@ -5174,9 +5183,18 @@ function UserRequestRecentTable({
 
       <div className='ct-model-gateway-user-request-pagination'>
         <span>{t('共 {{count}} 条', { count: filteredItems.length })}</span>
-        <div className='ct-model-gateway-user-request-page-size'>
-          {USER_REQUEST_PAGE_SIZE} {t('条/页')}
-        </div>
+        <Select
+          value={pageSize}
+          onChange={handlePageSizeChange}
+          className='ct-model-gateway-user-request-page-size-select'
+          size='small'
+        >
+          {USER_REQUEST_PAGE_SIZE_OPTIONS.map((option) => (
+            <Select.Option key={option} value={option}>
+              {option} {t('条/页')}
+            </Select.Option>
+          ))}
+        </Select>
         <div className='ct-model-gateway-user-request-page-actions'>
           <Button
             size='small'
@@ -5246,6 +5264,8 @@ function UserRequestDashboard({
   onOpenScoreHistory,
   dispatchDetailLoading,
   dynamicRefreshCountdown,
+  userRequestPageSize,
+  onUserRequestPageSizeChange,
 }) {
   const userRequests = data?.user_requests || {};
   const summary = userRequests.summary || {};
@@ -5398,6 +5418,8 @@ function UserRequestDashboard({
         onOpenDispatchDetail={onOpenDispatchDetail}
         onOpenScoreHistory={onOpenScoreHistory}
         dispatchDetailLoading={dispatchDetailLoading}
+        pageSize={userRequestPageSize}
+        onPageSizeChange={onUserRequestPageSizeChange}
       />
     </div>
   );
@@ -10481,6 +10503,7 @@ function CandidateExplanationCard({
   t,
 }) {
   const [clearingCircuit, setClearingCircuit] = useState(false);
+  const [recoveringHealth, setRecoveringHealth] = useState(false);
   const sampleCount = Number(candidate?.sample_count || 0);
   const hasRealSamples = sampleCount > 0;
   const allScoreItems = normalizeScoreItemsForDisplay(candidate?.score_items);
@@ -10665,6 +10688,27 @@ function CandidateExplanationCard({
     }
   };
 
+  const recoverChannelHealth = async () => {
+    const channelID = Number(
+      candidate?.channel_id || candidate?.runtime_key?.channel_id || 0,
+    );
+    if (!channelID || recoveringHealth) return;
+    setRecoveringHealth(true);
+    try {
+      const res = await API.post(`/api/channel/${channelID}/recover_health`);
+      if (res?.data?.success) {
+        Toast.success(t('渠道健康状态已恢复'));
+        onRuntimeCircuitCleared?.();
+      } else {
+        showError(res?.data?.message || t('恢复健康失败'));
+      }
+    } catch (error) {
+      showError(error);
+    } finally {
+      setRecoveringHealth(false);
+    }
+  };
+
   return (
     <div
       className={`ct-model-gateway-candidate-card${
@@ -10700,6 +10744,18 @@ function CandidateExplanationCard({
               </Tag>
             </Tooltip>
           )}
+          {balanceInsufficient ? (
+            <Button
+              icon={<RotateCcw size={13} />}
+              size='small'
+              theme='borderless'
+              type='tertiary'
+              loading={recoveringHealth}
+              onClick={recoverChannelHealth}
+            >
+              {t('恢复健康')}
+            </Button>
+          ) : null}
           {available && !balanceInsufficient && (
             <Tag color='green' type='light' size='small'>
               {t('可用')}
@@ -12483,6 +12539,10 @@ export default function ModelGatewayMonitor() {
   const [stickyRefreshToken, setStickyRefreshToken] = useState(0);
   const [viewMode, setViewMode] = useState(VIEW_MODES.USER_REQUESTS);
   const [filtersVisible, setFiltersVisible] = useState(false);
+  const [userRequestPageSize, setUserRequestPageSize] = useState(
+    DEFAULT_USER_REQUEST_PAGE_SIZE,
+  );
+  const userRequestRecentLimit = Math.max(RECENT_LIMIT, userRequestPageSize);
   const {
     data,
     loading,
@@ -12496,7 +12556,7 @@ export default function ModelGatewayMonitor() {
     hours,
     trendBucket,
     defaultTrendBucket: DEFAULT_TREND_BUCKET,
-    recentLimit: RECENT_LIMIT,
+    recentLimit: userRequestRecentLimit,
     topN: TOP_N,
     appliedFilters,
     viewMode,
@@ -13284,6 +13344,8 @@ export default function ModelGatewayMonitor() {
           onOpenScoreHistory={openScoreHistory}
           dispatchDetailLoading={dispatchDetailLoading}
           dynamicRefreshCountdown={dynamicRefreshCountdown}
+          userRequestPageSize={userRequestPageSize}
+          onUserRequestPageSizeChange={setUserRequestPageSize}
         />
       ) : viewMode === VIEW_MODES.OPERATIONS ? (
         <OperationsDashboard

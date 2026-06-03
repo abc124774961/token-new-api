@@ -274,7 +274,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			default:
 			}
 
-			ticker.Reset(streamingTimeout)
 			data := scanner.Text()
 			if common.DebugEnabled {
 				println(data)
@@ -301,6 +300,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 
 				select {
 				case dataChan <- data:
+					ticker.Reset(streamingTimeout)
 				case <-ctx.Done():
 					return
 				case <-stopChan:

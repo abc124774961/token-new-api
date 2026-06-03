@@ -156,6 +156,30 @@ func ClearChannelRuntimeBalanceInsufficient(identity ChannelRuntimeIdentity) {
 	channelRuntimeBalanceInsufficient.Delete(identity.AccountScope())
 }
 
+func ClearChannelBalanceInsufficientForChannel(channelID int) int {
+	if channelID <= 0 {
+		return 0
+	}
+	cleared := 0
+	if _, ok := channelBalanceInsufficientRuntime.Load(channelID); ok {
+		channelBalanceInsufficientRuntime.Delete(channelID)
+		cleared++
+	}
+	channelRuntimeBalanceInsufficient.Range(func(key, value any) bool {
+		identity, ok := key.(ChannelRuntimeIdentity)
+		if !ok {
+			channelRuntimeBalanceInsufficient.Delete(key)
+			return true
+		}
+		if identity.Normalize().ChannelID == channelID {
+			channelRuntimeBalanceInsufficient.Delete(key)
+			cleared++
+		}
+		return true
+	})
+	return cleared
+}
+
 func IsRuntimeBalanceInsufficientChannelID(channelID int) bool {
 	if channelID <= 0 {
 		return false
@@ -198,6 +222,52 @@ func runtimeBalanceEntryActive(identity ChannelRuntimeIdentity) bool {
 
 func IsRuntimeBalanceInsufficientChannel(channel *model.Channel) bool {
 	return channel != nil && IsRuntimeBalanceInsufficientChannelID(channel.Id)
+}
+
+func RuntimeBalanceInsufficientChannelCounts() map[int]int {
+	counts := make(map[int]int)
+	now := time.Now()
+	channelBalanceInsufficientRuntime.Range(func(key, value any) bool {
+		channelID, ok := key.(int)
+		if !ok {
+			channelBalanceInsufficientRuntime.Delete(key)
+			return true
+		}
+		until, ok := value.(time.Time)
+		if !ok || !until.After(now) {
+			channelBalanceInsufficientRuntime.Delete(key)
+			return true
+		}
+		counts[channelID]++
+		return true
+	})
+	channelRuntimeBalanceInsufficient.Range(func(key, value any) bool {
+		identity, ok := key.(ChannelRuntimeIdentity)
+		if !ok {
+			channelRuntimeBalanceInsufficient.Delete(key)
+			return true
+		}
+		identity = identity.Normalize()
+		if !identity.Valid() {
+			channelRuntimeBalanceInsufficient.Delete(key)
+			return true
+		}
+		until, ok := value.(time.Time)
+		if !ok || !until.After(now) {
+			channelRuntimeBalanceInsufficient.Delete(key)
+			return true
+		}
+		counts[identity.ChannelID]++
+		return true
+	})
+	return counts
+}
+
+func RuntimeBalanceInsufficientCountForChannel(channelID int) int {
+	if channelID <= 0 {
+		return 0
+	}
+	return RuntimeBalanceInsufficientChannelCounts()[channelID]
 }
 
 func ShouldDisableChannel(err *types.NewAPIError) bool {

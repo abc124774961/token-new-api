@@ -625,6 +625,17 @@ func GetChannelConcurrencyCooldownStatus(channelID int) *ChannelConcurrencyContr
 	}
 }
 
+func ClearChannelConcurrencyCooldown(channelID int) bool {
+	if channelID <= 0 {
+		return false
+	}
+	if _, ok := channelConcurrencyControl.Load(channelID); !ok {
+		return false
+	}
+	channelConcurrencyControl.Delete(channelID)
+	return true
+}
+
 func RecordChannelConcurrencyCooldown(channelID int, err *types.NewAPIError) {
 	if channelID <= 0 || err == nil {
 		return

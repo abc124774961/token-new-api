@@ -547,6 +547,75 @@ func TestStreamScannerHandler_StreamStatus_Timeout(t *testing.T) {
 	assert.False(t, info.StreamStatus.IsNormalEnd())
 }
 
+func TestStreamScannerHandler_KeepaliveLinesDoNotExtendTimeout(t *testing.T) {
+	// Not parallel: modifies global constant.StreamingTimeout
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 1
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	pr, pw := io.Pipe()
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		defer pw.Close()
+
+		if _, err := fmt.Fprint(pw, "data: {\"id\":1}\n"); err != nil {
+			return
+		}
+
+		lines := []string{
+			": upstream heartbeat\n",
+			"\n",
+			"event: ping\n",
+			"id: 123\n",
+			"data: \n",
+		}
+		deadline := time.Now().Add(3 * time.Second)
+		for i := 0; time.Now().Before(deadline); i++ {
+			time.Sleep(100 * time.Millisecond)
+			if _, err := fmt.Fprint(pw, lines[i%len(lines)]); err != nil {
+				return
+			}
+		}
+	}()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	resp := &http.Response{Body: pr}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+
+	var count atomic.Int64
+	done := make(chan struct{})
+	start := time.Now()
+	go func() {
+		StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
+			count.Add(1)
+		})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(4 * time.Second):
+		t.Fatal("keepalive lines kept the stream alive past the timeout")
+	}
+
+	select {
+	case <-writerDone:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("writer did not stop after scanner closed the upstream body")
+	}
+
+	require.NotNil(t, info.StreamStatus)
+	assert.Equal(t, relaycommon.StreamEndReasonTimeout, info.StreamStatus.EndReason)
+	assert.False(t, info.StreamStatus.IsNormalEnd())
+	assert.Equal(t, int64(1), count.Load())
+	assert.Equal(t, 1, info.ReceivedResponseCount)
+	assert.Less(t, time.Since(start), 2500*time.Millisecond)
+}
+
 func TestStreamScannerHandler_ClientGoneClosesUpstreamBodyPromptly(t *testing.T) {
 	// Not parallel: modifies global constant.StreamingTimeout
 	oldTimeout := constant.StreamingTimeout

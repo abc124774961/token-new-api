@@ -1850,16 +1850,20 @@
   box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.18);
 }
 
-.ct-model-gateway-user-request-page-size {
-  display: inline-flex;
-  height: 30px;
-  align-items: center;
-  border: 1px solid rgba(213, 222, 235, 0.95);
-  border-radius: 7px;
-  padding: 0 14px;
-  color: #172033;
-  background: #fff;
+.ct-model-gateway-user-request-page-size-select {
+  width: 104px;
+  flex: 0 0 auto;
+}
+
+.ct-model-gateway-user-request-page-size-select .semi-select-selection {
   font-weight: 700;
+  color: #172033;
+}
+
+.ct-model-gateway-user-request-page-size-select.semi-select {
+  height: 30px;
+  border-radius: 7px;
+  background: #fff;
 }
 
 .ct-model-gateway-user-request-page-jump {

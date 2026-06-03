@@ -94,6 +94,7 @@ const CHANNEL_ACCOUNT_IMPORT_FILE_ACCEPT =
 const XAUTO_NEWAPI_PACKAGE_TYPE = 'newapi-channel-files';
 const CHANNEL_ACCOUNT_RECONCILE_CACHE_TTL_MS = 30 * 1000;
 const CHANNEL_ACCOUNT_TEST_MODEL = 'gpt-5.5';
+const CHANNEL_ACCOUNT_IMPORT_DEFAULT_MAX_CONCURRENCY = 6;
 
 function unwrapApiData(response) {
   return response?.data?.data || response?.data || {};
@@ -782,10 +783,16 @@ class ChannelAccountImportFileQueue {
 }
 
 class ChannelAccountImportSubmission {
-  constructor({ credentials, files, onlyNew }) {
+  constructor({
+    credentials,
+    files,
+    onlyNew,
+    maxConcurrency = CHANNEL_ACCOUNT_IMPORT_DEFAULT_MAX_CONCURRENCY,
+  }) {
     this.credentials = stringsTrim(credentials);
     this.files = files || [];
     this.onlyNew = Boolean(onlyNew);
+    this.maxConcurrency = Math.max(0, Number(maxConcurrency || 0));
   }
 
   hasInput() {
@@ -800,6 +807,7 @@ class ChannelAccountImportSubmission {
           credentials: this.credentials,
           credential_list: parsedFiles.credentials,
           only_new: this.onlyNew,
+          max_concurrency: this.maxConcurrency,
         },
         config: undefined,
       };
@@ -810,6 +818,7 @@ class ChannelAccountImportSubmission {
         body: {
           credentials: this.credentials,
           only_new: this.onlyNew,
+          max_concurrency: this.maxConcurrency,
         },
         config: undefined,
       };
@@ -818,6 +827,7 @@ class ChannelAccountImportSubmission {
     const form = new FormData();
     form.append('credentials', this.credentials);
     form.append('only_new', String(this.onlyNew));
+    form.append('max_concurrency', String(this.maxConcurrency));
     parsedFiles.credentials.forEach((credential) => {
       form.append('credential_list', credential);
     });
@@ -4844,6 +4854,7 @@ function ChannelAccount() {
       credentials: importCredentials,
       files: importFileList,
       onlyNew: importOnlyNew,
+      maxConcurrency: CHANNEL_ACCOUNT_IMPORT_DEFAULT_MAX_CONCURRENCY,
     });
     if (!submission.hasInput()) {
       showError(t('请先输入账号凭证'));

@@ -59,6 +59,15 @@ func TestBuildProbeRequestUsesStreaming(t *testing.T) {
 	geminiCtx, _ := newProbeGinContext(context.Background(), "probe-stream-gemini", geminiPath)
 	require.True(t, geminiRequest.IsStream(geminiCtx))
 
+	imagePath := requestPathForEndpoint(constant.EndpointTypeImageGeneration, "gpt-image-2")
+	require.Equal(t, "/v1/images/generations", imagePath)
+	imageRequest, ok := buildProbeRequest("gpt-image-2", constant.EndpointTypeImageGeneration).(*dto.ImageRequest)
+	require.True(t, ok)
+	require.Equal(t, "gpt-image-2", imageRequest.Model)
+	require.NotEmpty(t, imageRequest.Prompt)
+	require.NotNil(t, imageRequest.N)
+	require.Equal(t, uint(1), *imageRequest.N)
+
 	require.Equal(
 		t,
 		constant.EndpointTypeOpenAIResponse,
@@ -94,6 +103,24 @@ func TestProbeEndpointTypeHonorsExplicitCodexResponsesProfile(t *testing.T) {
 	info.RequestURLPath = "/v1/responses"
 	info.InitChannelMeta(ctx)
 	require.True(t, request.IsStream(ctx))
+}
+
+func TestProbeEndpointTypeUsesImageGenerationForImageModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	settings := dto.ChannelOtherSettings{
+		ProviderProfile: modelgatewayprovider.ProfileOpenAICodex,
+		ProxyProfile:    modelgatewayprovider.ProxyModeNativeResponses,
+	}
+	settingsBytes, err := common.Marshal(settings)
+	require.NoError(t, err)
+	channel := &model.Channel{
+		Type:          constant.ChannelTypeOpenAI,
+		OtherSettings: string(settingsBytes),
+	}
+
+	require.Equal(t, constant.EndpointTypeImageGeneration, endpointTypeForProbe(channel, "gpt-image-2"))
+	require.Equal(t, constant.EndpointTypeImageGeneration, probeEndpointType(channel, "gpt-image-2", constant.EndpointTypeImageGeneration))
+	require.Equal(t, types.RelayFormat(types.RelayFormatOpenAIImage), relayFormatForEndpoint(constant.EndpointTypeImageGeneration))
 }
 
 func TestBuildProbeRequestUsesPromptLibraryCategory(t *testing.T) {

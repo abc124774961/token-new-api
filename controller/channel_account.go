@@ -36,6 +36,7 @@ const channelAccountAuthReauthorizationPendingReason = "auth_reauthorization_pen
 const channelAccountImportMaxFileBytes int64 = 32 << 20
 const channelAccountImportMaxZipEntryBytes int64 = 4 << 20
 const channelAccountImportMaxZipEntries = 1000
+const channelAccountImportDefaultMaxConcurrency = 6
 const channelAccountDefaultPageSize = 20
 const channelAccountMaxPageSize = 100
 
@@ -332,6 +333,7 @@ type ImportChannelAccountsRequest struct {
 	Credentials    string   `json:"credentials"`
 	CredentialList []string `json:"credential_list,omitempty"`
 	OnlyNew        bool     `json:"only_new"`
+	MaxConcurrency *int     `json:"max_concurrency,omitempty"`
 }
 
 type ChannelAccountImportParser struct {
@@ -743,7 +745,7 @@ func ImportChannelAccounts(c *gin.Context) {
 		return
 	}
 
-	operation, err := importChannelAccounts(channelID, request.Credentials, request.CredentialList, request.OnlyNew)
+	operation, err := importChannelAccounts(channelID, request.Credentials, request.CredentialList, request.OnlyNew, request.MaxConcurrency)
 	if err != nil {
 		common.ApiErrorMsg(c, err.Error())
 		return
@@ -1031,6 +1033,13 @@ func (parser *ChannelAccountImportParser) parseMultipart() (ImportChannelAccount
 	if values := form.Value["only_new"]; len(values) > 0 {
 		request.OnlyNew = channelAccountImportBool(values[len(values)-1])
 	}
+	if values := form.Value["max_concurrency"]; len(values) > 0 {
+		limit, err := channelAccountImportNonNegativeInt(values[len(values)-1])
+		if err != nil {
+			return request, err
+		}
+		request.MaxConcurrency = &limit
+	}
 
 	for _, files := range form.File {
 		for _, fileHeader := range files {
@@ -1269,6 +1278,17 @@ func readChannelAccountImportBytes(reader io.Reader, maxBytes int64) ([]byte, er
 func channelAccountImportBool(value string) bool {
 	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
 	return err == nil && parsed
+}
+
+func channelAccountImportNonNegativeInt(value string) (int, error) {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return 0, fmt.Errorf("账号并发上限无效")
+	}
+	if parsed < 0 {
+		return 0, fmt.Errorf("账号并发上限不能小于 0")
+	}
+	return parsed, nil
 }
 
 func parseChannelAccountBoolQuery(value string) bool {
@@ -3507,9 +3527,16 @@ type normalizedChannelAccountCredentials struct {
 	SkippedBlankInput int
 }
 
-func importChannelAccounts(channelID int, credentials string, credentialList []string, onlyNew bool) (*ChannelAccountOperation, error) {
+func importChannelAccounts(channelID int, credentials string, credentialList []string, onlyNew bool, maxConcurrency *int) (*ChannelAccountOperation, error) {
 	if channelID <= 0 {
 		return nil, fmt.Errorf("渠道不存在")
+	}
+	importMaxConcurrency := channelAccountImportDefaultMaxConcurrency
+	if maxConcurrency != nil {
+		importMaxConcurrency = *maxConcurrency
+		if importMaxConcurrency < 0 {
+			return nil, fmt.Errorf("账号并发上限不能小于 0")
+		}
 	}
 	normalizedCredentials := normalizeChannelAccountCredentialLines(credentials, credentialList)
 	if len(normalizedCredentials.Keys) == 0 {
@@ -3563,6 +3590,11 @@ func importChannelAccounts(channelID int, credentials string, credentialList []s
 	channel.ChannelInfo.MultiKeySize = len(nextKeys)
 	if channel.ChannelInfo.IsMultiKey && channel.ChannelInfo.MultiKeyMode == "" {
 		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyModeRandom
+	}
+	if importMaxConcurrency > 0 {
+		for _, index := range addedIndexes {
+			setChannelAccountMaxConcurrency(channel, index, importMaxConcurrency)
+		}
 	}
 	cleanupChannelAccountStatusMaps(channel, len(nextKeys))
 	if err := assignCodexApplicationEnvironments(channel, addedIndexes); err != nil {

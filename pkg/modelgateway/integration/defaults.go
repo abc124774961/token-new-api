@@ -190,6 +190,12 @@ func DefaultRuntimeObservabilityDeps() *DefaultRuntimeObservability {
 	return defaultRuntime
 }
 
+func CurrentDefaultRuntimeObservabilityDeps() *DefaultRuntimeObservability {
+	defaultWrapperMu.Lock()
+	defer defaultWrapperMu.Unlock()
+	return defaultRuntime
+}
+
 func RefreshDefaultAccountCandidateIndex() {
 	defaultWrapperMu.Lock()
 	runtimeDeps := defaultRuntime

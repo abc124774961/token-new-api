@@ -442,6 +442,14 @@ func buildProbeRequestWithCategory(modelName string, endpointType constant.Endpo
 				MaxOutputTokens: &maxTokens,
 			},
 		}
+	case constant.EndpointTypeImageGeneration:
+		n := uint(1)
+		return &dto.ImageRequest{
+			Model:  modelName,
+			Prompt: prompt.Content,
+			N:      &n,
+			Size:   "1024x1024",
+		}
 	case constant.EndpointTypeOpenAI:
 		maxTokens := prompt.MaxOutputTokens
 		return &dto.GeneralOpenAIRequest{
@@ -465,6 +473,9 @@ func probeEndpointType(channel *model.Channel, modelName string, fallback consta
 	}
 	if endpointType == constant.EndpointTypeOpenAIResponseCompact {
 		return constant.EndpointTypeOpenAIResponse
+	}
+	if endpointType == constant.EndpointTypeImageGeneration || endpointType == constant.EndpointTypeImageEdit {
+		return endpointType
 	}
 	if probeChannelPrefersResponses(channel, modelName) {
 		return constant.EndpointTypeOpenAIResponse
@@ -531,6 +542,9 @@ func buildProbeDispatchPlan(result ProbeRunResult, endpointType constant.Endpoin
 
 func endpointTypeForProbe(channel *model.Channel, modelName string) constant.EndpointType {
 	modelName = strings.TrimSpace(modelName)
+	if common.IsImageGenerationModel(modelName) {
+		return constant.EndpointTypeImageGeneration
+	}
 	if strings.HasSuffix(modelName, ratio_setting.CompactModelSuffix) {
 		return constant.EndpointTypeOpenAIResponse
 	}
@@ -590,6 +604,8 @@ func relayFormatForEndpoint(endpointType constant.EndpointType) types.RelayForma
 		return types.RelayFormatClaude
 	case constant.EndpointTypeGemini:
 		return types.RelayFormatGemini
+	case constant.EndpointTypeImageGeneration, constant.EndpointTypeImageEdit:
+		return types.RelayFormatOpenAIImage
 	default:
 		return types.RelayFormatOpenAI
 	}
@@ -605,6 +621,8 @@ func endpointTypeForRelayFormat(relayFormat types.RelayFormat) constant.Endpoint
 		return constant.EndpointTypeAnthropic
 	case types.RelayFormatGemini:
 		return constant.EndpointTypeGemini
+	case types.RelayFormatOpenAIImage:
+		return constant.EndpointTypeImageGeneration
 	default:
 		return constant.EndpointTypeOpenAI
 	}

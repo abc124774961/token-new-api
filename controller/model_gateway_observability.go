@@ -5452,6 +5452,29 @@ func modelGatewayClearRuntimeCircuitSnapshots(runtimeDeps *modelgatewayintegrati
 	return updated
 }
 
+func modelGatewayClearRuntimeCooldownSnapshots(runtimeDeps *modelgatewayintegration.DefaultRuntimeObservability, keys []modelgatewaycore.RuntimeKey) int {
+	if runtimeDeps == nil || runtimeDeps.SnapshotStore == nil || len(keys) == 0 {
+		return 0
+	}
+	updated := 0
+	for _, key := range keys {
+		snapshot, ok := runtimeDeps.SnapshotStore.Get(key)
+		if !ok || !snapshot.Cooldown {
+			continue
+		}
+		snapshot.Cooldown = false
+		if strings.TrimSpace(snapshot.ProbeTriggerReason) == "cooldown" {
+			snapshot.ProbeRecoveryPending = false
+			snapshot.ProbeRecoverySuccessCount = 0
+			snapshot.ProbeRecoveryRequired = 0
+			snapshot.ProbeTriggerReason = ""
+		}
+		runtimeDeps.SnapshotStore.Put(snapshot)
+		updated++
+	}
+	return updated
+}
+
 func modelGatewayRuntimeKeyOnlyChannel(key ModelGatewayRuntimeKey, channelID int) bool {
 	key.ChannelID = channelID
 	return key.RequestedModel == "" &&

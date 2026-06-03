@@ -99,6 +99,45 @@ func TestRuntimeBalanceAndSelectionSkipScope(t *testing.T) {
 	require.True(t, IsChannelRuntimeSelectionSkipped(ctx, accountB))
 }
 
+func TestRuntimeBalanceInsufficientChannelCountsIncludeAccountScope(t *testing.T) {
+	clearRuntimeBalanceInsufficientForTest()
+	t.Cleanup(clearRuntimeBalanceInsufficientForTest)
+
+	accountA := testRuntimeIdentity(8111, "acct-a", 0)
+	accountB := testRuntimeIdentity(8111, "acct-b", 1)
+	accountOther := testRuntimeIdentity(8112, "acct-c", 0)
+
+	MarkChannelRuntimeBalanceInsufficient(accountA)
+	MarkChannelRuntimeBalanceInsufficient(accountB)
+	MarkChannelRuntimeBalanceInsufficient(accountOther)
+	MarkChannelBalanceInsufficient(8111)
+
+	counts := RuntimeBalanceInsufficientChannelCounts()
+	require.Equal(t, 3, counts[8111])
+	require.Equal(t, 1, counts[8112])
+	require.Equal(t, 3, RuntimeBalanceInsufficientCountForChannel(8111))
+}
+
+func TestClearChannelBalanceInsufficientForChannelClearsAccountScope(t *testing.T) {
+	clearRuntimeBalanceInsufficientForTest()
+	t.Cleanup(clearRuntimeBalanceInsufficientForTest)
+
+	accountA := testRuntimeIdentity(8121, "acct-a", 0)
+	accountB := testRuntimeIdentity(8121, "acct-b", 1)
+	accountOther := testRuntimeIdentity(8122, "acct-c", 0)
+
+	MarkChannelRuntimeBalanceInsufficient(accountA)
+	MarkChannelRuntimeBalanceInsufficient(accountB)
+	MarkChannelRuntimeBalanceInsufficient(accountOther)
+	MarkChannelBalanceInsufficient(8121)
+
+	require.Equal(t, 3, ClearChannelBalanceInsufficientForChannel(8121))
+	require.False(t, IsRuntimeBalanceInsufficientIdentity(accountA))
+	require.False(t, IsRuntimeBalanceInsufficientIdentity(accountB))
+	require.False(t, IsRuntimeBalanceInsufficientChannelID(8121))
+	require.True(t, IsRuntimeBalanceInsufficientIdentity(accountOther))
+}
+
 func TestChannelRuntimeAccountScopeIgnoresDisplayMetadata(t *testing.T) {
 	base := testRuntimeIdentity(8104, "acct-a", 0)
 	withMetadata := base

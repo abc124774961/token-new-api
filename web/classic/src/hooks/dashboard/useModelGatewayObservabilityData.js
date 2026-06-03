@@ -27,14 +27,18 @@ const FALLBACK_REFRESH_SECONDS = 30;
 const RECENT_RECORD_LIMIT = 50;
 const MANUAL_REFRESH_SOURCE = 'manual';
 const FALLBACK_REFRESH_SOURCE = 'fallback';
-const RECENT_USER_REQUEST_LIMIT = 50;
+const DEFAULT_RECENT_USER_REQUEST_LIMIT = 50;
 const MANUAL_REFRESH_DEBOUNCE_MS = 800;
 
 function unwrapApiData(response) {
   return response?.data?.data || response?.data || {};
 }
 
-function mergeDelta(current, delta) {
+function mergeDelta(
+  current,
+  delta,
+  userRequestLimit = DEFAULT_RECENT_USER_REQUEST_LIMIT,
+) {
   if (!current || !delta) return current;
   const recentRecords = Array.isArray(delta.recent_records)
     ? delta.recent_records
@@ -57,6 +61,7 @@ function mergeDelta(current, delta) {
     user_requests: mergeUserRequestDelta(
       current.user_requests,
       delta.user_requests_recent,
+      userRequestLimit,
     ),
   };
 }
@@ -174,7 +179,11 @@ function mergeUserRequestRecord(existing, incoming) {
   };
 }
 
-function mergeUserRequestDelta(userRequests, recentDelta) {
+function mergeUserRequestDelta(
+  userRequests,
+  recentDelta,
+  limit = DEFAULT_RECENT_USER_REQUEST_LIMIT,
+) {
   if (
     !userRequests ||
     !Array.isArray(recentDelta) ||
@@ -182,6 +191,10 @@ function mergeUserRequestDelta(userRequests, recentDelta) {
   ) {
     return userRequests;
   }
+  const normalizedLimit =
+    Number.isFinite(Number(limit)) && Number(limit) > 0
+      ? Number(limit)
+      : DEFAULT_RECENT_USER_REQUEST_LIMIT;
   const mergedByKey = new Map();
   (userRequests.recent_requests || []).forEach((record) => {
     const key = userRequestKey(record);
@@ -195,7 +208,7 @@ function mergeUserRequestDelta(userRequests, recentDelta) {
   });
   const recentRequests = [...mergedByKey.values()]
     .sort(compareUserRequestRecordsForDisplay)
-    .slice(0, RECENT_USER_REQUEST_LIMIT);
+    .slice(0, normalizedLimit);
   return {
     ...userRequests,
     recent_requests: recentRequests,
@@ -346,9 +359,12 @@ export function useModelGatewayObservabilityData({
     setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
   }, []);
 
-  const handleDelta = useCallback((payload) => {
-    setData((current) => mergeDelta(current, payload));
-  }, []);
+  const handleDelta = useCallback(
+    (payload) => {
+      setData((current) => mergeDelta(current, payload, recentLimit));
+    },
+    [recentLimit],
+  );
 
   const handleRealtimeError = useCallback((message) => {
     if (!message) return;

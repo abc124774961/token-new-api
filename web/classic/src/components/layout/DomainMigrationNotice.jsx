@@ -25,23 +25,16 @@ import { useTranslation } from 'react-i18next';
 const OLD_DOMAIN = 'https://api.codetoken.top';
 const NEW_DOMAIN = 'https://api.token-bits.com';
 const LEGACY_HOSTNAME = 'api.codetoken.top';
-const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
 
 const normalizeHostname = (hostname = '') =>
   hostname.toLowerCase().replace(/\.$/, '');
-
-const isLocalHostname = (hostname) =>
-  LOCAL_HOSTNAMES.has(hostname) || hostname.endsWith('.local');
 
 const isLegacyDomain = () => {
   if (typeof window === 'undefined') {
     return false;
   }
   const hostname = normalizeHostname(window.location.hostname);
-  if (hostname === LEGACY_HOSTNAME) {
-    return true;
-  }
-  return import.meta.env.DEV && isLocalHostname(hostname);
+  return hostname === LEGACY_HOSTNAME;
 };
 
 const getNewDomainTarget = () => {

@@ -1728,6 +1728,9 @@ func TestImportChannelAccountsAppendsOnlyNewAndKeepsAllDisabledChannel(t *testin
 	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.ChannelInfo.MultiKeyStatusList[0])
 	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.ChannelInfo.MultiKeyStatusList[1])
 	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.ChannelInfo.MultiKeyStatusList[2])
+	require.NotContains(t, updated.ChannelInfo.MultiKeyMaxConcurrency, 0)
+	require.Equal(t, channelAccountImportDefaultMaxConcurrency, updated.ChannelInfo.MultiKeyMaxConcurrency[1])
+	require.Equal(t, channelAccountImportDefaultMaxConcurrency, updated.ChannelInfo.MultiKeyMaxConcurrency[2])
 	require.Equal(t, channelAccountAllKeysDisabledReason, updated.GetOtherInfo()["status_reason"])
 	var ability model.Ability
 	require.NoError(t, db.First(&ability, "channel_id = ?", 14).Error)
@@ -1768,10 +1771,12 @@ func TestImportChannelAccountsDisablesSingleImportedAccount(t *testing.T) {
 	require.Equal(t, 1, payload.Data.Total)
 	require.Equal(t, 0, payload.Data.Enabled)
 	require.Equal(t, 1, payload.Data.Disabled)
+	require.Equal(t, channelAccountImportDefaultMaxConcurrency, payload.Data.Items[0].MaxConcurrency)
 
 	updated, err := model.GetChannelById(140, true)
 	require.NoError(t, err)
 	require.Equal(t, "sk-new", updated.Key)
+	require.Equal(t, channelAccountImportDefaultMaxConcurrency, updated.ChannelInfo.MultiKeyMaxConcurrency[0])
 	require.False(t, updated.ChannelInfo.IsMultiKey)
 	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.Status)
 	require.Equal(t, channelAccountManualDisabledReason, updated.GetOtherInfo()["status_reason"])
@@ -2223,6 +2228,8 @@ func TestImportChannelAccountsAcceptsSub2APIAccountExport(t *testing.T) {
 	require.JSONEq(t, `{"access_token":"access-two","refresh_token":"refresh-two","id_token":"id-two","email":"second@example.com","account_id":"acct-two","chatgpt_account_id":"acct-two","chatgpt_user_id":"user-two","expires_at":"2026-06-08T11:53:12Z"}`, keys[1])
 	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.ChannelInfo.MultiKeyStatusList[0])
 	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.ChannelInfo.MultiKeyStatusList[1])
+	require.Equal(t, channelAccountImportDefaultMaxConcurrency, updated.ChannelInfo.MultiKeyMaxConcurrency[0])
+	require.Equal(t, channelAccountImportDefaultMaxConcurrency, updated.ChannelInfo.MultiKeyMaxConcurrency[1])
 
 	fileChannel := model.Channel{
 		Id:     73,
@@ -2261,6 +2268,8 @@ func TestImportChannelAccountsAcceptsSub2APIAccountExport(t *testing.T) {
 	require.Equal(t, common.ChannelStatusAutoDisabled, updatedFromFile.Status)
 	require.Equal(t, common.ChannelStatusManuallyDisabled, updatedFromFile.ChannelInfo.MultiKeyStatusList[0])
 	require.Equal(t, common.ChannelStatusManuallyDisabled, updatedFromFile.ChannelInfo.MultiKeyStatusList[1])
+	require.Equal(t, channelAccountImportDefaultMaxConcurrency, updatedFromFile.ChannelInfo.MultiKeyMaxConcurrency[0])
+	require.Equal(t, channelAccountImportDefaultMaxConcurrency, updatedFromFile.ChannelInfo.MultiKeyMaxConcurrency[1])
 }
 
 func TestImportChannelAccountsRefreshesAccountCandidateIndex(t *testing.T) {
