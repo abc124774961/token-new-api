@@ -1,22 +1,25 @@
 APP_PORT=3000
 TZ=Asia/Shanghai
-SESSION_SECRET=2131aea660d90670241bd450bdae5db5
-CRYPTO_SECRET=7bd3b43cb05e31454e5a82ed5238d2d2
-SQL_DSN=token_new_api:ynPz2DGWdXiRSbpT@tcp(host.docker.internal:3306)/token_new_api?charset=utf8mb4&parseTime=true&loc=Local
+MAILPIT_SMTP_PORT=1026
+MAILPIT_WEB_PORT=8026
+SESSION_SECRET=9a204425b3f0b6b01038c77bb3b4c3d0e13551bb9650c3a075d6da5bf9d074bd
+CRYPTO_SECRET=76d1450655b754c98aefe4a7961043369b12bd2085d545cce956856016873b45
 ERROR_LOG_ENABLED=true
 BATCH_UPDATE_ENABLED=true
-NODE_NAME=ecs-node-1
+RELAY_TIMEOUT=900
+STREAMING_TIMEOUT=900
+STREAM_SCANNER_MAX_BUFFER_MB=256
 CHANNEL_FAILURE_AVOIDANCE_ENABLED=true
 CHANNEL_FAILURE_AVOIDANCE_TTL_SECONDS=6
 CHANNEL_BALANCE_AUTO_RESUME_ENABLED=true
 CHANNEL_BALANCE_RECOVERY_THRESHOLD=0
-# REDIS_CONN_STRING=redis://host.docker.internal:6379/0
-
-# Token account automation callback used by the main gateway container.
-TOKEN_ACCOUNT_AUTOMATION_URL=http://host.docker.internal:18091
-TOKEN_ACCOUNT_AUTOMATION_API_TOKEN=replace-with-pro-automation-api-token
-TOKEN_ACCOUNT_AUTOMATION_CALLBACK_TOKEN=replace-with-pro-automation-callback-token
+NODE_NAME=gcp-us-central1
+SQL_DSN=token_new_api:43d4856fae8827fb4d2165edba01821bc6ed@tcp(172.19.0.1:3306)/token_new_api?charset=utf8mb4&parseTime=true&loc=Local&timeout=10s&readTimeout=30s&writeTimeout=30s
+TOKEN_ACCOUNT_AUTOMATION_URL=http://host.docker.internal:8091
+TOKEN_ACCOUNT_AUTOMATION_API_TOKEN=0f383179b7558665066dd85490ac8627baf2b0333db2887534f1edb179f3ce2c
+TOKEN_ACCOUNT_AUTOMATION_CALLBACK_TOKEN=0f383179b7558665066dd85490ac8627baf2b0333db2887534f1edb179f3ce2c
 TOKEN_ACCOUNT_AUTOMATION_TIMEOUT_SECONDS=5
+
 
 # Token account automation service, loaded by:
 #   cd token-account-automation && AUTOMATION_ENV_FILE=../.env.pro go run ./cmd/server
