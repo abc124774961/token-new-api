@@ -139,3 +139,43 @@ func TestWritebackTokenAccountAutomationCredentialDoesNotEnableManualDisabledAcc
 	require.Equal(t, "manual", updated.ChannelInfo.MultiKeyDisabledReason[0])
 	require.Equal(t, "new-a", updated.GetKeys()[0])
 }
+
+func TestWritebackTokenAccountAutomationCredentialEnablesSingleKeyAuthDisabledChannel(t *testing.T) {
+	db := setupTokenAccountAutomationWritebackDB(t)
+	channel := model.Channel{
+		Id:     91003,
+		Name:   "automation-writeback-single-auth",
+		Status: common.ChannelStatusAutoDisabled,
+		Key:    `{"access_token":"old-a","refresh_token":"old-refresh-a","account_id":"acct-a"}`,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   false,
+			MultiKeySize: 1,
+			MultiKeyAccountTypes: map[int]string{
+				0: tokenAccountAutomationAccountTypeOAuthAccount,
+			},
+		},
+	}
+	channel.SetOtherInfo(map[string]any{"status_reason": "auth_reauthorization_pending", "status_time": int64(1700000003)})
+	require.NoError(t, db.Create(&channel).Error)
+
+	result, err := WritebackTokenAccountAutomationCredential(TokenAccountAutomationCredentialWritebackRequest{
+		ChannelID:       channel.Id,
+		CredentialIndex: 0,
+		CredentialType:  tokenAccountAutomationAccountTypeOAuthAccount,
+		Credential: map[string]any{
+			"access_token":  "new-a",
+			"refresh_token": "new-refresh-a",
+			"account_id":    "acct-a",
+			"provider":      "codex",
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, result.AccountEnabled)
+	require.Equal(t, common.ChannelStatusEnabled, result.ChannelStatus)
+
+	var updated model.Channel
+	require.NoError(t, db.First(&updated, "id = ?", channel.Id).Error)
+	require.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	require.NotContains(t, updated.GetOtherInfo(), "status_reason")
+	require.Contains(t, updated.GetKeys()[0], `"new-refresh-a"`)
+}

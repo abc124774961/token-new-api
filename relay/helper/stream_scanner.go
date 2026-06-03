@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/observability/userrequest"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -292,6 +293,10 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			}
 			if !strings.HasPrefix(data, "[DONE]") {
 				MarkRelayFirstResponseObserved(c, info)
+				userrequest.ObserveActivity(userrequest.ActivityObservation{
+					RequestID:  info.RequestId,
+					ObservedAt: time.Now(),
+				})
 				info.ReceivedResponseCount++
 
 				select {

@@ -27,7 +27,7 @@ func TestNotifyTokenAccountAutomationAuthInvalidPostsEvent(t *testing.T) {
 	t.Setenv(tokenAccountAutomationAPITokenEnv, "api-token")
 	t.Setenv(tokenAccountAutomationTimeoutSecondsEnv, "1")
 
-	err := NotifyTokenAccountAutomationAuthInvalid(context.Background(), TokenAccountAutomationAuthInvalidEvent{
+	result, err := EnqueueTokenAccountAutomationAuthInvalid(context.Background(), TokenAccountAutomationAuthInvalidEvent{
 		ChannelID:       12,
 		CredentialIndex: 3,
 		Provider:        "codex_oauth",
@@ -43,6 +43,7 @@ func TestNotifyTokenAccountAutomationAuthInvalidPostsEvent(t *testing.T) {
 	require.Equal(t, 3, gotEvent.CredentialIndex)
 	require.Equal(t, "codex_oauth", gotEvent.Provider)
 	require.Equal(t, "account-key", gotEvent.SubjectKey)
+	require.False(t, result.Created)
 }
 
 func TestNotifyTokenAccountAutomationAuthInvalidNoopsWhenUnconfigured(t *testing.T) {

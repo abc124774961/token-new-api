@@ -90,6 +90,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	appendFinalRequestFormat(relayInfo, other)
 	appendBillingInfo(relayInfo, other)
 	appendParamOverrideInfo(relayInfo, other)
+	appendRelayDeliveryInfo(ctx, other)
 	appendStreamStatus(relayInfo, other)
 	return other
 }
@@ -259,6 +260,27 @@ func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other map[string]inter
 		streamInfo["errors"] = messages
 	}
 	other["stream_status"] = streamInfo
+}
+
+func appendRelayDeliveryInfo(ctx *gin.Context, other map[string]interface{}) {
+	if ctx == nil || other == nil {
+		return
+	}
+	if upstreamStatus := common.GetContextKeyInt(ctx, constant.ContextKeyRelayUpstreamStatus); upstreamStatus > 0 {
+		other["upstream_status"] = upstreamStatus
+	}
+	if status := strings.TrimSpace(common.GetContextKeyString(ctx, constant.ContextKeyRelayDownstreamWriteStatus)); status != "" {
+		other["downstream_write_status"] = status
+	}
+	if keepAliveCount := common.GetContextKeyInt(ctx, constant.ContextKeyRelayDownstreamKeepAliveCount); keepAliveCount > 0 {
+		other["keepalive_count"] = keepAliveCount
+	}
+	if common.GetContextKeyBool(ctx, constant.ContextKeyRelayClientReceivedStarted) {
+		other["client_received_started"] = true
+	}
+	if classification := strings.TrimSpace(common.GetContextKeyString(ctx, constant.ContextKeyRelayFinalClassification)); classification != "" {
+		other["final_classification"] = classification
+	}
 }
 
 func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {

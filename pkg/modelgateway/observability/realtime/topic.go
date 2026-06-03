@@ -201,6 +201,7 @@ func (t *Topic) run() {
 		case record := <-t.eventCh:
 			t.handleRecord(record)
 		case <-ticker.C:
+			userrequest.SweepStale()
 			t.flushPending()
 		case <-t.closeCh:
 			return
@@ -528,20 +529,28 @@ func mergeUserRequestPendingSnapshot(response controller.ModelGatewayObservabili
 }
 
 func mergeUserRequestRealtimeRecords(completed []controller.ModelGatewayUserRequestRecord, pending []userrequest.Record, limit int) []controller.ModelGatewayUserRequestRecord {
-	merged := make([]controller.ModelGatewayUserRequestRecord, 0, len(completed)+len(pending))
-	seen := map[string]bool{}
+	mergedByRequestID := make(map[string]controller.ModelGatewayUserRequestRecord, len(completed)+len(pending))
+	for _, record := range completed {
+		requestID := strings.TrimSpace(record.RequestID)
+		if requestID == "" {
+			continue
+		}
+		mergedByRequestID[requestID] = record
+	}
 	for _, item := range pending {
 		record := userRequestRecordFromRealtimeRecord(item)
-		if strings.TrimSpace(record.RequestID) == "" {
+		requestID := strings.TrimSpace(record.RequestID)
+		if requestID == "" {
 			continue
 		}
-		seen[record.RequestID] = true
-		merged = append(merged, record)
+		existing, exists := mergedByRequestID[requestID]
+		if exists && userRequestRecordTerminal(existing) {
+			continue
+		}
+		mergedByRequestID[requestID] = record
 	}
-	for _, record := range completed {
-		if strings.TrimSpace(record.RequestID) != "" && seen[record.RequestID] {
-			continue
-		}
+	merged := make([]controller.ModelGatewayUserRequestRecord, 0, len(mergedByRequestID))
+	for _, record := range mergedByRequestID {
 		merged = append(merged, record)
 	}
 	sort.Slice(merged, func(i, j int) bool {
@@ -587,7 +596,29 @@ func userRequestRecordSortTime(record controller.ModelGatewayUserRequestRecord) 
 }
 
 func userRequestRecordProcessing(record controller.ModelGatewayUserRequestRecord) bool {
-	return record.Status == userrequest.StatusProcessing || record.CompletedAt <= 0
+	return strings.TrimSpace(record.Status) == userrequest.StatusProcessing &&
+		record.CompletedAt <= 0 &&
+		!userRequestRecordTerminal(record)
+}
+
+func userRequestRecordTerminal(record controller.ModelGatewayUserRequestRecord) bool {
+	if record.CompletedAt > 0 {
+		return true
+	}
+	if record.FinalSuccess || record.ClientAborted || record.FinalStatusCode > 0 || strings.TrimSpace(record.FinalErrorCategory) != "" {
+		return true
+	}
+	switch strings.TrimSpace(record.Status) {
+	case userrequest.StatusSuccess,
+		userrequest.StatusFailed,
+		userrequest.StatusProbe,
+		userrequest.StatusProbeFailed,
+		"client_aborted",
+		model.ModelGatewayUserRequestErrorUserQuotaExhausted:
+		return true
+	default:
+		return false
+	}
 }
 
 func userRequestRecordUpdatedAt(record userrequest.Record) int64 {

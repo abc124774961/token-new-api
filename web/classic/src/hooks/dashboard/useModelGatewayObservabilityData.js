@@ -62,7 +62,24 @@ function mergeDelta(current, delta) {
 }
 
 function isUserRequestProcessingRecord(record) {
-  return record?.status === 'processing' || !Number(record?.completed_at || 0);
+  return (
+    String(record?.status || '').trim() === 'processing' &&
+    !Number(record?.completed_at || 0)
+  );
+}
+
+function isUserRequestTerminalRecord(record) {
+  if (!record) return false;
+  if (Number(record?.completed_at || 0) > 0) return true;
+  const status = String(record?.status || '').trim();
+  return [
+    'success',
+    'failed',
+    'health_probe',
+    'health_probe_failed',
+    'client_aborted',
+    'user_quota_exhausted',
+  ].includes(status);
 }
 
 function userRequestDisplaySortTime(record) {
@@ -97,11 +114,16 @@ function userRequestKey(record) {
 function mergeUserRequestRecord(existing, incoming) {
   if (!existing) return incoming;
   if (!incoming) return existing;
+  const existingTerminal = isUserRequestTerminalRecord(existing);
+  const incomingTerminal = isUserRequestTerminalRecord(incoming);
+  const base =
+    existingTerminal && isUserRequestProcessingRecord(incoming)
+      ? { ...incoming, ...existing }
+      : { ...existing, ...incoming };
   const existingTTFT = Number(existing.ttft_ms || 0);
   const incomingTTFT = Number(incoming.ttft_ms || 0);
   return {
-    ...existing,
-    ...incoming,
+    ...base,
     updated_at: Math.max(
       Number(existing.updated_at || 0),
       Number(incoming.updated_at || 0),
@@ -115,7 +137,29 @@ function mergeUserRequestRecord(existing, incoming) {
         ? incoming.ttft_ms
         : existingTTFT > 0
           ? existing.ttft_ms
-          : incoming.ttft_ms,
+          : base.ttft_ms,
+    completed_at:
+      existingTerminal && !incomingTerminal
+        ? existing.completed_at
+        : base.completed_at,
+    status:
+      existingTerminal && !incomingTerminal ? existing.status : base.status,
+    final_success:
+      existingTerminal && !incomingTerminal
+        ? existing.final_success
+        : base.final_success,
+    final_status_code:
+      existingTerminal && !incomingTerminal
+        ? existing.final_status_code
+        : base.final_status_code,
+    final_error_category:
+      existingTerminal && !incomingTerminal
+        ? existing.final_error_category
+        : base.final_error_category,
+    client_aborted:
+      existingTerminal && !incomingTerminal
+        ? existing.client_aborted
+        : base.client_aborted,
     billing: incoming.billing || existing.billing,
     dispatch_record: incoming.dispatch_record || existing.dispatch_record,
     actual_group: incoming.actual_group || existing.actual_group,

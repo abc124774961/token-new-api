@@ -211,6 +211,25 @@ func TestGenerateTextOtherInfoIncludesSelectedAccountIdentity(t *testing.T) {
 	require.Equal(t, "abcdef1234567890", adminInfo["credential_subject_fingerprint"])
 }
 
+func TestGenerateTextOtherInfoIncludesRelayDeliveryInfo(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	common.SetContextKey(ctx, constant.ContextKeyRelayUpstreamStatus, 200)
+	common.SetContextKey(ctx, constant.ContextKeyRelayDownstreamWriteStatus, "client_aborted")
+	common.SetContextKey(ctx, constant.ContextKeyRelayDownstreamKeepAliveCount, 2)
+	common.SetContextKey(ctx, constant.ContextKeyRelayClientReceivedStarted, true)
+	common.SetContextKey(ctx, constant.ContextKeyRelayFinalClassification, "client_aborted")
+
+	other := GenerateTextOtherInfo(ctx, &relaycommon.RelayInfo{StartTime: time.Now()}, 1, 1, 1, 0, 1, -1, -1)
+
+	require.Equal(t, 200, other["upstream_status"])
+	require.Equal(t, "client_aborted", other["downstream_write_status"])
+	require.Equal(t, 2, other["keepalive_count"])
+	require.Equal(t, true, other["client_received_started"])
+	require.Equal(t, "client_aborted", other["final_classification"])
+}
+
 func TestGenerateTextOtherInfoIncludesDynamicBillingSnapshot(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

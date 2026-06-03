@@ -1,13 +1,17 @@
 package userrequest
 
 import (
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 )
 
 const (
@@ -19,6 +23,10 @@ const (
 
 	defaultMaxPending = 200
 	defaultTTL        = 10 * time.Minute
+
+	defaultStaleProcessingGrace = 30 * time.Second
+	defaultStreamingIdleTimeout = 300 * time.Second
+	minStaleProcessingTimeout   = 30 * time.Second
 )
 
 type EventKind string
@@ -71,17 +79,23 @@ type FirstByteObservation struct {
 	TTFT       time.Duration
 }
 
+type ActivityObservation struct {
+	RequestID  string
+	ObservedAt time.Time
+}
+
 type Observer func(Event)
 
 type Tracker struct {
-	mu         sync.RWMutex
-	pending    map[string]Record
-	finished   map[string]int64
-	firstBytes map[string]FirstByteObservation
-	maxPending int
-	ttl        time.Duration
-	observerMu sync.RWMutex
-	observers  []Observer
+	mu          sync.RWMutex
+	pending     map[string]Record
+	finished    map[string]int64
+	staleFinals map[string]Record
+	firstBytes  map[string]FirstByteObservation
+	maxPending  int
+	ttl         time.Duration
+	observerMu  sync.RWMutex
+	observers   []Observer
 }
 
 var DefaultTracker = NewTracker(defaultMaxPending, defaultTTL)
@@ -94,11 +108,12 @@ func NewTracker(maxPending int, ttl time.Duration) *Tracker {
 		ttl = defaultTTL
 	}
 	return &Tracker{
-		pending:    map[string]Record{},
-		finished:   map[string]int64{},
-		firstBytes: map[string]FirstByteObservation{},
-		maxPending: maxPending,
-		ttl:        ttl,
+		pending:     map[string]Record{},
+		finished:    map[string]int64{},
+		staleFinals: map[string]Record{},
+		firstBytes:  map[string]FirstByteObservation{},
+		maxPending:  maxPending,
+		ttl:         ttl,
 	}
 }
 
@@ -118,8 +133,16 @@ func ObserveFirstByte(observation FirstByteObservation) {
 	DefaultTracker.ObserveFirstByte(observation)
 }
 
+func ObserveActivity(observation ActivityObservation) {
+	DefaultTracker.ObserveActivity(observation)
+}
+
 func Snapshot(limit int, filters Filters) []Record {
 	return DefaultTracker.Snapshot(limit, filters)
+}
+
+func SweepStale() []Record {
+	return DefaultTracker.SweepStale()
 }
 
 func (t *Tracker) AddObserver(observer Observer) {
@@ -195,6 +218,7 @@ func (t *Tracker) Finish(result core.AttemptResult, summary *model.ModelGatewayU
 	if modelGatewayAttemptFinalized(result) {
 		delete(t.pending, requestID)
 		delete(t.firstBytes, requestID)
+		delete(t.staleFinals, requestID)
 		t.finished[requestID] = time.Now().Unix()
 	} else {
 		if hadPending {
@@ -260,20 +284,60 @@ func (t *Tracker) ObserveFirstByte(observation FirstByteObservation) {
 	t.notify(Event{Kind: EventStarted, Record: pending})
 }
 
+func (t *Tracker) ObserveActivity(observation ActivityObservation) {
+	if t == nil || strings.TrimSpace(observation.RequestID) == "" {
+		return
+	}
+	requestID := strings.TrimSpace(observation.RequestID)
+	observedAt := observation.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+	updatedAt := observedAt.Unix()
+	if updatedAt <= 0 {
+		return
+	}
+
+	t.mu.Lock()
+	pending, hadPending := t.pending[requestID]
+	if !hadPending {
+		t.mu.Unlock()
+		return
+	}
+	if pending.UpdatedAt < updatedAt {
+		pending.UpdatedAt = updatedAt
+		t.pending[requestID] = pending
+	}
+	t.mu.Unlock()
+}
+
 func (t *Tracker) Snapshot(limit int, filters Filters) []Record {
 	if t == nil {
 		return []Record{}
 	}
 	now := time.Now()
+	staleTimeout := staleProcessingTimeout()
 	t.mu.Lock()
 	t.pruneLocked(now)
-	items := make([]Record, 0, len(t.pending))
+	staleRecords := t.collectStaleFinalsLocked(now, staleTimeout)
+	items := make([]Record, 0, len(t.pending)+len(t.staleFinals))
 	for _, item := range t.pending {
+		if processingRecordStale(item, now, staleTimeout) {
+			continue
+		}
+		if filters.Match(item) {
+			items = append(items, item)
+		}
+	}
+	for _, item := range t.staleFinals {
 		if filters.Match(item) {
 			items = append(items, item)
 		}
 	}
 	t.mu.Unlock()
+	for _, record := range staleRecords {
+		t.notify(Event{Kind: EventFinished, Record: record})
+	}
 	sort.Slice(items, func(i, j int) bool {
 		return recordSortLess(items[i], items[j])
 	})
@@ -281,6 +345,21 @@ func (t *Tracker) Snapshot(limit int, filters Filters) []Record {
 		items = items[:limit]
 	}
 	return items
+}
+
+func (t *Tracker) SweepStale() []Record {
+	if t == nil {
+		return []Record{}
+	}
+	now := time.Now()
+	t.mu.Lock()
+	t.pruneLocked(now)
+	records := t.collectStaleFinalsLocked(now, staleProcessingTimeout())
+	t.mu.Unlock()
+	for _, record := range records {
+		t.notify(Event{Kind: EventFinished, Record: record})
+	}
+	return records
 }
 
 func (t *Tracker) notify(event Event) {
@@ -305,6 +384,12 @@ func (t *Tracker) pruneLocked(now time.Time) {
 	for requestID, finishedAt := range t.finished {
 		if finishedAt > 0 && finishedAt < cutoff {
 			delete(t.finished, requestID)
+			delete(t.staleFinals, requestID)
+		}
+	}
+	for requestID, item := range t.staleFinals {
+		if item.CompletedAt > 0 && item.CompletedAt < cutoff {
+			delete(t.staleFinals, requestID)
 		}
 	}
 	for requestID, observation := range t.firstBytes {
@@ -317,6 +402,25 @@ func (t *Tracker) pruneLocked(now time.Time) {
 			delete(t.firstBytes, requestID)
 		}
 	}
+}
+
+func (t *Tracker) collectStaleFinalsLocked(now time.Time, timeout time.Duration) []Record {
+	if t == nil || timeout <= 0 {
+		return nil
+	}
+	records := make([]Record, 0)
+	for requestID, item := range t.pending {
+		if !processingRecordStale(item, now, timeout) {
+			continue
+		}
+		delete(t.pending, requestID)
+		delete(t.firstBytes, requestID)
+		record := staleProcessingFinalRecord(item, now)
+		t.finished[requestID] = record.CompletedAt
+		t.staleFinals[requestID] = record
+		records = append(records, record)
+	}
+	return records
 }
 
 func (t *Tracker) pruneOverflowLocked() {
@@ -477,6 +581,11 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 }
 
 func recordSortLess(left, right Record) bool {
+	leftProcessing := recordProcessing(left)
+	rightProcessing := recordProcessing(right)
+	if leftProcessing != rightProcessing {
+		return leftProcessing
+	}
 	if left.CreatedAt != right.CreatedAt {
 		return left.CreatedAt > right.CreatedAt
 	}
@@ -487,6 +596,87 @@ func recordSortLess(left, right Record) bool {
 		return left.ID > right.ID
 	}
 	return left.RequestID > right.RequestID
+}
+
+func recordProcessing(record Record) bool {
+	return strings.TrimSpace(record.Status) == StatusProcessing && record.CompletedAt <= 0
+}
+
+func processingRecordStale(record Record, now time.Time, timeout time.Duration) bool {
+	if timeout <= 0 || !recordProcessing(record) {
+		return false
+	}
+	anchor := record.UpdatedAt
+	if anchor <= 0 {
+		anchor = record.CreatedAt
+	}
+	if anchor <= 0 {
+		return false
+	}
+	return !time.Unix(anchor, 0).Add(timeout).After(now)
+}
+
+func staleProcessingFinalRecord(record Record, now time.Time) Record {
+	completedAt := now.Unix()
+	if record.CreatedAt <= 0 {
+		record.CreatedAt = completedAt
+	}
+	record.UpdatedAt = completedAt
+	record.CompletedAt = completedAt
+	record.FinalSuccess = false
+	record.FinalStatusCode = http.StatusGatewayTimeout
+	record.FinalErrorCategory = model.ModelGatewayUserRequestErrorTimeout
+	record.Status = StatusFailed
+	if record.IsHealthProbe {
+		record.Status = StatusProbeFailed
+	}
+	if record.Attempts <= 0 {
+		record.Attempts = 1
+	}
+	if record.DurationMs <= 0 && completedAt >= record.CreatedAt {
+		record.DurationMs = (completedAt - record.CreatedAt) * int64(time.Second/time.Millisecond)
+	}
+	return record
+}
+
+func staleProcessingTimeout() time.Duration {
+	timeout := currentStreamingIdleTimeout()
+	if totalTimeout := currentRelayTotalTimeout(); totalTimeout > timeout {
+		timeout = totalTimeout
+	}
+	if timeout <= 0 {
+		timeout = defaultStreamingIdleTimeout
+	}
+	timeout += defaultStaleProcessingGrace
+	if timeout < minStaleProcessingTimeout {
+		return minStaleProcessingTimeout
+	}
+	return timeout
+}
+
+func currentStreamingIdleTimeout() time.Duration {
+	if constant.StreamingTimeout > 0 {
+		return time.Duration(constant.StreamingTimeout) * time.Second
+	}
+	if common.RelayTimeout > 0 {
+		return time.Duration(common.RelayTimeout) * time.Second
+	}
+	return defaultStreamingIdleTimeout
+}
+
+func currentRelayTotalTimeout() time.Duration {
+	setting := scheduler_setting.GetSetting()
+	if !setting.RelayTotalTimeoutEnabled {
+		return 0
+	}
+	seconds := setting.RelayTotalTimeoutSeconds
+	if seconds <= 0 {
+		seconds = scheduler_setting.DefaultSetting().RelayTotalTimeoutSeconds
+	}
+	if seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func applyFirstByteObservation(record *Record, observation FirstByteObservation) {

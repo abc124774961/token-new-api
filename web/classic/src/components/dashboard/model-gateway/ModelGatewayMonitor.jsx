@@ -2691,7 +2691,7 @@ function getUserRequestStatusMeta(record, t) {
       ? { color: 'cyan', label: t('健康探活'), tone: 'probe' }
       : { color: 'orange', label: t('探活异常'), tone: 'probe-warning' };
   }
-  if (record?.status === 'processing') {
+  if (isUserRequestProcessing(record)) {
     return { color: 'blue', label: t('处理中'), tone: 'processing' };
   }
   if (isUserQuotaExhaustedRecord(record)) {
@@ -2722,7 +2722,30 @@ function getUserRequestStatusMeta(record, t) {
 }
 
 function isUserRequestProcessing(record) {
-  return record?.status === 'processing' || !Number(record?.completed_at || 0);
+  if (!record) return false;
+  if (Number(record?.completed_at || 0) > 0) return false;
+  const status = String(record?.status || '').trim();
+  if (
+    [
+      'success',
+      'failed',
+      'health_probe',
+      'health_probe_failed',
+      'client_aborted',
+      'user_quota_exhausted',
+    ].includes(status)
+  ) {
+    return false;
+  }
+  if (
+    record?.final_error_category ||
+    Number(record?.final_status_code || 0) > 0 ||
+    record?.client_aborted ||
+    record?.final_success
+  ) {
+    return false;
+  }
+  return status === 'processing' || status === '';
 }
 
 function formatUserRequestErrorCategory(category, t) {

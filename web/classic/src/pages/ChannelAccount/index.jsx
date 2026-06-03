@@ -3131,7 +3131,14 @@ function buildStatsColumns(t, onToggleStatus, onOpenDetail, statusLoadingKey) {
   ];
 }
 
-function buildPoolColumns(t, poolView, onRestore, onDiscard, onDelete) {
+function buildPoolColumns(
+  t,
+  poolView,
+  onRestore,
+  onReauthorize,
+  onDiscard,
+  onDelete,
+) {
   return [
     {
       title: t('账号状态'),
@@ -3313,12 +3320,28 @@ function buildPoolColumns(t, poolView, onRestore, onDiscard, onDelete) {
     {
       title: t('操作'),
       dataIndex: 'operation',
-      width: poolView === 'invalid' ? 230 : 110,
+      width: poolView === 'invalid' ? 320 : 110,
       fixed: 'right',
       render: (_, record) => (
         <Space spacing={6}>
           {poolView === 'invalid' ? (
             <>
+              <Popconfirm
+                title={t('重新授权账号？')}
+                content={t(
+                  '系统会先恢复账号并提交自动授权任务，成功写回后自动启用该账号',
+                )}
+                onConfirm={() => onReauthorize(record)}
+              >
+                <Button
+                  size='small'
+                  type='primary'
+                  theme='solid'
+                  icon={<PlugZap size={14} />}
+                >
+                  {t('重新授权')}
+                </Button>
+              </Popconfirm>
               <Popconfirm
                 title={t('恢复账号？')}
                 content={t('恢复后账号默认禁用，需要确认后再启用调度')}
@@ -4680,6 +4703,33 @@ function ChannelAccount() {
     [loadAccounts, t],
   );
 
+  const reauthorizePoolAccount = useCallback(
+    async (record) => {
+      try {
+        const response = await API.post(
+          `/api/channel/account-pools/invalid/${record.id}/reauthorize`,
+          { channel_id: record.channel_id },
+        );
+        if (response?.data?.success === false) {
+          throw new Error(response?.data?.message || t('操作失败'));
+        }
+        const payload = unwrapApiData(response);
+        await loadAccounts();
+        const jobID = payload?.automation?.job?.job_id;
+        showSuccess(
+          jobID
+            ? t('自动授权任务已提交：{{job}}', { job: jobID })
+            : t('自动授权任务已提交'),
+        );
+      } catch (err) {
+        const message =
+          err?.response?.data?.message || err?.message || t('操作失败');
+        showError(message);
+      }
+    },
+    [loadAccounts, t],
+  );
+
   const discardPoolAccount = useCallback(
     async (record) => {
       try {
@@ -5351,10 +5401,18 @@ function ChannelAccount() {
         t,
         poolView,
         restorePoolAccount,
+        reauthorizePoolAccount,
         discardPoolAccount,
         deletePoolAccount,
       ),
-    [deletePoolAccount, discardPoolAccount, poolView, restorePoolAccount, t],
+    [
+      deletePoolAccount,
+      discardPoolAccount,
+      poolView,
+      reauthorizePoolAccount,
+      restorePoolAccount,
+      t,
+    ],
   );
   const items = data?.items || [];
   const selectedCount = selectedRowKeys.length;

@@ -21,6 +21,7 @@ import (
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -52,6 +53,15 @@ type codexApplicationEnvironmentListAPIResponse struct {
 	Data    CodexApplicationEnvironmentListResponse `json:"data"`
 }
 
+type channelAccountPoolReauthorizeAPIResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Data    struct {
+		Operation  *ChannelAccountOperation                         `json:"operation"`
+		Automation *service.TokenAccountAutomationAuthInvalidResult `json:"automation"`
+	} `json:"data"`
+}
+
 func setupChannelAccountControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -75,6 +85,8 @@ func setupChannelAccountControllerTestDB(t *testing.T) *gorm.DB {
 		&model.ModelGatewayProxy{},
 		&model.ModelGatewayProxyUsage{},
 		&model.ChannelAccountUsageEvent{},
+		&model.ChannelInvalidAccount{},
+		&model.ChannelDiscardedAccount{},
 		&model.CodexApplicationEnvironment{},
 	))
 	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
@@ -2525,6 +2537,97 @@ func TestDeleteChannelAccountsKeepsCodexEnvironmentBoundByAccountUniqueKey(t *te
 	require.Len(t, updated.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys, 1)
 	accountUniqueKey := modelgatewayaccount.AccountIdentityForChannelKey(updated, 1, "sk-three").AccountUniqueKey
 	require.Equal(t, envThree.Id, updated.ChannelInfo.MultiKeyCodexEnvironmentAccountUniqueKeys[accountUniqueKey])
+}
+
+func TestReauthorizeChannelInvalidAccountRestoresWithNewIndexAndEnqueuesAutomation(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     28,
+		Name:   "codex invalid pool",
+		Type:   constant.ChannelTypeCodex,
+		Key:    `{"access_token":"live","refresh_token":"live-refresh","account_id":"acct-live"}`,
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 1,
+			MultiKeyAccountTypes: map[int]string{
+				0: modelgatewaycore.AccountTypeOAuthAccount,
+			},
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.ChannelInvalidAccount{ChannelAccountArchiveFields: model.ChannelAccountArchiveFields{
+		ID:                           7001,
+		ChannelID:                    channel.Id,
+		ChannelName:                  channel.Name,
+		CredentialIndex:              4,
+		Credential:                   `{"access_token":"expired","refresh_token":"expired-refresh","account_id":"acct-expired"}`,
+		AccountID:                    "acct-expired",
+		AccountIdentityKey:           "codex_oauth:codex:acct-expired",
+		CredentialSubjectFingerprint: "subject-fp-expired",
+		CredentialFingerprint:        "credential-fp-expired",
+		AccountType:                  modelgatewaycore.AccountTypeOAuthAccount,
+		Brand:                        "codex",
+		Provider:                     "codex_oauth",
+		ResourceID:                   "platform:channel:28",
+		ResourceType:                 "platform_owned",
+		Reason:                       "manual_invalid",
+		Note:                         "授权异常",
+	}}).Error)
+
+	var gotEvent service.TokenAccountAutomationAuthInvalidEvent
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/events/account-auth-invalid", r.URL.Path)
+		require.Equal(t, "Bearer automation-token", r.Header.Get("Authorization"))
+		require.NoError(t, common.DecodeJson(r.Body, &gotEvent))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"created":true,"job":{"job_id":"job_reauth_1","task_type":"auth_recover","status":"PENDING","target_ref":"auto_target_1"}}}`))
+	}))
+	defer server.Close()
+	t.Setenv("TOKEN_ACCOUNT_AUTOMATION_URL", server.URL)
+	t.Setenv("TOKEN_ACCOUNT_AUTOMATION_API_TOKEN", "automation-token")
+
+	router := gin.New()
+	router.POST("/api/channel/account-pools/invalid/:id/reauthorize", ReauthorizeChannelInvalidAccount)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/channel/account-pools/invalid/7001/reauthorize", bytes.NewBufferString(`{}`))
+	router.ServeHTTP(recorder, req)
+
+	var payload channelAccountPoolReauthorizeAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success, recorder.Body.String())
+	require.NotNil(t, payload.Data.Operation)
+	require.Equal(t, channel.Id, payload.Data.Operation.ChannelID)
+	require.NotNil(t, payload.Data.Operation.CredentialIndex)
+	require.NotNil(t, payload.Data.Operation.OriginalIndex)
+	require.Equal(t, 1, *payload.Data.Operation.CredentialIndex)
+	require.Equal(t, 4, *payload.Data.Operation.OriginalIndex)
+	require.NotNil(t, payload.Data.Automation)
+	require.True(t, payload.Data.Automation.Created)
+	require.Equal(t, "job_reauth_1", payload.Data.Automation.Job.JobID)
+
+	require.Equal(t, channel.Id, gotEvent.ChannelID)
+	require.Equal(t, 1, gotEvent.CredentialIndex)
+	require.Equal(t, "codex_oauth", gotEvent.Provider)
+	require.Equal(t, "codex_oauth:codex:acct-expired", gotEvent.SubjectKey)
+	require.Equal(t, "manual", gotEvent.Source)
+	require.Equal(t, "manual_reauthorize", gotEvent.Reason)
+	require.Equal(t, float64(4), gotEvent.Context["original_credential_index"])
+	require.Equal(t, float64(1), gotEvent.Context["restored_credential_index"])
+
+	var invalidCount int64
+	require.NoError(t, db.Model(&model.ChannelInvalidAccount{}).Count(&invalidCount).Error)
+	require.Equal(t, int64(0), invalidCount)
+
+	updated, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	keys := updated.GetKeys()
+	require.Len(t, keys, 2)
+	require.Contains(t, keys[1], `"expired-refresh"`)
+	require.Equal(t, common.ChannelStatusAutoDisabled, updated.ChannelInfo.MultiKeyStatusList[1])
+	require.Equal(t, channelAccountAuthReauthorizationPendingReason, updated.ChannelInfo.MultiKeyDisabledReason[1])
 }
 
 func TestUpdateChannelAccountProxyBindsAndClearsProxy(t *testing.T) {

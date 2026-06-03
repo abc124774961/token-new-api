@@ -25,6 +25,8 @@ if (!cfg.workerToken) {
   throw new Error('AUTOMATION_WORKER_TOKEN is required');
 }
 
+class WaitingHumanError extends Error {}
+
 await main();
 
 async function main() {
@@ -307,5 +309,3 @@ function safeError(error) {
   const message = error instanceof Error ? error.message : String(error);
   return message.slice(0, 1000);
 }
-
-class WaitingHumanError extends Error {}

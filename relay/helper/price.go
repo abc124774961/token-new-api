@@ -112,16 +112,13 @@ func applyDynamicBillingRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo
 	if relayInfo == nil || groupRatioInfo == nil {
 		return
 	}
-	mode := scheduler_setting.BillingRatioModeStatic
-	if plan, ok := modelgatewayintegration.GetSelectedPlan(ctx); ok && plan != nil {
-		mode = strings.TrimSpace(plan.BillingRatioMode)
-	}
+	setting := scheduler_setting.GetSetting()
+	mode := resolveDynamicBillingRatioMode(ctx, relayInfo, setting)
 	if mode != scheduler_setting.BillingRatioModeDynamic {
 		relayInfo.DynamicBilling = nil
 		return
 	}
 	staticRatio := groupRatioInfo.GroupRatio
-	setting := scheduler_setting.GetSetting()
 	snapshot := modelgatewaydynamicbilling.Apply(modelgatewaydynamicbilling.ApplyInput{
 		RequestedModel:   relayInfo.OriginModelName,
 		Group:            relayInfo.UsingGroup,
@@ -137,6 +134,81 @@ func applyDynamicBillingRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo
 	groupRatioInfo.GroupRatio = snapshot.DynamicRatio
 	groupRatioInfo.GroupSpecialRatio = -1
 	groupRatioInfo.HasSpecialRatio = false
+}
+
+func resolveDynamicBillingRatioMode(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, setting scheduler_setting.SchedulerSetting) string {
+	actualGroup := ""
+	if relayInfo != nil {
+		actualGroup = strings.TrimSpace(relayInfo.UsingGroup)
+	}
+	if groupCoveredByDynamicBillingPolicy(setting, actualGroup) {
+		return scheduler_setting.BillingRatioModeDynamic
+	}
+
+	plan, hasPlan := modelgatewayintegration.GetSelectedPlan(ctx)
+	if hasPlan && plan != nil {
+		if requestedGroupHasDynamicBillingPolicy(setting, plan.RequestedGroup, actualGroup) {
+			return scheduler_setting.BillingRatioModeDynamic
+		}
+		if strings.TrimSpace(plan.BillingRatioMode) == scheduler_setting.BillingRatioModeDynamic {
+			return scheduler_setting.BillingRatioModeDynamic
+		}
+	}
+
+	if relayInfo != nil && requestedGroupHasDynamicBillingPolicy(setting, relayInfo.TokenGroup, actualGroup) {
+		return scheduler_setting.BillingRatioModeDynamic
+	}
+	if ctx != nil {
+		if requestedGroupHasDynamicBillingPolicy(setting, common.GetContextKeyString(ctx, constant.ContextKeyTokenGroup), actualGroup) {
+			return scheduler_setting.BillingRatioModeDynamic
+		}
+	}
+	return scheduler_setting.BillingRatioModeStatic
+}
+
+func requestedGroupHasDynamicBillingPolicy(setting scheduler_setting.SchedulerSetting, requestedGroup string, actualGroup string) bool {
+	requestedGroup = strings.TrimSpace(requestedGroup)
+	if requestedGroup == "" {
+		return false
+	}
+	policy, ok := setting.GroupPolicies[requestedGroup]
+	if !ok || strings.TrimSpace(policy.BillingRatioMode) != scheduler_setting.BillingRatioModeDynamic {
+		return false
+	}
+	actualGroup = strings.TrimSpace(actualGroup)
+	if actualGroup == "" || actualGroup == requestedGroup || len(policy.CandidateGroups) == 0 {
+		return true
+	}
+	return groupInList(policy.CandidateGroups, actualGroup)
+}
+
+func groupCoveredByDynamicBillingPolicy(setting scheduler_setting.SchedulerSetting, group string) bool {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return false
+	}
+	for policyGroup, policy := range setting.GroupPolicies {
+		if strings.TrimSpace(policy.BillingRatioMode) != scheduler_setting.BillingRatioModeDynamic {
+			continue
+		}
+		if strings.TrimSpace(policyGroup) == group || groupInList(policy.CandidateGroups, group) {
+			return true
+		}
+	}
+	return false
+}
+
+func groupInList(groups []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, group := range groups {
+		if strings.TrimSpace(group) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {

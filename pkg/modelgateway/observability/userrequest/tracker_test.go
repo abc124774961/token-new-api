@@ -1,11 +1,15 @@
 package userrequest
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -331,6 +335,91 @@ func TestTrackerPrunesExpiredProcessingRequests(t *testing.T) {
 	require.Empty(t, tracker.Snapshot(5, Filters{}))
 }
 
+func TestTrackerSweepStaleProcessingPublishesTimeoutFinal(t *testing.T) {
+	restore := setTrackerTimeoutsForTest(t, true, 1, 1, 0)
+	defer restore()
+
+	tracker := NewTracker(10, time.Minute)
+	events := make([]Event, 0)
+	tracker.AddObserver(func(event Event) {
+		events = append(events, event)
+	})
+	createdAt := time.Now().Add(-35 * time.Second)
+	tracker.Start(core.DispatchRecord{
+		Request: core.DispatchRequest{
+			RequestID:      "req-stale",
+			UserID:         77,
+			RequestedGroup: "auto",
+			ModelName:      "gpt-5.5",
+		},
+		Plan:       &core.DispatchPlan{SelectedGroup: "codex-plus"},
+		RecordedAt: createdAt,
+	})
+
+	records := tracker.SweepStale()
+
+	require.Len(t, records, 1)
+	require.Equal(t, "req-stale", records[0].RequestID)
+	require.Equal(t, StatusFailed, records[0].Status)
+	require.Equal(t, http.StatusGatewayTimeout, records[0].FinalStatusCode)
+	require.Equal(t, model.ModelGatewayUserRequestErrorTimeout, records[0].FinalErrorCategory)
+	require.Greater(t, records[0].CompletedAt, int64(0))
+	require.GreaterOrEqual(t, records[0].DurationMs, int64(30000))
+	require.Len(t, events, 2)
+	require.Equal(t, EventFinished, events[1].Kind)
+	require.Equal(t, StatusFailed, events[1].Record.Status)
+
+	items := tracker.Snapshot(5, Filters{})
+	require.Len(t, items, 1)
+	require.Equal(t, StatusFailed, items[0].Status)
+	require.Equal(t, model.ModelGatewayUserRequestErrorTimeout, items[0].FinalErrorCategory)
+}
+
+func TestTrackerSnapshotConvertsStaleProcessingToTimeoutFinal(t *testing.T) {
+	restore := setTrackerTimeoutsForTest(t, true, 1, 1, 0)
+	defer restore()
+
+	tracker := NewTracker(10, time.Minute)
+	events := make([]Event, 0)
+	tracker.AddObserver(func(event Event) {
+		events = append(events, event)
+	})
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-stale-snapshot", ModelName: "gpt-5.5"},
+		RecordedAt: time.Now().Add(-35 * time.Second),
+	})
+
+	items := tracker.Snapshot(5, Filters{})
+
+	require.Len(t, items, 1)
+	require.Equal(t, "req-stale-snapshot", items[0].RequestID)
+	require.Equal(t, StatusFailed, items[0].Status)
+	require.Equal(t, model.ModelGatewayUserRequestErrorTimeout, items[0].FinalErrorCategory)
+	require.Len(t, events, 2)
+	require.Equal(t, EventFinished, events[1].Kind)
+}
+
+func TestTrackerRecentActivityKeepsLongRunningStreamProcessing(t *testing.T) {
+	restore := setTrackerTimeoutsForTest(t, true, 1, 1, 0)
+	defer restore()
+
+	tracker := NewTracker(10, time.Minute)
+	createdAt := time.Now().Add(-35 * time.Second)
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-active", ModelName: "gpt-5.5"},
+		RecordedAt: createdAt,
+	})
+	tracker.ObserveActivity(ActivityObservation{
+		RequestID:  "req-active",
+		ObservedAt: time.Now().Add(-5 * time.Second),
+	})
+
+	require.Empty(t, tracker.SweepStale())
+	items := tracker.Snapshot(5, Filters{})
+	require.Len(t, items, 1)
+	require.Equal(t, StatusProcessing, items[0].Status)
+}
+
 func TestTrackerCarriesExperienceIssueOnSuccessfulRequest(t *testing.T) {
 	tracker := NewTracker(10, time.Minute)
 	var finished Event
@@ -448,4 +537,21 @@ func TestFiltersMatchHealthProbeRecordsByDefault(t *testing.T) {
 	}
 
 	require.True(t, Filters{}.Match(record))
+}
+
+func setTrackerTimeoutsForTest(t *testing.T, totalEnabled bool, totalSeconds int, streamingSeconds int, relaySeconds int) func() {
+	t.Helper()
+	oldStreamingTimeout := constant.StreamingTimeout
+	oldRelayTimeout := common.RelayTimeout
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		RelayTotalTimeoutEnabled: totalEnabled,
+		RelayTotalTimeoutSeconds: totalSeconds,
+	})
+	constant.StreamingTimeout = streamingSeconds
+	common.RelayTimeout = relaySeconds
+	return func() {
+		constant.StreamingTimeout = oldStreamingTimeout
+		common.RelayTimeout = oldRelayTimeout
+		restoreSetting()
+	}
 }

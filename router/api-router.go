@@ -243,6 +243,7 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.POST("/account-pools/invalid/archive", controller.ArchiveChannelAccountsToInvalidPool)
 			channelRoute.POST("/account-pools/discarded/archive", controller.ArchiveChannelAccountsToDiscardedPool)
 			channelRoute.POST("/account-pools/invalid/:id/restore", controller.RestoreChannelInvalidAccount)
+			channelRoute.POST("/account-pools/invalid/:id/reauthorize", controller.ReauthorizeChannelInvalidAccount)
 			channelRoute.POST("/account-pools/invalid/:id/discard", controller.DiscardChannelInvalidAccount)
 			channelRoute.DELETE("/account-pools/invalid/:id", controller.DeleteChannelInvalidAccountPoolItem)
 			channelRoute.DELETE("/account-pools/discarded/:id", controller.DeleteChannelDiscardedAccountPoolItem)

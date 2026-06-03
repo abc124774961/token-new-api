@@ -22,6 +22,7 @@ import (
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -30,6 +31,8 @@ import (
 const channelAccountManualDisabledReason = "manual_disabled"
 const channelAccountAllKeysDisabledReason = "All keys are disabled"
 const channelAccountEmptyCodexReason = channelAccountAllKeysDisabledReason
+const channelAccountRestoredFromInvalidPoolReason = "restored_from_invalid_pool"
+const channelAccountAuthReauthorizationPendingReason = "auth_reauthorization_pending"
 const channelAccountImportMaxFileBytes int64 = 32 << 20
 const channelAccountImportMaxZipEntryBytes int64 = 4 << 20
 const channelAccountImportMaxZipEntries = 1000
@@ -382,6 +385,9 @@ type ChannelAccountOperation struct {
 	SkippedExisting  int    `json:"skipped_existing,omitempty"`
 	SkippedDuplicate int    `json:"skipped_duplicate,omitempty"`
 	TotalInput       int    `json:"total_input,omitempty"`
+	ChannelID        int    `json:"channel_id,omitempty"`
+	CredentialIndex  *int   `json:"credential_index,omitempty"`
+	OriginalIndex    *int   `json:"original_index,omitempty"`
 	ChannelRestored  bool   `json:"channel_restored,omitempty"`
 	ChannelDisabled  bool   `json:"channel_disabled,omitempty"`
 }
@@ -828,6 +834,36 @@ func RestoreChannelInvalidAccount(c *gin.Context) {
 	model.InitChannelCache()
 	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
 	common.ApiSuccess(c, gin.H{"operation": operation})
+}
+
+func ReauthorizeChannelInvalidAccount(c *gin.Context) {
+	poolID, ok := parsePositiveIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var request RestoreChannelInvalidAccountRequest
+	_ = c.ShouldBindJSON(&request)
+	if !service.TokenAccountAutomationConfigured() {
+		common.ApiErrorMsg(c, "账号自动化服务未配置")
+		return
+	}
+	restored, err := restoreChannelInvalidAccountForReauthorization(poolID, request.ChannelID)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	event := buildTokenAccountAutomationManualReauthorizationEvent(restored.Record, restored.ChannelID, restored.CredentialIndex, restored.PoolID, request.Reason)
+	automation, err := service.EnqueueTokenAccountAutomationAuthInvalid(c.Request.Context(), event)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	common.ApiSuccess(c, gin.H{
+		"operation":  restored.Operation,
+		"automation": automation,
+	})
 }
 
 func DiscardChannelInvalidAccount(c *gin.Context) {
@@ -2546,11 +2582,46 @@ func buildChannelAccountArchiveRecordsFromChannel(channel *model.Channel, indexe
 	return records, nil
 }
 
+type restoreChannelInvalidAccountOptions struct {
+	TargetChannelID int
+	DisabledStatus  int
+	DisabledReason  string
+}
+
+type restoredChannelInvalidAccount struct {
+	PoolID          int
+	Record          model.ChannelInvalidAccount
+	ChannelID       int
+	CredentialIndex int
+	Operation       *ChannelAccountOperation
+}
+
 func restoreChannelInvalidAccount(poolID int, targetChannelID int) (*ChannelAccountOperation, error) {
+	result, err := restoreChannelInvalidAccountWithOptions(poolID, restoreChannelInvalidAccountOptions{
+		TargetChannelID: targetChannelID,
+		DisabledStatus:  common.ChannelStatusManuallyDisabled,
+		DisabledReason:  channelAccountRestoredFromInvalidPoolReason,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Operation, nil
+}
+
+func restoreChannelInvalidAccountForReauthorization(poolID int, targetChannelID int) (*restoredChannelInvalidAccount, error) {
+	return restoreChannelInvalidAccountWithOptions(poolID, restoreChannelInvalidAccountOptions{
+		TargetChannelID: targetChannelID,
+		DisabledStatus:  common.ChannelStatusAutoDisabled,
+		DisabledReason:  channelAccountAuthReauthorizationPendingReason,
+	})
+}
+
+func restoreChannelInvalidAccountWithOptions(poolID int, options restoreChannelInvalidAccountOptions) (*restoredChannelInvalidAccount, error) {
 	var record model.ChannelInvalidAccount
 	if err := model.DB.First(&record, poolID).Error; err != nil {
 		return nil, fmt.Errorf("失效账号不存在")
 	}
+	targetChannelID := options.TargetChannelID
 	if targetChannelID <= 0 {
 		targetChannelID = record.ChannelID
 	}
@@ -2587,6 +2658,14 @@ func restoreChannelInvalidAccount(poolID int, targetChannelID int) (*ChannelAcco
 		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyModeRandom
 	}
 	cleanupChannelAccountStatusMaps(channel, len(keys))
+	disabledStatus := options.DisabledStatus
+	if disabledStatus == 0 {
+		disabledStatus = common.ChannelStatusManuallyDisabled
+	}
+	disabledReason := strings.TrimSpace(options.DisabledReason)
+	if disabledReason == "" {
+		disabledReason = channelAccountRestoredFromInvalidPoolReason
+	}
 	if channel.ChannelInfo.IsMultiKey {
 		if channel.ChannelInfo.MultiKeyStatusList == nil {
 			channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
@@ -2597,12 +2676,12 @@ func restoreChannelInvalidAccount(poolID int, targetChannelID int) (*ChannelAcco
 		if channel.ChannelInfo.MultiKeyDisabledTime == nil {
 			channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
 		}
-		channel.ChannelInfo.MultiKeyStatusList[newIndex] = common.ChannelStatusManuallyDisabled
-		channel.ChannelInfo.MultiKeyDisabledReason[newIndex] = "restored_from_invalid_pool"
+		channel.ChannelInfo.MultiKeyStatusList[newIndex] = disabledStatus
+		channel.ChannelInfo.MultiKeyDisabledReason[newIndex] = disabledReason
 		channel.ChannelInfo.MultiKeyDisabledTime[newIndex] = common.GetTimestamp()
 	} else {
-		channel.Status = common.ChannelStatusManuallyDisabled
-		setChannelAccountStatusReason(channel, "restored_from_invalid_pool")
+		channel.Status = disabledStatus
+		setChannelAccountStatusReason(channel, disabledReason)
 	}
 	if accountType := strings.ToLower(strings.TrimSpace(record.AccountType)); isKnownChannelAccountType(accountType) {
 		if channel.ChannelInfo.MultiKeyAccountTypes == nil {
@@ -2637,13 +2716,67 @@ func restoreChannelInvalidAccount(poolID int, targetChannelID int) (*ChannelAcco
 	if err := model.DB.Delete(&model.ChannelInvalidAccount{}, poolID).Error; err != nil {
 		return nil, err
 	}
-	return &ChannelAccountOperation{
-		Type:      "pool",
-		Action:    "restore",
-		Requested: 1,
-		Affected:  1,
-		Added:     1,
+	operation := &ChannelAccountOperation{
+		Type:            "pool",
+		Action:          "restore",
+		Requested:       1,
+		Affected:        1,
+		Added:           1,
+		ChannelID:       targetChannelID,
+		CredentialIndex: common.GetPointer(newIndex),
+		OriginalIndex:   common.GetPointer(record.CredentialIndex),
+	}
+	return &restoredChannelInvalidAccount{
+		PoolID:          poolID,
+		Record:          record,
+		ChannelID:       targetChannelID,
+		CredentialIndex: newIndex,
+		Operation:       operation,
 	}, nil
+}
+
+func buildTokenAccountAutomationManualReauthorizationEvent(record model.ChannelInvalidAccount, channelID int, credentialIndex int, poolID int, reason string) service.TokenAccountAutomationAuthInvalidEvent {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "manual_reauthorize"
+	}
+	contextPayload := map[string]any{
+		"pool":                           model.ChannelAccountPoolInvalid,
+		"pool_id":                        poolID,
+		"pool_reason":                    record.Reason,
+		"pool_note":                      record.Note,
+		"original_credential_index":      record.CredentialIndex,
+		"restored_credential_index":      credentialIndex,
+		"account_id":                     record.AccountID,
+		"account_type":                   record.AccountType,
+		"account_brand":                  record.Brand,
+		"account_provider":               record.Provider,
+		"account_identity_key":           record.AccountIdentityKey,
+		"credential_subject_fingerprint": record.CredentialSubjectFingerprint,
+		"credential_fingerprint":         record.CredentialFingerprint,
+		"resource_id":                    record.ResourceID,
+		"resource_type":                  record.ResourceType,
+	}
+	return service.TokenAccountAutomationAuthInvalidEvent{
+		ChannelID:       channelID,
+		CredentialIndex: credentialIndex,
+		Provider:        relayFirstNonEmptyString(record.Provider, record.Brand),
+		SubjectKey: relayFirstNonEmptyString(
+			record.AccountIdentityKey,
+			record.AccountID,
+			record.CredentialSubjectFingerprint,
+			record.CredentialFingerprint,
+		),
+		DisplayName: relayFirstNonEmptyString(
+			record.AccountID,
+			record.AccountIdentityKey,
+			record.CredentialSubjectFingerprint,
+			fmt.Sprintf("channel:%d#%d", channelID, credentialIndex),
+		),
+		Source:  "manual",
+		Reason:  reason,
+		Context: compactAutomationEventContext(contextPayload),
+	}
 }
 
 func discardChannelInvalidAccount(poolID int) (*ChannelAccountOperation, error) {

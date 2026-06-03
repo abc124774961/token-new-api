@@ -30,28 +30,45 @@ type TokenAccountAutomationAuthInvalidEvent struct {
 	Context         map[string]any `json:"context,omitempty"`
 }
 
+type TokenAccountAutomationJobSummary struct {
+	JobID     string `json:"job_id,omitempty"`
+	TaskType  string `json:"task_type,omitempty"`
+	Status    string `json:"status,omitempty"`
+	TargetRef string `json:"target_ref,omitempty"`
+}
+
+type TokenAccountAutomationAuthInvalidResult struct {
+	Job     TokenAccountAutomationJobSummary `json:"job,omitempty"`
+	Created bool                             `json:"created"`
+}
+
 func TokenAccountAutomationConfigured() bool {
 	return strings.TrimSpace(common.GetEnvOrDefaultString(tokenAccountAutomationURLEnv, "")) != "" &&
 		strings.TrimSpace(common.GetEnvOrDefaultString(tokenAccountAutomationAPITokenEnv, "")) != ""
 }
 
 func NotifyTokenAccountAutomationAuthInvalid(ctx context.Context, event TokenAccountAutomationAuthInvalidEvent) error {
+	_, err := EnqueueTokenAccountAutomationAuthInvalid(ctx, event)
+	return err
+}
+
+func EnqueueTokenAccountAutomationAuthInvalid(ctx context.Context, event TokenAccountAutomationAuthInvalidEvent) (*TokenAccountAutomationAuthInvalidResult, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(common.GetEnvOrDefaultString(tokenAccountAutomationURLEnv, "")), "/")
 	token := strings.TrimSpace(common.GetEnvOrDefaultString(tokenAccountAutomationAPITokenEnv, ""))
 	if baseURL == "" || token == "" {
-		return nil
+		return nil, nil
 	}
 	event.normalize()
 	if event.TargetRef == "" && (event.ChannelID <= 0 || event.CredentialIndex < 0) {
-		return errors.New("target_ref or channel_id + credential_index is required")
+		return nil, errors.New("target_ref or channel_id + credential_index is required")
 	}
 	payload, err := common.Marshal(event)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/events/account-auth-invalid", bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -71,13 +88,14 @@ func NotifyTokenAccountAutomationAuthInvalid(ctx context.Context, event TokenAcc
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	var result struct {
-		Success bool   `json:"success"`
-		Message string `json:"message,omitempty"`
+		Success bool                                    `json:"success"`
+		Message string                                  `json:"message,omitempty"`
+		Data    TokenAccountAutomationAuthInvalidResult `json:"data,omitempty"`
 	}
 	_ = common.DecodeJson(resp.Body, &result)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices || !result.Success {
@@ -85,9 +103,9 @@ func NotifyTokenAccountAutomationAuthInvalid(ctx context.Context, event TokenAcc
 		if message == "" {
 			message = http.StatusText(resp.StatusCode)
 		}
-		return fmt.Errorf("token account automation auth invalid event failed: status=%d message=%s", resp.StatusCode, message)
+		return nil, fmt.Errorf("token account automation auth invalid event failed: status=%d message=%s", resp.StatusCode, message)
 	}
-	return nil
+	return &result.Data, nil
 }
 
 func (event *TokenAccountAutomationAuthInvalidEvent) normalize() {

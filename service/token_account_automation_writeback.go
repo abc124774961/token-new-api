@@ -324,7 +324,7 @@ func tokenAccountAutomationReconcileChannelStatus(channel *model.Channel, keyCou
 		}
 		return
 	}
-	if channel.Status == common.ChannelStatusAutoDisabled && tokenAccountAutomationStatusReasonIsAllKeysDisabled(channel) {
+	if channel.Status == common.ChannelStatusAutoDisabled && tokenAccountAutomationCanEnableAutoDisabledChannel(channel) {
 		channel.Status = common.ChannelStatusEnabled
 		tokenAccountAutomationClearStatusReason(channel)
 	}
@@ -345,7 +345,22 @@ func tokenAccountAutomationStatusReasonIsAllKeysDisabled(channel *model.Channel)
 	if channel == nil {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(fmt.Sprint(channel.GetOtherInfo()["status_reason"])), tokenAccountAutomationAllKeysDisabledReason)
+	return strings.EqualFold(tokenAccountAutomationStatusReason(channel), tokenAccountAutomationAllKeysDisabledReason)
+}
+
+func tokenAccountAutomationCanEnableAutoDisabledChannel(channel *model.Channel) bool {
+	reason := tokenAccountAutomationStatusReason(channel)
+	if tokenAccountAutomationStatusReasonIsAllKeysDisabled(channel) {
+		return true
+	}
+	return reason != "" && tokenAccountAutomationAutoAuthDisabledReason(reason)
+}
+
+func tokenAccountAutomationStatusReason(channel *model.Channel) string {
+	if channel == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(channel.GetOtherInfo()["status_reason"]))
 }
 
 func tokenAccountAutomationSetStatusReason(channel *model.Channel, reason string) {

@@ -49,7 +49,7 @@ func setupRealtimeTopicTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func TestMergeUserRequestRealtimeRecordsPrefersPendingAndLimits(t *testing.T) {
+func TestMergeUserRequestRealtimeRecordsPrefersTerminalAndLimits(t *testing.T) {
 	completed := []controller.ModelGatewayUserRequestRecord{
 		{
 			ID:             1,
@@ -64,7 +64,7 @@ func TestMergeUserRequestRealtimeRecordsPrefersPendingAndLimits(t *testing.T) {
 			ID:             2,
 			RequestID:      "req-overlap",
 			CreatedAt:      80,
-			CompletedAt:    95,
+			CompletedAt:    105,
 			RequestedModel: "gpt-5.5",
 			FinalSuccess:   true,
 			Status:         "success",
@@ -90,11 +90,38 @@ func TestMergeUserRequestRealtimeRecordsPrefersPendingAndLimits(t *testing.T) {
 	merged := mergeUserRequestRealtimeRecords(completed, pending, 2)
 
 	require.Len(t, merged, 2)
-	require.Equal(t, "req-overlap", merged[0].RequestID)
-	require.Equal(t, "processing", merged[0].Status)
-	require.Equal(t, "req-pending", merged[1].RequestID)
-	require.Equal(t, 12, merged[1].FinalChannelID)
-	require.Equal(t, "live-channel", merged[1].FinalChannelName)
+	require.Equal(t, "req-pending", merged[0].RequestID)
+	require.Equal(t, 12, merged[0].FinalChannelID)
+	require.Equal(t, "live-channel", merged[0].FinalChannelName)
+	require.Equal(t, "req-overlap", merged[1].RequestID)
+	require.Equal(t, "success", merged[1].Status)
+	require.Equal(t, int64(105), merged[1].CompletedAt)
+}
+
+func TestMergeUserRequestRealtimeRecordsTreatsExplicitFailedWithoutCompletedAtAsTerminal(t *testing.T) {
+	completed := []controller.ModelGatewayUserRequestRecord{
+		{
+			RequestID:          "req-quota",
+			CreatedAt:          100,
+			FinalStatusCode:    403,
+			FinalErrorCategory: "user_quota_exhausted",
+			Status:             "user_quota_exhausted",
+		},
+	}
+	pending := []userrequest.Record{
+		{
+			RequestID: "req-quota",
+			CreatedAt: 120,
+			Status:    userrequest.StatusProcessing,
+		},
+	}
+
+	merged := mergeUserRequestRealtimeRecords(completed, pending, 10)
+
+	require.Len(t, merged, 1)
+	require.Equal(t, "req-quota", merged[0].RequestID)
+	require.Equal(t, "user_quota_exhausted", merged[0].Status)
+	require.Equal(t, 403, merged[0].FinalStatusCode)
 }
 
 func TestParamsMatchesUserRequest(t *testing.T) {
