@@ -30,9 +30,11 @@ const (
 )
 
 const (
-	TaskAuthRecover      = "auth_recover"
-	TaskAuthTokenRefresh = "auth_token_refresh"
-	TaskAuthBrowserLogin = "auth_browser_login"
+	TaskAuthRecover          = "auth_recover"
+	TaskAuthTokenRefresh     = "auth_token_refresh"
+	TaskAuthBrowserLogin     = "auth_browser_login"
+	TaskAccountProbe         = "account_probe"
+	TaskAccountProfileVerify = "account_profile_verify"
 )
 
 const (

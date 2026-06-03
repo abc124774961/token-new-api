@@ -176,6 +176,14 @@ type dispatchRequestMeta struct {
 	RetryIntentApplied        bool                        `json:"retry_intent_applied,omitempty"`
 	RetryQueuePriorityBoost   bool                        `json:"retry_queue_priority_boost,omitempty"`
 	CostGuardDecision         *core.CostGuardDecision     `json:"cost_guard_decision,omitempty"`
+	ResourceProtectionEnabled bool                        `json:"resource_protection_enabled,omitempty"`
+	ResourceProtectionPhase   string                      `json:"resource_protection_phase,omitempty"`
+	ResourceProtectionReason  string                      `json:"resource_protection_reason,omitempty"`
+	ResourceProtectionRole    string                      `json:"resource_protection_role,omitempty"`
+	PrimaryChannelIDs         []int                       `json:"primary_channel_ids,omitempty"`
+	FallbackChannelIDs        []int                       `json:"fallback_channel_ids,omitempty"`
+	PrimaryWaitTimeoutMs      int                         `json:"primary_wait_timeout_ms,omitempty"`
+	PrimaryQueueMaxDepth      int                         `json:"primary_queue_max_depth,omitempty"`
 }
 
 type attemptRequestMeta struct {
@@ -248,12 +256,20 @@ func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
 		CandidateFilterConditions: dispatchFilterConditionsForRecord(plan.CandidateFilterConditions),
 		CandidateExplanations: append([]core.CandidateExplanation(nil),
 			plan.Candidates...),
-		IsHealthProbe:           plan.IsHealthProbe,
-		ProbeReason:             plan.ProbeReason,
-		RetryRoutingIntent:      plan.RetryRoutingIntent.Clone(),
-		RetryIntentApplied:      plan.RetryIntentApplied,
-		RetryQueuePriorityBoost: plan.RetryQueuePriorityBoost,
-		CostGuardDecision:       plan.CostGuardDecision,
+		IsHealthProbe:             plan.IsHealthProbe,
+		ProbeReason:               plan.ProbeReason,
+		RetryRoutingIntent:        plan.RetryRoutingIntent.Clone(),
+		RetryIntentApplied:        plan.RetryIntentApplied,
+		RetryQueuePriorityBoost:   plan.RetryQueuePriorityBoost,
+		CostGuardDecision:         plan.CostGuardDecision,
+		ResourceProtectionEnabled: plan.ResourceProtectionEnabled,
+		ResourceProtectionPhase:   plan.ResourceProtectionPhase,
+		ResourceProtectionReason:  plan.ResourceProtectionReason,
+		ResourceProtectionRole:    plan.ResourceProtectionRole,
+		PrimaryChannelIDs:         append([]int(nil), plan.PrimaryChannelIDs...),
+		FallbackChannelIDs:        append([]int(nil), plan.FallbackChannelIDs...),
+		PrimaryWaitTimeoutMs:      plan.PrimaryWaitTimeoutMs,
+		PrimaryQueueMaxDepth:      plan.PrimaryQueueMaxDepth,
 	}
 }
 

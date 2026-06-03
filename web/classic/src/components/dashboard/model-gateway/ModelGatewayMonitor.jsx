@@ -1061,7 +1061,9 @@ function isLatencyWarning(value, thresholds) {
 }
 
 function isHealthProbeRecord(record) {
-  return Boolean(record?.is_health_probe || record?.request_meta?.is_health_probe);
+  return Boolean(
+    record?.is_health_probe || record?.request_meta?.is_health_probe,
+  );
 }
 
 function getStatusMeta(record, t) {
@@ -1101,7 +1103,9 @@ function isUserQuotaExhaustedRecord(record) {
   )
     .trim()
     .toLowerCase();
-  const status = String(record?.status || '').trim().toLowerCase();
+  const status = String(record?.status || '')
+    .trim()
+    .toLowerCase();
   const errorCode = String(
     record?.error_code || record?.dispatch_record?.error_code || '',
   )
@@ -1953,12 +1957,101 @@ function QueueStickyTags({
   return <div className='ct-model-gateway-queue-tags'>{tags}</div>;
 }
 
+function resourceProtectionPhaseMeta(phase, reason, t) {
+  const normalized = String(phase || reason || '').trim();
+  switch (normalized) {
+    case 'primary_hit':
+    case 'primary_resource_available':
+      return { color: 'green', label: t('命中主资源') };
+    case 'primary_saturated_wait':
+    case 'primary_resource_saturated':
+      return { color: 'cyan', label: t('主资源满载等待') };
+    case 'fallback_after_timeout':
+    case 'primary_wait_timeout':
+    case 'fallback_after_primary_wait_timeout':
+      return { color: 'orange', label: t('等待超时转兜底') };
+    case 'primary_failure_fallback':
+    case 'primary_resource_failure':
+      return { color: 'red', label: t('主资源故障转兜底') };
+    case 'no_primary_fallback':
+    case 'no_primary_resource_candidate':
+      return { color: 'orange', label: t('无主资源转兜底') };
+    default:
+      return normalized ? { color: 'grey', label: normalized } : null;
+  }
+}
+
+function resourceProtectionRecordMeta(record, t) {
+  const enabled =
+    record?.resource_protection_enabled ||
+    record?.request_meta?.resource_protection_enabled;
+  if (!enabled) return null;
+  const phase =
+    record?.resource_protection_phase ||
+    record?.request_meta?.resource_protection_phase;
+  const reason =
+    record?.resource_protection_reason ||
+    record?.request_meta?.resource_protection_reason;
+  return resourceProtectionPhaseMeta(phase, reason, t);
+}
+
+function ResourceProtectionAggregateCell({ record, t }) {
+  const dispatches = Number(record?.resource_protection_dispatches || 0);
+  if (dispatches <= 0) {
+    return <Typography.Text type='tertiary'>--</Typography.Text>;
+  }
+  const waits = Number(record?.resource_protection_primary_waits || 0);
+  const timeoutFallbacks = Number(
+    record?.resource_protection_wait_timeout_fallbacks || 0,
+  );
+  const failureFallbacks = Number(
+    record?.resource_protection_primary_failure_fallbacks || 0,
+  );
+  const queueDepth = Number(record?.resource_protection_queue_depth || 0);
+  const queueCapacity = Number(record?.resource_protection_queue_capacity || 0);
+  const costShare = Number(
+    record?.resource_protection_fallback_cost_share || 0,
+  );
+  return (
+    <div className='ct-model-gateway-record-tags'>
+      <Tag color='cyan' type='light' size='small'>
+        {t('主资源等待')} {formatNumber(waits)}
+      </Tag>
+      <Tag
+        color={timeoutFallbacks > 0 ? 'orange' : 'green'}
+        type='light'
+        size='small'
+      >
+        {t('超时兜底')} {formatNumber(timeoutFallbacks)}
+      </Tag>
+      <Tag
+        color={failureFallbacks > 0 ? 'red' : 'green'}
+        type='light'
+        size='small'
+      >
+        {t('故障兜底')} {formatNumber(failureFallbacks)}
+      </Tag>
+      <Tag color='blue' type='light' size='small'>
+        {t('平均等待')} {formatLatency(record?.resource_protection_avg_wait_ms)}
+      </Tag>
+      <Tag color='grey' type='light' size='small'>
+        {t('主资源队列')} {formatQueuePair(queueDepth, queueCapacity)}
+      </Tag>
+      <Tag color={costShare > 0 ? 'orange' : 'green'} type='light' size='small'>
+        {t('兜底成本占比')} {costShare > 0 ? formatPercent(costShare) : '--'}
+      </Tag>
+    </div>
+  );
+}
+
 function formatAttemptFlowAction(action, t) {
   switch (action) {
     case 'complete':
       return t('请求完成');
     case 'switch_channel':
       return t('切换渠道');
+    case 'resource_protection_fallback':
+      return t('主资源保护兜底');
     case 'retry':
       return t('继续重试');
     case 'stop':
@@ -1988,6 +2081,8 @@ function formatAttemptRetryReason(reason, t) {
   ) {
     case RETRY_REASON_FIRST_BYTE_TIMEOUT:
       return t('首字超时');
+    case 'primary_wait_timeout':
+      return t('等待超时转兜底');
     default:
       return reason || '';
   }
@@ -2151,6 +2246,7 @@ function DispatchFlowTags({ record, t, compact = false }) {
   const configuredLimit = Number(record?.configured_concurrency_limit || 0);
   const learnedLimit = Number(record?.learned_concurrency_limit || 0);
   const usedChannels = getUsedChannels(record);
+  const resourceProtectionMeta = resourceProtectionRecordMeta(record, t);
 
   if (action) {
     tags.push(
@@ -2161,6 +2257,18 @@ function DispatchFlowTags({ record, t, compact = false }) {
         {...tagProps}
       >
         {formatAttemptFlowAction(action, t)}
+      </Tag>,
+    );
+  }
+  if (resourceProtectionMeta) {
+    tags.push(
+      <Tag
+        key='resource-protection'
+        color={resourceProtectionMeta.color}
+        type='light'
+        {...tagProps}
+      >
+        {resourceProtectionMeta.label}
       </Tag>,
     );
   }
@@ -2980,7 +3088,9 @@ function dynamicBillingSummaryLabel(billing, t) {
   if (!billing) return '';
   if (billing.dynamic_billing_applied) {
     return [
-      formatDynamicCostRatio(billing.dynamic_billing_ratio || billing.group_ratio),
+      formatDynamicCostRatio(
+        billing.dynamic_billing_ratio || billing.group_ratio,
+      ),
       billing.dynamic_billing_price_per_m > 0
         ? `${formatUsdCostAmount(billing.dynamic_billing_price_per_m)}/M`
         : '',
@@ -4588,7 +4698,9 @@ function DynamicBillingMiniPanel({
             value:
               upstreamCost > 0
                 ? `${formatUsdCostAmount(upstreamCost)}${
-                    targetRatio > 0 ? ` · ${formatDynamicCostRatio(targetRatio)}` : ''
+                    targetRatio > 0
+                      ? ` · ${formatDynamicCostRatio(targetRatio)}`
+                      : ''
                   }`
                 : '--',
           },
@@ -4611,7 +4723,9 @@ function DynamicBillingMiniPanel({
   const costRow = (
     <div className='ct-model-gateway-dynamic-mini-cost-row'>
       <span>{t('成本')}</span>
-      <bdi className='ct-model-gateway-dynamic-mini-cost-value'>{costValue}</bdi>
+      <bdi className='ct-model-gateway-dynamic-mini-cost-value'>
+        {costValue}
+      </bdi>
     </div>
   );
   return (
@@ -4889,7 +5003,9 @@ function UserRequestRecentTable({
         <div>
           <h3>{t('进行中的请求数据统计')}</h3>
           <p>
-            {t('处理中优先，完成请求按最后完成时间排序，未完成请求按创建时间排序')}
+            {t(
+              '处理中优先，完成请求按最后完成时间排序，未完成请求按创建时间排序',
+            )}
           </p>
         </div>
         <div className='ct-model-gateway-user-request-list-actions'>
@@ -5147,12 +5263,12 @@ function UserRequestRecentTable({
                             ? t('客户端中断')
                             : meta.tone === 'quota'
                               ? t('业务拦截')
-                            : meta.tone === 'probe' ||
-                                meta.tone === 'probe-warning'
-                              ? t('探活请求')
-                              : record.final_success
-                                ? t('请求完成')
-                                : t('请求失败')}
+                              : meta.tone === 'probe' ||
+                                  meta.tone === 'probe-warning'
+                                ? t('探活请求')
+                                : record.final_success
+                                  ? t('请求完成')
+                                  : t('请求失败')}
                       </span>
                     </div>
 
@@ -9742,7 +9858,8 @@ function getCandidateAccountUID(candidate) {
       candidate?.runtime_key?.credential_subject_fingerprint ||
       '',
   ).trim();
-  if (subject) return `acct-${subject.length <= 8 ? subject : subject.slice(0, 8)}`;
+  if (subject)
+    return `acct-${subject.length <= 8 ? subject : subject.slice(0, 8)}`;
   const credential = String(
     candidate?.credential_fingerprint ||
       candidate?.runtime_key?.credential_fingerprint ||
@@ -12865,111 +12982,126 @@ export default function ModelGatewayMonitor() {
   }, [refresh]);
 
   const aggregateColumns = useCallback(
-    (type) => [
-      {
-        key: `${type}-name`,
-        title:
-          type === 'model'
-            ? t('模型')
-            : type === 'group'
-              ? t('分组')
-              : type === 'profile'
-                ? t('Provider Profile')
-                : type === 'proxy'
-                  ? t('Proxy Mode')
-                  : t('渠道'),
-        dataIndex: 'key',
-        width: 220,
-        render: (_, record) => (
-          <AggregateNameCell record={record} type={type} />
-        ),
-      },
-      {
-        key: `${type}-dispatches`,
-        title: t('调度'),
-        dataIndex: 'dispatches',
-        width: 100,
-        sorter: (a, b) => Number(a.dispatches) - Number(b.dispatches),
-        render: (value) => (
-          <Typography.Text strong>{formatNumber(value)}</Typography.Text>
-        ),
-      },
-      {
-        key: `${type}-success-rate`,
-        title: t('成功率'),
-        dataIndex: 'success_rate',
-        width: 110,
-        sorter: (a, b) => Number(a.success_rate) - Number(b.success_rate),
-        render: (value, record) => {
-          const tone = getSuccessTone(value, record.attempts);
-          return (
-            <Tag
-              color={
-                tone === 'success'
-                  ? 'green'
-                  : tone === 'warning'
-                    ? 'orange'
-                    : 'red'
-              }
-              shape='circle'
-              type='light'
-            >
-              {formatAttemptRate(value, record.attempts)}
-            </Tag>
-          );
+    (type) => {
+      const columns = [
+        {
+          key: `${type}-name`,
+          title:
+            type === 'model'
+              ? t('模型')
+              : type === 'group'
+                ? t('分组')
+                : type === 'profile'
+                  ? t('Provider Profile')
+                  : type === 'proxy'
+                    ? t('Proxy Mode')
+                    : t('渠道'),
+          dataIndex: 'key',
+          width: 220,
+          render: (_, record) => (
+            <AggregateNameCell record={record} type={type} />
+          ),
         },
-      },
-      {
-        key: `${type}-avg-duration`,
-        title: t('平均耗时'),
-        dataIndex: 'avg_duration_ms',
-        width: 120,
-        sorter: (a, b) => Number(a.avg_duration_ms) - Number(b.avg_duration_ms),
-        render: (value) => formatLatency(value),
-      },
-      {
-        key: `${type}-avg-ttft`,
-        title: t('首包延迟'),
-        dataIndex: 'avg_ttft_ms',
-        width: 120,
-        sorter: (a, b) => Number(a.avg_ttft_ms) - Number(b.avg_ttft_ms),
-        render: (value) => formatLatency(value),
-      },
-      {
-        key: `${type}-stream-interrupted`,
-        title: t('流中断'),
-        dataIndex: 'stream_interrupted',
-        width: 100,
-        render: (value) => (
-          <Typography.Text type={value > 0 ? 'warning' : 'secondary'}>
-            {formatNumber(value)}
-          </Typography.Text>
-        ),
-      },
-      {
-        key: `${type}-queue-sticky`,
-        title: t('队列 / 粘滞'),
-        dataIndex: 'avg_queue_wait_ms',
-        width: 260,
-        render: (_, record) => (
-          <QueueStickyTags record={record} t={t} compact />
-        ),
-      },
-      {
-        key: `${type}-avg-score`,
-        title: t('平均稳定评分'),
-        dataIndex: 'avg_score_total',
-        width: 110,
-        render: (value) => formatScore(value),
-      },
-      {
-        key: `${type}-score-breakdown`,
-        title: t('评分拆解'),
-        dataIndex: 'score_breakdown',
-        width: 240,
-        render: (value) => <ScoreBreakdown value={value} />,
-      },
-    ],
+        {
+          key: `${type}-dispatches`,
+          title: t('调度'),
+          dataIndex: 'dispatches',
+          width: 100,
+          sorter: (a, b) => Number(a.dispatches) - Number(b.dispatches),
+          render: (value) => (
+            <Typography.Text strong>{formatNumber(value)}</Typography.Text>
+          ),
+        },
+        {
+          key: `${type}-success-rate`,
+          title: t('成功率'),
+          dataIndex: 'success_rate',
+          width: 110,
+          sorter: (a, b) => Number(a.success_rate) - Number(b.success_rate),
+          render: (value, record) => {
+            const tone = getSuccessTone(value, record.attempts);
+            return (
+              <Tag
+                color={
+                  tone === 'success'
+                    ? 'green'
+                    : tone === 'warning'
+                      ? 'orange'
+                      : 'red'
+                }
+                shape='circle'
+                type='light'
+              >
+                {formatAttemptRate(value, record.attempts)}
+              </Tag>
+            );
+          },
+        },
+        {
+          key: `${type}-avg-duration`,
+          title: t('平均耗时'),
+          dataIndex: 'avg_duration_ms',
+          width: 120,
+          sorter: (a, b) =>
+            Number(a.avg_duration_ms) - Number(b.avg_duration_ms),
+          render: (value) => formatLatency(value),
+        },
+        {
+          key: `${type}-avg-ttft`,
+          title: t('首包延迟'),
+          dataIndex: 'avg_ttft_ms',
+          width: 120,
+          sorter: (a, b) => Number(a.avg_ttft_ms) - Number(b.avg_ttft_ms),
+          render: (value) => formatLatency(value),
+        },
+        {
+          key: `${type}-stream-interrupted`,
+          title: t('流中断'),
+          dataIndex: 'stream_interrupted',
+          width: 100,
+          render: (value) => (
+            <Typography.Text type={value > 0 ? 'warning' : 'secondary'}>
+              {formatNumber(value)}
+            </Typography.Text>
+          ),
+        },
+        {
+          key: `${type}-queue-sticky`,
+          title: t('队列 / 粘滞'),
+          dataIndex: 'avg_queue_wait_ms',
+          width: 260,
+          render: (_, record) => (
+            <QueueStickyTags record={record} t={t} compact />
+          ),
+        },
+        {
+          key: `${type}-avg-score`,
+          title: t('平均稳定评分'),
+          dataIndex: 'avg_score_total',
+          width: 110,
+          render: (value) => formatScore(value),
+        },
+        {
+          key: `${type}-score-breakdown`,
+          title: t('评分拆解'),
+          dataIndex: 'score_breakdown',
+          width: 240,
+          render: (value) => <ScoreBreakdown value={value} />,
+        },
+      ];
+      if (type === 'group') {
+        columns.splice(7, 0, {
+          key: `${type}-resource-protection`,
+          title: t('主资源保护指标'),
+          dataIndex: 'resource_protection_dispatches',
+          width: 320,
+          render: (_, record) => (
+            <ResourceProtectionAggregateCell record={record} t={t} />
+          ),
+        });
+      }
+      return columns;
+    },
     [t],
   );
 
@@ -13465,7 +13597,7 @@ export default function ModelGatewayMonitor() {
                 rowKey='key'
                 pagination={false}
                 empty={<EmptyState t={t} />}
-                scroll={{ x: 1380 }}
+                scroll={{ x: 1640 }}
               />
             </DashboardCard>
           </div>

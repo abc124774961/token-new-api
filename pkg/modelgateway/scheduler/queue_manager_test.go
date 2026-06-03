@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/service"
@@ -137,6 +138,115 @@ func TestQueueManagerRejectsWhenMaxDepthReached(t *testing.T) {
 	cancel()
 	<-done
 	require.Equal(t, 0, manager.Depth(8005))
+}
+
+func TestQueueManagerPoolWaitsForAnyResourceInPool(t *testing.T) {
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
+	first, acquired := service.TryAcquireChannelConcurrency(8020, dto.ChannelSettings{MaxConcurrency: 1})
+	require.True(t, acquired)
+	defer first.Release()
+	second, acquired := service.TryAcquireChannelConcurrency(8021, dto.ChannelSettings{MaxConcurrency: 1})
+	require.True(t, acquired)
+
+	manager := scheduler.NewQueueManager(500*time.Millisecond, 4)
+	done := make(chan scheduler.QueueAcquireResult, 1)
+	go func() {
+		done <- manager.AcquirePoolWithOptions(context.Background(), &core.DispatchPlan{
+			QueueEnabled: true,
+			QueueWaitMs:  400,
+		}, scheduler.QueuePoolAcquireOptions{
+			PoolKey: "group=codex-plus|primary=8020,8021",
+			Group:   "codex-plus",
+			TryAcquire: func() scheduler.QueueAcquireResult {
+				for _, channelID := range []int{8020, 8021} {
+					lease, ok := service.TryAcquireChannelConcurrency(channelID, dto.ChannelSettings{MaxConcurrency: 1})
+					if ok {
+						return scheduler.QueueAcquireResult{
+							Lease:  lease,
+							Status: scheduler.QueueAcquireAcquired,
+							Plan: &core.DispatchPlan{
+								Channel: &model.Channel{Id: channelID},
+							},
+						}
+					}
+				}
+				return scheduler.QueueAcquireResult{Status: scheduler.QueueAcquireRejected}
+			},
+		})
+	}()
+	require.Eventually(t, func() bool {
+		return manager.PoolDepth("group=codex-plus|primary=8020,8021") == 1
+	}, 100*time.Millisecond, 10*time.Millisecond)
+
+	second.Release()
+	result := <-done
+	defer result.Lease.Release()
+
+	require.Equal(t, scheduler.QueueAcquireQueued, result.Status)
+	require.NotNil(t, result.Lease)
+	require.NotNil(t, result.Plan)
+	require.NotNil(t, result.Plan.Channel)
+	require.Equal(t, 8021, result.Plan.Channel.Id)
+	require.Equal(t, 0, manager.PoolDepth("group=codex-plus|primary=8020,8021"))
+}
+
+func TestQueueManagerPoolDepthIsIsolatedByGroupPoolKey(t *testing.T) {
+	manager := scheduler.NewQueueManager(500*time.Millisecond, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tryReject := func() scheduler.QueueAcquireResult {
+		return scheduler.QueueAcquireResult{Status: scheduler.QueueAcquireRejected}
+	}
+	plan := &core.DispatchPlan{QueueEnabled: true, QueueWaitMs: 400}
+	firstDone := make(chan scheduler.QueueAcquireResult, 1)
+	go func() {
+		firstDone <- manager.AcquirePoolWithOptions(ctx, plan, scheduler.QueuePoolAcquireOptions{
+			PoolKey:    "group=A|primary=1,2",
+			Group:      "A",
+			MaxDepth:   1,
+			TryAcquire: tryReject,
+		})
+	}()
+	require.Eventually(t, func() bool {
+		return manager.PoolDepth("group=A|primary=1,2") == 1
+	}, 100*time.Millisecond, 10*time.Millisecond)
+
+	rejected := manager.AcquirePoolWithOptions(context.Background(), plan, scheduler.QueuePoolAcquireOptions{
+		PoolKey:    "group=A|primary=1,2",
+		Group:      "A",
+		MaxDepth:   1,
+		TryAcquire: tryReject,
+	})
+	require.Equal(t, scheduler.QueueAcquireRejected, rejected.Status)
+
+	secondCtx, secondCancel := context.WithCancel(context.Background())
+	defer secondCancel()
+	secondDone := make(chan scheduler.QueueAcquireResult, 1)
+	go func() {
+		secondDone <- manager.AcquirePoolWithOptions(secondCtx, plan, scheduler.QueuePoolAcquireOptions{
+			PoolKey:    "group=B|primary=1,2",
+			Group:      "B",
+			MaxDepth:   1,
+			TryAcquire: tryReject,
+		})
+	}()
+	require.Eventually(t, func() bool {
+		return manager.PoolDepth("group=B|primary=1,2") == 1
+	}, 100*time.Millisecond, 10*time.Millisecond)
+	snapshot := manager.DetailedSnapshot()
+	require.Equal(t, 2, snapshot.Summary.TotalQueued)
+	require.Equal(t, 2, snapshot.Summary.QueueGroups)
+	require.Len(t, snapshot.Groups, 2)
+	require.Len(t, snapshot.RuntimeKeys, 2)
+
+	cancel()
+	secondCancel()
+	require.Equal(t, scheduler.QueueAcquireRejected, (<-firstDone).Status)
+	require.Equal(t, scheduler.QueueAcquireRejected, (<-secondDone).Status)
+	require.Equal(t, 0, manager.PoolDepth("group=A|primary=1,2"))
+	require.Equal(t, 0, manager.PoolDepth("group=B|primary=1,2"))
 }
 
 func TestQueueManagerPriorityOptionsDoNotBypassDefaultDepthLimit(t *testing.T) {

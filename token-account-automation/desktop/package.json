@@ -1,0 +1,54 @@
+{
+  "name": "token-account-automation-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main/main.js",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "electron": "electron .",
+    "start": "node scripts/start-dev.mjs dev",
+    "start:pro": "node scripts/start-dev.mjs pro",
+    "open": "AUTOMATION_ENV_FILE=../../.env.dev AUTOMATION_DESKTOP_LOAD_DIST=1 electron .",
+    "open:pro": "AUTOMATION_ENV_FILE=../../.env.pro AUTOMATION_DESKTOP_LOAD_DIST=1 electron .",
+    "build": "vite build",
+    "package": "bun run build && electron-builder --dir",
+    "dist": "bun run build && electron-builder"
+  },
+  "dependencies": {
+    "@douyinfe/semi-icons": "^2.76.0",
+    "@douyinfe/semi-ui": "^2.76.0",
+    "electron-updater": "^6.3.9",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^35.7.5",
+    "electron-builder": "^26.0.12",
+    "vite": "^6.0.11",
+    "wait-on": "^8.0.2"
+  },
+  "build": {
+    "appId": "com.quantumnous.tokenAccountAutomationDesktop",
+    "productName": "Token Account Automation Desktop",
+    "files": [
+      "dist/**",
+      "src/main/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}

@@ -4053,6 +4053,8 @@ function ChannelAccount() {
   const [testingAccountKey, setTestingAccountKey] = useState('');
   const [capabilityLoadingKey, setCapabilityLoadingKey] = useState('');
   const [capabilityBatchLoading, setCapabilityBatchLoading] = useState(false);
+  const [authRecoverySyncLoading, setAuthRecoverySyncLoading] =
+    useState(false);
   const [batchLoading, setBatchLoading] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [keyword, setKeyword] = useState('');
@@ -4545,6 +4547,47 @@ function ChannelAccount() {
       showError(message);
     } finally {
       setCapabilityBatchLoading(false);
+    }
+  }, [loadAccounts, scopedChannelID, t]);
+
+  const syncAuthRecoveryAccounts = useCallback(async () => {
+    setAuthRecoverySyncLoading(true);
+    try {
+      const response = await API.post('/api/channel/accounts/auth-recovery/sync', {
+        channel_id: scopedChannelID || undefined,
+        limit: 500,
+      });
+      if (response?.data?.success === false) {
+        throw new Error(response?.data?.message || t('自动授权同步失败'));
+      }
+      const payload = unwrapApiData(response);
+      await loadAccounts();
+      showSuccess(
+        t(
+          '自动授权同步完成：匹配 {{matched}} 个，新建 {{enqueued}} 个，已存在 {{existing}} 个，跳过 {{skipped}} 个',
+          {
+            matched: formatNumber(payload?.matched),
+            enqueued: formatNumber(payload?.enqueued),
+            existing: formatNumber(payload?.existing),
+            skipped: formatNumber(payload?.skipped),
+          },
+        ),
+      );
+      if (Number(payload?.automation_errors || 0) > 0) {
+        showError(
+          t('有 {{total}} 个账号投递失败，请检查自动化服务配置', {
+            total: formatNumber(payload?.automation_errors),
+          }),
+        );
+      }
+    } catch (err) {
+      const message =
+        err?.response?.data?.message ||
+        err?.message ||
+        t('自动授权同步失败');
+      showError(message);
+    } finally {
+      setAuthRecoverySyncLoading(false);
     }
   }, [loadAccounts, scopedChannelID, t]);
 
@@ -5738,6 +5781,26 @@ function ChannelAccount() {
               >
                 {t('返回渠道列表')}
               </Button>
+              <Popconfirm
+                title={t('同步授权异常账号？')}
+                content={
+                  scopedChannelID
+                    ? t('将当前渠道中授权异常的运行账号提交到自动授权队列')
+                    : t('将所有渠道中授权异常的运行账号提交到自动授权队列')
+                }
+                onConfirm={syncAuthRecoveryAccounts}
+                disabled={!isRunningView}
+              >
+                <Button
+                  icon={<UserRoundCog size={15} />}
+                  type='primary'
+                  theme='light'
+                  loading={authRecoverySyncLoading}
+                  disabled={!isRunningView}
+                >
+                  {t('同步授权异常')}
+                </Button>
+              </Popconfirm>
               <Button
                 icon={<Plus size={15} />}
                 type='primary'

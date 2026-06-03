@@ -83,6 +83,8 @@ type channelResponse struct {
 	BalanceInsufficient             bool                                     `json:"balance_insufficient"`
 	RuntimeBalanceInsufficientCount int                                      `json:"runtime_balance_insufficient_count,omitempty"`
 	UpstreamCostDisplay             *channelUpstreamCostDisplay              `json:"upstream_cost_display,omitempty"`
+	ActiveConcurrency               int                                      `json:"active_concurrency,omitempty"`
+	MaxConcurrency                  int                                      `json:"max_concurrency,omitempty"`
 }
 
 type channelRuntimeCircuitStatus struct {
@@ -142,6 +144,7 @@ func buildChannelResponseWithDisplays(channel *model.Channel, costDisplay *chann
 	clearChannelInfo(channel)
 	channel.CostPerMillion = nil
 	statusReason := service.ChannelStatusReason(channel)
+	channelSetting := channel.GetSetting()
 	return &channelResponse{
 		Channel:                         channel,
 		FailureAvoidance:                service.GetChannelFailureAvoidanceStatus(channel.Id),
@@ -151,6 +154,8 @@ func buildChannelResponseWithDisplays(channel *model.Channel, costDisplay *chann
 		BalanceInsufficient:             service.IsKnownBalanceInsufficientChannel(channel) || runtimeBalanceCount > 0,
 		RuntimeBalanceInsufficientCount: runtimeBalanceCount,
 		UpstreamCostDisplay:             costDisplay,
+		ActiveConcurrency:               service.GetChannelEffectiveActiveConcurrency(channel.Id),
+		MaxConcurrency:                  channelSetting.MaxConcurrency,
 	}
 }
 

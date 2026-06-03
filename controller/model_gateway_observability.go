@@ -387,43 +387,54 @@ type ModelGatewayTrendExportPreview struct {
 }
 
 type ModelGatewayObservabilitySummary struct {
-	WindowHours              int                            `json:"window_hours"`
-	TrendBucketSeconds       int64                          `json:"trend_bucket_seconds"`
-	StartTime                int64                          `json:"start_time"`
-	EndTime                  int64                          `json:"end_time"`
-	TotalRecords             int64                          `json:"total_records"`
-	ScannedRecords           int                            `json:"scanned_records"`
-	Truncated                bool                           `json:"truncated"`
-	Dispatches               int64                          `json:"dispatches"`
-	Attempts                 int64                          `json:"attempts"`
-	Successes                int64                          `json:"successes"`
-	Failures                 int64                          `json:"failures"`
-	StreamInterrupted        int64                          `json:"stream_interrupted"`
-	FallbackUsed             int64                          `json:"fallback_used"`
-	SuccessRate              float64                        `json:"success_rate"`
-	AvgDurationMs            int64                          `json:"avg_duration_ms"`
-	AvgTTFTMs                int64                          `json:"avg_ttft_ms"`
-	AvgScoreTotal            float64                        `json:"avg_score_total"`
-	QueueEnabledDispatches   int64                          `json:"queue_enabled_dispatches"`
-	QueuedDispatches         int64                          `json:"queued_dispatches"`
-	QueueWaitCount           int64                          `json:"queue_wait_count"`
-	AvgQueueWaitMs           int64                          `json:"avg_queue_wait_ms"`
-	StickyRoutes             int64                          `json:"sticky_routes"`
-	StickyRetained           int64                          `json:"sticky_retained"`
-	StickyBroken             int64                          `json:"sticky_broken"`
-	CacheAffinityRoutes      int64                          `json:"cache_affinity_routes"`
-	OverloadSkipCount        int64                          `json:"overload_skip_count"`
-	AuthConfigErrorCount     int64                          `json:"auth_config_error_count"`
-	UnknownErrorCount        int64                          `json:"unknown_error_count"`
-	ConfigErrorIsolatedCount int64                          `json:"config_error_isolated_count"`
-	ScoreBreakdownSamples    int64                          `json:"score_breakdown_samples"`
-	ScoreBreakdownParseErrs  int64                          `json:"score_breakdown_parse_errors"`
-	RiskEvents               int64                          `json:"risk_events"`
-	RiskStatusChanges        int64                          `json:"risk_status_changes"`
-	CurrentRiskRuntimeKeys   int                            `json:"current_risk_runtime_keys"`
-	CircuitOpenReasons       []ModelGatewayTrendReasonCount `json:"circuit_open_reasons,omitempty"`
-	CircuitErrorCounts       []ModelGatewayTrendReasonCount `json:"circuit_error_counts,omitempty"`
-	CircuitErrorTypes        []ModelGatewayTrendReasonCount `json:"circuit_error_types,omitempty"`
+	WindowHours                               int                            `json:"window_hours"`
+	TrendBucketSeconds                        int64                          `json:"trend_bucket_seconds"`
+	StartTime                                 int64                          `json:"start_time"`
+	EndTime                                   int64                          `json:"end_time"`
+	TotalRecords                              int64                          `json:"total_records"`
+	ScannedRecords                            int                            `json:"scanned_records"`
+	Truncated                                 bool                           `json:"truncated"`
+	Dispatches                                int64                          `json:"dispatches"`
+	Attempts                                  int64                          `json:"attempts"`
+	Successes                                 int64                          `json:"successes"`
+	Failures                                  int64                          `json:"failures"`
+	StreamInterrupted                         int64                          `json:"stream_interrupted"`
+	FallbackUsed                              int64                          `json:"fallback_used"`
+	SuccessRate                               float64                        `json:"success_rate"`
+	AvgDurationMs                             int64                          `json:"avg_duration_ms"`
+	AvgTTFTMs                                 int64                          `json:"avg_ttft_ms"`
+	AvgScoreTotal                             float64                        `json:"avg_score_total"`
+	QueueEnabledDispatches                    int64                          `json:"queue_enabled_dispatches"`
+	QueuedDispatches                          int64                          `json:"queued_dispatches"`
+	QueueWaitCount                            int64                          `json:"queue_wait_count"`
+	AvgQueueWaitMs                            int64                          `json:"avg_queue_wait_ms"`
+	ResourceProtectionDispatches              int64                          `json:"resource_protection_dispatches"`
+	ResourceProtectionPrimaryHits             int64                          `json:"resource_protection_primary_hits"`
+	ResourceProtectionPrimaryWaits            int64                          `json:"resource_protection_primary_waits"`
+	ResourceProtectionFallbacks               int64                          `json:"resource_protection_fallbacks"`
+	ResourceProtectionWaitTimeoutFallbacks    int64                          `json:"resource_protection_wait_timeout_fallbacks"`
+	ResourceProtectionPrimaryFailureFallbacks int64                          `json:"resource_protection_primary_failure_fallbacks"`
+	ResourceProtectionQueueDepth              int                            `json:"resource_protection_queue_depth,omitempty"`
+	ResourceProtectionMaxQueueDepth           int                            `json:"resource_protection_max_queue_depth,omitempty"`
+	ResourceProtectionQueueCapacity           int                            `json:"resource_protection_queue_capacity,omitempty"`
+	ResourceProtectionAvgWaitMs               int64                          `json:"resource_protection_avg_wait_ms"`
+	ResourceProtectionFallbackCostShare       float64                        `json:"resource_protection_fallback_cost_share,omitempty"`
+	StickyRoutes                              int64                          `json:"sticky_routes"`
+	StickyRetained                            int64                          `json:"sticky_retained"`
+	StickyBroken                              int64                          `json:"sticky_broken"`
+	CacheAffinityRoutes                       int64                          `json:"cache_affinity_routes"`
+	OverloadSkipCount                         int64                          `json:"overload_skip_count"`
+	AuthConfigErrorCount                      int64                          `json:"auth_config_error_count"`
+	UnknownErrorCount                         int64                          `json:"unknown_error_count"`
+	ConfigErrorIsolatedCount                  int64                          `json:"config_error_isolated_count"`
+	ScoreBreakdownSamples                     int64                          `json:"score_breakdown_samples"`
+	ScoreBreakdownParseErrs                   int64                          `json:"score_breakdown_parse_errors"`
+	RiskEvents                                int64                          `json:"risk_events"`
+	RiskStatusChanges                         int64                          `json:"risk_status_changes"`
+	CurrentRiskRuntimeKeys                    int                            `json:"current_risk_runtime_keys"`
+	CircuitOpenReasons                        []ModelGatewayTrendReasonCount `json:"circuit_open_reasons,omitempty"`
+	CircuitErrorCounts                        []ModelGatewayTrendReasonCount `json:"circuit_error_counts,omitempty"`
+	CircuitErrorTypes                         []ModelGatewayTrendReasonCount `json:"circuit_error_types,omitempty"`
 }
 
 type ModelGatewayUserRequestObservabilityResponse struct {
@@ -597,41 +608,52 @@ type ModelGatewayUserRequestBillingInfo struct {
 }
 
 type ModelGatewayObservabilityTrendPoint struct {
-	BucketStart              int64                                `json:"bucket_start"`
-	BucketEnd                int64                                `json:"bucket_end"`
-	Records                  int64                                `json:"records"`
-	Dispatches               int64                                `json:"dispatches"`
-	Attempts                 int64                                `json:"attempts"`
-	Successes                int64                                `json:"successes"`
-	Failures                 int64                                `json:"failures"`
-	StreamInterrupted        int64                                `json:"stream_interrupted"`
-	FallbackUsed             int64                                `json:"fallback_used"`
-	SuccessRate              float64                              `json:"success_rate"`
-	AvgDurationMs            int64                                `json:"avg_duration_ms"`
-	AvgTTFTMs                int64                                `json:"avg_ttft_ms"`
-	QueueEnabledDispatches   int64                                `json:"queue_enabled_dispatches"`
-	QueuedDispatches         int64                                `json:"queued_dispatches"`
-	QueueWaitCount           int64                                `json:"queue_wait_count"`
-	AvgQueueWaitMs           int64                                `json:"avg_queue_wait_ms"`
-	QueueWaitP50Ms           int64                                `json:"queue_wait_p50_ms"`
-	QueueWaitP90Ms           int64                                `json:"queue_wait_p90_ms"`
-	QueueWaitP95Ms           int64                                `json:"queue_wait_p95_ms"`
-	StickyRoutes             int64                                `json:"sticky_routes"`
-	StickyRetained           int64                                `json:"sticky_retained"`
-	StickyBroken             int64                                `json:"sticky_broken"`
-	CacheAffinityRoutes      int64                                `json:"cache_affinity_routes"`
-	OverloadSkipCount        int64                                `json:"overload_skip_count"`
-	AuthConfigErrorCount     int64                                `json:"auth_config_error_count"`
-	UnknownErrorCount        int64                                `json:"unknown_error_count"`
-	ConfigErrorIsolatedCount int64                                `json:"config_error_isolated_count"`
-	ByProviderProfile        []ModelGatewayObservabilityAggregate `json:"by_provider_profile,omitempty"`
-	ByProxyMode              []ModelGatewayObservabilityAggregate `json:"by_proxy_mode,omitempty"`
-	RejectReasons            []ModelGatewayTrendReasonCount       `json:"reject_reasons,omitempty"`
-	CircuitOpenReasons       []ModelGatewayTrendReasonCount       `json:"circuit_open_reasons,omitempty"`
-	CircuitErrorCounts       []ModelGatewayTrendReasonCount       `json:"circuit_error_counts,omitempty"`
-	CircuitErrorTypes        []ModelGatewayTrendReasonCount       `json:"circuit_error_types,omitempty"`
-	Risk                     *ModelGatewayRiskSnapshot            `json:"risk,omitempty"`
-	RiskEvents               []ModelGatewayRiskEvent              `json:"risk_events,omitempty"`
+	BucketStart                               int64                                `json:"bucket_start"`
+	BucketEnd                                 int64                                `json:"bucket_end"`
+	Records                                   int64                                `json:"records"`
+	Dispatches                                int64                                `json:"dispatches"`
+	Attempts                                  int64                                `json:"attempts"`
+	Successes                                 int64                                `json:"successes"`
+	Failures                                  int64                                `json:"failures"`
+	StreamInterrupted                         int64                                `json:"stream_interrupted"`
+	FallbackUsed                              int64                                `json:"fallback_used"`
+	SuccessRate                               float64                              `json:"success_rate"`
+	AvgDurationMs                             int64                                `json:"avg_duration_ms"`
+	AvgTTFTMs                                 int64                                `json:"avg_ttft_ms"`
+	QueueEnabledDispatches                    int64                                `json:"queue_enabled_dispatches"`
+	QueuedDispatches                          int64                                `json:"queued_dispatches"`
+	QueueWaitCount                            int64                                `json:"queue_wait_count"`
+	AvgQueueWaitMs                            int64                                `json:"avg_queue_wait_ms"`
+	QueueWaitP50Ms                            int64                                `json:"queue_wait_p50_ms"`
+	QueueWaitP90Ms                            int64                                `json:"queue_wait_p90_ms"`
+	QueueWaitP95Ms                            int64                                `json:"queue_wait_p95_ms"`
+	ResourceProtectionDispatches              int64                                `json:"resource_protection_dispatches"`
+	ResourceProtectionPrimaryHits             int64                                `json:"resource_protection_primary_hits"`
+	ResourceProtectionPrimaryWaits            int64                                `json:"resource_protection_primary_waits"`
+	ResourceProtectionFallbacks               int64                                `json:"resource_protection_fallbacks"`
+	ResourceProtectionWaitTimeoutFallbacks    int64                                `json:"resource_protection_wait_timeout_fallbacks"`
+	ResourceProtectionPrimaryFailureFallbacks int64                                `json:"resource_protection_primary_failure_fallbacks"`
+	ResourceProtectionQueueDepth              int                                  `json:"resource_protection_queue_depth,omitempty"`
+	ResourceProtectionMaxQueueDepth           int                                  `json:"resource_protection_max_queue_depth,omitempty"`
+	ResourceProtectionQueueCapacity           int                                  `json:"resource_protection_queue_capacity,omitempty"`
+	ResourceProtectionAvgWaitMs               int64                                `json:"resource_protection_avg_wait_ms"`
+	ResourceProtectionFallbackCostShare       float64                              `json:"resource_protection_fallback_cost_share,omitempty"`
+	StickyRoutes                              int64                                `json:"sticky_routes"`
+	StickyRetained                            int64                                `json:"sticky_retained"`
+	StickyBroken                              int64                                `json:"sticky_broken"`
+	CacheAffinityRoutes                       int64                                `json:"cache_affinity_routes"`
+	OverloadSkipCount                         int64                                `json:"overload_skip_count"`
+	AuthConfigErrorCount                      int64                                `json:"auth_config_error_count"`
+	UnknownErrorCount                         int64                                `json:"unknown_error_count"`
+	ConfigErrorIsolatedCount                  int64                                `json:"config_error_isolated_count"`
+	ByProviderProfile                         []ModelGatewayObservabilityAggregate `json:"by_provider_profile,omitempty"`
+	ByProxyMode                               []ModelGatewayObservabilityAggregate `json:"by_proxy_mode,omitempty"`
+	RejectReasons                             []ModelGatewayTrendReasonCount       `json:"reject_reasons,omitempty"`
+	CircuitOpenReasons                        []ModelGatewayTrendReasonCount       `json:"circuit_open_reasons,omitempty"`
+	CircuitErrorCounts                        []ModelGatewayTrendReasonCount       `json:"circuit_error_counts,omitempty"`
+	CircuitErrorTypes                         []ModelGatewayTrendReasonCount       `json:"circuit_error_types,omitempty"`
+	Risk                                      *ModelGatewayRiskSnapshot            `json:"risk,omitempty"`
+	RiskEvents                                []ModelGatewayRiskEvent              `json:"risk_events,omitempty"`
 }
 
 type ModelGatewayTrendReasonCount struct {
@@ -685,39 +707,50 @@ type ModelGatewayRiskSnapshot struct {
 }
 
 type ModelGatewayObservabilityAggregate struct {
-	Key                      string             `json:"key"`
-	Name                     string             `json:"name,omitempty"`
-	ChannelID                int                `json:"channel_id,omitempty"`
-	ChannelStatus            int                `json:"channel_status,omitempty"`
-	StatusReason             string             `json:"status_reason,omitempty"`
-	BalanceInsufficient      bool               `json:"balance_insufficient,omitempty"`
-	Records                  int64              `json:"records"`
-	Dispatches               int64              `json:"dispatches"`
-	Attempts                 int64              `json:"attempts"`
-	Successes                int64              `json:"successes"`
-	Failures                 int64              `json:"failures"`
-	StreamInterrupted        int64              `json:"stream_interrupted"`
-	FallbackUsed             int64              `json:"fallback_used"`
-	SuccessRate              float64            `json:"success_rate"`
-	AvgDurationMs            int64              `json:"avg_duration_ms"`
-	AvgTTFTMs                int64              `json:"avg_ttft_ms"`
-	AvgScoreTotal            float64            `json:"avg_score_total"`
-	QueueEnabledDispatches   int64              `json:"queue_enabled_dispatches"`
-	QueuedDispatches         int64              `json:"queued_dispatches"`
-	QueueWaitCount           int64              `json:"queue_wait_count"`
-	AvgQueueWaitMs           int64              `json:"avg_queue_wait_ms"`
-	StickyRoutes             int64              `json:"sticky_routes"`
-	StickyRetained           int64              `json:"sticky_retained"`
-	StickyBroken             int64              `json:"sticky_broken"`
-	CacheAffinityRoutes      int64              `json:"cache_affinity_routes"`
-	OverloadSkipCount        int64              `json:"overload_skip_count"`
-	AuthConfigErrorCount     int64              `json:"auth_config_error_count"`
-	UnknownErrorCount        int64              `json:"unknown_error_count"`
-	ConfigErrorIsolatedCount int64              `json:"config_error_isolated_count"`
-	ScoreBreakdown           map[string]float64 `json:"score_breakdown,omitempty"`
-	ScoreBreakdownSamples    int64              `json:"score_breakdown_samples"`
-	ScoreBreakdownParseErrs  int64              `json:"score_breakdown_parse_errors"`
-	LastRecordAt             int64              `json:"last_record_at"`
+	Key                                       string             `json:"key"`
+	Name                                      string             `json:"name,omitempty"`
+	ChannelID                                 int                `json:"channel_id,omitempty"`
+	ChannelStatus                             int                `json:"channel_status,omitempty"`
+	StatusReason                              string             `json:"status_reason,omitempty"`
+	BalanceInsufficient                       bool               `json:"balance_insufficient,omitempty"`
+	Records                                   int64              `json:"records"`
+	Dispatches                                int64              `json:"dispatches"`
+	Attempts                                  int64              `json:"attempts"`
+	Successes                                 int64              `json:"successes"`
+	Failures                                  int64              `json:"failures"`
+	StreamInterrupted                         int64              `json:"stream_interrupted"`
+	FallbackUsed                              int64              `json:"fallback_used"`
+	SuccessRate                               float64            `json:"success_rate"`
+	AvgDurationMs                             int64              `json:"avg_duration_ms"`
+	AvgTTFTMs                                 int64              `json:"avg_ttft_ms"`
+	AvgScoreTotal                             float64            `json:"avg_score_total"`
+	QueueEnabledDispatches                    int64              `json:"queue_enabled_dispatches"`
+	QueuedDispatches                          int64              `json:"queued_dispatches"`
+	QueueWaitCount                            int64              `json:"queue_wait_count"`
+	AvgQueueWaitMs                            int64              `json:"avg_queue_wait_ms"`
+	ResourceProtectionDispatches              int64              `json:"resource_protection_dispatches"`
+	ResourceProtectionPrimaryHits             int64              `json:"resource_protection_primary_hits"`
+	ResourceProtectionPrimaryWaits            int64              `json:"resource_protection_primary_waits"`
+	ResourceProtectionFallbacks               int64              `json:"resource_protection_fallbacks"`
+	ResourceProtectionWaitTimeoutFallbacks    int64              `json:"resource_protection_wait_timeout_fallbacks"`
+	ResourceProtectionPrimaryFailureFallbacks int64              `json:"resource_protection_primary_failure_fallbacks"`
+	ResourceProtectionQueueDepth              int                `json:"resource_protection_queue_depth,omitempty"`
+	ResourceProtectionMaxQueueDepth           int                `json:"resource_protection_max_queue_depth,omitempty"`
+	ResourceProtectionQueueCapacity           int                `json:"resource_protection_queue_capacity,omitempty"`
+	ResourceProtectionAvgWaitMs               int64              `json:"resource_protection_avg_wait_ms"`
+	ResourceProtectionFallbackCostShare       float64            `json:"resource_protection_fallback_cost_share,omitempty"`
+	StickyRoutes                              int64              `json:"sticky_routes"`
+	StickyRetained                            int64              `json:"sticky_retained"`
+	StickyBroken                              int64              `json:"sticky_broken"`
+	CacheAffinityRoutes                       int64              `json:"cache_affinity_routes"`
+	OverloadSkipCount                         int64              `json:"overload_skip_count"`
+	AuthConfigErrorCount                      int64              `json:"auth_config_error_count"`
+	UnknownErrorCount                         int64              `json:"unknown_error_count"`
+	ConfigErrorIsolatedCount                  int64              `json:"config_error_isolated_count"`
+	ScoreBreakdown                            map[string]float64 `json:"score_breakdown,omitempty"`
+	ScoreBreakdownSamples                     int64              `json:"score_breakdown_samples"`
+	ScoreBreakdownParseErrs                   int64              `json:"score_breakdown_parse_errors"`
+	LastRecordAt                              int64              `json:"last_record_at"`
 }
 
 type ModelGatewayObservabilityScoreBreakdown struct {
@@ -763,6 +796,14 @@ type ModelGatewayObservabilityRecord struct {
 	QueueWaitMs                    int64                              `json:"queue_wait_ms,omitempty"`
 	QueueDepth                     int                                `json:"queue_depth,omitempty"`
 	QueueCapacity                  int                                `json:"queue_capacity,omitempty"`
+	ResourceProtectionEnabled      bool                               `json:"resource_protection_enabled,omitempty"`
+	ResourceProtectionPhase        string                             `json:"resource_protection_phase,omitempty"`
+	ResourceProtectionReason       string                             `json:"resource_protection_reason,omitempty"`
+	ResourceProtectionRole         string                             `json:"resource_protection_role,omitempty"`
+	PrimaryChannelIDs              []int                              `json:"primary_channel_ids,omitempty"`
+	FallbackChannelIDs             []int                              `json:"fallback_channel_ids,omitempty"`
+	PrimaryWaitTimeoutMs           int                                `json:"primary_wait_timeout_ms,omitempty"`
+	PrimaryQueueMaxDepth           int                                `json:"primary_queue_max_depth,omitempty"`
 	StickySource                   string                             `json:"sticky_source,omitempty"`
 	StickyRetained                 bool                               `json:"sticky_retained,omitempty"`
 	StickyBreak                    string                             `json:"sticky_break,omitempty"`
@@ -844,6 +885,8 @@ type ModelGatewayCandidateExplanation struct {
 	QueueDepth                   int                          `json:"queue_depth,omitempty"`
 	QueueCapacity                int                          `json:"queue_capacity,omitempty"`
 	EstimatedQueueWaitMs         float64                      `json:"estimated_queue_wait_ms,omitempty"`
+	ResourceProtectionRole       string                       `json:"resource_protection_role,omitempty"`
+	ResourceProtectionReason     string                       `json:"resource_protection_reason,omitempty"`
 	CostRatio                    float64                      `json:"cost_ratio,omitempty"`
 	CostReferenceRatio           float64                      `json:"cost_reference_ratio,omitempty"`
 	CostPricingMode              string                       `json:"cost_pricing_mode,omitempty"`
@@ -919,17 +962,21 @@ type ModelGatewayObservabilityOptions struct {
 
 type modelGatewayObservabilityAccumulator struct {
 	ModelGatewayObservabilityAggregate
-	durationSum         int64
-	durationSamples     int64
-	ttftSum             int64
-	ttftSamples         int64
-	scoreTotalSum       float64
-	scoreTotalSamples   int64
-	queueWaitSum        int64
-	queueWaitSamples    int64
-	queueWaitValues     []int64
-	scoreSums           map[string]float64
-	configIsolationKeys map[string]struct{}
+	durationSum                    int64
+	durationSamples                int64
+	ttftSum                        int64
+	ttftSamples                    int64
+	scoreTotalSum                  float64
+	scoreTotalSamples              int64
+	queueWaitSum                   int64
+	queueWaitSamples               int64
+	queueWaitValues                []int64
+	resourceProtectionWaitSum      int64
+	resourceProtectionWaitSamples  int64
+	resourceProtectionCostSum      float64
+	resourceProtectionFallbackCost float64
+	scoreSums                      map[string]float64
+	configIsolationKeys            map[string]struct{}
 }
 
 type modelGatewayObservabilityTrendAccumulator struct {
@@ -2662,6 +2709,11 @@ func modelGatewayRuntimePolicyForGroup(group string) modelgatewaycore.GroupSmart
 		policy.QueueEnabled = groupPolicy.QueueEnabled
 		policy.QueueHighPriority = groupPolicy.QueueHighPriority
 		policy.CircuitBreakerEnabled = groupPolicy.CircuitBreakerEnabled
+		policy.ResourceProtectionEnabled = groupPolicy.ResourceProtectionEnabled
+		policy.PrimaryChannelIDs = append([]int(nil), groupPolicy.PrimaryChannelIDs...)
+		policy.PrimaryWaitTimeoutMs = groupPolicy.PrimaryWaitTimeoutMs
+		policy.PrimaryQueueMaxDepth = groupPolicy.PrimaryQueueMaxDepth
+		policy.FallbackChannelIDs = append([]int(nil), groupPolicy.FallbackChannelIDs...)
 	}
 	if len(policy.CandidateGroups) == 0 && group != "" {
 		policy.CandidateGroups = []string{group}
@@ -4534,6 +4586,17 @@ func modelGatewayObservabilitySummaryFromAccumulator(summary ModelGatewayObserva
 	summary.QueuedDispatches = accumulator.QueuedDispatches
 	summary.QueueWaitCount = accumulator.QueueWaitCount
 	summary.AvgQueueWaitMs = averageInt64(accumulator.queueWaitSum, accumulator.queueWaitSamples)
+	summary.ResourceProtectionDispatches = accumulator.ResourceProtectionDispatches
+	summary.ResourceProtectionPrimaryHits = accumulator.ResourceProtectionPrimaryHits
+	summary.ResourceProtectionPrimaryWaits = accumulator.ResourceProtectionPrimaryWaits
+	summary.ResourceProtectionFallbacks = accumulator.ResourceProtectionFallbacks
+	summary.ResourceProtectionWaitTimeoutFallbacks = accumulator.ResourceProtectionWaitTimeoutFallbacks
+	summary.ResourceProtectionPrimaryFailureFallbacks = accumulator.ResourceProtectionPrimaryFailureFallbacks
+	summary.ResourceProtectionQueueDepth = accumulator.ResourceProtectionQueueDepth
+	summary.ResourceProtectionMaxQueueDepth = accumulator.ResourceProtectionMaxQueueDepth
+	summary.ResourceProtectionQueueCapacity = accumulator.ResourceProtectionQueueCapacity
+	summary.ResourceProtectionAvgWaitMs = averageInt64(accumulator.resourceProtectionWaitSum, accumulator.resourceProtectionWaitSamples)
+	summary.ResourceProtectionFallbackCostShare = modelGatewayResourceProtectionFallbackCostShare(accumulator)
 	summary.StickyRoutes = accumulator.StickyRoutes
 	summary.StickyRetained = accumulator.StickyRetained
 	summary.StickyBroken = accumulator.StickyBroken
@@ -4588,6 +4651,14 @@ func modelGatewayObservabilityRecentRecord(record model.ModelExecutionRecord, sc
 		QueueWaitMs:                    meta.QueueWaitMs,
 		QueueDepth:                     meta.QueueDepth,
 		QueueCapacity:                  meta.QueueCapacity,
+		ResourceProtectionEnabled:      meta.ResourceProtectionEnabled,
+		ResourceProtectionPhase:        meta.ResourceProtectionPhase,
+		ResourceProtectionReason:       meta.ResourceProtectionReason,
+		ResourceProtectionRole:         meta.ResourceProtectionRole,
+		PrimaryChannelIDs:              append([]int(nil), meta.PrimaryChannelIDs...),
+		FallbackChannelIDs:             append([]int(nil), meta.FallbackChannelIDs...),
+		PrimaryWaitTimeoutMs:           meta.PrimaryWaitTimeoutMs,
+		PrimaryQueueMaxDepth:           meta.PrimaryQueueMaxDepth,
 		StickySource:                   meta.StickySource,
 		StickyRetained:                 meta.StickyRetained,
 		StickyBreak:                    meta.StickyBreak,
@@ -4663,7 +4734,7 @@ func applyModelGatewayObservabilityRecord(accumulator *modelGatewayObservability
 	}
 	if isModelGatewayDispatchRecord(record) {
 		accumulator.Dispatches++
-		applyModelGatewayObservabilityDispatchMeta(accumulator, requestMeta)
+		applyModelGatewayObservabilityDispatchMeta(accumulator, record, requestMeta)
 	}
 	if record.FallbackUsed {
 		accumulator.FallbackUsed++
@@ -4689,6 +4760,7 @@ func applyModelGatewayObservabilityRecord(accumulator *modelGatewayObservability
 				accumulator.ttftSum += record.TTFTMs
 				accumulator.ttftSamples++
 			}
+			applyModelGatewayResourceProtectionAttemptMeta(accumulator, requestMeta, attemptMeta)
 		}
 	}
 	if hasModelGatewayScoreTotalSample(record) {
@@ -4818,16 +4890,24 @@ func modelGatewayConfigIsolationCandidateKey(candidate ModelGatewayCandidateExpl
 }
 
 type modelGatewayObservabilityDispatchMeta struct {
-	QueueEnabled   bool
-	QueueWaitMs    int64
-	QueueWaitSet   bool
-	QueueDepth     int
-	QueueCapacity  int
-	StickySource   string
-	StickyRetained bool
-	StickyBreak    string
-	StickyDecision *modelgatewaycore.StickyDecision
-	CacheAffinity  bool
+	QueueEnabled              bool
+	QueueWaitMs               int64
+	QueueWaitSet              bool
+	QueueDepth                int
+	QueueCapacity             int
+	ResourceProtectionEnabled bool
+	ResourceProtectionPhase   string
+	ResourceProtectionReason  string
+	ResourceProtectionRole    string
+	PrimaryChannelIDs         []int
+	FallbackChannelIDs        []int
+	PrimaryWaitTimeoutMs      int
+	PrimaryQueueMaxDepth      int
+	StickySource              string
+	StickyRetained            bool
+	StickyBreak               string
+	StickyDecision            *modelgatewaycore.StickyDecision
+	CacheAffinity             bool
 }
 
 type modelGatewayObservabilityAttemptMeta struct {
@@ -4895,7 +4975,7 @@ func buildModelGatewayDispatchMetaIndex(records []model.ModelExecutionRecord) ma
 	return index
 }
 
-func applyModelGatewayObservabilityDispatchMeta(accumulator *modelGatewayObservabilityAccumulator, requestMeta map[string]any) {
+func applyModelGatewayObservabilityDispatchMeta(accumulator *modelGatewayObservabilityAccumulator, record model.ModelExecutionRecord, requestMeta map[string]any) {
 	if accumulator == nil {
 		return
 	}
@@ -4912,6 +4992,7 @@ func applyModelGatewayObservabilityDispatchMeta(accumulator *modelGatewayObserva
 		accumulator.queueWaitSamples++
 		accumulator.queueWaitValues = append(accumulator.queueWaitValues, meta.QueueWaitMs)
 	}
+	applyModelGatewayResourceProtectionDispatchMeta(accumulator, record, meta, requestMeta)
 	if meta.StickySource != "" {
 		accumulator.StickyRoutes++
 	}
@@ -4926,22 +5007,112 @@ func applyModelGatewayObservabilityDispatchMeta(accumulator *modelGatewayObserva
 	}
 }
 
+func applyModelGatewayResourceProtectionDispatchMeta(accumulator *modelGatewayObservabilityAccumulator, record model.ModelExecutionRecord, meta modelGatewayObservabilityDispatchMeta, requestMeta map[string]any) {
+	if accumulator == nil || !meta.ResourceProtectionEnabled {
+		return
+	}
+	accumulator.ResourceProtectionDispatches++
+	switch meta.ResourceProtectionPhase {
+	case modelgatewaycore.ResourceProtectionPhasePrimaryHit:
+		accumulator.ResourceProtectionPrimaryHits++
+	case modelgatewaycore.ResourceProtectionPhasePrimarySaturatedWait:
+		accumulator.ResourceProtectionPrimaryWaits++
+	case modelgatewaycore.ResourceProtectionPhaseFallbackAfterTimeout:
+		accumulator.ResourceProtectionFallbacks++
+		accumulator.ResourceProtectionWaitTimeoutFallbacks++
+	case modelgatewaycore.ResourceProtectionPhasePrimaryFailureFallback:
+		accumulator.ResourceProtectionFallbacks++
+		accumulator.ResourceProtectionPrimaryFailureFallbacks++
+	case modelgatewaycore.ResourceProtectionPhaseNoPrimaryFallback:
+		accumulator.ResourceProtectionFallbacks++
+	default:
+		if meta.ResourceProtectionRole == modelgatewaycore.ResourceProtectionRoleFallback {
+			accumulator.ResourceProtectionFallbacks++
+		}
+	}
+	if meta.ResourceProtectionPhase == modelgatewaycore.ResourceProtectionPhasePrimarySaturatedWait || meta.QueueDepth > 0 {
+		accumulator.ResourceProtectionQueueDepth = meta.QueueDepth
+		if meta.QueueDepth > accumulator.ResourceProtectionMaxQueueDepth {
+			accumulator.ResourceProtectionMaxQueueDepth = meta.QueueDepth
+		}
+		if meta.QueueCapacity > 0 {
+			accumulator.ResourceProtectionQueueCapacity = meta.QueueCapacity
+		}
+	}
+	if costRatio := modelGatewaySelectedDispatchCostRatio(record, requestMeta); costRatio > 0 {
+		accumulator.resourceProtectionCostSum += costRatio
+		if meta.ResourceProtectionRole == modelgatewaycore.ResourceProtectionRoleFallback {
+			accumulator.resourceProtectionFallbackCost += costRatio
+		}
+	}
+}
+
+func applyModelGatewayResourceProtectionAttemptMeta(accumulator *modelGatewayObservabilityAccumulator, requestMeta map[string]any, attemptMeta modelGatewayObservabilityAttemptMeta) {
+	if accumulator == nil {
+		return
+	}
+	meta := modelGatewayObservabilityMetaFromRequestMeta(requestMeta)
+	if !meta.ResourceProtectionEnabled {
+		return
+	}
+	timing := modelGatewayObservabilityTimingMetaFromRequestMeta(requestMeta)
+	if timing.QueueWaitMs <= 0 {
+		return
+	}
+	if meta.ResourceProtectionRole == modelgatewaycore.ResourceProtectionRolePrimary ||
+		meta.ResourceProtectionPhase == modelgatewaycore.ResourceProtectionPhaseFallbackAfterTimeout ||
+		attemptMeta.RetryAction == "resource_protection_fallback" {
+		accumulator.resourceProtectionWaitSum += timing.QueueWaitMs
+		accumulator.resourceProtectionWaitSamples++
+	}
+}
+
+func modelGatewaySelectedDispatchCostRatio(record model.ModelExecutionRecord, requestMeta map[string]any) float64 {
+	channelID := record.ActualChannelId
+	if channelID <= 0 {
+		channelID = record.ChannelId
+	}
+	candidates := modelGatewayCandidateExplanationsFromRequestMeta(requestMeta)
+	if len(candidates) == 0 {
+		return 0
+	}
+	if channelID > 0 {
+		for _, candidate := range candidates {
+			if candidate.ChannelID == channelID && candidate.CostRatio > 0 {
+				return candidate.CostRatio
+			}
+		}
+	}
+	if len(candidates) == 1 && candidates[0].CostRatio > 0 {
+		return candidates[0].CostRatio
+	}
+	return 0
+}
+
 func modelGatewayObservabilityMetaFromRequestMeta(requestMeta map[string]any) modelGatewayObservabilityDispatchMeta {
 	if len(requestMeta) == 0 {
 		return modelGatewayObservabilityDispatchMeta{}
 	}
 	queueWaitMs, queueWaitSet := modelGatewayObservabilityMetaNonNegativeInt64(requestMeta["queue_wait_ms"])
 	return modelGatewayObservabilityDispatchMeta{
-		QueueEnabled:   modelGatewayObservabilityMetaBool(requestMeta["queue_enabled"]),
-		QueueWaitMs:    queueWaitMs,
-		QueueWaitSet:   queueWaitSet,
-		QueueDepth:     int(modelGatewayObservabilityMetaInt64(requestMeta["queue_depth"])),
-		QueueCapacity:  int(modelGatewayObservabilityMetaInt64(requestMeta["queue_capacity"])),
-		StickySource:   strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["sticky_source"])),
-		StickyRetained: modelGatewayObservabilityMetaBool(requestMeta["sticky_retained"]),
-		StickyBreak:    strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["sticky_break"])),
-		StickyDecision: modelGatewayStickyDecisionFromRequestMeta(requestMeta),
-		CacheAffinity:  modelGatewayObservabilityMetaBool(requestMeta["cache_affinity"]),
+		QueueEnabled:              modelGatewayObservabilityMetaBool(requestMeta["queue_enabled"]),
+		QueueWaitMs:               queueWaitMs,
+		QueueWaitSet:              queueWaitSet,
+		QueueDepth:                int(modelGatewayObservabilityMetaInt64(requestMeta["queue_depth"])),
+		QueueCapacity:             int(modelGatewayObservabilityMetaInt64(requestMeta["queue_capacity"])),
+		ResourceProtectionEnabled: modelGatewayObservabilityMetaBool(requestMeta["resource_protection_enabled"]),
+		ResourceProtectionPhase:   strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["resource_protection_phase"])),
+		ResourceProtectionReason:  strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["resource_protection_reason"])),
+		ResourceProtectionRole:    strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["resource_protection_role"])),
+		PrimaryChannelIDs:         modelGatewayObservabilityIntSlice(requestMeta["primary_channel_ids"]),
+		FallbackChannelIDs:        modelGatewayObservabilityIntSlice(requestMeta["fallback_channel_ids"]),
+		PrimaryWaitTimeoutMs:      int(modelGatewayObservabilityMetaInt64(requestMeta["primary_wait_timeout_ms"])),
+		PrimaryQueueMaxDepth:      int(modelGatewayObservabilityMetaInt64(requestMeta["primary_queue_max_depth"])),
+		StickySource:              strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["sticky_source"])),
+		StickyRetained:            modelGatewayObservabilityMetaBool(requestMeta["sticky_retained"]),
+		StickyBreak:               strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["sticky_break"])),
+		StickyDecision:            modelGatewayStickyDecisionFromRequestMeta(requestMeta),
+		CacheAffinity:             modelGatewayObservabilityMetaBool(requestMeta["cache_affinity"]),
 	}
 }
 
@@ -5910,6 +6081,8 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			QueueDepth:                 candidate.QueueDepth,
 			QueueCapacity:              candidate.QueueCapacity,
 			EstimatedQueueWaitMs:       roundModelGatewayObservabilityFloat(candidate.EstimatedQueueWaitMs),
+			ResourceProtectionRole:     strings.TrimSpace(candidate.ResourceProtectionRole),
+			ResourceProtectionReason:   strings.TrimSpace(candidate.ResourceProtectionReason),
 			CostRatio:                  roundModelGatewayObservabilityFloat(candidate.CostRatio),
 			CostReferenceRatio:         roundModelGatewayObservabilityFloat(candidate.CostReferenceRatio),
 			CostPricingMode:            strings.TrimSpace(candidate.CostPricingMode),
@@ -6151,6 +6324,30 @@ func modelGatewayObservabilityStringSlice(value any) []string {
 	}
 }
 
+func modelGatewayObservabilityIntSlice(value any) []int {
+	switch typed := value.(type) {
+	case []int:
+		return append([]int(nil), typed...)
+	case []float64:
+		result := make([]int, 0, len(typed))
+		for _, item := range typed {
+			result = append(result, int(item))
+		}
+		return result
+	case []any:
+		result := make([]int, 0, len(typed))
+		for _, item := range typed {
+			value := int(modelGatewayObservabilityMetaInt64(item))
+			if value > 0 {
+				result = append(result, value)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
 func finalizeModelGatewayObservabilityAggregates(accumulators map[string]*modelGatewayObservabilityAccumulator, topN int) []ModelGatewayObservabilityAggregate {
 	items := make([]ModelGatewayObservabilityAggregate, 0, len(accumulators))
 	for _, accumulator := range accumulators {
@@ -6161,6 +6358,8 @@ func finalizeModelGatewayObservabilityAggregates(accumulators map[string]*modelG
 		item.AvgScoreTotal = averageFloat64(accumulator.scoreTotalSum, accumulator.scoreTotalSamples)
 		item.QueueWaitCount = accumulator.QueueWaitCount
 		item.AvgQueueWaitMs = averageInt64(accumulator.queueWaitSum, accumulator.queueWaitSamples)
+		item.ResourceProtectionAvgWaitMs = averageInt64(accumulator.resourceProtectionWaitSum, accumulator.resourceProtectionWaitSamples)
+		item.ResourceProtectionFallbackCostShare = modelGatewayResourceProtectionFallbackCostShare(accumulator)
 		item.ScoreBreakdown = averageModelGatewayObservabilityScoreBreakdown(accumulator)
 		items = append(items, item)
 	}
@@ -6180,6 +6379,20 @@ func finalizeModelGatewayObservabilityAggregates(accumulators map[string]*modelG
 		return items[:topN]
 	}
 	return items
+}
+
+func modelGatewayResourceProtectionFallbackCostShare(accumulator *modelGatewayObservabilityAccumulator) float64 {
+	if accumulator == nil || accumulator.resourceProtectionCostSum <= 0 {
+		return 0
+	}
+	share := accumulator.resourceProtectionFallbackCost / accumulator.resourceProtectionCostSum
+	if share < 0 {
+		share = 0
+	}
+	if share > 1 {
+		share = 1
+	}
+	return roundModelGatewayObservabilityFloat(share)
 }
 
 func finalizeModelGatewayObservabilityTrends(accumulators map[int64]*modelGatewayObservabilityTrendAccumulator, startTime int64, endTime int64, bucketSeconds int64) []ModelGatewayObservabilityTrendPoint {
@@ -6227,6 +6440,17 @@ func modelGatewayObservabilityTrendPointFromAccumulator(bucketStart int64, bucke
 	point.QueueWaitP50Ms = percentileModelGatewayObservabilityInt64(accumulator.queueWaitValues, 0.50)
 	point.QueueWaitP90Ms = percentileModelGatewayObservabilityInt64(accumulator.queueWaitValues, 0.90)
 	point.QueueWaitP95Ms = percentileModelGatewayObservabilityInt64(accumulator.queueWaitValues, 0.95)
+	point.ResourceProtectionDispatches = accumulator.ResourceProtectionDispatches
+	point.ResourceProtectionPrimaryHits = accumulator.ResourceProtectionPrimaryHits
+	point.ResourceProtectionPrimaryWaits = accumulator.ResourceProtectionPrimaryWaits
+	point.ResourceProtectionFallbacks = accumulator.ResourceProtectionFallbacks
+	point.ResourceProtectionWaitTimeoutFallbacks = accumulator.ResourceProtectionWaitTimeoutFallbacks
+	point.ResourceProtectionPrimaryFailureFallbacks = accumulator.ResourceProtectionPrimaryFailureFallbacks
+	point.ResourceProtectionQueueDepth = accumulator.ResourceProtectionQueueDepth
+	point.ResourceProtectionMaxQueueDepth = accumulator.ResourceProtectionMaxQueueDepth
+	point.ResourceProtectionQueueCapacity = accumulator.ResourceProtectionQueueCapacity
+	point.ResourceProtectionAvgWaitMs = averageInt64(accumulator.resourceProtectionWaitSum, accumulator.resourceProtectionWaitSamples)
+	point.ResourceProtectionFallbackCostShare = modelGatewayResourceProtectionFallbackCostShare(accumulator.modelGatewayObservabilityAccumulator)
 	point.StickyRoutes = accumulator.StickyRoutes
 	point.StickyRetained = accumulator.StickyRetained
 	point.StickyBroken = accumulator.StickyBroken

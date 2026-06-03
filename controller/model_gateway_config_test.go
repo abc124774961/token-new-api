@@ -428,6 +428,43 @@ func TestModelGatewayConfigRejectsInvalidPolicy(t *testing.T) {
 	require.Contains(t, resp.Body.String(), "invalid mode")
 }
 
+func TestModelGatewayConfigNormalizesResourceProtectionPolicy(t *testing.T) {
+	setupModelGatewayConfigControllerTestDB(t)
+	router := gin.New()
+	router.PUT("/api/model_gateway/config", UpdateModelGatewayConfig)
+
+	setting := scheduler_setting.DefaultSetting()
+	setting.Enabled = true
+	setting.DefaultMode = scheduler_setting.ModeActive
+	setting.QueueDefaultTimeoutMs = 4200
+	setting.QueueMaxDepthPerChannel = 12
+	setting.GroupPolicies = map[string]scheduler_setting.GroupPolicySetting{
+		"codex-plus": {
+			Mode:                      scheduler_setting.ModeActive,
+			ResourceProtectionEnabled: true,
+			PrimaryChannelIDs:         []int{8, 8, 0, 9},
+			PrimaryWaitTimeoutMs:      0,
+			PrimaryQueueMaxDepth:      0,
+			FallbackChannelIDs:        []int{18, -1, 18, 19},
+		},
+	}
+	body, err := common.Marshal(setting)
+	require.NoError(t, err)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/model_gateway/config", bytes.NewReader(body))
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayConfigResponse(t, resp)
+	require.True(t, payload.Success, resp.Body.String())
+	policy := payload.Data.Setting.GroupPolicies["codex-plus"]
+	require.True(t, policy.ResourceProtectionEnabled)
+	require.Equal(t, []int{8, 9}, policy.PrimaryChannelIDs)
+	require.Equal(t, 4200, policy.PrimaryWaitTimeoutMs)
+	require.Equal(t, 12, policy.PrimaryQueueMaxDepth)
+	require.Equal(t, []int{18, 19}, policy.FallbackChannelIDs)
+}
+
 func TestModelGatewayConfigRejectsInvalidProxyReusePolicy(t *testing.T) {
 	setupModelGatewayConfigControllerTestDB(t)
 	router := gin.New()

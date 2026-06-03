@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -573,10 +574,42 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			lastModelGatewayChannel = channel
 			channelSetting = channelAccountScopedConcurrencySetting(c, channel, channelSetting)
 		}
-		concurrencyResult := currentRelayQueueManager().AcquireWithOptions(c.Request.Context(), plan, channel.Id, channelSetting, relayQueueAcquireOptions(plan))
+		concurrencyResult, setupErr := acquireRelayModelGatewayConcurrency(c, relayInfo, retryParam, plan, channel, channelSetting)
+		if concurrencyResult.Plan != nil && concurrencyResult.Plan.Channel != nil {
+			plan = concurrencyResult.Plan
+			channel = concurrencyResult.Plan.Channel
+			channelSetting = channelAccountScopedConcurrencySetting(c, channel, channel.GetSetting())
+			lastModelGatewayPlan = plan
+			lastModelGatewayChannel = channel
+		}
 		queueWait := concurrencyResult.WaitTime
-		service.ReleaseChannelSelectionReservation(c, channel.Id)
 		concurrencyLease := concurrencyResult.Lease
+		if setupErr != nil {
+			if concurrencyLease != nil {
+				concurrencyLease.Release()
+			}
+			channelErr := setupErr
+			willRetry := prepareModelGatewaySetupFailureRetry(c, channel, channelErr, retryParam)
+			if relayInfo.ChannelMeta == nil {
+				relayInfo.InitChannelMeta(c)
+			}
+			if channel != nil {
+				traceChannelFailure(c, *newChannelErrorFromSelectedChannel(c, channel), channelErr, !willRetry)
+				reportModelGatewayAttempt(c, relayInfo, retryParam, channel, channelErr, modelGatewayAttemptFlow{
+					ErrorCategory: setupFailureErrorCategory(c, channelErr),
+					RetryAction:   lo.Ternary(willRetry, "switch_channel", "stop"),
+					WillRetry:     willRetry,
+					UsedChannels:  append([]string(nil), c.GetStringSlice("use_channel")...),
+					QueueWait:     queueWait,
+				})
+			}
+			if willRetry {
+				continue
+			}
+			finalAttemptReported = true
+			newAPIError = channelErr
+			break
+		}
 		if concurrencyResult.Status == modelgatewayscheduler.QueueAcquireRejected {
 			clientAbort := relayRequestContextCanceled(c) || relayClientAborted(c, relayInfo, nil)
 			limit := 0
@@ -605,19 +638,26 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			willRetry := false
 			if !clientAbort {
 				service.MarkChannelSelectionSkipped(c, channel.Id)
-				var forceNextAutoGroup bool
-				willRetry, forceNextAutoGroup = service.GetConcurrencyLimitFailoverPlan(retryParam)
-				if willRetry {
-					if forceNextAutoGroup {
-						common.SetContextKey(c, constant.ContextKeyForceNextAutoGroup, true)
-					}
+				if modelGatewayPlanShouldFallbackAfterPrimaryWait(plan) {
+					modelgatewaycore.AllowResourceProtectionFallback(c, modelgatewaycore.ResourceProtectionReasonPrimaryWaitTimeout)
 					retryParam.AllowExtraRetry(1)
+					willRetry = true
+				} else {
+					var forceNextAutoGroup bool
+					willRetry, forceNextAutoGroup = service.GetConcurrencyLimitFailoverPlan(retryParam)
+					if willRetry {
+						if forceNextAutoGroup {
+							common.SetContextKey(c, constant.ContextKeyForceNextAutoGroup, true)
+						}
+						retryParam.AllowExtraRetry(1)
+					}
 				}
 				traceChannelFailure(c, *newChannelErrorFromSelectedChannel(c, channel), newAPIError, !willRetry)
 			}
 			reportModelGatewayAttempt(c, relayInfo, retryParam, channel, newAPIError, modelGatewayAttemptFlow{
 				ErrorCategory:              lo.Ternary(clientAbort, modelgatewaycore.ErrorCategoryClientAborted, modelgatewaycore.ErrorCategoryLocalConcurrencyLimit),
-				RetryAction:                lo.Ternary(clientAbort, "client_aborted", lo.Ternary(willRetry, "switch_channel", "stop")),
+				RetryAction:                lo.Ternary(clientAbort, "client_aborted", lo.Ternary(modelGatewayPlanShouldFallbackAfterPrimaryWait(plan) && willRetry, "resource_protection_fallback", lo.Ternary(willRetry, "switch_channel", "stop"))),
+				RetryReason:                lo.Ternary(modelGatewayPlanShouldFallbackAfterPrimaryWait(plan) && willRetry, modelgatewaycore.ResourceProtectionReasonPrimaryWaitTimeout, ""),
 				WillRetry:                  willRetry,
 				ClientAborted:              clientAbort,
 				ConcurrencyLimited:         !clientAbort,
@@ -1087,6 +1127,134 @@ func selectedModelGatewayPlan(c *gin.Context) *modelgatewaycore.DispatchPlan {
 	return plan
 }
 
+func modelGatewayPlanShouldFallbackAfterPrimaryWait(plan *modelgatewaycore.DispatchPlan) bool {
+	return plan != nil &&
+		plan.ResourceProtectionEnabled &&
+		plan.ResourceProtectionPhase == modelgatewaycore.ResourceProtectionPhasePrimarySaturatedWait
+}
+
+func acquireRelayModelGatewayConcurrency(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, plan *modelgatewaycore.DispatchPlan, channel *model.Channel, channelSetting dto.ChannelSettings) (modelgatewayscheduler.QueueAcquireResult, *types.NewAPIError) {
+	if c == nil || channel == nil {
+		return modelgatewayscheduler.QueueAcquireResult{Status: modelgatewayscheduler.QueueAcquireRejected}, nil
+	}
+	if !modelGatewayPlanShouldFallbackAfterPrimaryWait(plan) {
+		result := currentRelayQueueManager().AcquireWithOptions(c.Request.Context(), plan, channel.Id, channelSetting, relayQueueAcquireOptions(plan))
+		service.ReleaseChannelSelectionReservation(c, channel.Id)
+		return result, nil
+	}
+	service.ReleaseChannelSelectionReservation(c, channel.Id)
+	poolKey := relayResourceProtectionPoolKey(plan)
+	if poolKey == "" {
+		result := currentRelayQueueManager().AcquireWithOptions(c.Request.Context(), plan, channel.Id, channelSetting, relayQueueAcquireOptions(plan))
+		return result, nil
+	}
+	options := relayQueueAcquireOptions(plan)
+	result := currentRelayQueueManager().AcquirePoolWithOptions(c.Request.Context(), plan, modelgatewayscheduler.QueuePoolAcquireOptions{
+		PoolKey:  poolKey,
+		Group:    options.Group,
+		Priority: options.Priority,
+		RuntimeKey: modelgatewaycore.RuntimeKey{
+			RequestedModel:        options.RuntimeKey.RequestedModel,
+			UpstreamModel:         options.RuntimeKey.UpstreamModel,
+			Group:                 options.RuntimeKey.Group,
+			EndpointType:          options.RuntimeKey.EndpointType,
+			CapabilityFingerprint: options.RuntimeKey.CapabilityFingerprint,
+		},
+		MaxDepth: options.MaxDepth,
+		TryAcquire: func() modelgatewayscheduler.QueueAcquireResult {
+			return tryAcquireRelayResourceProtectionPoolCandidate(c, retryParam)
+		},
+	})
+	if result.Plan != nil && result.Plan.Channel != nil && (result.Status == modelgatewayscheduler.QueueAcquireAcquired || result.Status == modelgatewayscheduler.QueueAcquireQueued) {
+		if apiErr := setupRelaySelectedModelGatewayPlan(c, info, retryParam, result.Plan); apiErr != nil {
+			return result, apiErr
+		}
+	}
+	return result, nil
+}
+
+func tryAcquireRelayResourceProtectionPoolCandidate(c *gin.Context, retryParam *service.RetryParam) modelgatewayscheduler.QueueAcquireResult {
+	wrapper := modelgatewayintegration.DefaultChannelSelectionWrapper()
+	if wrapper == nil {
+		return modelgatewayscheduler.QueueAcquireResult{Status: modelgatewayscheduler.QueueAcquireRejected, StopWaiting: true}
+	}
+	selection, selectionErr := wrapper.SelectSmartOnly(c, retryParam)
+	if selectionErr != nil || selection == nil || selection.Channel == nil || selection.Plan == nil {
+		return modelgatewayscheduler.QueueAcquireResult{Status: modelgatewayscheduler.QueueAcquireRejected, StopWaiting: true}
+	}
+	plan := selection.Plan
+	channel := selection.Channel
+	channelSetting := channelAccountScopedConcurrencySetting(c, channel, channel.GetSetting())
+	lease, acquired := service.TryAcquireChannelConcurrency(channel.Id, channelSetting)
+	service.ReleaseChannelSelectionReservation(c, channel.Id)
+	result := modelgatewayscheduler.QueueAcquireResult{
+		Lease:  lease,
+		Status: modelgatewayscheduler.QueueAcquireRejected,
+		Plan:   plan,
+	}
+	if acquired {
+		result.Status = modelgatewayscheduler.QueueAcquireAcquired
+		return result
+	}
+	if plan.ResourceProtectionEnabled && plan.ResourceProtectionRole == modelgatewaycore.ResourceProtectionRolePrimary {
+		return result
+	}
+	result.StopWaiting = true
+	return result
+}
+
+func setupRelaySelectedModelGatewayPlan(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, plan *modelgatewaycore.DispatchPlan) *types.NewAPIError {
+	if c == nil || info == nil || plan == nil || plan.Channel == nil {
+		return nil
+	}
+	selectGroup := plan.SelectedGroup
+	if selectGroup == "" && retryParam != nil {
+		selectGroup = retryParam.TokenGroup
+	}
+	helper.ApplySelectedGroupRatio(c, info, selectGroup)
+	if apiErr := reserveSelectedGroupBilling(c, info); apiErr != nil {
+		return apiErr
+	}
+	endpointType := requiredEndpointTypeForRelay(info)
+	if retryParam != nil {
+		endpointType = retryParam.EndpointType
+	}
+	selection := &modelgatewayintegration.SelectionResult{
+		Channel:      plan.Channel,
+		Group:        selectGroup,
+		Plan:         plan,
+		SmartHandled: true,
+	}
+	modelgatewayintegration.SetSelectedPlan(c, plan)
+	if apiErr := middleware.SetupContextForSelectedChannelWithEndpoint(c, plan.Channel, info.OriginModelName, endpointType, selection); apiErr != nil {
+		return apiErr
+	}
+	info.InitChannelMeta(c)
+	return nil
+}
+
+func relayResourceProtectionPoolKey(plan *modelgatewaycore.DispatchPlan) string {
+	if plan == nil || !plan.ResourceProtectionEnabled || len(plan.PrimaryChannelIDs) == 0 {
+		return ""
+	}
+	group := strings.TrimSpace(plan.SelectedGroup)
+	if group == "" {
+		group = strings.TrimSpace(plan.RequestedGroup)
+	}
+	ids := append([]int(nil), plan.PrimaryChannelIDs...)
+	sort.Ints(ids)
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id > 0 {
+			parts = append(parts, fmt.Sprintf("%d", id))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("group=%s|primary=%s", group, strings.Join(parts, ","))
+}
+
 func channelAccountScopedConcurrencySetting(c *gin.Context, channel *model.Channel, setting dto.ChannelSettings) dto.ChannelSettings {
 	if channel == nil {
 		return setting
@@ -1144,11 +1312,15 @@ func relayQueueAcquireOptions(plan *modelgatewaycore.DispatchPlan) modelgateways
 	if plan == nil {
 		return modelgatewayscheduler.QueueAcquireOptions{}
 	}
-	return modelgatewayscheduler.QueueAcquireOptions{
+	options := modelgatewayscheduler.QueueAcquireOptions{
 		Group:      plan.SelectedGroup,
 		Priority:   plan.QueuePriority,
 		RuntimeKey: plan.RuntimeKey,
 	}
+	if plan.ResourceProtectionPhase == modelgatewaycore.ResourceProtectionPhasePrimarySaturatedWait && plan.PrimaryQueueMaxDepth > 0 {
+		options.MaxDepth = plan.PrimaryQueueMaxDepth
+	}
+	return options
 }
 
 func newChannelErrorFromSelectedChannel(c *gin.Context, channel *model.Channel) *types.ChannelError {
@@ -2606,7 +2778,7 @@ func compactAutomationEventContext(values map[string]any) map[string]any {
 				result[key] = strings.TrimSpace(typed)
 			}
 		case int:
-			if typed != 0 {
+			if typed != 0 || strings.HasSuffix(key, "_index") {
 				result[key] = typed
 			}
 		default:

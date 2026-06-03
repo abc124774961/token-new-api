@@ -216,6 +216,21 @@ const normalizeCandidateGroups = (value) => {
   ];
 };
 
+const normalizeChannelIds = (value) => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set();
+  const result = [];
+  for (const item of value) {
+    const id = Number(item);
+    if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue;
+    seen.add(id);
+    result.push(id);
+  }
+  return result;
+};
+
 const makeGroupOption = (group, info = {}) => ({
   label: group,
   value: group,
@@ -267,6 +282,57 @@ const renderGroupOptionItem = (option, t) => (
         {option.description}
       </Typography.Text>
     )}
+  </div>
+);
+
+const formatChannelCost = (channel) => {
+  const costDisplay = channel?.upstream_cost_display || {};
+  const value =
+    Number(costDisplay.cost_coefficient) ||
+    Number(costDisplay.actual_token_multiplier) ||
+    Number(costDisplay.token_multiplier) ||
+    Number(channel?.model_ratio);
+  return Number.isFinite(value) && value > 0
+    ? `${parseFloat(value.toFixed(4))}x`
+    : '-';
+};
+
+const makeChannelOption = (channel) => {
+  const id = Number(channel?.id);
+  const name = String(channel?.name || '').trim();
+  const group = String(channel?.group || '').trim();
+  const active = Number(channel?.active_concurrency) || 0;
+  const max = Number(channel?.max_concurrency) || 0;
+  return {
+    value: id,
+    label: `#${id}${name ? ` ${name}` : ''}`,
+    name,
+    group,
+    status: Number(channel?.status),
+    cost: formatChannelCost(channel),
+    concurrency: max > 0 ? `${active}/${max}` : `${active}/-`,
+  };
+};
+
+const renderChannelOptionItem = (option, t) => (
+  <div style={{ minWidth: 280 }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+      <Typography.Text strong ellipsis style={{ maxWidth: 170 }}>
+        {option.label}
+      </Typography.Text>
+      <Space spacing={4}>
+        <Tag size='small' color={option.status === 1 ? 'green' : 'grey'}>
+          {option.status === 1 ? t('已启用') : t('未启用')}
+        </Tag>
+        <Tag size='small' color='cyan'>
+          {option.cost}
+        </Tag>
+      </Space>
+    </div>
+    <Typography.Text type='tertiary' size='small' ellipsis>
+      {option.group ? `${t('分组')} ${option.group} · ` : ''}
+      {t('并发')} {option.concurrency}
+    </Typography.Text>
   </div>
 );
 
@@ -569,9 +635,9 @@ const normalizeSetting = (setting) => {
     (numberOrDefault(merged.dynamic_billing_profit_rate, 0.2) * 100).toFixed(2),
   );
   merged.dynamic_billing_max_step_change_percent = Number(
-    (numberOrDefault(merged.dynamic_billing_max_step_change, 0.3) * 100).toFixed(
-      2,
-    ),
+    (
+      numberOrDefault(merged.dynamic_billing_max_step_change, 0.3) * 100
+    ).toFixed(2),
   );
   return merged;
 };
@@ -594,6 +660,17 @@ const policyMapToRows = (policies = {}, priorities = {}) =>
       queue_enabled: !!policy?.queue_enabled,
       queue_high_priority: !!policy?.queue_high_priority,
       circuit_breaker_enabled: !!policy?.circuit_breaker_enabled,
+      resource_protection_enabled: !!policy?.resource_protection_enabled,
+      primary_channel_ids: normalizeChannelIds(policy?.primary_channel_ids),
+      primary_wait_timeout_ms:
+        policy?.primary_wait_timeout_ms === undefined
+          ? ''
+          : String(policy.primary_wait_timeout_ms),
+      primary_queue_max_depth:
+        policy?.primary_queue_max_depth === undefined
+          ? ''
+          : String(policy.primary_queue_max_depth),
+      fallback_channel_ids: normalizeChannelIds(policy?.fallback_channel_ids),
     }));
 
 const rowsToPolicyMaps = (rows) => {
@@ -616,6 +693,11 @@ const rowsToPolicyMaps = (rows) => {
       queue_enabled: !!row.queue_enabled,
       queue_high_priority: !!row.queue_high_priority,
       circuit_breaker_enabled: !!row.circuit_breaker_enabled,
+      resource_protection_enabled: !!row.resource_protection_enabled,
+      primary_channel_ids: normalizeChannelIds(row.primary_channel_ids),
+      primary_wait_timeout_ms: numberOrDefault(row.primary_wait_timeout_ms, 0),
+      primary_queue_max_depth: numberOrDefault(row.primary_queue_max_depth, 0),
+      fallback_channel_ids: normalizeChannelIds(row.fallback_channel_ids),
     };
     const ratio = Number(row.priority_ratio);
     if (Number.isFinite(ratio) && ratio > 0) {
@@ -642,6 +724,7 @@ export default function SettingsModelGatewayScheduler() {
     auto_modes: AUTO_MODE_OPTIONS,
   });
   const [groupOptions, setGroupOptions] = useState([]);
+  const [channelOptions, setChannelOptions] = useState([]);
   const [dynamicBillingBaselines, setDynamicBillingBaselines] = useState([]);
 
   const modeOptions = useMemo(
@@ -811,6 +894,35 @@ export default function SettingsModelGatewayScheduler() {
     }
   };
 
+  const loadChannels = async () => {
+    try {
+      const response = await API.get('/api/channel/', {
+        params: {
+          page: 1,
+          page_size: 1000,
+          id_sort: true,
+          status: 'all',
+        },
+        disableDuplicate: true,
+      });
+      const { success, data, message } = response.data;
+      if (!success) {
+        showWarning(t(message || '加载渠道失败'));
+        return;
+      }
+      const items = Array.isArray(data?.items) ? data.items : [];
+      setChannelOptions(
+        items
+          .map(makeChannelOption)
+          .filter(
+            (option) => Number.isInteger(option.value) && option.value > 0,
+          ),
+      );
+    } catch (error) {
+      showWarning(t('加载渠道失败'));
+    }
+  };
+
   const loadConfig = async () => {
     try {
       setLoading(true);
@@ -846,6 +958,7 @@ export default function SettingsModelGatewayScheduler() {
   useEffect(() => {
     loadConfig();
     loadGroups();
+    loadChannels();
   }, []);
 
   const updateSetting = (field, value) => {
@@ -875,6 +988,11 @@ export default function SettingsModelGatewayScheduler() {
         queue_enabled: setting.queue_enabled,
         queue_high_priority: false,
         circuit_breaker_enabled: setting.circuit_breaker_enabled,
+        resource_protection_enabled: false,
+        primary_channel_ids: [],
+        primary_wait_timeout_ms: '',
+        primary_queue_max_depth: '',
+        fallback_channel_ids: [],
       },
     ]);
   };
@@ -1136,6 +1254,15 @@ export default function SettingsModelGatewayScheduler() {
       showError(t('分组策略中存在重复分组'));
       return;
     }
+    const missingPrimaryGroup = policyRows.find(
+      (row) =>
+        row.resource_protection_enabled &&
+        normalizeChannelIds(row.primary_channel_ids).length === 0,
+    );
+    if (missingPrimaryGroup) {
+      showError(t('启用主资源保护后必须选择主资源渠道'));
+      return;
+    }
     try {
       setSaving(true);
       const res = await API.put('/api/model_gateway/config', buildPayload());
@@ -1373,6 +1500,90 @@ export default function SettingsModelGatewayScheduler() {
           </div>
         );
       },
+    },
+    {
+      title: t('主资源保护'),
+      dataIndex: 'resource_protection',
+      width: 460,
+      render: (_, row) => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <Space spacing={8} wrap>
+            <Switch
+              checked={row.resource_protection_enabled}
+              onChange={(value) =>
+                updatePolicyRow(row.id, {
+                  resource_protection_enabled: value,
+                })
+              }
+            />
+            <Typography.Text strong>
+              {row.resource_protection_enabled ? t('已启用') : t('未启用')}
+            </Typography.Text>
+            <Typography.Text type='tertiary' size='small'>
+              {t('先等主资源，超时再兜底')}
+            </Typography.Text>
+          </Space>
+          <Select
+            multiple
+            filter
+            showClear
+            maxTagCount={2}
+            value={normalizeChannelIds(row.primary_channel_ids)}
+            optionList={channelOptions}
+            placeholder={t('请选择主资源渠道')}
+            style={{ width: '100%' }}
+            renderOptionItem={(option) => renderChannelOptionItem(option, t)}
+            onChange={(value) =>
+              updatePolicyRow(row.id, {
+                primary_channel_ids: normalizeChannelIds(value),
+              })
+            }
+          />
+          <Row gutter={8}>
+            <Col span={12}>
+              <Input
+                prefix={t('等待')}
+                suffix='ms'
+                value={row.primary_wait_timeout_ms}
+                placeholder={String(setting.queue_default_timeout_ms || 3000)}
+                onChange={(value) =>
+                  updatePolicyRow(row.id, {
+                    primary_wait_timeout_ms: value,
+                  })
+                }
+              />
+            </Col>
+            <Col span={12}>
+              <Input
+                prefix={t('队列')}
+                value={row.primary_queue_max_depth}
+                placeholder={String(setting.queue_max_depth_per_channel || 64)}
+                onChange={(value) =>
+                  updatePolicyRow(row.id, {
+                    primary_queue_max_depth: value,
+                  })
+                }
+              />
+            </Col>
+          </Row>
+          <Select
+            multiple
+            filter
+            showClear
+            maxTagCount={2}
+            value={normalizeChannelIds(row.fallback_channel_ids)}
+            optionList={channelOptions}
+            placeholder={t('兜底渠道可选，留空使用非主资源候选')}
+            style={{ width: '100%' }}
+            renderOptionItem={(option) => renderChannelOptionItem(option, t)}
+            onChange={(value) =>
+              updatePolicyRow(row.id, {
+                fallback_channel_ids: normalizeChannelIds(value),
+              })
+            }
+          />
+        </div>
+      ),
     },
     {
       title: t('能力'),

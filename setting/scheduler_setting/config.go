@@ -38,16 +38,21 @@ const (
 )
 
 type GroupPolicySetting struct {
-	Mode                  string   `json:"mode"`
-	Strategy              string   `json:"strategy"`
-	AutoMode              string   `json:"auto_mode"`
-	CrossGroupFusion      bool     `json:"cross_group_fusion"`
-	CandidateGroups       []string `json:"candidate_groups"`
-	BillingRatioMode      string   `json:"billing_ratio_mode"`
-	CacheAffinityEnabled  bool     `json:"cache_affinity_enabled"`
-	QueueEnabled          bool     `json:"queue_enabled"`
-	QueueHighPriority     bool     `json:"queue_high_priority"`
-	CircuitBreakerEnabled bool     `json:"circuit_breaker_enabled"`
+	Mode                      string   `json:"mode"`
+	Strategy                  string   `json:"strategy"`
+	AutoMode                  string   `json:"auto_mode"`
+	CrossGroupFusion          bool     `json:"cross_group_fusion"`
+	CandidateGroups           []string `json:"candidate_groups"`
+	BillingRatioMode          string   `json:"billing_ratio_mode"`
+	CacheAffinityEnabled      bool     `json:"cache_affinity_enabled"`
+	QueueEnabled              bool     `json:"queue_enabled"`
+	QueueHighPriority         bool     `json:"queue_high_priority"`
+	CircuitBreakerEnabled     bool     `json:"circuit_breaker_enabled"`
+	ResourceProtectionEnabled bool     `json:"resource_protection_enabled"`
+	PrimaryChannelIDs         []int    `json:"primary_channel_ids"`
+	PrimaryWaitTimeoutMs      int      `json:"primary_wait_timeout_ms"`
+	PrimaryQueueMaxDepth      int      `json:"primary_queue_max_depth"`
+	FallbackChannelIDs        []int    `json:"fallback_channel_ids"`
 }
 
 type CircuitErrorPolicySetting struct {

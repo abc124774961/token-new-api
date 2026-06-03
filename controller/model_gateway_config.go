@@ -428,9 +428,51 @@ func normalizeModelGatewayGroupPolicies(src map[string]scheduler_setting.GroupPo
 			return nil, fmt.Errorf("invalid billing_ratio_mode for group %s", group)
 		}
 		policy.CandidateGroups = uniqueTrimmedModelGatewayStrings(policy.CandidateGroups)
+		policy.PrimaryChannelIDs = uniquePositiveModelGatewayInts(policy.PrimaryChannelIDs)
+		policy.FallbackChannelIDs = uniquePositiveModelGatewayInts(policy.FallbackChannelIDs)
+		if policy.PrimaryWaitTimeoutMs < 0 {
+			policy.PrimaryWaitTimeoutMs = 0
+		}
+		if policy.PrimaryQueueMaxDepth < 0 {
+			policy.PrimaryQueueMaxDepth = 0
+		}
+		if policy.ResourceProtectionEnabled {
+			if len(policy.PrimaryChannelIDs) == 0 {
+				return nil, fmt.Errorf("primary_channel_ids is required for group %s when resource protection is enabled", group)
+			}
+			if policy.PrimaryWaitTimeoutMs <= 0 {
+				policy.PrimaryWaitTimeoutMs = defaultInt(setting.QueueDefaultTimeoutMs, 3000)
+			}
+			policy.PrimaryWaitTimeoutMs = normalizeModelGatewayConfigMin(policy.PrimaryWaitTimeoutMs, 1, 3000)
+			policy.PrimaryWaitTimeoutMs = normalizeModelGatewayConfigMax(policy.PrimaryWaitTimeoutMs, 600000)
+			if policy.PrimaryQueueMaxDepth <= 0 {
+				policy.PrimaryQueueMaxDepth = defaultInt(setting.QueueMaxDepthPerChannel, 64)
+			}
+			policy.PrimaryQueueMaxDepth = normalizeModelGatewayConfigMin(policy.PrimaryQueueMaxDepth, 1, 64)
+			policy.PrimaryQueueMaxDepth = normalizeModelGatewayConfigMax(policy.PrimaryQueueMaxDepth, 10000)
+		}
 		result[group] = policy
 	}
 	return result, nil
+}
+
+func uniquePositiveModelGatewayInts(values []int) []int {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(values))
+	result := make([]int, 0, len(values))
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func normalizeModelGatewayCircuitErrorPolicies(src map[string]scheduler_setting.CircuitErrorPolicySetting, setting scheduler_setting.SchedulerSetting) map[string]scheduler_setting.CircuitErrorPolicySetting {
@@ -678,6 +720,13 @@ func validModelGatewayConfigValue(value string, allowed map[string]struct{}) boo
 func normalizeModelGatewayConfigMin(value int, minValue int, fallback int) int {
 	if value < minValue {
 		return fallback
+	}
+	return value
+}
+
+func normalizeModelGatewayConfigMax(value int, maxValue int) int {
+	if maxValue > 0 && value > maxValue {
+		return maxValue
 	}
 	return value
 }

@@ -245,10 +245,11 @@ func (s *Service) channelAccountLocator(ctx context.Context, targetRef string) (
 }
 
 func (s *Service) dispatchBrowserFallback(ctx context.Context, claim *queue.ClaimResult, targetRef string, fallbackErr error) error {
+	executorType := s.browserLoginExecutor()
 	child, created, err := s.queue.CreateJob(ctx, queue.CreateJobRequest{
 		ParentJobID:    claim.Job.JobID,
 		TaskType:       model.TaskAuthBrowserLogin,
-		ExecutorType:   model.ExecutorBrowserPlaywright,
+		ExecutorType:   executorType,
 		Priority:       claim.Job.Priority,
 		MaxAttempts:    1,
 		IdempotencyKey: authBrowserLoginKey(targetRef),
@@ -263,12 +264,23 @@ func (s *Service) dispatchBrowserFallback(ctx context.Context, claim *queue.Clai
 		return s.queue.Fail(ctx, claim.Job.JobID, claim.Attempt.WorkerID, "browser_job_create_failed", err.Error(), 30)
 	}
 	return s.queue.Succeed(ctx, claim.Job.JobID, claim.Attempt.WorkerID, map[string]any{
-		"next_task_type": model.TaskAuthBrowserLogin,
-		"next_job_id":    child.JobID,
-		"created":        created,
-		"fallback":       true,
-		"reason":         sanitizeText(fallbackErr.Error()),
+		"next_task_type":     model.TaskAuthBrowserLogin,
+		"next_executor_type": executorType,
+		"next_job_id":        child.JobID,
+		"created":            created,
+		"fallback":           true,
+		"reason":             sanitizeText(fallbackErr.Error()),
 	})
+}
+
+func (s *Service) browserLoginExecutor() string {
+	executorType := strings.ToLower(strings.TrimSpace(s.cfg.BrowserLoginExecutor))
+	switch executorType {
+	case model.ExecutorDesktopSession, model.ExecutorBrowserPlaywright:
+		return executorType
+	default:
+		return model.ExecutorBrowserPlaywright
+	}
 }
 
 func (s *Service) lookupRefreshToken(ctx context.Context, targetRef string, refreshTokenRef string) (string, *secret.Plaintext, error) {

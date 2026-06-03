@@ -3,6 +3,7 @@ package controller
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -295,6 +296,16 @@ type ChannelAccountRequestReconcileDiagnosis struct {
 	Severity string `json:"severity"`
 }
 
+type TokenAccountAutomationAccountProfileResponse struct {
+	ChannelID       int                `json:"channel_id"`
+	ChannelName     string             `json:"channel_name,omitempty"`
+	ChannelStatus   int                `json:"channel_status"`
+	CredentialIndex int                `json:"credential_index"`
+	ResourceRef     modelgatewaycore.ResourceRef `json:"resource_ref"`
+	Account         ChannelAccountItem `json:"account"`
+	SnapshotAt      int64              `json:"snapshot_at"`
+}
+
 type channelAccountsQuery struct {
 	View        string
 	Page        int
@@ -374,6 +385,23 @@ type UpdateChannelAccountsProxyRequest struct {
 	CredentialIndexes []int `json:"credential_indexes"`
 	ProxyID           *int  `json:"proxy_id"`
 	AllowReuseRisk    bool  `json:"allow_reuse_risk,omitempty"`
+}
+
+type SyncChannelAccountAuthRecoveryRequest struct {
+	ChannelID       int  `json:"channel_id,omitempty"`
+	Limit           int  `json:"limit,omitempty"`
+	IncludeDisabled bool `json:"include_disabled,omitempty"`
+}
+
+type SyncChannelAccountAuthRecoveryResponse struct {
+	Scanned          int `json:"scanned"`
+	Matched          int `json:"matched"`
+	Enqueued         int `json:"enqueued"`
+	Existing         int `json:"existing"`
+	Skipped          int `json:"skipped"`
+	SkippedUnscoped  int `json:"skipped_unscoped"`
+	SkippedDisabled  int `json:"skipped_disabled"`
+	AutomationErrors int `json:"automation_errors"`
 }
 
 type ChannelAccountOperation struct {
@@ -866,6 +894,21 @@ func ReauthorizeChannelInvalidAccount(c *gin.Context) {
 		"operation":  restored.Operation,
 		"automation": automation,
 	})
+}
+
+func SyncChannelAccountAuthRecovery(c *gin.Context) {
+	var request SyncChannelAccountAuthRecoveryRequest
+	_ = c.ShouldBindJSON(&request)
+	if !service.TokenAccountAutomationConfigured() {
+		common.ApiErrorMsg(c, "账号自动化服务未配置")
+		return
+	}
+	result, err := syncChannelAccountAuthRecovery(c.Request.Context(), request)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	common.ApiSuccess(c, result)
 }
 
 func DiscardChannelInvalidAccount(c *gin.Context) {
@@ -1471,6 +1514,68 @@ func buildChannelAccountsResponse(channel *model.Channel, query ...channelAccoun
 		}
 	}
 	return response
+}
+
+func buildTokenAccountAutomationAccountProfile(channelID int, credentialIndex int) (TokenAccountAutomationAccountProfileResponse, error) {
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		return TokenAccountAutomationAccountProfileResponse{}, fmt.Errorf("channel not found")
+	}
+	accounts := modelgatewayaccount.NewRegistry().AccountsForChannel(channel)
+	for _, account := range accounts {
+		if account.CredentialIndex != credentialIndex {
+			continue
+		}
+		item := buildSingleChannelAccountItem(channel, account, len(accounts) == 1)
+		return TokenAccountAutomationAccountProfileResponse{
+			ChannelID:       channel.Id,
+			ChannelName:     channel.Name,
+			ChannelStatus:   channel.Status,
+			CredentialIndex: credentialIndex,
+			ResourceRef:     modelgatewayaccount.ResourceRefForChannel(channel),
+			Account:         item,
+			SnapshotAt:      common.GetTimestamp(),
+		}, nil
+	}
+	return TokenAccountAutomationAccountProfileResponse{}, fmt.Errorf("credential index out of range")
+}
+
+func buildSingleChannelAccountItem(channel *model.Channel, account modelgatewayaccount.ChannelAccount, allowChannelFallback bool) ChannelAccountItem {
+	runtimeItems := runtimeItemsForChannelAccounts(channel.Id, []modelgatewayaccount.ChannelAccount{account}, allowChannelFallback)
+	item := buildChannelAccountItem(account, runtimeItems, allowChannelFallback)
+	item.ChannelName = channel.Name
+	if envs := channelAccountCodexEnvironmentsByID([]modelgatewayaccount.ChannelAccount{account}); len(envs) > 0 {
+		if env, ok := envs[item.CodexEnvironmentID]; ok {
+			envResponse := env.ToResponse()
+			item.CodexEnvironment = &envResponse
+		}
+	}
+	item.Capabilities = keyStatusCapabilities(channel, account.CredentialIndex)
+	if item.Capabilities != nil {
+		item.Capabilities.CapabilityClassification = item.Capabilities.EffectiveClassification()
+	}
+	if statsByAccount, _ := channelAccountStatsForAccounts(channel.Id, []modelgatewayaccount.ChannelAccount{account}); len(statsByAccount) > 0 {
+		if stats, ok := statsByAccount[channelAccountStatsKey(account)]; ok {
+			item.Stats = stats
+		}
+	}
+	if account.ProxyRef.ProxyID > 0 {
+		proxiesByID := channelAccountProxiesByID(channel, []modelgatewayaccount.ChannelAccount{account})
+		proxyUsagesByID := channelAccountProxyUsagesByID(proxiesByID)
+		if proxyConfig, ok := proxiesByID[account.ProxyRef.ProxyID]; ok {
+			proxyResponse := buildModelGatewayProxyResponse(proxyConfig, proxyUsagesByID[account.ProxyRef.ProxyID])
+			item.Proxy = &proxyResponse
+		} else {
+			item.Proxy = &ModelGatewayProxyResponse{
+				ID:             account.ProxyRef.ProxyID,
+				Name:           fmt.Sprintf("Proxy #%d", account.ProxyRef.ProxyID),
+				Enabled:        false,
+				PasswordMasked: true,
+			}
+		}
+	}
+	item.Scheduling = buildChannelAccountSchedulingExplanation(item)
+	return item
 }
 
 func buildChannelAccountChannelItem(channel *model.Channel, accounts []modelgatewayaccount.ChannelAccount) ChannelAccountChannelItem {
@@ -2797,6 +2902,120 @@ func buildTokenAccountAutomationManualReauthorizationEvent(record model.ChannelI
 		Reason:  reason,
 		Context: compactAutomationEventContext(contextPayload),
 	}
+}
+
+func syncChannelAccountAuthRecovery(ctx context.Context, request SyncChannelAccountAuthRecoveryRequest) (*SyncChannelAccountAuthRecoveryResponse, error) {
+	limit := request.Limit
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	channels, err := channelsForAuthRecoverySync(request.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	result := &SyncChannelAccountAuthRecoveryResponse{}
+	attempted := 0
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		keys := channel.GetKeys()
+		for credentialIndex, key := range keys {
+			result.Scanned++
+			capability, ok := channel.ChannelInfo.MultiKeyCapabilities[credentialIndex]
+			if !ok || capability.EffectiveClassification() != channelcapability.ClassificationAuthError {
+				continue
+			}
+			result.Matched++
+			if !request.IncludeDisabled && !channelAccountIndexEnabled(channel, credentialIndex) {
+				result.Skipped++
+				result.SkippedDisabled++
+				continue
+			}
+			if channel.Id <= 0 || credentialIndex < 0 {
+				result.Skipped++
+				result.SkippedUnscoped++
+				continue
+			}
+			if attempted >= limit {
+				result.Skipped++
+				continue
+			}
+			attempted++
+			identity := modelgatewayaccount.AccountIdentityForChannelKey(channel, credentialIndex, key)
+			event := service.TokenAccountAutomationAuthInvalidEvent{
+				ChannelID:       channel.Id,
+				CredentialIndex: credentialIndex,
+				Provider:        relayFirstNonEmptyString(identity.Provider, identity.Brand),
+				SubjectKey: relayFirstNonEmptyString(
+					identity.AccountIdentityKey,
+					identity.AccountID,
+					identity.CredentialSubjectFingerprint,
+					identity.CredentialFingerprint,
+				),
+				DisplayName: relayFirstNonEmptyString(
+					identity.DisplayName,
+					identity.AccountID,
+					fmt.Sprintf("channel:%d#%d", channel.Id, credentialIndex),
+				),
+				Source: "admin_sync",
+				Reason: channelcapability.ClassificationAuthError,
+				Context: compactAutomationEventContext(map[string]any{
+					"channel_id":                     channel.Id,
+					"channel_name":                   channel.Name,
+					"credential_index":               credentialIndex,
+					"account_id":                     identity.AccountID,
+					"account_type":                   identity.AccountType,
+					"account_brand":                  identity.Brand,
+					"account_provider":               identity.Provider,
+					"account_identity_key":           identity.AccountIdentityKey,
+					"credential_subject_fingerprint": identity.CredentialSubjectFingerprint,
+					"credential_fingerprint":         identity.CredentialFingerprint,
+					"capability_last_endpoint":       capability.LastEndpoint,
+					"capability_last_message":        capability.LastMessage,
+					"capability_checked_time":        capability.CheckedTime,
+				}),
+			}
+			automation, err := service.EnqueueTokenAccountAutomationAuthInvalid(ctx, event)
+			if err != nil {
+				result.AutomationErrors++
+				continue
+			}
+			if automation != nil && automation.Created {
+				result.Enqueued++
+			} else {
+				result.Existing++
+			}
+		}
+	}
+	return result, nil
+}
+
+func channelsForAuthRecoverySync(channelID int) ([]*model.Channel, error) {
+	if channelID > 0 {
+		channel, err := model.GetChannelById(channelID, true)
+		if err != nil {
+			return nil, fmt.Errorf("渠道不存在")
+		}
+		return []*model.Channel{channel}, nil
+	}
+	return model.GetAllChannels(0, 0, true, true)
+}
+
+func channelAccountIndexEnabled(channel *model.Channel, credentialIndex int) bool {
+	if channel == nil || credentialIndex < 0 {
+		return false
+	}
+	status := common.ChannelStatusEnabled
+	if channel.ChannelInfo.MultiKeyStatusList != nil {
+		if value, ok := channel.ChannelInfo.MultiKeyStatusList[credentialIndex]; ok {
+			status = value
+		}
+	}
+	return status == common.ChannelStatusEnabled
 }
 
 func discardChannelInvalidAccount(poolID int) (*ChannelAccountOperation, error) {

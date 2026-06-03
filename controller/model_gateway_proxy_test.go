@@ -99,6 +99,52 @@ func TestModelGatewayProxyListMasksSecretAndIncludesUsage(t *testing.T) {
 	require.Nil(t, payload.Data[0].ReuseRisks)
 }
 
+func TestTokenAccountAutomationProxyListRequiresTokenAndReturnsProxyRules(t *testing.T) {
+	db := setupModelGatewayProxyControllerTestDB(t)
+	require.NoError(t, db.Create(&model.ModelGatewayProxy{
+		ID:       1301,
+		Name:     "desktop proxy",
+		Protocol: "socks5",
+		Address:  "127.0.0.1:1080",
+		Username: "user",
+		Password: "pass",
+		Enabled:  true,
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelGatewayProxy{
+		ID:       1302,
+		Name:     "disabled proxy",
+		Protocol: "http",
+		Address:  "127.0.0.1:8080",
+		Enabled:  false,
+	}).Error)
+	require.NoError(t, db.Model(&model.ModelGatewayProxy{}).Where("id = ?", 1302).Update("enabled", false).Error)
+	t.Setenv(tokenAccountAutomationCallbackTokenEnv, "callback-token")
+
+	router := gin.New()
+	router.GET("/api/internal/token-account-automation/proxies", ListTokenAccountAutomationProxies)
+
+	unauthorized := httptest.NewRecorder()
+	router.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/internal/token-account-automation/proxies", nil))
+	require.Equal(t, http.StatusUnauthorized, unauthorized.Code)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/token-account-automation/proxies", nil)
+	req.Header.Set("Authorization", "Bearer callback-token")
+	router.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var payload struct {
+		Success bool                                  `json:"success"`
+		Data    []TokenAccountAutomationProxyResponse `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Len(t, payload.Data, 1)
+	require.Equal(t, 1301, payload.Data[0].ID)
+	require.Equal(t, "socks5://user:pass@127.0.0.1:1080", payload.Data[0].ProxyRules)
+	require.Equal(t, "socks5://127.0.0.1:1080", payload.Data[0].MaskedAddress)
+}
+
 func TestUpdateModelGatewayProxyKeepsExistingAddressAndPasswordWhenBlank(t *testing.T) {
 	db := setupModelGatewayProxyControllerTestDB(t)
 	require.NoError(t, db.Create(&model.ModelGatewayProxy{

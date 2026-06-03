@@ -207,6 +207,15 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	if len(candidates) == 0 {
 		return nil, false, nil
 	}
+	var resourceDecision resourceProtectionDecision
+	var resourceErr *types.NewAPIError
+	candidates, resourceDecision, resourceErr = s.resourceProtectionCandidates(c, req, policy, candidates)
+	if resourceErr != nil {
+		return nil, true, resourceErr
+	}
+	if len(candidates) == 0 {
+		return nil, false, nil
+	}
 	stickyRoute, hasSticky := s.stickyRoute(c, &req, policy)
 	var bestAvailableCandidate core.Candidate
 	var bestAvailableSnapshot core.RuntimeSnapshot
@@ -259,6 +268,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		}
 		scored := s.scorePreparedCandidate(candidate, snapshot, policy, evaluation.stickyMatched, retryIntent)
 		explanation := scored.Explanation
+		applyResourceProtectionExplanation(&explanation, candidate, resourceDecision)
 		score := scored.Score
 		if evaluation.rejectReason != "" {
 			explanation.RejectReason = evaluation.rejectReason
@@ -430,10 +440,10 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		ScoreBreakdown:              bestScore.Breakdown,
 		RoutingScoreTotal:           bestScore.RoutingTotal,
 		RoutingScoreBreakdown:       bestScore.RoutingBreakdown,
-		QueueWaitMs:                 selectedQueueWaitMs(bestSnapshot, policy, selectedSaturated),
-		QueueEnabled:                policy.QueueEnabled,
+		QueueWaitMs:                 selectedQueueWaitMs(bestSnapshot, policy, selectedSaturated, resourceDecision),
+		QueueEnabled:                resourceDecision.queueEnabled(selectedSaturated, policy),
 		QueueDepth:                  bestSnapshot.QueueDepth,
-		QueueCapacity:               bestSnapshot.QueueCapacity,
+		QueueCapacity:               selectedQueueCapacity(bestSnapshot, resourceDecision, selectedSaturated),
 		QueuePriority:               queuePriorityForRetryIntent(policy.QueuePriority, retryIntent),
 		SelectedReason:              bestScore.Reason,
 		StickySource:                stickyRoute.Source,
@@ -455,6 +465,14 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		RetryIntentApplied:          retryIntent != nil && retryIntent.Active(),
 		RetryQueuePriorityBoost:     retryIntent != nil && retryIntent.QueuePriorityBoost,
 		CostGuardDecision:           costGuardDecision,
+		ResourceProtectionEnabled:   resourceDecision.Enabled,
+		ResourceProtectionPhase:     resourceDecision.selectedPhase(selectedSaturated),
+		ResourceProtectionReason:    resourceDecision.selectedReason(selectedSaturated),
+		ResourceProtectionRole:      resourceDecision.Role,
+		PrimaryChannelIDs:           append([]int(nil), resourceDecision.PrimaryChannelIDs...),
+		FallbackChannelIDs:          append([]int(nil), resourceDecision.FallbackChannelIDs...),
+		PrimaryWaitTimeoutMs:        resourceDecision.PrimaryWaitTimeoutMs,
+		PrimaryQueueMaxDepth:        resourceDecision.PrimaryQueueMaxDepth,
 	}
 	if s.shouldSaveStickyOnSelect() {
 		s.stickyRouter.Save(c, &req, plan)
@@ -607,8 +625,20 @@ func routingConcurrencySaturated(snapshot core.RuntimeSnapshot) bool {
 	return limit > 0 && snapshot.ActiveConcurrency >= limit
 }
 
-func selectedQueueWaitMs(snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy, selectedSaturated bool) int {
-	if !selectedSaturated || !policy.QueueEnabled {
+func selectedQueueWaitMs(snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy, selectedSaturated bool, resourceDecision resourceProtectionDecision) int {
+	if !selectedSaturated {
+		return 0
+	}
+	if resourceDecision.primaryWaitSelected(selectedSaturated) {
+		if resourceDecision.PrimaryWaitTimeoutMs > 0 {
+			return resourceDecision.PrimaryWaitTimeoutMs
+		}
+		if snapshot.QueueTimeoutMs > 0 {
+			return snapshot.QueueTimeoutMs
+		}
+		return defaultQueueTimeoutMs
+	}
+	if !policy.QueueEnabled {
 		return 0
 	}
 	if snapshot.QueueCapacity > 0 && snapshot.QueueDepth >= snapshot.QueueCapacity {
@@ -618,6 +648,13 @@ func selectedQueueWaitMs(snapshot core.RuntimeSnapshot, policy core.GroupSmartPo
 		return snapshot.QueueTimeoutMs
 	}
 	return defaultQueueTimeoutMs
+}
+
+func selectedQueueCapacity(snapshot core.RuntimeSnapshot, resourceDecision resourceProtectionDecision, selectedSaturated bool) int {
+	if resourceDecision.primaryWaitSelected(selectedSaturated) && resourceDecision.PrimaryQueueMaxDepth > 0 {
+		return resourceDecision.PrimaryQueueMaxDepth
+	}
+	return snapshot.QueueCapacity
 }
 
 func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapshot, stickyMatched bool) core.CandidateExplanation {

@@ -22,6 +22,7 @@ Required tokens:
 
 - `AUTOMATION_API_TOKEN`: used by the main gateway or admin tools.
 - `AUTOMATION_WORKER_TOKEN`: used by workers.
+- `AUTOMATION_DESKTOP_TOKEN`: used by the Electron desktop `desktop_session` executor.
 - `AUTOMATION_SECRET_KEY`: encrypts credentials in `automation_secrets`.
 
 Deployment runbook: [docs/deployment-runbook.md](docs/deployment-runbook.md).
@@ -50,6 +51,7 @@ Internal executor:
 - `AUTOMATION_INTERNAL_WORKER_ID=internal-api-1`
 - `AUTOMATION_INTERNAL_POLL_INTERVAL=2`
 - `AUTOMATION_INTERNAL_LEASE_SECONDS=60`
+- `AUTOMATION_BROWSER_LOGIN_EXECUTOR=browser_playwright|desktop_session`: controls where browser-login fallback jobs are routed.
 
 Database:
 
@@ -70,10 +72,27 @@ go test ./...
 go run ./cmd/server
 ```
 
+Run with the project root dev/pro env files:
+
+```bash
+# Dev: listens on :18091, matches TOKEN_ACCOUNT_AUTOMATION_URL in ../.env.dev.
+AUTOMATION_ENV_FILE=../.env.dev go run ./cmd/server
+
+# Pro: listens on :18091, replace pro tokens in ../.env.pro before use.
+AUTOMATION_ENV_FILE=../.env.pro go run ./cmd/server
+```
+
+For a local long-running desktop test, building a binary first avoids tying the service to `go run` wrapper processes:
+
+```bash
+go build -o /tmp/token-account-automation-server ./cmd/server
+AUTOMATION_ENV_FILE=/Users/frode.luo/project/token-new-api/.env.dev /tmp/token-account-automation-server
+```
+
 Health check:
 
 ```bash
-curl http://127.0.0.1:8091/health
+curl http://127.0.0.1:18091/health
 ```
 
 Emit auth-invalid event:
@@ -143,6 +162,69 @@ Optional persistent browser profiles:
 - Set `BROWSER_PROFILE_DIR=/worker/profiles` in container deployments to reuse browser session state by target account.
 - Treat the profile directory as sensitive secret material because cookies and browser storage may be stored there.
 - Leave it empty for fully ephemeral browser sessions.
+
+Electron desktop executor:
+
+```bash
+cd desktop
+bun install
+bun run start
+```
+
+`bun run start` is the development launcher. It picks an available renderer port automatically from `5174` upward and passes it to Electron, so it will not fail just because `5173` is already occupied. To open the built local client without a Vite dev server, run `bun run build && bun run open`.
+
+Configure the desktop app with the automation service URL and `AUTOMATION_DESKTOP_TOKEN`. For local dev with the root `.env.dev`, use:
+
+```text
+Automation URL: http://127.0.0.1:18091
+Desktop Token: dev-desktop-client-token
+```
+
+To route browser-login fallback jobs to Electron instead of the Playwright worker, set:
+
+```bash
+AUTOMATION_BROWSER_LOGIN_EXECUTOR=desktop_session
+AUTOMATION_DESKTOP_TOKEN=replace-with-desktop-client-token
+```
+
+Desktop tokens can only claim and operate `desktop_session` jobs. The general worker token remains required for `browser_playwright` and `internal_api` jobs.
+
+Desktop diagnostics:
+
+- The local environment panel checks the automation health endpoint, desktop API, callback port, env file, gateway callback URL, callback token presence, gateway proxy endpoint, and gateway invalid-pool endpoint.
+- A 404 on the gateway invalid-pool endpoint usually means the main gateway process is still running an older build and needs to be published or restarted.
+- The callback port shows whether it is available or currently owned by the desktop callback server.
+
+Desktop account pool actions:
+
+- The task detail panel can move the channel account bound to a `desktop_session` job into the main gateway invalid pool or discarded pool.
+- Bulk task selection supports the same invalid/discarded pool actions for jobs with a channel account locator.
+- The desktop home view can list the main gateway invalid account pool with masked credentials and submit a reauthorization request for a pool item.
+- The desktop client calls the automation service only; the automation service resolves the job locator and forwards the archive request to the main gateway through the callback-token internal endpoints.
+- Invalid-pool reauthorization is forwarded to the main gateway, which restores the account into the source channel and enqueues a new authorization recovery job.
+- Archive actions append an `account_pool_archived` event to the job timeline for operations audit.
+
+Desktop proxy health:
+
+- Remote proxies synced from the main gateway are scored locally with source, geo status, recent success, recent failure, failure count, use count, and cooldown state.
+- Authorization jobs automatically pick the highest-scored available proxy unless the operator sets `preferred_proxy_id` during retry.
+- Successful authorization records local proxy success; failed authorization records local proxy failure and applies incremental cooldown.
+- The desktop proxy panel and retry dropdown display score, status, and the short recommendation reason.
+
+Desktop automation capability map:
+
+- `GET /api/desktop/action-templates` returns the current desktop-visible automation capability list.
+- The response separates ready, partial, and planned capabilities across authorization, operations, account pools, diagnostics, and security handoff.
+- The desktop sidebar uses this list to show product value, technical entry point, executor/task type, proxy or locator requirements, and whether the action is currently enabled by gateway callback configuration.
+- Ready capabilities include auth recovery orchestration, refresh-token recovery, desktop browser login, retry with proxy, local session cleanup, gateway proxy sync, invalid/discarded archive, and invalid-pool reauthorization.
+- Partial capabilities include desktop account availability probe and account profile verification jobs. They currently collect local target, browser partition, proxy selection, desktop runtime, and operator context; real upstream account permission/profile callbacks can be attached later without redesigning the client navigation.
+
+Desktop account diagnostics:
+
+- Task detail can enqueue `account_probe` through `POST /api/desktop/jobs/{job_id}/probe`.
+- Task detail can enqueue `account_profile_verify` through `POST /api/desktop/jobs/{job_id}/profile-verify`.
+- These child jobs reuse the source task target ref, account locator, selected proxy, and optional local-session cleanup flag.
+- The desktop executor handles these task types separately from `auth_browser_login`, so diagnostics cannot accidentally open the OAuth login flow.
 
 Worker-only credential completion endpoint:
 

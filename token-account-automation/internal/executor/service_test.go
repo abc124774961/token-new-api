@@ -356,3 +356,41 @@ func TestAuthTokenRefreshFallsBackToBrowserWhenRefreshTokenMissing(t *testing.T)
 		t.Fatalf("refresh client should not be called, got token=%q", refreshClient.token)
 	}
 }
+
+func TestAuthTokenRefreshFallbackCanTargetDesktopSessionExecutor(t *testing.T) {
+	refreshClient := &fakeRefreshClient{err: errors.New("should not be called")}
+	_, queueService, secretService, executorService := testExecutor(t, refreshClient)
+	executorService = New(config.Config{
+		InternalWorkerID:     "executor-test",
+		InternalLeaseSeconds: 60,
+		BrowserLoginExecutor: model.ExecutorDesktopSession,
+	}, queueService, secretService, refreshClient, nil)
+	ctx := context.Background()
+	job, _, err := queueService.CreateJob(ctx, queue.CreateJobRequest{
+		TaskType:     model.TaskAuthTokenRefresh,
+		ExecutorType: model.ExecutorInternalAPI,
+		TargetRef:    "auto_target_desktop",
+	})
+	if err != nil {
+		t.Fatalf("create refresh job: %v", err)
+	}
+	claim, err := queueService.Claim(ctx, queue.ClaimRequest{ExecutorType: model.ExecutorInternalAPI, WorkerID: "executor-test"})
+	if err != nil {
+		t.Fatalf("claim refresh job: %v", err)
+	}
+	if err := executorService.handleClaim(ctx, claim); err != nil {
+		t.Fatalf("handle refresh job: %v", err)
+	}
+	children, total, err := queueService.ListJobs(ctx, queue.JobFilter{
+		TaskType:     model.TaskAuthBrowserLogin,
+		ExecutorType: model.ExecutorDesktopSession,
+		TargetRef:    "auto_target_desktop",
+		PageSize:     10,
+	})
+	if err != nil {
+		t.Fatalf("list desktop children: %v", err)
+	}
+	if total != 1 || len(children) != 1 || children[0].ParentJobID != job.JobID {
+		t.Fatalf("unexpected desktop fallback child: total=%d children=%+v", total, children)
+	}
+}

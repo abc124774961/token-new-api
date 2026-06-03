@@ -66,6 +66,25 @@ const (
 	CandidatePoolPro = "pro"
 )
 
+const (
+	ResourceProtectionRolePrimary  = "primary"
+	ResourceProtectionRoleFallback = "fallback"
+
+	ResourceProtectionPhasePrimaryHit             = "primary_hit"
+	ResourceProtectionPhasePrimarySaturatedWait   = "primary_saturated_wait"
+	ResourceProtectionPhaseFallbackAfterTimeout   = "fallback_after_timeout"
+	ResourceProtectionPhasePrimaryFailureFallback = "primary_failure_fallback"
+	ResourceProtectionPhaseNoPrimaryFallback      = "no_primary_fallback"
+
+	ResourceProtectionReasonPrimaryAvailable     = "primary_resource_available"
+	ResourceProtectionReasonPrimarySaturated     = "primary_resource_saturated"
+	ResourceProtectionReasonPrimaryWaitTimeout   = "primary_wait_timeout"
+	ResourceProtectionReasonPrimaryFailure       = "primary_resource_failure"
+	ResourceProtectionReasonNoPrimaryCandidate   = "no_primary_resource_candidate"
+	ResourceProtectionReasonNoFallbackCandidate  = "no_fallback_resource_candidate"
+	ResourceProtectionReasonFallbackAfterTimeout = "fallback_after_primary_wait_timeout"
+)
+
 type ResourceRef struct {
 	ResourceID         string `json:"resource_id,omitempty"`
 	ResourceType       string `json:"resource_type,omitempty"`
@@ -123,23 +142,30 @@ type DispatchRequest struct {
 	CurrentAutoGroupIndex       int
 	HasCurrentAutoGroupIndex    bool
 	RetryRoutingIntent          *RetryRoutingIntent
+	ResourceProtectionFallback  bool
+	ResourceProtectionReason    string
 }
 
 type GroupSmartPolicy struct {
-	RequestedGroup        string
-	UserGroup             string
-	Mode                  string
-	Strategy              string
-	AutoMode              string
-	CrossGroupFusion      bool
-	CandidateGroups       []string
-	BillingRatioMode      string
-	CacheAffinityEnabled  bool
-	QueueEnabled          bool
-	QueueHighPriority     bool
-	QueuePriority         int
-	CircuitBreakerEnabled bool
-	GroupPriorityRatio    map[string]float64
+	RequestedGroup            string
+	UserGroup                 string
+	Mode                      string
+	Strategy                  string
+	AutoMode                  string
+	CrossGroupFusion          bool
+	CandidateGroups           []string
+	BillingRatioMode          string
+	CacheAffinityEnabled      bool
+	QueueEnabled              bool
+	QueueHighPriority         bool
+	QueuePriority             int
+	CircuitBreakerEnabled     bool
+	GroupPriorityRatio        map[string]float64
+	ResourceProtectionEnabled bool
+	PrimaryChannelIDs         []int
+	PrimaryWaitTimeoutMs      int
+	PrimaryQueueMaxDepth      int
+	FallbackChannelIDs        []int
 }
 
 func (p GroupSmartPolicy) IsActive() bool {
@@ -206,6 +232,14 @@ type DispatchPlan struct {
 	RetryIntentApplied          bool
 	RetryQueuePriorityBoost     bool
 	CostGuardDecision           *CostGuardDecision
+	ResourceProtectionEnabled   bool
+	ResourceProtectionPhase     string
+	ResourceProtectionReason    string
+	ResourceProtectionRole      string
+	PrimaryChannelIDs           []int
+	FallbackChannelIDs          []int
+	PrimaryWaitTimeoutMs        int
+	PrimaryQueueMaxDepth        int
 }
 
 type RetryRoutingIntent struct {
@@ -618,6 +652,8 @@ type CandidateExplanation struct {
 	MatchedRuntimeKey                 RuntimeKey         `json:"matched_runtime_key,omitempty"`
 	RetryIntentApplied                bool               `json:"retry_intent_applied,omitempty"`
 	RetryIntentReason                 string             `json:"retry_intent_reason,omitempty"`
+	ResourceProtectionRole            string             `json:"resource_protection_role,omitempty"`
+	ResourceProtectionReason          string             `json:"resource_protection_reason,omitempty"`
 }
 
 type ScoreWeights struct {

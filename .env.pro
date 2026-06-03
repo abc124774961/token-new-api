@@ -11,3 +11,34 @@ CHANNEL_FAILURE_AVOIDANCE_TTL_SECONDS=6
 CHANNEL_BALANCE_AUTO_RESUME_ENABLED=true
 CHANNEL_BALANCE_RECOVERY_THRESHOLD=0
 # REDIS_CONN_STRING=redis://host.docker.internal:6379/0
+
+# Token account automation callback used by the main gateway container.
+TOKEN_ACCOUNT_AUTOMATION_URL=http://host.docker.internal:18091
+TOKEN_ACCOUNT_AUTOMATION_API_TOKEN=replace-with-pro-automation-api-token
+TOKEN_ACCOUNT_AUTOMATION_CALLBACK_TOKEN=replace-with-pro-automation-callback-token
+TOKEN_ACCOUNT_AUTOMATION_TIMEOUT_SECONDS=5
+
+# Token account automation service, loaded by:
+#   cd token-account-automation && AUTOMATION_ENV_FILE=../.env.pro go run ./cmd/server
+AUTOMATION_LISTEN_ADDR=:18091
+AUTOMATION_API_TOKEN=${TOKEN_ACCOUNT_AUTOMATION_API_TOKEN}
+AUTOMATION_WORKER_TOKEN=replace-with-pro-automation-worker-token
+AUTOMATION_DESKTOP_TOKEN=replace-with-pro-desktop-client-token
+AUTOMATION_SECRET_KEY=replace-with-32-byte-or-longer-pro-secret-key
+AUTOMATION_DB_DRIVER=sqlite
+AUTOMATION_DB_DSN=/www/wwwroot/token-new-api/token-account-automation/data/token-account-automation.db
+AUTOMATION_RUN_MIGRATIONS=true
+AUTOMATION_INTERNAL_EXECUTOR=true
+AUTOMATION_INTERNAL_WORKER_ID=internal-api-pro-1
+AUTOMATION_INTERNAL_POLL_INTERVAL=2
+AUTOMATION_INTERNAL_LEASE_SECONDS=60
+AUTOMATION_BROWSER_LOGIN_EXECUTOR=desktop_session
+AUTOMATION_GATEWAY_CALLBACK_URL=http://127.0.0.1:3000
+AUTOMATION_GATEWAY_CALLBACK_TOKEN=${TOKEN_ACCOUNT_AUTOMATION_CALLBACK_TOKEN}
+AUTOMATION_GATEWAY_CALLBACK_TIMEOUT_SECONDS=5
+BROWSER_WORKER_ID=browser-worker-pro-1
+BROWSER_HEADLESS=true
+BROWSER_POLL_INTERVAL_SECONDS=2
+BROWSER_CALLBACK_PORT=1455
+BROWSER_LOGIN_TIMEOUT_SECONDS=900
+BROWSER_PROFILE_DIR=/www/wwwroot/token-new-api/token-account-automation/browser-profiles

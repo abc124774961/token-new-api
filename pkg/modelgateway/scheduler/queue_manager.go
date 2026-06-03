@@ -20,9 +20,11 @@ const (
 )
 
 type QueueAcquireResult struct {
-	Lease    *service.ChannelConcurrencyLease
-	Status   QueueAcquireStatus
-	WaitTime time.Duration
+	Lease       *service.ChannelConcurrencyLease
+	Status      QueueAcquireStatus
+	WaitTime    time.Duration
+	Plan        *core.DispatchPlan
+	StopWaiting bool
 }
 
 // QueueAcquireOptions carries optional admission metadata for queued requests.
@@ -31,6 +33,19 @@ type QueueAcquireOptions struct {
 	Group      string
 	Priority   int
 	RuntimeKey core.RuntimeKey
+	MaxDepth   int
+}
+
+// QueuePoolAcquireOptions describes a group-level resource pool queue. The
+// TryAcquire callback should re-run the pool's selection logic and return an
+// acquired lease when any member resource is available.
+type QueuePoolAcquireOptions struct {
+	PoolKey    string
+	Group      string
+	Priority   int
+	RuntimeKey core.RuntimeKey
+	MaxDepth   int
+	TryAcquire func() QueueAcquireResult
 }
 
 // QueueAdmissionContext describes the current channel queue state before a
@@ -197,6 +212,9 @@ type QueueManager struct {
 	queueDepths      map[int]int
 	queueGroupDepths map[int]map[string]int
 	queueWaiters     map[int][]queueWaiterState
+	poolDepths       map[string]int
+	poolGroupDepths  map[string]map[string]int
+	poolWaiters      map[string][]queueWaiterState
 	rejectReasons    map[string]int
 	nextWaiterSeq    int64
 	timeout          time.Duration
@@ -220,6 +238,9 @@ func NewQueueManagerWithAdmissionPolicy(timeout time.Duration, maxDepth int, pol
 		queueDepths:      map[int]int{},
 		queueGroupDepths: map[int]map[string]int{},
 		queueWaiters:     map[int][]queueWaiterState{},
+		poolDepths:       map[string]int{},
+		poolGroupDepths:  map[string]map[string]int{},
+		poolWaiters:      map[string][]queueWaiterState{},
 		rejectReasons:    map[string]int{},
 		timeout:          timeout,
 		tick:             25 * time.Millisecond,
@@ -284,6 +305,88 @@ func (m *QueueManager) AcquireWithOptions(ctx context.Context, plan *core.Dispat
 	}
 }
 
+func (m *QueueManager) AcquirePoolWithOptions(ctx context.Context, plan *core.DispatchPlan, options QueuePoolAcquireOptions) QueueAcquireResult {
+	if options.TryAcquire == nil {
+		return QueueAcquireResult{Status: QueueAcquireRejected}
+	}
+	if m == nil {
+		result := options.TryAcquire()
+		if result.Status == "" {
+			result.Status = QueueAcquireRejected
+		}
+		return result
+	}
+	result := options.TryAcquire()
+	if result.Status == QueueAcquireAcquired || result.Status == QueueAcquireQueued || result.StopWaiting {
+		return result
+	}
+	if plan == nil || !plan.QueueEnabled || plan.QueueWaitMs <= 0 {
+		if result.Status == "" {
+			result.Status = QueueAcquireRejected
+		}
+		return result
+	}
+	timeout := time.Duration(plan.QueueWaitMs) * time.Millisecond
+	if timeout <= 0 {
+		timeout = m.timeout
+	}
+	if timeout > m.timeout {
+		timeout = m.timeout
+	}
+	waiter, entered := m.tryEnterPoolQueue(options)
+	if !entered {
+		if result.Status == "" {
+			result.Status = QueueAcquireRejected
+		}
+		return result
+	}
+	defer m.leavePoolQueue(options.PoolKey, waiter)
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(m.tick)
+	defer ticker.Stop()
+	started := time.Now()
+	for {
+		select {
+		case <-ctx.Done():
+			result.WaitTime = time.Since(started)
+			if result.Status == "" {
+				result.Status = QueueAcquireRejected
+			}
+			return result
+		case <-timer.C:
+			result.WaitTime = time.Since(started)
+			if result.Status == "" {
+				result.Status = QueueAcquireRejected
+			}
+			return result
+		case <-ticker.C:
+			if !m.isPoolQueueTurn(options.PoolKey, waiter) {
+				continue
+			}
+			next := options.TryAcquire()
+			if next.Status == QueueAcquireAcquired || next.Status == QueueAcquireQueued {
+				if next.Status == QueueAcquireAcquired {
+					next.Status = QueueAcquireQueued
+				}
+				next.WaitTime = time.Since(started)
+				return next
+			}
+			if next.StopWaiting {
+				next.WaitTime = time.Since(started)
+				if next.Status == "" {
+					next.Status = QueueAcquireRejected
+				}
+				return next
+			}
+			if next.Status != "" || next.Lease != nil || next.Plan != nil {
+				result = next
+			}
+		}
+	}
+}
+
 func (m *QueueManager) Depth(channelID int) int {
 	if m == nil {
 		return 0
@@ -291,6 +394,15 @@ func (m *QueueManager) Depth(channelID int) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.queueDepths[channelID]
+}
+
+func (m *QueueManager) PoolDepth(poolKey string) int {
+	if m == nil || poolKey == "" {
+		return 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.poolDepths[poolKey]
 }
 
 func (m *QueueManager) Snapshot() map[int]int {
@@ -375,11 +487,45 @@ func (m *QueueManager) DetailedSnapshot() core.RuntimeQueueSnapshot {
 			snapshot.Summary.MaxQueueDepth = depth
 		}
 	}
+	poolGroups := make([]core.RuntimeQueueGroupSnapshot, 0)
+	for poolKey, depth := range m.poolDepths {
+		if poolKey == "" || depth <= 0 {
+			continue
+		}
+		for group, groupDepth := range m.poolGroupDepths[poolKey] {
+			if groupDepth <= 0 {
+				continue
+			}
+			groupSnapshot := core.RuntimeQueueGroupSnapshot{
+				Group:           group,
+				QueueDepth:      groupDepth,
+				QueuedRequests:  groupDepth,
+				WaitingRequests: groupDepth,
+			}
+			applyQueuePriorityDepths(&groupSnapshot, m.poolWaiters[poolKey])
+			poolGroups = append(poolGroups, groupSnapshot)
+		}
+		for _, waiter := range m.poolWaiters[poolKey] {
+			if waiter.HighPriority {
+				snapshot.Summary.HighPriorityDepth++
+			} else {
+				snapshot.Summary.NormalDepth++
+			}
+		}
+		snapshot.RuntimeKeys = append(snapshot.RuntimeKeys, runtimeQueuePoolKeySnapshots(m.poolWaiters[poolKey])...)
+		snapshot.Summary.TotalQueued += depth
+		snapshot.Summary.TotalDepth += depth
+		snapshot.Summary.Waiting += depth
+		snapshot.Summary.QueuedRequests += depth
+		snapshot.Summary.WaitingRequests += depth
+		if depth > snapshot.Summary.MaxQueueDepth {
+			snapshot.Summary.MaxQueueDepth = depth
+		}
+	}
 	snapshot.Summary.QueueChannels = len(snapshot.Channels)
-	snapshot.Summary.QueueGroups = len(snapshot.Groups)
 	snapshot.Summary.HighPriorityCapacity = highPriorityCapacityForPolicy(m.admissionPolicy, m.maxDepth)
 	snapshot.Summary.NormalCapacity = normalCapacityForPolicy(m.admissionPolicy, m.maxDepth)
-	snapshot.Groups = aggregateQueueGroups(snapshot.Channels)
+	snapshot.Groups = aggregateRuntimeQueueGroups(append(aggregateQueueGroups(snapshot.Channels), poolGroups...))
 	snapshot.Summary.QueueGroups = len(snapshot.Groups)
 	snapshot.RejectReasons = runtimeQueueRejectReasons(m.rejectReasons)
 	sortRuntimeQueueChannelSnapshots(snapshot.Channels)
@@ -407,6 +553,10 @@ func (m *QueueManager) tryEnterQueue(channelID int, options QueueAcquireOptions)
 	}
 	currentDepth := m.queueDepths[channelID]
 	currentGroupDepth := m.groupDepthLocked(channelID, options.Group)
+	maxDepth := m.maxDepth
+	if options.MaxDepth > 0 {
+		maxDepth = options.MaxDepth
+	}
 	if m.admissionPolicy != nil {
 		if !m.admissionPolicy.AllowQueue(QueueAdmissionContext{
 			ChannelID:         channelID,
@@ -415,12 +565,12 @@ func (m *QueueManager) tryEnterQueue(channelID int, options QueueAcquireOptions)
 			CurrentDepth:      currentDepth,
 			CurrentGroupDepth: currentGroupDepth,
 			GroupDepths:       m.cloneGroupDepthsLocked(channelID),
-			MaxDepth:          m.maxDepth,
+			MaxDepth:          maxDepth,
 		}) {
-			m.rejectReasons[queueRejectReason(options, currentDepth, m.maxDepth)]++
+			m.rejectReasons[queueRejectReason(options, currentDepth, maxDepth)]++
 			return queueWaiterState{}, false
 		}
-	} else if currentDepth >= m.maxDepth {
+	} else if currentDepth >= maxDepth {
 		m.rejectReasons["max_depth_reached"]++
 		return queueWaiterState{}, false
 	}
@@ -438,6 +588,66 @@ func (m *QueueManager) tryEnterQueue(channelID int, options QueueAcquireOptions)
 		Sequence:     m.nextWaiterSeq,
 	}
 	m.queueWaiters[channelID] = append(m.queueWaiters[channelID], waiter)
+	return waiter, true
+}
+
+func (m *QueueManager) tryEnterPoolQueue(options QueuePoolAcquireOptions) (queueWaiterState, bool) {
+	if m == nil || options.PoolKey == "" {
+		return queueWaiterState{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.poolDepths == nil {
+		m.poolDepths = map[string]int{}
+	}
+	if m.poolGroupDepths == nil {
+		m.poolGroupDepths = map[string]map[string]int{}
+	}
+	if m.poolWaiters == nil {
+		m.poolWaiters = map[string][]queueWaiterState{}
+	}
+	if m.rejectReasons == nil {
+		m.rejectReasons = map[string]int{}
+	}
+	currentDepth := m.poolDepths[options.PoolKey]
+	currentGroupDepth := m.poolGroupDepthLocked(options.PoolKey, options.Group)
+	maxDepth := m.maxDepth
+	if options.MaxDepth > 0 {
+		maxDepth = options.MaxDepth
+	}
+	if m.admissionPolicy != nil {
+		if !m.admissionPolicy.AllowQueue(QueueAdmissionContext{
+			Group:             options.Group,
+			Priority:          options.Priority,
+			CurrentDepth:      currentDepth,
+			CurrentGroupDepth: currentGroupDepth,
+			GroupDepths:       m.clonePoolGroupDepthsLocked(options.PoolKey),
+			MaxDepth:          maxDepth,
+		}) {
+			m.rejectReasons[queueRejectReason(QueueAcquireOptions{
+				Group:    options.Group,
+				Priority: options.Priority,
+			}, currentDepth, maxDepth)]++
+			return queueWaiterState{}, false
+		}
+	} else if currentDepth >= maxDepth {
+		m.rejectReasons["max_depth_reached"]++
+		return queueWaiterState{}, false
+	}
+	m.poolDepths[options.PoolKey]++
+	if m.poolGroupDepths[options.PoolKey] == nil {
+		m.poolGroupDepths[options.PoolKey] = map[string]int{}
+	}
+	m.poolGroupDepths[options.PoolKey][options.Group]++
+	m.nextWaiterSeq++
+	waiter := queueWaiterState{
+		Group:        options.Group,
+		Priority:     options.Priority,
+		HighPriority: m.isHighPriorityLocked(QueueAcquireOptions{Group: options.Group, Priority: options.Priority}),
+		RuntimeKey:   normalizedPoolQueueRuntimeKey(options),
+		Sequence:     m.nextWaiterSeq,
+	}
+	m.poolWaiters[options.PoolKey] = append(m.poolWaiters[options.PoolKey], waiter)
 	return waiter, true
 }
 
@@ -466,6 +676,31 @@ func (m *QueueManager) leaveQueue(channelID int, waiter queueWaiterState) {
 	m.removeQueueWaiterLocked(channelID, waiter)
 }
 
+func (m *QueueManager) leavePoolQueue(poolKey string, waiter queueWaiterState) {
+	if m == nil || poolKey == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if groups := m.poolGroupDepths[poolKey]; groups != nil {
+		if groups[waiter.Group] <= 1 {
+			delete(groups, waiter.Group)
+		} else {
+			groups[waiter.Group]--
+		}
+		if len(groups) == 0 {
+			delete(m.poolGroupDepths, poolKey)
+		}
+	}
+	if m.poolDepths[poolKey] <= 1 {
+		delete(m.poolDepths, poolKey)
+		m.removePoolWaiterLocked(poolKey, waiter)
+		return
+	}
+	m.poolDepths[poolKey]--
+	m.removePoolWaiterLocked(poolKey, waiter)
+}
+
 func (m *QueueManager) groupDepthLocked(channelID int, group string) int {
 	if m.queueGroupDepths == nil || m.queueGroupDepths[channelID] == nil {
 		return 0
@@ -473,11 +708,30 @@ func (m *QueueManager) groupDepthLocked(channelID int, group string) int {
 	return m.queueGroupDepths[channelID][group]
 }
 
+func (m *QueueManager) poolGroupDepthLocked(poolKey string, group string) int {
+	if m.poolGroupDepths == nil || len(m.poolGroupDepths[poolKey]) == 0 {
+		return 0
+	}
+	return m.poolGroupDepths[poolKey][group]
+}
+
 func (m *QueueManager) cloneGroupDepthsLocked(channelID int) map[string]int {
 	if m.queueGroupDepths == nil || len(m.queueGroupDepths[channelID]) == 0 {
 		return nil
 	}
 	source := m.queueGroupDepths[channelID]
+	groupDepths := make(map[string]int, len(source))
+	for group, depth := range source {
+		groupDepths[group] = depth
+	}
+	return groupDepths
+}
+
+func (m *QueueManager) clonePoolGroupDepthsLocked(poolKey string) map[string]int {
+	if m.poolGroupDepths == nil || len(m.poolGroupDepths[poolKey]) == 0 {
+		return nil
+	}
+	source := m.poolGroupDepths[poolKey]
 	groupDepths := make(map[string]int, len(source))
 	for group, depth := range source {
 		groupDepths[group] = depth
@@ -515,6 +769,26 @@ func (m *QueueManager) removeQueueWaiterLocked(channelID int, target queueWaiter
 	}
 }
 
+func (m *QueueManager) removePoolWaiterLocked(poolKey string, target queueWaiterState) {
+	waiters := m.poolWaiters[poolKey]
+	if len(waiters) == 0 {
+		return
+	}
+	for index, waiter := range waiters {
+		if queueWaiterSameIdentity(waiter, target) {
+			m.poolWaiters[poolKey] = append(waiters[:index], waiters[index+1:]...)
+			if len(m.poolWaiters[poolKey]) == 0 {
+				delete(m.poolWaiters, poolKey)
+			}
+			return
+		}
+	}
+	m.poolWaiters[poolKey] = waiters[1:]
+	if len(m.poolWaiters[poolKey]) == 0 {
+		delete(m.poolWaiters, poolKey)
+	}
+}
+
 func (m *QueueManager) isQueueTurn(channelID int, target queueWaiterState) bool {
 	if m == nil {
 		return true
@@ -522,6 +796,26 @@ func (m *QueueManager) isQueueTurn(channelID int, target queueWaiterState) bool 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	waiters := m.queueWaiters[channelID]
+	if len(waiters) <= 1 {
+		return true
+	}
+	bestIndex := 0
+	for idx := 1; idx < len(waiters); idx++ {
+		if queueWaiterPrecedes(waiters[idx], waiters[bestIndex]) {
+			bestIndex = idx
+		}
+	}
+	best := waiters[bestIndex]
+	return queueWaiterSameIdentity(best, target)
+}
+
+func (m *QueueManager) isPoolQueueTurn(poolKey string, target queueWaiterState) bool {
+	if m == nil || poolKey == "" {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	waiters := m.poolWaiters[poolKey]
 	if len(waiters) <= 1 {
 		return true
 	}
@@ -612,11 +906,57 @@ func runtimeQueueKeySnapshots(channelID int, waiters []queueWaiterState) []core.
 	return out
 }
 
+func runtimeQueuePoolKeySnapshots(waiters []queueWaiterState) []core.RuntimeQueueKeySnapshot {
+	if len(waiters) == 0 {
+		return nil
+	}
+	keyMap := map[core.RuntimeKey]*core.RuntimeQueueKeySnapshot{}
+	for _, waiter := range waiters {
+		key := waiter.RuntimeKey
+		key.ChannelID = 0
+		target := keyMap[key]
+		if target == nil {
+			target = &core.RuntimeQueueKeySnapshot{
+				RuntimeKey:            key,
+				RequestedModel:        key.RequestedModel,
+				UpstreamModel:         key.UpstreamModel,
+				Group:                 key.Group,
+				EndpointType:          string(key.EndpointType),
+				CapabilityFingerprint: key.CapabilityFingerprint,
+			}
+			keyMap[key] = target
+		}
+		target.QueueDepth++
+		target.QueuedRequests++
+		target.WaitingRequests++
+		if waiter.HighPriority {
+			target.HighPriorityDepth++
+		} else {
+			target.NormalDepth++
+		}
+	}
+	out := make([]core.RuntimeQueueKeySnapshot, 0, len(keyMap))
+	for _, item := range keyMap {
+		out = append(out, *item)
+	}
+	sortRuntimeQueueKeySnapshots(out)
+	return out
+}
+
 func normalizedQueueRuntimeKey(channelID int, options QueueAcquireOptions) core.RuntimeKey {
 	key := options.RuntimeKey
 	if key.ChannelID <= 0 {
 		key.ChannelID = channelID
 	}
+	if key.Group == "" {
+		key.Group = options.Group
+	}
+	return key
+}
+
+func normalizedPoolQueueRuntimeKey(options QueuePoolAcquireOptions) core.RuntimeKey {
+	key := options.RuntimeKey
+	key.ChannelID = 0
 	if key.Group == "" {
 		key.Group = options.Group
 	}
@@ -649,6 +989,35 @@ func aggregateQueueGroups(channels []core.RuntimeQueueChannelSnapshot) []core.Ru
 	}
 	sortRuntimeQueueGroupSnapshots(groups)
 	return groups
+}
+
+func aggregateRuntimeQueueGroups(groups []core.RuntimeQueueGroupSnapshot) []core.RuntimeQueueGroupSnapshot {
+	if len(groups) == 0 {
+		return nil
+	}
+	groupMap := map[string]*core.RuntimeQueueGroupSnapshot{}
+	for _, group := range groups {
+		key := group.Group
+		if key == "" {
+			key = "_default"
+		}
+		target := groupMap[key]
+		if target == nil {
+			target = &core.RuntimeQueueGroupSnapshot{Group: group.Group}
+			groupMap[key] = target
+		}
+		target.QueueDepth += group.QueueDepth
+		target.QueuedRequests += group.QueuedRequests
+		target.WaitingRequests += group.WaitingRequests
+		target.HighPriorityDepth += group.HighPriorityDepth
+		target.NormalDepth += group.NormalDepth
+	}
+	out := make([]core.RuntimeQueueGroupSnapshot, 0, len(groupMap))
+	for _, group := range groupMap {
+		out = append(out, *group)
+	}
+	sortRuntimeQueueGroupSnapshots(out)
+	return out
 }
 
 func sortRuntimeQueueChannelSnapshots(channels []core.RuntimeQueueChannelSnapshot) {

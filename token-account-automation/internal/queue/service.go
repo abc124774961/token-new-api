@@ -41,6 +41,7 @@ type JobFilter struct {
 	ExecutorType string
 	Status       string
 	TargetRef    string
+	Keyword      string
 	Page         int
 	PageSize     int
 }
@@ -58,9 +59,11 @@ type ClaimResult struct {
 }
 
 type JobDetail struct {
-	Job      model.Job        `json:"job"`
-	Attempts []model.Attempt  `json:"attempts"`
-	Events   []model.JobEvent `json:"events"`
+	Job      model.Job              `json:"job"`
+	Target   *model.Target          `json:"target,omitempty"`
+	Locator  *ChannelAccountLocator `json:"locator,omitempty"`
+	Attempts []model.Attempt        `json:"attempts"`
+	Events   []model.JobEvent       `json:"events"`
 }
 
 type JobStats struct {
@@ -70,6 +73,21 @@ type JobStats struct {
 	StatusCounts       map[string]int64 `json:"status_counts"`
 	TaskTypeCounts     map[string]int64 `json:"task_type_counts"`
 	ExecutorTypeCounts map[string]int64 `json:"executor_type_counts"`
+}
+
+type JobList struct {
+	Items    []JobListItem `json:"items"`
+	Total    int64         `json:"total"`
+	Page     int           `json:"page"`
+	PageSize int           `json:"page_size"`
+}
+
+type JobListItem struct {
+	Job             model.Job              `json:"job"`
+	Target          *model.Target          `json:"target,omitempty"`
+	Locator         *ChannelAccountLocator `json:"locator,omitempty"`
+	LatestEvent     *model.JobEvent        `json:"latest_event,omitempty"`
+	LatestEventData map[string]any         `json:"latest_event_data,omitempty"`
 }
 
 type WaitingHumanList struct {
@@ -186,6 +204,19 @@ func (s *Service) ListJobs(ctx context.Context, filter JobFilter) ([]model.Job, 
 	return jobs, total, err
 }
 
+func (s *Service) ListJobItems(ctx context.Context, filter JobFilter) (*JobList, error) {
+	filter = normalizeFilter(filter)
+	jobs, total, err := s.ListJobs(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	items, err := s.hydrateJobItems(ctx, jobs)
+	if err != nil {
+		return nil, err
+	}
+	return &JobList{Items: items, Total: total, Page: filter.Page, PageSize: filter.PageSize}, nil
+}
+
 func (s *Service) GetDetail(ctx context.Context, jobID string) (*JobDetail, error) {
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" {
@@ -203,7 +234,101 @@ func (s *Service) GetDetail(ctx context.Context, jobID string) (*JobDetail, erro
 	if err := s.db.WithContext(ctx).Where("job_id = ?", jobID).Order("id DESC").Limit(200).Find(&events).Error; err != nil {
 		return nil, err
 	}
-	return &JobDetail{Job: job, Attempts: attempts, Events: events}, nil
+	detail := &JobDetail{Job: job, Attempts: attempts, Events: events}
+	if strings.TrimSpace(job.TargetRef) != "" {
+		if channelID, credentialIndex, ok := ParseChannelAccountExternalRef(job.TargetRef); ok {
+			detail.Locator = &ChannelAccountLocator{
+				TargetRef:       job.TargetRef,
+				ExternalRef:     job.TargetRef,
+				ChannelID:       channelID,
+				CredentialIndex: credentialIndex,
+			}
+		}
+		targets, err := s.targetsByRef(ctx, []string{job.TargetRef})
+		if err != nil {
+			return nil, err
+		}
+		if target, ok := targets[job.TargetRef]; ok {
+			targetCopy := target
+			detail.Target = &targetCopy
+		}
+		if locator, err := s.ChannelAccountLocatorForTarget(ctx, job.TargetRef); err == nil {
+			detail.Locator = locator
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
+	return detail, nil
+}
+
+func (s *Service) UpdateJobInput(ctx context.Context, jobID string, patch map[string]any) (*model.Job, error) {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return nil, errors.New("job_id is required")
+	}
+	if len(patch) == 0 {
+		detail, err := s.GetDetail(ctx, jobID)
+		if err != nil {
+			return nil, err
+		}
+		return &detail.Job, nil
+	}
+	var job model.Job
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("job_id = ?", jobID).First(&job).Error; err != nil {
+			return err
+		}
+		input := decodeMap(job.InputJSON)
+		for key, value := range patch {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			input[key] = value
+		}
+		inputJSON, err := encodeJSON(input)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Job{}).Where("id = ?", job.ID).Updates(map[string]any{
+			"input_json": inputJSON,
+			"updated_at": model.Now(),
+		}).Error; err != nil {
+			return err
+		}
+		if err := createEventTx(tx, job.JobID, "input_updated", "", job.Status, "job input updated", inputJSON); err != nil {
+			return err
+		}
+		return tx.Where("id = ?", job.ID).First(&job).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
+func (s *Service) RecordEvent(ctx context.Context, jobID string, eventType string, stage string, message string, data any) error {
+	jobID = strings.TrimSpace(jobID)
+	eventType = strings.ToLower(strings.TrimSpace(eventType))
+	stage = strings.ToLower(strings.TrimSpace(stage))
+	if jobID == "" || eventType == "" {
+		return errors.New("job_id and event_type are required")
+	}
+	dataJSON, err := encodeJSON(data)
+	if err != nil {
+		return err
+	}
+	now := model.Now()
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var job model.Job
+		if err := tx.Where("job_id = ?", jobID).First(&job).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Job{}).Where("id = ?", job.ID).Update("updated_at", now).Error; err != nil {
+			return err
+		}
+		return createEventTx(tx, jobID, eventType, stage, job.Status, Sanitize(message), dataJSON)
+	})
 }
 
 func (s *Service) JobStats(ctx context.Context, filter JobFilter) (*JobStats, error) {
@@ -289,6 +414,51 @@ func (s *Service) ListWaitingHuman(ctx context.Context, filter JobFilter) (*Wait
 		items = append(items, item)
 	}
 	return &WaitingHumanList{Items: items, Total: total, Page: filter.Page, Size: filter.PageSize}, nil
+}
+
+func (s *Service) hydrateJobItems(ctx context.Context, jobs []model.Job) ([]JobListItem, error) {
+	items := make([]JobListItem, 0, len(jobs))
+	if len(jobs) == 0 {
+		return items, nil
+	}
+	jobIDs := make([]string, 0, len(jobs))
+	targetRefs := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		jobIDs = append(jobIDs, job.JobID)
+		if strings.TrimSpace(job.TargetRef) != "" {
+			targetRefs = append(targetRefs, job.TargetRef)
+		}
+	}
+	targets, err := s.targetsByRef(ctx, targetRefs)
+	if err != nil {
+		return nil, err
+	}
+	locators, err := s.channelAccountLocatorsByTargetRef(ctx, targetRefs)
+	if err != nil {
+		return nil, err
+	}
+	events, err := s.latestEvents(ctx, jobIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, job := range jobs {
+		item := JobListItem{Job: job}
+		if target, ok := targets[job.TargetRef]; ok {
+			targetCopy := target
+			item.Target = &targetCopy
+		}
+		if locator, ok := locators[job.TargetRef]; ok {
+			locatorCopy := locator
+			item.Locator = &locatorCopy
+		}
+		if event, ok := events[job.JobID]; ok {
+			eventCopy := event
+			item.LatestEvent = &eventCopy
+			item.LatestEventData = decodeMap(event.DataJSON)
+		}
+		items = append(items, item)
+	}
+	return items, nil
 }
 
 func (s *Service) Claim(ctx context.Context, req ClaimRequest) (*ClaimResult, error) {
@@ -714,6 +884,32 @@ func (s *Service) latestWaitingHumanEvents(ctx context.Context, jobIDs []string)
 	return result, nil
 }
 
+func (s *Service) latestEvents(ctx context.Context, jobIDs []string) (map[string]model.JobEvent, error) {
+	result := make(map[string]model.JobEvent)
+	jobIDs = compactStrings(jobIDs)
+	if len(jobIDs) == 0 {
+		return result, nil
+	}
+	var events []model.JobEvent
+	subQuery := s.db.WithContext(ctx).
+		Model(&model.JobEvent{}).
+		Select("MAX(id)").
+		Where("job_id IN ?", jobIDs).
+		Group("job_id")
+	if err := s.db.WithContext(ctx).
+		Where("id IN (?)", subQuery).
+		Find(&events).Error; err != nil {
+		return nil, err
+	}
+	for _, event := range events {
+		if _, exists := result[event.JobID]; exists {
+			continue
+		}
+		result[event.JobID] = event
+	}
+	return result, nil
+}
+
 func (s *Service) targetsByRef(ctx context.Context, targetRefs []string) (map[string]model.Target, error) {
 	result := make(map[string]model.Target)
 	targetRefs = compactStrings(targetRefs)
@@ -908,6 +1104,7 @@ func normalizeFilter(filter JobFilter) JobFilter {
 	filter.ExecutorType = strings.ToLower(strings.TrimSpace(filter.ExecutorType))
 	filter.Status = strings.ToUpper(strings.TrimSpace(filter.Status))
 	filter.TargetRef = strings.TrimSpace(filter.TargetRef)
+	filter.Keyword = strings.TrimSpace(filter.Keyword)
 	if filter.Page <= 0 {
 		filter.Page = 1
 	}
@@ -932,6 +1129,10 @@ func applyFilter(tx *gorm.DB, filter JobFilter) *gorm.DB {
 	}
 	if filter.TargetRef != "" {
 		tx = tx.Where("target_ref = ?", filter.TargetRef)
+	}
+	if filter.Keyword != "" {
+		like := "%" + filter.Keyword + "%"
+		tx = tx.Where("(job_id LIKE ? OR target_ref LIKE ? OR error_code LIKE ? OR sanitized_error LIKE ?)", like, like, like, like)
 	}
 	return tx
 }

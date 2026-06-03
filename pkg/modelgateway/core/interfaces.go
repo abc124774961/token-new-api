@@ -76,16 +76,21 @@ type QueueFairnessPolicySetting struct {
 }
 
 type GroupPolicySetting struct {
-	Mode                  string
-	Strategy              string
-	AutoMode              string
-	CrossGroupFusion      bool
-	CandidateGroups       []string
-	BillingRatioMode      string
-	CacheAffinityEnabled  bool
-	QueueEnabled          bool
-	QueueHighPriority     bool
-	CircuitBreakerEnabled bool
+	Mode                      string
+	Strategy                  string
+	AutoMode                  string
+	CrossGroupFusion          bool
+	CandidateGroups           []string
+	BillingRatioMode          string
+	CacheAffinityEnabled      bool
+	QueueEnabled              bool
+	QueueHighPriority         bool
+	CircuitBreakerEnabled     bool
+	ResourceProtectionEnabled bool
+	PrimaryChannelIDs         []int
+	PrimaryWaitTimeoutMs      int
+	PrimaryQueueMaxDepth      int
+	FallbackChannelIDs        []int
 }
 
 type RuntimeSnapshotStore interface {

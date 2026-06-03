@@ -139,16 +139,21 @@ func (p *SchedulerSettingsProvider) Get() core.SchedulerSettings {
 	policies := make(map[string]core.GroupPolicySetting, len(setting.GroupPolicies))
 	for group, policy := range setting.GroupPolicies {
 		policies[group] = core.GroupPolicySetting{
-			Mode:                  policy.Mode,
-			Strategy:              policy.Strategy,
-			AutoMode:              policy.AutoMode,
-			CrossGroupFusion:      policy.CrossGroupFusion,
-			CandidateGroups:       append([]string(nil), policy.CandidateGroups...),
-			BillingRatioMode:      policy.BillingRatioMode,
-			CacheAffinityEnabled:  policy.CacheAffinityEnabled,
-			QueueEnabled:          policy.QueueEnabled,
-			QueueHighPriority:     policy.QueueHighPriority,
-			CircuitBreakerEnabled: policy.CircuitBreakerEnabled,
+			Mode:                      policy.Mode,
+			Strategy:                  policy.Strategy,
+			AutoMode:                  policy.AutoMode,
+			CrossGroupFusion:          policy.CrossGroupFusion,
+			CandidateGroups:           append([]string(nil), policy.CandidateGroups...),
+			BillingRatioMode:          policy.BillingRatioMode,
+			CacheAffinityEnabled:      policy.CacheAffinityEnabled,
+			QueueEnabled:              policy.QueueEnabled,
+			QueueHighPriority:         policy.QueueHighPriority,
+			CircuitBreakerEnabled:     policy.CircuitBreakerEnabled,
+			ResourceProtectionEnabled: policy.ResourceProtectionEnabled,
+			PrimaryChannelIDs:         append([]int(nil), policy.PrimaryChannelIDs...),
+			PrimaryWaitTimeoutMs:      policy.PrimaryWaitTimeoutMs,
+			PrimaryQueueMaxDepth:      policy.PrimaryQueueMaxDepth,
+			FallbackChannelIDs:        append([]int(nil), policy.FallbackChannelIDs...),
 		}
 	}
 	return core.SchedulerSettings{

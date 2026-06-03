@@ -2449,6 +2449,61 @@ func TestDeleteChannelAccountsReindexesStatusAndKeepsRawKeysHidden(t *testing.T)
 	require.True(t, ability.Enabled)
 }
 
+func TestTokenAccountAutomationArchiveInvalidAccountRequiresCallbackToken(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	t.Setenv("TOKEN_ACCOUNT_AUTOMATION_CALLBACK_TOKEN", "callback-token")
+	channel := model.Channel{
+		Id:     177,
+		Name:   "automation archive",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-one\nsk-two",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	router := gin.New()
+	router.POST("/api/internal/token-account-automation/account-pools/invalid/archive", TokenAccountAutomationArchiveInvalidAccount)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/token-account-automation/account-pools/invalid/archive", bytes.NewBufferString(`{
+		"targets":[{"channel_id":177,"credential_index":1}],
+		"reason":"desktop_operator_invalid",
+		"note":"desktop job job-1"
+	}`))
+	req.Header.Set("Authorization", "Bearer callback-token")
+	router.ServeHTTP(recorder, req)
+
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Operation *ChannelAccountOperation `json:"operation"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success, recorder.Body.String())
+	require.NotNil(t, payload.Data.Operation)
+	require.Equal(t, 1, payload.Data.Operation.Deleted)
+
+	updated, err := model.GetChannelById(177, true)
+	require.NoError(t, err)
+	require.Equal(t, "sk-one", updated.Key)
+	var invalid model.ChannelInvalidAccount
+	require.NoError(t, db.First(&invalid, "channel_id = ?", 177).Error)
+	require.Equal(t, "sk-two", invalid.Credential)
+	require.Equal(t, "desktop_operator_invalid", invalid.Reason)
+
+	unauthorized := httptest.NewRecorder()
+	badReq := httptest.NewRequest(http.MethodPost, "/api/internal/token-account-automation/account-pools/invalid/archive", bytes.NewBufferString(`{"targets":[{"channel_id":177,"credential_index":0}]}`))
+	badReq.Header.Set("Authorization", "Bearer wrong")
+	router.ServeHTTP(unauthorized, badReq)
+	require.Equal(t, http.StatusUnauthorized, unauthorized.Code)
+}
+
 func TestDeleteChannelAccountsReindexesAccountTypes(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	channel := model.Channel{
@@ -2637,6 +2692,134 @@ func TestReauthorizeChannelInvalidAccountRestoresWithNewIndexAndEnqueuesAutomati
 	require.Contains(t, keys[1], `"expired-refresh"`)
 	require.Equal(t, common.ChannelStatusAutoDisabled, updated.ChannelInfo.MultiKeyStatusList[1])
 	require.Equal(t, channelAccountAuthReauthorizationPendingReason, updated.ChannelInfo.MultiKeyDisabledReason[1])
+}
+
+func TestSyncChannelAccountAuthRecoveryEnqueuesAuthErrorAccounts(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     29,
+		Name:   "codex auth sync",
+		Type:   constant.ChannelTypeCodex,
+		Key:    `{"access_token":"bad","refresh_token":"bad-refresh","account_id":"acct-bad"}` + "\n" + `{"access_token":"ok","refresh_token":"ok-refresh","account_id":"acct-ok"}`,
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+			MultiKeyAccountTypes: map[int]string{
+				0: modelgatewaycore.AccountTypeOAuthAccount,
+				1: modelgatewaycore.AccountTypeOAuthAccount,
+			},
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CapabilityClassification: channelcapability.ClassificationAuthError,
+					LastEndpoint:             "auth",
+					LastMessage:              "token_revoked",
+					CheckedTime:              100,
+				},
+				1: {
+					CapabilityClassification: channelcapability.ClassificationCodexBackendAvailable,
+				},
+			},
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	var gotEvents []service.TokenAccountAutomationAuthInvalidEvent
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/events/account-auth-invalid", r.URL.Path)
+		var event service.TokenAccountAutomationAuthInvalidEvent
+		require.NoError(t, common.DecodeJson(r.Body, &event))
+		gotEvents = append(gotEvents, event)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"created":true,"job":{"job_id":"job_sync_1","task_type":"auth_recover","status":"PENDING","target_ref":"auto_target_sync"}}}`))
+	}))
+	defer server.Close()
+	t.Setenv("TOKEN_ACCOUNT_AUTOMATION_URL", server.URL)
+	t.Setenv("TOKEN_ACCOUNT_AUTOMATION_API_TOKEN", "automation-token")
+
+	router := gin.New()
+	router.POST("/api/channel/accounts/auth-recovery/sync", SyncChannelAccountAuthRecovery)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/channel/accounts/auth-recovery/sync", bytes.NewBufferString(`{"channel_id":29}`))
+	router.ServeHTTP(recorder, req)
+
+	var payload struct {
+		Success bool                                   `json:"success"`
+		Data    SyncChannelAccountAuthRecoveryResponse `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, 2, payload.Data.Scanned)
+	require.Equal(t, 1, payload.Data.Matched)
+	require.Equal(t, 1, payload.Data.Enqueued)
+	require.Equal(t, 0, payload.Data.AutomationErrors)
+	require.Len(t, gotEvents, 1)
+	require.Equal(t, 29, gotEvents[0].ChannelID)
+	require.Equal(t, 0, gotEvents[0].CredentialIndex)
+	require.Equal(t, "admin_sync", gotEvents[0].Source)
+	require.Equal(t, channelcapability.ClassificationAuthError, gotEvents[0].Reason)
+	require.Equal(t, float64(29), gotEvents[0].Context["channel_id"])
+	require.Equal(t, float64(0), gotEvents[0].Context["credential_index"])
+	require.Equal(t, "token_revoked", gotEvents[0].Context["capability_last_message"])
+}
+
+func TestSyncChannelAccountAuthRecoveryLimitSkipsDisabledBeforeCounting(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     30,
+		Name:   "codex auth sync disabled",
+		Type:   constant.ChannelTypeCodex,
+		Key:    `{"access_token":"disabled","refresh_token":"disabled-refresh","account_id":"acct-disabled"}` + "\n" + `{"access_token":"first","refresh_token":"first-refresh","account_id":"acct-first"}` + "\n" + `{"access_token":"second","refresh_token":"second-refresh","account_id":"acct-second"}`,
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:           true,
+			MultiKeySize:         3,
+			MultiKeyStatusList:   map[int]int{0: common.ChannelStatusAutoDisabled},
+			MultiKeyAccountTypes: map[int]string{0: modelgatewaycore.AccountTypeOAuthAccount, 1: modelgatewaycore.AccountTypeOAuthAccount, 2: modelgatewaycore.AccountTypeOAuthAccount},
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {CapabilityClassification: channelcapability.ClassificationAuthError},
+				1: {CapabilityClassification: channelcapability.ClassificationAuthError},
+				2: {CapabilityClassification: channelcapability.ClassificationAuthError},
+			},
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	var gotEvents []service.TokenAccountAutomationAuthInvalidEvent
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var event service.TokenAccountAutomationAuthInvalidEvent
+		require.NoError(t, common.DecodeJson(r.Body, &event))
+		gotEvents = append(gotEvents, event)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"created":true,"job":{"job_id":"job_sync_limit","task_type":"auth_recover","status":"PENDING","target_ref":"auto_target_sync_limit"}}}`))
+	}))
+	defer server.Close()
+	t.Setenv("TOKEN_ACCOUNT_AUTOMATION_URL", server.URL)
+	t.Setenv("TOKEN_ACCOUNT_AUTOMATION_API_TOKEN", "automation-token")
+
+	router := gin.New()
+	router.POST("/api/channel/accounts/auth-recovery/sync", SyncChannelAccountAuthRecovery)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/channel/accounts/auth-recovery/sync", bytes.NewBufferString(`{"channel_id":30,"limit":1}`))
+	router.ServeHTTP(recorder, req)
+
+	var payload struct {
+		Success bool                                   `json:"success"`
+		Data    SyncChannelAccountAuthRecoveryResponse `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, 3, payload.Data.Scanned)
+	require.Equal(t, 3, payload.Data.Matched)
+	require.Equal(t, 1, payload.Data.Enqueued)
+	require.Equal(t, 2, payload.Data.Skipped)
+	require.Equal(t, 1, payload.Data.SkippedDisabled)
+	require.Len(t, gotEvents, 1)
+	require.Equal(t, 1, gotEvents[0].CredentialIndex)
 }
 
 func TestUpdateChannelAccountProxyBindsAndClearsProxy(t *testing.T) {

@@ -690,6 +690,146 @@ func TestBuildModelGatewayObservabilitySummaryExposesEngineeringErrorMetrics(t *
 	require.Equal(t, now+3600, response.RecentRecords[3].CandidateExplanations[0].IsolationUntil)
 }
 
+func TestBuildModelGatewayObservabilitySummaryAggregatesResourceProtection(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	primaryMeta, err := common.Marshal(map[string]any{
+		"queue_enabled":               true,
+		"queue_wait_ms":               3000,
+		"queue_depth":                 4,
+		"queue_capacity":              8,
+		"resource_protection_enabled": true,
+		"resource_protection_phase":   core.ResourceProtectionPhasePrimarySaturatedWait,
+		"resource_protection_reason":  core.ResourceProtectionReasonPrimarySaturated,
+		"resource_protection_role":    core.ResourceProtectionRolePrimary,
+		"primary_channel_ids":         []int{11},
+		"primary_wait_timeout_ms":     3000,
+		"primary_queue_max_depth":     8,
+		"candidate_explanations": []core.CandidateExplanation{
+			{
+				ChannelID:   11,
+				ChannelName: "primary",
+				Available:   true,
+				CostRatio:   0.05,
+				RuntimeKey: core.RuntimeKey{
+					RequestedModel: "gpt-5.5",
+					UpstreamModel:  "gpt-5.5",
+					ChannelID:      11,
+					Group:          "codex-plus",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	fallbackMeta, err := common.Marshal(map[string]any{
+		"resource_protection_enabled": true,
+		"resource_protection_phase":   core.ResourceProtectionPhaseFallbackAfterTimeout,
+		"resource_protection_reason":  core.ResourceProtectionReasonPrimaryWaitTimeout,
+		"resource_protection_role":    core.ResourceProtectionRoleFallback,
+		"primary_channel_ids":         []int{11},
+		"fallback_channel_ids":        []int{24},
+		"primary_wait_timeout_ms":     3000,
+		"primary_queue_max_depth":     8,
+		"candidate_explanations": []core.CandidateExplanation{
+			{
+				ChannelID:   24,
+				ChannelName: "fallback",
+				Available:   true,
+				CostRatio:   1.5,
+				RuntimeKey: core.RuntimeKey{
+					RequestedModel: "gpt-5.5",
+					UpstreamModel:  "gpt-5.5",
+					ChannelID:      24,
+					Group:          "codex-plus",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	primaryAttemptMeta, err := common.Marshal(map[string]any{
+		"resource_protection_enabled": true,
+		"resource_protection_phase":   core.ResourceProtectionPhasePrimaryHit,
+		"resource_protection_reason":  core.ResourceProtectionReasonPrimaryAvailable,
+		"resource_protection_role":    core.ResourceProtectionRolePrimary,
+		"primary_channel_ids":         []int{11},
+		"primary_wait_timeout_ms":     3000,
+		"primary_queue_max_depth":     8,
+		"timing": map[string]any{
+			"queue_wait_ms": int64(640),
+		},
+	})
+	require.NoError(t, err)
+	records := []model.ModelExecutionRecord{
+		{
+			CreatedAt:      now - 2,
+			RequestId:      "resource-primary-wait",
+			RequestedGroup: "codex-plus",
+			SelectedGroup:  "codex-plus",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      11,
+			SmartHandled:   true,
+			PolicyMode:     "active",
+			RequestMeta:    string(primaryMeta),
+		},
+		{
+			CreatedAt:      now - 2,
+			RequestId:      "resource-primary-wait",
+			RequestedGroup: "codex-plus",
+			SelectedGroup:  "codex-plus",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      11,
+			SmartHandled:   true,
+			PolicyMode:     "active",
+			Success:        true,
+			DurationMs:     1200,
+			RequestMeta:    string(primaryAttemptMeta),
+		},
+		{
+			CreatedAt:      now - 1,
+			RequestId:      "resource-fallback",
+			RequestedGroup: "codex-plus",
+			SelectedGroup:  "codex-plus",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      24,
+			SmartHandled:   true,
+			PolicyMode:     "active",
+			RequestMeta:    string(fallbackMeta),
+		},
+	}
+	require.NoError(t, db.Create(&records).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:              1,
+		RecentLimit:        10,
+		TopN:               10,
+		ScanLimit:          10,
+		TrendBucketSeconds: 3600,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), response.Summary.ResourceProtectionDispatches)
+	require.Equal(t, int64(1), response.Summary.ResourceProtectionPrimaryWaits)
+	require.Equal(t, int64(1), response.Summary.ResourceProtectionFallbacks)
+	require.Equal(t, int64(1), response.Summary.ResourceProtectionWaitTimeoutFallbacks)
+	require.Equal(t, int64(640), response.Summary.ResourceProtectionAvgWaitMs)
+	require.Equal(t, 4, response.Summary.ResourceProtectionQueueDepth)
+	require.Equal(t, 8, response.Summary.ResourceProtectionQueueCapacity)
+	require.InEpsilon(t, 1.5/1.55, response.Summary.ResourceProtectionFallbackCostShare, 0.0001)
+
+	group := requireAggregate(t, response.ByGroup, "codex-plus", 1, 1, 0)
+	require.Equal(t, int64(2), group.Dispatches)
+	require.Equal(t, int64(2), group.ResourceProtectionDispatches)
+	require.Equal(t, int64(1), group.ResourceProtectionPrimaryWaits)
+	require.Equal(t, int64(1), group.ResourceProtectionWaitTimeoutFallbacks)
+	require.Equal(t, int64(640), group.ResourceProtectionAvgWaitMs)
+	require.InEpsilon(t, 1.5/1.55, group.ResourceProtectionFallbackCostShare, 0.0001)
+
+	trend := requireModelGatewayTrendWithRecords(t, response.Trends, 3)
+	require.Equal(t, int64(1), trend.ResourceProtectionPrimaryWaits)
+	require.Equal(t, int64(1), trend.ResourceProtectionWaitTimeoutFallbacks)
+	require.Equal(t, int64(640), trend.ResourceProtectionAvgWaitMs)
+	require.InEpsilon(t, 1.5/1.55, trend.ResourceProtectionFallbackCostShare, 0.0001)
+}
+
 func TestBuildModelGatewayObservabilitySummaryExposesHealthProbeMarker(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()

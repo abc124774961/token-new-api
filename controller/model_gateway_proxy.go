@@ -58,6 +58,28 @@ type ModelGatewayProxyResponse struct {
 	PasswordMasked bool                          `json:"password_masked"`
 }
 
+type TokenAccountAutomationProxyResponse struct {
+	ID            int    `json:"id"`
+	Name          string `json:"name"`
+	Protocol      string `json:"protocol"`
+	ProxyRules    string `json:"proxy_rules"`
+	MaskedAddress string `json:"masked_address"`
+	Enabled       bool   `json:"enabled"`
+	Remark        string `json:"remark,omitempty"`
+	ExitIP        string `json:"exit_ip,omitempty"`
+	RegionCode    string `json:"region_code,omitempty"`
+	RegionName    string `json:"region_name,omitempty"`
+	CountryName   string `json:"country_name,omitempty"`
+	City          string `json:"city,omitempty"`
+	GeoStatus     string `json:"geo_status,omitempty"`
+	GeoCheckedAt  int64  `json:"geo_checked_at,omitempty"`
+	LastSuccessAt int64  `json:"last_success_at,omitempty"`
+	LastFailureAt int64  `json:"last_failure_at,omitempty"`
+	FailureCount  int64  `json:"failure_count,omitempty"`
+	UseCount      int64  `json:"use_count,omitempty"`
+	UpdatedTime   int64  `json:"updated_time,omitempty"`
+}
+
 type ModelGatewayProxyUsageBrief struct {
 	Brand                        string `json:"brand,omitempty"`
 	Provider                     string `json:"provider,omitempty"`
@@ -104,6 +126,28 @@ func ListModelGatewayProxies(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, buildModelGatewayProxyResponses(proxies, usages))
+}
+
+func ListTokenAccountAutomationProxies(c *gin.Context) {
+	if !requireTokenAccountAutomationCallbackToken(c) {
+		return
+	}
+	enabledOnly := parseBoolQuery(c.Query("enabled_only"), true)
+	proxies, err := model.ListModelGatewayProxies(enabledOnly)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	responses := make([]TokenAccountAutomationProxyResponse, 0, len(proxies))
+	for _, proxy := range proxies {
+		proxyRules, err := proxy.ProxyURL()
+		if err != nil {
+			common.SysLog(fmt.Sprintf("skip invalid automation proxy: id=%d error=%v", proxy.ID, err))
+			continue
+		}
+		responses = append(responses, buildTokenAccountAutomationProxyResponse(proxy, proxyRules))
+	}
+	common.ApiSuccess(c, responses)
 }
 
 func CreateModelGatewayProxy(c *gin.Context) {
@@ -364,6 +408,30 @@ func buildModelGatewayProxyResponse(proxy model.ModelGatewayProxy, usages []mode
 		response.ReuseRisks = nil
 	}
 	return response
+}
+
+func buildTokenAccountAutomationProxyResponse(proxy model.ModelGatewayProxy, proxyRules string) TokenAccountAutomationProxyResponse {
+	return TokenAccountAutomationProxyResponse{
+		ID:            proxy.ID,
+		Name:          proxy.Name,
+		Protocol:      model.NormalizeModelGatewayProxyProtocol(proxy.Protocol),
+		ProxyRules:    proxyRules,
+		MaskedAddress: proxy.MaskedAddress(),
+		Enabled:       proxy.Enabled,
+		Remark:        proxy.Remark,
+		ExitIP:        proxy.ExitIP,
+		RegionCode:    proxy.RegionCode,
+		RegionName:    proxy.RegionName,
+		CountryName:   proxy.CountryName,
+		City:          proxy.City,
+		GeoStatus:     proxy.GeoStatus,
+		GeoCheckedAt:  proxy.GeoCheckedAt,
+		LastSuccessAt: proxy.LastSuccessAt,
+		LastFailureAt: proxy.LastFailureAt,
+		FailureCount:  proxy.FailureCount,
+		UseCount:      proxy.UseCount,
+		UpdatedTime:   proxy.UpdatedTime,
+	}
 }
 
 func buildModelGatewayProxyReuseRisks(usages []model.ModelGatewayProxyUsage) []ModelGatewayProxyReuseRisk {

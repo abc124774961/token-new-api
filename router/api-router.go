@@ -65,6 +65,12 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.POST("/waffo/webhook", controller.WaffoWebhook)
 		//apiRouter.POST("/waffo-pancake/webhook", controller.WaffoPancakeWebhook)
 		apiRouter.POST("/internal/token-account-automation/credential", controller.TokenAccountAutomationCredentialWriteback)
+		apiRouter.GET("/internal/token-account-automation/proxies", controller.ListTokenAccountAutomationProxies)
+		apiRouter.GET("/internal/token-account-automation/account-profile", controller.TokenAccountAutomationAccountProfile)
+		apiRouter.GET("/internal/token-account-automation/account-pools/invalid", controller.TokenAccountAutomationListInvalidAccounts)
+		apiRouter.POST("/internal/token-account-automation/account-pools/invalid/archive", controller.TokenAccountAutomationArchiveInvalidAccount)
+		apiRouter.POST("/internal/token-account-automation/account-pools/invalid/:id/reauthorize", controller.TokenAccountAutomationReauthorizeInvalidAccount)
+		apiRouter.POST("/internal/token-account-automation/account-pools/discarded/archive", controller.TokenAccountAutomationArchiveDiscardedAccount)
 
 		// Universal secure verification routes
 		apiRouter.POST("/verify", middleware.UserAuth(), middleware.CriticalRateLimit(), controller.UniversalVerify)
@@ -238,6 +244,7 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.GET("/group_summary", controller.GetChannelGroupSummary)
 			channelRoute.GET("/codex-environments", controller.ListCodexApplicationEnvironments)
 			channelRoute.GET("/accounts", controller.ListAllChannelAccounts)
+			channelRoute.POST("/accounts/auth-recovery/sync", controller.SyncChannelAccountAuthRecovery)
 			channelRoute.GET("/account-pools/invalid", controller.ListChannelInvalidAccountPool)
 			channelRoute.GET("/account-pools/discarded", controller.ListChannelDiscardedAccountPool)
 			channelRoute.POST("/account-pools/invalid/archive", controller.ArchiveChannelAccountsToInvalidPool)

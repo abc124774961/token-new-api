@@ -53,6 +53,34 @@ func TestGroupPolicyResolverCarriesGroupPriorityRatio(t *testing.T) {
 	require.Equal(t, 0.7, p.GroupPriorityRatio["codex-pro"])
 }
 
+func TestGroupPolicyResolverCarriesResourceProtectionSettings(t *testing.T) {
+	resolver := policy.NewDefaultGroupPolicyResolver(testkit.StaticSettingsProvider{
+		Settings: core.SchedulerSettings{
+			Enabled:         true,
+			DefaultMode:     core.ModeActive,
+			DefaultStrategy: core.StrategyBalanced,
+			GroupPolicies: map[string]core.GroupPolicySetting{
+				"codex-plus": {
+					Mode:                      core.ModeActive,
+					ResourceProtectionEnabled: true,
+					PrimaryChannelIDs:         []int{11, 12},
+					PrimaryWaitTimeoutMs:      4500,
+					PrimaryQueueMaxDepth:      9,
+					FallbackChannelIDs:        []int{21},
+				},
+			},
+		},
+	})
+
+	p := resolver.Resolve(nil, &core.DispatchRequest{RequestedGroup: "codex-plus", UserGroup: "vip"})
+
+	require.True(t, p.ResourceProtectionEnabled)
+	require.Equal(t, []int{11, 12}, p.PrimaryChannelIDs)
+	require.Equal(t, 4500, p.PrimaryWaitTimeoutMs)
+	require.Equal(t, 9, p.PrimaryQueueMaxDepth)
+	require.Equal(t, []int{21}, p.FallbackChannelIDs)
+}
+
 func TestAutoGroupResolverSequentialUsesUserAutoGroups(t *testing.T) {
 	groupService := &testkit.FakeGroupPermissionService{
 		UsableGroups: map[string]map[string]string{

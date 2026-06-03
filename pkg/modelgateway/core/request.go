@@ -33,6 +33,10 @@ func NewDispatchRequestFromGin(c *gin.Context, param *service.RetryParam) Dispat
 	if intent, ok := GetRetryRoutingIntent(c); ok {
 		req.RetryRoutingIntent = intent.Clone()
 	}
+	if fallback, ok := GetResourceProtectionFallback(c); ok {
+		req.ResourceProtectionFallback = true
+		req.ResourceProtectionReason = fallback.Reason
+	}
 	if index, ok := common.GetContextKey(c, constant.ContextKeyAutoGroupIndex); ok {
 		if idx, ok := index.(int); ok {
 			req.CurrentAutoGroupIndex = idx
