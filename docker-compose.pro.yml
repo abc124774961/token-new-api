@@ -32,6 +32,9 @@ services:
       - ./logs:/app/logs
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - cpa-manager-plus
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       SESSION_SECRET: ${SESSION_SECRET:-}
@@ -62,3 +65,8 @@ services:
 
 volumes:
   mailpit-data:
+
+networks:
+  cpa-manager-plus:
+    external: true
+    name: cpa-manager-plus_default

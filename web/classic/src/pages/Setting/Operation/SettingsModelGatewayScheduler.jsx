@@ -231,6 +231,9 @@ const normalizeChannelIds = (value) => {
   return result;
 };
 
+const normalizeChannelSelectValues = (value) =>
+  normalizeChannelIds(value).map((id) => String(id));
+
 const makeGroupOption = (group, info = {}) => ({
   label: group,
   value: group,
@@ -304,7 +307,8 @@ const makeChannelOption = (channel) => {
   const active = Number(channel?.active_concurrency) || 0;
   const max = Number(channel?.max_concurrency) || 0;
   return {
-    value: id,
+    value: String(id),
+    channelId: id,
     label: `#${id}${name ? ` ${name}` : ''}`,
     name,
     group,
@@ -335,6 +339,9 @@ const renderChannelOptionItem = (option, t) => (
     </Typography.Text>
   </div>
 );
+
+const channelPopupContainer = (triggerNode) =>
+  triggerNode?.parentElement || document.body;
 
 const CandidateGroupsEditor = ({
   value,
@@ -915,7 +922,8 @@ export default function SettingsModelGatewayScheduler() {
         items
           .map(makeChannelOption)
           .filter(
-            (option) => Number.isInteger(option.value) && option.value > 0,
+            (option) =>
+              Number.isInteger(option.channelId) && option.channelId > 0,
           ),
       );
     } catch (error) {
@@ -1528,10 +1536,11 @@ export default function SettingsModelGatewayScheduler() {
             filter
             showClear
             maxTagCount={2}
-            value={normalizeChannelIds(row.primary_channel_ids)}
+            value={normalizeChannelSelectValues(row.primary_channel_ids)}
             optionList={channelOptions}
             placeholder={t('请选择主资源渠道')}
             style={{ width: '100%' }}
+            getPopupContainer={channelPopupContainer}
             renderOptionItem={(option) => renderChannelOptionItem(option, t)}
             onChange={(value) =>
               updatePolicyRow(row.id, {
@@ -1571,10 +1580,11 @@ export default function SettingsModelGatewayScheduler() {
             filter
             showClear
             maxTagCount={2}
-            value={normalizeChannelIds(row.fallback_channel_ids)}
+            value={normalizeChannelSelectValues(row.fallback_channel_ids)}
             optionList={channelOptions}
             placeholder={t('兜底渠道可选，留空使用非主资源候选')}
             style={{ width: '100%' }}
+            getPopupContainer={channelPopupContainer}
             renderOptionItem={(option) => renderChannelOptionItem(option, t)}
             onChange={(value) =>
               updatePolicyRow(row.id, {
