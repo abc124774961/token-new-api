@@ -36,5 +36,6 @@ const (
 	APITypeMiniMax
 	APITypeReplicate
 	APITypeCodex
+	APITypeGrsai
 	APITypeDummy // this one is only for count, do not add any channel after this
 )
