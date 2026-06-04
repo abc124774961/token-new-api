@@ -69,13 +69,25 @@ function mergeDelta(
 function isUserRequestProcessingRecord(record) {
   return (
     String(record?.status || '').trim() === 'processing' &&
-    !Number(record?.completed_at || 0)
+    !Number(record?.completed_at || 0) &&
+    !record?.final_success &&
+    !record?.client_aborted &&
+    !record?.final_error_category &&
+    !Number(record?.final_status_code || 0)
   );
 }
 
 function isUserRequestTerminalRecord(record) {
   if (!record) return false;
   if (Number(record?.completed_at || 0) > 0) return true;
+  if (
+    record?.final_success ||
+    record?.client_aborted ||
+    record?.final_error_category ||
+    Number(record?.final_status_code || 0) > 0
+  ) {
+    return true;
+  }
   const status = String(record?.status || '').trim();
   return [
     'success',
@@ -84,6 +96,7 @@ function isUserRequestTerminalRecord(record) {
     'health_probe_failed',
     'client_aborted',
     'user_quota_exhausted',
+    'settling',
   ].includes(status);
 }
 

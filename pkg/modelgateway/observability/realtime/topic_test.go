@@ -124,6 +124,28 @@ func TestMergeUserRequestRealtimeRecordsTreatsExplicitFailedWithoutCompletedAtAs
 	require.Equal(t, 403, merged[0].FinalStatusCode)
 }
 
+func TestMergeUserRequestRealtimeRecordsTreatsSettlingAsTerminal(t *testing.T) {
+	completed := []controller.ModelGatewayUserRequestRecord{
+		{
+			RequestID: "req-settling",
+			CreatedAt: 100,
+			Status:    userrequest.StatusSettling,
+		},
+	}
+	pending := []userrequest.Record{
+		{
+			RequestID: "req-settling",
+			CreatedAt: 120,
+			Status:    userrequest.StatusProcessing,
+		},
+	}
+
+	merged := mergeUserRequestRealtimeRecords(completed, pending, 10)
+
+	require.Len(t, merged, 1)
+	require.Equal(t, userrequest.StatusSettling, merged[0].Status)
+}
+
 func TestParamsMatchesUserRequest(t *testing.T) {
 	now := time.Now().Unix()
 	params := params{

@@ -326,6 +326,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			}
 		}
 		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
+		if info.StreamStatus.IsNormalEnd() && !info.StreamStatus.HasErrors() {
+			MarkRelayUpstreamCompleted(c, info)
+		}
 	})
 
 	// 主循环等待完成或超时
