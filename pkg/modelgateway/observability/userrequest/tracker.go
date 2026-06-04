@@ -37,6 +37,7 @@ const (
 	defaultTTL        = 10 * time.Minute
 
 	defaultStaleProcessingGrace = 30 * time.Second
+	defaultFirstByteTimeout     = 20 * time.Second
 	defaultStreamingIdleTimeout = 300 * time.Second
 	minStaleProcessingTimeout   = 30 * time.Second
 )
@@ -372,13 +373,12 @@ func (t *Tracker) Snapshot(limit int, filters Filters) []Record {
 		return []Record{}
 	}
 	now := time.Now()
-	staleTimeout := staleProcessingTimeout()
 	t.mu.Lock()
 	t.pruneLocked(now)
-	staleRecords := t.collectStaleFinalsLocked(now, staleTimeout)
+	staleRecords := t.collectStaleFinalsLocked(now)
 	items := make([]Record, 0, len(t.pending)+len(t.staleFinals))
 	for _, item := range t.pending {
-		if processingRecordStale(item, now, staleTimeout) {
+		if processingRecordStale(item, now) {
 			continue
 		}
 		if filters.Match(item) {
@@ -411,7 +411,7 @@ func (t *Tracker) SweepStale() []Record {
 	now := time.Now()
 	t.mu.Lock()
 	t.pruneLocked(now)
-	records := t.collectStaleFinalsLocked(now, staleProcessingTimeout())
+	records := t.collectStaleFinalsLocked(now)
 	t.mu.Unlock()
 	for idx := range records {
 		records[idx] = persistStaleProcessingFinal(records[idx])
@@ -472,13 +472,13 @@ func (t *Tracker) pruneLocked(now time.Time) {
 	}
 }
 
-func (t *Tracker) collectStaleFinalsLocked(now time.Time, timeout time.Duration) []Record {
-	if t == nil || timeout <= 0 {
+func (t *Tracker) collectStaleFinalsLocked(now time.Time) []Record {
+	if t == nil {
 		return nil
 	}
 	records := make([]Record, 0)
 	for requestID, item := range t.pending {
-		if !processingRecordStale(item, now, timeout) {
+		if !processingRecordStale(item, now) {
 			continue
 		}
 		delete(t.pending, requestID)
@@ -680,7 +680,8 @@ func recordProcessing(record Record) bool {
 	return strings.TrimSpace(record.Status) == StatusProcessing && record.CompletedAt <= 0
 }
 
-func processingRecordStale(record Record, now time.Time, timeout time.Duration) bool {
+func processingRecordStale(record Record, now time.Time) bool {
+	timeout := staleProcessingTimeoutForRecord(record)
 	if timeout <= 0 || !recordProcessing(record) {
 		return false
 	}
@@ -692,6 +693,13 @@ func processingRecordStale(record Record, now time.Time, timeout time.Duration) 
 		return false
 	}
 	return !time.Unix(anchor, 0).Add(timeout).After(now)
+}
+
+func staleProcessingTimeoutForRecord(record Record) time.Duration {
+	if record.TTFTMs <= 0 {
+		return firstByteProcessingTimeout()
+	}
+	return staleProcessingTimeout()
 }
 
 func staleProcessingFinalRecord(record Record, now time.Time) Record {
@@ -772,6 +780,21 @@ func staleProcessingTimeout() time.Duration {
 	}
 	if timeout <= 0 {
 		timeout = defaultStreamingIdleTimeout
+	}
+	timeout += defaultStaleProcessingGrace
+	if timeout < minStaleProcessingTimeout {
+		return minStaleProcessingTimeout
+	}
+	return timeout
+}
+
+func firstByteProcessingTimeout() time.Duration {
+	timeout := defaultFirstByteTimeout
+	if totalTimeout := currentRelayTotalTimeout(); totalTimeout > 0 && totalTimeout < timeout {
+		timeout = totalTimeout
+	}
+	if streamingTimeout := currentStreamingIdleTimeout(); streamingTimeout > 0 && streamingTimeout < timeout {
+		timeout = streamingTimeout
 	}
 	timeout += defaultStaleProcessingGrace
 	if timeout < minStaleProcessingTimeout {

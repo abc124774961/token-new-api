@@ -600,6 +600,48 @@ func TestTrackerRecentActivityKeepsLongRunningStreamProcessing(t *testing.T) {
 	require.Equal(t, StatusProcessing, items[0].Status)
 }
 
+func TestTrackerStaleProcessingWithoutFirstByteUsesFirstByteTimeout(t *testing.T) {
+	restore := setTrackerTimeoutsForTest(t, true, 180, 900, 0)
+	defer restore()
+
+	tracker := NewTracker(10, time.Minute)
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-stale-first-byte", ModelName: "gpt-5.5"},
+		RecordedAt: time.Now().Add(-55 * time.Second),
+	})
+
+	records := tracker.SweepStale()
+
+	require.Len(t, records, 1)
+	require.Equal(t, "req-stale-first-byte", records[0].RequestID)
+	require.Equal(t, StatusFailed, records[0].Status)
+	require.Equal(t, model.ModelGatewayUserRequestErrorTimeout, records[0].FinalErrorCategory)
+	require.GreaterOrEqual(t, records[0].DurationMs, int64(50000))
+}
+
+func TestTrackerStaleProcessingWithFirstByteKeepsStreamingTimeout(t *testing.T) {
+	restore := setTrackerTimeoutsForTest(t, true, 180, 900, 0)
+	defer restore()
+
+	tracker := NewTracker(10, time.Hour)
+	createdAt := time.Now().Add(-55 * time.Second)
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-stream-after-first-byte", ModelName: "gpt-5.5"},
+		RecordedAt: createdAt,
+	})
+	tracker.ObserveFirstByte(FirstByteObservation{
+		RequestID:  "req-stream-after-first-byte",
+		ObservedAt: createdAt.Add(2 * time.Second),
+		TTFT:       2 * time.Second,
+	})
+
+	require.Empty(t, tracker.SweepStale())
+	items := tracker.Snapshot(5, Filters{})
+	require.Len(t, items, 1)
+	require.Equal(t, StatusProcessing, items[0].Status)
+	require.Equal(t, int64(2000), items[0].TTFTMs)
+}
+
 func TestTrackerCarriesExperienceIssueOnSuccessfulRequest(t *testing.T) {
 	tracker := NewTracker(10, time.Minute)
 	var finished Event
