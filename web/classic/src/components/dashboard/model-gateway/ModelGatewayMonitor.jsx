@@ -4434,77 +4434,6 @@ function buildUserRequestSparkValues(trends, key) {
     .map((item) => Number(item?.[key]) || 0);
 }
 
-function buildUserRequestTrendSpec(trends, t) {
-  const trendRows = Array.isArray(trends) ? trends : [];
-  const values = trendRows.flatMap((item) => {
-    const bucket = formatBucketRange(item);
-    const requests = Number(item.requests || 0);
-    return [
-      {
-        bucket,
-        metric: t('请求量'),
-        value: requests,
-        axis: 'count',
-      },
-      {
-        bucket,
-        metric: t('用户成功率'),
-        value: Number(item.user_success_rate || 0) * 100,
-        axis: 'rate',
-      },
-      {
-        bucket,
-        metric: t('P95 首包'),
-        value: Number(item.p95_ttft_ms || 0),
-        axis: 'latency',
-      },
-    ];
-  });
-
-  return {
-    type: 'line',
-    data: [{ id: 'user-request-trends', values }],
-    xField: 'bucket',
-    yField: 'value',
-    seriesField: 'metric',
-    axes: [
-      {
-        orient: 'bottom',
-        label: { visible: false },
-        tick: { visible: false },
-        domainLine: { visible: false },
-      },
-      {
-        orient: 'left',
-        label: { style: { fill: '#64748b', fontSize: 11 } },
-        grid: { visible: true, style: { stroke: 'rgba(148, 163, 184, 0.16)' } },
-      },
-    ],
-    color: ['#14b8a6', '#059669', '#f97316'],
-    line: {
-      style: {
-        lineWidth: (datum) => (datum.metric === t('请求量') ? 1.2 : 2.3),
-        strokeOpacity: (datum) => (datum.metric === t('请求量') ? 0.45 : 1),
-      },
-    },
-    point: { visible: false },
-    legends: {
-      visible: true,
-      orient: 'top',
-      position: 'end',
-      item: {
-        label: { style: { fill: '#475569', fontSize: 11 } },
-      },
-    },
-    tooltip: {
-      visible: true,
-    },
-    padding: { top: 8, right: 12, bottom: 8, left: 44 },
-    background: { fill: 'transparent' },
-    animation: false,
-  };
-}
-
 function MiniSparkline({ values, tone = 'success', variant = 'line' }) {
   const spec = useMemo(() => {
     const normalizedValues = Array.isArray(values)
@@ -4924,30 +4853,6 @@ function DynamicBillingMiniPanel({
         </span>
       </div>
     </div>
-  );
-}
-
-function UserRequestTrendPanel({ trends, t }) {
-  const spec = useMemo(() => buildUserRequestTrendSpec(trends, t), [trends, t]);
-  return (
-    <DashboardCard
-      title={
-        <span className='ct-model-gateway-panel-title'>
-          <Activity size={17} />
-          {t('客户端请求趋势')}
-        </span>
-      }
-      bodyClassName='ct-model-gateway-user-trend-body'
-    >
-      {Array.isArray(trends) &&
-      trends.some((item) => Number(item?.requests) > 0) ? (
-        <VChart spec={spec} option={MINI_SPARKLINE_CHART_OPTIONS} />
-      ) : (
-        <div className='ct-model-gateway-trend-empty'>
-          {t('暂无客户端请求趋势')}
-        </div>
-      )}
-    </DashboardCard>
   );
 }
 
@@ -5686,8 +5591,6 @@ function UserRequestDashboard({
           />
         </div>
       </div>
-
-      <UserRequestTrendPanel trends={trends} t={t} />
 
       <div className='ct-model-gateway-user-rank-grid'>
         <UserRequestRankPanel

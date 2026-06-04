@@ -656,17 +656,6 @@
 
 }
 
-.ct-model-gateway-user-trend-body {
-  height: 284px;
-  min-height: 284px;
-}
-
-.ct-model-gateway-user-trend-body > div:not(.ct-model-gateway-trend-empty),
-.ct-model-gateway-user-trend-body canvas {
-  width: 100% !important;
-  height: 100% !important;
-}
-
 .ct-model-gateway-user-rank-grid {
   display: grid;
   gap: 8px;
