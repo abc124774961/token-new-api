@@ -2922,6 +2922,8 @@
     "当前余额": "Số dư hiện tại",
     "当前倍率": "He so hien tai",
     "当前倍率上限": "Giới hạn trên tỷ lệ hiện tại",
+    "设置时间": "Thời điểm đặt",
+    "设置于 {{time}}": "Đặt lúc {{time}}",
     "当前倍率被上下限限制，确认是否需要调整分组限制范围。": "Tỷ lệ hiện tại bị giới hạn bởi ngưỡng trên/dưới. Hãy xác nhận có cần chỉnh giới hạn nhóm không.",
     "当前值": "Giá trị hiện tại",
     "当前值不是合法 JSON，无法格式化": "Giá trị hiện tại không phải JSON hợp lệ, không thể định dạng",

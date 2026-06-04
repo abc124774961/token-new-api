@@ -74,6 +74,7 @@ func UpdateModelGatewayConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	invalidatePublicHomeDynamicBillingCache()
 	modelgatewayprobe.RegisterRelayInvoker(Relay)
 	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
 	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()
@@ -188,6 +189,7 @@ func ResetModelGatewayConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	invalidatePublicHomeDynamicBillingCache()
 	modelgatewayprobe.RegisterRelayInvoker(Relay)
 	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
 	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()

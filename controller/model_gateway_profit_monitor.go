@@ -49,6 +49,7 @@ type ModelGatewayProfitMonitorConfig struct {
 	TargetProfitRate               float64 `json:"target_profit_rate"`
 	DynamicRatioMinLimit           float64 `json:"dynamic_ratio_min_limit"`
 	DynamicRatioMaxLimit           float64 `json:"dynamic_ratio_max_limit"`
+	DynamicRatioMaxLimitUpdatedAt  int64   `json:"dynamic_ratio_max_limit_updated_at,omitempty"`
 	DynamicRatioFixedValue         float64 `json:"dynamic_ratio_fixed_value"`
 	DynamicRatioRecommendationMode string  `json:"dynamic_ratio_recommendation_mode"`
 }
@@ -412,6 +413,7 @@ func GetModelGatewayProfitMonitorConfig(c *gin.Context) {
 
 func UpdateModelGatewayProfitMonitorConfig(c *gin.Context) {
 	config := loadModelGatewayProfitMonitorConfig()
+	previous := normalizeModelGatewayProfitMonitorConfig(config)
 	var request UpdateModelGatewayProfitMonitorConfigRequest
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的参数"})
@@ -451,6 +453,9 @@ func UpdateModelGatewayProfitMonitorConfig(c *gin.Context) {
 		config.DynamicRatioRecommendationMode = strings.TrimSpace(request.DynamicRatioRecommendationMode)
 	}
 	config = normalizeModelGatewayProfitMonitorConfig(config)
+	if request.DynamicRatioMaxLimit != nil && (config.DynamicRatioMaxLimit != previous.DynamicRatioMaxLimit || config.DynamicRatioMaxLimitUpdatedAt <= 0) {
+		config.DynamicRatioMaxLimitUpdatedAt = common.GetTimestamp()
+	}
 	if err := saveModelGatewayProfitMonitorConfig(config); err != nil {
 		common.ApiError(c, err)
 		return
@@ -852,7 +857,11 @@ func saveModelGatewayProfitMonitorConfig(config ModelGatewayProfitMonitorConfig)
 	if err != nil {
 		return err
 	}
-	return model.UpdateOption(modelGatewayProfitMonitorConfigOptionKey, string(payload))
+	if err := model.UpdateOption(modelGatewayProfitMonitorConfigOptionKey, string(payload)); err != nil {
+		return err
+	}
+	invalidatePublicHomeDynamicBillingCache()
+	return nil
 }
 
 func normalizeModelGatewayProfitMonitorConfig(config ModelGatewayProfitMonitorConfig) ModelGatewayProfitMonitorConfig {
@@ -888,6 +897,9 @@ func normalizeModelGatewayProfitMonitorConfig(config ModelGatewayProfitMonitorCo
 	}
 	if config.DynamicRatioMaxLimit > 100 {
 		config.DynamicRatioMaxLimit = 100
+	}
+	if config.DynamicRatioMaxLimitUpdatedAt < 0 {
+		config.DynamicRatioMaxLimitUpdatedAt = 0
 	}
 	if config.DynamicRatioFixedValue > 100 {
 		config.DynamicRatioFixedValue = 100

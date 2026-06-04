@@ -30856,9 +30856,9 @@ html.dark
 .ct-lite-ratio-fixed-info {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: repeat(4, minmax(74px, 1fr));
+  grid-template-columns: repeat(2, minmax(110px, 1fr));
   gap: 8px;
-  max-width: 430px;
+  max-width: 300px;
 }
 
 .ct-lite-ratio-fixed-info span {
@@ -31026,22 +31026,31 @@ html.dark
 }
 
 .ct-lite-ratio-limit-line {
-  stroke: rgba(14, 116, 144, 0.82);
+  stroke: rgba(220, 38, 38, 0.82);
   stroke-dasharray: 12 9;
   stroke-linecap: round;
   stroke-width: 4;
-  filter: drop-shadow(0 6px 12px rgba(14, 116, 144, 0.18));
+  filter: drop-shadow(0 6px 12px rgba(220, 38, 38, 0.18));
+}
+
+.ct-lite-ratio-limit-label-bg {
+  fill: rgba(255, 247, 247, 0.94);
+  stroke: rgba(220, 38, 38, 0.2);
+  stroke-width: 1;
+  filter: drop-shadow(0 10px 20px rgba(220, 38, 38, 0.12));
 }
 
 .ct-lite-ratio-limit-label {
-  fill: #0f766e;
+  fill: #b91c1c;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   font-weight: 950;
-  paint-order: stroke;
-  stroke: rgba(255, 255, 255, 0.92);
-  stroke-linejoin: round;
-  stroke-width: 4px;
+}
+
+.ct-lite-ratio-limit-time-label {
+  fill: #ef4444;
+  font-size: 11px;
+  font-weight: 900;
 }
 
 .ct-lite-ratio-dot {
@@ -31054,12 +31063,6 @@ html.dark
     r 160ms ease,
     fill 160ms ease,
     stroke-width 160ms ease;
-}
-
-.ct-lite-ratio-dot.is-change {
-  fill: rgba(255, 255, 255, 0.98);
-  stroke: #0f766e;
-  stroke-width: 3.4;
 }
 
 .ct-lite-ratio-dot:hover,

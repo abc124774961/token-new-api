@@ -58,8 +58,7 @@ const fallbackStatus = {
   updated_at: 0,
 };
 
-const homeStatusCacheKey = 'home_public_status_v3';
-const homeStatusCacheTTL = 2 * 60 * 1000;
+const homeStatusCacheKey = 'home_public_status_v4';
 const homeDynamicPricingGroupLabel = '本站plus动态';
 const homeStatusCacheStaleTTL = 30 * 60 * 1000;
 
@@ -131,6 +130,16 @@ const formatHomeTrendTime = (timestamp, range) => {
     return `${date.getMonth() + 1}/${date.getDate()}`;
   }
   return `${String(date.getHours()).padStart(2, '0')}:00`;
+};
+
+const formatHomeLimitSetTime = (timestamp) => {
+  const number = Number(timestamp);
+  if (!Number.isFinite(number) || number <= 0) return '';
+  const date = new Date(number * 1000);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getMonth() + 1}/${date.getDate()} ${String(
+    date.getHours(),
+  ).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 };
 
 const formatHeroDynamicRatioRange = (minValue, maxValue) => {
@@ -384,7 +393,7 @@ const writeCachedHomeStatus = (status) => {
 const requestHomeStatus = async () => {
   try {
     const res = await API.get('/api/public/home/status', {
-      params: { days: 7 },
+      params: { days: 7, _: Date.now() },
       skipErrorHandler: true,
       disableDuplicate: true,
     });
@@ -397,12 +406,15 @@ const requestHomeStatus = async () => {
     // shared axios instance if it is intercepted, stale, or mid-refresh.
   }
 
-  const response = await fetch('/api/public/home/status?days=30', {
-    cache: 'no-store',
-    headers: {
-      Accept: 'application/json',
+  const response = await fetch(
+    `/api/public/home/status?days=30&_=${Date.now()}`,
+    {
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+      },
     },
-  });
+  );
   const payload = await response.json();
   if (payload?.success && payload?.data) {
     return payload.data;
@@ -477,7 +489,6 @@ const HeroOrbitVisual = ({
   const [paused, setPaused] = useState(false);
   const ratioValue = Number(dynamicBilling?.current_ratio || 0);
   const ratioUpperLimit = Number(dynamicBilling?.ratio_upper_limit || 0);
-  const fixedRatio = Number(dynamicBilling?.fixed_ratio || 0);
   const priceValue = Number(dynamicBilling?.display_price_per_m || 0);
   const isBillingReady = Boolean(dynamicBilling?.enabled) && ratioValue > 0;
   const group = String(dynamicBilling?.group || '').trim();
@@ -542,14 +553,8 @@ const HeroOrbitVisual = ({
       chips: billingChips,
       detail:
         ratioUpperLimit > 0
-          ? t('倍率上限 {{ratio}}', {
-              ratio: formatHeroDynamicRatio(ratioUpperLimit),
-            })
-          : fixedRatio > 0
-            ? t('固定倍率 {{ratio}}', {
-                ratio: formatHeroDynamicRatio(fixedRatio),
-              })
-            : t('当前倍率上限'),
+          ? `${t('当前倍率上限')} ${formatHeroDynamicRatio(ratioUpperLimit)}`
+          : t('当前倍率上限'),
       visualLabel: billingVisualLabel,
       tone: isBillingReady ? 'amber' : 'muted',
     },
@@ -1930,7 +1935,12 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
   const activeSeries = trend?.[activeRange] || {};
   const points = Array.isArray(activeSeries.points) ? activeSeries.points : [];
   const ratioUpperLimit = Number(dynamicBilling?.ratio_upper_limit || 0);
-  const fixedRatio = Number(dynamicBilling?.fixed_ratio || 0);
+  const ratioLimitSetTime = formatHomeLimitSetTime(
+    dynamicBilling?.ratio_upper_limit_updated_at,
+  );
+  const ratioLimitSetLabel = ratioLimitSetTime
+    ? t('设置于 {{time}}', { time: ratioLimitSetTime })
+    : '';
   const curve = useMemo(
     () => buildHomeRatioCurve(points, chartWidth, { ratioUpperLimit }),
     [chartWidth, points, ratioUpperLimit],
@@ -1939,7 +1949,6 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
   const latestRatio =
     Number(activeSeries.latest_ratio || 0) ||
     Number(dynamicBilling?.current_ratio || 0);
-  const sampleCount = Number(activeSeries.sample_count || 0);
   const rangeLabel = formatHeroDynamicRatioRange(
     activeSeries.min_ratio,
     activeSeries.max_ratio,
@@ -1965,29 +1974,42 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
     },
     {
       key: 'limit',
-      label: t('倍率上限'),
+      label: t('当前倍率上限'),
       value: ratioUpperLimit > 0 ? formatHeroDynamicRatio(ratioUpperLimit) : '--',
-      note: fixedRatio > 0 ? t('固定倍率生效') : t('当前倍率上限'),
+      note: ratioLimitSetLabel || t('动态计费'),
     },
   ];
-  const fixedInfoItems = [
+  const limitInfoItems = [
     {
-      label: t('倍率上限'),
+      label: t('当前倍率上限'),
       value: ratioUpperLimit > 0 ? formatHeroDynamicRatio(ratioUpperLimit) : t('未设置'),
     },
-    {
-      label: t('固定倍率'),
-      value: fixedRatio > 0 ? formatHeroDynamicRatio(fixedRatio) : t('未设置'),
-    },
-    {
-      label: t('样本数'),
-      value: sampleCount > 0 ? String(sampleCount) : '0',
-    },
-    {
-      label: t('变化点'),
-      value: String(curve.dots.filter((point) => point.changed).length),
-    },
+    ...(ratioLimitSetTime
+      ? [
+          {
+            label: t('设置时间'),
+            value: ratioLimitSetTime,
+          },
+        ]
+      : []),
   ];
+  const limitLineLabel = curve.limitLine
+    ? `${t('当前倍率上限')} ${formatHeroDynamicRatio(curve.limitLine.ratio)}`
+    : '';
+  const limitLabelLines = [limitLineLabel, ratioLimitSetLabel].filter(Boolean);
+  const limitLabelMaxWidth = Math.max(
+    160,
+    curve.plotRight - curve.plotLeft - 16,
+  );
+  const limitLabelWidth = Math.min(
+    limitLabelMaxWidth,
+    Math.max(150, ...limitLabelLines.map((line) => line.length * 7.5 + 24)),
+  );
+  const limitLabelHeight = ratioLimitSetLabel ? 46 : 30;
+  const limitLabelX = curve.plotRight - limitLabelWidth - 8;
+  const limitLabelY = curve.limitLine
+    ? Math.max(curve.plotTop + 8, curve.limitLine.y - limitLabelHeight - 10)
+    : 0;
   const tooltipPoint = focusedPoint;
   useEffect(() => {
     const chartElement = chartRef.current;
@@ -2065,7 +2087,7 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
               </strong>
             </div>
             <div className='ct-lite-ratio-fixed-info' aria-label={t('当前倍率上限')}>
-              {fixedInfoItems.map((item) => (
+              {limitInfoItems.map((item) => (
                 <span key={item.label}>
                   <em>{item.label}</em>
                   <strong>{item.value}</strong>
@@ -2138,14 +2160,35 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
                     y2={curve.limitLine.y}
                     className='ct-lite-ratio-limit-line'
                   />
-                  <text
-                    x={curve.plotRight - 8}
-                    y={Math.max(curve.plotTop + 18, curve.limitLine.y - 8)}
-                    textAnchor='end'
-                    className='ct-lite-ratio-limit-label'
+                  <g
+                    className='ct-lite-ratio-limit-label-wrap'
+                    transform={`translate(${limitLabelX.toFixed(1)} ${limitLabelY.toFixed(1)})`}
                   >
-                    {t('倍率上限')} {formatHeroDynamicRatio(curve.limitLine.ratio)}
-                  </text>
+                    <rect
+                      width={limitLabelWidth}
+                      height={limitLabelHeight}
+                      rx='8'
+                      className='ct-lite-ratio-limit-label-bg'
+                    />
+                    <text
+                      x={limitLabelWidth - 12}
+                      y={ratioLimitSetLabel ? 18 : 19}
+                      textAnchor='end'
+                      className='ct-lite-ratio-limit-label'
+                    >
+                      {limitLineLabel}
+                    </text>
+                    {ratioLimitSetLabel ? (
+                      <text
+                        x={limitLabelWidth - 12}
+                        y='36'
+                        textAnchor='end'
+                        className='ct-lite-ratio-limit-time-label'
+                      >
+                        {ratioLimitSetLabel}
+                      </text>
+                    ) : null}
+                  </g>
                 </>
               ) : null}
               {hasData ? (
@@ -2157,17 +2200,11 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
                       key={`${point.timestamp}-${index}`}
                       cx={point.x}
                       cy={point.y}
-                      r={
-                        point.changed
-                          ? index === curve.dots.length - 1
-                            ? 6.2
-                            : 5
-                          : 3.4
-                      }
+                      r={3.4}
                       tabIndex={0}
                       className={`ct-lite-ratio-dot${
                         focusedPoint?.timestamp === point.timestamp ? ' active' : ''
-                      }${point.changed ? ' is-change' : ''}`}
+                      }`}
                       onMouseEnter={() => setFocusedPoint(point)}
                       onFocus={() => setFocusedPoint(point)}
                       onBlur={() => setFocusedPoint(null)}
@@ -2224,17 +2261,6 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
                 <small>
                   {t('展示价格')} {formatHeroDynamicPrice(tooltipPoint.pricePerM)}
                 </small>
-                <small>
-                  {t('样本数')} {tooltipPoint.sampleCount || 0}
-                </small>
-                {tooltipPoint.changed ? (
-                  <small>
-                    {t('倍率改动')} · {t('倍率上限')}{' '}
-                    {ratioUpperLimit > 0
-                      ? formatHeroDynamicRatio(ratioUpperLimit)
-                      : t('未设置')}
-                  </small>
-                ) : null}
               </div>
             ) : null}
           </div>
@@ -2768,9 +2794,6 @@ const Home = () => {
     if (cached?.data) {
       homeStatusRef.current = cached.data;
       setHomeStatus(cached.data);
-      if (cached.age < homeStatusCacheTTL) {
-        return;
-      }
     }
 
     try {

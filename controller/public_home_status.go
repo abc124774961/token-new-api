@@ -119,6 +119,7 @@ type PublicHomeDynamicBilling struct {
 	Model             string                         `json:"model,omitempty"`
 	CurrentRatio      float64                        `json:"current_ratio,omitempty"`
 	RatioUpperLimit   float64                        `json:"ratio_upper_limit,omitempty"`
+	RatioLimitSetAt   int64                          `json:"ratio_upper_limit_updated_at,omitempty"`
 	FixedRatio        float64                        `json:"fixed_ratio,omitempty"`
 	MinRatio7d        float64                        `json:"min_ratio_7d,omitempty"`
 	MaxRatio7d        float64                        `json:"max_ratio_7d,omitempty"`
@@ -166,7 +167,9 @@ type publicHomeModelGatewayStatsAggRow struct {
 }
 
 func GetPublicHomeStatus(c *gin.Context) {
-	c.Header("Cache-Control", "public, max-age=30, stale-while-revalidate=300")
+	c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	c.Header("Pragma", "no-cache")
+	c.Header("Expires", "0")
 
 	days := publicHomeStatusDefaultDays
 	if raw := c.Query("days"); raw != "" {
@@ -340,6 +343,13 @@ func buildPublicHomeStatus(days int) (PublicHomeStatusResponse, error) {
 	return result, nil
 }
 
+func invalidatePublicHomeDynamicBillingCache() {
+	publicHomeDynamicBillingCache.Lock()
+	publicHomeDynamicBillingCache.result = nil
+	publicHomeDynamicBillingCache.expiresAt = time.Time{}
+	publicHomeDynamicBillingCache.Unlock()
+}
+
 func getCachedPublicHomeDynamicBilling() *PublicHomeDynamicBilling {
 	now := time.Now()
 	publicHomeDynamicBillingCache.Lock()
@@ -376,6 +386,7 @@ func buildPublicHomeDynamicBilling(now int64) *PublicHomeDynamicBilling {
 	overview := buildModelGatewayDynamicBillingOverviewForDisplay(now, 0)
 	profitConfig := loadModelGatewayProfitMonitorConfig()
 	_, ratioUpperLimit := modelGatewayProfitEffectiveDynamicRatioLimits(profitConfig)
+	ratioLimitSetAt := publicHomeDynamicBillingRatioLimitSetAt(profitConfig)
 	fixedRatio := profitConfig.DynamicRatioFixedValue
 	refreshSeconds := overview.RefreshSeconds
 	if refreshSeconds <= 0 {
@@ -387,6 +398,7 @@ func buildPublicHomeDynamicBilling(now int64) *PublicHomeDynamicBilling {
 			Status:          "waiting_samples",
 			Model:           modelGatewayDynamicBillingDisplayModel,
 			RatioUpperLimit: ratioUpperLimit,
+			RatioLimitSetAt: ratioLimitSetAt,
 			FixedRatio:      fixedRatio,
 			RefreshSeconds:  refreshSeconds,
 		}
@@ -451,6 +463,7 @@ func buildPublicHomeDynamicBilling(now int64) *PublicHomeDynamicBilling {
 		Model:             modelName,
 		CurrentRatio:      ratio,
 		RatioUpperLimit:   ratioUpperLimit,
+		RatioLimitSetAt:   ratioLimitSetAt,
 		FixedRatio:        fixedRatio,
 		MinRatio7d:        minRatio7d,
 		MaxRatio7d:        maxRatio7d,
@@ -459,6 +472,18 @@ func buildPublicHomeDynamicBilling(now int64) *PublicHomeDynamicBilling {
 		UpdatedSecondsAgo: updatedSecondsAgo,
 		RefreshSeconds:    refreshSeconds,
 	}
+}
+
+func publicHomeDynamicBillingRatioLimitSetAt(config ModelGatewayProfitMonitorConfig) int64 {
+	config = normalizeModelGatewayProfitMonitorConfig(config)
+	setting := scheduler_setting.GetSetting()
+	if config.DynamicRatioMaxLimit > 0 && (setting.DynamicBillingMaxRatio <= 0 || config.DynamicRatioMaxLimit <= setting.DynamicBillingMaxRatio) {
+		return config.DynamicRatioMaxLimitUpdatedAt
+	}
+	if setting.DynamicBillingMaxRatio > 0 {
+		return setting.DynamicBillingEnabledAt
+	}
+	return config.DynamicRatioMaxLimitUpdatedAt
 }
 
 type publicHomeDynamicBillingTrendSample struct {
