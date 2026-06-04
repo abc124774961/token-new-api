@@ -478,7 +478,10 @@ func publicHomeDynamicBillingRatioLimitSetAt(config ModelGatewayProfitMonitorCon
 	config = normalizeModelGatewayProfitMonitorConfig(config)
 	setting := scheduler_setting.GetSetting()
 	if config.DynamicRatioMaxLimit > 0 && (setting.DynamicBillingMaxRatio <= 0 || config.DynamicRatioMaxLimit <= setting.DynamicBillingMaxRatio) {
-		return config.DynamicRatioMaxLimitUpdatedAt
+		if config.DynamicRatioMaxLimitUpdatedAt > 0 {
+			return config.DynamicRatioMaxLimitUpdatedAt
+		}
+		return setting.DynamicBillingEnabledAt
 	}
 	if setting.DynamicBillingMaxRatio > 0 {
 		return setting.DynamicBillingEnabledAt
