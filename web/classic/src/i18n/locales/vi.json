@@ -3736,6 +3736,8 @@
     "智能熔断": "Circuit breaker thông minh",
     "智能网关": "Smart gateway",
     "智能评分": "Chấm điểm thông minh",
+    "智能切换": "Chuyển thông minh",
+    "智能切换后成功": "Thành công sau chuyển thông minh",
     "智能调度": "Điều phối thông minh",
     "智能调度 auto 模式：auto_fusion": "Gộp nhóm ứng viên",
     "智能调度 auto 模式：auto_sequential": "Nhóm auto tuần tự",
@@ -6272,6 +6274,7 @@
     "请求发生错误: ": "Đã xảy ra lỗi yêu cầu: ",
     "请求后端接口失败：": "Yêu cầu giao diện phụ trợ thất bại: ",
     "请求命中率": "Tỷ lệ hit của yêu cầu",
+    "请求通过智能调度切换到可用渠道后完成": "Hoàn tất sau khi điều phối thông minh chuyển sang kênh khả dụng",
     "请求失败": "Yêu cầu thất bại",
     "请求失败，请重试": "Yêu cầu thất bại, vui lòng thử lại",
     "请求失败自动旁路，流式响应稳定返回": "Yêu cầu lỗi được tự động bỏ qua, phản hồi streaming trả về ổn định.",
@@ -7542,6 +7545,9 @@
     "默认测试模型": "Mô hình kiểm tra mặc định",
     "默认用户消息": "Xin chào",
     "默认策略": "Chiến lược mặc định",
-    "默认补全倍率": "Tỷ lệ hoàn thành mặc định"
+    "默认补全倍率": "Tỷ lệ hoàn thành mặc định",
+    "费用结算中": "Đang quyết toán phí",
+    "上游已完成，费用待结算": "Thượng nguồn đã hoàn tất, chờ quyết toán phí",
+    "上游完成时间": "Thời điểm thượng nguồn hoàn tất"
   }
 }

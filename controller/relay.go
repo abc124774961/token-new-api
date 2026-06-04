@@ -674,6 +674,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		runtimeIdentity := relayRuntimeIdentity(c, channel.Id)
 		firstByteLease := service.BeginChannelRuntimeFirstByteWait(c, runtimeIdentity, relayInfo.RequestId, relayInfo.RetryIndex)
+		service.BindChannelConcurrencyLease(c, concurrencyLease)
 		upstreamConcurrencySample := concurrencyLease.ActiveAtHit()
 
 		addUsedChannel(c, channel.Id)
@@ -718,6 +719,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = newRelayTotalDurationTimeoutError(attemptWatchdog.totalDurationElapsed())
 		}
 		relayTotal := time.Since(relayStart)
+		if completedDuration := relayInfo.UpstreamCompletedSince(relayStart); completedDuration > 0 {
+			relayTotal = completedDuration
+		}
 		if firstByteTimeoutHit && relayTotal < attemptWatchdog.firstByteElapsed() {
 			relayTotal = attemptWatchdog.firstByteElapsed()
 		}
@@ -1407,6 +1411,7 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 		ModelName:              modelName,
 		EndpointType:           requiredEndpointTypeForRelay(info),
 		Success:                apiErr == nil,
+		ObservedAt:             modelGatewayAttemptObservedAt(info),
 		Duration:               modelGatewayAttemptDuration(flow),
 		TTFT:                   modelGatewayAttemptTTFT(flow),
 		RequestDuration:        modelGatewayRequestDuration(info),
@@ -1919,10 +1924,17 @@ func modelGatewayAttemptTTFT(flow modelGatewayAttemptFlow) time.Duration {
 }
 
 func modelGatewayRequestDuration(info *relaycommon.RelayInfo) time.Duration {
-	if info == nil || info.StartTime.IsZero() {
-		return 0
+	return info.CurrentRequestDuration()
+}
+
+func modelGatewayAttemptObservedAt(info *relaycommon.RelayInfo) time.Time {
+	if info == nil {
+		return time.Now()
 	}
-	return time.Since(info.StartTime)
+	if duration := info.UpstreamCompletedDuration(); duration > 0 && !info.StartTime.IsZero() {
+		return info.StartTime.Add(duration)
+	}
+	return time.Now()
 }
 
 func modelGatewayRequestTTFT(info *relaycommon.RelayInfo) time.Duration {

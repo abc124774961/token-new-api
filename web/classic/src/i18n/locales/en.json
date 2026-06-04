@@ -3802,6 +3802,8 @@
     "智能熔断": "Smart circuit breaker",
     "智能网关": "Smart gateway",
     "智能评分": "Smart scoring",
+    "智能切换": "Smart switch",
+    "智能切换后成功": "Succeeded after smart switch",
     "智能调度": "Smart scheduling",
     "智能调度 auto 模式：auto_fusion": "Fused candidate pool",
     "智能调度 auto 模式：auto_sequential": "Sequential auto groups",
@@ -6005,6 +6007,7 @@
     "请求发生错误: ": "An error occurred with the request: ",
     "请求后端接口失败：": "Failed to request the backend interface: ",
     "请求命中率": "Request hit rate",
+    "请求通过智能调度切换到可用渠道后完成": "Completed after smart scheduling switched to an available channel",
     "请求失败": "Request failed",
     "请求失败自动旁路，流式响应稳定返回": "Failed requests are bypassed automatically, with stable streaming responses.",
     "请求头": "",
@@ -7155,6 +7158,9 @@
     "默认测试模型": "Default Test Model",
     "默认用户消息": "Default User Message",
     "默认策略": "Default strategy",
-    "默认补全倍率": "Default completion ratio"
+    "默认补全倍率": "Default completion ratio",
+    "费用结算中": "Billing settling",
+    "上游已完成，费用待结算": "Upstream completed, billing pending",
+    "上游完成时间": "Upstream completed at"
   }
 }

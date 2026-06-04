@@ -311,6 +311,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				}
 			} else {
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+				MarkRelayUpstreamCompleted(c, info)
 				if common.DebugEnabled {
 					println("received [DONE], stopping scanner")
 				}

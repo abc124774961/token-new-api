@@ -121,6 +121,105 @@ func TestTrackerAppliesEarlyFirstByteWhenStartArrivesLater(t *testing.T) {
 	require.Equal(t, now.Add(2*time.Second).Unix(), items[0].UpdatedAt)
 }
 
+func TestTrackerObserveUpstreamCompletedMovesToSettling(t *testing.T) {
+	tracker := NewTracker(10, time.Minute)
+	events := make([]Event, 0)
+	tracker.AddObserver(func(event Event) {
+		events = append(events, event)
+	})
+	now := time.Now()
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-upstream-done", RequestedGroup: "auto", ModelName: "gpt-5.5"},
+		Plan:       &core.DispatchPlan{SelectedGroup: "codex-plus"},
+		RecordedAt: now,
+	})
+
+	tracker.ObserveUpstreamCompleted(UpstreamCompletedObservation{
+		RequestID:  "req-upstream-done",
+		ObservedAt: now.Add(7 * time.Second),
+		Duration:   7 * time.Second,
+	})
+
+	items := tracker.Snapshot(5, Filters{})
+	require.Len(t, items, 1)
+	require.Equal(t, StatusSettling, items[0].Status)
+	require.Equal(t, now.Add(7*time.Second).Unix(), items[0].CompletedAt)
+	require.Equal(t, int64(7000), items[0].DurationMs)
+	require.True(t, items[0].FinalSuccess)
+	require.Len(t, events, 2)
+	require.Equal(t, EventUpdated, events[1].Kind)
+}
+
+func TestTrackerAppliesEarlyUpstreamCompletedWhenStartArrivesLater(t *testing.T) {
+	tracker := NewTracker(10, time.Minute)
+	now := time.Now()
+
+	tracker.ObserveUpstreamCompleted(UpstreamCompletedObservation{
+		RequestID:  "req-early-upstream-done",
+		ObservedAt: now.Add(3 * time.Second),
+		Duration:   3 * time.Second,
+	})
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-early-upstream-done", RequestedGroup: "auto", ModelName: "gpt-5.5"},
+		Plan:       &core.DispatchPlan{SelectedGroup: "codex-plus"},
+		RecordedAt: now,
+	})
+
+	items := tracker.Snapshot(5, Filters{})
+	require.Len(t, items, 1)
+	require.Equal(t, StatusSettling, items[0].Status)
+	require.Equal(t, now.Add(3*time.Second).Unix(), items[0].CompletedAt)
+	require.Equal(t, int64(3000), items[0].DurationMs)
+}
+
+func TestTrackerFinishKeepsUpstreamCompletionDuration(t *testing.T) {
+	tracker := NewTracker(10, time.Minute)
+	events := make([]Event, 0)
+	tracker.AddObserver(func(event Event) {
+		events = append(events, event)
+	})
+	startedAt := time.Unix(1000, 0)
+	completedAt := startedAt.Add(4 * time.Second)
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-finish-after-settle", RequestedGroup: "auto", ModelName: "gpt-5.5"},
+		Plan:       &core.DispatchPlan{SelectedGroup: "codex-plus"},
+		RecordedAt: startedAt,
+	})
+	tracker.ObserveUpstreamCompleted(UpstreamCompletedObservation{
+		RequestID:  "req-finish-after-settle",
+		ObservedAt: completedAt,
+		Duration:   4 * time.Second,
+	})
+
+	tracker.Finish(core.AttemptResult{
+		RequestID:      "req-finish-after-settle",
+		AttemptIndex:   0,
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		ModelName:      "gpt-5.5",
+		Success:        true,
+	}, &model.ModelGatewayUserRequestSummary{
+		Id:             11,
+		CreatedAt:      startedAt.Unix(),
+		CompletedAt:    startedAt.Add(12 * time.Second).Unix(),
+		RequestId:      "req-finish-after-settle",
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		RequestedModel: "gpt-5.5",
+		Attempts:       1,
+		FinalSuccess:   true,
+		DurationMs:     12000,
+		TTFTMs:         500,
+	})
+
+	require.Empty(t, tracker.Snapshot(5, Filters{}))
+	require.Len(t, events, 3)
+	require.Equal(t, EventFinished, events[2].Kind)
+	require.Equal(t, StatusSuccess, events[2].Record.Status)
+	require.Equal(t, completedAt.Unix(), events[2].Record.CompletedAt)
+	require.Equal(t, int64(4000), events[2].Record.DurationMs)
+}
+
 func TestTrackerFinishRemovesProcessingAndPublishesFinalSummary(t *testing.T) {
 	tracker := NewTracker(10, time.Minute)
 	events := make([]Event, 0)

@@ -11,11 +11,23 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 )
 
+func init() {
+	service.RegisterRelayUpstreamCompletedObserver(func(requestID string, observedAt time.Time, duration time.Duration) {
+		ObserveUpstreamCompleted(UpstreamCompletedObservation{
+			RequestID:  requestID,
+			ObservedAt: observedAt,
+			Duration:   duration,
+		})
+	})
+}
+
 const (
 	StatusProcessing  = "processing"
+	StatusSettling    = "settling"
 	StatusSuccess     = "success"
 	StatusProbe       = "health_probe"
 	StatusFailed      = "failed"
@@ -33,6 +45,7 @@ type EventKind string
 
 const (
 	EventStarted  EventKind = "started"
+	EventUpdated  EventKind = "updated"
 	EventFinished EventKind = "finished"
 )
 
@@ -84,6 +97,12 @@ type ActivityObservation struct {
 	ObservedAt time.Time
 }
 
+type UpstreamCompletedObservation struct {
+	RequestID  string
+	ObservedAt time.Time
+	Duration   time.Duration
+}
+
 type Observer func(Event)
 
 type Tracker struct {
@@ -92,6 +111,7 @@ type Tracker struct {
 	finished    map[string]int64
 	staleFinals map[string]Record
 	firstBytes  map[string]FirstByteObservation
+	completed   map[string]UpstreamCompletedObservation
 	maxPending  int
 	ttl         time.Duration
 	observerMu  sync.RWMutex
@@ -112,6 +132,7 @@ func NewTracker(maxPending int, ttl time.Duration) *Tracker {
 		finished:    map[string]int64{},
 		staleFinals: map[string]Record{},
 		firstBytes:  map[string]FirstByteObservation{},
+		completed:   map[string]UpstreamCompletedObservation{},
 		maxPending:  maxPending,
 		ttl:         ttl,
 	}
@@ -135,6 +156,10 @@ func ObserveFirstByte(observation FirstByteObservation) {
 
 func ObserveActivity(observation ActivityObservation) {
 	DefaultTracker.ObserveActivity(observation)
+}
+
+func ObserveUpstreamCompleted(observation UpstreamCompletedObservation) {
+	DefaultTracker.ObserveUpstreamCompleted(observation)
 }
 
 func Snapshot(limit int, filters Filters) []Record {
@@ -201,6 +226,10 @@ func (t *Tracker) Start(record core.DispatchRecord) {
 		applyFirstByteObservation(&item, observation)
 		delete(t.firstBytes, item.RequestID)
 	}
+	if observation, ok := t.completed[item.RequestID]; ok {
+		applyUpstreamCompletedObservation(&item, observation)
+		delete(t.completed, item.RequestID)
+	}
 	t.pending[item.RequestID] = item
 	t.pruneOverflowLocked()
 	t.mu.Unlock()
@@ -218,6 +247,7 @@ func (t *Tracker) Finish(result core.AttemptResult, summary *model.ModelGatewayU
 	if modelGatewayAttemptFinalized(result) {
 		delete(t.pending, requestID)
 		delete(t.firstBytes, requestID)
+		delete(t.completed, requestID)
 		delete(t.staleFinals, requestID)
 		t.finished[requestID] = time.Now().Unix()
 	} else {
@@ -309,6 +339,32 @@ func (t *Tracker) ObserveActivity(observation ActivityObservation) {
 		t.pending[requestID] = pending
 	}
 	t.mu.Unlock()
+}
+
+func (t *Tracker) ObserveUpstreamCompleted(observation UpstreamCompletedObservation) {
+	if t == nil || strings.TrimSpace(observation.RequestID) == "" {
+		return
+	}
+	requestID := strings.TrimSpace(observation.RequestID)
+	observedAt := observation.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+
+	t.mu.Lock()
+	pending, hadPending := t.pending[requestID]
+	if !hadPending {
+		if _, done := t.finished[requestID]; !done {
+			t.completed[requestID] = observation
+		}
+		t.mu.Unlock()
+		return
+	}
+	applyUpstreamCompletedObservation(&pending, observation)
+	t.pending[requestID] = pending
+	t.mu.Unlock()
+
+	t.notify(Event{Kind: EventUpdated, Record: pending})
 }
 
 func (t *Tracker) Snapshot(limit int, filters Filters) []Record {
@@ -404,6 +460,16 @@ func (t *Tracker) pruneLocked(now time.Time) {
 			delete(t.firstBytes, requestID)
 		}
 	}
+	for requestID, observation := range t.completed {
+		observedAt := observation.ObservedAt
+		if observedAt.IsZero() {
+			delete(t.completed, requestID)
+			continue
+		}
+		if observedAt.Unix() < cutoff {
+			delete(t.completed, requestID)
+		}
+	}
 }
 
 func (t *Tracker) collectStaleFinalsLocked(now time.Time, timeout time.Duration) []Record {
@@ -481,11 +547,21 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 		if updatedAt <= 0 {
 			updatedAt = summary.CreatedAt
 		}
+		completedAt := summary.CompletedAt
+		durationMs := summary.DurationMs
+		if pending.Status == StatusSettling {
+			if pending.CompletedAt > 0 && (completedAt <= 0 || pending.CompletedAt < completedAt) {
+				completedAt = pending.CompletedAt
+			}
+			if pending.DurationMs > 0 && (durationMs <= 0 || pending.CompletedAt == completedAt) {
+				durationMs = pending.DurationMs
+			}
+		}
 		return Record{
 			ID:                        summary.Id,
 			CreatedAt:                 summary.CreatedAt,
 			UpdatedAt:                 updatedAt,
-			CompletedAt:               summary.CompletedAt,
+			CompletedAt:               completedAt,
 			RequestID:                 summary.RequestId,
 			UserID:                    firstPositiveInt(pending.UserID, result.UserID),
 			Username:                  strings.TrimSpace(pending.Username),
@@ -508,7 +584,7 @@ func userRequestRecordFromResult(result core.AttemptResult, summary *model.Model
 			ClientAborted:             clientAborted,
 			IsHealthProbe:             result.IsHealthProbe || summary.IsHealthProbe,
 			ProbeReason:               firstNonEmpty(result.ProbeReason, summary.ProbeReason),
-			DurationMs:                summary.DurationMs,
+			DurationMs:                durationMs,
 			TTFTMs:                    summary.TTFTMs,
 			Status:                    userRequestStatus(summary.FinalSuccess, clientAborted, result.IsHealthProbe || summary.IsHealthProbe),
 		}
@@ -743,6 +819,41 @@ func applyFirstByteObservation(record *Record, observation FirstByteObservation)
 	}
 	record.UpdatedAt = observedAt.Unix()
 	record.TTFTMs = ttftMs
+}
+
+func applyUpstreamCompletedObservation(record *Record, observation UpstreamCompletedObservation) {
+	if record == nil {
+		return
+	}
+	observedAt := observation.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+	completedAt := observedAt.Unix()
+	if completedAt <= 0 {
+		return
+	}
+	record.UpdatedAt = completedAt
+	record.CompletedAt = completedAt
+	if record.CreatedAt <= 0 {
+		record.CreatedAt = completedAt
+	}
+	durationMs := observation.Duration.Milliseconds()
+	if durationMs <= 0 && record.CreatedAt > 0 && completedAt >= record.CreatedAt {
+		durationMs = (completedAt - record.CreatedAt) * int64(time.Second/time.Millisecond)
+	}
+	if durationMs > 0 {
+		record.DurationMs = durationMs
+	}
+	record.FinalSuccess = true
+	if record.Attempts <= 0 {
+		record.Attempts = 1
+	}
+	if record.IsHealthProbe {
+		record.Status = StatusProbe
+		return
+	}
+	record.Status = StatusSettling
 }
 
 func userRequestResultDuration(result core.AttemptResult) time.Duration {

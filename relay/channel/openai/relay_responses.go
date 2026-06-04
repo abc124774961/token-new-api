@@ -132,6 +132,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			normalizeResponsesStreamResponseModel(info, &streamResponse)
 			data = string(normalizeResponsesStreamJSONBodyModel(info, common.StringToByteSlice(data)))
 			sendOrBufferEvent(streamResponse, data, true)
+			helper.MarkRelayUpstreamCompleted(c, info)
 			if streamResponse.Response != nil {
 				if streamResponse.Response.Usage != nil {
 					if streamResponse.Response.Usage.InputTokens != 0 {
@@ -239,6 +240,7 @@ func OaiResponsesStreamAsNonStreamHandler(c *gin.Context, info *relaycommon.Rela
 		case "response.output_text.delta":
 			outputText.WriteString(streamResponse.Delta)
 		case "response.completed":
+			helper.MarkRelayUpstreamCompleted(c, info)
 			normalizeResponsesStreamResponseModel(info, &streamResponse)
 			if streamResponse.Response != nil {
 				finalResponse = streamResponse.Response

@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/stretchr/testify/require"
@@ -90,6 +91,52 @@ func TestTrackChannelConcurrencyIgnoresConfiguredLimit(t *testing.T) {
 	second.Release()
 	first.Release()
 	require.Zero(t, GetChannelActiveConcurrency(1006))
+}
+
+func TestReleaseChannelConcurrencyLeaseFromContextIsIdempotent(t *testing.T) {
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	ctx := newRetryContext()
+	lease, ok := TryAcquireChannelConcurrency(1007, dto.ChannelSettings{MaxConcurrency: 1})
+	require.True(t, ok)
+	require.Equal(t, 1, GetChannelActiveConcurrency(1007))
+
+	BindChannelConcurrencyLease(ctx, lease)
+	ReleaseChannelConcurrencyLease(ctx)
+	lease.Release()
+
+	require.Zero(t, GetChannelActiveConcurrency(1007))
+}
+
+func TestMarkRelayUpstreamCompletedReleasesLeaseAndNotifiesOnce(t *testing.T) {
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+	t.Cleanup(func() { RegisterRelayUpstreamCompletedObserver(nil) })
+
+	ctx := newRetryContext()
+	lease, ok := TryAcquireChannelConcurrency(1009, dto.ChannelSettings{MaxConcurrency: 1})
+	require.True(t, ok)
+	BindChannelConcurrencyLease(ctx, lease)
+
+	var calls int
+	var observedDuration time.Duration
+	RegisterRelayUpstreamCompletedObserver(func(requestID string, _ time.Time, duration time.Duration) {
+		require.Equal(t, "req-upstream-complete", requestID)
+		calls++
+		observedDuration = duration
+	})
+	info := &relaycommon.RelayInfo{
+		RequestId: "req-upstream-complete",
+		StartTime: time.Now().Add(-2 * time.Second),
+	}
+
+	MarkRelayUpstreamCompleted(ctx, info)
+	MarkRelayUpstreamCompleted(ctx, info)
+
+	require.Equal(t, 1, calls)
+	require.Greater(t, observedDuration, time.Duration(0))
+	require.Zero(t, GetChannelActiveConcurrency(1009))
 }
 
 func TestChannelSelectionReservationCountsTowardEffectiveConcurrency(t *testing.T) {

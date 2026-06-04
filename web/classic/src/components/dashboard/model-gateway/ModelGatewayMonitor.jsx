@@ -2803,6 +2803,9 @@ function getUserRequestStatusMeta(record, t) {
   if (isUserRequestProcessing(record)) {
     return { color: 'blue', label: t('执行中'), tone: 'processing' };
   }
+  if (String(record?.status || '').trim() === 'settling') {
+    return { color: 'teal', label: t('费用结算中'), tone: 'settling' };
+  }
   if (isUserQuotaExhaustedRecord(record)) {
     return { color: 'grey', label: t('用户额度不足'), tone: 'quota' };
   }
@@ -2821,6 +2824,9 @@ function getUserRequestStatusMeta(record, t) {
   ) {
     return { color: 'grey', label: t('客户端中断'), tone: 'aborted' };
   }
+  if (record?.final_success && isSmartSwitchRecovered(record)) {
+    return { color: 'teal', label: t('成功'), tone: 'recovered' };
+  }
   if (record?.final_success) {
     if (record?.empty_output || record?.experience_issue) {
       return { color: 'orange', label: t('体验异常'), tone: 'warning' };
@@ -2828,6 +2834,10 @@ function getUserRequestStatusMeta(record, t) {
     return { color: 'green', label: t('成功'), tone: 'success' };
   }
   return { color: 'red', label: t('最终失败'), tone: 'failed' };
+}
+
+function isSmartSwitchRecovered(record) {
+  return record?.recovered === true;
 }
 
 function isUserRequestProcessing(record) {
@@ -2842,6 +2852,7 @@ function isUserRequestProcessing(record) {
       'health_probe_failed',
       'client_aborted',
       'user_quota_exhausted',
+      'settling',
     ].includes(status)
   ) {
     return false;
@@ -2935,7 +2946,8 @@ function userRequestStatusCaption(record, meta, processing, hasTTFT, durationMs,
   if (processing) {
     return userRequestProcessingStage(record, durationMs, hasTTFT, t);
   }
-  if (record?.recovered) return t('切换后成功');
+  if (meta?.tone === 'settling') return t('上游已完成，费用待结算');
+  if (isSmartSwitchRecovered(record)) return t('智能切换后成功');
   if (meta?.tone === 'quota') return t('业务拦截');
   if (meta?.tone === 'aborted') return t('客户端断开');
   if (meta?.tone === 'probe' || meta?.tone === 'probe-warning') {
@@ -2960,6 +2972,7 @@ function userRequestTimeCaption(record, meta, processing, t) {
   if (processing) return t('开始处理');
   if (meta?.tone === 'aborted') return t('断开时间');
   if (meta?.tone === 'quota') return t('拦截时间');
+  if (meta?.tone === 'settling') return t('上游完成时间');
   if (meta?.tone === 'probe' || meta?.tone === 'probe-warning') {
     return t('探活时间');
   }
@@ -3696,6 +3709,12 @@ function UserRequestEventTooltip({ record, meta, processing, durationMs, t }) {
       }),
     ]);
   }
+  if (isSmartSwitchRecovered(record) && !processing) {
+    rows.push([
+      t('智能切换'),
+      t('请求通过智能调度切换到可用渠道后完成'),
+    ]);
+  }
   if (hasModelGatewayWarning(record) && !processing) {
     rows.push([t('渠道预警'), modelGatewayWarningContent(record, t)]);
   }
@@ -4177,7 +4196,7 @@ function UserRequestCostSummaryCell({ record, t }) {
       : upstreamLabel;
   const billingLabel = billing
     ? renderQuota(billingReferenceQuota(billing), 6)
-    : processing
+    : processing || String(record?.status || '').trim() === 'settling'
       ? t('待结算')
       : '--';
   const dynamicBillingLabel = dynamicBillingSummaryLabel(billing, t);
@@ -5135,6 +5154,7 @@ function UserRequestRecentTable({
                 const groupFlowLabel = formatUserRequestGroupFlow(record);
                 const groupRatioLabel = formatUserRequestGroupRatio(record);
                 const hasTTFT = Number(record.ttft_ms || 0) > 0;
+                const smartSwitchRecovered = isSmartSwitchRecovered(record);
                 const firstByteTimeoutAttempts = Array.isArray(
                   record.attempt_records,
                 )
@@ -5196,11 +5216,22 @@ function UserRequestRecentTable({
                     key={requestId || record.id}
                   >
                     <div className='ct-model-gateway-user-request-status-col'>
-                      <div
-                        className={`ct-model-gateway-user-request-status-pill ct-model-gateway-user-request-status-pill-${meta.tone}`}
-                      >
-                        <StatusIcon size={13} />
-                        <span>{meta.label}</span>
+                      <div className='ct-model-gateway-user-request-status-top-line'>
+                        <div
+                          className={`ct-model-gateway-user-request-status-pill ct-model-gateway-user-request-status-pill-${meta.tone}`}
+                        >
+                          <StatusIcon size={13} />
+                          <span>{meta.label}</span>
+                        </div>
+                        {smartSwitchRecovered && (
+                          <Tooltip
+                            content={t('请求通过智能调度切换到可用渠道后完成')}
+                          >
+                            <span className='ct-model-gateway-user-request-smart-switch-icon'>
+                              <GitBranch size={12} />
+                            </span>
+                          </Tooltip>
+                        )}
                       </div>
                       <small title={statusCaption}>{statusCaption}</small>
                     </div>
@@ -5249,6 +5280,20 @@ function UserRequestRecentTable({
                           <Tag color='cyan' size='small' type='light'>
                             {t('健康探活')}
                           </Tag>
+                        )}
+                        {smartSwitchRecovered && (
+                          <Tooltip
+                            content={t('请求通过智能调度切换到可用渠道后完成')}
+                          >
+                            <Tag
+                              className='ct-model-gateway-user-request-smart-switch-tag'
+                              color='cyan'
+                              size='small'
+                              type='light'
+                            >
+                              {t('智能切换')}
+                            </Tag>
+                          </Tooltip>
                         )}
                         <ModelGatewayWarningTag record={record} t={t} />
                         <span title={channelLabel}>{channelLabel}</span>

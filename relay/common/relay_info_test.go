@@ -2,6 +2,7 @@ package common
 
 import (
 	"testing"
+	"time"
 
 	basecommon "github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -10,6 +11,16 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRelayInfoCurrentRequestDurationUsesUpstreamCompletedTime(t *testing.T) {
+	startedAt := time.Unix(100, 0)
+	info := &RelayInfo{StartTime: startedAt}
+
+	require.True(t, info.SetUpstreamCompletedTime(startedAt.Add(4*time.Second)))
+	require.False(t, info.SetUpstreamCompletedTime(startedAt.Add(9*time.Second)))
+	require.Equal(t, 4*time.Second, info.UpstreamCompletedDuration())
+	require.Equal(t, 4*time.Second, info.CurrentRequestDuration())
+}
 
 func TestRelayInfoGetFinalRequestRelayFormatPrefersExplicitFinal(t *testing.T) {
 	info := &RelayInfo{

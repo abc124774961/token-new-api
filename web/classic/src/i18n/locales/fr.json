@@ -3776,6 +3776,8 @@
     "智能熔断": "Circuit breaker intelligent",
     "智能网关": "Smart gateway",
     "智能评分": "Score intelligent",
+    "智能切换": "Bascule intelligente",
+    "智能切换后成功": "Réussi après bascule intelligente",
     "智能调度": "Planification intelligente",
     "智能调度 auto 模式：auto_fusion": "Pool de candidats fusionné",
     "智能调度 auto 模式：auto_sequential": "Groupes auto séquentiels",
@@ -5947,6 +5949,7 @@
     "请求发生错误: ": "Une erreur s'est produite lors de la demande : ",
     "请求后端接口失败：": "Échec de la requête de l'interface backend : ",
     "请求命中率": "Taux de hit des requêtes",
+    "请求通过智能调度切换到可用渠道后完成": "Terminée après bascule intelligente vers un canal disponible",
     "请求失败": "Échec de la demande",
     "请求失败自动旁路，流式响应稳定返回": "Les échecs sont contournés automatiquement et les réponses streaming restent stables.",
     "请求头": "",
@@ -7057,6 +7060,9 @@
     "默认测试模型": "Modèle de test par défaut",
     "默认用户消息": "Bonjour",
     "默认策略": "Stratégie par défaut",
-    "默认补全倍率": "Taux de complétion par défaut"
+    "默认补全倍率": "Taux de complétion par défaut",
+    "费用结算中": "Règlement en cours",
+    "上游已完成，费用待结算": "Réponse amont terminée, facturation en attente",
+    "上游完成时间": "Fin amont"
   }
 }

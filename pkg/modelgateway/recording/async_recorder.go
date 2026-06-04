@@ -388,6 +388,9 @@ func requestMetaFromAttemptResult(result core.AttemptResult, attemptMeta attempt
 
 func modelGatewayUserRequestAttemptFromResult(result core.AttemptResult) model.ModelGatewayUserRequestAttempt {
 	createdAt := time.Now().Unix()
+	if observedAt := result.ObservedAt.Unix(); observedAt > 0 {
+		createdAt = observedAt
+	}
 	return model.ModelGatewayUserRequestAttempt{
 		CreatedAt:         createdAt,
 		RequestId:         result.RequestID,

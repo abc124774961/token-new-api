@@ -45,7 +45,7 @@ type ChannelConcurrencyLease struct {
 	counter     *channelConcurrencyCounter
 	accountHeld *channelConcurrencyCounter
 	channelHeld *channelConcurrencyCounter
-	released    bool
+	releaseOnce sync.Once
 }
 
 type channelConcurrencyControlState struct {
@@ -485,27 +485,46 @@ func TrackChannelConcurrency(channelID int, setting dto.ChannelSettings) *Channe
 }
 
 func (lease *ChannelConcurrencyLease) Release() {
-	if lease == nil || lease.released {
+	if lease == nil {
 		return
 	}
-	for _, counter := range []*channelConcurrencyCounter{lease.channelHeld, lease.accountHeld} {
-		if counter == nil {
-			continue
+	lease.releaseOnce.Do(func() {
+		for _, counter := range []*channelConcurrencyCounter{lease.channelHeld, lease.accountHeld} {
+			if counter == nil {
+				continue
+			}
+			counter.mu.Lock()
+			if counter.active > 0 {
+				counter.active--
+			}
+			counter.mu.Unlock()
 		}
-		counter.mu.Lock()
-		if counter.active > 0 {
-			counter.active--
+		if lease.accountHeld == nil && lease.channelHeld == nil && lease.counter != nil {
+			lease.counter.mu.Lock()
+			if lease.counter.active > 0 {
+				lease.counter.active--
+			}
+			lease.counter.mu.Unlock()
 		}
-		counter.mu.Unlock()
+	})
+}
+
+func BindChannelConcurrencyLease(ctx *gin.Context, lease *ChannelConcurrencyLease) {
+	if ctx == nil || lease == nil {
+		return
 	}
-	if lease.accountHeld == nil && lease.channelHeld == nil && lease.counter != nil {
-		lease.counter.mu.Lock()
-		if lease.counter.active > 0 {
-			lease.counter.active--
-		}
-		lease.counter.mu.Unlock()
+	common.SetContextKey(ctx, constant.ContextKeyChannelConcurrencyLease, lease)
+}
+
+func ReleaseChannelConcurrencyLease(ctx *gin.Context) {
+	if ctx == nil {
+		return
 	}
-	lease.released = true
+	lease, ok := common.GetContextKeyType[*ChannelConcurrencyLease](ctx, constant.ContextKeyChannelConcurrencyLease)
+	if !ok || lease == nil {
+		return
+	}
+	lease.Release()
 }
 
 func (lease *ChannelConcurrencyLease) ActiveAtHit() int {

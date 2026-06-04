@@ -115,6 +115,18 @@ func ForceMarkRelayFirstResponseObserved(c *gin.Context, info *relaycommon.Relay
 	markRelayFirstResponseObserved(c, info, true)
 }
 
+func MarkRelayUpstreamCompleted(c *gin.Context, info *relaycommon.RelayInfo) {
+	if c == nil {
+		return
+	}
+	if info == nil {
+		if relayInfo, ok := common.GetContextKeyType[*relaycommon.RelayInfo](c, constant.ContextKeyRelayInfo); ok {
+			info = relayInfo
+		}
+	}
+	service.MarkRelayUpstreamCompleted(c, info)
+}
+
 func markRelayFirstResponseObserved(c *gin.Context, info *relaycommon.RelayInfo, force bool) {
 	first := false
 	if info != nil {

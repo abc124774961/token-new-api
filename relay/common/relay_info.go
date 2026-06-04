@@ -91,17 +91,18 @@ type TokenCountMeta struct {
 }
 
 type RelayInfo struct {
-	TokenId           int
-	TokenKey          string
-	TokenGroup        string
-	UserId            int
-	UsingGroup        string // 使用的分组，当auto跨分组重试时，会变动
-	UserGroup         string // 用户所在分组
-	TokenUnlimited    bool
-	StartTime         time.Time
-	FirstResponseTime time.Time
-	isFirstResponse   bool
-	firstResponseMu   sync.Mutex
+	TokenId               int
+	TokenKey              string
+	TokenGroup            string
+	UserId                int
+	UsingGroup            string // 使用的分组，当auto跨分组重试时，会变动
+	UserGroup             string // 用户所在分组
+	TokenUnlimited        bool
+	StartTime             time.Time
+	FirstResponseTime     time.Time
+	UpstreamCompletedTime time.Time
+	isFirstResponse       bool
+	firstResponseMu       sync.Mutex
 	//SendLastReasoningResponse bool
 	IsStream               bool
 	IsGeminiBatchEmbedding bool
@@ -868,6 +869,52 @@ func (info *RelayInfo) HasSendResponse() bool {
 	info.firstResponseMu.Lock()
 	defer info.firstResponseMu.Unlock()
 	return info.FirstResponseTime.After(info.StartTime)
+}
+
+func (info *RelayInfo) SetUpstreamCompletedTime(completedAt time.Time) bool {
+	if info == nil {
+		return false
+	}
+	if completedAt.IsZero() {
+		completedAt = time.Now()
+	}
+	info.firstResponseMu.Lock()
+	defer info.firstResponseMu.Unlock()
+	if !info.UpstreamCompletedTime.IsZero() {
+		return false
+	}
+	info.UpstreamCompletedTime = completedAt
+	return true
+}
+
+func (info *RelayInfo) UpstreamCompletedDuration() time.Duration {
+	if info == nil || info.StartTime.IsZero() {
+		return 0
+	}
+	return info.UpstreamCompletedSince(info.StartTime)
+}
+
+func (info *RelayInfo) UpstreamCompletedSince(startedAt time.Time) time.Duration {
+	if info == nil || startedAt.IsZero() {
+		return 0
+	}
+	info.firstResponseMu.Lock()
+	completedAt := info.UpstreamCompletedTime
+	info.firstResponseMu.Unlock()
+	if completedAt.IsZero() || completedAt.Before(startedAt) {
+		return 0
+	}
+	return completedAt.Sub(startedAt)
+}
+
+func (info *RelayInfo) CurrentRequestDuration() time.Duration {
+	if completed := info.UpstreamCompletedDuration(); completed > 0 {
+		return completed
+	}
+	if info == nil || info.StartTime.IsZero() {
+		return 0
+	}
+	return time.Since(info.StartTime)
 }
 
 type TaskRelayInfo struct {

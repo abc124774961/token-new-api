@@ -138,7 +138,7 @@ func (t *Topic) PublishUserRequest(event userrequest.Event) {
 		return
 	}
 	record := userRequestRecordFromRealtimeRecord(event.Record)
-	if event.Kind == userrequest.EventFinished {
+	if event.Kind == userrequest.EventFinished || event.Kind == userrequest.EventUpdated {
 		controller.InvalidateModelGatewayObservabilitySummaryCacheForUserRequest(record)
 	}
 	t.mu.Lock()
@@ -155,7 +155,7 @@ func (t *Topic) PublishUserRequest(event userrequest.Event) {
 		if sample == nil || sample.params.ViewMode != "user_requests" || !sample.params.matchesUserRequest(record) {
 			continue
 		}
-		if event.Kind == userrequest.EventFinished {
+		if event.Kind == userrequest.EventFinished || event.Kind == userrequest.EventUpdated {
 			t.pending[groupKey] = true
 			delete(t.cache, groupKey)
 		}
@@ -167,7 +167,7 @@ func (t *Topic) PublishUserRequest(event userrequest.Event) {
 	if len(deliveries) == 0 {
 		return
 	}
-	if event.Kind == userrequest.EventFinished {
+	if event.Kind == userrequest.EventFinished || event.Kind == userrequest.EventUpdated {
 		records := []controller.ModelGatewayUserRequestRecord{record}
 		controller.AttachModelGatewayUserRequestDispatchRecords(records)
 		record = records[0]
@@ -610,6 +610,7 @@ func userRequestRecordTerminal(record controller.ModelGatewayUserRequestRecord) 
 	}
 	switch strings.TrimSpace(record.Status) {
 	case userrequest.StatusSuccess,
+		userrequest.StatusSettling,
 		userrequest.StatusFailed,
 		userrequest.StatusProbe,
 		userrequest.StatusProbeFailed,
