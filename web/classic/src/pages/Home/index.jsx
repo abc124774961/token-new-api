@@ -2010,7 +2010,14 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
   const limitLabelY = curve.limitLine
     ? Math.max(curve.plotTop + 8, curve.limitLine.y - limitLabelHeight - 10)
     : 0;
-  const tooltipPoint = focusedPoint;
+  const defaultTooltipPoint =
+    hasData && curve.dots.length > 0 ? curve.dots[curve.dots.length - 1] : null;
+  const activeFocusedPoint =
+    focusedPoint &&
+    curve.dots.some((point) => point.timestamp === focusedPoint.timestamp)
+      ? focusedPoint
+      : null;
+  const tooltipPoint = activeFocusedPoint || defaultTooltipPoint;
   useEffect(() => {
     const chartElement = chartRef.current;
     if (!chartElement) return undefined;
@@ -2203,7 +2210,7 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
                       r={3.4}
                       tabIndex={0}
                       className={`ct-lite-ratio-dot${
-                        focusedPoint?.timestamp === point.timestamp ? ' active' : ''
+                        tooltipPoint?.timestamp === point.timestamp ? ' active' : ''
                       }`}
                       onMouseEnter={() => setFocusedPoint(point)}
                       onFocus={() => setFocusedPoint(point)}
