@@ -813,7 +813,7 @@
 }
 
 .ct-model-gateway-user-request-table {
-  min-width: 1460px;
+  min-width: 1580px;
 }
 
 .ct-model-gateway-user-request-table-head,
@@ -821,7 +821,7 @@
   display: grid;
   align-items: center;
   grid-template-columns:
-    108px minmax(136px, 0.4fr) minmax(390px, 1.32fr)
+    108px minmax(136px, 0.38fr) minmax(500px, 1.55fr)
     minmax(146px, 0.48fr) minmax(220px, 0.72fr)
     142px 118px 78px;
 }
@@ -1251,7 +1251,7 @@
 }
 
 .ct-model-gateway-user-request-summary-col .ct-model-gateway-request-id {
-  max-width: 146px;
+  max-width: 160px;
   color: #253551;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
@@ -1415,8 +1415,8 @@
 }
 
 .ct-model-gateway-user-request-route-channel {
-  max-width: 116px;
-  flex: 0 1 116px;
+  max-width: 220px;
+  flex: 0 1 220px;
 }
 
 .ct-model-gateway-user-request-route-model {

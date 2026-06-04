@@ -2795,6 +2795,8 @@ function getUserRequestStatusLabel(status, t) {
 }
 
 function getUserRequestStatusMeta(record, t) {
+  const status = String(record?.status || '').trim();
+  const settledWithBilling = Boolean(record?.billing) && record?.final_success;
   if (record?.is_health_probe || record?.request_meta?.is_health_probe) {
     return record?.final_success || record?.success
       ? { color: 'cyan', label: t('健康探活'), tone: 'probe' }
@@ -2803,10 +2805,10 @@ function getUserRequestStatusMeta(record, t) {
   if (isUserRequestProcessing(record)) {
     return { color: 'blue', label: t('执行中'), tone: 'processing' };
   }
-  if (String(record?.status || '').trim() === 'settling') {
+  if (status === 'settling' && !settledWithBilling) {
     return { color: 'teal', label: t('费用结算中'), tone: 'settling' };
   }
-  if (String(record?.status || '').trim() === 'settlement_timeout') {
+  if (status === 'settlement_timeout' && !settledWithBilling) {
     return { color: 'orange', label: t('扣费待写入'), tone: 'billing-pending' };
   }
   if (isUserQuotaExhaustedRecord(record)) {

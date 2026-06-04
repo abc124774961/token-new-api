@@ -388,7 +388,10 @@ export function useModelGatewayObservabilityData({
         if (!isActiveRequest()) return;
         if (source === FALLBACK_REFRESH_SOURCE && hasSnapshotRef.current)
           return;
-        setData(unwrapApiData(response));
+        const payload = unwrapApiData(response);
+        setData((current) =>
+          mergeSnapshot(current, payload || null, recentLimit),
+        );
         setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
       })();
       activeRequestRef.current = {
@@ -419,7 +422,14 @@ export function useModelGatewayObservabilityData({
         setRefreshing(false);
       }
     },
-    [abortActiveRequest, isAbortError, requestKey, requestParams, t],
+    [
+      abortActiveRequest,
+      isAbortError,
+      recentLimit,
+      requestKey,
+      requestParams,
+      t,
+    ],
   );
 
   const handleSnapshot = useCallback((payload) => {

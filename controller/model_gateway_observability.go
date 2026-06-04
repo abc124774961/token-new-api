@@ -3783,6 +3783,17 @@ func AttachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequ
 	attachModelGatewayUserRequestDispatchRecords(records)
 }
 
+func AttachModelGatewayUserRequestRealtimeDetails(records []ModelGatewayUserRequestRecord) {
+	attachModelGatewayUserRequestBilling(records)
+	attachModelGatewayUserRequestCosts(records)
+	attachModelGatewayUserRequestDispatchRecords(records)
+	attachModelGatewayUserRequestWarningDispatchFallback(records)
+	normalizeModelGatewayUserRequestBusinessRecords(records)
+	normalizeModelGatewayUserRequestHealthProbeRecords(records)
+	attachModelGatewayUserRequestExecutionUsers(records)
+	attachModelGatewayUserRequestUsernames(records)
+}
+
 func normalizeModelGatewayUserRequestBusinessRecords(records []ModelGatewayUserRequestRecord) {
 	for idx := range records {
 		if !modelGatewayUserRequestRecordUserQuotaExhausted(records[idx]) {

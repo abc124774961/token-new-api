@@ -169,7 +169,7 @@ func (t *Topic) PublishUserRequest(event userrequest.Event) {
 	}
 	if event.Kind == userrequest.EventFinished || event.Kind == userrequest.EventUpdated {
 		records := []controller.ModelGatewayUserRequestRecord{record}
-		controller.AttachModelGatewayUserRequestDispatchRecords(records)
+		controller.AttachModelGatewayUserRequestRealtimeDetails(records)
 		record = records[0]
 	}
 	for _, subscriptions := range deliveries {
