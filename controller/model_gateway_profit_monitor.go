@@ -49,6 +49,7 @@ type ModelGatewayProfitMonitorConfig struct {
 	TargetProfitRate               float64 `json:"target_profit_rate"`
 	DynamicRatioMinLimit           float64 `json:"dynamic_ratio_min_limit"`
 	DynamicRatioMaxLimit           float64 `json:"dynamic_ratio_max_limit"`
+	DynamicRatioFixedValue         float64 `json:"dynamic_ratio_fixed_value"`
 	DynamicRatioRecommendationMode string  `json:"dynamic_ratio_recommendation_mode"`
 }
 
@@ -62,6 +63,7 @@ type UpdateModelGatewayProfitMonitorConfigRequest struct {
 	TargetProfitRate               *float64 `json:"target_profit_rate,omitempty"`
 	DynamicRatioMinLimit           *float64 `json:"dynamic_ratio_min_limit,omitempty"`
 	DynamicRatioMaxLimit           *float64 `json:"dynamic_ratio_max_limit,omitempty"`
+	DynamicRatioFixedValue         *float64 `json:"dynamic_ratio_fixed_value,omitempty"`
 	DynamicRatioRecommendationMode string   `json:"dynamic_ratio_recommendation_mode,omitempty"`
 }
 
@@ -200,46 +202,48 @@ type ModelGatewayProfitMonitorBreakdown struct {
 }
 
 type ModelGatewayProfitDynamicRatioGroup struct {
-	Group                string  `json:"group"`
-	BillingRatioMode     string  `json:"billing_ratio_mode"`
-	StaticRatio          float64 `json:"static_ratio"`
-	TargetRatio          float64 `json:"target_ratio"`
-	EffectiveRatio       float64 `json:"effective_ratio"`
-	DynamicRatio         float64 `json:"dynamic_ratio"`
-	ActualRatio          float64 `json:"actual_ratio"`
-	Applied              bool    `json:"applied"`
-	FallbackReason       string  `json:"fallback_reason"`
-	ApplyReason          string  `json:"apply_reason"`
-	Clamped              bool    `json:"clamped"`
-	PendingManualConfirm bool    `json:"pending_manual_confirm"`
-	SampleCount          int     `json:"sample_count"`
-	ModelCount           int     `json:"model_count"`
-	RequestCount         int64   `json:"request_count"`
-	SuccessRequestCount  int64   `json:"success_request_count"`
-	TotalTokens          int64   `json:"total_tokens"`
-	CurrentRevenueUSD    float64 `json:"current_revenue_usd"`
-	RequiredRevenueUSD   float64 `json:"required_revenue_usd"`
-	RevenueGapUSD        float64 `json:"revenue_gap_usd"`
-	UpstreamCostUSD      float64 `json:"upstream_cost_usd"`
-	TrafficCostUSD       float64 `json:"traffic_cost_usd"`
-	ServerCostUSD        float64 `json:"server_cost_usd"`
-	ResourceCostUSD      float64 `json:"resource_cost_usd"`
-	OperatingCostUSD     float64 `json:"operating_cost_usd"`
-	DynamicRatioLimitMin float64 `json:"dynamic_ratio_limit_min"`
-	DynamicRatioLimitMax float64 `json:"dynamic_ratio_limit_max"`
-	BaseQuotaAtRatio1    float64 `json:"base_quota_at_ratio_1"`
-	CostMultiplier       float64 `json:"cost_multiplier"`
-	CostMarkupMultiplier float64 `json:"cost_markup_multiplier"`
-	ReferenceModel       string  `json:"reference_model"`
-	CostSource           string  `json:"cost_source"`
-	ApplyMode            string  `json:"apply_mode"`
-	ProfitRate           float64 `json:"profit_rate"`
-	TrafficEstimated     bool    `json:"traffic_estimated"`
-	TrafficDataReady     bool    `json:"traffic_data_ready"`
-	WindowStart          int64   `json:"window_start"`
-	WindowEnd            int64   `json:"window_end"`
-	CalculatedAt         int64   `json:"calculated_at"`
-	UpdatedAt            int64   `json:"updated_at"`
+	Group                    string  `json:"group"`
+	BillingRatioMode         string  `json:"billing_ratio_mode"`
+	StaticRatio              float64 `json:"static_ratio"`
+	TargetRatio              float64 `json:"target_ratio"`
+	EffectiveRatio           float64 `json:"effective_ratio"`
+	DynamicRatio             float64 `json:"dynamic_ratio"`
+	ActualRatio              float64 `json:"actual_ratio"`
+	Applied                  bool    `json:"applied"`
+	FallbackReason           string  `json:"fallback_reason"`
+	ApplyReason              string  `json:"apply_reason"`
+	Clamped                  bool    `json:"clamped"`
+	PendingManualConfirm     bool    `json:"pending_manual_confirm"`
+	SampleCount              int     `json:"sample_count"`
+	ModelCount               int     `json:"model_count"`
+	RequestCount             int64   `json:"request_count"`
+	SuccessRequestCount      int64   `json:"success_request_count"`
+	TotalTokens              int64   `json:"total_tokens"`
+	CurrentRevenueUSD        float64 `json:"current_revenue_usd"`
+	RequiredRevenueUSD       float64 `json:"required_revenue_usd"`
+	RevenueGapUSD            float64 `json:"revenue_gap_usd"`
+	UpstreamCostUSD          float64 `json:"upstream_cost_usd"`
+	TrafficCostUSD           float64 `json:"traffic_cost_usd"`
+	ServerCostUSD            float64 `json:"server_cost_usd"`
+	ResourceCostUSD          float64 `json:"resource_cost_usd"`
+	OperatingCostUSD         float64 `json:"operating_cost_usd"`
+	DynamicRatioLimitMin     float64 `json:"dynamic_ratio_limit_min"`
+	DynamicRatioLimitMax     float64 `json:"dynamic_ratio_limit_max"`
+	DynamicRatioFixedValue   float64 `json:"dynamic_ratio_fixed_value"`
+	DynamicRatioFixedApplied bool    `json:"dynamic_ratio_fixed_applied"`
+	BaseQuotaAtRatio1        float64 `json:"base_quota_at_ratio_1"`
+	CostMultiplier           float64 `json:"cost_multiplier"`
+	CostMarkupMultiplier     float64 `json:"cost_markup_multiplier"`
+	ReferenceModel           string  `json:"reference_model"`
+	CostSource               string  `json:"cost_source"`
+	ApplyMode                string  `json:"apply_mode"`
+	ProfitRate               float64 `json:"profit_rate"`
+	TrafficEstimated         bool    `json:"traffic_estimated"`
+	TrafficDataReady         bool    `json:"traffic_data_ready"`
+	WindowStart              int64   `json:"window_start"`
+	WindowEnd                int64   `json:"window_end"`
+	CalculatedAt             int64   `json:"calculated_at"`
+	UpdatedAt                int64   `json:"updated_at"`
 }
 
 type ModelGatewayProfitDynamicRatioSummary struct {
@@ -290,6 +294,8 @@ type ModelGatewayProfitRecommendation struct {
 	SuggestedDynamicRatioRaw       float64 `json:"suggested_dynamic_ratio_raw"`
 	DynamicRatioLimitMin           float64 `json:"dynamic_ratio_limit_min"`
 	DynamicRatioLimitMax           float64 `json:"dynamic_ratio_limit_max"`
+	DynamicRatioFixedValue         float64 `json:"dynamic_ratio_fixed_value"`
+	DynamicRatioFixedApplied       bool    `json:"dynamic_ratio_fixed_applied"`
 	DynamicRatioLimitApplied       bool    `json:"dynamic_ratio_limit_applied"`
 	DynamicRatioLimitReason        string  `json:"dynamic_ratio_limit_reason"`
 	CurrentEffectiveDynamicRatio   float64 `json:"current_effective_dynamic_ratio"`
@@ -437,6 +443,9 @@ func UpdateModelGatewayProfitMonitorConfig(c *gin.Context) {
 	}
 	if request.DynamicRatioMaxLimit != nil {
 		config.DynamicRatioMaxLimit = *request.DynamicRatioMaxLimit
+	}
+	if request.DynamicRatioFixedValue != nil {
+		config.DynamicRatioFixedValue = *request.DynamicRatioFixedValue
 	}
 	if strings.TrimSpace(request.DynamicRatioRecommendationMode) != "" {
 		config.DynamicRatioRecommendationMode = strings.TrimSpace(request.DynamicRatioRecommendationMode)
@@ -819,6 +828,7 @@ func defaultModelGatewayProfitMonitorConfig() ModelGatewayProfitMonitorConfig {
 		TargetProfitRate:               0.20,
 		DynamicRatioMinLimit:           0,
 		DynamicRatioMaxLimit:           0,
+		DynamicRatioFixedValue:         0,
 		DynamicRatioRecommendationMode: "observe",
 	}
 }
@@ -870,11 +880,17 @@ func normalizeModelGatewayProfitMonitorConfig(config ModelGatewayProfitMonitorCo
 	if config.DynamicRatioMaxLimit < 0 {
 		config.DynamicRatioMaxLimit = 0
 	}
+	if config.DynamicRatioFixedValue < 0 {
+		config.DynamicRatioFixedValue = 0
+	}
 	if config.DynamicRatioMinLimit > 100 {
 		config.DynamicRatioMinLimit = 100
 	}
 	if config.DynamicRatioMaxLimit > 100 {
 		config.DynamicRatioMaxLimit = 100
+	}
+	if config.DynamicRatioFixedValue > 100 {
+		config.DynamicRatioFixedValue = 100
 	}
 	if config.DynamicRatioMaxLimit > 0 && config.DynamicRatioMinLimit > config.DynamicRatioMaxLimit {
 		config.DynamicRatioMaxLimit = config.DynamicRatioMinLimit
@@ -1468,46 +1484,48 @@ func buildModelGatewayProfitDynamicRatioGroups(config ModelGatewayProfitMonitorC
 			applyReason = strings.TrimSpace(baseline.ApplyReason)
 		}
 		item := ModelGatewayProfitDynamicRatioGroup{
-			Group:                group,
-			BillingRatioMode:     billingMode,
-			StaticRatio:          staticRatio,
-			TargetRatio:          baseline.TargetRatio,
-			EffectiveRatio:       effectiveRatio,
-			DynamicRatio:         dynamicRatio,
-			ActualRatio:          actualRatio,
-			Applied:              applied.Applied,
-			FallbackReason:       fallbackReason,
-			ApplyReason:          applyReason,
-			Clamped:              baseline.Clamped,
-			PendingManualConfirm: baseline.PendingManualConfirm,
-			SampleCount:          baseline.SampleCount,
-			ModelCount:           baseline.ModelCount,
-			RequestCount:         baseline.RequestCount,
-			SuccessRequestCount:  baseline.SuccessRequestCount,
-			TotalTokens:          baseline.TotalTokens,
-			CurrentRevenueUSD:    currentRevenue,
-			RequiredRevenueUSD:   requiredRevenue,
-			RevenueGapUSD:        requiredRevenue - currentRevenue,
-			UpstreamCostUSD:      baseline.UpstreamCostUSD,
-			TrafficCostUSD:       baseline.TrafficCostUSD,
-			ServerCostUSD:        baseline.ServerCostUSD,
-			ResourceCostUSD:      baseline.ResourceCostUSD,
-			OperatingCostUSD:     baseline.OperatingCostUSD,
-			DynamicRatioLimitMin: dynamicRatioLimitMin,
-			DynamicRatioLimitMax: dynamicRatioLimitMax,
-			BaseQuotaAtRatio1:    baseline.BaseQuotaAtRatio1,
-			CostMultiplier:       baseline.CostMultiplier,
-			CostMarkupMultiplier: modelgatewaydynamicbilling.RevenueMultiplierForGrossMargin(profitRate),
-			ReferenceModel:       referenceModel,
-			CostSource:           strings.TrimSpace(baseline.CostSource),
-			ApplyMode:            strings.TrimSpace(applied.ApplyMode),
-			ProfitRate:           profitRate,
-			TrafficEstimated:     baseline.TrafficEstimated,
-			TrafficDataReady:     baseline.TrafficDataReady,
-			WindowStart:          baseline.WindowStart,
-			WindowEnd:            baseline.WindowEnd,
-			CalculatedAt:         baseline.CalculatedAt,
-			UpdatedAt:            baseline.CalculatedAt,
+			Group:                    group,
+			BillingRatioMode:         billingMode,
+			StaticRatio:              staticRatio,
+			TargetRatio:              baseline.TargetRatio,
+			EffectiveRatio:           effectiveRatio,
+			DynamicRatio:             dynamicRatio,
+			ActualRatio:              actualRatio,
+			Applied:                  applied.Applied,
+			FallbackReason:           fallbackReason,
+			ApplyReason:              applyReason,
+			Clamped:                  baseline.Clamped,
+			PendingManualConfirm:     baseline.PendingManualConfirm,
+			DynamicRatioFixedValue:   baseline.FixedRatio,
+			DynamicRatioFixedApplied: baseline.FixedRatioApplied,
+			SampleCount:              baseline.SampleCount,
+			ModelCount:               baseline.ModelCount,
+			RequestCount:             baseline.RequestCount,
+			SuccessRequestCount:      baseline.SuccessRequestCount,
+			TotalTokens:              baseline.TotalTokens,
+			CurrentRevenueUSD:        currentRevenue,
+			RequiredRevenueUSD:       requiredRevenue,
+			RevenueGapUSD:            requiredRevenue - currentRevenue,
+			UpstreamCostUSD:          baseline.UpstreamCostUSD,
+			TrafficCostUSD:           baseline.TrafficCostUSD,
+			ServerCostUSD:            baseline.ServerCostUSD,
+			ResourceCostUSD:          baseline.ResourceCostUSD,
+			OperatingCostUSD:         baseline.OperatingCostUSD,
+			DynamicRatioLimitMin:     dynamicRatioLimitMin,
+			DynamicRatioLimitMax:     dynamicRatioLimitMax,
+			BaseQuotaAtRatio1:        baseline.BaseQuotaAtRatio1,
+			CostMultiplier:           baseline.CostMultiplier,
+			CostMarkupMultiplier:     modelgatewaydynamicbilling.RevenueMultiplierForGrossMargin(profitRate),
+			ReferenceModel:           referenceModel,
+			CostSource:               strings.TrimSpace(baseline.CostSource),
+			ApplyMode:                strings.TrimSpace(applied.ApplyMode),
+			ProfitRate:               profitRate,
+			TrafficEstimated:         baseline.TrafficEstimated,
+			TrafficDataReady:         baseline.TrafficDataReady,
+			WindowStart:              baseline.WindowStart,
+			WindowEnd:                baseline.WindowEnd,
+			CalculatedAt:             baseline.CalculatedAt,
+			UpdatedAt:                baseline.CalculatedAt,
 		}
 		items = append(items, item)
 		summary.TotalGroups++
@@ -1713,20 +1731,29 @@ func applyModelGatewayProfitDynamicRatioLimit(recommendation *ModelGatewayProfit
 	rawRatio := recommendation.SuggestedDynamicRatio
 	limitedRatio := rawRatio
 	reason := ""
-	if minLimit > 0 && limitedRatio < minLimit {
+	fixedRatio := normalizeModelGatewayProfitMonitorConfig(config).DynamicRatioFixedValue
+	if fixedRatio > 0 {
+		limitedRatio = fixedRatio
+		reason = "fixed_ratio"
+	}
+	if fixedRatio <= 0 && minLimit > 0 && limitedRatio < minLimit {
 		limitedRatio = minLimit
 		reason = "min_limit"
 	}
-	if maxLimit > 0 && limitedRatio > maxLimit {
+	if fixedRatio <= 0 && maxLimit > 0 && limitedRatio > maxLimit {
 		limitedRatio = maxLimit
 		reason = "max_limit"
 	}
 	recommendation.SuggestedDynamicRatioRaw = rawRatio
 	recommendation.DynamicRatioLimitMin = minLimit
 	recommendation.DynamicRatioLimitMax = maxLimit
+	recommendation.DynamicRatioFixedValue = fixedRatio
+	recommendation.DynamicRatioFixedApplied = fixedRatio > 0
 	if math.Abs(limitedRatio-rawRatio) > 0.0000001 {
 		recommendation.SuggestedDynamicRatio = limitedRatio
 		recommendation.DynamicRatioLimitApplied = true
+		recommendation.DynamicRatioLimitReason = reason
+	} else if fixedRatio > 0 {
 		recommendation.DynamicRatioLimitReason = reason
 	}
 }
@@ -1805,6 +1832,8 @@ func buildModelGatewayProfitRecommendationSnapshot(payload ModelGatewayProfitMon
 			"suggested_dynamic_ratio_raw":       recommendation.SuggestedDynamicRatioRaw,
 			"dynamic_ratio_limit_min":           recommendation.DynamicRatioLimitMin,
 			"dynamic_ratio_limit_max":           recommendation.DynamicRatioLimitMax,
+			"dynamic_ratio_fixed_value":         recommendation.DynamicRatioFixedValue,
+			"dynamic_ratio_fixed_applied":       boolToProfitMonitorFloat(recommendation.DynamicRatioFixedApplied),
 			"dynamic_ratio_limit_applied":       boolToProfitMonitorFloat(recommendation.DynamicRatioLimitApplied),
 			"traffic_cost_usd":                  summary.TrafficCostUSD,
 			"resource_cost_usd":                 resourceCost,
@@ -1891,7 +1920,9 @@ func buildModelGatewayProfitGroupRecommendationSnapshot(payload ModelGatewayProf
 		SuggestedDynamicRatioRaw:       item.TargetRatio,
 		CurrentEffectiveDynamicRatio:   item.ActualRatio,
 		DynamicBillingApplied:          item.Applied,
-		DynamicRatioLimitApplied:       item.Clamped,
+		DynamicRatioFixedValue:         item.DynamicRatioFixedValue,
+		DynamicRatioFixedApplied:       item.DynamicRatioFixedApplied,
+		DynamicRatioLimitApplied:       item.Clamped || item.DynamicRatioFixedApplied,
 		DynamicRatioLimitReason:        modelGatewayProfitDynamicRatioLimitReason(item),
 		MinimumRevenuePerMBaseQuotaUSD: ratioOrZero(item.RequiredRevenueUSD, item.BaseQuotaAtRatio1) * 1_000_000,
 		CanRecommend:                   item.RequiredRevenueUSD > 0 && item.BaseQuotaAtRatio1 > 0,
@@ -1952,6 +1983,8 @@ func buildModelGatewayProfitGroupRecommendationSnapshot(payload ModelGatewayProf
 			"suggested_dynamic_ratio":           recommendation.SuggestedDynamicRatio,
 			"suggested_dynamic_ratio_raw":       recommendation.SuggestedDynamicRatioRaw,
 			"current_effective_dynamic_ratio":   recommendation.CurrentEffectiveDynamicRatio,
+			"dynamic_ratio_fixed_value":         recommendation.DynamicRatioFixedValue,
+			"dynamic_ratio_fixed_applied":       boolToProfitMonitorFloat(recommendation.DynamicRatioFixedApplied),
 			"dynamic_ratio_limit_applied":       boolToProfitMonitorFloat(recommendation.DynamicRatioLimitApplied),
 			"request_count":                     float64(summary.Requests),
 			"success_rate":                      summary.SuccessRate,
@@ -2005,6 +2038,9 @@ func normalizeModelGatewayProfitRecommendationScopeRequest(request CreateModelGa
 }
 
 func modelGatewayProfitDynamicRatioLimitReason(item ModelGatewayProfitDynamicRatioGroup) string {
+	if item.DynamicRatioFixedApplied {
+		return "fixed_ratio"
+	}
 	if !item.Clamped {
 		return ""
 	}

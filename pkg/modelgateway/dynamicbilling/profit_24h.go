@@ -22,6 +22,7 @@ type profit24hMonitorConfig struct {
 	ResourceCostEnabled           bool    `json:"resource_cost_enabled"`
 	DynamicRatioMinLimit          float64 `json:"dynamic_ratio_min_limit"`
 	DynamicRatioMaxLimit          float64 `json:"dynamic_ratio_max_limit"`
+	DynamicRatioFixedValue        float64 `json:"dynamic_ratio_fixed_value"`
 }
 
 type profit24hGroupAccumulator struct {
@@ -524,11 +525,17 @@ func loadProfit24hMonitorConfig() profit24hMonitorConfig {
 	if config.DynamicRatioMaxLimit < 0 {
 		config.DynamicRatioMaxLimit = 0
 	}
+	if config.DynamicRatioFixedValue < 0 {
+		config.DynamicRatioFixedValue = 0
+	}
 	if config.DynamicRatioMinLimit > 100 {
 		config.DynamicRatioMinLimit = 100
 	}
 	if config.DynamicRatioMaxLimit > 100 {
 		config.DynamicRatioMaxLimit = 100
+	}
+	if config.DynamicRatioFixedValue > 100 {
+		config.DynamicRatioFixedValue = 100
 	}
 	if config.DynamicRatioMaxLimit > 0 && config.DynamicRatioMinLimit > config.DynamicRatioMaxLimit {
 		config.DynamicRatioMaxLimit = config.DynamicRatioMinLimit

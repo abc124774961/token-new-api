@@ -118,6 +118,8 @@ type PublicHomeDynamicBilling struct {
 	Group             string                         `json:"group,omitempty"`
 	Model             string                         `json:"model,omitempty"`
 	CurrentRatio      float64                        `json:"current_ratio,omitempty"`
+	RatioUpperLimit   float64                        `json:"ratio_upper_limit,omitempty"`
+	FixedRatio        float64                        `json:"fixed_ratio,omitempty"`
 	MinRatio7d        float64                        `json:"min_ratio_7d,omitempty"`
 	MaxRatio7d        float64                        `json:"max_ratio_7d,omitempty"`
 	DisplayPricePerM  float64                        `json:"display_price_per_m,omitempty"`
@@ -372,16 +374,21 @@ func getCachedPublicHomeDynamicBilling() *PublicHomeDynamicBilling {
 
 func buildPublicHomeDynamicBilling(now int64) *PublicHomeDynamicBilling {
 	overview := buildModelGatewayDynamicBillingOverviewForDisplay(now, 0)
+	profitConfig := loadModelGatewayProfitMonitorConfig()
+	_, ratioUpperLimit := modelGatewayProfitEffectiveDynamicRatioLimits(profitConfig)
+	fixedRatio := profitConfig.DynamicRatioFixedValue
 	refreshSeconds := overview.RefreshSeconds
 	if refreshSeconds <= 0 {
 		refreshSeconds = int(publicHomeDynamicBillingTTL.Seconds())
 	}
 	if !overview.Enabled || len(overview.Groups) == 0 {
 		return &PublicHomeDynamicBilling{
-			Enabled:        overview.Enabled,
-			Status:         "waiting_samples",
-			Model:          modelGatewayDynamicBillingDisplayModel,
-			RefreshSeconds: refreshSeconds,
+			Enabled:         overview.Enabled,
+			Status:          "waiting_samples",
+			Model:           modelGatewayDynamicBillingDisplayModel,
+			RatioUpperLimit: ratioUpperLimit,
+			FixedRatio:      fixedRatio,
+			RefreshSeconds:  refreshSeconds,
 		}
 	}
 
@@ -443,6 +450,8 @@ func buildPublicHomeDynamicBilling(now int64) *PublicHomeDynamicBilling {
 		Group:             firstNonEmptyTrimmed(primary.DisplayGroup, primary.CurrentTargetGroup, primary.PolicyGroup),
 		Model:             modelName,
 		CurrentRatio:      ratio,
+		RatioUpperLimit:   ratioUpperLimit,
+		FixedRatio:        fixedRatio,
 		MinRatio7d:        minRatio7d,
 		MaxRatio7d:        maxRatio7d,
 		DisplayPricePerM:  displayPrice,

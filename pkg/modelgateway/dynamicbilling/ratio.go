@@ -36,6 +36,7 @@ const (
 	ApplyReasonAutoApplied           = "auto_applied"
 	ApplyReasonManualModeAutoApplied = "manual_mode_auto_applied"
 	ApplyReasonStepChangeAutoApplied = "step_change_auto_applied"
+	ApplyReasonFixedRatioApplied     = "fixed_ratio_applied"
 )
 
 type RatioBaseline struct {
@@ -60,6 +61,8 @@ type RatioBaseline struct {
 	CostMultiplier       float64 `json:"cost_multiplier,omitempty"`
 	TargetRatio          float64 `json:"target_ratio,omitempty"`
 	EffectiveRatio       float64 `json:"effective_ratio,omitempty"`
+	FixedRatio           float64 `json:"fixed_ratio,omitempty"`
+	FixedRatioApplied    bool    `json:"fixed_ratio_applied,omitempty"`
 	Clamped              bool    `json:"clamped,omitempty"`
 	PendingManualConfirm bool    `json:"pending_manual_confirm,omitempty"`
 	FallbackReason       string  `json:"fallback_reason,omitempty"`
@@ -358,6 +361,7 @@ func normalizeRatioBaseline(value RatioBaseline) RatioBaseline {
 	value.Ratio = RoundDynamicRatio(value.Ratio)
 	value.TargetRatio = RoundDynamicRatio(value.TargetRatio)
 	value.EffectiveRatio = RoundDynamicRatio(value.EffectiveRatio)
+	value.FixedRatio = RoundDynamicRatio(value.FixedRatio)
 	if value.Ratio > 0 {
 		referenceModel := strings.TrimSpace(value.ReferenceModel)
 		if referenceModel == "" {
@@ -440,6 +444,8 @@ func Apply(input ApplyInput) types.DynamicBillingSnapshot {
 	snapshot.CostMultiplier = baseline.CostMultiplier
 	snapshot.TargetRatio = baseline.TargetRatio
 	snapshot.EffectiveRatio = baseline.EffectiveRatio
+	snapshot.FixedRatio = baseline.FixedRatio
+	snapshot.FixedRatioApplied = baseline.FixedRatioApplied
 	snapshot.Clamped = baseline.Clamped
 	snapshot.PendingManualConfirm = false
 	snapshot.RequestCount = baseline.RequestCount
@@ -451,17 +457,18 @@ func Apply(input ApplyInput) types.DynamicBillingSnapshot {
 	snapshot.ServerCostUSD = baseline.ServerCostUSD
 	snapshot.ResourceCostUSD = baseline.ResourceCostUSD
 	snapshot.UpstreamCostUSD = baseline.UpstreamCostUSD
-	if fallbackReason := strings.TrimSpace(baseline.FallbackReason); fallbackReason != "" && !isAutoAppliedLegacyFallback(fallbackReason) {
+	fixedRatioApplied := baseline.FixedRatioApplied && baseline.FixedRatio > 0
+	if fallbackReason := strings.TrimSpace(baseline.FallbackReason); fallbackReason != "" && !isAutoAppliedLegacyFallback(fallbackReason) && !fixedRatioApplied {
 		snapshot.FallbackReason = fallbackReason
 		return snapshot
 	} else if fallbackReason != "" && snapshot.ApplyReason == "" {
 		snapshot.ApplyReason = applyReasonForLegacyFallback(fallbackReason)
 	}
-	if input.Setting.DynamicBillingMinSamples > 0 && baseline.SampleCount < input.Setting.DynamicBillingMinSamples {
+	if !fixedRatioApplied && input.Setting.DynamicBillingMinSamples > 0 && baseline.SampleCount < input.Setting.DynamicBillingMinSamples {
 		snapshot.FallbackReason = FallbackInsufficientSamples
 		return snapshot
 	}
-	if isProfit24hBaseline(baseline) {
+	if !fixedRatioApplied && isProfit24hBaseline(baseline) {
 		if baseline.RequestCount < int64(input.Setting.DynamicBillingMinRequests) ||
 			baseline.SuccessRequestCount < int64(input.Setting.DynamicBillingMinSuccessRequests) ||
 			baseline.TotalTokens < int64(input.Setting.DynamicBillingMinTokens) {
@@ -479,7 +486,7 @@ func Apply(input ApplyInput) types.DynamicBillingSnapshot {
 		}
 	}
 	maxAge := input.Setting.DynamicBillingMaxAgeSeconds
-	if maxAge > 0 {
+	if !fixedRatioApplied && maxAge > 0 {
 		now := input.Now
 		if now <= 0 {
 			now = time.Now().Unix()
@@ -493,6 +500,9 @@ func Apply(input ApplyInput) types.DynamicBillingSnapshot {
 		snapshot.FallbackReason = FallbackMissingKey
 		return snapshot
 	}
+	if fixedRatioApplied {
+		snapshot.ApplyReason = ApplyReasonFixedRatioApplied
+	}
 	if snapshot.ApplyReason == "" {
 		snapshot.ApplyReason = defaultApplyReason(snapshot.ApplyMode)
 	}
@@ -502,6 +512,37 @@ func Apply(input ApplyInput) types.DynamicBillingSnapshot {
 
 func BuildRatioBaselines(db *gorm.DB, logDB *gorm.DB, setting scheduler_setting.SchedulerSetting, now int64) (map[string]RatioBaseline, error) {
 	return BuildRatioBaselinesWithFilter(db, logDB, setting, now, SnapshotFilter{})
+}
+
+func applyProfitMonitorFixedDynamicRatio(values map[string]RatioBaseline) map[string]RatioBaseline {
+	if len(values) == 0 {
+		return values
+	}
+	config := loadProfit24hMonitorConfig()
+	fixedRatio := RoundDynamicRatio(config.DynamicRatioFixedValue)
+	if fixedRatio <= 0 {
+		return values
+	}
+	result := make(map[string]RatioBaseline, len(values))
+	for key, baseline := range values {
+		baseline.FixedRatio = fixedRatio
+		baseline.FixedRatioApplied = true
+		baseline.Ratio = fixedRatio
+		baseline.EffectiveRatio = fixedRatio
+		baseline.PendingManualConfirm = false
+		baseline.FallbackReason = ""
+		baseline.ApplyReason = ApplyReasonFixedRatioApplied
+		referenceModel := strings.TrimSpace(baseline.ReferenceModel)
+		if referenceModel == "" {
+			referenceModel = strings.TrimSpace(baseline.RequestedModel)
+		}
+		baseline.PricePerM = requestedModelPricePerMillion(referenceModel, fixedRatio)
+		if baseline.BaseQuotaAtRatio1 > 0 && common.QuotaPerUnit > 0 {
+			baseline.RequiredRevenueUSD = fixedRatio * baseline.BaseQuotaAtRatio1 / common.QuotaPerUnit
+		}
+		result[key] = baseline
+	}
+	return result
 }
 
 func BuildRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, setting scheduler_setting.SchedulerSetting, now int64, filter SnapshotFilter) (map[string]RatioBaseline, error) {
@@ -515,6 +556,7 @@ func BuildRatioBaselinesWithFilter(db *gorm.DB, logDB *gorm.DB, setting schedule
 	if err != nil {
 		return nil, err
 	}
+	values = applyProfitMonitorFixedDynamicRatio(values)
 	return normalizeRatioBaselineMap(values), nil
 }
 

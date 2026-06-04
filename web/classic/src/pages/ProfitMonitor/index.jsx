@@ -99,6 +99,7 @@ const DEFAULT_CONFIG = {
   target_profit_rate: 0.2,
   dynamic_ratio_min_limit: 0,
   dynamic_ratio_max_limit: 0,
+  dynamic_ratio_fixed_value: 0,
   dynamic_ratio_recommendation_mode: 'observe',
 };
 
@@ -726,6 +727,14 @@ function resolveDynamicRatioLimitMax(dynamicRatioGroup, config) {
   return 0;
 }
 
+function resolveDynamicRatioFixedValue(dynamicRatioGroup, config) {
+  const groupFixed = Number(dynamicRatioGroup?.dynamic_ratio_fixed_value || 0);
+  if (Number.isFinite(groupFixed) && groupFixed > 0) return groupFixed;
+  const configFixed = Number(config?.dynamic_ratio_fixed_value || 0);
+  if (Number.isFinite(configFixed) && configFixed > 0) return configFixed;
+  return 0;
+}
+
 function formatOptionalRatioLimit(value, t) {
   const numeric = Number(value || 0);
   return Number.isFinite(numeric) && numeric > 0
@@ -821,7 +830,7 @@ function buildOperationRatioInsight(dynamicRatioGroup, config, t) {
       tone: 'warning',
       title: t('触达倍率限制'),
       description: t(
-        '运营侧应先核对成本和上限配置，再决定是否放宽最高倍率限制。',
+        '运营侧应先核对成本和上限配置，再决定是否放宽倍率上限。',
       ),
     };
   }
@@ -900,12 +909,25 @@ function GroupRatioPanel({ dynamicRatioGroup, config, t }) {
       </div>
       <div className='ct-profit-ratio-stat-grid'>
         <RatioStat
-          label={t('最高倍率限制')}
+          label={t('倍率上限')}
           value={formatOptionalRatioLimit(maxLimit, t)}
           detail={
             dynamicRatioGroup.clamped ? t('已触达限制') : t('用于控制价格上沿')
           }
           tone={dynamicRatioGroup.clamped ? 'warning' : 'neutral'}
+        />
+        <RatioStat
+          label={t('固定倍率')}
+          value={formatOptionalRatioLimit(
+            resolveDynamicRatioFixedValue(dynamicRatioGroup, config),
+            t,
+          )}
+          detail={
+            dynamicRatioGroup.dynamic_ratio_fixed_applied
+              ? t('固定倍率生效')
+              : t('未设置')
+          }
+          tone={dynamicRatioGroup.dynamic_ratio_fixed_applied ? 'success' : 'neutral'}
         />
         <RatioStat
           label={t('建议目标倍率')}
@@ -1080,7 +1102,7 @@ function GroupProfitCard({
           value={formatRatioValue(dynamicRatioGroup?.actual_ratio)}
           detail={
             dynamicRatioGroup
-              ? t('最高限制 {{limit}} · 静态 {{static}}', {
+              ? t('倍率上限 {{limit}} · 静态 {{static}}', {
                   limit: formatOptionalRatioLimit(
                     resolveDynamicRatioLimitMax(dynamicRatioGroup, config),
                     t,
@@ -1197,7 +1219,7 @@ function ConfigModal({ visible, config, saving, onCancel, onSave, t }) {
           />
         </label>
         <label className='ct-profit-field'>
-          <span>{t('建议倍率上限')}</span>
+          <span>{t('倍率上限')}</span>
           <InputNumber
             min={0}
             max={100}
@@ -1208,6 +1230,20 @@ function ConfigModal({ visible, config, saving, onCancel, onSave, t }) {
               update('dynamic_ratio_max_limit', numberOrDefault(value))
             }
           />
+        </label>
+        <label className='ct-profit-field'>
+          <span>{t('固定倍率')}</span>
+          <InputNumber
+            min={0}
+            max={100}
+            step={0.0001}
+            suffix='x'
+            value={form.dynamic_ratio_fixed_value}
+            onChange={(value) =>
+              update('dynamic_ratio_fixed_value', numberOrDefault(value))
+            }
+          />
+          <small>{t('设置固定倍率后，动态倍率将直接使用该值。')}</small>
         </label>
         <label className='ct-profit-field'>
           <span>{t('流量每 GB 成本')}</span>
@@ -2595,13 +2631,13 @@ export default function ProfitMonitor() {
       ),
     },
     {
-      title: t('限制 / 建议倍率'),
+      title: t('倍率上限 / 建议倍率'),
       dataIndex: 'dynamic_ratio_limit_max',
       width: 190,
       render: (value, record) => (
         <div className='ct-profit-name-cell'>
           <strong>
-            {t('最高 {{ratio}}', {
+            {t('上限 {{ratio}}', {
               ratio: formatOptionalRatioLimit(
                 resolveDynamicRatioLimitMax(record, data.config),
                 t,

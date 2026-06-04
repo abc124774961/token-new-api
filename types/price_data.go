@@ -30,6 +30,8 @@ type DynamicBillingSnapshot struct {
 	CostMultiplier       float64 `json:"cost_multiplier,omitempty"`
 	TargetRatio          float64 `json:"target_ratio,omitempty"`
 	EffectiveRatio       float64 `json:"effective_ratio,omitempty"`
+	FixedRatio           float64 `json:"fixed_ratio,omitempty"`
+	FixedRatioApplied    bool    `json:"fixed_ratio_applied,omitempty"`
 	Clamped              bool    `json:"clamped,omitempty"`
 	PendingManualConfirm bool    `json:"pending_manual_confirm,omitempty"`
 	RequestCount         int64   `json:"request_count,omitempty"`

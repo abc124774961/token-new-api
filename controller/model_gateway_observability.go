@@ -140,6 +140,8 @@ type ModelGatewayDynamicBillingGroupOverview struct {
 	CostMultiplier       float64  `json:"cost_multiplier,omitempty"`
 	TargetRatio          float64  `json:"target_ratio,omitempty"`
 	EffectiveRatio       float64  `json:"effective_ratio,omitempty"`
+	FixedRatio           float64  `json:"fixed_ratio,omitempty"`
+	FixedRatioApplied    bool     `json:"fixed_ratio_applied,omitempty"`
 	Clamped              bool     `json:"clamped,omitempty"`
 	PendingManualConfirm bool     `json:"pending_manual_confirm,omitempty"`
 	FallbackReason       string   `json:"fallback_reason,omitempty"`
@@ -2007,6 +2009,9 @@ func buildModelGatewayDynamicBillingOverviewWithOptions(now int64, windowMinutes
 		if baseline.Ratio <= 0 {
 			return false
 		}
+		if baseline.FixedRatioApplied && baseline.FixedRatio > 0 {
+			return true
+		}
 		if strings.TrimSpace(baseline.FallbackReason) != "" && !modelgatewaydynamicbilling.IsAutoAppliedLegacyFallback(baseline.FallbackReason) {
 			return false
 		}
@@ -2184,6 +2189,8 @@ func buildModelGatewayDynamicBillingOverviewWithOptions(now int64, windowMinutes
 			item.CostMultiplier = currentBaseline.CostMultiplier
 			item.TargetRatio = currentBaseline.TargetRatio
 			item.EffectiveRatio = currentBaseline.EffectiveRatio
+			item.FixedRatio = currentBaseline.FixedRatio
+			item.FixedRatioApplied = currentBaseline.FixedRatioApplied
 			item.Clamped = currentBaseline.Clamped
 			item.PendingManualConfirm = currentBaseline.PendingManualConfirm && !modelgatewaydynamicbilling.IsAutoAppliedLegacyFallback(currentBaseline.FallbackReason)
 			item.FallbackReason = currentBaseline.FallbackReason

@@ -293,6 +293,26 @@ func TestPublicHomeDynamicBillingOnlyExposesDisplayPrice(t *testing.T) {
 		},
 	})
 	defer restoreBaselines()
+	configPayload, err := common.Marshal(ModelGatewayProfitMonitorConfig{
+		Enabled:                true,
+		DynamicRatioMaxLimit:   0.08,
+		DynamicRatioFixedValue: 0.0666,
+	})
+	require.NoError(t, err)
+	common.OptionMapRWMutex.Lock()
+	oldOptionMap := common.OptionMap
+	nextOptionMap := make(map[string]string, len(oldOptionMap)+1)
+	for key, value := range oldOptionMap {
+		nextOptionMap[key] = value
+	}
+	nextOptionMap[modelGatewayProfitMonitorConfigOptionKey] = string(configPayload)
+	common.OptionMap = nextOptionMap
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = oldOptionMap
+		common.OptionMapRWMutex.Unlock()
+	})
 
 	require.NoError(t, db.Create(&[]model.ModelGatewayUserRequestSummary{
 		{
@@ -370,6 +390,8 @@ func TestPublicHomeDynamicBillingOnlyExposesDisplayPrice(t *testing.T) {
 	require.InEpsilon(t, 0.0693, result.CurrentRatio, 0.000001)
 	require.InEpsilon(t, 0.069, result.MinRatio7d, 0.000001)
 	require.InEpsilon(t, 0.069, result.MaxRatio7d, 0.000001)
+	require.InEpsilon(t, 0.08, result.RatioUpperLimit, 0.000001)
+	require.InEpsilon(t, 0.0666, result.FixedRatio, 0.000001)
 	require.Equal(t, modelGatewayDynamicBillingPricePerMillion("gpt-5.4", 0.0693), result.DisplayPricePerM)
 	require.EqualValues(t, 24, result.UpdatedSecondsAgo)
 

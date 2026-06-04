@@ -454,6 +454,103 @@ func TestBuildRatioBaselinesProfit24hAppliesProfitMonitorRatioLimit(t *testing.T
 	require.Empty(t, baseline.FallbackReason)
 }
 
+func TestBuildRatioBaselinesAppliesProfitMonitorFixedRatio(t *testing.T) {
+	db := newDynamicBillingTestDB(t)
+	oldModelRatio := ratio_setting.ModelRatio2JSONString()
+	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-test":2}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"codex-plus":0.1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldModelRatio))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroupRatio))
+	})
+	setProfit24hMonitorConfigForTest(t, profit24hMonitorConfig{
+		DynamicRatioFixedValue: 0.0444,
+		ResourceCostEnabled:    true,
+	})
+
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&model.ModelGatewayRequestCostSummary{
+		RequestId:         "req-profit-24h-fixed",
+		UpstreamCostTotal: 0.0006,
+		BreakdownJSON:     `{"token_multiplier":0.03}`,
+		CalculatedAt:      now,
+	}).Error)
+	require.NoError(t, db.Create(&model.Log{
+		Type:             model.LogTypeConsume,
+		CreatedAt:        now,
+		RequestId:        "req-profit-24h-fixed",
+		ModelName:        "gpt-test",
+		Group:            "codex-plus",
+		PromptTokens:     100,
+		CompletionTokens: 100,
+		Quota:            100,
+		Other:            `{"group_ratio":0.1,"model_ratio":2,"completion_ratio":4}`,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelAccountUsageEvent{
+		RequestId:      "req-profit-24h-fixed",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		CompletedAt:    now,
+		RequestedModel: "gpt-test",
+		SelectedGroup:  "codex-plus",
+		Success:        true,
+		TotalTokens:    200,
+		Quota:          100,
+	}).Error)
+
+	setting := scheduler_setting.SchedulerSetting{
+		DynamicBillingCostSource:         scheduler_setting.DynamicBillingCostSourceProfit24h,
+		DynamicBillingApplyMode:          scheduler_setting.DynamicBillingApplyModeObserve,
+		DynamicBillingProfitRate:         0.2,
+		DynamicBillingProfitWindowHours:  24,
+		DynamicBillingMinTokens:          1,
+		DynamicBillingMinRequests:        1,
+		DynamicBillingMinSuccessRequests: 1,
+		DynamicBillingMinRatio:           0.01,
+		DynamicBillingMaxRatio:           2,
+		DynamicBillingMaxStepChange:      10,
+	}
+	baselines, err := BuildRatioBaselines(db, db, setting, now)
+
+	require.NoError(t, err)
+	baseline, ok := baselines[cacheKey("gpt-test", "codex-plus")]
+	require.True(t, ok)
+	require.InEpsilon(t, 0.0375, baseline.TargetRatio, 0.000001)
+	require.InEpsilon(t, 0.0444, baseline.Ratio, 0.000001)
+	require.InEpsilon(t, 0.0444, baseline.EffectiveRatio, 0.000001)
+	require.True(t, baseline.FixedRatioApplied)
+	require.InEpsilon(t, 0.0444, baseline.FixedRatio, 0.000001)
+	require.Equal(t, ApplyReasonFixedRatioApplied, baseline.ApplyReason)
+	require.Empty(t, baseline.FallbackReason)
+
+	cache := NewRatioCache()
+	cache.Store(baselines)
+	snapshot := Apply(ApplyInput{
+		RequestedModel:   "gpt-test",
+		Group:            "codex-plus",
+		StaticGroupRatio: 0.1,
+		Mode:             scheduler_setting.BillingRatioModeDynamic,
+		Setting: scheduler_setting.SchedulerSetting{
+			DynamicBillingEnabled:            true,
+			DynamicBillingCostSource:         scheduler_setting.DynamicBillingCostSourceProfit24h,
+			DynamicBillingApplyMode:          scheduler_setting.DynamicBillingApplyModeObserve,
+			DynamicBillingMinSamples:         100,
+			DynamicBillingMinRequests:        100,
+			DynamicBillingMinSuccessRequests: 100,
+			DynamicBillingMinTokens:          100000,
+			DynamicBillingMaxAgeSeconds:      1,
+		},
+		Provider: cache,
+		Now:      now + 3600,
+	})
+	require.True(t, snapshot.Applied)
+	require.InEpsilon(t, 0.0444, snapshot.DynamicRatio, 0.000001)
+	require.True(t, snapshot.FixedRatioApplied)
+	require.Equal(t, ApplyReasonFixedRatioApplied, snapshot.ApplyReason)
+	require.Empty(t, snapshot.FallbackReason)
+}
+
 func TestBuildRatioBaselinesUsesRequestCostUsageWeightedMultiplier(t *testing.T) {
 	db := newDynamicBillingTestDB(t)
 	oldModelRatio := ratio_setting.ModelRatio2JSONString()

@@ -30853,6 +30853,47 @@ html.dark
   margin-bottom: 18px;
 }
 
+.ct-lite-ratio-fixed-info {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(74px, 1fr));
+  gap: 8px;
+  max-width: 430px;
+}
+
+.ct-lite-ratio-fixed-info span {
+  min-height: 46px;
+  padding: 8px 10px;
+  border: 1px solid rgba(13, 156, 165, 0.14);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.ct-lite-ratio-fixed-info em,
+.ct-lite-ratio-fixed-info strong {
+  display: block;
+}
+
+.ct-lite-ratio-fixed-info em {
+  color: #64748b;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.ct-lite-ratio-fixed-info strong {
+  overflow: hidden;
+  margin-top: 6px;
+  color: #0f172a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 950;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ct-lite-ratio-board-head span,
 .ct-lite-ratio-board-head strong {
   display: block;
@@ -30984,10 +31025,29 @@ html.dark
   filter: drop-shadow(0 8px 14px rgba(13, 156, 165, 0.2));
 }
 
+.ct-lite-ratio-limit-line {
+  stroke: rgba(14, 116, 144, 0.82);
+  stroke-dasharray: 12 9;
+  stroke-linecap: round;
+  stroke-width: 4;
+  filter: drop-shadow(0 6px 12px rgba(14, 116, 144, 0.18));
+}
+
+.ct-lite-ratio-limit-label {
+  fill: #0f766e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 950;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-linejoin: round;
+  stroke-width: 4px;
+}
+
 .ct-lite-ratio-dot {
-  fill: #ffffff;
+  fill: rgba(255, 255, 255, 0.96);
   stroke: #0d9ca5;
-  stroke-width: 3;
+  stroke-width: 2.6;
   cursor: pointer;
   outline: none;
   transition:
@@ -30996,11 +31056,17 @@ html.dark
     stroke-width 160ms ease;
 }
 
+.ct-lite-ratio-dot.is-change {
+  fill: rgba(255, 255, 255, 0.98);
+  stroke: #0f766e;
+  stroke-width: 3.4;
+}
+
 .ct-lite-ratio-dot:hover,
 .ct-lite-ratio-dot:focus,
 .ct-lite-ratio-dot.active {
-  fill: #0d9ca5;
-  stroke: #ffffff;
+  fill: #ffffff;
+  stroke: #2563eb;
   stroke-width: 4;
 }
 
@@ -32315,6 +32381,12 @@ html.dark
 
   .ct-lite-ratio-board-head {
     flex-direction: column;
+  }
+
+  .ct-lite-ratio-fixed-info {
+    width: 100%;
+    max-width: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .ct-lite-ratio-tabs {

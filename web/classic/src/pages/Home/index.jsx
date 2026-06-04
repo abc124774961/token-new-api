@@ -166,14 +166,30 @@ const hasFinitePositiveValue = (value) => {
   return Number.isFinite(number) && number > 0;
 };
 
-const homeRatioChartMaxRatio = 0.3;
 const homeRatioChartTicks = [0.3, 0.225, 0.15, 0.075, 0];
 
-const buildHomeRatioCurve = (points, chartWidth = 720) => {
+const buildHomeRatioTicks = (chartMaxRatio) => {
+  const maxRatio = Number(chartMaxRatio || 0.3);
+  if (!Number.isFinite(maxRatio) || maxRatio <= 0.3) return homeRatioChartTicks;
+  return [maxRatio, maxRatio * 0.75, maxRatio * 0.5, maxRatio * 0.25, 0];
+};
+
+const buildHomeRatioCurve = (points, chartWidth = 720, options = {}) => {
   const normalizedPoints = Array.isArray(points) ? points : [];
   const values = normalizedPoints
     .map((point) => Number(point?.ratio || 0))
     .filter((value) => Number.isFinite(value) && value > 0);
+  const ratioUpperLimit = Number(options?.ratioUpperLimit || 0);
+  const dataMaxRatio = Math.max(0.3, ...values);
+  const shouldFitUpperLimit =
+    ratioUpperLimit > 0 && ratioUpperLimit <= dataMaxRatio * 1.8;
+  const rawChartMaxRatio = Math.max(
+    dataMaxRatio,
+    shouldFitUpperLimit ? ratioUpperLimit : 0,
+  );
+  const chartMaxRatio =
+    rawChartMaxRatio > 0.3 ? rawChartMaxRatio * 1.12 : 0.3;
+  const yTicksSource = buildHomeRatioTicks(chartMaxRatio);
   const width = Math.max(Math.round(Number(chartWidth) || 720), 360);
   const height = 392;
   const plotInsetX = Math.min(44, Math.max(24, width * 0.04));
@@ -192,13 +208,21 @@ const buildHomeRatioCurve = (points, chartWidth = 720) => {
       line: '',
       area: '',
       dots: [],
-      yTicks: homeRatioChartTicks.map((ratio) => ({
-        y:
-          plotBottom -
-          (ratio / homeRatioChartMaxRatio) * (plotBottom - plotTop),
+      yTicks: yTicksSource.map((ratio) => ({
+        y: plotBottom - (ratio / chartMaxRatio) * (plotBottom - plotTop),
         ratio,
       })),
       xTicks: [],
+      limitLine:
+        ratioUpperLimit > 0
+          ? {
+              y:
+                plotBottom -
+                (Math.min(ratioUpperLimit, chartMaxRatio) / chartMaxRatio) *
+                  (plotBottom - plotTop),
+              ratio: ratioUpperLimit,
+            }
+          : null,
       min: 0,
       max: 0,
     };
@@ -207,12 +231,16 @@ const buildHomeRatioCurve = (points, chartWidth = 720) => {
   const max = Math.max(...values);
   const usableWidth = plotRight - plotLeft;
   const usableHeight = plotBottom - plotTop;
+  let lastPositiveRatio = 0;
   const plotPoints = normalizedPoints.map((point, index) => {
     const ratio = Number(point?.ratio || 0);
-    const clampedRatio = Math.min(
-      Math.max(ratio, 0),
-      homeRatioChartMaxRatio,
-    );
+    const clampedRatio = Math.min(Math.max(ratio, 0), chartMaxRatio);
+    const changed =
+      ratio > 0 &&
+      (lastPositiveRatio <= 0 || Math.abs(ratio - lastPositiveRatio) > 0.00005);
+    if (ratio > 0) {
+      lastPositiveRatio = ratio;
+    }
     const x =
       plotLeft +
       (normalizedPoints.length <= 1
@@ -221,12 +249,13 @@ const buildHomeRatioCurve = (points, chartWidth = 720) => {
     const y =
       ratio > 0
         ? plotBottom -
-          (clampedRatio / homeRatioChartMaxRatio) * usableHeight
+          (clampedRatio / chartMaxRatio) * usableHeight
         : null;
     return {
       x,
       y,
       ratio,
+      changed,
       pricePerM: Number(point?.price_per_m || 0),
       sampleCount: Number(point?.sample_count || 0),
       timestamp: point?.timestamp,
@@ -245,10 +274,20 @@ const buildHomeRatioCurve = (points, chartWidth = 720) => {
     first && last
       ? `${line} L ${last.x.toFixed(1)} ${baseline} L ${first.x.toFixed(1)} ${baseline} Z`
       : '';
-  const yTicks = homeRatioChartTicks.map((ratio) => ({
-    y: plotBottom - (ratio / homeRatioChartMaxRatio) * usableHeight,
+  const yTicks = yTicksSource.map((ratio) => ({
+    y: plotBottom - (ratio / chartMaxRatio) * usableHeight,
     ratio,
   }));
+  const limitLine =
+    ratioUpperLimit > 0
+      ? {
+          y:
+            plotBottom -
+            (Math.min(ratioUpperLimit, chartMaxRatio) / chartMaxRatio) *
+              usableHeight,
+          ratio: ratioUpperLimit,
+        }
+      : null;
   const xTickCount = normalizedPoints.length >= 12 ? 7 : normalizedPoints.length;
   const xTicks = Array.from({ length: Math.max(xTickCount, 0) })
     .map((_, index) => {
@@ -276,6 +315,7 @@ const buildHomeRatioCurve = (points, chartWidth = 720) => {
     dots: validPoints,
     yTicks,
     xTicks,
+    limitLine,
     min,
     max,
   };
@@ -436,6 +476,8 @@ const HeroOrbitVisual = ({
   const [activeIndex, setActiveIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const ratioValue = Number(dynamicBilling?.current_ratio || 0);
+  const ratioUpperLimit = Number(dynamicBilling?.ratio_upper_limit || 0);
+  const fixedRatio = Number(dynamicBilling?.fixed_ratio || 0);
   const priceValue = Number(dynamicBilling?.display_price_per_m || 0);
   const isBillingReady = Boolean(dynamicBilling?.enabled) && ratioValue > 0;
   const group = String(dynamicBilling?.group || '').trim();
@@ -498,6 +540,16 @@ const HeroOrbitVisual = ({
       value: isBillingReady ? formatHeroDynamicRatio(ratioValue) : '--',
       note: billingPriceLabel,
       chips: billingChips,
+      detail:
+        ratioUpperLimit > 0
+          ? t('倍率上限 {{ratio}}', {
+              ratio: formatHeroDynamicRatio(ratioUpperLimit),
+            })
+          : fixedRatio > 0
+            ? t('固定倍率 {{ratio}}', {
+                ratio: formatHeroDynamicRatio(fixedRatio),
+              })
+            : t('当前倍率上限'),
       visualLabel: billingVisualLabel,
       tone: isBillingReady ? 'amber' : 'muted',
     },
@@ -1877,9 +1929,11 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
   ];
   const activeSeries = trend?.[activeRange] || {};
   const points = Array.isArray(activeSeries.points) ? activeSeries.points : [];
+  const ratioUpperLimit = Number(dynamicBilling?.ratio_upper_limit || 0);
+  const fixedRatio = Number(dynamicBilling?.fixed_ratio || 0);
   const curve = useMemo(
-    () => buildHomeRatioCurve(points, chartWidth),
-    [chartWidth, points],
+    () => buildHomeRatioCurve(points, chartWidth, { ratioUpperLimit }),
+    [chartWidth, points, ratioUpperLimit],
   );
   const hasData = Number(activeSeries.sample_count || 0) > 0 && curve.line;
   const latestRatio =
@@ -1910,10 +1964,28 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
       note: dynamicBilling?.model || 'gpt-5.4',
     },
     {
-      key: 'samples',
+      key: 'limit',
+      label: t('倍率上限'),
+      value: ratioUpperLimit > 0 ? formatHeroDynamicRatio(ratioUpperLimit) : '--',
+      note: fixedRatio > 0 ? t('固定倍率生效') : t('当前倍率上限'),
+    },
+  ];
+  const fixedInfoItems = [
+    {
+      label: t('倍率上限'),
+      value: ratioUpperLimit > 0 ? formatHeroDynamicRatio(ratioUpperLimit) : t('未设置'),
+    },
+    {
+      label: t('固定倍率'),
+      value: fixedRatio > 0 ? formatHeroDynamicRatio(fixedRatio) : t('未设置'),
+    },
+    {
       label: t('样本数'),
-      value: sampleCount > 0 ? String(sampleCount) : '--',
-      note: t('不含探活'),
+      value: sampleCount > 0 ? String(sampleCount) : '0',
+    },
+    {
+      label: t('变化点'),
+      value: String(curve.dots.filter((point) => point.changed).length),
     },
   ];
   const tooltipPoint = focusedPoint;
@@ -1992,6 +2064,14 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
                   : t('等待真实请求样本')}
               </strong>
             </div>
+            <div className='ct-lite-ratio-fixed-info' aria-label={t('当前倍率上限')}>
+              {fixedInfoItems.map((item) => (
+                <span key={item.label}>
+                  <em>{item.label}</em>
+                  <strong>{item.value}</strong>
+                </span>
+              ))}
+            </div>
             <div className='ct-lite-ratio-tabs'>
               {ranges.map((range) => (
                 <button
@@ -2049,6 +2129,25 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
                   className='ct-lite-ratio-gridline vertical'
                 />
               ))}
+              {curve.limitLine ? (
+                <>
+                  <line
+                    x1={curve.plotLeft}
+                    x2={curve.plotRight}
+                    y1={curve.limitLine.y}
+                    y2={curve.limitLine.y}
+                    className='ct-lite-ratio-limit-line'
+                  />
+                  <text
+                    x={curve.plotRight - 8}
+                    y={Math.max(curve.plotTop + 18, curve.limitLine.y - 8)}
+                    textAnchor='end'
+                    className='ct-lite-ratio-limit-label'
+                  >
+                    {t('倍率上限')} {formatHeroDynamicRatio(curve.limitLine.ratio)}
+                  </text>
+                </>
+              ) : null}
               {hasData ? (
                 <>
                   <path d={curve.area} className='ct-lite-ratio-area' />
@@ -2058,11 +2157,17 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
                       key={`${point.timestamp}-${index}`}
                       cx={point.x}
                       cy={point.y}
-                      r={index === curve.dots.length - 1 ? 5.8 : 3.8}
+                      r={
+                        point.changed
+                          ? index === curve.dots.length - 1
+                            ? 6.2
+                            : 5
+                          : 3.4
+                      }
                       tabIndex={0}
                       className={`ct-lite-ratio-dot${
                         focusedPoint?.timestamp === point.timestamp ? ' active' : ''
-                      }`}
+                      }${point.changed ? ' is-change' : ''}`}
                       onMouseEnter={() => setFocusedPoint(point)}
                       onFocus={() => setFocusedPoint(point)}
                       onBlur={() => setFocusedPoint(null)}
@@ -2122,6 +2227,14 @@ const RatioCurveSection = ({ dynamicBilling, t }) => {
                 <small>
                   {t('样本数')} {tooltipPoint.sampleCount || 0}
                 </small>
+                {tooltipPoint.changed ? (
+                  <small>
+                    {t('倍率改动')} · {t('倍率上限')}{' '}
+                    {ratioUpperLimit > 0
+                      ? formatHeroDynamicRatio(ratioUpperLimit)
+                      : t('未设置')}
+                  </small>
+                ) : null}
               </div>
             ) : null}
           </div>
