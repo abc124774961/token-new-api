@@ -20,6 +20,7 @@ const (
 	ModelGatewayUserRequestErrorBalanceOrQuota     = "balance_or_quota"
 	ModelGatewayUserRequestErrorUserQuotaExhausted = "user_quota_exhausted"
 	ModelGatewayUserRequestErrorAuthConfig         = "auth_config_error"
+	ModelGatewayUserRequestErrorSchedulerExhausted = "scheduler_exhausted"
 	ModelGatewayUserRequestErrorUnknown            = "unknown"
 )
 
@@ -73,6 +74,7 @@ type ModelGatewayUserRequestAttempt struct {
 	StreamInterrupted bool
 	WillRetry         bool
 	ClientAborted     bool
+	RetryAction       string
 	IsHealthProbe     bool
 	ProbeReason       string
 	EmptyOutput       bool
@@ -302,7 +304,19 @@ func modelGatewayUserRequestAttemptFinalized(attempt ModelGatewayUserRequestAtte
 	if attempt.Success || modelGatewayUserRequestAttemptClientAborted(attempt) {
 		return true
 	}
-	return !attempt.WillRetry
+	return !modelGatewayUserRequestAttemptWillRetry(attempt)
+}
+
+func modelGatewayUserRequestAttemptWillRetry(attempt ModelGatewayUserRequestAttempt) bool {
+	if !attempt.WillRetry {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(attempt.RetryAction)) {
+	case "switch_channel", "retry", "resource_protection_fallback":
+		return true
+	default:
+		return false
+	}
 }
 
 func modelGatewayUserRequestFinalStatusCode(attempt ModelGatewayUserRequestAttempt, finalized bool, success bool) int {
@@ -381,6 +395,8 @@ func NormalizeModelGatewayUserRequestErrorCategory(category string, errorCode st
 		return ModelGatewayUserRequestErrorRateLimit
 	case strings.Contains(normalizedCategory, "server_error"):
 		return ModelGatewayUserRequestErrorServer
+	case strings.Contains(normalizedCategory, "scheduler_exhausted"):
+		return ModelGatewayUserRequestErrorSchedulerExhausted
 	case strings.Contains(normalizedCategory, "upstream") || strings.Contains(normalizedType, "upstream"):
 		return ModelGatewayUserRequestErrorUpstream
 	case statusCode >= http.StatusInternalServerError:

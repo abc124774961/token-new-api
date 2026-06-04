@@ -2,6 +2,7 @@ package recording
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,7 +12,10 @@ import (
 	"github.com/QuantumNous/new-api/pkg/modelgateway/observability/userrequest"
 )
 
-const defaultQueueSize = 1024
+const (
+	defaultQueueSize             = 1024
+	resultOverflowEnqueueTimeout = 100 * time.Millisecond
+)
 
 type AsyncExecutionRecorder struct {
 	queue      chan event
@@ -60,6 +64,7 @@ func (r *AsyncExecutionRecorder) Report(ctx context.Context, result core.Attempt
 	if r == nil {
 		return
 	}
+	result = normalizeAttemptResultLifecycle(result)
 	userrequest.Finish(result, nil)
 	r.offer(event{result: &result})
 }
@@ -68,28 +73,47 @@ func (r *AsyncExecutionRecorder) offer(e event) {
 	select {
 	case r.queue <- e:
 	default:
-		common.SysLog("modelgateway recorder queue full, dropping event")
+		if e.result != nil {
+			r.offerResultOverflow(e)
+			return
+		}
+		common.SysLog("modelgateway recorder queue full, dropping dispatch event")
 	}
 }
 
 func (r *AsyncExecutionRecorder) run() {
 	for e := range r.queue {
-		if e.record != nil {
-			userrequest.Start(*e.record)
-			model.RecordModelExecution(modelExecutionRecordFromDispatch(*e.record))
-			recordChannelAccountUsageDispatch(*e.record)
-			r.forwardRecord(*e.record)
-			continue
+		r.process(e)
+	}
+}
+
+func (r *AsyncExecutionRecorder) offerResultOverflow(e event) {
+	timer := time.NewTimer(resultOverflowEnqueueTimeout)
+	defer timer.Stop()
+	select {
+	case r.queue <- e:
+	case <-timer.C:
+		common.SysLog("modelgateway recorder queue full, processing result event out of band")
+		go r.process(e)
+	}
+}
+
+func (r *AsyncExecutionRecorder) process(e event) {
+	if e.record != nil {
+		userrequest.Start(*e.record)
+		model.RecordModelExecution(modelExecutionRecordFromDispatch(*e.record))
+		recordChannelAccountUsageDispatch(*e.record)
+		r.forwardRecord(*e.record)
+		return
+	}
+	if e.result != nil {
+		summary := model.RecordModelGatewayUserRequestAttempt(modelGatewayUserRequestAttemptFromResult(*e.result))
+		if summary != nil {
+			userrequest.Finish(*e.result, summary)
 		}
-		if e.result != nil {
-			summary := model.RecordModelGatewayUserRequestAttempt(modelGatewayUserRequestAttemptFromResult(*e.result))
-			if summary != nil {
-				userrequest.Finish(*e.result, summary)
-			}
-			model.RecordModelExecution(modelExecutionRecordFromAttempt(*e.result))
-			recordChannelAccountUsageAttempt(*e.result)
-			r.forwardResult(*e.result)
-		}
+		model.RecordModelExecution(modelExecutionRecordFromAttempt(*e.result))
+		recordChannelAccountUsageAttempt(*e.result)
+		r.forwardResult(*e.result)
 	}
 }
 
@@ -382,11 +406,32 @@ func modelGatewayUserRequestAttemptFromResult(result core.AttemptResult) model.M
 		TTFTMs:            requestTTFT(result).Milliseconds(),
 		StreamInterrupted: result.StreamInterrupted,
 		WillRetry:         result.WillRetry,
+		RetryAction:       result.RetryAction,
 		ClientAborted:     result.ClientAborted,
 		IsHealthProbe:     result.IsHealthProbe,
 		ProbeReason:       result.ProbeReason,
 		EmptyOutput:       result.EmptyOutput,
 		ExperienceIssue:   result.ExperienceIssue,
+	}
+}
+
+func normalizeAttemptResultLifecycle(result core.AttemptResult) core.AttemptResult {
+	if !result.WillRetry {
+		return result
+	}
+	if result.Success || result.ClientAborted {
+		result.WillRetry = false
+		return result
+	}
+	switch strings.ToLower(strings.TrimSpace(result.RetryAction)) {
+	case "switch_channel", "retry", "resource_protection_fallback":
+		return result
+	default:
+		result.WillRetry = false
+		if strings.TrimSpace(result.RetryAction) == "" {
+			result.RetryAction = "stop"
+		}
+		return result
 	}
 }
 

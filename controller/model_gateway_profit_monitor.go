@@ -225,6 +225,8 @@ type ModelGatewayProfitDynamicRatioGroup struct {
 	ServerCostUSD        float64 `json:"server_cost_usd"`
 	ResourceCostUSD      float64 `json:"resource_cost_usd"`
 	OperatingCostUSD     float64 `json:"operating_cost_usd"`
+	DynamicRatioLimitMin float64 `json:"dynamic_ratio_limit_min"`
+	DynamicRatioLimitMax float64 `json:"dynamic_ratio_limit_max"`
 	BaseQuotaAtRatio1    float64 `json:"base_quota_at_ratio_1"`
 	CostMultiplier       float64 `json:"cost_multiplier"`
 	CostMarkupMultiplier float64 `json:"cost_markup_multiplier"`
@@ -983,7 +985,7 @@ func queryModelGatewayProfitMonitorSummary(startTimestamp int64, endTimestamp in
 		return ModelGatewayProfitMonitorSummary{}, nil
 	}
 	query := modelGatewayProfitUsageBaseQuery(startTimestamp, endTimestamp)
-	err := query.Select(modelGatewayProfitAggregateSelect(), true).
+	err := query.Select(modelGatewayProfitAggregateSelect(), modelGatewayProfitAggregateSelectArgs()...).
 		Scan(&aggregate).Error
 	if err != nil {
 		return ModelGatewayProfitMonitorSummary{}, err
@@ -1028,7 +1030,7 @@ func queryModelGatewayProfitMonitorBreakdown(startTimestamp int64, endTimestamp 
 	rows := make([]modelGatewayProfitBreakdownRow, 0)
 	query := modelGatewayProfitUsageBaseQuery(startTimestamp, endTimestamp)
 	selectPrefix, groupExpr := modelGatewayProfitBreakdownSelectParts(dimension)
-	err := query.Select(selectPrefix+", "+modelGatewayProfitAggregateSelect(), true).
+	err := query.Select(selectPrefix+", "+modelGatewayProfitAggregateSelect(), modelGatewayProfitAggregateSelectArgs()...).
 		Group(groupExpr).
 		Order("revenue_quota DESC").
 		Limit(100).
@@ -1074,10 +1076,11 @@ func queryModelGatewayProfitAnomalies(startTimestamp int64, endTimestamp int64, 
 	rows := make([]modelGatewayProfitAnomalyRow, 0)
 	query := modelGatewayProfitUsageBaseQuery(startTimestamp, endTimestamp)
 	err := query.Select(
-		"channel_id, MAX(channel_name) AS channel_name, requested_model, COUNT(*) AS requests, " +
-			"COALESCE(SUM(total_tokens), 0) AS total_tokens, COALESCE(SUM(quota), 0) AS billing_quota, " +
+		"channel_id, MAX(channel_name) AS channel_name, requested_model, COUNT(*) AS requests, "+
+			"COALESCE(SUM(total_tokens), 0) AS total_tokens, COALESCE(SUM(quota), 0) AS billing_quota, "+
 			"COALESCE(SUM(upstream_cost_total), 0) AS upstream_cost_usd",
 	).
+		Where("success = ?", true).
 		Group("channel_id, requested_model").
 		Order("upstream_cost_usd DESC").
 		Limit(50).
@@ -1143,12 +1146,16 @@ func modelGatewayProfitUsageBaseQuery(startTimestamp int64, endTimestamp int64) 
 func modelGatewayProfitAggregateSelect() string {
 	return "COUNT(*) AS requests, " +
 		"COALESCE(SUM(CASE WHEN success = ? THEN 1 ELSE 0 END), 0) AS success_requests, " +
-		"COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, " +
-		"COALESCE(SUM(completion_tokens), 0) AS completion_tokens, " +
-		"COALESCE(SUM(total_tokens), 0) AS total_tokens, " +
-		"COALESCE(SUM(quota), 0) AS billing_quota, " +
-		"COALESCE(SUM(quota), 0) AS revenue_quota, " +
-		"COALESCE(SUM(upstream_cost_total), 0) AS upstream_cost_usd"
+		"COALESCE(SUM(CASE WHEN success = ? THEN prompt_tokens ELSE 0 END), 0) AS prompt_tokens, " +
+		"COALESCE(SUM(CASE WHEN success = ? THEN completion_tokens ELSE 0 END), 0) AS completion_tokens, " +
+		"COALESCE(SUM(CASE WHEN success = ? THEN total_tokens ELSE 0 END), 0) AS total_tokens, " +
+		"COALESCE(SUM(CASE WHEN success = ? THEN quota ELSE 0 END), 0) AS billing_quota, " +
+		"COALESCE(SUM(CASE WHEN success = ? THEN quota ELSE 0 END), 0) AS revenue_quota, " +
+		"COALESCE(SUM(CASE WHEN success = ? THEN upstream_cost_total ELSE 0 END), 0) AS upstream_cost_usd"
+}
+
+func modelGatewayProfitAggregateSelectArgs() []interface{} {
+	return []interface{}{true, true, true, true, true, true, true}
 }
 
 func modelGatewayProfitBreakdownSelectParts(dimension string) (string, string) {
@@ -1354,11 +1361,11 @@ func modelGatewayProfitResourceMatchesBreakdown(resource model.ModelGatewayProfi
 func modelGatewayProfitAllocationRatio(row ModelGatewayProfitMonitorBreakdown, summary ModelGatewayProfitMonitorSummary, allocationMode string) float64 {
 	switch model.NormalizeModelGatewayProfitResourceAllocationMode(allocationMode) {
 	case model.ModelGatewayProfitResourceAllocationRequest:
-		return ratioOrZero(float64(row.Requests), float64(summary.Requests))
+		return ratioOrZero(float64(row.SuccessRequests), float64(summary.SuccessRequests))
 	default:
 		ratio := ratioOrZero(row.RevenueUSD, summary.RevenueUSD)
 		if ratio <= 0 {
-			ratio = ratioOrZero(float64(row.Requests), float64(summary.Requests))
+			ratio = ratioOrZero(float64(row.SuccessRequests), float64(summary.SuccessRequests))
 		}
 		return ratio
 	}
@@ -1402,6 +1409,7 @@ func buildModelGatewayProfitDynamicRatioGroups(config ModelGatewayProfitMonitorC
 	now := common.GetTimestamp()
 	items := make([]ModelGatewayProfitDynamicRatioGroup, 0, len(groups))
 	summary := ModelGatewayProfitDynamicRatioSummary{}
+	dynamicRatioLimitMin, dynamicRatioLimitMax := modelGatewayProfitEffectiveDynamicRatioLimits(config)
 	for _, group := range groups {
 		key := strings.ToLower(strings.TrimSpace(group))
 		baseline := baselineByGroup[key]
@@ -1485,6 +1493,8 @@ func buildModelGatewayProfitDynamicRatioGroups(config ModelGatewayProfitMonitorC
 			ServerCostUSD:        baseline.ServerCostUSD,
 			ResourceCostUSD:      baseline.ResourceCostUSD,
 			OperatingCostUSD:     baseline.OperatingCostUSD,
+			DynamicRatioLimitMin: dynamicRatioLimitMin,
+			DynamicRatioLimitMax: dynamicRatioLimitMax,
 			BaseQuotaAtRatio1:    baseline.BaseQuotaAtRatio1,
 			CostMultiplier:       baseline.CostMultiplier,
 			CostMarkupMultiplier: modelgatewaydynamicbilling.RevenueMultiplierForGrossMargin(profitRate),

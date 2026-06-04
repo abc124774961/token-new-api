@@ -1120,9 +1120,8 @@ body[theme-mode='dark'] .usage-log-channel-cost-title {
   color: #1d4ed8;
 }
 
-.usage-log-channel-cost-metric-profit {
-  grid-column: 1 / -1;
-  padding: 9px 10px;
+.usage-log-channel-cost-metric-profit,
+.usage-log-channel-cost-metric-margin {
   border-color: rgba(16, 185, 129, 0.3);
   background: linear-gradient(
       180deg,
@@ -1136,19 +1135,19 @@ body[theme-mode='dark'] .usage-log-channel-cost-title {
     );
 }
 
-.usage-log-channel-cost-metric-profit > strong {
+.usage-log-channel-cost-metric-profit > strong,
+.usage-log-channel-cost-metric-margin > strong {
   color: #047857;
   font-size: 15px;
 }
 
 .usage-log-channel-cost-metric-profit > span,
+.usage-log-channel-cost-metric-margin > span,
 .usage-log-channel-cost-metric-negative > span {
   color: #475569;
 }
 
 .usage-log-channel-cost-metric-negative {
-  grid-column: 1 / -1;
-  padding: 9px 10px;
   border-color: rgba(248, 113, 113, 0.3);
   background: linear-gradient(
       180deg,
@@ -1227,6 +1226,10 @@ body[theme-mode='dark'] .usage-log-channel-cost-metric-charge > strong {
 }
 
 body[theme-mode='dark'] .usage-log-channel-cost-metric-profit > strong {
+  color: #6ee7b7;
+}
+
+body[theme-mode='dark'] .usage-log-channel-cost-metric-margin > strong {
   color: #6ee7b7;
 }
 

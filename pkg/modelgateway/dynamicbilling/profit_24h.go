@@ -237,9 +237,9 @@ func loadProfit24hUsageGroups(db *gorm.DB, windowStart int64, windowEnd int64) (
 		Select(groupExpr+" AS billing_group, "+
 			"COUNT(*) AS requests, "+
 			"COALESCE(SUM(CASE WHEN success = ? THEN 1 ELSE 0 END), 0) AS success_requests, "+
-			"COALESCE(SUM(total_tokens), 0) AS total_tokens, "+
-			"COALESCE(SUM(quota), 0) AS billing_quota, "+
-			"COALESCE(SUM(upstream_cost_total), 0) AS upstream_cost_usd", true).
+			"COALESCE(SUM(CASE WHEN success = ? THEN total_tokens ELSE 0 END), 0) AS total_tokens, "+
+			"COALESCE(SUM(CASE WHEN success = ? THEN quota ELSE 0 END), 0) AS billing_quota, "+
+			"COALESCE(SUM(CASE WHEN success = ? THEN upstream_cost_total ELSE 0 END), 0) AS upstream_cost_usd", true, true, true, true).
 		Group(groupExpr).
 		Scan(&rows).Error
 	return rows, err
@@ -262,10 +262,10 @@ func applyProfit24hOperatingCosts(db *gorm.DB, accumulators map[string]*profit24
 		return
 	}
 	totalBaseQuota := 0.0
-	totalRequests := int64(0)
+	totalSuccessRequests := int64(0)
 	for _, accumulator := range accumulators {
 		totalBaseQuota += accumulator.BaseQuotaAtRatio1
-		totalRequests += accumulator.RequestCount
+		totalSuccessRequests += accumulator.SuccessRequestCount
 	}
 	trafficByGroup, hasTrafficBreakdown := loadProfit24hTrafficCosts(windowStart, windowEnd, config)
 	serverWindowCost := config.ServerDailyCostUSD * math.Max(0, float64(windowEnd-windowStart)) / 86400
@@ -288,7 +288,7 @@ func applyProfit24hOperatingCosts(db *gorm.DB, accumulators map[string]*profit24
 			accumulator.TrafficCostUSD = trafficCostUSD(estimatedBytes, config.TrafficCostPerGBUSD)
 		}
 		baseShare := ratioOrZero(accumulator.BaseQuotaAtRatio1, totalBaseQuota)
-		requestShare := ratioOrZero(float64(accumulator.RequestCount), float64(totalRequests))
+		requestShare := ratioOrZero(float64(accumulator.SuccessRequestCount), float64(totalSuccessRequests))
 		accumulator.ServerCostUSD = serverWindowCost * baseShare
 		for _, resource := range resourceCosts {
 			if resource.totalCost <= 0 {

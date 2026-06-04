@@ -2801,7 +2801,7 @@ function getUserRequestStatusMeta(record, t) {
       : { color: 'orange', label: t('探活异常'), tone: 'probe-warning' };
   }
   if (isUserRequestProcessing(record)) {
-    return { color: 'blue', label: t('处理中'), tone: 'processing' };
+    return { color: 'blue', label: t('执行中'), tone: 'processing' };
   }
   if (isUserQuotaExhaustedRecord(record)) {
     return { color: 'grey', label: t('用户额度不足'), tone: 'quota' };
@@ -2877,6 +2877,8 @@ function formatUserRequestErrorCategory(category, t) {
       return t('用户额度不足');
     case 'server_error':
       return t('最终失败类型：server_error');
+    case 'scheduler_exhausted':
+      return t('不可调度');
     default:
       return category || '--';
   }
@@ -2908,6 +2910,62 @@ function userRequestDisplayTime(record, nowSeconds, t) {
   return formatRelativeTime(timestamp, nowSeconds, t);
 }
 
+function isLongFormGenerationRequest(record) {
+  const model = String(record?.requested_model || '').toLowerCase();
+  const path = String(
+    record?.request_path || record?.request_meta?.request_path || '',
+  ).toLowerCase();
+  return (
+    model.includes('image') ||
+    model.includes('video') ||
+    path.includes('/images/') ||
+    path.includes('/videos/')
+  );
+}
+
+function userRequestProcessingStage(record, durationMs, hasTTFT, t) {
+  if (!isUserRequestProcessing(record)) return '';
+  if (hasTTFT) return t('上游已响应');
+  if (isLongFormGenerationRequest(record)) return t('生成任务等待上游');
+  if (durationMs >= 30000) return t('首包等待偏长');
+  return t('等待首包');
+}
+
+function userRequestStatusCaption(record, meta, processing, hasTTFT, durationMs, t) {
+  if (processing) {
+    return userRequestProcessingStage(record, durationMs, hasTTFT, t);
+  }
+  if (record?.recovered) return t('切换后成功');
+  if (meta?.tone === 'quota') return t('业务拦截');
+  if (meta?.tone === 'aborted') return t('客户端断开');
+  if (meta?.tone === 'probe' || meta?.tone === 'probe-warning') {
+    return t('探活样本');
+  }
+  if (meta?.tone === 'warning') return t('需复核');
+  if (record?.final_success) return t('已结算');
+  return t('需排查');
+}
+
+function userRequestDurationCaption(processing, t) {
+  return processing ? t('实时计时') : t('端到端耗时');
+}
+
+function userRequestTTFTCaption(processing, hasTTFT, t) {
+  if (processing && !hasTTFT) return t('未收到首包');
+  if (processing && hasTTFT) return t('首包已到');
+  return t('首包延迟');
+}
+
+function userRequestTimeCaption(record, meta, processing, t) {
+  if (processing) return t('开始处理');
+  if (meta?.tone === 'aborted') return t('断开时间');
+  if (meta?.tone === 'quota') return t('拦截时间');
+  if (meta?.tone === 'probe' || meta?.tone === 'probe-warning') {
+    return t('探活时间');
+  }
+  return record?.final_success ? t('完成时间') : t('失败时间');
+}
+
 function userRequestMatchesQuery(record, query) {
   const normalizedQuery = String(query || '')
     .trim()
@@ -2935,12 +2993,12 @@ function formatUserRequestUser(record) {
   if (username) {
     return username;
   }
-  return userID > 0 ? `#${userID}` : '--';
+  return userID > 0 ? `用户 #${userID}` : '--';
 }
 
 function formatUserRequestUserID(record, t) {
   const userID = Number(record?.user_id || 0);
-  return userID > 0 ? `${t('用户 ID')} #${userID}` : t('未知用户');
+  return userID > 0 ? `${t('ID')} #${userID}` : t('未知用户');
 }
 
 function formatUserRequestChannel(record) {
@@ -3837,7 +3895,7 @@ function UserRequestCostTooltip({ billing, t }) {
 function upstreamCostSourceLabel(source, accuracy, t) {
   if (source === 'not_applicable' || accuracy === 'not_applicable')
     return t('未发生');
-  if (source === 'pending' || accuracy === 'pending') return t('计算中');
+  if (source === 'pending' || accuracy === 'pending') return t('待核算');
   if (source === 'missing' || accuracy === 'missing') return t('未配置');
   if (source === 'auto_synced') return t('自动同步');
   if (source === 'manual') return t('手动规则');
@@ -4103,6 +4161,7 @@ function UserRequestCostSummaryTooltip({ record, t }) {
 function UserRequestCostSummaryCell({ record, t }) {
   const status = upstreamCostStatus(record);
   const billing = record?.billing;
+  const processing = isUserRequestProcessing(record);
   const channelRatio = safeNumber(
     record?.upstream_cost_breakdown?.token_multiplier,
   );
@@ -4118,7 +4177,9 @@ function UserRequestCostSummaryCell({ record, t }) {
       : upstreamLabel;
   const billingLabel = billing
     ? renderQuota(billingReferenceQuota(billing), 6)
-    : '--';
+    : processing
+      ? t('待结算')
+      : '--';
   const dynamicBillingLabel = dynamicBillingSummaryLabel(billing, t);
 
   return (
@@ -4138,12 +4199,12 @@ function UserRequestCostSummaryCell({ record, t }) {
           <strong title={t('1:1 实际成本倍率')}>{upstreamSummaryLabel}</strong>
         </div>
         <div className='ct-model-gateway-user-request-cost-summary-line ct-model-gateway-user-request-cost-summary-billing'>
-          <span>{t('扣费')}</span>
+          <span>{t('平台计费')}</span>
           <strong>{billingLabel}</strong>
         </div>
         {dynamicBillingLabel && (
           <div className='ct-model-gateway-user-request-cost-summary-line ct-model-gateway-user-request-cost-summary-dynamic'>
-            <span>{t('动态收费')}</span>
+            <span>{t('动态倍率')}</span>
             <strong title={dynamicBillingLabel}>{dynamicBillingLabel}</strong>
           </div>
         )}
@@ -4219,10 +4280,11 @@ function UserRequestScoreSummaryCell({ record, t, onOpenScoreHistory }) {
   };
 
   if (!hasScore) {
+    const processing = isUserRequestProcessing(record);
     return (
       <div className='ct-model-gateway-user-request-score-col ct-model-gateway-user-request-score-empty'>
         <strong>--</strong>
-        <span>{t('暂无评分数据')}</span>
+        <span>{processing ? t('运行中，暂未评分') : t('未命中评分样本')}</span>
       </div>
     );
   }
@@ -5001,10 +5063,10 @@ function UserRequestRecentTable({
     <DashboardCard bodyClassName='ct-model-gateway-user-request-list-body'>
       <div className='ct-model-gateway-user-request-list-head'>
         <div>
-          <h3>{t('进行中的请求数据统计')}</h3>
+          <h3>{t('用户请求实时台账')}</h3>
           <p>
             {t(
-              '处理中优先，完成请求按最后完成时间排序，未完成请求按创建时间排序',
+              '处理中置顶，已完成按最后完成时间倒序；成本、计费与评分为异步核算口径',
             )}
           </p>
         </div>
@@ -5021,7 +5083,7 @@ function UserRequestRecentTable({
             value={query}
             onChange={setQuery}
             prefix={<Search size={14} />}
-            placeholder={t('搜索请求 ID / 用户')}
+            placeholder={t('搜索请求 ID / 用户 / 模型 / 渠道')}
             className='ct-model-gateway-user-request-search'
             showClear
           />
@@ -5039,15 +5101,15 @@ function UserRequestRecentTable({
         <div className='ct-model-gateway-user-request-table'>
           <div className='ct-model-gateway-user-request-table-head'>
             {[
-              { key: 'status', label: t('状态') },
-              { key: 'user', label: t('请求用户') },
-              { key: 'request', label: t('请求模型') },
-              { key: 'score', label: t('当前模型稳定评分'), hint: true },
-              { key: 'cost', label: t('成本'), hint: true },
-              { key: 'duration', label: t('总耗时'), hint: true },
+              { key: 'status', label: t('处置状态') },
+              { key: 'user', label: t('用户') },
+              { key: 'request', label: t('请求 / 路由') },
+              { key: 'score', label: t('调度评分'), hint: true },
+              { key: 'cost', label: t('成本 / 计费'), hint: true },
+              { key: 'duration', label: t('耗时'), hint: true },
               { key: 'ttft', label: t('首包'), hint: true },
-              { key: 'complete', label: t('完成') },
-              { key: 'action', label: t('操作') },
+              { key: 'complete', label: t('时间状态') },
+              { key: 'action', label: t('诊断') },
             ].map(({ key, label, hint }) => (
               <span key={key}>
                 {label}
@@ -5072,6 +5134,7 @@ function UserRequestRecentTable({
                 const channelIdLabel = formatUserRequestChannelId(record);
                 const groupFlowLabel = formatUserRequestGroupFlow(record);
                 const groupRatioLabel = formatUserRequestGroupRatio(record);
+                const hasTTFT = Number(record.ttft_ms || 0) > 0;
                 const firstByteTimeoutAttempts = Array.isArray(
                   record.attempt_records,
                 )
@@ -5079,8 +5142,9 @@ function UserRequestRecentTable({
                       isFirstByteTimeoutAttempt(attempt),
                     ).length
                   : 0;
-                const issueLabel =
-                  firstByteTimeoutAttempts > 0
+                const issueLabel = processing
+                  ? userRequestProcessingStage(record, durationMs, hasTTFT, t)
+                  : firstByteTimeoutAttempts > 0
                     ? t('首字超时切换')
                     : hasModelGatewayWarning(record) && !processing
                       ? modelGatewayWarningLabel(record, t)
@@ -5117,7 +5181,14 @@ function UserRequestRecentTable({
                   record.ttft_ms,
                   LATENCY_THRESHOLDS.ttftMs,
                 );
-                const hasTTFT = Number(record.ttft_ms || 0) > 0;
+                const statusCaption = userRequestStatusCaption(
+                  record,
+                  meta,
+                  processing,
+                  hasTTFT,
+                  durationMs,
+                  t,
+                );
 
                 return (
                   <div
@@ -5131,15 +5202,7 @@ function UserRequestRecentTable({
                         <StatusIcon size={13} />
                         <span>{meta.label}</span>
                       </div>
-                      <small
-                        className={
-                          !processing && record.recovered
-                            ? ''
-                            : 'ct-model-gateway-user-request-hidden-line'
-                        }
-                      >
-                        {t('智能调度')}
-                      </small>
+                      <small title={statusCaption}>{statusCaption}</small>
                     </div>
 
                     <div className='ct-model-gateway-user-request-user-col'>
@@ -5222,9 +5285,7 @@ function UserRequestRecentTable({
                       className={`ct-model-gateway-user-request-value-col ct-model-gateway-user-request-value-${durationTone}`}
                     >
                       <strong>{formatLatency(durationMs)}</strong>
-                      <span>
-                        {processing ? t('实时处理中') : t('仅供排查')}
-                      </span>
+                      <span>{userRequestDurationCaption(processing, t)}</span>
                     </div>
 
                     <div
@@ -5234,7 +5295,7 @@ function UserRequestRecentTable({
                         {hasTTFT ? formatLatency(record.ttft_ms) : '--'}
                       </strong>
                       <span>
-                        {processing && !hasTTFT ? t('等待完成') : t('首包延迟')}
+                        {userRequestTTFTCaption(processing, hasTTFT, t)}
                       </span>
                     </div>
 
@@ -5257,33 +5318,22 @@ function UserRequestRecentTable({
                         </strong>
                       </HoverCard>
                       <span>
-                        {processing
-                          ? t('进行中')
-                          : meta.tone === 'aborted'
-                            ? t('客户端中断')
-                            : meta.tone === 'quota'
-                              ? t('业务拦截')
-                              : meta.tone === 'probe' ||
-                                  meta.tone === 'probe-warning'
-                                ? t('探活请求')
-                                : record.final_success
-                                  ? t('请求完成')
-                                  : t('请求失败')}
+                        {userRequestTimeCaption(record, meta, processing, t)}
                       </span>
                     </div>
 
                     <div className='ct-model-gateway-user-request-action-col'>
-                      <Tooltip content={t('调度详情')}>
+                      <Tooltip content={t('查看调度链路与计费明细')}>
                         <Button
                           size='small'
                           type='tertiary'
-                          aria-label={t('查看详情')}
+                          aria-label={t('查看调度链路与计费明细')}
                           icon={<Eye size={14} />}
                           loading={dispatchDetailLoading === requestId}
                           disabled={!requestId}
                           onClick={() => onOpenDispatchDetail?.(record)}
                         >
-                          {t('查看')}
+                          {t('诊断')}
                         </Button>
                       </Tooltip>
                     </div>

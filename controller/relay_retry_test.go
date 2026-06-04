@@ -95,6 +95,67 @@ func TestReportModelGatewayEarlyFailureRecordsSelectedPlanTerminalError(t *testi
 	require.Greater(t, capturedFlow.RelayTotal, time.Duration(0))
 }
 
+func TestReportModelGatewayTerminalSelectionFailureClosesRetryableAttempt(t *testing.T) {
+	var capturedChannel *model.Channel
+	var capturedAPIError *types.NewAPIError
+	var capturedFlow modelGatewayAttemptFlow
+	oldReporter := reportModelGatewayTerminalSelectionFailureAttempt
+	reportModelGatewayTerminalSelectionFailureAttempt = func(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, channel *model.Channel, apiErr *types.NewAPIError, flow modelGatewayAttemptFlow) {
+		capturedChannel = channel
+		capturedAPIError = apiErr
+		capturedFlow = flow
+	}
+	t.Cleanup(func() {
+		reportModelGatewayTerminalSelectionFailureAttempt = oldReporter
+	})
+
+	ctx := newRelayRetryContext()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Set("use_channel", []string{"42"})
+	channel := &model.Channel{Id: 42, Name: "self-built-pool", Type: constant.ChannelTypeOpenAI}
+	plan := &modelgatewaycore.DispatchPlan{
+		PolicyMode:    modelgatewaycore.ModeActive,
+		SelectedGroup: "codex-plus",
+		Channel:       channel,
+		RuntimeKey: modelgatewaycore.RuntimeKey{
+			ChannelID:      channel.Id,
+			RequestedModel: "gpt-5.5",
+			Group:          "codex-plus",
+			EndpointType:   constant.EndpointTypeOpenAIResponse,
+		},
+	}
+	info := &relaycommon.RelayInfo{
+		RequestId:       "req-selection-exhausted",
+		UserId:          39,
+		TokenId:         28,
+		TokenGroup:      "auto",
+		UsingGroup:      "codex-plus",
+		OriginModelName: "gpt-5.5",
+		RelayMode:       relayconstant.RelayModeResponses,
+		RelayFormat:     types.RelayFormatOpenAI,
+		StartTime:       time.Now().Add(-50 * time.Millisecond),
+		RetryIndex:      1,
+	}
+	apiErr := types.NewError(
+		errors.New("no available smart candidates after retry"),
+		types.ErrorCodeGetChannelFailed,
+		types.ErrOptionWithSkipRetry(),
+	)
+
+	require.True(t, reportModelGatewayTerminalSelectionFailureIfNeeded(ctx, info, nil, apiErr, plan, channel, false))
+	require.Equal(t, channel, capturedChannel)
+	require.Equal(t, apiErr, capturedAPIError)
+	require.Equal(t, modelgatewaycore.ErrorCategorySchedulerExhausted, capturedFlow.ErrorCategory)
+	require.Equal(t, "stop", capturedFlow.RetryAction)
+	require.Equal(t, modelgatewaycore.ErrorCategorySchedulerExhausted, capturedFlow.RetryReason)
+	require.False(t, capturedFlow.WillRetry)
+	require.Contains(t, capturedFlow.UsedChannels, "42")
+	require.Greater(t, capturedFlow.RelayTotal, time.Duration(0))
+	selectedPlan, ok := modelgatewayintegration.GetSelectedPlan(ctx)
+	require.True(t, ok)
+	require.Equal(t, plan, selectedPlan)
+}
+
 func TestRelayTotalDurationWatchdogAppliesOnlySmartStreamingNonSpecificRequests(t *testing.T) {
 	setting := scheduler_setting.DefaultSetting()
 	setting.RelayTotalTimeoutEnabled = true

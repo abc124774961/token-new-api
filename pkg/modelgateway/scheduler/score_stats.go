@@ -231,6 +231,8 @@ func scoreSampleDecision(result core.AttemptResult) core.ScoreSampleDecision {
 		return skippedScoreSample("user_quota_exhausted")
 	case result.BalanceInsufficient || isBalanceInsufficientAttempt(result):
 		return skippedScoreSample("balance_insufficient")
+	case strings.TrimSpace(result.ErrorCategory) == core.ErrorCategorySchedulerExhausted:
+		return skippedScoreSample(core.ErrorCategorySchedulerExhausted)
 	case result.ConcurrencyLimited:
 		return skippedScoreSample("concurrency_limited")
 	case isCircuitOverloadSkipResult(result):

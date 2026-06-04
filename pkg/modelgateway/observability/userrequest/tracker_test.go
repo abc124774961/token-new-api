@@ -10,7 +10,9 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestTrackerStartSnapshotsProcessingWithoutDatabase(t *testing.T) {
@@ -242,6 +244,44 @@ func TestTrackerRetryingStreamInterruptedAttemptStaysProcessing(t *testing.T) {
 	require.Equal(t, StatusProcessing, events[1].Record.Status)
 }
 
+func TestTrackerFinalizesMisflaggedStopRetryAttempt(t *testing.T) {
+	tracker := NewTracker(10, time.Minute)
+	events := make([]Event, 0)
+	tracker.AddObserver(func(event Event) {
+		events = append(events, event)
+	})
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-stop-retry", RequestedGroup: "auto", ModelName: "gpt-5.5"},
+		Plan:       &core.DispatchPlan{SelectedGroup: "codex-plus"},
+		RecordedAt: time.Now(),
+	})
+
+	tracker.Finish(core.AttemptResult{
+		RequestID:      "req-stop-retry",
+		AttemptIndex:   1,
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		ModelName:      "gpt-5.5",
+		ChannelID:      42,
+		ChannelName:    "self-built-pool",
+		StatusCode:     http.StatusInternalServerError,
+		ErrorCategory:  core.ErrorCategorySchedulerExhausted,
+		RetryAction:    "stop",
+		WillRetry:      true,
+		Duration:       2 * time.Second,
+		TTFT:           4900 * time.Millisecond,
+	}, nil)
+
+	require.Empty(t, tracker.Snapshot(5, Filters{}))
+	require.Len(t, events, 2)
+	require.Equal(t, EventFinished, events[1].Kind)
+	require.Equal(t, StatusFailed, events[1].Record.Status)
+	require.Equal(t, "req-stop-retry", events[1].Record.RequestID)
+	require.Equal(t, model.ModelGatewayUserRequestErrorSchedulerExhausted, events[1].Record.FinalErrorCategory)
+	require.Equal(t, int64(2000), events[1].Record.DurationMs)
+	require.Equal(t, int64(4900), events[1].Record.TTFTMs)
+}
+
 func TestTrackerLateStartDoesNotReopenFinishedRequest(t *testing.T) {
 	tracker := NewTracker(10, time.Minute)
 	events := make([]Event, 0)
@@ -373,6 +413,47 @@ func TestTrackerSweepStaleProcessingPublishesTimeoutFinal(t *testing.T) {
 	require.Len(t, items, 1)
 	require.Equal(t, StatusFailed, items[0].Status)
 	require.Equal(t, model.ModelGatewayUserRequestErrorTimeout, items[0].FinalErrorCategory)
+}
+
+func TestTrackerSweepStaleProcessingPersistsTimeoutSummary(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelGatewayUserRequestSummary{}))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+	restore := setTrackerTimeoutsForTest(t, true, 1, 1, 0)
+	defer restore()
+
+	tracker := NewTracker(10, time.Minute)
+	tracker.Start(core.DispatchRecord{
+		Request: core.DispatchRequest{
+			RequestID:      "req-stale-persisted",
+			RequestedGroup: "auto",
+			ModelName:      "gpt-5.5",
+		},
+		Plan: &core.DispatchPlan{
+			SelectedGroup: "codex-plus",
+			Channel:       &model.Channel{Id: 42, Name: "stale-channel"},
+		},
+		RecordedAt: time.Now().Add(-35 * time.Second),
+	})
+
+	records := tracker.SweepStale()
+
+	require.Len(t, records, 1)
+	require.Greater(t, records[0].ID, 0)
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-stale-persisted").First(&summary).Error)
+	require.Greater(t, summary.CompletedAt, int64(0))
+	require.Equal(t, http.StatusGatewayTimeout, summary.FinalStatusCode)
+	require.Equal(t, model.ModelGatewayUserRequestErrorTimeout, summary.FinalErrorCategory)
+	require.Equal(t, "gpt-5.5", summary.RequestedModel)
+	require.Equal(t, "codex-plus", summary.SelectedGroup)
+	require.Equal(t, 42, summary.FinalChannelID)
+	require.GreaterOrEqual(t, summary.DurationMs, int64(30000))
 }
 
 func TestTrackerSnapshotConvertsStaleProcessingToTimeoutFinal(t *testing.T) {

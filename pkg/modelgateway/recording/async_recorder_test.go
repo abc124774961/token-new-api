@@ -2,6 +2,7 @@ package recording
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -123,6 +124,54 @@ func TestChannelAccountUsageEventFromAttemptUsesCurrentTimeWhenObservedAtUnset(t
 	require.LessOrEqual(t, event.CompletedAt, after)
 	require.Greater(t, event.CreatedAt, int64(0))
 	require.Greater(t, event.UpdatedAt, int64(0))
+}
+
+func TestAsyncExecutionRecorderDoesNotDropResultWhenQueueFull(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := &AsyncExecutionRecorder{queue: make(chan event, 1)}
+	recorder.offer(event{record: &core.DispatchRecord{
+		Request: core.DispatchRequest{
+			RequestID:    "req-queued-dispatch",
+			ModelName:    "gpt-5.5",
+			EndpointType: constant.EndpointTypeOpenAI,
+		},
+		RecordedAt: time.Now(),
+	}})
+	recorder.offer(event{result: &core.AttemptResult{
+		RequestID:      "req-overflow-result",
+		AttemptIndex:   0,
+		ChannelID:      42,
+		ChannelName:    "overflow-channel",
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		ModelName:      "gpt-5.5",
+		EndpointType:   constant.EndpointTypeOpenAI,
+		Success:        true,
+		RetryAction:    "complete",
+		Duration:       250 * time.Millisecond,
+		TTFT:           80 * time.Millisecond,
+	}})
+
+	require.Eventually(t, func() bool {
+		var summary model.ModelGatewayUserRequestSummary
+		err := db.Where("request_id = ?", "req-overflow-result").First(&summary).Error
+		return err == nil && summary.CompletedAt > 0 && summary.FinalSuccess
+	}, 2*time.Second, 10*time.Millisecond)
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-overflow-result").First(&summary).Error)
+	require.Equal(t, "overflow-channel", summary.FinalChannelName)
+	require.Equal(t, int64(250), summary.DurationMs)
+	require.Equal(t, int64(80), summary.TTFTMs)
 }
 
 func TestAsyncExecutionRecorderRecordsRetryRoutingIntentMeta(t *testing.T) {
@@ -282,6 +331,50 @@ func TestAsyncExecutionRecorderDoesNotSummarizeRetryingStreamInterruptedAttempt(
 		Where("request_id = ?", "req-retrying-stream-interrupted").
 		Count(&summaries).Error)
 	require.Equal(t, int64(0), summaries)
+}
+
+func TestAsyncExecutionRecorderFinalizesMisflaggedStopRetryAttempt(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:      "req-stop-retry-misflag",
+		AttemptIndex:   1,
+		ChannelID:      42,
+		ChannelName:    "self-built-pool",
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		ModelName:      "gpt-5.5",
+		StatusCode:     http.StatusInternalServerError,
+		ErrorCategory:  core.ErrorCategorySchedulerExhausted,
+		RetryAction:    "stop",
+		WillRetry:      true,
+		Duration:       2 * time.Second,
+		TTFT:           4900 * time.Millisecond,
+	})
+
+	require.Eventually(t, func() bool {
+		var summary model.ModelGatewayUserRequestSummary
+		err := db.Where("request_id = ?", "req-stop-retry-misflag").First(&summary).Error
+		return err == nil && summary.CompletedAt > 0
+	}, time.Second, 10*time.Millisecond)
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-stop-retry-misflag").First(&summary).Error)
+	require.False(t, summary.FinalSuccess)
+	require.Equal(t, 2, summary.Attempts)
+	require.Equal(t, http.StatusInternalServerError, summary.FinalStatusCode)
+	require.Equal(t, model.ModelGatewayUserRequestErrorSchedulerExhausted, summary.FinalErrorCategory)
+	require.Equal(t, int64(2000), summary.DurationMs)
+	require.Equal(t, int64(4900), summary.TTFTMs)
 }
 
 func TestAsyncExecutionRecorderAttemptPreservesDispatchScoreExplanation(t *testing.T) {

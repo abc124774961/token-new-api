@@ -938,6 +938,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}
 
+	if reportModelGatewayTerminalSelectionFailureIfNeeded(c, relayInfo, retryParam, newAPIError, lastModelGatewayPlan, lastModelGatewayChannel, finalAttemptReported) {
+		finalAttemptReported = true
+	}
+
 	reportModelGatewayClientAbortIfNeeded(c, relayInfo, retryParam, lastModelGatewayPlan, lastModelGatewayChannel, finalAttemptReported)
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -1366,6 +1370,7 @@ type modelGatewayAttemptFlow struct {
 }
 
 var reportModelGatewayEarlyFailureAttempt = reportModelGatewayAttempt
+var reportModelGatewayTerminalSelectionFailureAttempt = reportModelGatewayAttempt
 
 func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, channel *model.Channel, apiErr *types.NewAPIError, flow modelGatewayAttemptFlow) {
 	if c == nil || info == nil || channel == nil {
@@ -1508,6 +1513,27 @@ func reportModelGatewayEarlyFailureIfNeeded(c *gin.Context, info *relaycommon.Re
 		ErrorCategory: errorCategory,
 		RetryAction:   retryAction,
 		ClientAborted: clientAbort,
+		UsedChannels:  relayEarlyFailureUsedChannels(c, channel),
+		RelayTotal:    modelGatewayRequestDuration(info),
+	})
+	return true
+}
+
+func reportModelGatewayTerminalSelectionFailureIfNeeded(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, apiErr *types.NewAPIError, plan *modelgatewaycore.DispatchPlan, channel *model.Channel, finalAlreadyReported bool) bool {
+	if c == nil || info == nil || apiErr == nil || finalAlreadyReported {
+		return false
+	}
+	if apiErr.GetErrorCode() != types.ErrorCodeGetChannelFailed {
+		return false
+	}
+	if plan == nil || channel == nil {
+		return false
+	}
+	modelgatewayintegration.SetSelectedPlan(c, plan)
+	reportModelGatewayTerminalSelectionFailureAttempt(c, info, retryParam, channel, apiErr, modelGatewayAttemptFlow{
+		ErrorCategory: modelgatewaycore.ErrorCategorySchedulerExhausted,
+		RetryAction:   "stop",
+		RetryReason:   modelgatewaycore.ErrorCategorySchedulerExhausted,
 		UsedChannels:  relayEarlyFailureUsedChannels(c, channel),
 		RelayTotal:    modelGatewayRequestDuration(info),
 	})

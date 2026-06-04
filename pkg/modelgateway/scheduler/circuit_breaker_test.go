@@ -216,6 +216,34 @@ func TestCircuitBreakerIgnoresBalanceInsufficient(t *testing.T) {
 	}))
 }
 
+func TestCircuitBreakerIgnoresSchedulerExhausted(t *testing.T) {
+	breaker := scheduler.NewCircuitBreakerForTest(scheduler.CircuitBreakerOptions{
+		FailureThreshold:   1,
+		MinSamples:         1,
+		OpenDuration:       time.Second,
+		HalfOpenProbeCount: 1,
+	}, func() time.Time { return time.Unix(420, 0) })
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 14, Group: "codex-plus"}
+
+	breaker.Report(core.AttemptResult{
+		Key:           key,
+		ChannelID:     14,
+		StatusCode:    http.StatusTooManyRequests,
+		ErrorCategory: core.ErrorCategorySchedulerExhausted,
+		RetryAction:   "stop",
+	})
+
+	snapshot := breaker.Snapshot(key)
+	require.Equal(t, core.CircuitStateClosed, snapshot.State)
+	require.Zero(t, snapshot.SampleCount)
+	require.Empty(t, snapshot.ErrorCounts)
+	require.Empty(t, scheduler.ClassifyCircuitError(core.AttemptResult{
+		StatusCode:    http.StatusTooManyRequests,
+		ErrorCategory: core.ErrorCategorySchedulerExhausted,
+		RetryAction:   "stop",
+	}))
+}
+
 func TestCircuitBreakerDoesNotCountAuthWithoutErrorPolicy(t *testing.T) {
 	breaker := scheduler.NewCircuitBreakerForTest(scheduler.CircuitBreakerOptions{
 		FailureThreshold:   1,

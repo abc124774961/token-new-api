@@ -335,8 +335,9 @@ func (t *Tracker) Snapshot(limit int, filters Filters) []Record {
 		}
 	}
 	t.mu.Unlock()
-	for _, record := range staleRecords {
-		t.notify(Event{Kind: EventFinished, Record: record})
+	for idx := range staleRecords {
+		staleRecords[idx] = persistStaleProcessingFinal(staleRecords[idx])
+		t.notify(Event{Kind: EventFinished, Record: staleRecords[idx]})
 	}
 	sort.Slice(items, func(i, j int) bool {
 		return recordSortLess(items[i], items[j])
@@ -356,8 +357,9 @@ func (t *Tracker) SweepStale() []Record {
 	t.pruneLocked(now)
 	records := t.collectStaleFinalsLocked(now, staleProcessingTimeout())
 	t.mu.Unlock()
-	for _, record := range records {
-		t.notify(Event{Kind: EventFinished, Record: record})
+	for idx := range records {
+		records[idx] = persistStaleProcessingFinal(records[idx])
+		t.notify(Event{Kind: EventFinished, Record: records[idx]})
 	}
 	return records
 }
@@ -639,6 +641,54 @@ func staleProcessingFinalRecord(record Record, now time.Time) Record {
 	return record
 }
 
+func persistStaleProcessingFinal(record Record) Record {
+	requestID := strings.TrimSpace(record.RequestID)
+	if requestID == "" {
+		return record
+	}
+	completedAt := record.CompletedAt
+	if completedAt <= 0 {
+		completedAt = time.Now().Unix()
+		record.CompletedAt = completedAt
+	}
+	attemptIndex := record.Attempts - 1
+	if attemptIndex < 0 {
+		attemptIndex = 0
+	}
+	duration := time.Duration(record.DurationMs) * time.Millisecond
+	summary := model.RecordModelGatewayUserRequestAttempt(model.ModelGatewayUserRequestAttempt{
+		CreatedAt:      completedAt,
+		RequestId:      requestID,
+		AttemptIndex:   attemptIndex,
+		RequestedGroup: record.RequestedGroup,
+		SelectedGroup:  record.SelectedGroup,
+		ChannelID:      record.FinalChannelID,
+		ChannelName:    record.FinalChannelName,
+		RequestedModel: record.RequestedModel,
+		Success:        false,
+		StatusCode:     http.StatusGatewayTimeout,
+		ErrorCategory:  model.ModelGatewayUserRequestErrorTimeout,
+		DurationMs:     duration.Milliseconds(),
+		TTFTMs:         record.TTFTMs,
+		RetryAction:    "stale_timeout",
+		IsHealthProbe:  record.IsHealthProbe,
+		ProbeReason:    record.ProbeReason,
+	})
+	if summary == nil {
+		return record
+	}
+	record.ID = summary.Id
+	record.FinalStatusCode = summary.FinalStatusCode
+	record.FinalErrorCategory = summary.FinalErrorCategory
+	if summary.DurationMs > 0 {
+		record.DurationMs = summary.DurationMs
+	}
+	if summary.TTFTMs > 0 {
+		record.TTFTMs = summary.TTFTMs
+	}
+	return record
+}
+
 func staleProcessingTimeout() time.Duration {
 	timeout := currentStreamingIdleTimeout()
 	if totalTimeout := currentRelayTotalTimeout(); totalTimeout > timeout {
@@ -713,7 +763,19 @@ func modelGatewayAttemptFinalized(result core.AttemptResult) bool {
 	if result.Success || userRequestResultClientAborted(result) {
 		return true
 	}
-	return !result.WillRetry
+	return !modelGatewayAttemptWillRetry(result)
+}
+
+func modelGatewayAttemptWillRetry(result core.AttemptResult) bool {
+	if !result.WillRetry {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(result.RetryAction)) {
+	case "switch_channel", "retry", "resource_protection_fallback":
+		return true
+	default:
+		return false
+	}
 }
 
 func userRequestStatus(success bool, clientAborted bool, healthProbe bool) string {

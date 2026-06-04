@@ -145,7 +145,7 @@ func (b *CircuitBreaker) AllowProbe(key core.RuntimeKey) bool {
 }
 
 func (b *CircuitBreaker) Report(result core.AttemptResult) {
-	if b == nil || result.ChannelID <= 0 || result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) {
+	if b == nil || result.ChannelID <= 0 || result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) || isCircuitSchedulerExhaustedResult(result) {
 		return
 	}
 	key := normalizeRuntimeKey(result.RuntimeKey())
@@ -399,7 +399,7 @@ func (b *CircuitBreaker) classifyFailure(result core.AttemptResult) (string, boo
 // mean the failure is counted by the circuit breaker; policies still decide
 // that in classifyFailure.
 func ClassifyCircuitError(result core.AttemptResult) string {
-	if result.ClientAborted || strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) {
+	if result.ClientAborted || strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) || isCircuitSchedulerExhaustedResult(result) {
 		return ""
 	}
 	if result.StreamInterrupted {
@@ -434,7 +434,7 @@ func ClassifyCircuitError(result core.AttemptResult) string {
 }
 
 func isDefaultCircuitFailure(result core.AttemptResult) bool {
-	if result.ClientAborted || strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) {
+	if result.ClientAborted || strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) || isCircuitSchedulerExhaustedResult(result) {
 		return false
 	}
 	if result.StreamInterrupted {
@@ -457,6 +457,10 @@ func isCircuitOverloadSkipResult(result core.AttemptResult) bool {
 		return true
 	}
 	return result.StatusCode == http.StatusTooManyRequests
+}
+
+func isCircuitSchedulerExhaustedResult(result core.AttemptResult) bool {
+	return strings.TrimSpace(result.ErrorCategory) == core.ErrorCategorySchedulerExhausted
 }
 
 func isCircuitConcurrencyLimitResult(result core.AttemptResult) bool {

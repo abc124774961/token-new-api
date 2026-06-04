@@ -134,6 +134,345 @@
   color: #2563eb;
 }
 
+.ct-profit-group-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ct-profit-executive-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.ct-profit-executive-grid .ct-profit-metric {
+  min-height: 116px;
+}
+
+.ct-profit-panel-head.compact-head {
+  margin-bottom: 2px;
+  padding: 0 2px;
+}
+
+.ct-profit-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ct-profit-group-card {
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.05);
+}
+
+.ct-profit-group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ct-profit-group-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.ct-profit-group-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ct-profit-group-title strong {
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 900;
+  word-break: break-word;
+}
+
+.ct-profit-group-title span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ct-profit-group-score {
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 116px;
+  padding: 9px 11px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.ct-profit-group-score span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.ct-profit-group-score strong {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  color: #0f172a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', monospace;
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.ct-profit-group-score em {
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.ct-profit-score-success {
+  background: rgba(220, 252, 231, 0.72);
+  border-color: rgba(22, 163, 74, 0.16);
+}
+
+.ct-profit-score-info {
+  background: rgba(219, 234, 254, 0.68);
+  border-color: rgba(37, 99, 235, 0.16);
+}
+
+.ct-profit-score-warning {
+  background: rgba(254, 243, 199, 0.68);
+  border-color: rgba(217, 119, 6, 0.18);
+}
+
+.ct-profit-score-danger {
+  background: rgba(254, 226, 226, 0.7);
+  border-color: rgba(220, 38, 38, 0.18);
+}
+
+.ct-profit-group-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.ct-profit-group-metrics .ct-profit-metric {
+  min-height: 112px;
+  padding: 14px;
+  border-radius: 16px;
+  box-shadow: none;
+}
+
+.ct-profit-group-metrics .ct-profit-metric-value {
+  font-size: 21px;
+}
+
+.ct-profit-group-metrics .ct-profit-metric-icon {
+  width: 34px;
+  height: 34px;
+  flex-basis: 34px;
+}
+
+.ct-profit-group-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ct-profit-group-inline .ct-profit-name-cell {
+  min-width: 0;
+}
+
+.ct-profit-group-insights {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.ct-profit-ratio-panel {
+  margin-top: 12px;
+  padding: 13px;
+  border: 1px solid rgba(20, 184, 166, 0.18);
+  border-radius: 18px;
+  background: rgba(240, 253, 250, 0.56);
+}
+
+.ct-profit-ratio-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.ct-profit-ratio-head > div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ct-profit-ratio-head span {
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ct-profit-ratio-head strong {
+  color: #0f172a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', monospace;
+  font-size: 24px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.ct-profit-ratio-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.ct-profit-ratio-stat {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.ct-profit-ratio-stat span {
+  display: block;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.ct-profit-ratio-stat strong {
+  display: block;
+  margin-top: 5px;
+  color: #0f172a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', monospace;
+  font-size: 17px;
+  line-height: 1.15;
+  font-weight: 900;
+}
+
+.ct-profit-ratio-stat em {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.ct-profit-ratio-stat-info {
+  background: rgba(239, 246, 255, 0.74);
+  border-color: rgba(37, 99, 235, 0.14);
+}
+
+.ct-profit-ratio-stat-success {
+  background: rgba(240, 253, 244, 0.74);
+  border-color: rgba(22, 163, 74, 0.14);
+}
+
+.ct-profit-ratio-stat-warning {
+  background: rgba(255, 251, 235, 0.82);
+  border-color: rgba(217, 119, 6, 0.18);
+}
+
+.ct-profit-ratio-angles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.ct-profit-ratio-current-cell strong {
+  color: #0f766e;
+  font-size: 16px;
+}
+
+.ct-profit-ratio-angle-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 0;
+}
+
+.ct-profit-ratio-angle-cell span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.ct-profit-group-insight {
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(248, 250, 252, 0.82);
+}
+
+.ct-profit-group-insight span {
+  display: inline-flex;
+  margin-bottom: 5px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.ct-profit-group-insight strong {
+  display: block;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.ct-profit-group-insight p {
+  margin: 5px 0 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ct-profit-insight-success {
+  background: rgba(240, 253, 244, 0.72);
+  border-color: rgba(22, 163, 74, 0.16);
+}
+
+.ct-profit-insight-info {
+  background: rgba(239, 246, 255, 0.72);
+  border-color: rgba(37, 99, 235, 0.16);
+}
+
+.ct-profit-insight-warning {
+  background: rgba(255, 251, 235, 0.78);
+  border-color: rgba(217, 119, 6, 0.18);
+}
+
+.ct-profit-insight-danger {
+  background: rgba(254, 242, 242, 0.78);
+  border-color: rgba(220, 38, 38, 0.18);
+}
+
 .ct-profit-panels {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(340px, 0.9fr);
@@ -470,17 +809,74 @@ body[theme-mode='dark'] .ct-profit-page {
 }
 
 body[theme-mode='dark'] .ct-profit-metric,
+body[theme-mode='dark'] .ct-profit-group-card,
 body[theme-mode='dark'] .ct-profit-panel {
   background: rgba(17, 24, 39, 0.9);
   border-color: rgba(148, 163, 184, 0.18);
 }
 
+body[theme-mode='dark'] .ct-profit-group-score,
+body[theme-mode='dark'] .ct-profit-ratio-panel,
+body[theme-mode='dark'] .ct-profit-ratio-stat,
+body[theme-mode='dark'] .ct-profit-group-insight {
+  background: rgba(15, 23, 42, 0.62);
+  border-color: rgba(148, 163, 184, 0.16);
+}
+
 body[theme-mode='dark'] .ct-profit-header h1,
 body[theme-mode='dark'] .ct-profit-panel h2,
+body[theme-mode='dark'] .ct-profit-group-title strong,
+body[theme-mode='dark'] .ct-profit-group-score strong,
+body[theme-mode='dark'] .ct-profit-ratio-head strong,
+body[theme-mode='dark'] .ct-profit-ratio-stat strong,
+body[theme-mode='dark'] .ct-profit-group-insight strong,
 body[theme-mode='dark'] .ct-profit-name-cell strong,
 body[theme-mode='dark'] .ct-profit-subhead strong,
 body[theme-mode='dark'] .ct-profit-recommendation strong {
   color: var(--semi-color-text-0);
+}
+
+body[theme-mode='dark'] .ct-profit-group-title span,
+body[theme-mode='dark'] .ct-profit-group-score span,
+body[theme-mode='dark'] .ct-profit-group-score em,
+body[theme-mode='dark'] .ct-profit-ratio-stat span,
+body[theme-mode='dark'] .ct-profit-ratio-stat em,
+body[theme-mode='dark'] .ct-profit-ratio-angle-cell span,
+body[theme-mode='dark'] .ct-profit-group-insight span,
+body[theme-mode='dark'] .ct-profit-group-insight p {
+  color: var(--semi-color-text-1);
+}
+
+body[theme-mode='dark'] .ct-profit-ratio-head span,
+body[theme-mode='dark'] .ct-profit-ratio-current-cell strong {
+  color: #7cc7bd;
+}
+
+body[theme-mode='dark'] .ct-profit-score-success,
+body[theme-mode='dark'] .ct-profit-ratio-stat-success,
+body[theme-mode='dark'] .ct-profit-insight-success {
+  background: rgba(22, 101, 52, 0.26);
+  border-color: rgba(125, 202, 166, 0.18);
+}
+
+body[theme-mode='dark'] .ct-profit-score-info,
+body[theme-mode='dark'] .ct-profit-ratio-stat-info,
+body[theme-mode='dark'] .ct-profit-insight-info {
+  background: rgba(30, 64, 175, 0.24);
+  border-color: rgba(147, 183, 232, 0.18);
+}
+
+body[theme-mode='dark'] .ct-profit-score-warning,
+body[theme-mode='dark'] .ct-profit-ratio-stat-warning,
+body[theme-mode='dark'] .ct-profit-insight-warning {
+  background: rgba(120, 53, 15, 0.24);
+  border-color: rgba(223, 180, 103, 0.2);
+}
+
+body[theme-mode='dark'] .ct-profit-score-danger,
+body[theme-mode='dark'] .ct-profit-insight-danger {
+  background: rgba(127, 29, 29, 0.26);
+  border-color: rgba(229, 143, 143, 0.2);
 }
 
 body[theme-mode='dark'] .ct-profit-recommendation > div {
@@ -527,6 +923,18 @@ body[theme-mode='dark'] .ct-profit-json-grid pre {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .ct-profit-executive-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ct-profit-group-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ct-profit-ratio-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .ct-profit-panels {
     grid-template-columns: 1fr;
   }
@@ -546,11 +954,34 @@ body[theme-mode='dark'] .ct-profit-json-grid pre {
     width: 100%;
   }
 
+  .ct-profit-group-head {
+    flex-direction: column;
+  }
+
+  .ct-profit-group-identity {
+    align-items: flex-start;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .ct-profit-group-score {
+    width: 100%;
+  }
+
   .ct-profit-metrics,
+  .ct-profit-executive-grid,
+  .ct-profit-group-metrics,
+  .ct-profit-group-insights,
+  .ct-profit-ratio-stat-grid,
+  .ct-profit-ratio-angles,
   .ct-profit-form-grid,
   .ct-profit-detail-grid,
   .ct-profit-json-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ct-profit-ratio-head {
+    flex-direction: column;
   }
 
   .ct-profit-header h1 {

@@ -736,7 +736,7 @@
 }
 
 .ct-model-gateway-user-request-list-body {
-  padding: 20px 22px 24px !important;
+  padding: 18px 20px 22px !important;
 }
 
 .ct-model-gateway-user-request-list-head {
@@ -749,8 +749,8 @@
 
 .ct-model-gateway-user-request-list-head h3 {
   margin: 0;
-  color: #172033;
-  font-size: 16px;
+  color: #102033;
+  font-size: 17px;
   font-weight: 800;
   line-height: 1.2;
 }
@@ -758,8 +758,8 @@
 .ct-model-gateway-user-request-list-head p {
   margin: 7px 0 0;
   color: #6b7a90;
-  font-size: 12px;
-  font-weight: 520;
+  font-size: 12.5px;
+  font-weight: 560;
 }
 
 .ct-model-gateway-user-request-list-actions {
@@ -824,7 +824,7 @@
 }
 
 .ct-model-gateway-user-request-table {
-  min-width: 1500px;
+  min-width: 1580px;
 }
 
 .ct-model-gateway-user-request-table-head,
@@ -832,18 +832,18 @@
   display: grid;
   align-items: center;
   grid-template-columns:
-    106px minmax(148px, 0.48fr) minmax(330px, 1.35fr)
-    minmax(152px, 0.54fr) minmax(196px, 0.72fr)
-    104px 102px 126px 84px;
+    116px minmax(144px, 0.44fr) minmax(360px, 1.32fr)
+    minmax(160px, 0.52fr) minmax(214px, 0.75fr)
+    112px 108px 128px 86px;
 }
 
 .ct-model-gateway-user-request-table-head {
   min-height: 44px;
   border-bottom: 1px solid rgba(222, 229, 239, 0.98);
   color: #4b5e78;
-  background: #fff;
-  font-size: 12px;
-  font-weight: 720;
+  background: linear-gradient(180deg, #fbfdff 0%, #f7fafc 100%);
+  font-size: 12.5px;
+  font-weight: 760;
 }
 
 .ct-model-gateway-user-request-table-head span {
@@ -861,7 +861,7 @@
 
 .ct-model-gateway-user-request-row {
   position: relative;
-  min-height: 78px;
+  min-height: 82px;
   border-bottom: 1px solid rgba(225, 231, 240, 0.86);
   color: #263650;
   background: #fff;
@@ -870,8 +870,24 @@
 }
 
 .ct-model-gateway-user-request-row:hover {
-  background: #fff;
+  background: #fbfdff;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.ct-model-gateway-user-request-row-processing {
+  background: linear-gradient(
+    90deg,
+    rgba(239, 246, 255, 0.72) 0%,
+    rgba(255, 255, 255, 0.98) 34%
+  );
+}
+
+.ct-model-gateway-user-request-row-processing:hover {
+  background: linear-gradient(
+    90deg,
+    rgba(219, 234, 254, 0.82) 0%,
+    rgba(248, 252, 255, 0.98) 36%
+  );
 }
 
 .ct-model-gateway-user-request-row:last-child {
@@ -962,7 +978,7 @@
   position: relative;
   min-width: 0;
   height: 100%;
-  padding: 8px 13px;
+  padding: 9px 14px;
 }
 
 .ct-model-gateway-user-request-row > div:not(:last-child)::after {
@@ -1017,13 +1033,13 @@
 }
 
 .ct-model-gateway-user-request-action-col .semi-button {
-  width: 72px;
+  width: 74px;
   justify-content: center;
   border: 1px solid rgba(180, 192, 209, 0.55);
   border-radius: 7px;
   color: #2f405b;
   background: rgba(255, 255, 255, 0.96);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 760;
 }
 
@@ -1036,8 +1052,8 @@
 .ct-model-gateway-user-request-status-pill {
   display: inline-flex;
   width: fit-content;
-  min-width: 62px;
-  height: 24px;
+  min-width: 68px;
+  height: 26px;
   align-items: center;
   justify-content: center;
   gap: 5px;
@@ -1045,7 +1061,7 @@
   padding: 5px 10px 5px 7px;
   color: #138544;
   background: #dff4df;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 760;
   line-height: 1;
   white-space: nowrap;
@@ -1058,7 +1074,7 @@
 .ct-model-gateway-user-request-status-pill span {
   display: inline-flex;
   color: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 760;
   line-height: 1;
   white-space: nowrap;
@@ -1187,6 +1203,12 @@
   white-space: nowrap;
 }
 
+.ct-model-gateway-user-request-status-col small {
+  max-width: 94px;
+  color: #5b6f89;
+  font-weight: 700;
+}
+
 .ct-model-gateway-user-request-id-line {
   display: flex;
   min-width: 0;
@@ -1206,7 +1228,7 @@
   max-width: 100%;
   color: #253551;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 780;
 }
 
@@ -1238,7 +1260,7 @@
   min-width: 0;
   overflow: hidden;
   color: #253551;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 780;
   line-height: 1.16;
   text-overflow: ellipsis;
@@ -1283,7 +1305,7 @@
   overflow: hidden;
   color: #10233f;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 850;
   line-height: 1.2;
   text-overflow: ellipsis;
@@ -1291,12 +1313,12 @@
 }
 
 .ct-model-gateway-user-request-route-line span {
-  max-width: 170px;
+  max-width: 188px;
   min-width: 0;
   overflow: hidden;
   color: #51647e;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1318,7 +1340,7 @@
   min-width: 0;
   overflow: hidden;
   color: #66758b;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 720;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1542,7 +1564,7 @@
 
 .ct-model-gateway-user-request-value-col strong {
   color: #009b76;
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 900;
 }
 
@@ -1645,18 +1667,18 @@
   min-width: 0;
   align-items: baseline;
   gap: 8px;
-  grid-template-columns: 58px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
 }
 
 .ct-model-gateway-user-request-cost-summary-line span {
   color: #66758b;
-  font-size: 11px;
-  font-weight: 660;
+  font-size: 11.5px;
+  font-weight: 700;
 }
 
 .ct-model-gateway-user-request-cost-summary-line strong {
   color: #047857;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 880;
   text-align: right;
 }
@@ -1702,7 +1724,7 @@
   background: transparent;
   cursor: inherit;
   gap: 8px;
-  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-columns: 42px minmax(0, 1fr);
   padding: 0;
   text-align: left;
 }
@@ -1713,7 +1735,7 @@
 
 .ct-model-gateway-user-request-score-main span {
   color: #66758b;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 680;
 }
 
@@ -1721,7 +1743,7 @@
   overflow: hidden;
   color: #0f766e;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 920;
   line-height: 1.1;
   text-overflow: ellipsis;
@@ -1773,7 +1795,7 @@
 
 .ct-model-gateway-user-request-score-empty span {
   color: #94a3b8;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 680;
 }
 

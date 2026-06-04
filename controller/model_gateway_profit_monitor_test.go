@@ -143,6 +143,22 @@ func TestModelGatewayProfitMonitorSummaryExcludesHealthProbeAndAddsResourceCost(
 		UpstreamCostTotal: 9,
 		IsHealthProbe:     true,
 	}).Error)
+	require.NoError(t, db.Create(&model.ChannelAccountUsageEvent{
+		RequestId:         "req-failed-real",
+		ChannelID:         12,
+		ChannelName:       "real channel",
+		RequestedModel:    "gpt-test",
+		RequestedGroup:    "default",
+		SelectedGroup:     "default",
+		CompletedAt:       140,
+		Success:           false,
+		StatusCode:        500,
+		ErrorCategory:     "upstream_error",
+		TotalTokens:       2000,
+		Quota:             900000,
+		UpstreamCostTotal: 8,
+		IsHealthProbe:     false,
+	}).Error)
 	require.NoError(t, db.Create(&model.ModelGatewayProfitResourceCost{
 		Name:            "account batch",
 		ResourceType:    model.ModelGatewayProfitResourceTypeAccountPool,
@@ -162,8 +178,11 @@ func TestModelGatewayProfitMonitorSummaryExcludesHealthProbeAndAddsResourceCost(
 	var payload modelGatewayProfitMonitorAPIResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
 	require.True(t, payload.Success, recorder.Body.String())
-	require.Equal(t, int64(1), payload.Data.Summary.Requests)
+	require.Equal(t, int64(2), payload.Data.Summary.Requests)
+	require.Equal(t, int64(1), payload.Data.Summary.SuccessRequests)
+	require.InEpsilon(t, 0.5, payload.Data.Summary.SuccessRate, 0.0001)
 	require.Equal(t, int64(500000), payload.Data.Summary.BillingQuota)
+	require.Equal(t, int64(1000), payload.Data.Summary.TotalTokens)
 	require.InEpsilon(t, 1.0, payload.Data.Summary.RevenueUSD, 0.0001)
 	require.InEpsilon(t, 0.3, payload.Data.Summary.UpstreamCostUSD, 0.0001)
 	require.InEpsilon(t, 1.0, payload.Data.Summary.ServerCostUSD, 0.0001)
@@ -172,6 +191,10 @@ func TestModelGatewayProfitMonitorSummaryExcludesHealthProbeAndAddsResourceCost(
 	require.Len(t, payload.Data.Breakdown, 1)
 	require.Equal(t, "channel", payload.Data.BreakdownDimension)
 	require.Equal(t, 12, payload.Data.Breakdown[0].DimensionID)
+	require.Equal(t, int64(2), payload.Data.Breakdown[0].Requests)
+	require.Equal(t, int64(1), payload.Data.Breakdown[0].SuccessRequests)
+	require.Equal(t, int64(500000), payload.Data.Breakdown[0].BillingQuota)
+	require.InEpsilon(t, 0.3, payload.Data.Breakdown[0].UpstreamCostUSD, 0.0001)
 }
 
 func TestModelGatewayProfitMonitorSummaryPrefersRealTrafficBytes(t *testing.T) {

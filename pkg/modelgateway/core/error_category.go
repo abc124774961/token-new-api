@@ -17,6 +17,7 @@ const (
 	ErrorCategoryUpstreamError             = "upstream_error"
 	ErrorCategoryServerError               = "server_error"
 	ErrorCategoryTimeout                   = "timeout"
+	ErrorCategorySchedulerExhausted        = "scheduler_exhausted"
 )
 
 const (

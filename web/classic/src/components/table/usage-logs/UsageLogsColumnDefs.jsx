@@ -113,7 +113,7 @@ function quotaToUsdAmount(quota) {
   return quotaValue / quotaPerUnit;
 }
 
-function formatProfitRate(profit, billingUsdAmount) {
+function formatGrossMarginRate(profit, billingUsdAmount) {
   const profitValue = Number(profit);
   const billingValue = Number(billingUsdAmount);
   if (
@@ -124,6 +124,19 @@ function formatProfitRate(profit, billingUsdAmount) {
     return null;
   }
   return `${profitValue >= 0 ? '+' : ''}${((profitValue / billingValue) * 100).toFixed(1)}%`;
+}
+
+function formatMarkupRate(profit, upstreamCost) {
+  const profitValue = Number(profit);
+  const upstreamValue = Number(upstreamCost);
+  if (
+    !Number.isFinite(profitValue) ||
+    !Number.isFinite(upstreamValue) ||
+    upstreamValue <= 0
+  ) {
+    return null;
+  }
+  return `${((profitValue / upstreamValue) * 100).toFixed(1)}%`;
 }
 
 function upstreamCostSourceLabel(source, accuracy, t) {
@@ -162,8 +175,10 @@ function buildChannelCostTooltip(record, other, channelContent, t) {
           allowNegative: true,
           showSign: true,
         });
-  const profitRateText =
-    profit === null ? null : formatProfitRate(profit, billingUsdAmount);
+  const grossMarginText =
+    profit === null ? null : formatGrossMarginRate(profit, billingUsdAmount);
+  const markupRateText =
+    profit === null ? null : formatMarkupRate(profit, upstreamCost);
   const metrics = [
     {
       key: 'cost',
@@ -181,8 +196,13 @@ function buildChannelCostTooltip(record, other, channelContent, t) {
       key: 'profit',
       label: t('利润'),
       value: profitText,
-      hint: profitRateText,
       tone: profit !== null && profit < 0 ? 'negative' : 'profit',
+    },
+    {
+      key: 'margin',
+      label: t('毛利率'),
+      value: grossMarginText || '--',
+      tone: profit !== null && profit < 0 ? 'negative' : 'margin',
     },
   ];
   const rows = [
@@ -195,6 +215,7 @@ function buildChannelCostTooltip(record, other, channelContent, t) {
       t('1:1 实际成本倍率'),
       actualCostRatio > 0 ? formatCostRatio(actualCostRatio) : '--',
     ],
+    [t('加价率'), markupRateText || '--'],
     [t('成本来源'), upstreamStatus],
   ];
 
