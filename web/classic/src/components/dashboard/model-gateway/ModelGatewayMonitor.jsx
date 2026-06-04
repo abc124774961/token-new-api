@@ -2936,7 +2936,7 @@ function isLongFormGenerationRequest(record) {
 
 function userRequestProcessingStage(record, durationMs, hasTTFT, t) {
   if (!isUserRequestProcessing(record)) return '';
-  if (hasTTFT) return t('上游已响应');
+  if (hasTTFT) return t('首包已到');
   if (isLongFormGenerationRequest(record)) return t('生成任务等待上游');
   if (durationMs >= 30000) return t('首包等待偏长');
   return t('等待首包');
@@ -2954,7 +2954,36 @@ function userRequestStatusCaption(record, meta, processing, hasTTFT, durationMs,
     return t('探活样本');
   }
   if (meta?.tone === 'warning') return t('需复核');
-  if (record?.final_success) return t('已结算');
+  if (record?.final_success) {
+    return record?.billing ? t('已结算') : t('费用待结算');
+  }
+  return t('需排查');
+}
+
+function userRequestStatusShortCaption(
+  record,
+  meta,
+  processing,
+  hasTTFT,
+  durationMs,
+  t,
+) {
+  if (processing) {
+    if (hasTTFT) return t('首包已到');
+    if (durationMs >= 30000) return t('长等待');
+    return t('待首包');
+  }
+  if (meta?.tone === 'settling') return t('待结算');
+  if (isSmartSwitchRecovered(record)) return t('智能切换');
+  if (meta?.tone === 'quota') return t('拦截');
+  if (meta?.tone === 'aborted') return t('断开');
+  if (meta?.tone === 'probe' || meta?.tone === 'probe-warning') {
+    return t('探活');
+  }
+  if (meta?.tone === 'warning') return t('需复核');
+  if (record?.final_success) {
+    return record?.billing ? t('已结算') : t('待结算');
+  }
   return t('需排查');
 }
 
@@ -2977,6 +3006,17 @@ function userRequestTimeCaption(record, meta, processing, t) {
     return t('探活时间');
   }
   return record?.final_success ? t('完成时间') : t('失败时间');
+}
+
+function userRequestTimeShortCaption(record, meta, processing, t) {
+  if (processing) return t('开始');
+  if (meta?.tone === 'aborted') return t('断开');
+  if (meta?.tone === 'quota') return t('拦截');
+  if (meta?.tone === 'settling') return t('上游完成');
+  if (meta?.tone === 'probe' || meta?.tone === 'probe-warning') {
+    return t('探活');
+  }
+  return record?.final_success ? t('完成') : t('失败');
 }
 
 function userRequestMatchesQuery(record, query) {
@@ -4196,10 +4236,15 @@ function UserRequestCostSummaryCell({ record, t }) {
       : upstreamLabel;
   const billingLabel = billing
     ? renderQuota(billingReferenceQuota(billing), 6)
-    : processing || String(record?.status || '').trim() === 'settling'
+    : processing ||
+        String(record?.status || '').trim() === 'settling' ||
+        record?.final_success
       ? t('待结算')
       : '--';
   const dynamicBillingLabel = dynamicBillingSummaryLabel(billing, t);
+  const billingSummaryLabel = [billingLabel, dynamicBillingLabel]
+    .filter((item) => item && item !== '--')
+    .join(' · ');
 
   return (
     <div
@@ -4214,19 +4259,15 @@ function UserRequestCostSummaryCell({ record, t }) {
         className='ct-model-gateway-user-request-cost-summary-trigger'
       >
         <div className='ct-model-gateway-user-request-cost-summary-line'>
-          <span>{t('上游成本')}</span>
+          <span>{t('上游')}</span>
           <strong title={t('1:1 实际成本倍率')}>{upstreamSummaryLabel}</strong>
         </div>
         <div className='ct-model-gateway-user-request-cost-summary-line ct-model-gateway-user-request-cost-summary-billing'>
-          <span>{t('平台计费')}</span>
-          <strong>{billingLabel}</strong>
+          <span>{t('计费')}</span>
+          <strong title={billingSummaryLabel || billingLabel}>
+            {billingSummaryLabel || billingLabel}
+          </strong>
         </div>
-        {dynamicBillingLabel && (
-          <div className='ct-model-gateway-user-request-cost-summary-line ct-model-gateway-user-request-cost-summary-dynamic'>
-            <span>{t('动态倍率')}</span>
-            <strong title={dynamicBillingLabel}>{dynamicBillingLabel}</strong>
-          </div>
-        )}
       </HoverCard>
     </div>
   );
@@ -4286,8 +4327,16 @@ function UserRequestScoreSummaryCell({ record, t, onOpenScoreHistory }) {
   const hasScore = Number.isFinite(score) && score > 0;
   const metricEntries = normalizeScoreItemsForDisplay(candidate?.score_items)
     .filter((item) => item.weight > 0 && !item.missing_reason)
-    .slice(0, 3)
+    .slice(0, 1)
     .map((item) => [item.key, scoreItemLabel(item, t), item.score]);
+  const metricSummary = [
+    routingScore !== null ? `${t('调度')} ${formatScore(routingScore)}` : '',
+    ...metricEntries.map(
+      ([, label, value]) => `${label} ${formatScore(value)}`,
+    ),
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const canOpenHistory =
     typeof onOpenScoreHistory === 'function' &&
     Boolean(candidate || scoreHistoryCandidateFromRecord(scoreRecord));
@@ -4333,16 +4382,9 @@ function UserRequestScoreSummaryCell({ record, t, onOpenScoreHistory }) {
           <strong>{formatScore(score)}</strong>
         </button>
         <div className='ct-model-gateway-user-request-score-meta'>
-          {routingScore !== null && (
-            <em>
-              {t('本次调度评分')} {formatScore(routingScore)}
-            </em>
-          )}
-          {metricEntries.map(([key, label, value]) => (
-            <small key={key}>
-              {label} {formatScore(value)}
-            </small>
-          ))}
+          <small title={metricSummary || t('当前模型稳定评分')}>
+            {metricSummary || t('当前模型稳定评分')}
+          </small>
         </div>
       </HoverCard>
     </div>
@@ -5125,9 +5167,8 @@ function UserRequestRecentTable({
               { key: 'request', label: t('请求 / 路由') },
               { key: 'score', label: t('调度评分'), hint: true },
               { key: 'cost', label: t('成本 / 计费'), hint: true },
-              { key: 'duration', label: t('耗时'), hint: true },
-              { key: 'ttft', label: t('首包'), hint: true },
-              { key: 'complete', label: t('时间状态') },
+              { key: 'latency', label: t('延迟'), hint: true },
+              { key: 'complete', label: t('时间') },
               { key: 'action', label: t('诊断') },
             ].map(({ key, label, hint }) => (
               <span key={key}>
@@ -5209,6 +5250,26 @@ function UserRequestRecentTable({
                   durationMs,
                   t,
                 );
+                const statusShortCaption = userRequestStatusShortCaption(
+                  record,
+                  meta,
+                  processing,
+                  hasTTFT,
+                  durationMs,
+                  t,
+                );
+                const timeCaption = userRequestTimeCaption(
+                  record,
+                  meta,
+                  processing,
+                  t,
+                );
+                const timeShortCaption = userRequestTimeShortCaption(
+                  record,
+                  meta,
+                  processing,
+                  t,
+                );
 
                 return (
                   <div
@@ -5233,7 +5294,7 @@ function UserRequestRecentTable({
                           </Tooltip>
                         )}
                       </div>
-                      <small title={statusCaption}>{statusCaption}</small>
+                      <small title={statusCaption}>{statusShortCaption}</small>
                     </div>
 
                     <div className='ct-model-gateway-user-request-user-col'>
@@ -5270,15 +5331,44 @@ function UserRequestRecentTable({
                             />
                           </Tooltip>
                         )}
+                        <span
+                          className='ct-model-gateway-user-request-route-chip ct-model-gateway-user-request-route-channel'
+                          title={channelLabel}
+                        >
+                          <ServerCog size={12} />
+                          <bdi>{channelLabel}</bdi>
+                        </span>
+                        {channelIdLabel && (
+                          <code
+                            className='ct-model-gateway-user-request-channel-id'
+                            title={t('渠道 ID')}
+                          >
+                            {channelIdLabel}
+                          </code>
+                        )}
                       </div>
                       <div className='ct-model-gateway-user-request-route-line'>
-                        <strong title={record.requested_model || '--'}>
-                          {record.requested_model || '--'}
-                        </strong>
+                        <span
+                          className='ct-model-gateway-user-request-route-chip ct-model-gateway-user-request-route-model'
+                          title={record.requested_model || '--'}
+                        >
+                          <Bot size={12} />
+                          <strong>{record.requested_model || '--'}</strong>
+                        </span>
+                        <span
+                          className='ct-model-gateway-user-request-route-chip ct-model-gateway-user-request-route-group'
+                          title={groupFlowLabel}
+                        >
+                          <Layers3 size={12} />
+                          <bdi>{groupFlowLabel}</bdi>
+                        </span>
+                        {groupRatioLabel && (
+                          <em title={groupRatioLabel}>{groupRatioLabel}</em>
+                        )}
                         {(record.is_health_probe ||
                           record.request_meta?.is_health_probe) && (
                           <Tag color='cyan' size='small' type='light'>
-                            {t('健康探活')}
+                            {t('探活')}
                           </Tag>
                         )}
                         {smartSwitchRecovered && (
@@ -5296,16 +5386,6 @@ function UserRequestRecentTable({
                           </Tooltip>
                         )}
                         <ModelGatewayWarningTag record={record} t={t} />
-                        <span title={channelLabel}>{channelLabel}</span>
-                        {channelIdLabel && (
-                          <code title={t('渠道 ID')}>{channelIdLabel}</code>
-                        )}
-                      </div>
-                      <div className='ct-model-gateway-user-request-group-line'>
-                        <span title={groupFlowLabel}>{groupFlowLabel}</span>
-                        {groupRatioLabel && (
-                          <em title={groupRatioLabel}>{groupRatioLabel}</em>
-                        )}
                         {issueLabel && (
                           <small title={issueLabel}>{issueLabel}</small>
                         )}
@@ -5326,22 +5406,29 @@ function UserRequestRecentTable({
 
                     <UserRequestCostSummaryCell record={record} t={t} />
 
-                    <div
-                      className={`ct-model-gateway-user-request-value-col ct-model-gateway-user-request-value-${durationTone}`}
-                    >
-                      <strong>{formatLatency(durationMs)}</strong>
-                      <span>{userRequestDurationCaption(processing, t)}</span>
-                    </div>
-
-                    <div
-                      className={`ct-model-gateway-user-request-value-col ct-model-gateway-user-request-value-${ttftTone}`}
-                    >
-                      <strong>
-                        {hasTTFT ? formatLatency(record.ttft_ms) : '--'}
-                      </strong>
-                      <span>
-                        {userRequestTTFTCaption(processing, hasTTFT, t)}
-                      </span>
+                    <div className='ct-model-gateway-user-request-latency-col'>
+                      <div
+                        className={`ct-model-gateway-user-request-latency-line ct-model-gateway-user-request-latency-${durationTone}`}
+                        title={userRequestDurationCaption(processing, t)}
+                      >
+                        <Timer size={13} />
+                        <span>{t('总耗时')}</span>
+                        <strong>{formatLatency(durationMs)}</strong>
+                      </div>
+                      <div
+                        className={`ct-model-gateway-user-request-latency-line ct-model-gateway-user-request-latency-${ttftTone}`}
+                        title={userRequestTTFTCaption(
+                          processing,
+                          hasTTFT,
+                          t,
+                        )}
+                      >
+                        <Clock3 size={13} />
+                        <span>{t('首包')}</span>
+                        <strong>
+                          {hasTTFT ? formatLatency(record.ttft_ms) : '--'}
+                        </strong>
+                      </div>
                     </div>
 
                     <div className='ct-model-gateway-user-request-complete-col'>
@@ -5362,9 +5449,7 @@ function UserRequestRecentTable({
                           {userRequestDisplayTime(record, nowSeconds, t)}
                         </strong>
                       </HoverCard>
-                      <span>
-                        {userRequestTimeCaption(record, meta, processing, t)}
-                      </span>
+                      <span title={timeCaption}>{timeShortCaption}</span>
                     </div>
 
                     <div className='ct-model-gateway-user-request-action-col'>
