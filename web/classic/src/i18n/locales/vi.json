@@ -4583,6 +4583,8 @@
     "清除历史日志": "Xóa nhật ký lịch sử",
     "清除失效兑换码": "Xóa mã đổi thưởng không hợp lệ",
     "清除所有模型": "Xóa tất cả các mô hình",
+    "没有匹配的渠道": "Không có kênh phù hợp",
+    "搜索渠道": "Tìm kiếm kênh",
     "渠道": "Kênh",
     "渠道 ID": "ID kênh",
     "渠道 ID 缺失，无法立即探活": "Thiếu ID kênh; không thể probe ngay",

@@ -4522,6 +4522,8 @@
     "清除历史日志": "Effacer les journaux historiques",
     "清除失效兑换码": "Effacer les codes d'échange non valides",
     "清除所有模型": "Effacer tous les modèles",
+    "没有匹配的渠道": "Aucun canal correspondant",
+    "搜索渠道": "Rechercher des canaux",
     "渠道": "Canal",
     "渠道 ID": "ID du Canal",
     "渠道 ID 缺失，无法立即探活": "ID de canal manquant ; impossible de lancer une sonde immédiate",

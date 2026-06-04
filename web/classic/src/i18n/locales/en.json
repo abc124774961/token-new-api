@@ -4560,6 +4560,8 @@
     "清除历史日志": "Clear historical logs",
     "清除失效兑换码": "Clear invalid redemption codes",
     "清除所有模型": "Clear all models",
+    "没有匹配的渠道": "No matching channels",
+    "搜索渠道": "Search channels",
     "渠道": "Channel",
     "渠道 ID": "Channel ID",
     "渠道 ID 缺失，无法立即探活": "Channel ID is missing; cannot run an immediate probe",

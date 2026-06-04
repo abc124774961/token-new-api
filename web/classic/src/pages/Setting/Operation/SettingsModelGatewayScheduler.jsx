@@ -231,9 +231,6 @@ const normalizeChannelIds = (value) => {
   return result;
 };
 
-const normalizeChannelSelectValues = (value) =>
-  normalizeChannelIds(value).map((id) => String(id));
-
 const makeGroupOption = (group, info = {}) => ({
   label: group,
   value: group,
@@ -339,9 +336,6 @@ const renderChannelOptionItem = (option, t) => (
     </Typography.Text>
   </div>
 );
-
-const channelPopupContainer = (triggerNode) =>
-  triggerNode?.parentElement || document.body;
 
 const CandidateGroupsEditor = ({
   value,
@@ -470,6 +464,168 @@ const CandidateGroupsEditor = ({
         </Space>
       </div>
     </Dropdown>
+  );
+};
+
+const ChannelIdsEditor = ({ value, optionList, placeholder, onChange, t }) => {
+  const [visible, setVisible] = useState(false);
+  const [keyword, setKeyword] = useState('');
+  const selectedIds = normalizeChannelIds(value);
+  const selectedSet = new Set(selectedIds);
+  const selectedOptions = (optionList || []).filter((option) =>
+    selectedSet.has(option.channelId),
+  );
+  const normalizedKeyword = keyword.trim().toLowerCase();
+  const filteredOptions = (optionList || []).filter((option) => {
+    if (!normalizedKeyword) return true;
+    return [option.label, option.name, option.group, String(option.channelId)]
+      .join(' ')
+      .toLowerCase()
+      .includes(normalizedKeyword);
+  });
+
+  const toggleChannel = (channelId) => {
+    if (!Number.isInteger(channelId) || channelId <= 0) return;
+    if (selectedSet.has(channelId)) {
+      onChange(selectedIds.filter((item) => item !== channelId));
+      return;
+    }
+    onChange([...selectedIds, channelId]);
+  };
+
+  const clearChannels = (event) => {
+    event?.stopPropagation?.();
+    onChange([]);
+  };
+
+  return (
+    <>
+      <div
+        role='button'
+        tabIndex={0}
+        style={{
+          minHeight: 34,
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          padding: '4px 8px',
+          borderRadius: 6,
+          background: 'var(--semi-color-fill-0)',
+          border: '1px solid var(--semi-color-border)',
+          cursor: 'pointer',
+        }}
+        onClick={() => setVisible(true)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setVisible(true);
+          }
+        }}
+      >
+        <Space wrap spacing={4} style={{ flex: 1, minWidth: 0 }}>
+          {selectedOptions.length ? (
+            <>
+              {selectedOptions.slice(0, 2).map((option) => (
+                <Tag key={option.channelId} size='small' color='blue'>
+                  {option.label}
+                </Tag>
+              ))}
+              {selectedOptions.length > 2 ? (
+                <Tag size='small' color='grey'>
+                  +{selectedOptions.length - 2}
+                </Tag>
+              ) : null}
+            </>
+          ) : (
+            <Typography.Text type='tertiary'>{placeholder}</Typography.Text>
+          )}
+        </Space>
+        <Space spacing={4}>
+          {selectedOptions.length ? (
+            <Typography.Text
+              type='tertiary'
+              onClick={clearChannels}
+              style={{ cursor: 'pointer' }}
+            >
+              x
+            </Typography.Text>
+          ) : null}
+          <IconChevronDown size='small' />
+        </Space>
+      </div>
+      <Modal
+        visible={visible}
+        title={placeholder}
+        width={640}
+        footer={null}
+        onCancel={() => setVisible(false)}
+        bodyStyle={{ paddingTop: 12 }}
+      >
+        <Input
+          value={keyword}
+          showClear
+          placeholder={t('搜索渠道')}
+          style={{ marginBottom: 12 }}
+          onChange={(value) => setKeyword(value)}
+        />
+        <div
+          style={{
+            maxHeight: 420,
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+          }}
+        >
+          {filteredOptions.length ? (
+            filteredOptions.map((option) => {
+              const checked = selectedSet.has(option.channelId);
+              return (
+                <div
+                  key={option.channelId}
+                  role='button'
+                  tabIndex={0}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 10,
+                    padding: '9px 10px',
+                    borderRadius: 8,
+                    border: `1px solid ${
+                      checked
+                        ? 'var(--semi-color-primary-light-default)'
+                        : 'var(--semi-color-border)'
+                    }`,
+                    background: checked
+                      ? 'var(--semi-color-primary-light-default)'
+                      : 'var(--semi-color-bg-1)',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => toggleChannel(option.channelId)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      toggleChannel(option.channelId);
+                    }
+                  }}
+                >
+                  <Checkbox checked={checked} style={{ pointerEvents: 'none' }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {renderChannelOptionItem(option, t)}
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <Typography.Text type='tertiary'>
+              {t('没有匹配的渠道')}
+            </Typography.Text>
+          )}
+        </div>
+      </Modal>
+    </>
   );
 };
 
@@ -1531,22 +1687,16 @@ export default function SettingsModelGatewayScheduler() {
               {t('先等主资源，超时再兜底')}
             </Typography.Text>
           </Space>
-          <Select
-            multiple
-            filter
-            showClear
-            maxTagCount={2}
-            value={normalizeChannelSelectValues(row.primary_channel_ids)}
+          <ChannelIdsEditor
+            value={row.primary_channel_ids}
             optionList={channelOptions}
             placeholder={t('请选择主资源渠道')}
-            style={{ width: '100%' }}
-            getPopupContainer={channelPopupContainer}
-            renderOptionItem={(option) => renderChannelOptionItem(option, t)}
             onChange={(value) =>
               updatePolicyRow(row.id, {
                 primary_channel_ids: normalizeChannelIds(value),
               })
             }
+            t={t}
           />
           <Row gutter={8}>
             <Col span={12}>
@@ -1575,22 +1725,16 @@ export default function SettingsModelGatewayScheduler() {
               />
             </Col>
           </Row>
-          <Select
-            multiple
-            filter
-            showClear
-            maxTagCount={2}
-            value={normalizeChannelSelectValues(row.fallback_channel_ids)}
+          <ChannelIdsEditor
+            value={row.fallback_channel_ids}
             optionList={channelOptions}
             placeholder={t('兜底渠道可选，留空使用非主资源候选')}
-            style={{ width: '100%' }}
-            getPopupContainer={channelPopupContainer}
-            renderOptionItem={(option) => renderChannelOptionItem(option, t)}
             onChange={(value) =>
               updatePolicyRow(row.id, {
                 fallback_channel_ids: normalizeChannelIds(value),
               })
             }
+            t={t}
           />
         </div>
       ),
