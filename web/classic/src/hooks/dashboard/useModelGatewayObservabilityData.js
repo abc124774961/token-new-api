@@ -130,13 +130,23 @@ function userRequestKey(record) {
   );
 }
 
+function userRequestHasBilling(record) {
+  return Boolean(record?.billing);
+}
+
 function mergeUserRequestRecord(existing, incoming) {
   if (!existing) return incoming;
   if (!incoming) return existing;
   const existingTerminal = isUserRequestTerminalRecord(existing);
   const incomingTerminal = isUserRequestTerminalRecord(incoming);
+  const keepExistingSettledDisplay =
+    existingTerminal &&
+    incomingTerminal &&
+    userRequestHasBilling(existing) &&
+    !userRequestHasBilling(incoming);
   const base =
-    existingTerminal && isUserRequestProcessingRecord(incoming)
+    keepExistingSettledDisplay ||
+    (existingTerminal && isUserRequestProcessingRecord(incoming))
       ? { ...incoming, ...existing }
       : { ...existing, ...incoming };
   const existingTTFT = Number(existing.ttft_ms || 0);
@@ -190,6 +200,55 @@ function mergeUserRequestRecord(existing, incoming) {
       Number(incoming.actual_group_ratio || 0) > 0
         ? incoming.actual_group_ratio
         : existing.actual_group_ratio,
+  };
+}
+
+function mergeUserRequestSnapshot(
+  currentUserRequests,
+  snapshotUserRequests,
+  limit = DEFAULT_RECENT_USER_REQUEST_LIMIT,
+) {
+  if (!snapshotUserRequests) return snapshotUserRequests;
+  const snapshotRecent = Array.isArray(snapshotUserRequests.recent_requests)
+    ? snapshotUserRequests.recent_requests
+    : [];
+  const currentRecent = Array.isArray(currentUserRequests?.recent_requests)
+    ? currentUserRequests.recent_requests
+    : [];
+  if (!snapshotRecent.length || !currentRecent.length) {
+    return snapshotUserRequests;
+  }
+  const currentByKey = new Map();
+  currentRecent.forEach((record) => {
+    const key = userRequestKey(record);
+    if (key && !currentByKey.has(key)) {
+      currentByKey.set(key, record);
+    }
+  });
+  const normalizedLimit =
+    Number.isFinite(Number(limit)) && Number(limit) > 0
+      ? Number(limit)
+      : DEFAULT_RECENT_USER_REQUEST_LIMIT;
+  return {
+    ...snapshotUserRequests,
+    recent_requests: snapshotRecent
+      .map((record) =>
+        mergeUserRequestRecord(currentByKey.get(userRequestKey(record)), record),
+      )
+      .sort(compareUserRequestRecordsForDisplay)
+      .slice(0, normalizedLimit),
+  };
+}
+
+function mergeSnapshot(current, snapshot, userRequestLimit) {
+  if (!current || !snapshot) return snapshot || null;
+  return {
+    ...snapshot,
+    user_requests: mergeUserRequestSnapshot(
+      current.user_requests,
+      snapshot.user_requests,
+      userRequestLimit,
+    ),
   };
 }
 
@@ -365,13 +424,13 @@ export function useModelGatewayObservabilityData({
 
   const handleSnapshot = useCallback((payload) => {
     hasSnapshotRef.current = true;
-    setData(payload || null);
+    setData((current) => mergeSnapshot(current, payload || null, recentLimit));
     setError('');
     setLoading(false);
     setRefreshing(false);
     setFallbackMode(false);
     setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
-  }, []);
+  }, [recentLimit]);
 
   const handleDelta = useCallback(
     (payload) => {
