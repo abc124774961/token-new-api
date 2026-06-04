@@ -342,7 +342,11 @@ func InitResources() error {
 		return err
 	}
 	modelgatewayintegration.SyncRuntimeEventSubscriberLifecycle()
-	modelgatewayintegration.WarmupDefaultRuntimeObservability()
+	if common.GetEnvOrDefaultBool("SKIP_MODEL_GATEWAY_RUNTIME_WARMUP", false) {
+		common.SysLog("model gateway runtime observability warmup skipped by SKIP_MODEL_GATEWAY_RUNTIME_WARMUP")
+	} else {
+		modelgatewayintegration.WarmupDefaultRuntimeObservability()
+	}
 	defer modelgatewayintegration.CloseRuntimeEventSubscriber()
 
 	perfmetrics.Init()
