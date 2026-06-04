@@ -146,6 +146,28 @@ func TestMergeUserRequestRealtimeRecordsTreatsSettlingAsTerminal(t *testing.T) {
 	require.Equal(t, userrequest.StatusSettling, merged[0].Status)
 }
 
+func TestMergeUserRequestRealtimeRecordsTreatsSettlementTimeoutAsTerminal(t *testing.T) {
+	completed := []controller.ModelGatewayUserRequestRecord{
+		{
+			RequestID: "req-settlement-timeout",
+			CreatedAt: 100,
+			Status:    userrequest.StatusSettlementTimeout,
+		},
+	}
+	pending := []userrequest.Record{
+		{
+			RequestID: "req-settlement-timeout",
+			CreatedAt: 120,
+			Status:    userrequest.StatusProcessing,
+		},
+	}
+
+	merged := mergeUserRequestRealtimeRecords(completed, pending, 10)
+
+	require.Len(t, merged, 1)
+	require.Equal(t, userrequest.StatusSettlementTimeout, merged[0].Status)
+}
+
 func TestParamsMatchesUserRequest(t *testing.T) {
 	now := time.Now().Unix()
 	params := params{

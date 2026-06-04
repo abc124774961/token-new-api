@@ -2697,6 +2697,7 @@
     "已复制版本号": "Version copied",
     "已复制自动生成的 API Key": "Auto-generated API Key copied",
     "已完成": "Completed",
+    "已扣费": "Charged",
     "已结算": "Settled",
     "已将模型 {{name}} 的价格配置批量应用到 {{count}} 个模型": "Applied the pricing configuration of model {{name}} to {{count}} models in batch",
     "已将模型 {{name}} 的价格配置批量应用到 {{count}} 个模型_one": "",
@@ -3082,6 +3083,7 @@
     "待检查队列基于当前运行态快照推导，检测历史来自实际健康探活请求记录。": "The pending check queue is inferred from the current runtime snapshot; history comes from actual health probe requests.",
     "待检查队列由后端根据当前运行态和探活配置生成，检测历史来自实际健康探活请求记录。": "",
     "待检测": "Pending check",
+    "待消费日志": "Waiting for consume log",
     "待首包": "Awaiting first byte",
     "待结算": "Pending settlement",
     "待真实请求确认": "Awaiting real request confirmation",
@@ -6347,6 +6349,7 @@
     "费用信息": "Cost Information",
     "费用参考": "Cost reference",
     "费用待结算": "Billing pending",
+    "扣费待写入": "Charge log pending",
     "费用计算 / 充值换算": "Fee calculation / recharge conversion",
     "费用计算倍率": "Fee multiplier",
     "费用计算参考": "Cost calculation reference",
@@ -7169,6 +7172,7 @@
     "默认补全倍率": "Default completion ratio",
     "费用结算中": "Billing settling",
     "上游已完成，费用待结算": "Upstream completed, billing pending",
+    "上游已完成，未收到消费日志": "Upstream completed; consume log not received",
     "上游完成": "Upstream done",
     "上游完成时间": "Upstream completed at"
   }

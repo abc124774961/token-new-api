@@ -2806,6 +2806,9 @@ function getUserRequestStatusMeta(record, t) {
   if (String(record?.status || '').trim() === 'settling') {
     return { color: 'teal', label: t('费用结算中'), tone: 'settling' };
   }
+  if (String(record?.status || '').trim() === 'settlement_timeout') {
+    return { color: 'orange', label: t('扣费待写入'), tone: 'billing-pending' };
+  }
   if (isUserQuotaExhaustedRecord(record)) {
     return { color: 'grey', label: t('用户额度不足'), tone: 'quota' };
   }
@@ -2853,6 +2856,7 @@ function isUserRequestProcessing(record) {
       'client_aborted',
       'user_quota_exhausted',
       'settling',
+      'settlement_timeout',
     ].includes(status)
   ) {
     return false;
@@ -2947,6 +2951,8 @@ function userRequestStatusCaption(record, meta, processing, hasTTFT, durationMs,
     return userRequestProcessingStage(record, durationMs, hasTTFT, t);
   }
   if (meta?.tone === 'settling') return t('上游已完成，费用待结算');
+  if (meta?.tone === 'billing-pending')
+    return t('上游已完成，未收到消费日志');
   if (isSmartSwitchRecovered(record)) return t('智能切换后成功');
   if (meta?.tone === 'quota') return t('业务拦截');
   if (meta?.tone === 'aborted') return t('客户端断开');
@@ -2955,7 +2961,7 @@ function userRequestStatusCaption(record, meta, processing, hasTTFT, durationMs,
   }
   if (meta?.tone === 'warning') return t('需复核');
   if (record?.final_success) {
-    return record?.billing ? t('已结算') : t('费用待结算');
+    return record?.billing ? t('已扣费') : t('扣费待写入');
   }
   return t('需排查');
 }
@@ -2974,6 +2980,7 @@ function userRequestStatusShortCaption(
     return t('待首包');
   }
   if (meta?.tone === 'settling') return t('待结算');
+  if (meta?.tone === 'billing-pending') return t('扣费待写入');
   if (isSmartSwitchRecovered(record)) return t('智能切换');
   if (meta?.tone === 'quota') return t('拦截');
   if (meta?.tone === 'aborted') return t('断开');
@@ -2982,7 +2989,7 @@ function userRequestStatusShortCaption(
   }
   if (meta?.tone === 'warning') return t('需复核');
   if (record?.final_success) {
-    return record?.billing ? t('已结算') : t('待结算');
+    return record?.billing ? t('已扣费') : t('待消费日志');
   }
   return t('需排查');
 }
@@ -3002,6 +3009,7 @@ function userRequestTimeCaption(record, meta, processing, t) {
   if (meta?.tone === 'aborted') return t('断开时间');
   if (meta?.tone === 'quota') return t('拦截时间');
   if (meta?.tone === 'settling') return t('上游完成时间');
+  if (meta?.tone === 'billing-pending') return t('上游完成时间');
   if (meta?.tone === 'probe' || meta?.tone === 'probe-warning') {
     return t('探活时间');
   }
@@ -3013,6 +3021,7 @@ function userRequestTimeShortCaption(record, meta, processing, t) {
   if (meta?.tone === 'aborted') return t('断开');
   if (meta?.tone === 'quota') return t('拦截');
   if (meta?.tone === 'settling') return t('上游完成');
+  if (meta?.tone === 'billing-pending') return t('上游完成');
   if (meta?.tone === 'probe' || meta?.tone === 'probe-warning') {
     return t('探活');
   }
@@ -4238,8 +4247,9 @@ function UserRequestCostSummaryCell({ record, t }) {
     ? renderQuota(billingReferenceQuota(billing), 6)
     : processing ||
         String(record?.status || '').trim() === 'settling' ||
+        String(record?.status || '').trim() === 'settlement_timeout' ||
         record?.final_success
-      ? t('待结算')
+      ? t('扣费待写入')
       : '--';
   const dynamicBillingLabel = dynamicBillingSummaryLabel(billing, t);
   const billingSummaryLabel = [billingLabel, dynamicBillingLabel]

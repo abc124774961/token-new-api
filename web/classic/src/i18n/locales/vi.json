@@ -2655,6 +2655,7 @@
     "已复制版本号": "Version copied",
     "已复制自动生成的 API Key": "Auto-generated API Key copied",
     "已完成": "Completed",
+    "已扣费": "Đã trừ phí",
     "已结算": "Đã quyết toán",
     "已将模型 {{name}} 的价格配置批量应用到 {{count}} 个模型": "Đã áp dụng hàng loạt cấu hình giá của mô hình {{name}} cho {{count}} mô hình",
     "已将模型 {{name}} 的价格配置批量应用到 {{count}} 个模型_other": "",
@@ -3035,6 +3036,7 @@
     "待检查队列基于当前运行态快照推导，检测历史来自实际健康探活请求记录。": "Hàng đợi chờ kiểm tra được suy ra từ snapshot runtime hiện tại; lịch sử đến từ các yêu cầu probe sức khỏe thực tế.",
     "待检查队列由后端根据当前运行态和探活配置生成，检测历史来自实际健康探活请求记录。": "",
     "待检测": "Chờ kiểm tra",
+    "待消费日志": "Chờ nhật ký tiêu thụ",
     "待首包": "Chờ phản hồi đầu",
     "待结算": "Chờ quyết toán",
     "待真实请求确认": "Chờ xác nhận bằng yêu cầu thật",
@@ -6682,6 +6684,7 @@
     "费用信息": "Cost Information",
     "费用参考": "Tham khảo chi phí",
     "费用待结算": "Chờ quyết toán phí",
+    "扣费待写入": "Chờ ghi phí",
     "费用计算 / 充值换算": "Tính phí / quy đổi nạp",
     "费用计算倍率": "Hệ số tính phí",
     "费用计算参考": "Tham khảo tính phí",
@@ -7556,6 +7559,7 @@
     "默认补全倍率": "Tỷ lệ hoàn thành mặc định",
     "费用结算中": "Đang quyết toán phí",
     "上游已完成，费用待结算": "Thượng nguồn đã hoàn tất, chờ quyết toán phí",
+    "上游已完成，未收到消费日志": "Thượng nguồn đã hoàn tất, chưa nhận nhật ký tiêu thụ",
     "上游完成": "Thượng nguồn xong",
     "上游完成时间": "Thời điểm thượng nguồn hoàn tất"
   }

@@ -150,6 +150,106 @@ func TestTrackerObserveUpstreamCompletedMovesToSettling(t *testing.T) {
 	require.Equal(t, EventUpdated, events[1].Kind)
 }
 
+func TestTrackerSnapshotConvertsStaleSettlingToBillingPendingFinal(t *testing.T) {
+	tracker := NewTracker(10, time.Hour)
+	events := make([]Event, 0)
+	tracker.AddObserver(func(event Event) {
+		events = append(events, event)
+	})
+	startedAt := time.Now().Add(-3 * time.Minute)
+	completedAt := time.Now().Add(-2 * time.Minute)
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-stale-settling", RequestedGroup: "auto", ModelName: "gpt-5.5"},
+		Plan:       &core.DispatchPlan{SelectedGroup: "codex-plus"},
+		RecordedAt: startedAt,
+	})
+	tracker.ObserveUpstreamCompleted(UpstreamCompletedObservation{
+		RequestID:  "req-stale-settling",
+		ObservedAt: completedAt,
+		Duration:   completedAt.Sub(startedAt),
+	})
+
+	items := tracker.Snapshot(5, Filters{})
+
+	require.Len(t, items, 1)
+	require.Equal(t, "req-stale-settling", items[0].RequestID)
+	require.Equal(t, StatusSettlementTimeout, items[0].Status)
+	require.True(t, items[0].FinalSuccess)
+	require.Equal(t, completedAt.Unix(), items[0].CompletedAt)
+	require.Zero(t, items[0].FinalStatusCode)
+	require.Empty(t, items[0].FinalErrorCategory)
+	require.Len(t, events, 3)
+	require.Equal(t, EventFinished, events[2].Kind)
+	require.Equal(t, StatusSettlementTimeout, events[2].Record.Status)
+}
+
+func TestTrackerRecentSettlingStaysPending(t *testing.T) {
+	tracker := NewTracker(10, time.Hour)
+	startedAt := time.Now().Add(-20 * time.Second)
+	completedAt := time.Now().Add(-5 * time.Second)
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-recent-settling", RequestedGroup: "auto", ModelName: "gpt-5.5"},
+		Plan:       &core.DispatchPlan{SelectedGroup: "codex-plus"},
+		RecordedAt: startedAt,
+	})
+	tracker.ObserveUpstreamCompleted(UpstreamCompletedObservation{
+		RequestID:  "req-recent-settling",
+		ObservedAt: completedAt,
+		Duration:   completedAt.Sub(startedAt),
+	})
+
+	items := tracker.Snapshot(5, Filters{})
+
+	require.Len(t, items, 1)
+	require.Equal(t, StatusSettling, items[0].Status)
+}
+
+func TestTrackerLateFinishReplacesStaleSettlingPlaceholder(t *testing.T) {
+	tracker := NewTracker(10, time.Hour)
+	events := make([]Event, 0)
+	tracker.AddObserver(func(event Event) {
+		events = append(events, event)
+	})
+	startedAt := time.Now().Add(-3 * time.Minute)
+	completedAt := time.Now().Add(-2 * time.Minute)
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-late-settling", RequestedGroup: "auto", ModelName: "gpt-5.5"},
+		Plan:       &core.DispatchPlan{SelectedGroup: "codex-plus"},
+		RecordedAt: startedAt,
+	})
+	tracker.ObserveUpstreamCompleted(UpstreamCompletedObservation{
+		RequestID:  "req-late-settling",
+		ObservedAt: completedAt,
+		Duration:   completedAt.Sub(startedAt),
+	})
+	require.Len(t, tracker.SweepStale(), 1)
+
+	tracker.Finish(core.AttemptResult{
+		RequestID:      "req-late-settling",
+		AttemptIndex:   0,
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		ModelName:      "gpt-5.5",
+		Success:        true,
+	}, &model.ModelGatewayUserRequestSummary{
+		Id:             19,
+		CreatedAt:      startedAt.Unix(),
+		CompletedAt:    completedAt.Unix(),
+		RequestId:      "req-late-settling",
+		RequestedGroup: "auto",
+		SelectedGroup:  "codex-plus",
+		RequestedModel: "gpt-5.5",
+		Attempts:       1,
+		FinalSuccess:   true,
+		DurationMs:     completedAt.Sub(startedAt).Milliseconds(),
+	})
+
+	require.Empty(t, tracker.Snapshot(5, Filters{}))
+	require.Equal(t, EventFinished, events[len(events)-1].Kind)
+	require.Equal(t, StatusSuccess, events[len(events)-1].Record.Status)
+	require.Equal(t, 19, events[len(events)-1].Record.ID)
+}
+
 func TestTrackerAppliesEarlyUpstreamCompletedWhenStartArrivesLater(t *testing.T) {
 	tracker := NewTracker(10, time.Minute)
 	now := time.Now()

@@ -611,6 +611,7 @@ func userRequestRecordTerminal(record controller.ModelGatewayUserRequestRecord) 
 	switch strings.TrimSpace(record.Status) {
 	case userrequest.StatusSuccess,
 		userrequest.StatusSettling,
+		userrequest.StatusSettlementTimeout,
 		userrequest.StatusFailed,
 		userrequest.StatusProbe,
 		userrequest.StatusProbeFailed,

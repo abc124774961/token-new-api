@@ -97,6 +97,7 @@ function isUserRequestTerminalRecord(record) {
     'client_aborted',
     'user_quota_exhausted',
     'settling',
+    'settlement_timeout',
   ].includes(status);
 }
 

@@ -26,17 +26,19 @@ func init() {
 }
 
 const (
-	StatusProcessing  = "processing"
-	StatusSettling    = "settling"
-	StatusSuccess     = "success"
-	StatusProbe       = "health_probe"
-	StatusFailed      = "failed"
-	StatusProbeFailed = "health_probe_failed"
+	StatusProcessing        = "processing"
+	StatusSettling          = "settling"
+	StatusSettlementTimeout = "settlement_timeout"
+	StatusSuccess           = "success"
+	StatusProbe             = "health_probe"
+	StatusFailed            = "failed"
+	StatusProbeFailed       = "health_probe_failed"
 
 	defaultMaxPending = 200
 	defaultTTL        = 10 * time.Minute
 
 	defaultStaleProcessingGrace = 30 * time.Second
+	defaultSettlingTimeout      = 90 * time.Second
 	defaultFirstByteTimeout     = 20 * time.Second
 	defaultStreamingIdleTimeout = 300 * time.Second
 	minStaleProcessingTimeout   = 30 * time.Second
@@ -378,7 +380,7 @@ func (t *Tracker) Snapshot(limit int, filters Filters) []Record {
 	staleRecords := t.collectStaleFinalsLocked(now)
 	items := make([]Record, 0, len(t.pending)+len(t.staleFinals))
 	for _, item := range t.pending {
-		if processingRecordStale(item, now) {
+		if processingRecordStale(item, now) || settlingRecordStale(item, now) {
 			continue
 		}
 		if filters.Match(item) {
@@ -392,7 +394,9 @@ func (t *Tracker) Snapshot(limit int, filters Filters) []Record {
 	}
 	t.mu.Unlock()
 	for idx := range staleRecords {
-		staleRecords[idx] = persistStaleProcessingFinal(staleRecords[idx])
+		if shouldPersistStaleFinal(staleRecords[idx]) {
+			staleRecords[idx] = persistStaleProcessingFinal(staleRecords[idx])
+		}
 		t.notify(Event{Kind: EventFinished, Record: staleRecords[idx]})
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -414,7 +418,9 @@ func (t *Tracker) SweepStale() []Record {
 	records := t.collectStaleFinalsLocked(now)
 	t.mu.Unlock()
 	for idx := range records {
-		records[idx] = persistStaleProcessingFinal(records[idx])
+		if shouldPersistStaleFinal(records[idx]) {
+			records[idx] = persistStaleProcessingFinal(records[idx])
+		}
 		t.notify(Event{Kind: EventFinished, Record: records[idx]})
 	}
 	return records
@@ -478,12 +484,18 @@ func (t *Tracker) collectStaleFinalsLocked(now time.Time) []Record {
 	}
 	records := make([]Record, 0)
 	for requestID, item := range t.pending {
-		if !processingRecordStale(item, now) {
+		var record Record
+		switch {
+		case processingRecordStale(item, now):
+			record = staleProcessingFinalRecord(item, now)
+		case settlingRecordStale(item, now):
+			record = staleSettlingFinalRecord(item, now)
+		default:
 			continue
 		}
 		delete(t.pending, requestID)
 		delete(t.firstBytes, requestID)
-		record := staleProcessingFinalRecord(item, now)
+		delete(t.completed, requestID)
 		t.finished[requestID] = record.CompletedAt
 		t.staleFinals[requestID] = record
 		records = append(records, record)
@@ -695,6 +707,20 @@ func processingRecordStale(record Record, now time.Time) bool {
 	return !time.Unix(anchor, 0).Add(timeout).After(now)
 }
 
+func settlingRecordStale(record Record, now time.Time) bool {
+	if strings.TrimSpace(record.Status) != StatusSettling {
+		return false
+	}
+	anchor := record.CompletedAt
+	if anchor <= 0 {
+		anchor = record.UpdatedAt
+	}
+	if anchor <= 0 {
+		return false
+	}
+	return !time.Unix(anchor, 0).Add(defaultSettlingTimeout).After(now)
+}
+
 func staleProcessingTimeoutForRecord(record Record) time.Duration {
 	if record.TTFTMs <= 0 {
 		return firstByteProcessingTimeout()
@@ -723,6 +749,42 @@ func staleProcessingFinalRecord(record Record, now time.Time) Record {
 		record.DurationMs = (completedAt - record.CreatedAt) * int64(time.Second/time.Millisecond)
 	}
 	return record
+}
+
+func staleSettlingFinalRecord(record Record, now time.Time) Record {
+	nowUnix := now.Unix()
+	completedAt := record.CompletedAt
+	if completedAt <= 0 {
+		completedAt = record.UpdatedAt
+	}
+	if completedAt <= 0 {
+		completedAt = nowUnix
+	}
+	if record.CreatedAt <= 0 {
+		record.CreatedAt = completedAt
+	}
+	record.UpdatedAt = nowUnix
+	record.CompletedAt = completedAt
+	record.FinalSuccess = true
+	record.FinalStatusCode = 0
+	record.FinalErrorCategory = ""
+	record.Status = StatusSettlementTimeout
+	if record.Attempts <= 0 {
+		record.Attempts = 1
+	}
+	if record.DurationMs <= 0 && completedAt >= record.CreatedAt {
+		record.DurationMs = (completedAt - record.CreatedAt) * int64(time.Second/time.Millisecond)
+	}
+	return record
+}
+
+func shouldPersistStaleFinal(record Record) bool {
+	switch strings.TrimSpace(record.Status) {
+	case StatusFailed, StatusProbeFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func persistStaleProcessingFinal(record Record) Record {
