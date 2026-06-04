@@ -14,7 +14,7 @@ CHANNEL_FAILURE_AVOIDANCE_TTL_SECONDS=6
 CHANNEL_BALANCE_AUTO_RESUME_ENABLED=true
 CHANNEL_BALANCE_RECOVERY_THRESHOLD=0
 NODE_NAME=gcp-us-central1
-SQL_DSN=token_new_api:43d4856fae8827fb4d2165edba01821bc6ed@tcp(172.19.0.1:3306)/token_new_api?charset=utf8mb4&parseTime=true&loc=Local&timeout=10s&readTimeout=30s&writeTimeout=30s
+SQL_DSN=token_new_api:ynPz2DGWdXiRSbpT@tcp(host.docker.internal:3306)/token_new_api?charset=utf8mb4&parseTime=true&loc=Local
 TOKEN_ACCOUNT_AUTOMATION_URL=http://host.docker.internal:8091
 TOKEN_ACCOUNT_AUTOMATION_API_TOKEN=0f383179b7558665066dd85490ac8627baf2b0333db2887534f1edb179f3ce2c
 TOKEN_ACCOUNT_AUTOMATION_CALLBACK_TOKEN=0f383179b7558665066dd85490ac8627baf2b0333db2887534f1edb179f3ce2c
