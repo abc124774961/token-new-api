@@ -419,6 +419,8 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+	common.SetContextKey(ctx, constant.ContextKeyRelayFinalPromptTokens, summary.PromptTokens)
+	common.SetContextKey(ctx, constant.ContextKeyRelayFinalCompletionTokens, summary.CompletionTokens)
 
 	var tieredResult *billingexpr.TieredResult
 	tieredBillingApplied := false

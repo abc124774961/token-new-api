@@ -2235,6 +2235,79 @@ function getUsedChannels(record) {
   return value.map((item) => String(item)).filter(Boolean);
 }
 
+function normalizedRouteValue(value) {
+  return String(value ?? '').trim();
+}
+
+function uniqueRouteValues(values) {
+  const unique = new Set();
+  values.forEach((value) => {
+    const normalized = normalizedRouteValue(value);
+    if (normalized) unique.add(normalized);
+  });
+  return unique;
+}
+
+function attemptRouteSignature(attempt) {
+  if (!attempt) return '';
+  const channelID =
+    attempt?.actual_channel_id || attempt?.channel_id || attempt?.final_channel_id;
+  const group =
+    attempt?.actual_group || attempt?.selected_group || attempt?.requested_group;
+  const meta = attempt?.request_meta || {};
+  const runtimeKey =
+    meta?.runtime_key ||
+    meta?.selected_runtime_key ||
+    attempt?.runtime_key ||
+    {};
+  const account =
+    attempt?.account_id ||
+    meta?.account_id ||
+    runtimeKey?.account_id ||
+    runtimeKey?.credential_fingerprint ||
+    runtimeKey?.credential_subject_fingerprint ||
+    meta?.credential_fingerprint ||
+    meta?.credential_subject_fingerprint ||
+    '';
+  return [channelID, group, account].map(normalizedRouteValue).join(':');
+}
+
+function isSwitchRetryAction(action) {
+  return ['switch_channel', 'resource_protection_fallback'].includes(
+    String(action || '').trim(),
+  );
+}
+
+function hasSmartSwitchEvidence(record) {
+  if (!record) return false;
+  const attempts = Array.isArray(record?.attempt_records)
+    ? record.attempt_records
+    : [];
+  if (
+    isSwitchRetryAction(record?.retry_action) ||
+    isSwitchRetryAction(record?.request_meta?.retry_action)
+  ) {
+    return true;
+  }
+  if (
+    attempts.some(
+      (attempt) =>
+        attempt?.will_retry === true ||
+        isSwitchRetryAction(attempt?.retry_action) ||
+        isSwitchRetryAction(attempt?.request_meta?.retry_action),
+    )
+  ) {
+    return true;
+  }
+  const usedChannelSet = uniqueRouteValues(getUsedChannels(record));
+  if (usedChannelSet.size > 1) return true;
+  if (attempts.length > 1) {
+    const routeSet = uniqueRouteValues(attempts.map(attemptRouteSignature));
+    if (routeSet.size > 1) return true;
+  }
+  return false;
+}
+
 function DispatchFlowTags({ record, t, compact = false }) {
   const tagProps = compact ? { size: 'small' } : {};
   const tags = [];
@@ -2401,7 +2474,8 @@ function SmartDispatchAttemptTimeline({ record, t }) {
   const attempts = Array.isArray(record?.attempt_records)
     ? record.attempt_records
     : [];
-  if (!record?.recovered && attempts.length <= 1) return null;
+  const hasSwitchEvidence = hasSmartSwitchEvidence(record);
+  if (!hasSwitchEvidence && attempts.length <= 1) return null;
   const displayAttempts = attempts.length
     ? attempts
     : [
@@ -2842,7 +2916,7 @@ function getUserRequestStatusMeta(record, t) {
 }
 
 function isSmartSwitchRecovered(record) {
-  return record?.recovered === true;
+  return record?.recovered === true && hasSmartSwitchEvidence(record);
 }
 
 function isUserRequestProcessing(record) {
@@ -3733,7 +3807,7 @@ function UserRequestEventTooltip({ record, meta, processing, durationMs, t }) {
           ? modelGatewayWarningLabel(record, t)
           : record?.client_aborted
             ? t('用户主动终止')
-            : record?.recovered
+            : isSmartSwitchRecovered(record)
               ? t('智能调度后成功')
               : record?.final_success
                 ? t('请求完成')

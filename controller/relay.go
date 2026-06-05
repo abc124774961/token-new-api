@@ -47,6 +47,8 @@ var (
 const relayStatusClientClosedRequest = 499
 const relayFirstByteTimeout = 20 * time.Second
 const relayChannelInducedClientAbortMinDuration = 5 * time.Second
+const relayHealthyLongOutputMinCompletionTokens = 3000
+const relayHealthyLongOutputMinTokensPerSecond = 20.0
 
 func newRelayQueueManager() *modelgatewayscheduler.QueueManager {
 	policy := modelgatewayintegration.RuntimePolicySetting()
@@ -734,7 +736,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		upstreamResponseHeader := relayUpstreamResponseHeaderDuration(c)
 		firstByteLease.Release()
-		totalDurationAfterOutput := relayTotalDurationAfterOutput(relayInfo, relayTotal, attemptWatchdog.totalTimeout)
+		totalDurationAfterOutput := relayTotalDurationAfterOutput(c, relayInfo, relayTotal, attemptWatchdog.totalTimeout)
 
 		if newAPIError == nil {
 			concurrencyLease.Release()
@@ -2235,11 +2237,35 @@ func relayTotalDurationWatchdogCanCancel(c *gin.Context, info *relaycommon.Relay
 	return !info.HasSendResponse()
 }
 
-func relayTotalDurationAfterOutput(info *relaycommon.RelayInfo, relayTotal time.Duration, threshold time.Duration) bool {
+func relayTotalDurationAfterOutput(c *gin.Context, info *relaycommon.RelayInfo, relayTotal time.Duration, threshold time.Duration) bool {
 	if info == nil || threshold <= 0 || relayTotal < threshold {
 		return false
 	}
-	return info.HasSendResponse()
+	if !info.HasSendResponse() {
+		return false
+	}
+	return !relayHealthyLongOutputAfterFirstByte(c, info, relayTotal)
+}
+
+func relayHealthyLongOutputAfterFirstByte(c *gin.Context, info *relaycommon.RelayInfo, relayTotal time.Duration) bool {
+	if c == nil {
+		return false
+	}
+	completionTokens := common.GetContextKeyInt(c, constant.ContextKeyRelayFinalCompletionTokens)
+	if completionTokens < relayHealthyLongOutputMinCompletionTokens {
+		return false
+	}
+	postFirstByte := relayTotal
+	if info != nil && info.FirstResponseTime.After(info.StartTime) {
+		relayToFirstByte := info.FirstResponseTime.Sub(info.StartTime)
+		if relayTotal > relayToFirstByte {
+			postFirstByte = relayTotal - relayToFirstByte
+		}
+	}
+	if postFirstByte <= 0 {
+		return false
+	}
+	return float64(completionTokens)/postFirstByte.Seconds() >= relayHealthyLongOutputMinTokensPerSecond
 }
 
 func (w *relayAttemptWatchdog) cancelReason() string {

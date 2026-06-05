@@ -204,7 +204,7 @@ func TestRelayTotalDurationWatchdogCanCancelOnlyBeforeOutput(t *testing.T) {
 
 	info.ForceSetFirstResponseTime()
 	require.False(t, relayTotalDurationWatchdogCanCancel(ctx, info))
-	require.True(t, relayTotalDurationAfterOutput(info, 181*time.Second, 180*time.Second))
+	require.True(t, relayTotalDurationAfterOutput(ctx, info, 181*time.Second, 180*time.Second))
 
 	info = &relaycommon.RelayInfo{StartTime: time.Now()}
 	helper.MarkRelayDownstreamStarted(ctx)
@@ -212,6 +212,30 @@ func TestRelayTotalDurationWatchdogCanCancelOnlyBeforeOutput(t *testing.T) {
 
 	common.SetContextKey(ctx, constant.ContextKeyRelayResponseStarted, true)
 	require.False(t, relayTotalDurationWatchdogCanCancel(ctx, info))
+}
+
+func TestRelayTotalDurationAfterOutputIgnoresHealthyLongOutput(t *testing.T) {
+	ctx := newRelayRetryContext()
+	start := time.Now().Add(-4 * time.Minute)
+	info := &relaycommon.RelayInfo{
+		StartTime:         start,
+		FirstResponseTime: start.Add(1500 * time.Millisecond),
+	}
+	common.SetContextKey(ctx, constant.ContextKeyRelayFinalCompletionTokens, 12000)
+
+	require.False(t, relayTotalDurationAfterOutput(ctx, info, 4*time.Minute, 180*time.Second))
+}
+
+func TestRelayTotalDurationAfterOutputKeepsSlowLongOutputWarning(t *testing.T) {
+	ctx := newRelayRetryContext()
+	start := time.Now().Add(-20 * time.Minute)
+	info := &relaycommon.RelayInfo{
+		StartTime:         start,
+		FirstResponseTime: start.Add(1500 * time.Millisecond),
+	}
+	common.SetContextKey(ctx, constant.ContextKeyRelayFinalCompletionTokens, 12000)
+
+	require.True(t, relayTotalDurationAfterOutput(ctx, info, 20*time.Minute, 180*time.Second))
 }
 
 func TestRelayRuntimeIdentityFallsBackToChannelScopeWithoutSelectedPlan(t *testing.T) {
