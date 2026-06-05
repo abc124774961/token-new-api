@@ -1135,6 +1135,143 @@ func selectedModelGatewayPlan(c *gin.Context) *modelgatewaycore.DispatchPlan {
 	return plan
 }
 
+func modelGatewayPlanRuntimeIdentity(plan *modelgatewaycore.DispatchPlan, fallbackChannelID int) service.ChannelRuntimeIdentity {
+	if plan == nil {
+		return service.ChannelRuntimeIdentity{}
+	}
+	key := plan.RuntimeKey
+	if key.ChannelID <= 0 {
+		key.ChannelID = fallbackChannelID
+	}
+	if key.ChannelID <= 0 && plan.Channel != nil {
+		key.ChannelID = plan.Channel.Id
+	}
+	identity := service.ChannelRuntimeIdentity{
+		ChannelID:           key.ChannelID,
+		RequestedModel:      key.RequestedModel,
+		SelectedGroup:       key.Group,
+		EndpointType:        key.EndpointType,
+		AccountID:           key.AccountID,
+		AccountType:         key.AccountType,
+		Brand:               key.Brand,
+		Provider:            key.Provider,
+		CredentialIndex:     key.CredentialIndex,
+		CredentialSubjectFP: key.CredentialSubjectFP,
+		CredentialFP:        key.CredentialFP,
+	}
+	ref := plan.CredentialRef
+	if identity.AccountID == "" {
+		identity.AccountID = ref.AccountID
+	}
+	if identity.CredentialSubjectFP == "" {
+		identity.CredentialSubjectFP = ref.CredentialSubjectFingerprint
+	}
+	if identity.CredentialFP == "" {
+		identity.CredentialFP = ref.CredentialFingerprint
+	}
+	if key.AccountID != "" || key.CredentialSubjectFP != "" || key.CredentialFP != "" ||
+		ref.ResourceID != "" || ref.AccountID != "" || ref.CredentialFingerprint != "" || ref.CredentialSubjectFingerprint != "" {
+		if ref.CredentialIndex >= 0 {
+			identity.CredentialIndex = ref.CredentialIndex
+		}
+		identity.CredentialIndexSet = true
+	}
+	return identity.Normalize()
+}
+
+func modelGatewayCandidateRuntimeIdentity(candidate modelgatewaycore.CandidateExplanation) service.ChannelRuntimeIdentity {
+	key := candidate.RuntimeKey
+	channelID := candidate.ChannelID
+	if channelID <= 0 {
+		channelID = key.ChannelID
+	}
+	identity := service.ChannelRuntimeIdentity{
+		ChannelID:           channelID,
+		RequestedModel:      key.RequestedModel,
+		SelectedGroup:       candidate.Group,
+		EndpointType:        key.EndpointType,
+		AccountID:           candidate.AccountID,
+		AccountType:         candidate.AccountType,
+		Brand:               candidate.Brand,
+		Provider:            candidate.Provider,
+		CredentialIndex:     candidate.CredentialIndex,
+		CredentialSubjectFP: candidate.CredentialSubjectFP,
+		CredentialFP:        candidate.CredentialFP,
+	}
+	if identity.SelectedGroup == "" {
+		identity.SelectedGroup = key.Group
+	}
+	if identity.AccountID == "" {
+		identity.AccountID = key.AccountID
+	}
+	if identity.AccountType == "" {
+		identity.AccountType = key.AccountType
+	}
+	if identity.Brand == "" {
+		identity.Brand = key.Brand
+	}
+	if identity.Provider == "" {
+		identity.Provider = key.Provider
+	}
+	if identity.CredentialIndex == 0 && key.CredentialIndex != 0 {
+		identity.CredentialIndex = key.CredentialIndex
+	}
+	if identity.CredentialSubjectFP == "" {
+		identity.CredentialSubjectFP = key.CredentialSubjectFP
+	}
+	if identity.CredentialFP == "" {
+		identity.CredentialFP = key.CredentialFP
+	}
+	if identity.AccountID != "" || identity.CredentialSubjectFP != "" || identity.CredentialFP != "" ||
+		candidate.ResourceID != "" || candidate.CredentialIndex != 0 || key.CredentialIndex != 0 {
+		identity.CredentialIndexSet = true
+	}
+	return identity.Normalize()
+}
+
+func sameModelGatewayRuntimeIdentity(left service.ChannelRuntimeIdentity, right service.ChannelRuntimeIdentity) bool {
+	left = left.Normalize()
+	right = right.Normalize()
+	if left.ChannelID <= 0 || right.ChannelID <= 0 || left.ChannelID != right.ChannelID {
+		return false
+	}
+	if !left.HasAccountScope() || !right.HasAccountScope() {
+		return true
+	}
+	return left.AccountScope() == right.AccountScope()
+}
+
+func modelGatewayPlanHasAlternativeRuntimeCandidate(plan *modelgatewaycore.DispatchPlan) bool {
+	if plan == nil || plan.PolicyMode != modelgatewaycore.ModeActive || len(plan.Candidates) == 0 {
+		return false
+	}
+	selected := modelGatewayPlanRuntimeIdentity(plan, 0)
+	if !selected.Valid() {
+		return false
+	}
+	for _, candidate := range plan.Candidates {
+		if !candidate.Available || candidate.Selected {
+			continue
+		}
+		identity := modelGatewayCandidateRuntimeIdentity(candidate)
+		if !identity.Valid() {
+			continue
+		}
+		if !sameModelGatewayRuntimeIdentity(selected, identity) {
+			return true
+		}
+	}
+	return false
+}
+
+func allowSmartModelGatewayFailoverRetry(c *gin.Context, retryParam *service.RetryParam) bool {
+	if retryParam == nil || !modelGatewayPlanHasAlternativeRuntimeCandidate(selectedModelGatewayPlan(c)) {
+		return false
+	}
+	retryParam.AllowExtraRetry(1)
+	return true
+}
+
 func modelGatewayPlanShouldFallbackAfterPrimaryWait(plan *modelgatewaycore.DispatchPlan) bool {
 	return plan != nil &&
 		plan.ResourceProtectionEnabled &&
@@ -1286,32 +1423,7 @@ func channelAccountScopedConcurrencySetting(c *gin.Context, channel *model.Chann
 
 func relayRuntimeIdentity(c *gin.Context, channelID int) service.ChannelRuntimeIdentity {
 	if plan := selectedModelGatewayPlan(c); plan != nil {
-		key := plan.RuntimeKey
-		if key.ChannelID <= 0 {
-			key.ChannelID = channelID
-		}
-		identity := service.ChannelRuntimeIdentity{
-			ChannelID:           key.ChannelID,
-			RequestedModel:      key.RequestedModel,
-			SelectedGroup:       key.Group,
-			EndpointType:        key.EndpointType,
-			AccountID:           key.AccountID,
-			AccountType:         key.AccountType,
-			Brand:               key.Brand,
-			Provider:            key.Provider,
-			CredentialIndex:     key.CredentialIndex,
-			CredentialSubjectFP: key.CredentialSubjectFP,
-			CredentialFP:        key.CredentialFP,
-		}
-		ref := plan.CredentialRef
-		if key.AccountID != "" || key.CredentialSubjectFP != "" || key.CredentialFP != "" ||
-			ref.ResourceID != "" || ref.AccountID != "" || ref.CredentialFingerprint != "" || ref.CredentialSubjectFingerprint != "" {
-			if ref.CredentialIndex >= 0 {
-				identity.CredentialIndex = ref.CredentialIndex
-			}
-			identity.CredentialIndexSet = true
-		}
-		return identity.Normalize()
+		return modelGatewayPlanRuntimeIdentity(plan, channelID)
 	}
 	return service.ChannelOnlyRuntimeIdentity(channelID)
 }
@@ -2234,6 +2346,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *servi
 	if retryParam != nil && shouldFailoverToAlternativeChannel(c, openaiErr) {
 		canFailover, forceNextAutoGroup := service.GetChannelFailoverPlan(retryParam)
 		if !canFailover {
+			if allowSmartModelGatewayFailoverRetry(c, retryParam) {
+				return true
+			}
 			return false
 		}
 		retryParam.AllowExtraRetry(1)

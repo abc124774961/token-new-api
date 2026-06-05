@@ -960,6 +960,83 @@ func TestShouldRetryRejectsFirstByteTimeoutWithoutAlternativeOrBudget(t *testing
 	require.Equal(t, "stop", retryActionForAttempt(ctx, err, false))
 }
 
+func TestShouldRetryAllowsSmartRuntimeFailoverWithinSameChannel(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 624, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Set("use_channel", []string{"624"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	accountA := modelgatewaycore.RuntimeKey{
+		RequestedModel:      "gpt-5.5",
+		UpstreamModel:       "gpt-5.5",
+		ChannelID:           624,
+		Group:               "default",
+		EndpointType:        constant.EndpointTypeOpenAI,
+		AccountID:           "acct-a",
+		CredentialIndex:     0,
+		CredentialSubjectFP: "subject-a",
+		CredentialFP:        "credential-a",
+	}
+	accountB := accountA
+	accountB.AccountID = "acct-b"
+	accountB.CredentialIndex = 1
+	accountB.CredentialSubjectFP = "subject-b"
+	accountB.CredentialFP = "credential-b"
+
+	modelgatewayintegration.SetSelectedPlan(ctx, &modelgatewaycore.DispatchPlan{
+		PolicyMode:    modelgatewaycore.ModeActive,
+		SelectedGroup: "default",
+		Channel:       &model.Channel{Id: 624, Name: "pooled"},
+		RuntimeKey:    accountA,
+		CredentialRef: modelgatewaycore.CredentialRef{
+			AccountID:                    "acct-a",
+			CredentialIndex:              0,
+			CredentialSubjectFingerprint: "subject-a",
+			CredentialFingerprint:        "credential-a",
+		},
+		Candidates: []modelgatewaycore.CandidateExplanation{
+			{
+				ChannelID:           624,
+				ChannelName:         "pooled",
+				AccountID:           "acct-a",
+				CredentialIndex:     0,
+				CredentialSubjectFP: "subject-a",
+				CredentialFP:        "credential-a",
+				RuntimeKey:          accountA,
+				Available:           true,
+				Selected:            true,
+			},
+			{
+				ChannelID:           624,
+				ChannelName:         "pooled",
+				AccountID:           "acct-b",
+				CredentialIndex:     1,
+				CredentialSubjectFP: "subject-b",
+				CredentialFP:        "credential-b",
+				RuntimeKey:          accountB,
+				Available:           true,
+			},
+		},
+	})
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	canLegacyFailover, _ := service.GetChannelFailoverPlan(param)
+	require.False(t, canLegacyFailover)
+
+	err := newRelayFirstByteTimeoutError(relayFirstByteTimeout)
+	require.True(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, 1, param.GetExtraRetries())
+	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
+}
+
 func TestModelGatewayAttemptFailureScopeClassifiesClientAbort(t *testing.T) {
 	result := modelgatewaycore.AttemptResult{
 		Success:       false,
