@@ -17,10 +17,11 @@ import (
 )
 
 var (
-	defaultWrapper     *ChannelSelectionWrapper
-	defaultRuntime     *DefaultRuntimeObservability
-	defaultWrapperMu   sync.Mutex
-	defaultWrapperOnce sync.Once
+	defaultWrapper         *ChannelSelectionWrapper
+	defaultWrapperOverride *ChannelSelectionWrapper
+	defaultRuntime         *DefaultRuntimeObservability
+	defaultWrapperMu       sync.Mutex
+	defaultWrapperOnce     sync.Once
 )
 
 type DefaultRuntimeObservability struct {
@@ -42,6 +43,9 @@ type DefaultRuntimeObservability struct {
 func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 	defaultWrapperMu.Lock()
 	defer defaultWrapperMu.Unlock()
+	if defaultWrapperOverride != nil {
+		return defaultWrapperOverride
+	}
 	defaultWrapperOnce.Do(func() {
 		settingsProvider := NewSchedulerSettingsProvider()
 		groupService := NewServiceGroupPermissionService()
@@ -181,6 +185,18 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 	return defaultWrapper
 }
 
+func SetDefaultChannelSelectionWrapperForTest(wrapper *ChannelSelectionWrapper) func() {
+	defaultWrapperMu.Lock()
+	previousOverride := defaultWrapperOverride
+	defaultWrapperOverride = wrapper
+	defaultWrapperMu.Unlock()
+	return func() {
+		defaultWrapperMu.Lock()
+		defaultWrapperOverride = previousOverride
+		defaultWrapperMu.Unlock()
+	}
+}
+
 func WarmupDefaultRuntimeObservability() {
 	DefaultChannelSelectionWrapper()
 }
@@ -223,6 +239,7 @@ func ResetDefaultRuntimeObservabilityDeps() {
 	}
 	defaultWrapperOnce = sync.Once{}
 	defaultWrapper = nil
+	defaultWrapperOverride = nil
 	defaultRuntime = nil
 }
 

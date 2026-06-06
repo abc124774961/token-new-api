@@ -85,6 +85,20 @@ var channelAffinitySetting = ChannelAffinitySetting{
 			PathRegex:  []string{"/v1/responses"},
 			KeySources: []ChannelAffinityKeySource{
 				{Type: "gjson", Path: "prompt_cache_key"},
+			},
+			ValueRegex:            "",
+			TTLSeconds:            0,
+			ParamOverrideTemplate: buildPassHeaderTemplate(codexCliPassThroughHeaders),
+			SkipRetryOnFailure:    false,
+			IncludeUsingGroup:     true,
+			IncludeRuleName:       true,
+			UserAgentInclude:      nil,
+		},
+		{
+			Name:       "codex cli previous response",
+			ModelRegex: []string{"^gpt-.*$"},
+			PathRegex:  []string{"/v1/responses"},
+			KeySources: []ChannelAffinityKeySource{
 				{Type: "gjson", Path: "previous_response_id"},
 			},
 			ValueRegex:            "",

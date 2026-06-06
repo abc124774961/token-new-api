@@ -255,7 +255,7 @@ func TestChannelAffinityCodexFallsBackToPreviousResponseID(t *testing.T) {
 	var codexRule *operation_setting.ChannelAffinityRule
 	for i := range setting.Rules {
 		rule := &setting.Rules[i]
-		if strings.EqualFold(strings.TrimSpace(rule.Name), "codex cli trace") {
+		if strings.EqualFold(strings.TrimSpace(rule.Name), "codex cli previous response") {
 			codexRule = rule
 			break
 		}
@@ -282,12 +282,31 @@ func TestChannelAffinityCodexFallsBackToPreviousResponseID(t *testing.T) {
 
 	statsContext, ok := GetChannelAffinityStatsContext(ctx)
 	require.True(t, ok)
-	require.Equal(t, "codex cli trace", statsContext.RuleName)
+	require.Equal(t, "codex cli previous response", statsContext.RuleName)
 
 	meta, ok := getChannelAffinityMeta(ctx)
 	require.True(t, ok)
 	require.Equal(t, "previous_response_id", meta.KeySourcePath)
 	require.Equal(t, affinityFingerprint(affinityValue), meta.KeyFingerprint)
+	require.True(t, ShouldSkipRetryAfterChannelAffinityFailure(ctx))
+}
+
+func TestChannelAffinityCodexPromptCacheAllowsRetry(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	affinityValue := fmt.Sprintf("pc-retry-%d", time.Now().UnixNano())
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(fmt.Sprintf(`{"prompt_cache_key":"%s"}`, affinityValue)))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	_, found := ResolveChannelAffinitySignal(ctx, "gpt-5", "default")
+	require.True(t, found)
+
+	meta, ok := getChannelAffinityMeta(ctx)
+	require.True(t, ok)
+	require.Equal(t, "prompt_cache_key", meta.KeySourcePath)
+	require.False(t, ShouldSkipRetryAfterChannelAffinityFailure(ctx))
 }
 
 func TestRecordChannelAffinitySkippedForInternalFailoverSuccess(t *testing.T) {

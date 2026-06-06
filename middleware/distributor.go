@@ -126,14 +126,7 @@ func distribute(c *gin.Context, next gin.HandlerFunc) {
 			}
 
 			var selectionErr *types.NewAPIError
-			selection, selectionErr = modelgatewayintegration.DefaultChannelSelectionWrapper().SelectSmartOnly(c, &service.RetryParam{
-				Ctx:                    c,
-				ModelName:              modelRequest.Model,
-				EndpointType:           modelRequest.EndpointType,
-				RequiresCodexImageTool: modelRequest.RequiresCodexImageTool,
-				TokenGroup:             usingGroup,
-				Retry:                  common.GetPointer(0),
-			})
+			selection, selectionErr = selectSmartDistributorChannel(c, modelRequest, usingGroup)
 			if selectionErr != nil {
 				showGroup := usingGroup
 				if usingGroup == "auto" {
@@ -146,6 +139,10 @@ func distribute(c *gin.Context, next gin.HandlerFunc) {
 			if selection != nil {
 				channel = selection.Channel
 				selectGroup = selection.Group
+			}
+			if setupErr := setupInitialDistributorSmartSelection(c, modelRequest, usingGroup, &channel, &selectGroup, &selection); setupErr != nil {
+				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": common.GetContextKeyString(c, constant.ContextKeyUsingGroup), "Model": modelRequest.Model, "Error": setupErr.Error()}), setupErr.GetErrorCode())
+				return
 			}
 
 			if channel == nil {
@@ -234,7 +231,7 @@ func distribute(c *gin.Context, next gin.HandlerFunc) {
 	}
 	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 	logDistributorSelectedChannel(c, channel, modelRequest)
-	if setupErr := SetupContextForSelectedChannelWithEndpoint(c, channel, modelRequest.Model, modelRequest.EndpointType, selection); setupErr != nil {
+	if setupErr := setupDistributorSelectedChannelIfNeeded(c, channel, modelRequest, selection); setupErr != nil {
 		abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": common.GetContextKeyString(c, constant.ContextKeyUsingGroup), "Model": modelRequest.Model, "Error": setupErr.Error()}), setupErr.GetErrorCode())
 		return
 	}
@@ -260,6 +257,101 @@ func applySelectedGroupContext(c *gin.Context, requestedGroup, selectedGroup str
 		common.SetContextKey(c, constant.ContextKeyAutoGroup, selectedGroup)
 	}
 	common.SetContextKey(c, constant.ContextKeyUsingGroup, selectedGroup)
+}
+
+func selectSmartDistributorChannel(c *gin.Context, modelRequest *ModelRequest, usingGroup string) (*modelgatewayintegration.SelectionResult, *types.NewAPIError) {
+	if modelRequest == nil {
+		return nil, nil
+	}
+	return modelgatewayintegration.DefaultChannelSelectionWrapper().SelectSmartOnly(c, &service.RetryParam{
+		Ctx:                    c,
+		ModelName:              modelRequest.Model,
+		EndpointType:           modelRequest.EndpointType,
+		RequiresCodexImageTool: modelRequest.RequiresCodexImageTool,
+		TokenGroup:             usingGroup,
+		Retry:                  common.GetPointer(0),
+	})
+}
+
+func setupInitialDistributorSmartSelection(c *gin.Context, modelRequest *ModelRequest, usingGroup string, channel **model.Channel, selectGroup *string, selection **modelgatewayintegration.SelectionResult) *types.NewAPIError {
+	if c == nil || modelRequest == nil || channel == nil || selectGroup == nil || selection == nil {
+		return nil
+	}
+	currentSelection := *selection
+	if currentSelection == nil || !currentSelection.SmartHandled || currentSelection.Plan == nil || *channel == nil {
+		return nil
+	}
+	var lastSetupErr *types.NewAPIError
+	for attempts := 0; attempts < 4; attempts++ {
+		applySelectedGroupContext(c, usingGroup, *selectGroup)
+		setupErr := SetupContextForSelectedChannelWithEndpoint(c, *channel, modelRequest.Model, modelRequest.EndpointType, currentSelection)
+		if setupErr == nil {
+			return nil
+		}
+		lastSetupErr = setupErr
+		if !shouldRetryDistributorSmartSetupFailure(c, setupErr) {
+			return setupErr
+		}
+		markDistributorSmartSetupFailure(c, currentSelection)
+		if attempts == 3 {
+			return lastSetupErr
+		}
+		nextSelection, selectionErr := selectSmartDistributorChannel(c, modelRequest, usingGroup)
+		if selectionErr != nil {
+			return selectionErr
+		}
+		if nextSelection == nil || nextSelection.Channel == nil || !nextSelection.SmartHandled || nextSelection.Plan == nil {
+			*channel = nil
+			*selection = nil
+			return nil
+		}
+		currentSelection = nextSelection
+		*selection = nextSelection
+		*channel = nextSelection.Channel
+		*selectGroup = nextSelection.Group
+	}
+	return lastSetupErr
+}
+
+func shouldRetryDistributorSmartSetupFailure(c *gin.Context, apiErr *types.NewAPIError) bool {
+	if c == nil || apiErr == nil {
+		return false
+	}
+	if _, ok := c.Get("specific_channel_id"); ok {
+		return false
+	}
+	switch apiErr.GetErrorCode() {
+	case types.ErrorCodeChannelNoAvailableKey, types.ErrorCodeChannelInvalidKey, types.ErrorCodeGetChannelFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func markDistributorSmartSetupFailure(c *gin.Context, selection *modelgatewayintegration.SelectionResult) {
+	if c == nil || selection == nil || selection.Channel == nil {
+		return
+	}
+	service.ReleaseChannelSelectionReservation(c, selection.Channel.Id)
+	identity := modelgatewayintegration.RuntimeIdentityFromPlan(selection.Plan)
+	if !identity.Valid() {
+		identity = service.ChannelRuntimeIdentityFromContext(c, selection.Channel.Id)
+	}
+	service.MarkChannelRuntimeSelectionSkipped(c, identity)
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+}
+
+func setupDistributorSelectedChannelIfNeeded(c *gin.Context, channel *model.Channel, modelRequest *ModelRequest, selection *modelgatewayintegration.SelectionResult) *types.NewAPIError {
+	if selection != nil && selection.SmartHandled && selection.Plan != nil {
+		return nil
+	}
+	modelName := ""
+	endpointType := constant.EndpointType("")
+	if modelRequest != nil {
+		modelName = modelRequest.Model
+		endpointType = modelRequest.EndpointType
+	}
+	return SetupContextForSelectedChannelWithEndpoint(c, channel, modelName, endpointType, selection)
 }
 
 func logCodexEffectiveModelCapabilityForRequest(c *gin.Context, modelRequest *ModelRequest) {

@@ -7355,6 +7355,8 @@ html.dark
 }
 
 .ct-channel-monitor-availability {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 7px 14px;
   margin-top: 14px;
   padding: 13px 14px;
@@ -7365,6 +7367,13 @@ html.dark
     rgba(240, 253, 250, 0.7),
     rgba(255, 255, 255, 0.34)
   );
+}
+
+.ct-channel-monitor-availability-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dark .ct-channel-monitor-availability {
@@ -7379,6 +7388,16 @@ html.dark
 .ct-channel-monitor-availability-value {
   font-size: 30px;
   font-weight: 900;
+  white-space: nowrap;
+}
+
+.ct-channel-monitor-availability-sub {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ct-channel-monitor-availability-track {

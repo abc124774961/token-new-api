@@ -90,6 +90,67 @@ func TestPublicHomeStatusEmptyKeepsDailyWindow(t *testing.T) {
 	require.Len(t, response.Groups[0].Daily, 30)
 }
 
+func TestPublicHomeStatusSnapshotLoadsFreshPayload(t *testing.T) {
+	now := time.Now()
+	response := PublicHomeStatusResponse{
+		Summary: PublicHomeStatusSummary{
+			Days:         7,
+			Requests:     123,
+			SuccessRate:  99.1,
+			AvgLatencyMs: 456,
+			AvgTTFTMs:    234,
+		},
+		UpdatedAt: now.Unix() - 10,
+	}
+	payload, err := common.Marshal(publicHomeStatusSnapshotPayload{
+		Days:       7,
+		SnapshotAt: now.Add(-time.Minute).Unix(),
+		Data:       response,
+	})
+	require.NoError(t, err)
+
+	common.OptionMapRWMutex.Lock()
+	oldOptionMap := common.OptionMap
+	common.OptionMap = map[string]string{publicHomeStatusSnapshotKey: string(payload)}
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = oldOptionMap
+		common.OptionMapRWMutex.Unlock()
+	})
+
+	result, ok := loadPublicHomeStatusSnapshot(7, now)
+	require.True(t, ok)
+	require.EqualValues(t, 123, result.Summary.Requests)
+	require.EqualValues(t, 456, result.Summary.AvgLatencyMs)
+	require.False(t, result.Partial)
+}
+
+func TestPublicHomeStatusSnapshotRejectsStalePayload(t *testing.T) {
+	now := time.Now()
+	payload, err := common.Marshal(publicHomeStatusSnapshotPayload{
+		Days:       7,
+		SnapshotAt: now.Add(-publicHomeStatusSnapshotTTL - time.Second).Unix(),
+		Data: PublicHomeStatusResponse{
+			Summary: PublicHomeStatusSummary{Days: 7, Requests: 123},
+		},
+	})
+	require.NoError(t, err)
+
+	common.OptionMapRWMutex.Lock()
+	oldOptionMap := common.OptionMap
+	common.OptionMap = map[string]string{publicHomeStatusSnapshotKey: string(payload)}
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = oldOptionMap
+		common.OptionMapRWMutex.Unlock()
+	})
+
+	_, ok := loadPublicHomeStatusSnapshot(7, now)
+	require.False(t, ok)
+}
+
 func TestPublicHomeModelGatewayStatsOverrideFirstByteLatency(t *testing.T) {
 	response := PublicHomeStatusResponse{
 		Summary: PublicHomeStatusSummary{

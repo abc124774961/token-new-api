@@ -21,6 +21,7 @@ const (
 	publicHomeStatusCacheTTL    = 2 * time.Minute
 	publicHomeStatusErrorTTL    = 30 * time.Second
 	publicHomeStatusStaleTTL    = 10 * time.Minute
+	publicHomeStatusSnapshotTTL = 30 * time.Minute
 	publicHomeDynamicBillingTTL = 30 * time.Second
 	publicHomeGatewayStatsTTL   = 2 * time.Minute
 	publicHomeGatewayStatsStale = 30 * time.Minute
@@ -30,6 +31,7 @@ const (
 	publicHomeGatewayFirstWait  = 500 * time.Millisecond
 	publicHomeGatewayStatsHours = 24
 	publicHomeStatusLogQueryTTL = 900 * time.Millisecond
+	publicHomeStatusSnapshotKey = "public_home_status_snapshot"
 )
 
 var publicHomeStatusCache = struct {
@@ -60,6 +62,12 @@ type publicHomeStatusCacheItem struct {
 	result     PublicHomeStatusResponse
 	expiresAt  time.Time
 	staleUntil time.Time
+}
+
+type publicHomeStatusSnapshotPayload struct {
+	Days       int                      `json:"days"`
+	SnapshotAt int64                    `json:"snapshot_at"`
+	Data       PublicHomeStatusResponse `json:"data"`
 }
 
 type publicHomeModelGatewayStatsCacheItem struct {
@@ -241,7 +249,34 @@ func buildPublicHomeStatusCached(days int) (PublicHomeStatusResponse, error) {
 	}
 	if done, ok := publicHomeStatusCache.inFlight[days]; ok {
 		publicHomeStatusCache.Unlock()
-		<-done
+		if result, ok := loadPublicHomeStatusSnapshot(days, now); ok {
+			return result, nil
+		}
+		select {
+		case <-done:
+			publicHomeStatusCache.Lock()
+			if cached, ok := publicHomeStatusCache.items[days]; ok {
+				result := cached.result
+				publicHomeStatusCache.Unlock()
+				return result, nil
+			}
+			publicHomeStatusCache.Unlock()
+		case <-time.After(publicHomeGatewayFirstWait):
+		}
+		return buildPublicHomeStatusEmpty(days, true), nil
+	}
+	done := make(chan struct{})
+	publicHomeStatusCache.inFlight[days] = done
+	publicHomeStatusCache.Unlock()
+
+	if result, ok := loadPublicHomeStatusSnapshot(days, now); ok {
+		go refreshPublicHomeStatusCache(days, done)
+		return result, nil
+	}
+
+	go refreshPublicHomeStatusCache(days, done)
+	select {
+	case <-done:
 		publicHomeStatusCache.Lock()
 		if cached, ok := publicHomeStatusCache.items[days]; ok {
 			result := cached.result
@@ -249,13 +284,9 @@ func buildPublicHomeStatusCached(days int) (PublicHomeStatusResponse, error) {
 			return result, nil
 		}
 		publicHomeStatusCache.Unlock()
-		return buildPublicHomeStatusEmpty(days, true), nil
+	case <-time.After(publicHomeGatewayFirstWait):
 	}
-	done := make(chan struct{})
-	publicHomeStatusCache.inFlight[days] = done
-	publicHomeStatusCache.Unlock()
-
-	return refreshPublicHomeStatusCache(days, done)
+	return buildPublicHomeStatusEmpty(days, true), nil
 }
 
 func refreshPublicHomeStatusCache(days int, done chan struct{}) (PublicHomeStatusResponse, error) {
@@ -287,8 +318,63 @@ func refreshPublicHomeStatusCache(days int, done chan struct{}) (PublicHomeStatu
 	delete(publicHomeStatusCache.inFlight, days)
 	close(done)
 	publicHomeStatusCache.Unlock()
+	if err == nil && !result.Partial {
+		persistPublicHomeStatusSnapshot(days, result, now)
+	}
 
 	return result, err
+}
+
+func loadPublicHomeStatusSnapshot(days int, now time.Time) (PublicHomeStatusResponse, bool) {
+	days = normalizePublicHomeStatusDays(days)
+	if now.IsZero() {
+		now = time.Now()
+	}
+	common.OptionMapRWMutex.RLock()
+	raw := common.OptionMap[publicHomeStatusSnapshotKey]
+	common.OptionMapRWMutex.RUnlock()
+	if strings.TrimSpace(raw) == "" {
+		return PublicHomeStatusResponse{}, false
+	}
+	var payload publicHomeStatusSnapshotPayload
+	if err := common.UnmarshalJsonStr(raw, &payload); err != nil {
+		return PublicHomeStatusResponse{}, false
+	}
+	if normalizePublicHomeStatusDays(payload.Days) != days || payload.SnapshotAt <= 0 {
+		return PublicHomeStatusResponse{}, false
+	}
+	if now.Sub(time.Unix(payload.SnapshotAt, 0)) > publicHomeStatusSnapshotTTL {
+		return PublicHomeStatusResponse{}, false
+	}
+	result := payload.Data
+	if result.Summary.Days == 0 {
+		result.Summary.Days = days
+	}
+	if result.UpdatedAt <= 0 {
+		result.UpdatedAt = payload.SnapshotAt
+	}
+	return result, true
+}
+
+func persistPublicHomeStatusSnapshot(days int, result PublicHomeStatusResponse, now time.Time) {
+	if model.DB == nil {
+		return
+	}
+	days = normalizePublicHomeStatusDays(days)
+	if now.IsZero() {
+		now = time.Now()
+	}
+	payload, err := common.Marshal(publicHomeStatusSnapshotPayload{
+		Days:       days,
+		SnapshotAt: now.Unix(),
+		Data:       result,
+	})
+	if err != nil {
+		return
+	}
+	if err := model.UpdateOption(publicHomeStatusSnapshotKey, string(payload)); err != nil {
+		common.SysLog("failed to persist public home status snapshot: " + err.Error())
+	}
 }
 
 func buildPublicHomeStatus(days int) (PublicHomeStatusResponse, error) {

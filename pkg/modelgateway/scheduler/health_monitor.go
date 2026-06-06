@@ -161,8 +161,10 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	snapshot.EmptyOutputRate = stats.emptyRate
 	snapshot.ExperienceIssueRate = stats.issueRate
 	recoveryScore := m.scoreSnapshot(result, snapshot)
-	m.applyRecoverableQuality(&snapshot, result, recoveryScore)
-	m.applyProbeRecovery(&snapshot, result, recoveryScore)
+	scoreAnomalyActiveBefore := scoreAnomalyRecoveryActive(snapshot)
+	recoverableQualityAnomaly := m.applyRecoverableQuality(&snapshot, result, recoveryScore)
+	scoreAnomalyJustTriggered := recoverableQualityAnomaly && !scoreAnomalyActiveBefore
+	m.applyProbeRecovery(&snapshot, result, recoveryScore, scoreAnomalyJustTriggered)
 	if result.IsHealthProbe {
 		snapshot.LastProbeAt = observedAtUnix
 		if result.Success {
@@ -257,9 +259,9 @@ func healthStatsFromSnapshot(snapshot core.RuntimeSnapshot, ok bool) *healthStat
 	return stats
 }
 
-func (m *RuntimeHealthMonitor) applyRecoverableQuality(snapshot *core.RuntimeSnapshot, result core.AttemptResult, score core.ScoreResult) {
+func (m *RuntimeHealthMonitor) applyRecoverableQuality(snapshot *core.RuntimeSnapshot, result core.AttemptResult, score core.ScoreResult) bool {
 	if snapshot == nil {
-		return
+		return false
 	}
 	setting := scheduler_setting.GetSetting()
 	evaluation := EvaluateRecoverableQuality(score, setting.ProbeRecoverableScoreItems)
@@ -289,9 +291,10 @@ func (m *RuntimeHealthMonitor) applyRecoverableQuality(snapshot *core.RuntimeSna
 	if shouldUpdateRecoverableQualityBaseline(*snapshot, result, evaluation, len(triggers) > 0) {
 		updateRecoverableQualityBaseline(snapshot, evaluation)
 	}
+	return len(triggers) > 0
 }
 
-func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot, result core.AttemptResult, score core.ScoreResult) {
+func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot, result core.AttemptResult, score core.ScoreResult, scoreAnomalyJustTriggered bool) {
 	if snapshot == nil || result.ChannelID <= 0 || result.ConcurrencyLimited || result.ClientAborted {
 		return
 	}
@@ -361,7 +364,7 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 		snapshot.FailureAvoidance = snapshot.FailureAvoidance || avoidance != nil
 	}
 	snapshot.FailureAvoidance = snapshot.FailureAvoidance || avoidance != nil
-	if shouldClearScoreAnomalyRecoveryAfterRealSuccess(*snapshot, result, score, lowScoreThreshold) {
+	if !scoreAnomalyJustTriggered && shouldClearScoreAnomalyRecoveryAfterRealSuccess(*snapshot, result, score, lowScoreThreshold) {
 		clearScoreAnomalyRecovery(snapshot)
 	}
 	scoreAnomalyPending := ScoreAnomalyFastProbePending(*snapshot)

@@ -172,6 +172,10 @@ func serviceRuntimeIdentityFromPlan(plan *core.DispatchPlan) service.ChannelRunt
 	return identity.Normalize()
 }
 
+func RuntimeIdentityFromPlan(plan *core.DispatchPlan) service.ChannelRuntimeIdentity {
+	return serviceRuntimeIdentityFromPlan(plan)
+}
+
 func validateSelectedSmartPlan(plan *core.DispatchPlan) (bool, string) {
 	if plan == nil || plan.Channel == nil {
 		return true, ""

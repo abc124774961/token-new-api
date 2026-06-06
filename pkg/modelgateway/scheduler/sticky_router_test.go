@@ -1315,7 +1315,7 @@ func TestServiceCacheAffinityAdapterUsesPreviousResponseID(t *testing.T) {
 	var codexRule *operation_setting.ChannelAffinityRule
 	for i := range setting.Rules {
 		rule := &setting.Rules[i]
-		if strings.EqualFold(strings.TrimSpace(rule.Name), "codex cli trace") {
+		if strings.EqualFold(strings.TrimSpace(rule.Name), "codex cli previous response") {
 			codexRule = rule
 			break
 		}
@@ -1331,7 +1331,7 @@ func TestServiceCacheAffinityAdapterUsesPreviousResponseID(t *testing.T) {
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	signal, ok := service.ResolveChannelAffinitySignal(ctx, "gpt-5", "default")
 	require.True(t, ok)
-	require.Equal(t, "codex cli trace", signal.RuleName)
+	require.Equal(t, "codex cli previous response", signal.RuleName)
 	require.Equal(t, "previous_response_id", signal.KeySourcePath)
 	require.Equal(t, 0, signal.PreferredChannelID)
 	service.RecordChannelAffinity(ctx, 11)

@@ -10,8 +10,13 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/modelgateway"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/policy"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/testkit"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -160,6 +165,120 @@ func TestSetupContextForSelectedChannelAppliesSmartCredentialWithoutPolling(t *t
 	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyChannelIsMultiKey))
 	require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyChannelMultiKeyIndex))
 	require.Equal(t, 2, channel.ChannelInfo.MultiKeyPollingIndex)
+}
+
+func TestDistributeRetriesSmartSetupFailureBeforeRelay(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	common.CryptoSecret = "test-secret"
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
+	channel := &model.Channel{
+		Id:     52,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-disabled\nsk-enabled",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "gpt-5.5",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:         true,
+			MultiKeySize:       2,
+			MultiKeyStatusList: map[int]int{0: common.ChannelStatusManuallyDisabled},
+		},
+	}
+	keyA := core.RuntimeKey{ChannelID: channel.Id, RequestedModel: "gpt-5.5", Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	keyB := keyA
+	keyA.CredentialIndex = 0
+	keyA.CredentialFP = common.GenerateHMAC("sk-disabled")
+	keyB.CredentialIndex = 1
+	keyB.CredentialFP = common.GenerateHMAC("sk-enabled")
+
+	snapshots := scheduler.NewMemoryRuntimeSnapshotStore()
+	snapshots.Put(core.RuntimeSnapshot{
+		Key:                keyA,
+		SuccessRate:        0.99,
+		TTFTMs:             120,
+		TokensPerSecond:    80,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	snapshots.Put(core.RuntimeSnapshot{
+		Key:                keyB,
+		SuccessRate:        0.95,
+		TTFTMs:             180,
+		TokensPerSecond:    60,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{
+				Channel:    channel,
+				Group:      "default",
+				RuntimeKey: keyA,
+				CredentialRef: core.CredentialRef{
+					ResourceID:                   "platform:channel:52",
+					CredentialIndex:              0,
+					CredentialFingerprint:        common.GenerateHMAC("sk-disabled"),
+					CredentialSubjectFingerprint: common.GenerateHMAC("sk-disabled"),
+					Resolver:                     "channel_key",
+				},
+			},
+			{
+				Channel:    channel,
+				Group:      "default",
+				RuntimeKey: keyB,
+				CredentialRef: core.CredentialRef{
+					ResourceID:                   "platform:channel:52",
+					CredentialIndex:              1,
+					CredentialFingerprint:        common.GenerateHMAC("sk-enabled"),
+					CredentialSubjectFingerprint: common.GenerateHMAC("sk-enabled"),
+					Resolver:                     "channel_key",
+				},
+			},
+		}),
+		snapshots,
+		scheduler.DefaultScoreWeights(),
+	)
+	facade := modelgateway.NewSmartDispatchFacade(modelgateway.SmartDispatchDeps{
+		PolicyResolver: policy.NewDefaultGroupPolicyResolver(testkit.StaticSettingsProvider{Settings: core.SchedulerSettings{
+			Enabled:         true,
+			DefaultMode:     core.ModeOff,
+			DefaultStrategy: core.StrategyBalanced,
+			GroupPolicies: map[string]core.GroupPolicySetting{
+				"default": {Mode: core.ModeActive, Strategy: core.StrategyBalanced, AutoMode: core.AutoModeSequential},
+			},
+		}}),
+		AutoResolver: policy.NewDefaultAutoGroupResolver(&testkit.FakeGroupPermissionService{
+			AutoGroups: map[string][]string{"default": []string{"default"}},
+		}),
+		Selector: selector,
+		Recorder: &testkit.FakeExecutionRecorder{},
+	})
+	restoreWrapper := modelgatewayintegration.SetDefaultChannelSelectionWrapperForTest(modelgatewayintegration.NewChannelSelectionWrapper(facade, &testkit.FakeLegacyChannelSelector{}))
+	t.Cleanup(restoreWrapper)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}]}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "default")
+	nextCalled := false
+
+	distribute(ctx, func(c *gin.Context) {
+		nextCalled = true
+		require.Equal(t, "sk-enabled", common.GetContextKeyString(c, constant.ContextKeyChannelKey))
+		require.Equal(t, 1, common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex))
+	})
+
+	require.True(t, nextCalled)
+	require.False(t, ctx.IsAborted())
+	require.Equal(t, 1, service.GetChannelSelectionReservations(channel.Id))
+	service.ReleaseChannelSelectionReservations(ctx)
 }
 
 func TestSetupContextForSelectedChannelLegacyStillUsesNextEnabledKey(t *testing.T) {

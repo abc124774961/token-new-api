@@ -407,7 +407,7 @@ const requestHomeStatus = async () => {
   }
 
   const response = await fetch(
-    `/api/public/home/status?days=30&_=${Date.now()}`,
+    `/api/public/home/status?days=7&_=${Date.now()}`,
     {
       cache: 'no-store',
       headers: {
