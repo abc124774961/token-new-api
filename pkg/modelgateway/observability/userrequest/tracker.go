@@ -722,6 +722,9 @@ func settlingRecordStale(record Record, now time.Time) bool {
 }
 
 func staleProcessingTimeoutForRecord(record Record) time.Duration {
+	if common.IsImageGenerationModel(record.RequestedModel) {
+		return staleProcessingTimeout()
+	}
 	if record.TTFTMs <= 0 {
 		return firstByteProcessingTimeout()
 	}

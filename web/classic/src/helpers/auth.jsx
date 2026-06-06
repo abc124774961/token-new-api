@@ -20,6 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { history } from './history';
+import { hasAdminPermission } from '../apps/admin-console/permissions/adminPermissions.config';
 
 export function authHeader() {
   // return authorization header with jwt token
@@ -32,11 +33,11 @@ export function authHeader() {
   }
 }
 
-export const AuthRedirect = ({ children }) => {
+export const AuthRedirect = ({ children, to = '/console' }) => {
   const user = localStorage.getItem('user');
 
   if (user) {
-    return <Navigate to='/console' replace />;
+    return <Navigate to={to} replace />;
   }
 
   return children;
@@ -49,14 +50,14 @@ function PrivateRoute({ children }) {
   return children;
 }
 
-export function AdminRoute({ children }) {
+export function AdminRoute({ children, permission }) {
   const raw = localStorage.getItem('user');
   if (!raw) {
     return <Navigate to='/login' state={{ from: history.location }} />;
   }
   try {
     const user = JSON.parse(raw);
-    if (user && typeof user.role === 'number' && user.role >= 10) {
+    if (hasAdminPermission(user, permission)) {
       return children;
     }
   } catch (e) {

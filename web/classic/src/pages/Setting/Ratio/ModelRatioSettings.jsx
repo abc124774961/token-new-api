@@ -36,8 +36,16 @@ import {
   verifyJSON,
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import { AdminPermissionButton } from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
-export default function ModelRatioSettings(props) {
+export default function ModelRatioSettings({
+  options,
+  refresh,
+  canManageRatioDanger,
+  ratioDangerPermissionDenied,
+  ensureRatioPermission,
+}) {
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState({
     ModelPrice: '',
@@ -55,6 +63,10 @@ export default function ModelRatioSettings(props) {
   const { t } = useTranslation();
 
   async function onSubmit() {
+    if (ensureRatioPermission && !ensureRatioPermission()) {
+      return;
+    }
+
     try {
       await refForm.current
         .validate()
@@ -89,7 +101,7 @@ export default function ModelRatioSettings(props) {
               }
 
               showSuccess(t('保存成功'));
-              props.refresh();
+              refresh();
             })
             .catch((error) => {
               console.error('Unexpected error:', error);
@@ -109,11 +121,15 @@ export default function ModelRatioSettings(props) {
   }
 
   async function resetModelRatio() {
+    if (ensureRatioPermission && !ensureRatioPermission()) {
+      return;
+    }
+
     try {
       let res = await API.post(`/api/option/rest_model_ratio`);
       if (res.data.success) {
         showSuccess(res.data.message);
-        props.refresh();
+        refresh();
       } else {
         showError(res.data.message);
       }
@@ -124,15 +140,15 @@ export default function ModelRatioSettings(props) {
 
   useEffect(() => {
     const currentInputs = {};
-    for (let key in props.options) {
+    for (let key in options) {
       if (Object.keys(inputs).includes(key)) {
-        currentInputs[key] = props.options[key];
+        currentInputs[key] = options[key];
       }
     }
     setInputs(currentInputs);
     setInputsRow(structuredClone(currentInputs));
     refForm.current.setValues(currentInputs);
-  }, [props.options]);
+  }, [options]);
 
   return (
     <Spin spinning={loading}>
@@ -332,15 +348,28 @@ export default function ModelRatioSettings(props) {
         </Row>
       </Form>
       <Space>
-        <Button onClick={onSubmit}>{t('保存模型倍率设置')}</Button>
+        <AdminPermissionButton
+          dangerPermission={ADMIN_PERMISSION_KEYS.modelRatioUpdate}
+          fallbackTooltip={ratioDangerPermissionDenied}
+          onClick={onSubmit}
+        >
+          {t('保存模型倍率设置')}
+        </AdminPermissionButton>
         <Popconfirm
           title={t('确定重置模型倍率吗？')}
           content={t('此修改将不可逆')}
           okType={'danger'}
           position={'top'}
+          disabled={!canManageRatioDanger}
           onConfirm={resetModelRatio}
         >
-          <Button type={'danger'}>{t('重置模型倍率')}</Button>
+          <AdminPermissionButton
+            dangerPermission={ADMIN_PERMISSION_KEYS.modelRatioUpdate}
+            fallbackTooltip={ratioDangerPermissionDenied}
+            type={'danger'}
+          >
+            {t('重置模型倍率')}
+          </AdminPermissionButton>
         </Popconfirm>
       </Space>
     </Spin>

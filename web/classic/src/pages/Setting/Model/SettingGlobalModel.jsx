@@ -37,6 +37,11 @@ import {
   verifyJSON,
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  AdminPermissionButton,
+  useAdminActionPermission,
+} from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 const thinkingExample = JSON.stringify(
   ['moonshotai/kimi-k2-thinking', 'kimi-k2-thinking'],
@@ -78,6 +83,17 @@ const defaultGlobalSettingInputs = {
 
 export default function SettingGlobalModel(props) {
   const { t } = useTranslation();
+  const canManageSystemSettings = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.systemSettingsUpdate,
+  );
+  const systemSettingsPermissionDenied = t(
+    '没有系统设置修改权限，请联系超级管理员。',
+  );
+  const ensureSystemSettingsPermission = () => {
+    if (canManageSystemSettings) return true;
+    showWarning(systemSettingsPermissionDenied);
+    return false;
+  };
 
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState(defaultGlobalSettingInputs);
@@ -109,6 +125,10 @@ export default function SettingGlobalModel(props) {
   };
 
   function onSubmit() {
+    if (!ensureSystemSettingsPermission()) {
+      return;
+    }
+
     const updateArray = compareObjects(inputs, inputsRow);
     if (!updateArray.length) return showWarning(t('你似乎并没有修改什么'));
     const requestQueue = updateArray.map((item) => {
@@ -441,9 +461,14 @@ export default function SettingGlobalModel(props) {
             </Form.Section>
 
             <Row>
-              <Button size='default' onClick={onSubmit}>
+              <AdminPermissionButton
+                size='default'
+                requiredPermission={ADMIN_PERMISSION_KEYS.systemSettingsUpdate}
+                fallbackTooltip={systemSettingsPermissionDenied}
+                onClick={onSubmit}
+              >
                 {t('保存')}
-              </Button>
+              </AdminPermissionButton>
             </Row>
           </Form.Section>
         </Form>

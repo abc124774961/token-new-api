@@ -141,7 +141,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
   // 显示加载状态
   if (loading) {
     return (
-      <div className='flex justify-center items-center min-h-screen'>
+      <div className='ct-document-page ct-document-state'>
         <Spin size='large' />
       </div>
     );
@@ -150,7 +150,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
   // 如果没有内容，显示空状态
   if (!content || content.trim() === '') {
     return (
-      <div className='flex justify-center items-center min-h-screen bg-gray-50'>
+      <div className='ct-document-page ct-document-state'>
         <Empty
           title={t('管理员未设置' + title + '内容')}
           image={
@@ -159,7 +159,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
           darkModeImage={
             <IllustrationConstructionDark style={{ width: 150, height: 150 }} />
           }
-          className='p-8'
+          className='ct-document-empty'
         />
       </div>
     );
@@ -168,13 +168,13 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
   // 如果是 URL，显示链接卡片
   if (isUrl(content)) {
     return (
-      <div className='flex justify-center items-center min-h-screen bg-gray-50 p-4'>
-        <Card className='max-w-md w-full'>
-          <div className='text-center'>
-            <Title heading={4} className='mb-4'>
+      <div className='ct-document-page ct-document-state'>
+        <Card className='ct-document-card ct-document-link-card'>
+          <div className='ct-document-link-content'>
+            <Title heading={4} className='ct-document-link-title'>
               {title}
             </Title>
-            <p className='text-gray-600 mb-4'>
+            <p>
               {t('管理员设置了外部链接，点击下方按钮访问')}
             </p>
             <a
@@ -183,7 +183,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
               rel='noopener noreferrer'
               title={content.trim()}
               aria-label={`${t('访问' + title)}: ${content.trim()}`}
-              className='inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors'
+              className='ct-document-action'
             >
               {t('访问' + title)}
             </a>
@@ -196,14 +196,14 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
   // 如果是 HTML 内容，直接渲染
   if (isHtmlContent(content)) {
     return (
-      <div className='min-h-screen bg-gray-50'>
-        <div className='max-w-4xl mx-auto py-12 px-4 sm:px-6 lg:px-8'>
-          <div className='bg-white rounded-lg shadow-sm p-8'>
-            <Title heading={2} className='text-center mb-8'>
+      <div className='ct-document-page'>
+        <div className='ct-document-shell'>
+          <div className='ct-document-card'>
+            <Title heading={2} className='ct-document-title'>
               {title}
             </Title>
             <div
-              className='prose prose-lg max-w-none'
+              className='ct-document-body prose prose-lg max-w-none'
               dangerouslySetInnerHTML={{ __html: htmlPayload.content }}
             />
           </div>
@@ -214,13 +214,13 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
 
   // 其他内容统一使用 Markdown 渲染器
   return (
-    <div className='min-h-screen bg-gray-50'>
-      <div className='max-w-4xl mx-auto py-12 px-4 sm:px-6 lg:px-8'>
-        <div className='bg-white rounded-lg shadow-sm p-8'>
-          <Title heading={2} className='text-center mb-8'>
+    <div className='ct-document-page'>
+      <div className='ct-document-shell'>
+        <div className='ct-document-card'>
+          <Title heading={2} className='ct-document-title'>
             {title}
           </Title>
-          <div className='prose prose-lg max-w-none'>
+          <div className='ct-document-body prose prose-lg max-w-none'>
             <MarkdownRenderer content={content} />
           </div>
         </div>

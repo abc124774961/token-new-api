@@ -20,9 +20,15 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import SubscriptionsPage from '../../components/table/subscriptions';
 
-const Subscription = () => {
+const Subscription = ({ variant = 'default' }) => {
   return (
-    <div className='ct-console-content-wrap'>
+    <div
+      className={`ct-console-content-wrap${
+        variant === 'admin'
+          ? ' ct-admin-table-page ct-admin-subscription-page'
+          : ''
+      }`}
+    >
       <SubscriptionsPage />
     </div>
   );

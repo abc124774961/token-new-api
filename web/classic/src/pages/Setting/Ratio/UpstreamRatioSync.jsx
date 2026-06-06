@@ -49,6 +49,8 @@ import {
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
 import ChannelSelectorModal from '../../../components/settings/ChannelSelectorModal';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import { AdminPermissionButton } from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 const OFFICIAL_RATIO_PRESET_ID = -100;
 const OFFICIAL_RATIO_PRESET_NAME = '官方倍率预设';
@@ -440,6 +442,10 @@ export default function UpstreamRatioSync(props) {
   );
 
   const applySync = async () => {
+    if (props.ensureRatioPermission && !props.ensureRatioPermission()) {
+      return;
+    }
+
     const currentRatios = {
       ModelRatio: JSON.parse(props.options.ModelRatio || '{}'),
       CompletionRatio: JSON.parse(props.options.CompletionRatio || '{}'),
@@ -534,6 +540,10 @@ export default function UpstreamRatioSync(props) {
 
   const performSync = useCallback(
     async (currentRatios) => {
+      if (props.ensureRatioPermission && !props.ensureRatioPermission()) {
+        return false;
+      }
+
       const finalRatios = {
         ModelRatio: { ...currentRatios.ModelRatio },
         CompletionRatio: { ...currentRatios.CompletionRatio },
@@ -626,7 +636,7 @@ export default function UpstreamRatioSync(props) {
       }
       return success;
     },
-    [resolutions, props.options, props.refresh],
+    [resolutions, props.options, props.refresh, props.ensureRatioPermission],
   );
 
   const getCurrentPageData = (dataSource) => {
@@ -657,7 +667,9 @@ export default function UpstreamRatioSync(props) {
             const hasSelections = Object.keys(resolutions).length > 0;
 
             return (
-              <Button
+              <AdminPermissionButton
+                dangerPermission={ADMIN_PERMISSION_KEYS.modelRatioUpdate}
+                fallbackTooltip={props.ratioDangerPermissionDenied}
                 icon={<CheckSquare size={14} />}
                 type='secondary'
                 onClick={applySync}
@@ -668,7 +680,7 @@ export default function UpstreamRatioSync(props) {
                 className='w-full md:w-auto mt-2'
               >
                 {t('应用同步')}
-              </Button>
+              </AdminPermissionButton>
             );
           })()}
 
@@ -1098,6 +1110,10 @@ export default function UpstreamRatioSync(props) {
         items={conflictItems}
         loading={confirmLoading}
         onOk={async () => {
+          if (props.ensureRatioPermission && !props.ensureRatioPermission()) {
+            return;
+          }
+
           setConfirmLoading(true);
           const curRatios = {
             ModelRatio: JSON.parse(props.options.ModelRatio || '{}'),

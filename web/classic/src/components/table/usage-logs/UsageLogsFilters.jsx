@@ -27,6 +27,24 @@ import {
 } from 'react-icons/pi';
 
 import { DATE_RANGE_PRESETS } from '../../../constants/console.constants';
+import {
+  adminDangerousOperationPermissions,
+  adminMenuPermissions,
+  adminOperationPermissions,
+} from '../../../apps/admin-console/permissions/adminPermissions.config';
+
+const adminAuditPermissionOptions = [
+  ...adminMenuPermissions,
+  ...adminDangerousOperationPermissions.map((item) => ({
+    ...item,
+    label: item.operation,
+    group: item.page,
+  })),
+  ...adminOperationPermissions.map((item) => ({
+    ...item,
+    label: item.operation,
+  })),
+];
 
 const LogsFilters = ({
   formInitValues,
@@ -37,8 +55,11 @@ const LogsFilters = ({
   setLogType,
   loading,
   isAdminUser,
+  initialLogType,
   t,
 }) => {
+  const showAdminAuditFilters = isAdminUser && initialLogType === 3;
+
   return (
     <Form
       className='ct-usage-logs-filter-form'
@@ -145,6 +166,99 @@ const LogsFilters = ({
               </div>
             </>
           )}
+
+          {showAdminAuditFilters && (
+            <>
+              <div className='ct-usage-logs-filter-field'>
+                <span>{t('权限点')}</span>
+                <Form.Select
+                  field='audit_permission'
+                  placeholder={t('权限点')}
+                  showClear
+                  filter
+                  pure
+                  size='small'
+                >
+                  {adminAuditPermissionOptions.map((item) => (
+                    <Form.Select.Option
+                      key={item.permission}
+                      value={item.permission}
+                    >
+                      {`${t(item.group)} / ${t(item.label)}`}
+                    </Form.Select.Option>
+                  ))}
+                </Form.Select>
+              </div>
+              <div className='ct-usage-logs-filter-field'>
+                <span>{t('权限来源')}</span>
+                <Form.Select
+                  field='audit_source'
+                  placeholder={t('权限来源')}
+                  showClear
+                  pure
+                  size='small'
+                >
+                  <Form.Select.Option value='role_compatibility'>
+                    {t('固定角色兼容')}
+                  </Form.Select.Option>
+                  <Form.Select.Option value='database'>
+                    {t('数据库权限')}
+                  </Form.Select.Option>
+                  <Form.Select.Option value='root'>
+                    {t('超级管理员')}
+                  </Form.Select.Option>
+                </Form.Select>
+              </div>
+              <div className='ct-usage-logs-filter-field'>
+                <span>{t('操作结果')}</span>
+                <Form.Select
+                  field='audit_result'
+                  placeholder={t('操作结果')}
+                  showClear
+                  pure
+                  size='small'
+                >
+                  <Form.Select.Option value='completed'>
+                    {t('完成')}
+                  </Form.Select.Option>
+                  <Form.Select.Option value='denied'>
+                    {t('拒绝')}
+                  </Form.Select.Option>
+                  <Form.Select.Option value='error'>
+                    {t('错误')}
+                  </Form.Select.Option>
+                  <Form.Select.Option value='http_error'>
+                    {t('HTTP 错误')}
+                  </Form.Select.Option>
+                  <Form.Select.Option value='aborted'>
+                    {t('中止')}
+                  </Form.Select.Option>
+                </Form.Select>
+              </div>
+              <div className='ct-usage-logs-filter-field'>
+                <span>{t('审计操作人')}</span>
+                <Form.Input
+                  field='audit_operator'
+                  prefix={<IconSearch />}
+                  placeholder={t('审计操作人')}
+                  showClear
+                  pure
+                  size='small'
+                />
+              </div>
+              <div className='ct-usage-logs-filter-field'>
+                <span>{t('目标用户 ID')}</span>
+                <Form.Input
+                  field='audit_target_user_id'
+                  prefix={<IconSearch />}
+                  placeholder={t('目标用户 ID')}
+                  showClear
+                  pure
+                  size='small'
+                />
+              </div>
+            </>
+          )}
         </div>
 
         <div className='ct-usage-logs-filter-footer'>
@@ -192,7 +306,7 @@ const LogsFilters = ({
               onClick={() => {
                 if (formApi) {
                   formApi.reset();
-                  setLogType(0);
+                  setLogType(initialLogType || 0);
                   setTimeout(() => {
                     refresh();
                   }, 100);

@@ -23,7 +23,13 @@ import { useTranslation } from 'react-i18next';
 import ModelPricingEditor from './components/ModelPricingEditor';
 import ModelRatioSettings from './ModelRatioSettings';
 
-export default function ModelPricingCombined({ options, refresh }) {
+export default function ModelPricingCombined({
+  options,
+  refresh,
+  canManageRatioDanger,
+  ratioDangerPermissionDenied,
+  ensureRatioPermission,
+}) {
   const { t } = useTranslation();
   const [editMode, setEditMode] = useState('visual');
 
@@ -41,9 +47,21 @@ export default function ModelPricingCombined({ options, refresh }) {
         </RadioGroup>
       </div>
       {editMode === 'visual' ? (
-        <ModelPricingEditor options={options} refresh={refresh} />
+        <ModelPricingEditor
+          options={options}
+          refresh={refresh}
+          canManageRatioDanger={canManageRatioDanger}
+          ratioDangerPermissionDenied={ratioDangerPermissionDenied}
+          ensureRatioPermission={ensureRatioPermission}
+        />
       ) : (
-        <ModelRatioSettings options={options} refresh={refresh} />
+        <ModelRatioSettings
+          options={options}
+          refresh={refresh}
+          canManageRatioDanger={canManageRatioDanger}
+          ratioDangerPermissionDenied={ratioDangerPermissionDenied}
+          ensureRatioPermission={ensureRatioPermission}
+        />
       )}
     </div>
   );

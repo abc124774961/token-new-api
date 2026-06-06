@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/codexauth"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
@@ -1654,6 +1655,7 @@ func AddChannel(c *gin.Context) {
 
 func DeleteChannel(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
+	beforeStats, invalidIDCount, snapshotErr := getChannelAuditStatsByIds([]int{id})
 	channel := model.Channel{Id: id}
 	err := channel.Delete()
 	if err != nil {
@@ -1662,6 +1664,11 @@ func DeleteChannel(c *gin.Context) {
 	}
 	model.InitChannelCache()
 	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	middleware.SetAdminAuditSummary(c, "operation", "delete_channel")
+	middleware.SetAdminAuditSummary(c, "channel_id", id)
+	middleware.SetAdminAuditSummary(c, "invalid_id_count", invalidIDCount)
+	setChannelAuditStats(c, "target_", "_before", beforeStats)
+	setChannelAuditSnapshotError(c, snapshotErr)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -1670,6 +1677,10 @@ func DeleteChannel(c *gin.Context) {
 }
 
 func DeleteDisabledChannel(c *gin.Context) {
+	beforeStats, snapshotErr := getChannelAuditStatsByStatuses([]int{
+		common.ChannelStatusAutoDisabled,
+		common.ChannelStatusManuallyDisabled,
+	})
 	rows, err := model.DeleteDisabledChannel()
 	if err != nil {
 		common.ApiError(c, err)
@@ -1677,6 +1688,10 @@ func DeleteDisabledChannel(c *gin.Context) {
 	}
 	model.InitChannelCache()
 	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	middleware.SetAdminAuditSummary(c, "operation", "delete_disabled_channels")
+	middleware.SetAdminAuditSummary(c, "deleted_count", rows)
+	setChannelAuditStats(c, "target_", "_before", beforeStats)
+	setChannelAuditSnapshotError(c, snapshotErr)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -1707,13 +1722,21 @@ func DisableTagChannels(c *gin.Context) {
 		})
 		return
 	}
+	beforeStats, snapshotErr := getChannelAuditStatsByTag(channelTag.Tag)
 	err = model.DisableChannelByTag(channelTag.Tag)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	afterStats, afterSnapshotErr := getChannelAuditStatsByTag(channelTag.Tag)
 	model.InitChannelCache()
 	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	middleware.SetAdminAuditSummary(c, "operation", "disable_tag_channels")
+	middleware.SetAdminAuditSummary(c, "tag", channelTag.Tag)
+	setChannelAuditStats(c, "target_", "_before", beforeStats)
+	setChannelAuditStats(c, "target_", "_after", afterStats)
+	setChannelAuditSnapshotError(c, snapshotErr)
+	setChannelAuditSnapshotError(c, afterSnapshotErr)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -1731,13 +1754,21 @@ func EnableTagChannels(c *gin.Context) {
 		})
 		return
 	}
+	beforeStats, snapshotErr := getChannelAuditStatsByTag(channelTag.Tag)
 	err = model.EnableChannelByTag(channelTag.Tag)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	afterStats, afterSnapshotErr := getChannelAuditStatsByTag(channelTag.Tag)
 	model.InitChannelCache()
 	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	middleware.SetAdminAuditSummary(c, "operation", "enable_tag_channels")
+	middleware.SetAdminAuditSummary(c, "tag", channelTag.Tag)
+	setChannelAuditStats(c, "target_", "_before", beforeStats)
+	setChannelAuditStats(c, "target_", "_after", afterStats)
+	setChannelAuditSnapshotError(c, snapshotErr)
+	setChannelAuditSnapshotError(c, afterSnapshotErr)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -1803,6 +1834,119 @@ type ChannelBatch struct {
 	Tag *string `json:"tag"`
 }
 
+type channelAuditRow struct {
+	Status int
+	Tag    *string
+}
+
+type channelAuditStats struct {
+	ChannelCount             int
+	EnabledCount             int
+	ManuallyDisabledCount    int
+	AutoDisabledCount        int
+	OtherStatusCount         int
+	TaggedCount              int
+	UntaggedCount            int
+	DistinctNonEmptyTagCount int
+}
+
+func normalizeChannelAuditIds(ids []int) ([]int, int) {
+	if len(ids) == 0 {
+		return nil, 0
+	}
+	result := make([]int, 0, len(ids))
+	seen := make(map[int]struct{}, len(ids))
+	invalidCount := 0
+	for _, id := range ids {
+		if id <= 0 {
+			invalidCount++
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	return result, invalidCount
+}
+
+func buildChannelAuditStats(rows []channelAuditRow) channelAuditStats {
+	stats := channelAuditStats{ChannelCount: len(rows)}
+	tags := make(map[string]struct{})
+	for _, row := range rows {
+		switch row.Status {
+		case common.ChannelStatusEnabled:
+			stats.EnabledCount++
+		case common.ChannelStatusManuallyDisabled:
+			stats.ManuallyDisabledCount++
+		case common.ChannelStatusAutoDisabled:
+			stats.AutoDisabledCount++
+		default:
+			stats.OtherStatusCount++
+		}
+		if row.Tag == nil || strings.TrimSpace(*row.Tag) == "" {
+			stats.UntaggedCount++
+			continue
+		}
+		stats.TaggedCount++
+		tags[strings.TrimSpace(*row.Tag)] = struct{}{}
+	}
+	stats.DistinctNonEmptyTagCount = len(tags)
+	return stats
+}
+
+func getChannelAuditStatsByIds(ids []int) (channelAuditStats, int, error) {
+	normalizedIds, invalidCount := normalizeChannelAuditIds(ids)
+	if len(normalizedIds) == 0 {
+		return channelAuditStats{}, invalidCount, nil
+	}
+	var rows []channelAuditRow
+	err := model.DB.Model(&model.Channel{}).
+		Select("status", "tag").
+		Where("id IN ?", normalizedIds).
+		Find(&rows).Error
+	return buildChannelAuditStats(rows), invalidCount, err
+}
+
+func getChannelAuditStatsByStatuses(statuses []int) (channelAuditStats, error) {
+	if len(statuses) == 0 {
+		return channelAuditStats{}, nil
+	}
+	var rows []channelAuditRow
+	err := model.DB.Model(&model.Channel{}).
+		Select("status", "tag").
+		Where("status IN ?", statuses).
+		Find(&rows).Error
+	return buildChannelAuditStats(rows), err
+}
+
+func getChannelAuditStatsByTag(tag string) (channelAuditStats, error) {
+	var rows []channelAuditRow
+	err := model.DB.Model(&model.Channel{}).
+		Select("status", "tag").
+		Where("tag = ?", tag).
+		Find(&rows).Error
+	return buildChannelAuditStats(rows), err
+}
+
+func setChannelAuditStats(c *gin.Context, prefix string, suffix string, stats channelAuditStats) {
+	middleware.SetAdminAuditSummary(c, prefix+"channel_count"+suffix, stats.ChannelCount)
+	middleware.SetAdminAuditSummary(c, prefix+"enabled_count"+suffix, stats.EnabledCount)
+	middleware.SetAdminAuditSummary(c, prefix+"manual_disabled_count"+suffix, stats.ManuallyDisabledCount)
+	middleware.SetAdminAuditSummary(c, prefix+"auto_disabled_count"+suffix, stats.AutoDisabledCount)
+	middleware.SetAdminAuditSummary(c, prefix+"other_status_count"+suffix, stats.OtherStatusCount)
+	middleware.SetAdminAuditSummary(c, prefix+"tagged_count"+suffix, stats.TaggedCount)
+	middleware.SetAdminAuditSummary(c, prefix+"untagged_count"+suffix, stats.UntaggedCount)
+	middleware.SetAdminAuditSummary(c, prefix+"distinct_tag_count"+suffix, stats.DistinctNonEmptyTagCount)
+}
+
+func setChannelAuditSnapshotError(c *gin.Context, err error) {
+	if err != nil {
+		middleware.SetAdminAuditSummary(c, "snapshot_error", true)
+	}
+}
+
 func DeleteChannelBatch(c *gin.Context) {
 	channelBatch := ChannelBatch{}
 	err := c.ShouldBindJSON(&channelBatch)
@@ -1813,6 +1957,7 @@ func DeleteChannelBatch(c *gin.Context) {
 		})
 		return
 	}
+	beforeStats, invalidIDCount, snapshotErr := getChannelAuditStatsByIds(channelBatch.Ids)
 	err = model.BatchDeleteChannels(channelBatch.Ids)
 	if err != nil {
 		common.ApiError(c, err)
@@ -1820,6 +1965,13 @@ func DeleteChannelBatch(c *gin.Context) {
 	}
 	model.InitChannelCache()
 	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	middleware.SetAdminAuditSummary(c, "operation", "delete_channel_batch")
+	middleware.SetAdminAuditSummary(c, "requested_count", len(channelBatch.Ids))
+	normalizedIds, _ := normalizeChannelAuditIds(channelBatch.Ids)
+	middleware.SetAdminAuditSummary(c, "requested_unique_count", len(normalizedIds))
+	middleware.SetAdminAuditSummary(c, "invalid_id_count", invalidIDCount)
+	setChannelAuditStats(c, "target_", "_before", beforeStats)
+	setChannelAuditSnapshotError(c, snapshotErr)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -2128,12 +2280,27 @@ func BatchSetChannelTag(c *gin.Context) {
 		})
 		return
 	}
+	beforeStats, invalidIDCount, snapshotErr := getChannelAuditStatsByIds(channelBatch.Ids)
 	err = model.BatchSetChannelTag(channelBatch.Ids, channelBatch.Tag)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	afterStats, _, afterSnapshotErr := getChannelAuditStatsByIds(channelBatch.Ids)
 	model.InitChannelCache()
+	middleware.SetAdminAuditSummary(c, "operation", "batch_set_channel_tag")
+	middleware.SetAdminAuditSummary(c, "requested_count", len(channelBatch.Ids))
+	normalizedIds, _ := normalizeChannelAuditIds(channelBatch.Ids)
+	middleware.SetAdminAuditSummary(c, "requested_unique_count", len(normalizedIds))
+	middleware.SetAdminAuditSummary(c, "invalid_id_count", invalidIDCount)
+	middleware.SetAdminAuditSummary(c, "tag_after_is_nil", channelBatch.Tag == nil)
+	if channelBatch.Tag != nil {
+		middleware.SetAdminAuditSummary(c, "tag_after", *channelBatch.Tag)
+	}
+	setChannelAuditStats(c, "target_", "_before", beforeStats)
+	setChannelAuditStats(c, "target_", "_after", afterStats)
+	setChannelAuditSnapshotError(c, snapshotErr)
+	setChannelAuditSnapshotError(c, afterSnapshotErr)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

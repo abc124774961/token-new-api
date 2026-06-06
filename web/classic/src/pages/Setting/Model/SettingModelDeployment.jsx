@@ -36,11 +36,27 @@ import {
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
 import { Server, Cloud, Zap, ArrowUpRight } from 'lucide-react';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  AdminPermissionButton,
+  useAdminActionPermission,
+} from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 const { Text } = Typography;
 
 export default function SettingModelDeployment(props) {
   const { t } = useTranslation();
+  const canManageSystemSettings = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.systemSettingsUpdate,
+  );
+  const systemSettingsPermissionDenied = t(
+    '没有系统设置修改权限，请联系超级管理员。',
+  );
+  const ensureSystemSettingsPermission = () => {
+    if (canManageSystemSettings) return true;
+    showWarning(systemSettingsPermissionDenied);
+    return false;
+  };
 
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState({
@@ -108,6 +124,10 @@ export default function SettingModelDeployment(props) {
   };
 
   function onSubmit() {
+    if (!ensureSystemSettingsPermission()) {
+      return;
+    }
+
     const updateArray = compareObjects(inputs, inputsRow);
     if (!updateArray.length) return showWarning(t('你似乎并没有修改什么'));
 
@@ -321,9 +341,15 @@ export default function SettingModelDeployment(props) {
             </Card>
 
             <Row>
-              <Button size='default' type='primary' onClick={onSubmit}>
+              <AdminPermissionButton
+                size='default'
+                type='primary'
+                requiredPermission={ADMIN_PERMISSION_KEYS.systemSettingsUpdate}
+                fallbackTooltip={systemSettingsPermissionDenied}
+                onClick={onSubmit}
+              >
                 {t('保存设置')}
-              </Button>
+              </AdminPermissionButton>
             </Row>
           </Form.Section>
         </Form>

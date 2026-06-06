@@ -54,18 +54,15 @@ const ChatPage = () => {
   const iframeSrc = keys.length > 0 ? comLink(keys[0]) : '';
 
   return !isLoading && iframeSrc ? (
-    <iframe
-      src={iframeSrc}
-      style={{
-        width: '100%',
-        height: 'calc(100vh - 64px)',
-        border: 'none',
-      }}
-      title='Token Frame'
-      allow='camera;microphone'
-    />
+    <div className='aurora-chat-frame'>
+      <iframe
+        src={iframeSrc}
+        title='Token Frame'
+        allow='camera;microphone'
+      />
+    </div>
   ) : (
-    <div className='fixed inset-x-0 bottom-0 top-[64px] flex items-center justify-center bg-white/80 z-[1000]'>
+    <div className='aurora-chat-loading'>
       <div className='flex flex-col items-center'>
         <Spin size='large' spinning={true} tip={null} />
         <span

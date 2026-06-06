@@ -33,8 +33,11 @@ import {
   renderGroup,
   renderNumber,
   renderQuota,
+  showWarning,
   timestamp2string,
 } from '../../../helpers';
+import { AdminPermissionButton } from '../../../apps/admin-console/permissions/AdminPermissionAction';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
 
 const renderTimestamp = (text) => (text ? timestamp2string(text) : '-');
 
@@ -216,12 +219,24 @@ const renderOperations = (
     showResetPasskeyModal,
     showResetTwoFAModal,
     showUserSubscriptionsModal,
+    canManageUserDanger,
     t,
   },
 ) => {
   if (record.DeletedAt !== null) {
     return <></>;
   }
+
+  const userDangerPermissionDenied = t(
+    '没有用户高危操作权限，请联系运营管理员或超级管理员。',
+  );
+  const guardUserDangerAction = (action) => () => {
+    if (!canManageUserDanger) {
+      showWarning(userDangerPermissionDenied);
+      return;
+    }
+    action();
+  };
 
   const moreMenu = [
     {
@@ -235,12 +250,12 @@ const renderOperations = (
     {
       node: 'item',
       name: t('重置 Passkey'),
-      onClick: () => showResetPasskeyModal(record),
+      onClick: guardUserDangerAction(() => showResetPasskeyModal(record)),
     },
     {
       node: 'item',
       name: t('重置 2FA'),
-      onClick: () => showResetTwoFAModal(record),
+      onClick: guardUserDangerAction(() => showResetTwoFAModal(record)),
     },
     {
       node: 'divider',
@@ -249,27 +264,31 @@ const renderOperations = (
       node: 'item',
       name: t('注销'),
       type: 'danger',
-      onClick: () => showDeleteModal(record),
+      onClick: guardUserDangerAction(() => showDeleteModal(record)),
     },
   ];
 
   return (
     <Space>
       {record.status === 1 ? (
-        <Button
+        <AdminPermissionButton
+          dangerPermission={ADMIN_PERMISSION_KEYS.userUserDanger}
+          fallbackTooltip={userDangerPermissionDenied}
           type='danger'
           size='small'
           onClick={() => showEnableDisableModal(record, 'disable')}
         >
           {t('禁用')}
-        </Button>
+        </AdminPermissionButton>
       ) : (
-        <Button
+        <AdminPermissionButton
+          dangerPermission={ADMIN_PERMISSION_KEYS.userUserDanger}
+          fallbackTooltip={userDangerPermissionDenied}
           size='small'
           onClick={() => showEnableDisableModal(record, 'enable')}
         >
           {t('启用')}
-        </Button>
+        </AdminPermissionButton>
       )}
       <Button
         type='tertiary'
@@ -281,20 +300,24 @@ const renderOperations = (
       >
         {t('编辑')}
       </Button>
-      <Button
+      <AdminPermissionButton
+        dangerPermission={ADMIN_PERMISSION_KEYS.userUserDanger}
+        fallbackTooltip={userDangerPermissionDenied}
         type='warning'
         size='small'
         onClick={() => showPromoteModal(record)}
       >
         {t('提升')}
-      </Button>
-      <Button
+      </AdminPermissionButton>
+      <AdminPermissionButton
+        dangerPermission={ADMIN_PERMISSION_KEYS.userUserDanger}
+        fallbackTooltip={userDangerPermissionDenied}
         type='secondary'
         size='small'
         onClick={() => showDemoteModal(record)}
       >
         {t('降级')}
-      </Button>
+      </AdminPermissionButton>
       <Dropdown menu={moreMenu} trigger='click' position='bottomRight'>
         <Button type='tertiary' size='small' icon={<IconMore />} />
       </Dropdown>
@@ -316,6 +339,7 @@ export const getUsersColumns = ({
   showResetPasskeyModal,
   showResetTwoFAModal,
   showUserSubscriptionsModal,
+  canManageUserDanger,
 }) => {
   return [
     {
@@ -383,6 +407,7 @@ export const getUsersColumns = ({
           showResetPasskeyModal,
           showResetTwoFAModal,
           showUserSubscriptionsModal,
+          canManageUserDanger,
           t,
         }),
     },

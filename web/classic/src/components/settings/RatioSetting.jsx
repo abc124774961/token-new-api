@@ -27,10 +27,23 @@ import ModelRatioNotSetEditor from '../../pages/Setting/Ratio/ModelRationNotSetE
 import UpstreamRatioSync from '../../pages/Setting/Ratio/UpstreamRatioSync';
 import ToolPriceSettings from '../../pages/Setting/Ratio/ToolPriceSettings';
 
-import { API, showError, toBoolean } from '../../helpers';
+import { API, showError, showWarning, toBoolean } from '../../helpers';
+import { ADMIN_PERMISSION_KEYS } from '../../apps/admin-console/permissions/adminPermissions.config';
+import { useAdminActionPermission } from '../../apps/admin-console/permissions/AdminPermissionAction';
 
 const RatioSetting = () => {
   const { t } = useTranslation();
+  const canManageRatioDanger = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.modelRatioUpdate,
+  );
+  const ratioDangerPermissionDenied = t(
+    '没有倍率配置高危操作权限，请联系模型管理员或超级管理员。',
+  );
+  const ensureRatioPermission = () => {
+    if (canManageRatioDanger) return true;
+    showWarning(ratioDangerPermissionDenied);
+    return false;
+  };
 
   let [inputs, setInputs] = useState({
     ModelPrice: '',
@@ -98,19 +111,48 @@ const RatioSetting = () => {
       <Card style={{ marginTop: '10px' }}>
         <Tabs type='card' defaultActiveKey='pricing'>
           <Tabs.TabPane tab={t('模型定价设置')} itemKey='pricing'>
-            <ModelPricingCombined options={inputs} refresh={onRefresh} />
+            <ModelPricingCombined
+              options={inputs}
+              refresh={onRefresh}
+              canManageRatioDanger={canManageRatioDanger}
+              ratioDangerPermissionDenied={ratioDangerPermissionDenied}
+              ensureRatioPermission={ensureRatioPermission}
+            />
           </Tabs.TabPane>
           <Tabs.TabPane tab={t('分组相关设置')} itemKey='group'>
-            <GroupRatioSettings options={inputs} refresh={onRefresh} />
+            <GroupRatioSettings
+              options={inputs}
+              refresh={onRefresh}
+              canManageRatioDanger={canManageRatioDanger}
+              ratioDangerPermissionDenied={ratioDangerPermissionDenied}
+              ensureRatioPermission={ensureRatioPermission}
+            />
           </Tabs.TabPane>
           <Tabs.TabPane tab={t('未设置价格模型')} itemKey='unset_models'>
-            <ModelRatioNotSetEditor options={inputs} refresh={onRefresh} />
+            <ModelRatioNotSetEditor
+              options={inputs}
+              refresh={onRefresh}
+              canManageRatioDanger={canManageRatioDanger}
+              ratioDangerPermissionDenied={ratioDangerPermissionDenied}
+              ensureRatioPermission={ensureRatioPermission}
+            />
           </Tabs.TabPane>
           <Tabs.TabPane tab={t('上游价格同步')} itemKey='upstream_sync'>
-            <UpstreamRatioSync options={inputs} refresh={onRefresh} />
+            <UpstreamRatioSync
+              options={inputs}
+              refresh={onRefresh}
+              canManageRatioDanger={canManageRatioDanger}
+              ratioDangerPermissionDenied={ratioDangerPermissionDenied}
+              ensureRatioPermission={ensureRatioPermission}
+            />
           </Tabs.TabPane>
           <Tabs.TabPane tab={t('工具调用定价')} itemKey='tool_price'>
-            <ToolPriceSettings options={inputs} />
+            <ToolPriceSettings
+              options={inputs}
+              canManageRatioDanger={canManageRatioDanger}
+              ratioDangerPermissionDenied={ratioDangerPermissionDenied}
+              ensureRatioPermission={ensureRatioPermission}
+            />
           </Tabs.TabPane>
         </Tabs>
       </Card>

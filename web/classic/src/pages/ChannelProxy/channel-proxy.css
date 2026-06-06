@@ -31,6 +31,22 @@
   --semi-color-primary-hover: #0d9488;
 }
 
+.ct-channel-proxy-page-admin {
+  min-height: auto;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--aurora-text, #10202f);
+  --cp-surface: rgba(255, 255, 255, 0.9);
+  --cp-border: var(--aurora-line-soft, #edf2f6);
+  --cp-text: var(--aurora-text, #10202f);
+  --cp-muted: var(--aurora-muted, #64748b);
+  --cp-teal: var(--aurora-brand-dark, #047c80);
+  --semi-color-primary: var(--aurora-brand-dark, #047c80);
+  --semi-color-primary-hover: var(--aurora-brand, #00a7a7);
+}
+
 .ct-channel-proxy-hero {
   display: grid;
   align-items: center;
@@ -39,6 +55,14 @@
   grid-template-columns: minmax(0, 1fr) auto;
   border-bottom: 1px solid var(--cp-border);
   padding: 2px 4px 10px;
+}
+
+.ct-channel-proxy-page-admin .ct-channel-proxy-hero {
+  border: 1px solid var(--cp-border);
+  border-radius: var(--aurora-radius, 12px);
+  padding: 22px 24px;
+  background: linear-gradient(135deg, #ffffff 0%, #f7fbfc 100%);
+  box-shadow: var(--aurora-shadow, 0 14px 34px rgba(15, 23, 42, 0.08));
 }
 
 .ct-channel-proxy-title-block,
@@ -65,6 +89,15 @@
   box-shadow: inset 0 0 0 1px rgba(20, 184, 166, 0.18);
 }
 
+.ct-channel-proxy-page-admin .ct-channel-proxy-title-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 13px;
+  color: var(--cp-teal);
+  background: var(--aurora-brand-soft, #e6f8f7);
+  box-shadow: inset 0 0 0 1px rgba(0, 167, 167, 0.16);
+}
+
 .ct-channel-proxy-eyebrow {
   margin-bottom: 2px;
   color: var(--cp-teal);
@@ -80,10 +113,28 @@
   letter-spacing: 0;
 }
 
+.ct-channel-proxy-page-admin .ct-channel-proxy-title-block h2 {
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 860;
+}
+
 .ct-channel-proxy-title-block p {
   margin: 4px 0 0;
   color: var(--cp-muted);
   font-size: 12px;
+}
+
+.ct-channel-proxy-page-admin .ct-channel-proxy-title-block p {
+  margin-top: 7px;
+  font-size: 14px;
+  line-height: 23px;
+}
+
+.ct-channel-proxy-page-admin .ct-channel-proxy-actions .semi-button {
+  height: 36px;
+  border-radius: 9px;
+  font-weight: 760;
 }
 
 .ct-channel-proxy-error {
@@ -108,6 +159,19 @@
   padding: 14px;
   background: var(--cp-surface);
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.035);
+}
+
+.ct-channel-proxy-page-admin .ct-channel-proxy-metric,
+.ct-channel-proxy-page-admin .ct-channel-proxy-table-wrap {
+  border-color: var(--cp-border);
+  border-radius: var(--aurora-radius, 12px);
+  background: var(--cp-surface);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.045);
+}
+
+.ct-channel-proxy-page-admin .ct-channel-proxy-metric {
+  min-height: 104px;
+  padding: 16px;
 }
 
 .ct-channel-proxy-metric-label,
@@ -143,6 +207,10 @@
   background: var(--cp-surface);
 }
 
+.ct-channel-proxy-page-admin .ct-channel-proxy-table-wrap {
+  overflow: hidden;
+}
+
 .ct-channel-proxy-toolbar {
   display: grid;
   align-items: center;
@@ -152,6 +220,47 @@
   border-bottom: 1px solid var(--cp-border);
   padding: 10px;
   background: #fff;
+}
+
+.ct-channel-proxy-page-admin .ct-channel-proxy-toolbar {
+  border-bottom-color: var(--cp-border);
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.ct-channel-proxy-page-admin .semi-input-wrapper,
+.ct-channel-proxy-page-admin .semi-select,
+.ct-channel-proxy-page-admin .semi-select-selection {
+  border-color: var(--cp-border) !important;
+  border-radius: 9px !important;
+  background: var(--aurora-surface-soft, #f9fbfd) !important;
+}
+
+.ct-channel-proxy-page-admin
+  .semi-table-thead
+  > .semi-table-row
+  > .semi-table-row-head {
+  height: 42px;
+  padding: 8px 12px;
+  color: var(--cp-muted) !important;
+  background: var(--aurora-surface-soft, #f9fbfd) !important;
+  font-weight: 780;
+}
+
+.ct-channel-proxy-page-admin
+  .semi-table-tbody
+  > .semi-table-row
+  > .semi-table-row-cell {
+  height: 58px;
+  padding: 9px 12px;
+  border-bottom-color: rgba(148, 163, 184, 0.16) !important;
+}
+
+.ct-channel-proxy-page-admin
+  .semi-table-tbody
+  > .semi-table-row:hover
+  > .semi-table-row-cell {
+  background: #f7fbfc !important;
 }
 
 .ct-channel-proxy-filter-group {

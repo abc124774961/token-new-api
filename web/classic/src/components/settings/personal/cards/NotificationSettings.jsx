@@ -49,6 +49,15 @@ import {
   useSidebar,
 } from '../../../../hooks/common/useSidebar';
 
+const USER_SIDEBAR_MODULES = {
+  chat: ['playground', 'chat'],
+  console: ['detail', 'channel_status', 'token', 'log', 'midjourney', 'task'],
+  personal: ['affiliate', 'recharge', 'subscription_plans'],
+};
+
+const isUserSidebarModule = (sectionKey, moduleKey) =>
+  USER_SIDEBAR_MODULES[sectionKey]?.includes(moduleKey);
+
 const NotificationSettings = ({
   t,
   notificationSettings,
@@ -73,7 +82,6 @@ const NotificationSettings = ({
       enabled: true,
       detail: true,
       channel_status: true,
-      model_gateway: true,
       token: true,
       log: true,
       midjourney: true,
@@ -84,21 +92,6 @@ const NotificationSettings = ({
       affiliate: true,
       recharge: true,
       subscription_plans: true,
-      personal: true,
-    },
-    admin: {
-      enabled: true,
-      channel: true,
-      channel_account: true,
-      channel_balance_monitor: true,
-      channel_health_check: true,
-      channel_proxy: true,
-      models: true,
-      deployment: true,
-      subscription: true,
-      redemption: true,
-      user: true,
-      setting: true,
     },
   });
   const [adminConfig, setAdminConfig] = useState(null);
@@ -169,7 +162,6 @@ const NotificationSettings = ({
         enabled: true,
         detail: true,
         channel_status: true,
-        model_gateway: true,
         token: true,
         log: true,
         midjourney: true,
@@ -180,21 +172,6 @@ const NotificationSettings = ({
         affiliate: true,
         recharge: true,
         subscription_plans: true,
-        personal: true,
-      },
-      admin: {
-        enabled: true,
-        channel: true,
-        channel_account: true,
-        channel_balance_monitor: true,
-        channel_health_check: true,
-        channel_proxy: true,
-        models: true,
-        deployment: true,
-        subscription: true,
-        redemption: true,
-        user: true,
-        setting: true,
       },
     };
     setSidebarModulesUser(defaultConfig);
@@ -227,7 +204,25 @@ const NotificationSettings = ({
           } else {
             userConf = userRes.data.data.sidebar_modules;
           }
-          setSidebarModulesUser(userConf);
+          const filteredUserConf = {};
+          Object.keys(userConf).forEach((sectionKey) => {
+            if (
+              USER_SIDEBAR_MODULES[sectionKey] &&
+              isSidebarSectionAllowed(sectionKey)
+            ) {
+              filteredUserConf[sectionKey] = { ...userConf[sectionKey] };
+              Object.keys(userConf[sectionKey]).forEach((moduleKey) => {
+                if (
+                  moduleKey !== 'enabled' &&
+                  (!isUserSidebarModule(sectionKey, moduleKey) ||
+                    !isSidebarModuleAllowed(sectionKey, moduleKey))
+                ) {
+                  delete filteredUserConf[sectionKey][moduleKey];
+                }
+              });
+            }
+          });
+          setSidebarModulesUser(filteredUserConf);
         }
       } catch (error) {
         console.error('加载边栏配置失败:', error);
@@ -285,13 +280,8 @@ const NotificationSettings = ({
         { key: 'detail', title: t('数据看板'), description: t('系统数据统计') },
         {
           key: 'channel_status',
-          title: t('渠道状态监控'),
+          title: t('服务状态'),
           description: t('按分组监控渠道访问状态'),
-        },
-        {
-          key: 'model_gateway',
-          title: t('智能模型网关'),
-          description: t('智能调度与渠道观测'),
         },
         { key: 'token', title: t('令牌管理'), description: t('API令牌管理') },
         { key: 'log', title: t('使用日志'), description: t('API使用记录') },
@@ -322,62 +312,6 @@ const NotificationSettings = ({
           key: 'subscription_plans',
           title: t('套餐订阅'),
           description: t('当前套餐与订阅购买'),
-        },
-        {
-          key: 'personal',
-          title: t('个人设置'),
-          description: t('个人信息设置'),
-        },
-      ],
-    },
-    // 管理员区域：根据后端权限控制显示
-    {
-      key: 'admin',
-      title: t('管理员区域'),
-      description: t('系统管理功能'),
-      modules: [
-        { key: 'channel', title: t('渠道管理'), description: t('API渠道配置') },
-        {
-          key: 'channel_account',
-          title: t('账号池管理'),
-          description: t('全渠道账号与归档池'),
-        },
-        {
-          key: 'channel_balance_monitor',
-          title: t('渠道余额监控'),
-          description: t('账号余额告警和倍率同步'),
-        },
-        {
-          key: 'channel_health_check',
-          title: t('渠道健康检测'),
-          description: t('待检查队列和探活历史'),
-        },
-        {
-          key: 'channel_proxy',
-          title: t('代理管理'),
-          description: t('渠道账号代理资源管理'),
-        },
-        { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
-        {
-          key: 'deployment',
-          title: t('模型部署'),
-          description: t('模型部署管理'),
-        },
-        {
-          key: 'subscription',
-          title: t('订阅管理'),
-          description: t('订阅套餐管理'),
-        },
-        {
-          key: 'redemption',
-          title: t('兑换码管理'),
-          description: t('兑换码生成管理'),
-        },
-        { key: 'user', title: t('用户管理'), description: t('用户账户管理') },
-        {
-          key: 'setting',
-          title: t('系统设置'),
-          description: t('系统参数配置'),
         },
       ],
     },

@@ -38,14 +38,40 @@ import {
   removeTrailingSlash,
   showError,
   showSuccess,
+  showWarning,
   toBoolean,
 } from '../../helpers';
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
 import CustomOAuthSetting from './CustomOAuthSetting';
+import { ADMIN_PERMISSION_KEYS } from '../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  AdminPermissionButton,
+  useAdminActionPermission,
+} from '../../apps/admin-console/permissions/AdminPermissionAction';
 
 const SystemSetting = () => {
   const { t } = useTranslation();
+  const canManageSystemSettings = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.systemSettingsUpdate,
+  );
+  const systemSettingsPermissionDenied = t(
+    '没有系统设置修改权限，请联系超级管理员。',
+  );
+  const ensureSystemSettingsPermission = () => {
+    if (canManageSystemSettings) return true;
+    showWarning(systemSettingsPermissionDenied);
+    return false;
+  };
+  const SystemSettingsPermissionButton = ({ children, ...buttonProps }) => (
+    <AdminPermissionButton
+      requiredPermission={ADMIN_PERMISSION_KEYS.systemSettingsUpdate}
+      fallbackTooltip={systemSettingsPermissionDenied}
+      {...buttonProps}
+    >
+      {children}
+    </AdminPermissionButton>
+  );
   let [inputs, setInputs] = useState({
     PasswordLoginEnabled: '',
     PasswordRegisterEnabled: '',
@@ -241,6 +267,10 @@ const SystemSetting = () => {
   }, []);
 
   const updateOptions = async (options) => {
+    if (!ensureSystemSettingsPermission()) {
+      return false;
+    }
+
     setLoading(true);
     try {
       // 分离 checkbox 类型的选项和其他选项
@@ -259,7 +289,7 @@ const SystemSetting = () => {
         });
         if (!res.data.success) {
           showError(res.data.message);
-          return;
+          return false;
         }
       }
 
@@ -280,6 +310,9 @@ const SystemSetting = () => {
         errorResults.forEach((res) => {
           showError(res.data.message);
         });
+        if (errorResults.length > 0) {
+          return false;
+        }
       }
 
       showSuccess(t('更新成功'));
@@ -289,10 +322,13 @@ const SystemSetting = () => {
         newInputs[opt.key] = opt.value;
       });
       setInputs(newInputs);
+      return true;
     } catch (error) {
       showError(t('更新失败'));
+      return false;
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleFormChange = (values) => {
@@ -680,11 +716,19 @@ const SystemSetting = () => {
 
   const handleCheckboxChange = async (optionKey, event) => {
     const value = event.target.checked;
+    if (!ensureSystemSettingsPermission()) {
+      formApiRef.current?.setValue(optionKey, inputs[optionKey]);
+      return;
+    }
 
     if (optionKey === 'PasswordLoginEnabled' && !value) {
       setShowPasswordLoginConfirmModal(true);
     } else {
-      await updateOptions([{ key: optionKey, value }]);
+      const updated = await updateOptions([{ key: optionKey, value }]);
+      if (!updated) {
+        formApiRef.current?.setValue(optionKey, inputs[optionKey]);
+        return;
+      }
     }
     if (optionKey === 'LinuxDOOAuthEnabled') {
       setLinuxDOOAuthEnabled(value);
@@ -692,8 +736,12 @@ const SystemSetting = () => {
   };
 
   const handlePasswordLoginConfirm = async () => {
-    await updateOptions([{ key: 'PasswordLoginEnabled', value: false }]);
-    setShowPasswordLoginConfirmModal(false);
+    const updated = await updateOptions([
+      { key: 'PasswordLoginEnabled', value: false },
+    ]);
+    if (updated) {
+      setShowPasswordLoginConfirmModal(false);
+    }
   };
 
   return (
@@ -729,9 +777,9 @@ const SystemSetting = () => {
                       />
                     </Col>
                   </Row>
-                  <Button onClick={submitServerAddress}>
+                  <SystemSettingsPermissionButton onClick={submitServerAddress}>
                     {t('更新服务器地址')}
-                  </Button>
+                  </SystemSettingsPermissionButton>
                 </Form.Section>
               </Card>
 
@@ -780,7 +828,9 @@ const SystemSetting = () => {
                   >
                     {t('允许 HTTP 协议图片请求（适用于自部署代理）')}
                   </Form.Checkbox>
-                  <Button onClick={submitWorker}>{t('更新Worker设置')}</Button>
+                  <SystemSettingsPermissionButton onClick={submitWorker}>
+                    {t('更新Worker设置')}
+                  </SystemSettingsPermissionButton>
                 </Form.Section>
               </Card>
 
@@ -978,9 +1028,12 @@ const SystemSetting = () => {
                     </Col>
                   </Row>
 
-                  <Button onClick={submitSSRF} style={{ marginTop: 16 }}>
+                  <SystemSettingsPermissionButton
+                    onClick={submitSSRF}
+                    style={{ marginTop: 16 }}
+                  >
                     {t('更新SSRF防护设置')}
-                  </Button>
+                  </SystemSettingsPermissionButton>
                 </Form.Section>
               </Card>
 
@@ -1216,12 +1269,12 @@ const SystemSetting = () => {
                       />
                     </Col>
                   </Row>
-                  <Button
+                  <SystemSettingsPermissionButton
                     onClick={submitPasskeySettings}
                     style={{ marginTop: 16 }}
                   >
                     {t('保存 Passkey 设置')}
-                  </Button>
+                  </SystemSettingsPermissionButton>
                 </Form.Section>
               </Card>
 
@@ -1282,12 +1335,12 @@ const SystemSetting = () => {
                     }
                     onEnterPress={handleAddEmail}
                   />
-                  <Button
+                  <SystemSettingsPermissionButton
                     onClick={submitEmailDomainWhitelist}
                     style={{ marginTop: 10 }}
                   >
                     {t('保存邮箱域名白名单设置')}
-                  </Button>
+                  </SystemSettingsPermissionButton>
                 </Form.Section>
               </Card>
               <Card>
@@ -1348,7 +1401,9 @@ const SystemSetting = () => {
                       </Form.Checkbox>
                     </Col>
                   </Row>
-                  <Button onClick={submitSMTP}>{t('保存 SMTP 设置')}</Button>
+                  <SystemSettingsPermissionButton onClick={submitSMTP}>
+                    {t('保存 SMTP 设置')}
+                  </SystemSettingsPermissionButton>
                 </Form.Section>
               </Card>
               <Card>
@@ -1423,9 +1478,9 @@ const SystemSetting = () => {
                       />
                     </Col>
                   </Row>
-                  <Button onClick={submitOIDCSettings}>
+                  <SystemSettingsPermissionButton onClick={submitOIDCSettings}>
                     {t('保存 OIDC 设置')}
-                  </Button>
+                  </SystemSettingsPermissionButton>
                 </Form.Section>
               </Card>
 
@@ -1455,9 +1510,9 @@ const SystemSetting = () => {
                       />
                     </Col>
                   </Row>
-                  <Button onClick={submitGitHubOAuth}>
+                  <SystemSettingsPermissionButton onClick={submitGitHubOAuth}>
                     {t('保存 GitHub OAuth 设置')}
-                  </Button>
+                  </SystemSettingsPermissionButton>
                 </Form.Section>
               </Card>
               <Card>
@@ -1486,9 +1541,9 @@ const SystemSetting = () => {
                       />
                     </Col>
                   </Row>
-                  <Button onClick={submitDiscordOAuth}>
+                  <SystemSettingsPermissionButton onClick={submitDiscordOAuth}>
                     {t('保存 Discord OAuth 设置')}
-                  </Button>
+                  </SystemSettingsPermissionButton>
                 </Form.Section>
               </Card>
               <Card>
@@ -1540,9 +1595,9 @@ const SystemSetting = () => {
                       />
                     </Col>
                   </Row>
-                  <Button onClick={submitLinuxDOOAuth}>
+                  <SystemSettingsPermissionButton onClick={submitLinuxDOOAuth}>
                     {t('保存 Linux DO OAuth 设置')}
-                  </Button>
+                  </SystemSettingsPermissionButton>
                 </Form.Section>
               </Card>
 
@@ -1575,9 +1630,9 @@ const SystemSetting = () => {
                       />
                     </Col>
                   </Row>
-                  <Button onClick={submitWeChat}>
+                  <SystemSettingsPermissionButton onClick={submitWeChat}>
                     {t('保存 WeChat Server 设置')}
-                  </Button>
+                  </SystemSettingsPermissionButton>
                 </Form.Section>
               </Card>
 
@@ -1602,9 +1657,11 @@ const SystemSetting = () => {
                       />
                     </Col>
                   </Row>
-                  <Button onClick={submitTelegramSettings}>
+                  <SystemSettingsPermissionButton
+                    onClick={submitTelegramSettings}
+                  >
                     {t('保存 Telegram 登录设置')}
-                  </Button>
+                  </SystemSettingsPermissionButton>
                 </Form.Section>
               </Card>
 
@@ -1629,9 +1686,9 @@ const SystemSetting = () => {
                       />
                     </Col>
                   </Row>
-                  <Button onClick={submitTurnstile}>
+                  <SystemSettingsPermissionButton onClick={submitTurnstile}>
                     {t('保存 Turnstile 设置')}
-                  </Button>
+                  </SystemSettingsPermissionButton>
                 </Form.Section>
               </Card>
 

@@ -30,12 +30,14 @@ import React, { useContext, useEffect, useState } from 'react';
 import { useIsMobile } from '../../hooks/common/useIsMobile';
 import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
 import { useTranslation } from 'react-i18next';
+import { isUserConsoleShellRoute } from '../../apps/user-console/routes/userConsoleRoutes.config';
 import {
   API,
   getLogo,
   getSystemName,
   showError,
   setStatusData,
+  loadStoredUserData,
 } from '../../helpers';
 import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
@@ -86,7 +88,23 @@ const PageLayout = () => {
     location.pathname !== '/console/playground';
 
   const isConsoleRoute = location.pathname.startsWith('/console');
+  const isAdminRoute = location.pathname.startsWith('/admin');
+  const isUserShellRoute = isUserConsoleShellRoute(location.pathname);
+  const isAuroraShellRoute = isAdminRoute || isUserShellRoute;
   const isHomeRoute = location.pathname === '/';
+  const isAuthRoute =
+    ['/login', '/register', '/reset', '/user/reset'].includes(
+      location.pathname,
+    ) || location.pathname.startsWith('/oauth/');
+  const isPublicRoute = [
+    '/',
+    '/pricing',
+    '/integration-docs',
+    '/about',
+    '/user-agreement',
+    '/privacy-policy',
+  ].includes(location.pathname);
+  const isAuroraSiteRoute = isAuthRoute || isPublicRoute;
   const isTopupRoute = [
     '/console/affiliate',
     '/console/recharge',
@@ -101,10 +119,32 @@ const PageLayout = () => {
     '/console/recharge': 'ct-topup-recharge-route',
     '/console/subscription-plans': 'ct-topup-subscription-route',
   };
-  const showSider = isConsoleRoute && (!isMobile || drawerOpen);
+  const showSider =
+    isConsoleRoute && !isAuroraShellRoute && (!isMobile || drawerOpen);
 
   useEffect(() => {
     const routeClasses = Object.values(paymentGrowthRouteClassMap);
+    document.body.classList.toggle('ct-aurora-shell-route', isAuroraShellRoute);
+    document.body.classList.toggle('ct-aurora-site-route', isAuroraSiteRoute);
+    document.body.classList.toggle('ct-aurora-auth-route', isAuthRoute);
+    document.body.classList.toggle(
+      'ct-aurora-public-route',
+      isPublicRoute && !isAuthRoute,
+    );
+    document.body.classList.toggle(
+      'ct-aurora-pricing-route',
+      location.pathname === '/pricing',
+    );
+    document.body.classList.toggle(
+      'ct-aurora-docs-route',
+      location.pathname === '/integration-docs',
+    );
+    document.body.classList.toggle(
+      'ct-aurora-policy-route',
+      ['/about', '/user-agreement', '/privacy-policy'].includes(
+        location.pathname,
+      ),
+    );
     document.body.classList.toggle(
       'ct-payment-growth-route',
       isPaymentGrowthRoute,
@@ -117,12 +157,26 @@ const PageLayout = () => {
     });
 
     return () => {
+      document.body.classList.remove('ct-aurora-shell-route');
+      document.body.classList.remove('ct-aurora-site-route');
+      document.body.classList.remove('ct-aurora-auth-route');
+      document.body.classList.remove('ct-aurora-public-route');
+      document.body.classList.remove('ct-aurora-pricing-route');
+      document.body.classList.remove('ct-aurora-docs-route');
+      document.body.classList.remove('ct-aurora-policy-route');
       document.body.classList.remove('ct-payment-growth-route');
       routeClasses.forEach((className) => {
         document.body.classList.remove(className);
       });
     };
-  }, [isPaymentGrowthRoute, location.pathname]);
+  }, [
+    isAuroraShellRoute,
+    isAuroraSiteRoute,
+    isAuthRoute,
+    isPublicRoute,
+    isPaymentGrowthRoute,
+    location.pathname,
+  ]);
 
   useEffect(() => {
     if (isMobile && drawerOpen && collapsed) {
@@ -130,12 +184,8 @@ const PageLayout = () => {
     }
   }, [isMobile, drawerOpen, collapsed, setCollapsed]);
 
-  const loadUser = () => {
-    let user = localStorage.getItem('user');
-    if (user) {
-      let data = JSON.parse(user);
-      userDispatch({ type: 'login', payload: data });
-    }
+  const loadUser = async () => {
+    await loadStoredUserData(userDispatch);
   };
 
   const loadStatus = async () => {
@@ -159,7 +209,7 @@ const PageLayout = () => {
   };
 
   useEffect(() => {
-    loadUser();
+    loadUser().catch(console.error);
     loadStatus().catch(console.error);
     applyDocumentBranding(getSystemName(), getLogo());
   }, []);
@@ -207,27 +257,34 @@ const PageLayout = () => {
         overflow: isMobile ? 'visible' : 'hidden',
       }}
     >
-      <Header
-        style={{
-          padding: 0,
-          height: 'auto',
-          lineHeight: 'normal',
-          position: 'fixed',
-          width: '100%',
-          top: 0,
-          zIndex: 100,
-        }}
-      >
-        <HeaderBar
-          onMobileMenuToggle={() => setDrawerOpen((prev) => !prev)}
-          drawerOpen={drawerOpen}
-        />
-      </Header>
+      {!isAuroraShellRoute && (
+        <Header
+          style={{
+            padding: 0,
+            height: 'auto',
+            lineHeight: 'normal',
+            position: 'fixed',
+            width: '100%',
+            top: 0,
+            zIndex: 100,
+          }}
+        >
+          <HeaderBar
+            onMobileMenuToggle={() => setDrawerOpen((prev) => !prev)}
+            drawerOpen={drawerOpen}
+          />
+        </Header>
+      )}
       <Layout
         style={{
-          overflow: isMobile ? 'visible' : 'auto',
+          overflow: isMobile
+            ? 'visible'
+            : isAuroraShellRoute
+              ? 'hidden'
+              : 'auto',
           display: 'flex',
           flexDirection: 'column',
+          minHeight: 0,
         }}
       >
         {showSider && (
@@ -257,18 +314,25 @@ const PageLayout = () => {
               : showSider
                 ? 'var(--sidebar-current-width)'
                 : '0',
-            paddingTop: isConsoleRoute ? '64px' : '0',
-            flex: '1 1 auto',
+            paddingTop: isConsoleRoute && !isAuroraShellRoute ? '64px' : '0',
+            flex: isAuroraShellRoute ? '1 1 0' : '1 1 auto',
+            minHeight: 0,
             display: 'flex',
             flexDirection: 'column',
           }}
         >
           <Content
             style={{
-              flex: '1 0 auto',
+              flex: isAuroraShellRoute ? '1 1 0' : '1 0 auto',
+              minHeight: 0,
               overflowY: isMobile ? 'visible' : 'hidden',
               WebkitOverflowScrolling: 'touch',
-              padding: shouldInnerPadding ? (isMobile ? '5px' : '24px') : '0',
+              padding:
+                shouldInnerPadding && !isAuroraShellRoute
+                  ? isMobile
+                    ? '5px'
+                    : '24px'
+                  : '0',
               position: 'relative',
             }}
           >
@@ -276,7 +340,7 @@ const PageLayout = () => {
               <App />
             </ErrorBoundary>
           </Content>
-          {!shouldHideFooter && (
+          {!isAuroraShellRoute && !shouldHideFooter && (
             <Layout.Footer
               style={{
                 flex: '0 0 auto',

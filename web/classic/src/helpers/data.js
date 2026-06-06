@@ -17,6 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { API } from './api';
+import {
+  ADMIN_LEGACY_ROLE,
+  hasAdminPermissionSource,
+} from '../apps/admin-console/permissions/adminPermissions.config';
+
 export function setStatusData(data) {
   localStorage.setItem('status', JSON.stringify(data));
   localStorage.setItem('system_name', data.system_name);
@@ -58,4 +64,66 @@ export function setStatusData(data) {
 
 export function setUserData(data) {
   localStorage.setItem('user', JSON.stringify(data));
+}
+
+export async function hydrateAdminPermissionData(user, options = {}) {
+  const { force = false } = options;
+  const role = Number(user?.role || 0);
+  if (
+    !user ||
+    role < ADMIN_LEGACY_ROLE ||
+    (!force && hasAdminPermissionSource(user))
+  ) {
+    return user;
+  }
+
+  try {
+    const res = await API.get('/api/admin/permissions/self', {
+      disableDuplicate: true,
+      skipErrorHandler: true,
+    });
+    const { success, data } = res.data || {};
+    if (!success || !data) {
+      return user;
+    }
+    const nextUser = {
+      ...user,
+      admin_permissions: data.admin_permissions,
+      admin_permission_mode: data.admin_permission_mode || data.mode,
+      admin_permission_source: data.admin_permission_source || data.source,
+    };
+    setUserData(nextUser);
+    return nextUser;
+  } catch (error) {
+    return user;
+  }
+}
+
+export async function refreshStoredAdminPermissionData(userDispatch) {
+  const rawUser = localStorage.getItem('user');
+  if (!rawUser) {
+    return undefined;
+  }
+
+  const user = JSON.parse(rawUser);
+  const nextUser = await hydrateAdminPermissionData(user, { force: true });
+  if (nextUser !== user && userDispatch) {
+    userDispatch({ type: 'login', payload: nextUser });
+  }
+  return nextUser;
+}
+
+export async function loadStoredUserData(userDispatch) {
+  const rawUser = localStorage.getItem('user');
+  if (!rawUser) {
+    return undefined;
+  }
+
+  const user = JSON.parse(rawUser);
+  userDispatch({ type: 'login', payload: user });
+  const hydratedUser = await hydrateAdminPermissionData(user);
+  if (hydratedUser !== user) {
+    userDispatch({ type: 'login', payload: hydratedUser });
+  }
+  return hydratedUser;
 }

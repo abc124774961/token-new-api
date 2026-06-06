@@ -1345,8 +1345,8 @@ func BatchSetChannelTag(ids []int, tag *string) error {
 	}
 
 	// update ability status
-	channels, err := GetChannelsByIds(ids)
-	if err != nil {
+	var channels []*Channel
+	if err := tx.Where("id in (?)", ids).Find(&channels).Error; err != nil {
 		tx.Rollback()
 		return err
 	}

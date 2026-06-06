@@ -1,11 +1,14 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
@@ -14,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 var completionRatioMetaOptionKeys = []string{
@@ -34,6 +38,18 @@ func isVisiblePublicKeyOption(key string) bool {
 	default:
 		return false
 	}
+}
+
+func isSensitiveOptionKey(key string) bool {
+	if isVisiblePublicKeyOption(key) {
+		return false
+	}
+	lowerKey := strings.ToLower(strings.TrimSpace(key))
+	return strings.HasSuffix(key, "Token") ||
+		strings.HasSuffix(key, "Secret") ||
+		strings.HasSuffix(key, "Key") ||
+		strings.HasSuffix(lowerKey, "secret") ||
+		strings.HasSuffix(lowerKey, "api_key")
 }
 
 func collectModelNamesFromOptionValue(raw string, modelNames map[string]struct{}) {
@@ -75,12 +91,7 @@ func GetOptions(c *gin.Context) {
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
 		value := common.Interface2String(v)
-		isSensitiveKey := strings.HasSuffix(k, "Token") ||
-			strings.HasSuffix(k, "Secret") ||
-			strings.HasSuffix(k, "Key") ||
-			strings.HasSuffix(k, "secret") ||
-			strings.HasSuffix(k, "api_key")
-		if isSensitiveKey && !isVisiblePublicKeyOption(k) {
+		if isSensitiveOptionKey(k) {
 			continue
 		}
 		options = append(options, &model.Option{
@@ -112,6 +123,123 @@ type OptionUpdateRequest struct {
 	Value any    `json:"value"`
 }
 
+type optionAuditSnapshot struct {
+	Exists bool
+	Value  string
+}
+
+func getOptionAuditSnapshot(key string) (optionAuditSnapshot, error) {
+	common.OptionMapRWMutex.RLock()
+	if common.OptionMap != nil {
+		if value, ok := common.OptionMap[key]; ok {
+			common.OptionMapRWMutex.RUnlock()
+			return optionAuditSnapshot{Exists: true, Value: value}, nil
+		}
+	}
+	common.OptionMapRWMutex.RUnlock()
+
+	if model.DB == nil {
+		return optionAuditSnapshot{}, nil
+	}
+	var option model.Option
+	err := model.DB.Where("key = ?", key).First(&option).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return optionAuditSnapshot{}, nil
+	}
+	if err != nil {
+		return optionAuditSnapshot{}, err
+	}
+	return optionAuditSnapshot{Exists: true, Value: option.Value}, nil
+}
+
+func optionAuditValueKind(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "empty"
+	}
+	if trimmed == "true" || trimmed == "false" {
+		return "bool"
+	}
+	if _, err := strconv.ParseFloat(trimmed, 64); err == nil {
+		return "number"
+	}
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		var parsed any
+		if err := common.UnmarshalJsonStr(trimmed, &parsed); err == nil {
+			return "json"
+		}
+	}
+	if strings.Contains(trimmed, ",") {
+		return "list"
+	}
+	return "string"
+}
+
+func optionAuditValueFingerprint(value string) string {
+	if value == "" {
+		return ""
+	}
+	hash := common.Sha1([]byte(value))
+	if len(hash) > 12 {
+		return hash[:12]
+	}
+	return hash
+}
+
+func optionAuditRequestValueType(value any) string {
+	switch value.(type) {
+	case bool:
+		return "bool"
+	case float64:
+		return "number"
+	case int:
+		return "number"
+	case string:
+		return "string"
+	case nil:
+		return "null"
+	default:
+		return "other"
+	}
+}
+
+func setOptionAuditSnapshotSummary(c *gin.Context, prefix string, snapshot optionAuditSnapshot, sensitive bool) {
+	trimmed := strings.TrimSpace(snapshot.Value)
+	valueKind := optionAuditValueKind(snapshot.Value)
+	middleware.SetAdminAuditSummary(c, prefix+"exists", snapshot.Exists)
+	middleware.SetAdminAuditSummary(c, prefix+"empty", trimmed == "")
+	middleware.SetAdminAuditSummary(c, prefix+"value_length", len(snapshot.Value))
+	middleware.SetAdminAuditSummary(c, prefix+"value_kind", valueKind)
+	if snapshot.Value != "" {
+		middleware.SetAdminAuditSummary(c, prefix+"value_fingerprint", optionAuditValueFingerprint(snapshot.Value))
+	}
+	if !sensitive {
+		switch valueKind {
+		case "bool":
+			middleware.SetAdminAuditSummary(c, prefix+"bool_value", trimmed == "true")
+		case "number":
+			if numberValue, err := strconv.ParseFloat(trimmed, 64); err == nil {
+				middleware.SetAdminAuditSummary(c, prefix+"number_value", numberValue)
+			}
+		}
+	}
+}
+
+func setUpdateOptionAuditSummary(c *gin.Context, key string, requestValueType string, before optionAuditSnapshot, after optionAuditSnapshot, beforeErr error, afterErr error) {
+	sensitive := isSensitiveOptionKey(key)
+	middleware.SetAdminAuditSummary(c, "operation", "update_option")
+	middleware.SetAdminAuditSummary(c, "option_key", key)
+	middleware.SetAdminAuditSummary(c, "request_value_type", requestValueType)
+	middleware.SetAdminAuditSummary(c, "sensitive_option", sensitive)
+	middleware.SetAdminAuditSummary(c, "value_changed", before.Value != after.Value || before.Exists != after.Exists)
+	middleware.SetAdminAuditSummary(c, "value_fingerprint_changed", optionAuditValueFingerprint(before.Value) != optionAuditValueFingerprint(after.Value))
+	setOptionAuditSnapshotSummary(c, "before_", before, sensitive)
+	setOptionAuditSnapshotSummary(c, "after_", after, sensitive)
+	if beforeErr != nil || afterErr != nil {
+		middleware.SetAdminAuditSummary(c, "snapshot_error", true)
+	}
+}
+
 func UpdateOption(c *gin.Context) {
 	var option OptionUpdateRequest
 	err := common.DecodeJson(c.Request.Body, &option)
@@ -122,6 +250,7 @@ func UpdateOption(c *gin.Context) {
 		})
 		return
 	}
+	requestValueType := optionAuditRequestValueType(option.Value)
 	switch option.Value.(type) {
 	case bool:
 		option.Value = common.Interface2String(option.Value.(bool))
@@ -132,6 +261,7 @@ func UpdateOption(c *gin.Context) {
 	default:
 		option.Value = fmt.Sprintf("%v", option.Value)
 	}
+	beforeSnapshot, beforeSnapshotErr := getOptionAuditSnapshot(option.Key)
 	switch option.Key {
 	case "GitHubOAuthEnabled":
 		if option.Value == "true" && common.GitHubClientId == "" {
@@ -329,6 +459,8 @@ func UpdateOption(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	afterSnapshot, afterSnapshotErr := getOptionAuditSnapshot(option.Key)
+	setUpdateOptionAuditSummary(c, option.Key, requestValueType, beforeSnapshot, afterSnapshot, beforeSnapshotErr, afterSnapshotErr)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

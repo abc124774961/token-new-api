@@ -133,9 +133,9 @@ const About = () => {
   );
 
   return (
-    <div className='mt-[60px] px-2'>
+    <div className='ct-about-page'>
       {aboutLoaded && about === '' ? (
-        <div className='flex justify-center items-center h-screen p-8'>
+        <div className='ct-about-empty'>
           <Empty
             image={
               <IllustrationConstruction style={{ width: 150, height: 150 }} />
@@ -156,11 +156,11 @@ const About = () => {
           {about.startsWith('https://') ? (
             <iframe
               src={about}
-              style={{ width: '100%', height: '100vh', border: 'none' }}
+              className='ct-about-frame'
             />
           ) : (
             <div
-              style={{ fontSize: 'larger' }}
+              className='ct-about-content'
               dangerouslySetInnerHTML={{ __html: about }}
             ></div>
           )}

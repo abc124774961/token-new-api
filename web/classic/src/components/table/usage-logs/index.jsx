@@ -55,10 +55,37 @@ const UsageLogMetricCard = ({ icon, label, value, helper, tone }) => (
   </div>
 );
 
-const LogsPage = () => {
-  const logsData = useLogsData();
+const adminInsightProfiles = {
+  2: [
+    ['默认视图', '消费日志', '聚焦扣费和成本字段'],
+    ['核对重点', '模型计费', '对照用户消耗与渠道费用'],
+    ['处置动作', '展开明细', '查看完整计费过程'],
+  ],
+  3: [
+    ['默认视图', '管理日志', '聚焦后台操作和权限变化'],
+    ['核对重点', '操作人', '结合用户、接口和时间排查'],
+    ['处置动作', '审计追踪', '保留操作上下文'],
+  ],
+  5: [
+    ['默认视图', '错误日志', '聚焦失败、拦截和异常响应'],
+    ['核对重点', '风险用户', '结合用户、渠道和模型定位'],
+    ['处置动作', '复测链路', '对异常请求做路由排查'],
+  ],
+};
+
+const LogsPage = ({
+  variant = 'default',
+  initialLogType = 0,
+  eyebrow,
+  title,
+  description,
+}) => {
+  const logsData = useLogsData({ initialLogType });
   const isMobile = useIsMobile();
   const { t } = logsData;
+  const isAdminVariant = variant === 'admin';
+  const adminInsights =
+    adminInsightProfiles[initialLogType] || adminInsightProfiles[2];
 
   const summaryCards = [
     {
@@ -96,7 +123,11 @@ const LogsPage = () => {
   ];
 
   return (
-    <div className='ct-usage-logs-page'>
+    <div
+      className={`ct-usage-logs-page${
+        isAdminVariant ? ' ct-usage-logs-page-admin' : ''
+      }`}
+    >
       <ColumnSelectorModal {...logsData} />
       <UserInfoModal {...logsData} />
       <ChannelAffinityUsageCacheModal {...logsData} />
@@ -107,10 +138,12 @@ const LogsPage = () => {
         <div className='ct-usage-logs-hero-copy'>
           <div className='ct-usage-logs-eyebrow'>
             <PiListMagnifyingGlassDuotone size={16} />
-            {t('请求观测')}
+            {t(eyebrow || '请求观测')}
           </div>
-          <h1>{t('使用日志')}</h1>
-          <p>{t('集中查看请求链路、计费消耗、延迟与调度细节。')}</p>
+          <h1>{t(title || '使用日志')}</h1>
+          <p>
+            {t(description || '集中查看请求链路、计费消耗、延迟与调度细节。')}
+          </p>
         </div>
         <LogsActions {...logsData} />
       </section>
@@ -127,6 +160,18 @@ const LogsPage = () => {
           />
         ))}
       </section>
+
+      {isAdminVariant && (
+        <section className='ct-usage-logs-admin-strip'>
+          {adminInsights.map(([label, value, helper]) => (
+            <div className='ct-usage-logs-admin-insight' key={label}>
+              <span>{t(label)}</span>
+              <strong>{t(value)}</strong>
+              <small>{t(helper)}</small>
+            </div>
+          ))}
+        </section>
+      )}
 
       <section className='ct-usage-logs-filter-panel'>
         <div className='ct-usage-logs-section-head'>

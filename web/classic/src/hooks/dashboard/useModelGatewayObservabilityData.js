@@ -134,6 +134,15 @@ function userRequestHasBilling(record) {
   return Boolean(record?.billing);
 }
 
+function userRequestSuccessStatus(record) {
+  const status = String(record?.status || '').trim();
+  if (status === 'settling' || status === 'settlement_timeout') return status;
+  if (record?.is_health_probe || record?.request_meta?.is_health_probe) {
+    return 'health_probe';
+  }
+  return 'success';
+}
+
 function mergeUserRequestRecord(existing, incoming) {
   if (!existing) return incoming;
   if (!incoming) return existing;
@@ -151,7 +160,7 @@ function mergeUserRequestRecord(existing, incoming) {
       : { ...existing, ...incoming };
   const existingTTFT = Number(existing.ttft_ms || 0);
   const incomingTTFT = Number(incoming.ttft_ms || 0);
-  return {
+  const merged = {
     ...base,
     updated_at: Math.max(
       Number(existing.updated_at || 0),
@@ -200,6 +209,20 @@ function mergeUserRequestRecord(existing, incoming) {
       Number(incoming.actual_group_ratio || 0) > 0
         ? incoming.actual_group_ratio
         : existing.actual_group_ratio,
+  };
+  const hasFinalSuccess =
+    existing.final_success === true ||
+    incoming.final_success === true ||
+    merged.final_success === true;
+  if (!hasFinalSuccess) return merged;
+  return {
+    ...merged,
+    final_success: true,
+    status: userRequestSuccessStatus(merged),
+    final_status_code: 0,
+    final_error_category: '',
+    client_aborted: false,
+    stream_interrupted: false,
   };
 }
 

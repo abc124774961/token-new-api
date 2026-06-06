@@ -20,9 +20,13 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import UsersTable from '../../components/table/users';
 
-const User = () => {
+const User = ({ variant = 'default' }) => {
   return (
-    <div className='ct-console-content-wrap'>
+    <div
+      className={`ct-console-content-wrap${
+        variant === 'admin' ? ' ct-admin-table-page ct-admin-users-page' : ''
+      }`}
+    >
       <UsersTable />
     </div>
   );

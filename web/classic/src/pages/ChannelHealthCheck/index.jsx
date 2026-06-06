@@ -93,14 +93,18 @@ const DEFAULT_PROBE_CONFIG = {
   probe_long_no_success_seconds: 1800,
   probe_recovery_successes_required: 2,
   probe_failure_avoidance_priority_enabled: true,
-  probe_recoverable_score_items: PROBE_SCORE_ITEM_OPTIONS.map(([value]) => value),
+  probe_recoverable_score_items: PROBE_SCORE_ITEM_OPTIONS.map(
+    ([value]) => value,
+  ),
   probe_skip_recent_real_request_enabled: true,
   probe_recent_real_request_window_seconds: 1800,
   probe_good_baseline_enabled: true,
   probe_good_baseline_min_samples: 3,
   probe_good_baseline_window_seconds: 86400,
   probe_prompt_library_enabled: true,
-  probe_prompt_categories: PROBE_PROMPT_CATEGORY_OPTIONS.map(([value]) => value),
+  probe_prompt_categories: PROBE_PROMPT_CATEGORY_OPTIONS.map(
+    ([value]) => value,
+  ),
 };
 
 function numberOrDefault(value, fallback) {
@@ -115,11 +119,11 @@ function normalizeProbeConfig(setting = {}) {
     probe_recoverable_score_items: Array.isArray(
       setting.probe_recoverable_score_items,
     )
-        ? setting.probe_recoverable_score_items
-        : DEFAULT_PROBE_CONFIG.probe_recoverable_score_items,
+      ? setting.probe_recoverable_score_items
+      : DEFAULT_PROBE_CONFIG.probe_recoverable_score_items,
     probe_prompt_categories: Array.isArray(setting.probe_prompt_categories)
-        ? setting.probe_prompt_categories
-        : DEFAULT_PROBE_CONFIG.probe_prompt_categories,
+      ? setting.probe_prompt_categories
+      : DEFAULT_PROBE_CONFIG.probe_prompt_categories,
   };
 }
 
@@ -193,7 +197,9 @@ function formatLatency(value) {
 }
 
 function formatTimestamp(timestamp) {
-  return Number(timestamp || 0) > 0 ? timestamp2string(Number(timestamp)) : '--';
+  return Number(timestamp || 0) > 0
+    ? timestamp2string(Number(timestamp))
+    : '--';
 }
 
 function compactIdentity(value, head = 8, tail = 6) {
@@ -204,9 +210,7 @@ function compactIdentity(value, head = 8, tail = 6) {
 }
 
 function normalizedIdentityValue(...values) {
-  return values
-    .map((value) => String(value || '').trim())
-    .find(Boolean) || '';
+  return values.map((value) => String(value || '').trim()).find(Boolean) || '';
 }
 
 function credentialNumber(value) {
@@ -265,7 +269,11 @@ function getChannelIdentity(record = {}, fallback = {}) {
       fallback.account_type,
       runtimeKey.account_type,
     ),
-    brand: normalizedIdentityValue(record.brand, fallback.brand, runtimeKey.brand),
+    brand: normalizedIdentityValue(
+      record.brand,
+      fallback.brand,
+      runtimeKey.brand,
+    ),
     provider: normalizedIdentityValue(
       record.provider,
       fallback.provider,
@@ -402,7 +410,9 @@ function formatSchedulerCountdownDetail(summary, t) {
     `${t('扫描间隔')} ${formatDurationAmount(intervalSeconds, t)}`,
   ];
   if (summary?.scheduler_running) {
-    parts.push(`${t('上次整体探测')} ${formatRelativeTime(summary?.last_scheduler_probe_at, t)}`);
+    parts.push(
+      `${t('上次整体探测')} ${formatRelativeTime(summary?.last_scheduler_probe_at, t)}`,
+    );
   } else if (summary?.probe_enabled === false) {
     parts.push(t('健康探活已关闭'));
   } else if (summary?.scheduler_master_node === false) {
@@ -425,16 +435,34 @@ function buildProbeRuntimeKey(record = {}) {
       record.requested_model,
       runtimeKey.requested_model,
     ),
-    upstream_model: normalizedIdentityValue(record.upstream_model, runtimeKey.upstream_model),
+    upstream_model: normalizedIdentityValue(
+      record.upstream_model,
+      runtimeKey.upstream_model,
+    ),
     channel_id: Number(record.channel_id || runtimeKey.channel_id || 0),
-    resource_id: normalizedIdentityValue(record.resource_id, runtimeKey.resource_id),
-    resource_type: normalizedIdentityValue(record.resource_type, runtimeKey.resource_type),
-    account_id: normalizedIdentityValue(record.account_id, runtimeKey.account_id),
-    account_type: normalizedIdentityValue(record.account_type, runtimeKey.account_type),
+    resource_id: normalizedIdentityValue(
+      record.resource_id,
+      runtimeKey.resource_id,
+    ),
+    resource_type: normalizedIdentityValue(
+      record.resource_type,
+      runtimeKey.resource_type,
+    ),
+    account_id: normalizedIdentityValue(
+      record.account_id,
+      runtimeKey.account_id,
+    ),
+    account_type: normalizedIdentityValue(
+      record.account_type,
+      runtimeKey.account_type,
+    ),
     brand: normalizedIdentityValue(record.brand, runtimeKey.brand),
     provider: normalizedIdentityValue(record.provider, runtimeKey.provider),
     group: normalizedIdentityValue(record.group, runtimeKey.group),
-    endpoint_type: normalizedIdentityValue(record.endpoint_type, runtimeKey.endpoint_type),
+    endpoint_type: normalizedIdentityValue(
+      record.endpoint_type,
+      runtimeKey.endpoint_type,
+    ),
     capability_fingerprint: normalizedIdentityValue(
       record.capability_fingerprint,
       runtimeKey.capability_fingerprint,
@@ -548,7 +576,9 @@ function getReasonMeta(reason, t) {
       success_rate: t('成功率偏低'),
       empty_output: t('空输出偏高'),
       experience_issue: t('体验异常偏高'),
-    }[key] || key || t('待检查');
+    }[key] ||
+    key ||
+    t('待检查');
   return { key, label, color };
 }
 
@@ -747,14 +777,20 @@ function historyScoreScope(record) {
   );
   return [
     channelID,
-    record?.requested_model || dispatch?.requested_model || runtimeKey.requested_model || '',
+    record?.requested_model ||
+      dispatch?.requested_model ||
+      runtimeKey.requested_model ||
+      '',
     candidate?.upstream_model ||
       runtimeKey.upstream_model ||
       record?.upstream_model ||
       dispatch?.upstream_model ||
       '',
     group,
-    record?.endpoint_type || dispatch?.endpoint_type || runtimeKey.endpoint_type || '',
+    record?.endpoint_type ||
+      dispatch?.endpoint_type ||
+      runtimeKey.endpoint_type ||
+      '',
   ]
     .map((value) => String(value || '').trim())
     .join('|');
@@ -775,7 +811,12 @@ function buildHistoryScoreChanges(records) {
     const key = historyRecordKey(record);
     const scope = historyScoreScope(record);
     if (score === null || !scope) {
-      changes.set(key, { score: null, delta: 0, hasPrevious: false, metricDeltas: {} });
+      changes.set(key, {
+        score: null,
+        delta: 0,
+        hasPrevious: false,
+        metricDeltas: {},
+      });
       return;
     }
     const breakdown = getHistoryScoreBreakdown(record);
@@ -858,7 +899,10 @@ function ProbeScoreItemTags({ items, t }) {
 function importantScoreDeltaEntries(delta, t) {
   return Object.entries(delta || {})
     .map(([key, value]) => ({ key, value: Number(value) }))
-    .filter((entry) => Number.isFinite(entry.value) && Math.abs(entry.value) >= 0.0001)
+    .filter(
+      (entry) =>
+        Number.isFinite(entry.value) && Math.abs(entry.value) >= 0.0001,
+    )
     .sort((left, right) => Math.abs(right.value) - Math.abs(left.value))
     .slice(0, 3)
     .map((entry) => ({
@@ -884,7 +928,9 @@ function ScoreChangeCell({ scoreChange, t }) {
       <div className='ct-channel-health-score-change-main'>
         <strong>{formatScore(scoreChange.score)}</strong>
         <span className={`ct-channel-health-score-delta-${tone}`}>
-          {scoreChange.hasPrevious ? formatScoreDelta(scoreChange.delta) : t('首次')}
+          {scoreChange.hasPrevious
+            ? formatScoreDelta(scoreChange.delta)
+            : t('首次')}
         </span>
       </div>
       {scoreChange.hasPrevious ? (
@@ -915,7 +961,9 @@ function ScoreChangeCell({ scoreChange, t }) {
 
 function MetricCard({ label, value, detail, icon, tone = 'default' }) {
   return (
-    <div className={`ct-channel-health-metric ct-channel-health-metric-${tone}`}>
+    <div
+      className={`ct-channel-health-metric ct-channel-health-metric-${tone}`}
+    >
       <div className='ct-channel-health-metric-main'>
         <span>{label}</span>
         <strong>{value}</strong>
@@ -973,7 +1021,9 @@ function ChannelIdentityCell({ record, t, fallback = null }) {
   const title =
     identity.channelName ||
     (identity.channelID ? `${t('渠道')} #${identity.channelID}` : '--');
-  const detail = [identity.brand, identity.provider].filter(Boolean).join(' / ');
+  const detail = [identity.brand, identity.provider]
+    .filter(Boolean)
+    .join(' / ');
   const tooltip = <IdentityTooltip identity={identity} t={t} />;
   return (
     <div className='ct-channel-health-identity-cell'>
@@ -1038,7 +1088,10 @@ function ScopeCell({ record, t }) {
   const candidate = getSelectedScoreCandidate(record) || {};
   const runtimeKey = candidate.runtime_key || {};
   const requestedModel =
-    record.requested_model || dispatch.requested_model || runtimeKey.requested_model || '';
+    record.requested_model ||
+    dispatch.requested_model ||
+    runtimeKey.requested_model ||
+    '';
   const group =
     record.group ||
     candidate.group ||
@@ -1057,7 +1110,10 @@ function ScopeCell({ record, t }) {
     dispatch.upstream_model ||
     '';
   const endpointType =
-    record.endpoint_type || dispatch.endpoint_type || runtimeKey.endpoint_type || '';
+    record.endpoint_type ||
+    dispatch.endpoint_type ||
+    runtimeKey.endpoint_type ||
+    '';
   return (
     <div className='ct-channel-health-scope-cell'>
       <Typography.Text strong ellipsis={{ showTooltip: true }}>
@@ -1107,7 +1163,9 @@ function ScoreCompactCell({ record, t }) {
             icon={<Gauge size={12} />}
             label={`${formatScore(qualityScore)} / ${formatScore(qualityBaseline)}`}
             tooltip={`${t('质量分')} / ${t('历史基线')}${
-              qualityDrop > 0 ? ` · ${t('下降')} ${formatPercent(qualityDrop)}` : ''
+              qualityDrop > 0
+                ? ` · ${t('下降')} ${formatPercent(qualityDrop)}`
+                : ''
             }`}
             tone={qualityDrop > 0.1 ? 'orange' : 'cyan'}
             mono
@@ -1164,7 +1222,9 @@ function PerformanceCell({ record, t }) {
       <div className='ct-channel-health-badge-row'>
         <IconBadge
           icon={<CheckCircle2 size={12} />}
-          label={record.sample_count > 0 ? formatPercent(record.success_rate) : '--'}
+          label={
+            record.sample_count > 0 ? formatPercent(record.success_rate) : '--'
+          }
           tooltip={t('完成率')}
           tone='green'
           mono
@@ -1280,7 +1340,9 @@ function ProbeSettingsModal({
       <Spin spinning={loading}>
         <div className='ct-channel-health-settings'>
           <section>
-            <div className='ct-channel-health-settings-title'>{t('基础开关')}</div>
+            <div className='ct-channel-health-settings-title'>
+              {t('基础开关')}
+            </div>
             <div className='ct-channel-health-settings-grid'>
               <ProbeSettingField label={t('启用健康探活')}>
                 <Switch
@@ -1334,7 +1396,9 @@ function ProbeSettingsModal({
           </section>
 
           <section>
-            <div className='ct-channel-health-settings-title'>{t('低分触发')}</div>
+            <div className='ct-channel-health-settings-title'>
+              {t('低分触发')}
+            </div>
             <div className='ct-channel-health-settings-grid'>
               <ProbeSettingField label={t('低分阈值')}>
                 <InputNumber
@@ -1343,14 +1407,19 @@ function ProbeSettingsModal({
                   step={0.01}
                   value={config.probe_low_score_threshold}
                   onChange={(value) =>
-                    update('probe_low_score_threshold', numberOrDefault(value, 0.62))
+                    update(
+                      'probe_low_score_threshold',
+                      numberOrDefault(value, 0.62),
+                    )
                   }
                 />
               </ProbeSettingField>
             </div>
             <Checkbox.Group
               value={scoreItems}
-              onChange={(values) => update('probe_recoverable_score_items', values)}
+              onChange={(values) =>
+                update('probe_recoverable_score_items', values)
+              }
             >
               <div className='ct-channel-health-checkbox-grid'>
                 {PROBE_SCORE_ITEM_OPTIONS.map(([value, label]) => (
@@ -1363,11 +1432,15 @@ function ProbeSettingsModal({
           </section>
 
           <section>
-            <div className='ct-channel-health-settings-title'>{t('真实请求跳过')}</div>
+            <div className='ct-channel-health-settings-title'>
+              {t('真实请求跳过')}
+            </div>
             <div className='ct-channel-health-settings-grid'>
               <ProbeSettingField label={t('近期已有真实请求则跳过体检')}>
                 <Switch
-                  checked={config.probe_skip_recent_real_request_enabled !== false}
+                  checked={
+                    config.probe_skip_recent_real_request_enabled !== false
+                  }
                   onChange={(value) =>
                     update('probe_skip_recent_real_request_enabled', value)
                   }
@@ -1390,12 +1463,16 @@ function ProbeSettingsModal({
           </section>
 
           <section>
-            <div className='ct-channel-health-settings-title'>{t('轻量基线')}</div>
+            <div className='ct-channel-health-settings-title'>
+              {t('轻量基线')}
+            </div>
             <div className='ct-channel-health-settings-grid'>
               <ProbeSettingField label={t('只体检平常表现不错的渠道')}>
                 <Switch
                   checked={config.probe_good_baseline_enabled !== false}
-                  onChange={(value) => update('probe_good_baseline_enabled', value)}
+                  onChange={(value) =>
+                    update('probe_good_baseline_enabled', value)
+                  }
                 />
               </ProbeSettingField>
               <ProbeSettingField label={t('最低历史样本数')}>
@@ -1403,7 +1480,10 @@ function ProbeSettingsModal({
                   min={1}
                   value={config.probe_good_baseline_min_samples}
                   onChange={(value) =>
-                    update('probe_good_baseline_min_samples', numberOrDefault(value, 3))
+                    update(
+                      'probe_good_baseline_min_samples',
+                      numberOrDefault(value, 3),
+                    )
                   }
                 />
               </ProbeSettingField>
@@ -1424,12 +1504,16 @@ function ProbeSettingsModal({
           </section>
 
           <section>
-            <div className='ct-channel-health-settings-title'>{t('样本库')}</div>
+            <div className='ct-channel-health-settings-title'>
+              {t('样本库')}
+            </div>
             <div className='ct-channel-health-settings-grid'>
               <ProbeSettingField label={t('启用内置低成本随机样本')}>
                 <Switch
                   checked={config.probe_prompt_library_enabled !== false}
-                  onChange={(value) => update('probe_prompt_library_enabled', value)}
+                  onChange={(value) =>
+                    update('probe_prompt_library_enabled', value)
+                  }
                 />
               </ProbeSettingField>
             </div>
@@ -1452,8 +1536,9 @@ function ProbeSettingsModal({
   );
 }
 
-function ChannelHealthCheck() {
+function ChannelHealthCheck({ variant = 'default' }) {
   const { t } = useTranslation();
+  const isAdminVariant = variant === 'admin';
   const [queueData, setQueueData] = useState(null);
   const [historyData, setHistoryData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1492,16 +1577,19 @@ function ChannelHealthCheck() {
         {
           key: 'queue',
           label: t('待检查队列'),
-          request: API.get('/api/model_gateway/observability/health-check/queue', {
-            params: {
-              ...commonParams,
-              limit: 1000,
-              queue_type: statusFilter,
-              _t: Date.now(),
+          request: API.get(
+            '/api/model_gateway/observability/health-check/queue',
+            {
+              params: {
+                ...commonParams,
+                limit: 1000,
+                queue_type: statusFilter,
+                _t: Date.now(),
+              },
+              disableDuplicate: true,
+              skipErrorHandler: true,
             },
-            disableDuplicate: true,
-            skipErrorHandler: true,
-          }),
+          ),
         },
         {
           key: 'history',
@@ -1524,7 +1612,9 @@ function ChannelHealthCheck() {
       ];
 
       try {
-        const results = await Promise.allSettled(requests.map((item) => item.request));
+        const results = await Promise.allSettled(
+          requests.map((item) => item.request),
+        );
         const failures = [];
 
         results.forEach((result, index) => {
@@ -1541,7 +1631,9 @@ function ChannelHealthCheck() {
             }
             return;
           }
-          failures.push(buildRequestErrorDetail(result.reason, requestMeta.label, t));
+          failures.push(
+            buildRequestErrorDetail(result.reason, requestMeta.label, t),
+          );
         });
 
         if (failures.length > 0) {
@@ -1601,7 +1693,10 @@ function ChannelHealthCheck() {
   const saveProbeConfig = useCallback(async () => {
     try {
       setSettingsSaving(true);
-      const res = await API.patch('/api/model_gateway/config/probe', probeConfig);
+      const res = await API.patch(
+        '/api/model_gateway/config/probe',
+        probeConfig,
+      );
       const { success, message, data } = res.data || {};
       if (!success) {
         showError(t(message || '保存健康探活设置失败'));
@@ -1620,9 +1715,12 @@ function ChannelHealthCheck() {
 
   const runImmediateProbe = useCallback(
     async (record) => {
-      const rowKey = record?.row_key || record?.rowKey || `${record?.channel_id || 0}`;
+      const rowKey =
+        record?.row_key || record?.rowKey || `${record?.channel_id || 0}`;
       const runtimeKey = buildProbeRuntimeKey(record);
-      const channelID = Number(record?.channel_id || runtimeKey.channel_id || 0);
+      const channelID = Number(
+        record?.channel_id || runtimeKey.channel_id || 0,
+      );
       if (!channelID) {
         showError(t('渠道 ID 缺失，无法立即探活'));
         return;
@@ -1634,7 +1732,8 @@ function ChannelHealthCheck() {
           {
             channel_id: channelID,
             runtime_key: runtimeKey,
-            requested_model: record?.requested_model || runtimeKey.requested_model,
+            requested_model:
+              record?.requested_model || runtimeKey.requested_model,
             group: record?.group || runtimeKey.group,
             reason: primaryProbeReason(record),
             trigger_score_items: record?.probe_trigger_score_items || [],
@@ -1678,8 +1777,7 @@ function ChannelHealthCheck() {
 
   const pendingRows = queueData?.items || [];
   const visiblePendingRows = useMemo(
-    () =>
-      pendingRows.filter((record) => recordMatchesSearch(record, keyword)),
+    () => pendingRows.filter((record) => recordMatchesSearch(record, keyword)),
     [keyword, pendingRows],
   );
   const rawHistoryRecords = useMemo(
@@ -1710,7 +1808,8 @@ function ChannelHealthCheck() {
     .join(' / ');
   const probeEnabledText =
     probeConfig.probe_enabled !== false ? t('已启用') : t('未启用');
-  const activeFilterCount = Object.values(appliedFilters).filter(Boolean).length;
+  const activeFilterCount =
+    Object.values(appliedFilters).filter(Boolean).length;
   const lastUpdated = formatTimestamp(queueData?.summary?.updated_at);
   const queueGeneratedAt = Number(
     queueData?.local_generated_at || queueData?.generated_at || 0,
@@ -1803,13 +1902,17 @@ function ChannelHealthCheck() {
               <div className='ct-channel-health-tooltip'>
                 <div>{t('后端根据当前运行态和探活配置生成待检查项')}</div>
                 <div>
-                  {t('当前探活原因')}: {formatProbeReason(record.probe_trigger_reason, t)}
+                  {t('当前探活原因')}:{' '}
+                  {formatProbeReason(record.probe_trigger_reason, t)}
                 </div>
                 {record.probe_trigger_reason === 'score_anomaly_fast_probe' && (
                   <div>
-                    {t('质量分')}: {formatScore(record.recoverable_quality_score)} /{' '}
-                    {t('历史基线')}: {formatScore(record.recoverable_quality_baseline)} ·{' '}
-                    {t('下降')}: {formatPercent(record.recoverable_quality_drop_ratio)}
+                    {t('质量分')}:{' '}
+                    {formatScore(record.recoverable_quality_score)} /{' '}
+                    {t('历史基线')}:{' '}
+                    {formatScore(record.recoverable_quality_baseline)} ·{' '}
+                    {t('下降')}:{' '}
+                    {formatPercent(record.recoverable_quality_drop_ratio)}
                   </div>
                 )}
                 {record.probe_skip_reason === 'recent_real_request' && (
@@ -1820,7 +1923,10 @@ function ChannelHealthCheck() {
           >
             <div className='ct-channel-health-stack'>
               <ReasonTags reasons={reasons} t={t} />
-              <ProbeScoreItemTags items={record.probe_trigger_score_items} t={t} />
+              <ProbeScoreItemTags
+                items={record.probe_trigger_score_items}
+                t={t}
+              />
               {record.probe_skip_reason === 'recent_real_request' && (
                 <Tag color='green' size='small' type='light'>
                   {t('已有真实请求，跳过体检')}
@@ -1853,7 +1959,8 @@ function ChannelHealthCheck() {
             queueGeneratedAt,
           );
           const countdownReady = countdownSeconds <= 0;
-          const rowKey = record?.row_key || record?.rowKey || `${record?.channel_id || 0}`;
+          const rowKey =
+            record?.row_key || record?.rowKey || `${record?.channel_id || 0}`;
           const recoveryProbe = isRecoveryProbeRecord(record);
           const running = Boolean(probeRunningKeys[rowKey]);
           return (
@@ -1866,7 +1973,11 @@ function ChannelHealthCheck() {
                 disabled={running}
                 onClick={() => runImmediateProbe(record)}
               >
-                {running ? <RefreshCw size={12} className='ct-channel-health-spin' /> : <Clock3 size={12} />}
+                {running ? (
+                  <RefreshCw size={12} className='ct-channel-health-spin' />
+                ) : (
+                  <Clock3 size={12} />
+                )}
                 <span>{recoveryProbe ? t('立即恢复') : t('下一次探测')}</span>
                 <strong>{formatCountdownDuration(countdownSeconds, t)}</strong>
               </button>
@@ -1874,11 +1985,13 @@ function ChannelHealthCheck() {
                 {t('上次探活')} {formatRelativeTime(record.last_probe_at, t)}
               </Typography.Text>
               <Typography.Text type='secondary' size='small'>
-                {t('上次成功')} {formatRelativeTime(record.last_probe_success_at, t)}
+                {t('上次成功')}{' '}
+                {formatRelativeTime(record.last_probe_success_at, t)}
               </Typography.Text>
               {record.probe_recovery_pending && (
                 <Tag color='cyan' size='small' type='light'>
-                  {t('恢复')} {formatNumber(record.probe_recovery_success_count)}/
+                  {t('恢复')}{' '}
+                  {formatNumber(record.probe_recovery_success_count)}/
                   {formatNumber(record.probe_recovery_required)}
                 </Tag>
               )}
@@ -1966,7 +2079,9 @@ function ChannelHealthCheck() {
         width: 170,
         render: (_, record) => (
           <div className='ct-channel-health-stack'>
-            <Typography.Text strong>{formatLatency(record.duration_ms)}</Typography.Text>
+            <Typography.Text strong>
+              {formatLatency(record.duration_ms)}
+            </Typography.Text>
             <Typography.Text type='secondary' size='small'>
               {t('首包')} {formatLatency(record.ttft_ms)}
             </Typography.Text>
@@ -2034,7 +2149,11 @@ function ChannelHealthCheck() {
 
   return (
     <div className='ct-console-content-wrap'>
-      <div className='ct-channel-health-page'>
+      <div
+        className={`ct-channel-health-page${
+          isAdminVariant ? ' ct-channel-health-page-admin' : ''
+        }`}
+      >
         <div className='ct-channel-health-hero'>
           <div className='ct-channel-health-title-block'>
             <div className='ct-channel-health-title-icon'>
@@ -2049,10 +2168,7 @@ function ChannelHealthCheck() {
             </div>
           </div>
           <div className='ct-channel-health-actions'>
-            <Button
-              icon={<Settings size={15} />}
-              onClick={openSettings}
-            >
+            <Button icon={<Settings size={15} />} onClick={openSettings}>
               {t('设置')}
             </Button>
             <Select
@@ -2109,7 +2225,11 @@ function ChannelHealthCheck() {
               scoreAnomalyCount,
             )} ${t('分数异常')}`}
             icon={<ListChecks size={18} />}
-            tone={Number(queueData?.summary?.pending_count || 0) > 0 ? 'warning' : 'success'}
+            tone={
+              Number(queueData?.summary?.pending_count || 0) > 0
+                ? 'warning'
+                : 'success'
+            }
           />
           <MetricCard
             label={t('恢复确认中')}
@@ -2131,7 +2251,9 @@ function ChannelHealthCheck() {
             label={t('检测历史')}
             value={formatNumber(historyRecords.length)}
             detail={`${formatNumber(historySuccessCount)} ${t('成功')} · ${formatPercent(
-              historyRecords.length ? historySuccessCount / historyRecords.length : 0,
+              historyRecords.length
+                ? historySuccessCount / historyRecords.length
+                : 0,
             )}`}
             icon={<History size={18} />}
             tone='default'
@@ -2157,13 +2279,17 @@ function ChannelHealthCheck() {
           />
           <Input
             value={filters.model}
-            onChange={(value) => setFilters((prev) => ({ ...prev, model: value }))}
+            onChange={(value) =>
+              setFilters((prev) => ({ ...prev, model: value }))
+            }
             placeholder={t('按模型筛选')}
             prefix={t('模型')}
           />
           <Input
             value={filters.group}
-            onChange={(value) => setFilters((prev) => ({ ...prev, group: value }))}
+            onChange={(value) =>
+              setFilters((prev) => ({ ...prev, group: value }))
+            }
             placeholder={t('按分组筛选')}
             prefix={t('分组')}
           />
@@ -2268,9 +2394,7 @@ function ChannelHealthCheck() {
             )}
           </span>
           <CheckCircle2 size={14} />
-          <span>
-            {t('探活结果会更新评分，但不会增加真实访问样本计数。')}
-          </span>
+          <span>{t('探活结果会更新评分，但不会增加真实访问样本计数。')}</span>
         </div>
         <ProbeSettingsModal
           visible={settingsVisible}

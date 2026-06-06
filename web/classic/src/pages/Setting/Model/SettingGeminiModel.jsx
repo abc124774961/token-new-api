@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import { Col, Form, Row, Spin } from '@douyinfe/semi-ui';
 import {
   compareObjects,
   API,
@@ -29,9 +29,14 @@ import {
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
 import Text from '@douyinfe/semi-ui/lib/es/typography/text';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  AdminPermissionButton,
+  useAdminActionPermission,
+} from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 const GEMINI_SETTING_EXAMPLE = {
-  default: 'OFF'
+  default: 'OFF',
 };
 
 const GEMINI_VERSION_EXAMPLE = {
@@ -50,6 +55,17 @@ const DEFAULT_GEMINI_INPUTS = {
 
 export default function SettingGeminiModel(props) {
   const { t } = useTranslation();
+  const canManageSystemSettings = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.systemSettingsUpdate,
+  );
+  const systemSettingsPermissionDenied = t(
+    '没有系统设置修改权限，请联系超级管理员。',
+  );
+  const ensureSystemSettingsPermission = () => {
+    if (canManageSystemSettings) return true;
+    showWarning(systemSettingsPermissionDenied);
+    return false;
+  };
 
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState(DEFAULT_GEMINI_INPUTS);
@@ -57,6 +73,10 @@ export default function SettingGeminiModel(props) {
   const [inputsRow, setInputsRow] = useState(DEFAULT_GEMINI_INPUTS);
 
   async function onSubmit() {
+    if (!ensureSystemSettingsPermission()) {
+      return;
+    }
+
     await refForm.current
       .validate()
       .then(() => {
@@ -295,9 +315,14 @@ export default function SettingGeminiModel(props) {
           </Form.Section>
 
           <Row>
-            <Button size='default' onClick={onSubmit}>
+            <AdminPermissionButton
+              size='default'
+              requiredPermission={ADMIN_PERMISSION_KEYS.systemSettingsUpdate}
+              fallbackTooltip={systemSettingsPermissionDenied}
+              onClick={onSubmit}
+            >
               {t('保存')}
-            </Button>
+            </AdminPermissionButton>
           </Row>
         </Form>
       </Spin>

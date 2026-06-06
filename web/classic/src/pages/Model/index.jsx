@@ -19,9 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import ModelsTable from '../../components/table/models';
 
-const ModelPage = () => {
+const ModelPage = ({ variant = 'default' }) => {
   return (
-    <div className='ct-console-content-wrap'>
+    <div
+      className={`ct-console-content-wrap${
+        variant === 'admin' ? ' ct-admin-table-page ct-admin-model-page' : ''
+      }`}
+    >
       <ModelsTable />
     </div>
   );

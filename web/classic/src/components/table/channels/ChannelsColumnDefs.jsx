@@ -38,6 +38,7 @@ import {
   showSuccess,
   showError,
   showInfo,
+  showWarning,
   API,
   renderChannelCapabilities,
 } from '../../../helpers';
@@ -107,7 +108,7 @@ const renderType = (type, record = {}, t) => {
     if (!ionetMeta?.deployment_id) {
       return;
     }
-    const targetUrl = `/console/deployment?deployment_id=${ionetMeta.deployment_id}`;
+    const targetUrl = `/admin/deployment?deployment_id=${ionetMeta.deployment_id}`;
     window.open(targetUrl, '_blank', 'noopener');
   };
 
@@ -393,58 +394,59 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
     }
   };
 
-  const statusNode = balanceInsufficient || cooldownActive || anyCircuitActive ? (
-    <Space spacing={4} wrap>
-      {balanceInsufficient && (
-        <Tag color='red' shape='circle'>
-          {t('余额不足')}
-        </Tag>
-      )}
-      {cooldownActive && (
-        <Tag color='yellow' shape='circle'>
-          {t('冷却中')} {cooldownLabel}
-        </Tag>
-      )}
-      {circuitActive && (
-        <Tag color='orange' shape='circle'>
-          {t('熔断中')} {circuitLabel}
-        </Tag>
-      )}
-      {runtimeCircuitOpenActive && (
-        <Tag color='red' shape='circle'>
-          {t('运行态熔断 {{count}}', { count: runtimeCircuitOpen })}
-        </Tag>
-      )}
-      {runtimeCircuitHalfOpenActive && (
-        <Tag color='cyan' shape='circle'>
-          {t('半开探测')} {runtimeCircuitHalfOpen}
-        </Tag>
-      )}
-      {anyCircuitActive && (
-        <Button
-          size='small'
-          type='tertiary'
-          loading={clearingCircuit}
-          onClick={clearCircuit}
-        >
-          {t('解除')}
-        </Button>
-      )}
-      {balanceInsufficient && (
-        <Button
-          size='small'
-          type='tertiary'
-          icon={<RotateCcw size={13} />}
-          loading={recoveringHealth}
-          onClick={recoverHealth}
-        >
-          {t('恢复健康')}
-        </Button>
-      )}
-    </Space>
-  ) : (
-    renderStatus(record?.status, record?.channel_info, t)
-  );
+  const statusNode =
+    balanceInsufficient || cooldownActive || anyCircuitActive ? (
+      <Space spacing={4} wrap>
+        {balanceInsufficient && (
+          <Tag color='red' shape='circle'>
+            {t('余额不足')}
+          </Tag>
+        )}
+        {cooldownActive && (
+          <Tag color='yellow' shape='circle'>
+            {t('冷却中')} {cooldownLabel}
+          </Tag>
+        )}
+        {circuitActive && (
+          <Tag color='orange' shape='circle'>
+            {t('熔断中')} {circuitLabel}
+          </Tag>
+        )}
+        {runtimeCircuitOpenActive && (
+          <Tag color='red' shape='circle'>
+            {t('运行态熔断 {{count}}', { count: runtimeCircuitOpen })}
+          </Tag>
+        )}
+        {runtimeCircuitHalfOpenActive && (
+          <Tag color='cyan' shape='circle'>
+            {t('半开探测')} {runtimeCircuitHalfOpen}
+          </Tag>
+        )}
+        {anyCircuitActive && (
+          <Button
+            size='small'
+            type='tertiary'
+            loading={clearingCircuit}
+            onClick={clearCircuit}
+          >
+            {t('解除')}
+          </Button>
+        )}
+        {balanceInsufficient && (
+          <Button
+            size='small'
+            type='tertiary'
+            icon={<RotateCcw size={13} />}
+            loading={recoveringHealth}
+            onClick={recoverHealth}
+          >
+            {t('恢复健康')}
+          </Button>
+        )}
+      </Space>
+    ) : (
+      renderStatus(record?.status, record?.channel_info, t)
+    );
 
   const tooltipLines = [];
   if (cooldownActive) {
@@ -768,6 +770,7 @@ export const getChannelsColumns = ({
   setCurrentMultiKeyChannel,
   openUpstreamUpdateModal,
   detectChannelUpstreamUpdates,
+  canDeleteChannelDanger = true,
 }) => {
   return [
     {
@@ -1158,7 +1161,7 @@ export const getChannelsColumns = ({
               name: t('账号管理'),
               type: 'tertiary',
               onClick: () => {
-                window.location.href = `/console/channel/accounts?channel_id=${record.id}`;
+                window.location.href = `/admin/channel-accounts?channel_id=${record.id}`;
               },
             },
             {
@@ -1172,6 +1175,13 @@ export const getChannelsColumns = ({
               name: t('删除'),
               type: 'danger',
               onClick: () => {
+                if (!canDeleteChannelDanger) {
+                  showWarning(
+                    t('没有删除渠道权限，请联系渠道管理员或超级管理员。'),
+                  );
+                  return;
+                }
+
                 Modal.confirm({
                   title: t('确定是否要删除此渠道？'),
                   content: t('此修改将不可逆'),

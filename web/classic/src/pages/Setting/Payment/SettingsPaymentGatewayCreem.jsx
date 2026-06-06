@@ -32,12 +32,28 @@ import {
   Select,
 } from '@douyinfe/semi-ui';
 const { Text } = Typography;
-import { API, showError, showSuccess } from '../../../helpers';
+import { API, showError, showSuccess, showWarning } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
 import { BookOpen, Plus, Trash2 } from 'lucide-react';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  AdminPermissionButton,
+  useAdminActionPermission,
+} from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 export default function SettingsPaymentGatewayCreem(props) {
   const { t } = useTranslation();
+  const canManageSystemSettings = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.systemSettingsUpdate,
+  );
+  const systemSettingsPermissionDenied = t(
+    '没有系统设置修改权限，请联系超级管理员。',
+  );
+  const ensureSystemSettingsPermission = () => {
+    if (canManageSystemSettings) return true;
+    showWarning(systemSettingsPermissionDenied);
+    return false;
+  };
   const sectionTitle = props.hideSectionTitle ? undefined : t('Creem 设置');
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState({
@@ -86,6 +102,10 @@ export default function SettingsPaymentGatewayCreem(props) {
   };
 
   const submitCreemSetting = async () => {
+    if (!ensureSystemSettingsPermission()) {
+      return;
+    }
+
     setLoading(true);
     try {
       const options = [];
@@ -329,9 +349,14 @@ export default function SettingsPaymentGatewayCreem(props) {
             />
           </div>
 
-          <Button onClick={submitCreemSetting} style={{ marginTop: 16 }}>
+          <AdminPermissionButton
+            requiredPermission={ADMIN_PERMISSION_KEYS.systemSettingsUpdate}
+            fallbackTooltip={systemSettingsPermissionDenied}
+            onClick={submitCreemSetting}
+            style={{ marginTop: 16 }}
+          >
             {t('更新 Creem 设置')}
-          </Button>
+          </AdminPermissionButton>
         </Form.Section>
       </Form>
 

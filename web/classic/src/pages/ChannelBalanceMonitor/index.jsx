@@ -55,7 +55,9 @@ function unwrapApiData(response) {
 }
 
 function formatTimestamp(timestamp) {
-  return Number(timestamp || 0) > 0 ? timestamp2string(Number(timestamp)) : '--';
+  return Number(timestamp || 0) > 0
+    ? timestamp2string(Number(timestamp))
+    : '--';
 }
 
 function formatBalance(value) {
@@ -79,12 +81,12 @@ function formatCostValue(value) {
 function RatioSummaryView({ summary, t }) {
   const ratioSummary = summary || {};
   const costMultiplier = Number(
-    ratioSummary.cost_multiplier ||
-      ratioSummary.actual_token_multiplier ||
-      1,
+    ratioSummary.cost_multiplier || ratioSummary.actual_token_multiplier || 1,
   );
   const hasRequestPrice = Number(ratioSummary.actual_request_price || 0) > 0;
-  const syncTime = Number(ratioSummary.synced_at || ratioSummary.updated_at || 0);
+  const syncTime = Number(
+    ratioSummary.synced_at || ratioSummary.updated_at || 0,
+  );
   const tooltip = (
     <div className='cbm-ratio-tooltip'>
       <div className='cbm-ratio-tooltip-row'>
@@ -111,7 +113,9 @@ function RatioSummaryView({ summary, t }) {
       )}
       <div className='cbm-ratio-tooltip-row'>
         <span>{t('价格来源')}</span>
-        <span>{ratioSummary.configured ? t('渠道上游成本倍率') : t('默认')}</span>
+        <span>
+          {ratioSummary.configured ? t('渠道上游成本倍率') : t('默认')}
+        </span>
       </div>
       {syncTime > 0 && (
         <div className='cbm-ratio-tooltip-row'>
@@ -197,8 +201,9 @@ function MetricCard({ icon: Icon, label, value, detail, tone = 'teal' }) {
   );
 }
 
-export default function ChannelBalanceMonitor() {
+export default function ChannelBalanceMonitor({ variant = 'default' }) {
   const { t } = useTranslation();
+  const isAdminVariant = variant === 'admin';
   const [loading, setLoading] = useState(false);
   const [refreshingMode, setRefreshingMode] = useState('');
   const [data, setData] = useState({
@@ -209,28 +214,34 @@ export default function ChannelBalanceMonitor() {
     settings: {},
   });
 
-  const fetchData = useCallback(async ({ silent = false } = {}) => {
-    if (!silent) setLoading(true);
-    try {
-      const response = await API.get('/api/channel/balance_monitor');
-      const payload = unwrapApiData(response);
-      setData({
-        summary: payload.summary || {},
-        accounts: payload.accounts || [],
-        channels: payload.channels || [],
-        events: payload.events || [],
-        settings: payload.settings || {},
-      });
-    } catch (error) {
-      showError(t('获取渠道余额监控失败：') + (error.message || ''));
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [t]);
+  const fetchData = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!silent) setLoading(true);
+      try {
+        const response = await API.get('/api/channel/balance_monitor');
+        const payload = unwrapApiData(response);
+        setData({
+          summary: payload.summary || {},
+          accounts: payload.accounts || [],
+          channels: payload.channels || [],
+          events: payload.events || [],
+          settings: payload.settings || {},
+        });
+      } catch (error) {
+        showError(t('获取渠道余额监控失败：') + (error.message || ''));
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [t],
+  );
 
   useEffect(() => {
     fetchData();
-    const timer = window.setInterval(() => fetchData({ silent: true }), REFRESH_INTERVAL_MS);
+    const timer = window.setInterval(
+      () => fetchData({ silent: true }),
+      REFRESH_INTERVAL_MS,
+    );
     return () => window.clearInterval(timer);
   }, [fetchData]);
 
@@ -272,7 +283,10 @@ export default function ChannelBalanceMonitor() {
       await fetchData({ silent: true });
       showSuccess(enabled ? t('账号已启用') : t('账号已禁用'));
     } catch (error) {
-      showError((enabled ? t('启用账号失败：') : t('禁用账号失败：')) + (error.message || ''));
+      showError(
+        (enabled ? t('启用账号失败：') : t('禁用账号失败：')) +
+          (error.message || ''),
+      );
     } finally {
       setRefreshingMode('');
     }
@@ -281,180 +295,216 @@ export default function ChannelBalanceMonitor() {
   const summary = data.summary || {};
   const settings = data.settings || {};
 
-  const accountColumns = useMemo(() => [
-    {
-      title: t('账号'),
-      dataIndex: 'account_id',
-      render: (_, record) => (
-        <div className='cbm-account-cell'>
-          <Text strong ellipsis={{ showTooltip: true }}>
-            {record.account_display_name || record.account_id || `#${record.credential_index + 1}`}
-          </Text>
-          <Text type='tertiary' size='small' ellipsis={{ showTooltip: true }}>
-            {record.account_id || record.account_identity_key || '--'}
-          </Text>
-        </div>
-      ),
-    },
-    {
-      title: t('渠道'),
-      dataIndex: 'channel_name',
-      render: (_, record) => (
-        <div className='cbm-account-cell'>
-          <Text strong>{record.channel_name}</Text>
-          <Text type='tertiary' size='small'>
-            #{record.channel_id} · {record.channel_type_name || record.channel_type} · {record.group || 'default'}
-          </Text>
-        </div>
-      ),
-    },
-    {
-      title: t('凭证'),
-      dataIndex: 'credential_index',
-      width: 92,
-      render: (value, record) => (
-        <Tag color={record.is_multi_key ? 'teal' : 'blue'}>
-          {record.is_multi_key ? `#${Number(value) + 1}` : t('单账号')}
-        </Tag>
-      ),
-    },
-    {
-      title: t('余额'),
-      dataIndex: 'balance',
-      width: 110,
-      render: (value) => <Text strong>{formatBalance(value)}</Text>,
-    },
-    {
-      title: t('成本倍率'),
-      dataIndex: 'ratio_summary',
-      width: 170,
-      render: (value) => <RatioSummaryView summary={value} t={t} />,
-    },
-    {
-      title: t('状态'),
-      dataIndex: 'status',
-      width: 120,
-      render: (status, record) => {
-        const meta = statusMeta(status, t);
-        return (
-          <Tooltip content={record.last_error || record.disabled_reason || ''}>
-            <Tag color={meta.color}>{meta.label}</Tag>
-          </Tooltip>
-        );
-      },
-    },
-    {
-      title: t('影响范围'),
-      dataIndex: 'affected_channels',
-      width: 190,
-      render: (value, record) => {
-        const labels = Array.isArray(value) && value.length > 0
-          ? value
-          : [`${record.channel_name}(#${record.channel_id})`];
-        return (
-          <Tooltip content={labels.join(' / ')}>
-            <Text type='tertiary' ellipsis={{ showTooltip: false }}>
-              {labels.length > 1 ? `${labels[0]} +${labels.length - 1}` : labels[0]}
+  const accountColumns = useMemo(
+    () => [
+      {
+        title: t('账号'),
+        dataIndex: 'account_id',
+        render: (_, record) => (
+          <div className='cbm-account-cell'>
+            <Text strong ellipsis={{ showTooltip: true }}>
+              {record.account_display_name ||
+                record.account_id ||
+                `#${record.credential_index + 1}`}
             </Text>
-          </Tooltip>
-        );
+            <Text type='tertiary' size='small' ellipsis={{ showTooltip: true }}>
+              {record.account_id || record.account_identity_key || '--'}
+            </Text>
+          </div>
+        ),
       },
-    },
-    {
-      title: t('最近刷新'),
-      dataIndex: 'last_updated_time',
-      width: 160,
-      render: (value) => <Text type='tertiary'>{formatTimestamp(value)}</Text>,
-    },
-    {
-      title: t('操作'),
-      dataIndex: 'action',
-      width: 185,
-      render: (_, record) => (
-        <Space>
-          <Tooltip content={t('刷新单账号')}>
-            <Button
-              icon={<RefreshCw size={14} />}
-              size='small'
-              loading={refreshingMode === `account-${record.channel_id}-${record.credential_index}`}
-              onClick={() =>
-                refreshMonitor(
-                  'balance',
-                  {
-                    channel_id: record.channel_id,
-                    credential_index: record.credential_index,
-                  },
-                  `account-${record.channel_id}-${record.credential_index}`,
-                )
-              }
-            />
-          </Tooltip>
-          <Tooltip content={record.key_enabled ? t('暂停账号') : t('恢复账号')}>
-            <Button
-              icon={record.key_enabled ? <Pause size={14} /> : <Play size={14} />}
-              size='small'
-              loading={refreshingMode === `status-${record.channel_id}-${record.credential_index}`}
-              onClick={() => updateAccountStatus(record, !record.key_enabled)}
-            />
-          </Tooltip>
-          <Tooltip content={t('查看影响渠道')}>
-            <Button
-              icon={<Eye size={14} />}
-              size='small'
-              onClick={() => {
-                window.location.href = `/console/channel/accounts?channel_id=${record.channel_id}`;
-              }}
-            />
-          </Tooltip>
-        </Space>
-      ),
-    },
-  ], [fetchData, refreshingMode, t]);
+      {
+        title: t('渠道'),
+        dataIndex: 'channel_name',
+        render: (_, record) => (
+          <div className='cbm-account-cell'>
+            <Text strong>{record.channel_name}</Text>
+            <Text type='tertiary' size='small'>
+              #{record.channel_id} ·{' '}
+              {record.channel_type_name || record.channel_type} ·{' '}
+              {record.group || 'default'}
+            </Text>
+          </div>
+        ),
+      },
+      {
+        title: t('凭证'),
+        dataIndex: 'credential_index',
+        width: 92,
+        render: (value, record) => (
+          <Tag color={record.is_multi_key ? 'teal' : 'blue'}>
+            {record.is_multi_key ? `#${Number(value) + 1}` : t('单账号')}
+          </Tag>
+        ),
+      },
+      {
+        title: t('余额'),
+        dataIndex: 'balance',
+        width: 110,
+        render: (value) => <Text strong>{formatBalance(value)}</Text>,
+      },
+      {
+        title: t('成本倍率'),
+        dataIndex: 'ratio_summary',
+        width: 170,
+        render: (value) => <RatioSummaryView summary={value} t={t} />,
+      },
+      {
+        title: t('状态'),
+        dataIndex: 'status',
+        width: 120,
+        render: (status, record) => {
+          const meta = statusMeta(status, t);
+          return (
+            <Tooltip
+              content={record.last_error || record.disabled_reason || ''}
+            >
+              <Tag color={meta.color}>{meta.label}</Tag>
+            </Tooltip>
+          );
+        },
+      },
+      {
+        title: t('影响范围'),
+        dataIndex: 'affected_channels',
+        width: 190,
+        render: (value, record) => {
+          const labels =
+            Array.isArray(value) && value.length > 0
+              ? value
+              : [`${record.channel_name}(#${record.channel_id})`];
+          return (
+            <Tooltip content={labels.join(' / ')}>
+              <Text type='tertiary' ellipsis={{ showTooltip: false }}>
+                {labels.length > 1
+                  ? `${labels[0]} +${labels.length - 1}`
+                  : labels[0]}
+              </Text>
+            </Tooltip>
+          );
+        },
+      },
+      {
+        title: t('最近刷新'),
+        dataIndex: 'last_updated_time',
+        width: 160,
+        render: (value) => (
+          <Text type='tertiary'>{formatTimestamp(value)}</Text>
+        ),
+      },
+      {
+        title: t('操作'),
+        dataIndex: 'action',
+        width: 185,
+        render: (_, record) => (
+          <Space>
+            <Tooltip content={t('刷新单账号')}>
+              <Button
+                icon={<RefreshCw size={14} />}
+                size='small'
+                loading={
+                  refreshingMode ===
+                  `account-${record.channel_id}-${record.credential_index}`
+                }
+                onClick={() =>
+                  refreshMonitor(
+                    'balance',
+                    {
+                      channel_id: record.channel_id,
+                      credential_index: record.credential_index,
+                    },
+                    `account-${record.channel_id}-${record.credential_index}`,
+                  )
+                }
+              />
+            </Tooltip>
+            <Tooltip
+              content={record.key_enabled ? t('暂停账号') : t('恢复账号')}
+            >
+              <Button
+                icon={
+                  record.key_enabled ? <Pause size={14} /> : <Play size={14} />
+                }
+                size='small'
+                loading={
+                  refreshingMode ===
+                  `status-${record.channel_id}-${record.credential_index}`
+                }
+                onClick={() => updateAccountStatus(record, !record.key_enabled)}
+              />
+            </Tooltip>
+            <Tooltip content={t('查看影响渠道')}>
+              <Button
+                icon={<Eye size={14} />}
+                size='small'
+                onClick={() => {
+                  window.location.href = `/admin/channel-accounts?channel_id=${record.channel_id}`;
+                }}
+              />
+            </Tooltip>
+          </Space>
+        ),
+      },
+    ],
+    [fetchData, refreshingMode, t],
+  );
 
-  const channelColumns = useMemo(() => [
-    {
-      title: t('渠道'),
-      dataIndex: 'channel_name',
-      render: (_, record) => (
-        <div className='cbm-account-cell'>
-          <Text strong>{record.channel_name}</Text>
-          <Text type='tertiary' size='small'>
-            #{record.channel_id} · {record.channel_type_name || record.channel_type}
-          </Text>
-        </div>
-      ),
-    },
-    {
-      title: t('账号健康'),
-      dataIndex: 'account_total',
-      render: (_, record) => (
-        <Space wrap>
-          <Tag color='green'>{t('可用')} {record.enabled_accounts}</Tag>
-          <Tag color='orange'>{t('低余额')} {record.low_balance_accounts}</Tag>
-          <Tag color='red'>{t('耗尽')} {record.empty_accounts}</Tag>
-          <Tag color='grey'>{t('不支持')} {record.unsupported_accounts}</Tag>
-        </Space>
-      ),
-    },
-    {
-      title: t('成本倍率'),
-      dataIndex: 'ratio_summary',
-      width: 170,
-      render: (value) => <RatioSummaryView summary={value} t={t} />,
-    },
-    {
-      title: t('聚合状态'),
-      dataIndex: 'aggregate_status',
-      width: 120,
-      render: (status) => {
-        const meta = statusMeta(status, t);
-        return <Tag color={meta.color}>{meta.label}</Tag>;
+  const channelColumns = useMemo(
+    () => [
+      {
+        title: t('渠道'),
+        dataIndex: 'channel_name',
+        render: (_, record) => (
+          <div className='cbm-account-cell'>
+            <Text strong>{record.channel_name}</Text>
+            <Text type='tertiary' size='small'>
+              #{record.channel_id} ·{' '}
+              {record.channel_type_name || record.channel_type}
+            </Text>
+          </div>
+        ),
       },
-    },
-  ], [t]);
+      {
+        title: t('账号健康'),
+        dataIndex: 'account_total',
+        render: (_, record) => (
+          <Space wrap>
+            <Tag color='green'>
+              {t('可用')} {record.enabled_accounts}
+            </Tag>
+            <Tag color='orange'>
+              {t('低余额')} {record.low_balance_accounts}
+            </Tag>
+            <Tag color='red'>
+              {t('耗尽')} {record.empty_accounts}
+            </Tag>
+            <Tag color='grey'>
+              {t('不支持')} {record.unsupported_accounts}
+            </Tag>
+          </Space>
+        ),
+      },
+      {
+        title: t('成本倍率'),
+        dataIndex: 'ratio_summary',
+        width: 170,
+        render: (value) => <RatioSummaryView summary={value} t={t} />,
+      },
+      {
+        title: t('聚合状态'),
+        dataIndex: 'aggregate_status',
+        width: 120,
+        render: (status) => {
+          const meta = statusMeta(status, t);
+          return <Tag color={meta.color}>{meta.label}</Tag>;
+        },
+      },
+    ],
+    [t],
+  );
 
   return (
-    <div className='cbm-page'>
+    <div className={`cbm-page${isAdminVariant ? ' cbm-page-admin' : ''}`}>
       <div className='cbm-hero'>
         <div className='cbm-title-block'>
           <div className='cbm-title-icon'>
@@ -493,11 +543,40 @@ export default function ChannelBalanceMonitor() {
       </div>
 
       <div className='cbm-metric-grid'>
-        <MetricCard icon={CreditCard} label={t('账号总数')} value={summary.account_total || 0} detail={`${t('阈值')} ${formatBalance(settings.warning_threshold)}`} />
-        <MetricCard icon={AlertTriangle} label={t('低余额账号')} value={summary.low_balance_accounts || 0} detail={t('需要运营关注')} tone='orange' />
-        <MetricCard icon={ShieldAlert} label={t('耗尽账号')} value={summary.empty_accounts || 0} detail={`${t('受影响渠道')} ${summary.affected_channels || 0}`} tone='red' />
-        <MetricCard icon={Zap} label={t('成本倍率更新')} value={summary.ratio_auto_applied || 0} detail={`${t('冲突')} ${summary.ratio_conflicts || 0}`} tone='green' />
-        <MetricCard icon={Clock3} label={t('最后同步')} value={formatTimestamp(summary.last_sync_time)} detail={settings.enabled ? t('定时监控已开启') : t('定时监控未开启')} tone='blue' />
+        <MetricCard
+          icon={CreditCard}
+          label={t('账号总数')}
+          value={summary.account_total || 0}
+          detail={`${t('阈值')} ${formatBalance(settings.warning_threshold)}`}
+        />
+        <MetricCard
+          icon={AlertTriangle}
+          label={t('低余额账号')}
+          value={summary.low_balance_accounts || 0}
+          detail={t('需要运营关注')}
+          tone='orange'
+        />
+        <MetricCard
+          icon={ShieldAlert}
+          label={t('耗尽账号')}
+          value={summary.empty_accounts || 0}
+          detail={`${t('受影响渠道')} ${summary.affected_channels || 0}`}
+          tone='red'
+        />
+        <MetricCard
+          icon={Zap}
+          label={t('成本倍率更新')}
+          value={summary.ratio_auto_applied || 0}
+          detail={`${t('冲突')} ${summary.ratio_conflicts || 0}`}
+          tone='green'
+        />
+        <MetricCard
+          icon={Clock3}
+          label={t('最后同步')}
+          value={formatTimestamp(summary.last_sync_time)}
+          detail={settings.enabled ? t('定时监控已开启') : t('定时监控未开启')}
+          tone='blue'
+        />
       </div>
 
       <div className='cbm-grid'>
@@ -512,7 +591,9 @@ export default function ChannelBalanceMonitor() {
             loading={loading}
             columns={accountColumns}
             dataSource={data.accounts || []}
-            rowKey={(record) => `${record.channel_id}-${record.credential_index}-${record.account_id}`}
+            rowKey={(record) =>
+              `${record.channel_id}-${record.credential_index}-${record.account_id}`
+            }
             pagination={{ pageSize: 10 }}
             empty={<Empty description={t('暂无账号余额数据')} />}
           />
@@ -549,13 +630,24 @@ export default function ChannelBalanceMonitor() {
             return (
               <div className='cbm-event' key={event.id}>
                 <div className='cbm-event-icon'>
-                  {event.scope === 'ratio' ? <Route size={15} /> : <Layers size={15} />}
+                  {event.scope === 'ratio' ? (
+                    <Route size={15} />
+                  ) : (
+                    <Layers size={15} />
+                  )}
                 </div>
                 <div className='cbm-event-body'>
                   <Space wrap>
                     <Tag color={meta.color}>{meta.label}</Tag>
-                    <Text strong>{event.channel_name || event.model_name || event.field || t('系统事件')}</Text>
-                    {event.account_id && <Text type='tertiary'>{event.account_id}</Text>}
+                    <Text strong>
+                      {event.channel_name ||
+                        event.model_name ||
+                        event.field ||
+                        t('系统事件')}
+                    </Text>
+                    {event.account_id && (
+                      <Text type='tertiary'>{event.account_id}</Text>
+                    )}
                   </Space>
                   <Text type='tertiary' size='small'>
                     {formatTimestamp(event.created_time)}

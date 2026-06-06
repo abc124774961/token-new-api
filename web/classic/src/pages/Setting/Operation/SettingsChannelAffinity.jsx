@@ -59,6 +59,11 @@ import {
   cloneChannelAffinityTemplate,
 } from '../../../constants/channel-affinity-template.constants';
 import ParamOverrideEditorModal from '../../../components/table/channels/modals/ParamOverrideEditorModal';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  AdminPermissionButton,
+  useAdminActionPermission,
+} from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 const KEY_ENABLED = 'channel_affinity_setting.enabled';
 const KEY_SWITCH_ON_SUCCESS = 'channel_affinity_setting.switch_on_success';
@@ -224,6 +229,17 @@ const buildChannelAffinityRulePayload = ({
 
 export default function SettingsChannelAffinity(props) {
   const { t } = useTranslation();
+  const canManageRoutePolicyDanger = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.modelRoutePolicyDanger,
+  );
+  const routePolicyDangerPermissionDenied = t(
+    '没有路由策略高危操作权限，请联系模型管理员或超级管理员。',
+  );
+  const ensureRoutePolicyPermission = () => {
+    if (canManageRoutePolicyDanger) return true;
+    showWarning(routePolicyDangerPermissionDenied);
+    return false;
+  };
   const { Text } = Typography;
   const [loading, setLoading] = useState(false);
 
@@ -389,6 +405,10 @@ export default function SettingsChannelAffinity(props) {
   };
 
   const confirmClearAllCache = () => {
+    if (!ensureRoutePolicyPermission()) {
+      return;
+    }
+
     Modal.confirm({
       title: t('确认清空全部渠道亲和性缓存'),
       content: (
@@ -397,6 +417,10 @@ export default function SettingsChannelAffinity(props) {
         </div>
       ),
       onOk: async () => {
+        if (!ensureRoutePolicyPermission()) {
+          return;
+        }
+
         const res = await API.delete('/api/option/channel_affinity_cache', {
           params: { all: true },
         });
@@ -420,6 +444,10 @@ export default function SettingsChannelAffinity(props) {
       );
       return;
     }
+    if (!ensureRoutePolicyPermission()) {
+      return;
+    }
+
     Modal.confirm({
       title: t('确认清空该规则缓存'),
       content: (
@@ -428,6 +456,10 @@ export default function SettingsChannelAffinity(props) {
         </div>
       ),
       onOk: async () => {
+        if (!ensureRoutePolicyPermission()) {
+          return;
+        }
+
         const res = await API.delete('/api/option/channel_affinity_cache', {
           params: { rule_name: name },
         });
@@ -626,11 +658,13 @@ export default function SettingsChannelAffinity(props) {
       title: t('操作'),
       render: (_, record) => (
         <Space>
-          <Button
+          <AdminPermissionButton
             icon={<IconClose />}
             theme='borderless'
             type='warning'
             disabled={!record?.include_rule_name}
+            dangerPermission={ADMIN_PERMISSION_KEYS.modelRoutePolicyDanger}
+            fallbackTooltip={routePolicyDangerPermissionDenied}
             title={t('清空该规则缓存')}
             aria-label={t('清空该规则缓存')}
             onClick={() => confirmClearRuleCache(record)}
@@ -806,6 +840,10 @@ export default function SettingsChannelAffinity(props) {
   };
 
   async function onSubmit() {
+    if (!ensureRoutePolicyPermission()) {
+      return;
+    }
+
     const updateArray = compareObjects(inputs, inputsRow);
     if (!updateArray.length) return showWarning(t('你似乎并没有修改什么'));
 
@@ -1021,9 +1059,14 @@ export default function SettingsChannelAffinity(props) {
               <Button icon={<IconPlus />} onClick={openAddModal}>
                 {t('新增规则')}
               </Button>
-              <Button theme='solid' onClick={onSubmit}>
+              <AdminPermissionButton
+                theme='solid'
+                dangerPermission={ADMIN_PERMISSION_KEYS.modelRoutePolicyDanger}
+                fallbackTooltip={routePolicyDangerPermissionDenied}
+                onClick={onSubmit}
+              >
                 {t('保存')}
-              </Button>
+              </AdminPermissionButton>
               <Button
                 icon={<IconRefresh />}
                 loading={cacheLoading}
@@ -1031,9 +1074,14 @@ export default function SettingsChannelAffinity(props) {
               >
                 {t('刷新缓存统计')}
               </Button>
-              <Button type='danger' onClick={confirmClearAllCache}>
+              <AdminPermissionButton
+                type='danger'
+                dangerPermission={ADMIN_PERMISSION_KEYS.modelRoutePolicyDanger}
+                fallbackTooltip={routePolicyDangerPermissionDenied}
+                onClick={confirmClearAllCache}
+              >
                 {t('清空全部缓存')}
-              </Button>
+              </AdminPermissionButton>
             </Space>
 
             {editMode === 'visual' ? (

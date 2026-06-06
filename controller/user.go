@@ -104,17 +104,19 @@ func setupLogin(user *model.User, c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserSessionSaveFailed)
 		return
 	}
+	responseData := map[string]any{
+		"id":           user.Id,
+		"username":     user.Username,
+		"display_name": user.DisplayName,
+		"role":         user.Role,
+		"status":       user.Status,
+		"group":        user.Group,
+	}
+	appendAdminPermissionUserFields(responseData, user.Id, user.Role)
 	c.JSON(http.StatusOK, gin.H{
 		"message": "",
 		"success": true,
-		"data": map[string]any{
-			"id":           user.Id,
-			"username":     user.Username,
-			"display_name": user.DisplayName,
-			"role":         user.Role,
-			"status":       user.Status,
-			"group":        user.Group,
-		},
+		"data":    responseData,
 	})
 }
 
@@ -663,6 +665,7 @@ func GetSelf(c *gin.Context) {
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
 		"permissions":       permissions,                // 新增权限字段
 	}
+	appendAdminPermissionUserFields(responseData, user.Id, user.Role)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

@@ -104,114 +104,101 @@ const PasswordResetConfirm = () => {
   }
 
   return (
-    <div className='relative overflow-hidden bg-gray-100 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8'>
-      {/* 背景模糊晕染球 */}
-      <div
-        className='blur-ball blur-ball-indigo'
-        style={{ top: '-80px', right: '-80px', transform: 'none' }}
-      />
-      <div
-        className='blur-ball blur-ball-teal'
-        style={{ top: '50%', left: '-120px' }}
-      />
-      <div className='w-full max-w-sm mt-[60px]'>
-        <div className='flex flex-col items-center'>
-          <div className='w-full max-w-md'>
-            <div className='flex items-center justify-center mb-6 gap-2'>
-              <img src={logo} alt='Logo' className='h-10 rounded-full' />
-              <Title heading={3} className='!text-gray-800'>
-                {systemName}
-              </Title>
-            </div>
+    <div className='ct-auth-page ct-auth-simple-page'>
+      <div className='ct-auth-bg-grid' aria-hidden='true' />
+      <div className='ct-auth-bg-ribbon' aria-hidden='true' />
 
-            <Card className='border-0 !rounded-2xl overflow-hidden'>
-              <div className='flex justify-center pt-6 pb-2'>
-                <Title heading={3} className='text-gray-800 dark:text-gray-200'>
+      <div className='ct-auth-simple-shell'>
+        <Card className='ct-auth-card ct-auth-simple-card'>
+          <div className='ct-auth-card-inner'>
+            <div className='ct-auth-card-header'>
+              <div className='ct-auth-logo-mark'>
+                <img src={logo} alt='Logo' />
+              </div>
+              <div className='ct-auth-card-heading'>
+                <Title heading={3} className='ct-auth-card-title'>
                   {t('密码重置确认')}
                 </Title>
+                <Text className='ct-auth-card-subtitle'>{systemName}</Text>
               </div>
-              <div className='px-2 py-8'>
-                {!isValidResetLink && (
-                  <Banner
-                    type='danger'
-                    description={t('无效的重置链接，请重新发起密码重置请求')}
-                    className='mb-4 !rounded-lg'
-                    closeIcon={null}
-                  />
-                )}
-                <Form
-                  getFormApi={(api) => setFormApi(api)}
-                  initValues={{
-                    email: email || '',
-                    newPassword: newPassword || '',
-                  }}
-                  className='space-y-4'
-                >
-                  <Form.Input
-                    field='email'
-                    label={t('邮箱')}
-                    name='email'
-                    disabled={true}
-                    prefix={<IconMail />}
-                    placeholder={email ? '' : t('等待获取邮箱信息...')}
-                  />
+            </div>
 
-                  {newPassword && (
-                    <Form.Input
-                      field='newPassword'
-                      label={t('新密码')}
-                      name='newPassword'
-                      disabled={true}
-                      prefix={<IconLock />}
-                      suffix={
-                        <Button
-                          icon={<IconCopy />}
-                          type='tertiary'
-                          theme='borderless'
-                          onClick={async () => {
-                            await copy(newPassword);
-                            showNotice(
-                              `${t('密码已复制到剪贴板：')} ${newPassword}`,
-                            );
-                          }}
-                        >
-                          {t('复制')}
-                        </Button>
-                      }
-                    />
-                  )}
+            {!isValidResetLink && (
+              <Banner
+                type='danger'
+                description={t('无效的重置链接，请重新发起密码重置请求')}
+                className='ct-auth-banner'
+                closeIcon={null}
+              />
+            )}
 
-                  <div className='space-y-2 pt-2'>
+            <Form
+              getFormApi={(api) => setFormApi(api)}
+              initValues={{
+                email: email || '',
+                newPassword: newPassword || '',
+              }}
+              className='ct-auth-form'
+            >
+              <Form.Input
+                className='ct-auth-form-field'
+                field='email'
+                label={t('邮箱')}
+                name='email'
+                disabled={true}
+                prefix={<IconMail />}
+                placeholder={email ? '' : t('等待获取邮箱信息...')}
+              />
+
+              {newPassword && (
+                <Form.Input
+                  className='ct-auth-form-field'
+                  field='newPassword'
+                  label={t('新密码')}
+                  name='newPassword'
+                  disabled={true}
+                  prefix={<IconLock />}
+                  suffix={
                     <Button
-                      theme='solid'
-                      className='w-full !rounded-full'
-                      type='primary'
-                      htmlType='submit'
-                      onClick={handleSubmit}
-                      loading={loading}
-                      disabled={
-                        disableButton || newPassword || !isValidResetLink
-                      }
+                      className='ct-auth-inline-action'
+                      icon={<IconCopy />}
+                      type='tertiary'
+                      theme='borderless'
+                      onClick={async () => {
+                        await copy(newPassword);
+                        showNotice(`${t('密码已复制到剪贴板：')} ${newPassword}`);
+                      }}
                     >
-                      {newPassword ? t('密码重置完成') : t('确认重置密码')}
+                      {t('复制')}
                     </Button>
-                  </div>
-                </Form>
+                  }
+                />
+              )}
 
-                <div className='mt-6 text-center text-sm'>
-                  <Text>
-                    <Link
-                      to='/login'
-                      className='text-blue-600 hover:text-blue-800 font-medium'
-                    >
-                      {t('返回登录')}
-                    </Link>
-                  </Text>
-                </div>
+              <div className='ct-auth-actions'>
+                <Button
+                  theme='solid'
+                  className='ct-auth-button ct-auth-button-primary'
+                  type='primary'
+                  htmlType='submit'
+                  onClick={handleSubmit}
+                  loading={loading}
+                  disabled={disableButton || newPassword || !isValidResetLink}
+                >
+                  {newPassword ? t('密码重置完成') : t('确认重置密码')}
+                </Button>
               </div>
-            </Card>
+            </Form>
+
+            <div className='ct-auth-register-line'>
+              <Text>
+                <Link to='/login' className='ct-auth-link'>
+                  {t('返回登录')}
+                </Link>
+              </Text>
+            </div>
           </div>
-        </div>
+        </Card>
       </div>
     </div>
   );

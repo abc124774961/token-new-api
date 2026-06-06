@@ -6,11 +6,18 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 
 	"github.com/gin-gonic/gin"
 )
+
+func countHistoryLogsBeforeTimestamp(targetTimestamp int64) (int64, error) {
+	var count int64
+	err := model.LOG_DB.Model(&model.Log{}).Where("created_at < ?", targetTimestamp).Count(&count).Error
+	return count, err
+}
 
 func GetAllLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
@@ -23,7 +30,14 @@ func GetAllLogs(c *gin.Context) {
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")
 	requestId := c.Query("request_id")
-	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId)
+	adminAuditFilters := model.AdminAuditLogFilters{
+		Permission:   strings.TrimSpace(c.Query("audit_permission")),
+		Source:       strings.TrimSpace(c.Query("audit_source")),
+		Result:       strings.TrimSpace(c.Query("audit_result")),
+		Operator:     strings.TrimSpace(c.Query("audit_operator")),
+		TargetUserId: strings.TrimSpace(c.Query("audit_target_user_id")),
+	}
+	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, adminAuditFilters)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -352,10 +366,22 @@ func DeleteHistoryLogs(c *gin.Context) {
 		})
 		return
 	}
-	count, err := model.DeleteOldLog(c.Request.Context(), targetTimestamp, 100)
+	const batchLimit = 100
+	beforeCount, beforeErr := countHistoryLogsBeforeTimestamp(targetTimestamp)
+	count, err := model.DeleteOldLog(c.Request.Context(), targetTimestamp, batchLimit)
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	afterCount, afterErr := countHistoryLogsBeforeTimestamp(targetTimestamp)
+	middleware.SetAdminAuditSummary(c, "operation", "delete_history_logs")
+	middleware.SetAdminAuditSummary(c, "target_timestamp", targetTimestamp)
+	middleware.SetAdminAuditSummary(c, "batch_limit", batchLimit)
+	middleware.SetAdminAuditSummary(c, "matched_count_before", beforeCount)
+	middleware.SetAdminAuditSummary(c, "deleted_count", count)
+	middleware.SetAdminAuditSummary(c, "remaining_count_after", afterCount)
+	if beforeErr != nil || afterErr != nil {
+		middleware.SetAdminAuditSummary(c, "snapshot_error", true)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

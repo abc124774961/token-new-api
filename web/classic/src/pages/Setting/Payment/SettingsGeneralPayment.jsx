@@ -18,18 +18,35 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import { Col, Form, Row, Spin } from '@douyinfe/semi-ui';
 import {
   API,
   removeTrailingSlash,
   showError,
   showSuccess,
+  showWarning,
   verifyJSON,
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  AdminPermissionButton,
+  useAdminActionPermission,
+} from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 export default function SettingsGeneralPayment(props) {
   const { t } = useTranslation();
+  const canManageSystemSettings = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.systemSettingsUpdate,
+  );
+  const systemSettingsPermissionDenied = t(
+    '没有系统设置修改权限，请联系超级管理员。',
+  );
+  const ensureSystemSettingsPermission = () => {
+    if (canManageSystemSettings) return true;
+    showWarning(systemSettingsPermissionDenied);
+    return false;
+  };
   const sectionTitle = props.hideSectionTitle ? undefined : t('通用设置');
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState({
@@ -64,6 +81,10 @@ export default function SettingsGeneralPayment(props) {
   };
 
   const submitGeneralSettings = async () => {
+    if (!ensureSystemSettingsPermission()) {
+      return;
+    }
+
     if (
       originInputs.TopupGroupRatio !== inputs.TopupGroupRatio &&
       !verifyJSON(inputs.TopupGroupRatio)
@@ -238,9 +259,14 @@ export default function SettingsGeneralPayment(props) {
               />
             </Col>
           </Row>
-          <Button onClick={submitGeneralSettings} style={{ marginTop: 16 }}>
+          <AdminPermissionButton
+            requiredPermission={ADMIN_PERMISSION_KEYS.systemSettingsUpdate}
+            fallbackTooltip={systemSettingsPermissionDenied}
+            onClick={submitGeneralSettings}
+            style={{ marginTop: 16 }}
+          >
             {t('保存通用设置')}
-          </Button>
+          </AdminPermissionButton>
         </Form.Section>
       </Form>
     </Spin>

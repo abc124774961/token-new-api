@@ -20,9 +20,9 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import ModelGatewayMonitor from '../../components/dashboard/model-gateway/ModelGatewayMonitor';
 
-const ModelGateway = () => (
+const ModelGateway = ({ variant = 'default' }) => (
   <div className='ct-console-content-wrap'>
-    <ModelGatewayMonitor />
+    <ModelGatewayMonitor variant={variant} />
   </div>
 );
 

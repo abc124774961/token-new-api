@@ -18,18 +18,35 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { Banner, Button, Form, Row, Col, Spin } from '@douyinfe/semi-ui';
+import { Banner, Form, Row, Col, Spin } from '@douyinfe/semi-ui';
 import {
   API,
   removeTrailingSlash,
   showError,
   showSuccess,
+  showWarning,
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
 import { BookOpen, TriangleAlert } from 'lucide-react';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  AdminPermissionButton,
+  useAdminActionPermission,
+} from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 export default function SettingsPaymentGateway(props) {
   const { t } = useTranslation();
+  const canManageSystemSettings = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.systemSettingsUpdate,
+  );
+  const systemSettingsPermissionDenied = t(
+    '没有系统设置修改权限，请联系超级管理员。',
+  );
+  const ensureSystemSettingsPermission = () => {
+    if (canManageSystemSettings) return true;
+    showWarning(systemSettingsPermissionDenied);
+    return false;
+  };
   const sectionTitle = props.hideSectionTitle ? undefined : t('Stripe 设置');
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState({
@@ -73,6 +90,10 @@ export default function SettingsPaymentGateway(props) {
   };
 
   const submitStripeSetting = async () => {
+    if (!ensureSystemSettingsPermission()) {
+      return;
+    }
+
     if (props.options.ServerAddress === '') {
       showError(t('请先填写服务器地址'));
       return;
@@ -258,7 +279,13 @@ export default function SettingsPaymentGateway(props) {
               />
             </Col>
           </Row>
-          <Button onClick={submitStripeSetting}>{t('更新 Stripe 设置')}</Button>
+          <AdminPermissionButton
+            requiredPermission={ADMIN_PERMISSION_KEYS.systemSettingsUpdate}
+            fallbackTooltip={systemSettingsPermissionDenied}
+            onClick={submitStripeSetting}
+          >
+            {t('更新 Stripe 设置')}
+          </AdminPermissionButton>
         </Form.Section>
       </Form>
     </Spin>

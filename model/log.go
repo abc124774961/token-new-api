@@ -116,6 +116,82 @@ func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo m
 	}
 }
 
+type AdminAuditLogParams struct {
+	Permission string
+	Result     string
+	Method     string
+	Route      string
+	Path       string
+	RequestId  string
+	StatusCode int
+	DurationMs int64
+	MinRole    int
+	Role       int
+	Target     map[string]string
+	QueryKeys  []string
+	Summary    map[string]interface{}
+	Source     string
+}
+
+type AdminAuditLogFilters struct {
+	Permission   string
+	Source       string
+	Result       string
+	Operator     string
+	TargetUserId string
+}
+
+func RecordAdminAuditLog(c *gin.Context, params AdminAuditLogParams) {
+	if LOG_DB == nil {
+		common.SysLog("failed to record admin audit log: log db is nil")
+		return
+	}
+	userId := c.GetInt("id")
+	if userId <= 0 {
+		return
+	}
+	username := c.GetString("username")
+	if username == "" {
+		username, _ = GetUsernameById(userId, false)
+	}
+	adminInfo := map[string]interface{}{
+		"permission":  params.Permission,
+		"result":      params.Result,
+		"method":      params.Method,
+		"route":       params.Route,
+		"path":        params.Path,
+		"status_code": params.StatusCode,
+		"duration_ms": params.DurationMs,
+		"min_role":    params.MinRole,
+		"role":        params.Role,
+		"operator_id": userId,
+		"operator":    username,
+		"request_id":  params.RequestId,
+		"target":      params.Target,
+		"query_keys":  params.QueryKeys,
+	}
+	if params.Source != "" {
+		adminInfo["source"] = params.Source
+	}
+	if len(params.Summary) > 0 {
+		adminInfo["summary"] = params.Summary
+	}
+	log := &Log{
+		UserId:    userId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypeManage,
+		Content:   fmt.Sprintf("管理员操作: %s %s %s", params.Permission, params.Method, params.Route),
+		Group:     c.GetString("group"),
+		Ip:        c.ClientIP(),
+		RequestId: params.RequestId,
+		Other:     common.MapToJsonStr(map[string]interface{}{"admin_info": adminInfo}),
+	}
+	if err := LOG_DB.Create(log).Error; err != nil {
+		common.SysLog("failed to record admin audit log: " + err.Error())
+	}
+}
+
 func RecordTopupLog(userId int, content string, callerIp string, paymentMethod string, callbackPaymentMethod string) {
 	username, _ := GetUsernameById(userId, false)
 	adminInfo := map[string]interface{}{
@@ -345,7 +421,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string) (logs []*Log, total int64, err error) {
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, adminAuditFilters AdminAuditLogFilters) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
@@ -377,6 +453,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if group != "" {
 		tx = tx.Where("logs."+logGroupCol+" = ?", group)
 	}
+	tx = applyAdminAuditLogFilters(tx, adminAuditFilters)
 	err = tx.Model(&Log{}).Count(&total).Error
 	if err != nil {
 		return nil, 0, err
@@ -427,6 +504,49 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	}
 
 	return logs, total, err
+}
+
+func applyAdminAuditLogFilters(tx *gorm.DB, filters AdminAuditLogFilters) *gorm.DB {
+	if tx == nil {
+		return tx
+	}
+	if filters.Permission != "" {
+		tx = tx.Where("logs.other LIKE ? ESCAPE '!'", adminAuditJSONFieldLikePattern("permission", filters.Permission))
+	}
+	if filters.Source != "" {
+		tx = tx.Where("logs.other LIKE ? ESCAPE '!'", adminAuditJSONFieldLikePattern("source", filters.Source))
+	}
+	if filters.Result != "" {
+		tx = tx.Where("logs.other LIKE ? ESCAPE '!'", adminAuditJSONFieldLikePattern("result", filters.Result))
+	}
+	if filters.Operator != "" {
+		tx = tx.Where("logs.username = ?", filters.Operator)
+	}
+	if filters.TargetUserId != "" {
+		stringPattern := adminAuditJSONFieldLikePattern("target_user_id", filters.TargetUserId)
+		numberPattern := adminAuditJSONNumberFieldLikePattern("target_user_id", filters.TargetUserId)
+		tx = tx.Where("(logs.other LIKE ? ESCAPE '!' OR logs.other LIKE ? ESCAPE '!')", stringPattern, numberPattern)
+	}
+	return tx
+}
+
+func adminAuditJSONFieldLikePattern(key string, value string) string {
+	valueBytes, err := common.Marshal(value)
+	if err != nil {
+		return "%"
+	}
+	return "%\"" + escapeLogLikeLiteral(key) + "\":" + escapeLogLikeLiteral(string(valueBytes)) + "%"
+}
+
+func adminAuditJSONNumberFieldLikePattern(key string, value string) string {
+	return "%\"" + escapeLogLikeLiteral(key) + "\":" + escapeLogLikeLiteral(strings.TrimSpace(value)) + "%"
+}
+
+func escapeLogLikeLiteral(value string) string {
+	value = strings.ReplaceAll(value, "!", "!!")
+	value = strings.ReplaceAll(value, "%", "!%")
+	value = strings.ReplaceAll(value, "_", "!_")
+	return value
 }
 
 const logSearchCountLimit = 10000

@@ -81,10 +81,16 @@ import {
   showError,
   showInfo,
   showSuccess,
+  showWarning,
   timestamp2string,
 } from '../../helpers';
 import { renderQuota } from '../../helpers/render';
 import ProxyEditorModal from '../../components/model-gateway/ProxyEditorModal';
+import { ADMIN_PERMISSION_KEYS } from '../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  AdminPermissionButton,
+  useAdminActionPermission,
+} from '../../apps/admin-console/permissions/AdminPermissionAction';
 import './channel-account.css';
 
 const { Text } = Typography;
@@ -500,7 +506,9 @@ function accountCredentialTypeLabel(value, t) {
 }
 
 function normalizeAccountPlanType(value) {
-  return String(value || '').trim().toLowerCase();
+  return String(value || '')
+    .trim()
+    .toLowerCase();
 }
 
 function accountPlanTypeLabel(value) {
@@ -1348,7 +1356,13 @@ function summarizeAccountCapabilityError(message, t) {
   return raw;
 }
 
-function ProxyCell({ record, t, onOpenProxy, onOpenProxyEdit }) {
+function ProxyCell({
+  record,
+  t,
+  onOpenProxy,
+  onOpenProxyEdit,
+  accountDangerPermissionDenied,
+}) {
   const proxy = record?.proxy;
   if (!proxy) {
     return (
@@ -1356,7 +1370,9 @@ function ProxyCell({ record, t, onOpenProxy, onOpenProxyEdit }) {
         <Tag color='grey' type='light' shape='circle'>
           {t('未绑定代理')}
         </Tag>
-        <Button
+        <AdminPermissionButton
+          dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+          fallbackTooltip={accountDangerPermissionDenied}
           size='small'
           type='tertiary'
           theme='borderless'
@@ -1408,7 +1424,9 @@ function ProxyCell({ record, t, onOpenProxy, onOpenProxyEdit }) {
           {proxyAddress(proxy) || '--'}
         </Text>
       </button>
-      <Button
+      <AdminPermissionButton
+        dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+        fallbackTooltip={accountDangerPermissionDenied}
         size='small'
         type='tertiary'
         theme='borderless'
@@ -2411,10 +2429,7 @@ function CodexEnvironmentCell({ record, t }) {
           <strong>
             {codexEnvironmentLabel(environment, environmentID, t)}
           </strong>
-          <Tag
-            size='small'
-            color={codexEnvironmentSourceColor(environment)}
-          >
+          <Tag size='small' color={codexEnvironmentSourceColor(environment)}>
             {codexEnvironmentSourceLabel(environment, t)}
           </Tag>
           {!environment ||
@@ -2715,6 +2730,8 @@ function buildColumns(
   statusLoadingKey,
   testingAccountKey,
   capabilityLoadingKey,
+  canManageAccountDanger,
+  accountDangerPermissionDenied,
 ) {
   return [
     {
@@ -2790,6 +2807,7 @@ function buildColumns(
           t={t}
           onOpenProxy={onOpenProxy}
           onOpenProxyEdit={onOpenProxyEdit}
+          accountDangerPermissionDenied={accountDangerPermissionDenied}
         />
       ),
     },
@@ -2875,8 +2893,11 @@ function buildColumns(
                   : t('启用后该账号可重新参与智能调度')
               }
               onConfirm={() => onToggleStatus(record)}
+              disabled={!canManageAccountDanger}
             >
-              <Button
+              <AdminPermissionButton
+                dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                fallbackTooltip={accountDangerPermissionDenied}
                 size='small'
                 type={action === 'disable' ? 'warning' : 'primary'}
                 theme={action === 'disable' ? 'light' : 'solid'}
@@ -2890,7 +2911,7 @@ function buildColumns(
                 }
               >
                 {action === 'disable' ? t('禁用账号') : t('启用账号')}
-              </Button>
+              </AdminPermissionButton>
             </Popconfirm>
             <Tooltip content={t('测试账号')}>
               <Button
@@ -2928,7 +2949,9 @@ function buildColumns(
               />
             </Tooltip>
             <Tooltip content={t('编辑账号')}>
-              <Button
+              <AdminPermissionButton
+                dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                fallbackTooltip={accountDangerPermissionDenied}
                 size='small'
                 type='tertiary'
                 theme='borderless'
@@ -2942,8 +2965,11 @@ function buildColumns(
               title={t('移入失效账号池？')}
               content={t('失效账号会从运行账号移除，可人工恢复')}
               onConfirm={() => onArchiveInvalid(record)}
+              disabled={!canManageAccountDanger}
             >
-              <Button
+              <AdminPermissionButton
+                dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                fallbackTooltip={accountDangerPermissionDenied}
                 size='small'
                 type='warning'
                 theme='borderless'
@@ -2956,8 +2982,11 @@ function buildColumns(
               title={t('移入废弃账号池？')}
               content={t('废弃账号会从运行账号移除并作为不再调度的归档')}
               onConfirm={() => onArchiveDiscarded(record)}
+              disabled={!canManageAccountDanger}
             >
-              <Button
+              <AdminPermissionButton
+                dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                fallbackTooltip={accountDangerPermissionDenied}
                 size='small'
                 type='danger'
                 theme='borderless'
@@ -2970,8 +2999,11 @@ function buildColumns(
               title={t('确定删除该账号？')}
               content={t('删除后该凭证将从渠道中移除，此操作不可撤销')}
               onConfirm={() => onDeleteAccount(record)}
+              disabled={!canManageAccountDanger}
             >
-              <Button
+              <AdminPermissionButton
+                dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                fallbackTooltip={accountDangerPermissionDenied}
                 size='small'
                 type='danger'
                 theme='borderless'
@@ -2987,7 +3019,14 @@ function buildColumns(
   ];
 }
 
-function buildStatsColumns(t, onToggleStatus, onOpenDetail, statusLoadingKey) {
+function buildStatsColumns(
+  t,
+  onToggleStatus,
+  onOpenDetail,
+  statusLoadingKey,
+  canManageAccountDanger,
+  accountDangerPermissionDenied,
+) {
   return [
     {
       title: t('状态'),
@@ -3025,7 +3064,9 @@ function buildStatsColumns(t, onToggleStatus, onOpenDetail, statusLoadingKey) {
       title: t('账号类型'),
       dataIndex: 'account_identity',
       width: 185,
-      render: (_, record) => <AccountTypeTags record={record} t={t} showBrand />,
+      render: (_, record) => (
+        <AccountTypeTags record={record} t={t} showBrand />
+      ),
     },
     {
       title: t('调度'),
@@ -3108,8 +3149,11 @@ function buildStatsColumns(t, onToggleStatus, onOpenDetail, statusLoadingKey) {
                   : t('启用后该账号可重新参与智能调度')
               }
               onConfirm={() => onToggleStatus(record)}
+              disabled={!canManageAccountDanger}
             >
-              <Button
+              <AdminPermissionButton
+                dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                fallbackTooltip={accountDangerPermissionDenied}
                 size='small'
                 type={action === 'disable' ? 'warning' : 'primary'}
                 theme='light'
@@ -3123,7 +3167,7 @@ function buildStatsColumns(t, onToggleStatus, onOpenDetail, statusLoadingKey) {
                 }
               >
                 {action === 'disable' ? t('禁用') : t('启用')}
-              </Button>
+              </AdminPermissionButton>
             </Popconfirm>
             <Button
               size='small'
@@ -3148,6 +3192,8 @@ function buildPoolColumns(
   onReauthorize,
   onDiscard,
   onDelete,
+  canManageAccountDanger,
+  accountDangerPermissionDenied,
 ) {
   return [
     {
@@ -3342,36 +3388,45 @@ function buildPoolColumns(
                   '系统会先恢复账号并提交自动授权任务，成功写回后自动启用该账号',
                 )}
                 onConfirm={() => onReauthorize(record)}
+                disabled={!canManageAccountDanger}
               >
-                <Button
+                <AdminPermissionButton
+                  dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                  fallbackTooltip={accountDangerPermissionDenied}
                   size='small'
                   type='primary'
                   theme='solid'
                   icon={<PlugZap size={14} />}
                 >
                   {t('重新授权')}
-                </Button>
+                </AdminPermissionButton>
               </Popconfirm>
               <Popconfirm
                 title={t('恢复账号？')}
                 content={t('恢复后账号默认禁用，需要确认后再启用调度')}
                 onConfirm={() => onRestore(record)}
+                disabled={!canManageAccountDanger}
               >
-                <Button
+                <AdminPermissionButton
+                  dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                  fallbackTooltip={accountDangerPermissionDenied}
                   size='small'
                   type='primary'
                   theme='light'
                   icon={<RefreshCw size={14} />}
                 >
                   {t('恢复')}
-                </Button>
+                </AdminPermissionButton>
               </Popconfirm>
               <Popconfirm
                 title={t('移入废弃账号池？')}
                 content={t('废弃后仍保留归档信息，但不再作为可恢复账号处理')}
                 onConfirm={() => onDiscard(record)}
+                disabled={!canManageAccountDanger}
               >
-                <Button
+                <AdminPermissionButton
+                  dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                  fallbackTooltip={accountDangerPermissionDenied}
                   size='small'
                   type='warning'
                   theme='borderless'
@@ -3385,8 +3440,11 @@ function buildPoolColumns(
             title={t('删除归档记录？')}
             content={t('此操作只删除归档池记录，不会恢复账号')}
             onConfirm={() => onDelete(record)}
+            disabled={!canManageAccountDanger}
           >
-            <Button
+            <AdminPermissionButton
+              dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+              fallbackTooltip={accountDangerPermissionDenied}
               size='small'
               type='danger'
               theme='borderless'
@@ -4036,8 +4094,20 @@ function AccountDetailSideSheet({ visible, record, onClose, onReload, t }) {
   );
 }
 
-function ChannelAccount() {
+function ChannelAccount({ variant = 'default' }) {
   const { t } = useTranslation();
+  const isAdminVariant = variant === 'admin';
+  const canManageAccountDanger = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.channelAccountDanger,
+  );
+  const accountDangerPermissionDenied = t(
+    '没有账号池高危操作权限，请联系渠道管理员或超级管理员。',
+  );
+  const ensureAccountDangerPermission = useCallback(() => {
+    if (canManageAccountDanger) return true;
+    showWarning(accountDangerPermissionDenied);
+    return false;
+  }, [accountDangerPermissionDenied, canManageAccountDanger]);
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -4053,8 +4123,7 @@ function ChannelAccount() {
   const [testingAccountKey, setTestingAccountKey] = useState('');
   const [capabilityLoadingKey, setCapabilityLoadingKey] = useState('');
   const [capabilityBatchLoading, setCapabilityBatchLoading] = useState(false);
-  const [authRecoverySyncLoading, setAuthRecoverySyncLoading] =
-    useState(false);
+  const [authRecoverySyncLoading, setAuthRecoverySyncLoading] = useState(false);
   const [batchLoading, setBatchLoading] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [keyword, setKeyword] = useState('');
@@ -4307,6 +4376,7 @@ function ChannelAccount() {
 
   const toggleAccountStatus = useCallback(
     async (record) => {
+      if (!ensureAccountDangerPermission()) return;
       const enabled = !record?.key_enabled;
       const loadingKey = `${record.channel_id}-${record.credential_index}`;
       setStatusLoadingKey(loadingKey);
@@ -4338,11 +4408,12 @@ function ChannelAccount() {
         setStatusLoadingKey('');
       }
     },
-    [loadAccounts, t],
+    [ensureAccountDangerPermission, loadAccounts, t],
   );
 
   const batchUpdateAccountStatus = useCallback(
     async (enabled) => {
+      if (!ensureAccountDangerPermission()) return;
       if (selectedTargets.length === 0) {
         showError(t('请先选择账号'));
         return;
@@ -4388,7 +4459,7 @@ function ChannelAccount() {
         setBatchLoading(false);
       }
     },
-    [loadAccounts, selectedTargets, t],
+    [ensureAccountDangerPermission, loadAccounts, selectedTargets, t],
   );
 
   const testAccount = useCallback(
@@ -4551,12 +4622,16 @@ function ChannelAccount() {
   }, [loadAccounts, scopedChannelID, t]);
 
   const syncAuthRecoveryAccounts = useCallback(async () => {
+    if (!ensureAccountDangerPermission()) return;
     setAuthRecoverySyncLoading(true);
     try {
-      const response = await API.post('/api/channel/accounts/auth-recovery/sync', {
-        channel_id: scopedChannelID || undefined,
-        limit: 500,
-      });
+      const response = await API.post(
+        '/api/channel/accounts/auth-recovery/sync',
+        {
+          channel_id: scopedChannelID || undefined,
+          limit: 500,
+        },
+      );
       if (response?.data?.success === false) {
         throw new Error(response?.data?.message || t('自动授权同步失败'));
       }
@@ -4582,17 +4657,16 @@ function ChannelAccount() {
       }
     } catch (err) {
       const message =
-        err?.response?.data?.message ||
-        err?.message ||
-        t('自动授权同步失败');
+        err?.response?.data?.message || err?.message || t('自动授权同步失败');
       showError(message);
     } finally {
       setAuthRecoverySyncLoading(false);
     }
-  }, [loadAccounts, scopedChannelID, t]);
+  }, [ensureAccountDangerPermission, loadAccounts, scopedChannelID, t]);
 
   const deleteAccounts = useCallback(
     async (targets) => {
+      if (!ensureAccountDangerPermission()) return;
       const normalizedTargets = (targets || [])
         .map((target) => ({
           channel_id: Number(target.channel_id || 0),
@@ -4644,7 +4718,7 @@ function ChannelAccount() {
         setDeleteLoading(false);
       }
     },
-    [loadAccounts, t],
+    [ensureAccountDangerPermission, loadAccounts, t],
   );
 
   const deleteSingleAccount = useCallback(
@@ -4664,6 +4738,7 @@ function ChannelAccount() {
 
   const archiveAccounts = useCallback(
     async (targets, pool) => {
+      if (!ensureAccountDangerPermission()) return;
       const normalizedTargets = (targets || [])
         .map((target) => ({
           channel_id: Number(target.channel_id || 0),
@@ -4713,7 +4788,7 @@ function ChannelAccount() {
         setDeleteLoading(false);
       }
     },
-    [loadAccounts, t],
+    [ensureAccountDangerPermission, loadAccounts, t],
   );
 
   const archiveSingleAccount = useCallback(
@@ -4737,6 +4812,7 @@ function ChannelAccount() {
 
   const restorePoolAccount = useCallback(
     async (record) => {
+      if (!ensureAccountDangerPermission()) return;
       try {
         const response = await API.post(
           `/api/channel/account-pools/invalid/${record.id}/restore`,
@@ -4753,11 +4829,12 @@ function ChannelAccount() {
         showError(message);
       }
     },
-    [loadAccounts, t],
+    [ensureAccountDangerPermission, loadAccounts, t],
   );
 
   const reauthorizePoolAccount = useCallback(
     async (record) => {
+      if (!ensureAccountDangerPermission()) return;
       try {
         const response = await API.post(
           `/api/channel/account-pools/invalid/${record.id}/reauthorize`,
@@ -4780,11 +4857,12 @@ function ChannelAccount() {
         showError(message);
       }
     },
-    [loadAccounts, t],
+    [ensureAccountDangerPermission, loadAccounts, t],
   );
 
   const discardPoolAccount = useCallback(
     async (record) => {
+      if (!ensureAccountDangerPermission()) return;
       try {
         const response = await API.post(
           `/api/channel/account-pools/invalid/${record.id}/discard`,
@@ -4800,11 +4878,12 @@ function ChannelAccount() {
         showError(message);
       }
     },
-    [loadAccounts, t],
+    [ensureAccountDangerPermission, loadAccounts, t],
   );
 
   const deletePoolAccount = useCallback(
     async (record) => {
+      if (!ensureAccountDangerPermission()) return;
       try {
         const pool = poolView === 'discarded' ? 'discarded' : 'invalid';
         const response = await API.delete(
@@ -4821,7 +4900,7 @@ function ChannelAccount() {
         showError(message);
       }
     },
-    [loadAccounts, poolView, t],
+    [ensureAccountDangerPermission, loadAccounts, poolView, t],
   );
 
   const resetImportModal = useCallback(() => {
@@ -4889,6 +4968,7 @@ function ChannelAccount() {
   }, []);
 
   const importAccounts = useCallback(async () => {
+    if (!ensureAccountDangerPermission()) return;
     if (!scopedChannelID) {
       showError(t('请先筛选单个渠道'));
       return;
@@ -4930,6 +5010,7 @@ function ChannelAccount() {
     importCredentials,
     importFileList,
     importOnlyNew,
+    ensureAccountDangerPermission,
     loadAccounts,
     resetImportModal,
     scopedChannelID,
@@ -4938,6 +5019,7 @@ function ChannelAccount() {
 
   const openEditModal = useCallback(
     (record) => {
+      if (!ensureAccountDangerPermission()) return;
       setEditRecord(record);
       setProxyRecord(record);
       setEditCredentialType(record?.account_identity?.account_type || 'auto');
@@ -4951,6 +5033,7 @@ function ChannelAccount() {
       loadSchedulerConfig();
     },
     [
+      ensureAccountDangerPermission,
       loadCodexEnvironments,
       loadProxies,
       loadSchedulerConfig,
@@ -4971,16 +5054,23 @@ function ChannelAccount() {
 
   const openProxyModal = useCallback(
     (record) => {
+      if (!ensureAccountDangerPermission()) return;
       setProxyRecord(record);
       resetProxyEditorState(record);
       setProxyVisible(true);
       loadProxies();
       loadSchedulerConfig();
     },
-    [loadProxies, loadSchedulerConfig, resetProxyEditorState],
+    [
+      ensureAccountDangerPermission,
+      loadProxies,
+      loadSchedulerConfig,
+      resetProxyEditorState,
+    ],
   );
 
   const openBatchProxyModal = useCallback(() => {
+    if (!ensureAccountDangerPermission()) return;
     if (selectedTargets.length === 0) {
       showError(t('请先选择账号'));
       return;
@@ -4993,6 +5083,7 @@ function ChannelAccount() {
   }, [
     loadProxies,
     loadSchedulerConfig,
+    ensureAccountDangerPermission,
     resetProxyEditorState,
     selectedTargets.length,
     t,
@@ -5115,6 +5206,7 @@ function ChannelAccount() {
 
   const saveAccountCredential = useCallback(
     async (allowReuseRisk = false) => {
+      if (!ensureAccountDangerPermission()) return;
       if (!editRecord) return;
       const confirmedReuse = allowReuseRisk === true;
       const credential = editCredential.trim();
@@ -5256,6 +5348,7 @@ function ChannelAccount() {
       editCredentialType,
       editMaxConcurrency,
       editRecord,
+      ensureAccountDangerPermission,
       proxyBindingChanged,
       loadAccounts,
       proxyReusePolicy,
@@ -5268,6 +5361,7 @@ function ChannelAccount() {
 
   const saveProxyBindingRequest = useCallback(
     async (allowReuseRisk = false) => {
+      if (!ensureAccountDangerPermission()) return;
       if (!proxyRecord) return;
       setProxySaving(true);
       try {
@@ -5311,6 +5405,7 @@ function ChannelAccount() {
     [
       closeProxyModal,
       createProxyInline,
+      ensureAccountDangerPermission,
       loadAccounts,
       proxyRecord,
       selectedProxyRisk,
@@ -5345,6 +5440,7 @@ function ChannelAccount() {
 
   const saveBatchProxyBindingRequest = useCallback(
     async (allowReuseRisk = false) => {
+      if (!ensureAccountDangerPermission()) return;
       if (selectedTargets.length === 0) {
         showError(t('请先选择账号'));
         return;
@@ -5394,6 +5490,7 @@ function ChannelAccount() {
     [
       closeBatchProxyModal,
       createProxyInline,
+      ensureAccountDangerPermission,
       loadAccounts,
       selectedTargets,
       submitBatchProxyBinding,
@@ -5422,8 +5519,12 @@ function ChannelAccount() {
         statusLoadingKey,
         testingAccountKey,
         capabilityLoadingKey,
+        canManageAccountDanger,
+        accountDangerPermissionDenied,
       ),
     [
+      accountDangerPermissionDenied,
+      canManageAccountDanger,
       t,
       toggleAccountStatus,
       deleteSingleAccount,
@@ -5446,8 +5547,16 @@ function ChannelAccount() {
         toggleAccountStatus,
         setDetailRecord,
         statusLoadingKey,
+        canManageAccountDanger,
+        accountDangerPermissionDenied,
       ),
-    [t, toggleAccountStatus, statusLoadingKey],
+    [
+      accountDangerPermissionDenied,
+      canManageAccountDanger,
+      t,
+      toggleAccountStatus,
+      statusLoadingKey,
+    ],
   );
   const poolColumns = useMemo(
     () =>
@@ -5458,8 +5567,12 @@ function ChannelAccount() {
         reauthorizePoolAccount,
         discardPoolAccount,
         deletePoolAccount,
+        canManageAccountDanger,
+        accountDangerPermissionDenied,
       ),
     [
+      accountDangerPermissionDenied,
+      canManageAccountDanger,
       deletePoolAccount,
       discardPoolAccount,
       poolView,
@@ -5686,7 +5799,11 @@ function ChannelAccount() {
   );
   return (
     <div className='ct-console-content-wrap'>
-      <div className='ct-channel-account-page'>
+      <div
+        className={`ct-channel-account-page${
+          isAdminVariant ? ' ct-channel-account-page-admin' : ''
+        }`}
+      >
         <div className='ct-channel-account-sticky'>
           <div className='ct-channel-account-hero'>
             <div className='ct-channel-account-title-block'>
@@ -5715,7 +5832,9 @@ function ChannelAccount() {
                     <button
                       type='button'
                       className={`ct-channel-account-channel-chip ${
-                        scopedChannelID ? '' : 'ct-channel-account-channel-chip-active'
+                        scopedChannelID
+                          ? ''
+                          : 'ct-channel-account-channel-chip-active'
                       }`}
                       onClick={() => selectChannelScope(0)}
                       role='tab'
@@ -5747,9 +5866,7 @@ function ChannelAccount() {
                               ? ''
                               : 'ct-channel-account-channel-chip-muted'
                           }`}
-                          onClick={() =>
-                            selectChannelScope(channel.channel_id)
-                          }
+                          onClick={() => selectChannelScope(channel.channel_id)}
                           role='tab'
                           aria-selected={active}
                         >
@@ -5777,7 +5894,7 @@ function ChannelAccount() {
               <Button
                 icon={<ArrowLeft size={16} />}
                 type='tertiary'
-                onClick={() => navigate('/console/channel')}
+                onClick={() => navigate('/admin/channels')}
               >
                 {t('返回渠道列表')}
               </Button>
@@ -5789,9 +5906,11 @@ function ChannelAccount() {
                     : t('将所有渠道中授权异常的运行账号提交到自动授权队列')
                 }
                 onConfirm={syncAuthRecoveryAccounts}
-                disabled={!isRunningView}
+                disabled={!isRunningView || !canManageAccountDanger}
               >
-                <Button
+                <AdminPermissionButton
+                  dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                  fallbackTooltip={accountDangerPermissionDenied}
                   icon={<UserRoundCog size={15} />}
                   type='primary'
                   theme='light'
@@ -5799,9 +5918,11 @@ function ChannelAccount() {
                   disabled={!isRunningView}
                 >
                   {t('同步授权异常')}
-                </Button>
+                </AdminPermissionButton>
               </Popconfirm>
-              <Button
+              <AdminPermissionButton
+                dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                fallbackTooltip={accountDangerPermissionDenied}
                 icon={<Plus size={15} />}
                 type='primary'
                 theme='light'
@@ -5809,7 +5930,7 @@ function ChannelAccount() {
                 onClick={() => setImportVisible(true)}
               >
                 {t('导入账号')}
-              </Button>
+              </AdminPermissionButton>
               <Button
                 icon={<RefreshCw size={15} />}
                 type='primary'
@@ -5963,24 +6084,28 @@ function ChannelAccount() {
                 title={t('确定启用所选账号？')}
                 content={t('启用后这些账号可重新参与智能调度')}
                 onConfirm={() => batchUpdateAccountStatus(true)}
-                disabled={selectedCount === 0}
+                disabled={selectedCount === 0 || !canManageAccountDanger}
               >
-                <Button
+                <AdminPermissionButton
+                  dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                  fallbackTooltip={accountDangerPermissionDenied}
                   size='small'
                   icon={<ToggleRight size={14} />}
                   loading={batchLoading}
                   disabled={selectedCount === 0}
                 >
                   {t('批量启用')}
-                </Button>
+                </AdminPermissionButton>
               </Popconfirm>
               <Popconfirm
                 title={t('确定禁用所选账号？')}
                 content={t('禁用后这些账号不会参与智能调度')}
                 onConfirm={() => batchUpdateAccountStatus(false)}
-                disabled={selectedCount === 0}
+                disabled={selectedCount === 0 || !canManageAccountDanger}
               >
-                <Button
+                <AdminPermissionButton
+                  dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                  fallbackTooltip={accountDangerPermissionDenied}
                   size='small'
                   type='warning'
                   theme='light'
@@ -5989,7 +6114,7 @@ function ChannelAccount() {
                   disabled={selectedCount === 0}
                 >
                   {t('批量禁用')}
-                </Button>
+                </AdminPermissionButton>
               </Popconfirm>
               <Button
                 size='small'
@@ -6006,9 +6131,11 @@ function ChannelAccount() {
                 title={t('移入失效账号池？')}
                 content={t('所选账号会从运行账号中移除，可从失效池恢复')}
                 onConfirm={() => batchArchiveAccounts('invalid')}
-                disabled={selectedCount === 0}
+                disabled={selectedCount === 0 || !canManageAccountDanger}
               >
-                <Button
+                <AdminPermissionButton
+                  dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                  fallbackTooltip={accountDangerPermissionDenied}
                   size='small'
                   type='warning'
                   theme='light'
@@ -6017,15 +6144,17 @@ function ChannelAccount() {
                   disabled={selectedCount === 0}
                 >
                   {t('移入失效池')}
-                </Button>
+                </AdminPermissionButton>
               </Popconfirm>
               <Popconfirm
                 title={t('移入废弃账号池？')}
                 content={t('所选账号会从运行账号中移除并归档为不再调度')}
                 onConfirm={() => batchArchiveAccounts('discarded')}
-                disabled={selectedCount === 0}
+                disabled={selectedCount === 0 || !canManageAccountDanger}
               >
-                <Button
+                <AdminPermissionButton
+                  dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                  fallbackTooltip={accountDangerPermissionDenied}
                   size='small'
                   type='danger'
                   theme='light'
@@ -6034,9 +6163,11 @@ function ChannelAccount() {
                   disabled={selectedCount === 0}
                 >
                   {t('移入废弃池')}
-                </Button>
+                </AdminPermissionButton>
               </Popconfirm>
-              <Button
+              <AdminPermissionButton
+                dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                fallbackTooltip={accountDangerPermissionDenied}
                 size='small'
                 icon={<PlugZap size={14} />}
                 loading={proxySaving && batchProxyVisible}
@@ -6044,14 +6175,16 @@ function ChannelAccount() {
                 onClick={openBatchProxyModal}
               >
                 {t('批量设置代理')}
-              </Button>
+              </AdminPermissionButton>
               <Popconfirm
                 title={t('确定删除所选账号？')}
                 content={t('删除后这些凭证将从渠道中移除，此操作不可撤销')}
                 onConfirm={batchDeleteAccounts}
-                disabled={selectedCount === 0}
+                disabled={selectedCount === 0 || !canManageAccountDanger}
               >
-                <Button
+                <AdminPermissionButton
+                  dangerPermission={ADMIN_PERMISSION_KEYS.channelAccountDanger}
+                  fallbackTooltip={accountDangerPermissionDenied}
                   size='small'
                   type='danger'
                   theme='light'
@@ -6060,7 +6193,7 @@ function ChannelAccount() {
                   disabled={selectedCount === 0}
                 >
                   {t('批量删除')}
-                </Button>
+                </AdminPermissionButton>
               </Popconfirm>
             </Space>
           </div>
@@ -6223,7 +6356,9 @@ function ChannelAccount() {
                 />
               </label>
               <Text type='tertiary' size='small'>
-                {t('设置后仅限制当前账号的同时请求数，0 表示继续使用渠道级并发。')}
+                {t(
+                  '设置后仅限制当前账号的同时请求数，0 表示继续使用渠道级并发。',
+                )}
               </Text>
             </div>
             <div className='ct-channel-account-edit-section'>

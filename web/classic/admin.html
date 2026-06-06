@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="/logo.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta
+      name="description"
+      lang="zh"
+      content="New API 管理员后台，用于渠道运营、模型路由、商业运营、用户运营和系统治理。"
+    />
+    <meta
+      name="description"
+      lang="en"
+      content="New API admin console for channel operations, model routing, business operations, user operations, and system governance."
+    />
+    <meta name="generator" content="new-api" />
+    <title>New API Admin</title>
+    <script>
+      (() => {
+        try {
+          const systemName = localStorage.getItem('system_name');
+          if (systemName) {
+            document.title = `${systemName} Admin`;
+          }
+          const logo = localStorage.getItem('logo');
+          if (logo) {
+            const linkElement = document.querySelector("link[rel~='icon']");
+            if (linkElement) {
+              linkElement.href = logo;
+            }
+          }
+        } catch (error) {
+          console.error('failed to load cached admin branding', error);
+        }
+      })();
+    </script>
+  </head>
+
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/apps/admin-console/entry.jsx"></script>
+  </body>
+</html>

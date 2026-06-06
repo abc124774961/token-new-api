@@ -232,16 +232,16 @@ func InitDB() (err error) {
 		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
 		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
 
-			if !common.IsMasterNode {
-				return nil
-			}
-			if common.GetEnvOrDefaultBool("SKIP_DB_AUTO_MIGRATE", false) {
-				common.SysLog("database migration skipped by SKIP_DB_AUTO_MIGRATE")
-				return nil
-			}
-			if common.UsingMySQL {
-				//_, _ = sqlDB.Exec("ALTER TABLE channels MODIFY model_mapping TEXT;") // TODO: delete this line when most users have upgraded
-			}
+		if !common.IsMasterNode {
+			return nil
+		}
+		if common.GetEnvOrDefaultBool("SKIP_DB_AUTO_MIGRATE", false) {
+			common.SysLog("database migration skipped by SKIP_DB_AUTO_MIGRATE")
+			return nil
+		}
+		if common.UsingMySQL {
+			//_, _ = sqlDB.Exec("ALTER TABLE channels MODIFY model_mapping TEXT;") // TODO: delete this line when most users have upgraded
+		}
 		common.SysLog("database migration started")
 		err = migrateDB()
 		return err
@@ -348,6 +348,10 @@ func migrateDB() error {
 		&ModelGatewayTrafficMetric{},
 		&Token{},
 		&User{},
+		&AdminRole{},
+		&AdminRolePermission{},
+		&AdminUserRoleBinding{},
+		&AdminUserPermissionOverride{},
 		&PasskeyCredential{},
 		&Option{},
 		&Redemption{},
@@ -437,6 +441,10 @@ func migrateDBFast() error {
 		{&ModelGatewayTrafficMetric{}, "ModelGatewayTrafficMetric"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
+		{&AdminRole{}, "AdminRole"},
+		{&AdminRolePermission{}, "AdminRolePermission"},
+		{&AdminUserRoleBinding{}, "AdminUserRoleBinding"},
+		{&AdminUserPermissionOverride{}, "AdminUserPermissionOverride"},
 		{&PasskeyCredential{}, "PasskeyCredential"},
 		{&Option{}, "Option"},
 		{&Redemption{}, "Redemption"},

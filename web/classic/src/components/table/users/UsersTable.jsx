@@ -32,6 +32,9 @@ import DeleteUserModal from './modals/DeleteUserModal';
 import ResetPasskeyModal from './modals/ResetPasskeyModal';
 import ResetTwoFAModal from './modals/ResetTwoFAModal';
 import UserSubscriptionsModal from './modals/UserSubscriptionsModal';
+import { showWarning } from '../../../helpers';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import { useAdminActionPermission } from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 const UsersTable = (usersData) => {
   const {
@@ -64,6 +67,12 @@ const UsersTable = (usersData) => {
   const [showResetTwoFAModal, setShowResetTwoFAModal] = useState(false);
   const [showUserSubscriptionsModal, setShowUserSubscriptionsModal] =
     useState(false);
+  const canManageUserDanger = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.userUserDanger,
+  );
+  const userDangerPermissionDenied = t(
+    '没有用户高危操作权限，请联系运营管理员或超级管理员。',
+  );
 
   // Modal handlers
   const showPromoteUserModal = (user) => {
@@ -104,26 +113,46 @@ const UsersTable = (usersData) => {
 
   // Modal confirm handlers
   const handlePromoteConfirm = () => {
+    if (!canManageUserDanger) {
+      showWarning(userDangerPermissionDenied);
+      return;
+    }
     manageUser(modalUser.id, 'promote', modalUser);
     setShowPromoteModal(false);
   };
 
   const handleDemoteConfirm = () => {
+    if (!canManageUserDanger) {
+      showWarning(userDangerPermissionDenied);
+      return;
+    }
     manageUser(modalUser.id, 'demote', modalUser);
     setShowDemoteModal(false);
   };
 
   const handleEnableDisableConfirm = () => {
+    if (!canManageUserDanger) {
+      showWarning(userDangerPermissionDenied);
+      return;
+    }
     manageUser(modalUser.id, enableDisableAction, modalUser);
     setShowEnableDisableModal(false);
   };
 
   const handleResetPasskeyConfirm = async () => {
+    if (!canManageUserDanger) {
+      showWarning(userDangerPermissionDenied);
+      return;
+    }
     await resetUserPasskey(modalUser);
     setShowResetPasskeyModal(false);
   };
 
   const handleResetTwoFAConfirm = async () => {
+    if (!canManageUserDanger) {
+      showWarning(userDangerPermissionDenied);
+      return;
+    }
     await resetUserTwoFA(modalUser);
     setShowResetTwoFAModal(false);
   };
@@ -141,6 +170,7 @@ const UsersTable = (usersData) => {
       showResetPasskeyModal: showResetPasskeyUserModal,
       showResetTwoFAModal: showResetTwoFAUserModal,
       showUserSubscriptionsModal: showUserSubscriptionsUserModal,
+      canManageUserDanger,
     });
   }, [
     t,
@@ -153,6 +183,7 @@ const UsersTable = (usersData) => {
     showResetPasskeyUserModal,
     showResetTwoFAUserModal,
     showUserSubscriptionsUserModal,
+    canManageUserDanger,
   ]);
 
   // Handle compact mode by removing fixed positioning
@@ -234,6 +265,7 @@ const UsersTable = (usersData) => {
         activePage={activePage}
         refresh={refresh}
         manageUser={manageUser}
+        canManageUserDanger={canManageUserDanger}
         t={t}
       />
 

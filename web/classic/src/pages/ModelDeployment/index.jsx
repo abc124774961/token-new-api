@@ -22,7 +22,7 @@ import DeploymentsTable from '../../components/table/model-deployments';
 import DeploymentAccessGuard from '../../components/model-deployments/DeploymentAccessGuard';
 import { useModelDeploymentSettings } from '../../hooks/model-deployments/useModelDeploymentSettings';
 
-const ModelDeploymentPage = () => {
+const ModelDeploymentPage = ({ variant = 'default' }) => {
   const {
     loading,
     isIoNetEnabled,
@@ -41,7 +41,13 @@ const ModelDeploymentPage = () => {
       connectionError={connectionError}
       onRetry={() => testConnection()}
     >
-      <div className='ct-console-content-wrap'>
+      <div
+        className={`ct-console-content-wrap${
+          variant === 'admin'
+            ? ' ct-admin-table-page ct-admin-model-deployment-page'
+            : ''
+        }`}
+      >
         <DeploymentsTable />
       </div>
     </DeploymentAccessGuard>

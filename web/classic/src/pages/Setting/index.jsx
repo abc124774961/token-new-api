@@ -50,7 +50,7 @@ import PaymentSetting from '../../components/settings/PaymentSetting';
 import ModelDeploymentSetting from '../../components/settings/ModelDeploymentSetting';
 import PerformanceSetting from '../../components/settings/PerformanceSetting';
 
-const Setting = () => {
+const Setting = ({ variant = 'default' }) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
@@ -193,7 +193,11 @@ const Setting = () => {
     }
   }, [location.search]);
   return (
-    <div className='ct-console-content-wrap'>
+    <div
+      className={`ct-console-content-wrap${
+        variant === 'admin' ? ' ct-admin-settings-page' : ''
+      }`}
+    >
       <Layout>
         <Layout.Content>
           <Tabs

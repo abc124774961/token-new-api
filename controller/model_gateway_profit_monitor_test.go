@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
@@ -51,16 +52,20 @@ func setupModelGatewayProfitMonitorTestDB(t *testing.T) *gorm.DB {
 		&model.ModelGatewayProfitRatioRecommendation{},
 		&model.ModelGatewayProfitCanaryTask{},
 		&model.ModelGatewayTrafficMetric{},
+		&model.Log{},
 	))
 
 	oldDB := model.DB
+	oldLogDB := model.LOG_DB
 	oldOptionMap := common.OptionMap
 	oldQuotaPerUnit := common.QuotaPerUnit
 	model.DB = db
+	model.LOG_DB = db
 	common.OptionMap = map[string]string{}
 	common.QuotaPerUnit = 500000
 	t.Cleanup(func() {
 		model.DB = oldDB
+		model.LOG_DB = oldLogDB
 		common.OptionMap = oldOptionMap
 		common.QuotaPerUnit = oldQuotaPerUnit
 		sqlDB, err := db.DB()
@@ -562,8 +567,11 @@ func TestModelGatewayProfitMonitorRecommendationDecisionPatchPersistsAuditFields
 	router.PATCH("/api/model_gateway/profit_monitor/recommendations/:id/decision", func(c *gin.Context) {
 		c.Set("id", 42)
 		c.Set("username", "ops-admin")
-		UpdateModelGatewayProfitMonitorRecommendationDecision(c)
-	})
+		c.Set("role", common.RoleRootUser)
+		c.Set("group", "default")
+		c.Set(common.RequestIdKey, "profit-decision-audit-test")
+		c.Next()
+	}, middleware.RequireAdminPermission(middleware.AdminPermissionCommercialProfitUpdate), UpdateModelGatewayProfitMonitorRecommendationDecision)
 
 	body, err := common.Marshal(UpdateModelGatewayProfitRecommendationDecisionRequest{
 		DecisionStatus:           model.ModelGatewayProfitRecommendationDecisionCanary,
@@ -587,6 +595,26 @@ func TestModelGatewayProfitMonitorRecommendationDecisionPatchPersistsAuditFields
 	require.NotZero(t, payload.Data.DecisionUpdatedAt)
 	require.Equal(t, `{"summary":{"requests":20}}`, payload.Data.InputJSON)
 	require.Equal(t, `{"reason_code":"below_target"}`, payload.Data.RecommendationJSON)
+
+	summary := latestAdminPermissionAuditSummary(t, db)
+	require.Equal(t, "update_profit_recommendation_decision", summary["operation"])
+	require.Equal(t, float64(1), summary["recommendation_id"])
+	require.Equal(t, model.ModelGatewayProfitRecommendationDecisionPending, summary["decision_status_before"])
+	require.Equal(t, model.ModelGatewayProfitRecommendationDecisionCanary, summary["decision_status_after"])
+	require.Equal(t, true, summary["decision_status_changed"])
+	require.Equal(t, float64(0), summary["planned_revenue_multiplier_before"])
+	require.Equal(t, 1.25, summary["planned_revenue_multiplier_after"])
+	require.Equal(t, true, summary["planned_revenue_multiplier_changed"])
+	require.Equal(t, "", summary["decision_remark_before"])
+	require.Equal(t, "先灰度 default 分组 2 小时", summary["decision_remark_after"])
+	require.Equal(t, true, summary["decision_remark_changed"])
+	require.Equal(t, float64(0), summary["decision_remark_before_length"])
+	require.Equal(t, float64(len([]rune("先灰度 default 分组 2 小时"))), summary["decision_remark_after_length"])
+	require.Equal(t, "24h", summary["recommendation_window"])
+	require.Equal(t, "group", summary["recommendation_dimension"])
+	require.Equal(t, "below_target", summary["recommendation_reason"])
+	require.Equal(t, float64(42), summary["decision_operator_id"])
+	require.Equal(t, "ops-admin", summary["decision_operator_name"])
 
 	invalidBody, err := common.Marshal(UpdateModelGatewayProfitRecommendationDecisionRequest{
 		DecisionStatus: "shipped",

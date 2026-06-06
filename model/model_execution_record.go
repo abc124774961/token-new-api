@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -89,6 +90,31 @@ func RecordModelExecution(record *ModelExecutionRecord) {
 		return
 	}
 	notifyModelExecutionObservers(*record)
+}
+
+func DeleteOldModelExecutionRecords(ctx context.Context, targetTimestamp int64, limit int) (int64, error) {
+	if DB == nil || targetTimestamp <= 0 {
+		return 0, nil
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+
+	ids := make([]int, 0, limit)
+	if err := DB.WithContext(ctx).
+		Model(&ModelExecutionRecord{}).
+		Where("created_at < ?", targetTimestamp).
+		Order("id asc").
+		Limit(limit).
+		Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	result := DB.WithContext(ctx).Where("id IN ?", ids).Delete(&ModelExecutionRecord{})
+	return result.RowsAffected, result.Error
 }
 
 func isMissingModelExecutionRequestMetaColumnError(err error) bool {

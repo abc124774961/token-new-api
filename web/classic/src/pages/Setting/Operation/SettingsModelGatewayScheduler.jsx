@@ -45,6 +45,11 @@ import {
 import { IconChevronDown, IconDelete, IconPlus } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
 import { API, showError, showSuccess, showWarning } from '../../../helpers';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  AdminPermissionButton,
+  useAdminActionPermission,
+} from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 const MODE_OPTIONS = ['off', 'shadow', 'active'];
 const STRATEGY_OPTIONS = [
@@ -284,6 +289,18 @@ const renderGroupOptionItem = (option, t) => (
     )}
   </div>
 );
+
+const selectGroupFilter = (input, option) => {
+  if (!input) return true;
+  const keyword = String(input).trim().toLowerCase();
+  if (!keyword) return true;
+  return [option?.value, option?.label, option?.description]
+    .map((value) => String(value || '').toLowerCase())
+    .some((value) => value.includes(keyword));
+};
+
+const selectGroupValue = (value) =>
+  String(value?.value ?? value ?? '').trim();
 
 const formatChannelCost = (channel) => {
   const costDisplay = channel?.upstream_cost_display || {};
@@ -611,7 +628,10 @@ const ChannelIdsEditor = ({ value, optionList, placeholder, onChange, t }) => {
                     }
                   }}
                 >
-                  <Checkbox checked={checked} style={{ pointerEvents: 'none' }} />
+                  <Checkbox
+                    checked={checked}
+                    style={{ pointerEvents: 'none' }}
+                  />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {renderChannelOptionItem(option, t)}
                   </div>
@@ -872,6 +892,17 @@ const rowsToPolicyMaps = (rows) => {
 
 export default function SettingsModelGatewayScheduler() {
   const { t } = useTranslation();
+  const canManageRoutePolicyDanger = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.modelRoutePolicyDanger,
+  );
+  const routePolicyDangerPermissionDenied = t(
+    '没有路由策略高危操作权限，请联系模型管理员或超级管理员。',
+  );
+  const ensureRoutePolicyPermission = () => {
+    if (canManageRoutePolicyDanger) return true;
+    showWarning(routePolicyDangerPermissionDenied);
+    return false;
+  };
   const refForm = useRef();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1411,6 +1442,10 @@ export default function SettingsModelGatewayScheduler() {
   };
 
   const saveConfig = async () => {
+    if (!ensureRoutePolicyPermission()) {
+      return;
+    }
+
     const groupNames = policyRows
       .map((row) => (row.group || '').trim())
       .filter(Boolean);
@@ -1452,10 +1487,18 @@ export default function SettingsModelGatewayScheduler() {
   };
 
   const resetConfig = () => {
+    if (!ensureRoutePolicyPermission()) {
+      return;
+    }
+
     Modal.confirm({
       title: t('恢复智能调度默认配置'),
       content: t('将覆盖当前智能调度配置，并保留其它系统设置不变。'),
       onOk: async () => {
+        if (!ensureRoutePolicyPermission()) {
+          return;
+        }
+
         try {
           setSaving(true);
           const res = await API.post('/api/model_gateway/config/reset');
@@ -1492,18 +1535,39 @@ export default function SettingsModelGatewayScheduler() {
       render: (_, row) => (
         <Select
           value={row.group || undefined}
-          optionList={candidateGroupOptions}
           placeholder={t('请选择分组')}
-          filter
+          filter={selectGroupFilter}
           allowCreate
           showClear
+          searchPosition='dropdown'
+          position='bottomLeft'
           style={{ width: '100%' }}
           onChange={(value) =>
-            updatePolicyRow(row.id, { group: String(value || '') })
+            updatePolicyRow(row.id, { group: selectGroupValue(value) })
           }
-          renderSelectedItem={(optionNode) => optionNode?.value || ''}
-          renderOptionItem={(option) => renderGroupOptionItem(option, t)}
-        />
+          onSelect={(value) =>
+            updatePolicyRow(row.id, { group: selectGroupValue(value) })
+          }
+          onCreate={(option) =>
+            updatePolicyRow(row.id, { group: selectGroupValue(option) })
+          }
+          onClear={() => updatePolicyRow(row.id, { group: '' })}
+          renderSelectedItem={(optionNode) =>
+            selectGroupValue(optionNode) || optionNode?.label || ''
+          }
+        >
+          {candidateGroupOptions.map((option) => (
+            <Select.Option
+              key={option.value}
+              value={option.value}
+              label={option.label}
+              description={option.description}
+              ratio={option.ratio}
+            >
+              {renderGroupOptionItem(option, t)}
+            </Select.Option>
+          ))}
+        </Select>
       ),
     },
     {
@@ -2963,13 +3027,25 @@ export default function SettingsModelGatewayScheduler() {
 
       <div style={{ marginTop: 8, marginBottom: 12 }}>
         <Space>
-          <Button type='primary' onClick={saveConfig} loading={saving}>
+          <AdminPermissionButton
+            type='primary'
+            dangerPermission={ADMIN_PERMISSION_KEYS.modelRoutePolicyDanger}
+            fallbackTooltip={routePolicyDangerPermissionDenied}
+            onClick={saveConfig}
+            loading={saving}
+          >
             {t('保存智能调度配置')}
-          </Button>
+          </AdminPermissionButton>
           <Button onClick={loadConfig}>{t('刷新配置')}</Button>
-          <Button type='danger' theme='borderless' onClick={resetConfig}>
+          <AdminPermissionButton
+            type='danger'
+            theme='borderless'
+            dangerPermission={ADMIN_PERMISSION_KEYS.modelRoutePolicyDanger}
+            fallbackTooltip={routePolicyDangerPermissionDenied}
+            onClick={resetConfig}
+          >
             {t('恢复默认配置')}
-          </Button>
+          </AdminPermissionButton>
         </Space>
       </div>
 

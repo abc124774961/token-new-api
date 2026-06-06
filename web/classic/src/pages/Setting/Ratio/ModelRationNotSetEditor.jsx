@@ -59,6 +59,9 @@ export default function ModelRatioNotSetEditor(props) {
       )}
       emptyTitle={t('没有未设置定价的模型')}
       emptyDescription={t('当前没有未设置定价的模型')}
+      canManageRatioDanger={props.canManageRatioDanger}
+      ratioDangerPermissionDenied={props.ratioDangerPermissionDenied}
+      ensureRatioPermission={props.ensureRatioPermission}
     />
   );
 }

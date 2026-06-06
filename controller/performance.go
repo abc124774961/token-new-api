@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -79,6 +80,23 @@ type PerformanceConfig struct {
 	MonitorDiskThreshold int `json:"monitor_disk_threshold"`
 }
 
+func setDiskCacheAuditSummary(c *gin.Context, prefix string, info DiskCacheInfo, stats common.DiskCacheStats) {
+	middleware.SetAdminAuditSummary(c, prefix+"disk_cache_file_count", info.FileCount)
+	middleware.SetAdminAuditSummary(c, prefix+"disk_cache_total_size", info.TotalSize)
+	middleware.SetAdminAuditSummary(c, prefix+"disk_cache_exists", info.Exists)
+	middleware.SetAdminAuditSummary(c, prefix+"active_disk_files", stats.ActiveDiskFiles)
+	middleware.SetAdminAuditSummary(c, prefix+"current_disk_usage_bytes", stats.CurrentDiskUsageBytes)
+	middleware.SetAdminAuditSummary(c, prefix+"disk_cache_hits", stats.DiskCacheHits)
+	middleware.SetAdminAuditSummary(c, prefix+"memory_cache_hits", stats.MemoryCacheHits)
+}
+
+func setMemoryGCAuditSummary(c *gin.Context, prefix string, stats runtime.MemStats) {
+	middleware.SetAdminAuditSummary(c, prefix+"alloc", stats.Alloc)
+	middleware.SetAdminAuditSummary(c, prefix+"sys", stats.Sys)
+	middleware.SetAdminAuditSummary(c, prefix+"heap_alloc", stats.HeapAlloc)
+	middleware.SetAdminAuditSummary(c, prefix+"num_gc", stats.NumGC)
+}
+
 // GetPerformanceStats 获取性能统计信息
 func GetPerformanceStats(c *gin.Context) {
 	// 不再每次获取统计都全量扫描磁盘，依赖原子计数器保证性能
@@ -143,11 +161,21 @@ func GetPerformanceStats(c *gin.Context) {
 func ClearDiskCache(c *gin.Context) {
 	// 清理超过 10 分钟未使用的缓存文件
 	// 10 分钟是一个安全的阈值，确保正在进行的请求不会被误删
+	beforeInfo := getDiskCacheInfo()
+	beforeStats := common.GetDiskCacheStats()
 	err := common.CleanupOldDiskCacheFiles(10 * time.Minute)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	afterInfo := getDiskCacheInfo()
+	afterStats := common.GetDiskCacheStats()
+	middleware.SetAdminAuditSummary(c, "operation", "clear_disk_cache")
+	middleware.SetAdminAuditSummary(c, "max_age_seconds", int64((10 * time.Minute).Seconds()))
+	middleware.SetAdminAuditSummary(c, "deleted_file_count", beforeInfo.FileCount-afterInfo.FileCount)
+	middleware.SetAdminAuditSummary(c, "freed_bytes", beforeInfo.TotalSize-afterInfo.TotalSize)
+	setDiskCacheAuditSummary(c, "before_", beforeInfo, beforeStats)
+	setDiskCacheAuditSummary(c, "after_", afterInfo, afterStats)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -157,7 +185,14 @@ func ClearDiskCache(c *gin.Context) {
 
 // ResetPerformanceStats 重置性能统计
 func ResetPerformanceStats(c *gin.Context) {
+	beforeStats := common.GetDiskCacheStats()
 	common.ResetDiskCacheStats()
+	afterStats := common.GetDiskCacheStats()
+	middleware.SetAdminAuditSummary(c, "operation", "reset_performance_stats")
+	middleware.SetAdminAuditSummary(c, "disk_cache_hits_before", beforeStats.DiskCacheHits)
+	middleware.SetAdminAuditSummary(c, "disk_cache_hits_after", afterStats.DiskCacheHits)
+	middleware.SetAdminAuditSummary(c, "memory_cache_hits_before", beforeStats.MemoryCacheHits)
+	middleware.SetAdminAuditSummary(c, "memory_cache_hits_after", afterStats.MemoryCacheHits)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -167,7 +202,14 @@ func ResetPerformanceStats(c *gin.Context) {
 
 // ForceGC 强制执行 GC
 func ForceGC(c *gin.Context) {
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
 	runtime.GC()
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+	middleware.SetAdminAuditSummary(c, "operation", "force_gc")
+	setMemoryGCAuditSummary(c, "before_", before)
+	setMemoryGCAuditSummary(c, "after_", after)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -287,9 +329,14 @@ func CleanupLogFiles(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	var totalSizeBefore int64
+	for _, f := range files {
+		totalSizeBefore += f.Size
+	}
 
 	activeLogPath := logger.GetCurrentLogPath()
 	var toDelete []LogFileInfo
+	activeLogSkipped := 0
 
 	switch mode {
 	case "by_count":
@@ -300,6 +347,7 @@ func CleanupLogFiles(c *gin.Context) {
 			}
 			fullPath := filepath.Join(*common.LogDir, f.Name)
 			if fullPath == activeLogPath {
+				activeLogSkipped++
 				continue
 			}
 			toDelete = append(toDelete, f)
@@ -310,6 +358,7 @@ func CleanupLogFiles(c *gin.Context) {
 			if f.ModTime.Before(cutoff) {
 				fullPath := filepath.Join(*common.LogDir, f.Name)
 				if fullPath == activeLogPath {
+					activeLogSkipped++
 					continue
 				}
 				toDelete = append(toDelete, f)
@@ -329,6 +378,24 @@ func CleanupLogFiles(c *gin.Context) {
 		deletedCount++
 		freedBytes += f.Size
 	}
+
+	remainingFiles, _ := getLogFiles()
+	var totalSizeAfter int64
+	for _, f := range remainingFiles {
+		totalSizeAfter += f.Size
+	}
+	middleware.SetAdminAuditSummary(c, "operation", "cleanup_log_files")
+	middleware.SetAdminAuditSummary(c, "mode", mode)
+	middleware.SetAdminAuditSummary(c, "value", value)
+	middleware.SetAdminAuditSummary(c, "file_count_before", len(files))
+	middleware.SetAdminAuditSummary(c, "file_count_after", len(remainingFiles))
+	middleware.SetAdminAuditSummary(c, "total_size_before", totalSizeBefore)
+	middleware.SetAdminAuditSummary(c, "total_size_after", totalSizeAfter)
+	middleware.SetAdminAuditSummary(c, "candidate_delete_count", len(toDelete))
+	middleware.SetAdminAuditSummary(c, "deleted_count", deletedCount)
+	middleware.SetAdminAuditSummary(c, "freed_bytes", freedBytes)
+	middleware.SetAdminAuditSummary(c, "failed_count", len(failedFiles))
+	middleware.SetAdminAuditSummary(c, "active_log_skipped_count", activeLogSkipped)
 
 	result := gin.H{
 		"deleted_count": deletedCount,

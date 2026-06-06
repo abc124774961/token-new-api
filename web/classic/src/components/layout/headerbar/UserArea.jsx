@@ -26,8 +26,9 @@ import {
   IconUserSetting,
   IconCreditCard,
   IconKey,
+  IconSetting,
 } from '@douyinfe/semi-icons';
-import { stringToColor } from '../../../helpers';
+import { isAdmin, stringToColor } from '../../../helpers';
 import SkeletonWrapper from '../components/SkeletonWrapper';
 
 const UserArea = ({
@@ -54,6 +55,7 @@ const UserArea = ({
 
   const isConsoleRoute = currentPath.startsWith('/console');
   const usePortalActions = !isConsoleRoute;
+  const isAdminUser = isAdmin();
 
   if (userState.user) {
     return (
@@ -124,6 +126,22 @@ const UserArea = ({
                   <span>{t('账户充值')}</span>
                 </div>
               </Dropdown.Item>
+              {isAdminUser && (
+                <Dropdown.Item
+                  onClick={() => {
+                    navigate('/admin/overview');
+                  }}
+                  className='!px-3 !py-1.5 !text-sm !text-semi-color-text-0 hover:!bg-semi-color-fill-1 dark:!text-gray-200 dark:hover:!bg-blue-500 dark:hover:!text-white'
+                >
+                  <div className='flex items-center gap-2'>
+                    <IconSetting
+                      size='small'
+                      className='text-gray-500 dark:text-gray-400'
+                    />
+                    <span>{t('进入管理员后台')}</span>
+                  </div>
+                </Dropdown.Item>
+              )}
               <Dropdown.Item
                 onClick={logout}
                 className='!px-3 !py-1.5 !text-sm !text-semi-color-text-0 hover:!bg-semi-color-fill-1 dark:!text-gray-200 dark:hover:!bg-red-500 dark:hover:!text-white'

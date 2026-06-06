@@ -37,6 +37,15 @@ import { Settings } from 'lucide-react';
 
 const { Text } = Typography;
 
+const USER_SIDEBAR_MODULES = {
+  chat: ['playground', 'chat'],
+  console: ['detail', 'channel_status', 'token', 'log', 'midjourney', 'task'],
+  personal: ['affiliate', 'recharge', 'subscription_plans'],
+};
+
+const isUserSidebarModule = (sectionKey, moduleKey) =>
+  USER_SIDEBAR_MODULES[sectionKey]?.includes(moduleKey);
+
 export default function SettingsSidebarModulesUser() {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
@@ -83,7 +92,6 @@ export default function SettingsSidebarModulesUser() {
         enabled: true,
         detail: isSidebarModuleAllowed('console', 'detail'),
         channel_status: isSidebarModuleAllowed('console', 'channel_status'),
-        model_gateway: isSidebarModuleAllowed('console', 'model_gateway'),
         token: isSidebarModuleAllowed('console', 'token'),
         log: isSidebarModuleAllowed('console', 'log'),
         midjourney: isSidebarModuleAllowed('console', 'midjourney'),
@@ -101,30 +109,6 @@ export default function SettingsSidebarModulesUser() {
           'personal',
           'subscription_plans',
         ),
-        personal: isSidebarModuleAllowed('personal', 'personal'),
-      };
-    }
-
-    // 管理员区域 - 只有管理员可以访问
-    if (isSidebarSectionAllowed('admin')) {
-      defaultConfig.admin = {
-        enabled: true,
-        channel: isSidebarModuleAllowed('admin', 'channel'),
-        channel_account: isSidebarModuleAllowed('admin', 'channel_account'),
-        channel_balance_monitor: isSidebarModuleAllowed(
-          'admin',
-          'channel_balance_monitor',
-        ),
-        channel_health_check: isSidebarModuleAllowed(
-          'admin',
-          'channel_health_check',
-        ),
-        channel_proxy: isSidebarModuleAllowed('admin', 'channel_proxy'),
-        models: isSidebarModuleAllowed('admin', 'models'),
-        deployment: isSidebarModuleAllowed('admin', 'deployment'),
-        redemption: isSidebarModuleAllowed('admin', 'redemption'),
-        user: isSidebarModuleAllowed('admin', 'user'),
-        setting: isSidebarModuleAllowed('admin', 'setting'),
       };
     }
 
@@ -251,13 +235,17 @@ export default function SettingsSidebarModulesUser() {
           // 确保用户配置也经过权限过滤
           const filteredUserConf = {};
           Object.keys(userConf).forEach((sectionKey) => {
-            if (isSidebarSectionAllowed(sectionKey)) {
+            if (
+              USER_SIDEBAR_MODULES[sectionKey] &&
+              isSidebarSectionAllowed(sectionKey)
+            ) {
               filteredUserConf[sectionKey] = { ...userConf[sectionKey] };
               // 过滤不允许的模块
               Object.keys(userConf[sectionKey]).forEach((moduleKey) => {
                 if (
                   moduleKey !== 'enabled' &&
-                  !isSidebarModuleAllowed(sectionKey, moduleKey)
+                  (!isUserSidebarModule(sectionKey, moduleKey) ||
+                    !isSidebarModuleAllowed(sectionKey, moduleKey))
                 ) {
                   delete filteredUserConf[sectionKey][moduleKey];
                 }
@@ -328,13 +316,8 @@ export default function SettingsSidebarModulesUser() {
         { key: 'detail', title: t('数据看板'), description: t('系统数据统计') },
         {
           key: 'channel_status',
-          title: t('渠道状态监控'),
+          title: t('服务状态'),
           description: t('按分组监控渠道访问状态'),
-        },
-        {
-          key: 'model_gateway',
-          title: t('智能模型网关'),
-          description: t('智能调度与渠道观测'),
         },
         { key: 'token', title: t('令牌管理'), description: t('API令牌管理') },
         { key: 'log', title: t('使用日志'), description: t('API使用记录') },
@@ -365,56 +348,6 @@ export default function SettingsSidebarModulesUser() {
           key: 'subscription_plans',
           title: t('套餐订阅'),
           description: t('当前套餐与订阅购买'),
-        },
-        {
-          key: 'personal',
-          title: t('个人设置'),
-          description: t('个人信息设置'),
-        },
-      ],
-    },
-    {
-      key: 'admin',
-      title: t('管理员区域'),
-      description: t('系统管理功能'),
-      modules: [
-        { key: 'channel', title: t('渠道管理'), description: t('API渠道配置') },
-        {
-          key: 'channel_account',
-          title: t('账号池管理'),
-          description: t('全渠道账号与归档池'),
-        },
-        {
-          key: 'channel_balance_monitor',
-          title: t('渠道余额监控'),
-          description: t('账号余额告警和倍率同步'),
-        },
-        {
-          key: 'channel_health_check',
-          title: t('渠道健康检测'),
-          description: t('待检查队列和探活历史'),
-        },
-        {
-          key: 'channel_proxy',
-          title: t('代理管理'),
-          description: t('渠道账号代理资源管理'),
-        },
-        { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
-        {
-          key: 'deployment',
-          title: t('模型部署'),
-          description: t('模型部署管理'),
-        },
-        {
-          key: 'redemption',
-          title: t('兑换码管理'),
-          description: t('兑换码生成管理'),
-        },
-        { key: 'user', title: t('用户管理'), description: t('用户账户管理') },
-        {
-          key: 'setting',
-          title: t('系统设置'),
-          description: t('系统参数配置'),
         },
       ],
     },

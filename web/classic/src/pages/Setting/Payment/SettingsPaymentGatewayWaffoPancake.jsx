@@ -18,15 +18,21 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Banner, Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import { Banner, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
 import {
   API,
   removeTrailingSlash,
   showError,
   showSuccess,
+  showWarning,
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
 import { BookOpen, TriangleAlert } from 'lucide-react';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  AdminPermissionButton,
+  useAdminActionPermission,
+} from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 const defaultInputs = {
   WaffoPancakeEnabled: false,
@@ -47,6 +53,17 @@ const toBoolean = (value) => value === true || value === 'true';
 
 export default function SettingsPaymentGatewayWaffoPancake(props) {
   const { t } = useTranslation();
+  const canManageSystemSettings = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.systemSettingsUpdate,
+  );
+  const systemSettingsPermissionDenied = t(
+    '没有系统设置修改权限，请联系超级管理员。',
+  );
+  const ensureSystemSettingsPermission = () => {
+    if (canManageSystemSettings) return true;
+    showWarning(systemSettingsPermissionDenied);
+    return false;
+  };
   const sectionTitle = props.hideSectionTitle
     ? undefined
     : t('Waffo Pancake 设置');
@@ -89,6 +106,10 @@ export default function SettingsPaymentGatewayWaffoPancake(props) {
   };
 
   const submitWaffoPancakeSetting = async () => {
+    if (!ensureSystemSettingsPermission()) {
+      return;
+    }
+
     const values = {
       ...inputs,
       ...(formApiRef.current?.getValues?.() || {}),
@@ -102,7 +123,7 @@ export default function SettingsPaymentGatewayWaffoPancake(props) {
       ? t('Webhook 公钥（测试环境）')
       : t('Webhook 公钥（生产环境）');
 
-      if (values.WaffoPancakeEnabled && !values.WaffoPancakeMerchantID.trim()) {
+    if (values.WaffoPancakeEnabled && !values.WaffoPancakeMerchantID.trim()) {
       showError(t('请输入商户 ID'));
       return;
     }
@@ -401,9 +422,13 @@ export default function SettingsPaymentGatewayWaffoPancake(props) {
             </Col>
           </Row>
 
-          <Button onClick={submitWaffoPancakeSetting}>
+          <AdminPermissionButton
+            requiredPermission={ADMIN_PERMISSION_KEYS.systemSettingsUpdate}
+            fallbackTooltip={systemSettingsPermissionDenied}
+            onClick={submitWaffoPancakeSetting}
+          >
             {t('更新 Waffo Pancake 设置')}
-          </Button>
+          </AdminPermissionButton>
         </Form.Section>
       </Form>
     </Spin>

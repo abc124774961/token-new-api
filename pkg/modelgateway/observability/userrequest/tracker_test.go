@@ -719,6 +719,24 @@ func TestTrackerStaleProcessingWithoutFirstByteUsesFirstByteTimeout(t *testing.T
 	require.GreaterOrEqual(t, records[0].DurationMs, int64(50000))
 }
 
+func TestTrackerImageRequestWithoutFirstByteUsesLongRunningTimeout(t *testing.T) {
+	restore := setTrackerTimeoutsForTest(t, true, 180, 900, 0)
+	defer restore()
+
+	tracker := NewTracker(10, time.Hour)
+	tracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-image-long-running", ModelName: "gpt-image-2"},
+		RecordedAt: time.Now().Add(-55 * time.Second),
+	})
+
+	require.Empty(t, tracker.SweepStale())
+	items := tracker.Snapshot(5, Filters{})
+	require.Len(t, items, 1)
+	require.Equal(t, StatusProcessing, items[0].Status)
+	require.Zero(t, items[0].FinalStatusCode)
+	require.Empty(t, items[0].FinalErrorCategory)
+}
+
 func TestTrackerStaleProcessingWithFirstByteKeepsStreamingTimeout(t *testing.T) {
 	restore := setTrackerTimeoutsForTest(t, true, 180, 900, 0)
 	defer restore()

@@ -37,6 +37,8 @@ import { IconSearch } from '@douyinfe/semi-icons';
 import { API, timestamp2string } from '../../../helpers';
 import { isAdmin } from '../../../helpers/utils';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
+import { AdminPermissionButton } from '../../../apps/admin-console/permissions/AdminPermissionAction';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
 const { Text } = Typography;
 
 // 状态映射配置
@@ -226,15 +228,21 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
           const actions = [];
           if (record.status === 'pending') {
             actions.push(
-              <Button
-                key="complete"
+              <AdminPermissionButton
+                key='complete'
                 size='small'
                 type='primary'
                 theme='outline'
+                dangerPermission={
+                  ADMIN_PERMISSION_KEYS.commercialSettlementComplete
+                }
+                fallbackTooltip={t(
+                  '没有人工补单权限，请联系财务管理员或超级管理员。',
+                )}
                 onClick={() => confirmAdminComplete(record.trade_no)}
               >
                 {t('补单')}
-              </Button>
+              </AdminPermissionButton>,
             );
           }
           return actions.length > 0 ? <>{actions}</> : null;

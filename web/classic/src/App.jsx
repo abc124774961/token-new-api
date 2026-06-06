@@ -26,22 +26,19 @@ import {
   useParams,
 } from 'react-router-dom';
 import Loading from './components/common/ui/Loading';
-import { AuthRedirect, PrivateRoute, AdminRoute } from './helpers';
+import { AuthRedirect, PrivateRoute } from './helpers';
 import { StatusContext } from './context/Status';
 import SetupCheck from './components/layout/SetupCheck';
 import {
   isPricingAuthRequired,
   parseHeaderNavModulesConfig,
 } from './constants/header-nav.constants';
+import { renderAdminRouteElements } from './apps/admin-console/routes/adminRoutes';
 
 const Home = lazy(() => import('./pages/Home'));
 const IntegrationDocs = lazy(() => import('./pages/IntegrationDocs'));
-const User = lazy(() => import('./pages/User'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const ChannelStatus = lazy(() => import('./pages/ChannelStatus'));
-const ModelGateway = lazy(() => import('./pages/ModelGateway'));
-const ChannelHealthCheck = lazy(() => import('./pages/ChannelHealthCheck'));
-const ProfitMonitor = lazy(() => import('./pages/ProfitMonitor'));
 const About = lazy(() => import('./pages/About'));
 const UserAgreement = lazy(() => import('./pages/UserAgreement'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
@@ -59,15 +56,7 @@ const PersonalSetting = lazy(
 );
 const NotFound = lazy(() => import('./pages/NotFound'));
 const Forbidden = lazy(() => import('./pages/Forbidden'));
-const Setting = lazy(() => import('./pages/Setting'));
-const Channel = lazy(() => import('./pages/Channel'));
-const ChannelAccount = lazy(() => import('./pages/ChannelAccount'));
-const ChannelBalanceMonitor = lazy(
-  () => import('./pages/ChannelBalanceMonitor'),
-);
-const ChannelProxy = lazy(() => import('./pages/ChannelProxy'));
 const Token = lazy(() => import('./pages/Token'));
-const Redemption = lazy(() => import('./pages/Redemption'));
 const TopUp = lazy(() => import('./pages/TopUp'));
 const Log = lazy(() => import('./pages/Log'));
 const Chat = lazy(() => import('./pages/Chat'));
@@ -75,20 +64,23 @@ const Chat2Link = lazy(() => import('./pages/Chat2Link'));
 const Midjourney = lazy(() => import('./pages/Midjourney'));
 const Pricing = lazy(() => import('./pages/Pricing'));
 const Task = lazy(() => import('./pages/Task'));
-const ModelPage = lazy(() => import('./pages/Model'));
-const ModelDeploymentPage = lazy(() => import('./pages/ModelDeployment'));
 const Playground = lazy(() => import('./pages/Playground'));
-const Subscription = lazy(() => import('./pages/Subscription'));
 const Setup = lazy(() => import('./pages/Setup'));
+const UserConsoleLayout = lazy(
+  () => import('./apps/user-console/layout/UserConsoleLayout'),
+);
 
 function DynamicOAuth2Callback() {
   const { provider } = useParams();
   return <OAuth2Callback type={provider} />;
 }
 
-function ChannelAccountLegacyRedirect() {
-  const { id } = useParams();
-  return <Navigate to={`/console/channel/accounts?channel_id=${id}`} replace />;
+function UserConsoleRoute({ children }) {
+  return (
+    <PrivateRoute>
+      <UserConsoleLayout>{children}</UserConsoleLayout>
+    </PrivateRoute>
+  );
 }
 
 function App() {
@@ -131,152 +123,34 @@ function App() {
             }
           />
           <Route path='/forbidden' element={<Forbidden />} />
-          <Route
-            path='/console/models'
-            element={
-              <AdminRoute>
-                <ModelPage />
-              </AdminRoute>
-            }
-          />
-          <Route
-            path='/console/deployment'
-            element={
-              <AdminRoute>
-                <ModelDeploymentPage />
-              </AdminRoute>
-            }
-          />
-          <Route
-            path='/console/subscription'
-            element={
-              <AdminRoute>
-                <Subscription />
-              </AdminRoute>
-            }
-          />
-          <Route
-            path='/console/channel'
-            element={
-              <AdminRoute>
-                <Channel />
-              </AdminRoute>
-            }
-          />
-          <Route
-            path='/console/channel/accounts'
-            element={
-              <AdminRoute>
-                <ChannelAccount />
-              </AdminRoute>
-            }
-          />
-          <Route
-            path='/console/channel/:id/accounts'
-            element={
-              <AdminRoute>
-                <ChannelAccountLegacyRedirect />
-              </AdminRoute>
-            }
-          />
-          <Route
-            path='/console/channel-balance-monitor'
-            element={
-              <AdminRoute>
-                <ChannelBalanceMonitor />
-              </AdminRoute>
-            }
-          />
-          <Route
-            path='/console/channel-proxies'
-            element={
-              <AdminRoute>
-                <ChannelProxy />
-              </AdminRoute>
-            }
-          />
+          {renderAdminRouteElements()}
           <Route
             path='/console/channel-status'
             element={
-              <PrivateRoute>
+              <UserConsoleRoute>
                 <Suspense
                   fallback={<Loading></Loading>}
                   key={location.pathname}
                 >
                   <ChannelStatus />
                 </Suspense>
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path='/console/model-gateway'
-            element={
-              <AdminRoute>
-                <Suspense
-                  fallback={<Loading></Loading>}
-                  key={location.pathname}
-                >
-                  <ModelGateway />
-                </Suspense>
-              </AdminRoute>
-            }
-          />
-          <Route
-            path='/console/channel-health-check'
-            element={
-              <AdminRoute>
-                <Suspense
-                  fallback={<Loading></Loading>}
-                  key={location.pathname}
-                >
-                  <ChannelHealthCheck />
-                </Suspense>
-              </AdminRoute>
-            }
-          />
-          <Route
-            path='/console/profit-monitor'
-            element={
-              <AdminRoute>
-                <Suspense
-                  fallback={<Loading></Loading>}
-                  key={location.pathname}
-                >
-                  <ProfitMonitor />
-                </Suspense>
-              </AdminRoute>
+              </UserConsoleRoute>
             }
           />
           <Route
             path='/console/token'
             element={
-              <PrivateRoute>
+              <UserConsoleRoute>
                 <Token />
-              </PrivateRoute>
+              </UserConsoleRoute>
             }
           />
           <Route
             path='/console/playground'
             element={
-              <PrivateRoute>
+              <UserConsoleRoute>
                 <Playground />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path='/console/redemption'
-            element={
-              <AdminRoute>
-                <Redemption />
-              </AdminRoute>
-            }
-          />
-          <Route
-            path='/console/user'
-            element={
-              <AdminRoute>
-                <User />
-              </AdminRoute>
+              </UserConsoleRoute>
             }
           />
           <Route
@@ -356,29 +230,16 @@ function App() {
             }
           />
           <Route
-            path='/console/setting'
-            element={
-              <AdminRoute>
-                <Suspense
-                  fallback={<Loading></Loading>}
-                  key={location.pathname}
-                >
-                  <Setting />
-                </Suspense>
-              </AdminRoute>
-            }
-          />
-          <Route
             path='/console/personal'
             element={
-              <PrivateRoute>
+              <UserConsoleRoute>
                 <Suspense
                   fallback={<Loading></Loading>}
                   key={location.pathname}
                 >
                   <PersonalSetting />
                 </Suspense>
-              </PrivateRoute>
+              </UserConsoleRoute>
             }
           />
           <Route
@@ -403,87 +264,87 @@ function App() {
           <Route
             path='/console/affiliate'
             element={
-              <PrivateRoute>
+              <UserConsoleRoute>
                 <Suspense
                   fallback={<Loading></Loading>}
                   key={location.pathname}
                 >
                   <TopUp view='affiliate' />
                 </Suspense>
-              </PrivateRoute>
+              </UserConsoleRoute>
             }
           />
           <Route
             path='/console/recharge'
             element={
-              <PrivateRoute>
+              <UserConsoleRoute>
                 <Suspense
                   fallback={<Loading></Loading>}
                   key={location.pathname}
                 >
                   <TopUp view='recharge' />
                 </Suspense>
-              </PrivateRoute>
+              </UserConsoleRoute>
             }
           />
           <Route
             path='/console/subscription-plans'
             element={
-              <PrivateRoute>
+              <UserConsoleRoute>
                 <Suspense
                   fallback={<Loading></Loading>}
                   key={location.pathname}
                 >
                   <TopUp view='subscription' />
                 </Suspense>
-              </PrivateRoute>
+              </UserConsoleRoute>
             }
           />
           <Route
             path='/console/log'
             element={
-              <PrivateRoute>
+              <UserConsoleRoute>
                 <Log />
-              </PrivateRoute>
+              </UserConsoleRoute>
             }
           />
           <Route
             path='/console'
             element={
-              <PrivateRoute>
+              <UserConsoleRoute>
                 <Suspense
                   fallback={<Loading></Loading>}
                   key={location.pathname}
                 >
                   <Dashboard />
                 </Suspense>
-              </PrivateRoute>
+              </UserConsoleRoute>
             }
           />
           <Route
             path='/console/midjourney'
             element={
-              <PrivateRoute>
+              <UserConsoleRoute>
                 <Suspense
                   fallback={<Loading></Loading>}
                   key={location.pathname}
                 >
                   <Midjourney />
                 </Suspense>
-              </PrivateRoute>
+              </UserConsoleRoute>
             }
           />
           <Route
             path='/console/task'
             element={
-              <PrivateRoute>
+              <UserConsoleRoute>
                 <Suspense
                   fallback={<Loading></Loading>}
                   key={location.pathname}
                 >
                   <Task />
                 </Suspense>
-              </PrivateRoute>
+              </UserConsoleRoute>
             }
           />
           <Route
@@ -535,9 +396,14 @@ function App() {
           <Route
             path='/console/chat/:id?'
             element={
-              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-                <Chat />
-              </Suspense>
+              <UserConsoleRoute>
+                <Suspense
+                  fallback={<Loading></Loading>}
+                  key={location.pathname}
+                >
+                  <Chat />
+                </Suspense>
+              </UserConsoleRoute>
             }
           />
           {/* 方便使用chat2link直接跳转聊天... */}

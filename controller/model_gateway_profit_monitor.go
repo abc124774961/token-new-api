@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewaytraffic "github.com/QuantumNous/new-api/pkg/modelgateway/traffic"
@@ -563,6 +564,7 @@ func UpdateModelGatewayProfitMonitorRecommendationDecision(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	setModelGatewayProfitRecommendationDecisionAuditSummary(c, row, beforeStatus, beforeMultiplier, beforeRemark)
 	recordModelGatewayProfitRecommendationDecisionLog(c, row, beforeStatus, beforeMultiplier, beforeRemark)
 	common.ApiSuccess(c, row)
 }
@@ -2147,6 +2149,54 @@ func modelGatewayProfitRecommendationActionCodes(summary ModelGatewayProfitMonit
 		actions = append(actions, "check_cost_anomalies")
 	}
 	return actions
+}
+
+func compactModelGatewayProfitDecisionRemark(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	const limit = 200
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value, false
+	}
+	return string(runes[:limit]), true
+}
+
+func setModelGatewayProfitRecommendationDecisionAuditSummary(c *gin.Context, row *model.ModelGatewayProfitRatioRecommendation, beforeStatus string, beforeMultiplier float64, beforeRemark string) {
+	if row == nil {
+		return
+	}
+	beforeRemarkText, beforeRemarkTruncated := compactModelGatewayProfitDecisionRemark(beforeRemark)
+	afterRemarkText, afterRemarkTruncated := compactModelGatewayProfitDecisionRemark(row.DecisionRemark)
+	middleware.SetAdminAuditSummary(c, "operation", "update_profit_recommendation_decision")
+	middleware.SetAdminAuditSummary(c, "recommendation_id", row.Id)
+	middleware.SetAdminAuditSummary(c, "decision_status_before", beforeStatus)
+	middleware.SetAdminAuditSummary(c, "decision_status_after", row.DecisionStatus)
+	middleware.SetAdminAuditSummary(c, "decision_status_changed", beforeStatus != row.DecisionStatus)
+	middleware.SetAdminAuditSummary(c, "planned_revenue_multiplier_before", beforeMultiplier)
+	middleware.SetAdminAuditSummary(c, "planned_revenue_multiplier_after", row.PlannedRevenueMultiplier)
+	middleware.SetAdminAuditSummary(c, "planned_revenue_multiplier_changed", beforeMultiplier != row.PlannedRevenueMultiplier)
+	middleware.SetAdminAuditSummary(c, "decision_remark_before", beforeRemarkText)
+	middleware.SetAdminAuditSummary(c, "decision_remark_after", afterRemarkText)
+	middleware.SetAdminAuditSummary(c, "decision_remark_before_length", len([]rune(strings.TrimSpace(beforeRemark))))
+	middleware.SetAdminAuditSummary(c, "decision_remark_after_length", len([]rune(strings.TrimSpace(row.DecisionRemark))))
+	middleware.SetAdminAuditSummary(c, "decision_remark_changed", strings.TrimSpace(beforeRemark) != strings.TrimSpace(row.DecisionRemark))
+	middleware.SetAdminAuditSummary(c, "decision_remark_before_truncated", beforeRemarkTruncated)
+	middleware.SetAdminAuditSummary(c, "decision_remark_after_truncated", afterRemarkTruncated)
+	middleware.SetAdminAuditSummary(c, "recommendation_window", row.Window)
+	middleware.SetAdminAuditSummary(c, "recommendation_dimension", row.Dimension)
+	middleware.SetAdminAuditSummary(c, "recommendation_scope_type", row.ScopeType)
+	middleware.SetAdminAuditSummary(c, "recommendation_scope_id", row.ScopeID)
+	middleware.SetAdminAuditSummary(c, "recommendation_scope_key", row.ScopeKey)
+	middleware.SetAdminAuditSummary(c, "recommendation_scope_name", row.ScopeName)
+	middleware.SetAdminAuditSummary(c, "recommendation_risk_level", row.RiskLevel)
+	middleware.SetAdminAuditSummary(c, "recommendation_reason", row.Reason)
+	middleware.SetAdminAuditSummary(c, "recommended_revenue_multiplier", row.RecommendedRevenueMultiplier)
+	middleware.SetAdminAuditSummary(c, "recommended_floor_per_m_token_usd", row.RecommendedFloorPerMTokenUSD)
+	middleware.SetAdminAuditSummary(c, "cost_multiplier", row.CostMultiplier)
+	middleware.SetAdminAuditSummary(c, "cost_markup_multiplier", row.CostMarkupMultiplier)
+	middleware.SetAdminAuditSummary(c, "decision_operator_id", row.DecisionOperatorID)
+	middleware.SetAdminAuditSummary(c, "decision_operator_name", row.DecisionOperatorName)
+	middleware.SetAdminAuditSummary(c, "decision_updated_at", row.DecisionUpdatedAt)
 }
 
 func recordModelGatewayProfitRecommendationDecisionLog(c *gin.Context, row *model.ModelGatewayProfitRatioRecommendation, beforeStatus string, beforeMultiplier float64, beforeRemark string) {

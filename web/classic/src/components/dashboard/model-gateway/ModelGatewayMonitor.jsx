@@ -2251,9 +2251,13 @@ function uniqueRouteValues(values) {
 function attemptRouteSignature(attempt) {
   if (!attempt) return '';
   const channelID =
-    attempt?.actual_channel_id || attempt?.channel_id || attempt?.final_channel_id;
+    attempt?.actual_channel_id ||
+    attempt?.channel_id ||
+    attempt?.final_channel_id;
   const group =
-    attempt?.actual_group || attempt?.selected_group || attempt?.requested_group;
+    attempt?.actual_group ||
+    attempt?.selected_group ||
+    attempt?.requested_group;
   const meta = attempt?.request_meta || {};
   const runtimeKey =
     meta?.runtime_key ||
@@ -3022,13 +3026,19 @@ function userRequestProcessingStage(record, durationMs, hasTTFT, t) {
   return t('等待首包');
 }
 
-function userRequestStatusCaption(record, meta, processing, hasTTFT, durationMs, t) {
+function userRequestStatusCaption(
+  record,
+  meta,
+  processing,
+  hasTTFT,
+  durationMs,
+  t,
+) {
   if (processing) {
     return userRequestProcessingStage(record, durationMs, hasTTFT, t);
   }
   if (meta?.tone === 'settling') return t('上游已完成，费用待结算');
-  if (meta?.tone === 'billing-pending')
-    return t('上游已完成，未收到消费日志');
+  if (meta?.tone === 'billing-pending') return t('上游已完成，未收到消费日志');
   if (isSmartSwitchRecovered(record)) return t('智能切换后成功');
   if (meta?.tone === 'quota') return t('业务拦截');
   if (meta?.tone === 'aborted') return t('客户端断开');
@@ -3835,10 +3845,7 @@ function UserRequestEventTooltip({ record, meta, processing, durationMs, t }) {
     ]);
   }
   if (isSmartSwitchRecovered(record) && !processing) {
-    rows.push([
-      t('智能切换'),
-      t('请求通过智能调度切换到可用渠道后完成'),
-    ]);
+    rows.push([t('智能切换'), t('请求通过智能调度切换到可用渠道后完成')]);
   }
   if (hasModelGatewayWarning(record) && !processing) {
     rows.push([t('渠道预警'), modelGatewayWarningContent(record, t)]);
@@ -5408,11 +5415,7 @@ function UserRequestRecentTable({
                       </div>
                       <div
                         className={`ct-model-gateway-user-request-latency-line ct-model-gateway-user-request-latency-${ttftTone}`}
-                        title={userRequestTTFTCaption(
-                          processing,
-                          hasTTFT,
-                          t,
-                        )}
+                        title={userRequestTTFTCaption(processing, hasTTFT, t)}
                       >
                         <Clock3 size={13} />
                         <span>{t('首包')}</span>
@@ -12797,8 +12800,9 @@ function ReplayBatchModal({
   );
 }
 
-export default function ModelGatewayMonitor() {
+export default function ModelGatewayMonitor({ variant = 'default' }) {
   const { t } = useTranslation();
+  const isAdminVariant = variant === 'admin';
   const [hours, setHours] = useState(DEFAULT_HOURS);
   const [trendBucket, setTrendBucket] = useState(DEFAULT_TREND_BUCKET);
   const [replayVisible, setReplayVisible] = useState(false);
@@ -13493,7 +13497,11 @@ export default function ModelGatewayMonitor() {
   );
 
   return (
-    <div className='ct-model-gateway-page'>
+    <div
+      className={`ct-model-gateway-page${
+        isAdminVariant ? ' ct-model-gateway-page-admin' : ''
+      }`}
+    >
       <div className='ct-model-gateway-hero'>
         <div className='ct-model-gateway-title-block'>
           <div className='ct-model-gateway-title-icon'>

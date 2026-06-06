@@ -106,15 +106,17 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
             />
           </div>
 
-          <Navigation
-            mainNavLinks={mainNavLinks}
-            isMobile={isMobile}
-            isLoading={isLoading}
-            userState={userState}
-            pricingRequireAuth={pricingRequireAuth}
-            currentPath={location.pathname}
-            currentHash={location.hash}
-          />
+          {!isConsoleRoute && (
+            <Navigation
+              mainNavLinks={mainNavLinks}
+              isMobile={isMobile}
+              isLoading={isLoading}
+              userState={userState}
+              pricingRequireAuth={pricingRequireAuth}
+              currentPath={location.pathname}
+              currentHash={location.hash}
+            />
+          )}
 
           <ActionButtons
             isNewYear={isNewYear}

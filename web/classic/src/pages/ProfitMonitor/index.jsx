@@ -829,9 +829,7 @@ function buildOperationRatioInsight(dynamicRatioGroup, config, t) {
     return {
       tone: 'warning',
       title: t('触达倍率限制'),
-      description: t(
-        '运营侧应先核对成本和上限配置，再决定是否放宽倍率上限。',
-      ),
+      description: t('运营侧应先核对成本和上限配置，再决定是否放宽倍率上限。'),
     };
   }
   if (dynamicRatioGroup.applied) {
@@ -927,7 +925,11 @@ function GroupRatioPanel({ dynamicRatioGroup, config, t }) {
               ? t('固定倍率生效')
               : t('未设置')
           }
-          tone={dynamicRatioGroup.dynamic_ratio_fixed_applied ? 'success' : 'neutral'}
+          tone={
+            dynamicRatioGroup.dynamic_ratio_fixed_applied
+              ? 'success'
+              : 'neutral'
+          }
         />
         <RatioStat
           label={t('建议目标倍率')}
@@ -1952,8 +1954,9 @@ function CanaryTaskModal({ visible, task, saving, onCancel, onSave, t }) {
   );
 }
 
-export default function ProfitMonitor() {
+export default function ProfitMonitor({ variant = 'default' }) {
   const { t } = useTranslation();
+  const isAdminVariant = variant === 'admin';
   const [windowKey, setWindowKey] = useState('24h');
   const [trafficDimension, setTrafficDimension] = useState('channel');
   const [loading, setLoading] = useState(false);
@@ -3177,7 +3180,9 @@ export default function ProfitMonitor() {
   ];
 
   return (
-    <div className='ct-profit-page'>
+    <div
+      className={`ct-profit-page${isAdminVariant ? ' ct-profit-page-admin' : ''}`}
+    >
       <div className='ct-profit-header'>
         <div>
           <div className='ct-profit-eyebrow'>{t('经营分析')}</div>

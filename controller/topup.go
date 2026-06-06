@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -494,9 +495,48 @@ func AdminCompleteTopUp(c *gin.Context) {
 	LockOrder(req.TradeNo)
 	defer UnlockOrder(req.TradeNo)
 
+	beforeTopUp := model.GetTopUpByTradeNo(req.TradeNo)
+	var beforeUser *model.User
+	if beforeTopUp != nil {
+		beforeUser, _ = model.GetUserById(beforeTopUp.UserId, false)
+	}
 	if err := model.ManualCompleteTopUp(req.TradeNo, c.ClientIP()); err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	afterTopUp := model.GetTopUpByTradeNo(req.TradeNo)
+	var afterUser *model.User
+	if afterTopUp != nil {
+		afterUser, _ = model.GetUserById(afterTopUp.UserId, false)
+	}
+	setAdminCompleteTopUpAuditSummary(c, req.TradeNo, beforeTopUp, afterTopUp, beforeUser, afterUser)
 	common.ApiSuccess(c, nil)
+}
+
+func setAdminCompleteTopUpAuditSummary(c *gin.Context, tradeNo string, before *model.TopUp, after *model.TopUp, beforeUser *model.User, afterUser *model.User) {
+	middleware.SetAdminAuditSummary(c, "operation", "admin_complete_topup")
+	middleware.SetAdminAuditSummary(c, "trade_no", tradeNo)
+	if after != nil {
+		middleware.SetAdminAuditSummary(c, "topup_id", after.Id)
+		middleware.SetAdminAuditSummary(c, "target_user_id", after.UserId)
+		middleware.SetAdminAuditSummary(c, "amount", after.Amount)
+		middleware.SetAdminAuditSummary(c, "money", after.Money)
+		middleware.SetAdminAuditSummary(c, "payment_method", after.PaymentMethod)
+		middleware.SetAdminAuditSummary(c, "payment_provider", after.PaymentProvider)
+		middleware.SetAdminAuditSummary(c, "status_after", after.Status)
+		middleware.SetAdminAuditSummary(c, "complete_time_after", after.CompleteTime)
+	}
+	if before != nil {
+		middleware.SetAdminAuditSummary(c, "status_before", before.Status)
+		middleware.SetAdminAuditSummary(c, "complete_time_before", before.CompleteTime)
+	}
+	if beforeUser != nil {
+		middleware.SetAdminAuditSummary(c, "quota_before", beforeUser.Quota)
+	}
+	if afterUser != nil {
+		middleware.SetAdminAuditSummary(c, "quota_after", afterUser.Quota)
+	}
+	if beforeUser != nil && afterUser != nil {
+		middleware.SetAdminAuditSummary(c, "quota_delta", afterUser.Quota-beforeUser.Quota)
+	}
 }

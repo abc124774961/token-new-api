@@ -171,8 +171,9 @@ function statusTag(proxy, t) {
   );
 }
 
-function ChannelProxy() {
+function ChannelProxy({ variant = 'default' }) {
   const { t } = useTranslation();
+  const isAdminVariant = variant === 'admin';
   const [proxies, setProxies] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -661,8 +662,16 @@ function ChannelProxy() {
   );
 
   return (
-    <div className='ct-console-content-wrap'>
-      <div className='ct-channel-proxy-page'>
+    <div
+      className={`ct-console-content-wrap${
+        isAdminVariant ? ' ct-admin-channel-proxy-shell' : ''
+      }`}
+    >
+      <div
+        className={`ct-channel-proxy-page${
+          isAdminVariant ? ' ct-channel-proxy-page-admin' : ''
+        }`}
+      >
         <div className='ct-channel-proxy-hero'>
           <div className='ct-channel-proxy-title-block'>
             <div className='ct-channel-proxy-title-icon'>

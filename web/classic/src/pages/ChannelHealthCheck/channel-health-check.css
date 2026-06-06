@@ -32,6 +32,23 @@
   --semi-color-primary-hover: #0d9488;
 }
 
+.ct-channel-health-page-admin {
+  min-height: auto;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--aurora-text, #10202f);
+  --ch-surface: rgba(255, 255, 255, 0.9);
+  --ch-surface-soft: var(--aurora-surface-soft, #f9fbfd);
+  --ch-border: var(--aurora-line-soft, #edf2f6);
+  --ch-text: var(--aurora-text, #10202f);
+  --ch-muted: var(--aurora-muted, #64748b);
+  --ch-teal: var(--aurora-brand-dark, #047c80);
+  --semi-color-primary: var(--aurora-brand-dark, #047c80);
+  --semi-color-primary-hover: var(--aurora-brand, #00a7a7);
+}
+
 .ct-channel-health-hero {
   display: grid;
   align-items: center;
@@ -40,6 +57,15 @@
   grid-template-columns: minmax(0, 1fr) auto;
   border-bottom: 1px solid var(--ch-border);
   padding: 2px 4px 10px;
+}
+
+.ct-channel-health-page-admin .ct-channel-health-hero {
+  gap: 24px;
+  border: 1px solid var(--ch-border);
+  border-radius: var(--aurora-radius, 12px);
+  padding: 24px 26px;
+  background: linear-gradient(135deg, #ffffff 0%, #f7fbfc 100%);
+  box-shadow: var(--aurora-shadow, 0 14px 34px rgba(15, 23, 42, 0.08));
 }
 
 .ct-channel-health-title-block,
@@ -66,6 +92,15 @@
   box-shadow: inset 0 0 0 1px rgba(20, 184, 166, 0.18);
 }
 
+.ct-channel-health-page-admin .ct-channel-health-title-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 13px;
+  color: var(--ch-teal);
+  background: var(--aurora-brand-soft, #e6f8f7);
+  box-shadow: inset 0 0 0 1px rgba(0, 167, 167, 0.16);
+}
+
 .ct-channel-health-eyebrow {
   margin-bottom: 2px;
   color: var(--ch-teal);
@@ -81,10 +116,29 @@
   letter-spacing: 0;
 }
 
+.ct-channel-health-page-admin .ct-channel-health-title-block h2 {
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 860;
+}
+
 .ct-channel-health-title-block p {
   margin: 4px 0 0;
   color: var(--ch-muted);
   font-size: 12px;
+}
+
+.ct-channel-health-page-admin .ct-channel-health-title-block p {
+  max-width: 760px;
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 23px;
+}
+
+.ct-channel-health-page-admin .ct-channel-health-actions .semi-button {
+  height: 36px;
+  border-radius: 9px;
+  font-weight: 760;
 }
 
 .ct-channel-health-window-select {
@@ -106,6 +160,10 @@
   gap: 10px;
 }
 
+.ct-channel-health-page-admin .ct-channel-health-metric-grid {
+  gap: 14px;
+}
+
 .ct-channel-health-metric {
   display: flex;
   min-height: 104px;
@@ -117,6 +175,14 @@
   padding: 14px;
   background: var(--ch-surface);
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.035);
+}
+
+.ct-channel-health-page-admin .ct-channel-health-metric {
+  min-height: 110px;
+  border-color: var(--ch-border);
+  border-radius: var(--aurora-radius, 12px);
+  padding: 16px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.045);
 }
 
 .ct-channel-health-metric-main {
@@ -135,9 +201,8 @@
 
 .ct-channel-health-metric-main strong {
   color: var(--ch-text);
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
   font-size: 28px;
   font-weight: 850;
   line-height: 1;
@@ -152,6 +217,14 @@
   border-radius: 11px;
   color: #0f766e;
   background: rgba(20, 184, 166, 0.12);
+}
+
+.ct-channel-health-page-admin .ct-channel-health-metric-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  color: var(--ch-teal);
+  background: var(--aurora-brand-soft, #e6f8f7);
 }
 
 .ct-channel-health-metric-warning .ct-channel-health-metric-icon {
@@ -172,13 +245,24 @@
 .ct-channel-health-filter-panel {
   display: grid;
   align-items: center;
-  grid-template-columns: minmax(220px, 1.3fr) repeat(3, minmax(150px, 1fr)) minmax(160px, 0.8fr) auto;
+  grid-template-columns: minmax(220px, 1.3fr) repeat(
+      3,
+      minmax(150px, 1fr)
+    ) minmax(160px, 0.8fr) auto;
   gap: 10px;
   border: 1px solid var(--ch-border);
   border-radius: 9px;
   padding: 10px;
   background: var(--ch-surface);
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.035);
+}
+
+.ct-channel-health-page-admin .ct-channel-health-filter-panel {
+  border-color: var(--ch-border);
+  border-radius: var(--aurora-radius, 12px);
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.045);
 }
 
 .ct-channel-health-filter-actions {
@@ -197,6 +281,14 @@
   padding: 10px;
   background: var(--ch-surface);
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.035);
+}
+
+.ct-channel-health-page-admin .ct-channel-health-panel {
+  border-color: var(--ch-border);
+  border-radius: var(--aurora-radius, 12px);
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.045);
 }
 
 .ct-channel-health-tab {
@@ -227,6 +319,17 @@
   font-weight: 800;
 }
 
+.ct-channel-health-page-admin
+  .semi-table-thead
+  > .semi-table-row
+  > .semi-table-row-head {
+  height: 42px;
+  padding: 8px 12px;
+  color: var(--ch-muted) !important;
+  background: var(--ch-surface-soft) !important;
+  font-weight: 780;
+}
+
 .ct-channel-health-page
   .semi-table-tbody
   > .semi-table-row
@@ -234,11 +337,26 @@
   border-bottom-color: #e5edf5 !important;
 }
 
+.ct-channel-health-page-admin
+  .semi-table-tbody
+  > .semi-table-row
+  > .semi-table-row-cell {
+  height: 58px;
+  padding: 9px 12px;
+}
+
 .ct-channel-health-page .semi-input-wrapper,
 .ct-channel-health-page .semi-select,
 .ct-channel-health-page .semi-select-selection {
   border-color: transparent !important;
   background: #eef3f8 !important;
+}
+
+.ct-channel-health-page-admin .semi-input-wrapper,
+.ct-channel-health-page-admin .semi-select,
+.ct-channel-health-page-admin .semi-select-selection {
+  border-color: var(--ch-border) !important;
+  background: var(--ch-surface-soft) !important;
 }
 
 .ct-channel-health-main-cell,
@@ -304,9 +422,8 @@
 }
 
 .ct-channel-health-icon-badge-mono span {
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
   font-weight: 850;
 }
 
@@ -361,9 +478,8 @@
 .ct-channel-health-identity-tooltip strong {
   overflow-wrap: anywhere;
   color: #f8fafc;
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
   font-weight: 800;
 }
 
@@ -375,9 +491,8 @@
 
 .ct-channel-health-score-stack strong {
   color: var(--ch-text);
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
   font-size: 18px;
   font-weight: 850;
 }
@@ -443,9 +558,8 @@
 }
 
 .ct-channel-health-countdown strong {
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
   font-weight: 850;
 }
 
@@ -495,9 +609,8 @@
 .ct-channel-health-score-change-main strong,
 .ct-channel-health-score-change-empty strong {
   color: var(--ch-text);
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
   font-size: 18px;
   font-weight: 850;
   line-height: 1;
@@ -508,9 +621,8 @@
   align-items: center;
   border-radius: 999px;
   padding: 2px 7px;
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
   font-size: 11px;
   font-weight: 850;
 }
@@ -543,9 +655,8 @@
 
 .ct-channel-health-score-change-metrics em {
   font-style: normal;
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
   font-weight: 850;
 }
 
@@ -655,6 +766,19 @@
   .ct-channel-health-filter-panel,
   .ct-channel-health-metric-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ct-channel-health-page-admin {
+    gap: 14px;
+  }
+
+  .ct-channel-health-page-admin .ct-channel-health-hero {
+    padding: 18px;
+  }
+
+  .ct-channel-health-page-admin .ct-channel-health-title-block h2 {
+    font-size: 24px;
+    line-height: 32px;
   }
 
   .ct-channel-health-actions,

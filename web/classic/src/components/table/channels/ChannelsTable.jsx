@@ -25,6 +25,8 @@ import {
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
 import { getChannelsColumns } from './ChannelsColumnDefs';
+import { useAdminActionPermission } from '../../../apps/admin-console/permissions/AdminPermissionAction';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
 
 const ChannelsTable = (channelsData) => {
   const {
@@ -64,6 +66,9 @@ const ChannelsTable = (channelsData) => {
     openUpstreamUpdateModal,
     detectChannelUpstreamUpdates,
   } = channelsData;
+  const canDeleteChannelDanger = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.channelChannelDanger,
+  );
 
   // Get all columns
   const allColumns = useMemo(() => {
@@ -90,6 +95,7 @@ const ChannelsTable = (channelsData) => {
       setCurrentMultiKeyChannel,
       openUpstreamUpdateModal,
       detectChannelUpstreamUpdates,
+      canDeleteChannelDanger,
     });
   }, [
     t,
@@ -114,6 +120,7 @@ const ChannelsTable = (channelsData) => {
     setCurrentMultiKeyChannel,
     openUpstreamUpdateModal,
     detectChannelUpstreamUpdates,
+    canDeleteChannelDanger,
   ]);
 
   // Filter columns based on visibility settings

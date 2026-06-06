@@ -42,6 +42,11 @@ import {
   showWarning,
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  AdminPermissionButton,
+  useAdminActionPermission,
+} from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 const { Text } = Typography;
 
@@ -60,6 +65,28 @@ function formatBytes(bytes, decimals = 2) {
 
 export default function SettingsPerformance(props) {
   const { t } = useTranslation();
+  const canManageSystemSettings = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.systemSettingsUpdate,
+  );
+  const canManagePerformanceDanger = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.systemPerformanceDanger,
+  );
+  const systemSettingsPermissionDenied = t(
+    '没有系统设置修改权限，请联系超级管理员。',
+  );
+  const performanceDangerPermissionDenied = t(
+    '没有性能设置高危操作权限，请联系超级管理员。',
+  );
+  const ensureSystemSettingsPermission = () => {
+    if (canManageSystemSettings) return true;
+    showWarning(systemSettingsPermissionDenied);
+    return false;
+  };
+  const ensurePerformanceDangerPermission = () => {
+    if (canManagePerformanceDanger) return true;
+    showWarning(performanceDangerPermissionDenied);
+    return false;
+  };
   const [loading, setLoading] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
   const [stats, setStats] = useState(null);
@@ -87,6 +114,10 @@ export default function SettingsPerformance(props) {
   }
 
   function onSubmit() {
+    if (!ensureSystemSettingsPermission()) {
+      return;
+    }
+
     const updateArray = compareObjects(inputs, inputsRow);
     if (!updateArray.length) return showWarning(t('你似乎并没有修改什么'));
     const requestQueue = updateArray.map((item) => {
@@ -137,6 +168,10 @@ export default function SettingsPerformance(props) {
   }
 
   async function clearDiskCache() {
+    if (!ensurePerformanceDangerPermission()) {
+      return;
+    }
+
     try {
       const res = await API.delete('/api/performance/disk_cache');
       if (res.data.success) {
@@ -151,6 +186,10 @@ export default function SettingsPerformance(props) {
   }
 
   async function resetStats() {
+    if (!ensurePerformanceDangerPermission()) {
+      return;
+    }
+
     try {
       const res = await API.post('/api/performance/reset_stats');
       if (res.data.success) {
@@ -163,6 +202,10 @@ export default function SettingsPerformance(props) {
   }
 
   async function forceGC() {
+    if (!ensurePerformanceDangerPermission()) {
+      return;
+    }
+
     try {
       const res = await API.post('/api/performance/gc');
       if (res.data.success) {
@@ -186,7 +229,15 @@ export default function SettingsPerformance(props) {
   }
 
   async function cleanupLogFiles() {
-    if (logCleanupValue == null || isNaN(logCleanupValue) || logCleanupValue < 1) {
+    if (!ensurePerformanceDangerPermission()) {
+      return;
+    }
+
+    if (
+      logCleanupValue == null ||
+      isNaN(logCleanupValue) ||
+      logCleanupValue < 1
+    ) {
       showError(t('请输入有效的数值'));
       return;
     }
@@ -390,9 +441,14 @@ export default function SettingsPerformance(props) {
               </Col>
             </Row>
             <Row>
-              <Button size='default' onClick={onSubmit}>
+              <AdminPermissionButton
+                size='default'
+                requiredPermission={ADMIN_PERMISSION_KEYS.systemSettingsUpdate}
+                fallbackTooltip={systemSettingsPermissionDenied}
+                onClick={onSubmit}
+              >
                 {t('保存性能设置')}
-              </Button>
+              </AdminPermissionButton>
             </Row>
           </Form.Section>
         </Form>
@@ -474,24 +530,32 @@ export default function SettingsPerformance(props) {
                   >
                     &nbsp;
                   </Text>
-                <Popconfirm
-                  title={t('确认清理日志文件？')}
-                  content={
-                    logCleanupMode === 'by_count'
-                      ? t(
-                          '将只保留最近 {{value}} 个日志文件，其余将被删除。',
-                          { value: logCleanupValue },
-                        )
-                      : t('将删除 {{value}} 天前的日志文件。', {
-                          value: logCleanupValue,
-                        })
-                  }
-                  onConfirm={cleanupLogFiles}
-                >
-                  <Button type='danger' loading={logCleanupLoading}>
-                    {t('清理日志文件')}
-                  </Button>
-                </Popconfirm>
+                  <Popconfirm
+                    title={t('确认清理日志文件？')}
+                    content={
+                      logCleanupMode === 'by_count'
+                        ? t(
+                            '将只保留最近 {{value}} 个日志文件，其余将被删除。',
+                            { value: logCleanupValue },
+                          )
+                        : t('将删除 {{value}} 天前的日志文件。', {
+                            value: logCleanupValue,
+                          })
+                    }
+                    disabled={!canManagePerformanceDanger}
+                    onConfirm={cleanupLogFiles}
+                  >
+                    <AdminPermissionButton
+                      type='danger'
+                      dangerPermission={
+                        ADMIN_PERMISSION_KEYS.systemPerformanceDanger
+                      }
+                      fallbackTooltip={performanceDangerPermissionDenied}
+                      loading={logCleanupLoading}
+                    >
+                      {t('清理日志文件')}
+                    </AdminPermissionButton>
+                  </Popconfirm>
                 </div>
               </Col>
             </Row>
@@ -514,12 +578,37 @@ export default function SettingsPerformance(props) {
                 <Popconfirm
                   title={t('确认清理不活跃的磁盘缓存？')}
                   content={t('这将删除超过 10 分钟未使用的临时缓存文件')}
+                  disabled={!canManagePerformanceDanger}
                   onConfirm={clearDiskCache}
                 >
-                  <Button type='warning'>{t('清理不活跃缓存')}</Button>
+                  <AdminPermissionButton
+                    type='warning'
+                    dangerPermission={
+                      ADMIN_PERMISSION_KEYS.systemPerformanceDanger
+                    }
+                    fallbackTooltip={performanceDangerPermissionDenied}
+                  >
+                    {t('清理不活跃缓存')}
+                  </AdminPermissionButton>
                 </Popconfirm>
-                <Button onClick={resetStats}>{t('重置统计')}</Button>
-                <Button onClick={forceGC}>{t('执行 GC')}</Button>
+                <AdminPermissionButton
+                  dangerPermission={
+                    ADMIN_PERMISSION_KEYS.systemPerformanceDanger
+                  }
+                  fallbackTooltip={performanceDangerPermissionDenied}
+                  onClick={resetStats}
+                >
+                  {t('重置统计')}
+                </AdminPermissionButton>
+                <AdminPermissionButton
+                  dangerPermission={
+                    ADMIN_PERMISSION_KEYS.systemPerformanceDanger
+                  }
+                  fallbackTooltip={performanceDangerPermissionDenied}
+                  onClick={forceGC}
+                >
+                  {t('执行 GC')}
+                </AdminPermissionButton>
               </div>
             </Col>
           </Row>

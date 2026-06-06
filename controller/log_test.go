@@ -167,6 +167,63 @@ func TestGetAllLogsAttachesEstimatedChannelCostWhenSummaryMissing(t *testing.T) 
 	require.NotContains(t, breakdownMap, "output")
 }
 
+func TestGetAllLogsFiltersAdminAuditFields(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	matchingOther := common.MapToJsonStr(map[string]interface{}{
+		"admin_info": map[string]interface{}{
+			"permission": "admin:system:roles:update",
+			"source":     "database",
+			"result":     "completed",
+			"summary": map[string]interface{}{
+				"target_user_id": 39,
+			},
+		},
+	})
+	otherOther := common.MapToJsonStr(map[string]interface{}{
+		"admin_info": map[string]interface{}{
+			"permission": "admin:channel:channel:update",
+			"source":     "role_compatibility",
+			"result":     "denied",
+			"summary": map[string]interface{}{
+				"target_user_id": 40,
+			},
+		},
+	})
+	require.NoError(t, db.Create(&model.Log{
+		UserId:    1,
+		CreatedAt: now,
+		Type:      model.LogTypeManage,
+		Username:  "root-admin",
+		Content:   "管理员操作: admin:system:roles:update PUT /api/admin/permissions/users/:id",
+		Other:     matchingOther,
+	}).Error)
+	require.NoError(t, db.Create(&model.Log{
+		UserId:    2,
+		CreatedAt: now,
+		Type:      model.LogTypeManage,
+		Username:  "channel-admin",
+		Content:   "管理员操作: admin:channel:channel:update PUT /api/channel/",
+		Other:     otherOther,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/log", GetAllLogs)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/log?type=3&page_size=20&audit_permission=admin:system:roles:update&audit_source=database&audit_result=completed&audit_operator=root-admin&audit_target_user_id=39", nil)
+	router.ServeHTTP(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	var payload logsAPIResponse
+	require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Equal(t, 1, payload.Data.Total)
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, "root-admin", payload.Data.Items[0].Username)
+	require.Contains(t, payload.Data.Items[0].Other, "admin:system:roles:update")
+}
+
 func TestGetUserLogsDoesNotExposeModelGatewayCostSummary(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()

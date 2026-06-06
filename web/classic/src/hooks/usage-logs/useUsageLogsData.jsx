@@ -44,7 +44,7 @@ import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
 
-export const useLogsData = () => {
+export const useLogsData = ({ initialLogType = 0 } = {}) => {
   const { t } = useTranslation();
 
   // Define column keys for selection
@@ -74,7 +74,7 @@ export const useLogsData = () => {
   const [activePage, setActivePage] = useState(1);
   const [logCount, setLogCount] = useState(0);
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
-  const [logType, setLogType] = useState(0);
+  const [logType, setLogType] = useState(initialLogType);
 
   // User and admin
   const isAdminUser = isAdmin();
@@ -101,11 +101,16 @@ export const useLogsData = () => {
     channel: '',
     group: '',
     request_id: '',
+    audit_permission: '',
+    audit_source: '',
+    audit_result: '',
+    audit_operator: '',
+    audit_target_user_id: '',
     dateRange: [
       timestamp2string(getTodayStartTimestamp()),
       timestamp2string(getTodayEndTimestamp()),
     ],
-    logType: '0',
+    logType: String(initialLogType),
   };
 
   // Get default column visibility based on user role
@@ -263,6 +268,11 @@ export const useLogsData = () => {
       channel: formValues.channel || '',
       group: formValues.group || '',
       request_id: formValues.request_id || '',
+      audit_permission: formValues.audit_permission || '',
+      audit_source: formValues.audit_source || '',
+      audit_result: formValues.audit_result || '',
+      audit_operator: formValues.audit_operator || '',
+      audit_target_user_id: formValues.audit_target_user_id || '',
       logType: formValues.logType ? parseInt(formValues.logType) : 0,
     };
   };
@@ -780,6 +790,73 @@ export const useLogsData = () => {
       }
       if (isAdminUser && logs[i].type === 3 && other?.admin_info) {
         const adminInfo = other.admin_info;
+        const stringifyAuditValue = (value) => {
+          if (value === undefined || value === null || value === '') {
+            return '';
+          }
+          if (typeof value === 'object') {
+            return JSON.stringify(value);
+          }
+          return String(value);
+        };
+        if (adminInfo.permission) {
+          expandDataLocal.push({
+            key: t('权限点'),
+            value: adminInfo.permission,
+          });
+        }
+        if (adminInfo.source) {
+          expandDataLocal.push({
+            key: t('权限来源'),
+            value: t(
+              {
+                role_compatibility: '固定角色兼容',
+                database: '数据库权限',
+                root: '超级管理员',
+              }[adminInfo.source] || adminInfo.source,
+            ),
+          });
+        }
+        if (adminInfo.result) {
+          expandDataLocal.push({
+            key: t('操作结果'),
+            value: t(
+              {
+                completed: '完成',
+                denied: '拒绝',
+                error: '错误',
+                http_error: 'HTTP 错误',
+                aborted: '中止',
+              }[adminInfo.result] || adminInfo.result,
+            ),
+          });
+        }
+        if (adminInfo.method || adminInfo.route || adminInfo.path) {
+          expandDataLocal.push({
+            key: t('接口路由'),
+            value: [adminInfo.method, adminInfo.route || adminInfo.path]
+              .filter(Boolean)
+              .join(' '),
+          });
+        }
+        if (adminInfo.duration_ms !== undefined) {
+          expandDataLocal.push({
+            key: t('耗时'),
+            value: `${adminInfo.duration_ms} ms`,
+          });
+        }
+        if (adminInfo.target && Object.keys(adminInfo.target).length > 0) {
+          expandDataLocal.push({
+            key: t('目标对象'),
+            value: stringifyAuditValue(adminInfo.target),
+          });
+        }
+        if (adminInfo.summary && Object.keys(adminInfo.summary).length > 0) {
+          expandDataLocal.push({
+            key: t('审计摘要'),
+            value: stringifyAuditValue(adminInfo.summary),
+          });
+        }
         const hasUsername =
           adminInfo.admin_username !== undefined &&
           adminInfo.admin_username !== null &&
@@ -824,6 +901,11 @@ export const useLogsData = () => {
       channel,
       group,
       request_id,
+      audit_permission,
+      audit_source,
+      audit_result,
+      audit_operator,
+      audit_target_user_id,
       logType: formLogType,
     } = getFormValues();
 
@@ -837,7 +919,11 @@ export const useLogsData = () => {
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
     if (isAdminUser) {
-      url = `/api/log/?p=${startIdx}&page_size=${pageSize}&type=${currentLogType}&username=${username}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&group=${group}&request_id=${request_id}`;
+      const auditQuery =
+        currentLogType === 3
+          ? `&audit_permission=${audit_permission}&audit_source=${audit_source}&audit_result=${audit_result}&audit_operator=${audit_operator}&audit_target_user_id=${audit_target_user_id}`
+          : '';
+      url = `/api/log/?p=${startIdx}&page_size=${pageSize}&type=${currentLogType}&username=${username}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&group=${group}&request_id=${request_id}${auditQuery}`;
     } else {
       url = `/api/log/self/?p=${startIdx}&page_size=${pageSize}&type=${currentLogType}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&group=${group}&request_id=${request_id}`;
     }
@@ -928,6 +1014,7 @@ export const useLogsData = () => {
     logCount,
     pageSize,
     logType,
+    initialLogType,
     stat,
     isAdminUser,
 

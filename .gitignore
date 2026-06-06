@@ -10,6 +10,7 @@ build
 logs
 logs-alpha/
 web/classic/dist
+web/classic/dist-admin
 web/node_modules
 web/dist
 .env

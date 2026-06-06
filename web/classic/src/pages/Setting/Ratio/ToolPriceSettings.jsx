@@ -31,6 +31,8 @@ import {
 import { IconCopy, IconDelete, IconPlus } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
 import { API, copy, showError, showSuccess } from '../../../helpers';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import { AdminPermissionButton } from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 const { Text } = Typography;
 
@@ -65,7 +67,11 @@ function objectToRows(prices) {
   }));
 }
 
-export default function ToolPriceSettings({ options }) {
+export default function ToolPriceSettings({
+  options,
+  ratioDangerPermissionDenied,
+  ensureRatioPermission,
+}) {
   const { t } = useTranslation();
   const [rows, setRows] = useState([]);
   const [mode, setMode] = useState('visual');
@@ -102,7 +108,11 @@ export default function ToolPriceSettings({ options }) {
     setJsonText(text);
     try {
       const parsed = JSON.parse(text);
-      if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+      if (
+        typeof parsed !== 'object' ||
+        Array.isArray(parsed) ||
+        parsed === null
+      ) {
         setJsonError(t('JSON 必须是对象'));
         return;
       }
@@ -132,6 +142,10 @@ export default function ToolPriceSettings({ options }) {
   const currentPrices = useMemo(() => rowsToObject(rows), [rows]);
 
   const handleSave = async () => {
+    if (ensureRatioPermission && !ensureRatioPermission()) {
+      return;
+    }
+
     setSaving(true);
     try {
       const res = await API.put('/api/option/', {
@@ -198,7 +212,11 @@ export default function ToolPriceSettings({ options }) {
         type='info'
         description={
           <>
-            <div>{t('配置各工具的调用价格（$/1K次调用）。按次计费模型不额外收取工具费用。')}</div>
+            <div>
+              {t(
+                '配置各工具的调用价格（$/1K次调用）。按次计费模型不额外收取工具费用。',
+              )}
+            </div>
             <div style={{ marginTop: 4 }}>
               <Text strong>{t('格式')}：</Text>
               <code>web_search_preview</code> {t('为默认价格')}，
@@ -247,7 +265,11 @@ export default function ToolPriceSettings({ options }) {
             style={{ fontFamily: 'monospace', fontSize: 13 }}
           />
           {jsonError && (
-            <Text type='danger' size='small' style={{ display: 'block', marginTop: 4 }}>
+            <Text
+              type='danger'
+              size='small'
+              style={{ display: 'block', marginTop: 4 }}
+            >
               {jsonError}
             </Text>
           )}
@@ -256,7 +278,9 @@ export default function ToolPriceSettings({ options }) {
               icon={<IconCopy />}
               size='small'
               theme='borderless'
-              onClick={() => { copy(jsonText, t('JSON')); }}
+              onClick={() => {
+                copy(jsonText, t('JSON'));
+              }}
             >
               {t('复制')}
             </Button>
@@ -267,8 +291,12 @@ export default function ToolPriceSettings({ options }) {
         </>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-        <Button
+      <div
+        style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}
+      >
+        <AdminPermissionButton
+          dangerPermission={ADMIN_PERMISSION_KEYS.modelRatioUpdate}
+          fallbackTooltip={ratioDangerPermissionDenied}
           theme='solid'
           type='primary'
           loading={saving}
@@ -276,7 +304,7 @@ export default function ToolPriceSettings({ options }) {
           onClick={handleSave}
         >
           {t('保存')}
-        </Button>
+        </AdminPermissionButton>
       </div>
     </div>
   );

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import { Col, Form, Row, Spin } from '@douyinfe/semi-ui';
 import {
   API,
   compareObjects,
@@ -27,6 +27,11 @@ import {
   showWarning,
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  AdminPermissionButton,
+  useAdminActionPermission,
+} from '../../../apps/admin-console/permissions/AdminPermissionAction';
 
 const XAI_VIOLATION_FEE_DOC_URL =
   'https://docs.x.ai/docs/models#usage-guidelines-violation-fee';
@@ -38,6 +43,17 @@ const DEFAULT_GROK_INPUTS = {
 
 export default function SettingGrokModel(props) {
   const { t } = useTranslation();
+  const canManageSystemSettings = useAdminActionPermission(
+    ADMIN_PERMISSION_KEYS.systemSettingsUpdate,
+  );
+  const systemSettingsPermissionDenied = t(
+    '没有系统设置修改权限，请联系超级管理员。',
+  );
+  const ensureSystemSettingsPermission = () => {
+    if (canManageSystemSettings) return true;
+    showWarning(systemSettingsPermissionDenied);
+    return false;
+  };
 
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState(DEFAULT_GROK_INPUTS);
@@ -45,6 +61,10 @@ export default function SettingGrokModel(props) {
   const refForm = useRef();
 
   async function onSubmit() {
+    if (!ensureSystemSettingsPermission()) {
+      return;
+    }
+
     await refForm.current
       .validate()
       .then(() => {
@@ -163,9 +183,14 @@ export default function SettingGrokModel(props) {
           </Row>
 
           <Row>
-            <Button size='default' onClick={onSubmit}>
+            <AdminPermissionButton
+              size='default'
+              requiredPermission={ADMIN_PERMISSION_KEYS.systemSettingsUpdate}
+              fallbackTooltip={systemSettingsPermissionDenied}
+              onClick={onSubmit}
+            >
               {t('保存')}
-            </Button>
+            </AdminPermissionButton>
           </Row>
         </Form.Section>
       </Form>

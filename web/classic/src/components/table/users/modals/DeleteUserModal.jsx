@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import { Modal } from '@douyinfe/semi-ui';
+import { showWarning } from '../../../../helpers';
 
 const DeleteUserModal = ({
   visible,
@@ -29,9 +30,14 @@ const DeleteUserModal = ({
   activePage,
   refresh,
   manageUser,
+  canManageUserDanger,
   t,
 }) => {
   const handleConfirm = async () => {
+    if (!canManageUserDanger) {
+      showWarning(t('没有用户高危操作权限，请联系运营管理员或超级管理员。'));
+      return;
+    }
     await manageUser(user.id, 'delete', user);
     await refresh();
     setTimeout(() => {

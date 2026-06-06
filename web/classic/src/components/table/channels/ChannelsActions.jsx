@@ -19,14 +19,16 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import {
-  Button,
   Dropdown,
   Modal,
   Switch,
   Typography,
   Select,
+  Button,
 } from '@douyinfe/semi-ui';
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
+import { AdminPermissionButton } from '../../../apps/admin-console/permissions/AdminPermissionAction';
+import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
 
 const ChannelsActions = ({
   enableBatchDelete,
@@ -65,11 +67,15 @@ const ChannelsActions = ({
       <div className='flex flex-col md:flex-row justify-between gap-2'>
         {/* 左侧：批量操作按钮 */}
         <div className='ct-channel-action-group flex flex-wrap md:flex-nowrap items-center gap-2 w-full md:w-auto order-2 md:order-1'>
-          <Button
+          <AdminPermissionButton
             size='small'
             disabled={!enableBatchDelete}
             type='danger'
             className='w-full md:w-auto'
+            dangerPermission={ADMIN_PERMISSION_KEYS.channelChannelDanger}
+            fallbackTooltip={t(
+              '没有删除渠道权限，请联系渠道管理员或超级管理员。',
+            )}
             onClick={() => {
               Modal.confirm({
                 title: t('确定是否要删除所选通道？'),
@@ -79,7 +85,7 @@ const ChannelsActions = ({
             }}
           >
             {t('删除所选通道')}
-          </Button>
+          </AdminPermissionButton>
 
           <Button
             size='small'
@@ -194,10 +200,16 @@ const ChannelsActions = ({
                   </Button>
                 </Dropdown.Item>
                 <Dropdown.Item>
-                  <Button
+                  <AdminPermissionButton
                     size='small'
                     type='danger'
                     className='w-full'
+                    dangerPermission={
+                      ADMIN_PERMISSION_KEYS.channelChannelDanger
+                    }
+                    fallbackTooltip={t(
+                      '没有删除渠道权限，请联系渠道管理员或超级管理员。',
+                    )}
                     onClick={() => {
                       Modal.confirm({
                         title: t('确定是否要删除禁用通道？'),
@@ -209,7 +221,7 @@ const ChannelsActions = ({
                     }}
                   >
                     {t('删除禁用通道')}
-                  </Button>
+                  </AdminPermissionButton>
                 </Dropdown.Item>
               </Dropdown.Menu>
             }
