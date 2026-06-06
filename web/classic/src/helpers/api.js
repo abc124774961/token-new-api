@@ -116,6 +116,7 @@ export let API = createAPIInstance();
 
 export function updateAPI() {
   API = createAPIInstance();
+  clearUserGroupsWithDynamicBillingCache();
 }
 
 // playground
@@ -255,6 +256,96 @@ export const processGroupsData = (data, userGroup) => {
   }
 
   return groupOptions;
+};
+
+const USER_GROUPS_DYNAMIC_ENDPOINT =
+  '/api/user/self/groups?include_dynamic_billing=true';
+const USER_GROUPS_DYNAMIC_CACHE_TTL = 30 * 1000;
+
+let userGroupsDynamicCache = null;
+let userGroupsDynamicRequest = null;
+
+const getUserGroupsDynamicCacheKey = () => getUserIdFromLocalStorage() || '';
+
+const normalizeUserGroupsWithDynamicBilling = (data = {}) => {
+  const safeData = data && typeof data === 'object' ? data : {};
+  const groupOptions = Object.entries(safeData).map(([group, info]) => {
+    const description = String(info?.desc || '').trim();
+    return {
+      label: description || group,
+      value: group,
+      ratio: info?.ratio,
+      fullLabel: description,
+      dynamic_billing: info?.dynamic_billing || null,
+    };
+  });
+  const groupRatios = {};
+  for (const [name, info] of Object.entries(safeData)) {
+    groupRatios[name] = {
+      ratio: info?.ratio,
+      desc: info?.desc || '',
+      dynamic_billing: info?.dynamic_billing || null,
+    };
+  }
+  return {
+    raw: safeData,
+    groupOptions,
+    groupRatios,
+  };
+};
+
+export const clearUserGroupsWithDynamicBillingCache = () => {
+  userGroupsDynamicCache = null;
+  userGroupsDynamicRequest = null;
+};
+
+export const getCachedUserGroupsWithDynamicBilling = () => {
+  if (!userGroupsDynamicCache) {
+    return null;
+  }
+  if (userGroupsDynamicCache.key !== getUserGroupsDynamicCacheKey()) {
+    clearUserGroupsWithDynamicBillingCache();
+    return null;
+  }
+  if (Date.now() - userGroupsDynamicCache.cachedAt > USER_GROUPS_DYNAMIC_CACHE_TTL) {
+    return null;
+  }
+  return normalizeUserGroupsWithDynamicBilling(userGroupsDynamicCache.data);
+};
+
+export const fetchUserGroupsWithDynamicBilling = async (options = {}) => {
+  const { force = false } = options;
+  const cached = !force ? getCachedUserGroupsWithDynamicBilling() : null;
+  if (cached) {
+    return cached;
+  }
+  if (!force && userGroupsDynamicRequest) {
+    return userGroupsDynamicRequest;
+  }
+
+  const cacheKey = getUserGroupsDynamicCacheKey();
+  userGroupsDynamicRequest = API.get(USER_GROUPS_DYNAMIC_ENDPOINT)
+    .then((res) => {
+      const { success, message, data } = res.data;
+      if (!success) {
+        throw new Error(message || '加载分组失败');
+      }
+      userGroupsDynamicCache = {
+        key: cacheKey,
+        data: data || {},
+        cachedAt: Date.now(),
+      };
+      return normalizeUserGroupsWithDynamicBilling(data || {});
+    })
+    .finally(() => {
+      userGroupsDynamicRequest = null;
+    });
+
+  return userGroupsDynamicRequest;
+};
+
+export const prefetchUserGroupsWithDynamicBilling = () => {
+  fetchUserGroupsWithDynamicBilling().catch(() => {});
 };
 
 // 原来components中的utils.js

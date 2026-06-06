@@ -4857,11 +4857,21 @@ function DynamicBillingMiniPanel({
                 : '--',
           },
           {
-            label: t('毛利换算'),
+            label: t('目标毛利换算'),
             value:
               grossMarginMultiplier > 0
                 ? formatCostRatio(grossMarginMultiplier)
                 : '--',
+          },
+          {
+            label: t('计算公式'),
+            value: t('收入 = 成本 / (1 - 目标毛利率)'),
+          },
+          {
+            label: t('示例'),
+            value: t(
+              '35% 毛利率对应收入倍率 1.538x；成本利润 100% 对应毛利率 50%。',
+            ),
           },
         ]
       : [];

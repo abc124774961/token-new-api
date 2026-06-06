@@ -29,6 +29,11 @@ import {
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
 import { AdminPermissionButton } from '../../../apps/admin-console/permissions/AdminPermissionAction';
 import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import { RotateCcw } from 'lucide-react';
+import {
+  flattenChannelRows,
+  isRecoverableHealthChannel,
+} from './channelHealthUtils';
 
 const ChannelsActions = ({
   enableBatchDelete,
@@ -37,6 +42,8 @@ const ChannelsActions = ({
   testAllChannels,
   fixChannelsAbilities,
   updateAllChannelsBalance,
+  recoverVisibleChannelHealth,
+  recoveringChannelHealth,
   deleteAllDisabledChannels,
   applyAllUpstreamUpdates,
   detectAllUpstreamUpdates,
@@ -59,8 +66,21 @@ const ChannelsActions = ({
   activePage,
   pageSize,
   setActivePage,
+  selectedChannels = [],
+  channels = [],
   t,
 }) => {
+  const selectedRecoverableCount = flattenChannelRows(selectedChannels).filter(
+    isRecoverableHealthChannel,
+  ).length;
+  const visibleRecoverableCount = flattenChannelRows(channels).filter(
+    isRecoverableHealthChannel,
+  ).length;
+  const recoverTargetCount =
+    selectedChannels.length > 0
+      ? selectedRecoverableCount
+      : visibleRecoverableCount;
+
   return (
     <div className='ct-channel-actions flex flex-col gap-2'>
       {/* 第一行：批量操作按钮 + 设置开关 */}
@@ -251,6 +271,33 @@ const ChannelsActions = ({
           >
             {t('分组列表')}
           </Button>
+
+          <AdminPermissionButton
+            size='small'
+            theme='light'
+            type='tertiary'
+            icon={<RotateCcw size={14} />}
+            className='w-full md:w-auto'
+            loading={recoveringChannelHealth}
+            disabled={recoveringChannelHealth || recoverTargetCount === 0}
+            requiredPermission={ADMIN_PERMISSION_KEYS.channelHealthExecute}
+            fallbackTooltip={t('没有渠道健康执行权限，请联系管理员。')}
+            onClick={() => {
+              Modal.confirm({
+                title: t('确定要恢复 {{count}} 个异常渠道健康状态吗？', {
+                  count: recoverTargetCount,
+                }),
+                content: t(
+                  '将清除余额不足、冷却和熔断等运行态标记；未真正恢复的渠道可能会在后续调度中再次进入异常。',
+                ),
+                onOk: () => recoverVisibleChannelHealth(),
+                size: 'small',
+                centered: true,
+              });
+            }}
+          >
+            {t('一键恢复健康')}
+          </AdminPermissionButton>
         </div>
 
         {/* 右侧：设置开关区域 */}

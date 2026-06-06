@@ -1206,6 +1206,11 @@ function ConfigModal({ visible, config, saving, onCancel, onSave, t }) {
               update('target_profit_rate', numberOrDefault(value) / 100)
             }
           />
+          <small>
+            {t(
+              '按收入 = 成本 / (1 - 目标毛利率) 计算；35% 毛利率对应收入倍率 1.538x，成本利润 100% 对应毛利率 50%。',
+            )}
+          </small>
         </label>
         <label className='ct-profit-field'>
           <span>{t('建议倍率下限')}</span>

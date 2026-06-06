@@ -1311,6 +1311,30 @@ html.dark body.ct-channel-account-route main.semi-layout-content {
   gap: 6px;
 }
 
+.ct-channel-account-import-concurrency {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.5fr) minmax(160px, 1fr);
+  align-items: center;
+  gap: 6px 12px;
+  border: 1px solid var(--ca-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--ca-surface-soft);
+}
+
+.ct-channel-account-import-concurrency > span {
+  color: var(--ca-text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ct-channel-account-import-concurrency > small {
+  grid-column: 1 / -1;
+  color: var(--ca-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .ct-channel-account-import-dropzone {
   display: flex;
   width: 100%;

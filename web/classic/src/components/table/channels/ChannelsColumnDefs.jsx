@@ -54,6 +54,7 @@ import {
 } from '@douyinfe/semi-icons';
 import { FaRandom } from 'react-icons/fa';
 import { RotateCcw } from 'lucide-react';
+import { isBalanceInsufficientChannel } from './channelHealthUtils';
 
 // Render functions
 const renderType = (type, record = {}, t) => {
@@ -273,20 +274,6 @@ const renderStatusReason = (reason, t) => {
   return reason;
 };
 
-const isBalanceInsufficientChannel = (record) => {
-  if (record?.balance_insufficient === true) return true;
-  const statusReason = String(
-    record?.status_reason ||
-      parseChannelOtherInfo(record?.other_info).status_reason ||
-      '',
-  )
-    .trim()
-    .toLowerCase();
-  return (
-    statusReason === 'balance_insufficient' || statusReason.includes('余额不足')
-  );
-};
-
 const ChannelStatusCell = ({ record, t, refresh }) => {
   const [nowSeconds, setNowSeconds] = React.useState(() =>
     Math.floor(Date.now() / 1000),
@@ -335,7 +322,9 @@ const ChannelStatusCell = ({ record, t, refresh }) => {
   const reason = renderStatusReason(
     concurrencyCooldown?.reason ||
       failureAvoidance?.reason ||
-      otherInfo.status_reason,
+      otherInfo.status_reason ||
+      otherInfo.pause_reason ||
+      otherInfo.pause_type,
     t,
   );
   const statusTime = otherInfo.status_time

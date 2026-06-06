@@ -21,11 +21,7 @@ import ModelsTable from '../../components/table/models';
 
 const ModelPage = ({ variant = 'default' }) => {
   return (
-    <div
-      className={`ct-console-content-wrap${
-        variant === 'admin' ? ' ct-admin-table-page ct-admin-model-page' : ''
-      }`}
-    >
+    <div className={`ct-console-content-wrap ${variant === 'admin' ? 'ct-admin-model-page' : ''}`.trim()}>
       <ModelsTable />
     </div>
   );

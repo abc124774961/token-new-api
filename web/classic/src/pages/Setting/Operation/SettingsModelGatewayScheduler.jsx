@@ -2718,7 +2718,7 @@ export default function SettingsModelGatewayScheduler() {
             closeIcon={null}
             title={t('动态收费倍率')}
             description={t(
-              '分组策略选择动态收费倍率后，请求会按实际选中的分组读取后台动态倍率；未命中时自动回退静态分组倍率。',
+              '分组策略选择动态收费倍率后，请求会按实际选中的分组读取后台动态倍率；目标毛利率按“收入 = 成本 / (1 - 目标毛利率)”计算，35% 毛利率对应收入倍率 1.538x，成本利润 100% 对应毛利率 50%。',
             )}
             style={{ marginTop: 8, marginBottom: 16 }}
           />

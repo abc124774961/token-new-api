@@ -16,7 +16,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const userGroupDynamicBillingCacheTTL = 30 * time.Second
+const (
+	userGroupDynamicBillingCacheTTL        = 30 * time.Second
+	userGroupDynamicBillingPartialCacheTTL = 5 * time.Second
+)
 
 type userGroupResponseItem struct {
 	Ratio          any                              `json:"ratio"`
@@ -38,11 +41,14 @@ type userGroupDynamicBillingResponse struct {
 type userGroupDynamicBillingCacheEntry struct {
 	expiresAt time.Time
 	values    map[string]userGroupDynamicBillingResponse
+	partial   bool
 }
 
 var userGroupDynamicBillingCache struct {
-	mu    sync.RWMutex
-	entry userGroupDynamicBillingCacheEntry
+	mu         sync.RWMutex
+	entry      userGroupDynamicBillingCacheEntry
+	refreshing bool
+	generation uint64
 }
 
 func GetGroups(c *gin.Context) {
@@ -113,18 +119,49 @@ func getCachedUserGroupDynamicBillingDisplay() map[string]userGroupDynamicBillin
 	}
 
 	now := time.Now()
-	userGroupDynamicBillingCache.mu.RLock()
-	if now.Before(userGroupDynamicBillingCache.entry.expiresAt) && userGroupDynamicBillingCache.entry.values != nil {
+	userGroupDynamicBillingCache.mu.Lock()
+	if userGroupDynamicBillingCache.entry.values != nil {
 		cached := cloneUserGroupDynamicBillingDisplayMap(userGroupDynamicBillingCache.entry.values)
-		userGroupDynamicBillingCache.mu.RUnlock()
+		if now.Before(userGroupDynamicBillingCache.entry.expiresAt) && !userGroupDynamicBillingCache.entry.partial {
+			userGroupDynamicBillingCache.mu.Unlock()
+			return cached
+		}
+		if !userGroupDynamicBillingCache.refreshing {
+			userGroupDynamicBillingCache.refreshing = true
+			generation := userGroupDynamicBillingCache.generation
+			go refreshUserGroupDynamicBillingDisplayCache(generation)
+		}
+		userGroupDynamicBillingCache.mu.Unlock()
 		return cached
 	}
-	userGroupDynamicBillingCache.mu.RUnlock()
 
-	values := buildUserGroupDynamicBillingDisplayMap(
-		buildModelGatewayDynamicBillingOverviewForDisplay(now.Unix(), 0),
-		buildModelGatewayDynamicBillingOverviewForDisplay(now.Unix(), 7*24*60),
-	)
+	if !userGroupDynamicBillingCache.refreshing {
+		userGroupDynamicBillingCache.refreshing = true
+		generation := userGroupDynamicBillingCache.generation
+		go refreshUserGroupDynamicBillingDisplayCache(generation)
+	}
+	generation := userGroupDynamicBillingCache.generation
+	userGroupDynamicBillingCache.mu.Unlock()
+
+	values := buildUserGroupDynamicBillingCurrentDisplayMap(now.Unix())
+	storeUserGroupDynamicBillingPartialDisplay(values, generation)
+	return values
+}
+
+func refreshUserGroupDynamicBillingDisplayCache(generation uint64) {
+	settingValue := scheduler_setting.GetSetting()
+	if !settingValue.DynamicBillingEnabled || len(settingValue.GroupPolicies) == 0 {
+		userGroupDynamicBillingCache.mu.Lock()
+		if generation == userGroupDynamicBillingCache.generation {
+			userGroupDynamicBillingCache.entry = userGroupDynamicBillingCacheEntry{}
+			userGroupDynamicBillingCache.refreshing = false
+		}
+		userGroupDynamicBillingCache.mu.Unlock()
+		return
+	}
+
+	now := time.Now()
+	values := buildUserGroupDynamicBillingFullDisplayMap(now.Unix())
 	ttl := time.Duration(settingValue.DynamicBillingRefreshSeconds) * time.Second
 	if ttl <= 0 {
 		ttl = userGroupDynamicBillingCacheTTL
@@ -134,13 +171,50 @@ func getCachedUserGroupDynamicBillingDisplay() map[string]userGroupDynamicBillin
 	}
 
 	userGroupDynamicBillingCache.mu.Lock()
+	if generation != userGroupDynamicBillingCache.generation {
+		userGroupDynamicBillingCache.mu.Unlock()
+		return
+	}
 	userGroupDynamicBillingCache.entry = userGroupDynamicBillingCacheEntry{
 		expiresAt: now.Add(ttl),
 		values:    cloneUserGroupDynamicBillingDisplayMap(values),
+		partial:   false,
 	}
+	userGroupDynamicBillingCache.refreshing = false
 	userGroupDynamicBillingCache.mu.Unlock()
+}
 
-	return values
+func buildUserGroupDynamicBillingCurrentDisplayMap(now int64) map[string]userGroupDynamicBillingResponse {
+	currentOverview := buildModelGatewayDynamicBillingOverviewForDisplay(now, 0)
+	return buildUserGroupDynamicBillingDisplayMap(
+		currentOverview,
+		ModelGatewayDynamicBillingOverview{Enabled: currentOverview.Enabled},
+	)
+}
+
+func buildUserGroupDynamicBillingFullDisplayMap(now int64) map[string]userGroupDynamicBillingResponse {
+	return buildUserGroupDynamicBillingDisplayMap(
+		buildModelGatewayDynamicBillingOverviewForDisplay(now, 0),
+		buildModelGatewayDynamicBillingOverviewForDisplay(now, 7*24*60),
+	)
+}
+
+func storeUserGroupDynamicBillingPartialDisplay(values map[string]userGroupDynamicBillingResponse, generation uint64) {
+	userGroupDynamicBillingCache.mu.Lock()
+	defer userGroupDynamicBillingCache.mu.Unlock()
+	if generation != userGroupDynamicBillingCache.generation {
+		return
+	}
+	if userGroupDynamicBillingCache.entry.values != nil &&
+		!userGroupDynamicBillingCache.entry.partial &&
+		time.Now().Before(userGroupDynamicBillingCache.entry.expiresAt) {
+		return
+	}
+	userGroupDynamicBillingCache.entry = userGroupDynamicBillingCacheEntry{
+		expiresAt: time.Now().Add(userGroupDynamicBillingPartialCacheTTL),
+		values:    cloneUserGroupDynamicBillingDisplayMap(values),
+		partial:   true,
+	}
 }
 
 func buildUserGroupDynamicBillingDisplayMap(currentOverview ModelGatewayDynamicBillingOverview, overview7d ModelGatewayDynamicBillingOverview) map[string]userGroupDynamicBillingResponse {
@@ -224,6 +298,8 @@ func clearUserGroupDynamicBillingDisplayCache() {
 	userGroupDynamicBillingCache.mu.Lock()
 	defer userGroupDynamicBillingCache.mu.Unlock()
 	userGroupDynamicBillingCache.entry = userGroupDynamicBillingCacheEntry{}
+	userGroupDynamicBillingCache.refreshing = false
+	userGroupDynamicBillingCache.generation++
 }
 
 func resetUserGroupDynamicBillingDisplayCache() {

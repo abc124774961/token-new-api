@@ -41,13 +41,7 @@ const ModelDeploymentPage = ({ variant = 'default' }) => {
       connectionError={connectionError}
       onRetry={() => testConnection()}
     >
-      <div
-        className={`ct-console-content-wrap${
-          variant === 'admin'
-            ? ' ct-admin-table-page ct-admin-model-deployment-page'
-            : ''
-        }`}
-      >
+      <div className={`ct-console-content-wrap ${variant === 'admin' ? 'ct-admin-model-deployment-page' : ''}`.trim()}>
         <DeploymentsTable />
       </div>
     </DeploymentAccessGuard>

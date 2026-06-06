@@ -22,13 +22,7 @@ import RedemptionsTable from '../../components/table/redemptions';
 
 const Redemption = ({ variant = 'default' }) => {
   return (
-    <div
-      className={`ct-console-content-wrap${
-        variant === 'admin'
-          ? ' ct-admin-table-page ct-admin-redemption-page'
-          : ''
-      }`}
-    >
+    <div className={`ct-console-content-wrap ${variant === 'admin' ? 'ct-admin-redemption-page' : ''}`.trim()}>
       <RedemptionsTable />
     </div>
   );

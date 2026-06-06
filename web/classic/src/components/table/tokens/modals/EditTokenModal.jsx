@@ -27,6 +27,8 @@ import {
   getCurrencyConfig,
   getModelCategories,
   selectFilter,
+  fetchUserGroupsWithDynamicBilling,
+  getCachedUserGroupsWithDynamicBilling,
 } from '../../../../helpers';
 import {
   quotaToDisplayAmount,
@@ -133,31 +135,33 @@ const EditTokenModal = (props) => {
     }
   };
 
-  const loadGroups = async () => {
-    let res = await API.get(`/api/user/self/groups?include_dynamic_billing=true`);
-    const { success, message, data } = res.data;
-    if (success) {
-      let localGroupOptions = Object.entries(data).map(([group, info]) => {
-        const description = String(info?.desc || '').trim();
-        return {
-          label: description || group,
-          value: group,
-          ratio: info.ratio,
-          fullLabel: description,
-          dynamic_billing: info.dynamic_billing || null,
-        };
-      });
-      if (statusState?.status?.default_use_auto_group) {
-        if (localGroupOptions.some((group) => group.value === 'auto')) {
-          localGroupOptions.sort((a, b) => (a.value === 'auto' ? -1 : 1));
-        }
+  const applyGroupOptions = (groupOptions) => {
+    const localGroupOptions = [...(groupOptions || [])];
+    if (statusState?.status?.default_use_auto_group) {
+      if (localGroupOptions.some((group) => group.value === 'auto')) {
+        localGroupOptions.sort((a, b) => {
+          if (a.value === 'auto') return -1;
+          if (b.value === 'auto') return 1;
+          return 0;
+        });
       }
-      setGroups(localGroupOptions);
-      // if (statusState?.status?.default_use_auto_group && formApiRef.current) {
-      //   formApiRef.current.setValue('group', 'auto');
-      // }
-    } else {
-      showError(t(message));
+    }
+    setGroups(localGroupOptions);
+    // if (statusState?.status?.default_use_auto_group && formApiRef.current) {
+    //   formApiRef.current.setValue('group', 'auto');
+    // }
+  };
+
+  const loadGroups = async () => {
+    const cachedGroups = getCachedUserGroupsWithDynamicBilling();
+    if (cachedGroups) {
+      applyGroupOptions(cachedGroups.groupOptions);
+    }
+    try {
+      const { groupOptions } = await fetchUserGroupsWithDynamicBilling();
+      applyGroupOptions(groupOptions);
+    } catch (error) {
+      showError(t(error?.message || '加载分组失败'));
     }
   };
 

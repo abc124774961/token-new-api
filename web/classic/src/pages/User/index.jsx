@@ -22,11 +22,7 @@ import UsersTable from '../../components/table/users';
 
 const User = ({ variant = 'default' }) => {
   return (
-    <div
-      className={`ct-console-content-wrap${
-        variant === 'admin' ? ' ct-admin-table-page ct-admin-users-page' : ''
-      }`}
-    >
+    <div className={`ct-console-content-wrap ${variant === 'admin' ? 'ct-admin-users-page' : ''}`.trim()}>
       <UsersTable />
     </div>
   );

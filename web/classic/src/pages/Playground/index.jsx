@@ -20,7 +20,8 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useContext, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Layout, Toast, Modal } from '@douyinfe/semi-ui';
+import { Layout, Toast, Tag } from '@douyinfe/semi-ui';
+import { Bot, Braces, Database, MessageSquareText } from 'lucide-react';
 
 // Context
 import { UserContext } from '../../context/User';
@@ -60,6 +61,8 @@ import {
 import ChatArea from '../../components/playground/ChatArea';
 import FloatingButtons from '../../components/playground/FloatingButtons';
 import { PlaygroundProvider } from '../../contexts/PlaygroundContext';
+import ConsolePageShell from '../../components/layout/ConsolePageShell';
+import { ConsoleMetricCard } from '../../components/common/ui/ConsoleTableScaffold';
 
 // 生成头像
 const generateAvatarDataUrl = (username) => {
@@ -459,16 +462,61 @@ const Playground = () => {
 
   return (
     <PlaygroundProvider value={playgroundContextValue}>
-      <div className='h-full'>
-        <Layout className='h-full bg-transparent flex flex-col md:flex-row'>
+      <ConsolePageShell
+        className='ct-playground-page'
+        eyebrow={t('开发者工具')}
+        title={t('调试操场')}
+        subtitle={t(
+          '在同一工作台内配置模型参数、发送测试请求并查看调试载荷，适合快速验证 API 行为。',
+        )}
+        badge={
+          <Tag color='teal' shape='circle' type='light'>
+            {t('请求实验室')}
+          </Tag>
+        }
+        metrics={
+          <>
+            <ConsoleMetricCard
+              icon={<Bot size={20} />}
+              label={t('可选模型')}
+              value={models.length}
+              helper={t('从当前账号可见模型加载')}
+              tone='teal'
+            />
+            <ConsoleMetricCard
+              icon={<Database size={20} />}
+              label={t('可用分组')}
+              value={groups.length}
+              helper={t('用于请求分组和倍率验证')}
+              tone='blue'
+            />
+            <ConsoleMetricCard
+              icon={<MessageSquareText size={20} />}
+              label={t('消息数量')}
+              value={message.length}
+              helper={t('当前会话上下文')}
+              tone='green'
+            />
+            <ConsoleMetricCard
+              icon={<Braces size={20} />}
+              label={t('请求模式')}
+              value={customRequestMode ? t('自定义') : t('标准')}
+              helper={showDebugPanel ? t('调试面板已打开') : t('调试面板未打开')}
+              tone={customRequestMode ? 'amber' : 'teal'}
+            />
+          </>
+        }
+      >
+      <div className='ct-playground-frame'>
+        <Layout className='ct-playground-layout bg-transparent flex flex-col md:flex-row'>
           {(showSettings || !isMobile) && (
             <Layout.Sider
               className={`
-              bg-transparent border-r-0 flex-shrink-0 overflow-auto
+              ct-playground-settings-panel bg-transparent border-r-0 flex-shrink-0 overflow-auto
               ${
                 isMobile
                   ? 'fixed top-0 left-0 right-0 bottom-0 z-[1000] w-full h-auto bg-white shadow-lg'
-                  : 'relative z-[1] w-80 h-[calc(100vh-130px)]'
+                  : 'relative z-[1] w-80'
               }
             `}
               width={isMobile ? '100%' : 320}
@@ -496,8 +544,8 @@ const Playground = () => {
             </Layout.Sider>
           )}
 
-          <Layout.Content className='relative flex-1 overflow-hidden'>
-            <div className='overflow-hidden flex flex-col lg:flex-row h-[calc(100vh-130px)]'>
+          <Layout.Content className='ct-playground-content relative flex-1 overflow-hidden'>
+            <div className='ct-playground-main overflow-hidden flex flex-col lg:flex-row'>
               <div className='flex-1 flex flex-col'>
                 <ChatArea
                   chatRef={chatRef}
@@ -520,7 +568,7 @@ const Playground = () => {
 
               {/* 调试面板 - 桌面端 */}
               {showDebugPanel && !isMobile && (
-                <div className='w-96 flex-shrink-0 h-full'>
+                <div className='ct-playground-debug-panel w-96 flex-shrink-0 h-full'>
                   <OptimizedDebugPanel
                     debugData={debugData}
                     activeDebugTab={activeDebugTab}
@@ -558,6 +606,7 @@ const Playground = () => {
           </Layout.Content>
         </Layout>
       </div>
+      </ConsolePageShell>
     </PlaygroundProvider>
   );
 };

@@ -45,6 +45,10 @@ import ChannelUpstreamUpdateModal from './modals/ChannelUpstreamUpdateModal';
 import ChannelGroupSummaryModal from './modals/ChannelGroupSummaryModal';
 import { createCardProPagination } from '../../../helpers/utils';
 import { CHANNEL_OPTIONS } from '../../../constants';
+import {
+  isBalanceInsufficientChannel,
+  isRecoverableHealthChannel,
+} from './channelHealthUtils';
 
 function parseJsonObject(value) {
   if (!value) return {};
@@ -70,28 +74,11 @@ function flattenChannels(channels = []) {
 }
 
 function isBalanceRiskChannel(channel) {
-  if (channel?.balance_insufficient === true) return true;
-  if (Number(channel?.runtime_balance_insufficient_count || 0) > 0) return true;
-  const statusReason = String(
-    channel?.status_reason ||
-      parseJsonObject(channel?.other_info).status_reason ||
-      '',
-  )
-    .trim()
-    .toLowerCase();
-  return (
-    statusReason === 'balance_insufficient' || statusReason.includes('余额不足')
-  );
+  return isBalanceInsufficientChannel(channel);
 }
 
 function isCircuitRiskChannel(channel) {
-  const runtimeCircuit = channel?.runtime_circuit || {};
-  return (
-    channel?.failure_avoidance?.active === true ||
-    channel?.concurrency_cooldown?.active === true ||
-    Number(runtimeCircuit.open_runtime_keys || 0) > 0 ||
-    Number(runtimeCircuit.half_open_runtime_keys || 0) > 0
-  );
+  return isRecoverableHealthChannel(channel) && !isBalanceRiskChannel(channel);
 }
 
 function isPassThroughChannel(channel) {

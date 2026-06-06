@@ -26,6 +26,8 @@ import {
   showError,
   showSuccess,
   encodeToBase64,
+  fetchUserGroupsWithDynamicBilling,
+  getCachedUserGroupsWithDynamicBilling,
 } from '../../helpers';
 import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
@@ -445,18 +447,14 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
       .catch((reason) => {
         showError(reason);
       });
-    API.get('/api/user/self/groups?include_dynamic_billing=true')
-      .then((res) => {
-        if (res.data.success && res.data.data) {
-          const ratios = {};
-          for (const [name, info] of Object.entries(res.data.data)) {
-            ratios[name] = {
-              ratio: info.ratio,
-              dynamic_billing: info.dynamic_billing || null,
-            };
-          }
-          setGroupRatios(ratios);
-        }
+
+    const cachedGroups = getCachedUserGroupsWithDynamicBilling();
+    if (cachedGroups) {
+      setGroupRatios(cachedGroups.groupRatios);
+    }
+    fetchUserGroupsWithDynamicBilling()
+      .then(({ groupRatios: ratios }) => {
+        setGroupRatios(ratios);
       })
       .catch(() => {});
   }, [pageSize]);

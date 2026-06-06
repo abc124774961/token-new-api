@@ -49,6 +49,10 @@ const CardTable = ({
 }) => {
   const isMobile = useIsMobile();
   const { t } = useTranslation();
+  const { className, ...restTableProps } = tableProps;
+  const tableClassName = ['ct-console-card-table', className]
+    .filter(Boolean)
+    .join(' ');
 
   const showSkeleton = useMinimumLoadingTime(loading);
 
@@ -59,8 +63,8 @@ const CardTable = ({
 
   if (!isMobile) {
     const finalTableProps = hidePagination
-      ? { ...tableProps, pagination: false }
-      : tableProps;
+      ? { ...restTableProps, pagination: false }
+      : restTableProps;
 
     return (
       <Table
@@ -68,6 +72,7 @@ const CardTable = ({
         dataSource={dataSource}
         loading={loading}
         rowKey={rowKey}
+        className={tableClassName}
         {...finalTableProps}
       />
     );
@@ -115,14 +120,14 @@ const CardTable = ({
       );
 
       return (
-        <Card key={key} className='!rounded-2xl shadow-sm'>
+        <Card key={key} className='ct-console-mobile-row-card'>
           <Skeleton loading={true} active placeholder={placeholder}></Skeleton>
         </Card>
       );
     };
 
     return (
-      <div className='flex flex-col gap-2'>
+      <div className='ct-console-mobile-table-list'>
         {[1, 2, 3].map((i) => renderSkeletonCard(i))}
       </div>
     );
@@ -139,7 +144,7 @@ const CardTable = ({
       (!tableProps.rowExpandable || tableProps.rowExpandable(record));
 
     return (
-      <Card key={rowKeyVal} className='!rounded-2xl shadow-sm'>
+      <Card key={rowKeyVal} className='ct-console-mobile-row-card'>
         {columns.map((col, colIdx) => {
           if (
             tableProps?.visibleColumns &&
@@ -208,13 +213,13 @@ const CardTable = ({
     if (tableProps.empty) return tableProps.empty;
     return (
       <div className='flex justify-center p-4'>
-        <Empty description='No Data' />
+        <Empty description={t('暂无数据')} />
       </div>
     );
   }
 
   return (
-    <div className='flex flex-col gap-2'>
+    <div className='ct-console-mobile-table-list'>
       {dataSource.map((record, index) => (
         <MobileRowCard
           key={getRowKey(record, index)}
@@ -223,7 +228,7 @@ const CardTable = ({
         />
       ))}
       {!hidePagination && tableProps.pagination && dataSource.length > 0 && (
-        <div className='mt-2 flex justify-center'>
+        <div className='ct-console-mobile-pagination'>
           <Pagination {...tableProps.pagination} />
         </div>
       )}

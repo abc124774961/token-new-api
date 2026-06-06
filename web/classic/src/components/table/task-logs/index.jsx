@@ -18,8 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Layout } from '@douyinfe/semi-ui';
-import CardPro from '../../common/ui/CardPro';
+import { Tag } from '@douyinfe/semi-ui';
+import { Activity, Columns3, FileText, Rows3 } from 'lucide-react';
+import ConsoleTableScaffold from '../../common/ui/ConsoleTableScaffold';
 import TaskLogsTable from './TaskLogsTable';
 import TaskLogsActions from './TaskLogsActions';
 import TaskLogsFilters from './TaskLogsFilters';
@@ -33,6 +34,9 @@ import { createCardProPagination } from '../../../helpers/utils';
 const TaskLogsPage = () => {
   const taskLogsData = useTaskLogsData();
   const isMobile = useIsMobile();
+  const visibleColumnCount = Object.values(
+    taskLogsData.visibleColumns || {},
+  ).filter(Boolean).length;
 
   return (
     <>
@@ -52,12 +56,65 @@ const TaskLogsPage = () => {
         audioClips={taskLogsData.audioClips}
       />
 
-      <Layout>
-        <CardPro
-          type='type2'
-          statsArea={<TaskLogsActions {...taskLogsData} />}
-          searchArea={<TaskLogsFilters {...taskLogsData} />}
-          paginationArea={createCardProPagination({
+      <ConsoleTableScaffold
+        eyebrow={taskLogsData.t('异步任务')}
+        title={taskLogsData.t('任务记录')}
+        subtitle={taskLogsData.t(
+          '查看异步任务、音视频预览、请求内容和执行状态，帮助定位任务链路问题。',
+        )}
+        badge={
+          <Tag color='orange' shape='circle' type='light'>
+            {taskLogsData.t('任务观测')}
+          </Tag>
+        }
+        metrics={[
+          {
+            key: 'logs',
+            label: taskLogsData.t('任务总数'),
+            value: taskLogsData.logCount,
+            helper: taskLogsData.t('当前筛选范围'),
+            tone: 'teal',
+            icon: <Activity size={20} />,
+          },
+          {
+            key: 'visible',
+            label: taskLogsData.t('当前页'),
+            value: taskLogsData.logs.length,
+            helper: taskLogsData.t('可见任务记录'),
+            tone: 'blue',
+            icon: <Rows3 size={20} />,
+          },
+          {
+            key: 'columns',
+            label: taskLogsData.t('显示列'),
+            value: visibleColumnCount,
+            helper: taskLogsData.t('当前表格视图'),
+            tone: 'green',
+            icon: <Columns3 size={20} />,
+          },
+          {
+            key: 'content',
+            label: taskLogsData.t('内容预览'),
+            value: taskLogsData.t('文本/媒体'),
+            helper: taskLogsData.t('支持弹窗查看'),
+            tone: 'amber',
+            icon: <FileText size={20} />,
+          },
+        ]}
+        tableTitle={taskLogsData.t('任务清单')}
+        tableSubtitle={taskLogsData.t('按时间、状态、模型和内容扫描任务')}
+        tableIcon={<Activity size={18} />}
+        tableMeta={`${taskLogsData.t('共')} ${taskLogsData.logCount} ${taskLogsData.t('条')}`}
+        toolbar={<TaskLogsActions {...taskLogsData} />}
+      >
+        <div className='ct-console-table-section ct-console-table-filter-panel'>
+          <TaskLogsFilters {...taskLogsData} />
+        </div>
+        <div className='ct-console-table-surface'>
+          <TaskLogsTable {...taskLogsData} />
+        </div>
+        <div className='ct-console-table-pagination'>
+          {createCardProPagination({
             currentPage: taskLogsData.activePage,
             pageSize: taskLogsData.pageSize,
             total: taskLogsData.logCount,
@@ -66,11 +123,8 @@ const TaskLogsPage = () => {
             isMobile: isMobile,
             t: taskLogsData.t,
           })}
-          t={taskLogsData.t}
-        >
-          <TaskLogsTable {...taskLogsData} />
-        </CardPro>
-      </Layout>
+        </div>
+      </ConsoleTableScaffold>
     </>
   );
 };

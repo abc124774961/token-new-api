@@ -18,12 +18,43 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Card, Button, Typography } from '@douyinfe/semi-ui';
+import { Button, Spin, Tag } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Settings, Server, AlertCircle, WifiOff } from 'lucide-react';
+import {
+  AlertCircle,
+  Loader2,
+  RefreshCw,
+  Server,
+  Settings,
+  WifiOff,
+} from 'lucide-react';
+import ConsolePageShell from '../layout/ConsolePageShell';
 
-const { Title, Text } = Typography;
+const DeploymentGuardState = ({
+  tone = 'warning',
+  icon,
+  eyebrow,
+  title,
+  subtitle,
+  badge,
+  children,
+  actions,
+}) => (
+  <ConsolePageShell
+    className='ct-deployment-guard-page'
+    eyebrow={eyebrow}
+    title={title}
+    subtitle={subtitle}
+    badge={badge}
+  >
+    <section className={`ct-deployment-guard-card is-${tone}`}>
+      <div className='ct-deployment-guard-icon'>{icon}</div>
+      <div className='ct-deployment-guard-copy'>{children}</div>
+      {actions && <div className='ct-deployment-guard-actions'>{actions}</div>}
+    </section>
+  </ConsolePageShell>
+);
 
 const DeploymentAccessGuard = ({
   children,
@@ -43,252 +74,85 @@ const DeploymentAccessGuard = ({
 
   if (loading) {
     return (
-      <div className='ct-console-content-wrap'>
-        <Card loading={true} style={{ minHeight: '400px' }}>
-          <div style={{ textAlign: 'center', padding: '50px 0' }}>
-            <Text type='secondary'>{t('加载设置中...')}</Text>
-          </div>
-        </Card>
-      </div>
+      <DeploymentGuardState
+        tone='loading'
+        eyebrow={t('模型与路由')}
+        title={t('模型部署')}
+        subtitle={t('正在加载部署服务配置。')}
+        badge={
+          <Tag color='blue' shape='circle' type='light'>
+            {t('初始化')}
+          </Tag>
+        }
+        icon={
+          <span className='ct-deployment-guard-spinner'>
+            <Spin size='middle' />
+          </span>
+        }
+      >
+        <strong>{t('加载设置中...')}</strong>
+        <p>{t('正在读取 io.net 部署开关和连接配置。')}</p>
+      </DeploymentGuardState>
     );
   }
 
   if (!isEnabled) {
     return (
-      <div
-        className='ct-console-empty-state'
-        style={{
-          minHeight: 'calc(100vh - 128px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <div
-          style={{
-            maxWidth: '600px',
-            width: '100%',
-            textAlign: 'center',
-            padding: '0 20px',
-          }}
-        >
-          <Card
-            style={{
-              padding: '60px 40px',
-              borderRadius: '16px',
-              border: '1px solid var(--semi-color-border)',
-              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
-              background:
-                'linear-gradient(135deg, var(--semi-color-bg-0) 0%, var(--semi-color-fill-0) 100%)',
-            }}
+      <DeploymentGuardState
+        tone='warning'
+        eyebrow={t('模型与路由')}
+        title={t('模型部署服务未启用')}
+        subtitle={t('访问模型部署功能需要先启用 io.net 部署服务。')}
+        badge={
+          <Tag color='orange' shape='circle' type='light'>
+            {t('需要配置')}
+          </Tag>
+        }
+        icon={<AlertCircle size={34} />}
+        actions={
+          <Button
+            type='primary'
+            theme='solid'
+            icon={<Settings size={16} />}
+            onClick={handleGoToSettings}
           >
-            {/* 图标区域 */}
-            <div style={{ marginBottom: '32px' }}>
-              <div
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  width: '120px',
-                  height: '120px',
-                  borderRadius: '50%',
-                  background:
-                    'linear-gradient(135deg, rgba(var(--semi-orange-4), 0.15) 0%, rgba(var(--semi-orange-5), 0.1) 100%)',
-                  border: '3px solid rgba(var(--semi-orange-4), 0.3)',
-                  marginBottom: '24px',
-                }}
-              >
-                <AlertCircle size={56} color='var(--semi-color-warning)' />
-              </div>
-            </div>
-
-            {/* 标题区域 */}
-            <div style={{ marginBottom: '24px' }}>
-              <Title
-                heading={2}
-                style={{
-                  color: 'var(--semi-color-text-0)',
-                  margin: '0 0 12px 0',
-                  fontSize: '28px',
-                  fontWeight: '700',
-                }}
-              >
-                {t('模型部署服务未启用')}
-              </Title>
-              <Text
-                style={{
-                  fontSize: '18px',
-                  lineHeight: '1.6',
-                  color: 'var(--semi-color-text-1)',
-                  display: 'block',
-                }}
-              >
-                {t('访问模型部署功能需要先启用 io.net 部署服务')}
-              </Text>
-            </div>
-
-            {/* 配置要求区域 */}
-            <div
-              style={{
-                backgroundColor: 'var(--semi-color-bg-1)',
-                padding: '24px',
-                borderRadius: '12px',
-                border: '1px solid var(--semi-color-border)',
-                margin: '32px 0',
-                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '12px',
-                  marginBottom: '16px',
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '8px',
-                    backgroundColor: 'rgba(var(--semi-blue-4), 0.15)',
-                  }}
-                >
-                  <Server size={20} color='var(--semi-color-primary)' />
-                </div>
-                <Text
-                  strong
-                  style={{
-                    fontSize: '16px',
-                    color: 'var(--semi-color-text-0)',
-                  }}
-                >
-                  {t('需要配置的项目')}
-                </Text>
-              </div>
-
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '12px',
-                  alignItems: 'flex-start',
-                  textAlign: 'left',
-                  maxWidth: '320px',
-                  margin: '0 auto',
-                }}
-              >
-                <div
-                  style={{ display: 'flex', alignItems: 'center', gap: '12px' }}
-                >
-                  <div
-                    style={{
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      backgroundColor: 'var(--semi-color-primary)',
-                      flexShrink: 0,
-                    }}
-                  ></div>
-                  <Text
-                    style={{
-                      fontSize: '15px',
-                      color: 'var(--semi-color-text-1)',
-                    }}
-                  >
-                    {t('启用 io.net 部署开关')}
-                  </Text>
-                </div>
-                <div
-                  style={{ display: 'flex', alignItems: 'center', gap: '12px' }}
-                >
-                  <div
-                    style={{
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      backgroundColor: 'var(--semi-color-primary)',
-                      flexShrink: 0,
-                    }}
-                  ></div>
-                  <Text
-                    style={{
-                      fontSize: '15px',
-                      color: 'var(--semi-color-text-1)',
-                    }}
-                  >
-                    {t('配置有效的 io.net API Key')}
-                  </Text>
-                </div>
-              </div>
-            </div>
-
-            {/* 操作链接区域 */}
-            <div style={{ marginBottom: '20px' }}>
-              <div
-                onClick={handleGoToSettings}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  cursor: 'pointer',
-                  padding: '12px 24px',
-                  borderRadius: '8px',
-                  fontSize: '16px',
-                  fontWeight: '500',
-                  color: 'var(--semi-color-primary)',
-                  background: 'var(--semi-color-fill-0)',
-                  border: '1px solid var(--semi-color-border)',
-                  transition: 'all 0.2s ease',
-                  textDecoration: 'none',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'var(--semi-color-fill-1)';
-                  e.currentTarget.style.transform = 'translateY(-1px)';
-                  e.currentTarget.style.boxShadow =
-                    '0 2px 8px rgba(0, 0, 0, 0.1)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'var(--semi-color-fill-0)';
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = 'none';
-                }}
-              >
-                <Settings size={18} />
-                {t('前往设置页面')}
-              </div>
-            </div>
-
-            {/* 底部提示 */}
-            <Text
-              type='tertiary'
-              style={{
-                fontSize: '14px',
-                color: 'var(--semi-color-text-2)',
-                lineHeight: '1.5',
-              }}
-            >
-              {t('配置完成后刷新页面即可使用模型部署功能')}
-            </Text>
-          </Card>
-        </div>
-      </div>
+            {t('前往设置页面')}
+          </Button>
+        }
+      >
+        <strong>{t('需要配置的项目')}</strong>
+        <ul>
+          <li>
+            <Server size={14} />
+            {t('启用 io.net 部署开关')}
+          </li>
+          <li>
+            <Settings size={14} />
+            {t('配置有效的 io.net API Key')}
+          </li>
+        </ul>
+        <p>{t('配置完成后刷新页面即可使用模型部署功能')}</p>
+      </DeploymentGuardState>
     );
   }
 
   if (connectionLoading || (connectionOk === null && !connectionError)) {
     return (
-      <div className='ct-console-content-wrap'>
-        <Card loading={true} style={{ minHeight: '400px' }}>
-          <div style={{ textAlign: 'center', padding: '50px 0' }}>
-            <Text type='secondary'>{t('正在检查 io.net 连接...')}</Text>
-          </div>
-        </Card>
-      </div>
+      <DeploymentGuardState
+        tone='loading'
+        eyebrow={t('模型与路由')}
+        title={t('正在检查 io.net 连接...')}
+        subtitle={t('正在验证部署服务连接状态，请稍候。')}
+        badge={
+          <Tag color='cyan' shape='circle' type='light'>
+            {t('连接检测')}
+          </Tag>
+        }
+        icon={<Loader2 className='is-spinning' size={34} />}
+      >
+        <strong>{t('连接检测中')}</strong>
+        <p>{t('检查完成后会自动进入模型部署工作台。')}</p>
+      </DeploymentGuardState>
     );
   }
 
@@ -301,108 +165,42 @@ const DeploymentAccessGuard = ({
     const detail = connectionError?.message || '';
 
     return (
-      <div
-        className='ct-console-empty-state'
-        style={{
-          minHeight: 'calc(100vh - 128px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <div
-          style={{
-            maxWidth: '600px',
-            width: '100%',
-            textAlign: 'center',
-            padding: '0 20px',
-          }}
-        >
-          <Card
-            style={{
-              padding: '60px 40px',
-              borderRadius: '16px',
-              border: '1px solid var(--semi-color-border)',
-              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
-              background:
-                'linear-gradient(135deg, var(--semi-color-bg-0) 0%, var(--semi-color-fill-0) 100%)',
-            }}
-          >
-            <div style={{ marginBottom: '32px' }}>
-              <div
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  width: '120px',
-                  height: '120px',
-                  borderRadius: '50%',
-                  background:
-                    'linear-gradient(135deg, rgba(var(--semi-red-4), 0.15) 0%, rgba(var(--semi-red-5), 0.1) 100%)',
-                  border: '3px solid rgba(var(--semi-red-4), 0.3)',
-                  marginBottom: '24px',
-                }}
-              >
-                <WifiOff size={56} color='var(--semi-color-danger)' />
-              </div>
-            </div>
-
-            <div style={{ marginBottom: '24px' }}>
-              <Title
-                heading={2}
-                style={{
-                  color: 'var(--semi-color-text-0)',
-                  margin: '0 0 12px 0',
-                  fontSize: '28px',
-                  fontWeight: '700',
-                }}
-              >
-                {title}
-              </Title>
-              <Text
-                style={{
-                  fontSize: '18px',
-                  lineHeight: '1.6',
-                  color: 'var(--semi-color-text-1)',
-                  display: 'block',
-                }}
-              >
-                {description}
-              </Text>
-              {detail ? (
-                <Text
-                  type='tertiary'
-                  style={{
-                    fontSize: '14px',
-                    lineHeight: '1.5',
-                    display: 'block',
-                    marginTop: '8px',
-                  }}
-                >
-                  {detail}
-                </Text>
-              ) : null}
-            </div>
-
-            <div
-              style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}
+      <DeploymentGuardState
+        tone='danger'
+        eyebrow={t('模型与路由')}
+        title={title}
+        subtitle={description}
+        badge={
+          <Tag color='red' shape='circle' type='light'>
+            {t('连接异常')}
+          </Tag>
+        }
+        icon={<WifiOff size={34} />}
+        actions={
+          <>
+            <Button
+              type='primary'
+              theme='solid'
+              icon={<Settings size={16} />}
+              onClick={handleGoToSettings}
             >
+              {t('前往设置')}
+            </Button>
+            {onRetry ? (
               <Button
-                type='primary'
-                icon={<Settings size={18} />}
-                onClick={handleGoToSettings}
+                type='tertiary'
+                icon={<RefreshCw size={16} />}
+                onClick={onRetry}
               >
-                {t('前往设置')}
+                {t('重试连接')}
               </Button>
-              {onRetry ? (
-                <Button type='tertiary' onClick={onRetry}>
-                  {t('重试连接')}
-                </Button>
-              ) : null}
-            </div>
-          </Card>
-        </div>
-      </div>
+            ) : null}
+          </>
+        }
+      >
+        <strong>{t('部署服务暂不可用')}</strong>
+        {detail ? <p>{detail}</p> : <p>{t('请检查 API Key 和网络连接。')}</p>}
+      </DeploymentGuardState>
     );
   }
 

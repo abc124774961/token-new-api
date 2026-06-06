@@ -4158,6 +4158,9 @@ function ChannelAccount({ variant = 'default' }) {
   const [importFileList, setImportFileList] = useState([]);
   const [importDragActive, setImportDragActive] = useState(false);
   const [importOnlyNew, setImportOnlyNew] = useState(true);
+  const [importMaxConcurrency, setImportMaxConcurrency] = useState(
+    CHANNEL_ACCOUNT_IMPORT_DEFAULT_MAX_CONCURRENCY,
+  );
   const [importLoading, setImportLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [editVisible, setEditVisible] = useState(false);
@@ -4909,6 +4912,7 @@ function ChannelAccount({ variant = 'default' }) {
     setImportFileList([]);
     setImportActiveTab('file');
     setImportDragActive(false);
+    setImportMaxConcurrency(CHANNEL_ACCOUNT_IMPORT_DEFAULT_MAX_CONCURRENCY);
     if (importFileInputRef.current) {
       importFileInputRef.current.value = '';
     }
@@ -4977,7 +4981,7 @@ function ChannelAccount({ variant = 'default' }) {
       credentials: importCredentials,
       files: importFileList,
       onlyNew: importOnlyNew,
-      maxConcurrency: CHANNEL_ACCOUNT_IMPORT_DEFAULT_MAX_CONCURRENCY,
+      maxConcurrency: importMaxConcurrency,
     });
     if (!submission.hasInput()) {
       showError(t('请先输入账号凭证'));
@@ -5009,6 +5013,7 @@ function ChannelAccount({ variant = 'default' }) {
   }, [
     importCredentials,
     importFileList,
+    importMaxConcurrency,
     importOnlyNew,
     ensureAccountDangerPermission,
     loadAccounts,
@@ -6615,6 +6620,24 @@ function ChannelAccount({ variant = 'default' }) {
                 />
               </Tabs.TabPane>
             </Tabs>
+            <label className='ct-channel-account-import-concurrency'>
+              <span>{t('默认账号并发')}</span>
+              <InputNumber
+                value={importMaxConcurrency}
+                min={0}
+                step={1}
+                precision={0}
+                onChange={(value) =>
+                  setImportMaxConcurrency(
+                    Math.max(0, Math.trunc(Number(value || 0))),
+                  )
+                }
+                placeholder={t('0 表示不限制')}
+              />
+              <small>
+                {t('0 表示不限制；导入账号会默认使用该并发上限。')}
+              </small>
+            </label>
             <Checkbox
               checked={importOnlyNew}
               onChange={(event) => setImportOnlyNew(event.target.checked)}

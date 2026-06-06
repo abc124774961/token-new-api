@@ -16,9 +16,9 @@ import (
 )
 
 type getUserGroupsAPIResponse struct {
-	Success bool                              `json:"success"`
-	Message string                            `json:"message"`
-	Data    map[string]userGroupResponseItem  `json:"data"`
+	Success bool                             `json:"success"`
+	Message string                           `json:"message"`
+	Data    map[string]userGroupResponseItem `json:"data"`
 }
 
 func TestGetUserGroupsIncludesDynamicBillingWhenRequested(t *testing.T) {
@@ -173,11 +173,11 @@ func TestBuildUserGroupDynamicBillingDisplayMapIncludesRatioRange(t *testing.T) 
 		Enabled: true,
 		Groups: []ModelGatewayDynamicBillingGroupOverview{
 			{
-				PolicyGroup:   "auto",
-				Status:        "active",
-				AverageRatio:  0.0673,
-				MinRatio:      0.0614,
-				MaxRatio:      0.0739,
+				PolicyGroup:      "auto",
+				Status:           "active",
+				AverageRatio:     0.0673,
+				MinRatio:         0.0614,
+				MaxRatio:         0.0739,
 				AveragePricePerM: 0.22,
 			},
 		},

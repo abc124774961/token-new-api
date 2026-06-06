@@ -22,13 +22,7 @@ import SubscriptionsPage from '../../components/table/subscriptions';
 
 const Subscription = ({ variant = 'default' }) => {
   return (
-    <div
-      className={`ct-console-content-wrap${
-        variant === 'admin'
-          ? ' ct-admin-table-page ct-admin-subscription-page'
-          : ''
-      }`}
-    >
+    <div className={`ct-console-content-wrap ${variant === 'admin' ? 'ct-admin-subscription-page' : ''}`.trim()}>
       <SubscriptionsPage />
     </div>
   );

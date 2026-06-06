@@ -110,6 +110,28 @@ html.dark
   place-items: center;
   color: rgba(229, 247, 247, 0.82);
   background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    background 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
+  text-decoration: none;
+}
+
+.aurora-rail-button:hover,
+.aurora-rail-button.is-active {
+  color: #ffffff;
+  border-color: rgba(125, 255, 245, 0.4);
+  background: rgba(0, 167, 167, 0.26);
+  transform: translateY(-1px);
+}
+
+.aurora-rail-button.is-disabled,
+.aurora-rail-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
 }
 
 .aurora-side {
@@ -180,6 +202,22 @@ html.dark
   color: #243447;
   font-size: 15px;
   font-weight: 760;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    background 0.16s ease;
+}
+
+.aurora-nav-parent:hover {
+  color: var(--aurora-brand-dark);
+  background: rgba(0, 167, 167, 0.045);
+}
+
+.aurora-nav-parent.is-collapsed {
+  color: var(--aurora-muted);
 }
 
 .aurora-nav-parent-left,
@@ -295,6 +333,20 @@ html.dark
 .aurora-icon-button {
   position: relative;
   width: 40px;
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease,
+    background 0.16s ease,
+    transform 0.16s ease;
+}
+
+.aurora-icon-button:hover,
+.aurora-language:hover {
+  color: var(--aurora-brand-dark);
+  border-color: rgba(0, 167, 167, 0.28);
+  background: var(--aurora-brand-soft);
+  transform: translateY(-1px);
 }
 
 .aurora-notice-dot {
@@ -312,6 +364,17 @@ html.dark
   padding: 0 12px;
   font-size: 14px;
   font-weight: 700;
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease,
+    background 0.16s ease,
+    transform 0.16s ease;
+}
+
+.aurora-language-menu .aurora-user-menu-item.is-active {
+  color: var(--aurora-brand-dark, #047c80);
+  font-weight: 820;
 }
 
 .aurora-user-button {
@@ -365,6 +428,85 @@ html.dark
   font-size: 15px;
   font-weight: 850;
   box-shadow: 0 10px 18px rgba(0, 139, 139, 0.18);
+}
+
+.aurora-command-palette {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.aurora-command-list {
+  max-height: 360px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 2px;
+}
+
+.aurora-command-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 50px;
+  padding: 8px 10px;
+  border: 1px solid var(--aurora-line-soft, #edf2f6);
+  border-radius: 10px;
+  color: var(--aurora-text, #10202f);
+  background: var(--aurora-surface-soft, #f9fbfd);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    transform 0.16s ease;
+}
+
+.aurora-command-item:hover {
+  border-color: rgba(0, 167, 167, 0.28);
+  background: var(--aurora-brand-soft, #e6f8f7);
+  transform: translateY(-1px);
+}
+
+.aurora-command-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--aurora-brand-dark, #047c80);
+  background: rgba(0, 167, 167, 0.1);
+}
+
+.aurora-command-item span:last-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.aurora-command-item strong {
+  color: var(--aurora-text, #10202f);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.aurora-command-item small,
+.aurora-command-empty {
+  color: var(--aurora-muted, #64748b);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.aurora-command-empty {
+  padding: 28px 10px;
+  text-align: center;
+  border: 1px dashed var(--aurora-line, #dfe7ee);
+  border-radius: 10px;
+  background: var(--aurora-surface-soft, #f9fbfd);
 }
 
 .aurora-content {
@@ -1579,6 +1721,58 @@ html.dark
 .ct-admin-settings-embed .semi-button {
   border-radius: 9px;
   font-weight: 740;
+}
+
+.ct-admin-settings-embed .semi-form,
+.ct-admin-settings-embed .semi-collapse,
+.ct-admin-settings-embed .semi-tabs,
+.ct-admin-settings-governance-body .semi-form,
+.ct-admin-settings-governance-body .semi-collapse,
+.ct-admin-settings-governance-body .semi-tabs {
+  border-color: var(--aurora-line-soft) !important;
+  border-radius: var(--aurora-radius) !important;
+}
+
+.ct-admin-settings-embed .semi-form-field-label,
+.ct-admin-settings-governance-body .semi-form-field-label {
+  color: var(--aurora-muted) !important;
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.ct-admin-settings-embed .semi-card,
+.ct-admin-settings-governance-body .semi-card {
+  background: rgba(255, 255, 255, 0.9) !important;
+}
+
+.ct-admin-settings-embed .semi-card-header,
+.ct-admin-settings-governance-body .semi-card-header {
+  border-bottom-color: var(--aurora-line-soft) !important;
+  background: linear-gradient(135deg, #ffffff 0%, #f7fbfc 100%);
+}
+
+.ct-admin-settings-embed
+  .semi-table-thead
+  > .semi-table-row
+  > .semi-table-row-head,
+.ct-admin-settings-governance-body
+  .semi-table-thead
+  > .semi-table-row
+  > .semi-table-row-head {
+  color: var(--aurora-muted) !important;
+  background: var(--aurora-surface-soft) !important;
+  font-weight: 780;
+}
+
+.ct-admin-settings-embed
+  .semi-table-tbody
+  > .semi-table-row:hover
+  > .semi-table-row-cell,
+.ct-admin-settings-governance-body
+  .semi-table-tbody
+  > .semi-table-row:hover
+  > .semi-table-row-cell {
+  background: #f7fbfc !important;
 }
 
 .ct-admin-settings-governance {

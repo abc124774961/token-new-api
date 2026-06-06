@@ -56,6 +56,7 @@ const ConsolePageShell = ({
   eyebrow,
   badge,
   actions,
+  metrics,
   children,
   className = '',
   bodyClassName = '',
@@ -70,6 +71,7 @@ const ConsolePageShell = ({
         actions={actions}
       />
     )}
+    {metrics && <div className='ct-console-page-metrics'>{metrics}</div>}
     <div className={`ct-console-page-body ${bodyClassName}`.trim()}>
       {children}
     </div>

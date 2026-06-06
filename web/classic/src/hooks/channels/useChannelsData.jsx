@@ -39,6 +39,10 @@ import { useChannelUpstreamUpdates } from './useChannelUpstreamUpdates';
 import { parseUpstreamUpdateMeta } from './upstreamUpdateUtils';
 import { Modal, Button } from '@douyinfe/semi-ui';
 import { openCodexUsageModal } from '../../components/table/channels/modals/CodexUsageModal';
+import {
+  flattenChannelRows,
+  isRecoverableHealthChannel,
+} from '../../components/table/channels/channelHealthUtils';
 
 const DEFAULT_CHANNEL_STATUS_FILTER = 'enabled';
 
@@ -71,6 +75,8 @@ export const useChannelsData = () => {
   const [showBatchSetTag, setShowBatchSetTag] = useState(false);
   const [batchSetTagValue, setBatchSetTagValue] = useState('');
   const [compactMode, setCompactMode] = useTableCompactMode('channels');
+  const [recoveringChannelHealth, setRecoveringChannelHealth] =
+    useState(false);
 
   // Column visibility states
   const [visibleColumns, setVisibleColumns] = useState({});
@@ -684,6 +690,7 @@ export const useChannelsData = () => {
 
   const clearChannelBalanceInsufficientMark = (channel) => {
     channel.balance_insufficient = false;
+    channel.runtime_balance_insufficient_count = 0;
     channel.balance_updated_time = 0;
     if (isBalanceInsufficientReason(channel.status_reason)) {
       channel.status_reason = '';
@@ -837,6 +844,65 @@ export const useChannelsData = () => {
       showInfo(t('已更新完毕所有已启用通道余额！'));
     } else {
       showError(message);
+    }
+  };
+
+  const recoverVisibleChannelHealth = async () => {
+    if (recoveringChannelHealth) return;
+    const selectedRecoverable = flattenChannelRows(selectedChannels).filter(
+      isRecoverableHealthChannel,
+    );
+    const visibleRecoverable = flattenChannelRows(channels).filter(
+      isRecoverableHealthChannel,
+    );
+    const targets =
+      selectedChannels.length > 0 ? selectedRecoverable : visibleRecoverable;
+    const uniqueTargets = [
+      ...new Map(
+        targets
+          .filter((channel) => channel?.id)
+          .map((channel) => [channel.id, channel]),
+      ).values(),
+    ];
+
+    if (uniqueTargets.length === 0) {
+      showInfo(t('当前没有可恢复的异常渠道'));
+      return;
+    }
+
+    setRecoveringChannelHealth(true);
+    try {
+      const results = await Promise.allSettled(
+        uniqueTargets.map((channel) =>
+          API.post(`/api/channel/${channel.id}/recover_health`),
+        ),
+      );
+      const successCount = results.filter(
+        (result) => result.status === 'fulfilled' && result.value?.data?.success,
+      ).length;
+      const failCount = results.length - successCount;
+      if (successCount > 0) {
+        showSuccess(
+          t('已恢复 {{success}} 个渠道，失败 {{fail}} 个。', {
+            success: successCount,
+            fail: failCount,
+          }),
+        );
+      } else {
+        const firstFailure = results.find(
+          (result) =>
+            result.status === 'rejected' || !result.value?.data?.success,
+        );
+        const message =
+          firstFailure?.value?.data?.message ||
+          firstFailure?.reason?.response?.data?.message ||
+          firstFailure?.reason?.message ||
+          t('恢复健康失败');
+        showError(message);
+      }
+      await refresh();
+    } finally {
+      setRecoveringChannelHealth(false);
     }
   };
 
@@ -1268,6 +1334,7 @@ export const useChannelsData = () => {
     enableBatchDelete,
     statusFilter,
     compactMode,
+    recoveringChannelHealth,
     globalPassThroughEnabled,
 
     // UI states
@@ -1357,6 +1424,7 @@ export const useChannelsData = () => {
     testAllChannels,
     deleteAllDisabledChannels,
     updateAllChannelsBalance,
+    recoverVisibleChannelHealth,
     updateChannelBalance,
     fixChannelsAbilities,
     checkOllamaVersion,
