@@ -59,6 +59,7 @@ const (
 	ContextKeyChannelSelectionReserved          ContextKey = "channel_selection_reserved"
 	ContextKeyChannelSelectionSkipped           ContextKey = "channel_selection_skipped"
 	ContextKeyChannelRuntimeSelectionSkipped    ContextKey = "channel_runtime_selection_skipped"
+	ContextKeyChannelRuntimeAttempted           ContextKey = "channel_runtime_attempted"
 	ContextKeyChannelFirstByteWaitLease         ContextKey = "channel_first_byte_wait_lease"
 	ContextKeyChannelConcurrencyLease           ContextKey = "channel_concurrency_lease"
 	ContextKeyRelayAttemptControl               ContextKey = "relay_attempt_control"

@@ -128,6 +128,38 @@ func TestCircuitBreakerDoesNotOpenForOverloadSkip429(t *testing.T) {
 	}))
 }
 
+func TestCircuitBreakerIgnoresClientContextLimit(t *testing.T) {
+	now := time.Unix(355, 0)
+	breaker := scheduler.NewCircuitBreakerForTest(scheduler.CircuitBreakerOptions{
+		FailureThreshold:   1,
+		MinSamples:         1,
+		OpenDuration:       time.Minute,
+		HalfOpenProbeCount: 1,
+	}, func() time.Time { return now })
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 17, Group: "vip"}
+
+	breaker.Report(core.AttemptResult{
+		Key:          key,
+		ChannelID:    17,
+		StatusCode:   http.StatusBadRequest,
+		ErrorCode:    "context_too_large",
+		ErrorType:    "invalid_request_error",
+		ErrorMessage: "context window exceeded",
+	})
+
+	snapshot := breaker.Snapshot(key)
+	require.Equal(t, core.CircuitStateClosed, snapshot.State)
+	require.Zero(t, snapshot.SampleCount)
+	require.Empty(t, snapshot.ErrorCounts)
+	require.Empty(t, scheduler.ClassifyCircuitError(core.AttemptResult{
+		StatusCode:    http.StatusBadRequest,
+		ErrorCode:     "context_too_large",
+		ErrorType:     "invalid_request_error",
+		ErrorMessage:  "context window exceeded",
+		ErrorCategory: core.ErrorCategoryClientRequestError,
+	}))
+}
+
 func TestCircuitBreakerIgnoresClientAbortedStream(t *testing.T) {
 	now := time.Unix(360, 0)
 	breaker := scheduler.NewCircuitBreakerForTest(scheduler.CircuitBreakerOptions{

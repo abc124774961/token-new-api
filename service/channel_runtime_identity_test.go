@@ -99,6 +99,24 @@ func TestRuntimeBalanceAndSelectionSkipScope(t *testing.T) {
 	require.True(t, IsChannelRuntimeSelectionSkipped(ctx, accountB))
 }
 
+func TestRuntimeAttemptedScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	accountA := testRuntimeIdentity(8105, "acct-a", 0)
+	accountB := testRuntimeIdentity(8105, "acct-b", 1)
+	ctx, _ := gin.CreateTestContext(nil)
+
+	MarkChannelRuntimeAttempted(ctx, accountA)
+	require.True(t, IsChannelRuntimeAttempted(ctx, accountA))
+	require.False(t, IsChannelRuntimeAttempted(ctx, accountB))
+	require.True(t, IsChannelRuntimeAttempted(ctx, ChannelOnlyRuntimeIdentity(8105)))
+
+	otherCtx, _ := gin.CreateTestContext(nil)
+	MarkChannelRuntimeAttempted(otherCtx, ChannelOnlyRuntimeIdentity(8105))
+	require.True(t, IsChannelRuntimeAttempted(otherCtx, accountA))
+	require.True(t, IsChannelRuntimeAttempted(otherCtx, accountB))
+}
+
 func TestRuntimeBalanceInsufficientChannelCountsIncludeAccountScope(t *testing.T) {
 	clearRuntimeBalanceInsufficientForTest()
 	t.Cleanup(clearRuntimeBalanceInsufficientForTest)

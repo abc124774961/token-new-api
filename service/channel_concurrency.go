@@ -274,6 +274,29 @@ func MarkChannelRuntimeSelectionSkipped(ctx *gin.Context, identity ChannelRuntim
 	common.SetContextKey(ctx, constant.ContextKeyChannelRuntimeSelectionSkipped, identities)
 }
 
+func MarkChannelRuntimeAttempted(ctx *gin.Context, identity ChannelRuntimeIdentity) {
+	if ctx == nil {
+		return
+	}
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return
+	}
+	if identity.HasAccountScope() {
+		identity = identity.AccountScope()
+	} else {
+		identity = identity.ChannelScope()
+	}
+	identities, _ := common.GetContextKeyType[[]ChannelRuntimeIdentity](ctx, constant.ContextKeyChannelRuntimeAttempted)
+	for _, existing := range identities {
+		if runtimeAttemptMatches(existing, identity) {
+			return
+		}
+	}
+	identities = append(identities, identity)
+	common.SetContextKey(ctx, constant.ContextKeyChannelRuntimeAttempted, identities)
+}
+
 func IsChannelSelectionSkipped(ctx *gin.Context, channelID int) bool {
 	if ctx == nil || channelID <= 0 {
 		return false
@@ -284,6 +307,26 @@ func IsChannelSelectionSkipped(ctx *gin.Context, channelID int) bool {
 	}
 	for _, existing := range channelIDs {
 		if existing == channelID {
+			return true
+		}
+	}
+	return false
+}
+
+func IsChannelRuntimeAttempted(ctx *gin.Context, identity ChannelRuntimeIdentity) bool {
+	if ctx == nil {
+		return false
+	}
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return false
+	}
+	identities, ok := common.GetContextKeyType[[]ChannelRuntimeIdentity](ctx, constant.ContextKeyChannelRuntimeAttempted)
+	if !ok {
+		return false
+	}
+	for _, existing := range identities {
+		if runtimeAttemptMatches(existing, identity) {
 			return true
 		}
 	}
@@ -314,6 +357,18 @@ func IsChannelRuntimeSelectionSkipped(ctx *gin.Context, identity ChannelRuntimeI
 		}
 	}
 	return false
+}
+
+func runtimeAttemptMatches(existing ChannelRuntimeIdentity, identity ChannelRuntimeIdentity) bool {
+	existing = existing.Normalize()
+	identity = identity.Normalize()
+	if existing.ChannelID <= 0 || identity.ChannelID <= 0 || existing.ChannelID != identity.ChannelID {
+		return false
+	}
+	if !existing.HasAccountScope() || !identity.HasAccountScope() {
+		return true
+	}
+	return runtimeSelectionSkipMatches(existing, identity)
 }
 
 func runtimeSelectionSkipMatches(existing ChannelRuntimeIdentity, identity ChannelRuntimeIdentity) bool {

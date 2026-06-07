@@ -283,6 +283,9 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	if IsUpstreamConcurrencyLimitError(err) {
 		return false
 	}
+	if IsClientContextLimitError(err) {
+		return false
+	}
 	if types.IsChannelError(err) {
 		return true
 	}

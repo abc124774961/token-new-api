@@ -135,6 +135,21 @@ func TestRelayErrorHandlerHidesUpstreamBalanceInsufficientFromClient(t *testing.
 	require.NotContains(t, common.JsonRawMessageToString(err.Metadata), "Insufficient account balance")
 }
 
+func TestClientContextLimitErrorDetection(t *testing.T) {
+	t.Parallel()
+
+	err := types.WithOpenAIError(types.OpenAIError{
+		Message: "Requested 200000 tokens exceeds the maximum context length of 128000 tokens.",
+		Type:    "invalid_request_error",
+		Code:    "context_too_large",
+	}, http.StatusBadRequest)
+
+	require.True(t, IsClientContextLimitError(err))
+	require.True(t, IsClientContextLimitMessage("context_length_exceeded"))
+	require.True(t, IsClientContextLimitMessage("上下文长度超限"))
+	require.False(t, IsClientContextLimitMessage("invalid api key"))
+}
+
 func TestRelayErrorHandlerHidesPlainTextUpstreamBalanceInsufficient(t *testing.T) {
 	t.Parallel()
 

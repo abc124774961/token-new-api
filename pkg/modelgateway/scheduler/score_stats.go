@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/service"
 )
 
 const scoreStatsVersion = 1
@@ -229,6 +230,8 @@ func scoreSampleDecision(result core.AttemptResult) core.ScoreSampleDecision {
 		return skippedScoreSample("client_aborted")
 	case strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted:
 		return skippedScoreSample("user_quota_exhausted")
+	case strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryClientRequestError || scoreStatsClientContextLimitResult(result):
+		return skippedScoreSample(core.ErrorCategoryClientRequestError)
 	case result.BalanceInsufficient || isBalanceInsufficientAttempt(result):
 		return skippedScoreSample("balance_insufficient")
 	case strings.TrimSpace(result.ErrorCategory) == core.ErrorCategorySchedulerExhausted:
@@ -253,6 +256,15 @@ func scoreSampleDecision(result core.AttemptResult) core.ScoreSampleDecision {
 
 func skippedScoreSample(reason string) core.ScoreSampleDecision {
 	return core.ScoreSampleDecision{SkipReason: reason, Reason: reason}
+}
+
+func scoreStatsClientContextLimitResult(result core.AttemptResult) bool {
+	label := strings.Join([]string{
+		result.ErrorCode,
+		result.ErrorType,
+		result.ErrorMessage,
+	}, " ")
+	return service.IsClientContextLimitMessage(label)
 }
 
 func internalFirstByteTimeoutRetry(result core.AttemptResult) bool {

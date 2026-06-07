@@ -192,6 +192,72 @@ func TestSelectorSkipsOnlyFailedRuntimeAccountWithinRequest(t *testing.T) {
 	require.NotNil(t, plan)
 	require.Equal(t, "acct-b", plan.RuntimeKey.AccountID)
 	accountAExplanation := candidateExplanationByRuntimeAccount(t, plan.Candidates, "acct-a")
+	require.Equal(t, "routing_slot_reserved", accountAExplanation.RejectReason)
+}
+
+func TestSelectorMarksRuntimeAccountAlreadyFailedOnlyAfterRealAttempt(t *testing.T) {
+	channel := &model.Channel{Id: 7003, Name: "pooled", Status: common.ChannelStatusEnabled}
+	accountA := core.RuntimeKey{
+		RequestedModel:      "gpt-5.5",
+		UpstreamModel:       "gpt-5.5",
+		ChannelID:           channel.Id,
+		Group:               "default",
+		EndpointType:        constant.EndpointTypeOpenAI,
+		AccountID:           "acct-a",
+		CredentialIndex:     0,
+		CredentialSubjectFP: "subject-a",
+		CredentialFP:        "credential-a",
+	}
+	accountB := accountA
+	accountB.AccountID = "acct-b"
+	accountB.CredentialIndex = 1
+	accountB.CredentialSubjectFP = "subject-b"
+	accountB.CredentialFP = "credential-b"
+	ctx, _ := gin.CreateTestContext(nil)
+	service.MarkChannelRuntimeAttempted(ctx, service.ChannelRuntimeIdentity{
+		ChannelID:           accountA.ChannelID,
+		RequestedModel:      accountA.RequestedModel,
+		SelectedGroup:       accountA.Group,
+		EndpointType:        accountA.EndpointType,
+		AccountID:           accountA.AccountID,
+		CredentialIndex:     accountA.CredentialIndex,
+		CredentialIndexSet:  true,
+		CredentialSubjectFP: accountA.CredentialSubjectFP,
+		CredentialFP:        accountA.CredentialFP,
+	})
+	service.MarkChannelRuntimeSelectionSkipped(ctx, service.ChannelRuntimeIdentity{
+		ChannelID:           accountA.ChannelID,
+		RequestedModel:      accountA.RequestedModel,
+		SelectedGroup:       accountA.Group,
+		EndpointType:        accountA.EndpointType,
+		AccountID:           accountA.AccountID,
+		CredentialIndex:     accountA.CredentialIndex,
+		CredentialIndexSet:  true,
+		CredentialSubjectFP: accountA.CredentialSubjectFP,
+		CredentialFP:        accountA.CredentialFP,
+	})
+
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: channel, Group: "default", RuntimeKey: accountA},
+			{Channel: channel, Group: "default", RuntimeKey: accountB},
+		}),
+		nil,
+		core.ScoreWeights{Success: 1, Speed: 0, Load: 0, Cost: 0, Group: 0},
+	).WithRuntimeSnapshotEnricher(scheduler.NewRuntimeSnapshotEnricher(scheduler.NewServiceRuntimeStateProvider(), 0, 0, 0))
+
+	plan, handled, apiErr := selector.Select(ctx, nil, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, "acct-b", plan.RuntimeKey.AccountID)
+	accountAExplanation := candidateExplanationByRuntimeAccount(t, plan.Candidates, "acct-a")
 	require.Equal(t, "already_failed_in_request", accountAExplanation.RejectReason)
 }
 

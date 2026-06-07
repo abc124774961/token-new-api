@@ -749,6 +749,40 @@ func TestShouldRetryRejectsInvalidEncryptedContent(t *testing.T) {
 	require.False(t, avoid)
 }
 
+func TestShouldRetryRejectsClientContextLimitWithoutChannelPenalty(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 475, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 476, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Set("use_channel", []string{"475"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	err := types.WithOpenAIError(types.OpenAIError{
+		Message: "Requested 200000 tokens exceeds the maximum context length of 128000 tokens.",
+		Type:    "invalid_request_error",
+		Code:    "context_too_large",
+	}, http.StatusBadRequest)
+
+	require.True(t, service.IsClientContextLimitError(err))
+	require.False(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, 0, param.GetExtraRetries())
+	require.False(t, shouldFailoverToAlternativeChannel(ctx, err))
+	require.False(t, isUpstreamFailoverCandidate(err))
+	require.Equal(t, modelgatewaycore.ErrorCategoryClientRequestError, classifyRelayAttemptError(ctx, err))
+	require.Equal(t, "stop", retryActionForAttempt(ctx, err, true))
+	_, avoid := channelFailureAvoidanceReason(err)
+	require.False(t, avoid)
+}
+
 func TestShouldRetryRejectsLocalBadRequestWhenNoRetryBudget(t *testing.T) {
 	ctx := newRelayRetryContext()
 
@@ -1293,6 +1327,35 @@ func TestProcessChannelErrorSkipsFailureAvoidanceForOverload429(t *testing.T) {
 	require.Nil(t, service.GetChannelFailureAvoidanceStatus(916))
 	require.Nil(t, service.GetChannelConcurrencyCooldownStatus(916))
 	require.False(t, service.IsRuntimeBalanceInsufficientChannelID(916))
+}
+
+func TestProcessChannelErrorSkipsFailureAvoidanceForClientContextLimit(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 45
+	common.AutomaticDisableChannelEnabled = true
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		common.AutomaticDisableChannelEnabled = originalAutomaticDisable
+		service.ClearChannelFailureAvoidance(917)
+		service.ClearChannelConcurrencyForTest()
+	})
+
+	err := types.WithOpenAIError(types.OpenAIError{
+		Message: "context window exceeded",
+		Type:    "invalid_request_error",
+		Code:    "context_too_large",
+	}, http.StatusBadRequest)
+	ctx := newRelayRetryContext()
+	processChannelError(ctx, *types.NewChannelError(917, 1, "channel-917", false, "", true), err, false)
+
+	require.Equal(t, modelgatewaycore.ErrorCategoryClientRequestError, classifyRelayAttemptError(ctx, err))
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(917))
+	require.Nil(t, service.GetChannelConcurrencyCooldownStatus(917))
+	require.False(t, service.IsRuntimeBalanceInsufficientChannelID(917))
 }
 
 func TestProcessChannelErrorRecordsTemporaryAvoidanceForBadGateway(t *testing.T) {

@@ -1187,11 +1187,11 @@ function formatChannelStatusReason(reason, t) {
   if (normalized === 'failure_avoidance') {
     return t('近期失败恢复中');
   }
-  if (
-    normalized === 'already_failed_in_request' ||
-    normalized === 'routing_slot_reserved'
-  ) {
+  if (normalized === 'already_failed_in_request') {
     return t('本次请求已尝试失败');
+  }
+  if (normalized === 'routing_slot_reserved') {
+    return t('本次调度已排除');
   }
   if (normalized === 'max_depth_reached') {
     return t('排队已满');
@@ -1325,10 +1325,78 @@ function userRequestAttemptRecords(records) {
     );
 }
 
+function mergeAttemptRecords(...sources) {
+  const merged = [];
+  const seen = new Set();
+  sources.flat().forEach((attempt) => {
+    if (!attempt || typeof attempt !== 'object') return;
+    const key = [
+      attempt.id || '',
+      attempt.request_id || '',
+      attempt.attempt_index ?? '',
+      attempt.channel_id || attempt.actual_channel_id || '',
+      attempt.created_at || '',
+    ].join(':');
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(attempt);
+  });
+  return merged.sort(
+    (left, right) =>
+      Number(left?.attempt_index || 0) - Number(right?.attempt_index || 0) ||
+      Number(left?.created_at || 0) - Number(right?.created_at || 0),
+  );
+}
+
+function candidateAlreadyFailedInRequest(candidate) {
+  const reasons = [
+    candidate?.reject_reason,
+    candidate?.selection_skip_reason,
+    candidate?.status_reason,
+  ].map((reason) =>
+    String(reason || '')
+      .trim()
+      .toLowerCase(),
+  );
+  return reasons.some((reason) => reason === 'already_failed_in_request');
+}
+
+function retryIntentMeta(record) {
+  return (
+    record?.retry_routing_intent ||
+    record?.request_meta?.retry_routing_intent ||
+    null
+  );
+}
+
+function inferredSwitchAttemptRecords(record) {
+  const inferred = [];
+  const retryIntent = retryIntentMeta(record);
+  const failedChannelId = Number(retryIntent?.failed_channel_id || 0);
+  if (retryIntent && failedChannelId > 0) {
+    inferred.push({
+      kind: 'attempt',
+      attempt_index: Number(retryIntent?.attempt_index || 0),
+      channel_id: failedChannelId,
+      channel_name: retryIntent?.failed_channel_name || '',
+      success: false,
+      will_retry: true,
+      retry_action: 'switch_channel',
+      retry_reason: retryIntent?.reason || '',
+      error_category: retryIntent?.reason ? 'timeout' : '',
+      request_id: record?.request_id,
+      requested_model: record?.requested_model,
+      requested_group: record?.requested_group,
+      selected_group: record?.selected_group,
+      inferred: true,
+    });
+  }
+  return inferred;
+}
+
 function buildUserRequestDetailRecord(userRequest, records) {
   const dispatch = pickDispatchDetailRecord(records);
   const attempt = pickAttemptDetailRecord(records);
-  const attemptRecords = userRequestAttemptRecords(records);
   const base = dispatch || attempt || {};
   const dispatchCandidates =
     dispatch?.candidate_explanations ||
@@ -1341,6 +1409,16 @@ function buildUserRequestDetailRecord(userRequest, records) {
   const candidateExplanations = dispatchCandidates.length
     ? dispatchCandidates
     : baseCandidates;
+  const persistedAttemptRecords = mergeAttemptRecords(
+    Array.isArray(userRequest?.attempt_records)
+      ? userRequest.attempt_records
+      : [],
+    userRequestAttemptRecords(records),
+  );
+  const inferredAttempts = inferredSwitchAttemptRecords(dispatch || base);
+  const attemptRecords = persistedAttemptRecords.length
+    ? persistedAttemptRecords
+    : inferredAttempts;
   const finalChannelId = Number(
     userRequest?.final_channel_id ||
       attempt?.channel_id ||
@@ -2303,6 +2381,7 @@ function hasSmartSwitchEvidence(record) {
   ) {
     return true;
   }
+  if (retryIntentMeta(record)?.failed_channel_id) return true;
   const usedChannelSet = uniqueRouteValues(getUsedChannels(record));
   if (usedChannelSet.size > 1) return true;
   if (attempts.length > 1) {
@@ -10319,12 +10398,15 @@ function buildCandidateDecisionText(candidate, candidates, record, t) {
     const normalizedReason = String(candidate?.reject_reason || '')
       .trim()
       .toLowerCase();
-    if (
-      normalizedReason === 'already_failed_in_request' ||
-      normalizedReason === 'routing_slot_reserved'
-    ) {
+    if (normalizedReason === 'already_failed_in_request') {
       return t(
-        '{{channel}} 本次未参与排序：首字超时或上游错误后内部切换，避免本次请求再次选择同一渠道。',
+        '{{channel}} 已在本次请求中尝试失败，系统避免重复选择同一渠道。',
+        { channel },
+      );
+    }
+    if (normalizedReason === 'routing_slot_reserved') {
+      return t(
+        '{{channel}} 本次调度已排除，未向该渠道发起请求。',
         { channel },
       );
     }
@@ -10355,12 +10437,15 @@ function buildCandidateDecisionText(candidate, candidates, record, t) {
       },
     );
   }
-  if (
-    candidate?.selection_skip_reason === 'already_failed_in_request' ||
-    candidate?.selection_skip_reason === 'routing_slot_reserved'
-  ) {
+  if (candidate?.selection_skip_reason === 'already_failed_in_request') {
     return t(
-      '{{channel}} 本次不参与排序：首字超时或上游错误后内部切换，避免本次请求再次选择同一渠道。',
+      '{{channel}} 已在本次请求中尝试失败，系统避免重复选择同一渠道。',
+      { channel },
+    );
+  }
+  if (candidate?.selection_skip_reason === 'routing_slot_reserved') {
+    return t(
+      '{{channel}} 本次调度已排除，未向该渠道发起请求。',
       { channel },
     );
   }
@@ -10905,9 +10990,8 @@ function CandidateExplanationCard({
     candidate?.probe_recovery_phase === 'fast_probe' ||
     candidate?.probe_recovery_phase === 'pending_real_confirmation' ||
     stateTags.includes('score_anomaly_fast_probe');
-  const alreadyFailedInRequest =
-    unavailableReason === 'already_failed_in_request' ||
-    unavailableReason === 'routing_slot_reserved';
+  const alreadyFailedInRequest = unavailableReason === 'already_failed_in_request';
+  const routingSlotReserved = unavailableReason === 'routing_slot_reserved';
   const recoverySuccessCount = Number(
     candidate?.probe_recovery_success_count || 0,
   );
@@ -11067,7 +11151,12 @@ function CandidateExplanationCard({
           )}
           {alreadyFailedInRequest ? (
             <Tag color='orange' type='light' size='small'>
-              {t('不参与本次排序')}
+              {t('已尝试失败')}
+            </Tag>
+          ) : null}
+          {routingSlotReserved ? (
+            <Tag color='orange' type='light' size='small'>
+              {t('本次调度已排除')}
             </Tag>
           ) : null}
           {timeoutRecovery ? (
@@ -13036,9 +13125,12 @@ export default function ModelGatewayMonitor({ variant = 'default' }) {
         Toast.warning(t('缺少请求 ID'));
         return;
       }
-      const fallbackRecords = record?.dispatch_record
-        ? [record.dispatch_record]
-        : [];
+      const fallbackRecords = [
+        record?.dispatch_record,
+        ...(Array.isArray(record?.attempt_records)
+          ? record.attempt_records
+          : []),
+      ].filter(Boolean);
       setDispatchDetailLoading(requestId);
       try {
         const response = await API.get(

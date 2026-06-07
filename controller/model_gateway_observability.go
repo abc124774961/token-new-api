@@ -551,6 +551,7 @@ type ModelGatewayUserRequestRecord struct {
 	Status                    string                              `json:"status,omitempty"`
 	Billing                   *ModelGatewayUserRequestBillingInfo `json:"billing,omitempty"`
 	DispatchRecord            *ModelGatewayObservabilityRecord    `json:"dispatch_record,omitempty"`
+	AttemptRecords            []ModelGatewayObservabilityRecord   `json:"attempt_records,omitempty"`
 }
 
 type ModelGatewayUserRequestBillingInfo struct {
@@ -3527,6 +3528,7 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 	response.Trends = finalizeModelGatewayUserRequestTrends(trendAccumulators, startTime, endTime, options.TrendBucketSeconds)
 	if !options.Lite || options.IncludeDispatch {
 		attachModelGatewayUserRequestDispatchRecords(response.RecentRequests)
+		attachModelGatewayUserRequestAttemptRecords(response.RecentRequests)
 	}
 	attachModelGatewayUserRequestWarningDispatchFallback(response.RecentRequests)
 	normalizeModelGatewayUserRequestBusinessRecords(response.RecentRequests)
@@ -3749,6 +3751,59 @@ func attachModelGatewayUserRequestDispatchRecords(records []ModelGatewayUserRequ
 	}
 }
 
+func attachModelGatewayUserRequestAttemptRecords(records []ModelGatewayUserRequestRecord) {
+	if len(records) == 0 || model.DB == nil {
+		return
+	}
+	requestIDs := make([]string, 0, len(records))
+	seen := make(map[string]bool, len(records))
+	for _, record := range records {
+		requestID := strings.TrimSpace(record.RequestID)
+		if requestID == "" || seen[requestID] {
+			continue
+		}
+		seen[requestID] = true
+		requestIDs = append(requestIDs, requestID)
+	}
+	if len(requestIDs) == 0 {
+		return
+	}
+
+	executionRecords := make([]model.ModelExecutionRecord, 0, len(requestIDs)*2)
+	if err := model.DB.
+		Where("request_id IN ?", requestIDs).
+		Order("request_id asc, attempt_index asc, created_at asc, id asc").
+		Find(&executionRecords).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to load model gateway user request attempt records: %v", err))
+		return
+	}
+
+	attemptsByRequestID := make(map[string][]ModelGatewayObservabilityRecord, len(requestIDs))
+	userByRequestID := make(map[string]int, len(requestIDs))
+	for _, record := range executionRecords {
+		if !isModelGatewayAttemptRecord(record) {
+			continue
+		}
+		requestID := strings.TrimSpace(record.RequestId)
+		if requestID == "" {
+			continue
+		}
+		attemptsByRequestID[requestID] = append(attemptsByRequestID[requestID], ModelGatewayObservabilityRecordFromModelRecord(record))
+		if record.UserId > 0 && userByRequestID[requestID] == 0 {
+			userByRequestID[requestID] = record.UserId
+		}
+	}
+	for idx := range records {
+		requestID := strings.TrimSpace(records[idx].RequestID)
+		if attempts := attemptsByRequestID[requestID]; len(attempts) > 0 {
+			records[idx].AttemptRecords = attempts
+		}
+		if records[idx].UserID == 0 && userByRequestID[requestID] > 0 {
+			records[idx].UserID = userByRequestID[requestID]
+		}
+	}
+}
+
 func attachModelGatewayUserRequestWarningDispatchFallback(records []ModelGatewayUserRequestRecord) {
 	for idx := range records {
 		if modelGatewayUserRequestRecordHasWarning(records[idx]) || records[idx].DispatchRecord == nil {
@@ -3787,6 +3842,7 @@ func AttachModelGatewayUserRequestRealtimeDetails(records []ModelGatewayUserRequ
 	attachModelGatewayUserRequestBilling(records)
 	attachModelGatewayUserRequestCosts(records)
 	attachModelGatewayUserRequestDispatchRecords(records)
+	attachModelGatewayUserRequestAttemptRecords(records)
 	attachModelGatewayUserRequestWarningDispatchFallback(records)
 	normalizeModelGatewayUserRequestBusinessRecords(records)
 	normalizeModelGatewayUserRequestHealthProbeRecords(records)

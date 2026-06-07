@@ -1558,7 +1558,10 @@ func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapsh
 		return "channel_disabled"
 	}
 	if service.IsChannelRuntimeSelectionSkipped(c, identity) {
-		return "already_failed_in_request"
+		if service.IsChannelRuntimeAttempted(c, identity) {
+			return "already_failed_in_request"
+		}
+		return "routing_slot_reserved"
 	}
 	if snapshot.CircuitOpen {
 		return "circuit_open"

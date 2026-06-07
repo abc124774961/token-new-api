@@ -143,6 +143,17 @@ function userRequestSuccessStatus(record) {
   return 'success';
 }
 
+function mergeUserRequestAttemptRecords(existing, incoming) {
+  const existingAttempts = Array.isArray(existing?.attempt_records)
+    ? existing.attempt_records
+    : [];
+  const incomingAttempts = Array.isArray(incoming?.attempt_records)
+    ? incoming.attempt_records
+    : [];
+  const attempts = incomingAttempts.length ? incomingAttempts : existingAttempts;
+  return attempts.length ? attempts : undefined;
+}
+
 function mergeUserRequestRecord(existing, incoming) {
   if (!existing) return incoming;
   if (!incoming) return existing;
@@ -198,6 +209,7 @@ function mergeUserRequestRecord(existing, incoming) {
       existingTerminal && !incomingTerminal
         ? existing.client_aborted
         : base.client_aborted,
+    attempt_records: mergeUserRequestAttemptRecords(existing, incoming),
     billing: incoming.billing || existing.billing,
     dispatch_record: incoming.dispatch_record || existing.dispatch_record,
     actual_group: incoming.actual_group || existing.actual_group,

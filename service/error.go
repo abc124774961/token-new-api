@@ -119,6 +119,71 @@ func SanitizeClientRelayError(newApiErr *types.NewAPIError) *types.NewAPIError {
 	return NewUpstreamBalanceInsufficientError(newApiErr.StatusCode, newApiErr.Metadata)
 }
 
+func IsClientContextLimitError(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	switch err.StatusCode {
+	case 0, http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+	default:
+		return false
+	}
+	openAIError := err.ToOpenAIError()
+	label := strings.Join([]string{
+		string(err.GetErrorCode()),
+		string(err.GetErrorType()),
+		fmt.Sprint(openAIError.Code),
+		openAIError.Type,
+		openAIError.Message,
+		err.Error(),
+	}, " ")
+	return IsClientContextLimitMessage(label)
+}
+
+func IsClientContextLimitMessage(message string) bool {
+	label := strings.ToLower(strings.TrimSpace(message))
+	if label == "" {
+		return false
+	}
+	for _, keyword := range []string{
+		"context_too_large",
+		"context_length_exceeded",
+		"context_length_error",
+		"context length exceeded",
+		"maximum context length",
+		"max context length",
+		"exceeds context length",
+		"exceeded context length",
+		"exceeds the context window",
+		"exceeded the context window",
+		"context window exceeded",
+		"prompt is too long",
+		"prompt too long",
+		"input is too long",
+		"input too long",
+	} {
+		if strings.Contains(label, keyword) {
+			return true
+		}
+	}
+	contextLimit := strings.Contains(label, "context") &&
+		(strings.Contains(label, "length") || strings.Contains(label, "window")) &&
+		(strings.Contains(label, "exceed") ||
+			strings.Contains(label, "too large") ||
+			strings.Contains(label, "too long") ||
+			strings.Contains(label, "over limit") ||
+			strings.Contains(label, "limit exceeded"))
+	if contextLimit {
+		return true
+	}
+	return strings.Contains(label, "上下文") &&
+		(strings.Contains(label, "超过") ||
+			strings.Contains(label, "超出") ||
+			strings.Contains(label, "超限") ||
+			strings.Contains(label, "过长") ||
+			strings.Contains(label, "太长"))
+}
+
 func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFail bool) (newApiErr *types.NewAPIError) {
 	newApiErr = types.InitOpenAIError(types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
 

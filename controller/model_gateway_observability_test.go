@@ -2417,6 +2417,112 @@ func TestBuildModelGatewayObservabilitySummaryUserRequestUsesDispatchUserFallbac
 	require.NotNil(t, record.DispatchRecord)
 }
 
+func TestBuildModelGatewayObservabilitySummaryUserRequestIncludesSwitchAttempts(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	dispatchMeta, err := common.Marshal(map[string]any{
+		"retry_routing_intent": core.NewFirstByteTimeoutRetryRoutingIntent(44, "slow-sticky", 0),
+		"retry_intent_applied": true,
+		"candidate_explanations": []core.CandidateExplanation{
+			{
+				ChannelID:    44,
+				ChannelName:  "slow-sticky",
+				RejectReason: "already_failed_in_request",
+			},
+			{
+				ChannelID:   53,
+				ChannelName: "healthy-final",
+				Available:   true,
+				Selected:    true,
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		CreatedAt:        now - 10,
+		UpdatedAt:        now - 7,
+		CompletedAt:      now - 6,
+		RequestId:        "req-switch-attempts",
+		RequestedGroup:   "auto",
+		SelectedGroup:    "codex-plus",
+		RequestedModel:   "gpt-5.5",
+		FinalChannelID:   53,
+		FinalChannelName: "healthy-final",
+		Attempts:         2,
+		LastAttemptIndex: 1,
+		FinalSuccess:     true,
+		Recovered:        true,
+		DurationMs:       21000,
+		TTFTMs:           20180,
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ModelExecutionRecord{
+		{
+			CreatedAt:      now - 9,
+			RequestId:      "req-switch-attempts",
+			AttemptIndex:   0,
+			RequestedGroup: "auto",
+			SelectedGroup:  "codex-plus",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      44,
+			ChannelName:    "slow-sticky",
+			StatusCode:     http.StatusGatewayTimeout,
+			ErrorCategory:  "timeout",
+			DurationMs:     20000,
+			RequestMeta:    `{"retry_action":"switch_channel","retry_reason":"first_byte_timeout","will_retry":true,"error_category":"timeout"}`,
+		},
+		{
+			CreatedAt:      now - 8,
+			RequestId:      "req-switch-attempts",
+			AttemptIndex:   1,
+			RequestedGroup: "auto",
+			SelectedGroup:  "codex-plus",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      53,
+			ChannelName:    "healthy-final",
+			Success:        true,
+			DurationMs:     900,
+			TTFTMs:         180,
+			RequestMeta:    `{"retry_action":"complete"}`,
+		},
+		{
+			CreatedAt:      now - 7,
+			RequestId:      "req-switch-attempts",
+			RequestedGroup: "auto",
+			SelectedGroup:  "codex-plus",
+			RequestedModel: "gpt-5.5",
+			ChannelId:      53,
+			ChannelName:    "healthy-final",
+			PolicyMode:     "active",
+			SmartHandled:   true,
+			ScoreTotal:     0.96,
+			RequestMeta:    string(dispatchMeta),
+		},
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		TopN:        5,
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+		RequestID:   "req-switch-attempts",
+	})
+	require.NoError(t, err)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	record := response.UserRequests.RecentRequests[0]
+	require.Equal(t, "req-switch-attempts", record.RequestID)
+	require.True(t, record.FinalSuccess)
+	require.True(t, record.Recovered)
+	require.NotNil(t, record.DispatchRecord)
+	require.Len(t, record.AttemptRecords, 2)
+	require.Equal(t, 44, record.AttemptRecords[0].ChannelID)
+	require.Equal(t, "switch_channel", record.AttemptRecords[0].RetryAction)
+	require.Equal(t, "first_byte_timeout", record.AttemptRecords[0].RetryReason)
+	require.True(t, record.AttemptRecords[0].WillRetry)
+	require.False(t, record.AttemptRecords[0].Success)
+	require.Equal(t, 53, record.AttemptRecords[1].ChannelID)
+	require.True(t, record.AttemptRecords[1].Success)
+}
+
 func TestBuildModelGatewayObservabilitySummaryLiteUserRequestSkipsHeavyAttachments(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()

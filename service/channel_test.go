@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/require"
 )
@@ -146,6 +147,26 @@ func TestOpenAIInsufficientQuotaMessageIsBalanceInsufficient(t *testing.T) {
 
 	require.True(t, IsBalanceInsufficientError(err))
 	require.True(t, IsBalanceInsufficientMessage("insufficient_quota"))
+}
+
+func TestShouldDisableChannelIgnoresClientContextLimitEvenWhenBadRequestConfigured(t *testing.T) {
+	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
+	originalRanges := operation_setting.AutomaticDisableStatusCodeRanges
+	common.AutomaticDisableChannelEnabled = true
+	operation_setting.AutomaticDisableStatusCodeRanges = []operation_setting.StatusCodeRange{{Start: http.StatusBadRequest, End: http.StatusBadRequest}}
+	t.Cleanup(func() {
+		common.AutomaticDisableChannelEnabled = originalAutomaticDisable
+		operation_setting.AutomaticDisableStatusCodeRanges = originalRanges
+	})
+
+	err := types.WithOpenAIError(types.OpenAIError{
+		Message: "context window exceeded",
+		Type:    "invalid_request_error",
+		Code:    "context_too_large",
+	}, http.StatusBadRequest)
+
+	require.True(t, IsClientContextLimitError(err))
+	require.False(t, ShouldDisableChannel(err))
 }
 
 func TestShouldResumeErrorPausedChannelWaitsForPauseUntilAndSuccess(t *testing.T) {

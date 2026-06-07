@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 )
 
@@ -145,7 +146,7 @@ func (b *CircuitBreaker) AllowProbe(key core.RuntimeKey) bool {
 }
 
 func (b *CircuitBreaker) Report(result core.AttemptResult) {
-	if b == nil || result.ChannelID <= 0 || result.ClientAborted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) || isCircuitSchedulerExhaustedResult(result) {
+	if b == nil || result.ChannelID <= 0 || result.ClientAborted || isCircuitClientRequestResult(result) || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) || isCircuitSchedulerExhaustedResult(result) {
 		return
 	}
 	key := normalizeRuntimeKey(result.RuntimeKey())
@@ -399,7 +400,7 @@ func (b *CircuitBreaker) classifyFailure(result core.AttemptResult) (string, boo
 // mean the failure is counted by the circuit breaker; policies still decide
 // that in classifyFailure.
 func ClassifyCircuitError(result core.AttemptResult) string {
-	if result.ClientAborted || strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) || isCircuitSchedulerExhaustedResult(result) {
+	if result.ClientAborted || isCircuitClientRequestResult(result) || strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) || isCircuitSchedulerExhaustedResult(result) {
 		return ""
 	}
 	if result.StreamInterrupted {
@@ -434,7 +435,7 @@ func ClassifyCircuitError(result core.AttemptResult) string {
 }
 
 func isDefaultCircuitFailure(result core.AttemptResult) bool {
-	if result.ClientAborted || strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) || isCircuitSchedulerExhaustedResult(result) {
+	if result.ClientAborted || isCircuitClientRequestResult(result) || strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryUserQuotaExhausted || result.BalanceInsufficient || isCircuitBalanceInsufficientResult(result) || isCircuitOverloadSkipResult(result) || isCircuitSchedulerExhaustedResult(result) {
 		return false
 	}
 	if result.StreamInterrupted {
@@ -450,6 +451,18 @@ func isDefaultCircuitFailure(result core.AttemptResult) bool {
 		return true
 	}
 	return false
+}
+
+func isCircuitClientRequestResult(result core.AttemptResult) bool {
+	if strings.TrimSpace(result.ErrorCategory) == core.ErrorCategoryClientRequestError {
+		return true
+	}
+	label := strings.Join([]string{
+		result.ErrorCode,
+		result.ErrorType,
+		result.ErrorMessage,
+	}, " ")
+	return service.IsClientContextLimitMessage(label)
 }
 
 func isCircuitOverloadSkipResult(result core.AttemptResult) bool {

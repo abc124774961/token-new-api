@@ -700,6 +700,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		resetRelayUpstreamTiming(c)
 
 		relayStart := time.Now()
+		service.MarkChannelRuntimeAttempted(c, relayRuntimeIdentity(c, channel.Id))
 		attemptWatchdog := beginRelayAttemptWatchdog(c, relayInfo, plan, relayStart)
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
@@ -1904,7 +1905,7 @@ func classifyRelayAttemptError(c *gin.Context, apiErr *types.NewAPIError) string
 	if isResponsesPreviousIDCompatibilityError(apiErr) || isUnsupportedStreamOptionsError(apiErr) {
 		return modelgatewaycore.ErrorCategoryUnsupportedCapability
 	}
-	if isInvalidEncryptedContentError(apiErr) {
+	if isInvalidEncryptedContentError(apiErr) || service.IsClientContextLimitError(apiErr) {
 		return modelgatewaycore.ErrorCategoryClientRequestError
 	}
 	if isRelayOverloadSkipError(apiErr) {
@@ -1974,7 +1975,7 @@ func retryActionForAttempt(c *gin.Context, apiErr *types.NewAPIError, willRetry 
 	if relayClientAborted(c, nil, apiErr) {
 		return "client_aborted"
 	}
-	if isInvalidEncryptedContentError(apiErr) {
+	if isInvalidEncryptedContentError(apiErr) || service.IsClientContextLimitError(apiErr) {
 		return "stop"
 	}
 	if !willRetry {
@@ -2366,7 +2367,7 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *servi
 	if openaiErr.GetErrorCode() == types.ErrorCodeInsufficientUserQuota {
 		return false
 	}
-	if isInvalidEncryptedContentError(openaiErr) {
+	if isInvalidEncryptedContentError(openaiErr) || service.IsClientContextLimitError(openaiErr) {
 		return false
 	}
 	if retryParam != nil && shouldFailoverToAlternativeChannel(c, openaiErr) {
@@ -2488,7 +2489,7 @@ func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIE
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
-	if isInvalidEncryptedContentError(openaiErr) {
+	if isInvalidEncryptedContentError(openaiErr) || service.IsClientContextLimitError(openaiErr) {
 		return false
 	}
 	if shouldFailoverOnConcurrencyLimit(c, openaiErr) {
@@ -2576,7 +2577,7 @@ func isUpstreamFailoverCandidate(openaiErr *types.NewAPIError) bool {
 	if openaiErr == nil {
 		return false
 	}
-	if isInvalidEncryptedContentError(openaiErr) {
+	if isInvalidEncryptedContentError(openaiErr) || service.IsClientContextLimitError(openaiErr) {
 		return false
 	}
 	code := openaiErr.StatusCode
@@ -3041,7 +3042,7 @@ func channelFailureAvoidanceReason(err *types.NewAPIError) (string, bool) {
 	if err == nil || types.IsSkipRetryError(err) {
 		return "", false
 	}
-	if isInvalidEncryptedContentError(err) {
+	if isInvalidEncryptedContentError(err) || service.IsClientContextLimitError(err) {
 		return "", false
 	}
 	if service.IsBalanceInsufficientError(err) {
