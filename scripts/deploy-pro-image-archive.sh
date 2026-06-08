@@ -5,13 +5,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 SERVER_HOST="${SERVER_HOST:-35.224.150.95}"
 SERVER_USER="${SERVER_USER:-root}"
-SSH_KEY="${SSH_KEY:-$HOME/.ssh/gcp-abc124774961}"
+SSH_KEY="${SSH_KEY:-}"
 SERVER_APP_DIR="${SERVER_APP_DIR:-/www/wwwroot/token-new-api}"
-IMAGE_NAME="${IMAGE_NAME:-token-new-api-pro:latest}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.pro.yml}"
 ENV_FILE="${ENV_FILE:-.env.pro}"
-SERVICE="${SERVICE:-new-api}"
-HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3000/api/status}"
+SERVICES="${SERVICES:-${SERVICE:-new-api-web new-api-gateway}}"
+WEB_SERVICE="${WEB_SERVICE:-new-api-web}"
+GATEWAY_SERVICE="${GATEWAY_SERVICE:-new-api-gateway}"
+WEB_HEALTH_URL="${WEB_HEALTH_URL:-http://127.0.0.1:3000/-/healthz}"
+WEB_API_STATUS_URL="${WEB_API_STATUS_URL:-http://127.0.0.1:3000/api/status}"
+GATEWAY_HEALTH_URL="${GATEWAY_HEALTH_URL:-http://127.0.0.1:3001/-/healthz}"
+HEALTH_URL="${HEALTH_URL:-}"
 REMOTE_RELEASE_DIR="${REMOTE_RELEASE_DIR:-/root/new-api-image-releases}"
 ARCHIVE="${ARCHIVE:-}"
 
@@ -40,19 +44,20 @@ if [ ! -f "$ARCHIVE" ]; then
   exit 1
 fi
 
-if [ ! -r "$SSH_KEY" ]; then
-  echo "SSH key is not readable: $SSH_KEY" >&2
-  exit 1
-fi
-
 REMOTE_ARCHIVE="$REMOTE_RELEASE_DIR/$(basename "$ARCHIVE")"
 SSH_TARGET="$SERVER_USER@$SERVER_HOST"
 SSH_OPTS=(
-  -i "$SSH_KEY"
   -o StrictHostKeyChecking=accept-new
   -o ServerAliveInterval=15
   -o ServerAliveCountMax=4
 )
+if [ -n "$SSH_KEY" ]; then
+  if [ ! -r "$SSH_KEY" ]; then
+    echo "SSH key is not readable: $SSH_KEY" >&2
+    exit 1
+  fi
+  SSH_OPTS=(-i "$SSH_KEY" "${SSH_OPTS[@]}")
+fi
 
 echo "Preflight on $SSH_TARGET..."
 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
@@ -65,17 +70,99 @@ scp "${SSH_OPTS[@]}" "$ARCHIVE" "$SSH_TARGET:$REMOTE_ARCHIVE"
 
 echo "Loading image and recreating service..."
 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
-  "SERVER_APP_DIR=$(shell_quote "$SERVER_APP_DIR") IMAGE_NAME=$(shell_quote "$IMAGE_NAME") COMPOSE_FILE=$(shell_quote "$COMPOSE_FILE") ENV_FILE=$(shell_quote "$ENV_FILE") SERVICE=$(shell_quote "$SERVICE") HEALTH_URL=$(shell_quote "$HEALTH_URL") REMOTE_ARCHIVE=$(shell_quote "$REMOTE_ARCHIVE") bash -s" <<'REMOTE_SCRIPT'
+  "SERVER_APP_DIR=$(shell_quote "$SERVER_APP_DIR") COMPOSE_FILE=$(shell_quote "$COMPOSE_FILE") ENV_FILE=$(shell_quote "$ENV_FILE") SERVICES=$(shell_quote "$SERVICES") WEB_SERVICE=$(shell_quote "$WEB_SERVICE") GATEWAY_SERVICE=$(shell_quote "$GATEWAY_SERVICE") WEB_HEALTH_URL=$(shell_quote "$WEB_HEALTH_URL") WEB_API_STATUS_URL=$(shell_quote "$WEB_API_STATUS_URL") GATEWAY_HEALTH_URL=$(shell_quote "$GATEWAY_HEALTH_URL") HEALTH_URL=$(shell_quote "$HEALTH_URL") REMOTE_ARCHIVE=$(shell_quote "$REMOTE_ARCHIVE") bash -s" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 cd "$SERVER_APP_DIR"
+
+compose() {
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
+
+health_url_for_service() {
+  local service="$1"
+  if [ -n "$HEALTH_URL" ] && [ "$SERVICES" = "$service" ]; then
+    printf '%s\n' "$HEALTH_URL"
+    return 0
+  fi
+  case "$service" in
+    "$WEB_SERVICE")
+      printf '%s\n' "$WEB_HEALTH_URL"
+      ;;
+    "$GATEWAY_SERVICE")
+      printf '%s\n' "$GATEWAY_HEALTH_URL"
+      ;;
+    *)
+      printf '%s\n' ""
+      ;;
+  esac
+}
+
+wait_for_success_json() {
+  local service="$1"
+  local url="$2"
+  local body=""
+  [ -n "$url" ] || return 0
+
+  echo "Waiting for health check: $service $url"
+  for i in $(seq 1 60); do
+    if command -v curl >/dev/null 2>&1; then
+      body="$(curl -fsS "$url" || true)"
+    elif command -v wget >/dev/null 2>&1; then
+      body="$(wget -q -O - "$url" || true)"
+    else
+      echo "Neither curl nor wget is available on the server." >&2
+      exit 1
+    fi
+
+    if printf '%s' "$body" | grep -q '"success"[[:space:]]*:[[:space:]]*true'; then
+      echo "$service health check passed."
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "$service health check failed. Recent logs:" >&2
+  compose logs --tail=160 "$service" >&2
+  exit 1
+}
+
+wait_for_http_ok() {
+  local service="$1"
+  local url="$2"
+  local status=""
+  [ -n "$url" ] || return 0
+
+  echo "Checking HTTP endpoint: $service $url"
+  for i in $(seq 1 60); do
+    if command -v curl >/dev/null 2>&1; then
+      status="$(curl -fsS -o /dev/null -w '%{http_code}' "$url" || true)"
+    elif command -v wget >/dev/null 2>&1; then
+      if wget -q -O /dev/null "$url"; then
+        status="200"
+      else
+        status=""
+      fi
+    fi
+    case "$status" in
+      2*|3*)
+        echo "$service HTTP check passed."
+        return 0
+        ;;
+    esac
+    sleep 2
+  done
+
+  echo "$service HTTP check failed. Recent logs:" >&2
+  compose logs --tail=160 "$service" >&2
+  exit 1
+}
 
 echo "Remote deploy context:"
 echo "  app dir:   $SERVER_APP_DIR"
 echo "  env file:  $ENV_FILE"
 echo "  compose:   $COMPOSE_FILE"
-echo "  service:   $SERVICE"
-echo "  image:     $IMAGE_NAME"
+echo "  services:  $SERVICES"
 echo "  archive:   $REMOTE_ARCHIVE"
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -88,11 +175,6 @@ if [ ! -f "$COMPOSE_FILE" ]; then
   exit 1
 fi
 
-before_image_id="$(docker image inspect "$IMAGE_NAME" --format '{{.Id}}' 2>/dev/null || true)"
-if [ -n "$before_image_id" ]; then
-  echo "Previous image id: $before_image_id"
-fi
-
 case "$REMOTE_ARCHIVE" in
   *.gz|*.tgz)
     gzip -dc "$REMOTE_ARCHIVE" | docker load
@@ -102,33 +184,18 @@ case "$REMOTE_ARCHIVE" in
     ;;
 esac
 
-after_image_id="$(docker image inspect "$IMAGE_NAME" --format '{{.Id}}')"
-echo "Loaded image id: $after_image_id"
+compose config --services >/dev/null
 
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-build --force-recreate "$SERVICE"
-
-echo "Waiting for health check: $HEALTH_URL"
-for i in $(seq 1 45); do
-  if command -v curl >/dev/null 2>&1; then
-    health_body="$(curl -fsS "$HEALTH_URL" || true)"
-  elif command -v wget >/dev/null 2>&1; then
-    health_body="$(wget -q -O - "$HEALTH_URL" || true)"
-  else
-    echo "Neither curl nor wget is available on the server." >&2
-    exit 1
+for service in $SERVICES; do
+  echo "Recreating service: $service"
+  compose up -d --no-build --force-recreate "$service"
+  wait_for_success_json "$service" "$(health_url_for_service "$service")"
+  if [ "$service" = "$WEB_SERVICE" ]; then
+    wait_for_http_ok "$service api/status" "$WEB_API_STATUS_URL"
   fi
-
-  if printf '%s' "$health_body" | grep -q '"success"[[:space:]]*:[[:space:]]*true'; then
-    echo "Health check passed."
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps "$SERVICE"
-    exit 0
-  fi
-  sleep 2
 done
 
-echo "Health check failed. Recent service logs:" >&2
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --tail=160 "$SERVICE" >&2
-exit 1
+compose ps $SERVICES
 REMOTE_SCRIPT
 
 echo "Deploy finished."

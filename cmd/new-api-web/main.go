@@ -7,7 +7,7 @@ import (
 
 func main() {
 	app.Run(app.RunConfig{
-		Role:   app.RoleFull,
+		Role:   app.RoleWeb,
 		Assets: classic.ThemeAssets(),
 	})
 }

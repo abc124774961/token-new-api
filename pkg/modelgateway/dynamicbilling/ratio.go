@@ -208,6 +208,13 @@ func SyncDefaultRefresherLifecycle() *Refresher {
 	return refresher
 }
 
+func LoadDefaultPersistedBaselines(db *gorm.DB) {
+	if db == nil {
+		return
+	}
+	defaultCache.Store(loadPersistedBaselines(db))
+}
+
 func StopDefaultRefresher() {
 	defaultCacheMu.Lock()
 	defer defaultCacheMu.Unlock()

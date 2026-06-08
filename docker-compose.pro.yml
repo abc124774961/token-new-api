@@ -17,19 +17,20 @@ services:
     volumes:
       - mailpit-data:/data
 
-  new-api:
+  new-api-web:
     build:
       context: .
       dockerfile: Dockerfile.pro.cn
-    image: token-new-api-pro:latest
-    container_name: token-new-api-pro
+      target: web
+    image: token-new-api-web-pro:latest
+    container_name: token-new-api-web-pro
     restart: unless-stopped
     command: --log-dir /app/logs
     ports:
-      - "${APP_PORT:-3000}:3000"
+      - "${WEB_APP_PORT:-${APP_PORT:-3000}}:3000"
     volumes:
       - ./data:/data
-      - ./logs:/app/logs
+      - ./logs-web:/app/logs
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -44,7 +45,8 @@ services:
       SQLITE_PATH: ${SQLITE_PATH:-}
       REDIS_CONN_STRING: ${REDIS_CONN_STRING:-}
       ERROR_LOG_ENABLED: ${ERROR_LOG_ENABLED:-true}
-      BATCH_UPDATE_ENABLED: ${BATCH_UPDATE_ENABLED:-true}
+      BATCH_UPDATE_ENABLED: ${WEB_BATCH_UPDATE_ENABLED:-true}
+      SKIP_DB_AUTO_MIGRATE: ${WEB_SKIP_DB_AUTO_MIGRATE:-false}
       RELAY_TIMEOUT: ${RELAY_TIMEOUT:-900}
       STREAMING_TIMEOUT: ${STREAMING_TIMEOUT:-900}
       STREAM_SCANNER_MAX_BUFFER_MB: ${STREAM_SCANNER_MAX_BUFFER_MB:-256}
@@ -61,9 +63,56 @@ services:
       TOKEN_ACCOUNT_AUTOMATION_API_TOKEN: ${TOKEN_ACCOUNT_AUTOMATION_API_TOKEN:-}
       TOKEN_ACCOUNT_AUTOMATION_CALLBACK_TOKEN: ${TOKEN_ACCOUNT_AUTOMATION_CALLBACK_TOKEN:-}
       TOKEN_ACCOUNT_AUTOMATION_TIMEOUT_SECONDS: ${TOKEN_ACCOUNT_AUTOMATION_TIMEOUT_SECONDS:-3}
-      NODE_NAME: ${NODE_NAME:-ecs-node-1}
+      NODE_TYPE: ${WEB_NODE_TYPE:-master}
+      NODE_NAME: ${WEB_NODE_NAME:-web-1}
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/-/healthz | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  new-api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.pro.cn
+      target: gateway
+    image: token-new-api-gateway-pro:latest
+    container_name: token-new-api-gateway-pro
+    restart: unless-stopped
+    command: --log-dir /app/logs
+    ports:
+      - "${GATEWAY_APP_PORT:-3001}:3000"
+    volumes:
+      - ./data:/data
+      - ./logs-gateway:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - cpa-manager-plus
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      CRYPTO_SECRET: ${CRYPTO_SECRET:-}
+      SQL_DSN: ${SQL_DSN:-}
+      LOG_SQL_DSN: ${LOG_SQL_DSN:-}
+      SQLITE_PATH: ${SQLITE_PATH:-}
+      REDIS_CONN_STRING: ${REDIS_CONN_STRING:-}
+      ERROR_LOG_ENABLED: ${ERROR_LOG_ENABLED:-true}
+      BATCH_UPDATE_ENABLED: ${GATEWAY_BATCH_UPDATE_ENABLED:-false}
+      SKIP_DB_AUTO_MIGRATE: ${GATEWAY_SKIP_DB_AUTO_MIGRATE:-true}
+      SKIP_CODEX_APPLICATION_ENVIRONMENT_SYNC: ${GATEWAY_SKIP_CODEX_APPLICATION_ENVIRONMENT_SYNC:-true}
+      RELAY_TIMEOUT: ${RELAY_TIMEOUT:-900}
+      STREAMING_TIMEOUT: ${STREAMING_TIMEOUT:-900}
+      STREAM_SCANNER_MAX_BUFFER_MB: ${STREAM_SCANNER_MAX_BUFFER_MB:-256}
+      CHANNEL_FAILURE_AVOIDANCE_ENABLED: ${CHANNEL_FAILURE_AVOIDANCE_ENABLED:-true}
+      CHANNEL_FAILURE_AVOIDANCE_TTL_SECONDS: ${CHANNEL_FAILURE_AVOIDANCE_TTL_SECONDS:-6}
+      CHANNEL_BALANCE_AUTO_RESUME_ENABLED: ${CHANNEL_BALANCE_AUTO_RESUME_ENABLED:-true}
+      CHANNEL_BALANCE_RECOVERY_THRESHOLD: ${CHANNEL_BALANCE_RECOVERY_THRESHOLD:-0}
+      NODE_TYPE: ${GATEWAY_NODE_TYPE:-slave}
+      NODE_NAME: ${GATEWAY_NODE_NAME:-gateway-1}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/-/healthz | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

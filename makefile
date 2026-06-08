@@ -47,8 +47,7 @@ publish-pro: pro-up
 
 pro-up:
 	@echo "Starting production container set (pro)..."
-	@mkdir -p data logs
-	@docker compose --env-file .env.pro -f docker-compose.pro.yml up -d --build
+	@scripts/deploy-pro-split.sh --no-pull
 
 pro-down:
 	@echo "Stopping production container set (pro)..."

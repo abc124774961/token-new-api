@@ -13,10 +13,30 @@ import (
 )
 
 func SetRouter(router *gin.Engine, assets ThemeAssets) {
+	SetFullRouter(router, assets)
+}
+
+func SetFullRouter(router *gin.Engine, assets ThemeAssets) {
 	SetApiRouter(router)
 	SetDashboardRouter(router)
-	SetRelayRouter(router)
-	SetVideoRouter(router)
+	SetGatewayRouter(router)
+	registerWebFallback(router, assets)
+}
+
+func SetWebServiceRouter(router *gin.Engine, assets ThemeAssets) {
+	SetApiRouter(router)
+	SetDashboardRouter(router)
+	registerWebFallback(router, assets)
+}
+
+func SetGatewayRouter(router *gin.Engine) {
+	gatewayRouter := router.Group("")
+	useRelayRootMiddleware(gatewayRouter)
+	SetRelayRoutes(gatewayRouter)
+	SetVideoRoutes(gatewayRouter)
+}
+
+func registerWebFallback(router *gin.Engine, assets ThemeAssets) {
 	frontendBaseUrl := os.Getenv("DEV_FRONTEND_BASE_URL")
 	if frontendBaseUrl == "" {
 		frontendBaseUrl = os.Getenv("FRONTEND_BASE_URL")

@@ -17,10 +17,15 @@ import (
 type ThemeAssets struct {
 	ClassicBuildFS   embed.FS
 	ClassicIndexPage []byte
+	ClassicAssetRoot string
 }
 
 func SetWebRouter(router *gin.Engine, assets ThemeAssets) {
-	classicFS := common.EmbedFolder(assets.ClassicBuildFS, "web/classic/dist")
+	assetRoot := assets.ClassicAssetRoot
+	if assetRoot == "" {
+		assetRoot = "web/classic/dist"
+	}
+	classicFS := common.EmbedFolder(assets.ClassicBuildFS, assetRoot)
 
 	router.Use(gzip.Gzip(gzip.DefaultCompression))
 	router.Use(middleware.GlobalWebRateLimit())
