@@ -5,9 +5,12 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -116,6 +119,50 @@ func TestChannelMonitorBalanceErrorsDoNotDeductHealthScore(t *testing.T) {
 	require.EqualValues(t, 1, item.RecentBalanceErrors)
 	require.EqualValues(t, 100, item.HealthScore)
 	require.Equal(t, "healthy", item.HealthState)
+}
+
+func TestChannelStatusMonitorFiltersGroupsForCommonUser(t *testing.T) {
+	originalUserGroups := setting.UserUsableGroups2JSONString()
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","codex-plus":"Plus 分组"}`))
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUserGroups))
+	})
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+	ctx.Set("role", common.RoleCommonUser)
+	ctx.Set(string(constant.ContextKeyUserGroup), "default")
+	response := buildChannelStatusMonitorFromRowsWithChannels(24, []*model.Channel{
+		{Id: 41, Name: "default-channel", Status: common.ChannelStatusEnabled, Group: "default", Models: "gpt-5.5"},
+		{Id: 42, Name: "plus-channel", Status: common.ChannelStatusEnabled, Group: "codex-plus", Models: "gpt-5.5"},
+		{Id: 43, Name: "vip2-channel", Status: common.ChannelStatusEnabled, Group: "codex-plus-vip2", Models: "gpt-5.5"},
+	}, nil, nil)
+
+	filtered := filterChannelStatusMonitorForRequest(ctx, response)
+
+	require.Len(t, filtered.Groups, 2)
+	require.ElementsMatch(t, []string{"default", "codex-plus"}, []string{filtered.Groups[0].Group, filtered.Groups[1].Group})
+	require.EqualValues(t, 2, filtered.Summary.TotalGroups)
+	require.EqualValues(t, 2, filtered.Summary.TotalChannels)
+	for _, group := range filtered.Groups {
+		require.NotEqual(t, "codex-plus-vip2", group.Group)
+	}
+	require.Len(t, response.Groups, 3)
+}
+
+func TestChannelStatusMonitorDoesNotFilterGroupsForAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+	ctx.Set("role", common.RoleAdminUser)
+	ctx.Set(string(constant.ContextKeyUserGroup), "default")
+	response := buildChannelStatusMonitorFromRowsWithChannels(24, []*model.Channel{
+		{Id: 44, Name: "default-channel", Status: common.ChannelStatusEnabled, Group: "default", Models: "gpt-5.5"},
+		{Id: 45, Name: "vip2-channel", Status: common.ChannelStatusEnabled, Group: "codex-plus-vip2", Models: "gpt-5.5"},
+	}, nil, nil)
+
+	filtered := filterChannelStatusMonitorForRequest(ctx, response)
+
+	require.Len(t, filtered.Groups, 2)
+	require.EqualValues(t, 2, filtered.Summary.TotalChannels)
 }
 
 func TestChannelMonitorErrorPauseShowsReasonAndRemaining(t *testing.T) {

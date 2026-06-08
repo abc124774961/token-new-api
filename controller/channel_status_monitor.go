@@ -211,7 +211,156 @@ func GetChannelStatusMonitor(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	result = filterChannelStatusMonitorForRequest(c, result)
 	common.ApiSuccess(c, result)
+}
+
+func filterChannelStatusMonitorForRequest(c *gin.Context, result ChannelStatusMonitorResponse) ChannelStatusMonitorResponse {
+	if c == nil || c.GetInt("role") >= common.RoleAdminUser {
+		return result
+	}
+	visibleGroups := channelStatusMonitorVisibleGroups(c)
+	if len(visibleGroups) == 0 {
+		return ChannelStatusMonitorResponse{
+			Summary: ChannelStatusMonitorSummary{WindowHours: result.Summary.WindowHours},
+			Groups:  []*ChannelStatusMonitorGroup{},
+			Partial: result.Partial,
+		}
+	}
+	filteredGroups := make([]*ChannelStatusMonitorGroup, 0, len(result.Groups))
+	for _, group := range result.Groups {
+		if group == nil {
+			continue
+		}
+		if _, ok := visibleGroups[normalizeChannelGroup(group.Group)]; !ok {
+			continue
+		}
+		filteredGroups = append(filteredGroups, cloneChannelStatusMonitorGroup(group))
+	}
+	return ChannelStatusMonitorResponse{
+		Summary: summarizeChannelStatusMonitorGroups(result.Summary.WindowHours, filteredGroups),
+		Groups:  filteredGroups,
+		Partial: result.Partial,
+	}
+}
+
+func channelStatusMonitorVisibleGroups(c *gin.Context) map[string]struct{} {
+	userGroup := strings.TrimSpace(c.GetString("user_group"))
+	if userGroup == "" {
+		userGroup = strings.TrimSpace(c.GetString("group"))
+	}
+	if userGroup == "" {
+		if userID := c.GetInt("id"); userID > 0 {
+			if user, err := model.GetUserCache(userID); err == nil && user != nil {
+				userGroup = strings.TrimSpace(user.Group)
+			}
+		}
+	}
+	usableGroups := service.GetUserUsableGroups(userGroup)
+	result := make(map[string]struct{}, len(usableGroups)+1)
+	for group := range usableGroups {
+		result[normalizeChannelGroup(group)] = struct{}{}
+	}
+	if userGroup != "" {
+		result[normalizeChannelGroup(userGroup)] = struct{}{}
+	}
+	return result
+}
+
+func cloneChannelStatusMonitorGroup(group *ChannelStatusMonitorGroup) *ChannelStatusMonitorGroup {
+	if group == nil {
+		return nil
+	}
+	clone := *group
+	clone.RecentStatus = append([]string(nil), group.RecentStatus...)
+	clone.Channels = make([]*ChannelStatusMonitorItem, 0, len(group.Channels))
+	for _, channel := range group.Channels {
+		if channel == nil {
+			continue
+		}
+		channelClone := *channel
+		if channel.Runtime != nil {
+			runtime := *channel.Runtime
+			channelClone.Runtime = &runtime
+		}
+		channelClone.RuntimeItems = append([]modelgatewayobservability.RuntimeStatusItem(nil), channel.RuntimeItems...)
+		clone.Channels = append(clone.Channels, &channelClone)
+	}
+	if group.Runtime != nil {
+		runtime := *group.Runtime
+		clone.Runtime = &runtime
+	}
+	return &clone
+}
+
+func summarizeChannelStatusMonitorGroups(windowHours int, groups []*ChannelStatusMonitorGroup) ChannelStatusMonitorSummary {
+	summary := ChannelStatusMonitorSummary{WindowHours: windowHours, TotalGroups: len(groups)}
+	seenChannels := map[int]struct{}{}
+	runtimeAgg := newChannelStatusRuntimeAgg()
+	var latencySum int64
+	var latencyCount int64
+	var ttftSum int64
+	var ttftCount int64
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		summary.RecentRequests += group.RecentRequests
+		summary.RecentSuccesses += group.RecentSuccesses
+		summary.RecentFailures += group.RecentFailures
+		summary.RecentHealthProbes += group.RecentHealthProbes
+		summary.RecentError429 += group.RecentError429
+		summary.RecentError5xx += group.RecentError5xx
+		summary.RecentErrorTimeout += group.RecentErrorTimeout
+		summary.RecentClientAborted += group.RecentClientAborted
+		summary.RecentRecovered += group.RecentRecovered
+		summary.RecentEmptyOutputs += group.RecentEmptyOutputs
+		summary.RecentExperienceIssues += group.RecentExperienceIssues
+		if group.AvgLatencyMs > 0 && group.RecentRequests > 0 {
+			latencySum += group.AvgLatencyMs * group.RecentRequests
+			latencyCount += group.RecentRequests
+		}
+		if group.AvgTTFTMs > 0 && group.RecentRequests > 0 {
+			ttftSum += group.AvgTTFTMs * group.RecentRequests
+			ttftCount += group.RecentRequests
+		}
+		for _, channel := range group.Channels {
+			if channel == nil {
+				continue
+			}
+			for _, item := range channel.RuntimeItems {
+				runtimeAgg.add(item)
+			}
+			if _, ok := seenChannels[channel.ID]; ok {
+				continue
+			}
+			seenChannels[channel.ID] = struct{}{}
+			summary.TotalChannels++
+			if channel.Enabled {
+				summary.EnabledChannels++
+			} else {
+				summary.DisabledChannels++
+			}
+			if channel.ActiveConcurrency > 0 {
+				summary.BusyChannels++
+			}
+			if channel.FailureAvoidance > 0 {
+				summary.CooldownChannels++
+			}
+			if channel.HealthState == "healthy" {
+				summary.HealthyChannels++
+			} else {
+				summary.BadChannels++
+			}
+		}
+	}
+	if summary.RecentRequests > 0 {
+		summary.SuccessRate = channelMonitorUserSuccessRate(summary.RecentSuccesses, summary.RecentRequests, summary.RecentClientAborted, summary.RecentHealthProbes)
+	}
+	summary.AvgLatencyMs = avgInt64(latencySum, latencyCount)
+	summary.AvgTTFTMs = avgInt64(ttftSum, ttftCount)
+	summary.Runtime = runtimeAgg.finalize()
+	return summary
 }
 
 func buildChannelStatusMonitorCached(windowHours int) (ChannelStatusMonitorResponse, error) {

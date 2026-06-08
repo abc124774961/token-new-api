@@ -3961,6 +3961,28 @@
     rgba(15, 23, 42, 0.42);
 }
 
+.ct-model-gateway-detail-diagnosis {
+  border-radius: 10px;
+}
+
+.ct-model-gateway-diagnosis-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  line-height: 1.55;
+}
+
+.ct-model-gateway-diagnosis-content strong {
+  color: var(--semi-color-text-0);
+  font-size: 13px;
+}
+
+.ct-model-gateway-diagnosis-content span {
+  color: var(--semi-color-text-1);
+  font-size: 13px;
+}
+
 .ct-model-gateway-detail-hero-main {
   display: flex;
   min-width: 0;

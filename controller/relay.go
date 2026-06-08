@@ -1975,7 +1975,13 @@ func retryActionForAttempt(c *gin.Context, apiErr *types.NewAPIError, willRetry 
 	if relayClientAborted(c, nil, apiErr) {
 		return "client_aborted"
 	}
-	if isInvalidEncryptedContentError(apiErr) || service.IsClientContextLimitError(apiErr) {
+	if isInvalidEncryptedContentError(apiErr) {
+		if willRetry {
+			return "switch_channel"
+		}
+		return "stop"
+	}
+	if service.IsClientContextLimitError(apiErr) {
 		return "stop"
 	}
 	if !willRetry {
@@ -2358,6 +2364,11 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *servi
 	if relayDownstreamAlreadyStarted(c) {
 		return false
 	}
+	if isInvalidEncryptedContentError(openaiErr) {
+		return retryParam != nil &&
+			shouldFailoverToAlternativeChannel(c, openaiErr) &&
+			applyRelayChannelFailoverRetryPlan(c, retryParam)
+	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
@@ -2367,22 +2378,11 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *servi
 	if openaiErr.GetErrorCode() == types.ErrorCodeInsufficientUserQuota {
 		return false
 	}
-	if isInvalidEncryptedContentError(openaiErr) || service.IsClientContextLimitError(openaiErr) {
+	if service.IsClientContextLimitError(openaiErr) {
 		return false
 	}
 	if retryParam != nil && shouldFailoverToAlternativeChannel(c, openaiErr) {
-		canFailover, forceNextAutoGroup := service.GetChannelFailoverPlan(retryParam)
-		if !canFailover {
-			if allowSmartModelGatewayFailoverRetry(c, retryParam) {
-				return true
-			}
-			return false
-		}
-		retryParam.AllowExtraRetry(1)
-		if forceNextAutoGroup {
-			common.SetContextKey(c, constant.ContextKeyForceNextAutoGroup, true)
-		}
-		return true
+		return applyRelayChannelFailoverRetryPlan(c, retryParam)
 	}
 	if retryTimes <= 0 {
 		return false
@@ -2404,6 +2404,18 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryParam *servi
 		return false
 	}
 	return operation_setting.ShouldRetryByStatusCode(code)
+}
+
+func applyRelayChannelFailoverRetryPlan(c *gin.Context, retryParam *service.RetryParam) bool {
+	canFailover, forceNextAutoGroup := service.GetChannelFailoverPlan(retryParam)
+	if !canFailover {
+		return allowSmartModelGatewayFailoverRetry(c, retryParam)
+	}
+	retryParam.AllowExtraRetry(1)
+	if forceNextAutoGroup {
+		common.SetContextKey(c, constant.ContextKeyForceNextAutoGroup, true)
+	}
+	return true
 }
 
 func relayResponseAlreadyStarted(c *gin.Context) bool {
@@ -2489,7 +2501,10 @@ func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIE
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
-	if isInvalidEncryptedContentError(openaiErr) || service.IsClientContextLimitError(openaiErr) {
+	if isInvalidEncryptedContentError(openaiErr) {
+		return true
+	}
+	if service.IsClientContextLimitError(openaiErr) {
 		return false
 	}
 	if shouldFailoverOnConcurrencyLimit(c, openaiErr) {

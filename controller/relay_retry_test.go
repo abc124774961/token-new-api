@@ -719,7 +719,7 @@ func TestShouldRetryAllowsGenericUpstreamBadRequestFailover(t *testing.T) {
 	require.Equal(t, 1, param.GetExtraRetries())
 }
 
-func TestShouldRetryRejectsInvalidEncryptedContent(t *testing.T) {
+func TestShouldRetrySwitchesInvalidEncryptedContentWithoutChannelPenalty(t *testing.T) {
 	db := serviceSetupRelayRetryDB(t)
 	serviceSeedRelayRetryChannel(t, db, 473, "default", "gpt-5.5", 10)
 	serviceSeedRelayRetryChannel(t, db, 474, "default", "gpt-5.5", 10)
@@ -740,11 +740,44 @@ func TestShouldRetryRejectsInvalidEncryptedContent(t *testing.T) {
 		Code:    "invalid_encrypted_content",
 	}, http.StatusBadRequest)
 
-	require.False(t, shouldRetry(ctx, err, param, 0))
-	require.Equal(t, 0, param.GetExtraRetries())
-	require.False(t, shouldFailoverToAlternativeChannel(ctx, err))
+	require.True(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, 1, param.GetExtraRetries())
+	require.True(t, shouldFailoverToAlternativeChannel(ctx, err))
 	require.Equal(t, modelgatewaycore.ErrorCategoryClientRequestError, classifyRelayAttemptError(ctx, err))
-	require.Equal(t, "stop", retryActionForAttempt(ctx, err, true))
+	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
+	_, avoid := channelFailureAvoidanceReason(err)
+	require.False(t, avoid)
+}
+
+func TestShouldRetryInvalidEncryptedContentBypassesAffinitySkipRetry(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 477, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 478, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"previous_response_id":"resp_stale"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set("use_channel", []string{"477"})
+	_, found := service.ResolveChannelAffinitySignal(ctx, "gpt-5.5", "default")
+	require.True(t, found)
+	require.True(t, service.ShouldSkipRetryAfterChannelAffinityFailure(ctx))
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+
+	err := types.WithOpenAIError(types.OpenAIError{
+		Message: "The encrypted content could not be verified. Reason: Encrypted content could not be decrypted or parsed.",
+		Type:    "openai_error",
+		Code:    "invalid_encrypted_content",
+	}, http.StatusBadRequest)
+
+	require.True(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, 1, param.GetExtraRetries())
+	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
 	_, avoid := channelFailureAvoidanceReason(err)
 	require.False(t, avoid)
 }

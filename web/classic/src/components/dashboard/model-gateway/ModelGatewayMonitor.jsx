@@ -2189,6 +2189,8 @@ function formatAttemptErrorCategory(category, t) {
   switch (category) {
     case 'channel_induced_client_abort':
       return t('渠道诱发中断');
+    case 'client_request_error':
+      return t('客户端请求错误');
     case 'client_aborted':
       return t('客户端中断');
     case 'upstream_concurrency_limit':
@@ -3035,6 +3037,8 @@ function formatUserRequestErrorCategory(category, t) {
   switch (category) {
     case 'channel_induced_client_abort':
       return t('渠道诱发中断');
+    case 'client_request_error':
+      return t('最终失败类型：client_request_error');
     case 'rate_limit':
       return t('最终失败类型：rate_limit');
     case 'timeout':
@@ -3065,6 +3069,62 @@ function formatUserRequestExperienceIssue(issue, t) {
     default:
       return issue || t('体验异常');
   }
+}
+
+function collectRecordErrorText(record) {
+  const fragments = [];
+  const add = (value) => {
+    if (value === undefined || value === null || value === '') return;
+    if (typeof value === 'string' || typeof value === 'number') {
+      fragments.push(String(value));
+    }
+  };
+  const addRecord = (entry) => {
+    if (!entry || typeof entry !== 'object') return;
+    add(entry.error_code);
+    add(entry.error_type);
+    add(entry.error_message);
+    add(entry.error_category);
+    add(entry.final_error_code);
+    add(entry.final_error_type);
+    add(entry.final_error_message);
+    add(entry.final_error_category);
+    add(entry.status_reason);
+    add(entry.reject_reason);
+    const meta = entry.request_meta || {};
+    add(meta.error_code);
+    add(meta.error_type);
+    add(meta.error_message);
+    add(meta.error_category);
+  };
+  addRecord(record);
+  addRecord(record?.dispatch_record);
+  if (Array.isArray(record?.attempt_records)) {
+    record.attempt_records.forEach(addRecord);
+  }
+  return fragments.join(' ').toLowerCase();
+}
+
+function isInvalidEncryptedContentRecord(record) {
+  const label = collectRecordErrorText(record);
+  if (!label) return false;
+  if (label.includes('invalid_encrypted_content')) return true;
+  return (
+    label.includes('encrypted content') &&
+    (label.includes('could not be decrypted') ||
+      label.includes('could not be parsed') ||
+      label.includes('could not be verified'))
+  );
+}
+
+function encryptedContextDiagnosisForRecord(record, t) {
+  if (!isInvalidEncryptedContentRecord(record)) return null;
+  return {
+    title: t('加密上下文失效'),
+    description: t(
+      '请求携带了上游无法解密的 Responses 加密上下文。系统会强制切换一个候选渠道重试；如果仍失败，请让用户新建会话或清空上一轮上下文。',
+    ),
+  };
 }
 
 function userRequestLiveDurationMs(record, nowSeconds) {
@@ -11629,6 +11689,10 @@ function RecordDetailDrawer({
   const hasErrorDetail = Boolean(
     record?.error_code || record?.error_type || record?.status_code,
   );
+  const encryptedContextDiagnosis = encryptedContextDiagnosisForRecord(
+    record,
+    t,
+  );
   const technicalMeta = [
     t('评分 {{count}} 项', { count: scoreEntries.length }),
     t('元数据 {{count}} 项', { count: metaEntries.length }),
@@ -11724,6 +11788,21 @@ function RecordDetailDrawer({
               />
             </div>
           </div>
+
+          {encryptedContextDiagnosis && (
+            <Banner
+              fullMode={false}
+              type='warning'
+              className='ct-model-gateway-detail-diagnosis'
+              closeIcon={null}
+              description={
+                <div className='ct-model-gateway-diagnosis-content'>
+                  <strong>{encryptedContextDiagnosis.title}</strong>
+                  <span>{encryptedContextDiagnosis.description}</span>
+                </div>
+              }
+            />
+          )}
 
           <div className='ct-model-gateway-detail-two-col'>
             <DetailPanel title={t('请求概览')}>
