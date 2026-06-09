@@ -12,10 +12,7 @@ import (
 )
 
 func SetApiRouter(router *gin.Engine) {
-	realtimeRouter := router.Group("/api")
-	realtimeRouter.Use(middleware.RouteTag("api"))
-	realtimeRouter.Use(middleware.GlobalAPIRateLimit())
-	realtimeRouter.GET("/realtime/ws", middleware.RealtimeAdminAuth(), controller.RealtimeWebSocket)
+	SetRealtimeRouter(router)
 
 	apiRouter := router.Group("/api")
 	apiRouter.Use(middleware.RouteTag("api"))
@@ -502,4 +499,11 @@ func SetApiRouter(router *gin.Engine) {
 			deploymentsRoute.DELETE("/:id", middleware.RequireAdminPermission(middleware.AdminPermissionModelDeploymentUpdate), controller.DeleteDeployment)
 		}
 	}
+}
+
+func SetRealtimeRouter(router *gin.Engine) {
+	realtimeRouter := router.Group("/api")
+	realtimeRouter.Use(middleware.RouteTag("api"))
+	realtimeRouter.Use(middleware.GlobalAPIRateLimit())
+	realtimeRouter.GET("/realtime/ws", middleware.RealtimeAdminAuth(), controller.RealtimeWebSocket)
 }

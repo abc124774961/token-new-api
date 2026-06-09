@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/observability/userrequest"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -923,6 +924,57 @@ func TestAsyncExecutionRecorderSummarizesClientAbortAsUserCanceled(t *testing.T)
 	require.NoError(t, db.Where("request_id = ?", "req-client-abort").First(&record).Error)
 	require.True(t, record.StreamInterrupted)
 	require.Contains(t, record.RequestMeta, "client_aborted")
+}
+
+func TestAsyncExecutionRecorderPublishesTerminalRealtimeAfterSummary(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	const requestID = "req-client-abort-realtime-summary"
+	events := make(chan userrequest.Event, 4)
+	userrequest.AddObserver(func(event userrequest.Event) {
+		if event.Record.RequestID == requestID {
+			events <- event
+		}
+	})
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:         requestID,
+		AttemptIndex:      0,
+		ChannelID:         8,
+		RequestedGroup:    "auto",
+		SelectedGroup:     "vip",
+		ModelName:         "gpt-5.5",
+		StatusCode:        499,
+		ErrorCategory:     "client_aborted",
+		RetryAction:       "client_aborted",
+		StreamInterrupted: true,
+		ClientAborted:     true,
+		Duration:          1400 * time.Millisecond,
+	})
+
+	var first userrequest.Event
+	require.Eventually(t, func() bool {
+		select {
+		case first = <-events:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, userrequest.EventFinished, first.Kind)
+	require.NotZero(t, first.Record.ID)
+	require.Equal(t, "client_aborted", first.Record.Status)
+	require.True(t, first.Record.ClientAborted)
+	require.Equal(t, model.ModelGatewayUserRequestErrorClientAborted, first.Record.FinalErrorCategory)
 }
 
 func TestAsyncExecutionRecorderPersistsChannelInducedAbortWarningMeta(t *testing.T) {

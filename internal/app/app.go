@@ -194,6 +194,7 @@ func RegisterRoutes(server *gin.Engine, role ServiceRole, assets router.ThemeAss
 	case RoleWeb:
 		router.SetWebServiceRouter(server, ApplyAnalytics(assets))
 	case RoleGateway:
+		router.SetRealtimeRouter(server)
 		router.SetGatewayRouter(server)
 	default:
 		router.SetRouter(server, ApplyAnalytics(assets))

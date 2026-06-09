@@ -65,7 +65,9 @@ func (r *AsyncExecutionRecorder) Report(ctx context.Context, result core.Attempt
 		return
 	}
 	result = normalizeAttemptResultLifecycle(result)
-	userrequest.Finish(result, nil)
+	if !attemptResultFinalizedForRealtime(result) {
+		userrequest.Finish(result, nil)
+	}
 	r.offer(event{result: &result})
 }
 
@@ -110,6 +112,8 @@ func (r *AsyncExecutionRecorder) process(e event) {
 		summary := model.RecordModelGatewayUserRequestAttempt(modelGatewayUserRequestAttemptFromResult(*e.result))
 		if summary != nil {
 			userrequest.Finish(*e.result, summary)
+		} else if attemptResultFinalizedForRealtime(*e.result) {
+			userrequest.Finish(*e.result, nil)
 		}
 		model.RecordModelExecution(modelExecutionRecordFromAttempt(*e.result))
 		recordChannelAccountUsageAttempt(*e.result)
@@ -436,6 +440,33 @@ func normalizeAttemptResultLifecycle(result core.AttemptResult) core.AttemptResu
 		}
 		return result
 	}
+}
+
+func attemptResultFinalizedForRealtime(result core.AttemptResult) bool {
+	if result.Success || attemptResultClientAborted(result) {
+		return true
+	}
+	return !attemptResultWillRetry(result)
+}
+
+func attemptResultWillRetry(result core.AttemptResult) bool {
+	if !result.WillRetry {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(result.RetryAction)) {
+	case "switch_channel", "retry", "resource_protection_fallback":
+		return true
+	default:
+		return false
+	}
+}
+
+func attemptResultClientAborted(result core.AttemptResult) bool {
+	category := strings.ToLower(strings.TrimSpace(result.ErrorCategory))
+	return result.ClientAborted ||
+		result.StatusCode == 499 ||
+		strings.Contains(category, "client_abort") ||
+		strings.Contains(category, "client_gone")
 }
 
 func recordChannelAccountUsageDispatch(record core.DispatchRecord) {
