@@ -84,6 +84,7 @@ type ModelGatewayObservabilityResponse struct {
 	RecentRecords     []ModelGatewayObservabilityRecord               `json:"recent_records"`
 	ScoreBreakdown    ModelGatewayObservabilityScoreBreakdown         `json:"score_breakdown"`
 	RuntimeStatus     modelgatewayobservability.RuntimeStatusResponse `json:"runtime_status"`
+	Partial           bool                                            `json:"partial,omitempty"`
 }
 
 type ModelGatewayDynamicBillingOverview struct {
@@ -884,6 +885,7 @@ type ModelGatewayCandidateExplanation struct {
 	ClientEmptyOutputRemainingSeconds int64                        `json:"client_empty_output_remaining_seconds,omitempty"`
 	SelectionSkipReason               string                       `json:"selection_skip_reason,omitempty"`
 	ChannelStatus                     int                          `json:"channel_status,omitempty"`
+	ChannelPriority                   int64                        `json:"channel_priority,omitempty"`
 	StatusReason                      string                       `json:"status_reason,omitempty"`
 	BalanceInsufficient               bool                         `json:"balance_insufficient,omitempty"`
 	ScoreTotal                        float64                      `json:"score_total,omitempty"`
@@ -980,6 +982,7 @@ type ModelGatewayObservabilityOptions struct {
 	HealthProbeOnly    bool
 	Lite               bool
 	IncludeDispatch    bool
+	RecentOnly         bool
 }
 
 type modelGatewayObservabilityAccumulator struct {
@@ -1457,6 +1460,7 @@ func parseModelGatewayObservabilityOptions(c *gin.Context) (ModelGatewayObservab
 		HealthProbeOnly:    parseModelGatewayObservabilityBool(c.Query("health_probe_only")),
 		Lite:               parseModelGatewayObservabilityBool(c.Query("lite")),
 		IncludeDispatch:    parseModelGatewayObservabilityBool(c.Query("include_dispatch")),
+		RecentOnly:         parseModelGatewayObservabilityBool(c.Query("recent_only")),
 	}, nil
 }
 
@@ -1686,6 +1690,9 @@ func normalizeModelGatewayObservabilityOptions(options ModelGatewayObservability
 	if options.ChannelID < 0 {
 		options.ChannelID = 0
 	}
+	if options.RecentOnly {
+		options.Lite = true
+	}
 	return options
 }
 
@@ -1716,6 +1723,7 @@ func modelGatewayObservabilitySummaryCacheKey(options ModelGatewayObservabilityO
 	values.Set("probe_only", strconv.FormatBool(options.HealthProbeOnly))
 	values.Set("lite", strconv.FormatBool(options.Lite))
 	values.Set("include_dispatch", strconv.FormatBool(options.IncludeDispatch))
+	values.Set("recent_only", strconv.FormatBool(options.RecentOnly))
 	return values.Encode()
 }
 
@@ -1948,6 +1956,7 @@ func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabi
 				EndTime:            endTime,
 			},
 			UserRequests: userRequests,
+			Partial:      options.RecentOnly,
 		}
 		if shouldIncludeModelGatewayDynamicBillingOverview(options) {
 			response.DynamicBilling = buildModelGatewayDynamicBillingOverviewForDisplay(time.Now().Unix(), 0)
@@ -2000,7 +2009,7 @@ func buildModelGatewayObservabilitySummaryUncached(options ModelGatewayObservabi
 }
 
 func shouldIncludeModelGatewayDynamicBillingOverview(options ModelGatewayObservabilityOptions) bool {
-	return !options.HealthProbeOnly
+	return !options.HealthProbeOnly && !options.RecentOnly
 }
 
 func buildModelGatewayDynamicBillingOverview(now int64, windowMinutesOverride int) ModelGatewayDynamicBillingOverview {
@@ -3329,7 +3338,12 @@ func buildModelGatewayUserRequestObservability(startTime int64, endTime int64, o
 	userRequests := make([]model.ModelGatewayUserRequestSummary, 0)
 	queryLimit := options.ScanLimit
 	var totalRequests int64
-	if options.IncludeTotal {
+	if options.RecentOnly {
+		queryLimit = options.RecentLimit
+		if queryLimit <= 0 {
+			queryLimit = modelGatewayObservabilityDefaultRecentLimit
+		}
+	} else if options.IncludeTotal {
 		if err := base.Count(&totalRequests).Error; err != nil {
 			return ModelGatewayUserRequestObservabilityResponse{}, err
 		}
@@ -3339,9 +3353,9 @@ func buildModelGatewayUserRequestObservability(startTime int64, endTime int64, o
 	if err := base.Order("completed_at desc, created_at desc, id desc").Limit(queryLimit).Find(&userRequests).Error; err != nil {
 		return ModelGatewayUserRequestObservabilityResponse{}, err
 	}
-	if !options.IncludeTotal {
+	if options.RecentOnly || !options.IncludeTotal {
 		totalRequests = int64(len(userRequests))
-		if len(userRequests) > options.ScanLimit {
+		if !options.RecentOnly && len(userRequests) > options.ScanLimit {
 			userRequests = userRequests[:options.ScanLimit]
 		}
 	}
@@ -3571,22 +3585,24 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 	for idx, userRequest := range userRequests {
 		isHealthProbe := userRequest.IsHealthProbe
 		applyModelGatewayUserRequestAccumulator(totalAccumulator, userRequest, isHealthProbe)
-		applyModelGatewayUserRequestAccumulator(
-			modelGatewayUserRequestAccumulatorFor(modelAccumulators, modelGatewayUserRequestModelKey(userRequest)),
-			userRequest,
-			isHealthProbe,
-		)
-		applyModelGatewayUserRequestAccumulator(
-			modelGatewayUserRequestAccumulatorFor(groupAccumulators, modelGatewayUserRequestGroupKey(userRequest)),
-			userRequest,
-			isHealthProbe,
-		)
-		if bucketStart, ok := modelGatewayObservabilityTrendBucketStart(userRequest.CompletedAt, startTime, endTime, options.TrendBucketSeconds); ok {
+		if !options.RecentOnly {
 			applyModelGatewayUserRequestAccumulator(
-				&modelGatewayUserRequestTrendAccumulatorFor(trendAccumulators, bucketStart).modelGatewayUserRequestAccumulator,
+				modelGatewayUserRequestAccumulatorFor(modelAccumulators, modelGatewayUserRequestModelKey(userRequest)),
 				userRequest,
 				isHealthProbe,
 			)
+			applyModelGatewayUserRequestAccumulator(
+				modelGatewayUserRequestAccumulatorFor(groupAccumulators, modelGatewayUserRequestGroupKey(userRequest)),
+				userRequest,
+				isHealthProbe,
+			)
+			if bucketStart, ok := modelGatewayObservabilityTrendBucketStart(userRequest.CompletedAt, startTime, endTime, options.TrendBucketSeconds); ok {
+				applyModelGatewayUserRequestAccumulator(
+					&modelGatewayUserRequestTrendAccumulatorFor(trendAccumulators, bucketStart).modelGatewayUserRequestAccumulator,
+					userRequest,
+					isHealthProbe,
+				)
+			}
 		}
 		if idx < options.RecentLimit {
 			response.RecentRequests = append(response.RecentRequests, modelGatewayUserRequestRecord(userRequest))
@@ -3599,9 +3615,11 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 	}
 
 	response.Summary = modelGatewayUserRequestSummaryFromAccumulator(response.Summary, totalAccumulator)
-	response.ByModel = finalizeModelGatewayUserRequestAggregates(modelAccumulators, options.TopN)
-	response.ByGroup = finalizeModelGatewayUserRequestAggregates(groupAccumulators, options.TopN)
-	response.Trends = finalizeModelGatewayUserRequestTrends(trendAccumulators, startTime, endTime, options.TrendBucketSeconds)
+	if !options.RecentOnly {
+		response.ByModel = finalizeModelGatewayUserRequestAggregates(modelAccumulators, options.TopN)
+		response.ByGroup = finalizeModelGatewayUserRequestAggregates(groupAccumulators, options.TopN)
+		response.Trends = finalizeModelGatewayUserRequestTrends(trendAccumulators, startTime, endTime, options.TrendBucketSeconds)
+	}
 	if !options.Lite || options.IncludeDispatch {
 		attachModelGatewayUserRequestDispatchRecords(response.RecentRequests)
 		attachModelGatewayUserRequestAttemptRecords(response.RecentRequests)
@@ -6292,6 +6310,7 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 			ClientEmptyOutputRemainingSeconds: candidate.ClientEmptyOutputRemainingSeconds,
 			SelectionSkipReason:               candidate.SelectionSkipReason,
 			ChannelStatus:                     candidate.ChannelStatus,
+			ChannelPriority:                   candidate.ChannelPriority,
 			StatusReason:                      candidate.StatusReason,
 			BalanceInsufficient:               candidate.BalanceInsufficient,
 			ScoreTotal:                        roundModelGatewayObservabilityFloat(candidate.ScoreTotal),

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useMemo } from 'react';
-import { Empty, Descriptions } from '@douyinfe/semi-ui';
+import { Empty } from '@douyinfe/semi-ui';
 import CardTable from '../../common/ui/CardTable';
 import {
   IllustrationNoResult,
@@ -84,8 +84,43 @@ const LogsTable = (logsData) => {
       : visibleColumnsList;
   }, [compactMode, visibleColumnsList]);
 
+  const renderExpandedValue = (value) => {
+    if (React.isValidElement(value)) {
+      return value;
+    }
+    if (value === undefined || value === null || value === '') {
+      return '-';
+    }
+    if (typeof value === 'object') {
+      try {
+        return JSON.stringify(value, null, 2);
+      } catch {
+        return String(value);
+      }
+    }
+    return String(value);
+  };
+
   const expandRowRender = (record, index) => {
-    return <Descriptions data={expandData[record.key]} />;
+    const rows = expandData[record.key] || [];
+    return (
+      <div
+        className='ct-usage-log-expanded-panel'
+        onClick={(event) => event.stopPropagation()}
+      >
+        {rows.map((item, itemIndex) => (
+          <div
+            className='ct-usage-log-expanded-item'
+            key={`${record.key}-${item.key || itemIndex}`}
+          >
+            <div className='ct-usage-log-expanded-key'>{item.key}</div>
+            <div className='ct-usage-log-expanded-value'>
+              {renderExpandedValue(item.value)}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
   };
 
   return (

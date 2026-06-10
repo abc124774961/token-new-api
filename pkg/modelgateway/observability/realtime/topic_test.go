@@ -208,6 +208,26 @@ func TestParamsMatchesUserRequest(t *testing.T) {
 	}))
 }
 
+func TestParseParamsCarriesRecentOnlyLightOptions(t *testing.T) {
+	parsed := parseParams(map[string]any{
+		"lite":             true,
+		"include_dispatch": "true",
+		"recent_only":      float64(1),
+	})
+
+	require.True(t, parsed.Lite)
+	require.True(t, parsed.IncludeDispatch)
+	require.True(t, parsed.RecentOnly)
+	require.Contains(t, parsed.key(), "lite=true")
+	require.Contains(t, parsed.key(), "include_dispatch=true")
+	require.Contains(t, parsed.key(), "recent_only=true")
+
+	options := parsed.toControllerOptions()
+	require.True(t, options.Lite)
+	require.True(t, options.IncludeDispatch)
+	require.True(t, options.RecentOnly)
+}
+
 func TestTopicPublishesProcessingUserRequestDelta(t *testing.T) {
 	topic := NewTopic()
 	defer topic.Close()

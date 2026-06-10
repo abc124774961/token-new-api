@@ -29,6 +29,9 @@ const MANUAL_REFRESH_SOURCE = 'manual';
 const FALLBACK_REFRESH_SOURCE = 'fallback';
 const DEFAULT_RECENT_USER_REQUEST_LIMIT = 50;
 const MANUAL_REFRESH_DEBOUNCE_MS = 800;
+const USER_REQUEST_VIEW_MODE = 'user_requests';
+const USER_REQUEST_STATS_REFRESH_DELAY_MS = 600;
+const USER_REQUEST_STATS_REFRESH_MIN_INTERVAL_MS = 15000;
 
 function unwrapApiData(response) {
   return response?.data?.data || response?.data || {};
@@ -275,8 +278,35 @@ function mergeUserRequestSnapshot(
   };
 }
 
+function mergePartialUserRequestSnapshot(current, snapshot, userRequestLimit) {
+  if (!current || !snapshot) return snapshot || null;
+  const mergedUserRequests = mergeUserRequestSnapshot(
+    current.user_requests,
+    snapshot.user_requests,
+    userRequestLimit,
+  );
+  return {
+    ...current,
+    summary: {
+      ...(current.summary || {}),
+      end_time: snapshot.summary?.end_time || current.summary?.end_time,
+    },
+    user_requests: {
+      ...(current.user_requests || {}),
+      recent_requests:
+        mergedUserRequests?.recent_requests ||
+        current.user_requests?.recent_requests ||
+        [],
+    },
+    partial: false,
+  };
+}
+
 function mergeSnapshot(current, snapshot, userRequestLimit) {
   if (!current || !snapshot) return snapshot || null;
+  if (snapshot.partial && current.partial !== true) {
+    return mergePartialUserRequestSnapshot(current, snapshot, userRequestLimit);
+  }
   return {
     ...snapshot,
     user_requests: mergeUserRequestSnapshot(
@@ -342,7 +372,7 @@ export function useModelGatewayObservabilityData({
   );
   const [fallbackMode, setFallbackMode] = useState(false);
 
-  const requestParams = useMemo(
+  const fullRequestParams = useMemo(
     () => ({
       hours,
       recent_limit: recentLimit,
@@ -365,13 +395,33 @@ export function useModelGatewayObservabilityData({
       viewMode,
     ],
   );
+  const isUserRequestMode = viewMode === USER_REQUEST_VIEW_MODE;
+  const requestParams = useMemo(() => {
+    if (!isUserRequestMode) return fullRequestParams;
+    return {
+      ...fullRequestParams,
+      scan_limit: Math.max(1, recentLimit || DEFAULT_RECENT_USER_REQUEST_LIMIT),
+      top_n: 1,
+      lite: true,
+      include_dispatch: true,
+      recent_only: true,
+    };
+  }, [fullRequestParams, isUserRequestMode, recentLimit]);
   const requestKey = useMemo(
     () => JSON.stringify(requestParams),
     [requestParams],
   );
+  const fullRequestKey = useMemo(
+    () => JSON.stringify(fullRequestParams),
+    [fullRequestParams],
+  );
   const latestRequestKeyRef = useRef(requestKey);
+  const latestFullRequestKeyRef = useRef(fullRequestKey);
   const hasSnapshotRef = useRef(false);
   const activeRequestRef = useRef(null);
+  const activeFullRequestRef = useRef(null);
+  const statsRefreshTimerRef = useRef(null);
+  const lastFullStatsRefreshRef = useRef({ key: '', at: 0 });
   const lastManualRefreshAtRef = useRef(0);
 
   const abortActiveRequest = useCallback(() => {
@@ -379,6 +429,19 @@ export function useModelGatewayObservabilityData({
     if (!activeRequest?.controller) return;
     activeRequest.controller.abort();
     activeRequestRef.current = null;
+  }, []);
+
+  const abortActiveFullRequest = useCallback(() => {
+    const activeRequest = activeFullRequestRef.current;
+    if (!activeRequest?.controller) return;
+    activeRequest.controller.abort();
+    activeFullRequestRef.current = null;
+  }, []);
+
+  const clearStatsRefreshTimer = useCallback(() => {
+    if (!statsRefreshTimerRef.current) return;
+    window.clearTimeout(statsRefreshTimerRef.current);
+    statsRefreshTimerRef.current = null;
   }, []);
 
   const isAbortError = useCallback((err) => {
@@ -389,6 +452,82 @@ export function useModelGatewayObservabilityData({
       err?.message === 'canceled'
     );
   }, []);
+
+  const loadFullStats = useCallback(
+    async ({ force = false } = {}) => {
+      if (!isUserRequestMode) return;
+      const activeRequestKey = fullRequestKey;
+      const now = Date.now();
+      const lastRefresh = lastFullStatsRefreshRef.current;
+      if (
+        !force &&
+        lastRefresh.key === activeRequestKey &&
+        now - lastRefresh.at < USER_REQUEST_STATS_REFRESH_MIN_INTERVAL_MS
+      ) {
+        return;
+      }
+      const activeRequest = activeFullRequestRef.current;
+      if (activeRequest?.key === activeRequestKey) {
+        return activeRequest.promise;
+      }
+      abortActiveFullRequest();
+      const controller = new AbortController();
+      const requestPromise = (async () => {
+        const response = await API.get(
+          '/api/model_gateway/observability/summary',
+          {
+            params: fullRequestParams,
+            disableDuplicate: true,
+            skipErrorHandler: true,
+            signal: controller.signal,
+          },
+        );
+        if (latestFullRequestKeyRef.current !== activeRequestKey) return;
+        const payload = unwrapApiData(response);
+        setData((current) =>
+          mergeSnapshot(current, payload || null, recentLimit),
+        );
+        lastFullStatsRefreshRef.current = {
+          key: activeRequestKey,
+          at: Date.now(),
+        };
+      })();
+      activeFullRequestRef.current = {
+        key: activeRequestKey,
+        controller,
+        promise: requestPromise,
+      };
+      try {
+        await requestPromise;
+      } catch (err) {
+        if (isAbortError(err)) return;
+      } finally {
+        if (activeFullRequestRef.current?.promise === requestPromise) {
+          activeFullRequestRef.current = null;
+        }
+      }
+    },
+    [
+      abortActiveFullRequest,
+      fullRequestKey,
+      fullRequestParams,
+      isAbortError,
+      isUserRequestMode,
+      recentLimit,
+    ],
+  );
+
+  const scheduleFullStatsRefresh = useCallback(
+    (force = false) => {
+      if (!isUserRequestMode) return;
+      clearStatsRefreshTimer();
+      statsRefreshTimerRef.current = window.setTimeout(() => {
+        statsRefreshTimerRef.current = null;
+        loadFullStats({ force });
+      }, USER_REQUEST_STATS_REFRESH_DELAY_MS);
+    },
+    [clearStatsRefreshTimer, isUserRequestMode, loadFullStats],
+  );
 
   const loadSummary = useCallback(
     async (silent = false, source = MANUAL_REFRESH_SOURCE) => {
@@ -427,6 +566,11 @@ export function useModelGatewayObservabilityData({
         setData((current) =>
           mergeSnapshot(current, payload || null, recentLimit),
         );
+        if (isUserRequestMode) {
+          scheduleFullStatsRefresh(
+            lastFullStatsRefreshRef.current.key !== fullRequestKey,
+          );
+        }
         setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
       })();
       activeRequestRef.current = {
@@ -460,22 +604,38 @@ export function useModelGatewayObservabilityData({
     [
       abortActiveRequest,
       isAbortError,
+      isUserRequestMode,
+      fullRequestKey,
       recentLimit,
       requestKey,
       requestParams,
+      scheduleFullStatsRefresh,
       t,
     ],
   );
 
-  const handleSnapshot = useCallback((payload) => {
-    hasSnapshotRef.current = true;
-    setData((current) => mergeSnapshot(current, payload || null, recentLimit));
-    setError('');
-    setLoading(false);
-    setRefreshing(false);
-    setFallbackMode(false);
-    setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
-  }, [recentLimit]);
+  const handleSnapshot = useCallback(
+    (payload) => {
+      hasSnapshotRef.current = true;
+      setData((current) => mergeSnapshot(current, payload || null, recentLimit));
+      if (isUserRequestMode) {
+        scheduleFullStatsRefresh(
+          lastFullStatsRefreshRef.current.key !== fullRequestKey,
+        );
+      }
+      setError('');
+      setLoading(false);
+      setRefreshing(false);
+      setFallbackMode(false);
+      setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
+    },
+    [
+      fullRequestKey,
+      isUserRequestMode,
+      recentLimit,
+      scheduleFullStatsRefresh,
+    ],
+  );
 
   const handleDelta = useCallback(
     (payload) => {
@@ -495,7 +655,10 @@ export function useModelGatewayObservabilityData({
 
   useEffect(() => {
     abortActiveRequest();
+    abortActiveFullRequest();
+    clearStatsRefreshTimer();
     latestRequestKeyRef.current = requestKey;
+    latestFullRequestKeyRef.current = fullRequestKey;
     hasSnapshotRef.current = false;
     setData(null);
     setLoading(true);
@@ -503,9 +666,22 @@ export function useModelGatewayObservabilityData({
     setError('');
     setFallbackMode(false);
     setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
-  }, [abortActiveRequest, requestKey]);
+  }, [
+    abortActiveFullRequest,
+    abortActiveRequest,
+    clearStatsRefreshTimer,
+    fullRequestKey,
+    requestKey,
+  ]);
 
-  useEffect(() => () => abortActiveRequest(), [abortActiveRequest]);
+  useEffect(
+    () => () => {
+      abortActiveRequest();
+      abortActiveFullRequest();
+      clearStatsRefreshTimer();
+    },
+    [abortActiveFullRequest, abortActiveRequest, clearStatsRefreshTimer],
+  );
 
   const { connectionState } = useRealtimeSubscription({
     topic: 'model_gateway.observability',

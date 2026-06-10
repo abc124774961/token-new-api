@@ -2576,6 +2576,78 @@ func TestBuildModelGatewayObservabilitySummaryLiteUserRequestSkipsHeavyAttachmen
 	require.Empty(t, record.UpstreamCostBreakdown)
 }
 
+func TestBuildModelGatewayObservabilitySummaryRecentOnlyLimitsUserRequestStats(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&[]model.ModelGatewayUserRequestSummary{
+		{
+			CreatedAt:      now - 30,
+			UpdatedAt:      now - 29,
+			CompletedAt:    now - 28,
+			RequestId:      "req-recent-only-old",
+			RequestedGroup: "default",
+			SelectedGroup:  "default",
+			RequestedModel: "gpt-5.5",
+			FinalSuccess:   true,
+		},
+		{
+			CreatedAt:      now - 20,
+			UpdatedAt:      now - 19,
+			CompletedAt:    now - 18,
+			RequestId:      "req-recent-only-mid",
+			RequestedGroup: "default",
+			SelectedGroup:  "default",
+			RequestedModel: "gpt-5.5",
+			FinalSuccess:   true,
+		},
+		{
+			CreatedAt:      now - 10,
+			UpdatedAt:      now - 9,
+			CompletedAt:    now - 8,
+			RequestId:      "req-recent-only-new",
+			RequestedGroup: "default",
+			SelectedGroup:  "default",
+			RequestedModel: "gpt-5.5",
+			FinalSuccess:   true,
+		},
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:        1,
+		RecentLimit:  1,
+		ScanLimit:    5000,
+		TopN:         5,
+		ViewMode:     modelGatewayObservabilityViewUserRequests,
+		IncludeTotal: true,
+		RecentOnly:   true,
+	})
+
+	require.NoError(t, err)
+	require.True(t, response.Partial)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	require.Equal(t, "req-recent-only-new", response.UserRequests.RecentRequests[0].RequestID)
+	require.Equal(t, 1, response.UserRequests.Summary.ScannedRequests)
+	require.Empty(t, response.UserRequests.ByModel)
+	require.Empty(t, response.UserRequests.ByGroup)
+	require.Empty(t, response.UserRequests.Trends)
+	require.Empty(t, response.DynamicBilling.Groups)
+}
+
+func TestModelGatewayCandidateExplanationsCarryChannelPriority(t *testing.T) {
+	candidates := modelGatewayCandidateExplanationsFromRequestMeta(map[string]any{
+		"candidate_explanations": []any{
+			map[string]any{
+				"channel_id":       float64(12),
+				"channel_name":     "priority-channel",
+				"channel_priority": float64(95),
+			},
+		},
+	})
+
+	require.Len(t, candidates, 1)
+	require.Equal(t, int64(95), candidates[0].ChannelPriority)
+}
+
 func TestBuildModelGatewayObservabilitySummaryUsesDefaultScanLimit(t *testing.T) {
 	db := setupModelGatewayReplayControllerTestDB(t)
 	now := common.GetTimestamp()

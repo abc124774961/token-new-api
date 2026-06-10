@@ -55,6 +55,9 @@ type params struct {
 	Group              string
 	ChannelID          int
 	RequestID          string
+	Lite               bool
+	IncludeDispatch    bool
+	RecentOnly         bool
 }
 
 type cacheEntry struct {
@@ -389,6 +392,9 @@ func parseParams(raw map[string]any) params {
 	result.Group = stringParam(raw, "group")
 	result.ChannelID = intParam(raw, "channel_id", 0)
 	result.RequestID = stringParam(raw, "request_id")
+	result.Lite = boolParam(raw, "lite")
+	result.IncludeDispatch = boolParam(raw, "include_dispatch")
+	result.RecentOnly = boolParam(raw, "recent_only")
 	return result
 }
 
@@ -403,6 +409,9 @@ func (p params) toControllerOptions() controller.ModelGatewayObservabilityOption
 		Group:              p.Group,
 		ChannelID:          p.ChannelID,
 		RequestID:          p.RequestID,
+		Lite:               p.Lite,
+		IncludeDispatch:    p.IncludeDispatch,
+		RecentOnly:         p.RecentOnly,
 	}
 }
 
@@ -417,6 +426,9 @@ func (p params) key() string {
 		"group=" + p.Group,
 		"channel_id=" + strconv.Itoa(p.ChannelID),
 		"request_id=" + p.RequestID,
+		"lite=" + strconv.FormatBool(p.Lite),
+		"include_dispatch=" + strconv.FormatBool(p.IncludeDispatch),
+		"recent_only=" + strconv.FormatBool(p.RecentOnly),
 	}
 	sort.Strings(values)
 	return strings.Join(values, "&")
@@ -651,6 +663,16 @@ func intParam(raw map[string]any, key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func boolParam(raw map[string]any, key string) bool {
+	value := strings.TrimSpace(strings.ToLower(toString(raw[key])))
+	switch value {
+	case "1", "t", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func int64Param(raw map[string]any, key string, fallback int64) int64 {
