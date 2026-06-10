@@ -283,6 +283,7 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	setting.CostFirstGuardMultiple = clampModelGatewayConfigFloat(defaultFloat(setting.CostFirstGuardMultiple, defaults.CostFirstGuardMultiple), 1.01, 100)
 	setting.CostFirstGuardSuccessAdvantage = clampModelGatewayConfigFloat(defaultFloat(setting.CostFirstGuardSuccessAdvantage, defaults.CostFirstGuardSuccessAdvantage), 0, 1)
 	setting.CostFirstGuardSpeedAdvantage = clampModelGatewayConfigFloat(defaultFloat(setting.CostFirstGuardSpeedAdvantage, defaults.CostFirstGuardSpeedAdvantage), 0, 1)
+	setting.ChannelPriorityTieBreakScoreDelta = clampModelGatewayConfigFloat(defaultFloat(setting.ChannelPriorityTieBreakScoreDelta, defaults.ChannelPriorityTieBreakScoreDelta), 0.000001, 1)
 	setting.QueueDefaultTimeoutMs = normalizeModelGatewayConfigMin(setting.QueueDefaultTimeoutMs, 1, defaults.QueueDefaultTimeoutMs)
 	setting.QueueMaxDepthPerChannel = normalizeModelGatewayConfigMin(setting.QueueMaxDepthPerChannel, 1, defaults.QueueMaxDepthPerChannel)
 	setting.QueueDepthMultiplier = normalizeModelGatewayConfigMin(setting.QueueDepthMultiplier, 1, defaults.QueueDepthMultiplier)
@@ -576,6 +577,8 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 		"cost_first_guard_multiple":                           strconv.FormatFloat(setting.CostFirstGuardMultiple, 'f', -1, 64),
 		"cost_first_guard_success_advantage":                  strconv.FormatFloat(setting.CostFirstGuardSuccessAdvantage, 'f', -1, 64),
 		"cost_first_guard_speed_advantage":                    strconv.FormatFloat(setting.CostFirstGuardSpeedAdvantage, 'f', -1, 64),
+		"channel_priority_tie_break_enabled":                  strconv.FormatBool(setting.ChannelPriorityTieBreakEnabled),
+		"channel_priority_tie_break_score_delta":              strconv.FormatFloat(setting.ChannelPriorityTieBreakScoreDelta, 'f', -1, 64),
 		"queue_enabled":                                       strconv.FormatBool(setting.QueueEnabled),
 		"queue_default_timeout_ms":                            strconv.Itoa(setting.QueueDefaultTimeoutMs),
 		"queue_max_depth_per_channel":                         strconv.Itoa(setting.QueueMaxDepthPerChannel),

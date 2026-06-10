@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
@@ -127,6 +128,8 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	setting.CostFirstGuardMultiple = 1.8
 	setting.CostFirstGuardSuccessAdvantage = 0.04
 	setting.CostFirstGuardSpeedAdvantage = 0.09
+	setting.ChannelPriorityTieBreakEnabled = false
+	setting.ChannelPriorityTieBreakScoreDelta = 0.049
 	setting.CircuitErrorPolicies = map[string]scheduler_setting.CircuitErrorPolicySetting{
 		"unknown": {
 			FailureThreshold:   0.9,
@@ -230,6 +233,8 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.Equal(t, 1.8, payload.Data.Setting.CostFirstGuardMultiple)
 	require.Equal(t, 0.04, payload.Data.Setting.CostFirstGuardSuccessAdvantage)
 	require.Equal(t, 0.09, payload.Data.Setting.CostFirstGuardSpeedAdvantage)
+	require.False(t, payload.Data.Setting.ChannelPriorityTieBreakEnabled)
+	require.Equal(t, 0.049, payload.Data.Setting.ChannelPriorityTieBreakScoreDelta)
 	require.Len(t, payload.Data.Setting.CircuitErrorPolicies, 2)
 	require.Equal(t, 0.25, payload.Data.Setting.CircuitErrorPolicies["rate_limit"].FailureThreshold)
 	require.Equal(t, 2, payload.Data.Setting.CircuitErrorPolicies["rate_limit"].MinSamples)
@@ -266,6 +271,15 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	var runtimeSyncEventSubscribeOption model.Option
 	require.NoError(t, db.First(&runtimeSyncEventSubscribeOption, "key = ?", "scheduler_setting.runtime_sync_event_subscribe_enabled").Error)
 	require.Equal(t, "true", runtimeSyncEventSubscribeOption.Value)
+	var channelPriorityTieBreakEnabledOption model.Option
+	require.NoError(t, db.First(&channelPriorityTieBreakEnabledOption, "key = ?", "scheduler_setting.channel_priority_tie_break_enabled").Error)
+	require.Equal(t, "false", channelPriorityTieBreakEnabledOption.Value)
+	var channelPriorityTieBreakDeltaOption model.Option
+	require.NoError(t, db.First(&channelPriorityTieBreakDeltaOption, "key = ?", "scheduler_setting.channel_priority_tie_break_score_delta").Error)
+	require.Equal(t, "0.049", channelPriorityTieBreakDeltaOption.Value)
+	runtimePolicy := modelgatewayintegration.RuntimePolicySetting()
+	require.False(t, runtimePolicy.ChannelPriorityTieBreak.Enabled)
+	require.Equal(t, 0.049, runtimePolicy.ChannelPriorityTieBreak.ScoreDelta)
 	var probeMaxPerTickOption model.Option
 	require.NoError(t, db.First(&probeMaxPerTickOption, "key = ?", "scheduler_setting.probe_max_per_tick").Error)
 	require.Equal(t, "7", probeMaxPerTickOption.Value)
@@ -506,6 +520,8 @@ func TestModelGatewayConfigResetRestoresDefaults(t *testing.T) {
 	require.Equal(t, scheduler_setting.ModeOff, payload.Data.Setting.DefaultMode)
 	require.Equal(t, 0, payload.Data.Setting.RolloutPercent)
 	require.Equal(t, scheduler_setting.ProxyReusePolicyWarn, payload.Data.Setting.ProxySameBrandReusePolicy)
+	require.True(t, payload.Data.Setting.ChannelPriorityTieBreakEnabled)
+	require.Equal(t, 0.05, payload.Data.Setting.ChannelPriorityTieBreakScoreDelta)
 }
 
 func TestModelGatewayProbeConfigPatchMergesProbeFields(t *testing.T) {

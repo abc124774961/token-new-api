@@ -86,6 +86,8 @@ type SchedulerSetting struct {
 	CostFirstGuardMultiple               float64                              `json:"cost_first_guard_multiple"`
 	CostFirstGuardSuccessAdvantage       float64                              `json:"cost_first_guard_success_advantage"`
 	CostFirstGuardSpeedAdvantage         float64                              `json:"cost_first_guard_speed_advantage"`
+	ChannelPriorityTieBreakEnabled       bool                                 `json:"channel_priority_tie_break_enabled"`
+	ChannelPriorityTieBreakScoreDelta    float64                              `json:"channel_priority_tie_break_score_delta"`
 	QueueEnabled                         bool                                 `json:"queue_enabled"`
 	QueueDefaultTimeoutMs                int                                  `json:"queue_default_timeout_ms"`
 	QueueMaxDepthPerChannel              int                                  `json:"queue_max_depth_per_channel"`
@@ -193,6 +195,8 @@ var schedulerSetting = SchedulerSetting{
 	CostFirstGuardMultiple:               1.8,
 	CostFirstGuardSuccessAdvantage:       0.03,
 	CostFirstGuardSpeedAdvantage:         0.08,
+	ChannelPriorityTieBreakEnabled:       true,
+	ChannelPriorityTieBreakScoreDelta:    0.05,
 	QueueEnabled:                         true,
 	QueueDefaultTimeoutMs:                2000,
 	QueueMaxDepthPerChannel:              64,
@@ -353,6 +357,8 @@ func defaultSchedulerSetting() SchedulerSetting {
 	setting.CostFirstGuardMultiple = 1.8
 	setting.CostFirstGuardSuccessAdvantage = 0.03
 	setting.CostFirstGuardSpeedAdvantage = 0.08
+	setting.ChannelPriorityTieBreakEnabled = true
+	setting.ChannelPriorityTieBreakScoreDelta = 0.05
 	setting.QueueEnabled = true
 	setting.QueueDefaultTimeoutMs = 2000
 	setting.QueueMaxDepthPerChannel = 64

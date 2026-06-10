@@ -15,25 +15,35 @@ import (
 const maxCandidateExplanations = 32
 
 const (
-	costFirstStickyEscapeCostRatio      = 0.75
-	costFirstStickyEscapeCacheCostRatio = 0.55
-	costFirstStickyEscapeMaxSpeedDrop   = 0.06
-	costFirstStickyEscapeCacheSpeedDrop = 0.03
-	costFirstStickyEscapeMinSamples     = 5
-	costFirstStickyEscapeSuccessSlack   = 0.02
+	channelPriorityTieBreakReason            = "channel_priority_tie_break"
+	channelPriorityTieBreakDefaultScoreDelta = 0.05
+	channelPriorityTieBreakScoreEpsilon      = 0.000000001
+	channelPriorityTieBreakMaxScoreDelta     = 1
+	costFirstStickyEscapeCostRatio           = 0.75
+	costFirstStickyEscapeCacheCostRatio      = 0.55
+	costFirstStickyEscapeMaxSpeedDrop        = 0.06
+	costFirstStickyEscapeCacheSpeedDrop      = 0.03
+	costFirstStickyEscapeMinSamples          = 5
+	costFirstStickyEscapeSuccessSlack        = 0.02
 )
 
 type DefaultSmartChannelSelector struct {
-	candidateBuilder     core.CandidatePoolBuilder
-	snapshotStore        core.RuntimeSnapshotStore
-	scoreWeights         core.ScoreWeights
-	snapshotEnricher     core.RuntimeSnapshotEnricher
-	stickyRouter         core.StickyRouter
-	costBaselineProvider core.CostBaselineProvider
-	scoringService       *CandidateScoringService
-	stickyEscapeConfig   CostFirstStickyEscapeConfig
-	costGuardConfig      CostFirstGuardConfig
-	emptyOutputSwitch    *ClientEmptyOutputSwitchTracker
+	candidateBuilder              core.CandidatePoolBuilder
+	snapshotStore                 core.RuntimeSnapshotStore
+	scoreWeights                  core.ScoreWeights
+	snapshotEnricher              core.RuntimeSnapshotEnricher
+	stickyRouter                  core.StickyRouter
+	costBaselineProvider          core.CostBaselineProvider
+	scoringService                *CandidateScoringService
+	stickyEscapeConfig            CostFirstStickyEscapeConfig
+	costGuardConfig               CostFirstGuardConfig
+	channelPriorityTieBreakConfig ChannelPriorityTieBreakConfig
+	emptyOutputSwitch             *ClientEmptyOutputSwitchTracker
+}
+
+type ChannelPriorityTieBreakConfig struct {
+	Enabled    bool
+	ScoreDelta float64
 }
 
 type CostFirstStickyEscapeConfig struct {
@@ -79,12 +89,30 @@ type CandidateScoreEvaluation struct {
 
 func NewDefaultSmartChannelSelector(candidateBuilder core.CandidatePoolBuilder, snapshotStore core.RuntimeSnapshotStore, weights core.ScoreWeights) *DefaultSmartChannelSelector {
 	return &DefaultSmartChannelSelector{
-		candidateBuilder:   candidateBuilder,
-		snapshotStore:      snapshotStore,
-		scoreWeights:       weights,
-		stickyEscapeConfig: DefaultCostFirstStickyEscapeConfig(),
-		costGuardConfig:    DefaultCostFirstGuardConfig(),
+		candidateBuilder:              candidateBuilder,
+		snapshotStore:                 snapshotStore,
+		scoreWeights:                  weights,
+		stickyEscapeConfig:            DefaultCostFirstStickyEscapeConfig(),
+		costGuardConfig:               DefaultCostFirstGuardConfig(),
+		channelPriorityTieBreakConfig: DefaultChannelPriorityTieBreakConfig(),
 	}
+}
+
+func DefaultChannelPriorityTieBreakConfig() ChannelPriorityTieBreakConfig {
+	return ChannelPriorityTieBreakConfig{
+		Enabled:    true,
+		ScoreDelta: channelPriorityTieBreakDefaultScoreDelta,
+	}
+}
+
+func (c ChannelPriorityTieBreakConfig) normalized() ChannelPriorityTieBreakConfig {
+	if c.ScoreDelta <= 0 {
+		c.ScoreDelta = channelPriorityTieBreakDefaultScoreDelta
+	}
+	if c.ScoreDelta > channelPriorityTieBreakMaxScoreDelta {
+		c.ScoreDelta = channelPriorityTieBreakMaxScoreDelta
+	}
+	return c
 }
 
 func DefaultCostFirstStickyEscapeConfig() CostFirstStickyEscapeConfig {
@@ -148,6 +176,14 @@ func (s *DefaultSmartChannelSelector) WithCostFirstGuardConfig(config CostFirstG
 		return nil
 	}
 	s.costGuardConfig = config.normalized()
+	return s
+}
+
+func (s *DefaultSmartChannelSelector) WithChannelPriorityTieBreakConfig(config ChannelPriorityTieBreakConfig) *DefaultSmartChannelSelector {
+	if s == nil {
+		return nil
+	}
+	s.channelPriorityTieBreakConfig = config.normalized()
 	return s
 }
 
@@ -226,12 +262,6 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		return nil, false, nil
 	}
 	stickyRoute, hasSticky := s.stickyRoute(c, &req, policy)
-	var bestAvailableCandidate core.Candidate
-	var bestAvailableSnapshot core.RuntimeSnapshot
-	var bestAvailableScore core.ScoreResult
-	var bestSaturatedCandidate core.Candidate
-	var bestSaturatedSnapshot core.RuntimeSnapshot
-	var bestSaturatedScore core.ScoreResult
 	var stickyCandidate core.Candidate
 	var stickySnapshot core.RuntimeSnapshot
 	var stickyScore core.ScoreResult
@@ -245,6 +275,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	explanations := make([]core.CandidateExplanation, 0, minInt(len(candidates), maxCandidateExplanations))
 	evaluations := make([]candidateEvaluation, 0, len(candidates))
 	availableEvaluations := make([]candidateEvaluation, 0, len(candidates))
+	saturatedEvaluations := make([]candidateEvaluation, 0, len(candidates))
 	for _, candidate := range candidates {
 		snapshot := s.snapshotForCandidate(candidate, policy)
 		if s.snapshotEnricher != nil {
@@ -307,37 +338,38 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			stickyFound = true
 		}
 		if routingConcurrencySaturated(snapshot) {
-			if !saturatedFound || score.RoutingTotal > bestSaturatedScore.RoutingTotal {
-				bestSaturatedCandidate = candidate
-				bestSaturatedSnapshot = snapshot
-				bestSaturatedScore = score
-				saturatedFound = true
-			}
+			evaluation.snapshot = snapshot
+			evaluation.score = score
+			saturatedEvaluations = append(saturatedEvaluations, evaluation)
+			saturatedFound = true
 			continue
 		}
 		evaluation.snapshot = snapshot
 		evaluation.score = score
 		availableEvaluations = append(availableEvaluations, evaluation)
-		if !availableFound || score.RoutingTotal > bestAvailableScore.RoutingTotal {
-			bestAvailableCandidate = candidate
-			bestAvailableSnapshot = snapshot
-			bestAvailableScore = score
-			availableFound = true
-		}
+		availableFound = true
 	}
 	var bestCandidate core.Candidate
 	var bestSnapshot core.RuntimeSnapshot
 	var bestScore core.ScoreResult
+	var prioritySelectedEvaluation candidateEvaluation
+	priorityTieBreakUsed := false
 	var costGuardDecision *core.CostGuardDecision
 	selectedSaturated := false
 	if availableFound {
-		bestCandidate = bestAvailableCandidate
-		bestSnapshot = bestAvailableSnapshot
-		bestScore = bestAvailableScore
+		selectedEvaluation, tieBreakUsed := s.selectCandidateByRoutingScoreAndChannelPriority(availableEvaluations)
+		bestCandidate = selectedEvaluation.candidate
+		bestSnapshot = selectedEvaluation.snapshot
+		bestScore = selectedEvaluation.score
+		prioritySelectedEvaluation = selectedEvaluation
+		priorityTieBreakUsed = tieBreakUsed
 	} else if saturatedFound {
-		bestCandidate = bestSaturatedCandidate
-		bestSnapshot = bestSaturatedSnapshot
-		bestScore = bestSaturatedScore
+		selectedEvaluation, tieBreakUsed := s.selectCandidateByRoutingScoreAndChannelPriority(saturatedEvaluations)
+		bestCandidate = selectedEvaluation.candidate
+		bestSnapshot = selectedEvaluation.snapshot
+		bestScore = selectedEvaluation.score
+		prioritySelectedEvaluation = selectedEvaluation
+		priorityTieBreakUsed = tieBreakUsed
 		selectedSaturated = true
 	} else {
 		return nil, false, nil
@@ -435,6 +467,18 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			}
 		} else if stickyBreak == "" {
 			stickyBreak = "candidate_not_found"
+		}
+	}
+	finalEvaluation := candidateEvaluation{candidate: bestCandidate, snapshot: bestSnapshot, score: bestScore}
+	if priorityTieBreakUsed &&
+		candidateEvaluationMatches(finalEvaluation, prioritySelectedEvaluation) &&
+		channelPriorityTieBreakCanOwnReason(bestScore.Reason) {
+		bestScore.Reason = channelPriorityTieBreakReason
+		finalEvaluation.score = bestScore
+		if selectedSaturated {
+			markChannelPriorityTieBreakCandidateExplanations(explanations, finalEvaluation, saturatedEvaluations, s.channelPriorityTieBreakConfig.normalized())
+		} else {
+			markChannelPriorityTieBreakCandidateExplanations(explanations, finalEvaluation, availableEvaluations, s.channelPriorityTieBreakConfig.normalized())
 		}
 	}
 	markSelectedCandidateExplanation(explanations, bestCandidate, bestSnapshot)
@@ -676,6 +720,129 @@ func selectedQueueCapacity(snapshot core.RuntimeSnapshot, resourceDecision resou
 	return snapshot.QueueCapacity
 }
 
+func (s *DefaultSmartChannelSelector) selectCandidateByRoutingScoreAndChannelPriority(evaluations []candidateEvaluation) (candidateEvaluation, bool) {
+	if len(evaluations) == 0 {
+		return candidateEvaluation{}, false
+	}
+	scoreOnlyBest := evaluations[0]
+	maxRoutingScore := evaluations[0].score.RoutingTotal
+	for _, evaluation := range evaluations[1:] {
+		if evaluation.score.RoutingTotal > maxRoutingScore+channelPriorityTieBreakScoreEpsilon {
+			scoreOnlyBest = evaluation
+			maxRoutingScore = evaluation.score.RoutingTotal
+		}
+	}
+	config := s.channelPriorityTieBreakConfig.normalized()
+	if !config.Enabled {
+		return scoreOnlyBest, false
+	}
+	selected := scoreOnlyBest
+	for _, evaluation := range evaluations {
+		if maxRoutingScore-evaluation.score.RoutingTotal > config.ScoreDelta+channelPriorityTieBreakScoreEpsilon {
+			continue
+		}
+		selectedPriority := candidateChannelPriority(selected.candidate)
+		evaluationPriority := candidateChannelPriority(evaluation.candidate)
+		if evaluationPriority > selectedPriority {
+			selected = evaluation
+			continue
+		}
+		if evaluationPriority == selectedPriority &&
+			evaluation.score.RoutingTotal > selected.score.RoutingTotal+channelPriorityTieBreakScoreEpsilon {
+			selected = evaluation
+		}
+	}
+	return selected, !candidateEvaluationMatches(selected, scoreOnlyBest)
+}
+
+func candidateChannelPriority(candidate core.Candidate) int64 {
+	if candidate.Channel == nil {
+		return 0
+	}
+	return candidate.Channel.GetPriority()
+}
+
+func candidateEvaluationMatches(left candidateEvaluation, right candidateEvaluation) bool {
+	leftKey := candidateExplanationRuntimeKey(left.candidate, left.snapshot)
+	rightKey := candidateExplanationRuntimeKey(right.candidate, right.snapshot)
+	if leftKey != rightKey {
+		return false
+	}
+	return candidateEvaluationChannelID(left) == candidateEvaluationChannelID(right)
+}
+
+func candidateEvaluationChannelID(evaluation candidateEvaluation) int {
+	if channelID := candidateChannelID(evaluation.candidate); channelID > 0 {
+		return channelID
+	}
+	if evaluation.snapshot.Key.ChannelID != 0 {
+		return evaluation.snapshot.Key.ChannelID
+	}
+	return evaluation.candidate.RuntimeKey.ChannelID
+}
+
+func channelPriorityTieBreakCanOwnReason(reason string) bool {
+	return reason == "" || reason == "score_items"
+}
+
+func markChannelPriorityTieBreakCandidateExplanations(explanations []core.CandidateExplanation, selected candidateEvaluation, evaluations []candidateEvaluation, config ChannelPriorityTieBreakConfig) {
+	config = config.normalized()
+	if !config.Enabled || len(explanations) == 0 || len(evaluations) == 0 {
+		return
+	}
+	selectedPriority := candidateChannelPriority(selected.candidate)
+	if selectedPriority <= 0 {
+		return
+	}
+	maxRoutingScore := evaluations[0].score.RoutingTotal
+	for _, evaluation := range evaluations[1:] {
+		if evaluation.score.RoutingTotal > maxRoutingScore+channelPriorityTieBreakScoreEpsilon {
+			maxRoutingScore = evaluation.score.RoutingTotal
+		}
+	}
+	for _, evaluation := range evaluations {
+		if candidateEvaluationMatches(evaluation, selected) {
+			continue
+		}
+		if maxRoutingScore-evaluation.score.RoutingTotal > config.ScoreDelta+channelPriorityTieBreakScoreEpsilon {
+			continue
+		}
+		if candidateChannelPriority(evaluation.candidate) >= selectedPriority {
+			continue
+		}
+		markCandidateExplanationSelectionSkipReason(explanations, evaluation, channelPriorityTieBreakReason)
+	}
+}
+
+func markCandidateExplanationSelectionSkipReason(explanations []core.CandidateExplanation, evaluation candidateEvaluation, reason string) {
+	channelID := candidateEvaluationChannelID(evaluation)
+	selectedKey := candidateExplanationRuntimeKey(evaluation.candidate, evaluation.snapshot)
+	for idx := range explanations {
+		if explanations[idx].ChannelID != channelID {
+			continue
+		}
+		if selectedKey.Group != "" && explanations[idx].RuntimeKey.Group != "" && explanations[idx].RuntimeKey.Group != selectedKey.Group {
+			continue
+		}
+		if selectedKey.RequestedModel != "" && explanations[idx].RuntimeKey.RequestedModel != "" && explanations[idx].RuntimeKey.RequestedModel != selectedKey.RequestedModel {
+			continue
+		}
+		if selectedKey.EndpointType != "" && explanations[idx].RuntimeKey.EndpointType != "" && explanations[idx].RuntimeKey.EndpointType != selectedKey.EndpointType {
+			continue
+		}
+		if selectedKey.AccountID != "" && explanations[idx].RuntimeKey.AccountID != "" && explanations[idx].RuntimeKey.AccountID != selectedKey.AccountID {
+			continue
+		}
+		if selectedKey.CredentialFP != "" && explanations[idx].RuntimeKey.CredentialFP != "" && explanations[idx].RuntimeKey.CredentialFP != selectedKey.CredentialFP {
+			continue
+		}
+		if explanations[idx].SelectionSkipReason == "" {
+			explanations[idx].SelectionSkipReason = reason
+		}
+		return
+	}
+}
+
 func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapshot, stickyMatched bool) core.CandidateExplanation {
 	explanation := core.CandidateExplanation{
 		Group:                             candidate.Group,
@@ -750,6 +917,7 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 		explanation.ChannelID = candidate.Channel.Id
 		explanation.ChannelName = candidate.Channel.Name
 		explanation.ChannelStatus = candidate.Channel.Status
+		explanation.ChannelPriority = candidate.Channel.GetPriority()
 		explanation.StatusReason = service.ChannelStatusReason(candidate.Channel)
 		explanation.BalanceInsufficient = service.IsKnownBalanceInsufficientChannel(candidate.Channel)
 	}

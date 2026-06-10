@@ -2047,6 +2047,169 @@ func TestSelectorDoesNotRejectUnsampledCandidateBelowConcurrencyLimit(t *testing
 	require.Equal(t, 40, candidate.EffectiveConcurrencyLimit)
 }
 
+func TestSelectorUsesChannelPriorityTieBreakWithinConfiguredScoreDelta(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	lowPriorityKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 11, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	highPriorityKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 12, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(priorityTieBreakSnapshot(lowPriorityKey, 1, false))
+	store.Put(priorityTieBreakSnapshot(highPriorityKey, 0.951, false))
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: testPriorityChannel(11, "low-priority-best-score", 10), Group: "default", RuntimeKey: lowPriorityKey},
+			{Channel: testPriorityChannel(12, "high-priority-near-score", 100), Group: "default", RuntimeKey: highPriorityKey},
+		}),
+		store,
+		core.ScoreWeights{Group: 1},
+	)
+
+	plan, handled, apiErr := selector.Select(nil, nil, priorityTieBreakPolicy())
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 12, plan.Channel.Id)
+	require.Equal(t, "channel_priority_tie_break", plan.SelectedReason)
+	selected := candidateExplanationByChannel(t, plan.Candidates, 12)
+	skipped := candidateExplanationByChannel(t, plan.Candidates, 11)
+	require.True(t, selected.Selected)
+	require.Equal(t, int64(100), selected.ChannelPriority)
+	require.Equal(t, "channel_priority_tie_break", skipped.SelectionSkipReason)
+}
+
+func TestSelectorKeepsHigherScoreOutsideChannelPriorityTieBreakDelta(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	lowPriorityKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 13, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	highPriorityKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 14, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(priorityTieBreakSnapshot(lowPriorityKey, 1, false))
+	store.Put(priorityTieBreakSnapshot(highPriorityKey, 0.949, false))
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: testPriorityChannel(13, "low-priority-best-score", 10), Group: "default", RuntimeKey: lowPriorityKey},
+			{Channel: testPriorityChannel(14, "high-priority-outside-delta", 100), Group: "default", RuntimeKey: highPriorityKey},
+		}),
+		store,
+		core.ScoreWeights{Group: 1},
+	)
+
+	plan, handled, apiErr := selector.Select(nil, nil, priorityTieBreakPolicy())
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 13, plan.Channel.Id)
+	require.NotEqual(t, "channel_priority_tie_break", plan.SelectedReason)
+}
+
+func TestSelectorChannelPriorityTieBreakDoesNotMakeRejectedCandidateEligible(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	availableKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 15, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	rejectedKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 16, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(priorityTieBreakSnapshot(availableKey, 0.951, false))
+	store.Put(priorityTieBreakSnapshot(rejectedKey, 1, false))
+	rejectedSnapshot, _ := store.Get(rejectedKey)
+	rejectedSnapshot.CircuitOpen = true
+	store.Put(rejectedSnapshot)
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: testPriorityChannel(15, "available", 10), Group: "default", RuntimeKey: availableKey},
+			{Channel: testPriorityChannel(16, "rejected-high-priority", 100), Group: "default", RuntimeKey: rejectedKey},
+		}),
+		store,
+		core.ScoreWeights{Group: 1},
+	)
+
+	plan, handled, apiErr := selector.Select(nil, nil, priorityTieBreakPolicy())
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 15, plan.Channel.Id)
+	rejected := candidateExplanationByChannel(t, plan.Candidates, 16)
+	require.False(t, rejected.Available)
+	require.Equal(t, "circuit_open", rejected.RejectReason)
+	require.Equal(t, int64(100), rejected.ChannelPriority)
+}
+
+func TestSelectorChannelPriorityTieBreakDoesNotPromoteSaturatedCandidateOverAvailable(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	availableKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 17, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	saturatedKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 18, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(priorityTieBreakSnapshot(availableKey, 0.951, false))
+	store.Put(priorityTieBreakSnapshot(saturatedKey, 1, true))
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: testPriorityChannel(17, "available-low-priority", 10), Group: "default", RuntimeKey: availableKey},
+			{Channel: testPriorityChannel(18, "saturated-high-priority", 100), Group: "default", RuntimeKey: saturatedKey},
+		}),
+		store,
+		core.ScoreWeights{Group: 1},
+	)
+
+	plan, handled, apiErr := selector.Select(nil, nil, priorityTieBreakPolicy())
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 17, plan.Channel.Id)
+	saturated := candidateExplanationByChannel(t, plan.Candidates, 18)
+	require.Equal(t, "concurrency_saturated", saturated.SelectionSkipReason)
+	require.False(t, saturated.Selected)
+}
+
+func TestSelectorChannelPriorityTieBreakAppliesWithinSaturatedFallback(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	lowPriorityKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 19, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	highPriorityKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 20, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(priorityTieBreakSnapshot(lowPriorityKey, 1, true))
+	store.Put(priorityTieBreakSnapshot(highPriorityKey, 0.951, true))
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: testPriorityChannel(19, "saturated-low-priority-best-score", 10), Group: "default", RuntimeKey: lowPriorityKey},
+			{Channel: testPriorityChannel(20, "saturated-high-priority-near-score", 100), Group: "default", RuntimeKey: highPriorityKey},
+		}),
+		store,
+		core.ScoreWeights{Group: 1},
+	)
+
+	plan, handled, apiErr := selector.Select(nil, nil, priorityTieBreakPolicy())
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 20, plan.Channel.Id)
+	require.Equal(t, "channel_priority_tie_break", plan.SelectedReason)
+	selected := candidateExplanationByChannel(t, plan.Candidates, 20)
+	require.True(t, selected.Selected)
+	require.Equal(t, "concurrency_saturated", selected.SelectionSkipReason)
+}
+
+func TestSelectorCanDisableChannelPriorityTieBreak(t *testing.T) {
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	lowPriorityKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 21, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	highPriorityKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 22, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(priorityTieBreakSnapshot(lowPriorityKey, 1, false))
+	store.Put(priorityTieBreakSnapshot(highPriorityKey, 0.951, false))
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: testPriorityChannel(21, "low-priority-best-score", 10), Group: "default", RuntimeKey: lowPriorityKey},
+			{Channel: testPriorityChannel(22, "high-priority-near-score", 100), Group: "default", RuntimeKey: highPriorityKey},
+		}),
+		store,
+		core.ScoreWeights{Group: 1},
+	).WithChannelPriorityTieBreakConfig(scheduler.ChannelPriorityTieBreakConfig{
+		Enabled:    false,
+		ScoreDelta: 0.05,
+	})
+
+	plan, handled, apiErr := selector.Select(nil, nil, priorityTieBreakPolicy())
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 21, plan.Channel.Id)
+	require.NotEqual(t, "channel_priority_tie_break", plan.SelectedReason)
+}
+
 func candidateExplanationByChannel(t *testing.T, candidates []core.CandidateExplanation, channelID int) core.CandidateExplanation {
 	t.Helper()
 	for _, candidate := range candidates {
@@ -2056,6 +2219,42 @@ func candidateExplanationByChannel(t *testing.T, candidates []core.CandidateExpl
 	}
 	require.Failf(t, "candidate explanation not found", "channel_id=%d", channelID)
 	return core.CandidateExplanation{}
+}
+
+func testPriorityChannel(id int, name string, priority int64) *model.Channel {
+	return &model.Channel{
+		Id:       id,
+		Name:     name,
+		Priority: &priority,
+	}
+}
+
+func priorityTieBreakSnapshot(key core.RuntimeKey, groupPriorityRatio float64, saturated bool) core.RuntimeSnapshot {
+	activeConcurrency := 0
+	if saturated {
+		activeConcurrency = 1
+	}
+	return core.RuntimeSnapshot{
+		Key:                       key,
+		SuccessRate:               1,
+		ActiveConcurrency:         activeConcurrency,
+		MaxConcurrency:            1,
+		EffectiveConcurrencyLimit: 1,
+		CostRatio:                 1,
+		CostReferenceRatio:        1,
+		GroupPriorityRatio:        groupPriorityRatio,
+		SampleCount:               10,
+	}
+}
+
+func priorityTieBreakPolicy() core.GroupSmartPolicy {
+	return core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+		QueueEnabled:    true,
+	}
 }
 
 func candidateExplanationByRuntimeAccount(t *testing.T, candidates []core.CandidateExplanation, accountID string) core.CandidateExplanation {

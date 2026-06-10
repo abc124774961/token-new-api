@@ -32,6 +32,7 @@ type RuntimePolicySettings struct {
 	CacheAffinityEnabled             bool
 	CostFirstStickyEscape            scheduler.CostFirstStickyEscapeConfig
 	CostFirstGuard                   scheduler.CostFirstGuardConfig
+	ChannelPriorityTieBreak          scheduler.ChannelPriorityTieBreakConfig
 	RuntimeSyncEnabled               bool
 	RuntimeSyncRedisEnabled          bool
 	RuntimeSyncNodeID                string
@@ -89,6 +90,10 @@ func RuntimePolicySetting() RuntimePolicySettings {
 			Multiple:         setting.CostFirstGuardMultiple,
 			SuccessAdvantage: setting.CostFirstGuardSuccessAdvantage,
 			SpeedAdvantage:   setting.CostFirstGuardSpeedAdvantage,
+		},
+		ChannelPriorityTieBreak: scheduler.ChannelPriorityTieBreakConfig{
+			Enabled:    setting.ChannelPriorityTieBreakEnabled,
+			ScoreDelta: setting.ChannelPriorityTieBreakScoreDelta,
 		},
 		RuntimeSyncEnabled:               setting.RuntimeSyncEnabled,
 		RuntimeSyncRedisEnabled:          setting.RuntimeSyncRedisEnabled,

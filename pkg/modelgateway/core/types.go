@@ -590,6 +590,7 @@ type CandidateExplanation struct {
 	ClientEmptyOutputRemainingSeconds int64              `json:"client_empty_output_remaining_seconds,omitempty"`
 	SelectionSkipReason               string             `json:"selection_skip_reason,omitempty"`
 	ChannelStatus                     int                `json:"channel_status,omitempty"`
+	ChannelPriority                   int64              `json:"channel_priority,omitempty"`
 	StatusReason                      string             `json:"status_reason,omitempty"`
 	BalanceInsufficient               bool               `json:"balance_insufficient,omitempty"`
 	ScoreTotal                        float64            `json:"score_total,omitempty"`

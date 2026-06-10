@@ -154,6 +154,7 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 			WithStickyRouter(stickyRouter).
 			WithCostFirstStickyEscapeConfig(runtimePolicy.CostFirstStickyEscape).
 			WithCostFirstGuardConfig(runtimePolicy.CostFirstGuard).
+			WithChannelPriorityTieBreakConfig(runtimePolicy.ChannelPriorityTieBreak).
 			WithClientEmptyOutputSwitchTracker(clientEmptyOutputSwitchTracker)
 		healthMonitor := scheduler.NewRuntimeHealthMonitor(snapshotStore, circuitBreaker).
 			WithScoringService(scheduler.NewCandidateScoringService().WithCostBaselineProvider(costBaselineCache)).

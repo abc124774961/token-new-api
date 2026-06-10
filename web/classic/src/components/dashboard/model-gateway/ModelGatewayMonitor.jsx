@@ -1041,6 +1041,28 @@ function clampRate(value) {
   return Math.min(1, Math.max(0, numeric));
 }
 
+function getCandidateChannelPriority(candidate, fallback) {
+  const value = Number(candidate?.channel_priority ?? fallback?.channel_priority);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function getChannelPriorityMeta(priority, t) {
+  const numeric = Number(priority || 0);
+  if (numeric >= 90) {
+    return { color: 'red', label: t('高优先级'), type: 'solid' };
+  }
+  if (numeric >= 65) {
+    return { color: 'orange', label: t('中优先级'), type: 'light' };
+  }
+  return { color: 'cyan', label: t('低优先级'), type: 'light' };
+}
+
+function formatChannelPriorityValue(priority, t) {
+  const numeric = Number(priority || 0);
+  const meta = getChannelPriorityMeta(numeric, t);
+  return `P${formatNumber(numeric)} ${meta.label}`;
+}
+
 function getSuccessTone(rate, attempts) {
   if (Number(attempts) <= 0) return 'default';
   if (Number(rate) >= 0.98) return 'success';
@@ -1198,6 +1220,9 @@ function formatChannelStatusReason(reason, t) {
   }
   if (normalized === 'routing_slot_reserved') {
     return t('本次调度已排除');
+  }
+  if (normalized === 'channel_priority_tie_break') {
+    return t('渠道优先级择优');
   }
   if (normalized === 'max_depth_reached') {
     return t('排队已满');
@@ -10353,6 +10378,9 @@ function formatSelectionReason(reason, t) {
   const normalized = String(reason || '').trim();
   if (!normalized) return '--';
   if (normalized === 'weighted_score') return t('本次调度分最高');
+  if (normalized === 'channel_priority_tie_break') {
+    return t('渠道优先级择优');
+  }
   if (normalized === 'cost_first_cheaper_higher_score') {
     return t('成本优先发现明显更低成本且调度分更高的候选');
   }
@@ -10490,6 +10518,11 @@ function buildSelectionSummaryText(insight, t) {
       },
     );
   }
+  if (insight.rawReason === 'channel_priority_tie_break') {
+    return t('选择 {{channel}}：调度分接近，按渠道优先级择优。', {
+      channel: label,
+    });
+  }
   if (insight.selectedTopTie && insight.topTieCount > 1) {
     return t(
       '选择 {{channel}}：多个候选调度分并列最高，按候选顺序保留先出现渠道。',
@@ -10599,6 +10632,15 @@ function buildCandidateDecisionText(candidate, candidates, record, t) {
   }
   if (candidate?.selection_skip_reason === 'routing_slot_reserved') {
     return t('{{channel}} 本次调度已排除，未向该渠道发起请求。', { channel });
+  }
+  if (candidate?.selection_skip_reason === 'channel_priority_tie_break') {
+    return t(
+      '{{channel}} 本次可用但未选中，调度分与最终选择 {{selectedChannel}} 接近，系统按渠道优先级择优。',
+      {
+        channel,
+        selectedChannel: selectedLabel || t('已选渠道'),
+      },
+    );
   }
   if (candidateSelectionScore !== null && selectedSelectionScore !== null) {
     if (candidateSelectionScore + scoreDeltaEpsilon < selectedSelectionScore) {
@@ -10718,6 +10760,10 @@ function buildSelectionInsight(record, candidates, t) {
     selectedAllScoreItems,
     'duration_latency',
   );
+  const selectedChannelPriority = getCandidateChannelPriority(
+    selectedCandidate,
+    record,
+  );
   const selectedScoreItems = selectedAllScoreItems.filter(
     (item) => item.weight > 0 && !item.missing_reason,
   );
@@ -10754,6 +10800,8 @@ function buildSelectionInsight(record, candidates, t) {
     explanation = t('本次调度分并列最高，按候选顺序保留先出现候选');
   } else if (selectedTopTie && rawReason === 'weighted_score') {
     explanation = t('在可用候选中本次调度分最高');
+  } else if (rawReason === 'channel_priority_tie_break') {
+    explanation = t('调度分接近，按渠道优先级择优');
   } else if (stickyRetained) {
     explanation = t('命中粘滞路由并满足保留阈值，优先复用该渠道');
   } else if (stickyBroken) {
@@ -10770,6 +10818,7 @@ function buildSelectionInsight(record, candidates, t) {
     'duration',
     'rank',
     'concurrency',
+    'channel_priority',
   ]);
   const metrics = [
     {
@@ -10805,6 +10854,11 @@ function buildSelectionInsight(record, candidates, t) {
               availableCandidates.length,
             )}`
           : '--',
+    },
+    {
+      key: 'channel_priority',
+      label: t('渠道优先级'),
+      value: formatChannelPriorityValue(selectedChannelPriority, t),
     },
     {
       key: 'order',
@@ -11097,6 +11151,8 @@ function CandidateExplanationCard({
   const channelLabel =
     String(candidate?.channel_name || '').trim() ||
     (candidate?.channel_id ? `#${candidate.channel_id}` : t('未知'));
+  const channelPriority = getCandidateChannelPriority(candidate);
+  const channelPriorityMeta = getChannelPriorityMeta(channelPriority, t);
   const activeConcurrency = Number(candidate?.active_concurrency || 0);
   const effectiveConcurrency = Number(
     candidate?.effective_concurrency_limit || candidate?.max_concurrency || 0,
@@ -11312,6 +11368,17 @@ function CandidateExplanationCard({
               {t('最终选择')}
             </Tag>
           )}
+          <Tooltip
+            content={`${t('渠道优先级')}: ${formatNumber(channelPriority)}`}
+          >
+            <Tag
+              color={channelPriorityMeta.color}
+              type={channelPriorityMeta.type}
+              size='small'
+            >
+              P{formatNumber(channelPriority)} {channelPriorityMeta.label}
+            </Tag>
+          </Tooltip>
           {balanceInsufficient && (
             <Tooltip
               content={statusReason || t('渠道余额不足，已暂停调度')}

@@ -137,6 +137,8 @@ const DEFAULT_SETTING = {
   cost_first_guard_multiple: 1.8,
   cost_first_guard_success_advantage: 0.03,
   cost_first_guard_speed_advantage: 0.08,
+  channel_priority_tie_break_enabled: true,
+  channel_priority_tie_break_score_delta: 0.05,
   queue_enabled: true,
   queue_default_timeout_ms: 2000,
   queue_max_depth_per_channel: 64,
@@ -1256,6 +1258,12 @@ export default function SettingsModelGatewayScheduler() {
         setting.cost_first_guard_speed_advantage,
         0.08,
       ),
+      channel_priority_tie_break_enabled:
+        setting.channel_priority_tie_break_enabled !== false,
+      channel_priority_tie_break_score_delta: numberOrDefault(
+        setting.channel_priority_tie_break_score_delta,
+        0.05,
+      ),
       queue_default_timeout_ms: numberOrDefault(
         setting.queue_default_timeout_ms,
         2000,
@@ -2046,6 +2054,44 @@ export default function SettingsModelGatewayScheduler() {
                 }
               />
             </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Switch
+                field='channel_priority_tie_break_enabled'
+                label={t('渠道优先级择优')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting('channel_priority_tie_break_enabled', value)
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.InputNumber
+                field='channel_priority_tie_break_score_delta'
+                label={t('优先级择优分差')}
+                min={0.000001}
+                max={1}
+                step={0.01}
+                onChange={(value) =>
+                  updateSetting(
+                    'channel_priority_tie_break_score_delta',
+                    numberOrDefault(value, 0.05),
+                  )
+                }
+              />
+            </Col>
+          </Row>
+          <Banner
+            type='info'
+            fullMode={false}
+            closeIcon={null}
+            title={t('渠道优先级只做最终择优')}
+            description={t(
+              '只影响已通过过滤且调度分接近的候选，不影响熔断、余额、避让、并发等过滤规则。',
+            )}
+            style={{ marginTop: 8, marginBottom: 16 }}
+          />
+          <Row gutter={16}>
             <Col xs={24} sm={12} md={8}>
               <Form.InputNumber
                 field='sticky_ttl_seconds'
