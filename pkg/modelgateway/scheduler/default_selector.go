@@ -33,6 +33,7 @@ type DefaultSmartChannelSelector struct {
 	scoringService       *CandidateScoringService
 	stickyEscapeConfig   CostFirstStickyEscapeConfig
 	costGuardConfig      CostFirstGuardConfig
+	emptyOutputSwitch    *ClientEmptyOutputSwitchTracker
 }
 
 type CostFirstStickyEscapeConfig struct {
@@ -150,6 +151,14 @@ func (s *DefaultSmartChannelSelector) WithCostFirstGuardConfig(config CostFirstG
 	return s
 }
 
+func (s *DefaultSmartChannelSelector) WithClientEmptyOutputSwitchTracker(tracker *ClientEmptyOutputSwitchTracker) *DefaultSmartChannelSelector {
+	if s == nil {
+		return nil
+	}
+	s.emptyOutputSwitch = tracker
+	return s
+}
+
 func (s *DefaultSmartChannelSelector) WithCostFirstStickyEscapeConfig(config CostFirstStickyEscapeConfig) *DefaultSmartChannelSelector {
 	if s == nil {
 		return nil
@@ -242,7 +251,10 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			snapshot = s.snapshotEnricher.Enrich(candidate, snapshot, policy)
 		}
 		stickyMatched := hasSticky && isStickyCandidate(candidate, stickyRoute)
-		rejectReason := candidateUnavailableReason(c, candidate, snapshot, policy)
+		rejectReason := s.candidateUnavailableReason(c, req, candidate, snapshot, policy)
+		if rejectReason == ClientEmptyOutputSwitchReason {
+			markClientEmptyOutputSwitchChannelSkipped(c, candidate, snapshot)
+		}
 		if stickyMatched && stickyBreak == "" && rejectReason != "" {
 			stickyBreak = rejectReason
 		}
@@ -272,6 +284,13 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		score := scored.Score
 		if evaluation.rejectReason != "" {
 			explanation.RejectReason = evaluation.rejectReason
+			if evaluation.rejectReason == ClientEmptyOutputSwitchReason && s.emptyOutputSwitch != nil {
+				if avoidance, ok := s.emptyOutputSwitch.AvoidanceInfo(req, candidate, snapshot); ok {
+					explanation.ClientEmptyOutputSessionKey = avoidance.Scope.SessionKey
+					explanation.ClientEmptyOutputAvoidUntil = avoidance.Until
+					explanation.ClientEmptyOutputRemainingSeconds = avoidance.RemainingSeconds
+				}
+			}
 			appendCandidateExplanation(&explanations, explanation)
 			continue
 		}
@@ -1540,6 +1559,32 @@ func sameRoutingCandidate(left core.Candidate, right core.Candidate) bool {
 	return true
 }
 
+func (s *DefaultSmartChannelSelector) candidateUnavailableReason(c *gin.Context, req core.DispatchRequest, candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) string {
+	if reason := candidateUnavailableReason(c, candidate, snapshot, policy); reason != "" {
+		if reason == "routing_slot_reserved" && s != nil && s.emptyOutputSwitch != nil {
+			if switchReason := s.emptyOutputSwitch.AvoidanceReason(req, candidate, snapshot); switchReason != "" {
+				return switchReason
+			}
+		}
+		return reason
+	}
+	if s == nil || s.emptyOutputSwitch == nil {
+		return ""
+	}
+	return s.emptyOutputSwitch.AvoidanceReason(req, candidate, snapshot)
+}
+
+func markClientEmptyOutputSwitchChannelSkipped(c *gin.Context, candidate core.Candidate, snapshot core.RuntimeSnapshot) {
+	if c == nil {
+		return
+	}
+	channelID := candidateChannelID(candidate)
+	if channelID <= 0 {
+		channelID = firstPositiveInt(snapshot.Key.ChannelID, candidate.RuntimeKey.ChannelID)
+	}
+	service.MarkChannelSelectionSkipped(c, channelID)
+}
+
 func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) string {
 	identity := serviceRuntimeIdentityFromCandidate(candidate, snapshot)
 	if snapshot.ConfigErrorIsolated {
@@ -1572,6 +1617,9 @@ func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapsh
 	if snapshot.FailureAvoidance {
 		if strings.TrimSpace(snapshot.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason {
 			return service.ChannelTimeoutRecoveryReason
+		}
+		if strings.TrimSpace(snapshot.ProbeTriggerReason) == service.ChannelOverloadRecoveryReason {
+			return service.ChannelOverloadRecoveryReason
 		}
 		return "failure_avoidance"
 	}

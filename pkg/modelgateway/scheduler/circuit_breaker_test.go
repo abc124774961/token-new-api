@@ -55,7 +55,7 @@ func TestCircuitBreakerReopensOnHalfOpenFailure(t *testing.T) {
 	require.Equal(t, core.CircuitStateOpen, breaker.Snapshot(key).State)
 }
 
-func TestCircuitBreakerDoesNotOpenFor429EvenWithRateLimitPolicy(t *testing.T) {
+func TestCircuitBreakerOpensForRepeated429WithRateLimitPolicy(t *testing.T) {
 	now := time.Unix(300, 0)
 	breaker := scheduler.NewCircuitBreakerForTest(scheduler.CircuitBreakerOptions{
 		FailureThreshold:   1,
@@ -78,17 +78,17 @@ func TestCircuitBreakerDoesNotOpenFor429EvenWithRateLimitPolicy(t *testing.T) {
 
 	breaker.Report(core.AttemptResult{Key: key, ChannelID: 10, StatusCode: http.StatusTooManyRequests})
 	snapshot := breaker.Snapshot(key)
-	require.Equal(t, core.CircuitStateClosed, snapshot.State)
-	require.Zero(t, snapshot.SampleCount)
-	require.Empty(t, snapshot.OpenReason)
-	require.Empty(t, snapshot.ErrorCounts)
-	require.Empty(t, scheduler.ClassifyCircuitError(core.AttemptResult{
+	require.Equal(t, core.CircuitStateOpen, snapshot.State)
+	require.Equal(t, 2, snapshot.SampleCount)
+	require.Equal(t, scheduler.CircuitErrorRateLimit, snapshot.OpenReason)
+	require.Equal(t, 2, snapshot.ErrorCounts[scheduler.CircuitErrorRateLimit])
+	require.Equal(t, scheduler.CircuitErrorRateLimit, scheduler.ClassifyCircuitError(core.AttemptResult{
 		StatusCode: http.StatusTooManyRequests,
 		ErrorCode:  "rate_limit",
 	}))
 }
 
-func TestCircuitBreakerDoesNotOpenForOverloadSkip429(t *testing.T) {
+func TestCircuitBreakerOpensForRepeatedOverloadSkip429(t *testing.T) {
 	now := time.Unix(350, 0)
 	breaker := scheduler.NewCircuitBreakerForTest(scheduler.CircuitBreakerOptions{
 		FailureThreshold:   1,
@@ -117,10 +117,11 @@ func TestCircuitBreakerDoesNotOpenForOverloadSkip429(t *testing.T) {
 	}
 
 	snapshot := breaker.Snapshot(key)
-	require.Equal(t, core.CircuitStateClosed, snapshot.State)
-	require.Zero(t, snapshot.SampleCount)
-	require.Empty(t, snapshot.ErrorCounts)
-	require.Empty(t, scheduler.ClassifyCircuitError(core.AttemptResult{
+	require.Equal(t, core.CircuitStateOpen, snapshot.State)
+	require.Equal(t, 3, snapshot.SampleCount)
+	require.Equal(t, scheduler.CircuitErrorRateLimit, snapshot.OpenReason)
+	require.Equal(t, 3, snapshot.ErrorCounts[scheduler.CircuitErrorRateLimit])
+	require.Equal(t, scheduler.CircuitErrorRateLimit, scheduler.ClassifyCircuitError(core.AttemptResult{
 		StatusCode:         http.StatusTooManyRequests,
 		ErrorMessage:       "Too many pending requests, please retry later",
 		ErrorCategory:      core.ErrorCategoryOverloadSkip,

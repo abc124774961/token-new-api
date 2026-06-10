@@ -50,18 +50,26 @@ func TestRuntimeHealthMonitorUpdatesSnapshotAndCircuit(t *testing.T) {
 	require.True(t, snapshot.CircuitOpen)
 }
 
-func TestRuntimeHealthMonitorSkipsOverloadSkip429(t *testing.T) {
+func TestRuntimeHealthMonitorKeepsOverloadSkip429AsCircuitOnlySample(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	breaker := scheduler.NewCircuitBreaker(scheduler.CircuitBreakerOptions{
 		FailureThreshold:   1,
 		MinSamples:         1,
 		OpenDuration:       time.Minute,
 		HalfOpenProbeCount: 1,
+		ErrorPolicies: map[string]scheduler.CircuitErrorPolicy{
+			scheduler.CircuitErrorRateLimit: {
+				FailureThreshold:   1,
+				MinSamples:         2,
+				OpenDuration:       time.Second,
+				HalfOpenProbeCount: 1,
+			},
+		},
 	})
 	monitor := scheduler.NewRuntimeHealthMonitor(store, breaker)
 	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 83, Group: "default"}
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 2; i++ {
 		monitor.Report(context.Background(), core.AttemptResult{
 			Key:           key,
 			ChannelID:     83,
@@ -73,12 +81,15 @@ func TestRuntimeHealthMonitorSkipsOverloadSkip429(t *testing.T) {
 		})
 	}
 
-	_, ok := store.Get(key)
-	require.False(t, ok)
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.Zero(t, snapshot.SampleCount)
+	require.Equal(t, core.CircuitStateOpen, snapshot.CircuitState)
+	require.True(t, snapshot.CircuitOpen)
 	circuit := breaker.Snapshot(key)
-	require.Equal(t, core.CircuitStateClosed, circuit.State)
-	require.Zero(t, circuit.SampleCount)
-	require.Empty(t, circuit.ErrorCounts)
+	require.Equal(t, core.CircuitStateOpen, circuit.State)
+	require.Equal(t, 2, circuit.SampleCount)
+	require.Equal(t, 2, circuit.ErrorCounts[scheduler.CircuitErrorRateLimit])
 }
 
 func TestRuntimeHealthMonitorSkipsBalanceInsufficientForSuccessRate(t *testing.T) {

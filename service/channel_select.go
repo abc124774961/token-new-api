@@ -40,11 +40,14 @@ var channelFailureAvoidance sync.Map
 var channelTimeoutDegradeEvents sync.Map
 var channelRuntimeFailureAvoidance sync.Map
 var channelRuntimeTimeoutDegradeEvents sync.Map
+var channelOverloadRecoveryEvents sync.Map
+var channelRuntimeOverloadRecoveryEvents sync.Map
 
 const (
 	channelFailureAvoidancePauseDuration = 30 * time.Minute
 	channelFailureAvoidanceStepSeconds   = 8
 	ChannelTimeoutRecoveryReason         = "timeout_recovery"
+	ChannelOverloadRecoveryReason        = "overload_recovery"
 )
 
 type ChannelFailureAvoidanceStatus struct {
@@ -100,6 +103,13 @@ type ChannelTimeoutDegradeConfig struct {
 	Threshold             float64
 	Consecutive           int
 	RecoveryProbeRequired bool
+}
+
+type ChannelOverloadRecoveryConfig struct {
+	Enabled     bool
+	Window      time.Duration
+	MinSamples  int
+	Consecutive int
 }
 
 type channelTimeoutEvent struct {
@@ -459,6 +469,37 @@ func RecordChannelRuntimeTimeoutDegradeSample(identity ChannelRuntimeIdentity, k
 	return recordChannelRuntimeTimeoutDegradeSample(identity, kind, true, config, failureContext)
 }
 
+func RecordChannelOverloadRecoverySuccess(channelID int, config ChannelOverloadRecoveryConfig) {
+	recordChannelOverloadRecoverySample(channelID, "success", false, config, nil)
+}
+
+func RecordChannelRuntimeOverloadRecoverySuccess(identity ChannelRuntimeIdentity, config ChannelOverloadRecoveryConfig) {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return
+	}
+	if !identity.HasAccountScope() {
+		RecordChannelOverloadRecoverySuccess(identity.ChannelID, config)
+		return
+	}
+	recordChannelRuntimeOverloadRecoverySample(identity, "success", false, config, nil)
+}
+
+func RecordChannelOverloadRecoverySample(channelID int, kind string, config ChannelOverloadRecoveryConfig, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	return recordChannelOverloadRecoverySample(channelID, kind, true, config, failureContext)
+}
+
+func RecordChannelRuntimeOverloadRecoverySample(identity ChannelRuntimeIdentity, kind string, config ChannelOverloadRecoveryConfig, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return nil
+	}
+	if !identity.HasAccountScope() {
+		return RecordChannelOverloadRecoverySample(identity.ChannelID, kind, config, failureContext)
+	}
+	return recordChannelRuntimeOverloadRecoverySample(identity, kind, true, config, failureContext)
+}
+
 func recordChannelTimeoutDegradeSample(channelID int, kind string, timeoutSample bool, config ChannelTimeoutDegradeConfig, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
 	if channelID <= 0 || !config.Enabled {
 		return nil
@@ -602,6 +643,106 @@ func recordChannelRuntimeTimeoutDegradeSample(identity ChannelRuntimeIdentity, k
 	return record
 }
 
+func recordChannelOverloadRecoverySample(channelID int, kind string, overloadSample bool, config ChannelOverloadRecoveryConfig, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	if channelID <= 0 || !config.Enabled {
+		return nil
+	}
+	config = normalizeChannelOverloadRecoveryConfig(config)
+	stateValue, _ := channelOverloadRecoveryEvents.LoadOrStore(channelID, &channelTimeoutDegradeState{})
+	state, ok := stateValue.(*channelTimeoutDegradeState)
+	if !ok || state == nil {
+		state = &channelTimeoutDegradeState{}
+		channelOverloadRecoveryEvents.Store(channelID, state)
+	}
+	now := time.Now()
+	samples, overloadCount, consecutive := recordChannelOverloadRecoveryEvent(state, kind, overloadSample, config.Window, now)
+	triggered := overloadCount >= config.MinSamples || consecutive >= config.Consecutive
+	if !overloadSample || !triggered {
+		return nil
+	}
+	if failureContext == nil {
+		failureContext = &ChannelFailureAvoidanceContext{}
+	}
+	failureContext.ErrorType = "overload"
+	failureContext.ErrorCode = ChannelOverloadRecoveryReason
+	failureContext.Message = strings.TrimSpace(fmt.Sprintf("%s samples=%d overloads=%d consecutive=%d window=%s", kind, samples, overloadCount, consecutive, config.Window))
+	record := RecordChannelOverloadRecovery(channelID, failureContext)
+	if record != nil {
+		common.SysLog(fmt.Sprintf("channel #%d entered overload recovery: kind=%s samples=%d overloads=%d consecutive=%d window=%s", channelID, kind, samples, overloadCount, consecutive, config.Window))
+	}
+	return record
+}
+
+func recordChannelRuntimeOverloadRecoverySample(identity ChannelRuntimeIdentity, kind string, overloadSample bool, config ChannelOverloadRecoveryConfig, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	identity = identity.Normalize()
+	if !identity.Valid() || !identity.HasAccountScope() || !config.Enabled {
+		return nil
+	}
+	config = normalizeChannelOverloadRecoveryConfig(config)
+	stateValue, _ := channelRuntimeOverloadRecoveryEvents.LoadOrStore(identity, &channelTimeoutDegradeState{})
+	state, ok := stateValue.(*channelTimeoutDegradeState)
+	if !ok || state == nil {
+		state = &channelTimeoutDegradeState{}
+		channelRuntimeOverloadRecoveryEvents.Store(identity, state)
+	}
+	now := time.Now()
+	samples, overloadCount, consecutive := recordChannelOverloadRecoveryEvent(state, kind, overloadSample, config.Window, now)
+	triggered := overloadCount >= config.MinSamples || consecutive >= config.Consecutive
+	if !overloadSample || !triggered {
+		return nil
+	}
+	if failureContext == nil {
+		failureContext = &ChannelFailureAvoidanceContext{}
+	}
+	failureContext.ErrorType = "overload"
+	failureContext.ErrorCode = ChannelOverloadRecoveryReason
+	failureContext.Message = strings.TrimSpace(fmt.Sprintf("%s samples=%d overloads=%d consecutive=%d window=%s", kind, samples, overloadCount, consecutive, config.Window))
+	record := RecordChannelRuntimeOverloadRecovery(identity, failureContext)
+	if record != nil {
+		common.SysLog(fmt.Sprintf("channel runtime #%d entered overload recovery: kind=%s samples=%d overloads=%d consecutive=%d window=%s", identity.ChannelID, kind, samples, overloadCount, consecutive, config.Window))
+	}
+	return record
+}
+
+func normalizeChannelOverloadRecoveryConfig(config ChannelOverloadRecoveryConfig) ChannelOverloadRecoveryConfig {
+	if config.Window <= 0 {
+		config.Window = time.Minute
+	}
+	if config.MinSamples <= 0 {
+		config.MinSamples = 3
+	}
+	if config.Consecutive <= 0 {
+		config.Consecutive = config.MinSamples
+	}
+	return config
+}
+
+func recordChannelOverloadRecoveryEvent(state *channelTimeoutDegradeState, kind string, overloadSample bool, window time.Duration, now time.Time) (int, int, int) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	cutoff := now.Add(-window)
+	events := state.events[:0]
+	for _, event := range state.events {
+		if event.at.After(cutoff) {
+			events = append(events, event)
+		}
+	}
+	events = append(events, channelTimeoutEvent{at: now, kind: strings.TrimSpace(kind), timeout: overloadSample})
+	state.events = events
+	if overloadSample {
+		state.consecutive++
+	} else {
+		state.consecutive = 0
+	}
+	overloadCount := 0
+	for _, event := range state.events {
+		if event.timeout {
+			overloadCount++
+		}
+	}
+	return len(state.events), overloadCount, state.consecutive
+}
+
 func mergeChannelSets(sets ...map[int]struct{}) map[int]struct{} {
 	merged := make(map[int]struct{})
 	for _, set := range sets {
@@ -660,6 +801,33 @@ func RecordChannelRuntimeFailureAvoidanceWithContext(identity ChannelRuntimeIden
 		return RecordChannelFailureAvoidanceWithContext(identity.ChannelID, reason, failureContext)
 	}
 	return recordChannelRuntimeAvoidance(identity, reason, failureContext, true, false)
+}
+
+func RecordChannelOverloadRecovery(channelID int, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	if failureContext != nil {
+		if strings.TrimSpace(failureContext.ErrorType) == "" {
+			failureContext.ErrorType = "overload"
+		}
+		failureContext.ErrorCode = ChannelOverloadRecoveryReason
+	}
+	return recordChannelAvoidanceWithProbeRecovery(channelID, ChannelOverloadRecoveryReason, failureContext, true, true)
+}
+
+func RecordChannelRuntimeOverloadRecovery(identity ChannelRuntimeIdentity, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return nil
+	}
+	if !identity.HasAccountScope() {
+		return RecordChannelOverloadRecovery(identity.ChannelID, failureContext)
+	}
+	if failureContext != nil {
+		if strings.TrimSpace(failureContext.ErrorType) == "" {
+			failureContext.ErrorType = "overload"
+		}
+		failureContext.ErrorCode = ChannelOverloadRecoveryReason
+	}
+	return recordChannelRuntimeAvoidance(identity, ChannelOverloadRecoveryReason, failureContext, true, true)
 }
 
 func recordChannelAvoidance(channelID int, reason string, failureContext *ChannelFailureAvoidanceContext, allowPause bool) *ChannelFailureAvoidanceRecord {
@@ -799,6 +967,7 @@ func ClearChannelFailureAvoidance(channelID int) {
 	}
 	channelFailureAvoidance.Delete(channelID)
 	channelTimeoutDegradeEvents.Delete(channelID)
+	channelOverloadRecoveryEvents.Delete(channelID)
 	channelRuntimeFailureAvoidance.Range(func(key, value any) bool {
 		identity, ok := key.(ChannelRuntimeIdentity)
 		if ok && identity.ChannelID == channelID {
@@ -810,6 +979,13 @@ func ClearChannelFailureAvoidance(channelID int) {
 		identity, ok := key.(ChannelRuntimeIdentity)
 		if ok && identity.ChannelID == channelID {
 			channelRuntimeTimeoutDegradeEvents.Delete(key)
+		}
+		return true
+	})
+	channelRuntimeOverloadRecoveryEvents.Range(func(key, value any) bool {
+		identity, ok := key.(ChannelRuntimeIdentity)
+		if ok && identity.ChannelID == channelID {
+			channelRuntimeOverloadRecoveryEvents.Delete(key)
 		}
 		return true
 	})
@@ -826,6 +1002,7 @@ func ClearChannelRuntimeFailureAvoidance(identity ChannelRuntimeIdentity) {
 	}
 	channelRuntimeFailureAvoidance.Delete(identity)
 	channelRuntimeTimeoutDegradeEvents.Delete(identity)
+	channelRuntimeOverloadRecoveryEvents.Delete(identity)
 }
 
 func ClearChannelRuntimeFailureAvoidanceForAccountIndex(channelID int, credentialIndex int) {
@@ -843,6 +1020,13 @@ func ClearChannelRuntimeFailureAvoidanceForAccountIndex(channelID int, credentia
 		identity, ok := key.(ChannelRuntimeIdentity)
 		if ok && identity.ChannelID == channelID && identity.CredentialIndexSet && identity.CredentialIndex == credentialIndex {
 			channelRuntimeTimeoutDegradeEvents.Delete(key)
+		}
+		return true
+	})
+	channelRuntimeOverloadRecoveryEvents.Range(func(key, value any) bool {
+		identity, ok := key.(ChannelRuntimeIdentity)
+		if ok && identity.ChannelID == channelID && identity.CredentialIndexSet && identity.CredentialIndex == credentialIndex {
+			channelRuntimeOverloadRecoveryEvents.Delete(key)
 		}
 		return true
 	})
@@ -904,6 +1088,15 @@ func IsTimeoutRecoveryReason(reason string) bool {
 	return strings.TrimSpace(reason) == ChannelTimeoutRecoveryReason
 }
 
+func IsProbeRecoveryReason(reason string) bool {
+	switch strings.TrimSpace(reason) {
+	case ChannelTimeoutRecoveryReason, ChannelOverloadRecoveryReason:
+		return true
+	default:
+		return false
+	}
+}
+
 func RecordChannelTimeoutRecovery(channelID int, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
 	if failureContext != nil {
 		if strings.TrimSpace(failureContext.ErrorType) == "" {
@@ -949,12 +1142,20 @@ func clearAllChannelFailureAvoidanceForTest() {
 		channelTimeoutDegradeEvents.Delete(key)
 		return true
 	})
+	channelOverloadRecoveryEvents.Range(func(key, value any) bool {
+		channelOverloadRecoveryEvents.Delete(key)
+		return true
+	})
 	channelRuntimeFailureAvoidance.Range(func(key, value any) bool {
 		channelRuntimeFailureAvoidance.Delete(key)
 		return true
 	})
 	channelRuntimeTimeoutDegradeEvents.Range(func(key, value any) bool {
 		channelRuntimeTimeoutDegradeEvents.Delete(key)
+		return true
+	})
+	channelRuntimeOverloadRecoveryEvents.Range(func(key, value any) bool {
+		channelRuntimeOverloadRecoveryEvents.Delete(key)
 		return true
 	})
 }

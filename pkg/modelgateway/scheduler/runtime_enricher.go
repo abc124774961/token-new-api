@@ -206,13 +206,16 @@ func (e *RuntimeSnapshotEnricher) applyFailureAvoidance(snapshot core.RuntimeSna
 		return snapshot
 	}
 	snapshot.FailureAvoidance = true
-	if service.IsTimeoutRecoveryReason(status.Reason) || status.ProbeRecoveryRequired {
+	if service.IsProbeRecoveryReason(status.Reason) || status.ProbeRecoveryRequired {
 		snapshot.ProbeRecoveryPending = true
-		snapshot.ProbeTriggerReason = service.ChannelTimeoutRecoveryReason
+		snapshot.ProbeTriggerReason = strings.TrimSpace(status.Reason)
 		setting := scheduler_setting.GetSetting()
-		required := setting.ChannelTimeoutRecoveryProbeSuccesses
-		if required <= 0 {
-			required = setting.ProbeRecoverySuccessesRequired
+		required := setting.ProbeRecoverySuccessesRequired
+		if service.IsTimeoutRecoveryReason(status.Reason) {
+			required = setting.ChannelTimeoutRecoveryProbeSuccesses
+			if required <= 0 {
+				required = setting.ProbeRecoverySuccessesRequired
+			}
 		}
 		if required <= 0 {
 			required = 2

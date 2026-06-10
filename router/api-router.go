@@ -403,6 +403,7 @@ func SetApiRouter(router *gin.Engine) {
 			modelGatewayRoute.GET("/observability/trends/export", controller.ExportModelGatewayObservabilityTrends)
 			modelGatewayRoute.GET("/observability/runtime", controller.GetModelGatewayRuntimeStatus)
 			modelGatewayRoute.POST("/observability/runtime/clear_circuit", middleware.RequireAdminPermission(middleware.AdminPermissionChannelHealthExecute), controller.ClearModelGatewayRuntimeCircuit)
+			modelGatewayRoute.POST("/observability/runtime/clear_client_empty_output_avoidance", middleware.RequireAdminPermission(middleware.AdminPermissionChannelHealthExecute), controller.ClearModelGatewayClientEmptyOutputAvoidance)
 			modelGatewayRoute.GET("/observability/health-check/queue", controller.GetModelGatewayHealthCheckQueue)
 			modelGatewayRoute.POST("/observability/health-check/probe", middleware.RequireAdminPermission(middleware.AdminPermissionChannelHealthExecute), controller.RunModelGatewayHealthCheckProbe)
 			modelGatewayRoute.GET("/observability/score-history", controller.GetModelGatewayScoreHistory)

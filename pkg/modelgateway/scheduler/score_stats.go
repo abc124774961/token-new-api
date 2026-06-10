@@ -236,10 +236,10 @@ func scoreSampleDecision(result core.AttemptResult) core.ScoreSampleDecision {
 		return skippedScoreSample("balance_insufficient")
 	case strings.TrimSpace(result.ErrorCategory) == core.ErrorCategorySchedulerExhausted:
 		return skippedScoreSample(core.ErrorCategorySchedulerExhausted)
+	case isCircuitOverloadSkipResult(result):
+		return circuitOnlyScoreSample(core.ErrorCategoryOverloadSkip)
 	case result.ConcurrencyLimited:
 		return skippedScoreSample("concurrency_limited")
-	case isCircuitOverloadSkipResult(result):
-		return skippedScoreSample("circuit_overload_skip")
 	case internalFirstByteTimeoutRetry(result):
 		return skippedScoreSample(core.RelayAttemptCancelReasonFirstByteTimeout)
 	case result.StreamInterrupted:
@@ -256,6 +256,14 @@ func scoreSampleDecision(result core.AttemptResult) core.ScoreSampleDecision {
 
 func skippedScoreSample(reason string) core.ScoreSampleDecision {
 	return core.ScoreSampleDecision{SkipReason: reason, Reason: reason}
+}
+
+func circuitOnlyScoreSample(reason string) core.ScoreSampleDecision {
+	return core.ScoreSampleDecision{
+		CircuitSample: true,
+		Reason:        reason,
+		SkipReason:    reason,
+	}
 }
 
 func scoreStatsClientContextLimitResult(result core.AttemptResult) bool {

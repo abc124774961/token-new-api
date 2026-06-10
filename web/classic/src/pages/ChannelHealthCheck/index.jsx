@@ -505,6 +505,7 @@ function isRecoveryProbeRecord(record = {}) {
       record.circuit_state === 'half_open' ||
       reason === 'failure_avoidance' ||
       reason === 'timeout_recovery' ||
+      reason === 'overload_recovery' ||
       reason === 'circuit_half_open' ||
       reason === 'score_anomaly_fast_probe',
   );
@@ -554,6 +555,8 @@ function getReasonMeta(reason, t) {
       circuit_open: 'red',
       cooldown: 'orange',
       failure_avoidance: 'orange',
+      client_empty_output_switch: 'orange',
+      overload_recovery: 'orange',
       probe_recovery_pending: 'cyan',
       score_anomaly_fast_probe: 'orange',
       low_score: 'orange',
@@ -569,6 +572,8 @@ function getReasonMeta(reason, t) {
       circuit_open: t('熔断打开'),
       cooldown: t('冷却恢复探测'),
       failure_avoidance: t('近期失败恢复中'),
+      client_empty_output_switch: t('空输出避让'),
+      overload_recovery: t('429 过载恢复中'),
       probe_recovery_pending: t('恢复确认中'),
       score_anomaly_fast_probe: t('分数异常快速恢复'),
       low_score: t('低评分'),
@@ -605,6 +610,8 @@ function formatProbeReason(value, t) {
       return t('低访问激活探测');
     case 'failure_avoidance':
       return t('近期失败恢复中');
+    case 'overload_recovery':
+      return t('429 过载恢复中');
     case 'score_anomaly_fast_probe':
       return t('分数异常快速恢复');
     case 'cooldown':
@@ -959,6 +966,243 @@ function ScoreChangeCell({ scoreChange, t }) {
   );
 }
 
+function candidateRuntimeKey(candidate = {}) {
+  return candidate.runtime_key || candidate.runtimeKey || {};
+}
+
+function candidateChannelID(candidate = {}) {
+  const runtimeKey = candidateRuntimeKey(candidate);
+  const channelID = Number(candidate.channel_id || runtimeKey.channel_id || 0);
+  return Number.isFinite(channelID) ? channelID : 0;
+}
+
+function candidateRequestedModel(candidate = {}, record = {}) {
+  const runtimeKey = candidateRuntimeKey(candidate);
+  const dispatch = getRecordDispatch(record) || {};
+  return normalizedIdentityValue(
+    runtimeKey.requested_model,
+    record.requested_model,
+    dispatch.requested_model,
+    candidate.upstream_model,
+    runtimeKey.upstream_model,
+  );
+}
+
+function candidateGroup(candidate = {}, record = {}) {
+  const runtimeKey = candidateRuntimeKey(candidate);
+  const dispatch = getRecordDispatch(record) || {};
+  return normalizedIdentityValue(
+    candidate.group,
+    runtimeKey.group,
+    record.actual_group,
+    dispatch.actual_group,
+    dispatch.selected_group,
+    record.selected_group,
+    record.requested_group,
+    dispatch.requested_group,
+  );
+}
+
+function candidateEndpointType(candidate = {}, record = {}) {
+  const runtimeKey = candidateRuntimeKey(candidate);
+  const dispatch = getRecordDispatch(record) || {};
+  return (
+    normalizedIdentityValue(
+      runtimeKey.endpoint_type,
+      record.endpoint_type,
+      dispatch.endpoint_type,
+    ) || 'openai'
+  );
+}
+
+function clientEmptyOutputAvoidancePayload(candidate = {}, record = {}) {
+  const sessionKey = normalizedIdentityValue(
+    candidate.client_empty_output_session_key,
+  );
+  const channelID = candidateChannelID(candidate);
+  const requestedModel = candidateRequestedModel(candidate, record);
+  const group = candidateGroup(candidate, record);
+  const endpointType = candidateEndpointType(candidate, record);
+  if (!sessionKey || channelID <= 0 || !requestedModel || !group) return null;
+  return {
+    session_key: sessionKey,
+    channel_id: channelID,
+    requested_model: requestedModel,
+    group,
+    endpoint_type: endpointType,
+  };
+}
+
+function clientEmptyOutputAvoidanceKey(payload) {
+  if (!payload) return '';
+  return [
+    payload.session_key,
+    payload.channel_id,
+    payload.requested_model,
+    payload.group,
+    payload.endpoint_type,
+  ]
+    .map((value) => String(value || '').trim())
+    .join('|');
+}
+
+function candidateStatusMeta(candidate, t) {
+  if (candidate?.selected) return { color: 'green', label: t('已选择') };
+  if (candidate?.available) return { color: 'cyan', label: t('可用') };
+  const reason = candidate?.reject_reason || candidate?.selection_skip_reason;
+  if (reason) return getReasonMeta(reason, t);
+  return { color: 'grey', label: t('不可用') };
+}
+
+function candidateAvoidanceDetail(candidate, t) {
+  const until = Number(candidate?.client_empty_output_avoid_until || 0);
+  const remaining = Number(
+    candidate?.client_empty_output_remaining_seconds || 0,
+  );
+  const parts = [];
+  if (until > 0) {
+    parts.push(t('避让至 {{time}}', { time: timestamp2string(until) }));
+  }
+  if (remaining > 0) {
+    parts.push(
+      t('剩余 {{duration}}', {
+        duration: formatCountdownDuration(remaining, t),
+      }),
+    );
+  }
+  return parts.join(' · ');
+}
+
+function HistoryDispatchExpandedRow({
+  record,
+  t,
+  clearingAvoidanceKeys,
+  onClearClientEmptyOutputAvoidance,
+}) {
+  const candidates = getRecordCandidates(record);
+  if (!candidates.length) {
+    return (
+      <div className='ct-channel-health-dispatch-empty'>
+        {t('暂无调度详情')}
+      </div>
+    );
+  }
+  return (
+    <div className='ct-channel-health-dispatch-detail'>
+      <div className='ct-channel-health-dispatch-title'>
+        <Route size={14} />
+        <span>{t('调度详情')}</span>
+      </div>
+      <div className='ct-channel-health-candidate-list'>
+        {candidates.map((candidate, index) => {
+          const runtimeKey = candidateRuntimeKey(candidate);
+          const identity = getChannelIdentity({}, candidate);
+          const status = candidateStatusMeta(candidate, t);
+          const score = formatScore(
+            candidate.score_total || candidate.routing_score_total,
+          );
+          const payload = clientEmptyOutputAvoidancePayload(candidate, record);
+          const avoidanceKey = clientEmptyOutputAvoidanceKey(payload);
+          const clearing = Boolean(clearingAvoidanceKeys[avoidanceKey]);
+          const avoidanceDetail = candidateAvoidanceDetail(candidate, t);
+          const rowKey = [
+            candidateChannelID(candidate),
+            runtimeKey.group,
+            runtimeKey.requested_model,
+            runtimeKey.account_id,
+            runtimeKey.credential_index,
+            index,
+          ].join(':');
+          return (
+            <div key={rowKey} className='ct-channel-health-candidate-row'>
+              <div className='ct-channel-health-candidate-main'>
+                <div className='ct-channel-health-candidate-heading'>
+                  <Tag color={status.color} size='small' type='light'>
+                    {status.label}
+                  </Tag>
+                  <Typography.Text strong ellipsis={{ showTooltip: true }}>
+                    {identity.channelName ||
+                      (identity.channelID
+                        ? `${t('渠道')} #${identity.channelID}`
+                        : t('候选渠道'))}
+                  </Typography.Text>
+                  {score !== '--' && (
+                    <Tag color='blue' size='small' type='light'>
+                      {t('评分')} {score}
+                    </Tag>
+                  )}
+                </div>
+                <div className='ct-channel-health-badge-row'>
+                  <IconBadge
+                    icon={<Hash size={12} />}
+                    label={identity.channelID ? `#${identity.channelID}` : ''}
+                    tooltip={t('渠道 ID')}
+                    mono
+                  />
+                  <IconBadge
+                    icon={<Layers size={12} />}
+                    label={candidateGroup(candidate, record)}
+                    tooltip={t('分组')}
+                    tone='green'
+                  />
+                  <IconBadge
+                    icon={<Route size={12} />}
+                    label={
+                      runtimeKey.upstream_model || candidate.upstream_model
+                    }
+                    tooltip={t('上游模型')}
+                    tone='blue'
+                  />
+                  <IconBadge
+                    icon={<KeyRound size={12} />}
+                    label={identity.index ? `#${identity.index}` : ''}
+                    tooltip={t('凭证序号')}
+                    tone='blue'
+                    mono
+                  />
+                </div>
+                {avoidanceDetail && (
+                  <Typography.Text type='secondary' size='small'>
+                    {avoidanceDetail}
+                  </Typography.Text>
+                )}
+              </div>
+              {payload && (
+                <Tooltip
+                  content={t('将清除此 session 对该渠道的空输出临时避让。')}
+                >
+                  <Button
+                    size='small'
+                    type='tertiary'
+                    theme='borderless'
+                    icon={
+                      clearing ? (
+                        <RefreshCw
+                          size={13}
+                          className='ct-channel-health-spin'
+                        />
+                      ) : (
+                        <ShieldCheck size={13} />
+                      )
+                    }
+                    loading={clearing}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onClearClientEmptyOutputAvoidance(payload);
+                    }}
+                  >
+                    {t('清理避让')}
+                  </Button>
+                </Tooltip>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function MetricCard({ label, value, detail, icon, tone = 'default' }) {
   return (
     <div
@@ -1262,6 +1506,7 @@ function reasonIconForKey(key) {
     case 'cooldown':
     case 'failure_avoidance':
     case 'timeout_recovery':
+    case 'overload_recovery':
       return <Clock3 size={11} />;
     case 'probe_recovery_pending':
       return <ShieldCheck size={11} />;
@@ -1551,6 +1796,7 @@ function ChannelHealthCheck({ variant = 'default' }) {
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [probeRunningKeys, setProbeRunningKeys] = useState({});
+  const [clearingAvoidanceKeys, setClearingAvoidanceKeys] = useState({});
   const [probeConfig, setProbeConfig] = useState(DEFAULT_PROBE_CONFIG);
   const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
   const [filters, setFilters] = useState({
@@ -1768,6 +2014,45 @@ function ChannelHealthCheck({ variant = 'default' }) {
         setProbeRunningKeys((prev) => {
           const next = { ...prev };
           delete next[rowKey];
+          return next;
+        });
+      }
+    },
+    [loadData, t],
+  );
+
+  const clearClientEmptyOutputAvoidance = useCallback(
+    async (payload) => {
+      const avoidanceKey = clientEmptyOutputAvoidanceKey(payload);
+      if (!payload || !avoidanceKey) {
+        showError(t('缺少空输出避让上下文'));
+        return;
+      }
+      setClearingAvoidanceKeys((prev) => ({ ...prev, [avoidanceKey]: true }));
+      try {
+        const res = await API.post(
+          '/api/model_gateway/observability/runtime/clear_client_empty_output_avoidance',
+          payload,
+          {
+            disableDuplicate: true,
+            skipErrorHandler: true,
+          },
+        );
+        const { success, message, data } = res.data || {};
+        if (!success) {
+          showError(t(message || '清理空输出避让失败'));
+          return;
+        }
+        showSuccess(
+          data?.cleared ? t('空输出避让已清理') : t('空输出避让不存在或已过期'),
+        );
+        loadData(true);
+      } catch (err) {
+        showError(`${t('清理空输出避让失败')}: ${err?.message || ''}`);
+      } finally {
+        setClearingAvoidanceKeys((prev) => {
+          const next = { ...prev };
+          delete next[avoidanceKey];
           return next;
         });
       }
@@ -2372,6 +2657,20 @@ function ChannelHealthCheck({ variant = 'default' }) {
                   dataSource={historyRecords}
                   rowKey={(record) =>
                     record.request_id || `${record.id}-${record.completed_at}`
+                  }
+                  expandedRowRender={(record) => (
+                    <HistoryDispatchExpandedRow
+                      record={record}
+                      t={t}
+                      clearingAvoidanceKeys={clearingAvoidanceKeys}
+                      onClearClientEmptyOutputAvoidance={
+                        clearClientEmptyOutputAvoidance
+                      }
+                    />
+                  )}
+                  expandRowByClick
+                  rowExpandable={(record) =>
+                    getRecordCandidates(record).length > 0
                   }
                   pagination={{
                     pageSize: 12,

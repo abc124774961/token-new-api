@@ -825,6 +825,9 @@ func stateTagsForSnapshot(snapshot core.RuntimeSnapshot) []string {
 	if snapshot.FailureAvoidance && strings.TrimSpace(snapshot.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason {
 		tags = append(tags, service.ChannelTimeoutRecoveryReason)
 	}
+	if snapshot.FailureAvoidance && strings.TrimSpace(snapshot.ProbeTriggerReason) == service.ChannelOverloadRecoveryReason {
+		tags = append(tags, service.ChannelOverloadRecoveryReason)
+	}
 	if snapshot.ProbeRecoveryPending {
 		tags = append(tags, "probe_recovery_pending")
 	}

@@ -67,7 +67,7 @@ func RuntimePolicySetting() RuntimePolicySettings {
 		CircuitMinSamples:           setting.CircuitMinSamples,
 		CircuitOpenSeconds:          setting.CircuitOpenSeconds,
 		CircuitHalfOpenProbeCount:   setting.CircuitHalfOpenProbeCount,
-		CircuitErrorPolicies:        circuitErrorPolicies(setting.CircuitErrorPolicies),
+		CircuitErrorPolicies:        circuitErrorPolicies(setting),
 		StickyTTLSeconds:            setting.StickyTTLSeconds,
 		StickyKeepScoreRatio:        setting.StickyKeepScoreRatio,
 		StickySaveOnSelect:          setting.StickySaveOnSelect,
@@ -187,17 +187,26 @@ func copyFloatMap(values map[string]float64) map[string]float64 {
 	return out
 }
 
-func circuitErrorPolicies(policies map[string]scheduler_setting.CircuitErrorPolicySetting) map[string]scheduler.CircuitErrorPolicy {
-	if len(policies) == 0 {
-		return nil
-	}
-	out := make(map[string]scheduler.CircuitErrorPolicy, len(policies))
-	for kind, policy := range policies {
+func circuitErrorPolicies(setting scheduler_setting.SchedulerSetting) map[string]scheduler.CircuitErrorPolicy {
+	out := make(map[string]scheduler.CircuitErrorPolicy, len(setting.CircuitErrorPolicies)+1)
+	for kind, policy := range setting.CircuitErrorPolicies {
 		out[kind] = scheduler.CircuitErrorPolicy{
 			FailureThreshold:   policy.FailureThreshold,
 			MinSamples:         policy.MinSamples,
 			OpenDuration:       time.Duration(policy.OpenSeconds) * time.Second,
 			HalfOpenProbeCount: policy.HalfOpenProbeCount,
+		}
+	}
+	if _, ok := out[scheduler.CircuitErrorRateLimit]; !ok {
+		openSeconds := setting.CircuitOpenSeconds
+		if openSeconds <= 0 {
+			openSeconds = 30
+		}
+		out[scheduler.CircuitErrorRateLimit] = scheduler.CircuitErrorPolicy{
+			FailureThreshold:   1,
+			MinSamples:         3,
+			OpenDuration:       time.Duration(openSeconds) * time.Second,
+			HalfOpenProbeCount: 1,
 		}
 	}
 	return out

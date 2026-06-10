@@ -193,6 +193,19 @@ type ModelGatewayRuntimeCircuitClearResponse struct {
 	ClearFailureAvoidance   bool                     `json:"clear_failure_avoidance"`
 }
 
+type ModelGatewayClientEmptyOutputAvoidanceClearRequest struct {
+	SessionKey     string                `json:"session_key"`
+	ChannelID      int                   `json:"channel_id"`
+	RequestedModel string                `json:"requested_model"`
+	Group          string                `json:"group"`
+	EndpointType   constant.EndpointType `json:"endpoint_type,omitempty"`
+}
+
+type ModelGatewayClientEmptyOutputAvoidanceClearResponse struct {
+	Cleared bool                                               `json:"cleared"`
+	Scope   modelgatewayscheduler.ClientEmptyOutputSwitchScope `json:"scope"`
+}
+
 type ModelGatewayHealthCheckProbeRequest struct {
 	ChannelID          int                    `json:"channel_id"`
 	RuntimeKey         ModelGatewayRuntimeKey `json:"runtime_key,omitempty"`
@@ -305,41 +318,44 @@ type ModelGatewayScoreHistoryResponse struct {
 }
 
 type ModelGatewayScoreHistoryItem struct {
-	ID                    int                                    `json:"id"`
-	Source                string                                 `json:"source,omitempty"`
-	CreatedAt             int64                                  `json:"created_at"`
-	RequestID             string                                 `json:"request_id"`
-	RequestedModel        string                                 `json:"requested_model,omitempty"`
-	RequestedGroup        string                                 `json:"requested_group,omitempty"`
-	SelectedGroup         string                                 `json:"selected_group,omitempty"`
-	ChannelID             int                                    `json:"channel_id"`
-	ChannelName           string                                 `json:"channel_name,omitempty"`
-	RuntimeKey            ModelGatewayRuntimeKey                 `json:"runtime_key,omitempty"`
-	PoolLevel             string                                 `json:"pool_level,omitempty"`
-	SwitchReason          string                                 `json:"switch_reason,omitempty"`
-	FailureScope          string                                 `json:"failure_scope,omitempty"`
-	Selected              bool                                   `json:"selected,omitempty"`
-	SelectedReason        string                                 `json:"selected_reason,omitempty"`
-	Available             bool                                   `json:"available"`
-	RejectReason          string                                 `json:"reject_reason,omitempty"`
-	StatusReason          string                                 `json:"status_reason,omitempty"`
-	ScoreTotal            float64                                `json:"score_total,omitempty"`
-	ScoreDelta            float64                                `json:"score_delta,omitempty"`
-	ScoreBreakdown        map[string]float64                     `json:"score_breakdown,omitempty"`
-	ScoreItems            []modelgatewaycore.ScoreItem           `json:"score_items,omitempty"`
-	ScoreItemDeltas       []modelgatewaycore.ScoreAdjustmentItem `json:"score_item_deltas,omitempty"`
-	ScoreBreakdownDelta   map[string]float64                     `json:"score_breakdown_delta,omitempty"`
-	RoutingScoreTotal     float64                                `json:"routing_score_total,omitempty"`
-	RoutingScoreBreakdown map[string]float64                     `json:"routing_score_breakdown,omitempty"`
-	RoutingScoreItems     []modelgatewaycore.ScoreItem           `json:"routing_score_items,omitempty"`
-	CostReferenceMissing  bool                                   `json:"cost_reference_missing,omitempty"`
-	SampleCount           int                                    `json:"sample_count,omitempty"`
-	TTFTMs                float64                                `json:"ttft_ms,omitempty"`
-	DurationMs            float64                                `json:"duration_ms,omitempty"`
-	ActiveConcurrency     int                                    `json:"active_concurrency,omitempty"`
-	EffectiveConcurrency  int                                    `json:"effective_concurrency_limit,omitempty"`
-	IsHealthProbe         bool                                   `json:"is_health_probe,omitempty"`
-	ScoreSampleSource     string                                 `json:"score_sample_source,omitempty"`
+	ID                                int                                    `json:"id"`
+	Source                            string                                 `json:"source,omitempty"`
+	CreatedAt                         int64                                  `json:"created_at"`
+	RequestID                         string                                 `json:"request_id"`
+	RequestedModel                    string                                 `json:"requested_model,omitempty"`
+	RequestedGroup                    string                                 `json:"requested_group,omitempty"`
+	SelectedGroup                     string                                 `json:"selected_group,omitempty"`
+	ChannelID                         int                                    `json:"channel_id"`
+	ChannelName                       string                                 `json:"channel_name,omitempty"`
+	RuntimeKey                        ModelGatewayRuntimeKey                 `json:"runtime_key,omitempty"`
+	PoolLevel                         string                                 `json:"pool_level,omitempty"`
+	SwitchReason                      string                                 `json:"switch_reason,omitempty"`
+	FailureScope                      string                                 `json:"failure_scope,omitempty"`
+	Selected                          bool                                   `json:"selected,omitempty"`
+	SelectedReason                    string                                 `json:"selected_reason,omitempty"`
+	Available                         bool                                   `json:"available"`
+	RejectReason                      string                                 `json:"reject_reason,omitempty"`
+	ClientEmptyOutputSessionKey       string                                 `json:"client_empty_output_session_key,omitempty"`
+	ClientEmptyOutputAvoidUntil       int64                                  `json:"client_empty_output_avoid_until,omitempty"`
+	ClientEmptyOutputRemainingSeconds int64                                  `json:"client_empty_output_remaining_seconds,omitempty"`
+	StatusReason                      string                                 `json:"status_reason,omitempty"`
+	ScoreTotal                        float64                                `json:"score_total,omitempty"`
+	ScoreDelta                        float64                                `json:"score_delta,omitempty"`
+	ScoreBreakdown                    map[string]float64                     `json:"score_breakdown,omitempty"`
+	ScoreItems                        []modelgatewaycore.ScoreItem           `json:"score_items,omitempty"`
+	ScoreItemDeltas                   []modelgatewaycore.ScoreAdjustmentItem `json:"score_item_deltas,omitempty"`
+	ScoreBreakdownDelta               map[string]float64                     `json:"score_breakdown_delta,omitempty"`
+	RoutingScoreTotal                 float64                                `json:"routing_score_total,omitempty"`
+	RoutingScoreBreakdown             map[string]float64                     `json:"routing_score_breakdown,omitempty"`
+	RoutingScoreItems                 []modelgatewaycore.ScoreItem           `json:"routing_score_items,omitempty"`
+	CostReferenceMissing              bool                                   `json:"cost_reference_missing,omitempty"`
+	SampleCount                       int                                    `json:"sample_count,omitempty"`
+	TTFTMs                            float64                                `json:"ttft_ms,omitempty"`
+	DurationMs                        float64                                `json:"duration_ms,omitempty"`
+	ActiveConcurrency                 int                                    `json:"active_concurrency,omitempty"`
+	EffectiveConcurrency              int                                    `json:"effective_concurrency_limit,omitempty"`
+	IsHealthProbe                     bool                                   `json:"is_health_probe,omitempty"`
+	ScoreSampleSource                 string                                 `json:"score_sample_source,omitempty"`
 }
 
 type modelGatewayScoreHistoryOptions struct {
@@ -840,91 +856,94 @@ type ModelGatewayObservabilityRecord struct {
 }
 
 type ModelGatewayCandidateExplanation struct {
-	ChannelID                    int                          `json:"channel_id"`
-	ChannelName                  string                       `json:"channel_name,omitempty"`
-	ResourceID                   string                       `json:"resource_id,omitempty"`
-	ResourceType                 string                       `json:"resource_type,omitempty"`
-	AccountID                    string                       `json:"account_id,omitempty"`
-	AccountType                  string                       `json:"account_type,omitempty"`
-	Brand                        string                       `json:"brand,omitempty"`
-	Provider                     string                       `json:"provider,omitempty"`
-	CredentialIndex              int                          `json:"credential_index,omitempty"`
-	CredentialSubjectFP          string                       `json:"credential_subject_fingerprint,omitempty"`
-	CredentialFP                 string                       `json:"credential_fingerprint,omitempty"`
-	CredentialUID                string                       `json:"credential_uid,omitempty"`
-	CredentialLabel              string                       `json:"credential_label,omitempty"`
-	PoolLevel                    string                       `json:"pool_level,omitempty"`
-	SwitchReason                 string                       `json:"switch_reason,omitempty"`
-	FailureScope                 string                       `json:"failure_scope,omitempty"`
-	Group                        string                       `json:"group,omitempty"`
-	UpstreamModel                string                       `json:"upstream_model,omitempty"`
-	ProviderProfile              string                       `json:"provider_profile,omitempty"`
-	ProxyMode                    string                       `json:"proxy_mode,omitempty"`
-	RuntimeKey                   ModelGatewayRuntimeKey       `json:"runtime_key"`
-	Available                    bool                         `json:"available"`
-	RejectReason                 string                       `json:"reject_reason,omitempty"`
-	SelectionSkipReason          string                       `json:"selection_skip_reason,omitempty"`
-	ChannelStatus                int                          `json:"channel_status,omitempty"`
-	StatusReason                 string                       `json:"status_reason,omitempty"`
-	BalanceInsufficient          bool                         `json:"balance_insufficient,omitempty"`
-	ScoreTotal                   float64                      `json:"score_total,omitempty"`
-	ScoreBreakdown               map[string]float64           `json:"score_breakdown,omitempty"`
-	ScoreItems                   []modelgatewaycore.ScoreItem `json:"score_items,omitempty"`
-	RoutingScoreTotal            float64                      `json:"routing_score_total,omitempty"`
-	RoutingScoreBreakdown        map[string]float64           `json:"routing_score_breakdown,omitempty"`
-	RoutingScoreItems            []modelgatewaycore.ScoreItem `json:"routing_score_items,omitempty"`
-	StateTags                    []string                     `json:"state_tags,omitempty"`
-	CostReferenceMissing         bool                         `json:"cost_reference_missing,omitempty"`
-	SuccessRate                  float64                      `json:"success_rate,omitempty"`
-	TTFTMs                       float64                      `json:"ttft_ms,omitempty"`
-	DurationMs                   float64                      `json:"duration_ms,omitempty"`
-	TokensPerSecond              float64                      `json:"tokens_per_second,omitempty"`
-	SampleCount                  int                          `json:"sample_count,omitempty"`
-	ActiveConcurrency            int                          `json:"active_concurrency,omitempty"`
-	MaxConcurrency               int                          `json:"max_concurrency,omitempty"`
-	ConfiguredConcurrencyLimit   int                          `json:"configured_concurrency_limit,omitempty"`
-	LearnedConcurrencyLimit      int                          `json:"learned_concurrency_limit,omitempty"`
-	EffectiveConcurrencyLimit    int                          `json:"effective_concurrency_limit,omitempty"`
-	QueueDepth                   int                          `json:"queue_depth,omitempty"`
-	QueueCapacity                int                          `json:"queue_capacity,omitempty"`
-	EstimatedQueueWaitMs         float64                      `json:"estimated_queue_wait_ms,omitempty"`
-	ResourceProtectionRole       string                       `json:"resource_protection_role,omitempty"`
-	ResourceProtectionReason     string                       `json:"resource_protection_reason,omitempty"`
-	CostRatio                    float64                      `json:"cost_ratio,omitempty"`
-	CostReferenceRatio           float64                      `json:"cost_reference_ratio,omitempty"`
-	CostPricingMode              string                       `json:"cost_pricing_mode,omitempty"`
-	GroupPriorityRatio           float64                      `json:"group_priority_ratio,omitempty"`
-	CircuitState                 string                       `json:"circuit_state,omitempty"`
-	CircuitOpen                  bool                         `json:"circuit_open,omitempty"`
-	CircuitOpenUntil             int64                        `json:"circuit_open_until,omitempty"`
-	CircuitOpenReason            string                       `json:"circuit_open_reason,omitempty"`
-	CircuitFailureCount          int                          `json:"circuit_failure_count,omitempty"`
-	CircuitFailureRate           float64                      `json:"circuit_failure_rate,omitempty"`
-	CircuitSampleCount           int                          `json:"circuit_sample_count,omitempty"`
-	CircuitErrorCounts           map[string]int               `json:"circuit_error_counts,omitempty"`
-	CircuitHalfOpenProbeUsed     int                          `json:"circuit_half_open_probe_used,omitempty"`
-	CircuitHalfOpenProbeMax      int                          `json:"circuit_half_open_probe_max,omitempty"`
-	EmptyOutputRate              float64                      `json:"empty_output_rate,omitempty"`
-	ExperienceIssueRate          float64                      `json:"experience_issue_rate,omitempty"`
-	ProbeRecoveryPending         bool                         `json:"probe_recovery_pending,omitempty"`
-	ProbeRecoverySuccessCount    int                          `json:"probe_recovery_success_count,omitempty"`
-	ProbeRecoveryRequired        int                          `json:"probe_recovery_required,omitempty"`
-	ProbeTriggerReason           string                       `json:"probe_trigger_reason,omitempty"`
-	ConfigErrorIsolated          bool                         `json:"config_error_isolated,omitempty"`
-	IsolationReason              string                       `json:"isolation_reason,omitempty"`
-	IsolationUntil               int64                        `json:"isolation_until,omitempty"`
-	AuthConfigErrorCount         int                          `json:"auth_config_error_count,omitempty"`
-	LastAuthConfigErrorAt        int64                        `json:"last_auth_config_error_at,omitempty"`
-	StickyMatched                bool                         `json:"sticky_matched,omitempty"`
-	Selected                     bool                         `json:"selected,omitempty"`
-	ScoreSampleSource            string                       `json:"score_sample_source,omitempty"`
-	MatchedRuntimeKey            ModelGatewayRuntimeKey       `json:"matched_runtime_key,omitempty"`
-	RequestBodyBytes             int64                        `json:"request_body_bytes,omitempty"`
-	RequestBodyStorage           string                       `json:"request_body_storage,omitempty"`
-	RequestBodySizeLikelyLatency bool                         `json:"request_body_size_likely_latency,omitempty"`
-	RequestBodyPrepareMs         int64                        `json:"request_body_prepare_ms,omitempty"`
-	UpstreamResponseHeaderMs     int64                        `json:"upstream_response_header_ms,omitempty"`
-	UpstreamFirstEventWaitMs     int64                        `json:"upstream_first_event_wait_ms,omitempty"`
+	ChannelID                         int                          `json:"channel_id"`
+	ChannelName                       string                       `json:"channel_name,omitempty"`
+	ResourceID                        string                       `json:"resource_id,omitempty"`
+	ResourceType                      string                       `json:"resource_type,omitempty"`
+	AccountID                         string                       `json:"account_id,omitempty"`
+	AccountType                       string                       `json:"account_type,omitempty"`
+	Brand                             string                       `json:"brand,omitempty"`
+	Provider                          string                       `json:"provider,omitempty"`
+	CredentialIndex                   int                          `json:"credential_index,omitempty"`
+	CredentialSubjectFP               string                       `json:"credential_subject_fingerprint,omitempty"`
+	CredentialFP                      string                       `json:"credential_fingerprint,omitempty"`
+	CredentialUID                     string                       `json:"credential_uid,omitempty"`
+	CredentialLabel                   string                       `json:"credential_label,omitempty"`
+	PoolLevel                         string                       `json:"pool_level,omitempty"`
+	SwitchReason                      string                       `json:"switch_reason,omitempty"`
+	FailureScope                      string                       `json:"failure_scope,omitempty"`
+	Group                             string                       `json:"group,omitempty"`
+	UpstreamModel                     string                       `json:"upstream_model,omitempty"`
+	ProviderProfile                   string                       `json:"provider_profile,omitempty"`
+	ProxyMode                         string                       `json:"proxy_mode,omitempty"`
+	RuntimeKey                        ModelGatewayRuntimeKey       `json:"runtime_key"`
+	Available                         bool                         `json:"available"`
+	RejectReason                      string                       `json:"reject_reason,omitempty"`
+	ClientEmptyOutputSessionKey       string                       `json:"client_empty_output_session_key,omitempty"`
+	ClientEmptyOutputAvoidUntil       int64                        `json:"client_empty_output_avoid_until,omitempty"`
+	ClientEmptyOutputRemainingSeconds int64                        `json:"client_empty_output_remaining_seconds,omitempty"`
+	SelectionSkipReason               string                       `json:"selection_skip_reason,omitempty"`
+	ChannelStatus                     int                          `json:"channel_status,omitempty"`
+	StatusReason                      string                       `json:"status_reason,omitempty"`
+	BalanceInsufficient               bool                         `json:"balance_insufficient,omitempty"`
+	ScoreTotal                        float64                      `json:"score_total,omitempty"`
+	ScoreBreakdown                    map[string]float64           `json:"score_breakdown,omitempty"`
+	ScoreItems                        []modelgatewaycore.ScoreItem `json:"score_items,omitempty"`
+	RoutingScoreTotal                 float64                      `json:"routing_score_total,omitempty"`
+	RoutingScoreBreakdown             map[string]float64           `json:"routing_score_breakdown,omitempty"`
+	RoutingScoreItems                 []modelgatewaycore.ScoreItem `json:"routing_score_items,omitempty"`
+	StateTags                         []string                     `json:"state_tags,omitempty"`
+	CostReferenceMissing              bool                         `json:"cost_reference_missing,omitempty"`
+	SuccessRate                       float64                      `json:"success_rate,omitempty"`
+	TTFTMs                            float64                      `json:"ttft_ms,omitempty"`
+	DurationMs                        float64                      `json:"duration_ms,omitempty"`
+	TokensPerSecond                   float64                      `json:"tokens_per_second,omitempty"`
+	SampleCount                       int                          `json:"sample_count,omitempty"`
+	ActiveConcurrency                 int                          `json:"active_concurrency,omitempty"`
+	MaxConcurrency                    int                          `json:"max_concurrency,omitempty"`
+	ConfiguredConcurrencyLimit        int                          `json:"configured_concurrency_limit,omitempty"`
+	LearnedConcurrencyLimit           int                          `json:"learned_concurrency_limit,omitempty"`
+	EffectiveConcurrencyLimit         int                          `json:"effective_concurrency_limit,omitempty"`
+	QueueDepth                        int                          `json:"queue_depth,omitempty"`
+	QueueCapacity                     int                          `json:"queue_capacity,omitempty"`
+	EstimatedQueueWaitMs              float64                      `json:"estimated_queue_wait_ms,omitempty"`
+	ResourceProtectionRole            string                       `json:"resource_protection_role,omitempty"`
+	ResourceProtectionReason          string                       `json:"resource_protection_reason,omitempty"`
+	CostRatio                         float64                      `json:"cost_ratio,omitempty"`
+	CostReferenceRatio                float64                      `json:"cost_reference_ratio,omitempty"`
+	CostPricingMode                   string                       `json:"cost_pricing_mode,omitempty"`
+	GroupPriorityRatio                float64                      `json:"group_priority_ratio,omitempty"`
+	CircuitState                      string                       `json:"circuit_state,omitempty"`
+	CircuitOpen                       bool                         `json:"circuit_open,omitempty"`
+	CircuitOpenUntil                  int64                        `json:"circuit_open_until,omitempty"`
+	CircuitOpenReason                 string                       `json:"circuit_open_reason,omitempty"`
+	CircuitFailureCount               int                          `json:"circuit_failure_count,omitempty"`
+	CircuitFailureRate                float64                      `json:"circuit_failure_rate,omitempty"`
+	CircuitSampleCount                int                          `json:"circuit_sample_count,omitempty"`
+	CircuitErrorCounts                map[string]int               `json:"circuit_error_counts,omitempty"`
+	CircuitHalfOpenProbeUsed          int                          `json:"circuit_half_open_probe_used,omitempty"`
+	CircuitHalfOpenProbeMax           int                          `json:"circuit_half_open_probe_max,omitempty"`
+	EmptyOutputRate                   float64                      `json:"empty_output_rate,omitempty"`
+	ExperienceIssueRate               float64                      `json:"experience_issue_rate,omitempty"`
+	ProbeRecoveryPending              bool                         `json:"probe_recovery_pending,omitempty"`
+	ProbeRecoverySuccessCount         int                          `json:"probe_recovery_success_count,omitempty"`
+	ProbeRecoveryRequired             int                          `json:"probe_recovery_required,omitempty"`
+	ProbeTriggerReason                string                       `json:"probe_trigger_reason,omitempty"`
+	ConfigErrorIsolated               bool                         `json:"config_error_isolated,omitempty"`
+	IsolationReason                   string                       `json:"isolation_reason,omitempty"`
+	IsolationUntil                    int64                        `json:"isolation_until,omitempty"`
+	AuthConfigErrorCount              int                          `json:"auth_config_error_count,omitempty"`
+	LastAuthConfigErrorAt             int64                        `json:"last_auth_config_error_at,omitempty"`
+	StickyMatched                     bool                         `json:"sticky_matched,omitempty"`
+	Selected                          bool                         `json:"selected,omitempty"`
+	ScoreSampleSource                 string                       `json:"score_sample_source,omitempty"`
+	MatchedRuntimeKey                 ModelGatewayRuntimeKey       `json:"matched_runtime_key,omitempty"`
+	RequestBodyBytes                  int64                        `json:"request_body_bytes,omitempty"`
+	RequestBodyStorage                string                       `json:"request_body_storage,omitempty"`
+	RequestBodySizeLikelyLatency      bool                         `json:"request_body_size_likely_latency,omitempty"`
+	RequestBodyPrepareMs              int64                        `json:"request_body_prepare_ms,omitempty"`
+	UpstreamResponseHeaderMs          int64                        `json:"upstream_response_header_ms,omitempty"`
+	UpstreamFirstEventWaitMs          int64                        `json:"upstream_first_event_wait_ms,omitempty"`
 }
 
 type ModelGatewayRuntimeKey struct {
@@ -1359,6 +1378,53 @@ func ClearModelGatewayRuntimeCircuit(c *gin.Context) {
 		FailureAvoidanceCleared: failureAvoidanceCleared,
 		MatchedRuntimeKeys:      modelGatewayRuntimeKeysFromCore(matchedKeys),
 		ClearFailureAvoidance:   clearFailureAvoidance,
+	})
+}
+
+func ClearModelGatewayClientEmptyOutputAvoidance(c *gin.Context) {
+	var request ModelGatewayClientEmptyOutputAvoidanceClearRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	sessionKey := strings.TrimSpace(request.SessionKey)
+	requestedModel := strings.TrimSpace(request.RequestedModel)
+	group := strings.TrimSpace(request.Group)
+	if sessionKey == "" {
+		common.ApiErrorMsg(c, "missing session_key")
+		return
+	}
+	if request.ChannelID <= 0 {
+		common.ApiErrorMsg(c, "missing channel_id")
+		return
+	}
+	if requestedModel == "" {
+		common.ApiErrorMsg(c, "missing requested_model")
+		return
+	}
+	if group == "" {
+		common.ApiErrorMsg(c, "missing group")
+		return
+	}
+	endpointType := request.EndpointType
+	if endpointType == "" {
+		endpointType = constant.EndpointTypeOpenAI
+	}
+	scope := modelgatewayscheduler.ClientEmptyOutputSwitchScope{
+		SessionKey:     sessionKey,
+		ChannelID:      request.ChannelID,
+		RequestedModel: requestedModel,
+		Group:          group,
+		EndpointType:   endpointType,
+	}
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	cleared := false
+	if runtimeDeps != nil && runtimeDeps.ClientEmptyOutputSwitchTracker != nil {
+		cleared = runtimeDeps.ClientEmptyOutputSwitchTracker.Clear(scope)
+	}
+	common.ApiSuccess(c, ModelGatewayClientEmptyOutputAvoidanceClearResponse{
+		Cleared: cleared,
+		Scope:   scope,
 	})
 }
 
@@ -2900,9 +2966,14 @@ func modelGatewayHealthCheckQueueReasons(item modelgatewayobservability.RuntimeS
 		addReason("cooldown", 90, "warning")
 	}
 	if item.FailureAvoidance {
-		if strings.TrimSpace(item.FailureAvoidanceReason) == service.ChannelTimeoutRecoveryReason ||
-			strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason {
+		failureAvoidanceReason := strings.TrimSpace(item.FailureAvoidanceReason)
+		probeTriggerReason := strings.TrimSpace(item.ProbeTriggerReason)
+		if failureAvoidanceReason == service.ChannelTimeoutRecoveryReason ||
+			probeTriggerReason == service.ChannelTimeoutRecoveryReason {
 			addReason(service.ChannelTimeoutRecoveryReason, 92, "warning")
+		} else if failureAvoidanceReason == service.ChannelOverloadRecoveryReason ||
+			probeTriggerReason == service.ChannelOverloadRecoveryReason {
+			addReason(service.ChannelOverloadRecoveryReason, 92, "warning")
 		} else {
 			addReason("failure_avoidance", 88, "warning")
 		}
@@ -2949,6 +3020,8 @@ func modelGatewayHealthCheckReasonLabel(key string) string {
 		return "冷却中"
 	case service.ChannelTimeoutRecoveryReason:
 		return "频繁超时降级中"
+	case service.ChannelOverloadRecoveryReason:
+		return "429 过载恢复中"
 	case "failure_avoidance":
 		return "近期失败恢复中"
 	case "probe_recovery_pending":
@@ -3018,6 +3091,7 @@ func modelGatewayHealthCheckProbeSkipReason(item modelgatewayobservability.Runti
 	}
 	if strings.TrimSpace(item.CircuitState) == string(modelgatewaycore.CircuitStateHalfOpen) ||
 		strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason ||
+		strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelOverloadRecoveryReason ||
 		strings.TrimSpace(item.ProbeTriggerReason) == modelgatewaycore.ProbeReasonScoreAnomalyFastProbe ||
 		strings.TrimSpace(item.ProbeRecoveryPhase) == modelgatewaycore.ProbeRecoveryPhaseFastProbe {
 		return ""
@@ -3055,6 +3129,7 @@ func modelGatewayHealthCheckNextProbeSchedule(item modelgatewayobservability.Run
 	}
 	bypassRecentRequestSkip := strings.TrimSpace(item.CircuitState) == string(modelgatewaycore.CircuitStateHalfOpen) ||
 		strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason ||
+		strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelOverloadRecoveryReason ||
 		strings.TrimSpace(item.ProbeTriggerReason) == modelgatewaycore.ProbeReasonScoreAnomalyFastProbe ||
 		strings.TrimSpace(item.ProbeRecoveryPhase) == modelgatewaycore.ProbeRecoveryPhaseFastProbe
 	if !bypassRecentRequestSkip && setting.ProbeSkipRecentRealRequestEnabled && item.LastRealAttemptAt > 0 {
@@ -3084,7 +3159,7 @@ func modelGatewayHealthCheckQueueAccumulateSummary(summary *ModelGatewayHealthCh
 	if modelGatewayHealthCheckReasonsContain(reasons, modelGatewayHealthCheckQueueTypeScoreAnomaly) {
 		summary.ScoreAnomalyCount++
 	}
-	if item.ProbeRecoveryPending || item.FailureAvoidance || modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") || modelGatewayHealthCheckReasonsContain(reasons, service.ChannelTimeoutRecoveryReason) || modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") || modelGatewayHealthCheckReasonsContain(reasons, modelGatewayHealthCheckQueueTypeCircuitHalfOpen) {
+	if item.ProbeRecoveryPending || item.FailureAvoidance || modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") || modelGatewayHealthCheckReasonsContain(reasons, service.ChannelTimeoutRecoveryReason) || modelGatewayHealthCheckReasonsContain(reasons, service.ChannelOverloadRecoveryReason) || modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") || modelGatewayHealthCheckReasonsContain(reasons, modelGatewayHealthCheckQueueTypeCircuitHalfOpen) {
 		summary.RecoveryCount++
 	}
 	if item.CircuitOpen || item.Cooldown || item.ConfigErrorIsolated || modelGatewayHealthCheckReasonsContain(reasons, "circuit_open") || modelGatewayHealthCheckReasonsContain(reasons, "cooldown") || modelGatewayHealthCheckReasonsContain(reasons, "config_error") {
@@ -3108,6 +3183,7 @@ func modelGatewayHealthCheckQueueItemType(item modelgatewayobservability.Runtime
 	if item.ProbeRecoveryPending || item.FailureAvoidance ||
 		modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") ||
 		modelGatewayHealthCheckReasonsContain(reasons, service.ChannelTimeoutRecoveryReason) ||
+		modelGatewayHealthCheckReasonsContain(reasons, service.ChannelOverloadRecoveryReason) ||
 		modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") ||
 		modelGatewayHealthCheckReasonsContain(reasons, modelGatewayHealthCheckQueueTypeCircuitHalfOpen) {
 		return modelGatewayHealthCheckQueueTypeRecovery
@@ -5555,6 +5631,10 @@ func modelGatewayRuntimeStatusRejectReason(item modelgatewayobservability.Runtim
 			strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason {
 			return service.ChannelTimeoutRecoveryReason
 		}
+		if strings.TrimSpace(item.FailureAvoidanceReason) == service.ChannelOverloadRecoveryReason ||
+			strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelOverloadRecoveryReason {
+			return service.ChannelOverloadRecoveryReason
+		}
 		return "failure_avoidance"
 	case "high_pressure":
 		return "concurrency_pressure"
@@ -5682,6 +5762,7 @@ func modelGatewayClearRuntimeCircuitSnapshots(runtimeDeps *modelgatewayintegrati
 		if clearFailureAvoidance {
 			wasRecovery := snapshot.FailureAvoidance ||
 				strings.TrimSpace(snapshot.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason ||
+				strings.TrimSpace(snapshot.ProbeTriggerReason) == service.ChannelOverloadRecoveryReason ||
 				strings.TrimSpace(snapshot.ProbeTriggerReason) == "failure_avoidance"
 			snapshot.FailureAvoidance = false
 			if wasRecovery {
@@ -5713,6 +5794,79 @@ func modelGatewayClearRuntimeCooldownSnapshots(runtimeDeps *modelgatewayintegrat
 			snapshot.ProbeRecoverySuccessCount = 0
 			snapshot.ProbeRecoveryRequired = 0
 			snapshot.ProbeTriggerReason = ""
+		}
+		runtimeDeps.SnapshotStore.Put(snapshot)
+		updated++
+	}
+	return updated
+}
+
+func modelGatewayRecoverRuntimeHealthSnapshots(runtimeDeps *modelgatewayintegration.DefaultRuntimeObservability, keys []modelgatewaycore.RuntimeKey) int {
+	if runtimeDeps == nil || runtimeDeps.SnapshotStore == nil || len(keys) == 0 {
+		return 0
+	}
+	now := time.Now().Unix()
+	updated := 0
+	for _, key := range keys {
+		snapshot, ok := runtimeDeps.SnapshotStore.Get(key)
+		if !ok {
+			continue
+		}
+		if snapshot.SampleCount < 3 {
+			snapshot.SampleCount = 3
+		}
+		snapshot.ScoreStatsJSON = ""
+		snapshot.RecentLatencySamples = nil
+		snapshot.SuccessRate = 1
+		snapshot.TTFTMs = 800
+		snapshot.DurationMs = 3000
+		snapshot.TokensPerSecond = 80
+		snapshot.EmptyOutputRate = 0
+		snapshot.ExperienceIssueRate = 0
+		snapshot.QueueDepth = 0
+		snapshot.EstimatedQueueWaitMs = 0
+		snapshot.FirstBytePending = 0
+		snapshot.SlowFirstBytePending = 0
+		snapshot.OldestFirstByteWaitMs = 0
+		snapshot.CircuitState = modelgatewaycore.CircuitStateClosed
+		snapshot.CircuitOpen = false
+		snapshot.CircuitOpenUntil = 0
+		snapshot.CircuitOpenReason = ""
+		snapshot.CircuitFailureCount = 0
+		snapshot.CircuitFailureRate = 0
+		snapshot.CircuitSampleCount = 0
+		snapshot.CircuitErrorCounts = nil
+		snapshot.CircuitHalfOpenProbeUsed = 0
+		snapshot.CircuitHalfOpenProbeMax = 0
+		snapshot.Cooldown = false
+		snapshot.FailureAvoidance = false
+		snapshot.RecoverableQualityScore = 1
+		snapshot.RecoverableQualityBaseline = 0
+		snapshot.RecoverableQualityBaselineSamples = 0
+		snapshot.RecoverableQualityDropRatio = 0
+		snapshot.RecoverableQualityItemBaselines = nil
+		snapshot.ProbeRecoveryPending = false
+		snapshot.ProbeRecoverySuccessCount = 0
+		snapshot.ProbeRecoveryRequired = 0
+		snapshot.ProbeTriggerReason = ""
+		snapshot.ProbeRecoveryPhase = ""
+		snapshot.ProbeFastRecoveryAttempts = 0
+		snapshot.ProbeAnomalyTriggerItems = nil
+		snapshot.ConfigErrorIsolated = false
+		snapshot.IsolationReason = ""
+		snapshot.IsolationUntil = 0
+		snapshot.AuthConfigErrorCount = 0
+		snapshot.LastAuthConfigErrorAt = 0
+		snapshot.LastRealSuccessAt = now
+		snapshot.LastRealFailureAt = 0
+		if snapshot.LastRealAttemptAt <= 0 {
+			snapshot.LastRealAttemptAt = now
+		}
+		if snapshot.RealSampleCount30m <= 0 {
+			snapshot.RealSampleCount30m = 1
+		}
+		if snapshot.LastProbeSuccessAt <= 0 {
+			snapshot.LastProbeSuccessAt = now
 		}
 		runtimeDeps.SnapshotStore.Put(snapshot)
 		updated++
@@ -5943,37 +6097,40 @@ func modelGatewayScoreHistoryItem(record model.ModelExecutionRecord, candidate M
 	requestMeta, _ := parseModelGatewayRequestMeta(record.RequestMeta)
 	attemptMeta := modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta)
 	return ModelGatewayScoreHistoryItem{
-		ID:                    record.Id,
-		CreatedAt:             record.CreatedAt,
-		RequestID:             record.RequestId,
-		RequestedModel:        record.RequestedModel,
-		RequestedGroup:        record.RequestedGroup,
-		SelectedGroup:         record.SelectedGroup,
-		ChannelID:             modelGatewayCandidateChannelID(candidate),
-		ChannelName:           candidate.ChannelName,
-		RuntimeKey:            candidate.RuntimeKey,
-		PoolLevel:             candidate.PoolLevel,
-		SwitchReason:          candidate.SwitchReason,
-		FailureScope:          candidate.FailureScope,
-		Selected:              candidate.Selected,
-		SelectedReason:        record.SelectedReason,
-		Available:             candidate.Available,
-		RejectReason:          candidate.RejectReason,
-		StatusReason:          candidate.StatusReason,
-		ScoreTotal:            candidate.ScoreTotal,
-		ScoreBreakdown:        candidate.ScoreBreakdown,
-		ScoreItems:            candidate.ScoreItems,
-		RoutingScoreTotal:     candidate.RoutingScoreTotal,
-		RoutingScoreBreakdown: candidate.RoutingScoreBreakdown,
-		RoutingScoreItems:     candidate.RoutingScoreItems,
-		CostReferenceMissing:  candidate.CostReferenceMissing,
-		SampleCount:           candidate.SampleCount,
-		TTFTMs:                candidate.TTFTMs,
-		DurationMs:            candidate.DurationMs,
-		ActiveConcurrency:     candidate.ActiveConcurrency,
-		EffectiveConcurrency:  candidate.EffectiveConcurrencyLimit,
-		IsHealthProbe:         attemptMeta.IsHealthProbe,
-		ScoreSampleSource:     candidate.ScoreSampleSource,
+		ID:                                record.Id,
+		CreatedAt:                         record.CreatedAt,
+		RequestID:                         record.RequestId,
+		RequestedModel:                    record.RequestedModel,
+		RequestedGroup:                    record.RequestedGroup,
+		SelectedGroup:                     record.SelectedGroup,
+		ChannelID:                         modelGatewayCandidateChannelID(candidate),
+		ChannelName:                       candidate.ChannelName,
+		RuntimeKey:                        candidate.RuntimeKey,
+		PoolLevel:                         candidate.PoolLevel,
+		SwitchReason:                      candidate.SwitchReason,
+		FailureScope:                      candidate.FailureScope,
+		Selected:                          candidate.Selected,
+		SelectedReason:                    record.SelectedReason,
+		Available:                         candidate.Available,
+		RejectReason:                      candidate.RejectReason,
+		ClientEmptyOutputSessionKey:       candidate.ClientEmptyOutputSessionKey,
+		ClientEmptyOutputAvoidUntil:       candidate.ClientEmptyOutputAvoidUntil,
+		ClientEmptyOutputRemainingSeconds: candidate.ClientEmptyOutputRemainingSeconds,
+		StatusReason:                      candidate.StatusReason,
+		ScoreTotal:                        candidate.ScoreTotal,
+		ScoreBreakdown:                    candidate.ScoreBreakdown,
+		ScoreItems:                        candidate.ScoreItems,
+		RoutingScoreTotal:                 candidate.RoutingScoreTotal,
+		RoutingScoreBreakdown:             candidate.RoutingScoreBreakdown,
+		RoutingScoreItems:                 candidate.RoutingScoreItems,
+		CostReferenceMissing:              candidate.CostReferenceMissing,
+		SampleCount:                       candidate.SampleCount,
+		TTFTMs:                            candidate.TTFTMs,
+		DurationMs:                        candidate.DurationMs,
+		ActiveConcurrency:                 candidate.ActiveConcurrency,
+		EffectiveConcurrency:              candidate.EffectiveConcurrencyLimit,
+		IsHealthProbe:                     attemptMeta.IsHealthProbe,
+		ScoreSampleSource:                 candidate.ScoreSampleSource,
 	}
 }
 
@@ -6109,83 +6266,86 @@ func modelGatewayCandidateExplanationsFromRequestMeta(requestMeta map[string]any
 	out := make([]ModelGatewayCandidateExplanation, 0, len(candidates))
 	for _, candidate := range candidates {
 		item := ModelGatewayCandidateExplanation{
-			ChannelID:                  candidate.ChannelID,
-			ChannelName:                candidate.ChannelName,
-			ResourceID:                 strings.TrimSpace(candidate.ResourceID),
-			ResourceType:               strings.TrimSpace(candidate.ResourceType),
-			AccountID:                  strings.TrimSpace(candidate.AccountID),
-			AccountType:                strings.TrimSpace(candidate.AccountType),
-			Brand:                      strings.TrimSpace(candidate.Brand),
-			Provider:                   strings.TrimSpace(candidate.Provider),
-			CredentialIndex:            candidate.CredentialIndex,
-			CredentialSubjectFP:        strings.TrimSpace(candidate.CredentialSubjectFP),
-			CredentialFP:               strings.TrimSpace(candidate.CredentialFP),
-			PoolLevel:                  strings.TrimSpace(candidate.PoolLevel),
-			SwitchReason:               strings.TrimSpace(candidate.SwitchReason),
-			FailureScope:               strings.TrimSpace(candidate.FailureScope),
-			Group:                      candidate.Group,
-			UpstreamModel:              candidate.UpstreamModel,
-			ProviderProfile:            candidate.ProviderProfile,
-			ProxyMode:                  candidate.ProxyMode,
-			RuntimeKey:                 modelGatewayRuntimeKeyFromCore(candidate.RuntimeKey),
-			Available:                  candidate.Available,
-			RejectReason:               candidate.RejectReason,
-			SelectionSkipReason:        candidate.SelectionSkipReason,
-			ChannelStatus:              candidate.ChannelStatus,
-			StatusReason:               candidate.StatusReason,
-			BalanceInsufficient:        candidate.BalanceInsufficient,
-			ScoreTotal:                 roundModelGatewayObservabilityFloat(candidate.ScoreTotal),
-			ScoreBreakdown:             roundModelGatewayScoreMap(candidate.ScoreBreakdown),
-			ScoreItems:                 candidate.ScoreItems,
-			RoutingScoreTotal:          roundModelGatewayObservabilityFloat(candidate.RoutingScoreTotal),
-			RoutingScoreBreakdown:      roundModelGatewayScoreMap(candidate.RoutingScoreBreakdown),
-			RoutingScoreItems:          candidate.RoutingScoreItems,
-			StateTags:                  append([]string(nil), candidate.StateTags...),
-			CostReferenceMissing:       candidate.CostReferenceMissing,
-			SuccessRate:                roundModelGatewayObservabilityFloat(candidate.SuccessRate),
-			TTFTMs:                     roundModelGatewayObservabilityFloat(candidate.TTFTMs),
-			DurationMs:                 roundModelGatewayObservabilityFloat(candidate.DurationMs),
-			TokensPerSecond:            roundModelGatewayObservabilityFloat(candidate.TokensPerSecond),
-			SampleCount:                candidate.SampleCount,
-			ActiveConcurrency:          candidate.ActiveConcurrency,
-			MaxConcurrency:             candidate.MaxConcurrency,
-			ConfiguredConcurrencyLimit: candidate.ConfiguredConcurrencyLimit,
-			LearnedConcurrencyLimit:    candidate.LearnedConcurrencyLimit,
-			EffectiveConcurrencyLimit:  candidate.EffectiveConcurrencyLimit,
-			QueueDepth:                 candidate.QueueDepth,
-			QueueCapacity:              candidate.QueueCapacity,
-			EstimatedQueueWaitMs:       roundModelGatewayObservabilityFloat(candidate.EstimatedQueueWaitMs),
-			ResourceProtectionRole:     strings.TrimSpace(candidate.ResourceProtectionRole),
-			ResourceProtectionReason:   strings.TrimSpace(candidate.ResourceProtectionReason),
-			CostRatio:                  roundModelGatewayObservabilityFloat(candidate.CostRatio),
-			CostReferenceRatio:         roundModelGatewayObservabilityFloat(candidate.CostReferenceRatio),
-			CostPricingMode:            strings.TrimSpace(candidate.CostPricingMode),
-			GroupPriorityRatio:         roundModelGatewayObservabilityFloat(candidate.GroupPriorityRatio),
-			CircuitState:               strings.TrimSpace(string(candidate.CircuitState)),
-			CircuitOpen:                candidate.CircuitOpen,
-			CircuitOpenUntil:           candidate.CircuitOpenUntil,
-			CircuitOpenReason:          strings.TrimSpace(candidate.CircuitOpenReason),
-			CircuitFailureCount:        candidate.CircuitFailureCount,
-			CircuitFailureRate:         roundModelGatewayObservabilityFloat(candidate.CircuitFailureRate),
-			CircuitSampleCount:         candidate.CircuitSampleCount,
-			CircuitErrorCounts:         copyModelGatewayCircuitErrorCounts(candidate.CircuitErrorCounts),
-			CircuitHalfOpenProbeUsed:   candidate.CircuitHalfOpenProbeUsed,
-			CircuitHalfOpenProbeMax:    candidate.CircuitHalfOpenProbeMax,
-			EmptyOutputRate:            roundModelGatewayObservabilityFloat(candidate.EmptyOutputRate),
-			ExperienceIssueRate:        roundModelGatewayObservabilityFloat(candidate.ExperienceIssueRate),
-			ProbeRecoveryPending:       candidate.ProbeRecoveryPending,
-			ProbeRecoverySuccessCount:  candidate.ProbeRecoverySuccessCount,
-			ProbeRecoveryRequired:      candidate.ProbeRecoveryRequired,
-			ProbeTriggerReason:         strings.TrimSpace(candidate.ProbeTriggerReason),
-			ConfigErrorIsolated:        candidate.ConfigErrorIsolated,
-			IsolationReason:            strings.TrimSpace(candidate.IsolationReason),
-			IsolationUntil:             candidate.IsolationUntil,
-			AuthConfigErrorCount:       candidate.AuthConfigErrorCount,
-			LastAuthConfigErrorAt:      candidate.LastAuthConfigErrorAt,
-			StickyMatched:              candidate.StickyMatched,
-			Selected:                   candidate.Selected,
-			ScoreSampleSource:          candidate.ScoreSampleSource,
-			MatchedRuntimeKey:          modelGatewayRuntimeKeyFromCore(candidate.MatchedRuntimeKey),
+			ChannelID:                         candidate.ChannelID,
+			ChannelName:                       candidate.ChannelName,
+			ResourceID:                        strings.TrimSpace(candidate.ResourceID),
+			ResourceType:                      strings.TrimSpace(candidate.ResourceType),
+			AccountID:                         strings.TrimSpace(candidate.AccountID),
+			AccountType:                       strings.TrimSpace(candidate.AccountType),
+			Brand:                             strings.TrimSpace(candidate.Brand),
+			Provider:                          strings.TrimSpace(candidate.Provider),
+			CredentialIndex:                   candidate.CredentialIndex,
+			CredentialSubjectFP:               strings.TrimSpace(candidate.CredentialSubjectFP),
+			CredentialFP:                      strings.TrimSpace(candidate.CredentialFP),
+			PoolLevel:                         strings.TrimSpace(candidate.PoolLevel),
+			SwitchReason:                      strings.TrimSpace(candidate.SwitchReason),
+			FailureScope:                      strings.TrimSpace(candidate.FailureScope),
+			Group:                             candidate.Group,
+			UpstreamModel:                     candidate.UpstreamModel,
+			ProviderProfile:                   candidate.ProviderProfile,
+			ProxyMode:                         candidate.ProxyMode,
+			RuntimeKey:                        modelGatewayRuntimeKeyFromCore(candidate.RuntimeKey),
+			Available:                         candidate.Available,
+			RejectReason:                      candidate.RejectReason,
+			ClientEmptyOutputSessionKey:       candidate.ClientEmptyOutputSessionKey,
+			ClientEmptyOutputAvoidUntil:       candidate.ClientEmptyOutputAvoidUntil,
+			ClientEmptyOutputRemainingSeconds: candidate.ClientEmptyOutputRemainingSeconds,
+			SelectionSkipReason:               candidate.SelectionSkipReason,
+			ChannelStatus:                     candidate.ChannelStatus,
+			StatusReason:                      candidate.StatusReason,
+			BalanceInsufficient:               candidate.BalanceInsufficient,
+			ScoreTotal:                        roundModelGatewayObservabilityFloat(candidate.ScoreTotal),
+			ScoreBreakdown:                    roundModelGatewayScoreMap(candidate.ScoreBreakdown),
+			ScoreItems:                        candidate.ScoreItems,
+			RoutingScoreTotal:                 roundModelGatewayObservabilityFloat(candidate.RoutingScoreTotal),
+			RoutingScoreBreakdown:             roundModelGatewayScoreMap(candidate.RoutingScoreBreakdown),
+			RoutingScoreItems:                 candidate.RoutingScoreItems,
+			StateTags:                         append([]string(nil), candidate.StateTags...),
+			CostReferenceMissing:              candidate.CostReferenceMissing,
+			SuccessRate:                       roundModelGatewayObservabilityFloat(candidate.SuccessRate),
+			TTFTMs:                            roundModelGatewayObservabilityFloat(candidate.TTFTMs),
+			DurationMs:                        roundModelGatewayObservabilityFloat(candidate.DurationMs),
+			TokensPerSecond:                   roundModelGatewayObservabilityFloat(candidate.TokensPerSecond),
+			SampleCount:                       candidate.SampleCount,
+			ActiveConcurrency:                 candidate.ActiveConcurrency,
+			MaxConcurrency:                    candidate.MaxConcurrency,
+			ConfiguredConcurrencyLimit:        candidate.ConfiguredConcurrencyLimit,
+			LearnedConcurrencyLimit:           candidate.LearnedConcurrencyLimit,
+			EffectiveConcurrencyLimit:         candidate.EffectiveConcurrencyLimit,
+			QueueDepth:                        candidate.QueueDepth,
+			QueueCapacity:                     candidate.QueueCapacity,
+			EstimatedQueueWaitMs:              roundModelGatewayObservabilityFloat(candidate.EstimatedQueueWaitMs),
+			ResourceProtectionRole:            strings.TrimSpace(candidate.ResourceProtectionRole),
+			ResourceProtectionReason:          strings.TrimSpace(candidate.ResourceProtectionReason),
+			CostRatio:                         roundModelGatewayObservabilityFloat(candidate.CostRatio),
+			CostReferenceRatio:                roundModelGatewayObservabilityFloat(candidate.CostReferenceRatio),
+			CostPricingMode:                   strings.TrimSpace(candidate.CostPricingMode),
+			GroupPriorityRatio:                roundModelGatewayObservabilityFloat(candidate.GroupPriorityRatio),
+			CircuitState:                      strings.TrimSpace(string(candidate.CircuitState)),
+			CircuitOpen:                       candidate.CircuitOpen,
+			CircuitOpenUntil:                  candidate.CircuitOpenUntil,
+			CircuitOpenReason:                 strings.TrimSpace(candidate.CircuitOpenReason),
+			CircuitFailureCount:               candidate.CircuitFailureCount,
+			CircuitFailureRate:                roundModelGatewayObservabilityFloat(candidate.CircuitFailureRate),
+			CircuitSampleCount:                candidate.CircuitSampleCount,
+			CircuitErrorCounts:                copyModelGatewayCircuitErrorCounts(candidate.CircuitErrorCounts),
+			CircuitHalfOpenProbeUsed:          candidate.CircuitHalfOpenProbeUsed,
+			CircuitHalfOpenProbeMax:           candidate.CircuitHalfOpenProbeMax,
+			EmptyOutputRate:                   roundModelGatewayObservabilityFloat(candidate.EmptyOutputRate),
+			ExperienceIssueRate:               roundModelGatewayObservabilityFloat(candidate.ExperienceIssueRate),
+			ProbeRecoveryPending:              candidate.ProbeRecoveryPending,
+			ProbeRecoverySuccessCount:         candidate.ProbeRecoverySuccessCount,
+			ProbeRecoveryRequired:             candidate.ProbeRecoveryRequired,
+			ProbeTriggerReason:                strings.TrimSpace(candidate.ProbeTriggerReason),
+			ConfigErrorIsolated:               candidate.ConfigErrorIsolated,
+			IsolationReason:                   strings.TrimSpace(candidate.IsolationReason),
+			IsolationUntil:                    candidate.IsolationUntil,
+			AuthConfigErrorCount:              candidate.AuthConfigErrorCount,
+			LastAuthConfigErrorAt:             candidate.LastAuthConfigErrorAt,
+			StickyMatched:                     candidate.StickyMatched,
+			Selected:                          candidate.Selected,
+			ScoreSampleSource:                 candidate.ScoreSampleSource,
+			MatchedRuntimeKey:                 modelGatewayRuntimeKeyFromCore(candidate.MatchedRuntimeKey),
 		}
 		item.CredentialUID, item.CredentialLabel = modelGatewayCandidateCredentialDisplay(item)
 		out = append(out, item)
@@ -6965,6 +7125,10 @@ func modelGatewayRuntimeRiskReason(item modelgatewayobservability.RuntimeStatusI
 			strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason {
 			return service.ChannelTimeoutRecoveryReason
 		}
+		if strings.TrimSpace(item.FailureAvoidanceReason) == service.ChannelOverloadRecoveryReason ||
+			strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelOverloadRecoveryReason {
+			return service.ChannelOverloadRecoveryReason
+		}
 		return strings.TrimSpace(item.FailureAvoidanceReason)
 	case "queued":
 		return "queue_depth"
@@ -6985,6 +7149,8 @@ func modelGatewayRiskStatusForRejectReason(reason string) string {
 	case strings.Contains(normalized, "cooldown"):
 		return "cooldown"
 	case strings.Contains(normalized, "timeout_recovery"):
+		return "failure_avoidance"
+	case strings.Contains(normalized, "overload_recovery"):
 		return "failure_avoidance"
 	case strings.Contains(normalized, "avoid"):
 		return "failure_avoidance"

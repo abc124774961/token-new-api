@@ -25,19 +25,20 @@ var (
 )
 
 type DefaultRuntimeObservability struct {
-	SnapshotStore         *scheduler.SyncedRuntimeSnapshotStore
-	LocalSnapshotStore    *scheduler.MemoryRuntimeSnapshotStore
-	CircuitBreaker        *scheduler.SyncedCircuitBreaker
-	LocalCircuitBreaker   *scheduler.CircuitBreaker
-	StickyRouter          *scheduler.MemoryStickyRouter
-	RuntimeEnricher       *scheduler.RuntimeSnapshotEnricher
-	CostBaselineCache     *scheduler.CostBaselineCache
-	RuntimeSyncStore      scheduler.RuntimeSyncStore
-	RuntimeSyncEventStore *scheduler.RuntimeSyncEventStore
-	QueueSnapshotSyncer   *scheduler.RuntimeQueueSnapshotSyncer
-	SnapshotPersistence   *scheduler.RuntimeSnapshotPersistence
-	AccountCandidateIndex *AccountCandidateIndexRuntime
-	RuntimeSyncNodeID     string
+	SnapshotStore                  *scheduler.SyncedRuntimeSnapshotStore
+	LocalSnapshotStore             *scheduler.MemoryRuntimeSnapshotStore
+	CircuitBreaker                 *scheduler.SyncedCircuitBreaker
+	LocalCircuitBreaker            *scheduler.CircuitBreaker
+	ClientEmptyOutputSwitchTracker *scheduler.ClientEmptyOutputSwitchTracker
+	StickyRouter                   *scheduler.MemoryStickyRouter
+	RuntimeEnricher                *scheduler.RuntimeSnapshotEnricher
+	CostBaselineCache              *scheduler.CostBaselineCache
+	RuntimeSyncStore               scheduler.RuntimeSyncStore
+	RuntimeSyncEventStore          *scheduler.RuntimeSyncEventStore
+	QueueSnapshotSyncer            *scheduler.RuntimeQueueSnapshotSyncer
+	SnapshotPersistence            *scheduler.RuntimeSnapshotPersistence
+	AccountCandidateIndex          *AccountCandidateIndexRuntime
+	RuntimeSyncNodeID              string
 }
 
 func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
@@ -126,6 +127,7 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 			ErrorPolicies:      runtimePolicy.CircuitErrorPolicies,
 		})
 		circuitBreaker := scheduler.NewSyncedCircuitBreaker(localCircuitBreaker, runtimeSyncStore)
+		clientEmptyOutputSwitchTracker := scheduler.NewClientEmptyOutputSwitchTracker(scheduler.ClientEmptyOutputSwitchConfig{})
 		stickyRouter := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{
 			TTLSeconds:           runtimePolicy.StickyTTLSeconds,
 			StickyKeepScoreRatio: runtimePolicy.StickyKeepScoreRatio,
@@ -151,11 +153,13 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 			WithCostBaselineProvider(costBaselineCache).
 			WithStickyRouter(stickyRouter).
 			WithCostFirstStickyEscapeConfig(runtimePolicy.CostFirstStickyEscape).
-			WithCostFirstGuardConfig(runtimePolicy.CostFirstGuard)
+			WithCostFirstGuardConfig(runtimePolicy.CostFirstGuard).
+			WithClientEmptyOutputSwitchTracker(clientEmptyOutputSwitchTracker)
 		healthMonitor := scheduler.NewRuntimeHealthMonitor(snapshotStore, circuitBreaker).
 			WithScoringService(scheduler.NewCandidateScoringService().WithCostBaselineProvider(costBaselineCache)).
 			WithScoreWeights(runtimePolicy.ScoreWeights)
 		recorder := modelgateway.NewExecutionRecorderChain(
+			clientEmptyOutputSwitchTracker,
 			recording.NewAsyncExecutionRecorder(1024).WithPostProcessors(healthMonitor),
 		)
 		facade := modelgateway.NewSmartDispatchFacade(modelgateway.SmartDispatchDeps{
@@ -167,19 +171,20 @@ func DefaultChannelSelectionWrapper() *ChannelSelectionWrapper {
 		})
 		defaultWrapper = NewChannelSelectionWrapper(facade, legacySelector)
 		defaultRuntime = &DefaultRuntimeObservability{
-			SnapshotStore:         snapshotStore,
-			LocalSnapshotStore:    localSnapshotStore,
-			CircuitBreaker:        circuitBreaker,
-			LocalCircuitBreaker:   localCircuitBreaker,
-			StickyRouter:          stickyRouter,
-			RuntimeEnricher:       runtimeEnricher,
-			CostBaselineCache:     costBaselineCache,
-			RuntimeSyncStore:      runtimeSyncStore,
-			RuntimeSyncEventStore: runtimeSyncEventStore,
-			QueueSnapshotSyncer:   queueSnapshotSyncer,
-			SnapshotPersistence:   snapshotPersistence,
-			AccountCandidateIndex: accountCandidateIndex,
-			RuntimeSyncNodeID:     runtimeSyncNodeID,
+			SnapshotStore:                  snapshotStore,
+			LocalSnapshotStore:             localSnapshotStore,
+			CircuitBreaker:                 circuitBreaker,
+			LocalCircuitBreaker:            localCircuitBreaker,
+			ClientEmptyOutputSwitchTracker: clientEmptyOutputSwitchTracker,
+			StickyRouter:                   stickyRouter,
+			RuntimeEnricher:                runtimeEnricher,
+			CostBaselineCache:              costBaselineCache,
+			RuntimeSyncStore:               runtimeSyncStore,
+			RuntimeSyncEventStore:          runtimeSyncEventStore,
+			QueueSnapshotSyncer:            queueSnapshotSyncer,
+			SnapshotPersistence:            snapshotPersistence,
+			AccountCandidateIndex:          accountCandidateIndex,
+			RuntimeSyncNodeID:              runtimeSyncNodeID,
 		}
 	})
 	return defaultWrapper

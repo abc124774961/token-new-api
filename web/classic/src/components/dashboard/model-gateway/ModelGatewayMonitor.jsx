@@ -1181,6 +1181,12 @@ function formatChannelStatusReason(reason, t) {
   if (normalized === 'timeout_recovery') {
     return t('频繁超时降级中');
   }
+  if (normalized === 'overload_recovery') {
+    return t('429 过载恢复中');
+  }
+  if (normalized === 'client_empty_output_switch') {
+    return t('空输出避让');
+  }
   if (normalized === 'score_anomaly_fast_probe') {
     return t('分数异常快速恢复');
   }
@@ -1225,6 +1231,8 @@ function formatProbeReason(value, t) {
       return t('近期失败恢复中');
     case 'timeout_recovery':
       return t('等待恢复探活');
+    case 'overload_recovery':
+      return t('429 过载恢复中');
     case 'score_anomaly_fast_probe':
       return t('分数异常快速恢复');
     case 'cooldown':
@@ -2973,13 +2981,6 @@ function getUserRequestStatusMeta(record, t) {
   if (isUserQuotaExhaustedRecord(record)) {
     return { color: 'grey', label: t('用户额度不足'), tone: 'quota' };
   }
-  if (hasModelGatewayWarning(record)) {
-    return {
-      color: modelGatewayWarningColor(record),
-      label: modelGatewayWarningLabel(record, t),
-      tone: 'warning',
-    };
-  }
   if (
     record?.client_aborted ||
     record?.status === 'client_aborted' ||
@@ -2987,6 +2988,16 @@ function getUserRequestStatusMeta(record, t) {
     Number(record?.final_status_code || 0) === 499
   ) {
     return { color: 'grey', label: t('客户端中断'), tone: 'aborted' };
+  }
+  if (isUserRequestStreamInterrupted(record)) {
+    return { color: 'orange', label: t('流中断'), tone: 'stream-interrupted' };
+  }
+  if (hasModelGatewayWarning(record)) {
+    return {
+      color: modelGatewayWarningColor(record),
+      label: modelGatewayWarningLabel(record, t),
+      tone: 'warning',
+    };
   }
   if (record?.final_success && isSmartSwitchRecovered(record)) {
     return { color: 'teal', label: t('成功'), tone: 'recovered' };
@@ -2998,6 +3009,23 @@ function getUserRequestStatusMeta(record, t) {
     return { color: 'green', label: t('成功'), tone: 'success' };
   }
   return { color: 'red', label: t('最终失败'), tone: 'failed' };
+}
+
+function isUserRequestStreamInterrupted(record) {
+  const status = String(record?.status || '')
+    .trim()
+    .toLowerCase();
+  const category = String(
+    record?.final_error_category || record?.error_category || '',
+  )
+    .trim()
+    .toLowerCase();
+  return (
+    record?.stream_interrupted === true ||
+    Number(record?.stream_interrupted || 0) > 0 ||
+    status === 'stream_interrupted' ||
+    category === 'stream_interrupted'
+  );
 }
 
 function isSmartSwitchRecovered(record) {
@@ -3181,6 +3209,7 @@ function userRequestStatusCaption(
   if (isSmartSwitchRecovered(record)) return t('智能切换后成功');
   if (meta?.tone === 'quota') return t('业务拦截');
   if (meta?.tone === 'aborted') return t('客户端断开');
+  if (meta?.tone === 'stream-interrupted') return t('流式中断');
   if (meta?.tone === 'probe' || meta?.tone === 'probe-warning') {
     return t('探活样本');
   }
@@ -3209,6 +3238,7 @@ function userRequestStatusShortCaption(
   if (isSmartSwitchRecovered(record)) return t('智能切换');
   if (meta?.tone === 'quota') return t('拦截');
   if (meta?.tone === 'aborted') return t('断开');
+  if (meta?.tone === 'stream-interrupted') return t('流中断');
   if (meta?.tone === 'probe' || meta?.tone === 'probe-warning') {
     return t('探活');
   }
@@ -3232,6 +3262,7 @@ function userRequestTTFTCaption(processing, hasTTFT, t) {
 function userRequestTimeCaption(record, meta, processing, t) {
   if (processing) return t('开始处理');
   if (meta?.tone === 'aborted') return t('断开时间');
+  if (meta?.tone === 'stream-interrupted') return t('失败时间');
   if (meta?.tone === 'quota') return t('拦截时间');
   if (meta?.tone === 'settling') return t('上游完成时间');
   if (meta?.tone === 'billing-pending') return t('上游完成时间');
@@ -3244,6 +3275,7 @@ function userRequestTimeCaption(record, meta, processing, t) {
 function userRequestTimeShortCaption(record, meta, processing, t) {
   if (processing) return t('开始');
   if (meta?.tone === 'aborted') return t('断开');
+  if (meta?.tone === 'stream-interrupted') return t('失败');
   if (meta?.tone === 'quota') return t('拦截');
   if (meta?.tone === 'settling') return t('上游完成');
   if (meta?.tone === 'billing-pending') return t('上游完成');
@@ -5378,7 +5410,9 @@ function UserRequestRecentTable({
                     ? RadioTower
                     : meta.tone === 'aborted' || meta.tone === 'quota'
                       ? Ban
-                      : meta.tone === 'failed' || meta.tone === 'probe-warning'
+                      : meta.tone === 'failed' ||
+                          meta.tone === 'stream-interrupted' ||
+                          meta.tone === 'probe-warning'
                         ? Info
                         : CheckCircle2;
                 const durationTone = getThresholdTone(
@@ -10022,6 +10056,70 @@ function formatRuntimeKey(runtimeKey) {
     .join(' / ');
 }
 
+function clientEmptyOutputAvoidancePayloadFromCandidate(candidate, record) {
+  const runtimeKey = candidate?.runtime_key || {};
+  const sessionKey = normalizedRouteValue(
+    candidate?.client_empty_output_session_key,
+  );
+  const channelID = Number(candidate?.channel_id || runtimeKey.channel_id || 0);
+  const requestedModel = normalizedRouteValue(
+    runtimeKey.requested_model ||
+      record?.requested_model ||
+      candidate?.upstream_model ||
+      runtimeKey.upstream_model,
+  );
+  const group = normalizedRouteValue(
+    candidate?.group ||
+      runtimeKey.group ||
+      record?.actual_group ||
+      record?.selected_group ||
+      record?.requested_group,
+  );
+  const endpointType =
+    normalizedRouteValue(runtimeKey.endpoint_type || record?.endpoint_type) ||
+    'openai';
+  if (!sessionKey || channelID <= 0 || !requestedModel || !group) return null;
+  return {
+    session_key: sessionKey,
+    channel_id: channelID,
+    requested_model: requestedModel,
+    group,
+    endpoint_type: endpointType,
+  };
+}
+
+function clientEmptyOutputAvoidanceActionKey(payload) {
+  if (!payload) return '';
+  return [
+    payload.session_key,
+    payload.channel_id,
+    payload.requested_model,
+    payload.group,
+    payload.endpoint_type,
+  ]
+    .map((value) => String(value || '').trim())
+    .join('|');
+}
+
+function formatClientEmptyOutputAvoidanceDetail(candidate, t) {
+  const until = normalizeTimestamp(candidate?.client_empty_output_avoid_until);
+  const remaining = Number(
+    candidate?.client_empty_output_remaining_seconds || 0,
+  );
+  const parts = [];
+  if (until) {
+    parts.push(t('避让至 {{time}}', { time: timestamp2string(until) }));
+  }
+  if (remaining > 0) {
+    parts.push(
+      t('剩余 {{duration}}', {
+        duration: formatDurationSeconds(remaining, t),
+      }),
+    );
+  }
+  return parts.join(' · ');
+}
+
 function buildRuntimeKeyParams(runtimeKey = {}) {
   const params = {};
   if (runtimeKey.requested_model) {
@@ -10465,10 +10563,7 @@ function buildCandidateDecisionText(candidate, candidates, record, t) {
       );
     }
     if (normalizedReason === 'routing_slot_reserved') {
-      return t(
-        '{{channel}} 本次调度已排除，未向该渠道发起请求。',
-        { channel },
-      );
+      return t('{{channel}} 本次调度已排除，未向该渠道发起请求。', { channel });
     }
     return t('{{channel}} 本次未进入可用候选，原因是 {{reason}}。', {
       channel,
@@ -10498,16 +10593,12 @@ function buildCandidateDecisionText(candidate, candidates, record, t) {
     );
   }
   if (candidate?.selection_skip_reason === 'already_failed_in_request') {
-    return t(
-      '{{channel}} 已在本次请求中尝试失败，系统避免重复选择同一渠道。',
-      { channel },
-    );
+    return t('{{channel}} 已在本次请求中尝试失败，系统避免重复选择同一渠道。', {
+      channel,
+    });
   }
   if (candidate?.selection_skip_reason === 'routing_slot_reserved') {
-    return t(
-      '{{channel}} 本次调度已排除，未向该渠道发起请求。',
-      { channel },
-    );
+    return t('{{channel}} 本次调度已排除，未向该渠道发起请求。', { channel });
   }
   if (candidateSelectionScore !== null && selectedSelectionScore !== null) {
     if (candidateSelectionScore + scoreDeltaEpsilon < selectedSelectionScore) {
@@ -10948,6 +11039,8 @@ function CandidateExplanationCard({
 }) {
   const [clearingCircuit, setClearingCircuit] = useState(false);
   const [recoveringHealth, setRecoveringHealth] = useState(false);
+  const [clearingEmptyOutputAvoidance, setClearingEmptyOutputAvoidance] =
+    useState(false);
   const sampleCount = Number(candidate?.sample_count || 0);
   const hasRealSamples = sampleCount > 0;
   const allScoreItems = normalizeScoreItemsForDisplay(candidate?.score_items);
@@ -11050,8 +11143,15 @@ function CandidateExplanationCard({
     candidate?.probe_recovery_phase === 'fast_probe' ||
     candidate?.probe_recovery_phase === 'pending_real_confirmation' ||
     stateTags.includes('score_anomaly_fast_probe');
-  const alreadyFailedInRequest = unavailableReason === 'already_failed_in_request';
+  const alreadyFailedInRequest =
+    unavailableReason === 'already_failed_in_request';
   const routingSlotReserved = unavailableReason === 'routing_slot_reserved';
+  const clientEmptyOutputAvoidance =
+    unavailableReason === 'client_empty_output_switch';
+  const clientEmptyOutputPayload =
+    clientEmptyOutputAvoidancePayloadFromCandidate(candidate, record);
+  const clientEmptyOutputAvoidanceDetail =
+    formatClientEmptyOutputAvoidanceDetail(candidate, t);
   const recoverySuccessCount = Number(
     candidate?.probe_recovery_success_count || 0,
   );
@@ -11152,6 +11252,41 @@ function CandidateExplanationCard({
     }
   };
 
+  const clearClientEmptyOutputAvoidance = async () => {
+    if (
+      !clientEmptyOutputPayload ||
+      clearingEmptyOutputAvoidance ||
+      !clientEmptyOutputAvoidanceActionKey(clientEmptyOutputPayload)
+    ) {
+      return;
+    }
+    setClearingEmptyOutputAvoidance(true);
+    try {
+      const res = await API.post(
+        '/api/model_gateway/observability/runtime/clear_client_empty_output_avoidance',
+        clientEmptyOutputPayload,
+        {
+          disableDuplicate: true,
+          skipErrorHandler: true,
+        },
+      );
+      if (res?.data?.success) {
+        if (res?.data?.data?.cleared) {
+          Toast.success(t('空输出避让已清理'));
+        } else {
+          Toast.warning(t('空输出避让不存在或已过期'));
+        }
+        onRuntimeCircuitCleared?.();
+      } else {
+        showError(res?.data?.message || t('清理空输出避让失败'));
+      }
+    } catch (error) {
+      showError(error);
+    } finally {
+      setClearingEmptyOutputAvoidance(false);
+    }
+  };
+
   return (
     <div
       className={`ct-model-gateway-candidate-card${
@@ -11218,6 +11353,32 @@ function CandidateExplanationCard({
             <Tag color='orange' type='light' size='small'>
               {t('本次调度已排除')}
             </Tag>
+          ) : null}
+          {clientEmptyOutputAvoidance ? (
+            <Tooltip
+              content={
+                clientEmptyOutputAvoidanceDetail ||
+                t('将清除此 session 对该渠道的空输出临时避让。')
+              }
+            >
+              <Tag color='orange' type='light' size='small'>
+                {t('空输出避让')}
+              </Tag>
+            </Tooltip>
+          ) : null}
+          {clientEmptyOutputPayload ? (
+            <Tooltip content={t('将清除此 session 对该渠道的空输出临时避让。')}>
+              <Button
+                icon={<RotateCcw size={13} />}
+                size='small'
+                theme='borderless'
+                type='tertiary'
+                loading={clearingEmptyOutputAvoidance}
+                onClick={clearClientEmptyOutputAvoidance}
+              >
+                {t('清理避让')}
+              </Button>
+            </Tooltip>
           ) : null}
           {timeoutRecovery ? (
             <Tag color='orange' type='light' size='small'>

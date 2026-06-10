@@ -602,6 +602,47 @@ func TestRecordChannelTimeoutDegradeUsesWindowRate(t *testing.T) {
 	require.Equal(t, ChannelTimeoutRecoveryReason, record.Reason)
 }
 
+func TestRecordChannelRuntimeOverloadRecoveryRequiresProbe(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 1
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	identity := ChannelRuntimeIdentity{
+		ChannelID:          387,
+		CredentialIndex:    2,
+		CredentialIndexSet: true,
+	}
+	config := ChannelOverloadRecoveryConfig{
+		Enabled:     true,
+		Window:      time.Minute,
+		MinSamples:  3,
+		Consecutive: 3,
+	}
+	require.Nil(t, RecordChannelRuntimeOverloadRecoverySample(identity, "http_429", config, nil))
+	require.Nil(t, RecordChannelRuntimeOverloadRecoverySample(identity, "http_429", config, nil))
+	record := RecordChannelRuntimeOverloadRecoverySample(identity, "http_429", config, nil)
+	require.NotNil(t, record)
+	require.Equal(t, ChannelOverloadRecoveryReason, record.Reason)
+	require.True(t, record.ProbeRecoveryRequired)
+
+	status := GetChannelRuntimeFailureAvoidanceStatus(identity)
+	require.NotNil(t, status)
+	require.True(t, status.ProbeRecoveryRequired)
+	require.Equal(t, ChannelOverloadRecoveryReason, status.Reason)
+
+	require.False(t, ClearChannelRuntimeFailureAvoidanceOnRealSuccess(identity))
+	require.NotNil(t, GetChannelRuntimeFailureAvoidanceStatus(identity))
+
+	ClearChannelRuntimeProbeRecoveryAvoidance(identity)
+	require.Nil(t, GetChannelRuntimeFailureAvoidanceStatus(identity))
+}
+
 func TestRecordChannelFailureAvoidancePersistsEventContext(t *testing.T) {
 	db := setupChannelSelectTestDB(t)
 

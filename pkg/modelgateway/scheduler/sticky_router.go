@@ -4,7 +4,6 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -17,7 +16,6 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/hot"
-	"github.com/tidwall/gjson"
 )
 
 const (
@@ -662,7 +660,7 @@ func (r *MemoryStickyRouter) userStickyKey(c *gin.Context, req *core.DispatchReq
 	if endpointType == "" {
 		endpointType = constant.EndpointTypeOpenAI
 	}
-	sessionKey := stickySessionKey(c)
+	sessionKey := core.SessionRoutingKeyFromGin(c)
 	if sessionKey == "" {
 		return ""
 	}
@@ -674,179 +672,6 @@ func (r *MemoryStickyRouter) userStickyKey(c *gin.Context, req *core.DispatchReq
 		sessionKey,
 	}
 	return strings.Join(parts, "\n")
-}
-
-var stickyBodyKeyPaths = []string{
-	"prompt_cache_key",
-	"previous_response_id",
-	"session_id",
-	"sessionId",
-	"session.id",
-	"conversation_id",
-	"conversationId",
-	"conversation",
-	"conversation.id",
-	"chat_id",
-	"chatId",
-	"chat.id",
-	"thread_id",
-	"threadId",
-	"thread.id",
-	"parent_id",
-	"parentId",
-	"parent.id",
-	"metadata.session_id",
-	"metadata.sessionId",
-	"metadata.session.id",
-	"metadata.conversation_id",
-	"metadata.conversationId",
-	"metadata.conversation.id",
-	"metadata.chat_id",
-	"metadata.chatId",
-	"metadata.chat.id",
-	"metadata.thread_id",
-	"metadata.threadId",
-	"metadata.thread.id",
-	"metadata.parent_id",
-	"metadata.parentId",
-	"metadata.parent.id",
-	"metadata.user_id",
-	"metadata.userId",
-	"extra_body.session_id",
-	"extra_body.session.id",
-	"extra_body.conversation_id",
-	"extra_body.conversation.id",
-	"extra_body.thread_id",
-	"extra_body.thread.id",
-}
-
-var stickyHeaderKeys = []string{
-	"Session_id",
-	"Session-Id",
-	"X-Session-Id",
-	"X-Conversation-Id",
-	"X-Thread-Id",
-	"X-Chat-Id",
-	"X-Parent-Id",
-	"X-Codex-Session-Id",
-	"X-Codex-Conversation-Id",
-	"X-Codex-Thread-Id",
-	"Mcp-Session-Id",
-}
-
-var stickyMetadataHeaderPaths = []string{
-	"session_id",
-	"sessionId",
-	"conversation_id",
-	"conversationId",
-	"thread_id",
-	"threadId",
-	"chat_id",
-	"chatId",
-}
-
-func stickySessionKey(c *gin.Context) string {
-	if source, value := stickyHeaderSignal(c); value != "" {
-		return stickySessionKeyPart(source, value)
-	}
-	if source, value := stickyBodySignal(c); value != "" {
-		return stickySessionKeyPart(source, value)
-	}
-	return ""
-}
-
-func stickyHeaderSignal(c *gin.Context) (string, string) {
-	if c == nil || c.Request == nil {
-		return "", ""
-	}
-	if source, value := stickyMetadataHeaderSignal(c.Request.Header); value != "" {
-		return source, value
-	}
-	for _, header := range stickyHeaderKeys {
-		if value := normalizeStickySignalValue(c.GetHeader(header)); value != "" {
-			return "header." + strings.ToLower(header), value
-		}
-	}
-	return "", ""
-}
-
-func stickyMetadataHeaderSignal(header http.Header) (string, string) {
-	if len(header) == 0 {
-		return "", ""
-	}
-	raw := strings.TrimSpace(header.Get("X-Codex-Turn-Metadata"))
-	if raw == "" {
-		return "", ""
-	}
-	for _, path := range stickyMetadataHeaderPaths {
-		result := gjson.Get(raw, path)
-		if value := stickyJSONScalar(result); value != "" {
-			return "header.x-codex-turn-metadata." + path, value
-		}
-	}
-	return "", ""
-}
-
-func stickyBodySignal(c *gin.Context) (string, string) {
-	if c == nil || c.Request == nil {
-		return "", ""
-	}
-	if c.Request.Body == nil {
-		return "", ""
-	}
-	contentType := c.Request.Header.Get("Content-Type")
-	if contentType != "" && !strings.Contains(strings.ToLower(contentType), "json") {
-		return "", ""
-	}
-	storage, err := common.GetBodyStorage(c)
-	if err != nil {
-		return "", ""
-	}
-	body, err := storage.Bytes()
-	if err != nil || len(body) == 0 {
-		return "", ""
-	}
-	for _, path := range stickyBodyKeyPaths {
-		result := gjson.GetBytes(body, path)
-		if value := stickyJSONScalar(result); value != "" {
-			return "body." + path, value
-		}
-	}
-	return "", ""
-}
-
-func stickyJSONScalar(result gjson.Result) string {
-	if !result.Exists() {
-		return ""
-	}
-	switch result.Type {
-	case gjson.String, gjson.Number:
-		return normalizeStickySignalValue(result.String())
-	default:
-		return ""
-	}
-}
-
-func normalizeStickySignalValue(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	switch strings.ToLower(value) {
-	case "auto", "none", "null", "undefined", "false", "true", "{}", "[]":
-		return ""
-	default:
-		return value
-	}
-}
-
-func stickySessionKeyPart(source string, value string) string {
-	source = strings.TrimSpace(source)
-	value = normalizeStickySignalValue(value)
-	if source == "" || value == "" {
-		return ""
-	}
-	return "session:" + source + ":" + affinityFingerprint(value)
 }
 
 type ServiceCacheAffinitySignalAdapter struct{}

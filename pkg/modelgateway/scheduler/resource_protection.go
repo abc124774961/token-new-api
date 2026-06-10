@@ -33,7 +33,7 @@ func (s *DefaultSmartChannelSelector) resourceProtectionCandidates(c *gin.Contex
 		decision.Phase = core.ResourceProtectionPhaseFallbackAfterTimeout
 		decision.Reason = firstNonEmptyString(req.ResourceProtectionReason, core.ResourceProtectionReasonFallbackAfterTimeout)
 		decision.Role = core.ResourceProtectionRoleFallback
-		if !hasSelectableResourceProtectionCandidate(s, c, policy, fallbackCandidates) {
+		if !hasSelectableResourceProtectionCandidate(s, c, req, policy, fallbackCandidates) {
 			return nil, decision, resourceProtectionNoCandidateError(policy, decision)
 		}
 		return fallbackCandidates, decision, nil
@@ -42,12 +42,12 @@ func (s *DefaultSmartChannelSelector) resourceProtectionCandidates(c *gin.Contex
 		decision.Phase = core.ResourceProtectionPhaseNoPrimaryFallback
 		decision.Reason = core.ResourceProtectionReasonNoPrimaryCandidate
 		decision.Role = core.ResourceProtectionRoleFallback
-		if !hasSelectableResourceProtectionCandidate(s, c, policy, fallbackCandidates) {
+		if !hasSelectableResourceProtectionCandidate(s, c, req, policy, fallbackCandidates) {
 			return nil, decision, resourceProtectionNoCandidateError(policy, decision)
 		}
 		return fallbackCandidates, decision, nil
 	}
-	availability := resourceProtectionAvailability(s, c, policy, primaryCandidates)
+	availability := resourceProtectionAvailability(s, c, req, policy, primaryCandidates)
 	if availability.available || availability.saturated {
 		decision.Phase = core.ResourceProtectionPhasePrimaryHit
 		decision.Reason = core.ResourceProtectionReasonPrimaryAvailable
@@ -57,7 +57,7 @@ func (s *DefaultSmartChannelSelector) resourceProtectionCandidates(c *gin.Contex
 	decision.Phase = core.ResourceProtectionPhasePrimaryFailureFallback
 	decision.Reason = core.ResourceProtectionReasonPrimaryFailure
 	decision.Role = core.ResourceProtectionRoleFallback
-	if !hasSelectableResourceProtectionCandidate(s, c, policy, fallbackCandidates) {
+	if !hasSelectableResourceProtectionCandidate(s, c, req, policy, fallbackCandidates) {
 		return nil, decision, resourceProtectionNoCandidateError(policy, decision)
 	}
 	return fallbackCandidates, decision, nil
@@ -108,11 +108,15 @@ type resourceProtectionAvailabilityState struct {
 	saturated bool
 }
 
-func resourceProtectionAvailability(s *DefaultSmartChannelSelector, c *gin.Context, policy core.GroupSmartPolicy, candidates []core.Candidate) resourceProtectionAvailabilityState {
+func resourceProtectionAvailability(s *DefaultSmartChannelSelector, c *gin.Context, req core.DispatchRequest, policy core.GroupSmartPolicy, candidates []core.Candidate) resourceProtectionAvailabilityState {
 	state := resourceProtectionAvailabilityState{}
 	for _, candidate := range candidates {
 		snapshot := resourceProtectionSnapshotForCandidate(s, candidate, policy)
-		if candidateUnavailableReason(c, candidate, snapshot, policy) != "" {
+		rejectReason := s.candidateUnavailableReason(c, req, candidate, snapshot, policy)
+		if rejectReason != "" {
+			if rejectReason == ClientEmptyOutputSwitchReason {
+				markClientEmptyOutputSwitchChannelSkipped(c, candidate, snapshot)
+			}
 			continue
 		}
 		if routingConcurrencySaturated(snapshot) {
@@ -124,8 +128,8 @@ func resourceProtectionAvailability(s *DefaultSmartChannelSelector, c *gin.Conte
 	return state
 }
 
-func hasSelectableResourceProtectionCandidate(s *DefaultSmartChannelSelector, c *gin.Context, policy core.GroupSmartPolicy, candidates []core.Candidate) bool {
-	availability := resourceProtectionAvailability(s, c, policy, candidates)
+func hasSelectableResourceProtectionCandidate(s *DefaultSmartChannelSelector, c *gin.Context, req core.DispatchRequest, policy core.GroupSmartPolicy, candidates []core.Candidate) bool {
+	availability := resourceProtectionAvailability(s, c, req, policy, candidates)
 	return availability.available || availability.saturated
 }
 

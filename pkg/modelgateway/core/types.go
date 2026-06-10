@@ -126,6 +126,7 @@ type ProxyRef struct {
 
 type DispatchRequest struct {
 	RequestID                   string
+	ClientSessionKey            string
 	UserID                      int
 	TokenID                     int
 	RequestedGroup              string
@@ -584,6 +585,9 @@ type CandidateExplanation struct {
 	RuntimeKey                        RuntimeKey         `json:"runtime_key"`
 	Available                         bool               `json:"available"`
 	RejectReason                      string             `json:"reject_reason,omitempty"`
+	ClientEmptyOutputSessionKey       string             `json:"client_empty_output_session_key,omitempty"`
+	ClientEmptyOutputAvoidUntil       int64              `json:"client_empty_output_avoid_until,omitempty"`
+	ClientEmptyOutputRemainingSeconds int64              `json:"client_empty_output_remaining_seconds,omitempty"`
 	SelectionSkipReason               string             `json:"selection_skip_reason,omitempty"`
 	ChannelStatus                     int                `json:"channel_status,omitempty"`
 	StatusReason                      string             `json:"status_reason,omitempty"`
@@ -782,6 +786,7 @@ type AttemptResult struct {
 	Key                            RuntimeKey
 	Plan                           *DispatchPlan
 	RequestID                      string
+	ClientSessionKey               string
 	UserID                         int
 	TokenID                        int
 	AttemptIndex                   int

@@ -20,6 +20,7 @@ import (
 const (
 	probeActivationWindow          = 30 * time.Minute
 	probeDefaultGoodBaselineWindow = 24 * time.Hour
+	probeSuccessfulFollowupWindow  = time.Minute
 )
 
 type ProbeSelector struct {
@@ -372,6 +373,9 @@ func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapsh
 			if strings.TrimSpace(snapshot.ProbeTriggerReason) == reasonTimeoutRecovery {
 				return reasonTimeoutRecovery, nil
 			}
+			if strings.TrimSpace(snapshot.ProbeTriggerReason) == reasonOverloadRecovery {
+				return reasonOverloadRecovery, nil
+			}
 			return reasonFailureAvoidance, nil
 		}
 		if snapshot.Cooldown {
@@ -441,7 +445,7 @@ func (s *ProbeSelector) markProbeSelectionLocked(key core.RuntimeKey, reason str
 	if reason == reasonTimeoutRecovery {
 		snapshot.ProbeRecoveryRequired = config.TimeoutRecoverySuccessesRequired
 	}
-	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || reason == reasonLowScore || reason == reasonFailureAvoidance || reason == reasonTimeoutRecovery || reason == reasonCircuitProbe || reason == reasonScoreAnomaly
+	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || reason == reasonLowScore || reason == reasonFailureAvoidance || reason == reasonTimeoutRecovery || reason == reasonOverloadRecovery || reason == reasonCircuitProbe || reason == reasonScoreAnomaly
 	if reason == reasonScoreAnomaly {
 		snapshot.ProbeRecoveryPhase = core.ProbeRecoveryPhaseFastProbe
 		snapshot.ProbeFastRecoveryAttempts++
@@ -472,6 +476,9 @@ func (s *ProbeSelector) probeIntervalPassedLocked(key core.RuntimeKey, snapshot 
 			minInterval = fastInterval
 		}
 	}
+	if s.lastChannelProbeSucceededLocked(key, snapshot) {
+		minInterval = shorterPositiveDuration(minInterval, probeSuccessfulFollowupWindow)
+	}
 	for _, probeKey := range probeIntervalKeys(key) {
 		if last := s.lastProbe[probeKey]; !last.IsZero() && now.Sub(last) < minInterval {
 			return false
@@ -484,6 +491,65 @@ func (s *ProbeSelector) probeIntervalPassedLocked(key core.RuntimeKey, snapshot 
 		return false
 	}
 	return true
+}
+
+func (s *ProbeSelector) lastChannelProbeSucceededLocked(key core.RuntimeKey, snapshot core.RuntimeSnapshot) bool {
+	key = normalizeProbeRuntimeKey(key)
+	if key.ChannelID <= 0 {
+		return false
+	}
+	latestProbeAt := int64(0)
+	latestSuccessAt := int64(0)
+	collectSnapshot := func(candidate core.RuntimeSnapshot) {
+		candidateKey := normalizeProbeRuntimeKey(candidate.Key)
+		if candidateKey.ChannelID != key.ChannelID {
+			return
+		}
+		if candidate.LastProbeAt > latestProbeAt {
+			latestProbeAt = candidate.LastProbeAt
+		}
+		if candidate.LastProbeSuccessAt > latestSuccessAt {
+			latestSuccessAt = candidate.LastProbeSuccessAt
+		}
+	}
+	collectSnapshot(snapshot)
+	if stored, ok := s.snapshotForKey(key); ok {
+		collectSnapshot(stored)
+	}
+	if s != nil && s.store != nil {
+		for _, stored := range s.store.ListCandidates(nil) {
+			collectSnapshot(stored)
+		}
+	}
+	if s != nil {
+		for probeKey, probeAt := range s.lastProbe {
+			if normalizeProbeRuntimeKey(probeKey).ChannelID != key.ChannelID || probeAt.IsZero() {
+				continue
+			}
+			if unix := probeAt.Unix(); unix > latestProbeAt {
+				latestProbeAt = unix
+			}
+		}
+		for probeKey, successAt := range s.lastOK {
+			if normalizeProbeRuntimeKey(probeKey).ChannelID != key.ChannelID || successAt.IsZero() {
+				continue
+			}
+			if unix := successAt.Unix(); unix > latestSuccessAt {
+				latestSuccessAt = unix
+			}
+		}
+	}
+	return latestProbeAt > 0 && latestSuccessAt >= latestProbeAt
+}
+
+func shorterPositiveDuration(current time.Duration, candidate time.Duration) time.Duration {
+	if candidate <= 0 {
+		return current
+	}
+	if current <= 0 || candidate < current {
+		return candidate
+	}
+	return current
 }
 
 func probeIntervalKeys(key core.RuntimeKey) []core.RuntimeKey {
@@ -619,7 +685,7 @@ func skipRecentRealRequestProbe(candidate ProbeCandidate, config ProbeConfig, st
 		return false
 	}
 	switch strings.TrimSpace(candidate.Reason) {
-	case reasonCircuitProbe, reasonTimeoutRecovery, reasonScoreAnomaly:
+	case reasonCircuitProbe, reasonTimeoutRecovery, reasonOverloadRecovery, reasonScoreAnomaly:
 		return false
 	}
 	window := config.RecentRealRequestWindow
@@ -707,22 +773,24 @@ func probeReasonPriority(reason string) int {
 		return 1
 	case reasonTimeoutRecovery:
 		return 2
-	case reasonFailureAvoidance:
+	case reasonOverloadRecovery:
 		return 3
-	case reasonCooldown:
+	case reasonFailureAvoidance:
 		return 4
-	case reasonScoreAnomaly:
+	case reasonCooldown:
 		return 5
-	case reasonLowScore:
+	case reasonScoreAnomaly:
 		return 6
-	case reasonLongNoSuccess:
+	case reasonLowScore:
 		return 7
-	case reasonNoSamples:
+	case reasonLongNoSuccess:
 		return 8
-	case reasonLowTraffic:
+	case reasonNoSamples:
 		return 9
-	case reasonSampling:
+	case reasonLowTraffic:
 		return 10
+	case reasonSampling:
+		return 11
 	default:
 		return 99
 	}

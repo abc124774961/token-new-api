@@ -23,6 +23,7 @@ const (
 	reasonCircuitProbe      = "circuit_half_open"
 	reasonFailureAvoidance  = "failure_avoidance"
 	reasonTimeoutRecovery   = "timeout_recovery"
+	reasonOverloadRecovery  = "overload_recovery"
 	reasonScoreAnomaly      = core.ProbeReasonScoreAnomalyFastProbe
 	reasonCooldown          = "cooldown"
 	reasonSampling          = "sampling"
@@ -44,6 +45,8 @@ func NormalizeProbeReason(reason string) string {
 		return reasonFailureAvoidance
 	case reasonTimeoutRecovery:
 		return reasonTimeoutRecovery
+	case reasonOverloadRecovery:
+		return reasonOverloadRecovery
 	case reasonScoreAnomaly:
 		return reasonScoreAnomaly
 	case reasonCooldown:

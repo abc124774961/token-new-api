@@ -89,9 +89,6 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 		}
 		return
 	}
-	if isCircuitOverloadSkipResult(result) {
-		return
-	}
 	decision := scoreSampleDecision(result)
 	if m.breaker != nil && decision.CircuitSample {
 		m.breaker.Report(result)
@@ -99,7 +96,7 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	if result.ConcurrencyLimited {
 		return
 	}
-	if !decision.ScoreSample {
+	if !decision.ScoreSample && !decision.CircuitSample && !decision.ProbeRecoverySample {
 		return
 	}
 	if m.store == nil {
@@ -128,7 +125,10 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 			GroupPriorityRatio: 1,
 		}
 	}
-	beforeScore := m.scoreSnapshot(result, snapshot)
+	beforeScore := core.ScoreResult{}
+	if decision.ScoreSample || decision.ProbeRecoverySample {
+		beforeScore = m.scoreSnapshot(result, snapshot)
+	}
 	scoreStats := scoreStatsFromSnapshot(snapshot)
 	if decision.ScoreSample {
 		stats.sampleCount++
@@ -160,7 +160,10 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	}
 	snapshot.EmptyOutputRate = stats.emptyRate
 	snapshot.ExperienceIssueRate = stats.issueRate
-	recoveryScore := m.scoreSnapshot(result, snapshot)
+	recoveryScore := core.ScoreResult{}
+	if decision.ScoreSample || decision.ProbeRecoverySample {
+		recoveryScore = m.scoreSnapshot(result, snapshot)
+	}
 	scoreAnomalyActiveBefore := scoreAnomalyRecoveryActive(snapshot)
 	recoverableQualityAnomaly := m.applyRecoverableQuality(&snapshot, result, recoveryScore)
 	scoreAnomalyJustTriggered := recoverableQualityAnomaly && !scoreAnomalyActiveBefore
@@ -187,8 +190,11 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 		circuit := m.breaker.Snapshot(key)
 		applyCircuitToRuntimeSnapshot(&snapshot, circuit)
 	}
-	afterScore := m.scoreSnapshot(result, snapshot)
-	if m.scoreEvents != nil {
+	afterScore := core.ScoreResult{}
+	if decision.ScoreSample || decision.ProbeRecoverySample {
+		afterScore = m.scoreSnapshot(result, snapshot)
+	}
+	if m.scoreEvents != nil && (decision.ScoreSample || decision.ProbeRecoverySample) {
 		m.scoreEvents.ReportAdjustment(result, snapshot, decision, beforeScore, afterScore)
 	}
 	m.store.Put(snapshot)
@@ -305,7 +311,8 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 	}
 	identity := serviceRuntimeIdentityFromKey(result.RuntimeKey())
 	avoidance := service.GetChannelRuntimeFailureAvoidanceStatus(identity)
-	timeoutRecovery := (avoidance != nil && (avoidance.ProbeRecoveryRequired || service.IsTimeoutRecoveryReason(avoidance.Reason))) ||
+	probeRecoveryRequired := avoidance != nil && avoidance.ProbeRecoveryRequired
+	timeoutRecovery := (avoidance != nil && service.IsTimeoutRecoveryReason(avoidance.Reason)) ||
 		strings.TrimSpace(snapshot.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason ||
 		strings.TrimSpace(result.ProbeReason) == service.ChannelTimeoutRecoveryReason
 	if timeoutRecovery {
@@ -325,6 +332,9 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 	if result.IsHealthProbe {
 		snapshot.ProbeTriggerReason = strings.TrimSpace(result.ProbeReason)
 	}
+	if probeRecoveryRequired && strings.TrimSpace(snapshot.ProbeTriggerReason) == "" {
+		snapshot.ProbeTriggerReason = strings.TrimSpace(avoidance.Reason)
+	}
 	scoreAnomalyProbe := strings.TrimSpace(result.ProbeReason) == core.ProbeReasonScoreAnomalyFastProbe ||
 		strings.TrimSpace(snapshot.ProbeTriggerReason) == core.ProbeReasonScoreAnomalyFastProbe ||
 		strings.TrimSpace(snapshot.ProbeRecoveryPhase) == core.ProbeRecoveryPhaseFastProbe
@@ -339,6 +349,10 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 		snapshot.FailureAvoidance = true
 		snapshot.ProbeRecoveryPending = true
 	}
+	if probeRecoveryRequired {
+		snapshot.FailureAvoidance = true
+		snapshot.ProbeRecoveryPending = true
+	}
 	if result.IsHealthProbe && result.Success {
 		snapshot.ProbeRecoverySuccessCount++
 		if scoreAnomalyProbe && ScoreAnomalyRecovered(*snapshot, EvaluateRecoverableQuality(score, setting.ProbeRecoverableScoreItems)) {
@@ -346,12 +360,12 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 			snapshot.ProbeRecoveryPending = true
 			return
 		}
-		if snapshot.ProbeRecoverySuccessCount >= required && avoidance != nil && (!avoidance.ProbeRecoveryRequired || timeoutRecovery) {
+		if snapshot.ProbeRecoverySuccessCount >= required && avoidance != nil && (!avoidance.ProbeRecoveryRequired || probeRecoveryRequired) {
 			service.ClearChannelRuntimeProbeRecoveryAvoidance(identity)
 			snapshot.FailureAvoidance = false
 			snapshot.ProbeRecoveryPending = false
 			snapshot.ProbeRecoverySuccessCount = required
-			if timeoutRecovery {
+			if probeRecoveryRequired || timeoutRecovery {
 				snapshot.ProbeTriggerReason = ""
 			}
 			return
@@ -388,7 +402,7 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 
 func probeTriggerReasonClearedOnRecovery(reason string) bool {
 	switch strings.TrimSpace(reason) {
-	case probeReasonLongNoSuccess, probeReasonLowScore, probeReasonLowTraffic, core.ProbeReasonScoreAnomalyFastProbe:
+	case probeReasonLongNoSuccess, probeReasonLowScore, probeReasonLowTraffic, core.ProbeReasonScoreAnomalyFastProbe, service.ChannelOverloadRecoveryReason:
 		return true
 	default:
 		return false

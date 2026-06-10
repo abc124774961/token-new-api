@@ -800,6 +800,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				recordRelayChannelTimeoutDegrade(c, channel, modelgatewaycore.RelayAttemptCancelReasonTotalDurationAfterOutput, nil, false)
 			} else {
 				recordRelayChannelTimeoutDegradeSuccess(relayRuntimeIdentity(c, channel.Id))
+				recordRelayChannelOverloadRecoverySuccess(relayRuntimeIdentity(c, channel.Id))
 			}
 			recordRelayChannelConfigSuccess(c, channel.Id, relayInfo, retryParam)
 			service.RecordChannelConcurrencySuccess(channel.Id)
@@ -1516,6 +1517,7 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 	}
 	result := &modelgatewaycore.AttemptResult{
 		RequestID:              info.RequestId,
+		ClientSessionKey:       modelgatewaycore.SessionRoutingKeyFromGin(c),
 		UserID:                 info.UserId,
 		TokenID:                info.TokenId,
 		AttemptIndex:           info.RetryIndex,
@@ -2705,6 +2707,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	}
 	traceChannelFailure(c, channelError, err, persistLog)
 	if errorCategory == modelgatewaycore.ErrorCategoryOverloadSkip {
+		recordRelayChannelOverloadRecoveryForChannelError(c, channelError, err, persistLog)
 		return
 	}
 	if kind, ok := relayTimeoutDegradeKindFromError(err); ok {
@@ -2817,6 +2820,41 @@ func recordRelayChannelTimeoutDegradeForChannelError(c *gin.Context, channelErro
 		Threshold:   setting.ChannelTimeoutDegradeThreshold,
 		Consecutive: setting.ChannelTimeoutDegradeConsecutive,
 	}, buildChannelFailureAvoidanceContext(c, channelError, err, finalFailure))
+}
+
+func recordRelayChannelOverloadRecoverySuccess(identity service.ChannelRuntimeIdentity) {
+	setting := scheduler_setting.GetSetting()
+	service.RecordChannelRuntimeOverloadRecoverySuccess(identity, relayOverloadRecoveryConfig(setting))
+}
+
+func recordRelayChannelOverloadRecoveryForChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, finalFailure bool) {
+	if selectedModelGatewayPlan(c) == nil {
+		return
+	}
+	setting := scheduler_setting.GetSetting()
+	service.RecordChannelRuntimeOverloadRecoverySample(
+		relayRuntimeIdentity(c, channelError.ChannelId),
+		"http_429",
+		relayOverloadRecoveryConfig(setting),
+		buildChannelFailureAvoidanceContext(c, channelError, err, finalFailure),
+	)
+}
+
+func relayOverloadRecoveryConfig(setting scheduler_setting.SchedulerSetting) service.ChannelOverloadRecoveryConfig {
+	minSamples := 3
+	if policy, ok := setting.CircuitErrorPolicies[modelgatewayscheduler.CircuitErrorRateLimit]; ok && policy.MinSamples > 0 {
+		minSamples = policy.MinSamples
+	}
+	windowSeconds := setting.FailureFastWindowSeconds
+	if windowSeconds <= 0 {
+		windowSeconds = 60
+	}
+	return service.ChannelOverloadRecoveryConfig{
+		Enabled:     setting.Enabled && setting.CircuitBreakerEnabled,
+		Window:      time.Duration(windowSeconds) * time.Second,
+		MinSamples:  minSamples,
+		Consecutive: minSamples,
+	}
 }
 
 func buildChannelFailureAvoidanceContext(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, finalFailure bool) *service.ChannelFailureAvoidanceContext {

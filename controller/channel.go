@@ -988,7 +988,9 @@ type ChannelHealthRecoverResponse struct {
 	RuntimeCircuitsCleared          int  `json:"runtime_circuits_cleared"`
 	RuntimeSnapshotsUpdated         int  `json:"runtime_snapshots_updated"`
 	RuntimeCooldownSnapshotsUpdated int  `json:"runtime_cooldown_snapshots_updated"`
+	RuntimeHealthSnapshotsReset     int  `json:"runtime_health_snapshots_reset"`
 	FailureAvoidanceCleared         int  `json:"failure_avoidance_cleared"`
+	ConfigIsolationCleared          bool `json:"config_isolation_cleared"`
 	ConcurrencyCooldownCleared      bool `json:"concurrency_cooldown_cleared"`
 	RuntimeBalanceCleared           int  `json:"runtime_balance_cleared"`
 	BalanceMarkerCleared            bool `json:"balance_marker_cleared"`
@@ -1094,8 +1096,12 @@ func RecoverChannelHealth(c *gin.Context) {
 	}
 	runtimeSnapshotsUpdated := modelGatewayClearRuntimeCircuitSnapshots(runtimeDeps, matchedKeys, true)
 	runtimeCooldownSnapshotsUpdated := modelGatewayClearRuntimeCooldownSnapshots(runtimeDeps, matchedKeys)
+	runtimeHealthSnapshotsReset := modelGatewayRecoverRuntimeHealthSnapshots(runtimeDeps, matchedKeys)
 	concurrencyCooldownCleared := service.ClearChannelConcurrencyCooldown(id)
 	service.ClearChannelFailureAvoidance(id)
+	failureAvoidanceCleared := 1
+	service.ClearChannelConfigIsolationForChannel(id)
+	configIsolationCleared := true
 	runtimeBalanceCleared := service.ClearChannelBalanceInsufficientForChannel(id)
 	balanceMarkerCleared := false
 	if wasConfirmedBalance {
@@ -1126,10 +1132,14 @@ func RecoverChannelHealth(c *gin.Context) {
 		}
 	}
 
-	if statusUpdated || balanceMarkerCleared || runtimeBalanceCleared > 0 || concurrencyCooldownCleared || circuitsCleared > 0 || runtimeSnapshotsUpdated > 0 || runtimeCooldownSnapshotsUpdated > 0 || multiKeyBalanceCleared > 0 {
-		model.InitChannelCache()
-		modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	if runtimeDeps != nil && runtimeDeps.SnapshotPersistence != nil && runtimeHealthSnapshotsReset > 0 {
+		if err := runtimeDeps.SnapshotPersistence.Flush(context.Background()); err != nil {
+			common.SysLog(fmt.Sprintf("model gateway runtime snapshot flush after health recovery failed: %v", err))
+		}
 	}
+
+	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
 
 	common.ApiSuccess(c, ChannelHealthRecoverResponse{
 		ChannelID:                       id,
@@ -1137,7 +1147,9 @@ func RecoverChannelHealth(c *gin.Context) {
 		RuntimeCircuitsCleared:          circuitsCleared,
 		RuntimeSnapshotsUpdated:         runtimeSnapshotsUpdated,
 		RuntimeCooldownSnapshotsUpdated: runtimeCooldownSnapshotsUpdated,
-		FailureAvoidanceCleared:         1,
+		RuntimeHealthSnapshotsReset:     runtimeHealthSnapshotsReset,
+		FailureAvoidanceCleared:         failureAvoidanceCleared,
+		ConfigIsolationCleared:          configIsolationCleared,
 		ConcurrencyCooldownCleared:      concurrencyCooldownCleared,
 		RuntimeBalanceCleared:           runtimeBalanceCleared,
 		BalanceMarkerCleared:            balanceMarkerCleared,

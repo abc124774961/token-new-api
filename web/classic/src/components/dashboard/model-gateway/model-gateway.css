@@ -1047,6 +1047,10 @@
   background: #ef4444;
 }
 
+.ct-model-gateway-user-request-row-stream-interrupted::before {
+  background: #f97316;
+}
+
 .ct-model-gateway-user-request-row-aborted::before {
   background: #94a3b8;
 }
@@ -1082,6 +1086,12 @@
 .ct-model-gateway-user-request-row-failed .ct-model-gateway-user-request-dot {
   background: #ef4444;
   box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.1);
+}
+
+.ct-model-gateway-user-request-row-stream-interrupted
+  .ct-model-gateway-user-request-dot {
+  background: #f97316;
+  box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.12);
 }
 
 .ct-model-gateway-user-request-row-aborted .ct-model-gateway-user-request-dot {
@@ -1285,6 +1295,18 @@
   color: #ef4444;
   fill: none;
   stroke: #ef4444;
+  stroke-width: 2.3;
+}
+
+.ct-model-gateway-user-request-status-pill-stream-interrupted {
+  color: #c2410c;
+  background: #ffedd5;
+}
+
+.ct-model-gateway-user-request-status-pill-stream-interrupted svg {
+  color: #f97316;
+  fill: none;
+  stroke: #f97316;
   stroke-width: 2.3;
 }
 

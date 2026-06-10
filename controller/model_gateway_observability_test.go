@@ -568,8 +568,8 @@ func TestGetModelGatewayObservabilitySummaryTreatsPending429AsConcurrencyFlow(t 
 	require.Equal(t, 46, record.LearnedConcurrencyLimit)
 	require.True(t, record.LearnedConcurrencyLimitChanged)
 	require.Equal(t, []string{"8"}, record.UsedChannels)
-	require.Empty(t, response.Summary.CircuitErrorTypes)
-	require.Empty(t, response.Summary.CircuitErrorCounts)
+	requireTrendRejectReason(t, response.Summary.CircuitErrorTypes, scheduler.CircuitErrorRateLimit, 1)
+	requireTrendRejectReason(t, response.Summary.CircuitErrorCounts, scheduler.CircuitErrorRateLimit, 1)
 }
 
 func TestBuildModelGatewayObservabilitySummaryExposesEngineeringErrorMetrics(t *testing.T) {
@@ -3455,6 +3455,75 @@ func TestClearModelGatewayRuntimeCircuitClearsCircuitAndFailureAvoidance(t *test
 	require.Nil(t, service.GetChannelRuntimeFailureAvoidanceStatus(modelGatewayRuntimeIdentityFromCoreKey(key)))
 }
 
+func TestClearModelGatewayClientEmptyOutputAvoidanceClearsSessionScope(t *testing.T) {
+	setupModelGatewayReplayControllerTestDB(t)
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	require.NotNil(t, runtimeDeps)
+	require.NotNil(t, runtimeDeps.ClientEmptyOutputSwitchTracker)
+
+	now := time.Date(2026, time.June, 10, 12, 0, 0, 0, time.UTC)
+	tracker := runtimeDeps.ClientEmptyOutputSwitchTracker.WithNowForTest(func() time.Time { return now })
+	sessionKey := "session:test:client-empty-output"
+	runtimeKey := core.RuntimeKey{
+		RequestedModel: "gpt-5.5",
+		UpstreamModel:  "gpt-5.5",
+		ChannelID:      909,
+		Group:          "pro",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	for _, offset := range []time.Duration{-20 * time.Second, -10 * time.Second, -5 * time.Second} {
+		tracker.Report(context.Background(), core.AttemptResult{
+			ClientSessionKey: sessionKey,
+			Key:              runtimeKey,
+			ChannelID:        runtimeKey.ChannelID,
+			ModelName:        runtimeKey.RequestedModel,
+			SelectedGroup:    runtimeKey.Group,
+			EndpointType:     runtimeKey.EndpointType,
+			Success:          true,
+			EmptyOutput:      true,
+			ObservedAt:       now.Add(offset),
+		})
+	}
+	dispatchReq := core.DispatchRequest{
+		ClientSessionKey: sessionKey,
+		RequestedGroup:   runtimeKey.Group,
+		UserGroup:        runtimeKey.Group,
+		ModelName:        runtimeKey.RequestedModel,
+		EndpointType:     runtimeKey.EndpointType,
+	}
+	candidate := core.Candidate{
+		Channel:       &model.Channel{Id: runtimeKey.ChannelID, Name: "empty-output"},
+		Group:         runtimeKey.Group,
+		UpstreamModel: runtimeKey.UpstreamModel,
+		RuntimeKey:    runtimeKey,
+	}
+	snapshot := core.RuntimeSnapshot{Key: runtimeKey}
+	_, active := tracker.AvoidanceInfo(dispatchReq, candidate, snapshot)
+	require.True(t, active)
+
+	router := gin.New()
+	router.POST("/api/model_gateway/observability/runtime/clear_client_empty_output_avoidance", ClearModelGatewayClientEmptyOutputAvoidance)
+	body := `{"session_key":"session:test:client-empty-output","channel_id":909,"requested_model":"gpt-5.5","group":"pro","endpoint_type":"openai"}`
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/model_gateway/observability/runtime/clear_client_empty_output_avoidance", strings.NewReader(body))
+	router.ServeHTTP(resp, req)
+
+	var payload struct {
+		Success bool                                                `json:"success"`
+		Message string                                              `json:"message"`
+		Data    ModelGatewayClientEmptyOutputAvoidanceClearResponse `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &payload), resp.Body.String())
+	require.True(t, payload.Success, payload.Message)
+	require.True(t, payload.Data.Cleared)
+	require.Equal(t, sessionKey, payload.Data.Scope.SessionKey)
+	_, active = tracker.AvoidanceInfo(dispatchReq, candidate, snapshot)
+	require.False(t, active)
+}
+
 func TestGetModelGatewayRuntimeStatusRejectsInvalidChannelID(t *testing.T) {
 	router := gin.New()
 	router.GET("/api/model_gateway/observability/runtime", GetModelGatewayRuntimeStatus)
@@ -3469,6 +3538,7 @@ func TestGetModelGatewayRuntimeStatusRejectsInvalidChannelID(t *testing.T) {
 }
 
 func TestGetModelGatewayHealthCheckQueueReturnsPendingReasons(t *testing.T) {
+	useModelGatewayHealthCheckSnapshotOnly(t)
 	now := time.Unix(1710000000, 0)
 	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
 		ProbeLowScoreThreshold:      0.62,
@@ -3826,6 +3896,7 @@ func TestGetModelGatewayHealthCheckQueueSkipsDisabledMultiKeyAccount(t *testing.
 }
 
 func TestGetModelGatewayHealthCheckQueueShowsScoreAnomalyFastRecovery(t *testing.T) {
+	useModelGatewayHealthCheckSnapshotOnly(t)
 	now := common.GetTimestamp()
 	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
 		ProbeMinChannelIntervalSeconds:      300,
@@ -3896,6 +3967,7 @@ func TestGetModelGatewayHealthCheckQueueShowsScoreAnomalyFastRecovery(t *testing
 }
 
 func TestGetModelGatewayHealthCheckQueueReturnsNextProbeCountdown(t *testing.T) {
+	useModelGatewayHealthCheckSnapshotOnly(t)
 	now := common.GetTimestamp()
 	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
 		ProbeEnabled:                        true,
@@ -3954,6 +4026,68 @@ func TestGetModelGatewayHealthCheckQueueReturnsNextProbeCountdown(t *testing.T) 
 	require.Equal(t, expectedNextProbeAt, item.NextProbeAt)
 	require.InDelta(t, expectedNextProbeAt-common.GetTimestamp(), item.NextProbeRemainingSeconds, 2)
 	require.Greater(t, item.NextProbeRemainingSeconds, int64(1600))
+}
+
+func TestGetModelGatewayHealthCheckQueueShowsOverloadRecovery(t *testing.T) {
+	useModelGatewayHealthCheckSnapshotOnly(t)
+	now := common.GetTimestamp()
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		ProbeEnabled:                        true,
+		ProbeMinChannelIntervalSeconds:      300,
+		ProbeLowScoreThreshold:              0.8,
+		ProbeMissingSampleThreshold:         3,
+		ProbeSkipRecentRealRequestEnabled:   true,
+		ProbeRecentRealRequestWindowSeconds: 1800,
+	})
+	t.Cleanup(restoreSetting)
+	modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps()
+	t.Cleanup(modelgatewayintegration.ResetDefaultRuntimeObservabilityDeps)
+	runtimeDeps := modelgatewayintegration.DefaultRuntimeObservabilityDeps()
+	require.NotNil(t, runtimeDeps)
+	require.NotNil(t, runtimeDeps.LocalSnapshotStore)
+
+	runtimeDeps.LocalSnapshotStore.Put(core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			RequestedModel: "gpt-5.5",
+			UpstreamModel:  "gpt-5.5",
+			ChannelID:      821,
+			Group:          "vip",
+			EndpointType:   constant.EndpointTypeOpenAI,
+		},
+		SuccessRate:           1,
+		TTFTMs:                1200,
+		DurationMs:            2400,
+		CostRatio:             1,
+		GroupPriorityRatio:    1,
+		SampleCount:           8,
+		RealSampleCount30m:    2,
+		LastRealAttemptAt:     now - 60,
+		LastProbeAt:           now - 600,
+		FailureAvoidance:      true,
+		ProbeRecoveryPending:  true,
+		ProbeTriggerReason:    service.ChannelOverloadRecoveryReason,
+		ProbeRecoveryRequired: 1,
+	})
+
+	router := gin.New()
+	router.GET("/api/model_gateway/observability/health-check/queue", GetModelGatewayHealthCheckQueue)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/observability/health-check/queue?queue_type=recovery&model=gpt-5.5&group=vip", nil)
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayHealthCheckQueueResponse(t, resp)
+	require.True(t, payload.Success)
+	require.Equal(t, 1, payload.Data.Summary.PendingCount)
+	require.Equal(t, 1, payload.Data.Summary.RecoveryCount)
+	require.Len(t, payload.Data.Items, 1)
+	item := payload.Data.Items[0]
+	require.Equal(t, 821, item.ChannelID)
+	require.Equal(t, "recovery", item.QueueType)
+	require.Empty(t, item.ProbeSkipReason)
+	require.InDelta(t, common.GetTimestamp(), item.NextProbeAt, 2)
+	require.Equal(t, int64(0), item.NextProbeRemainingSeconds)
+	require.True(t, modelGatewayHealthCheckTestReasonsContain(item.Reasons, service.ChannelOverloadRecoveryReason))
 }
 
 func TestGetModelGatewayHealthCheckQueueCanIncludeQueueSnapshot(t *testing.T) {
@@ -4027,6 +4161,7 @@ func TestGetModelGatewayHealthCheckQueueCanIncludeQueueSnapshot(t *testing.T) {
 }
 
 func TestGetModelGatewayHealthCheckQueueFiltersQueueType(t *testing.T) {
+	useModelGatewayHealthCheckSnapshotOnly(t)
 	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
 		ProbeLowScoreThreshold:      0.62,
 		ProbeMissingSampleThreshold: 3,
@@ -4082,6 +4217,7 @@ func TestGetModelGatewayHealthCheckQueueFiltersQueueType(t *testing.T) {
 }
 
 func TestGetModelGatewayHealthCheckQueueIgnoresHealthyLowTrafficRuntime(t *testing.T) {
+	useModelGatewayHealthCheckSnapshotOnly(t)
 	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
 		ProbeLowScoreThreshold:      0.62,
 		ProbeMissingSampleThreshold: 3,
@@ -4451,6 +4587,18 @@ func enableModelGatewayControllerChannelCache(t *testing.T) func() {
 			model.InitChannelCache()
 		}
 	}
+}
+
+func useModelGatewayHealthCheckSnapshotOnly(t *testing.T) {
+	t.Helper()
+	oldDB := model.DB
+	oldMemoryCache := common.MemoryCacheEnabled
+	model.DB = nil
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		model.DB = oldDB
+		common.MemoryCacheEnabled = oldMemoryCache
+	})
 }
 
 func modelGatewayHealthCheckTestReasonsContain(reasons []ModelGatewayHealthCheckQueueReason, key string) bool {

@@ -148,6 +148,44 @@ func TestProbeSelectorTimeoutRecoveryHasPriorityAndRequiredSamples(t *testing.T)
 	require.Equal(t, 3, snapshot.ProbeRecoveryRequired)
 }
 
+func TestProbeSelectorOverloadRecoveryBypassesRecentRealRequestSkip(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-overload-recovery", "gpt-4.1", "default", "default", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 3, "overload-recovery", "default", "gpt-4.1", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "gpt-4.1", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                  key,
+		SampleCount:          8,
+		SuccessRate:          0.99,
+		FailureAvoidance:     true,
+		ProbeRecoveryPending: true,
+		ProbeTriggerReason:   reasonOverloadRecovery,
+		LastRealAttemptAt:    now.Unix(),
+		RealSampleCount30m:   2,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:              time.Second,
+		RecoverySuccessesRequired:       2,
+		FailureAvoidancePriorityEnabled: true,
+		SkipRecentRealRequestEnabled:    true,
+		RecentRealRequestWindow:         30 * time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, reasonOverloadRecovery, candidates[0].Reason)
+
+	snapshot, ok := store.Get(key)
+	require.True(t, ok)
+	require.True(t, snapshot.ProbeRecoveryPending)
+	require.Equal(t, 2, snapshot.ProbeRecoveryRequired)
+}
+
 func TestProbeSelectorDoesNotSelectLowScoreWhenUnifiedHealthAboveThreshold(t *testing.T) {
 	db := setupProbeSelectorTestDB(t)
 	now := time.Now()
@@ -341,6 +379,10 @@ func TestProbeSelectorSkipsWhenRecentRealRequestExistsForRuntime(t *testing.T) {
 		RecentRealRequestWindow:      30 * time.Minute,
 	}, store, now))
 	require.False(t, skipRecentRealRequestProbe(ProbeCandidate{Key: key, Channel: channel, Model: "gpt-4.1", Group: "default", Reason: reasonTimeoutRecovery}, ProbeConfig{
+		SkipRecentRealRequestEnabled: true,
+		RecentRealRequestWindow:      30 * time.Minute,
+	}, store, now))
+	require.False(t, skipRecentRealRequestProbe(ProbeCandidate{Key: key, Channel: channel, Model: "gpt-4.1", Group: "default", Reason: reasonOverloadRecovery}, ProbeConfig{
 		SkipRecentRealRequestEnabled: true,
 		RecentRealRequestWindow:      30 * time.Minute,
 	}, store, now))
@@ -824,6 +866,44 @@ func TestProbeSelectorRateLimitsByRuntimeKey(t *testing.T) {
 	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: 5 * time.Minute, LowScoreThreshold: 0.7})
 	require.NoError(t, err)
 	require.Empty(t, candidates)
+}
+
+func TestProbeSelectorSuccessfulProbeAllowsFollowupAfterSixtySeconds(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	seedProbeSelectorRecentRequest(t, db, "req-success-followup", "gpt-4.1", "default", "default", now.Unix())
+	channel := seedProbeSelectorChannel(t, db, 1, "success-followup", "default", "gpt-4.1", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "gpt-4.1", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SampleCount:        5,
+		SuccessRate:        0.3,
+		LastRealAttemptAt:  now.Unix(),
+		RealSampleCount30m: 1,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	selector.now = func() time.Time { return now }
+	config := ProbeConfig{MinChannelInterval: 5 * time.Minute, LowScoreThreshold: 0.7}
+	first, err := selector.Select(config)
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+
+	selector.MarkResult(ProbeRunResult{Success: true, TargetKey: first[0].Key})
+
+	now = now.Add(59 * time.Second)
+	second, err := selector.Select(config)
+	require.NoError(t, err)
+	require.Empty(t, second)
+
+	now = now.Add(2 * time.Second)
+	third, err := selector.Select(config)
+	require.NoError(t, err)
+	require.Len(t, third, 1)
+	require.Equal(t, first[0].Key.ChannelID, third[0].Key.ChannelID)
 }
 
 func TestProbeSelectorRateLimitsLegacySnapshotAfterCapabilityKeyEnrichment(t *testing.T) {
