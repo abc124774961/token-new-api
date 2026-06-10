@@ -1,12 +1,15 @@
 package common
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	basecommon "github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -82,4 +85,57 @@ func TestRelayInfoInitChannelMetaUsesEffectiveCodexChannelType(t *testing.T) {
 	require.Equal(t, constant.ChannelTypeCodex, info.ChannelType)
 	require.Equal(t, constant.APITypeCodex, info.ApiType)
 	require.Equal(t, constant.ChannelBaseURLs[constant.ChannelTypeCodex], info.ChannelBaseUrl)
+}
+
+func TestApplyChannelForceStreamResponseForResponsesRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	request := &dto.OpenAIResponsesRequest{Model: "gpt-5.5"}
+	info := &RelayInfo{
+		Request:   request,
+		RelayMode: relayconstant.RelayModeResponses,
+		ChannelMeta: &ChannelMeta{
+			ChannelSetting: dto.ChannelSettings{ForceStreamResponse: true},
+		},
+	}
+
+	require.True(t, info.ApplyChannelForceStreamResponse(ctx))
+	require.True(t, info.IsStream)
+	require.NotNil(t, request.Stream)
+	require.True(t, *request.Stream)
+	require.True(t, basecommon.GetContextKeyBool(ctx, constant.ContextKeyRelayForceStreamResponse))
+	require.True(t, ctx.GetBool(string(constant.ContextKeyIsStream)))
+}
+
+func TestApplyChannelForceStreamResponseForChatRequest(t *testing.T) {
+	request := &dto.GeneralOpenAIRequest{Model: "gpt-5.5"}
+	info := &RelayInfo{
+		Request:   request,
+		RelayMode: relayconstant.RelayModeChatCompletions,
+		ChannelMeta: &ChannelMeta{
+			ChannelSetting: dto.ChannelSettings{ForceStreamResponse: true},
+		},
+	}
+
+	require.True(t, info.ApplyChannelForceStreamResponse(nil))
+	require.True(t, info.IsStream)
+	require.NotNil(t, request.Stream)
+	require.True(t, *request.Stream)
+}
+
+func TestApplyChannelForceStreamResponseSkipsUnsupportedRequest(t *testing.T) {
+	request := &dto.EmbeddingRequest{Model: "text-embedding-3-large"}
+	info := &RelayInfo{
+		Request:   request,
+		RelayMode: relayconstant.RelayModeEmbeddings,
+		ChannelMeta: &ChannelMeta{
+			ChannelSetting: dto.ChannelSettings{ForceStreamResponse: true},
+		},
+	}
+
+	require.False(t, info.ApplyChannelForceStreamResponse(nil))
+	require.False(t, info.IsStream)
 }

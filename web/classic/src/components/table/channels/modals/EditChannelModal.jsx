@@ -390,6 +390,7 @@ const resolveCostCoefficient = (profile) =>
 const CHANNEL_SWITCH_FIELDS = [
   'auto_ban',
   'force_format',
+  'force_stream_response',
   'thinking_to_content',
   'pass_through_body_enabled',
   'system_prompt_override',
@@ -477,6 +478,7 @@ const EditChannelModal = (props) => {
     multi_key_mode: 'random',
     // 渠道额外设置的默认值
     force_format: false,
+    force_stream_response: false,
     thinking_to_content: false,
     proxy: '',
     pass_through_body_enabled: false,
@@ -821,6 +823,7 @@ const EditChannelModal = (props) => {
   // 渠道额外设置状态
   const [channelSettings, setChannelSettings] = useState({
     force_format: false,
+    force_stream_response: false,
     thinking_to_content: false,
     proxy: '',
     pass_through_body_enabled: false,
@@ -1871,6 +1874,9 @@ const EditChannelModal = (props) => {
         try {
           const parsedSettings = JSON.parse(data.setting);
           data.force_format = toBoolean(parsedSettings.force_format);
+          data.force_stream_response = toBoolean(
+            parsedSettings.force_stream_response,
+          );
           data.thinking_to_content = toBoolean(
             parsedSettings.thinking_to_content,
           );
@@ -1885,6 +1891,7 @@ const EditChannelModal = (props) => {
         } catch (error) {
           console.error('解析渠道设置失败:', error);
           data.force_format = false;
+          data.force_stream_response = false;
           data.thinking_to_content = false;
           data.proxy = '';
           data.pass_through_body_enabled = false;
@@ -1893,6 +1900,7 @@ const EditChannelModal = (props) => {
         }
       } else {
         data.force_format = false;
+        data.force_stream_response = false;
         data.thinking_to_content = false;
         data.proxy = '';
         data.pass_through_body_enabled = false;
@@ -2066,6 +2074,7 @@ const EditChannelModal = (props) => {
       // 同步更新channelSettings状态显示
       setChannelSettings({
         force_format: data.force_format,
+        force_stream_response: data.force_stream_response,
         thinking_to_content: data.thinking_to_content,
         proxy: data.proxy,
         pass_through_body_enabled: data.pass_through_body_enabled,
@@ -2112,6 +2121,7 @@ const EditChannelModal = (props) => {
         data.thinking_to_content ||
         data.pass_through_body_enabled ||
         data.force_format ||
+        data.force_stream_response ||
         data.claude_beta_query ||
         data.system_prompt_override;
       if (hasAdvancedValues) {
@@ -3307,6 +3317,7 @@ const EditChannelModal = (props) => {
     // 重置渠道设置状态
     setChannelSettings({
       force_format: false,
+      force_stream_response: false,
       thinking_to_content: false,
       proxy: '',
       pass_through_body_enabled: false,
@@ -3685,6 +3696,7 @@ const EditChannelModal = (props) => {
     // 生成渠道额外设置JSON
     const channelExtraSettings = {
       force_format: localInputs.force_format || false,
+      force_stream_response: localInputs.force_stream_response || false,
       thinking_to_content: localInputs.thinking_to_content || false,
       proxy: localInputs.proxy || '',
       pass_through_body_enabled: localInputs.pass_through_body_enabled || false,
@@ -3810,6 +3822,7 @@ const EditChannelModal = (props) => {
 
     // 清理不需要发送到后端的字段
     delete localInputs.force_format;
+    delete localInputs.force_stream_response;
     delete localInputs.thinking_to_content;
     delete localInputs.proxy;
     delete localInputs.pass_through_body_enabled;
@@ -4720,6 +4733,22 @@ const EditChannelModal = (props) => {
                       )}
                     />
                   )}
+
+                  <Form.Switch
+                    field='force_stream_response'
+                    label={t('强制流式返回')}
+                    checkedText={t('开')}
+                    uncheckedText={t('关')}
+                    onChange={(value) =>
+                      handleChannelSettingsChange(
+                        'force_stream_response',
+                        value,
+                      )
+                    }
+                    extraText={t(
+                      '非流式客户端请求会按流式链路转发并返回 SSE，适合超长响应绕开 CDN/客户端等待超时',
+                    )}
+                  />
 
                   <Form.Switch
                     field='thinking_to_content'

@@ -74,6 +74,7 @@ const (
 	ContextKeyRelayStreamInterrupted            ContextKey = "relay_stream_interrupted"
 	ContextKeyRelayEmptyOutput                  ContextKey = "relay_empty_output"
 	ContextKeyRelayExperienceIssue              ContextKey = "relay_experience_issue"
+	ContextKeyRelayForceStreamResponse          ContextKey = "relay_force_stream_response"
 	ContextKeyRelayFinalPromptTokens            ContextKey = "relay_final_prompt_tokens"
 	ContextKeyRelayFinalCompletionTokens        ContextKey = "relay_final_completion_tokens"
 	ContextKeyRelayInfo                         ContextKey = "relay_info"

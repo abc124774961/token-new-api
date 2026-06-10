@@ -7,6 +7,7 @@ import (
 
 type ChannelSettings struct {
 	ForceFormat            bool   `json:"force_format,omitempty"`
+	ForceStreamResponse    bool   `json:"force_stream_response,omitempty"`
 	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
 	Proxy                  string `json:"proxy"`
 	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`

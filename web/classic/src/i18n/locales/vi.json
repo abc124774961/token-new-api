@@ -3132,6 +3132,8 @@
     "强制使用 AUTH LOGIN": "Buộc AUTH LOGIN",
     "强制将响应格式化为 OpenAI 标准格式（只适用于OpenAI渠道类型）": "Buộc định dạng phản hồi theo định dạng chuẩn OpenAI (Chỉ dành cho các loại kênh OpenAI)",
     "强制格式化": "Buộc định dạng",
+    "强制流式返回": "Buộc trả về dạng stream",
+    "非流式客户端请求会按流式链路转发并返回 SSE，适合超长响应绕开 CDN/客户端等待超时": "Yêu cầu không stream từ client sẽ được chuyển tiếp và trả về qua luồng SSE, phù hợp với phản hồi rất dài để tránh timeout chờ của CDN/client",
     "强制要求": "Yêu cầu bắt buộc",
     "强变换": "Biến thể thấp",
     "归因完整": "Quy kết đầy đủ",

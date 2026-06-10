@@ -596,6 +596,10 @@ func mergeResponsesInputTokenDetails(dst *dto.InputTokenDetails, src dto.InputTo
 
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
+	passThroughGlobal := model_setting.GetGlobalSettings().PassThroughRequestEnabled
+	if !passThroughGlobal && !info.ChannelSetting.PassThroughBodyEnabled {
+		info.ApplyChannelForceStreamResponse(c)
+	}
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
 		switch info.ApiType {
 		case appconstant.APITypeOpenAI, appconstant.APITypeCodex:
@@ -648,7 +652,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 	defer restoreCapabilityBridgePlan()
 	restoreProxyMode := func() {}
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+	if passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())

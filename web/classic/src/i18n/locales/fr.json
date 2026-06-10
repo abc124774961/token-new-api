@@ -3170,6 +3170,8 @@
     "强制使用 AUTH LOGIN": "Forcer AUTH LOGIN",
     "强制将响应格式化为 OpenAI 标准格式（只适用于OpenAI渠道类型）": "Forcer le formatage des réponses au format standard OpenAI (uniquement pour les types de canaux OpenAI)",
     "强制格式化": "Forcer le format",
+    "强制流式返回": "Forcer la réponse en streaming",
+    "非流式客户端请求会按流式链路转发并返回 SSE，适合超长响应绕开 CDN/客户端等待超时": "Les requêtes client non streaming sont relayées et renvoyées via le flux SSE, utile pour les longues réponses afin d’éviter les délais d’attente CDN/client",
     "强制要求": "Exigence obligatoire",
     "强变换": "Forte variation",
     "归因完整": "Attribution complète",

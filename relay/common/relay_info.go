@@ -273,6 +273,42 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	info.CaptureRequestMetadata()
 }
 
+func (info *RelayInfo) ApplyChannelForceStreamResponse(c *gin.Context) bool {
+	if info == nil || info.IsStream || info.ChannelMeta == nil || !info.ChannelSetting.ForceStreamResponse {
+		return false
+	}
+	switch info.RelayMode {
+	case relayconstant.RelayModeChatCompletions,
+		relayconstant.RelayModeCompletions,
+		relayconstant.RelayModeResponses:
+	default:
+		return false
+	}
+
+	enabled := true
+	switch request := info.Request.(type) {
+	case *dto.GeneralOpenAIRequest:
+		if request == nil {
+			return false
+		}
+		request.Stream = &enabled
+	case *dto.OpenAIResponsesRequest:
+		if request == nil {
+			return false
+		}
+		request.Stream = &enabled
+	default:
+		return false
+	}
+
+	info.IsStream = true
+	if c != nil {
+		c.Set(string(constant.ContextKeyIsStream), true)
+		common.SetContextKey(c, constant.ContextKeyRelayForceStreamResponse, true)
+	}
+	return true
+}
+
 func (info *RelayInfo) ToString() string {
 	if info == nil {
 		return "RelayInfo<nil>"

@@ -278,6 +278,9 @@ func appendRelayDeliveryInfo(ctx *gin.Context, other map[string]interface{}) {
 	if common.GetContextKeyBool(ctx, constant.ContextKeyRelayClientReceivedStarted) {
 		other["client_received_started"] = true
 	}
+	if common.GetContextKeyBool(ctx, constant.ContextKeyRelayForceStreamResponse) {
+		other["force_stream_response"] = true
+	}
 	if classification := strings.TrimSpace(common.GetContextKeyString(ctx, constant.ContextKeyRelayFinalClassification)); classification != "" {
 		other["final_classification"] = classification
 	}

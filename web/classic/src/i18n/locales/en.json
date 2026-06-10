@@ -3178,6 +3178,8 @@
     "强制使用 AUTH LOGIN": "Force AUTH LOGIN",
     "强制将响应格式化为 OpenAI 标准格式（只适用于OpenAI渠道类型）": "Force format responses to OpenAI standard format (Only for OpenAI channel types)",
     "强制格式化": "Force format",
+    "强制流式返回": "Force streaming response",
+    "非流式客户端请求会按流式链路转发并返回 SSE，适合超长响应绕开 CDN/客户端等待超时": "Non-stream client requests are forwarded and returned over the streaming SSE path, useful for long responses to avoid CDN/client wait timeouts",
     "强制要求": "Mandatory requirement",
     "强变换": "Low Variation",
     "归因完整": "Attribution complete",
