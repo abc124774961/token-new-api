@@ -3101,7 +3101,7 @@
     "建议动态倍率": "Multiplicateur dynamique suggéré",
     "建议原因": "Motif de la recommandation",
     "建议在生产环境中使用 MySQL 或 PostgreSQL 数据库，或确保 SQLite 数据库文件已映射到宿主机的持久化存储。": "Il est recommandé d'utiliser les bases de données MySQL ou PostgreSQL dans les environnements de production, ou de s'assurer que le fichier de base de données SQLite est mappé sur le stockage persistant de la machine hôte.",
-    "建议小于CDN空闲超时时间，默认55秒": "Recommande sous le delai d’inactivite du CDN, 55 secondes par defaut",
+    "建议小于CDN空闲超时时间，默认15秒，运行时最大25秒": "Recommande sous le délai d’inactivité du CDN ; 15 secondes par défaut, maximum de 25 secondes à l’exécution",
     "建议已生成，后台动态倍率会按配置自动应用并保留记录。": "Recommandation générée. Les ratios dynamiques en arrière-plan s’appliquent automatiquement selon la configuration et conservent un journal.",
     "建议已生成，请结合成本明细人工确认。": "Recommandation générée. Confirmez manuellement avec le détail des coûts.",
     "建议已进入观察期，确认前请关注收入缺口和请求量变化。": "La recommandation est en observation. Surveillez l’écart de revenu et le volume avant confirmation.",

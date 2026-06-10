@@ -78,7 +78,7 @@ const defaultGlobalSettingInputs = {
   'general_setting.ping_interval_enabled': false,
   'general_setting.ping_interval_seconds': 60,
   'general_setting.downstream_keepalive_enabled': true,
-  'general_setting.downstream_keepalive_interval_seconds': 55,
+  'general_setting.downstream_keepalive_interval_seconds': 15,
 };
 
 export default function SettingGlobalModel(props) {
@@ -451,10 +451,13 @@ export default function SettingGlobalModel(props) {
                       })
                     }
                     min={5}
+                    max={25}
                     disabled={
                       !inputs['general_setting.downstream_keepalive_enabled']
                     }
-                    extraText={t('建议小于CDN空闲超时时间，默认55秒')}
+                    extraText={t(
+                      '建议小于CDN空闲超时时间，默认15秒，运行时最大25秒',
+                    )}
                   />
                 </Col>
               </Row>

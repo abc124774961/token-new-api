@@ -3108,7 +3108,7 @@
     "建议动态倍率": "Suggested dynamic ratio",
     "建议原因": "Recommendation reason",
     "建议在生产环境中使用 MySQL 或 PostgreSQL 数据库，或确保 SQLite 数据库文件已映射到宿主机的持久化存储。": "It is recommended to use MySQL or PostgreSQL databases in production environments, or ensure that the SQLite database file is mapped to the persistent storage of the host machine.",
-    "建议小于CDN空闲超时时间，默认55秒": "Recommended below the CDN idle timeout; default is 55 seconds",
+    "建议小于CDN空闲超时时间，默认15秒，运行时最大25秒": "Recommended below the CDN idle timeout; default is 15 seconds, runtime maximum is 25 seconds",
     "建议已生成，后台动态倍率会按配置自动应用并保留记录。": "Recommendation generated. Background dynamic ratios auto-apply according to configuration and keep an audit record.",
     "建议已生成，请结合成本明细人工确认。": "Recommendation generated. Confirm manually with the cost breakdown.",
     "建议已进入观察期，确认前请关注收入缺口和请求量变化。": "The recommendation is in observation. Watch revenue gap and request volume before confirming.",

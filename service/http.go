@@ -18,6 +18,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	defaultDownstreamKeepAliveIntervalSeconds = 15
+	minDownstreamKeepAliveIntervalSeconds     = 5
+	maxDownstreamKeepAliveIntervalSeconds     = 25
+)
+
 func CloseResponseBodyGracefully(httpResponse *http.Response) {
 	if httpResponse == nil || httpResponse.Body == nil {
 		return
@@ -232,12 +238,15 @@ func DownstreamKeepAliveEnabled() bool {
 
 func DownstreamKeepAliveInterval() time.Duration {
 	settings := operation_setting.GetGeneralSetting()
-	seconds := 55
+	seconds := defaultDownstreamKeepAliveIntervalSeconds
 	if settings != nil && settings.DownstreamKeepaliveIntervalSeconds > 0 {
 		seconds = settings.DownstreamKeepaliveIntervalSeconds
 	}
-	if seconds < 5 {
-		seconds = 5
+	if seconds < minDownstreamKeepAliveIntervalSeconds {
+		seconds = minDownstreamKeepAliveIntervalSeconds
+	}
+	if seconds > maxDownstreamKeepAliveIntervalSeconds {
+		seconds = maxDownstreamKeepAliveIntervalSeconds
 	}
 	return time.Duration(seconds) * time.Second
 }

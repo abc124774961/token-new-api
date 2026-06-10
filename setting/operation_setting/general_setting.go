@@ -30,7 +30,7 @@ var generalSetting = GeneralSetting{
 	PingIntervalEnabled:                false,
 	PingIntervalSeconds:                60,
 	DownstreamKeepaliveEnabled:         true,
-	DownstreamKeepaliveIntervalSeconds: 55,
+	DownstreamKeepaliveIntervalSeconds: 15,
 	QuotaDisplayType:                   QuotaDisplayTypeUSD,
 	CustomCurrencySymbol:               "¤",
 	CustomCurrencyExchangeRate:         1.0,

@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -68,4 +69,46 @@ func TestIOCopyBytesWithJSONKeepAliveSkipsBinaryResponse(t *testing.T) {
 	require.Equal(t, "3", recorder.Header().Get("Content-Length"))
 	require.Empty(t, recorder.Header().Get("Transfer-Encoding"))
 	require.Zero(t, common.GetContextKeyInt(c, constant.ContextKeyRelayDownstreamKeepAliveCount))
+}
+
+func TestDownstreamKeepAliveIntervalDefaultsAndBounds(t *testing.T) {
+	settings := operation_setting.GetGeneralSetting()
+	previous := settings.DownstreamKeepaliveIntervalSeconds
+	t.Cleanup(func() {
+		settings.DownstreamKeepaliveIntervalSeconds = previous
+	})
+
+	tests := []struct {
+		name       string
+		configured int
+		want       time.Duration
+	}{
+		{
+			name:       "default",
+			configured: 0,
+			want:       15 * time.Second,
+		},
+		{
+			name:       "minimum",
+			configured: 1,
+			want:       5 * time.Second,
+		},
+		{
+			name:       "configured",
+			configured: 20,
+			want:       20 * time.Second,
+		},
+		{
+			name:       "cdn safe maximum",
+			configured: 55,
+			want:       25 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings.DownstreamKeepaliveIntervalSeconds = tt.configured
+			require.Equal(t, tt.want, DownstreamKeepAliveInterval())
+		})
+	}
 }

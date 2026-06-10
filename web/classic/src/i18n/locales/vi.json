@@ -3063,7 +3063,7 @@
     "建议动态倍率": "Hệ số động đề xuất",
     "建议原因": "Lý do khuyến nghị",
     "建议在生产环境中使用 MySQL 或 PostgreSQL 数据库，或确保 SQLite 数据库文件已映射到宿主机的持久化存储。": "Khuyên dùng cơ sở dữ liệu MySQL hoặc PostgreSQL trong môi trường sản xuất, hoặc đảm bảo tệp cơ sở dữ liệu SQLite được ánh xạ tới bộ nhớ bền vững của máy chủ.",
-    "建议小于CDN空闲超时时间，默认55秒": "Nên nhỏ hơn thời gian chờ rỗi của CDN; mặc định là 55 giây",
+    "建议小于CDN空闲超时时间，默认15秒，运行时最大25秒": "Nên nhỏ hơn thời gian chờ rỗi của CDN; mặc định 15 giây, tối đa khi chạy là 25 giây",
     "建议已生成，后台动态倍率会按配置自动应用并保留记录。": "Đã tạo khuyến nghị. Hệ số động nền sẽ tự động áp dụng theo cấu hình và giữ bản ghi kiểm toán.",
     "建议已生成，请结合成本明细人工确认。": "Đã tạo khuyến nghị. Hãy xác nhận thủ công cùng với chi tiết chi phí.",
     "建议已进入观察期，确认前请关注收入缺口和请求量变化。": "Đề xuất đã vào giai đoạn quan sát. Trước khi xác nhận, hãy theo dõi thiếu hụt doanh thu và lượng yêu cầu.",
