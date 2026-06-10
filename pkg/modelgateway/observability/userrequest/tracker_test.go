@@ -68,7 +68,7 @@ func TestTrackerObserveFirstByteUpdatesProcessingRecord(t *testing.T) {
 	require.Equal(t, int64(1200), items[0].TTFTMs)
 	require.Equal(t, StatusProcessing, items[0].Status)
 	require.Len(t, events, 2)
-	require.Equal(t, EventStarted, events[1].Kind)
+	require.Equal(t, EventUpdated, events[1].Kind)
 	require.Equal(t, int64(1200), events[1].Record.TTFTMs)
 }
 
@@ -758,6 +758,34 @@ func TestTrackerStaleProcessingWithFirstByteKeepsStreamingTimeout(t *testing.T) 
 	require.Len(t, items, 1)
 	require.Equal(t, StatusProcessing, items[0].Status)
 	require.Equal(t, int64(2000), items[0].TTFTMs)
+}
+
+func TestFinalizeStaleActiveSummarySkipsTrackedPending(t *testing.T) {
+	restore := setTrackerTimeoutsForTest(t, true, 1, 1, 0)
+	defer restore()
+	oldDefault := DefaultTracker
+	DefaultTracker = NewTracker(10, time.Minute)
+	defer func() {
+		DefaultTracker = oldDefault
+	}()
+
+	createdAt := time.Now().Add(-35 * time.Second)
+	DefaultTracker.Start(core.DispatchRecord{
+		Request:    core.DispatchRequest{RequestID: "req-tracked-active", ModelName: "gpt-5.5"},
+		RecordedAt: createdAt,
+	})
+
+	summary := model.ModelGatewayUserRequestSummary{
+		RequestId:      "req-tracked-active",
+		CreatedAt:      createdAt.Unix(),
+		UpdatedAt:      createdAt.Unix(),
+		RequestedModel: "gpt-5.5",
+	}
+	updated, finalized := FinalizeStaleActiveSummary(summary, time.Now())
+
+	require.False(t, finalized)
+	require.Zero(t, updated.CompletedAt)
+	require.Zero(t, updated.FinalStatusCode)
 }
 
 func TestTrackerCarriesExperienceIssueOnSuccessfulRequest(t *testing.T) {

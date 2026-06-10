@@ -31,7 +31,7 @@ const DEFAULT_RECENT_USER_REQUEST_LIMIT = 100;
 const MANUAL_REFRESH_DEBOUNCE_MS = 800;
 const USER_REQUEST_VIEW_MODE = 'user_requests';
 const USER_REQUEST_RECENT_POLL_SOURCE = 'user_request_recent_poll';
-const USER_REQUEST_RECENT_POLL_INTERVAL_MS = 5000;
+const USER_REQUEST_RECENT_POLL_INTERVAL_MS = 2000;
 const USER_REQUEST_STATS_REFRESH_DELAY_MS = 600;
 const USER_REQUEST_STATS_REFRESH_MIN_INTERVAL_MS = 15000;
 
@@ -258,15 +258,9 @@ function mergeUserRequestSnapshot(
     ? currentUserRequests.recent_requests
     : [];
   if (!snapshotRecent.length) {
-    if (!currentRecent.length) return snapshotUserRequests;
     return {
       ...snapshotUserRequests,
-      recent_requests: currentRecent.slice(
-        0,
-        Number.isFinite(Number(limit)) && Number(limit) > 0
-          ? Number(limit)
-          : DEFAULT_RECENT_USER_REQUEST_LIMIT,
-      ),
+      recent_requests: [],
     };
   }
   if (!currentRecent.length) {

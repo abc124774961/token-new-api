@@ -173,6 +173,47 @@ func SweepStale() []Record {
 	return DefaultTracker.SweepStale()
 }
 
+func HasPending(requestID string) bool {
+	return DefaultTracker.HasPending(requestID)
+}
+
+func FinalizeStaleActiveSummary(summary model.ModelGatewayUserRequestSummary, now time.Time) (model.ModelGatewayUserRequestSummary, bool) {
+	if !activeSummaryProcessing(summary) || HasPending(summary.RequestId) {
+		return summary, false
+	}
+	record := recordFromActiveSummary(summary)
+	if !processingRecordStale(record, now) {
+		return summary, false
+	}
+	final := staleProcessingFinalRecord(record, now)
+	attemptIndex := summary.LastAttemptIndex + 1
+	if attemptIndex < 0 {
+		attemptIndex = 0
+	}
+	persisted := model.RecordModelGatewayUserRequestAttempt(model.ModelGatewayUserRequestAttempt{
+		CreatedAt:      final.CompletedAt,
+		RequestId:      final.RequestID,
+		AttemptIndex:   attemptIndex,
+		RequestedGroup: final.RequestedGroup,
+		SelectedGroup:  final.SelectedGroup,
+		ChannelID:      final.FinalChannelID,
+		ChannelName:    final.FinalChannelName,
+		RequestedModel: final.RequestedModel,
+		Success:        false,
+		StatusCode:     http.StatusGatewayTimeout,
+		ErrorCategory:  model.ModelGatewayUserRequestErrorTimeout,
+		DurationMs:     final.DurationMs,
+		TTFTMs:         final.TTFTMs,
+		RetryAction:    "stale_timeout",
+		IsHealthProbe:  final.IsHealthProbe,
+		ProbeReason:    final.ProbeReason,
+	})
+	if persisted != nil {
+		return *persisted, true
+	}
+	return summaryFromStaleFinal(summary, final), true
+}
+
 func (t *Tracker) AddObserver(observer Observer) {
 	if t == nil || observer == nil {
 		return
@@ -325,7 +366,7 @@ func (t *Tracker) ObserveFirstByte(observation FirstByteObservation) {
 	t.pending[requestID] = pending
 	t.mu.Unlock()
 
-	t.notify(Event{Kind: EventStarted, Record: pending})
+	t.notify(Event{Kind: EventUpdated, Record: pending})
 }
 
 func (t *Tracker) ObserveActivity(observation ActivityObservation) {
@@ -435,6 +476,20 @@ func (t *Tracker) SweepStale() []Record {
 		t.notify(Event{Kind: EventFinished, Record: records[idx]})
 	}
 	return records
+}
+
+func (t *Tracker) HasPending(requestID string) bool {
+	if t == nil {
+		return false
+	}
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return false
+	}
+	t.mu.RLock()
+	_, ok := t.pending[requestID]
+	t.mu.RUnlock()
+	return ok
 }
 
 func (t *Tracker) notify(event Event) {
@@ -701,6 +756,64 @@ func recordSortLess(left, right Record) bool {
 
 func recordProcessing(record Record) bool {
 	return strings.TrimSpace(record.Status) == StatusProcessing && record.CompletedAt <= 0
+}
+
+func activeSummaryProcessing(summary model.ModelGatewayUserRequestSummary) bool {
+	return summary.CompletedAt <= 0 &&
+		!summary.FinalSuccess &&
+		!summary.ClientAborted &&
+		summary.FinalStatusCode <= 0 &&
+		strings.TrimSpace(summary.FinalErrorCategory) == ""
+}
+
+func recordFromActiveSummary(summary model.ModelGatewayUserRequestSummary) Record {
+	updatedAt := summary.UpdatedAt
+	if updatedAt <= 0 {
+		updatedAt = summary.CreatedAt
+	}
+	return Record{
+		ID:                 summary.Id,
+		CreatedAt:          summary.CreatedAt,
+		UpdatedAt:          updatedAt,
+		CompletedAt:        summary.CompletedAt,
+		RequestID:          summary.RequestId,
+		RequestedModel:     summary.RequestedModel,
+		RequestedGroup:     summary.RequestedGroup,
+		SelectedGroup:      summary.SelectedGroup,
+		FinalChannelID:     summary.FinalChannelID,
+		FinalChannelName:   summary.FinalChannelName,
+		Attempts:           summary.Attempts,
+		FinalSuccess:       summary.FinalSuccess,
+		Recovered:          summary.Recovered,
+		FinalStatusCode:    summary.FinalStatusCode,
+		FinalErrorCategory: summary.FinalErrorCategory,
+		EmptyOutput:        summary.EmptyOutput,
+		ExperienceIssue:    summary.ExperienceIssue,
+		ClientAborted:      summary.ClientAborted,
+		IsHealthProbe:      summary.IsHealthProbe,
+		ProbeReason:        summary.ProbeReason,
+		DurationMs:         summary.DurationMs,
+		TTFTMs:             summary.TTFTMs,
+		Status:             StatusProcessing,
+	}
+}
+
+func summaryFromStaleFinal(summary model.ModelGatewayUserRequestSummary, final Record) model.ModelGatewayUserRequestSummary {
+	summary.UpdatedAt = final.UpdatedAt
+	summary.CompletedAt = final.CompletedAt
+	summary.FinalSuccess = false
+	summary.Recovered = false
+	summary.FinalStatusCode = final.FinalStatusCode
+	summary.FinalErrorCategory = final.FinalErrorCategory
+	summary.DurationMs = final.DurationMs
+	summary.TTFTMs = final.TTFTMs
+	if summary.Attempts <= 0 {
+		summary.Attempts = 1
+	}
+	if summary.LastAttemptIndex < 0 {
+		summary.LastAttemptIndex = 0
+	}
+	return summary
 }
 
 func processingRecordStale(record Record, now time.Time) bool {

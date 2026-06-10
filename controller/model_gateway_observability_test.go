@@ -17,6 +17,7 @@ import (
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
+	modelgatewayuserrequest "github.com/QuantumNous/new-api/pkg/modelgateway/observability/userrequest"
 	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -2634,6 +2635,106 @@ func TestBuildModelGatewayObservabilitySummaryRecentOnlyLimitsUserRequestStats(t
 	require.Empty(t, response.UserRequests.ByGroup)
 	require.Empty(t, response.UserRequests.Trends)
 	require.Empty(t, response.DynamicBilling.Groups)
+}
+
+func TestBuildModelGatewayUserRequestsFinalizesStaleActiveSummary(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	resetModelGatewayObservabilitySummaryCache()
+	defer resetModelGatewayObservabilitySummaryCache()
+	oldStreamingTimeout := constant.StreamingTimeout
+	oldRelayTimeout := common.RelayTimeout
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.SchedulerSetting{
+		RelayTotalTimeoutEnabled: true,
+		RelayTotalTimeoutSeconds: 1,
+	})
+	constant.StreamingTimeout = 1
+	common.RelayTimeout = 0
+	defer func() {
+		constant.StreamingTimeout = oldStreamingTimeout
+		common.RelayTimeout = oldRelayTimeout
+		restoreSetting()
+	}()
+
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.ModelGatewayUserRequestSummary{
+		CreatedAt:        now - 35,
+		UpdatedAt:        now - 35,
+		CompletedAt:      0,
+		RequestId:        "req-stale-active-summary",
+		RequestedGroup:   "default",
+		SelectedGroup:    "default",
+		RequestedModel:   "gpt-5.5",
+		FinalChannelID:   7,
+		FinalChannelName: "stale-channel",
+		LastAttemptIndex: -1,
+	}).Error)
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		ScanLimit:   10,
+		TopN:        5,
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	record := response.UserRequests.RecentRequests[0]
+	require.Equal(t, "req-stale-active-summary", record.RequestID)
+	require.Equal(t, "failed", record.Status)
+	require.Equal(t, http.StatusGatewayTimeout, record.FinalStatusCode)
+	require.Equal(t, model.ModelGatewayUserRequestErrorTimeout, record.FinalErrorCategory)
+	require.Greater(t, record.CompletedAt, int64(0))
+	require.GreaterOrEqual(t, record.DurationMs, int64(30000))
+
+	var persisted model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-stale-active-summary").First(&persisted).Error)
+	require.Greater(t, persisted.CompletedAt, int64(0))
+	require.Equal(t, http.StatusGatewayTimeout, persisted.FinalStatusCode)
+	require.Equal(t, model.ModelGatewayUserRequestErrorTimeout, persisted.FinalErrorCategory)
+}
+
+func TestBuildModelGatewayUserRequestsMergesTrackerFirstByte(t *testing.T) {
+	setupModelGatewayReplayControllerTestDB(t)
+	resetModelGatewayObservabilitySummaryCache()
+	defer resetModelGatewayObservabilitySummaryCache()
+	oldDefault := modelgatewayuserrequest.DefaultTracker
+	modelgatewayuserrequest.DefaultTracker = modelgatewayuserrequest.NewTracker(10, time.Minute)
+	defer func() {
+		modelgatewayuserrequest.DefaultTracker = oldDefault
+	}()
+
+	startedAt := time.Now()
+	modelgatewayuserrequest.Start(core.DispatchRecord{
+		Request: core.DispatchRequest{
+			RequestID:      "req-tracker-first-byte",
+			RequestedGroup: "default",
+			ModelName:      "gpt-5.5",
+		},
+		Plan:       &core.DispatchPlan{SelectedGroup: "default"},
+		RecordedAt: startedAt,
+	})
+	modelgatewayuserrequest.ObserveFirstByte(modelgatewayuserrequest.FirstByteObservation{
+		RequestID:  "req-tracker-first-byte",
+		ObservedAt: startedAt.Add(1200 * time.Millisecond),
+		TTFT:       1200 * time.Millisecond,
+	})
+
+	response, err := BuildModelGatewayObservabilitySummary(ModelGatewayObservabilityOptions{
+		Hours:       1,
+		RecentLimit: 5,
+		ScanLimit:   10,
+		TopN:        5,
+		ViewMode:    modelGatewayObservabilityViewUserRequests,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, response.UserRequests.RecentRequests, 1)
+	record := response.UserRequests.RecentRequests[0]
+	require.Equal(t, "req-tracker-first-byte", record.RequestID)
+	require.Equal(t, "processing", record.Status)
+	require.Equal(t, int64(1200), record.TTFTMs)
+	require.Equal(t, startedAt.Add(1200*time.Millisecond).Unix(), record.UpdatedAt)
 }
 
 func TestModelGatewayCandidateExplanationsCarryChannelPriority(t *testing.T) {

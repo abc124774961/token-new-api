@@ -21,6 +21,7 @@ import (
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayobservability "github.com/QuantumNous/new-api/pkg/modelgateway/observability"
+	modelgatewayuserrequest "github.com/QuantumNous/new-api/pkg/modelgateway/observability/userrequest"
 	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
 	modelgatewayscheduler "github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/service"
@@ -3337,6 +3338,8 @@ func applyModelGatewayUserRequestObservabilityFilters(tx *gorm.DB, options Model
 }
 
 func buildModelGatewayUserRequestObservability(startTime int64, endTime int64, options ModelGatewayObservabilityOptions) (ModelGatewayUserRequestObservabilityResponse, error) {
+	finalizeStaleActiveModelGatewayUserRequestSummaries(startTime, endTime, options)
+
 	base := model.DB.Model(&model.ModelGatewayUserRequestSummary{}).
 		Where("completed_at >= ? AND completed_at > 0", startTime)
 	base = applyModelGatewayUserRequestObservabilityFilters(base, options)
@@ -3368,7 +3371,44 @@ func buildModelGatewayUserRequestObservability(startTime int64, endTime int64, o
 	reconcileModelGatewayUserRequestClientAbortSummaries(userRequests)
 
 	activeRequests := loadActiveModelGatewayUserRequestSummaries(startTime, endTime, options)
-	return buildModelGatewayUserRequestObservabilityFromSummaries(userRequests, activeRequests, totalRequests, startTime, endTime, options), nil
+	response := buildModelGatewayUserRequestObservabilityFromSummaries(userRequests, activeRequests, totalRequests, startTime, endTime, options)
+	return mergeModelGatewayUserRequestTrackerSnapshot(response, options), nil
+}
+
+func finalizeStaleActiveModelGatewayUserRequestSummaries(startTime int64, endTime int64, options ModelGatewayObservabilityOptions) {
+	if model.DB == nil || options.RecentLimit <= 0 {
+		return
+	}
+	modelgatewayuserrequest.SweepStale()
+	activeCutoff := endTime - modelGatewayObservabilityActiveRequestTTL
+	if activeCutoff < startTime {
+		activeCutoff = startTime
+	}
+	limit := options.RecentLimit
+	if limit <= 0 {
+		limit = modelGatewayObservabilityDefaultRecentLimit
+	}
+	rows := make([]model.ModelGatewayUserRequestSummary, 0, limit)
+	tx := model.DB.Model(&model.ModelGatewayUserRequestSummary{}).
+		Where("completed_at <= 0").
+		Where("(updated_at >= ? OR (updated_at <= 0 AND created_at >= ?))", activeCutoff, activeCutoff)
+	tx = applyModelGatewayUserRequestObservabilityFilters(tx, options)
+	if err := tx.Order("created_at desc, updated_at desc, id desc").
+		Limit(limit).
+		Find(&rows).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to load stale active model gateway user requests: %v", err))
+		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+	now := time.Unix(endTime, 0)
+	if endTime <= 0 {
+		now = time.Now()
+	}
+	for _, row := range rows {
+		modelgatewayuserrequest.FinalizeStaleActiveSummary(row, now)
+	}
 }
 
 func loadActiveModelGatewayUserRequestSummaries(startTime int64, endTime int64, options ModelGatewayObservabilityOptions) []model.ModelGatewayUserRequestSummary {
@@ -3391,6 +3431,54 @@ func loadActiveModelGatewayUserRequestSummaries(startTime int64, endTime int64, 
 		return nil
 	}
 	return rows
+}
+
+func mergeModelGatewayUserRequestTrackerSnapshot(response ModelGatewayUserRequestObservabilityResponse, options ModelGatewayObservabilityOptions) ModelGatewayUserRequestObservabilityResponse {
+	if options.RecentLimit <= 0 {
+		return response
+	}
+	pending := modelgatewayuserrequest.Snapshot(options.RecentLimit, modelgatewayuserrequest.Filters{
+		Model:     options.Model,
+		Group:     options.Group,
+		ChannelID: options.ChannelID,
+		RequestID: options.RequestID,
+		Hours:     options.Hours,
+	})
+	if len(pending) == 0 {
+		return response
+	}
+	mergedByRequestID := make(map[string]ModelGatewayUserRequestRecord, len(response.RecentRequests)+len(pending))
+	for _, record := range response.RecentRequests {
+		requestID := strings.TrimSpace(record.RequestID)
+		if requestID == "" {
+			continue
+		}
+		mergedByRequestID[requestID] = record
+	}
+	for _, item := range pending {
+		record := modelGatewayUserRequestRecordFromTracker(item)
+		requestID := strings.TrimSpace(record.RequestID)
+		if requestID == "" {
+			continue
+		}
+		existing, exists := mergedByRequestID[requestID]
+		if exists && !modelGatewayUserRequestRecordProcessing(existing) {
+			continue
+		}
+		mergedByRequestID[requestID] = record
+	}
+	merged := make([]ModelGatewayUserRequestRecord, 0, len(mergedByRequestID))
+	for _, record := range mergedByRequestID {
+		merged = append(merged, record)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		return modelGatewayUserRequestRecordLess(merged[i], merged[j])
+	})
+	if options.RecentLimit > 0 && len(merged) > options.RecentLimit {
+		merged = merged[:options.RecentLimit]
+	}
+	response.RecentRequests = merged
+	return response
 }
 
 func reconcileModelGatewayUserRequestClientAbortSummaries(userRequests []model.ModelGatewayUserRequestSummary) {
@@ -4611,6 +4699,47 @@ func ModelGatewayUserRequestRecordFromSummary(userRequest model.ModelGatewayUser
 		DurationMs:         userRequest.DurationMs,
 		TTFTMs:             userRequest.TTFTMs,
 		Status:             modelGatewayUserRequestSummaryStatus(userRequest, clientAborted),
+	}
+}
+
+func modelGatewayUserRequestRecordFromTracker(record modelgatewayuserrequest.Record) ModelGatewayUserRequestRecord {
+	actualGroup := modelGatewayUserRequestActualGroup(record.RequestedGroup, record.SelectedGroup)
+	actualGroupRatio := 0.0
+	if record.CompletedAt > 0 && actualGroup != "" {
+		actualGroupRatio = ratio_setting.GetGroupRatio(actualGroup)
+	}
+	return ModelGatewayUserRequestRecord{
+		ID:                        record.ID,
+		CreatedAt:                 record.CreatedAt,
+		UpdatedAt:                 record.UpdatedAt,
+		CompletedAt:               record.CompletedAt,
+		RequestID:                 record.RequestID,
+		UserID:                    record.UserID,
+		Username:                  record.Username,
+		RequestedModel:            record.RequestedModel,
+		RequestedGroup:            record.RequestedGroup,
+		SelectedGroup:             record.SelectedGroup,
+		ActualGroup:               actualGroup,
+		ActualGroupRatio:          actualGroupRatio,
+		FinalChannelID:            record.FinalChannelID,
+		FinalChannelName:          record.FinalChannelName,
+		Attempts:                  record.Attempts,
+		FinalSuccess:              record.FinalSuccess,
+		Recovered:                 record.Recovered,
+		FinalStatusCode:           record.FinalStatusCode,
+		FinalErrorCategory:        record.FinalErrorCategory,
+		WarningLevel:              record.WarningLevel,
+		WarningFlags:              append([]string(nil), record.WarningFlags...),
+		WarningMessage:            record.WarningMessage,
+		ChannelInducedClientAbort: record.ChannelInducedClientAbort,
+		EmptyOutput:               record.EmptyOutput,
+		ExperienceIssue:           record.ExperienceIssue,
+		ClientAborted:             record.ClientAborted,
+		IsHealthProbe:             record.IsHealthProbe,
+		ProbeReason:               record.ProbeReason,
+		DurationMs:                record.DurationMs,
+		TTFTMs:                    record.TTFTMs,
+		Status:                    record.Status,
 	}
 }
 
