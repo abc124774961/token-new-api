@@ -228,6 +228,12 @@ func TestParseParamsCarriesRecentOnlyLightOptions(t *testing.T) {
 	require.True(t, options.RecentOnly)
 }
 
+func TestParseParamsDefaultsRecentLimitToOneHundred(t *testing.T) {
+	parsed := parseParams(nil)
+
+	require.Equal(t, 100, parsed.RecentLimit)
+}
+
 func TestTopicPublishesProcessingUserRequestDelta(t *testing.T) {
 	topic := NewTopic()
 	defer topic.Close()

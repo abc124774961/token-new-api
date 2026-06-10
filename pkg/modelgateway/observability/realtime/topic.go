@@ -19,7 +19,7 @@ import (
 const (
 	TopicName             = "model_gateway.observability"
 	defaultFlushInterval  = time.Second
-	defaultRecentLimit    = 50
+	defaultRecentLimit    = 100
 	defaultTopN           = 10
 	defaultWindowHours    = 24
 	defaultSubscriptionID = "model-gateway-observability"

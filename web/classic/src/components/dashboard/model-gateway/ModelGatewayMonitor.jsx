@@ -93,8 +93,8 @@ import DashboardCard from '../DashboardCard';
 import './model-gateway.css';
 
 const DEFAULT_HOURS = 24;
-const RECENT_LIMIT = 50;
-const DEFAULT_USER_REQUEST_PAGE_SIZE = 50;
+const RECENT_LIMIT = 100;
+const DEFAULT_USER_REQUEST_PAGE_SIZE = 100;
 const USER_REQUEST_PAGE_SIZE_OPTIONS = [20, 50, 100, 200];
 const TOP_N = 10;
 const STICKY_STORE_LIMIT = 100;

@@ -35,7 +35,7 @@ import (
 const (
 	modelGatewayObservabilityDefaultHours       = 24
 	modelGatewayObservabilityMaxHours           = 24 * 30
-	modelGatewayObservabilityDefaultRecentLimit = 50
+	modelGatewayObservabilityDefaultRecentLimit = 100
 	modelGatewayObservabilityMaxRecentLimit     = 200
 	modelGatewayObservabilityDefaultTopN        = 10
 	modelGatewayObservabilityMaxTopN            = 50

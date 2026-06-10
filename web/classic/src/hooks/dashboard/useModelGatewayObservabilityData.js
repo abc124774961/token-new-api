@@ -24,10 +24,10 @@ import { REALTIME_STATES } from '../../services/realtime/RealtimeClient';
 import { useRealtimeSubscription } from '../common/useRealtimeSubscription';
 
 const FALLBACK_REFRESH_SECONDS = 30;
-const RECENT_RECORD_LIMIT = 50;
+const RECENT_RECORD_LIMIT = 100;
 const MANUAL_REFRESH_SOURCE = 'manual';
 const FALLBACK_REFRESH_SOURCE = 'fallback';
-const DEFAULT_RECENT_USER_REQUEST_LIMIT = 50;
+const DEFAULT_RECENT_USER_REQUEST_LIMIT = 100;
 const MANUAL_REFRESH_DEBOUNCE_MS = 800;
 const USER_REQUEST_VIEW_MODE = 'user_requests';
 const USER_REQUEST_STATS_REFRESH_DELAY_MS = 600;
@@ -153,7 +153,9 @@ function mergeUserRequestAttemptRecords(existing, incoming) {
   const incomingAttempts = Array.isArray(incoming?.attempt_records)
     ? incoming.attempt_records
     : [];
-  const attempts = incomingAttempts.length ? incomingAttempts : existingAttempts;
+  const attempts = incomingAttempts.length
+    ? incomingAttempts
+    : existingAttempts;
   return attempts.length ? attempts : undefined;
 }
 
@@ -253,7 +255,19 @@ function mergeUserRequestSnapshot(
   const currentRecent = Array.isArray(currentUserRequests?.recent_requests)
     ? currentUserRequests.recent_requests
     : [];
-  if (!snapshotRecent.length || !currentRecent.length) {
+  if (!snapshotRecent.length) {
+    if (!currentRecent.length) return snapshotUserRequests;
+    return {
+      ...snapshotUserRequests,
+      recent_requests: currentRecent.slice(
+        0,
+        Number.isFinite(Number(limit)) && Number(limit) > 0
+          ? Number(limit)
+          : DEFAULT_RECENT_USER_REQUEST_LIMIT,
+      ),
+    };
+  }
+  if (!currentRecent.length) {
     return snapshotUserRequests;
   }
   const currentByKey = new Map();
@@ -271,7 +285,10 @@ function mergeUserRequestSnapshot(
     ...snapshotUserRequests,
     recent_requests: snapshotRecent
       .map((record) =>
-        mergeUserRequestRecord(currentByKey.get(userRequestKey(record)), record),
+        mergeUserRequestRecord(
+          currentByKey.get(userRequestKey(record)),
+          record,
+        ),
       )
       .sort(compareUserRequestRecordsForDisplay)
       .slice(0, normalizedLimit),
@@ -617,7 +634,9 @@ export function useModelGatewayObservabilityData({
   const handleSnapshot = useCallback(
     (payload) => {
       hasSnapshotRef.current = true;
-      setData((current) => mergeSnapshot(current, payload || null, recentLimit));
+      setData((current) =>
+        mergeSnapshot(current, payload || null, recentLimit),
+      );
       if (isUserRequestMode) {
         scheduleFullStatsRefresh(
           lastFullStatsRefreshRef.current.key !== fullRequestKey,
@@ -629,12 +648,7 @@ export function useModelGatewayObservabilityData({
       setFallbackMode(false);
       setFallbackCountdown(FALLBACK_REFRESH_SECONDS);
     },
-    [
-      fullRequestKey,
-      isUserRequestMode,
-      recentLimit,
-      scheduleFullStatsRefresh,
-    ],
+    [fullRequestKey, isUserRequestMode, recentLimit, scheduleFullStatsRefresh],
   );
 
   const handleDelta = useCallback(
