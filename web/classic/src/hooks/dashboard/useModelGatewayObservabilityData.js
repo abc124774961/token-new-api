@@ -551,20 +551,22 @@ export function useModelGatewayObservabilityData({
   const loadSummary = useCallback(
     async (silent = false, source = MANUAL_REFRESH_SOURCE) => {
       const activeRequestKey = requestKey;
+      const isUserRequestRecentPoll =
+        source === USER_REQUEST_RECENT_POLL_SOURCE;
       const isActiveRequest = () =>
         latestRequestKeyRef.current === activeRequestKey;
       const activeRequest = activeRequestRef.current;
       if (activeRequest?.key === activeRequestKey) {
-        if (silent && source !== USER_REQUEST_RECENT_POLL_SOURCE) {
+        if (silent && !isUserRequestRecentPoll) {
           setRefreshing(true);
         }
         return activeRequest.promise;
       }
       abortActiveRequest();
       const controller = new AbortController();
-      if (silent && source !== USER_REQUEST_RECENT_POLL_SOURCE) {
+      if (silent && !isUserRequestRecentPoll) {
         setRefreshing(true);
-      } else {
+      } else if (!silent) {
         setLoading(true);
       }
       setError('');
