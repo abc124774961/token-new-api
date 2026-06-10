@@ -156,10 +156,12 @@ func TestReportModelGatewayTerminalSelectionFailureClosesRetryableAttempt(t *tes
 	require.Equal(t, plan, selectedPlan)
 }
 
-func TestRelayTotalDurationWatchdogAppliesOnlySmartStreamingNonSpecificRequests(t *testing.T) {
+func TestRelayTotalDurationWatchdogAppliesToSmartSupportedRequests(t *testing.T) {
 	setting := scheduler_setting.DefaultSetting()
 	setting.RelayTotalTimeoutEnabled = true
 	setting.RelayTotalTimeoutSeconds = 180
+	setting.RelayNonStreamTimeoutEnabled = true
+	setting.RelayNonStreamTimeoutSeconds = 45
 	restore := scheduler_setting.SetSettingForTest(setting)
 	t.Cleanup(restore)
 
@@ -176,6 +178,10 @@ func TestRelayTotalDurationWatchdogAppliesOnlySmartStreamingNonSpecificRequests(
 	require.True(t, relayTotalDurationWatchdogApplies(ctx, info, plan))
 	require.Equal(t, 180*time.Second, relayTotalDurationTimeout(ctx, info, plan))
 
+	info.IsStream = false
+	require.True(t, relayTotalDurationWatchdogApplies(ctx, info, plan))
+	require.Equal(t, 45*time.Second, relayTotalDurationTimeout(ctx, info, plan))
+
 	ctx.Set("specific_channel_id", "1")
 	require.False(t, relayTotalDurationWatchdogApplies(ctx, info, plan))
 
@@ -185,13 +191,21 @@ func TestRelayTotalDurationWatchdogAppliesOnlySmartStreamingNonSpecificRequests(
 	require.False(t, relayTotalDurationWatchdogApplies(ctx, info, plan))
 
 	plan.IsHealthProbe = false
-	info.IsStream = false
+	info.RelayMode = relayconstant.RelayModeAudioSpeech
 	require.False(t, relayTotalDurationWatchdogApplies(ctx, info, plan))
 
+	info.RelayMode = relayconstant.RelayModeChatCompletions
 	info.IsStream = true
 	setting.RelayTotalTimeoutEnabled = false
 	restoreDisabled := scheduler_setting.SetSettingForTest(setting)
 	defer restoreDisabled()
+	require.False(t, relayTotalDurationWatchdogApplies(ctx, info, plan))
+
+	info.IsStream = false
+	setting.RelayTotalTimeoutEnabled = true
+	setting.RelayNonStreamTimeoutEnabled = false
+	restoreNonStreamDisabled := scheduler_setting.SetSettingForTest(setting)
+	defer restoreNonStreamDisabled()
 	require.False(t, relayTotalDurationWatchdogApplies(ctx, info, plan))
 }
 
@@ -1010,6 +1024,35 @@ func TestShouldRetryAllowsFirstByteTimeoutFailoverWithAlternativePeerChannel(t *
 	require.True(t, shouldRetry(ctx, err, param, 0))
 	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
 	require.False(t, relayClientAborted(ctx, nil, err))
+}
+
+func TestShouldRetryAllowsNonStreamTimeoutFailoverWithAlternativePeerChannel(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	serviceSeedRelayRetryChannel(t, db, 625, "default", "gpt-5.5", 10)
+	serviceSeedRelayRetryChannel(t, db, 626, "default", "gpt-5.5", 10)
+
+	ctx := newRelayRetryContext()
+	ctx.Set("use_channel", []string{"625"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	param := &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	err := newRelayTotalDurationTimeoutError(45 * time.Second)
+
+	require.Equal(t, modelgatewaycore.ErrorCategoryTimeout, classifyRelayAttemptError(ctx, err))
+	require.True(t, shouldRetry(ctx, err, param, 0))
+	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
+	require.False(t, relayClientAborted(ctx, nil, err))
+	require.True(t, setTotalDurationRetryRoutingIntentIfNeeded(ctx, &model.Channel{Id: 625, Name: "slow-non-stream"}, 0, true, true, "switch_channel"))
+	intent, ok := modelgatewaycore.GetRetryRoutingIntent(ctx)
+	require.True(t, ok)
+	require.Equal(t, modelgatewaycore.RelayAttemptCancelReasonTotalDurationTimeout, intent.Reason)
+	require.Equal(t, 625, intent.FailedChannelID)
 }
 
 func TestFirstByteRetryIntentIsOnlySetWhenSwitchWillRetry(t *testing.T) {

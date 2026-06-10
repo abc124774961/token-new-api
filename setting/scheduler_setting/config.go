@@ -174,6 +174,8 @@ type SchedulerSetting struct {
 	ProbePromptCategories                []string                             `json:"probe_prompt_categories"`
 	RelayTotalTimeoutEnabled             bool                                 `json:"relay_total_timeout_enabled"`
 	RelayTotalTimeoutSeconds             int                                  `json:"relay_total_timeout_seconds"`
+	RelayNonStreamTimeoutEnabled         bool                                 `json:"relay_non_stream_timeout_enabled"`
+	RelayNonStreamTimeoutSeconds         int                                  `json:"relay_non_stream_timeout_seconds"`
 	ChannelTimeoutDegradeEnabled         bool                                 `json:"channel_timeout_degrade_enabled"`
 	ChannelTimeoutDegradeWindowSeconds   int                                  `json:"channel_timeout_degrade_window_seconds"`
 	ChannelTimeoutDegradeMinSamples      int                                  `json:"channel_timeout_degrade_min_samples"`
@@ -286,6 +288,8 @@ var schedulerSetting = SchedulerSetting{
 	ProbePromptCategories:                []string{"short", "zh", "medium", "long"},
 	RelayTotalTimeoutEnabled:             true,
 	RelayTotalTimeoutSeconds:             180,
+	RelayNonStreamTimeoutEnabled:         true,
+	RelayNonStreamTimeoutSeconds:         45,
 	ChannelTimeoutDegradeEnabled:         true,
 	ChannelTimeoutDegradeWindowSeconds:   600,
 	ChannelTimeoutDegradeMinSamples:      5,
@@ -451,6 +455,8 @@ func defaultSchedulerSetting() SchedulerSetting {
 	setting.ProbePromptCategories = []string{"short", "zh", "medium", "long"}
 	setting.RelayTotalTimeoutEnabled = true
 	setting.RelayTotalTimeoutSeconds = 180
+	setting.RelayNonStreamTimeoutEnabled = true
+	setting.RelayNonStreamTimeoutSeconds = 45
 	setting.ChannelTimeoutDegradeEnabled = true
 	setting.ChannelTimeoutDegradeWindowSeconds = 600
 	setting.ChannelTimeoutDegradeMinSamples = 5

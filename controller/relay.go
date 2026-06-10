@@ -2184,12 +2184,22 @@ func relayTotalDurationTimeout(c *gin.Context, info *relaycommon.RelayInfo, plan
 	if !relayTotalDurationWatchdogApplies(c, info, plan) {
 		return 0
 	}
-	seconds := scheduler_setting.GetSetting().RelayTotalTimeoutSeconds
+	setting := scheduler_setting.GetSetting()
+	seconds := setting.RelayTotalTimeoutSeconds
+	if info != nil && !info.IsStream {
+		seconds = setting.RelayNonStreamTimeoutSeconds
+	}
 	if seconds <= 0 {
 		seconds = scheduler_setting.DefaultSetting().RelayTotalTimeoutSeconds
+		if info != nil && !info.IsStream {
+			seconds = scheduler_setting.DefaultSetting().RelayNonStreamTimeoutSeconds
+		}
 	}
 	if seconds <= 0 {
 		seconds = 180
+		if info != nil && !info.IsStream {
+			seconds = 45
+		}
 	}
 	return time.Duration(seconds) * time.Second
 }
@@ -2199,7 +2209,10 @@ func relayTotalDurationWatchdogApplies(c *gin.Context, info *relaycommon.RelayIn
 		return false
 	}
 	setting := scheduler_setting.GetSetting()
-	if !setting.RelayTotalTimeoutEnabled {
+	if info.IsStream && !setting.RelayTotalTimeoutEnabled {
+		return false
+	}
+	if !info.IsStream && !setting.RelayNonStreamTimeoutEnabled {
 		return false
 	}
 	if plan.PolicyMode != modelgatewaycore.ModeActive || plan.IsHealthProbe {
@@ -2208,7 +2221,7 @@ func relayTotalDurationWatchdogApplies(c *gin.Context, info *relaycommon.RelayIn
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
-	if !info.IsStream || !relayFirstByteWatchdogSupportedMode(info) {
+	if !relayFirstByteWatchdogSupportedMode(info) {
 		return false
 	}
 	if info.IsChannelTest || relayDownstreamAlreadyStarted(c) {

@@ -100,6 +100,8 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	setting.ProbeGoodBaselineWindowSeconds = 3600
 	setting.ProbePromptLibraryEnabled = false
 	setting.ProbePromptCategories = []string{"zh", "bad", "long"}
+	setting.RelayNonStreamTimeoutEnabled = false
+	setting.RelayNonStreamTimeoutSeconds = 38
 	setting.CostCalculationEnabled = true
 	setting.CostCalculationIntervalSeconds = 4
 	setting.CostCalculationWorkerCount = 3
@@ -205,6 +207,8 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.Equal(t, 3600, payload.Data.Setting.ProbeGoodBaselineWindowSeconds)
 	require.False(t, payload.Data.Setting.ProbePromptLibraryEnabled)
 	require.Equal(t, []string{"zh", "long"}, payload.Data.Setting.ProbePromptCategories)
+	require.False(t, payload.Data.Setting.RelayNonStreamTimeoutEnabled)
+	require.Equal(t, 38, payload.Data.Setting.RelayNonStreamTimeoutSeconds)
 	require.True(t, payload.Data.Setting.CostCalculationEnabled)
 	require.Equal(t, 4, payload.Data.Setting.CostCalculationIntervalSeconds)
 	require.Equal(t, 3, payload.Data.Setting.CostCalculationWorkerCount)
@@ -281,6 +285,12 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	runtimePolicy := modelgatewayintegration.RuntimePolicySetting()
 	require.False(t, runtimePolicy.ChannelPriorityTieBreak.Enabled)
 	require.Equal(t, 0.049, runtimePolicy.ChannelPriorityTieBreak.ScoreDelta)
+	var relayNonStreamTimeoutEnabledOption model.Option
+	require.NoError(t, db.First(&relayNonStreamTimeoutEnabledOption, "key = ?", "scheduler_setting.relay_non_stream_timeout_enabled").Error)
+	require.Equal(t, "false", relayNonStreamTimeoutEnabledOption.Value)
+	var relayNonStreamTimeoutOption model.Option
+	require.NoError(t, db.First(&relayNonStreamTimeoutOption, "key = ?", "scheduler_setting.relay_non_stream_timeout_seconds").Error)
+	require.Equal(t, "38", relayNonStreamTimeoutOption.Value)
 	var probeMaxPerTickOption model.Option
 	require.NoError(t, db.First(&probeMaxPerTickOption, "key = ?", "scheduler_setting.probe_max_per_tick").Error)
 	require.Equal(t, "7", probeMaxPerTickOption.Value)
@@ -347,6 +357,10 @@ func TestModelGatewayConfigGetIncludesUpstreamErrorDefaults(t *testing.T) {
 	require.True(t, payload.Success, resp.Body.String())
 	require.True(t, payload.Data.Setting.UpstreamErrorClassificationEnabled)
 	require.True(t, payload.Data.Defaults.UpstreamErrorClassificationEnabled)
+	require.True(t, payload.Data.Setting.RelayNonStreamTimeoutEnabled)
+	require.True(t, payload.Data.Defaults.RelayNonStreamTimeoutEnabled)
+	require.Equal(t, 45, payload.Data.Setting.RelayNonStreamTimeoutSeconds)
+	require.Equal(t, 45, payload.Data.Defaults.RelayNonStreamTimeoutSeconds)
 	require.Equal(t, scheduler_setting.UpstreamErrorRuleVersion, payload.Data.Setting.UpstreamErrorRuleVersion)
 	require.Equal(t, scheduler_setting.UpstreamErrorRuleVersion, payload.Data.Defaults.UpstreamErrorRuleVersion)
 	require.NotEmpty(t, payload.Data.Setting.UpstreamErrorRules)

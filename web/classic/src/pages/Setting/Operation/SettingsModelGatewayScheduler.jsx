@@ -89,6 +89,8 @@ const DEFAULT_SETTING = {
   probe_failure_avoidance_priority_enabled: true,
   relay_total_timeout_enabled: true,
   relay_total_timeout_seconds: 180,
+  relay_non_stream_timeout_enabled: true,
+  relay_non_stream_timeout_seconds: 45,
   channel_timeout_degrade_enabled: true,
   channel_timeout_degrade_window_seconds: 600,
   channel_timeout_degrade_min_samples: 5,
@@ -1348,6 +1350,12 @@ export default function SettingsModelGatewayScheduler() {
         setting.relay_total_timeout_seconds,
         180,
       ),
+      relay_non_stream_timeout_enabled:
+        setting.relay_non_stream_timeout_enabled !== false,
+      relay_non_stream_timeout_seconds: numberOrDefault(
+        setting.relay_non_stream_timeout_seconds,
+        45,
+      ),
       channel_timeout_degrade_enabled:
         setting.channel_timeout_degrade_enabled !== false,
       channel_timeout_degrade_window_seconds: numberOrDefault(
@@ -2139,7 +2147,7 @@ export default function SettingsModelGatewayScheduler() {
             closeIcon={null}
             title={t('超时切换与降级恢复')}
             description={t(
-              '流式智能网关请求在未输出前达到总耗时阈值会内部切换；频繁超时渠道进入降级避让，只能由恢复探活连续成功后恢复。',
+              '智能网关请求在未正式输出前达到超时阈值会内部切换；非流式使用独立阈值，避免被外层超时截断后无法重试。频繁超时渠道进入降级避让，只能由恢复探活连续成功后恢复。',
             )}
             style={{ marginTop: 8, marginBottom: 16 }}
           />
@@ -2158,13 +2166,38 @@ export default function SettingsModelGatewayScheduler() {
             <Col xs={24} sm={12} md={4}>
               <Form.InputNumber
                 field='relay_total_timeout_seconds'
-                label={t('总耗时阈值')}
+                label={t('流式总耗时阈值')}
                 min={1}
                 suffix={t('秒')}
                 onChange={(value) =>
                   updateSetting(
                     'relay_total_timeout_seconds',
                     numberOrDefault(value, 180),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.Switch
+                field='relay_non_stream_timeout_enabled'
+                label={t('启用非流式超时保护')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting('relay_non_stream_timeout_enabled', value)
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={4}>
+              <Form.InputNumber
+                field='relay_non_stream_timeout_seconds'
+                label={t('非流式响应阈值')}
+                min={1}
+                suffix={t('秒')}
+                onChange={(value) =>
+                  updateSetting(
+                    'relay_non_stream_timeout_seconds',
+                    numberOrDefault(value, 45),
                   )
                 }
               />

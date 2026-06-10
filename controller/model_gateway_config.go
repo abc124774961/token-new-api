@@ -352,6 +352,7 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	setting.ProbeGoodBaselineWindowSeconds = normalizeModelGatewayConfigMin(setting.ProbeGoodBaselineWindowSeconds, 1, defaults.ProbeGoodBaselineWindowSeconds)
 	setting.ProbePromptCategories = modelgatewayprobe.NormalizePromptCategories(defaultNilStringSlice(setting.ProbePromptCategories, defaults.ProbePromptCategories))
 	setting.RelayTotalTimeoutSeconds = normalizeModelGatewayConfigMin(setting.RelayTotalTimeoutSeconds, 1, defaults.RelayTotalTimeoutSeconds)
+	setting.RelayNonStreamTimeoutSeconds = normalizeModelGatewayConfigMin(setting.RelayNonStreamTimeoutSeconds, 1, defaults.RelayNonStreamTimeoutSeconds)
 	setting.ChannelTimeoutDegradeWindowSeconds = normalizeModelGatewayConfigMin(setting.ChannelTimeoutDegradeWindowSeconds, 1, defaults.ChannelTimeoutDegradeWindowSeconds)
 	setting.ChannelTimeoutDegradeMinSamples = normalizeModelGatewayConfigMin(setting.ChannelTimeoutDegradeMinSamples, 1, defaults.ChannelTimeoutDegradeMinSamples)
 	setting.ChannelTimeoutDegradeThreshold = clampModelGatewayConfigFloat(defaultFloat(setting.ChannelTimeoutDegradeThreshold, defaults.ChannelTimeoutDegradeThreshold), 0.01, 1)
@@ -815,6 +816,8 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 		"probe_prompt_categories":                             string(probePromptCategories),
 		"relay_total_timeout_enabled":                         strconv.FormatBool(setting.RelayTotalTimeoutEnabled),
 		"relay_total_timeout_seconds":                         strconv.Itoa(setting.RelayTotalTimeoutSeconds),
+		"relay_non_stream_timeout_enabled":                    strconv.FormatBool(setting.RelayNonStreamTimeoutEnabled),
+		"relay_non_stream_timeout_seconds":                    strconv.Itoa(setting.RelayNonStreamTimeoutSeconds),
 		"channel_timeout_degrade_enabled":                     strconv.FormatBool(setting.ChannelTimeoutDegradeEnabled),
 		"channel_timeout_degrade_window_seconds":              strconv.Itoa(setting.ChannelTimeoutDegradeWindowSeconds),
 		"channel_timeout_degrade_min_samples":                 strconv.Itoa(setting.ChannelTimeoutDegradeMinSamples),
