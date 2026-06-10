@@ -152,7 +152,7 @@ func TestProbeAttemptResultLearnsUpstreamConcurrencyLimit(t *testing.T) {
 	}
 	attempt := result.AttemptResult()
 	require.True(t, attempt.ConcurrencyLimited)
-	require.Equal(t, core.ErrorCategoryOverloadSkip, attempt.ErrorCategory)
+	require.Equal(t, core.ErrorCategoryUpstreamConcurrencyLimit, attempt.ErrorCategory)
 	require.Equal(t, 4, attempt.ActiveConcurrency)
 	require.Equal(t, 3, attempt.LearnedConcurrencyLimit)
 	require.True(t, attempt.LearnedConcurrencyLimitChanged)
@@ -163,9 +163,14 @@ func TestProbeAttemptResultLearnsUpstreamConcurrencyLimit(t *testing.T) {
 	require.Contains(t, *updated.Setting, `"custom_setting":"keep-me"`)
 }
 
-func TestProbeErrorCategoryMapsOverloadAndAuthConfig(t *testing.T) {
-	require.Equal(t, core.ErrorCategoryOverloadSkip, probeErrorCategory(types.NewErrorWithStatusCode(
+func TestProbeErrorCategoryUsesUpstreamClassifier(t *testing.T) {
+	require.Equal(t, core.ErrorCategoryRateLimit, probeErrorCategory(types.NewErrorWithStatusCode(
 		errors.New("too many requests"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)))
+	require.Equal(t, core.ErrorCategoryOverloadSkip, probeErrorCategory(types.NewErrorWithStatusCode(
+		errors.New("provider overloaded"),
 		types.ErrorCodeBadResponseStatusCode,
 		http.StatusTooManyRequests,
 	)))

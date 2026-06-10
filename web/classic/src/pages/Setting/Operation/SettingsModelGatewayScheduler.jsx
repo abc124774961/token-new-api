@@ -139,6 +139,9 @@ const DEFAULT_SETTING = {
   cost_first_guard_speed_advantage: 0.08,
   channel_priority_tie_break_enabled: true,
   channel_priority_tie_break_score_delta: 0.05,
+  upstream_error_classification_enabled: true,
+  upstream_error_rule_version: 1,
+  upstream_error_rules: [],
   queue_enabled: true,
   queue_default_timeout_ms: 2000,
   queue_max_depth_per_channel: 64,
@@ -301,8 +304,7 @@ const selectGroupFilter = (input, option) => {
     .some((value) => value.includes(keyword));
 };
 
-const selectGroupValue = (value) =>
-  String(value?.value ?? value ?? '').trim();
+const selectGroupValue = (value) => String(value?.value ?? value ?? '').trim();
 
 const formatChannelCost = (channel) => {
   const costDisplay = channel?.upstream_cost_display || {};
@@ -809,6 +811,9 @@ const normalizeSetting = (setting) => {
     ...(setting || {}),
     group_priority_ratio: setting?.group_priority_ratio || {},
     group_policies: setting?.group_policies || {},
+    upstream_error_rules: Array.isArray(setting?.upstream_error_rules)
+      ? setting.upstream_error_rules
+      : [],
   };
   merged.dynamic_billing_cost_source =
     merged.dynamic_billing_cost_source || 'profit_24h';
@@ -1264,6 +1269,15 @@ export default function SettingsModelGatewayScheduler() {
         setting.channel_priority_tie_break_score_delta,
         0.05,
       ),
+      upstream_error_classification_enabled:
+        setting.upstream_error_classification_enabled !== false,
+      upstream_error_rule_version: numberOrDefault(
+        setting.upstream_error_rule_version,
+        1,
+      ),
+      upstream_error_rules: Array.isArray(setting.upstream_error_rules)
+        ? setting.upstream_error_rules
+        : [],
       queue_default_timeout_ms: numberOrDefault(
         setting.queue_default_timeout_ms,
         2000,

@@ -15,17 +15,21 @@ import (
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	modelgatewayupstreamerror "github.com/QuantumNous/new-api/pkg/modelgateway/upstreamerror"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
 )
 
 type ModelGatewayConfigResponse struct {
-	Setting                 scheduler_setting.SchedulerSetting         `json:"setting"`
-	Defaults                scheduler_setting.SchedulerSetting         `json:"defaults"`
-	Modes                   []string                                   `json:"modes"`
-	Strategies              []string                                   `json:"strategies"`
-	AutoModes               []string                                   `json:"auto_modes"`
-	DynamicBillingBaselines []modelgatewaydynamicbilling.RatioBaseline `json:"dynamic_billing_baselines"`
+	Setting                   scheduler_setting.SchedulerSetting         `json:"setting"`
+	Defaults                  scheduler_setting.SchedulerSetting         `json:"defaults"`
+	Modes                     []string                                   `json:"modes"`
+	Strategies                []string                                   `json:"strategies"`
+	AutoModes                 []string                                   `json:"auto_modes"`
+	DynamicBillingBaselines   []modelgatewaydynamicbilling.RatioBaseline `json:"dynamic_billing_baselines"`
+	UpstreamErrorKinds        []string                                   `json:"upstream_error_kinds"`
+	UpstreamErrorActions      []string                                   `json:"upstream_error_actions"`
+	UpstreamErrorRuleDefaults []scheduler_setting.UpstreamErrorRule      `json:"upstream_error_rule_defaults"`
 }
 
 type UpdateModelGatewayProbeConfigRequest struct {
@@ -81,6 +85,7 @@ func UpdateModelGatewayConfig(c *gin.Context) {
 	modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()
 	modelgatewaycost.SyncDefaultWorkerLifecycle()
 	modelgatewaydynamicbilling.SyncDefaultRefresherLifecycle()
+	modelgatewayupstreamerror.SyncDefaultManager()
 	common.ApiSuccess(c, buildModelGatewayConfigResponse())
 }
 
@@ -112,6 +117,7 @@ func UpdateModelGatewayProbeConfig(c *gin.Context) {
 	modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()
 	modelgatewaycost.SyncDefaultWorkerLifecycle()
 	modelgatewaydynamicbilling.SyncDefaultRefresherLifecycle()
+	modelgatewayupstreamerror.SyncDefaultManager()
 	common.ApiSuccess(c, buildModelGatewayConfigResponse())
 }
 
@@ -183,6 +189,24 @@ func applyModelGatewayProbeConfigRequest(setting *scheduler_setting.SchedulerSet
 }
 
 func ResetModelGatewayConfig(c *gin.Context) {
+	if strings.EqualFold(strings.TrimSpace(c.Query("scope")), "upstream_error_rules") {
+		setting := scheduler_setting.GetSetting()
+		setting.UpstreamErrorClassificationEnabled = scheduler_setting.DefaultSetting().UpstreamErrorClassificationEnabled
+		setting.UpstreamErrorRuleVersion = scheduler_setting.UpstreamErrorRuleVersion
+		setting.UpstreamErrorRules = scheduler_setting.DefaultUpstreamErrorRules()
+		normalized, err := normalizeModelGatewaySchedulerSetting(setting)
+		if err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
+		if err := persistModelGatewaySchedulerSetting(normalized); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		modelgatewayupstreamerror.SyncDefaultManager()
+		common.ApiSuccess(c, buildModelGatewayConfigResponse())
+		return
+	}
 	setting := scheduler_setting.DefaultSetting()
 	setting.DynamicBillingEnabledAt = 0
 	if err := persistModelGatewaySchedulerSetting(setting); err != nil {
@@ -196,17 +220,21 @@ func ResetModelGatewayConfig(c *gin.Context) {
 	modelgatewayprobe.SyncDefaultProbeSchedulerLifecycle()
 	modelgatewaycost.SyncDefaultWorkerLifecycle()
 	modelgatewaydynamicbilling.SyncDefaultRefresherLifecycle()
+	modelgatewayupstreamerror.SyncDefaultManager()
 	common.ApiSuccess(c, buildModelGatewayConfigResponse())
 }
 
 func buildModelGatewayConfigResponse() ModelGatewayConfigResponse {
 	return ModelGatewayConfigResponse{
-		Setting:                 scheduler_setting.GetSetting(),
-		Defaults:                scheduler_setting.DefaultSetting(),
-		Modes:                   []string{scheduler_setting.ModeOff, scheduler_setting.ModeShadow, scheduler_setting.ModeActive},
-		Strategies:              []string{scheduler_setting.StrategyBalanced, scheduler_setting.StrategySpeedFirst, scheduler_setting.StrategyCostFirst, scheduler_setting.StrategyStabilityFirst},
-		AutoModes:               []string{scheduler_setting.AutoModeSequential, scheduler_setting.AutoModeFusion},
-		DynamicBillingBaselines: modelgatewaydynamicbilling.DefaultBaselineSnapshots(),
+		Setting:                   scheduler_setting.GetSetting(),
+		Defaults:                  scheduler_setting.DefaultSetting(),
+		Modes:                     []string{scheduler_setting.ModeOff, scheduler_setting.ModeShadow, scheduler_setting.ModeActive},
+		Strategies:                []string{scheduler_setting.StrategyBalanced, scheduler_setting.StrategySpeedFirst, scheduler_setting.StrategyCostFirst, scheduler_setting.StrategyStabilityFirst},
+		AutoModes:                 []string{scheduler_setting.AutoModeSequential, scheduler_setting.AutoModeFusion},
+		DynamicBillingBaselines:   modelgatewaydynamicbilling.DefaultBaselineSnapshots(),
+		UpstreamErrorKinds:        scheduler_setting.UpstreamErrorKinds(),
+		UpstreamErrorActions:      scheduler_setting.UpstreamErrorActions(),
+		UpstreamErrorRuleDefaults: scheduler_setting.DefaultUpstreamErrorRules(),
 	}
 }
 
@@ -284,6 +312,15 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	setting.CostFirstGuardSuccessAdvantage = clampModelGatewayConfigFloat(defaultFloat(setting.CostFirstGuardSuccessAdvantage, defaults.CostFirstGuardSuccessAdvantage), 0, 1)
 	setting.CostFirstGuardSpeedAdvantage = clampModelGatewayConfigFloat(defaultFloat(setting.CostFirstGuardSpeedAdvantage, defaults.CostFirstGuardSpeedAdvantage), 0, 1)
 	setting.ChannelPriorityTieBreakScoreDelta = clampModelGatewayConfigFloat(defaultFloat(setting.ChannelPriorityTieBreakScoreDelta, defaults.ChannelPriorityTieBreakScoreDelta), 0.000001, 1)
+	if setting.UpstreamErrorRuleVersion <= 0 && setting.UpstreamErrorRules == nil {
+		setting.UpstreamErrorClassificationEnabled = defaults.UpstreamErrorClassificationEnabled
+	}
+	upstreamRules, err := normalizeModelGatewayUpstreamErrorRules(setting.UpstreamErrorRules, setting.UpstreamErrorRuleVersion)
+	if err != nil {
+		return scheduler_setting.SchedulerSetting{}, err
+	}
+	setting.UpstreamErrorRuleVersion = scheduler_setting.UpstreamErrorRuleVersion
+	setting.UpstreamErrorRules = upstreamRules
 	setting.QueueDefaultTimeoutMs = normalizeModelGatewayConfigMin(setting.QueueDefaultTimeoutMs, 1, defaults.QueueDefaultTimeoutMs)
 	setting.QueueMaxDepthPerChannel = normalizeModelGatewayConfigMin(setting.QueueMaxDepthPerChannel, 1, defaults.QueueMaxDepthPerChannel)
 	setting.QueueDepthMultiplier = normalizeModelGatewayConfigMin(setting.QueueDepthMultiplier, 1, defaults.QueueDepthMultiplier)
@@ -512,6 +549,155 @@ func normalizeModelGatewayCircuitErrorKind(kind string) string {
 	}
 }
 
+func normalizeModelGatewayUpstreamErrorRules(src []scheduler_setting.UpstreamErrorRule, version int) ([]scheduler_setting.UpstreamErrorRule, error) {
+	if src == nil && version <= 0 {
+		return scheduler_setting.DefaultUpstreamErrorRules(), nil
+	}
+	if src == nil {
+		return scheduler_setting.DefaultUpstreamErrorRules(), nil
+	}
+	result := make([]scheduler_setting.UpstreamErrorRule, 0, len(src))
+	seenIDs := make(map[string]struct{}, len(src))
+	for index, rule := range src {
+		rule.ID = normalizeModelGatewayUpstreamRuleID(rule.ID, index)
+		if _, ok := seenIDs[rule.ID]; ok {
+			return nil, fmt.Errorf("duplicate upstream_error_rule id %s", rule.ID)
+		}
+		seenIDs[rule.ID] = struct{}{}
+		rule.Kind = strings.ToLower(strings.TrimSpace(rule.Kind))
+		if !modelgatewayupstreamerror.IsKnownKind(rule.Kind) {
+			return nil, fmt.Errorf("invalid upstream_error_rule kind %s", rule.Kind)
+		}
+		rule.SchedulerAction = strings.ToLower(strings.TrimSpace(rule.SchedulerAction))
+		if rule.SchedulerAction == "" {
+			rule.SchedulerAction = defaultModelGatewayUpstreamErrorAction(rule.Kind)
+		}
+		if !modelgatewayupstreamerror.IsKnownAction(rule.SchedulerAction) {
+			return nil, fmt.Errorf("invalid upstream_error_rule scheduler_action %s", rule.SchedulerAction)
+		}
+		rule.Priority = clampModelGatewayConfigInt(rule.Priority, 0, 10000)
+		rule.StatusCodes = uniqueModelGatewayHTTPStatusCodes(rule.StatusCodes)
+		rule.Keywords = normalizeModelGatewayUpstreamErrorKeywords(rule.Keywords)
+		rule.AvoidanceSeconds = normalizeModelGatewayConfigNonNegative(rule.AvoidanceSeconds)
+		rule.AvoidanceSeconds = normalizeModelGatewayConfigMax(rule.AvoidanceSeconds, 86400)
+		rule.Description = strings.TrimSpace(rule.Description)
+		if len(rule.Description) > 512 {
+			rule.Description = rule.Description[:512]
+		}
+		if len(rule.StatusCodes) == 0 && upstreamErrorKeywordRuleEmpty(rule.Keywords) {
+			return nil, fmt.Errorf("upstream_error_rule %s must define status_codes or keywords", rule.ID)
+		}
+		result = append(result, rule)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Priority == result[j].Priority {
+			return result[i].ID < result[j].ID
+		}
+		return result[i].Priority > result[j].Priority
+	})
+	return result, nil
+}
+
+func normalizeModelGatewayUpstreamRuleID(id string, index int) string {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if id == "" {
+		return fmt.Sprintf("rule_%d", index+1)
+	}
+	var builder strings.Builder
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' {
+			builder.WriteRune(r)
+			continue
+		}
+		if builder.Len() == 0 || builder.String()[builder.Len()-1] != '_' {
+			builder.WriteByte('_')
+		}
+	}
+	normalized := strings.Trim(builder.String(), "_.-")
+	if normalized == "" {
+		return fmt.Sprintf("rule_%d", index+1)
+	}
+	if len(normalized) > 80 {
+		normalized = normalized[:80]
+	}
+	return normalized
+}
+
+func defaultModelGatewayUpstreamErrorAction(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case scheduler_setting.UpstreamErrorKindRequestLimit,
+		scheduler_setting.UpstreamErrorKindPolicySafety:
+		return scheduler_setting.UpstreamErrorActionStop
+	default:
+		return scheduler_setting.UpstreamErrorActionSwitchChannel
+	}
+}
+
+func uniqueModelGatewayHTTPStatusCodes(values []int) []int {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(values))
+	result := make([]int, 0, len(values))
+	for _, value := range values {
+		if value < 100 || value > 599 {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Ints(result)
+	return result
+}
+
+func normalizeModelGatewayUpstreamErrorKeywords(src scheduler_setting.UpstreamErrorKeywordRule) scheduler_setting.UpstreamErrorKeywordRule {
+	return scheduler_setting.UpstreamErrorKeywordRule{
+		Code:     uniqueTrimmedModelGatewayStringsLimited(src.Code, 64, 128),
+		Type:     uniqueTrimmedModelGatewayStringsLimited(src.Type, 64, 128),
+		Message:  uniqueTrimmedModelGatewayStringsLimited(src.Message, 64, 256),
+		Metadata: uniqueTrimmedModelGatewayStringsLimited(src.Metadata, 64, 256),
+		Header:   uniqueTrimmedModelGatewayStringsLimited(src.Header, 64, 128),
+	}
+}
+
+func uniqueTrimmedModelGatewayStringsLimited(values []string, maxItems int, maxLen int) []string {
+	if len(values) == 0 || maxItems <= 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if len(value) > maxLen {
+			value = value[:maxLen]
+		}
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, value)
+		if len(result) >= maxItems {
+			break
+		}
+	}
+	return result
+}
+
+func upstreamErrorKeywordRuleEmpty(keywords scheduler_setting.UpstreamErrorKeywordRule) bool {
+	return len(keywords.Code) == 0 &&
+		len(keywords.Type) == 0 &&
+		len(keywords.Message) == 0 &&
+		len(keywords.Metadata) == 0 &&
+		len(keywords.Header) == 0
+}
+
 func persistModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSetting) error {
 	values, err := modelGatewaySchedulerSettingOptionMap(setting)
 	if err != nil {
@@ -553,6 +739,10 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 	if err != nil {
 		return nil, err
 	}
+	upstreamErrorRules, err := common.Marshal(setting.UpstreamErrorRules)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]string{
 		"enabled":                                             strconv.FormatBool(setting.Enabled),
 		"default_mode":                                        setting.DefaultMode,
@@ -579,6 +769,9 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 		"cost_first_guard_speed_advantage":                    strconv.FormatFloat(setting.CostFirstGuardSpeedAdvantage, 'f', -1, 64),
 		"channel_priority_tie_break_enabled":                  strconv.FormatBool(setting.ChannelPriorityTieBreakEnabled),
 		"channel_priority_tie_break_score_delta":              strconv.FormatFloat(setting.ChannelPriorityTieBreakScoreDelta, 'f', -1, 64),
+		"upstream_error_classification_enabled":               strconv.FormatBool(setting.UpstreamErrorClassificationEnabled),
+		"upstream_error_rule_version":                         strconv.Itoa(setting.UpstreamErrorRuleVersion),
+		"upstream_error_rules":                                string(upstreamErrorRules),
 		"queue_enabled":                                       strconv.FormatBool(setting.QueueEnabled),
 		"queue_default_timeout_ms":                            strconv.Itoa(setting.QueueDefaultTimeoutMs),
 		"queue_max_depth_per_channel":                         strconv.Itoa(setting.QueueMaxDepthPerChannel),

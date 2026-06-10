@@ -1775,6 +1775,48 @@ html.dark
   background: #f7fbfc !important;
 }
 
+.ct-smart-scheduler-tabs {
+  padding: 14px;
+}
+
+.ct-smart-scheduler-tabs > .semi-tabs {
+  width: 100%;
+}
+
+.ct-smart-scheduler-tabs .semi-tabs-content {
+  padding-top: 14px;
+}
+
+.ct-smart-scheduler-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.ct-smart-scheduler-errors .semi-banner {
+  border-radius: 8px;
+}
+
+.ct-smart-scheduler-keyword-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ct-smart-scheduler-keyword-field {
+  display: grid;
+  gap: 6px;
+}
+
+.ct-smart-scheduler-keyword-field span {
+  color: var(--semi-color-text-1);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .ct-admin-settings-governance {
   overflow: hidden;
   padding: 0;

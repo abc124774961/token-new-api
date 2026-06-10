@@ -25,6 +25,7 @@ import (
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayprovider "github.com/QuantumNous/new-api/pkg/modelgateway/provider"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	modelgatewayupstreamerror "github.com/QuantumNous/new-api/pkg/modelgateway/upstreamerror"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -700,6 +701,9 @@ func probeTTFT(info *relaycommon.RelayInfo) time.Duration {
 func probeErrorCategory(apiErr *types.NewAPIError) string {
 	if apiErr == nil {
 		return ""
+	}
+	if result := modelgatewayupstreamerror.ClassifyAPIError(apiErr); result.Matched && result.ErrorCategory != "" {
+		return result.ErrorCategory
 	}
 	if apiErr.StatusCode == http.StatusTooManyRequests {
 		return core.ErrorCategoryOverloadSkip

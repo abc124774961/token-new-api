@@ -1042,7 +1042,9 @@ function clampRate(value) {
 }
 
 function getCandidateChannelPriority(candidate, fallback) {
-  const value = Number(candidate?.channel_priority ?? fallback?.channel_priority);
+  const value = Number(
+    candidate?.channel_priority ?? fallback?.channel_priority,
+  );
   return Number.isFinite(value) ? value : 0;
 }
 
@@ -2172,6 +2174,72 @@ function formatAttemptFlowAction(action, t) {
   }
 }
 
+function formatUpstreamSchedulerAction(action, t) {
+  switch (action) {
+    case 'switch_channel':
+      return t('切换渠道');
+    case 'stop':
+      return t('停止请求');
+    case 'record_only':
+      return t('仅记录');
+    default:
+      return action || '--';
+  }
+}
+
+function formatUpstreamErrorKind(kind, t) {
+  switch (kind) {
+    case 'balance_quota':
+      return t('余额或额度限制');
+    case 'rate_limit':
+      return t('速率限制');
+    case 'concurrency_limit':
+      return t('并发限制');
+    case 'capacity_overload':
+      return t('容量过载');
+    case 'model_pool_unavailable':
+      return t('模型池不可用');
+    case 'tool_endpoint_unavailable':
+      return t('工具端点不可用');
+    case 'auth_account':
+      return t('账号鉴权问题');
+    case 'access_region':
+      return t('地域访问限制');
+    case 'request_limit':
+      return t('请求规格限制');
+    case 'policy_safety':
+      return t('内容安全限制');
+    case 'transport_timeout':
+      return t('传输超时');
+    case 'bad_response':
+      return t('上游响应异常');
+    case 'stream_interrupted':
+      return t('流中断');
+    default:
+      return kind || '--';
+  }
+}
+
+function numberMetaValue(value) {
+  const next = Number(value);
+  return Number.isFinite(next) && next > 0 ? next : 0;
+}
+
+function upstreamClassificationMeta(record) {
+  const meta = record?.request_meta || {};
+  return {
+    kind: record?.upstream_error_kind || meta?.upstream_error_kind || '',
+    matchedRuleID: record?.matched_rule_id || meta?.matched_rule_id || '',
+    schedulerAction: record?.scheduler_action || meta?.scheduler_action || '',
+    avoidanceSeconds: numberMetaValue(
+      record?.avoidance_seconds ?? meta?.avoidance_seconds,
+    ),
+    retryAfterSeconds: numberMetaValue(
+      record?.retry_after_seconds ?? meta?.retry_after_seconds,
+    ),
+  };
+}
+
 function getAttemptRetryReason(record) {
   return String(
     record?.retry_reason || record?.request_meta?.retry_reason || '',
@@ -2431,6 +2499,7 @@ function DispatchFlowTags({ record, t, compact = false }) {
   const tags = [];
   const action = record?.retry_action || (record?.will_retry ? 'retry' : '');
   const category = record?.error_category;
+  const upstreamMeta = upstreamClassificationMeta(record);
   const retryReason = getAttemptRetryReason(record);
   const balanceInsufficient = isBalanceInsufficientStatus(record);
   const activeConcurrency = Number(record?.active_concurrency || 0);
@@ -2472,6 +2541,42 @@ function DispatchFlowTags({ record, t, compact = false }) {
         {...tagProps}
       >
         {t('失败分类')}: {formatAttemptErrorCategory(category, t)}
+      </Tag>,
+    );
+  }
+  if (upstreamMeta.kind) {
+    tags.push(
+      <Tag key='upstream-kind' color='cyan' type='light' {...tagProps}>
+        {t('上游分类')}: {formatUpstreamErrorKind(upstreamMeta.kind, t)}
+      </Tag>,
+    );
+  }
+  if (upstreamMeta.matchedRuleID) {
+    tags.push(
+      <Tag key='matched-rule' color='blue' type='light' {...tagProps}>
+        {t('命中规则')}: {upstreamMeta.matchedRuleID}
+      </Tag>,
+    );
+  }
+  if (upstreamMeta.schedulerAction) {
+    tags.push(
+      <Tag key='scheduler-action' color='purple' type='light' {...tagProps}>
+        {t('调度动作')}:{' '}
+        {formatUpstreamSchedulerAction(upstreamMeta.schedulerAction, t)}
+      </Tag>,
+    );
+  }
+  if (upstreamMeta.avoidanceSeconds > 0) {
+    tags.push(
+      <Tag key='avoidance-seconds' color='orange' type='light' {...tagProps}>
+        {t('避让秒数')}: {formatNumber(upstreamMeta.avoidanceSeconds)}
+      </Tag>,
+    );
+  }
+  if (upstreamMeta.retryAfterSeconds > 0) {
+    tags.push(
+      <Tag key='retry-after-seconds' color='orange' type='light' {...tagProps}>
+        Retry-After: {formatNumber(upstreamMeta.retryAfterSeconds)}s
       </Tag>,
     );
   }

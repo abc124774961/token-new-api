@@ -805,6 +805,11 @@ type AttemptResult struct {
 	ErrorType                      string
 	ErrorMessage                   string
 	ErrorCategory                  string
+	UpstreamErrorKind              string
+	MatchedRuleID                  string
+	SchedulerAction                string
+	AvoidanceSeconds               int
+	RetryAfterSeconds              int
 	WarningLevel                   string
 	WarningFlags                   []string
 	WarningMessage                 string

@@ -58,6 +58,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     channel_balance_monitor: true,
     channel_health_check: true,
     channel_proxy: true,
+    smart_scheduler: true,
     route_policy: true,
     ratio_config: true,
     profit_monitor: true,

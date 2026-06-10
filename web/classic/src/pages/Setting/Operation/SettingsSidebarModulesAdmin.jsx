@@ -73,9 +73,7 @@ export default function SettingsSidebarModulesAdmin(props) {
 
         modules.forEach(({ sectionKey, moduleKey }) => {
           const currentSection =
-            nextModules[sectionKey] ||
-            DEFAULT_ADMIN_CONFIG[sectionKey] ||
-            {};
+            nextModules[sectionKey] || DEFAULT_ADMIN_CONFIG[sectionKey] || {};
 
           nextModules[sectionKey] = {
             ...currentSection,
@@ -251,7 +249,9 @@ export default function SettingsSidebarModulesAdmin(props) {
     {
       key: 'admin-console',
       title: t('管理员后台'),
-      description: t('控制管理员后台侧栏展示的运营、模型、商业和系统治理入口。'),
+      description: t(
+        '控制管理员后台侧栏展示的运营、模型、商业和系统治理入口。',
+      ),
       accent: '#2563eb',
       categories: [
         {
@@ -329,6 +329,12 @@ export default function SettingsSidebarModulesAdmin(props) {
             },
             {
               sectionKey: 'admin',
+              moduleKey: 'smart_scheduler',
+              title: t('智能调度'),
+              description: t('调度策略与上游错误分类'),
+            },
+            {
+              sectionKey: 'admin',
               moduleKey: 'models',
               title: t('模型管理'),
               description: t('AI模型配置'),
@@ -338,12 +344,6 @@ export default function SettingsSidebarModulesAdmin(props) {
               moduleKey: 'deployment',
               title: t('模型部署'),
               description: t('模型部署管理'),
-            },
-            {
-              sectionKey: 'admin',
-              moduleKey: 'route_policy',
-              title: t('路由策略'),
-              description: t('模型路由规则与兜底策略'),
             },
             {
               sectionKey: 'admin',

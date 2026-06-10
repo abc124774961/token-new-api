@@ -24,6 +24,7 @@ import (
 	modelgatewayrealtime "github.com/QuantumNous/new-api/pkg/modelgateway/observability/realtime"
 	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
 	modelgatewaytraffic "github.com/QuantumNous/new-api/pkg/modelgateway/traffic"
+	modelgatewayupstreamerror "github.com/QuantumNous/new-api/pkg/modelgateway/upstreamerror"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/router"
@@ -203,6 +204,7 @@ func RegisterRoutes(server *gin.Engine, role ServiceRole, assets router.ThemeAss
 
 func StartBackgroundProcesses(role ServiceRole) {
 	startSharedRequestRuntime(role)
+	modelgatewayupstreamerror.SyncDefaultManager()
 	switch normalizeRole(role) {
 	case RoleGateway:
 		startGatewayBillingRuntime()

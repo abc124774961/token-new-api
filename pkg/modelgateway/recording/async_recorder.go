@@ -217,6 +217,11 @@ type dispatchRequestMeta struct {
 type attemptRequestMeta struct {
 	ErrorMessage                   string             `json:"error_message,omitempty"`
 	ErrorCategory                  string             `json:"error_category,omitempty"`
+	UpstreamErrorKind              string             `json:"upstream_error_kind,omitempty"`
+	MatchedRuleID                  string             `json:"matched_rule_id,omitempty"`
+	SchedulerAction                string             `json:"scheduler_action,omitempty"`
+	AvoidanceSeconds               int                `json:"avoidance_seconds,omitempty"`
+	RetryAfterSeconds              int                `json:"retry_after_seconds,omitempty"`
 	WarningLevel                   string             `json:"warning_level,omitempty"`
 	WarningFlags                   []string           `json:"warning_flags,omitempty"`
 	WarningMessage                 string             `json:"warning_message,omitempty"`
@@ -676,6 +681,11 @@ func attemptRequestMetaFromResult(result core.AttemptResult) attemptRequestMeta 
 	return attemptRequestMeta{
 		ErrorMessage:                   result.ErrorMessage,
 		ErrorCategory:                  result.ErrorCategory,
+		UpstreamErrorKind:              result.UpstreamErrorKind,
+		MatchedRuleID:                  result.MatchedRuleID,
+		SchedulerAction:                result.SchedulerAction,
+		AvoidanceSeconds:               result.AvoidanceSeconds,
+		RetryAfterSeconds:              result.RetryAfterSeconds,
 		WarningLevel:                   result.WarningLevel,
 		WarningFlags:                   append([]string(nil), result.WarningFlags...),
 		WarningMessage:                 result.WarningMessage,
@@ -707,6 +717,11 @@ func attemptRequestMetaFromResult(result core.AttemptResult) attemptRequestMeta 
 func emptyAttemptRequestMeta(meta attemptRequestMeta) bool {
 	return meta.ErrorMessage == "" &&
 		meta.ErrorCategory == "" &&
+		meta.UpstreamErrorKind == "" &&
+		meta.MatchedRuleID == "" &&
+		meta.SchedulerAction == "" &&
+		meta.AvoidanceSeconds == 0 &&
+		meta.RetryAfterSeconds == 0 &&
 		meta.WarningLevel == "" &&
 		len(meta.WarningFlags) == 0 &&
 		meta.WarningMessage == "" &&

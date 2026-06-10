@@ -538,7 +538,7 @@ func TestShouldRetryAllowsGeneric429FailoverWhenAlternativePeerChannelExists(t *
 
 	require.True(t, shouldRetry(ctx, err, param, 0))
 	require.Equal(t, 1, param.GetExtraRetries())
-	require.Equal(t, "overload_skip", classifyRelayAttemptError(ctx, err))
+	require.Equal(t, modelgatewaycore.ErrorCategoryRateLimit, classifyRelayAttemptError(ctx, err))
 	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
 }
 
@@ -692,6 +692,30 @@ func TestShouldRetryAllowsUpstreamRateLimitWrappedAsBadRequest(t *testing.T) {
 
 	require.True(t, shouldRetry(ctx, err, param, 0))
 	require.Equal(t, 1, param.GetExtraRetries())
+}
+
+func TestShouldRetryTaskRelayUsesUpstreamClassificationForBadRequestSwitch(t *testing.T) {
+	ctx := newRelayRetryContext()
+	taskErr := &dto.TaskError{
+		Code:       "fail_to_fetch_task",
+		Message:    "model pool is empty for this account",
+		StatusCode: http.StatusBadRequest,
+		Error:      errors.New("model pool is empty for this account"),
+	}
+
+	require.True(t, shouldRetryTaskRelay(ctx, 771, taskErr, 1))
+}
+
+func TestShouldRetryTaskRelayStopsRequestLimitClassification(t *testing.T) {
+	ctx := newRelayRetryContext()
+	taskErr := &dto.TaskError{
+		Code:       "fail_to_fetch_task",
+		Message:    "maximum context length exceeded",
+		StatusCode: http.StatusBadRequest,
+		Error:      errors.New("maximum context length exceeded"),
+	}
+
+	require.False(t, shouldRetryTaskRelay(ctx, 772, taskErr, 1))
 }
 
 func TestShouldRetryAllowsGenericUpstreamBadRequestFailover(t *testing.T) {
@@ -1330,10 +1354,12 @@ func TestProcessChannelErrorSkipsPersistingRetriableIntermediateFailure(t *testi
 	var count int64
 	require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeError).Count(&count).Error)
 	require.Equal(t, int64(0), count)
-	require.Nil(t, service.GetChannelFailureAvoidanceStatus(2))
+	status := service.GetChannelFailureAvoidanceStatus(2)
+	require.NotNil(t, status)
+	require.Equal(t, "upstream_concurrency_limit", status.Reason)
 }
 
-func TestProcessChannelErrorSkipsFailureAvoidanceForOverload429(t *testing.T) {
+func TestProcessChannelErrorRecordsFailureAvoidanceForRateLimit429(t *testing.T) {
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
 	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
@@ -1356,8 +1382,10 @@ func TestProcessChannelErrorSkipsFailureAvoidanceForOverload429(t *testing.T) {
 	ctx := newRelayRetryContext()
 	processChannelError(ctx, *types.NewChannelError(916, 1, "channel-916", false, "", true), err, false)
 
-	require.Equal(t, "overload_skip", classifyRelayAttemptError(ctx, err))
-	require.Nil(t, service.GetChannelFailureAvoidanceStatus(916))
+	require.Equal(t, modelgatewaycore.ErrorCategoryRateLimit, classifyRelayAttemptError(ctx, err))
+	status := service.GetChannelFailureAvoidanceStatus(916)
+	require.NotNil(t, status)
+	require.Equal(t, "upstream_rate_limit", status.Reason)
 	require.Nil(t, service.GetChannelConcurrencyCooldownStatus(916))
 	require.False(t, service.IsRuntimeBalanceInsufficientChannelID(916))
 }
@@ -1571,7 +1599,7 @@ func TestTraceChannelFailureMarksConcurrencyLimitedWithoutCooldown(t *testing.T)
 	require.NotContains(t, trace[0], "concurrency_cooldown")
 }
 
-func TestTraceChannelFailureAddsOverloadCategoryAndSwitchAction(t *testing.T) {
+func TestTraceChannelFailureAddsUpstreamClassificationAndSwitchAction(t *testing.T) {
 	ctx := newRelayRetryContext()
 	err := types.NewOpenAIError(
 		errors.New("rate limit exceeded"),
@@ -1584,12 +1612,15 @@ func TestTraceChannelFailureAddsOverloadCategoryAndSwitchAction(t *testing.T) {
 	trace, ok := common.GetContextKeyType[[]map[string]interface{}](ctx, constant.ContextKeyChannelFailureTrace)
 	require.True(t, ok)
 	require.Len(t, trace, 1)
-	require.Equal(t, "overload_skip", trace[0]["error_category"])
+	require.Equal(t, modelgatewaycore.ErrorCategoryRateLimit, trace[0]["error_category"])
+	require.Equal(t, "rate_limit", trace[0]["upstream_error_kind"])
+	require.Equal(t, "upstream_rate_limit", trace[0]["matched_rule_id"])
+	require.Equal(t, "switch_channel", trace[0]["scheduler_action"])
 	require.Equal(t, "switch_channel", trace[0]["retry_action"])
-	require.NotContains(t, trace[0], "temporary_avoidance_reason")
+	require.Equal(t, "upstream_rate_limit", trace[0]["temporary_avoidance_reason"])
 }
 
-func TestProcessChannelErrorSkipsTemporaryAvoidanceForUpstreamConcurrencyBusy(t *testing.T) {
+func TestProcessChannelErrorRecordsTemporaryAvoidanceForUpstreamConcurrencyBusy(t *testing.T) {
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
 	common.ChannelFailureAvoidanceEnabled = true
@@ -1607,10 +1638,12 @@ func TestProcessChannelErrorSkipsTemporaryAvoidanceForUpstreamConcurrencyBusy(t 
 	)
 	processChannelError(newRelayRetryContext(), *types.NewChannelError(913, 1, "channel-913", false, "", false), err, false)
 
-	require.Nil(t, service.GetChannelFailureAvoidanceStatus(913))
+	status := service.GetChannelFailureAvoidanceStatus(913)
+	require.NotNil(t, status)
+	require.Equal(t, "upstream_concurrency_limit", status.Reason)
 }
 
-func TestProcessChannelErrorSkipsTemporaryAvoidanceForBalanceInsufficient(t *testing.T) {
+func TestProcessChannelErrorRecordsTemporaryAvoidanceForUpstreamBalanceInsufficient(t *testing.T) {
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
 	common.ChannelFailureAvoidanceEnabled = true
@@ -1628,7 +1661,9 @@ func TestProcessChannelErrorSkipsTemporaryAvoidanceForBalanceInsufficient(t *tes
 	)
 	processChannelError(newRelayRetryContext(), *types.NewChannelError(914, 1, "channel-914", false, "", false), err, false)
 
-	require.Nil(t, service.GetChannelFailureAvoidanceStatus(914))
+	status := service.GetChannelFailureAvoidanceStatus(914)
+	require.NotNil(t, status)
+	require.Equal(t, "upstream_balance_quota", status.Reason)
 }
 
 func TestShouldRetrySwitchesChannelForSanitizedUpstreamBalanceInsufficient(t *testing.T) {

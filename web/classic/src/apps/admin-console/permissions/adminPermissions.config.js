@@ -180,6 +180,14 @@ export const adminMenuPermissions = [
   },
   {
     group: '模型与路由',
+    label: '智能调度',
+    path: '/admin/smart-scheduler',
+    permission: ADMIN_PERMISSION_KEYS.modelRoutePolicyRead,
+    defaultRole: '模型管理员',
+    priority: 'P0',
+  },
+  {
+    group: '模型与路由',
     label: '模型管理',
     path: '/admin/models',
     permission: ADMIN_PERMISSION_KEYS.modelModelRead,
@@ -191,14 +199,6 @@ export const adminMenuPermissions = [
     label: '模型部署',
     path: '/admin/deployment',
     permission: ADMIN_PERMISSION_KEYS.modelDeploymentRead,
-    defaultRole: '模型管理员',
-    priority: 'P0',
-  },
-  {
-    group: '模型与路由',
-    label: '路由策略',
-    path: '/admin/route-policy',
-    permission: ADMIN_PERMISSION_KEYS.modelRoutePolicyRead,
     defaultRole: '模型管理员',
     priority: 'P0',
   },
@@ -357,8 +357,8 @@ export const adminDangerousOperationPermissions = [
     priority: 'P0',
   },
   {
-    page: '路由策略',
-    operation: '保存调度配置、恢复默认',
+    page: '智能调度',
+    operation: '保存调度配置、恢复默认、保存上游错误分类规则',
     permission: ADMIN_PERMISSION_KEYS.modelRoutePolicyDanger,
     defaultRole: '模型管理员',
     confirmation: '必须',
@@ -492,6 +492,10 @@ export const adminOperationPermissionByKey = Object.fromEntries(
 );
 
 export const adminRoutePermissionPatterns = [
+  {
+    pattern: /^\/admin\/route-policy$/,
+    permission: ADMIN_PERMISSION_KEYS.modelRoutePolicyRead,
+  },
   {
     pattern: /^\/admin\/channel\/[^/]+\/accounts$/,
     permission: ADMIN_PERMISSION_KEYS.channelAccountRead,

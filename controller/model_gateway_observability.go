@@ -831,6 +831,11 @@ type ModelGatewayObservabilityRecord struct {
 	CacheAffinity                  bool                               `json:"cache_affinity,omitempty"`
 	ErrorMessage                   string                             `json:"error_message,omitempty"`
 	ErrorCategory                  string                             `json:"error_category,omitempty"`
+	UpstreamErrorKind              string                             `json:"upstream_error_kind,omitempty"`
+	MatchedRuleID                  string                             `json:"matched_rule_id,omitempty"`
+	SchedulerAction                string                             `json:"scheduler_action,omitempty"`
+	AvoidanceSeconds               int                                `json:"avoidance_seconds,omitempty"`
+	RetryAfterSeconds              int                                `json:"retry_after_seconds,omitempty"`
 	WarningLevel                   string                             `json:"warning_level,omitempty"`
 	WarningFlags                   []string                           `json:"warning_flags,omitempty"`
 	WarningMessage                 string                             `json:"warning_message,omitempty"`
@@ -5081,6 +5086,11 @@ type modelGatewayObservabilityDispatchMeta struct {
 type modelGatewayObservabilityAttemptMeta struct {
 	ErrorMessage                   string
 	ErrorCategory                  string
+	UpstreamErrorKind              string
+	MatchedRuleID                  string
+	SchedulerAction                string
+	AvoidanceSeconds               int
+	RetryAfterSeconds              int
 	WarningLevel                   string
 	WarningFlags                   []string
 	WarningMessage                 string
@@ -6216,6 +6226,11 @@ func modelGatewayObservabilityAttemptMetaFromRequestMeta(requestMeta map[string]
 	return modelGatewayObservabilityAttemptMeta{
 		ErrorMessage:                   strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["error_message"])),
 		ErrorCategory:                  strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["error_category"])),
+		UpstreamErrorKind:              strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["upstream_error_kind"])),
+		MatchedRuleID:                  strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["matched_rule_id"])),
+		SchedulerAction:                strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["scheduler_action"])),
+		AvoidanceSeconds:               int(modelGatewayObservabilityMetaInt64(requestMeta["avoidance_seconds"])),
+		RetryAfterSeconds:              int(modelGatewayObservabilityMetaInt64(requestMeta["retry_after_seconds"])),
 		WarningLevel:                   strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["warning_level"])),
 		WarningFlags:                   modelGatewayObservabilityStringSlice(requestMeta["warning_flags"]),
 		WarningMessage:                 strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["warning_message"])),

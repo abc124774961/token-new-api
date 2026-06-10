@@ -21,6 +21,7 @@ import (
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayscheduler "github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	modelgatewayupstreamerror "github.com/QuantumNous/new-api/pkg/modelgateway/upstreamerror"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -1559,6 +1560,13 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 		result.ErrorCode = string(apiErr.GetErrorCode())
 		result.ErrorType = string(apiErr.GetErrorType())
 		result.ErrorMessage = apiErr.MaskSensitiveError()
+		if upstreamClassification := modelgatewayupstreamerror.ClassifyAPIError(apiErr); upstreamClassification.Matched {
+			result.UpstreamErrorKind = upstreamClassification.Kind
+			result.MatchedRuleID = upstreamClassification.MatchedRuleID
+			result.SchedulerAction = upstreamClassification.SchedulerAction
+			result.AvoidanceSeconds = upstreamClassification.AvoidanceSeconds
+			result.RetryAfterSeconds = upstreamClassification.RetryAfterSeconds
+		}
 	}
 	applyModelGatewayAttemptWarnings(c, info, &flow)
 	result.ErrorCategory = flow.ErrorCategory
@@ -1909,6 +1917,9 @@ func classifyRelayAttemptError(c *gin.Context, apiErr *types.NewAPIError) string
 	}
 	if isInvalidEncryptedContentError(apiErr) || service.IsClientContextLimitError(apiErr) {
 		return modelgatewaycore.ErrorCategoryClientRequestError
+	}
+	if result := modelgatewayupstreamerror.ClassifyAPIError(apiErr); result.Matched && result.ErrorCategory != "" {
+		return result.ErrorCategory
 	}
 	if isRelayOverloadSkipError(apiErr) {
 		return modelgatewaycore.ErrorCategoryOverloadSkip
@@ -2515,6 +2526,9 @@ func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIE
 	if shouldFailoverOnUnsupportedCapability(c, openaiErr) {
 		return true
 	}
+	if result := modelgatewayupstreamerror.ClassifyAPIError(openaiErr); result.Matched {
+		return modelgatewayupstreamerror.ShouldSwitchChannel(result)
+	}
 	if isUpstreamRateLimitLikeError(openaiErr) {
 		return true
 	}
@@ -3047,6 +3061,7 @@ func traceChannelFailure(c *gin.Context, channelError types.ChannelError, err *t
 	if c == nil || err == nil {
 		return
 	}
+	upstreamClassification := modelgatewayupstreamerror.ClassifyAPIError(err)
 	item := map[string]interface{}{
 		"channel_id":     channelError.ChannelId,
 		"channel_name":   channelError.ChannelName,
@@ -3057,6 +3072,20 @@ func traceChannelFailure(c *gin.Context, channelError types.ChannelError, err *t
 		"error_category": classifyRelayAttemptError(c, err),
 		"message":        err.MaskSensitiveError(),
 		"final_failure":  finalFailure,
+	}
+	if upstreamClassification.Matched {
+		item["upstream_error_kind"] = upstreamClassification.Kind
+		item["matched_rule_id"] = upstreamClassification.MatchedRuleID
+		item["scheduler_action"] = upstreamClassification.SchedulerAction
+		if upstreamClassification.AvoidanceSeconds > 0 {
+			item["avoidance_seconds"] = upstreamClassification.AvoidanceSeconds
+		}
+		if upstreamClassification.RetryAfterSeconds > 0 {
+			item["retry_after_seconds"] = upstreamClassification.RetryAfterSeconds
+		}
+		if upstreamClassification.SchedulerAction != "" {
+			item["retry_action"] = upstreamClassification.SchedulerAction
+		}
 	}
 	if item["error_category"] != modelgatewaycore.ErrorCategoryOverloadSkip {
 		if reason, ok := channelFailureAvoidanceReason(err); ok {
@@ -3096,6 +3125,12 @@ func channelFailureAvoidanceReason(err *types.NewAPIError) (string, bool) {
 		return "", false
 	}
 	if isInvalidEncryptedContentError(err) || service.IsClientContextLimitError(err) {
+		return "", false
+	}
+	if result := modelgatewayupstreamerror.ClassifyAPIError(err); result.Matched {
+		if modelgatewayupstreamerror.ShouldSwitchChannel(result) && result.AvoidanceSeconds > 0 {
+			return result.AvoidanceReason, true
+		}
 		return "", false
 	}
 	if service.IsBalanceInsufficientError(err) {
@@ -3320,7 +3355,7 @@ func RelayTask(c *gin.Context) {
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode),
+				taskErrorToAPIError(taskErr),
 				!willRetry)
 			if !willRetry {
 				break
@@ -3399,6 +3434,11 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
+	if !taskErr.LocalError {
+		if result := modelgatewayupstreamerror.ClassifyAPIError(taskErrorToAPIError(taskErr)); result.Matched {
+			return modelgatewayupstreamerror.ShouldSwitchChannel(result)
+		}
+	}
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		return true
 	}
@@ -3426,4 +3466,19 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 		return false
 	}
 	return true
+}
+
+func taskErrorToAPIError(taskErr *dto.TaskError) *types.NewAPIError {
+	if taskErr == nil {
+		return nil
+	}
+	err := taskErr.Error
+	if err == nil {
+		err = errors.New(taskErr.Message)
+	}
+	code := types.ErrorCode(strings.TrimSpace(taskErr.Code))
+	if code == "" {
+		code = types.ErrorCodeBadResponseStatusCode
+	}
+	return types.NewOpenAIError(err, code, taskErr.StatusCode)
 }

@@ -60,7 +60,7 @@ const AdminRealtimeMonitor = lazy(
   () => import('../pages/AdminRealtimeMonitor'),
 );
 const AdminChannelAlerts = lazy(() => import('../pages/AdminChannelAlerts'));
-const AdminRoutePolicy = lazy(() => import('../pages/AdminRoutePolicy'));
+const AdminSmartScheduler = lazy(() => import('../pages/AdminSmartScheduler'));
 const AdminRatioConfig = lazy(() => import('../pages/AdminRatioConfig'));
 
 function AdminChannelAccountLegacyRedirect() {
@@ -90,6 +90,21 @@ function LegacyAdminRedirect({ to }) {
       to={{
         pathname: to,
         search: location.search,
+      }}
+      replace
+    />
+  );
+}
+
+function RoutePolicyLegacyRedirect() {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  params.set('tab', 'policy');
+  return (
+    <Navigate
+      to={{
+        pathname: '/admin/smart-scheduler',
+        search: `?${params.toString()}`,
       }}
       replace
     />
@@ -212,9 +227,13 @@ export function renderAdminRouteElements() {
       />
       <Route
         path='/admin/route-policy'
+        element={<RoutePolicyLegacyRedirect />}
+      />
+      <Route
+        path='/admin/smart-scheduler'
         element={
           <AdminConsoleRoute>
-            <AdminRoutePolicy />
+            <AdminSmartScheduler />
           </AdminConsoleRoute>
         }
       />

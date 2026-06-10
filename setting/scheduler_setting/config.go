@@ -35,6 +35,26 @@ const (
 	ProxyReusePolicyWarn    = "warn"
 	ProxyReusePolicyConfirm = "confirm"
 	ProxyReusePolicyBlock   = "block"
+
+	UpstreamErrorRuleVersion = 1
+
+	UpstreamErrorKindBalanceQuota            = "balance_quota"
+	UpstreamErrorKindRateLimit               = "rate_limit"
+	UpstreamErrorKindConcurrencyLimit        = "concurrency_limit"
+	UpstreamErrorKindCapacityOverload        = "capacity_overload"
+	UpstreamErrorKindModelPoolUnavailable    = "model_pool_unavailable"
+	UpstreamErrorKindToolEndpointUnavailable = "tool_endpoint_unavailable"
+	UpstreamErrorKindAuthAccount             = "auth_account"
+	UpstreamErrorKindAccessRegion            = "access_region"
+	UpstreamErrorKindRequestLimit            = "request_limit"
+	UpstreamErrorKindPolicySafety            = "policy_safety"
+	UpstreamErrorKindTransportTimeout        = "transport_timeout"
+	UpstreamErrorKindBadResponse             = "bad_response"
+	UpstreamErrorKindStreamInterrupted       = "stream_interrupted"
+
+	UpstreamErrorActionSwitchChannel = "switch_channel"
+	UpstreamErrorActionStop          = "stop"
+	UpstreamErrorActionRecordOnly    = "record_only"
 )
 
 type GroupPolicySetting struct {
@@ -60,6 +80,26 @@ type CircuitErrorPolicySetting struct {
 	MinSamples         int     `json:"min_samples"`
 	OpenSeconds        int     `json:"open_seconds"`
 	HalfOpenProbeCount int     `json:"half_open_probe_count"`
+}
+
+type UpstreamErrorKeywordRule struct {
+	Code     []string `json:"code,omitempty"`
+	Type     []string `json:"type,omitempty"`
+	Message  []string `json:"message,omitempty"`
+	Metadata []string `json:"metadata,omitempty"`
+	Header   []string `json:"header,omitempty"`
+}
+
+type UpstreamErrorRule struct {
+	ID               string                   `json:"id"`
+	Enabled          bool                     `json:"enabled"`
+	Priority         int                      `json:"priority"`
+	Kind             string                   `json:"kind"`
+	StatusCodes      []int                    `json:"status_codes,omitempty"`
+	Keywords         UpstreamErrorKeywordRule `json:"keywords,omitempty"`
+	SchedulerAction  string                   `json:"scheduler_action"`
+	AvoidanceSeconds int                      `json:"avoidance_seconds,omitempty"`
+	Description      string                   `json:"description,omitempty"`
 }
 
 type SchedulerSetting struct {
@@ -88,6 +128,9 @@ type SchedulerSetting struct {
 	CostFirstGuardSpeedAdvantage         float64                              `json:"cost_first_guard_speed_advantage"`
 	ChannelPriorityTieBreakEnabled       bool                                 `json:"channel_priority_tie_break_enabled"`
 	ChannelPriorityTieBreakScoreDelta    float64                              `json:"channel_priority_tie_break_score_delta"`
+	UpstreamErrorClassificationEnabled   bool                                 `json:"upstream_error_classification_enabled"`
+	UpstreamErrorRuleVersion             int                                  `json:"upstream_error_rule_version"`
+	UpstreamErrorRules                   []UpstreamErrorRule                  `json:"upstream_error_rules"`
 	QueueEnabled                         bool                                 `json:"queue_enabled"`
 	QueueDefaultTimeoutMs                int                                  `json:"queue_default_timeout_ms"`
 	QueueMaxDepthPerChannel              int                                  `json:"queue_max_depth_per_channel"`
@@ -197,6 +240,9 @@ var schedulerSetting = SchedulerSetting{
 	CostFirstGuardSpeedAdvantage:         0.08,
 	ChannelPriorityTieBreakEnabled:       true,
 	ChannelPriorityTieBreakScoreDelta:    0.05,
+	UpstreamErrorClassificationEnabled:   true,
+	UpstreamErrorRuleVersion:             UpstreamErrorRuleVersion,
+	UpstreamErrorRules:                   DefaultUpstreamErrorRules(),
 	QueueEnabled:                         true,
 	QueueDefaultTimeoutMs:                2000,
 	QueueMaxDepthPerChannel:              64,
@@ -359,6 +405,9 @@ func defaultSchedulerSetting() SchedulerSetting {
 	setting.CostFirstGuardSpeedAdvantage = 0.08
 	setting.ChannelPriorityTieBreakEnabled = true
 	setting.ChannelPriorityTieBreakScoreDelta = 0.05
+	setting.UpstreamErrorClassificationEnabled = true
+	setting.UpstreamErrorRuleVersion = UpstreamErrorRuleVersion
+	setting.UpstreamErrorRules = DefaultUpstreamErrorRules()
 	setting.QueueEnabled = true
 	setting.QueueDefaultTimeoutMs = 2000
 	setting.QueueMaxDepthPerChannel = 64

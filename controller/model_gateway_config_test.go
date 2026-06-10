@@ -13,6 +13,7 @@ import (
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	modelgatewayprobe "github.com/QuantumNous/new-api/pkg/modelgateway/probe"
+	modelgatewayupstreamerror "github.com/QuantumNous/new-api/pkg/modelgateway/upstreamerror"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -331,6 +332,197 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.NoError(t, db.First(&costGuardSpeedOption, "key = ?", "scheduler_setting.cost_first_guard_speed_advantage").Error)
 	require.Equal(t, "0.09", costGuardSpeedOption.Value)
 	require.Equal(t, "35", common.OptionMap["scheduler_setting.rollout_percent"])
+}
+
+func TestModelGatewayConfigGetIncludesUpstreamErrorDefaults(t *testing.T) {
+	setupModelGatewayConfigControllerTestDB(t)
+	router := gin.New()
+	router.GET("/api/model_gateway/config", GetModelGatewayConfig)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/config", nil)
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayConfigResponse(t, resp)
+	require.True(t, payload.Success, resp.Body.String())
+	require.True(t, payload.Data.Setting.UpstreamErrorClassificationEnabled)
+	require.True(t, payload.Data.Defaults.UpstreamErrorClassificationEnabled)
+	require.Equal(t, scheduler_setting.UpstreamErrorRuleVersion, payload.Data.Setting.UpstreamErrorRuleVersion)
+	require.Equal(t, scheduler_setting.UpstreamErrorRuleVersion, payload.Data.Defaults.UpstreamErrorRuleVersion)
+	require.NotEmpty(t, payload.Data.Setting.UpstreamErrorRules)
+	require.Equal(t, scheduler_setting.UpstreamErrorKinds(), payload.Data.UpstreamErrorKinds)
+	require.Equal(t, scheduler_setting.UpstreamErrorActions(), payload.Data.UpstreamErrorActions)
+	require.Equal(t, scheduler_setting.DefaultUpstreamErrorRules(), payload.Data.UpstreamErrorRuleDefaults)
+}
+
+func TestModelGatewayConfigUpdatePersistsUpstreamErrorRulesAndReloadsClassifier(t *testing.T) {
+	db := setupModelGatewayConfigControllerTestDB(t)
+	router := gin.New()
+	router.PUT("/api/model_gateway/config", UpdateModelGatewayConfig)
+
+	setting := scheduler_setting.DefaultSetting()
+	setting.UpstreamErrorClassificationEnabled = true
+	setting.UpstreamErrorRuleVersion = 0
+	setting.UpstreamErrorRules = []scheduler_setting.UpstreamErrorRule{
+		{
+			ID:          " My Rule!! ",
+			Enabled:     true,
+			Priority:    99,
+			Kind:        " RATE_LIMIT ",
+			StatusCodes: []int{429, 99, 429, 600},
+			Keywords: scheduler_setting.UpstreamErrorKeywordRule{
+				Message: []string{" Burst ", "burst", ""},
+				Header:  []string{" Retry-After "},
+			},
+			AvoidanceSeconds: 7,
+			Description:      "  Custom upstream burst limiter  ",
+		},
+	}
+	body, err := common.Marshal(setting)
+	require.NoError(t, err)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/model_gateway/config", bytes.NewReader(body))
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayConfigResponse(t, resp)
+	require.True(t, payload.Success, resp.Body.String())
+	require.True(t, payload.Data.Setting.UpstreamErrorClassificationEnabled)
+	require.Equal(t, scheduler_setting.UpstreamErrorRuleVersion, payload.Data.Setting.UpstreamErrorRuleVersion)
+	require.Len(t, payload.Data.Setting.UpstreamErrorRules, 1)
+	rule := payload.Data.Setting.UpstreamErrorRules[0]
+	require.Equal(t, "my_rule", rule.ID)
+	require.True(t, rule.Enabled)
+	require.Equal(t, scheduler_setting.UpstreamErrorKindRateLimit, rule.Kind)
+	require.Equal(t, scheduler_setting.UpstreamErrorActionSwitchChannel, rule.SchedulerAction)
+	require.Equal(t, []int{429}, rule.StatusCodes)
+	require.Equal(t, []string{"Burst"}, rule.Keywords.Message)
+	require.Equal(t, []string{"Retry-After"}, rule.Keywords.Header)
+	require.Equal(t, 7, rule.AvoidanceSeconds)
+	require.Equal(t, "Custom upstream burst limiter", rule.Description)
+
+	var option model.Option
+	require.NoError(t, db.First(&option, "key = ?", "scheduler_setting.upstream_error_rules").Error)
+	require.Contains(t, option.Value, `"id":"my_rule"`)
+	require.Contains(t, option.Value, `"scheduler_action":"switch_channel"`)
+
+	classified := modelgatewayupstreamerror.Classify(modelgatewayupstreamerror.Signal{
+		StatusCode: 429,
+		Message:    "burst threshold exceeded",
+		Metadata:   `{"retry_after_seconds":12}`,
+	})
+	require.True(t, classified.Matched)
+	require.Equal(t, scheduler_setting.UpstreamErrorKindRateLimit, classified.Kind)
+	require.Equal(t, "my_rule", classified.MatchedRuleID)
+	require.Equal(t, scheduler_setting.UpstreamErrorActionSwitchChannel, classified.SchedulerAction)
+	require.Equal(t, 7, classified.AvoidanceSeconds)
+	require.Equal(t, 12, classified.RetryAfterSeconds)
+}
+
+func TestModelGatewayConfigResetUpstreamErrorRulesOnly(t *testing.T) {
+	setupModelGatewayConfigControllerTestDB(t)
+	current := scheduler_setting.DefaultSetting()
+	current.Enabled = true
+	current.DefaultMode = scheduler_setting.ModeActive
+	current.RolloutPercent = 25
+	current.UpstreamErrorClassificationEnabled = false
+	current.UpstreamErrorRules = []scheduler_setting.UpstreamErrorRule{
+		{
+			ID:              "custom_only",
+			Enabled:         true,
+			Priority:        1,
+			Kind:            scheduler_setting.UpstreamErrorKindRateLimit,
+			StatusCodes:     []int{429},
+			SchedulerAction: scheduler_setting.UpstreamErrorActionRecordOnly,
+		},
+	}
+	restoreSetting := scheduler_setting.SetSettingForTest(current)
+	defer restoreSetting()
+
+	router := gin.New()
+	router.POST("/api/model_gateway/config/reset", ResetModelGatewayConfig)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/model_gateway/config/reset?scope=upstream_error_rules", nil)
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayConfigResponse(t, resp)
+	require.True(t, payload.Success, resp.Body.String())
+	require.True(t, payload.Data.Setting.Enabled)
+	require.Equal(t, scheduler_setting.ModeActive, payload.Data.Setting.DefaultMode)
+	require.Equal(t, 25, payload.Data.Setting.RolloutPercent)
+	require.True(t, payload.Data.Setting.UpstreamErrorClassificationEnabled)
+	require.Equal(t, scheduler_setting.UpstreamErrorRuleVersion, payload.Data.Setting.UpstreamErrorRuleVersion)
+	require.Equal(t, scheduler_setting.DefaultUpstreamErrorRules(), payload.Data.Setting.UpstreamErrorRules)
+
+	classified := modelgatewayupstreamerror.Classify(modelgatewayupstreamerror.Signal{
+		StatusCode: 429,
+		Message:    "rate limit exceeded",
+	})
+	require.True(t, classified.Matched)
+	require.Equal(t, scheduler_setting.UpstreamErrorKindRateLimit, classified.Kind)
+}
+
+func TestModelGatewayConfigRejectsInvalidUpstreamErrorRules(t *testing.T) {
+	tests := []struct {
+		name    string
+		rule    scheduler_setting.UpstreamErrorRule
+		message string
+	}{
+		{
+			name: "invalid kind",
+			rule: scheduler_setting.UpstreamErrorRule{
+				ID:              "bad_kind",
+				Enabled:         true,
+				Kind:            "not_a_kind",
+				StatusCodes:     []int{429},
+				SchedulerAction: scheduler_setting.UpstreamErrorActionSwitchChannel,
+			},
+			message: "invalid upstream_error_rule kind",
+		},
+		{
+			name: "invalid action",
+			rule: scheduler_setting.UpstreamErrorRule{
+				ID:              "bad_action",
+				Enabled:         true,
+				Kind:            scheduler_setting.UpstreamErrorKindRateLimit,
+				StatusCodes:     []int{429},
+				SchedulerAction: "teleport",
+			},
+			message: "invalid upstream_error_rule scheduler_action",
+		},
+		{
+			name: "empty matcher",
+			rule: scheduler_setting.UpstreamErrorRule{
+				ID:              "empty_matcher",
+				Enabled:         true,
+				Kind:            scheduler_setting.UpstreamErrorKindRateLimit,
+				SchedulerAction: scheduler_setting.UpstreamErrorActionSwitchChannel,
+			},
+			message: "must define status_codes or keywords",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupModelGatewayConfigControllerTestDB(t)
+			router := gin.New()
+			router.PUT("/api/model_gateway/config", UpdateModelGatewayConfig)
+
+			setting := scheduler_setting.DefaultSetting()
+			setting.UpstreamErrorRules = []scheduler_setting.UpstreamErrorRule{tt.rule}
+			body, err := common.Marshal(setting)
+			require.NoError(t, err)
+
+			resp := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPut, "/api/model_gateway/config", bytes.NewReader(body))
+			router.ServeHTTP(resp, req)
+
+			require.Equal(t, http.StatusOK, resp.Code)
+			require.Contains(t, resp.Body.String(), `"success":false`)
+			require.Contains(t, resp.Body.String(), tt.message)
+		})
+	}
 }
 
 func TestModelGatewayConfigUpdatePersistsDynamicBillingMode(t *testing.T) {
