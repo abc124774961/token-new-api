@@ -81,6 +81,91 @@ type ModelGatewayUserRequestAttempt struct {
 	ExperienceIssue   string
 }
 
+type ModelGatewayUserRequestStart struct {
+	CreatedAt      int64
+	RequestId      string
+	RequestedGroup string
+	SelectedGroup  string
+	ChannelID      int
+	ChannelName    string
+	RequestedModel string
+	IsHealthProbe  bool
+	ProbeReason    string
+}
+
+func RecordModelGatewayUserRequestStart(start ModelGatewayUserRequestStart) *ModelGatewayUserRequestSummary {
+	if DB == nil {
+		return nil
+	}
+	start.RequestId = strings.TrimSpace(start.RequestId)
+	if start.RequestId == "" {
+		return nil
+	}
+	if start.CreatedAt == 0 {
+		start.CreatedAt = common.GetTimestamp()
+	}
+	summary := &ModelGatewayUserRequestSummary{
+		RequestId:          start.RequestId,
+		CreatedAt:          start.CreatedAt,
+		UpdatedAt:          start.CreatedAt,
+		CompletedAt:        0,
+		RequestedModel:     strings.TrimSpace(start.RequestedModel),
+		RequestedGroup:     strings.TrimSpace(start.RequestedGroup),
+		SelectedGroup:      strings.TrimSpace(start.SelectedGroup),
+		FinalChannelID:     start.ChannelID,
+		FinalChannelName:   strings.TrimSpace(start.ChannelName),
+		Attempts:           0,
+		LastAttemptIndex:   -1,
+		FinalSuccess:       false,
+		FinalStatusCode:    0,
+		FinalErrorCategory: "",
+		IsHealthProbe:      start.IsHealthProbe,
+		ProbeReason:        strings.TrimSpace(start.ProbeReason),
+	}
+	create := *summary
+	result := DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&create)
+	if result.Error != nil {
+		common.SysLog(fmt.Sprintf("failed to create processing model gateway user request summary: request_id=%s error=%v", start.RequestId, result.Error))
+		return nil
+	}
+	if result.RowsAffected > 0 {
+		return &create
+	}
+	updates := map[string]any{
+		"updated_at":      start.CreatedAt,
+		"is_health_probe": start.IsHealthProbe,
+	}
+	if summary.RequestedModel != "" {
+		updates["requested_model"] = summary.RequestedModel
+	}
+	if summary.RequestedGroup != "" {
+		updates["requested_group"] = summary.RequestedGroup
+	}
+	if summary.SelectedGroup != "" {
+		updates["selected_group"] = summary.SelectedGroup
+	}
+	if summary.FinalChannelID > 0 {
+		updates["final_channel_id"] = summary.FinalChannelID
+	}
+	if summary.FinalChannelName != "" {
+		updates["final_channel_name"] = summary.FinalChannelName
+	}
+	if summary.ProbeReason != "" {
+		updates["probe_reason"] = summary.ProbeReason
+	}
+	if err := DB.Model(&ModelGatewayUserRequestSummary{}).
+		Where("request_id = ? AND completed_at <= 0", start.RequestId).
+		Updates(updates).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to update processing model gateway user request summary: request_id=%s error=%v", start.RequestId, err))
+		return nil
+	}
+	var updated ModelGatewayUserRequestSummary
+	if err := DB.Where("request_id = ?", start.RequestId).First(&updated).Error; err != nil {
+		return nil
+	}
+	return &updated
+}
+
 func RecordModelGatewayUserRequestAttempt(attempt ModelGatewayUserRequestAttempt) *ModelGatewayUserRequestSummary {
 	if DB == nil {
 		return nil

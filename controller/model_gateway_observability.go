@@ -44,6 +44,7 @@ const (
 	modelGatewayObservabilityMinTrendBucket     = 60
 	modelGatewayObservabilityMaxTrendBucket     = 24 * 3600
 	modelGatewayObservabilityMaxTrendBuckets    = 360
+	modelGatewayObservabilityActiveRequestTTL   = 30 * 60
 	modelGatewayObservabilityTrendTopN          = 5
 	modelGatewayObservabilityRiskTimelineLimit  = 100
 	modelGatewayTrendExportPreviewLimit         = 20
@@ -3366,7 +3367,30 @@ func buildModelGatewayUserRequestObservability(startTime int64, endTime int64, o
 	}
 	reconcileModelGatewayUserRequestClientAbortSummaries(userRequests)
 
-	return buildModelGatewayUserRequestObservabilityFromSummaries(userRequests, totalRequests, startTime, endTime, options), nil
+	activeRequests := loadActiveModelGatewayUserRequestSummaries(startTime, endTime, options)
+	return buildModelGatewayUserRequestObservabilityFromSummaries(userRequests, activeRequests, totalRequests, startTime, endTime, options), nil
+}
+
+func loadActiveModelGatewayUserRequestSummaries(startTime int64, endTime int64, options ModelGatewayObservabilityOptions) []model.ModelGatewayUserRequestSummary {
+	if model.DB == nil || options.RecentLimit <= 0 {
+		return nil
+	}
+	activeCutoff := endTime - modelGatewayObservabilityActiveRequestTTL
+	if activeCutoff < startTime {
+		activeCutoff = startTime
+	}
+	rows := make([]model.ModelGatewayUserRequestSummary, 0, options.RecentLimit)
+	tx := model.DB.Model(&model.ModelGatewayUserRequestSummary{}).
+		Where("completed_at <= 0").
+		Where("(updated_at >= ? OR (updated_at <= 0 AND created_at >= ?))", activeCutoff, activeCutoff)
+	tx = applyModelGatewayUserRequestObservabilityFilters(tx, options)
+	if err := tx.Order("created_at desc, updated_at desc, id desc").
+		Limit(options.RecentLimit).
+		Find(&rows).Error; err != nil {
+		common.SysLog(fmt.Sprintf("failed to load active model gateway user requests: %v", err))
+		return nil
+	}
+	return rows
 }
 
 func reconcileModelGatewayUserRequestClientAbortSummaries(userRequests []model.ModelGatewayUserRequestSummary) {
@@ -3566,7 +3590,7 @@ type modelGatewayUserRequestTrendAccumulator struct {
 	modelGatewayUserRequestAccumulator
 }
 
-func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model.ModelGatewayUserRequestSummary, totalRequests int64, startTime int64, endTime int64, options ModelGatewayObservabilityOptions) ModelGatewayUserRequestObservabilityResponse {
+func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model.ModelGatewayUserRequestSummary, activeRequests []model.ModelGatewayUserRequestSummary, totalRequests int64, startTime int64, endTime int64, options ModelGatewayObservabilityOptions) ModelGatewayUserRequestObservabilityResponse {
 	response := ModelGatewayUserRequestObservabilityResponse{
 		Summary: ModelGatewayUserRequestSummary{
 			WindowHours:        options.Hours,
@@ -3580,12 +3604,16 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 		Trends:         make([]ModelGatewayUserRequestTrendPoint, 0),
 		ByModel:        make([]ModelGatewayUserRequestAggregate, 0),
 		ByGroup:        make([]ModelGatewayUserRequestAggregate, 0),
-		RecentRequests: make([]ModelGatewayUserRequestRecord, 0, minModelGatewayObservabilityInt(options.RecentLimit, len(userRequests))),
+		RecentRequests: make([]ModelGatewayUserRequestRecord, 0, minModelGatewayObservabilityInt(options.RecentLimit, len(userRequests)+len(activeRequests))),
 	}
 	totalAccumulator := newModelGatewayUserRequestAccumulator("all")
 	modelAccumulators := make(map[string]*modelGatewayUserRequestAccumulator)
 	groupAccumulators := make(map[string]*modelGatewayUserRequestAccumulator)
 	trendAccumulators := make(map[int64]*modelGatewayUserRequestTrendAccumulator)
+
+	for _, activeRequest := range activeRequests {
+		response.RecentRequests = append(response.RecentRequests, modelGatewayUserRequestRecord(activeRequest))
+	}
 
 	for idx, userRequest := range userRequests {
 		isHealthProbe := userRequest.IsHealthProbe
@@ -3612,6 +3640,12 @@ func buildModelGatewayUserRequestObservabilityFromSummaries(userRequests []model
 		if idx < options.RecentLimit {
 			response.RecentRequests = append(response.RecentRequests, modelGatewayUserRequestRecord(userRequest))
 		}
+	}
+	sort.Slice(response.RecentRequests, func(i, j int) bool {
+		return modelGatewayUserRequestRecordLess(response.RecentRequests[i], response.RecentRequests[j])
+	})
+	if options.RecentLimit > 0 && len(response.RecentRequests) > options.RecentLimit {
+		response.RecentRequests = response.RecentRequests[:options.RecentLimit]
 	}
 	attachModelGatewayUserRequestWarnings(response.RecentRequests)
 	if !options.Lite {
@@ -4576,7 +4610,7 @@ func ModelGatewayUserRequestRecordFromSummary(userRequest model.ModelGatewayUser
 		ProbeReason:        strings.TrimSpace(userRequest.ProbeReason),
 		DurationMs:         userRequest.DurationMs,
 		TTFTMs:             userRequest.TTFTMs,
-		Status:             modelGatewayUserRequestStatus(userRequest.FinalSuccess, clientAborted, userRequest.IsHealthProbe),
+		Status:             modelGatewayUserRequestSummaryStatus(userRequest, clientAborted),
 	}
 }
 
@@ -4602,6 +4636,61 @@ func modelGatewayUserRequestUpdatedAt(userRequest model.ModelGatewayUserRequestS
 		return userRequest.CompletedAt
 	}
 	return userRequest.CreatedAt
+}
+
+func modelGatewayUserRequestSummaryStatus(userRequest model.ModelGatewayUserRequestSummary, clientAborted bool) string {
+	if userRequest.CompletedAt <= 0 &&
+		!userRequest.FinalSuccess &&
+		!clientAborted &&
+		userRequest.FinalStatusCode <= 0 &&
+		strings.TrimSpace(userRequest.FinalErrorCategory) == "" {
+		return "processing"
+	}
+	return modelGatewayUserRequestStatus(userRequest.FinalSuccess, clientAborted, userRequest.IsHealthProbe)
+}
+
+func modelGatewayUserRequestRecordLess(left ModelGatewayUserRequestRecord, right ModelGatewayUserRequestRecord) bool {
+	leftProcessing := modelGatewayUserRequestRecordProcessing(left)
+	rightProcessing := modelGatewayUserRequestRecordProcessing(right)
+	if leftProcessing != rightProcessing {
+		return leftProcessing
+	}
+	leftTime := modelGatewayUserRequestRecordSortTime(left)
+	rightTime := modelGatewayUserRequestRecordSortTime(right)
+	if leftTime != rightTime {
+		return leftTime > rightTime
+	}
+	if left.CompletedAt != right.CompletedAt {
+		return left.CompletedAt > right.CompletedAt
+	}
+	if left.CreatedAt != right.CreatedAt {
+		return left.CreatedAt > right.CreatedAt
+	}
+	if left.ID != right.ID {
+		return left.ID > right.ID
+	}
+	return left.RequestID > right.RequestID
+}
+
+func modelGatewayUserRequestRecordSortTime(record ModelGatewayUserRequestRecord) int64 {
+	if modelGatewayUserRequestRecordProcessing(record) {
+		return record.CreatedAt
+	}
+	if record.CompletedAt > 0 {
+		return record.CompletedAt
+	}
+	return record.CreatedAt
+}
+
+func modelGatewayUserRequestRecordProcessing(record ModelGatewayUserRequestRecord) bool {
+	if record.CompletedAt > 0 {
+		return false
+	}
+	if record.FinalSuccess || record.ClientAborted || record.FinalStatusCode > 0 || strings.TrimSpace(record.FinalErrorCategory) != "" {
+		return false
+	}
+	status := strings.TrimSpace(record.Status)
+	return status == "processing" || status == ""
 }
 
 func modelGatewayUserRequestStatus(success bool, clientAborted bool, healthProbe bool) string {

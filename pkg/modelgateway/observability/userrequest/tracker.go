@@ -218,6 +218,17 @@ func (t *Tracker) Start(record core.DispatchRecord) {
 	if record.Plan != nil {
 		item.ProbeReason = strings.TrimSpace(record.Plan.ProbeReason)
 	}
+	model.RecordModelGatewayUserRequestStart(model.ModelGatewayUserRequestStart{
+		CreatedAt:      item.CreatedAt,
+		RequestId:      item.RequestID,
+		RequestedGroup: item.RequestedGroup,
+		SelectedGroup:  item.SelectedGroup,
+		ChannelID:      item.FinalChannelID,
+		ChannelName:    item.FinalChannelName,
+		RequestedModel: item.RequestedModel,
+		IsHealthProbe:  item.IsHealthProbe,
+		ProbeReason:    item.ProbeReason,
+	})
 
 	t.mu.Lock()
 	t.pruneLocked(time.Now())

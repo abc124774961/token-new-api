@@ -30,6 +30,8 @@ const FALLBACK_REFRESH_SOURCE = 'fallback';
 const DEFAULT_RECENT_USER_REQUEST_LIMIT = 100;
 const MANUAL_REFRESH_DEBOUNCE_MS = 800;
 const USER_REQUEST_VIEW_MODE = 'user_requests';
+const USER_REQUEST_RECENT_POLL_SOURCE = 'user_request_recent_poll';
+const USER_REQUEST_RECENT_POLL_INTERVAL_MS = 5000;
 const USER_REQUEST_STATS_REFRESH_DELAY_MS = 600;
 const USER_REQUEST_STATS_REFRESH_MIN_INTERVAL_MS = 15000;
 
@@ -553,14 +555,14 @@ export function useModelGatewayObservabilityData({
         latestRequestKeyRef.current === activeRequestKey;
       const activeRequest = activeRequestRef.current;
       if (activeRequest?.key === activeRequestKey) {
-        if (silent) {
+        if (silent && source !== USER_REQUEST_RECENT_POLL_SOURCE) {
           setRefreshing(true);
         }
         return activeRequest.promise;
       }
       abortActiveRequest();
       const controller = new AbortController();
-      if (silent) {
+      if (silent && source !== USER_REQUEST_RECENT_POLL_SOURCE) {
         setRefreshing(true);
       } else {
         setLoading(true);
@@ -605,7 +607,10 @@ export function useModelGatewayObservabilityData({
         const message =
           err?.response?.data?.message || err?.message || t('加载观测数据失败');
         setError(message);
-        if (source !== FALLBACK_REFRESH_SOURCE) {
+        if (
+          source !== FALLBACK_REFRESH_SOURCE &&
+          source !== USER_REQUEST_RECENT_POLL_SOURCE
+        ) {
           showError(message);
         }
       } finally {
@@ -710,6 +715,14 @@ export function useModelGatewayObservabilityData({
   useEffect(() => {
     loadSummary(false, FALLBACK_REFRESH_SOURCE);
   }, [loadSummary]);
+
+  useEffect(() => {
+    if (!isUserRequestMode) return undefined;
+    const timer = window.setInterval(() => {
+      loadSummary(true, USER_REQUEST_RECENT_POLL_SOURCE);
+    }, USER_REQUEST_RECENT_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [isUserRequestMode, loadSummary]);
 
   useEffect(() => {
     if (connectionState === REALTIME_STATES.CONNECTED) {
