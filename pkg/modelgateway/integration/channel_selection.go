@@ -92,8 +92,9 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 			RefreshDefaultAccountCandidateIndex()
 			continue
 		}
-		if !service.ReserveChannelSelectionRouting(c, plan.Channel.Id) {
-			service.MarkChannelSelectionSkipped(c, plan.Channel.Id)
+		identity := serviceRuntimeIdentityFromPlan(plan)
+		if !service.ReserveChannelRuntimeSelectionRouting(c, identity) {
+			service.MarkChannelRuntimeSelectionSkipped(c, identity)
 			w.mu.Unlock()
 			continue
 		}
@@ -165,8 +166,37 @@ func serviceRuntimeIdentityFromPlan(plan *core.DispatchPlan) service.ChannelRunt
 		CredentialSubjectFP: key.CredentialSubjectFP,
 		CredentialFP:        key.CredentialFP,
 	}
-	if key.AccountID != "" || key.CredentialSubjectFP != "" || key.CredentialFP != "" || dispatchPlanHasCredentialRef(plan) {
+	if identity.AccountID == "" {
+		identity.AccountID = plan.AccountIdentity.AccountID
+	}
+	if identity.AccountID == "" {
+		identity.AccountID = plan.CredentialRef.AccountID
+	}
+	if identity.CredentialSubjectFP == "" {
+		identity.CredentialSubjectFP = plan.AccountIdentity.CredentialSubjectFingerprint
+	}
+	if identity.CredentialSubjectFP == "" {
+		identity.CredentialSubjectFP = plan.CredentialRef.CredentialSubjectFingerprint
+	}
+	if identity.CredentialFP == "" {
+		identity.CredentialFP = plan.AccountIdentity.CredentialFingerprint
+	}
+	if identity.CredentialFP == "" {
+		identity.CredentialFP = plan.CredentialRef.CredentialFingerprint
+	}
+	if identity.CredentialIndex == 0 && plan.AccountIdentity.CredentialIndex != 0 {
+		identity.CredentialIndex = plan.AccountIdentity.CredentialIndex
+	}
+	if identity.CredentialIndex == 0 && plan.CredentialRef.CredentialIndex != 0 {
 		identity.CredentialIndex = plan.CredentialRef.CredentialIndex
+	}
+	if key.AccountID != "" || key.CredentialSubjectFP != "" || key.CredentialFP != "" ||
+		plan.AccountIdentity.AccountID != "" || plan.AccountIdentity.AccountIdentityKey != "" ||
+		plan.AccountIdentity.AccountUniqueKey != "" || plan.AccountIdentity.CredentialSubjectFingerprint != "" ||
+		plan.AccountIdentity.CredentialFingerprint != "" || dispatchPlanHasCredentialRef(plan) {
+		if plan.CredentialRef.CredentialIndex != 0 || identity.CredentialIndex == 0 {
+			identity.CredentialIndex = plan.CredentialRef.CredentialIndex
+		}
 		identity.CredentialIndexSet = true
 	}
 	return identity.Normalize()
@@ -210,7 +240,8 @@ func dispatchPlanHasCredentialRef(plan *core.DispatchPlan) bool {
 		return false
 	}
 	ref := plan.CredentialRef
-	return ref.ResourceID != "" || ref.AccountID != "" || ref.CredentialFingerprint != ""
+	return ref.ResourceID != "" || ref.AccountID != "" || ref.CredentialIndex != 0 ||
+		ref.CredentialSubjectFingerprint != "" || ref.CredentialFingerprint != ""
 }
 
 func selectedPlanUsageLimitRejectReason(plan *core.DispatchPlan, resolved modelgatewaycredential.ResolvedCredential) string {

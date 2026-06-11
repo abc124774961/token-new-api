@@ -57,6 +57,7 @@ const (
 	ContextKeyChannelBalanceSkipped             ContextKey = "channel_balance_skipped"
 	ContextKeyChannelRuntimeBalanceSkipped      ContextKey = "channel_runtime_balance_skipped"
 	ContextKeyChannelSelectionReserved          ContextKey = "channel_selection_reserved"
+	ContextKeyChannelRuntimeSelectionReserved   ContextKey = "channel_runtime_selection_reserved"
 	ContextKeyChannelSelectionSkipped           ContextKey = "channel_selection_skipped"
 	ContextKeyChannelRuntimeSelectionSkipped    ContextKey = "channel_runtime_selection_skipped"
 	ContextKeyChannelRuntimeAttempted           ContextKey = "channel_runtime_attempted"

@@ -231,6 +231,101 @@ func TestChannelSelectionWrapperSmartPlanReservesRoutingSlotBeforeRelayAcquire(t
 	require.Equal(t, 0, service.GetChannelSelectionReservations(101))
 }
 
+func TestChannelSelectionWrapperSmartPlanReservesAccountRuntimeSlotBeforeRelayAcquire(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
+	h := testkit.NewDispatchTestHarness(core.SchedulerSettings{
+		Enabled:         true,
+		DefaultMode:     core.ModeOff,
+		DefaultStrategy: core.StrategyBalanced,
+		GroupPolicies: map[string]core.GroupPolicySetting{
+			"default": {Mode: core.ModeActive, Strategy: core.StrategyBalanced, AutoMode: core.AutoModeSequential},
+		},
+	})
+	h.Selector.Plan = &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 108, Name: "reserved-account-smart", Status: common.ChannelStatusEnabled, Key: "sk-test-account", Setting: common.GetPointer(`{"max_concurrency":10}`)},
+		SelectedGroup: "default",
+		RuntimeKey: core.RuntimeKey{
+			ChannelID:       108,
+			AccountID:       "acct-sticky",
+			CredentialIndex: 0,
+			EndpointType:    constant.EndpointTypeOpenAI,
+		},
+		AccountIdentity: core.AccountIdentity{
+			AccountID:       "acct-sticky",
+			CredentialIndex: 0,
+		},
+		CredentialRef: core.CredentialRef{
+			AccountID:       "acct-sticky",
+			CredentialIndex: 0,
+			Resolver:        "channel_key",
+		},
+	}
+	h.Selector.Handled = true
+	wrapper := integration.NewChannelSelectionWrapper(h.Facade, h.Legacy)
+
+	ctx, _ := gin.CreateTestContext(nil)
+	result, apiErr := wrapper.SelectSmartOnly(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-4.1",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
+	require.Equal(t, 108, result.Channel.Id)
+
+	identity := service.ChannelRuntimeIdentity{
+		ChannelID:          108,
+		AccountID:          "acct-sticky",
+		CredentialIndex:    0,
+		CredentialIndexSet: true,
+	}
+	require.Equal(t, 1, service.GetChannelSelectionReservations(108))
+	require.Equal(t, 1, service.GetChannelRuntimeSelectionReservations(identity))
+	require.Equal(t, 1, service.GetChannelRuntimeEffectiveActiveConcurrency(identity))
+
+	service.ReleaseChannelSelectionReservations(ctx)
+	require.Zero(t, service.GetChannelSelectionReservations(108))
+	require.Zero(t, service.GetChannelRuntimeSelectionReservations(identity))
+}
+
+func TestRuntimeIdentityFromPlanFallsBackToAccountIdentityAndCredentialRef(t *testing.T) {
+	identity := integration.RuntimeIdentityFromPlan(&core.DispatchPlan{
+		Channel: &model.Channel{Id: 109},
+		AccountIdentity: core.AccountIdentity{
+			AccountID:                    "acct-from-identity",
+			CredentialIndex:              3,
+			CredentialSubjectFingerprint: "subject-from-identity",
+			CredentialFingerprint:        "credential-from-identity",
+		},
+	})
+	require.Equal(t, 109, identity.ChannelID)
+	require.Equal(t, "acct-from-identity", identity.AccountID)
+	require.Equal(t, "subject-from-identity", identity.CredentialSubjectFP)
+	require.Equal(t, "credential-from-identity", identity.CredentialFP)
+	require.Equal(t, 3, identity.CredentialIndex)
+	require.True(t, identity.CredentialIndexSet)
+
+	refOnly := integration.RuntimeIdentityFromPlan(&core.DispatchPlan{
+		Channel: &model.Channel{Id: 110},
+		CredentialRef: core.CredentialRef{
+			AccountID:                    "acct-from-ref",
+			CredentialIndex:              1,
+			CredentialSubjectFingerprint: "subject-from-ref",
+			CredentialFingerprint:        "credential-from-ref",
+		},
+	})
+	require.Equal(t, 110, refOnly.ChannelID)
+	require.Equal(t, "acct-from-ref", refOnly.AccountID)
+	require.Equal(t, "subject-from-ref", refOnly.CredentialSubjectFP)
+	require.Equal(t, "credential-from-ref", refOnly.CredentialFP)
+	require.Equal(t, 1, refOnly.CredentialIndex)
+	require.True(t, refOnly.CredentialIndexSet)
+}
+
 func TestChannelSelectionWrapperDoesNotColdStartProbeCap(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service.ClearChannelConcurrencyForTest()

@@ -189,6 +189,50 @@ func TestChannelSelectionReservationCountsTowardEffectiveConcurrency(t *testing.
 	require.False(t, IsChannelConcurrencyFull(1008, setting))
 }
 
+func TestChannelRuntimeSelectionReservationCountsTowardAccountConcurrency(t *testing.T) {
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	ctx := newRetryContext()
+	identity := ChannelRuntimeIdentity{
+		ChannelID:          2003,
+		AccountID:          "acct-sticky",
+		CredentialIndex:    0,
+		CredentialIndexSet: true,
+	}
+	sameAccountOtherRow := ChannelRuntimeIdentity{
+		ChannelID:          2003,
+		AccountID:          "acct-sticky",
+		CredentialIndex:    1,
+		CredentialIndexSet: true,
+	}
+	otherAccount := ChannelRuntimeIdentity{
+		ChannelID:          2003,
+		AccountID:          "acct-other",
+		CredentialIndex:    2,
+		CredentialIndexSet: true,
+	}
+	setting := dto.ChannelSettings{
+		MaxConcurrency:        10,
+		AccountMaxConcurrency: 1,
+		AccountConcurrencyKey: ChannelRuntimeConcurrencyScopeKey(identity),
+	}
+
+	require.True(t, ReserveChannelRuntimeSelectionRouting(ctx, identity))
+	require.Equal(t, 1, GetChannelSelectionReservations(2003))
+	require.Equal(t, 1, GetChannelRuntimeSelectionReservations(identity))
+	require.Equal(t, 1, GetChannelRuntimeSelectionReservations(sameAccountOtherRow))
+	require.Equal(t, 1, GetChannelRuntimeEffectiveActiveConcurrency(identity))
+	require.True(t, IsChannelConcurrencyFull(2003, setting))
+	require.Zero(t, GetChannelRuntimeSelectionReservations(otherAccount))
+
+	ReleaseChannelSelectionReservation(ctx, 2003)
+	require.Zero(t, GetChannelSelectionReservations(2003))
+	require.Zero(t, GetChannelRuntimeSelectionReservations(identity))
+	require.Zero(t, GetChannelRuntimeEffectiveActiveConcurrency(identity))
+	require.False(t, IsChannelConcurrencyFull(2003, setting))
+}
+
 func TestChannelSelectionReservationDoesNotOverReserveConcurrently(t *testing.T) {
 	ClearChannelConcurrencyForTest()
 	t.Cleanup(ClearChannelConcurrencyForTest)
