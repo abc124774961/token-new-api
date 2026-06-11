@@ -246,6 +246,7 @@ type attemptRequestMeta struct {
 
 type attemptTimingMeta struct {
 	QueueWaitMs                  int64  `json:"queue_wait_ms,omitempty"`
+	StickyQueueWaitMs            int64  `json:"sticky_queue_wait_ms,omitempty"`
 	RelayToFirstByteMs           int64  `json:"relay_to_first_byte_ms,omitempty"`
 	RelayTotalMs                 int64  `json:"relay_total_ms,omitempty"`
 	UpstreamResponseHeaderMs     int64  `json:"upstream_response_header_ms,omitempty"`
@@ -533,7 +534,7 @@ func channelAccountUsageEventFromAttempt(result core.AttemptResult) model.Channe
 		ErrorCategory:   result.ErrorCategory,
 		IsHealthProbe:   result.IsHealthProbe,
 		DurationMs:      requestDuration(result).Milliseconds(),
-		TTFTMs:          requestTTFT(result).Milliseconds(),
+		TTFTMs:          channelAccountUsageTTFT(result).Milliseconds(),
 		CreatedAt:       observedAt,
 		UpdatedAt:       observedAt,
 	}
@@ -737,6 +738,7 @@ func emptyAttemptRequestMeta(meta attemptRequestMeta) bool {
 func attemptTimingMetaFromResult(result core.AttemptResult) *attemptTimingMeta {
 	timing := &attemptTimingMeta{
 		QueueWaitMs:              positiveDurationMs(result.QueueWait),
+		StickyQueueWaitMs:        positiveDurationMs(result.StickyQueueWait),
 		RelayToFirstByteMs:       positiveDurationMs(result.RelayToFirstByte),
 		RelayTotalMs:             positiveDurationMs(result.RelayTotal),
 		UpstreamResponseHeaderMs: positiveDurationMs(result.UpstreamResponseHeader),
@@ -763,6 +765,7 @@ func attemptTimingMetaFromResult(result core.AttemptResult) *attemptTimingMeta {
 		timing.RequestBodySizeLikelyLatency = true
 	}
 	if timing.QueueWaitMs <= 0 &&
+		timing.StickyQueueWaitMs <= 0 &&
 		timing.RelayToFirstByteMs <= 0 &&
 		timing.RelayTotalMs <= 0 &&
 		timing.UpstreamResponseHeaderMs <= 0 &&
@@ -775,6 +778,13 @@ func attemptTimingMetaFromResult(result core.AttemptResult) *attemptTimingMeta {
 		return nil
 	}
 	return timing
+}
+
+func channelAccountUsageTTFT(result core.AttemptResult) time.Duration {
+	if result.TTFT > 0 {
+		return result.TTFT
+	}
+	return requestTTFT(result)
 }
 
 func subtractTimingSegment(totalMs, segmentMs int64) int64 {

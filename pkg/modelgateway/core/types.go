@@ -815,6 +815,7 @@ type AttemptResult struct {
 	RequestDuration                time.Duration
 	RequestTTFT                    time.Duration
 	QueueWait                      time.Duration
+	StickyQueueWait                time.Duration
 	RelayToFirstByte               time.Duration
 	RelayTotal                     time.Duration
 	UpstreamResponseHeader         time.Duration

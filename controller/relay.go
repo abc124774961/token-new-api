@@ -1481,6 +1481,7 @@ type modelGatewayAttemptFlow struct {
 	LearnedConcurrencyLimitChanged bool
 	UsedChannels                   []string
 	QueueWait                      time.Duration
+	StickyQueueWait                time.Duration
 	RelayToFirstByte               time.Duration
 	RelayTotal                     time.Duration
 	UpstreamResponseHeader         time.Duration
@@ -1515,6 +1516,10 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 	if retryParam != nil && retryParam.ModelName != "" {
 		modelName = retryParam.ModelName
 	}
+	stickyQueueWait := flow.StickyQueueWait
+	if stickyQueueWait <= 0 {
+		stickyQueueWait = modelGatewayAttemptStickyQueueWait(plan, flow.QueueWait)
+	}
 	result := &modelgatewaycore.AttemptResult{
 		RequestID:              info.RequestId,
 		ClientSessionKey:       modelgatewaycore.SessionRoutingKeyFromGin(c),
@@ -1534,6 +1539,7 @@ func reportModelGatewayAttempt(c *gin.Context, info *relaycommon.RelayInfo, retr
 		RequestDuration:        modelGatewayRequestDuration(info),
 		RequestTTFT:            modelGatewayRequestTTFT(info),
 		QueueWait:              flow.QueueWait,
+		StickyQueueWait:        stickyQueueWait,
 		RelayToFirstByte:       flow.RelayToFirstByte,
 		RelayTotal:             flow.RelayTotal,
 		UpstreamResponseHeader: flow.UpstreamResponseHeader,
@@ -2039,9 +2045,18 @@ func modelGatewayAttemptDuration(flow modelGatewayAttemptFlow) time.Duration {
 }
 
 func modelGatewayAttemptTTFT(flow modelGatewayAttemptFlow) time.Duration {
-	ttft := flow.QueueWait + flow.RelayToFirstByte
-	if ttft > 0 {
-		return ttft
+	if flow.RelayToFirstByte > 0 {
+		return flow.RelayToFirstByte
+	}
+	return 0
+}
+
+func modelGatewayAttemptStickyQueueWait(plan *modelgatewaycore.DispatchPlan, queueWait time.Duration) time.Duration {
+	if plan == nil || queueWait <= 0 {
+		return 0
+	}
+	if plan.CacheAffinity || plan.StickyRetained || strings.TrimSpace(plan.StickySource) != "" {
+		return queueWait
 	}
 	return 0
 }

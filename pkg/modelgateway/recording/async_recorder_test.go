@@ -127,6 +127,20 @@ func TestChannelAccountUsageEventFromAttemptUsesCurrentTimeWhenObservedAtUnset(t
 	require.Greater(t, event.UpdatedAt, int64(0))
 }
 
+func TestChannelAccountUsageEventFromAttemptPrefersRelayTTFTOverRequestTTFT(t *testing.T) {
+	event := channelAccountUsageEventFromAttempt(core.AttemptResult{
+		RequestID:       "req-account-ttft",
+		ChannelID:       22,
+		Success:         true,
+		TTFT:            180 * time.Millisecond,
+		RequestTTFT:     5*time.Second + 180*time.Millisecond,
+		QueueWait:       5 * time.Second,
+		StickyQueueWait: 5 * time.Second,
+	})
+
+	require.Equal(t, int64(180), event.TTFTMs)
+}
+
 func TestAsyncExecutionRecorderDoesNotDropResultWhenQueueFull(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
@@ -548,8 +562,9 @@ func TestAsyncExecutionRecorderRecordsAttemptTimingMeta(t *testing.T) {
 		Success:                true,
 		RetryAction:            "complete",
 		Duration:               24 * time.Second,
-		TTFT:                   12 * time.Second,
+		TTFT:                   2 * time.Second,
 		QueueWait:              9 * time.Second,
+		StickyQueueWait:        9 * time.Second,
 		RelayToFirstByte:       2 * time.Second,
 		RelayTotal:             13 * time.Second,
 		UpstreamResponseHeader: 1500 * time.Millisecond,
@@ -567,9 +582,10 @@ func TestAsyncExecutionRecorderRecordsAttemptTimingMeta(t *testing.T) {
 	var record model.ModelExecutionRecord
 	require.NoError(t, db.Where("request_id = ?", "req-timing").First(&record).Error)
 	require.Equal(t, int64(24000), record.DurationMs)
-	require.Equal(t, int64(12000), record.TTFTMs)
+	require.Equal(t, int64(2000), record.TTFTMs)
 	require.Contains(t, record.RequestMeta, `"timing"`)
 	require.Contains(t, record.RequestMeta, `"queue_wait_ms":9000`)
+	require.Contains(t, record.RequestMeta, `"sticky_queue_wait_ms":9000`)
 	require.Contains(t, record.RequestMeta, `"relay_to_first_byte_ms":2000`)
 	require.Contains(t, record.RequestMeta, `"relay_total_ms":13000`)
 	require.Contains(t, record.RequestMeta, `"upstream_response_header_ms":1500`)

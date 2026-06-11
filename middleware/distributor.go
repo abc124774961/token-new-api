@@ -809,7 +809,12 @@ func applySelectedPlanCredential(c *gin.Context, channel *model.Channel, selecti
 		return false, nil
 	}
 	ref := selection.Plan.CredentialRef
-	if ref.ResourceID == "" && ref.AccountID == "" && ref.CredentialFingerprint == "" {
+	if ref.ResourceID == "" &&
+		ref.AccountID == "" &&
+		ref.CredentialSubjectFingerprint == "" &&
+		ref.CredentialFingerprint == "" &&
+		ref.Resolver == "" &&
+		ref.CredentialIndex == 0 {
 		return false, nil
 	}
 	resolved, apiErr := modelgatewaycredential.ResolveChannelCredential(channel, ref)

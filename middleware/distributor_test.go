@@ -167,6 +167,46 @@ func TestSetupContextForSelectedChannelAppliesSmartCredentialWithoutPolling(t *t
 	require.Equal(t, 2, channel.ChannelInfo.MultiKeyPollingIndex)
 }
 
+func TestSetupContextForSelectedChannelAppliesSmartCredentialWithSubjectOnlyRef(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	common.CryptoSecret = "test-secret"
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	channel := &model.Channel{
+		Id:     43,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-a\nsk-b",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "gpt-5.4",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:           true,
+			MultiKeyPollingIndex: 0,
+		},
+	}
+	selection := &modelgatewayintegration.SelectionResult{
+		Channel:      channel,
+		Group:        "default",
+		SmartHandled: true,
+		Plan: &core.DispatchPlan{
+			Channel:       channel,
+			SelectedGroup: "default",
+			CredentialRef: core.CredentialRef{
+				CredentialIndex:              1,
+				CredentialSubjectFingerprint: common.GenerateHMAC("subject-b"),
+				Resolver:                     "channel_key",
+			},
+		},
+	}
+
+	apiErr := SetupContextForSelectedChannel(ctx, channel, "gpt-5.4", selection)
+
+	require.Nil(t, apiErr)
+	require.Equal(t, "sk-b", common.GetContextKeyString(ctx, constant.ContextKeyChannelKey))
+	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyChannelIsMultiKey))
+	require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyChannelMultiKeyIndex))
+	require.Equal(t, 0, channel.ChannelInfo.MultiKeyPollingIndex)
+}
+
 func TestDistributeRetriesSmartSetupFailureBeforeRelay(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	common.CryptoSecret = "test-secret"

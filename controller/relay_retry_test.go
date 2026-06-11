@@ -1140,6 +1140,27 @@ func TestModelGatewayAttemptFailureScopeClassifiesClientAbort(t *testing.T) {
 	require.Empty(t, modelGatewayAttemptSwitchReason(result))
 }
 
+func TestModelGatewayAttemptTTFTExcludesQueueWait(t *testing.T) {
+	flow := modelGatewayAttemptFlow{
+		QueueWait:        5 * time.Second,
+		RelayToFirstByte: 220 * time.Millisecond,
+	}
+
+	require.Equal(t, 220*time.Millisecond, modelGatewayAttemptTTFT(flow))
+}
+
+func TestModelGatewayAttemptStickyQueueWaitOnlyForStickyPlan(t *testing.T) {
+	wait := 5 * time.Second
+
+	require.Equal(t, wait, modelGatewayAttemptStickyQueueWait(&modelgatewaycore.DispatchPlan{
+		CacheAffinity: true,
+	}, wait))
+	require.Equal(t, wait, modelGatewayAttemptStickyQueueWait(&modelgatewaycore.DispatchPlan{
+		StickySource: "user_sticky",
+	}, wait))
+	require.Zero(t, modelGatewayAttemptStickyQueueWait(&modelgatewaycore.DispatchPlan{}, wait))
+}
+
 func TestModelGatewayAttemptFailureScopeClassifiesFirstByteSwitchAsAccount(t *testing.T) {
 	result := modelgatewaycore.AttemptResult{
 		Success:       false,
