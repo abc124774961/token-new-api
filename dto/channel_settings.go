@@ -53,6 +53,9 @@ type ChannelOtherSettings struct {
 	AllowSafetyIdentifier                 bool               `json:"allow_safety_identifier,omitempty"`   // 是否允许 safety_identifier 透传（默认过滤以保护用户隐私）
 	DisableStore                          bool               `json:"disable_store,omitempty"`             // 是否禁用 store 透传（默认允许透传，禁用后可能导致 Codex 无法使用）
 	AllowIncludeObfuscation               bool               `json:"allow_include_obfuscation,omitempty"` // 是否允许 stream_options.include_obfuscation 透传（默认过滤以避免关闭流混淆保护）
+	AllowUserIdentifier                   bool               `json:"allow_user_identifier,omitempty"`     // 是否允许 user/user_id 等上游用户标识透传（默认过滤以保护用户隐私）
+	AllowRequestMetadata                  bool               `json:"allow_request_metadata,omitempty"`    // 是否允许 metadata 透传（默认过滤以避免内部租户/追踪信息进入上游）
+	AllowPromptCacheKey                   bool               `json:"allow_prompt_cache_key,omitempty"`    // 是否允许 prompt_cache_key 透传（默认过滤以避免跨账号共享上游缓存键）
 	SupportStreamOptions                  *bool              `json:"support_stream_options,omitempty"`    // 渠道级 stream_options 能力覆盖；空值使用通道类型默认
 	SupportResponsesPreviousID            *bool              `json:"support_responses_previous_id,omitempty"`
 	AwsKeyType                            AwsKeyType         `json:"aws_key_type,omitempty"`

@@ -1335,6 +1335,13 @@ html.dark body.ct-channel-account-route main.semi-layout-content {
   line-height: 18px;
 }
 
+.ct-channel-account-import-rate-limit,
+.ct-channel-account-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .ct-channel-account-import-dropzone {
   display: flex;
   width: 100%;
@@ -1946,6 +1953,11 @@ html.dark body.ct-channel-account-route main.semi-layout-content {
   }
 
   .ct-channel-account-import-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .ct-channel-account-import-rate-limit,
+  .ct-channel-account-edit-grid {
     grid-template-columns: 1fr;
   }
 

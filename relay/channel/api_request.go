@@ -161,7 +161,107 @@ func shouldSkipPassthroughHeader(name string) bool {
 	if _, ok := passthroughSkipHeaderNamesLower[lower]; ok {
 		return true
 	}
+	if shouldDropUpstreamPrivacyHeader(name) {
+		return true
+	}
 	return false
+}
+
+var upstreamPrivacyBlockedHeaderNamesLower = map[string]struct{}{
+	"forwarded":          {},
+	"x-forwarded-for":    {},
+	"x-forwarded-host":   {},
+	"x-forwarded-port":   {},
+	"x-forwarded-proto":  {},
+	"x-forwarded-server": {},
+	"x-real-ip":          {},
+	"x-client-ip":        {},
+	"client-ip":          {},
+	"true-client-ip":     {},
+	"fastly-client-ip":   {},
+	"cf-connecting-ip":   {},
+	"cf-ipcountry":       {},
+	"cf-ray":             {},
+	"cdn-loop":           {},
+
+	"x-request-id":      {},
+	"x-correlation-id":  {},
+	"x-trace-id":        {},
+	"traceparent":       {},
+	"tracestate":        {},
+	"baggage":           {},
+	"sentry-trace":      {},
+	"x-amzn-trace-id":   {},
+	"x-b3-traceid":      {},
+	"x-b3-spanid":       {},
+	"x-b3-parentspanid": {},
+	"x-b3-sampled":      {},
+
+	"session_id":             {},
+	"session-id":             {},
+	"x-session-id":           {},
+	"x-codex-window-id":      {},
+	"x-codex-trace":          {},
+	"x-codex-turn-metadata":  {},
+	"x-codex-request-id":     {},
+	"x-codex-api-key-source": {},
+
+	"new-api-user":       {},
+	"new-api-token":      {},
+	"new-api-channel":    {},
+	"x-new-api-user":     {},
+	"x-new-api-token":    {},
+	"x-new-api-channel":  {},
+	"x-user-id":          {},
+	"x-user-email":       {},
+	"x-token-id":         {},
+	"x-channel-id":       {},
+	"x-tenant-id":        {},
+	"x-account-id":       {},
+	"x-account-identity": {},
+}
+
+var upstreamPrivacyBlockedHeaderPrefixesLower = []string{
+	"x-forwarded-",
+	"cf-",
+	"fly-",
+	"x-vercel-",
+	"x-render-",
+	"x-railway-",
+	"x-request-",
+	"x-correlation-",
+	"x-trace-",
+	"new-api-",
+	"x-new-api-",
+	"x-user-",
+	"x-token-",
+	"x-channel-",
+	"x-tenant-",
+	"x-account-",
+}
+
+func shouldDropUpstreamPrivacyHeader(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "" {
+		return true
+	}
+	if _, ok := upstreamPrivacyBlockedHeaderNamesLower[lower]; ok {
+		return true
+	}
+	for _, prefix := range upstreamPrivacyBlockedHeaderPrefixesLower {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeUpstreamRequestHeaders(header http.Header) {
+	for name := range header {
+		if shouldDropUpstreamPrivacyHeader(name) {
+			header.Del(name)
+		}
+	}
 }
 
 func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey string) (string, bool, error) {
@@ -437,6 +537,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
 	applyDefaultUpstreamHeaders(c, req, info)
+	sanitizeUpstreamRequestHeaders(req.Header)
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
@@ -473,6 +574,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
 	applyDefaultUpstreamHeaders(c, req, info)
+	sanitizeUpstreamRequestHeaders(req.Header)
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
@@ -503,6 +605,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	targetReq := &http.Request{Header: targetHeader}
 	applyDefaultUpstreamHeaders(c, targetReq, info)
+	sanitizeUpstreamRequestHeaders(targetHeader)
 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
 	if err != nil {
 		return nil, fmt.Errorf("dial failed to %s: %w", fullRequestURL, err)
@@ -820,6 +923,7 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	}
 	applyCodexApplicationEnvironmentHeaders(c, &req.Header)
 	applyDefaultUpstreamHeaders(c, req, info)
+	sanitizeUpstreamRequestHeaders(req.Header)
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)

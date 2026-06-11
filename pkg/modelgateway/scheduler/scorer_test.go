@@ -140,6 +140,87 @@ func TestSelectorKeepsPeerAccountAvailableWhenRuntimeAvoided(t *testing.T) {
 	require.Equal(t, "failure_avoidance", accountAExplanation.RejectReason)
 }
 
+func TestSelectorSkipsAccountWhenShortWindowRateLimitReached(t *testing.T) {
+	originalRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	scheduler.ResetAccountRateLimiterForTest()
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+		scheduler.ResetAccountRateLimiterForTest()
+	})
+
+	channel := &model.Channel{
+		Id:     8801,
+		Name:   "rate-limited-accounts",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{
+			MultiKeyRateLimits: map[int]model.ChannelAccountRateLimit{
+				0: {MaxRequests: 1, WindowSeconds: 60},
+			},
+		},
+	}
+	accountA := core.RuntimeKey{
+		RequestedModel:      "gpt-5.5",
+		UpstreamModel:       "gpt-5.5",
+		ChannelID:           channel.Id,
+		Group:               "default",
+		EndpointType:        constant.EndpointTypeOpenAI,
+		AccountID:           "acct-a",
+		CredentialIndex:     0,
+		CredentialSubjectFP: "subject-a",
+		CredentialFP:        "credential-a",
+	}
+	accountB := accountA
+	accountB.AccountID = "acct-b"
+	accountB.CredentialIndex = 1
+	accountB.CredentialSubjectFP = "subject-b"
+	accountB.CredentialFP = "credential-b"
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	store.Put(core.RuntimeSnapshot{Key: accountA, SuccessRate: 0.99, TTFTMs: 100, DurationMs: 500, SampleCount: 20, GroupPriorityRatio: 1})
+	store.Put(core.RuntimeSnapshot{Key: accountB, SuccessRate: 0.95, TTFTMs: 200, DurationMs: 700, SampleCount: 20, GroupPriorityRatio: 1})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{
+				Channel:         channel,
+				Group:           "default",
+				RuntimeKey:      accountA,
+				AccountIdentity: core.AccountIdentity{AccountID: "acct-a", CredentialIndex: 0, CredentialSubjectFingerprint: "subject-a", CredentialFingerprint: "credential-a"},
+				CredentialRef:   core.CredentialRef{AccountID: "acct-a", CredentialIndex: 0, CredentialSubjectFingerprint: "subject-a", CredentialFingerprint: "credential-a"},
+			},
+			{
+				Channel:         channel,
+				Group:           "default",
+				RuntimeKey:      accountB,
+				AccountIdentity: core.AccountIdentity{AccountID: "acct-b", CredentialIndex: 1, CredentialSubjectFingerprint: "subject-b", CredentialFingerprint: "credential-b"},
+				CredentialRef:   core.CredentialRef{AccountID: "acct-b", CredentialIndex: 1, CredentialSubjectFingerprint: "subject-b", CredentialFingerprint: "credential-b"},
+			},
+		}),
+		store,
+		core.ScoreWeights{Success: 1, Speed: 0, Load: 0, Cost: 0, Group: 0},
+	)
+	policy := core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	}
+
+	firstPlan, handled, apiErr := selector.Select(nil, nil, policy)
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, firstPlan)
+	require.Equal(t, "acct-a", firstPlan.RuntimeKey.AccountID)
+
+	secondPlan, handled, apiErr := selector.Select(nil, nil, policy)
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, secondPlan)
+	require.Equal(t, "acct-b", secondPlan.RuntimeKey.AccountID)
+	accountAExplanation := candidateExplanationByRuntimeAccount(t, secondPlan.Candidates, "acct-a")
+	require.Equal(t, scheduler.AccountRateLimitRejectReason, accountAExplanation.RejectReason)
+}
+
 func TestSelectorSkipsOnlyFailedRuntimeAccountWithinRequest(t *testing.T) {
 	channel := &model.Channel{Id: 7002, Name: "pooled", Status: common.ChannelStatusEnabled}
 	accountA := core.RuntimeKey{

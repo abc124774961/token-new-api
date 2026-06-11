@@ -38,6 +38,8 @@ const channelAccountImportMaxFileBytes int64 = 32 << 20
 const channelAccountImportMaxZipEntryBytes int64 = 4 << 20
 const channelAccountImportMaxZipEntries = 1000
 const channelAccountImportDefaultMaxConcurrency = 6
+const channelAccountImportDefaultRateLimitMaxRequests = 12
+const channelAccountImportDefaultRateLimitWindowSeconds = 300
 const channelAccountDefaultPageSize = 20
 const channelAccountMaxPageSize = 100
 
@@ -86,6 +88,7 @@ type ChannelAccountItem struct {
 	CodexEnvironmentID int                                        `json:"codex_environment_id,omitempty"`
 	CodexEnvironment   *model.CodexApplicationEnvironmentResponse `json:"codex_environment,omitempty"`
 	MaxConcurrency     int                                        `json:"max_concurrency,omitempty"`
+	RateLimit          *model.ChannelAccountRateLimit             `json:"rate_limit,omitempty"`
 	Capabilities       *model.ChannelAccountCapability            `json:"capabilities,omitempty"`
 	SubjectShort       string                                     `json:"subject_short,omitempty"`
 	CredentialShort    string                                     `json:"credential_short,omitempty"`
@@ -297,13 +300,13 @@ type ChannelAccountRequestReconcileDiagnosis struct {
 }
 
 type TokenAccountAutomationAccountProfileResponse struct {
-	ChannelID       int                `json:"channel_id"`
-	ChannelName     string             `json:"channel_name,omitempty"`
-	ChannelStatus   int                `json:"channel_status"`
-	CredentialIndex int                `json:"credential_index"`
+	ChannelID       int                          `json:"channel_id"`
+	ChannelName     string                       `json:"channel_name,omitempty"`
+	ChannelStatus   int                          `json:"channel_status"`
+	CredentialIndex int                          `json:"credential_index"`
 	ResourceRef     modelgatewaycore.ResourceRef `json:"resource_ref"`
-	Account         ChannelAccountItem `json:"account"`
-	SnapshotAt      int64              `json:"snapshot_at"`
+	Account         ChannelAccountItem           `json:"account"`
+	SnapshotAt      int64                        `json:"snapshot_at"`
 }
 
 type channelAccountsQuery struct {
@@ -327,10 +330,12 @@ type UpdateChannelAccountStatusRequest struct {
 }
 
 type UpdateChannelAccountCredentialRequest struct {
-	Credential         string `json:"credential"`
-	CredentialType     string `json:"credential_type,omitempty"`
-	CodexEnvironmentID *int   `json:"codex_environment_id,omitempty"`
-	MaxConcurrency     *int   `json:"max_concurrency,omitempty"`
+	Credential             string `json:"credential"`
+	CredentialType         string `json:"credential_type,omitempty"`
+	CodexEnvironmentID     *int   `json:"codex_environment_id,omitempty"`
+	MaxConcurrency         *int   `json:"max_concurrency,omitempty"`
+	RateLimitMaxRequests   *int   `json:"rate_limit_max_requests,omitempty"`
+	RateLimitWindowSeconds *int   `json:"rate_limit_window_seconds,omitempty"`
 }
 
 type UpdateChannelAccountsStatusRequest struct {
@@ -341,10 +346,12 @@ type UpdateChannelAccountsStatusRequest struct {
 }
 
 type ImportChannelAccountsRequest struct {
-	Credentials    string   `json:"credentials"`
-	CredentialList []string `json:"credential_list,omitempty"`
-	OnlyNew        bool     `json:"only_new"`
-	MaxConcurrency *int     `json:"max_concurrency,omitempty"`
+	Credentials            string   `json:"credentials"`
+	CredentialList         []string `json:"credential_list,omitempty"`
+	OnlyNew                bool     `json:"only_new"`
+	MaxConcurrency         *int     `json:"max_concurrency,omitempty"`
+	RateLimitMaxRequests   *int     `json:"rate_limit_max_requests,omitempty"`
+	RateLimitWindowSeconds *int     `json:"rate_limit_window_seconds,omitempty"`
 }
 
 type ChannelAccountImportParser struct {
@@ -712,7 +719,7 @@ func UpdateChannelAccountCredential(c *gin.Context) {
 		return
 	}
 
-	operation, err := updateChannelAccountCredential(channelID, credentialIndex, request.Credential, request.CredentialType, request.CodexEnvironmentID, request.MaxConcurrency)
+	operation, err := updateChannelAccountCredential(channelID, credentialIndex, request.Credential, request.CredentialType, request.CodexEnvironmentID, request.MaxConcurrency, request.RateLimitMaxRequests, request.RateLimitWindowSeconds)
 	if err != nil {
 		common.ApiErrorMsg(c, err.Error())
 		return
@@ -773,7 +780,7 @@ func ImportChannelAccounts(c *gin.Context) {
 		return
 	}
 
-	operation, err := importChannelAccounts(channelID, request.Credentials, request.CredentialList, request.OnlyNew, request.MaxConcurrency)
+	operation, err := importChannelAccounts(channelID, request.Credentials, request.CredentialList, request.OnlyNew, request.MaxConcurrency, request.RateLimitMaxRequests, request.RateLimitWindowSeconds)
 	if err != nil {
 		common.ApiErrorMsg(c, err.Error())
 		return
@@ -1077,11 +1084,25 @@ func (parser *ChannelAccountImportParser) parseMultipart() (ImportChannelAccount
 		request.OnlyNew = channelAccountImportBool(values[len(values)-1])
 	}
 	if values := form.Value["max_concurrency"]; len(values) > 0 {
-		limit, err := channelAccountImportNonNegativeInt(values[len(values)-1])
+		limit, err := channelAccountImportNonNegativeInt(values[len(values)-1], "账号并发上限")
 		if err != nil {
 			return request, err
 		}
 		request.MaxConcurrency = &limit
+	}
+	if values := form.Value["rate_limit_max_requests"]; len(values) > 0 {
+		limit, err := channelAccountImportNonNegativeInt(values[len(values)-1], "账号短窗口请求数")
+		if err != nil {
+			return request, err
+		}
+		request.RateLimitMaxRequests = &limit
+	}
+	if values := form.Value["rate_limit_window_seconds"]; len(values) > 0 {
+		window, err := channelAccountImportNonNegativeInt(values[len(values)-1], "账号限流窗口")
+		if err != nil {
+			return request, err
+		}
+		request.RateLimitWindowSeconds = &window
 	}
 
 	for _, files := range form.File {
@@ -1323,13 +1344,13 @@ func channelAccountImportBool(value string) bool {
 	return err == nil && parsed
 }
 
-func channelAccountImportNonNegativeInt(value string) (int, error) {
+func channelAccountImportNonNegativeInt(value string, label string) (int, error) {
 	parsed, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil {
-		return 0, fmt.Errorf("账号并发上限无效")
+		return 0, fmt.Errorf("%s无效", strings.TrimSpace(label))
 	}
 	if parsed < 0 {
-		return 0, fmt.Errorf("账号并发上限不能小于 0")
+		return 0, fmt.Errorf("%s不能小于 0", strings.TrimSpace(label))
 	}
 	return parsed, nil
 }
@@ -3093,7 +3114,7 @@ func updateChannelAccountStatus(channelID int, credentialIndex int, enabled bool
 	return updateChannelAccountsStatus(channelID, []int{credentialIndex}, enabled, reason)
 }
 
-func updateChannelAccountCredential(channelID int, credentialIndex int, credential string, credentialType string, codexEnvironmentID *int, maxConcurrency *int) (*ChannelAccountOperation, error) {
+func updateChannelAccountCredential(channelID int, credentialIndex int, credential string, credentialType string, codexEnvironmentID *int, maxConcurrency *int, rateLimitMaxRequests *int, rateLimitWindowSeconds *int) (*ChannelAccountOperation, error) {
 	if channelID <= 0 {
 		return nil, fmt.Errorf("渠道不存在")
 	}
@@ -3115,7 +3136,7 @@ func updateChannelAccountCredential(channelID int, credentialIndex int, credenti
 	cleanupChannelAccountCodexEnvironmentMappings(channel, len(keys))
 	credential = strings.TrimSpace(credential)
 	credentialUpdated := credential != ""
-	if !credentialUpdated && codexEnvironmentID == nil && maxConcurrency == nil {
+	if !credentialUpdated && codexEnvironmentID == nil && maxConcurrency == nil && rateLimitMaxRequests == nil && rateLimitWindowSeconds == nil {
 		return nil, fmt.Errorf("请填写账号凭证")
 	}
 	if credentialUpdated {
@@ -3167,6 +3188,14 @@ func updateChannelAccountCredential(channelID int, credentialIndex int, credenti
 			return nil, fmt.Errorf("账号并发上限不能小于 0")
 		}
 		setChannelAccountMaxConcurrency(channel, credentialIndex, limit)
+	}
+	if rateLimitMaxRequests != nil || rateLimitWindowSeconds != nil {
+		current, _ := channel.ChannelInfo.AccountRateLimit(credentialIndex)
+		limit, enabled, err := normalizeChannelAccountRateLimitUpdate(current, rateLimitMaxRequests, rateLimitWindowSeconds)
+		if err != nil {
+			return nil, err
+		}
+		setChannelAccountRateLimit(channel, credentialIndex, limit, enabled)
 	}
 	cleanupChannelAccountStatusMaps(channel, len(keys))
 	if err := saveChannelAccountsAfterDelete(channel); err != nil {
@@ -3587,6 +3616,53 @@ func setChannelAccountMaxConcurrency(channel *model.Channel, credentialIndex int
 	channel.ChannelInfo.MultiKeyMaxConcurrency[credentialIndex] = maxConcurrency
 }
 
+func normalizeChannelAccountRateLimitUpdate(current model.ChannelAccountRateLimit, maxRequests *int, windowSeconds *int) (model.ChannelAccountRateLimit, bool, error) {
+	maxValue := current.MaxRequests
+	windowValue := current.WindowSeconds
+	if maxRequests != nil {
+		maxValue = *maxRequests
+	}
+	if windowSeconds != nil {
+		windowValue = *windowSeconds
+	}
+	return normalizeChannelAccountRateLimitValues(maxValue, windowValue)
+}
+
+func normalizeChannelAccountRateLimitValues(maxRequests int, windowSeconds int) (model.ChannelAccountRateLimit, bool, error) {
+	if maxRequests < 0 {
+		return model.ChannelAccountRateLimit{}, false, fmt.Errorf("账号短窗口请求数不能小于 0")
+	}
+	if windowSeconds < 0 {
+		return model.ChannelAccountRateLimit{}, false, fmt.Errorf("账号限流窗口不能小于 0")
+	}
+	if maxRequests <= 0 || windowSeconds <= 0 {
+		return model.ChannelAccountRateLimit{}, false, nil
+	}
+	return model.ChannelAccountRateLimit{
+		MaxRequests:   maxRequests,
+		WindowSeconds: windowSeconds,
+	}, true, nil
+}
+
+func setChannelAccountRateLimit(channel *model.Channel, credentialIndex int, limit model.ChannelAccountRateLimit, enabled bool) {
+	if channel == nil || credentialIndex < 0 {
+		return
+	}
+	if !enabled {
+		if channel.ChannelInfo.MultiKeyRateLimits != nil {
+			delete(channel.ChannelInfo.MultiKeyRateLimits, credentialIndex)
+			if len(channel.ChannelInfo.MultiKeyRateLimits) == 0 {
+				channel.ChannelInfo.MultiKeyRateLimits = nil
+			}
+		}
+		return
+	}
+	if channel.ChannelInfo.MultiKeyRateLimits == nil {
+		channel.ChannelInfo.MultiKeyRateLimits = make(map[int]model.ChannelAccountRateLimit)
+	}
+	channel.ChannelInfo.MultiKeyRateLimits[credentialIndex] = limit
+}
+
 func cleanupChannelAccountCodexEnvironmentMappings(channel *model.Channel, keyCount int) {
 	if channel == nil {
 		return
@@ -3746,7 +3822,7 @@ type normalizedChannelAccountCredentials struct {
 	SkippedBlankInput int
 }
 
-func importChannelAccounts(channelID int, credentials string, credentialList []string, onlyNew bool, maxConcurrency *int) (*ChannelAccountOperation, error) {
+func importChannelAccounts(channelID int, credentials string, credentialList []string, onlyNew bool, maxConcurrency *int, rateLimitMaxRequests *int, rateLimitWindowSeconds *int) (*ChannelAccountOperation, error) {
 	if channelID <= 0 {
 		return nil, fmt.Errorf("渠道不存在")
 	}
@@ -3756,6 +3832,18 @@ func importChannelAccounts(channelID int, credentials string, credentialList []s
 		if importMaxConcurrency < 0 {
 			return nil, fmt.Errorf("账号并发上限不能小于 0")
 		}
+	}
+	importRateLimitMaxRequests := channelAccountImportDefaultRateLimitMaxRequests
+	if rateLimitMaxRequests != nil {
+		importRateLimitMaxRequests = *rateLimitMaxRequests
+	}
+	importRateLimitWindowSeconds := channelAccountImportDefaultRateLimitWindowSeconds
+	if rateLimitWindowSeconds != nil {
+		importRateLimitWindowSeconds = *rateLimitWindowSeconds
+	}
+	importRateLimit, importRateLimitEnabled, err := normalizeChannelAccountRateLimitValues(importRateLimitMaxRequests, importRateLimitWindowSeconds)
+	if err != nil {
+		return nil, err
 	}
 	normalizedCredentials := normalizeChannelAccountCredentialLines(credentials, credentialList)
 	if len(normalizedCredentials.Keys) == 0 {
@@ -3813,6 +3901,11 @@ func importChannelAccounts(channelID int, credentials string, credentialList []s
 	if importMaxConcurrency > 0 {
 		for _, index := range addedIndexes {
 			setChannelAccountMaxConcurrency(channel, index, importMaxConcurrency)
+		}
+	}
+	if importRateLimitEnabled {
+		for _, index := range addedIndexes {
+			setChannelAccountRateLimit(channel, index, importRateLimit, true)
 		}
 	}
 	cleanupChannelAccountStatusMaps(channel, len(nextKeys))
@@ -4107,6 +4200,7 @@ func deleteChannelAccountsLockedTx(tx *gorm.DB, channel *model.Channel, indexes 
 	newProxyIDs := make(map[int]int)
 	newAccountTypes := make(map[int]string)
 	newMaxConcurrency := make(map[int]int)
+	newRateLimits := make(map[int]model.ChannelAccountRateLimit)
 	newCapabilities := make(map[int]model.ChannelAccountCapability)
 	newIndex := 0
 	for oldIndex, key := range keys {
@@ -4144,6 +4238,13 @@ func deleteChannelAccountsLockedTx(tx *gorm.DB, channel *model.Channel, indexes 
 				newMaxConcurrency[newIndex] = limit
 			}
 		}
+		if channel.ChannelInfo.MultiKeyRateLimits != nil {
+			if limit, exists := channel.ChannelInfo.MultiKeyRateLimits[oldIndex]; exists {
+				if normalized, ok := limit.Normalized(); ok {
+					newRateLimits[newIndex] = normalized
+				}
+			}
+		}
 		if channel.ChannelInfo.MultiKeyCapabilities != nil {
 			if capability, exists := channel.ChannelInfo.MultiKeyCapabilities[oldIndex]; exists {
 				newCapabilities[newIndex] = capability
@@ -4165,6 +4266,7 @@ func deleteChannelAccountsLockedTx(tx *gorm.DB, channel *model.Channel, indexes 
 	channel.ChannelInfo.MultiKeyProxyIDs = newProxyIDs
 	channel.ChannelInfo.MultiKeyAccountTypes = newAccountTypes
 	channel.ChannelInfo.MultiKeyMaxConcurrency = newMaxConcurrency
+	channel.ChannelInfo.MultiKeyRateLimits = newRateLimits
 	channel.ChannelInfo.MultiKeyCapabilities = newCapabilities
 	cleanupChannelAccountCodexEnvironmentMappings(channel, len(remainingKeys))
 	if !channel.ChannelInfo.IsMultiKey {
@@ -4172,6 +4274,7 @@ func deleteChannelAccountsLockedTx(tx *gorm.DB, channel *model.Channel, indexes 
 		channel.ChannelInfo.MultiKeyDisabledTime = nil
 		channel.ChannelInfo.MultiKeyDisabledReason = nil
 		channel.ChannelInfo.MultiKeyMaxConcurrency = nil
+		channel.ChannelInfo.MultiKeyRateLimits = nil
 	}
 	if len(channel.ChannelInfo.MultiKeyProxyIDs) == 0 {
 		channel.ChannelInfo.MultiKeyProxyIDs = nil
@@ -4181,6 +4284,9 @@ func deleteChannelAccountsLockedTx(tx *gorm.DB, channel *model.Channel, indexes 
 	}
 	if len(channel.ChannelInfo.MultiKeyMaxConcurrency) == 0 {
 		channel.ChannelInfo.MultiKeyMaxConcurrency = nil
+	}
+	if len(channel.ChannelInfo.MultiKeyRateLimits) == 0 {
+		channel.ChannelInfo.MultiKeyRateLimits = nil
 	}
 	if len(channel.ChannelInfo.MultiKeyCapabilities) == 0 {
 		channel.ChannelInfo.MultiKeyCapabilities = nil
@@ -4420,6 +4526,22 @@ func cleanupChannelAccountStatusMaps(channel *model.Channel, keyCount int) {
 			channel.ChannelInfo.MultiKeyMaxConcurrency = nil
 		}
 	}
+	if channel.ChannelInfo.MultiKeyRateLimits != nil {
+		for index, limit := range channel.ChannelInfo.MultiKeyRateLimits {
+			if index < 0 || index >= keyCount {
+				delete(channel.ChannelInfo.MultiKeyRateLimits, index)
+				continue
+			}
+			if normalized, ok := limit.Normalized(); ok {
+				channel.ChannelInfo.MultiKeyRateLimits[index] = normalized
+			} else {
+				delete(channel.ChannelInfo.MultiKeyRateLimits, index)
+			}
+		}
+		if len(channel.ChannelInfo.MultiKeyRateLimits) == 0 {
+			channel.ChannelInfo.MultiKeyRateLimits = nil
+		}
+	}
 	cleanupChannelAccountCodexEnvironmentMappings(channel, keyCount)
 	if channel.ChannelInfo.MultiKeyCapabilities != nil {
 		for index := range channel.ChannelInfo.MultiKeyCapabilities {
@@ -4515,6 +4637,7 @@ func buildChannelAccountItem(account modelgatewayaccount.ChannelAccount, runtime
 		CredentialRef:      account.CredentialRef,
 		CodexEnvironmentID: account.CodexEnvironmentID,
 		MaxConcurrency:     account.MaxConcurrency,
+		RateLimit:          channelAccountRateLimitPtr(account.RateLimit),
 		SubjectShort:       modelgatewayaccount.ShortFingerprint(account.AccountIdentity.CredentialSubjectFingerprint),
 		CredentialShort:    modelgatewayaccount.ShortFingerprint(account.AccountIdentity.CredentialFingerprint),
 		CredentialUID:      channelAccountCredentialUID(account),
@@ -4544,6 +4667,13 @@ func buildChannelAccountItem(account modelgatewayaccount.ChannelAccount, runtime
 		}
 	}
 	return item
+}
+
+func channelAccountRateLimitPtr(limit model.ChannelAccountRateLimit) *model.ChannelAccountRateLimit {
+	if normalized, ok := limit.Normalized(); ok {
+		return &normalized
+	}
+	return nil
 }
 
 func channelAccountCredentialUID(account modelgatewayaccount.ChannelAccount) string {

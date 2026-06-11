@@ -415,6 +415,10 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 		if err != nil {
 			return nil, fmt.Errorf("error marshalling object: %w", err)
 		}
+		jsonData, err = relaycommon.SanitizeOpenAIPrivacyFields(jsonData, info.ChannelOtherSettings)
+		if err != nil {
+			return nil, fmt.Errorf("error sanitizing object: %w", err)
+		}
 		return bytes.NewReader(jsonData), nil
 	} else {
 		var requestBody bytes.Buffer
@@ -433,6 +437,9 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 		// 遍历表单字段并打印输出
 		for key, values := range formData.Value {
 			if key == "model" {
+				continue
+			}
+			if relaycommon.ShouldDropOpenAIPrivacyField(key, info.ChannelOtherSettings) {
 				continue
 			}
 			for _, value := range values {
@@ -498,6 +505,9 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		if mf != nil {
 			for key, values := range mf.Value {
 				if key == "model" {
+					continue
+				}
+				if relaycommon.ShouldDropOpenAIPrivacyField(key, info.ChannelOtherSettings) {
 					continue
 				}
 				for _, value := range values {

@@ -653,7 +653,10 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 		}
-		requestBody = common.ReaderOnly(storage)
+		requestBody, err = sanitizedOpenAIUpstreamBodyReader(c, info, storage)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+		}
 	} else if proxyDecision.Enabled {
 		bridgeResult, _, err := proxyBridge.ConvertResponsesRequest(c, info, request)
 		if err != nil {
@@ -661,6 +664,10 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		}
 		if bridgeResult == nil || len(bridgeResult.UpstreamBody) == 0 {
 			return types.NewError(fmt.Errorf("proxy bridge produced empty request"), types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		bridgeResult.UpstreamBody, err = sanitizeOpenAIUpstreamJSONData(info, bridgeResult.UpstreamBody)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 		info.AppendRequestConversion(types.RelayFormatOpenAI)
 		restoreProxyMode = applyProxyBridgeRequestMode(info)
@@ -688,6 +695,10 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			if err != nil {
 				return newAPIErrorFromParamOverride(err)
 			}
+		}
+		jsonData, err = sanitizeOpenAIUpstreamJSONData(info, jsonData)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
 		if common.DebugEnabled {

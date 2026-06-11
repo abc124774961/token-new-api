@@ -57,6 +57,10 @@ func EmbeddingHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			return newAPIErrorFromParamOverride(err)
 		}
 	}
+	jsonData, err = sanitizeOpenAIUpstreamJSONData(info, jsonData)
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
 
 	logger.LogDebug(c, fmt.Sprintf("converted embedding request body: %s", string(jsonData)))
 	var requestBody io.Reader = bytes.NewBuffer(jsonData)

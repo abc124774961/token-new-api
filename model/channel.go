@@ -72,6 +72,7 @@ type ChannelInfo struct {
 	MultiKeyProxyIDs                          map[int]int                      `json:"multi_key_proxy_ids,omitempty"`                             // key 绑定的代理资源，key index -> proxy id
 	MultiKeyAccountTypes                      map[int]string                   `json:"multi_key_account_types,omitempty"`                         // key 账号凭证类型，key index -> account type
 	MultiKeyMaxConcurrency                    map[int]int                      `json:"multi_key_max_concurrency,omitempty"`                       // key 并发上限，key index -> max concurrency
+	MultiKeyRateLimits                        map[int]ChannelAccountRateLimit  `json:"multi_key_rate_limits,omitempty"`                           // key 短窗口请求限流，key index -> rate limit
 	MultiKeyCodexEnvironmentIDs               map[int]int                      `json:"multi_key_codex_environment_ids,omitempty"`                 // legacy: key index -> environment id
 	MultiKeyCodexEnvironmentAccountUniqueKeys map[string]int                   `json:"multi_key_codex_environment_account_unique_keys,omitempty"` // account_unique_key -> environment id
 	MultiKeyCapabilities                      map[int]ChannelAccountCapability `json:"multi_key_capabilities,omitempty"`                          // key 功能权限检测结果，key index -> capability
@@ -80,6 +81,18 @@ type ChannelInfo struct {
 }
 
 type ChannelAccountCapability = channelcapability.AccountCapability
+
+type ChannelAccountRateLimit struct {
+	MaxRequests   int `json:"max_requests,omitempty"`
+	WindowSeconds int `json:"window_seconds,omitempty"`
+}
+
+func (limit ChannelAccountRateLimit) Normalized() (ChannelAccountRateLimit, bool) {
+	if limit.MaxRequests <= 0 || limit.WindowSeconds <= 0 {
+		return ChannelAccountRateLimit{}, false
+	}
+	return limit, true
+}
 
 func (info ChannelInfo) AccountCapability(index int) (ChannelAccountCapability, bool) {
 	if info.MultiKeyCapabilities == nil {
@@ -98,6 +111,13 @@ func (info ChannelInfo) AccountMaxConcurrency(index int) int {
 		return 0
 	}
 	return limit
+}
+
+func (info ChannelInfo) AccountRateLimit(index int) (ChannelAccountRateLimit, bool) {
+	if info.MultiKeyRateLimits == nil || index < 0 {
+		return ChannelAccountRateLimit{}, false
+	}
+	return info.MultiKeyRateLimits[index].Normalized()
 }
 
 type ChannelSortOptions struct {
@@ -697,6 +717,22 @@ func (channel *Channel) Update() error {
 			}
 			if len(channel.ChannelInfo.MultiKeyMaxConcurrency) == 0 {
 				channel.ChannelInfo.MultiKeyMaxConcurrency = nil
+			}
+		}
+		if channel.ChannelInfo.MultiKeyRateLimits != nil {
+			for idx, limit := range channel.ChannelInfo.MultiKeyRateLimits {
+				if idx < 0 || idx >= channel.ChannelInfo.MultiKeySize {
+					delete(channel.ChannelInfo.MultiKeyRateLimits, idx)
+					continue
+				}
+				if normalized, ok := limit.Normalized(); ok {
+					channel.ChannelInfo.MultiKeyRateLimits[idx] = normalized
+				} else {
+					delete(channel.ChannelInfo.MultiKeyRateLimits, idx)
+				}
+			}
+			if len(channel.ChannelInfo.MultiKeyRateLimits) == 0 {
+				channel.ChannelInfo.MultiKeyRateLimits = nil
 			}
 		}
 		if channel.ChannelInfo.MultiKeyCodexEnvironmentIDs != nil {

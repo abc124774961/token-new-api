@@ -121,6 +121,7 @@ func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	ctx.Request.Header.Set("X-Trace-Id", "trace-123")
+	ctx.Request.Header.Set("X-Feature-Flag", "feature-123")
 	ctx.Request.Header.Set("Accept-Encoding", "gzip")
 
 	info := &relaycommon.RelayInfo{
@@ -134,10 +135,51 @@ func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
 
 	headers, err := processHeaderOverride(info, ctx)
 	require.NoError(t, err)
-	require.Equal(t, "trace-123", headers["x-trace-id"])
+	require.Equal(t, "feature-123", headers["x-feature-flag"])
 
+	_, hasTraceID := headers["x-trace-id"]
+	require.False(t, hasTraceID)
 	_, hasAcceptEncoding := headers["accept-encoding"]
 	require.False(t, hasAcceptEncoding)
+}
+
+func TestSanitizeUpstreamRequestHeadersDropsInternalAndClientTraceHeaders(t *testing.T) {
+	t.Parallel()
+
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer upstream-key")
+	headers.Set("chatgpt-account-id", "acct-1")
+	headers.Set("OpenAI-Beta", "responses=v1")
+	headers.Set("User-Agent", "codex-cli-test")
+	headers.Set("originator", "codex_cli_rs")
+	headers.Set("X-Codex-Beta-Features", "terminal_resize_reflow")
+	headers.Set("Session_id", "client-session")
+	headers.Set("X-Codex-Turn-Metadata", `{"thread_id":"thread-1"}`)
+	headers.Set("X-Codex-Trace", "trace-1")
+	headers.Set("X-Forwarded-For", "203.0.113.1")
+	headers.Set("X-Real-IP", "203.0.113.1")
+	headers.Set("CF-Connecting-IP", "203.0.113.1")
+	headers.Set("X-New-Api-User", "user-1")
+	headers.Set("X-User-Email", "user@example.com")
+	headers.Set("X-Trace-Id", "trace-2")
+
+	sanitizeUpstreamRequestHeaders(headers)
+
+	require.Equal(t, "Bearer upstream-key", headers.Get("Authorization"))
+	require.Equal(t, "acct-1", headers.Get("chatgpt-account-id"))
+	require.Equal(t, "responses=v1", headers.Get("OpenAI-Beta"))
+	require.Equal(t, "codex-cli-test", headers.Get("User-Agent"))
+	require.Equal(t, "codex_cli_rs", headers.Get("originator"))
+	require.Equal(t, "terminal_resize_reflow", headers.Get("X-Codex-Beta-Features"))
+	require.Empty(t, headers.Get("Session_id"))
+	require.Empty(t, headers.Get("X-Codex-Turn-Metadata"))
+	require.Empty(t, headers.Get("X-Codex-Trace"))
+	require.Empty(t, headers.Get("X-Forwarded-For"))
+	require.Empty(t, headers.Get("X-Real-IP"))
+	require.Empty(t, headers.Get("CF-Connecting-IP"))
+	require.Empty(t, headers.Get("X-New-Api-User"))
+	require.Empty(t, headers.Get("X-User-Email"))
+	require.Empty(t, headers.Get("X-Trace-Id"))
 }
 
 func TestProcessHeaderOverride_OAuthJSONSkipsManagedAuthOverrides(t *testing.T) {

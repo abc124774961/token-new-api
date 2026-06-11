@@ -1221,6 +1221,9 @@ function formatChannelStatusReason(reason, t) {
   if (normalized === 'routing_slot_reserved') {
     return t('本次调度已排除');
   }
+  if (normalized === 'account_rate_limited') {
+    return t('账号短窗口限流');
+  }
   if (normalized === 'channel_priority_tie_break') {
     return t('渠道优先级择优');
   }

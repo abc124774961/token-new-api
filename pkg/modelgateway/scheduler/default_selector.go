@@ -481,6 +481,9 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			markChannelPriorityTieBreakCandidateExplanations(explanations, finalEvaluation, availableEvaluations, s.channelPriorityTieBreakConfig.normalized())
 		}
 	}
+	if !reserveCandidateAccountRateLimit(bestCandidate) {
+		return s.Select(c, param, policy)
+	}
 	markSelectedCandidateExplanation(explanations, bestCandidate, bestSnapshot)
 	markCostGuardCandidateExplanations(explanations, costGuardDecision)
 	if bestSnapshot.CircuitState == core.CircuitStateHalfOpen && s.snapshotEnricher != nil {
@@ -1769,6 +1772,9 @@ func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapsh
 	}
 	if candidate.Channel != nil && candidate.Channel.Status != 0 && candidate.Channel.Status != common.ChannelStatusEnabled {
 		return "channel_disabled"
+	}
+	if candidateAccountRateLimitRejected(candidate) {
+		return AccountRateLimitRejectReason
 	}
 	if service.IsChannelRuntimeSelectionSkipped(c, identity) {
 		if service.IsChannelRuntimeAttempted(c, identity) {

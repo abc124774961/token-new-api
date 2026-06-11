@@ -2085,6 +2085,47 @@ func TestRemoveDisabledFieldsAllowSpeed(t *testing.T) {
 	assertJSONEqual(t, `{"speed":"fast","store":true}`, string(out))
 }
 
+func TestSanitizeOpenAIPrivacyFieldsDefaultFiltering(t *testing.T) {
+	input := `{
+		"model":"gpt-5",
+		"user":"internal-user-1",
+		"user_id":"internal-user-id",
+		"metadata":{"tenant":"vip","trace_id":"trace-1"},
+		"prompt_cache_key":"client-session-1",
+		"prompt_cache_retention":"24h",
+		"messages":[{"role":"user","content":"hi"}]
+	}`
+
+	out, err := SanitizeOpenAIPrivacyFields([]byte(input), dto.ChannelOtherSettings{})
+	if err != nil {
+		t.Fatalf("SanitizeOpenAIPrivacyFields returned error: %v", err)
+	}
+	assertJSONEqual(t, `{
+		"model":"gpt-5",
+		"messages":[{"role":"user","content":"hi"}]
+	}`, string(out))
+}
+
+func TestSanitizeOpenAIPrivacyFieldsAllowOptInFields(t *testing.T) {
+	input := `{
+		"model":"gpt-5",
+		"user":"client-user",
+		"metadata":{"tenant":"external"},
+		"prompt_cache_key":"cache-key"
+	}`
+	settings := dto.ChannelOtherSettings{
+		AllowUserIdentifier:  true,
+		AllowRequestMetadata: true,
+		AllowPromptCacheKey:  true,
+	}
+
+	out, err := SanitizeOpenAIPrivacyFields([]byte(input), settings)
+	if err != nil {
+		t.Fatalf("SanitizeOpenAIPrivacyFields returned error: %v", err)
+	}
+	assertJSONEqual(t, input, string(out))
+}
+
 func TestApplyParamOverrideWithRelayInfoRecordsOperationAuditInDebugMode(t *testing.T) {
 	originalDebugEnabled := common2.DebugEnabled
 	common2.DebugEnabled = true

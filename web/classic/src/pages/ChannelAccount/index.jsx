@@ -101,6 +101,8 @@ const XAUTO_NEWAPI_PACKAGE_TYPE = 'newapi-channel-files';
 const CHANNEL_ACCOUNT_RECONCILE_CACHE_TTL_MS = 30 * 1000;
 const CHANNEL_ACCOUNT_TEST_MODEL = 'gpt-5.5';
 const CHANNEL_ACCOUNT_IMPORT_DEFAULT_MAX_CONCURRENCY = 6;
+const CHANNEL_ACCOUNT_IMPORT_DEFAULT_RATE_LIMIT_MAX_REQUESTS = 12;
+const CHANNEL_ACCOUNT_IMPORT_DEFAULT_RATE_LIMIT_WINDOW_SECONDS = 300;
 
 function unwrapApiData(response) {
   return response?.data?.data || response?.data || {};
@@ -796,11 +798,23 @@ class ChannelAccountImportSubmission {
     files,
     onlyNew,
     maxConcurrency = CHANNEL_ACCOUNT_IMPORT_DEFAULT_MAX_CONCURRENCY,
+    rateLimitMaxRequests =
+      CHANNEL_ACCOUNT_IMPORT_DEFAULT_RATE_LIMIT_MAX_REQUESTS,
+    rateLimitWindowSeconds =
+      CHANNEL_ACCOUNT_IMPORT_DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
   }) {
     this.credentials = stringsTrim(credentials);
     this.files = files || [];
     this.onlyNew = Boolean(onlyNew);
     this.maxConcurrency = Math.max(0, Number(maxConcurrency || 0));
+    this.rateLimitMaxRequests = Math.max(
+      0,
+      Number(rateLimitMaxRequests || 0),
+    );
+    this.rateLimitWindowSeconds = Math.max(
+      0,
+      Number(rateLimitWindowSeconds || 0),
+    );
   }
 
   hasInput() {
@@ -816,6 +830,8 @@ class ChannelAccountImportSubmission {
           credential_list: parsedFiles.credentials,
           only_new: this.onlyNew,
           max_concurrency: this.maxConcurrency,
+          rate_limit_max_requests: this.rateLimitMaxRequests,
+          rate_limit_window_seconds: this.rateLimitWindowSeconds,
         },
         config: undefined,
       };
@@ -827,6 +843,8 @@ class ChannelAccountImportSubmission {
           credentials: this.credentials,
           only_new: this.onlyNew,
           max_concurrency: this.maxConcurrency,
+          rate_limit_max_requests: this.rateLimitMaxRequests,
+          rate_limit_window_seconds: this.rateLimitWindowSeconds,
         },
         config: undefined,
       };
@@ -836,6 +854,11 @@ class ChannelAccountImportSubmission {
     form.append('credentials', this.credentials);
     form.append('only_new', String(this.onlyNew));
     form.append('max_concurrency', String(this.maxConcurrency));
+    form.append('rate_limit_max_requests', String(this.rateLimitMaxRequests));
+    form.append(
+      'rate_limit_window_seconds',
+      String(this.rateLimitWindowSeconds),
+    );
     parsedFiles.credentials.forEach((credential) => {
       form.append('credential_list', credential);
     });
@@ -1059,6 +1082,8 @@ function classificationMeta(value, t) {
       return { color: 'orange', label: t('Platform Responses 权限不足') };
     case 'account_usage_limited':
       return { color: 'orange', label: t('账号用量限制中') };
+    case 'account_rate_limited':
+      return { color: 'orange', label: t('账号短窗口限流') };
     case 'proxy_error':
       return { color: 'red', label: t('代理异常') };
     case 'auth_error':
@@ -1080,6 +1105,8 @@ function schedulingReasonMeta(value, t) {
       return { color: 'red', label: t('账号已禁用') };
     case 'account_usage_limited':
       return { color: 'orange', label: t('账号用量限制中') };
+    case 'account_rate_limited':
+      return { color: 'orange', label: t('账号短窗口限流') };
     case 'proxy_error':
       return { color: 'red', label: t('代理异常') };
     case 'codex_stream_unavailable':
@@ -2757,6 +2784,12 @@ function buildColumns(
                     {t('并发')} {formatNumber(record.max_concurrency)}
                   </Tag>
                 ) : null}
+                {Number(record?.rate_limit?.max_requests || 0) > 0 ? (
+                  <Tag color='cyan' type='light' shape='circle'>
+                    {t('限流')} {formatNumber(record.rate_limit.max_requests)}
+                    /{formatNumber(record.rate_limit.window_seconds || 0)}s
+                  </Tag>
+                ) : null}
               </div>
               <div className='ct-channel-account-sub ct-channel-account-uid'>
                 <KeyRound size={12} />
@@ -4161,6 +4194,11 @@ function ChannelAccount({ variant = 'default' }) {
   const [importMaxConcurrency, setImportMaxConcurrency] = useState(
     CHANNEL_ACCOUNT_IMPORT_DEFAULT_MAX_CONCURRENCY,
   );
+  const [importRateLimitMaxRequests, setImportRateLimitMaxRequests] = useState(
+    CHANNEL_ACCOUNT_IMPORT_DEFAULT_RATE_LIMIT_MAX_REQUESTS,
+  );
+  const [importRateLimitWindowSeconds, setImportRateLimitWindowSeconds] =
+    useState(CHANNEL_ACCOUNT_IMPORT_DEFAULT_RATE_LIMIT_WINDOW_SECONDS);
   const [importLoading, setImportLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [editVisible, setEditVisible] = useState(false);
@@ -4168,6 +4206,9 @@ function ChannelAccount({ variant = 'default' }) {
   const [editCredentialType, setEditCredentialType] = useState('auto');
   const [editCredential, setEditCredential] = useState('');
   const [editMaxConcurrency, setEditMaxConcurrency] = useState(0);
+  const [editRateLimitMaxRequests, setEditRateLimitMaxRequests] = useState(0);
+  const [editRateLimitWindowSeconds, setEditRateLimitWindowSeconds] =
+    useState(CHANNEL_ACCOUNT_IMPORT_DEFAULT_RATE_LIMIT_WINDOW_SECONDS);
   const [selectedCodexEnvironmentID, setSelectedCodexEnvironmentID] =
     useState(0);
   const [editLoading, setEditLoading] = useState(false);
@@ -4913,6 +4954,12 @@ function ChannelAccount({ variant = 'default' }) {
     setImportActiveTab('file');
     setImportDragActive(false);
     setImportMaxConcurrency(CHANNEL_ACCOUNT_IMPORT_DEFAULT_MAX_CONCURRENCY);
+    setImportRateLimitMaxRequests(
+      CHANNEL_ACCOUNT_IMPORT_DEFAULT_RATE_LIMIT_MAX_REQUESTS,
+    );
+    setImportRateLimitWindowSeconds(
+      CHANNEL_ACCOUNT_IMPORT_DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
+    );
     if (importFileInputRef.current) {
       importFileInputRef.current.value = '';
     }
@@ -4982,6 +5029,8 @@ function ChannelAccount({ variant = 'default' }) {
       files: importFileList,
       onlyNew: importOnlyNew,
       maxConcurrency: importMaxConcurrency,
+      rateLimitMaxRequests: importRateLimitMaxRequests,
+      rateLimitWindowSeconds: importRateLimitWindowSeconds,
     });
     if (!submission.hasInput()) {
       showError(t('请先输入账号凭证'));
@@ -5014,6 +5063,8 @@ function ChannelAccount({ variant = 'default' }) {
     importCredentials,
     importFileList,
     importMaxConcurrency,
+    importRateLimitMaxRequests,
+    importRateLimitWindowSeconds,
     importOnlyNew,
     ensureAccountDangerPermission,
     loadAccounts,
@@ -5030,6 +5081,15 @@ function ChannelAccount({ variant = 'default' }) {
       setEditCredentialType(record?.account_identity?.account_type || 'auto');
       setEditCredential('');
       setEditMaxConcurrency(Number(record?.max_concurrency || 0));
+      setEditRateLimitMaxRequests(
+        Number(record?.rate_limit?.max_requests || 0),
+      );
+      setEditRateLimitWindowSeconds(
+        Number(
+          record?.rate_limit?.window_seconds ||
+            CHANNEL_ACCOUNT_IMPORT_DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
+        ),
+      );
       setSelectedCodexEnvironmentID(Number(record?.codex_environment_id || 0));
       resetProxyEditorState(record);
       setEditVisible(true);
@@ -5053,6 +5113,10 @@ function ChannelAccount({ variant = 'default' }) {
     setEditCredentialType('auto');
     setEditCredential('');
     setEditMaxConcurrency(0);
+    setEditRateLimitMaxRequests(0);
+    setEditRateLimitWindowSeconds(
+      CHANNEL_ACCOUNT_IMPORT_DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
+    );
     setSelectedCodexEnvironmentID(0);
     resetProxyEditorState();
   }, [resetProxyEditorState]);
@@ -5226,11 +5290,30 @@ function ChannelAccount({ variant = 'default' }) {
       );
       const shouldUpdateMaxConcurrency =
         normalizedMaxConcurrency !== Number(editRecord?.max_concurrency || 0);
+      const normalizedRateLimitMaxRequests = Math.max(
+        0,
+        Number(editRateLimitMaxRequests || 0),
+      );
+      const normalizedRateLimitWindowSeconds = Math.max(
+        0,
+        Number(editRateLimitWindowSeconds || 0),
+      );
+      const currentRateLimitMaxRequests = Number(
+        editRecord?.rate_limit?.max_requests || 0,
+      );
+      const currentRateLimitWindowSeconds = Number(
+        editRecord?.rate_limit?.window_seconds || 0,
+      );
+      const shouldUpdateRateLimit =
+        normalizedRateLimitMaxRequests !== currentRateLimitMaxRequests ||
+        (normalizedRateLimitMaxRequests > 0 &&
+          normalizedRateLimitWindowSeconds !== currentRateLimitWindowSeconds);
       if (
         !shouldUpdateCredential &&
         !shouldUpdateProxy &&
         !shouldUpdateCodexEnvironment &&
-        !shouldUpdateMaxConcurrency
+        !shouldUpdateMaxConcurrency &&
+        !shouldUpdateRateLimit
       ) {
         closeEditModal();
         return;
@@ -5258,7 +5341,8 @@ function ChannelAccount({ variant = 'default' }) {
         if (
           shouldUpdateCredential ||
           shouldUpdateCodexEnvironment ||
-          shouldUpdateMaxConcurrency
+          shouldUpdateMaxConcurrency ||
+          shouldUpdateRateLimit
         ) {
           const requestBody = {
             credential: shouldUpdateCredential ? credential : '',
@@ -5271,6 +5355,12 @@ function ChannelAccount({ variant = 'default' }) {
           }
           if (shouldUpdateMaxConcurrency) {
             requestBody.max_concurrency = normalizedMaxConcurrency;
+          }
+          if (shouldUpdateRateLimit) {
+            requestBody.rate_limit_max_requests =
+              normalizedRateLimitMaxRequests;
+            requestBody.rate_limit_window_seconds =
+              normalizedRateLimitWindowSeconds;
           }
           const response = await API.put(
             `/api/channel/${editRecord.channel_id}/accounts/${editRecord.credential_index}`,
@@ -5288,7 +5378,9 @@ function ChannelAccount({ variant = 'default' }) {
                 ? t('账号凭证已更新')
                 : shouldUpdateCodexEnvironment
                   ? t('Codex 使用环境已更新')
-                  : t('账号并发已更新'),
+                  : shouldUpdateMaxConcurrency
+                    ? t('账号并发已更新')
+                    : t('账号限流已更新'),
             ),
           );
           if (shouldUpdateCredential && shouldUpdateCodexEnvironment) {
@@ -5299,6 +5391,14 @@ function ChannelAccount({ variant = 'default' }) {
             (shouldUpdateCredential || shouldUpdateCodexEnvironment)
           ) {
             messages.push(t('账号并发已更新'));
+          }
+          if (
+            shouldUpdateRateLimit &&
+            (shouldUpdateCredential ||
+              shouldUpdateCodexEnvironment ||
+              shouldUpdateMaxConcurrency)
+          ) {
+            messages.push(t('账号限流已更新'));
           }
         }
         if (shouldUpdateProxy) {
@@ -5352,6 +5452,8 @@ function ChannelAccount({ variant = 'default' }) {
       editCredential,
       editCredentialType,
       editMaxConcurrency,
+      editRateLimitMaxRequests,
+      editRateLimitWindowSeconds,
       editRecord,
       ensureAccountDangerPermission,
       proxyBindingChanged,
@@ -6368,6 +6470,63 @@ function ChannelAccount({ variant = 'default' }) {
             </div>
             <div className='ct-channel-account-edit-section'>
               <div className='ct-channel-account-edit-section-title'>
+                <ShieldCheck size={15} />
+                <span>{t('账号短窗口限流')}</span>
+                {Number(editRateLimitMaxRequests || 0) > 0 ? (
+                  <Tag color='teal' type='light' shape='circle'>
+                    {t('{{count}} 次 / {{seconds}} 秒', {
+                      count: formatNumber(editRateLimitMaxRequests),
+                      seconds: formatNumber(editRateLimitWindowSeconds),
+                    })}
+                  </Tag>
+                ) : (
+                  <Tag color='grey' type='light' shape='circle'>
+                    {t('未启用')}
+                  </Tag>
+                )}
+              </div>
+              <div className='ct-channel-account-edit-grid'>
+                <label className='ct-channel-account-edit-label'>
+                  <span>{t('短窗口请求数')}</span>
+                  <InputNumber
+                    value={editRateLimitMaxRequests}
+                    min={0}
+                    step={1}
+                    precision={0}
+                    onChange={(value) =>
+                      setEditRateLimitMaxRequests(
+                        Math.max(0, Math.trunc(Number(value || 0))),
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    placeholder={t('0 表示不限制')}
+                  />
+                </label>
+                <label className='ct-channel-account-edit-label'>
+                  <span>{t('限流窗口秒数')}</span>
+                  <InputNumber
+                    value={editRateLimitWindowSeconds}
+                    min={0}
+                    step={1}
+                    precision={0}
+                    onChange={(value) =>
+                      setEditRateLimitWindowSeconds(
+                        Math.max(0, Math.trunc(Number(value || 0))),
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    placeholder={t('例如 300')}
+                  />
+                </label>
+              </div>
+              <Text type='tertiary' size='small'>
+                {t(
+                  '超过短窗口请求数时调度器会暂时跳过该账号，0 表示关闭该账号的短窗口限流。',
+                )}
+              </Text>
+            </div>
+            <div className='ct-channel-account-edit-section'>
+              <div className='ct-channel-account-edit-section-title'>
                 <PlugZap size={15} />
                 <span>{t('账号代理')}</span>
                 {editRecord?.proxy ? (
@@ -6638,6 +6797,46 @@ function ChannelAccount({ variant = 'default' }) {
                 {t('0 表示不限制；导入账号会默认使用该并发上限。')}
               </small>
             </label>
+            <div className='ct-channel-account-import-rate-limit'>
+              <label className='ct-channel-account-import-concurrency'>
+                <span>{t('默认短窗口请求数')}</span>
+                <InputNumber
+                  value={importRateLimitMaxRequests}
+                  min={0}
+                  step={1}
+                  precision={0}
+                  onChange={(value) =>
+                    setImportRateLimitMaxRequests(
+                      Math.max(0, Math.trunc(Number(value || 0))),
+                    )
+                  }
+                  placeholder={t('0 表示不限制')}
+                />
+                <small>
+                  {t('导入账号在该窗口内最多可被调度的请求次数。')}
+                </small>
+              </label>
+              <label className='ct-channel-account-import-concurrency'>
+                <span>{t('默认限流窗口秒数')}</span>
+                <InputNumber
+                  value={importRateLimitWindowSeconds}
+                  min={0}
+                  step={1}
+                  precision={0}
+                  onChange={(value) =>
+                    setImportRateLimitWindowSeconds(
+                      Math.max(0, Math.trunc(Number(value || 0))),
+                    )
+                  }
+                  placeholder={t('例如 300')}
+                />
+                <small>
+                  {t(
+                    '默认 12 次 / 300 秒；请求数为 0 时关闭导入账号的短窗口限流。',
+                  )}
+                </small>
+              </label>
+            </div>
             <Checkbox
               checked={importOnlyNew}
               onChange={(event) => setImportOnlyNew(event.target.checked)}

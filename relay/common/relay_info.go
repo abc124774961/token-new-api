@@ -1110,6 +1110,74 @@ func RemoveDisabledFields(jsonData []byte, channelOtherSettings dto.ChannelOther
 	return jsonDataAfter, nil
 }
 
+// ShouldDropOpenAIPrivacyField reports whether a request field should be removed
+// before sending an OpenAI-compatible request upstream. These fields commonly
+// carry client/user/session identifiers and are opt-in per channel.
+func ShouldDropOpenAIPrivacyField(field string, channelOtherSettings dto.ChannelOtherSettings) bool {
+	field = strings.ToLower(strings.TrimSpace(field))
+	switch field {
+	case "user", "user_id":
+		return !channelOtherSettings.AllowUserIdentifier
+	case "metadata":
+		return !channelOtherSettings.AllowRequestMetadata
+	case "prompt_cache_key", "prompt_cache_retention":
+		return !channelOtherSettings.AllowPromptCacheKey
+	default:
+		return false
+	}
+}
+
+// SanitizeOpenAIPrivacyFields removes upstream-visible identity/session fields
+// after request conversion and parameter overrides. It intentionally does not
+// honor pass-through mode; privacy filtering should still apply to JSON bodies.
+func SanitizeOpenAIPrivacyFields(jsonData []byte, channelOtherSettings dto.ChannelOtherSettings) ([]byte, error) {
+	if len(jsonData) == 0 {
+		return jsonData, nil
+	}
+	if !looksJSONObject(jsonData) {
+		return jsonData, nil
+	}
+
+	var data map[string]interface{}
+	if err := common.Unmarshal(jsonData, &data); err != nil {
+		common.SysError("SanitizeOpenAIPrivacyFields Unmarshal error :" + err.Error())
+		return jsonData, nil
+	}
+
+	changed := false
+	for _, field := range []string{"user", "user_id", "metadata", "prompt_cache_key", "prompt_cache_retention"} {
+		if !ShouldDropOpenAIPrivacyField(field, channelOtherSettings) {
+			continue
+		}
+		if _, exists := data[field]; exists {
+			delete(data, field)
+			changed = true
+		}
+	}
+	if !changed {
+		return jsonData, nil
+	}
+
+	jsonDataAfter, err := common.Marshal(data)
+	if err != nil {
+		common.SysError("SanitizeOpenAIPrivacyFields Marshal error :" + err.Error())
+		return jsonData, nil
+	}
+	return jsonDataAfter, nil
+}
+
+func looksJSONObject(data []byte) bool {
+	for _, b := range data {
+		switch b {
+		case ' ', '\n', '\r', '\t':
+			continue
+		default:
+			return b == '{'
+		}
+	}
+	return false
+}
+
 // RemoveGeminiDisabledFields removes disabled fields from Gemini request JSON data
 // Currently supports removing functionResponse.id field which Vertex AI does not support
 func RemoveGeminiDisabledFields(jsonData []byte) ([]byte, error) {

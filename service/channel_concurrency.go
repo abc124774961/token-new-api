@@ -1,6 +1,9 @@
 package service
 
 import (
+	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -30,7 +33,40 @@ const (
 	channelConcurrencyMinLearnSample    = 3
 	channelConcurrencyDefaultCooldown   = 45 * time.Second
 	channelConcurrencyMaxCooldown       = 10 * time.Minute
+	accountConcurrencyRedisTTL          = 6 * time.Hour
 )
+
+const accountConcurrencyRedisAcquireScript = `
+local key = KEYS[1]
+local limit = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+local current = tonumber(redis.call('GET', key) or '0')
+if current >= limit then
+  return {0, current}
+end
+current = redis.call('INCR', key)
+redis.call('PEXPIRE', key, ttl)
+if current > limit then
+  current = redis.call('DECR', key)
+  if current <= 0 then
+    redis.call('DEL', key)
+    current = 0
+  end
+  return {0, current}
+end
+return {1, current}
+`
+
+const accountConcurrencyRedisReleaseScript = `
+local key = KEYS[1]
+local current = tonumber(redis.call('GET', key) or '0')
+if current <= 1 then
+  redis.call('DEL', key)
+  return 0
+end
+current = redis.call('DECR', key)
+return current
+`
 
 type channelConcurrencyCounter struct {
 	mu     sync.Mutex
@@ -45,6 +81,8 @@ type ChannelConcurrencyLease struct {
 	counter     *channelConcurrencyCounter
 	accountHeld *channelConcurrencyCounter
 	channelHeld *channelConcurrencyCounter
+	redisKey    string
+	redisHeld   bool
 	releaseOnce sync.Once
 }
 
@@ -139,23 +177,100 @@ func ChannelRuntimeConcurrencyScopeKey(identity ChannelRuntimeIdentity) string {
 	parts := []string{fmt.Sprintf("channel:%d", identity.ChannelID)}
 	if identity.AccountID != "" {
 		parts = append(parts, "account:"+identity.AccountID)
-	}
-	if identity.CredentialSubjectFP != "" {
+	} else if identity.CredentialSubjectFP != "" {
 		parts = append(parts, "subject:"+identity.CredentialSubjectFP)
-	}
-	if identity.CredentialFP != "" {
+	} else if identity.CredentialFP != "" {
 		parts = append(parts, "credential:"+identity.CredentialFP)
-	}
-	if identity.CredentialIndexSet {
+	} else if identity.CredentialIndexSet {
 		parts = append(parts, fmt.Sprintf("index:%d", identity.CredentialIndex))
 	}
 	return strings.Join(parts, "|")
+}
+
+func accountConcurrencyRedisKey(scopeKey string) string {
+	sum := sha1.Sum([]byte(strings.TrimSpace(scopeKey)))
+	return "channel_concurrency:account:" + hex.EncodeToString(sum[:])
+}
+
+func tryAcquireRedisAccountConcurrency(scopeKey string, limit int) (bool, int, string, error) {
+	if !common.RedisEnabled || common.RDB == nil || strings.TrimSpace(scopeKey) == "" || limit <= 0 {
+		return false, 0, "", fmt.Errorf("redis account concurrency disabled")
+	}
+	redisKey := accountConcurrencyRedisKey(scopeKey)
+	result, err := common.RDB.Eval(
+		context.Background(),
+		accountConcurrencyRedisAcquireScript,
+		[]string{redisKey},
+		limit,
+		int64(accountConcurrencyRedisTTL/time.Millisecond),
+	).Result()
+	if err != nil {
+		return false, 0, redisKey, err
+	}
+	values, ok := result.([]interface{})
+	if !ok || len(values) < 2 {
+		return false, 0, redisKey, fmt.Errorf("redis account concurrency result invalid")
+	}
+	allowed, ok := redisScriptInt(values[0])
+	if !ok {
+		return false, 0, redisKey, fmt.Errorf("redis account concurrency status invalid")
+	}
+	active, ok := redisScriptInt(values[1])
+	if !ok {
+		return false, 0, redisKey, fmt.Errorf("redis account concurrency active invalid")
+	}
+	if active < 0 {
+		active = 0
+	}
+	return allowed == 1, int(active), redisKey, nil
+}
+
+func releaseRedisAccountConcurrency(redisKey string) {
+	if !common.RedisEnabled || common.RDB == nil || strings.TrimSpace(redisKey) == "" {
+		return
+	}
+	_, _ = common.RDB.Eval(
+		context.Background(),
+		accountConcurrencyRedisReleaseScript,
+		[]string{strings.TrimSpace(redisKey)},
+	).Result()
+}
+
+func getRedisAccountConcurrency(scopeKey string) (int, bool) {
+	if !common.RedisEnabled || common.RDB == nil || strings.TrimSpace(scopeKey) == "" {
+		return 0, false
+	}
+	active, err := common.RDB.Get(context.Background(), accountConcurrencyRedisKey(scopeKey)).Int()
+	if err != nil {
+		return 0, false
+	}
+	if active < 0 {
+		active = 0
+	}
+	return active, true
+}
+
+func redisScriptInt(value interface{}) (int64, bool) {
+	switch v := value.(type) {
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func GetChannelRuntimeActiveConcurrency(identity ChannelRuntimeIdentity) int {
 	scopeKey := ChannelRuntimeConcurrencyScopeKey(identity)
 	if scopeKey == "" {
 		return GetChannelActiveConcurrency(identity.ChannelID)
+	}
+	if active, ok := getRedisAccountConcurrency(scopeKey); ok {
+		return active
 	}
 	value, ok := accountConcurrency.Load(scopeKey)
 	if !ok {
@@ -177,7 +292,11 @@ func GetChannelRuntimeEffectiveActiveConcurrency(identity ChannelRuntimeIdentity
 
 func IsChannelConcurrencyFull(channelID int, setting dto.ChannelSettings) bool {
 	if setting.AccountMaxConcurrency > 0 && strings.TrimSpace(setting.AccountConcurrencyKey) != "" {
-		value, ok := accountConcurrency.Load(strings.TrimSpace(setting.AccountConcurrencyKey))
+		accountScopeKey := strings.TrimSpace(setting.AccountConcurrencyKey)
+		if active, ok := getRedisAccountConcurrency(accountScopeKey); ok && active >= setting.AccountMaxConcurrency {
+			return true
+		}
+		value, ok := accountConcurrency.Load(accountScopeKey)
 		if ok {
 			counter := value.(*channelConcurrencyCounter)
 			counter.mu.Lock()
@@ -458,6 +577,29 @@ func TryAcquireChannelConcurrency(channelID int, setting dto.ChannelSettings) (*
 
 	var accountCounter *channelConcurrencyCounter
 	if accountLimit > 0 && accountScopeKey != "" {
+		if acquired, active, redisKey, err := tryAcquireRedisAccountConcurrency(accountScopeKey, accountLimit); err == nil {
+			if !acquired {
+				channelCounter.mu.Unlock()
+				return &ChannelConcurrencyLease{
+					ChannelID:   channelID,
+					Limit:       accountLimit,
+					ScopeKey:    accountScopeKey,
+					activeAtHit: active,
+					redisKey:    redisKey,
+				}, false
+			}
+			channelCounter.active++
+			channelCounter.mu.Unlock()
+			return &ChannelConcurrencyLease{
+				ChannelID:   channelID,
+				Limit:       accountLimit,
+				ScopeKey:    accountScopeKey,
+				activeAtHit: active,
+				channelHeld: channelCounter,
+				redisKey:    redisKey,
+				redisHeld:   true,
+			}, true
+		}
 		accountCounter = getAccountConcurrencyCounter(accountScopeKey)
 		accountCounter.mu.Lock()
 		if accountCounter.active >= accountLimit {
@@ -561,6 +703,9 @@ func (lease *ChannelConcurrencyLease) Release() {
 			}
 			lease.counter.mu.Unlock()
 		}
+		if lease.redisHeld && lease.redisKey != "" {
+			releaseRedisAccountConcurrency(lease.redisKey)
+		}
 	})
 }
 
@@ -592,6 +737,11 @@ func (lease *ChannelConcurrencyLease) ActiveAtHit() int {
 func (lease *ChannelConcurrencyLease) CurrentActive() int {
 	if lease == nil {
 		return 0
+	}
+	if lease.redisHeld && lease.ScopeKey != "" {
+		if active, ok := getRedisAccountConcurrency(lease.ScopeKey); ok {
+			return active
+		}
 	}
 	if lease.counter == nil {
 		return lease.activeAtHit

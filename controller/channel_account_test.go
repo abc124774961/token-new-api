@@ -1432,6 +1432,63 @@ func TestUpdateChannelAccountCredentialCanOnlyChangeMaxConcurrency(t *testing.T)
 	require.Nil(t, updated.ChannelInfo.MultiKeyMaxConcurrency)
 }
 
+func TestUpdateChannelAccountCredentialCanChangeRateLimit(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     77,
+		Name:   "account rate limit update",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-old\nsk-keep",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	router := gin.New()
+	router.PUT("/api/channel/:id/accounts/:credential_index", UpdateChannelAccountCredential)
+	bodyBytes, err := common.Marshal(map[string]interface{}{
+		"rate_limit_max_requests":   8,
+		"rate_limit_window_seconds": 120,
+	})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/channel/77/accounts/0", bytes.NewReader(bodyBytes))
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.NotNil(t, payload.Data.Items[0].RateLimit)
+	require.Equal(t, 8, payload.Data.Items[0].RateLimit.MaxRequests)
+	require.Equal(t, 120, payload.Data.Items[0].RateLimit.WindowSeconds)
+	require.Nil(t, payload.Data.Items[1].RateLimit)
+
+	updated, err := model.GetChannelById(77, true)
+	require.NoError(t, err)
+	require.Equal(t, model.ChannelAccountRateLimit{MaxRequests: 8, WindowSeconds: 120}, updated.ChannelInfo.MultiKeyRateLimits[0])
+
+	clearBytes, err := common.Marshal(map[string]interface{}{
+		"rate_limit_max_requests":   0,
+		"rate_limit_window_seconds": 120,
+	})
+	require.NoError(t, err)
+	clearRecorder := httptest.NewRecorder()
+	clearReq := httptest.NewRequest(http.MethodPut, "/api/channel/77/accounts/0", bytes.NewReader(clearBytes))
+	router.ServeHTTP(clearRecorder, clearReq)
+
+	clearPayload := decodeChannelAccountsResponse(t, clearRecorder)
+	require.True(t, clearPayload.Success, clearRecorder.Body.String())
+	require.Nil(t, clearPayload.Data.Items[0].RateLimit)
+
+	updated, err = model.GetChannelById(77, true)
+	require.NoError(t, err)
+	require.Nil(t, updated.ChannelInfo.MultiKeyRateLimits)
+}
+
 func TestUpdateChannelAccountCredentialSupportsOAuthJSONType(t *testing.T) {
 	db := setupChannelAccountControllerTestDB(t)
 	channel := model.Channel{
@@ -1731,6 +1788,9 @@ func TestImportChannelAccountsAppendsOnlyNewAndKeepsAllDisabledChannel(t *testin
 	require.NotContains(t, updated.ChannelInfo.MultiKeyMaxConcurrency, 0)
 	require.Equal(t, channelAccountImportDefaultMaxConcurrency, updated.ChannelInfo.MultiKeyMaxConcurrency[1])
 	require.Equal(t, channelAccountImportDefaultMaxConcurrency, updated.ChannelInfo.MultiKeyMaxConcurrency[2])
+	require.NotContains(t, updated.ChannelInfo.MultiKeyRateLimits, 0)
+	require.Equal(t, model.ChannelAccountRateLimit{MaxRequests: channelAccountImportDefaultRateLimitMaxRequests, WindowSeconds: channelAccountImportDefaultRateLimitWindowSeconds}, updated.ChannelInfo.MultiKeyRateLimits[1])
+	require.Equal(t, model.ChannelAccountRateLimit{MaxRequests: channelAccountImportDefaultRateLimitMaxRequests, WindowSeconds: channelAccountImportDefaultRateLimitWindowSeconds}, updated.ChannelInfo.MultiKeyRateLimits[2])
 	require.Equal(t, channelAccountAllKeysDisabledReason, updated.GetOtherInfo()["status_reason"])
 	var ability model.Ability
 	require.NoError(t, db.First(&ability, "channel_id = ?", 14).Error)
@@ -1772,17 +1832,52 @@ func TestImportChannelAccountsDisablesSingleImportedAccount(t *testing.T) {
 	require.Equal(t, 0, payload.Data.Enabled)
 	require.Equal(t, 1, payload.Data.Disabled)
 	require.Equal(t, channelAccountImportDefaultMaxConcurrency, payload.Data.Items[0].MaxConcurrency)
+	require.NotNil(t, payload.Data.Items[0].RateLimit)
+	require.Equal(t, channelAccountImportDefaultRateLimitMaxRequests, payload.Data.Items[0].RateLimit.MaxRequests)
+	require.Equal(t, channelAccountImportDefaultRateLimitWindowSeconds, payload.Data.Items[0].RateLimit.WindowSeconds)
 
 	updated, err := model.GetChannelById(140, true)
 	require.NoError(t, err)
 	require.Equal(t, "sk-new", updated.Key)
 	require.Equal(t, channelAccountImportDefaultMaxConcurrency, updated.ChannelInfo.MultiKeyMaxConcurrency[0])
+	require.Equal(t, model.ChannelAccountRateLimit{MaxRequests: channelAccountImportDefaultRateLimitMaxRequests, WindowSeconds: channelAccountImportDefaultRateLimitWindowSeconds}, updated.ChannelInfo.MultiKeyRateLimits[0])
 	require.False(t, updated.ChannelInfo.IsMultiKey)
 	require.Equal(t, common.ChannelStatusManuallyDisabled, updated.Status)
 	require.Equal(t, channelAccountManualDisabledReason, updated.GetOtherInfo()["status_reason"])
 	var ability model.Ability
 	require.NoError(t, db.First(&ability, "channel_id = ?", 140).Error)
 	require.False(t, ability.Enabled)
+}
+
+func TestImportChannelAccountsAcceptsCustomRateLimit(t *testing.T) {
+	db := setupChannelAccountControllerTestDB(t)
+	channel := model.Channel{
+		Id:     141,
+		Name:   "import custom rate limit",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.4",
+		Group:  "default",
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	router := gin.New()
+	router.PUT("/api/channel/:id/accounts", ImportChannelAccounts)
+	recorder := httptest.NewRecorder()
+	body := bytes.NewBufferString(`{"credentials":"sk-custom","only_new":true,"rate_limit_max_requests":5,"rate_limit_window_seconds":90}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/channel/141/accounts", body)
+	router.ServeHTTP(recorder, req)
+
+	payload := decodeChannelAccountsResponse(t, recorder)
+	require.True(t, payload.Success, recorder.Body.String())
+	require.NotNil(t, payload.Data.Items[0].RateLimit)
+	require.Equal(t, 5, payload.Data.Items[0].RateLimit.MaxRequests)
+	require.Equal(t, 90, payload.Data.Items[0].RateLimit.WindowSeconds)
+
+	updated, err := model.GetChannelById(141, true)
+	require.NoError(t, err)
+	require.Equal(t, model.ChannelAccountRateLimit{MaxRequests: 5, WindowSeconds: 90}, updated.ChannelInfo.MultiKeyRateLimits[0])
 }
 
 func TestImportChannelAccountsRejectsDuplicateWithoutOnlyNew(t *testing.T) {

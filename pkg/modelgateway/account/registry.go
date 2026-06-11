@@ -27,16 +27,17 @@ func NewRegistry() *Registry {
 }
 
 type ChannelAccount struct {
-	ResourceRef        core.ResourceRef     `json:"resource_ref"`
-	AccountIdentity    core.AccountIdentity `json:"account_identity"`
-	CredentialRef      core.CredentialRef   `json:"credential_ref"`
-	ProxyRef           core.ProxyRef        `json:"proxy_ref,omitempty"`
-	CodexEnvironmentID int                  `json:"codex_environment_id,omitempty"`
-	MaxConcurrency     int                  `json:"max_concurrency,omitempty"`
-	ChannelID          int                  `json:"channel_id"`
-	CredentialIndex    int                  `json:"credential_index"`
-	KeyEnabled         bool                 `json:"key_enabled"`
-	DisabledReason     string               `json:"disabled_reason,omitempty"`
+	ResourceRef        core.ResourceRef              `json:"resource_ref"`
+	AccountIdentity    core.AccountIdentity          `json:"account_identity"`
+	CredentialRef      core.CredentialRef            `json:"credential_ref"`
+	ProxyRef           core.ProxyRef                 `json:"proxy_ref,omitempty"`
+	CodexEnvironmentID int                           `json:"codex_environment_id,omitempty"`
+	MaxConcurrency     int                           `json:"max_concurrency,omitempty"`
+	RateLimit          model.ChannelAccountRateLimit `json:"rate_limit,omitempty"`
+	ChannelID          int                           `json:"channel_id"`
+	CredentialIndex    int                           `json:"credential_index"`
+	KeyEnabled         bool                          `json:"key_enabled"`
+	DisabledReason     string                        `json:"disabled_reason,omitempty"`
 }
 
 func (r *Registry) AccountsForChannel(channel *model.Channel) []ChannelAccount {
@@ -81,6 +82,7 @@ func (r *Registry) AccountsForChannel(channel *model.Channel) []ChannelAccount {
 			ProxyRef:           proxyRefForChannelKey(channel, idx),
 			CodexEnvironmentID: CodexEnvironmentIDForChannelKey(channel, idx, key),
 			MaxConcurrency:     channel.ChannelInfo.AccountMaxConcurrency(idx),
+			RateLimit:          accountRateLimitForChannelKey(channel, idx),
 			ChannelID:          channel.Id,
 			CredentialIndex:    idx,
 			KeyEnabled:         enabled,
@@ -186,6 +188,17 @@ func CandidateAccountFields(candidate *core.Candidate, account ChannelAccount) {
 	candidate.ProxyRef = account.ProxyRef
 	candidate.PoolLevel = core.CandidatePoolPro
 	candidate.RuntimeKey = RuntimeKeyForChannelAccount(candidate.RuntimeKey, account)
+}
+
+func accountRateLimitForChannelKey(channel *model.Channel, index int) model.ChannelAccountRateLimit {
+	if channel == nil {
+		return model.ChannelAccountRateLimit{}
+	}
+	limit, ok := channel.ChannelInfo.AccountRateLimit(index)
+	if !ok {
+		return model.ChannelAccountRateLimit{}
+	}
+	return limit
 }
 
 func proxyRefForChannelKey(channel *model.Channel, index int) core.ProxyRef {

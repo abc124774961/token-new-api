@@ -77,6 +77,38 @@ func TestTryAcquireChannelConcurrencyHonorsAccountScopedLimit(t *testing.T) {
 	require.Zero(t, GetChannelRuntimeActiveConcurrency(accountB))
 }
 
+func TestTryAcquireChannelConcurrencySharesLimitForSameAccountAcrossCredentialRows(t *testing.T) {
+	ClearChannelConcurrencyForTest()
+	t.Cleanup(ClearChannelConcurrencyForTest)
+
+	accountRowA := ChannelRuntimeIdentity{ChannelID: 2002, AccountID: "acct-shared", CredentialIndex: 0, CredentialIndexSet: true}
+	accountRowB := ChannelRuntimeIdentity{ChannelID: 2002, AccountID: "acct-shared", CredentialIndex: 1, CredentialIndexSet: true}
+	settingA := dto.ChannelSettings{
+		AccountMaxConcurrency: 1,
+		AccountConcurrencyKey: ChannelRuntimeConcurrencyScopeKey(accountRowA),
+	}
+	settingB := dto.ChannelSettings{
+		AccountMaxConcurrency: 1,
+		AccountConcurrencyKey: ChannelRuntimeConcurrencyScopeKey(accountRowB),
+	}
+	require.Equal(t, settingA.AccountConcurrencyKey, settingB.AccountConcurrencyKey)
+
+	first, ok := TryAcquireChannelConcurrency(2002, settingA)
+	require.True(t, ok)
+	require.Equal(t, 1, first.ActiveAtHit())
+
+	second, ok := TryAcquireChannelConcurrency(2002, settingB)
+	require.False(t, ok)
+	require.Equal(t, 1, second.ActiveAtHit())
+
+	first.Release()
+	third, ok := TryAcquireChannelConcurrency(2002, settingB)
+	require.True(t, ok)
+	third.Release()
+	require.Zero(t, GetChannelActiveConcurrency(2002))
+	require.Zero(t, GetChannelRuntimeActiveConcurrency(accountRowA))
+}
+
 func TestTrackChannelConcurrencyIgnoresConfiguredLimit(t *testing.T) {
 	ClearChannelConcurrencyForTest()
 	t.Cleanup(ClearChannelConcurrencyForTest)
