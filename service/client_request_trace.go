@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/observabilitypolicy"
 
 	"github.com/gin-gonic/gin"
 )
@@ -63,7 +64,12 @@ func ShouldLogClientRequestTrace(c *gin.Context) bool {
 	if c == nil || c.Request == nil {
 		return false
 	}
-	if !common.DebugEnabled && !common.GetEnvOrDefaultBool("CLIENT_REQUEST_TRACE_ENABLED", false) {
+	if !observabilitypolicy.ClientRequestTraceEnabled() {
+		return false
+	}
+	if !observabilitypolicy.ClientRequestTraceExplicitEnabled() &&
+		!common.DebugEnabled &&
+		!common.GetEnvOrDefaultBool("CLIENT_REQUEST_TRACE_ENABLED", false) {
 		return false
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/responses") {

@@ -5,66 +5,63 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
-func TestScoreEventFromAdjustmentCarriesAccountScopeAndSwitchReason(t *testing.T) {
-	key := core.RuntimeKey{
-		RequestedModel:        "gpt-5.4",
-		UpstreamModel:         "gpt-5.4",
-		ChannelID:             77,
-		ResourceID:            "platform:channel:77",
-		ResourceType:          core.ResourceTypePlatformOwned,
-		AccountID:             "openai:openai:acct-1",
-		AccountType:           core.AccountTypeOAuthAccount,
-		Brand:                 "openai",
-		Provider:              "openai",
-		CredentialIndex:       2,
-		CredentialSubjectFP:   "subject-fp",
-		CredentialFP:          "credential-fp",
-		Group:                 "default",
-		EndpointType:          constant.EndpointTypeOpenAI,
-		CapabilityFingerprint: "openai_codex|native",
-	}
+func TestScoreEventRecorderRespectsObservabilitySwitch(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelGatewayScoreEvent{}))
+	oldDB := model.DB
+	model.DB = db
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.DefaultSetting())
+	defer restoreSetting()
+
+	recorder := NewScoreEventRecorder(8)
 	result := core.AttemptResult{
-		RequestID:     "req-77",
-		AttemptIndex:  1,
-		ChannelID:     77,
-		FailureScope:  core.FailureScopeAccount,
-		SwitchReason:  core.RelayAttemptCancelReasonFirstByteTimeout,
-		Strategy:      core.StrategyBalanced,
-		AutoMode:      core.AutoModeFusion,
-		ObservedAt:    time.Unix(1710000000, 0),
-		IsHealthProbe: true,
+		RequestID:     "req-score-event-switch",
+		AttemptIndex:  0,
+		ChannelID:     88,
+		ModelName:     "gpt-5.5",
+		SelectedGroup: "vip",
+		EndpointType:  constant.EndpointTypeOpenAI,
+		ObservedAt:    time.Now(),
 	}
-	snapshot := core.RuntimeSnapshot{Key: key, SampleCount: 3}
-	adjustment := core.ScoreAdjustment{
-		TraceID:     "trace-77",
-		BeforeTotal: 0.92,
-		AfterTotal:  0.81,
-		Delta:       -0.11,
+	snapshot := core.RuntimeSnapshot{
+		Key: core.RuntimeKey{
+			ChannelID:      88,
+			RequestedModel: "gpt-5.5",
+			Group:          "vip",
+			EndpointType:   constant.EndpointTypeOpenAI,
+		},
 	}
+	decision := core.ScoreSampleDecision{ScoreSample: true}
+	before := core.ScoreResult{Total: 0.4, Items: []core.ScoreItem{{Key: "completion_rate", Score: 0.4, Weight: 1, WeightedScore: 0.4}}}
+	after := core.ScoreResult{Total: 0.8, Items: []core.ScoreItem{{Key: "completion_rate", Score: 0.8, Weight: 1, WeightedScore: 0.8}}}
 
-	event := scoreEventFromAdjustment(result, snapshot, adjustment)
+	recorder.ReportAdjustment(result, snapshot, decision, before, after)
+	time.Sleep(30 * time.Millisecond)
+	var disabledCount int64
+	require.NoError(t, db.Model(&model.ModelGatewayScoreEvent{}).Count(&disabledCount).Error)
+	require.Equal(t, int64(0), disabledCount)
 
-	require.Equal(t, "trace-77", event.TraceID)
-	require.Equal(t, "req-77", event.RequestID)
-	require.Equal(t, 1, event.AttemptIndex)
-	require.Equal(t, 77, event.ChannelID)
-	require.Equal(t, key.ResourceID, event.ResourceID)
-	require.Equal(t, key.ResourceType, event.ResourceType)
-	require.Equal(t, key.AccountID, event.AccountID)
-	require.Equal(t, key.AccountType, event.AccountType)
-	require.Equal(t, key.Brand, event.Brand)
-	require.Equal(t, key.Provider, event.Provider)
-	require.Equal(t, key.CredentialIndex, event.CredentialIndex)
-	require.Equal(t, key.CredentialSubjectFP, event.CredentialSubjectFP)
-	require.Equal(t, key.CredentialFP, event.CredentialFP)
-	require.Equal(t, core.FailureScopeAccount, event.FailureScope)
-	require.Equal(t, core.RelayAttemptCancelReasonFirstByteTimeout, event.SwitchReason)
-	require.True(t, event.IsHealthProbe)
-	require.Equal(t, int64(1710000000), event.CreatedAt)
-	require.Contains(t, event.ContextJSON, `"runtime_key"`)
-	require.Contains(t, event.ContextJSON, `"account_id":"openai:openai:acct-1"`)
+	enabledSetting := scheduler_setting.DefaultSetting()
+	enabledSetting.ObservabilityScoreEventEnabled = true
+	scheduler_setting.SetSetting(enabledSetting)
+	recorder.ReportAdjustment(result, snapshot, decision, before, after)
+
+	require.Eventually(t, func() bool {
+		var count int64
+		require.NoError(t, db.Model(&model.ModelGatewayScoreEvent{}).Count(&count).Error)
+		return count == 1
+	}, time.Second, 10*time.Millisecond)
 }

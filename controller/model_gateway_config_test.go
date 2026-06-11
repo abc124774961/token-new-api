@@ -133,6 +133,11 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	setting.CostFirstGuardSpeedAdvantage = 0.09
 	setting.ChannelPriorityTieBreakEnabled = false
 	setting.ChannelPriorityTieBreakScoreDelta = 0.049
+	setting.ObservabilityPerformanceModeEnabled = false
+	setting.ObservabilityDiagnosticLevel = scheduler_setting.ObservabilityDiagnosticLevelFull
+	setting.ObservabilityClientRequestTraceEnabled = true
+	setting.ObservabilityScoreEventEnabled = true
+	setting.ObservabilityCandidateDetailEnabled = true
 	setting.CircuitErrorPolicies = map[string]scheduler_setting.CircuitErrorPolicySetting{
 		"unknown": {
 			FailureThreshold:   0.9,
@@ -240,6 +245,11 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	require.Equal(t, 0.09, payload.Data.Setting.CostFirstGuardSpeedAdvantage)
 	require.False(t, payload.Data.Setting.ChannelPriorityTieBreakEnabled)
 	require.Equal(t, 0.049, payload.Data.Setting.ChannelPriorityTieBreakScoreDelta)
+	require.False(t, payload.Data.Setting.ObservabilityPerformanceModeEnabled)
+	require.Equal(t, scheduler_setting.ObservabilityDiagnosticLevelFull, payload.Data.Setting.ObservabilityDiagnosticLevel)
+	require.True(t, payload.Data.Setting.ObservabilityClientRequestTraceEnabled)
+	require.True(t, payload.Data.Setting.ObservabilityScoreEventEnabled)
+	require.True(t, payload.Data.Setting.ObservabilityCandidateDetailEnabled)
 	require.Len(t, payload.Data.Setting.CircuitErrorPolicies, 2)
 	require.Equal(t, 0.25, payload.Data.Setting.CircuitErrorPolicies["rate_limit"].FailureThreshold)
 	require.Equal(t, 2, payload.Data.Setting.CircuitErrorPolicies["rate_limit"].MinSamples)
@@ -282,6 +292,15 @@ func TestModelGatewayConfigUpdatePersistsSchedulerSetting(t *testing.T) {
 	var channelPriorityTieBreakDeltaOption model.Option
 	require.NoError(t, db.First(&channelPriorityTieBreakDeltaOption, "key = ?", "scheduler_setting.channel_priority_tie_break_score_delta").Error)
 	require.Equal(t, "0.049", channelPriorityTieBreakDeltaOption.Value)
+	var observabilityPerformanceModeOption model.Option
+	require.NoError(t, db.First(&observabilityPerformanceModeOption, "key = ?", "scheduler_setting.observability_performance_mode_enabled").Error)
+	require.Equal(t, "false", observabilityPerformanceModeOption.Value)
+	var observabilityDiagnosticLevelOption model.Option
+	require.NoError(t, db.First(&observabilityDiagnosticLevelOption, "key = ?", "scheduler_setting.observability_diagnostic_level").Error)
+	require.Equal(t, scheduler_setting.ObservabilityDiagnosticLevelFull, observabilityDiagnosticLevelOption.Value)
+	var observabilityScoreEventOption model.Option
+	require.NoError(t, db.First(&observabilityScoreEventOption, "key = ?", "scheduler_setting.observability_score_event_enabled").Error)
+	require.Equal(t, "true", observabilityScoreEventOption.Value)
 	runtimePolicy := modelgatewayintegration.RuntimePolicySetting()
 	require.False(t, runtimePolicy.ChannelPriorityTieBreak.Enabled)
 	require.Equal(t, 0.049, runtimePolicy.ChannelPriorityTieBreak.ScoreDelta)
@@ -361,6 +380,14 @@ func TestModelGatewayConfigGetIncludesUpstreamErrorDefaults(t *testing.T) {
 	require.True(t, payload.Data.Defaults.RelayNonStreamTimeoutEnabled)
 	require.Equal(t, 45, payload.Data.Setting.RelayNonStreamTimeoutSeconds)
 	require.Equal(t, 45, payload.Data.Defaults.RelayNonStreamTimeoutSeconds)
+	require.True(t, payload.Data.Setting.ObservabilityPerformanceModeEnabled)
+	require.True(t, payload.Data.Defaults.ObservabilityPerformanceModeEnabled)
+	require.Equal(t, scheduler_setting.ObservabilityDiagnosticLevelErrorsOnly, payload.Data.Setting.ObservabilityDiagnosticLevel)
+	require.Equal(t, scheduler_setting.ObservabilityDiagnosticLevelErrorsOnly, payload.Data.Defaults.ObservabilityDiagnosticLevel)
+	require.False(t, payload.Data.Setting.ObservabilityClientRequestTraceEnabled)
+	require.False(t, payload.Data.Setting.ObservabilityScoreEventEnabled)
+	require.False(t, payload.Data.Setting.ObservabilityCandidateDetailEnabled)
+	require.Equal(t, scheduler_setting.ObservabilityDiagnosticLevels(), payload.Data.ObservabilityDiagnosticLevels)
 	require.Equal(t, scheduler_setting.UpstreamErrorRuleVersion, payload.Data.Setting.UpstreamErrorRuleVersion)
 	require.Equal(t, scheduler_setting.UpstreamErrorRuleVersion, payload.Data.Defaults.UpstreamErrorRuleVersion)
 	require.NotEmpty(t, payload.Data.Setting.UpstreamErrorRules)
@@ -728,6 +755,31 @@ func TestModelGatewayConfigResetRestoresDefaults(t *testing.T) {
 	require.Equal(t, scheduler_setting.ProxyReusePolicyWarn, payload.Data.Setting.ProxySameBrandReusePolicy)
 	require.True(t, payload.Data.Setting.ChannelPriorityTieBreakEnabled)
 	require.Equal(t, 0.05, payload.Data.Setting.ChannelPriorityTieBreakScoreDelta)
+	require.True(t, payload.Data.Setting.ObservabilityPerformanceModeEnabled)
+	require.Equal(t, scheduler_setting.ObservabilityDiagnosticLevelErrorsOnly, payload.Data.Setting.ObservabilityDiagnosticLevel)
+}
+
+func TestModelGatewayConfigNormalizesInvalidObservabilityDiagnosticLevel(t *testing.T) {
+	setupModelGatewayConfigControllerTestDB(t)
+	router := gin.New()
+	router.PUT("/api/model_gateway/config", UpdateModelGatewayConfig)
+
+	setting := scheduler_setting.DefaultSetting()
+	setting.ObservabilityPerformanceModeEnabled = true
+	setting.ObservabilityDiagnosticLevel = " noisy "
+	setting.ObservabilityScoreEventEnabled = true
+	body, err := common.Marshal(setting)
+	require.NoError(t, err)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/model_gateway/config", bytes.NewReader(body))
+	router.ServeHTTP(resp, req)
+
+	payload := decodeModelGatewayConfigResponse(t, resp)
+	require.True(t, payload.Success, resp.Body.String())
+	require.True(t, payload.Data.Setting.ObservabilityPerformanceModeEnabled)
+	require.Equal(t, scheduler_setting.ObservabilityDiagnosticLevelErrorsOnly, payload.Data.Setting.ObservabilityDiagnosticLevel)
+	require.True(t, payload.Data.Setting.ObservabilityScoreEventEnabled)
 }
 
 func TestModelGatewayProbeConfigPatchMergesProbeFields(t *testing.T) {

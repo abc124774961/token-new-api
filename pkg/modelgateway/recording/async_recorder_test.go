@@ -3,6 +3,7 @@ package recording
 import (
 	"context"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -11,10 +12,160 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/observability/userrequest"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestMain(m *testing.M) {
+	setting := scheduler_setting.DefaultSetting()
+	setting.ObservabilityPerformanceModeEnabled = false
+	setting.ObservabilityDiagnosticLevel = scheduler_setting.ObservabilityDiagnosticLevelFull
+	restore := scheduler_setting.SetSettingForTest(setting)
+	code := m.Run()
+	restore()
+	os.Exit(code)
+}
+
+func setupAsyncRecorderTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ModelExecutionRecord{}, &model.ModelGatewayUserRequestSummary{}))
+	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
+	oldDB := model.DB
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	return db
+}
+
+func TestAsyncExecutionRecorderDefaultModeKeepsSuccessSummaryLightweight(t *testing.T) {
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.DefaultSetting())
+	defer restoreSetting()
+	db := setupAsyncRecorderTestDB(t)
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:      "req-light-summary",
+		AttemptIndex:   0,
+		ChannelID:      21,
+		ChannelName:    "fast-channel",
+		RequestedGroup: "auto",
+		SelectedGroup:  "vip",
+		ModelName:      "gpt-5.5",
+		EndpointType:   constant.EndpointTypeOpenAI,
+		Success:        true,
+		StatusCode:     http.StatusOK,
+		Duration:       800 * time.Millisecond,
+		TTFT:           120 * time.Millisecond,
+		RetryAction:    "complete",
+		Plan: &core.DispatchPlan{
+			Channel:        &model.Channel{Id: 21, Name: "fast-channel"},
+			SelectedGroup:  "vip",
+			ScoreTotal:     0.99,
+			ScoreBreakdown: map[string]float64{"completion_rate": 1},
+			Candidates: []core.CandidateExplanation{
+				{ChannelID: 21, ChannelName: "fast-channel", Available: true, Selected: true},
+			},
+		},
+	})
+
+	require.Eventually(t, func() bool {
+		var summary model.ModelGatewayUserRequestSummary
+		err := db.Where("request_id = ?", "req-light-summary").First(&summary).Error
+		return err == nil && summary.CompletedAt > 0 && summary.FinalSuccess
+	}, time.Second, 10*time.Millisecond)
+
+	var executions int64
+	require.NoError(t, db.Model(&model.ModelExecutionRecord{}).Where("request_id = ?", "req-light-summary").Count(&executions).Error)
+	require.Equal(t, int64(0), executions)
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-light-summary").First(&summary).Error)
+	require.Equal(t, 21, summary.FinalChannelID)
+	require.Equal(t, "gpt-5.5", summary.RequestedModel)
+	require.Equal(t, int64(800), summary.DurationMs)
+	require.Equal(t, int64(120), summary.TTFTMs)
+}
+
+func TestAsyncExecutionRecorderDefaultModeWritesCompactFailureDiagnostics(t *testing.T) {
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.DefaultSetting())
+	defer restoreSetting()
+	db := setupAsyncRecorderTestDB(t)
+
+	recorder := NewAsyncExecutionRecorder(8)
+	recorder.Report(context.Background(), core.AttemptResult{
+		RequestID:               "req-compact-failure",
+		AttemptIndex:            0,
+		ChannelID:               31,
+		ChannelName:             "limited-channel",
+		RequestedGroup:          "auto",
+		SelectedGroup:           "vip",
+		ModelName:               "gpt-5.5",
+		EndpointType:            constant.EndpointTypeOpenAI,
+		StatusCode:              http.StatusTooManyRequests,
+		ErrorCode:               "rate_limit_exceeded",
+		ErrorType:               "rate_limit_error",
+		ErrorMessage:            "very long upstream message should not be stored",
+		ErrorCategory:           "rate_limit",
+		UpstreamErrorKind:       "rate_limit",
+		MatchedRuleID:           "upstream_rate_limit",
+		SchedulerAction:         "switch_channel",
+		AvoidanceSeconds:        600,
+		RetryAfterSeconds:       10,
+		RetryAction:             "stop",
+		Duration:                1300 * time.Millisecond,
+		StreamInterrupted:       true,
+		EmptyOutput:             true,
+		ConcurrencyLimited:      true,
+		LearnedConcurrencyLimit: 12,
+		Plan: &core.DispatchPlan{
+			Channel:        &model.Channel{Id: 31, Name: "limited-channel"},
+			SelectedGroup:  "vip",
+			ScoreTotal:     0.91,
+			ScoreBreakdown: map[string]float64{"completion_rate": 0.8},
+			Candidates: []core.CandidateExplanation{
+				{ChannelID: 31, ChannelName: "limited-channel", Available: true, Selected: true},
+			},
+		},
+	})
+
+	require.Eventually(t, func() bool {
+		var record model.ModelExecutionRecord
+		err := db.Where("request_id = ?", "req-compact-failure").First(&record).Error
+		return err == nil && record.RequestMeta != ""
+	}, time.Second, 10*time.Millisecond)
+
+	var record model.ModelExecutionRecord
+	require.NoError(t, db.Where("request_id = ?", "req-compact-failure").First(&record).Error)
+	require.Equal(t, http.StatusTooManyRequests, record.StatusCode)
+	require.Equal(t, "rate_limit", record.ErrorCategory)
+	require.True(t, record.StreamInterrupted)
+	require.Empty(t, record.ScoreBreakdown)
+	require.Empty(t, record.CandidateGroups)
+	require.Contains(t, record.RequestMeta, `"upstream_error_kind":"rate_limit"`)
+	require.Contains(t, record.RequestMeta, `"matched_rule_id":"upstream_rate_limit"`)
+	require.Contains(t, record.RequestMeta, `"scheduler_action":"switch_channel"`)
+	require.Contains(t, record.RequestMeta, `"avoidance_seconds":600`)
+	require.Contains(t, record.RequestMeta, `"retry_after_seconds":10`)
+	require.Contains(t, record.RequestMeta, `"stream_interrupted":true`)
+	require.Contains(t, record.RequestMeta, `"empty_output":true`)
+	require.NotContains(t, record.RequestMeta, "very long upstream message")
+	require.NotContains(t, record.RequestMeta, "candidate_explanations")
+	require.NotContains(t, record.RequestMeta, "learned_concurrency_limit")
+
+	var summary model.ModelGatewayUserRequestSummary
+	require.NoError(t, db.Where("request_id = ?", "req-compact-failure").First(&summary).Error)
+	require.False(t, summary.FinalSuccess)
+	require.Equal(t, model.ModelGatewayUserRequestErrorStreamInterrupted, summary.FinalErrorCategory)
+}
 
 func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
@@ -111,6 +262,89 @@ func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 	require.Empty(t, requestMeta.CandidateFilterConditions)
 }
 
+func TestAsyncExecutionRecorderResultOverflowDoesNotBlockCaller(t *testing.T) {
+	oldDB := model.DB
+	model.DB = nil
+	defer func() {
+		model.DB = oldDB
+	}()
+
+	blocker := &blockingExecutionRecorder{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	recorder := (&AsyncExecutionRecorder{queue: make(chan event)}).WithPostProcessors(blocker)
+	done := make(chan struct{})
+	go func() {
+		recorder.Report(context.Background(), core.AttemptResult{
+			RequestID:     "req-overflow-nonblocking",
+			AttemptIndex:  0,
+			ChannelID:     9,
+			Success:       true,
+			StatusCode:    http.StatusOK,
+			RetryAction:   "complete",
+			ObservedAt:    time.Now(),
+			EndpointType:  constant.EndpointTypeOpenAI,
+			ModelName:     "gpt-5.5",
+			SelectedGroup: "default",
+		})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("Report blocked when recorder queue was full")
+	}
+
+	select {
+	case <-blocker.started:
+	case <-time.After(time.Second):
+		t.Fatal("overflow result was not processed out of band")
+	}
+	close(blocker.release)
+}
+
+func TestAsyncExecutionRecorderDispatchOverflowKeepsRealtimeStart(t *testing.T) {
+	oldDB := model.DB
+	model.DB = nil
+	defer func() {
+		model.DB = oldDB
+		userrequest.Finish(core.AttemptResult{
+			RequestID:   "req-dispatch-overflow-realtime",
+			Success:     true,
+			RetryAction: "complete",
+		}, nil)
+	}()
+
+	recorder := &AsyncExecutionRecorder{queue: make(chan event, 1)}
+	recorder.offer(event{record: &core.DispatchRecord{
+		Request: core.DispatchRequest{
+			RequestID:    "req-queued-dispatch-blocker",
+			ModelName:    "gpt-5.5",
+			EndpointType: constant.EndpointTypeOpenAI,
+		},
+		RecordedAt: time.Now(),
+	}})
+	recorder.offer(event{record: &core.DispatchRecord{
+		Request: core.DispatchRequest{
+			RequestID:      "req-dispatch-overflow-realtime",
+			RequestedGroup: "auto",
+			ModelName:      "gpt-5.5",
+			EndpointType:   constant.EndpointTypeOpenAI,
+		},
+		Plan: &core.DispatchPlan{
+			Channel:       &model.Channel{Id: 15, Name: "overflow-start-channel"},
+			SelectedGroup: "default",
+		},
+		RecordedAt: time.Now(),
+	}})
+
+	require.Eventually(t, func() bool {
+		return userrequest.HasPending("req-dispatch-overflow-realtime")
+	}, time.Second, 10*time.Millisecond)
+}
+
 func TestChannelAccountUsageEventFromAttemptUsesCurrentTimeWhenObservedAtUnset(t *testing.T) {
 	before := time.Now().Unix()
 	event := channelAccountUsageEventFromAttempt(core.AttemptResult{
@@ -125,6 +359,18 @@ func TestChannelAccountUsageEventFromAttemptUsesCurrentTimeWhenObservedAtUnset(t
 	require.LessOrEqual(t, event.CompletedAt, after)
 	require.Greater(t, event.CreatedAt, int64(0))
 	require.Greater(t, event.UpdatedAt, int64(0))
+}
+
+type blockingExecutionRecorder struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingExecutionRecorder) Record(ctx context.Context, record core.DispatchRecord) {}
+
+func (r *blockingExecutionRecorder) Report(ctx context.Context, result core.AttemptResult) {
+	close(r.started)
+	<-r.release
 }
 
 func TestAsyncExecutionRecorderDoesNotDropResultWhenQueueFull(t *testing.T) {

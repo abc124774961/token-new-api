@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -249,6 +250,8 @@ func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresOldSessionImageg
 
 func TestShouldLogClientRequestTrace(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	restoreSetting := scheduler_setting.SetSettingForTest(scheduler_setting.DefaultSetting())
+	defer restoreSetting()
 
 	origDebug := common.DebugEnabled
 	common.DebugEnabled = false
@@ -264,6 +267,11 @@ func TestShouldLogClientRequestTrace(t *testing.T) {
 	require.False(t, ShouldLogClientRequestTrace(disabledCtx))
 
 	t.Setenv("CLIENT_REQUEST_TRACE_ENABLED", "true")
+	require.False(t, ShouldLogClientRequestTrace(disabledCtx))
+
+	setting := scheduler_setting.DefaultSetting()
+	setting.ObservabilityClientRequestTraceEnabled = true
+	scheduler_setting.SetSetting(setting)
 
 	responsesCtx := newTraceTestContext(http.MethodPost, "/v1/responses", nil)
 	require.True(t, ShouldLogClientRequestTrace(responsesCtx))

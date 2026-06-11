@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/observabilitypolicy"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
 
@@ -157,6 +158,9 @@ func appendModelTraceInfo(relayInfo *relaycommon.RelayInfo, other map[string]int
 }
 
 func appendClientRequestTraceInfo(relayInfo *relaycommon.RelayInfo, adminInfo map[string]interface{}) {
+	if !observabilitypolicy.ClientRequestTraceEnabled() {
+		return
+	}
 	if relayInfo == nil || adminInfo == nil || len(relayInfo.RequestHeaders) == 0 {
 		return
 	}
@@ -248,11 +252,13 @@ func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other map[string]inter
 		"status":     status,
 		"end_reason": string(ss.EndReason),
 	}
-	if ss.EndError != nil {
-		streamInfo["end_error"] = ss.EndError.Error()
-	}
 	if ss.ErrorCount > 0 {
 		streamInfo["error_count"] = ss.ErrorCount
+	}
+	if observabilitypolicy.FullDiagnosticsEnabled() && ss.EndError != nil {
+		streamInfo["end_error"] = ss.EndError.Error()
+	}
+	if observabilitypolicy.FullDiagnosticsEnabled() && ss.ErrorCount > 0 {
 		messages := make([]string, 0, len(ss.Errors))
 		for _, e := range ss.Errors {
 			messages = append(messages, e.Message)

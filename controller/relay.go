@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	modelgatewaycore "github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/observabilitypolicy"
 	modelgatewayscheduler "github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	modelgatewayupstreamerror "github.com/QuantumNous/new-api/pkg/modelgateway/upstreamerror"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
@@ -3075,16 +3076,19 @@ func traceChannelFailure(c *gin.Context, channelError types.ChannelError, err *t
 		return
 	}
 	upstreamClassification := modelgatewayupstreamerror.ClassifyAPIError(err)
+	compact := !observabilitypolicy.FullDiagnosticsEnabled()
 	item := map[string]interface{}{
 		"channel_id":     channelError.ChannelId,
 		"channel_name":   channelError.ChannelName,
 		"channel_type":   channelError.ChannelType,
 		"status_code":    err.StatusCode,
-		"error_type":     err.GetErrorType(),
-		"error_code":     err.GetErrorCode(),
 		"error_category": classifyRelayAttemptError(c, err),
-		"message":        err.MaskSensitiveError(),
 		"final_failure":  finalFailure,
+	}
+	if !compact {
+		item["error_type"] = err.GetErrorType()
+		item["error_code"] = err.GetErrorCode()
+		item["message"] = err.MaskSensitiveError()
 	}
 	if upstreamClassification.Matched {
 		item["upstream_error_kind"] = upstreamClassification.Kind
@@ -3112,7 +3116,7 @@ func traceChannelFailure(c *gin.Context, channelError types.ChannelError, err *t
 		item["concurrency_limited"] = true
 		item["retry_action"] = "switch_channel"
 	}
-	if len(err.Metadata) > 0 {
+	if !compact && len(err.Metadata) > 0 {
 		item["error_metadata"] = common.JsonRawMessageToString(err.Metadata)
 	}
 	trace, _ := common.GetContextKeyType[[]map[string]interface{}](c, constant.ContextKeyChannelFailureTrace)

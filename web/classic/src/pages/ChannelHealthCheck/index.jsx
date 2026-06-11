@@ -1789,6 +1789,8 @@ function ChannelHealthCheck({ variant = 'default' }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
   const [historyHours, setHistoryHours] = useState(24);
   const [statusFilter, setStatusFilter] = useState(ALL_STATUSES);
   const [keyword, setKeyword] = useState('');
@@ -1806,6 +1808,47 @@ function ChannelHealthCheck({ variant = 'default' }) {
   });
   const [appliedFilters, setAppliedFilters] = useState(filters);
 
+  const loadHistoryData = useCallback(
+    async (silent = false) => {
+      if (!silent) {
+        setHistoryLoading(true);
+      }
+      setHistoryError('');
+      const commonParams = {
+        model: appliedFilters.model || undefined,
+        group: appliedFilters.group || undefined,
+        channel_id: appliedFilters.channel_id || undefined,
+      };
+      try {
+        const res = await API.get('/api/model_gateway/observability/summary', {
+          params: {
+            ...commonParams,
+            hours: historyHours,
+            recent_limit: 100,
+            scan_limit: 5000,
+            view_mode: 'user_requests',
+            health_probe_only: true,
+            lite: true,
+            include_dispatch: true,
+          },
+          disableDuplicate: true,
+          skipErrorHandler: true,
+        });
+        setHistoryData(unwrapApiData(res));
+      } catch (err) {
+        const failure = buildRequestErrorDetail(err, t('检测历史'), t);
+        const message = [failure.label, failure.message, failure.detail]
+          .filter(Boolean)
+          .join(': ');
+        setHistoryError(message || t('检测历史加载失败'));
+        console.error('[ChannelHealthCheck] history load failed', failure);
+      } finally {
+        setHistoryLoading(false);
+      }
+    },
+    [appliedFilters, historyHours, t],
+  );
+
   const loadData = useCallback(
     async (silent = false) => {
       if (silent) {
@@ -1819,86 +1862,40 @@ function ChannelHealthCheck({ variant = 'default' }) {
         group: appliedFilters.group || undefined,
         channel_id: appliedFilters.channel_id || undefined,
       };
-      const requests = [
-        {
-          key: 'queue',
-          label: t('待检查队列'),
-          request: API.get(
-            '/api/model_gateway/observability/health-check/queue',
-            {
-              params: {
-                ...commonParams,
-                limit: 1000,
-                queue_type: statusFilter,
-                _t: Date.now(),
-              },
-              disableDuplicate: true,
-              skipErrorHandler: true,
-            },
-          ),
-        },
-        {
-          key: 'history',
-          label: t('检测历史'),
-          request: API.get('/api/model_gateway/observability/summary', {
+
+      try {
+        const res = await API.get(
+          '/api/model_gateway/observability/health-check/queue',
+          {
             params: {
               ...commonParams,
-              hours: historyHours,
-              recent_limit: 200,
-              scan_limit: 5000,
-              view_mode: 'user_requests',
-              health_probe_only: true,
-              lite: true,
-              include_dispatch: true,
+              limit: 1000,
+              queue_type: statusFilter,
+              _t: Date.now(),
             },
             disableDuplicate: true,
             skipErrorHandler: true,
-          }),
-        },
-      ];
-
-      try {
-        const results = await Promise.allSettled(
-          requests.map((item) => item.request),
+          },
         );
-        const failures = [];
-
-        results.forEach((result, index) => {
-          const requestMeta = requests[index];
-          if (result.status === 'fulfilled') {
-            const data = unwrapApiData(result.value);
-            if (requestMeta.key === 'queue') {
-              setQueueData({
-                ...data,
-                local_generated_at: Math.floor(Date.now() / 1000),
-              });
-            } else {
-              setHistoryData(data);
-            }
-            return;
-          }
-          failures.push(
-            buildRequestErrorDetail(result.reason, requestMeta.label, t),
-          );
+        const data = unwrapApiData(res);
+        setQueueData({
+          ...data,
+          local_generated_at: Math.floor(Date.now() / 1000),
         });
-
-        if (failures.length > 0) {
-          const message = failures
-            .map((failure) =>
-              [failure.label, failure.message, failure.detail]
-                .filter(Boolean)
-                .join(': '),
-            )
-            .join('\n');
-          setError(`${t('部分健康检测数据加载失败')}\n${message}`);
-          console.error('[ChannelHealthCheck] load failed', failures);
-        }
+        void loadHistoryData(silent);
+      } catch (err) {
+        const failure = buildRequestErrorDetail(err, t('待检查队列'), t);
+        const message = [failure.label, failure.message, failure.detail]
+          .filter(Boolean)
+          .join(': ');
+        setError(message || t('待检查队列加载失败'));
+        console.error('[ChannelHealthCheck] queue load failed', failure);
       } finally {
         setLoading(false);
         setRefreshing(false);
       }
     },
-    [appliedFilters, historyHours, statusFilter, t],
+    [appliedFilters, loadHistoryData, statusFilter, t],
   );
 
   useEffect(() => {
@@ -2651,10 +2648,23 @@ function ChannelHealthCheck({ variant = 'default' }) {
                   </span>
                 }
               >
+                {historyError && (
+                  <Banner
+                    type='warning'
+                    className='ct-channel-health-banner'
+                    description={
+                      <span className='ct-channel-health-error-text'>
+                        {historyError}
+                      </span>
+                    }
+                    closeIcon={null}
+                  />
+                )}
                 <Table
                   size='small'
                   columns={historyColumns}
                   dataSource={historyRecords}
+                  loading={historyLoading}
                   rowKey={(record) =>
                     record.request_id || `${record.id}-${record.completed_at}`
                   }

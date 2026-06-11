@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/observabilitypolicy"
 )
 
 type ScoreEventRecorder struct {
@@ -31,7 +32,7 @@ func (r *ScoreEventRecorder) Report(ctx context.Context, result core.AttemptResu
 
 func (r *ScoreEventRecorder) ReportAdjustment(result core.AttemptResult, snapshot core.RuntimeSnapshot, decision core.ScoreSampleDecision, before core.ScoreResult, after core.ScoreResult) core.ScoreAdjustment {
 	adjustment := scoreAdjustment(result, decision, before, after)
-	if r == nil || !decision.ScoreSample || model.DB == nil {
+	if r == nil || !decision.ScoreSample || model.DB == nil || !observabilitypolicy.ScoreEventEnabled() {
 		return adjustment
 	}
 	if adjustment.TraceID == "" {

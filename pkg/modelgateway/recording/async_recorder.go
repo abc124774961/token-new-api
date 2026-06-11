@@ -10,11 +10,12 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/observability/userrequest"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/observabilitypolicy"
+	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 )
 
 const (
-	defaultQueueSize             = 1024
-	resultOverflowEnqueueTimeout = 100 * time.Millisecond
+	defaultQueueSize = 1024
 )
 
 type AsyncExecutionRecorder struct {
@@ -79,7 +80,11 @@ func (r *AsyncExecutionRecorder) offer(e event) {
 			r.offerResultOverflow(e)
 			return
 		}
-		common.SysLog("modelgateway recorder queue full, dropping dispatch event")
+		if e.record != nil {
+			r.offerDispatchOverflow(e)
+			return
+		}
+		common.SysLog("modelgateway recorder queue full, dropping empty event")
 	}
 }
 
@@ -90,35 +95,49 @@ func (r *AsyncExecutionRecorder) run() {
 }
 
 func (r *AsyncExecutionRecorder) offerResultOverflow(e event) {
-	timer := time.NewTimer(resultOverflowEnqueueTimeout)
-	defer timer.Stop()
-	select {
-	case r.queue <- e:
-	case <-timer.C:
-		common.SysLog("modelgateway recorder queue full, processing result event out of band")
-		go r.process(e)
+	common.SysLog("modelgateway recorder queue full, processing result event out of band")
+	go r.process(e)
+}
+
+func (r *AsyncExecutionRecorder) offerDispatchOverflow(e event) {
+	if e.record == nil {
+		return
 	}
+	common.SysLog("modelgateway recorder queue full, processing dispatch realtime event out of band")
+	go r.processDispatch(*e.record, false)
 }
 
 func (r *AsyncExecutionRecorder) process(e event) {
 	if e.record != nil {
-		userrequest.Start(*e.record)
-		model.RecordModelExecution(modelExecutionRecordFromDispatch(*e.record))
-		recordChannelAccountUsageDispatch(*e.record)
-		r.forwardRecord(*e.record)
+		r.processDispatch(*e.record, true)
 		return
 	}
 	if e.result != nil {
-		summary := model.RecordModelGatewayUserRequestAttempt(modelGatewayUserRequestAttemptFromResult(*e.result))
-		if summary != nil {
-			userrequest.Finish(*e.result, summary)
-		} else if attemptResultFinalizedForRealtime(*e.result) {
-			userrequest.Finish(*e.result, nil)
-		}
-		model.RecordModelExecution(modelExecutionRecordFromAttempt(*e.result))
-		recordChannelAccountUsageAttempt(*e.result)
-		r.forwardResult(*e.result)
+		r.processResult(*e.result)
 	}
+}
+
+func (r *AsyncExecutionRecorder) processDispatch(record core.DispatchRecord, persistOptionalDiagnostics bool) {
+	userrequest.Start(record)
+	if persistOptionalDiagnostics && observabilitypolicy.ShouldPersistDispatchRecord() {
+		model.RecordModelExecution(modelExecutionRecordFromDispatch(record))
+	}
+	recordChannelAccountUsageDispatch(record)
+	r.forwardRecord(record)
+}
+
+func (r *AsyncExecutionRecorder) processResult(result core.AttemptResult) {
+	summary := model.RecordModelGatewayUserRequestAttempt(modelGatewayUserRequestAttemptFromResult(result))
+	if summary != nil {
+		userrequest.Finish(result, summary)
+	} else if attemptResultFinalizedForRealtime(result) {
+		userrequest.Finish(result, nil)
+	}
+	if shouldPersistAttemptExecutionRecord(result) {
+		model.RecordModelExecution(modelExecutionRecordFromAttempt(result))
+	}
+	recordChannelAccountUsageAttempt(result)
+	r.forwardResult(result)
 }
 
 func (r *AsyncExecutionRecorder) forwardRecord(record core.DispatchRecord) {
@@ -249,6 +268,21 @@ type attemptRequestMeta struct {
 	Timing                         *attemptTimingMeta `json:"timing,omitempty"`
 }
 
+type compactAttemptRequestMeta struct {
+	ChannelID         int    `json:"channel_id,omitempty"`
+	StatusCode        int    `json:"status_code,omitempty"`
+	ErrorCategory     string `json:"error_category,omitempty"`
+	UpstreamErrorKind string `json:"upstream_error_kind,omitempty"`
+	MatchedRuleID     string `json:"matched_rule_id,omitempty"`
+	SchedulerAction   string `json:"scheduler_action,omitempty"`
+	AvoidanceSeconds  int    `json:"avoidance_seconds,omitempty"`
+	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
+	RetryAction       string `json:"retry_action,omitempty"`
+	DurationMs        int64  `json:"duration_ms,omitempty"`
+	StreamInterrupted bool   `json:"stream_interrupted,omitempty"`
+	EmptyOutput       bool   `json:"empty_output,omitempty"`
+}
+
 type attemptTimingMeta struct {
 	QueueWaitMs                  int64  `json:"queue_wait_ms,omitempty"`
 	RelayToFirstByteMs           int64  `json:"relay_to_first_byte_ms,omitempty"`
@@ -365,11 +399,18 @@ func modelExecutionRecordFromAttempt(result core.AttemptResult) *model.ModelExec
 		record.SmartHandled = true
 		record.FallbackUsed = result.Plan.FallbackUsed
 		record.ScoreTotal = result.Plan.ScoreTotal
-		record.ScoreBreakdown = marshalToString(result.Plan.ScoreBreakdown)
 		record.SelectedReason = result.Plan.SelectedReason
-		record.CandidateGroups = marshalToString([]string{result.Plan.SelectedGroup})
+		if observabilitypolicy.CandidateDetailEnabled() {
+			record.ScoreBreakdown = marshalToString(result.Plan.ScoreBreakdown)
+			record.CandidateGroups = marshalToString([]string{result.Plan.SelectedGroup})
+		}
 	}
-	if meta := attemptRequestMetaFromResult(result); result.Plan != nil || !emptyAttemptRequestMeta(meta) {
+	if observabilitypolicy.CompactAttemptDiagnosticsEnabled() {
+		meta := compactAttemptRequestMetaFromResult(result)
+		if !emptyCompactAttemptRequestMeta(meta) {
+			record.RequestMeta = marshalToString(meta)
+		}
+	} else if meta := attemptRequestMetaFromResult(result); result.Plan != nil || !emptyAttemptRequestMeta(meta) {
 		record.RequestMeta = marshalToString(requestMetaFromAttemptResult(result, meta))
 	}
 	return record
@@ -393,6 +434,38 @@ func requestMetaFromAttemptResult(result core.AttemptResult, attemptMeta attempt
 		}
 	}
 	return out
+}
+
+func compactAttemptRequestMetaFromResult(result core.AttemptResult) compactAttemptRequestMeta {
+	return compactAttemptRequestMeta{
+		ChannelID:         result.ChannelID,
+		StatusCode:        result.StatusCode,
+		ErrorCategory:     result.ErrorCategory,
+		UpstreamErrorKind: result.UpstreamErrorKind,
+		MatchedRuleID:     result.MatchedRuleID,
+		SchedulerAction:   result.SchedulerAction,
+		AvoidanceSeconds:  result.AvoidanceSeconds,
+		RetryAfterSeconds: result.RetryAfterSeconds,
+		RetryAction:       result.RetryAction,
+		DurationMs:        requestDuration(result).Milliseconds(),
+		StreamInterrupted: result.StreamInterrupted,
+		EmptyOutput:       result.EmptyOutput,
+	}
+}
+
+func emptyCompactAttemptRequestMeta(meta compactAttemptRequestMeta) bool {
+	return meta.ChannelID == 0 &&
+		meta.StatusCode == 0 &&
+		meta.ErrorCategory == "" &&
+		meta.UpstreamErrorKind == "" &&
+		meta.MatchedRuleID == "" &&
+		meta.SchedulerAction == "" &&
+		meta.AvoidanceSeconds == 0 &&
+		meta.RetryAfterSeconds == 0 &&
+		meta.RetryAction == "" &&
+		meta.DurationMs == 0 &&
+		!meta.StreamInterrupted &&
+		!meta.EmptyOutput
 }
 
 func modelGatewayUserRequestAttemptFromResult(result core.AttemptResult) model.ModelGatewayUserRequestAttempt {
@@ -472,6 +545,40 @@ func attemptResultClientAborted(result core.AttemptResult) bool {
 		result.StatusCode == 499 ||
 		strings.Contains(category, "client_abort") ||
 		strings.Contains(category, "client_gone")
+}
+
+func shouldPersistAttemptExecutionRecord(result core.AttemptResult) bool {
+	policy := observabilitypolicy.Current()
+	if policy.FullDiagnosticsEnabled() {
+		return true
+	}
+	if policy.DiagnosticLevel == scheduler_setting.ObservabilityDiagnosticLevelMinimal {
+		return false
+	}
+	return attemptNeedsCompactDiagnostics(result)
+}
+
+func attemptNeedsCompactDiagnostics(result core.AttemptResult) bool {
+	if !result.Success {
+		return true
+	}
+	if result.AttemptIndex > 0 {
+		return true
+	}
+	if result.StreamInterrupted || result.EmptyOutput || result.ClientAborted {
+		return true
+	}
+	if strings.TrimSpace(result.ExperienceIssue) != "" ||
+		strings.TrimSpace(result.WarningLevel) != "" ||
+		result.ChannelInducedClientAbort {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(result.RetryAction)) {
+	case "switch_channel", "retry", "resource_protection_fallback":
+		return true
+	default:
+		return result.WillRetry
+	}
 }
 
 func recordChannelAccountUsageDispatch(record core.DispatchRecord) {

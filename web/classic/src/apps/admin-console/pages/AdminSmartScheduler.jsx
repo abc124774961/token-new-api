@@ -73,6 +73,11 @@ const DEFAULT_SETTING_PATCH = {
   upstream_error_classification_enabled: true,
   upstream_error_rule_version: DEFAULT_RULE_VERSION,
   upstream_error_rules: [],
+  observability_performance_mode_enabled: true,
+  observability_diagnostic_level: 'errors_only',
+  observability_client_request_trace_enabled: false,
+  observability_score_event_enabled: false,
+  observability_candidate_detail_enabled: false,
 };
 
 function arrayValue(value) {
@@ -186,6 +191,17 @@ function ruleKeywordCount(rule) {
   );
 }
 
+function diagnosticLevelLabel(level, t) {
+  switch (level) {
+    case 'full':
+      return t('完整诊断');
+    case 'minimal':
+      return t('最小诊断');
+    default:
+      return t('只保留错误');
+  }
+}
+
 function SmartSchedulerSummary({ setting, t }) {
   const cards = [
     {
@@ -213,6 +229,14 @@ function SmartSchedulerSummary({ setting, t }) {
         ? `v${setting?.upstream_error_rule_version || DEFAULT_RULE_VERSION}`
         : t('未启用'),
       tone: setting?.upstream_error_classification_enabled ? 'green' : 'grey',
+    },
+    {
+      icon: <RadioTower size={15} />,
+      label: t('观测模式'),
+      value: setting?.observability_performance_mode_enabled
+        ? diagnosticLevelLabel(setting?.observability_diagnostic_level, t)
+        : t('完整诊断'),
+      tone: setting?.observability_performance_mode_enabled ? 'cyan' : 'orange',
     },
   ];
 

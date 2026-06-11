@@ -1,5 +1,27 @@
 package scheduler_setting
 
+import "strings"
+
+func ObservabilityDiagnosticLevels() []string {
+	return []string{
+		ObservabilityDiagnosticLevelFull,
+		ObservabilityDiagnosticLevelErrorsOnly,
+		ObservabilityDiagnosticLevelMinimal,
+	}
+}
+
+func NormalizeObservabilityDiagnosticLevel(level string) string {
+	level = strings.ToLower(strings.TrimSpace(level))
+	switch level {
+	case ObservabilityDiagnosticLevelFull,
+		ObservabilityDiagnosticLevelErrorsOnly,
+		ObservabilityDiagnosticLevelMinimal:
+		return level
+	default:
+		return ObservabilityDiagnosticLevelErrorsOnly
+	}
+}
+
 func UpstreamErrorKinds() []string {
 	return []string{
 		UpstreamErrorKindBalanceQuota,

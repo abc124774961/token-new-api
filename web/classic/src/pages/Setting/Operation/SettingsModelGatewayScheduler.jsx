@@ -72,6 +72,11 @@ const BILLING_RATIO_MODE_OPTIONS = ['static', 'dynamic'];
 const PROXY_REUSE_POLICY_OPTIONS = ['warn', 'confirm', 'block'];
 const DYNAMIC_BILLING_COST_SOURCE_OPTIONS = ['sample_cost', 'profit_24h'];
 const DYNAMIC_BILLING_APPLY_MODE_OPTIONS = ['observe', 'auto'];
+const OBSERVABILITY_DIAGNOSTIC_LEVEL_OPTIONS = [
+  'full',
+  'errors_only',
+  'minimal',
+];
 
 const DEFAULT_SETTING = {
   enabled: false,
@@ -144,6 +149,11 @@ const DEFAULT_SETTING = {
   upstream_error_classification_enabled: true,
   upstream_error_rule_version: 1,
   upstream_error_rules: [],
+  observability_performance_mode_enabled: true,
+  observability_diagnostic_level: 'errors_only',
+  observability_client_request_trace_enabled: false,
+  observability_score_event_enabled: false,
+  observability_candidate_detail_enabled: false,
   queue_enabled: true,
   queue_default_timeout_ms: 2000,
   queue_max_depth_per_channel: 64,
@@ -823,6 +833,13 @@ const normalizeSetting = (setting) => {
     merged.dynamic_billing_apply_mode === 'manual'
       ? 'auto'
       : merged.dynamic_billing_apply_mode || 'auto';
+  if (
+    !OBSERVABILITY_DIAGNOSTIC_LEVEL_OPTIONS.includes(
+      merged.observability_diagnostic_level,
+    )
+  ) {
+    merged.observability_diagnostic_level = 'errors_only';
+  }
   merged.dynamic_billing_profit_rate_percent = Number(
     (numberOrDefault(merged.dynamic_billing_profit_rate, 0.2) * 100).toFixed(2),
   );
@@ -988,6 +1005,19 @@ export default function SettingsModelGatewayScheduler() {
       DYNAMIC_BILLING_APPLY_MODE_OPTIONS.map((value) => ({
         value,
         label: dynamicBillingApplyModeLabel(value, t),
+      })),
+    [t],
+  );
+  const observabilityDiagnosticOptions = useMemo(
+    () =>
+      OBSERVABILITY_DIAGNOSTIC_LEVEL_OPTIONS.map((value) => ({
+        value,
+        label:
+          value === 'full'
+            ? t('完整诊断')
+            : value === 'minimal'
+              ? t('最小诊断')
+              : t('只保留错误'),
       })),
     [t],
   );
@@ -1280,6 +1310,20 @@ export default function SettingsModelGatewayScheduler() {
       upstream_error_rules: Array.isArray(setting.upstream_error_rules)
         ? setting.upstream_error_rules
         : [],
+      observability_performance_mode_enabled:
+        setting.observability_performance_mode_enabled !== false,
+      observability_diagnostic_level:
+        OBSERVABILITY_DIAGNOSTIC_LEVEL_OPTIONS.includes(
+          setting.observability_diagnostic_level,
+        )
+          ? setting.observability_diagnostic_level
+          : 'errors_only',
+      observability_client_request_trace_enabled:
+        !!setting.observability_client_request_trace_enabled,
+      observability_score_event_enabled:
+        !!setting.observability_score_event_enabled,
+      observability_candidate_detail_enabled:
+        !!setting.observability_candidate_detail_enabled,
       queue_default_timeout_ms: numberOrDefault(
         setting.queue_default_timeout_ms,
         2000,
@@ -2113,6 +2157,83 @@ export default function SettingsModelGatewayScheduler() {
             )}
             style={{ marginTop: 8, marginBottom: 16 }}
           />
+          <Banner
+            type='warning'
+            fullMode={false}
+            closeIcon={null}
+            title={t('调度观测性能模式')}
+            description={t(
+              '开启后降低 CPU/DB 压力；成功请求仍保留轻量统计，不影响探测和调度成功率；完整诊断仅建议临时排查时开启。',
+            )}
+            style={{ marginTop: 8, marginBottom: 16 }}
+          />
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Switch
+                field='observability_performance_mode_enabled'
+                label={t('调度观测性能模式')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting(
+                    'observability_performance_mode_enabled',
+                    value,
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Select
+                field='observability_diagnostic_level'
+                label={t('诊断级别')}
+                optionList={observabilityDiagnosticOptions}
+                onChange={(value) =>
+                  updateSetting('observability_diagnostic_level', value)
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Switch
+                field='observability_candidate_detail_enabled'
+                label={t('候选详情')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting(
+                    'observability_candidate_detail_enabled',
+                    value,
+                  )
+                }
+              />
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Switch
+                field='observability_score_event_enabled'
+                label={t('评分事件')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting('observability_score_event_enabled', value)
+                }
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Switch
+                field='observability_client_request_trace_enabled'
+                label={t('客户端请求头 trace')}
+                checkedText='｜'
+                uncheckedText='〇'
+                onChange={(value) =>
+                  updateSetting(
+                    'observability_client_request_trace_enabled',
+                    value,
+                  )
+                }
+              />
+            </Col>
+          </Row>
           <Row gutter={16}>
             <Col xs={24} sm={12} md={8}>
               <Form.InputNumber

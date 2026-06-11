@@ -21,15 +21,16 @@ import (
 )
 
 type ModelGatewayConfigResponse struct {
-	Setting                   scheduler_setting.SchedulerSetting         `json:"setting"`
-	Defaults                  scheduler_setting.SchedulerSetting         `json:"defaults"`
-	Modes                     []string                                   `json:"modes"`
-	Strategies                []string                                   `json:"strategies"`
-	AutoModes                 []string                                   `json:"auto_modes"`
-	DynamicBillingBaselines   []modelgatewaydynamicbilling.RatioBaseline `json:"dynamic_billing_baselines"`
-	UpstreamErrorKinds        []string                                   `json:"upstream_error_kinds"`
-	UpstreamErrorActions      []string                                   `json:"upstream_error_actions"`
-	UpstreamErrorRuleDefaults []scheduler_setting.UpstreamErrorRule      `json:"upstream_error_rule_defaults"`
+	Setting                       scheduler_setting.SchedulerSetting         `json:"setting"`
+	Defaults                      scheduler_setting.SchedulerSetting         `json:"defaults"`
+	Modes                         []string                                   `json:"modes"`
+	Strategies                    []string                                   `json:"strategies"`
+	AutoModes                     []string                                   `json:"auto_modes"`
+	DynamicBillingBaselines       []modelgatewaydynamicbilling.RatioBaseline `json:"dynamic_billing_baselines"`
+	UpstreamErrorKinds            []string                                   `json:"upstream_error_kinds"`
+	UpstreamErrorActions          []string                                   `json:"upstream_error_actions"`
+	UpstreamErrorRuleDefaults     []scheduler_setting.UpstreamErrorRule      `json:"upstream_error_rule_defaults"`
+	ObservabilityDiagnosticLevels []string                                   `json:"observability_diagnostic_levels"`
 }
 
 type UpdateModelGatewayProbeConfigRequest struct {
@@ -226,15 +227,16 @@ func ResetModelGatewayConfig(c *gin.Context) {
 
 func buildModelGatewayConfigResponse() ModelGatewayConfigResponse {
 	return ModelGatewayConfigResponse{
-		Setting:                   scheduler_setting.GetSetting(),
-		Defaults:                  scheduler_setting.DefaultSetting(),
-		Modes:                     []string{scheduler_setting.ModeOff, scheduler_setting.ModeShadow, scheduler_setting.ModeActive},
-		Strategies:                []string{scheduler_setting.StrategyBalanced, scheduler_setting.StrategySpeedFirst, scheduler_setting.StrategyCostFirst, scheduler_setting.StrategyStabilityFirst},
-		AutoModes:                 []string{scheduler_setting.AutoModeSequential, scheduler_setting.AutoModeFusion},
-		DynamicBillingBaselines:   modelgatewaydynamicbilling.DefaultBaselineSnapshots(),
-		UpstreamErrorKinds:        scheduler_setting.UpstreamErrorKinds(),
-		UpstreamErrorActions:      scheduler_setting.UpstreamErrorActions(),
-		UpstreamErrorRuleDefaults: scheduler_setting.DefaultUpstreamErrorRules(),
+		Setting:                       scheduler_setting.GetSetting(),
+		Defaults:                      scheduler_setting.DefaultSetting(),
+		Modes:                         []string{scheduler_setting.ModeOff, scheduler_setting.ModeShadow, scheduler_setting.ModeActive},
+		Strategies:                    []string{scheduler_setting.StrategyBalanced, scheduler_setting.StrategySpeedFirst, scheduler_setting.StrategyCostFirst, scheduler_setting.StrategyStabilityFirst},
+		AutoModes:                     []string{scheduler_setting.AutoModeSequential, scheduler_setting.AutoModeFusion},
+		DynamicBillingBaselines:       modelgatewaydynamicbilling.DefaultBaselineSnapshots(),
+		UpstreamErrorKinds:            scheduler_setting.UpstreamErrorKinds(),
+		UpstreamErrorActions:          scheduler_setting.UpstreamErrorActions(),
+		UpstreamErrorRuleDefaults:     scheduler_setting.DefaultUpstreamErrorRules(),
+		ObservabilityDiagnosticLevels: scheduler_setting.ObservabilityDiagnosticLevels(),
 	}
 }
 
@@ -321,6 +323,10 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	}
 	setting.UpstreamErrorRuleVersion = scheduler_setting.UpstreamErrorRuleVersion
 	setting.UpstreamErrorRules = upstreamRules
+	if shouldDefaultModelGatewayObservabilityPerformance(setting) {
+		setting.ObservabilityPerformanceModeEnabled = defaults.ObservabilityPerformanceModeEnabled
+	}
+	setting.ObservabilityDiagnosticLevel = scheduler_setting.NormalizeObservabilityDiagnosticLevel(setting.ObservabilityDiagnosticLevel)
 	setting.QueueDefaultTimeoutMs = normalizeModelGatewayConfigMin(setting.QueueDefaultTimeoutMs, 1, defaults.QueueDefaultTimeoutMs)
 	setting.QueueMaxDepthPerChannel = normalizeModelGatewayConfigMin(setting.QueueMaxDepthPerChannel, 1, defaults.QueueMaxDepthPerChannel)
 	setting.QueueDepthMultiplier = normalizeModelGatewayConfigMin(setting.QueueDepthMultiplier, 1, defaults.QueueDepthMultiplier)
@@ -417,6 +423,14 @@ func normalizeModelGatewaySchedulerSetting(setting scheduler_setting.SchedulerSe
 	}
 	setting.GroupPolicies = policies
 	return setting, nil
+}
+
+func shouldDefaultModelGatewayObservabilityPerformance(setting scheduler_setting.SchedulerSetting) bool {
+	return strings.TrimSpace(setting.ObservabilityDiagnosticLevel) == "" &&
+		!setting.ObservabilityPerformanceModeEnabled &&
+		!setting.ObservabilityClientRequestTraceEnabled &&
+		!setting.ObservabilityScoreEventEnabled &&
+		!setting.ObservabilityCandidateDetailEnabled
 }
 
 func normalizeModelGatewayGroupPriorityRatio(src map[string]float64) map[string]float64 {
@@ -773,6 +787,11 @@ func modelGatewaySchedulerSettingOptionMap(setting scheduler_setting.SchedulerSe
 		"upstream_error_classification_enabled":               strconv.FormatBool(setting.UpstreamErrorClassificationEnabled),
 		"upstream_error_rule_version":                         strconv.Itoa(setting.UpstreamErrorRuleVersion),
 		"upstream_error_rules":                                string(upstreamErrorRules),
+		"observability_performance_mode_enabled":              strconv.FormatBool(setting.ObservabilityPerformanceModeEnabled),
+		"observability_diagnostic_level":                      setting.ObservabilityDiagnosticLevel,
+		"observability_client_request_trace_enabled":          strconv.FormatBool(setting.ObservabilityClientRequestTraceEnabled),
+		"observability_score_event_enabled":                   strconv.FormatBool(setting.ObservabilityScoreEventEnabled),
+		"observability_candidate_detail_enabled":              strconv.FormatBool(setting.ObservabilityCandidateDetailEnabled),
 		"queue_enabled":                                       strconv.FormatBool(setting.QueueEnabled),
 		"queue_default_timeout_ms":                            strconv.Itoa(setting.QueueDefaultTimeoutMs),
 		"queue_max_depth_per_channel":                         strconv.Itoa(setting.QueueMaxDepthPerChannel),
