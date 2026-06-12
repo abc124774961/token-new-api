@@ -148,6 +148,37 @@ func TestProbeSelectorTimeoutRecoveryHasPriorityAndRequiredSamples(t *testing.T)
 	require.Equal(t, 3, snapshot.ProbeRecoveryRequired)
 }
 
+func TestProbeSelectorTimeoutRecoveryDoesNotRequirePriorityOrRecentTraffic(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	channel := seedProbeSelectorChannel(t, db, 2, "timeout-recovery-no-traffic", "default", "gpt-4.1", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "gpt-4.1", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                  key,
+		SampleCount:          8,
+		SuccessRate:          0.99,
+		FailureAvoidance:     true,
+		ProbeRecoveryPending: true,
+		ProbeTriggerReason:   reasonTimeoutRecovery,
+		LastRealAttemptAt:    now.Add(-2 * time.Hour).Unix(),
+		RealSampleCount30m:   0,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:              time.Second,
+		FailureAvoidancePriorityEnabled: false,
+		SkipRecentRealRequestEnabled:    true,
+		RecentRealRequestWindow:         30 * time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, reasonTimeoutRecovery, candidates[0].Reason)
+}
+
 func TestProbeSelectorOverloadRecoveryBypassesRecentRealRequestSkip(t *testing.T) {
 	db := setupProbeSelectorTestDB(t)
 	now := time.Now()
@@ -782,7 +813,7 @@ func TestProbeSelectorCollapsesCandidatesToSingleModelPerChannel(t *testing.T) {
 	require.Equal(t, "codex-plus", candidates[0].Group)
 }
 
-func TestProbeSelectorSkipsConfigErrorIsolatedSnapshot(t *testing.T) {
+func TestProbeSelectorDoesNotSkipLegacyConfigErrorIsolatedSnapshot(t *testing.T) {
 	db := setupProbeSelectorTestDB(t)
 	now := time.Now()
 	seedProbeSelectorRecentRequest(t, db, "req-config-isolated", "gpt-4.1", "default", "default", now.Unix())
@@ -804,10 +835,11 @@ func TestProbeSelectorSkipsConfigErrorIsolatedSnapshot(t *testing.T) {
 	selector := NewProbeSelector(store, nil)
 	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: time.Second, LowScoreThreshold: 0.7})
 	require.NoError(t, err)
-	require.Empty(t, candidates)
+	require.Len(t, candidates, 1)
+	require.Equal(t, reasonLowScore, candidates[0].Reason)
 }
 
-func TestProbeSelectorSkipsConfigErrorIsolatedChannel(t *testing.T) {
+func TestProbeSelectorDoesNotSkipLegacyConfigErrorIsolatedChannel(t *testing.T) {
 	db := setupProbeSelectorTestDB(t)
 	now := time.Now()
 	seedProbeSelectorRecentRequest(t, db, "req-channel-config-isolated", "gpt-4.1", "default", "default", now.Unix())
@@ -819,29 +851,82 @@ func TestProbeSelectorSkipsConfigErrorIsolatedChannel(t *testing.T) {
 	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", channel.Id).Update("other_info", channel.OtherInfo).Error)
 	model.InitChannelCache()
 
-	selector := NewProbeSelector(scheduler.NewMemoryRuntimeSnapshotStore(), nil)
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "gpt-4.1", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SampleCount:        8,
+		SuccessRate:        0.4,
+		LastRealAttemptAt:  now.Unix(),
+		RealSampleCount30m: 2,
+	})
+
+	selector := NewProbeSelector(store, nil)
 	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: time.Second})
 	require.NoError(t, err)
-	require.Empty(t, candidates)
+	require.Len(t, candidates, 1)
+	require.Equal(t, reasonLowScore, candidates[0].Reason)
 }
 
-func TestProbeSelectorSkipsServiceConfigErrorIsolatedRoute(t *testing.T) {
+func TestProbeSelectorUsesAuthConfigRecoveryCoolingRoute(t *testing.T) {
 	db := setupProbeSelectorTestDB(t)
 	now := time.Now()
 	seedProbeSelectorRecentRequest(t, db, "req-service-config-isolated", "gpt-4.1", "default", "default", now.Unix())
 	channel := seedProbeSelectorChannel(t, db, 1, "config-isolated", "default", "gpt-4.1", 1)
 	model.InitChannelCache()
 
-	key := service.NewChannelConfigIsolationKey(channel.Id, "gpt-4.1", "default", constant.EndpointTypeOpenAI)
-	service.ClearChannelConfigIsolation(key)
-	t.Cleanup(func() { service.ClearChannelConfigIsolation(key) })
-	service.RecordChannelConfigAuthError(key, core.ErrorCategoryAuthConfigError)
-	service.RecordChannelConfigAuthError(key, core.ErrorCategoryAuthConfigError)
+	service.ClearChannelFailureAvoidance(channel.Id)
+	t.Cleanup(func() { service.ClearChannelFailureAvoidance(channel.Id) })
+	service.RecordChannelAuthConfigRecovery(channel.Id, nil)
 
-	selector := NewProbeSelector(scheduler.NewMemoryRuntimeSnapshotStore(), nil)
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "gpt-4.1", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                  key,
+		SampleCount:          8,
+		SuccessRate:          0.4,
+		FailureAvoidance:     true,
+		ProbeRecoveryPending: true,
+		ProbeTriggerReason:   service.ChannelAuthConfigRecoveryReason,
+		LastRealAttemptAt:    now.Unix(),
+		RealSampleCount30m:   2,
+	})
+
+	selector := NewProbeSelector(store, nil)
 	candidates, err := selector.Select(ProbeConfig{MinChannelInterval: time.Second})
 	require.NoError(t, err)
-	require.Empty(t, candidates)
+	require.Len(t, candidates, 1)
+	require.Equal(t, reasonAuthConfigError, candidates[0].Reason)
+}
+
+func TestProbeSelectorSelectsAuthConfigRecoveryWithoutRecentTraffic(t *testing.T) {
+	db := setupProbeSelectorTestDB(t)
+	now := time.Now()
+	channel := seedProbeSelectorChannel(t, db, 1, "auth-config-recovery", "default", "gpt-4.1", 1)
+	model.InitChannelCache()
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-4.1", UpstreamModel: "gpt-4.1", ChannelID: channel.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store.Put(core.RuntimeSnapshot{
+		Key:                  key,
+		SampleCount:          8,
+		SuccessRate:          0.99,
+		FailureAvoidance:     true,
+		ProbeRecoveryPending: true,
+		ProbeTriggerReason:   service.ChannelAuthConfigRecoveryReason,
+		LastRealAttemptAt:    now.Add(-2 * time.Hour).Unix(),
+		RealSampleCount30m:   0,
+	})
+
+	selector := NewProbeSelector(store, nil)
+	candidates, err := selector.Select(ProbeConfig{
+		MinChannelInterval:           time.Second,
+		SkipRecentRealRequestEnabled: true,
+		RecentRealRequestWindow:      30 * time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, reasonAuthConfigError, candidates[0].Reason)
 }
 
 func TestProbeSelectorRateLimitsByRuntimeKey(t *testing.T) {

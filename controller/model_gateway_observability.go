@@ -2962,7 +2962,7 @@ func modelGatewayHealthCheckQueueReasons(item modelgatewayobservability.RuntimeS
 	scoreAnomaly := strings.TrimSpace(item.ProbeTriggerReason) == modelgatewaycore.ProbeReasonScoreAnomalyFastProbe ||
 		strings.TrimSpace(item.ProbeRecoveryPhase) == modelgatewaycore.ProbeRecoveryPhaseFastProbe ||
 		strings.TrimSpace(item.ProbeRecoveryPhase) == modelgatewaycore.ProbeRecoveryPhasePendingRealConfirmation
-	if item.ConfigErrorIsolated || item.AuthConfigErrorCount > 0 {
+	if item.ConfigErrorIsolated {
 		addReason("config_error", 100, "critical")
 	}
 	if item.CircuitOpen {
@@ -2983,6 +2983,9 @@ func modelGatewayHealthCheckQueueReasons(item modelgatewayobservability.RuntimeS
 		} else if failureAvoidanceReason == service.ChannelOverloadRecoveryReason ||
 			probeTriggerReason == service.ChannelOverloadRecoveryReason {
 			addReason(service.ChannelOverloadRecoveryReason, 92, "warning")
+		} else if failureAvoidanceReason == service.ChannelAuthConfigRecoveryReason ||
+			probeTriggerReason == service.ChannelAuthConfigRecoveryReason {
+			addReason(service.ChannelAuthConfigRecoveryReason, 92, "warning")
 		} else {
 			addReason("failure_avoidance", 88, "warning")
 		}
@@ -3031,6 +3034,8 @@ func modelGatewayHealthCheckReasonLabel(key string) string {
 		return "频繁超时降级中"
 	case service.ChannelOverloadRecoveryReason:
 		return "429 过载恢复中"
+	case service.ChannelAuthConfigRecoveryReason:
+		return "配置异常恢复中"
 	case "failure_avoidance":
 		return "近期失败恢复中"
 	case "probe_recovery_pending":
@@ -3101,6 +3106,7 @@ func modelGatewayHealthCheckProbeSkipReason(item modelgatewayobservability.Runti
 	if strings.TrimSpace(item.CircuitState) == string(modelgatewaycore.CircuitStateHalfOpen) ||
 		strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason ||
 		strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelOverloadRecoveryReason ||
+		strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelAuthConfigRecoveryReason ||
 		strings.TrimSpace(item.ProbeTriggerReason) == modelgatewaycore.ProbeReasonScoreAnomalyFastProbe ||
 		strings.TrimSpace(item.ProbeRecoveryPhase) == modelgatewaycore.ProbeRecoveryPhaseFastProbe {
 		return ""
@@ -3139,6 +3145,7 @@ func modelGatewayHealthCheckNextProbeSchedule(item modelgatewayobservability.Run
 	bypassRecentRequestSkip := strings.TrimSpace(item.CircuitState) == string(modelgatewaycore.CircuitStateHalfOpen) ||
 		strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason ||
 		strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelOverloadRecoveryReason ||
+		strings.TrimSpace(item.ProbeTriggerReason) == service.ChannelAuthConfigRecoveryReason ||
 		strings.TrimSpace(item.ProbeTriggerReason) == modelgatewaycore.ProbeReasonScoreAnomalyFastProbe ||
 		strings.TrimSpace(item.ProbeRecoveryPhase) == modelgatewaycore.ProbeRecoveryPhaseFastProbe
 	if !bypassRecentRequestSkip && setting.ProbeSkipRecentRealRequestEnabled && item.LastRealAttemptAt > 0 {
@@ -3168,7 +3175,7 @@ func modelGatewayHealthCheckQueueAccumulateSummary(summary *ModelGatewayHealthCh
 	if modelGatewayHealthCheckReasonsContain(reasons, modelGatewayHealthCheckQueueTypeScoreAnomaly) {
 		summary.ScoreAnomalyCount++
 	}
-	if item.ProbeRecoveryPending || item.FailureAvoidance || modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") || modelGatewayHealthCheckReasonsContain(reasons, service.ChannelTimeoutRecoveryReason) || modelGatewayHealthCheckReasonsContain(reasons, service.ChannelOverloadRecoveryReason) || modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") || modelGatewayHealthCheckReasonsContain(reasons, modelGatewayHealthCheckQueueTypeCircuitHalfOpen) {
+	if item.ProbeRecoveryPending || item.FailureAvoidance || modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") || modelGatewayHealthCheckReasonsContain(reasons, service.ChannelTimeoutRecoveryReason) || modelGatewayHealthCheckReasonsContain(reasons, service.ChannelOverloadRecoveryReason) || modelGatewayHealthCheckReasonsContain(reasons, service.ChannelAuthConfigRecoveryReason) || modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") || modelGatewayHealthCheckReasonsContain(reasons, modelGatewayHealthCheckQueueTypeCircuitHalfOpen) {
 		summary.RecoveryCount++
 	}
 	if item.CircuitOpen || item.Cooldown || item.ConfigErrorIsolated || modelGatewayHealthCheckReasonsContain(reasons, "circuit_open") || modelGatewayHealthCheckReasonsContain(reasons, "cooldown") || modelGatewayHealthCheckReasonsContain(reasons, "config_error") {
@@ -3193,6 +3200,7 @@ func modelGatewayHealthCheckQueueItemType(item modelgatewayobservability.Runtime
 		modelGatewayHealthCheckReasonsContain(reasons, "failure_avoidance") ||
 		modelGatewayHealthCheckReasonsContain(reasons, service.ChannelTimeoutRecoveryReason) ||
 		modelGatewayHealthCheckReasonsContain(reasons, service.ChannelOverloadRecoveryReason) ||
+		modelGatewayHealthCheckReasonsContain(reasons, service.ChannelAuthConfigRecoveryReason) ||
 		modelGatewayHealthCheckReasonsContain(reasons, "probe_recovery_pending") ||
 		modelGatewayHealthCheckReasonsContain(reasons, modelGatewayHealthCheckQueueTypeCircuitHalfOpen) {
 		return modelGatewayHealthCheckQueueTypeRecovery

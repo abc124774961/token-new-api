@@ -26,7 +26,7 @@ func TestConfigIsolationOneFailureDoesNotIsolate(t *testing.T) {
 	require.False(t, manager.IsIsolated(key))
 }
 
-func TestConfigIsolationTwoFailuresIsolate(t *testing.T) {
+func TestConfigIsolationTwoFailuresRemainNonBlocking(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
 	manager := newChannelConfigIsolationManager(time.Hour, 2, func() time.Time { return now })
 	key := NewChannelConfigIsolationKey(1002, "gpt-4o", "default", constant.EndpointTypeOpenAI)
@@ -35,13 +35,13 @@ func TestConfigIsolationTwoFailuresIsolate(t *testing.T) {
 	status := manager.RecordAuthError(key, "second 403")
 
 	require.NotNil(t, status)
-	require.True(t, status.Active)
+	require.False(t, status.Active)
 	require.Equal(t, "second 403", status.Reason)
 	require.Equal(t, 2, status.FailureCount)
 	require.Equal(t, now.Unix(), status.LastErrorAt)
-	require.Equal(t, now.Add(time.Hour).Unix(), status.Until)
-	require.EqualValues(t, 3600, status.RemainingSec)
-	require.True(t, manager.IsIsolated(key))
+	require.Zero(t, status.Until)
+	require.Zero(t, status.RemainingSec)
+	require.False(t, manager.IsIsolated(key))
 }
 
 func TestConfigIsolationSuccessClearsKey(t *testing.T) {
@@ -51,7 +51,8 @@ func TestConfigIsolationSuccessClearsKey(t *testing.T) {
 
 	manager.RecordAuthError(key, "401")
 	manager.RecordAuthError(key, "401")
-	require.True(t, manager.IsIsolated(key))
+	require.False(t, manager.IsIsolated(key))
+	require.NotNil(t, manager.GetStatus(key))
 
 	manager.RecordSuccess(key)
 
@@ -59,18 +60,18 @@ func TestConfigIsolationSuccessClearsKey(t *testing.T) {
 	require.False(t, manager.IsIsolated(key))
 }
 
-func TestConfigIsolationTTLExpiredDoesNotIsolate(t *testing.T) {
+func TestConfigIsolationAuthTrackingDoesNotUseTTL(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
 	manager := newChannelConfigIsolationManager(time.Hour, 2, func() time.Time { return now })
 	key := NewChannelConfigIsolationKey(1004, "gpt-4o", "default", constant.EndpointTypeOpenAI)
 
 	manager.RecordAuthError(key, "401")
 	manager.RecordAuthError(key, "403")
-	require.True(t, manager.IsIsolated(key))
+	require.False(t, manager.IsIsolated(key))
 
 	now = now.Add(time.Hour + time.Second)
 
-	require.Nil(t, manager.GetStatus(key))
+	require.NotNil(t, manager.GetStatus(key))
 	require.False(t, manager.IsIsolated(key))
 }
 
@@ -86,7 +87,10 @@ func TestConfigIsolationKeysAreIndependent(t *testing.T) {
 	manager.RecordAuthError(baseKey, "401")
 	manager.RecordAuthError(baseKey, "403")
 
-	require.True(t, manager.IsIsolated(baseKey))
+	status := manager.GetStatus(baseKey)
+	require.NotNil(t, status)
+	require.Equal(t, 2, status.FailureCount)
+	require.False(t, manager.IsIsolated(baseKey))
 	require.False(t, manager.IsIsolated(otherModelKey))
 	require.False(t, manager.IsIsolated(otherGroupKey))
 	require.False(t, manager.IsIsolated(otherEndpointKey))
@@ -103,14 +107,16 @@ func TestConfigIsolationClearForChannel(t *testing.T) {
 	for _, key := range []ChannelConfigIsolationKey{channelKey, channelPeerKey, otherChannelKey} {
 		manager.RecordAuthError(key, "401")
 		manager.RecordAuthError(key, "403")
-		require.True(t, manager.IsIsolated(key))
+		require.NotNil(t, manager.GetStatus(key))
+		require.False(t, manager.IsIsolated(key))
 	}
 
 	manager.ClearForChannel(1007)
 
-	require.False(t, manager.IsIsolated(channelKey))
-	require.False(t, manager.IsIsolated(channelPeerKey))
-	require.True(t, manager.IsIsolated(otherChannelKey))
+	require.Nil(t, manager.GetStatus(channelKey))
+	require.Nil(t, manager.GetStatus(channelPeerKey))
+	require.NotNil(t, manager.GetStatus(otherChannelKey))
+	require.False(t, manager.IsIsolated(otherChannelKey))
 }
 
 func TestConfigIsolationConcurrentRecordsAreSafe(t *testing.T) {
@@ -130,6 +136,6 @@ func TestConfigIsolationConcurrentRecordsAreSafe(t *testing.T) {
 
 	status := manager.GetStatus(key)
 	require.NotNil(t, status)
-	require.True(t, status.Active)
+	require.False(t, status.Active)
 	require.Equal(t, 32, status.FailureCount)
 }

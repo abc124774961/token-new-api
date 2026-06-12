@@ -6,6 +6,7 @@ type GroupRatioInfo struct {
 	GroupRatio        float64
 	GroupSpecialRatio float64
 	HasSpecialRatio   bool
+	BaseGroupRatio    float64
 }
 
 type DynamicBillingSnapshot struct {
@@ -76,6 +77,7 @@ type PriceData struct {
 	QuotaToPreConsume     int // 按量计费的预消耗额度
 	QuotaBeforeGroup      float64
 	GroupRatioInfo        GroupRatioInfo
+	BillingMultiplier     *BillingMultiplierSnapshot
 	FixedPriceMarginGuard *FixedPriceMarginGuardInfo
 }
 

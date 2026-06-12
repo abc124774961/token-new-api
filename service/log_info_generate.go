@@ -287,6 +287,16 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other map[string]interf
 	if relayInfo == nil || other == nil {
 		return
 	}
+	if snapshot := relayInfo.PriceData.BillingMultiplier; snapshot != nil {
+		other["billing_multiplier_applied"] = snapshot.Applied
+		other["billing_multiplier_base_group_ratio"] = snapshot.BaseGroupRatio
+		other["billing_multiplier_final_group_ratio"] = snapshot.FinalGroupRatio
+		other["billing_multiplier"] = snapshot.Multiplier
+		if len(snapshot.Rules) > 0 {
+			other["billing_multiplier_rules"] = snapshot.Rules
+			other["billing_source_detail"] = "multiplier_policy"
+		}
+	}
 	if snapshot := relayInfo.DynamicBilling; snapshot != nil {
 		other["dynamic_billing_applied"] = snapshot.Applied
 		other["dynamic_billing_group"] = snapshot.Group

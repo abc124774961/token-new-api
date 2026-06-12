@@ -7,7 +7,9 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
+	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 )
 
@@ -23,7 +25,6 @@ type RuntimeStateProvider interface {
 	FailureAvoidanceActive(channelID int) bool
 	FailureAvoidanceStatus(channelID int) *service.ChannelFailureAvoidanceStatus
 	FirstBytePendingStatus(channelID int) *service.ChannelFirstBytePendingStatus
-	ConfigErrorIsolationStatus(key core.RuntimeKey) *service.ChannelConfigIsolationStatus
 }
 
 type RuntimeAccountStateProvider interface {
@@ -83,15 +84,6 @@ func (p *ServiceRuntimeStateProvider) FirstBytePendingStatus(channelID int) *ser
 
 func (p *ServiceRuntimeStateProvider) FirstBytePendingStatusForIdentity(identity service.ChannelRuntimeIdentity) *service.ChannelFirstBytePendingStatus {
 	return service.GetChannelRuntimeFirstBytePendingStatus(identity)
-}
-
-func (p *ServiceRuntimeStateProvider) ConfigErrorIsolationStatus(key core.RuntimeKey) *service.ChannelConfigIsolationStatus {
-	return service.GetChannelConfigIsolationStatus(service.NewChannelRuntimeConfigIsolationKey(
-		serviceRuntimeIdentityFromKey(key),
-		key.RequestedModel,
-		key.Group,
-		key.EndpointType,
-	))
 }
 
 type RuntimeSnapshotEnricher struct {
@@ -187,7 +179,7 @@ func (e *RuntimeSnapshotEnricher) Enrich(candidate core.Candidate, snapshot core
 	snapshot = e.applyFirstBytePending(snapshot, channelID, identity)
 	snapshot.Cooldown = snapshot.Cooldown || e.stateProvider.ConcurrencyCooldownActive(channelID)
 	snapshot = e.applyFailureAvoidance(snapshot, channelID, identity)
-	snapshot = e.applyConfigErrorIsolation(snapshot)
+	snapshot = clearConfigErrorIsolationSnapshot(snapshot)
 	snapshot = e.applyCostSnapshot(candidate, snapshot, policy)
 	snapshot = e.applyCircuit(snapshot, policy)
 	return snapshot
@@ -225,16 +217,10 @@ func (e *RuntimeSnapshotEnricher) applyFailureAvoidance(snapshot core.RuntimeSna
 	return snapshot
 }
 
-func (e *RuntimeSnapshotEnricher) applyConfigErrorIsolation(snapshot core.RuntimeSnapshot) core.RuntimeSnapshot {
-	status := e.stateProvider.ConfigErrorIsolationStatus(snapshot.Key)
-	if status == nil {
-		return snapshot
-	}
-	snapshot.ConfigErrorIsolated = status.Active
-	snapshot.IsolationReason = status.Reason
-	snapshot.IsolationUntil = status.Until
-	snapshot.AuthConfigErrorCount = status.FailureCount
-	snapshot.LastAuthConfigErrorAt = status.LastErrorAt
+func clearConfigErrorIsolationSnapshot(snapshot core.RuntimeSnapshot) core.RuntimeSnapshot {
+	snapshot.ConfigErrorIsolated = false
+	snapshot.IsolationReason = ""
+	snapshot.IsolationUntil = 0
 	return snapshot
 }
 
@@ -424,6 +410,12 @@ func (e *RuntimeSnapshotEnricher) applyCostSnapshot(candidate core.Candidate, sn
 	} else if snapshot.GroupPriorityRatio <= 0 {
 		snapshot.GroupPriorityRatio = 1
 	}
+	if ratio := candidateGroupRevenueRatio(candidate, policy); ratio > 0 {
+		snapshot.RevenueRatio = ratio
+	}
+	if revenue := candidateRevenueRatio(candidate, policy); revenue > 0 {
+		snapshot.RevenueRatio = revenue
+	}
 	return snapshot
 }
 
@@ -492,6 +484,90 @@ func candidateGroupPriorityRatio(candidate core.Candidate, policy core.GroupSmar
 		return 0
 	}
 	return policy.GroupPriorityRatio[group]
+}
+
+func candidateGroupRevenueRatio(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {
+	group := strings.TrimSpace(candidate.Group)
+	if group == "" {
+		group = strings.TrimSpace(candidate.RuntimeKey.Group)
+	}
+	if group == "" || len(policy.GroupRevenueRatio) == 0 {
+		return 0
+	}
+	return policy.GroupRevenueRatio[group]
+}
+
+func candidateRevenueRatio(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {
+	group := strings.TrimSpace(candidate.Group)
+	if group == "" {
+		group = strings.TrimSpace(candidate.RuntimeKey.Group)
+	}
+	if group == "" {
+		return 0
+	}
+	modelName := strings.TrimSpace(candidate.RuntimeKey.RequestedModel)
+	if modelName == "" {
+		modelName = strings.TrimSpace(candidate.RuntimeKey.UpstreamModel)
+	}
+	if modelName == "" {
+		modelName = strings.TrimSpace(candidate.UpstreamModel)
+	}
+	if modelName == "" || candidate.Channel == nil {
+		return 0
+	}
+	groupRatio := candidateBillingGroupRatio(candidate, policy, group)
+	groupRatio = dynamicCandidateGroupRatio(modelName, group, groupRatio, policy)
+	return requestedModelRevenueRatio(modelName, groupRatio)
+}
+
+func candidateBillingGroupRatio(candidate core.Candidate, policy core.GroupSmartPolicy, group string) float64 {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return 0
+	}
+	if ratio, ok := ratio_setting.GetGroupGroupRatio(strings.TrimSpace(policy.UserGroup), group); ok && ratio > 0 {
+		return ratio
+	}
+	if ratio := candidateGroupRevenueRatio(candidate, policy); ratio > 0 {
+		return ratio
+	}
+	if ratio_setting.ContainsGroupRatio(group) {
+		return ratio_setting.GetGroupRatio(group)
+	}
+	return 1
+}
+
+func dynamicCandidateGroupRatio(modelName string, group string, staticGroupRatio float64, policy core.GroupSmartPolicy) float64 {
+	if strings.TrimSpace(policy.BillingRatioMode) != scheduler_setting.BillingRatioModeDynamic {
+		return staticGroupRatio
+	}
+	setting := scheduler_setting.GetSetting()
+	snapshot := modelgatewaydynamicbilling.Apply(modelgatewaydynamicbilling.ApplyInput{
+		RequestedModel:   modelName,
+		Group:            group,
+		StaticGroupRatio: staticGroupRatio,
+		Mode:             scheduler_setting.BillingRatioModeDynamic,
+		Setting:          setting,
+		Provider:         modelgatewaydynamicbilling.DefaultRatioProvider(),
+	})
+	if snapshot.Applied && snapshot.DynamicRatio > 0 {
+		return snapshot.DynamicRatio
+	}
+	return staticGroupRatio
+}
+
+func requestedModelRevenueRatio(modelName string, groupRatio float64) float64 {
+	if groupRatio <= 0 {
+		return 0
+	}
+	value, usePrice, ok := ratio_setting.GetModelRatioOrPrice(modelName)
+	if !ok || value <= 0 {
+		return 0
+	}
+	if usePrice {
+		return value * groupRatio
+	}
+	return value * 2 * groupRatio
 }
 
 func candidateCostModelName(candidate core.Candidate) string {

@@ -64,6 +64,7 @@ type SchedulerSettings struct {
 	QueueFairness         QueueFairnessPolicySetting
 	CircuitBreakerEnabled bool
 	GroupPriorityRatio    map[string]float64
+	GroupRevenueRatio     map[string]float64
 	GroupPolicies         map[string]GroupPolicySetting
 }
 

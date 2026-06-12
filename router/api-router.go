@@ -198,6 +198,16 @@ func SetApiRouter(router *gin.Engine) {
 			subscriptionAdminRoute.DELETE("/user_subscriptions/:id", middleware.RequireAdminPermission(middleware.AdminPermissionCommercialSubscriptionUpdate), controller.AdminDeleteUserSubscription)
 		}
 
+		billingMultiplierRoute := apiRouter.Group("/billing-multiplier-policies")
+		billingMultiplierRoute.Use(middleware.AdminAuth())
+		{
+			billingMultiplierRoute.GET("/", middleware.RequireAdminPermission(middleware.AdminPermissionModelRatioUpdate), controller.ListBillingMultiplierPolicies)
+			billingMultiplierRoute.POST("/", middleware.RequireAdminPermission(middleware.AdminPermissionModelRatioUpdate), controller.CreateBillingMultiplierPolicy)
+			billingMultiplierRoute.PUT("/:id", middleware.RequireAdminPermission(middleware.AdminPermissionModelRatioUpdate), controller.UpdateBillingMultiplierPolicy)
+			billingMultiplierRoute.DELETE("/:id", middleware.RequireAdminPermission(middleware.AdminPermissionModelRatioUpdate), controller.DeleteBillingMultiplierPolicy)
+			billingMultiplierRoute.POST("/preview", middleware.RequireAdminPermission(middleware.AdminPermissionModelRatioUpdate), controller.PreviewBillingMultiplierPolicy)
+		}
+
 		// Subscription payment callbacks (no auth)
 		apiRouter.POST("/subscription/epay/notify", controller.SubscriptionEpayNotify)
 		apiRouter.GET("/subscription/epay/notify", controller.SubscriptionEpayNotify)

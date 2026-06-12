@@ -187,6 +187,9 @@ func (r *MemoryStickyRouter) save(c *gin.Context, req *core.DispatchRequest, pla
 	if r == nil || req == nil || plan == nil || plan.Channel == nil || plan.Channel.Id <= 0 {
 		return
 	}
+	if plan.StickySaveSuppressed {
+		return
+	}
 	if StickyRoutingDisabled(c) {
 		return
 	}
@@ -231,6 +234,9 @@ func (r *MemoryStickyRouter) Report(c *gin.Context, req *core.DispatchRequest, p
 		return
 	}
 	if plan.CacheAffinity || plan.StickySource == stickySourceCacheAffinity {
+		return
+	}
+	if plan.StickySaveSuppressed {
 		return
 	}
 	if result.Success {

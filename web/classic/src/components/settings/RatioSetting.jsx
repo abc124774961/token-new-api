@@ -26,6 +26,7 @@ import GroupRatioSettings from '../../pages/Setting/Ratio/GroupRatioSettings';
 import ModelRatioNotSetEditor from '../../pages/Setting/Ratio/ModelRationNotSetEditor';
 import UpstreamRatioSync from '../../pages/Setting/Ratio/UpstreamRatioSync';
 import ToolPriceSettings from '../../pages/Setting/Ratio/ToolPriceSettings';
+import BillingMultiplierPolicies from '../../pages/Setting/Ratio/BillingMultiplierPolicies';
 
 import { API, showError, showWarning, toBoolean } from '../../helpers';
 import { ADMIN_PERMISSION_KEYS } from '../../apps/admin-console/permissions/adminPermissions.config';
@@ -124,6 +125,15 @@ const RatioSetting = () => {
               options={inputs}
               refresh={onRefresh}
               canManageRatioDanger={canManageRatioDanger}
+              ratioDangerPermissionDenied={ratioDangerPermissionDenied}
+              ensureRatioPermission={ensureRatioPermission}
+            />
+          </Tabs.TabPane>
+          <Tabs.TabPane
+            tab={t('会员/用户倍率规则')}
+            itemKey='billing_multiplier'
+          >
+            <BillingMultiplierPolicies
               ratioDangerPermissionDenied={ratioDangerPermissionDenied}
               ensureRatioPermission={ensureRatioPermission}
             />

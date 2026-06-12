@@ -89,7 +89,9 @@ func ApplySelectedGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	}
 	groupRatioInfo := HandleGroupRatio(ctx, relayInfo)
 	applyDynamicBillingRatio(ctx, relayInfo, &groupRatioInfo)
+	applyBillingMultiplier(ctx, relayInfo, &groupRatioInfo)
 	relayInfo.PriceData.GroupRatioInfo = groupRatioInfo
+	relayInfo.PriceData.BillingMultiplier = relayInfoBillingMultiplier(relayInfo)
 	if snap := relayInfo.TieredBillingSnapshot; snap != nil {
 		snap.GroupRatio = groupRatioInfo.GroupRatio
 		snap.EstimatedQuotaAfterGroup = billingexpr.QuotaRound(snap.EstimatedQuotaBeforeGroup * groupRatioInfo.GroupRatio)
@@ -106,6 +108,69 @@ func applyCurrentPlanBillingRatio(ctx *gin.Context, relayInfo *relaycommon.Relay
 		return
 	}
 	applyDynamicBillingRatio(ctx, relayInfo, groupRatioInfo)
+	applyBillingMultiplier(ctx, relayInfo, groupRatioInfo)
+}
+
+func relayInfoBillingMultiplier(relayInfo *relaycommon.RelayInfo) *types.BillingMultiplierSnapshot {
+	if relayInfo == nil || relayInfo.PriceData.BillingMultiplier == nil {
+		return nil
+	}
+	return relayInfo.PriceData.BillingMultiplier
+}
+
+func applyBillingMultiplier(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, groupRatioInfo *types.GroupRatioInfo) {
+	if relayInfo == nil || groupRatioInfo == nil {
+		return
+	}
+	baseRatio := groupRatioInfo.GroupRatio
+	groupRatioInfo.BaseGroupRatio = baseRatio
+	subscriptionPlanID := relayInfo.SubscriptionPlanId
+	subscriptionPlanIDs := []int(nil)
+	if subscriptionPlanID <= 0 {
+		subscriptionPlanIDs = resolveBillingMultiplierSubscriptionPlanIDs(relayInfo.UserId)
+		if len(subscriptionPlanIDs) > 0 {
+			subscriptionPlanID = subscriptionPlanIDs[0]
+		}
+	} else {
+		subscriptionPlanIDs = []int{subscriptionPlanID}
+	}
+	snapshot := model.EvaluateBillingMultiplier(model.BillingMultiplierContext{
+		UserID:              relayInfo.UserId,
+		UserGroup:           relayInfo.UserGroup,
+		UsingGroup:          relayInfo.UsingGroup,
+		ModelName:           relayInfo.OriginModelName,
+		SubscriptionPlanID:  subscriptionPlanID,
+		SubscriptionPlanIDs: subscriptionPlanIDs,
+		BaseGroupRatio:      baseRatio,
+	})
+	groupRatioInfo.GroupRatio = snapshot.FinalGroupRatio
+	if snapshot.Applied {
+		relayInfo.PriceData.BillingMultiplier = &snapshot
+	} else {
+		relayInfo.PriceData.BillingMultiplier = nil
+	}
+}
+
+func resolveBillingMultiplierSubscriptionPlanIDs(userID int) []int {
+	if userID <= 0 {
+		return nil
+	}
+	subscriptions, err := model.GetAllActiveUserSubscriptions(userID)
+	if err != nil || len(subscriptions) == 0 {
+		return nil
+	}
+	seen := map[int]struct{}{}
+	planIDs := make([]int, 0, len(subscriptions))
+	for _, summary := range subscriptions {
+		if summary.Subscription != nil && summary.Subscription.PlanId > 0 {
+			if _, ok := seen[summary.Subscription.PlanId]; ok {
+				continue
+			}
+			seen[summary.Subscription.PlanId] = struct{}{}
+			planIDs = append(planIDs, summary.Subscription.PlanId)
+		}
+	}
+	return planIDs
 }
 
 func applyDynamicBillingRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, groupRatioInfo *types.GroupRatioInfo) {
@@ -306,6 +371,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		CacheCreation1hRatio: cacheCreationRatio1h,
 		QuotaToPreConsume:    preConsumedQuota,
 		QuotaBeforeGroup:     quotaBeforeGroup,
+		BillingMultiplier:    relayInfoBillingMultiplier(info),
 	}
 
 	if common.DebugEnabled {
@@ -369,12 +435,13 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 	}
 
 	priceData := types.PriceData{
-		FreeModel:      freeModel,
-		ModelPrice:     modelPrice,
-		ModelRatio:     modelRatio,
-		UsePrice:       usePrice,
-		Quota:          quota,
-		GroupRatioInfo: groupRatioInfo,
+		FreeModel:         freeModel,
+		ModelPrice:        modelPrice,
+		ModelRatio:        modelRatio,
+		UsePrice:          usePrice,
+		Quota:             quota,
+		GroupRatioInfo:    groupRatioInfo,
+		BillingMultiplier: relayInfoBillingMultiplier(info),
 	}
 	priceData.FixedPriceMarginGuard = fixedPriceMarginGuard
 	return priceData, nil
@@ -508,6 +575,7 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 		GroupRatioInfo:    groupRatioInfo,
 		QuotaToPreConsume: preConsumedQuota,
 		QuotaBeforeGroup:  quotaBeforeGroup,
+		BillingMultiplier: relayInfoBillingMultiplier(info),
 	}
 
 	if common.DebugEnabled {

@@ -25,6 +25,7 @@ const (
 	costFirstStickyEscapeCacheSpeedDrop      = 0.03
 	costFirstStickyEscapeMinSamples          = 5
 	costFirstStickyEscapeSuccessSlack        = 0.02
+	negativeCurrentGroupMarginReason         = "negative_current_group_margin"
 )
 
 type DefaultSmartChannelSelector struct {
@@ -68,11 +69,12 @@ type stickySaveOnSelectRouter interface {
 }
 
 type candidateEvaluation struct {
-	candidate     core.Candidate
-	snapshot      core.RuntimeSnapshot
-	score         core.ScoreResult
-	stickyMatched bool
-	rejectReason  string
+	candidate      core.Candidate
+	snapshot       core.RuntimeSnapshot
+	score          core.ScoreResult
+	stickyMatched  bool
+	rejectReason   string
+	negativeMargin bool
 }
 
 type costFirstGuardResult struct {
@@ -282,12 +284,15 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			snapshot = s.snapshotEnricher.Enrich(candidate, snapshot, policy)
 		}
 		stickyMatched := hasSticky && isStickyCandidate(candidate, stickyRoute)
+		negativeMargin := negativeCurrentGroupMargin(snapshot)
 		rejectReason := s.candidateUnavailableReason(c, req, candidate, snapshot, policy)
 		if rejectReason == ClientEmptyOutputSwitchReason {
 			markClientEmptyOutputSwitchChannelSkipped(c, candidate, snapshot)
 		}
 		if stickyMatched && stickyBreak == "" && rejectReason != "" {
 			stickyBreak = rejectReason
+		} else if stickyMatched && stickyBreak == "" && negativeMargin {
+			stickyBreak = negativeCurrentGroupMarginReason
 		}
 		referenceCandidate := snapshot.CostReferenceRatio
 		if referenceCandidate <= 0 && !(hasSticky && stickyRoute.CacheAware) {
@@ -297,10 +302,11 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			costReferenceRatio = referenceCandidate
 		}
 		evaluations = append(evaluations, candidateEvaluation{
-			candidate:     candidate,
-			snapshot:      snapshot,
-			stickyMatched: stickyMatched,
-			rejectReason:  rejectReason,
+			candidate:      candidate,
+			snapshot:       snapshot,
+			stickyMatched:  stickyMatched,
+			rejectReason:   rejectReason,
+			negativeMargin: negativeMargin,
 		})
 	}
 	for _, evaluation := range evaluations {
@@ -309,10 +315,11 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		if reference, ok := s.costReferenceForCandidate(candidate, snapshot, policy, costReferenceRatio); ok {
 			snapshot.CostReferenceRatio = reference
 		}
-		scored := s.scorePreparedCandidate(candidate, snapshot, policy, evaluation.stickyMatched, retryIntent)
+		scored := s.scorePreparedCandidate(candidate, snapshot, policy, evaluation.stickyMatched && !evaluation.negativeMargin, retryIntent)
 		explanation := scored.Explanation
 		applyResourceProtectionExplanation(&explanation, candidate, resourceDecision)
 		score := scored.Score
+		explanation.NegativeCurrentGroupMargin = evaluation.negativeMargin
 		if evaluation.rejectReason != "" {
 			explanation.RejectReason = evaluation.rejectReason
 			if evaluation.rejectReason == ClientEmptyOutputSwitchReason && s.emptyOutputSwitch != nil {
@@ -335,7 +342,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			stickySnapshot = snapshot
 			stickyScore = score
 			stickySaturated = routingConcurrencySaturated(snapshot)
-			stickyFound = true
+			stickyFound = !evaluation.negativeMargin
 		}
 		if routingConcurrencySaturated(snapshot) {
 			evaluation.snapshot = snapshot
@@ -491,6 +498,11 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			return nil, false, nil
 		}
 	}
+	stickySaveSuppressed := negativeCurrentGroupMargin(bestSnapshot)
+	stickySuppressionReason := ""
+	if stickySaveSuppressed {
+		stickySuppressionReason = negativeCurrentGroupMarginReason
+	}
 	plan := &core.DispatchPlan{
 		Channel:                     bestCandidate.Channel,
 		ResourceRef:                 bestCandidate.ResourceRef,
@@ -518,6 +530,8 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		StickyBreak:                 stickyBreak,
 		StickyDecision:              stickyDecision,
 		CacheAffinity:               hasSticky && stickyRoute.CacheAware,
+		StickySaveSuppressed:        stickySaveSuppressed,
+		StickySuppressionReason:     stickySuppressionReason,
 		PolicyMode:                  policy.Mode,
 		AutoMode:                    policy.AutoMode,
 		Strategy:                    policy.Strategy,
@@ -540,7 +554,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		PrimaryWaitTimeoutMs:        resourceDecision.PrimaryWaitTimeoutMs,
 		PrimaryQueueMaxDepth:        resourceDecision.PrimaryQueueMaxDepth,
 	}
-	if s.shouldSaveStickyOnSelect() {
+	if s.shouldSaveStickyOnSelect() && !plan.StickySaveSuppressed {
 		s.stickyRouter.Save(c, &req, plan)
 	}
 	if plan.StickySource != "" && plan.SelectedReason == "score_items" && plan.StickyBreak != "" {
@@ -884,6 +898,8 @@ func candidateExplanation(candidate core.Candidate, snapshot core.RuntimeSnapsho
 		CostReferenceRatio:                snapshot.CostReferenceRatio,
 		CostPricingMode:                   snapshot.CostPricingMode,
 		GroupPriorityRatio:                snapshot.GroupPriorityRatio,
+		RevenueRatio:                      snapshot.RevenueRatio,
+		NegativeCurrentGroupMargin:        negativeCurrentGroupMargin(snapshot),
 		CircuitState:                      snapshot.CircuitState,
 		CircuitOpen:                       snapshot.CircuitOpen,
 		CircuitOpenUntil:                  snapshot.CircuitOpenUntil,
@@ -1148,6 +1164,7 @@ func mergeRuntimeSnapshotDynamicFields(snapshot core.RuntimeSnapshot, dynamic co
 	if dynamic.GroupPriorityRatio > 0 {
 		snapshot.GroupPriorityRatio = dynamic.GroupPriorityRatio
 	}
+	snapshot.RevenueRatio = dynamic.RevenueRatio
 	snapshot.ActiveConcurrency = dynamic.ActiveConcurrency
 	snapshot.MaxConcurrency = dynamic.MaxConcurrency
 	snapshot.ConfiguredConcurrencyLimit = dynamic.ConfiguredConcurrencyLimit
@@ -1175,9 +1192,9 @@ func mergeRuntimeSnapshotDynamicFields(snapshot core.RuntimeSnapshot, dynamic co
 	snapshot.ProbeRecoveryPhase = dynamic.ProbeRecoveryPhase
 	snapshot.ProbeFastRecoveryAttempts = dynamic.ProbeFastRecoveryAttempts
 	snapshot.ProbeAnomalyTriggerItems = append([]string(nil), dynamic.ProbeAnomalyTriggerItems...)
-	snapshot.ConfigErrorIsolated = dynamic.ConfigErrorIsolated
-	snapshot.IsolationReason = dynamic.IsolationReason
-	snapshot.IsolationUntil = dynamic.IsolationUntil
+	snapshot.ConfigErrorIsolated = false
+	snapshot.IsolationReason = ""
+	snapshot.IsolationUntil = 0
 	snapshot.AuthConfigErrorCount = dynamic.AuthConfigErrorCount
 	snapshot.LastAuthConfigErrorAt = dynamic.LastAuthConfigErrorAt
 	return snapshot
@@ -1707,6 +1724,16 @@ func stickyEscapeCost(snapshot core.RuntimeSnapshot) float64 {
 		groupRatio = 1
 	}
 	return snapshot.CostRatio * groupRatio
+}
+
+func negativeCurrentGroupMargin(snapshot core.RuntimeSnapshot) bool {
+	if snapshot.CostRatio <= 0 || snapshot.RevenueRatio <= 0 {
+		return false
+	}
+	if strings.TrimSpace(snapshot.CostPricingMode) == "request" {
+		return false
+	}
+	return snapshot.CostRatio > snapshot.RevenueRatio
 }
 
 func sameRoutingCandidate(left core.Candidate, right core.Candidate) bool {

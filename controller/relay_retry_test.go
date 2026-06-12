@@ -1795,7 +1795,7 @@ func TestProcessChannelErrorDoesNotAutoDisableChannelForUpstreamFailure(t *testi
 	require.False(t, service.IsErrorPausedChannel(updated))
 }
 
-func TestProcessChannelErrorRecordsConfigIsolationAfterTwoAuthFailures(t *testing.T) {
+func TestProcessChannelErrorRecordsAuthConfigRecoveryCooling(t *testing.T) {
 	t.Cleanup(func() {
 		service.ClearChannelConfigIsolation(service.NewChannelConfigIsolationKey(918, "gpt-5.5", "default", constant.EndpointTypeOpenAI))
 		service.ClearChannelFailureAvoidance(918)
@@ -1812,24 +1812,29 @@ func TestProcessChannelErrorRecordsConfigIsolationAfterTwoAuthFailures(t *testin
 	key := service.NewChannelConfigIsolationKey(918, "gpt-5.5", "default", constant.EndpointTypeOpenAI)
 
 	processChannelError(ctx, *types.NewChannelError(918, 1, "channel-918", false, "", true), err, false)
-	status := service.GetChannelConfigIsolationStatus(key)
+	require.Nil(t, service.GetChannelConfigIsolationStatus(key))
+	status := service.GetChannelFailureAvoidanceStatus(918)
 	require.NotNil(t, status)
-	require.False(t, status.Active)
+	require.True(t, status.Active)
 	require.Equal(t, 1, status.FailureCount)
-	require.Nil(t, service.GetChannelFailureAvoidanceStatus(918))
+	require.True(t, status.ProbeRecoveryRequired)
+	require.Equal(t, service.ChannelAuthConfigRecoveryReason, status.Reason)
 
 	processChannelError(ctx, *types.NewChannelError(918, 1, "channel-918", false, "", true), err, false)
-	status = service.GetChannelConfigIsolationStatus(key)
+	status = service.GetChannelFailureAvoidanceStatus(918)
 	require.NotNil(t, status)
 	require.True(t, status.Active)
 	require.Equal(t, 2, status.FailureCount)
+	require.True(t, status.ProbeRecoveryRequired)
+	require.Equal(t, service.ChannelAuthConfigRecoveryReason, status.Reason)
 	require.Equal(t, "auth_config_error", classifyRelayAttemptError(ctx, err))
-	require.Nil(t, service.GetChannelFailureAvoidanceStatus(918))
+	require.False(t, service.IsChannelConfigIsolated(key))
 }
 
-func TestRelayChannelConfigSuccessClearsIsolation(t *testing.T) {
+func TestRelayChannelConfigSuccessClearsAuthConfigRecoveryCooling(t *testing.T) {
 	t.Cleanup(func() {
 		service.ClearChannelConfigIsolation(service.NewChannelConfigIsolationKey(919, "gpt-5.5", "default", constant.EndpointTypeOpenAI))
+		service.ClearChannelFailureAvoidance(919)
 	})
 
 	ctx := newRelayRetryContext()
@@ -1838,7 +1843,9 @@ func TestRelayChannelConfigSuccessClearsIsolation(t *testing.T) {
 	key := service.NewChannelConfigIsolationKey(919, "gpt-5.5", "default", constant.EndpointTypeOpenAI)
 	service.RecordChannelConfigAuthError(key, "401")
 	service.RecordChannelConfigAuthError(key, "403")
-	require.True(t, service.IsChannelConfigIsolated(key))
+	service.RecordChannelAuthConfigRecovery(919, nil)
+	require.NotNil(t, service.GetChannelFailureAvoidanceStatus(919))
+	require.False(t, service.IsChannelConfigIsolated(key))
 
 	recordRelayChannelConfigSuccess(ctx, 919, nil, &service.RetryParam{
 		TokenGroup:   "default",
@@ -1847,6 +1854,7 @@ func TestRelayChannelConfigSuccessClearsIsolation(t *testing.T) {
 	})
 
 	require.Nil(t, service.GetChannelConfigIsolationStatus(key))
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(919))
 }
 
 func TestBuildTokenAccountAutomationAuthInvalidEventUsesAccountRuntimeIdentity(t *testing.T) {

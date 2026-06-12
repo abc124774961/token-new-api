@@ -162,6 +162,7 @@ type GroupSmartPolicy struct {
 	QueuePriority             int
 	CircuitBreakerEnabled     bool
 	GroupPriorityRatio        map[string]float64
+	GroupRevenueRatio         map[string]float64
 	ResourceProtectionEnabled bool
 	PrimaryChannelIDs         []int
 	PrimaryWaitTimeoutMs      int
@@ -216,6 +217,8 @@ type DispatchPlan struct {
 	StickyBreak                 string
 	StickyDecision              *StickyDecision
 	CacheAffinity               bool
+	StickySaveSuppressed        bool
+	StickySuppressionReason     string
 	FallbackUsed                bool
 	PolicyMode                  string
 	AutoMode                    string
@@ -383,6 +386,7 @@ type RuntimeSnapshot struct {
 	CostReferenceRatio                float64
 	CostPricingMode                   string
 	GroupPriorityRatio                float64
+	RevenueRatio                      float64
 	CircuitState                      CircuitState
 	CircuitOpen                       bool
 	CircuitOpenUntil                  int64
@@ -621,6 +625,8 @@ type CandidateExplanation struct {
 	CostReferenceRatio                float64            `json:"cost_reference_ratio,omitempty"`
 	CostPricingMode                   string             `json:"cost_pricing_mode,omitempty"`
 	GroupPriorityRatio                float64            `json:"group_priority_ratio,omitempty"`
+	RevenueRatio                      float64            `json:"revenue_ratio,omitempty"`
+	NegativeCurrentGroupMargin        bool               `json:"negative_current_group_margin,omitempty"`
 	CircuitState                      CircuitState       `json:"circuit_state,omitempty"`
 	CircuitOpen                       bool               `json:"circuit_open,omitempty"`
 	CircuitOpenUntil                  int64              `json:"circuit_open_until,omitempty"`

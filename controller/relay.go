@@ -2717,7 +2717,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
 	errorCategory := classifyRelayAttemptError(c, err)
 	if errorCategory == modelgatewaycore.ErrorCategoryAuthConfigError {
-		recordRelayChannelConfigAuthError(c, channelError.ChannelId, err)
+		recordRelayChannelConfigAuthError(c, channelError, err)
 	}
 	traceChannelFailure(c, channelError, err, persistLog)
 	if errorCategory == modelgatewaycore.ErrorCategoryOverloadSkip {
@@ -2920,13 +2920,14 @@ func relayChannelConfigIsolationKey(c *gin.Context, channelID int, info *relayco
 	return service.NewChannelRuntimeConfigIsolationKey(relayRuntimeIdentity(c, channelID), modelName, selectedGroup, endpointType)
 }
 
-func recordRelayChannelConfigAuthError(c *gin.Context, channelID int, err *types.NewAPIError) {
-	if channelID <= 0 || err == nil {
+func recordRelayChannelConfigAuthError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
+	if channelError.ChannelId <= 0 || err == nil {
 		return
 	}
-	key := relayChannelConfigIsolationKey(c, channelID, nil, nil)
-	service.RecordChannelConfigAuthError(key, err.MaskSensitiveError())
-	notifyTokenAccountAutomationAuthInvalid(c, channelID, err)
+	identity := relayRuntimeIdentity(c, channelError.ChannelId)
+	service.RecordChannelRuntimeAuthConfigRecovery(identity, buildChannelFailureAvoidanceContext(c, channelError, err, true))
+	service.ClearChannelConfigIsolationForChannel(channelError.ChannelId)
+	notifyTokenAccountAutomationAuthInvalid(c, channelError.ChannelId, err)
 }
 
 func recordRelayChannelConfigSuccess(c *gin.Context, channelID int, info *relaycommon.RelayInfo, retryParam *service.RetryParam) {
@@ -2935,6 +2936,7 @@ func recordRelayChannelConfigSuccess(c *gin.Context, channelID int, info *relayc
 	}
 	key := relayChannelConfigIsolationKey(c, channelID, info, retryParam)
 	service.RecordChannelConfigSuccess(key)
+	service.ClearChannelRuntimeFailureAvoidanceOnRealSuccess(relayRuntimeIdentity(c, channelID))
 }
 
 func notifyTokenAccountAutomationAuthInvalid(c *gin.Context, channelID int, err *types.NewAPIError) {

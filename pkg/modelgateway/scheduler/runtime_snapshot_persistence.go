@@ -474,9 +474,9 @@ func runtimeSnapshotToDB(snapshot core.RuntimeSnapshot, updatedAt int64) (model.
 		RealSampleCount30m:                snapshot.RealSampleCount30m,
 		LastProbeAt:                       snapshot.LastProbeAt,
 		LastProbeSuccessAt:                snapshot.LastProbeSuccessAt,
-		ConfigErrorIsolated:               snapshot.ConfigErrorIsolated,
-		IsolationReason:                   snapshot.IsolationReason,
-		IsolationUntil:                    snapshot.IsolationUntil,
+		ConfigErrorIsolated:               false,
+		IsolationReason:                   "",
+		IsolationUntil:                    0,
 		AuthConfigErrorCount:              snapshot.AuthConfigErrorCount,
 		LastAuthConfigErrorAt:             snapshot.LastAuthConfigErrorAt,
 	}, true
@@ -583,9 +583,9 @@ func runtimeSnapshotFromDB(row model.ModelGatewayRuntimeSnapshot) (core.RuntimeS
 		RealSampleCount30m:                row.RealSampleCount30m,
 		LastProbeAt:                       row.LastProbeAt,
 		LastProbeSuccessAt:                row.LastProbeSuccessAt,
-		ConfigErrorIsolated:               row.ConfigErrorIsolated,
-		IsolationReason:                   row.IsolationReason,
-		IsolationUntil:                    row.IsolationUntil,
+		ConfigErrorIsolated:               false,
+		IsolationReason:                   "",
+		IsolationUntil:                    0,
 		AuthConfigErrorCount:              row.AuthConfigErrorCount,
 		LastAuthConfigErrorAt:             row.LastAuthConfigErrorAt,
 		GroupPriorityRatio:                1,
@@ -728,10 +728,10 @@ func mergeRuntimeSnapshotRows(left, right model.ModelGatewayRuntimeSnapshot) mod
 		left.ProbeFastRecoveryAttempts = right.ProbeFastRecoveryAttempts
 		left.ProbeAnomalyTriggerItems = right.ProbeAnomalyTriggerItems
 	}
-	if right.ConfigErrorIsolated || right.LastAuthConfigErrorAt > left.LastAuthConfigErrorAt {
-		left.ConfigErrorIsolated = right.ConfigErrorIsolated
-		left.IsolationReason = right.IsolationReason
-		left.IsolationUntil = right.IsolationUntil
+	if right.LastAuthConfigErrorAt > left.LastAuthConfigErrorAt {
+		left.ConfigErrorIsolated = false
+		left.IsolationReason = ""
+		left.IsolationUntil = 0
 		left.AuthConfigErrorCount = right.AuthConfigErrorCount
 		left.LastAuthConfigErrorAt = right.LastAuthConfigErrorAt
 	}

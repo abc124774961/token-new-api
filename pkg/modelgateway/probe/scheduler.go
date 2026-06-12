@@ -605,7 +605,7 @@ func (s *ProbeScheduler) applyProbeScore(plan *core.DispatchPlan, candidate Prob
 	if candidate.Reason == reasonScoreAnomaly {
 		snapshot.ProbeRecoveryPhase = core.ProbeRecoveryPhaseFastProbe
 	}
-	if candidate.Reason == reasonLowScore || candidate.Reason == reasonFailureAvoidance || candidate.Reason == reasonTimeoutRecovery || candidate.Reason == reasonOverloadRecovery || candidate.Reason == reasonCircuitProbe || candidate.Reason == reasonScoreAnomaly || snapshot.FailureAvoidance {
+	if candidate.Reason == reasonLowScore || candidate.Reason == reasonFailureAvoidance || candidate.Reason == reasonTimeoutRecovery || candidate.Reason == reasonOverloadRecovery || candidate.Reason == reasonAuthConfigError || candidate.Reason == reasonCircuitProbe || candidate.Reason == reasonScoreAnomaly || snapshot.FailureAvoidance {
 		snapshot.ProbeRecoveryPending = true
 	}
 	score := scored.Score

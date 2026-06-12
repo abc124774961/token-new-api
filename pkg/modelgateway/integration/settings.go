@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 )
 
@@ -177,6 +178,7 @@ func (p *SchedulerSettingsProvider) Get() core.SchedulerSettings {
 		},
 		CircuitBreakerEnabled: setting.CircuitBreakerEnabled,
 		GroupPriorityRatio:    copyFloatMap(setting.GroupPriorityRatio),
+		GroupRevenueRatio:     copyFloatMap(ratio_setting.GetGroupRatioCopy()),
 		GroupPolicies:         policies,
 	}
 }

@@ -34,6 +34,9 @@ func (r *DefaultGroupPolicyResolver) Resolve(c *gin.Context, req *core.DispatchR
 			GroupPriorityRatio: copyGroupPriorityRatio(
 				settings.GroupPriorityRatio,
 			),
+			GroupRevenueRatio: copyGroupRevenueRatio(
+				settings.GroupRevenueRatio,
+			),
 		}
 	}
 	policySetting, ok := settings.GroupPolicies[req.RequestedGroup]
@@ -46,6 +49,9 @@ func (r *DefaultGroupPolicyResolver) Resolve(c *gin.Context, req *core.DispatchR
 			AutoMode:       core.AutoModeSequential,
 			GroupPriorityRatio: copyGroupPriorityRatio(
 				settings.GroupPriorityRatio,
+			),
+			GroupRevenueRatio: copyGroupRevenueRatio(
+				settings.GroupRevenueRatio,
 			),
 		}
 	}
@@ -64,6 +70,7 @@ func (r *DefaultGroupPolicyResolver) Resolve(c *gin.Context, req *core.DispatchR
 		QueuePriority:             queuePriorityForPolicy(req.RequestedGroup, policySetting, settings),
 		CircuitBreakerEnabled:     policySetting.CircuitBreakerEnabled,
 		GroupPriorityRatio:        copyGroupPriorityRatio(settings.GroupPriorityRatio),
+		GroupRevenueRatio:         copyGroupRevenueRatio(settings.GroupRevenueRatio),
 		ResourceProtectionEnabled: policySetting.ResourceProtectionEnabled,
 		PrimaryChannelIDs:         append([]int(nil), policySetting.PrimaryChannelIDs...),
 		PrimaryWaitTimeoutMs:      policySetting.PrimaryWaitTimeoutMs,
@@ -73,6 +80,20 @@ func (r *DefaultGroupPolicyResolver) Resolve(c *gin.Context, req *core.DispatchR
 }
 
 func copyGroupPriorityRatio(values map[string]float64) map[string]float64 {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(values))
+	for group, ratio := range values {
+		if group == "" || ratio <= 0 {
+			continue
+		}
+		out[group] = ratio
+	}
+	return out
+}
+
+func copyGroupRevenueRatio(values map[string]float64) map[string]float64 {
 	if len(values) == 0 {
 		return nil
 	}

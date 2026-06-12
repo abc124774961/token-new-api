@@ -10,7 +10,7 @@ import (
 
 const (
 	channelConfigIsolationFailureThreshold = 2
-	channelConfigIsolationDefaultTTL       = 24 * time.Hour
+	channelConfigIsolationDefaultTTL       = 0
 )
 
 type ChannelConfigIsolationKey struct {
@@ -87,7 +87,7 @@ func NewChannelConfigIsolationManager() *ChannelConfigIsolationManager {
 }
 
 func newChannelConfigIsolationManager(ttl time.Duration, failureThreshold int, now func() time.Time) *ChannelConfigIsolationManager {
-	if ttl <= 0 {
+	if ttl < 0 {
 		ttl = channelConfigIsolationDefaultTTL
 	}
 	if failureThreshold <= 0 {
@@ -150,9 +150,7 @@ func (m *ChannelConfigIsolationManager) RecordAuthError(key ChannelConfigIsolati
 	entry.failureCount++
 	entry.reason = reason
 	entry.lastErrorAt = now
-	if entry.failureCount >= m.failureThreshold {
-		entry.until = now.Add(m.ttl)
-	}
+	entry.until = time.Time{}
 	return statusFromChannelConfigIsolationEntry(entry, now)
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
@@ -168,15 +169,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 							}
 						}
 						if group != "" {
-							groupRatio := ratio_setting.GetGroupRatio(group)
-							userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(group, group)
-
-							var finalGroupRatio float64
-							if hasUserGroupRatio {
-								finalGroupRatio = userGroupRatio
-							} else {
-								finalGroupRatio = groupRatio
-							}
+							finalGroupRatio, multiplierSnapshot := service.TaskBillingGroupRatioSnapshot(task, group, modelName)
 
 							// 计算实际应扣费额度: totalTokens * modelRatio * groupRatio
 							actualQuota := int(float64(taskResult.TotalTokens) * modelRatio * finalGroupRatio)
@@ -205,6 +198,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 									logContent := fmt.Sprintf("视频任务成功补扣费，模型倍率 %.2f，分组倍率 %.2f，tokens %d，预扣费 %s，实际扣费 %s，补扣费 %s",
 										modelRatio, finalGroupRatio, taskResult.TotalTokens,
 										logger.LogQuota(preConsumedQuota), logger.LogQuota(actualQuota), logger.LogQuota(quotaDelta))
+									if multiplierSnapshot != nil {
+										logContent += fmt.Sprintf("，倍率规则 %.4f", multiplierSnapshot.Multiplier)
+									}
 									model.RecordLog(task.UserId, model.LogTypeSystem, logContent)
 								}
 							} else if quotaDelta < 0 {
@@ -226,6 +222,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 									logContent := fmt.Sprintf("视频任务成功退还多扣费用，模型倍率 %.2f，分组倍率 %.2f，tokens %d，预扣费 %s，实际扣费 %s，退还 %s",
 										modelRatio, finalGroupRatio, taskResult.TotalTokens,
 										logger.LogQuota(preConsumedQuota), logger.LogQuota(actualQuota), logger.LogQuota(refundQuota))
+									if multiplierSnapshot != nil {
+										logContent += fmt.Sprintf("，倍率规则 %.4f", multiplierSnapshot.Multiplier)
+									}
 									model.RecordLog(task.UserId, model.LogTypeSystem, logContent)
 								}
 							} else {

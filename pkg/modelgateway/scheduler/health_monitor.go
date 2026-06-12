@@ -197,6 +197,9 @@ func (m *RuntimeHealthMonitor) Report(ctx context.Context, result core.AttemptRe
 	if m.scoreEvents != nil && (decision.ScoreSample || decision.ProbeRecoverySample) {
 		m.scoreEvents.ReportAdjustment(result, snapshot, decision, beforeScore, afterScore)
 	}
+	snapshot.ConfigErrorIsolated = false
+	snapshot.IsolationReason = ""
+	snapshot.IsolationUntil = 0
 	m.store.Put(snapshot)
 	m.mu.Unlock()
 }
@@ -402,7 +405,7 @@ func (m *RuntimeHealthMonitor) applyProbeRecovery(snapshot *core.RuntimeSnapshot
 
 func probeTriggerReasonClearedOnRecovery(reason string) bool {
 	switch strings.TrimSpace(reason) {
-	case probeReasonLongNoSuccess, probeReasonLowScore, probeReasonLowTraffic, core.ProbeReasonScoreAnomalyFastProbe, service.ChannelOverloadRecoveryReason:
+	case probeReasonLongNoSuccess, probeReasonLowScore, probeReasonLowTraffic, core.ProbeReasonScoreAnomalyFastProbe, service.ChannelOverloadRecoveryReason, service.ChannelAuthConfigRecoveryReason:
 		return true
 	default:
 		return false
@@ -512,7 +515,7 @@ func shouldClearScoreAnomalyRecoveryAfterRealSuccess(snapshot core.RuntimeSnapsh
 	if strings.TrimSpace(result.ExperienceIssue) != "" || attemptHasUpstreamFailureSignal(result) {
 		return false
 	}
-	if snapshot.FailureAvoidance || snapshot.CircuitOpen || snapshot.Cooldown || snapshot.ConfigErrorIsolated {
+	if snapshot.FailureAvoidance || snapshot.CircuitOpen || snapshot.Cooldown {
 		return false
 	}
 	if score.Total <= lowScoreThreshold {

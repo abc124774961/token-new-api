@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
 
@@ -266,6 +267,31 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 	return other
 }
 
+func TaskBillingGroupRatioSnapshot(task *model.Task, group string, modelName string) (float64, *types.BillingMultiplierSnapshot) {
+	groupRatio := ratio_setting.GetGroupRatio(group)
+	userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(group, group)
+	if hasUserGroupRatio {
+		groupRatio = userGroupRatio
+	}
+	if task != nil && task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.GroupRatio > 0 {
+		groupRatio = task.PrivateData.BillingContext.GroupRatio
+	}
+	if task == nil {
+		return groupRatio, nil
+	}
+	snapshot := model.EvaluateBillingMultiplier(model.BillingMultiplierContext{
+		UserID:         task.UserId,
+		UserGroup:      group,
+		UsingGroup:     group,
+		ModelName:      modelName,
+		BaseGroupRatio: groupRatio,
+	})
+	if snapshot.Applied {
+		return snapshot.FinalGroupRatio, &snapshot
+	}
+	return groupRatio, nil
+}
+
 // taskModelName 从 BillingContext 或 Properties 中获取模型名称。
 func taskModelName(task *model.Task) string {
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.OriginModelName != "" {
@@ -400,15 +426,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		return
 	}
 
-	groupRatio := ratio_setting.GetGroupRatio(group)
-	userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(group, group)
-
-	var finalGroupRatio float64
-	if hasUserGroupRatio {
-		finalGroupRatio = userGroupRatio
-	} else {
-		finalGroupRatio = groupRatio
-	}
+	finalGroupRatio, multiplierSnapshot := TaskBillingGroupRatioSnapshot(task, group, modelName)
 
 	// 计算 OtherRatios 乘积（视频折扣、时长等）
 	otherMultiplier := 1.0
@@ -424,5 +442,8 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	actualQuota := int(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
 
 	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, finalGroupRatio, otherMultiplier)
+	if multiplierSnapshot != nil {
+		reason += fmt.Sprintf(", billingMultiplier=%.4f", multiplierSnapshot.Multiplier)
+	}
 	RecalculateTaskQuota(ctx, task, actualQuota, reason)
 }

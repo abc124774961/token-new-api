@@ -95,9 +95,6 @@ func (s *ProbeSelector) Select(config ProbeConfig) ([]ProbeCandidate, error) {
 	if err != nil {
 		return nil, err
 	}
-	if recent.Empty() {
-		return nil, nil
-	}
 	channels, err := model.GetAllChannels(0, 0, true, false)
 	if err != nil {
 		return nil, err
@@ -313,19 +310,22 @@ func (s *ProbeSelector) lowHealthCandidatesLocked(channelByID map[int]*model.Cha
 	candidates := make([]ProbeCandidate, 0, len(snapshots))
 	for _, snapshot := range snapshots {
 		key := normalizeProbeRuntimeKey(snapshot.Key)
-		if key.ChannelID <= 0 || !recent.Contains(key.RequestedModel, key.Group) {
+		if key.ChannelID <= 0 {
 			continue
 		}
 		snapshot.Key = key
-		if configErrorIsolatedSnapshot(snapshot) || configErrorIsolatedRuntimeKey(key) {
-			continue
-		}
+		snapshot.ConfigErrorIsolated = false
+		snapshot.IsolationReason = ""
+		snapshot.IsolationUntil = 0
 		channel := channelByID[key.ChannelID]
 		if channel == nil || !probeRuntimeKeyModelSupported(key) || !ProbeRuntimeKeyEligible(channel, key) {
 			continue
 		}
 		reason, triggerItems := s.probeReasonForSnapshotLocked(snapshot, recent, now, config)
 		if reason == "" {
+			continue
+		}
+		if !recent.Contains(key.RequestedModel, key.Group) && !probeReasonBypassesRecentScope(reason) {
 			continue
 		}
 		candidate := probeCandidateFromSnapshot(channel, snapshot, reason)
@@ -369,14 +369,18 @@ func (s *ProbeSelector) probeReasonForSnapshotLocked(snapshot core.RuntimeSnapsh
 		}
 	}
 	if reason == "" {
-		if config.FailureAvoidancePriorityEnabled && snapshot.FailureAvoidance {
-			if strings.TrimSpace(snapshot.ProbeTriggerReason) == reasonTimeoutRecovery {
+		if snapshot.FailureAvoidance {
+			switch strings.TrimSpace(snapshot.ProbeTriggerReason) {
+			case reasonTimeoutRecovery:
 				return reasonTimeoutRecovery, nil
-			}
-			if strings.TrimSpace(snapshot.ProbeTriggerReason) == reasonOverloadRecovery {
+			case reasonOverloadRecovery:
 				return reasonOverloadRecovery, nil
+			case reasonAuthConfigError:
+				return reasonAuthConfigError, nil
 			}
-			return reasonFailureAvoidance, nil
+			if config.FailureAvoidancePriorityEnabled {
+				return reasonFailureAvoidance, nil
+			}
 		}
 		if snapshot.Cooldown {
 			return reasonCooldown, nil
@@ -445,11 +449,14 @@ func (s *ProbeSelector) markProbeSelectionLocked(key core.RuntimeKey, reason str
 	if reason == reasonTimeoutRecovery {
 		snapshot.ProbeRecoveryRequired = config.TimeoutRecoverySuccessesRequired
 	}
-	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || reason == reasonLowScore || reason == reasonFailureAvoidance || reason == reasonTimeoutRecovery || reason == reasonOverloadRecovery || reason == reasonCircuitProbe || reason == reasonScoreAnomaly
+	snapshot.ProbeRecoveryPending = snapshot.FailureAvoidance || reason == reasonLowScore || reason == reasonFailureAvoidance || reason == reasonTimeoutRecovery || reason == reasonOverloadRecovery || reason == reasonAuthConfigError || reason == reasonCircuitProbe || reason == reasonScoreAnomaly
 	if reason == reasonScoreAnomaly {
 		snapshot.ProbeRecoveryPhase = core.ProbeRecoveryPhaseFastProbe
 		snapshot.ProbeFastRecoveryAttempts++
 	}
+	snapshot.ConfigErrorIsolated = false
+	snapshot.IsolationReason = ""
+	snapshot.IsolationUntil = 0
 	snapshot.LastProbeAt = s.now().Unix()
 	s.store.Put(snapshot)
 	enrichedKey := normalizeProbeRuntimeKey(key)
@@ -684,8 +691,7 @@ func skipRecentRealRequestProbe(candidate ProbeCandidate, config ProbeConfig, st
 	if !config.SkipRecentRealRequestEnabled {
 		return false
 	}
-	switch strings.TrimSpace(candidate.Reason) {
-	case reasonCircuitProbe, reasonTimeoutRecovery, reasonOverloadRecovery, reasonScoreAnomaly:
+	if probeReasonBypassesRecentRequestSkip(candidate.Reason) {
 		return false
 	}
 	window := config.RecentRealRequestWindow
@@ -732,6 +738,24 @@ func recentRealRequestExists(key core.RuntimeKey, cutoff int64) bool {
 	return count > 0
 }
 
+func probeReasonBypassesRecentScope(reason string) bool {
+	switch strings.TrimSpace(reason) {
+	case reasonCircuitProbe, reasonFailureAvoidance, reasonTimeoutRecovery, reasonOverloadRecovery, reasonAuthConfigError, reasonCooldown, reasonScoreAnomaly:
+		return true
+	default:
+		return false
+	}
+}
+
+func probeReasonBypassesRecentRequestSkip(reason string) bool {
+	switch strings.TrimSpace(reason) {
+	case reasonCircuitProbe, reasonTimeoutRecovery, reasonOverloadRecovery, reasonAuthConfigError, reasonScoreAnomaly:
+		return true
+	default:
+		return false
+	}
+}
+
 func probePolicyForGroup(group string, priorityRatio float64, resolver func(group string) core.GroupSmartPolicy) core.GroupSmartPolicy {
 	group = strings.TrimSpace(group)
 	var policy core.GroupSmartPolicy
@@ -775,22 +799,24 @@ func probeReasonPriority(reason string) int {
 		return 2
 	case reasonOverloadRecovery:
 		return 3
-	case reasonFailureAvoidance:
+	case reasonAuthConfigError:
 		return 4
-	case reasonCooldown:
+	case reasonFailureAvoidance:
 		return 5
-	case reasonScoreAnomaly:
+	case reasonCooldown:
 		return 6
-	case reasonLowScore:
+	case reasonScoreAnomaly:
 		return 7
-	case reasonLongNoSuccess:
+	case reasonLowScore:
 		return 8
-	case reasonNoSamples:
+	case reasonLongNoSuccess:
 		return 9
-	case reasonLowTraffic:
+	case reasonNoSamples:
 		return 10
-	case reasonSampling:
+	case reasonLowTraffic:
 		return 11
+	case reasonSampling:
+		return 12
 	default:
 		return 99
 	}
@@ -915,57 +941,16 @@ func probeChannelEligible(channel *model.Channel) bool {
 	switch channel.Status {
 	case common.ChannelStatusEnabled:
 	case common.ChannelStatusAutoDisabled:
-		if configErrorIsolatedChannel(channel) {
-			return false
-		}
 		if !service.IsErrorPausedChannel(channel) || !service.ShouldResumeErrorPausedChannel(channel, nil) {
 			return false
 		}
 	default:
 		return false
 	}
-	if configErrorIsolatedChannel(channel) {
-		return false
-	}
 	if service.IsConfirmedBalanceInsufficientChannel(channel) || service.IsRuntimeBalanceInsufficientChannel(channel) {
 		return false
 	}
 	return true
-}
-
-func configErrorIsolatedChannel(channel *model.Channel) bool {
-	if channel == nil {
-		return false
-	}
-	return configErrorIsolatedInfo(channel.GetOtherInfo())
-}
-
-func configErrorIsolatedSnapshot(snapshot core.RuntimeSnapshot) bool {
-	return snapshot.ConfigErrorIsolated
-}
-
-func configErrorIsolatedRuntimeKey(key core.RuntimeKey) bool {
-	key = normalizeProbeRuntimeKey(key)
-	if key.ChannelID <= 0 || key.RequestedModel == "" || key.Group == "" {
-		return false
-	}
-	return service.IsChannelConfigIsolated(service.NewChannelConfigIsolationKey(
-		key.ChannelID,
-		key.RequestedModel,
-		key.Group,
-		key.EndpointType,
-	))
-}
-
-func configErrorIsolatedInfo(info map[string]any) bool {
-	if value, ok := info["config_error_isolated"].(bool); ok && value {
-		return true
-	}
-	if value, ok := info["config_error_isolated"].(string); ok && strings.EqualFold(strings.TrimSpace(value), "true") {
-		return true
-	}
-	reason, _ := info["isolation_reason"].(string)
-	return strings.TrimSpace(reason) == core.ErrorCategoryAuthConfigError
 }
 
 func selectProbeModel(channel *model.Channel) string {

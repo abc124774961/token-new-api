@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/testkit"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -235,6 +236,30 @@ func TestRuntimeSnapshotEnricherAppliesGroupPriorityRatio(t *testing.T) {
 	require.Equal(t, 1.4, snapshot.GroupPriorityRatio)
 }
 
+func TestRuntimeSnapshotEnricherAppliesRevenueRatioFromBillingRatios(t *testing.T) {
+	oldModelRatio := ratio_setting.ModelRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-revenue-test":2}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldModelRatio))
+	})
+
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{}, 1500, 8, 2)
+
+	snapshot := enricher.Enrich(core.Candidate{
+		Channel: &model.Channel{Id: 7},
+		Group:   "codex-plus",
+		RuntimeKey: core.RuntimeKey{
+			RequestedModel: "gpt-revenue-test",
+		},
+	}, core.RuntimeSnapshot{}, core.GroupSmartPolicy{
+		GroupRevenueRatio: map[string]float64{
+			"codex-plus": 0.25,
+		},
+	})
+
+	require.Equal(t, 1.0, snapshot.RevenueRatio)
+}
+
 func TestRuntimeSnapshotEnricherAppliesFirstBytePending(t *testing.T) {
 	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{
 		FirstBytePendingByChannel: map[int]*service.ChannelFirstBytePendingStatus{
@@ -280,24 +305,8 @@ func TestRuntimeSnapshotEnricherMarksTimeoutRecoveryPending(t *testing.T) {
 	require.Equal(t, 2, snapshot.ProbeRecoveryRequired)
 }
 
-func TestRuntimeSnapshotEnricherAppliesConfigIsolation(t *testing.T) {
-	key := core.RuntimeKey{
-		RequestedModel: "gpt-5-codex",
-		ChannelID:      7,
-		Group:          "default",
-		EndpointType:   "openai",
-	}
-	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{
-		ConfigIsolationByKey: map[core.RuntimeKey]*service.ChannelConfigIsolationStatus{
-			key: {
-				Active:       true,
-				Reason:       "auth_config_error",
-				Until:        1770000000,
-				FailureCount: 2,
-				LastErrorAt:  1769999900,
-			},
-		},
-	}, 1500, 8, 2)
+func TestRuntimeSnapshotEnricherClearsLegacyConfigIsolation(t *testing.T) {
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{}, 1500, 8, 2)
 
 	snapshot := enricher.Enrich(core.Candidate{
 		Channel: &model.Channel{Id: 7},
@@ -306,11 +315,17 @@ func TestRuntimeSnapshotEnricherAppliesConfigIsolation(t *testing.T) {
 			RequestedModel: "gpt-5-codex",
 			EndpointType:   "openai",
 		},
-	}, core.RuntimeSnapshot{}, core.GroupSmartPolicy{})
+	}, core.RuntimeSnapshot{
+		ConfigErrorIsolated:   true,
+		IsolationReason:       "auth_config_error",
+		IsolationUntil:        1770000000,
+		AuthConfigErrorCount:  2,
+		LastAuthConfigErrorAt: 1769999900,
+	}, core.GroupSmartPolicy{})
 
-	require.True(t, snapshot.ConfigErrorIsolated)
-	require.Equal(t, "auth_config_error", snapshot.IsolationReason)
-	require.EqualValues(t, 1770000000, snapshot.IsolationUntil)
+	require.False(t, snapshot.ConfigErrorIsolated)
+	require.Empty(t, snapshot.IsolationReason)
+	require.Zero(t, snapshot.IsolationUntil)
 	require.Equal(t, 2, snapshot.AuthConfigErrorCount)
 	require.EqualValues(t, 1769999900, snapshot.LastAuthConfigErrorAt)
 }

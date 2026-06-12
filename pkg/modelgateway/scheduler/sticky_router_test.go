@@ -1097,6 +1097,42 @@ func TestStickyRouterReportSuccessRenewsTTL(t *testing.T) {
 	require.Equal(t, 31, route.ChannelID)
 }
 
+func TestStickyRouterReportSuccessDoesNotRenewSuppressedPlan(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-report-renew-suppressed"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 5061)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{
+		TTLSeconds:     1,
+		RenewOnSuccess: true,
+		Store:          scheduler.NewMemoryStickyStore(8),
+	}, nil)
+	plan := &core.DispatchPlan{
+		Channel:                 &model.Channel{Id: 31},
+		SelectedGroup:           "default",
+		StickySource:            "user_sticky",
+		StickySaveSuppressed:    true,
+		StickySuppressionReason: "negative_current_group_margin",
+	}
+	sticky.Save(ctx, &req, &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 31},
+		SelectedGroup: "default",
+	})
+	time.Sleep(600 * time.Millisecond)
+	sticky.Report(ctx, &req, plan, core.AttemptResult{
+		Success: true,
+	})
+
+	time.Sleep(600 * time.Millisecond)
+	_, ok := sticky.Route(ctx, &req, core.GroupSmartPolicy{RequestedGroup: "default"})
+	require.False(t, ok)
+}
+
 func TestStickyRouterDoesNotSaveRetryAttempt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := newStickyRequestContext(t, `{"session_id":"sess-retry-save-a"}`, nil)
@@ -1227,6 +1263,263 @@ func TestHybridStickyStoreStoresAndExpiresEntries(t *testing.T) {
 	})
 	_, ok = store.Get(expiredKey)
 	require.False(t, ok)
+}
+
+func TestSelectorBreaksStickyRouteOnNegativeCurrentGroupMargin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-break-negative-margin"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 601)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+	}
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{}, nil)
+	sticky.Save(ctx, &req, &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 1},
+		SelectedGroup: "default",
+	})
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	stickyKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 1, Group: "default"}
+	peerKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 2, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                stickyKey,
+		SuccessRate:        0.92,
+		TTFTMs:             600,
+		TokensPerSecond:    50,
+		CostRatio:          3,
+		RevenueRatio:       1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                peerKey,
+		SuccessRate:        0.96,
+		TTFTMs:             450,
+		TokensPerSecond:    70,
+		CostRatio:          0.5,
+		RevenueRatio:       1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 1}, Group: "default", RuntimeKey: stickyKey},
+			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: peerKey},
+		}),
+		store,
+		scheduler.DefaultScoreWeights(),
+	).WithStickyRouter(sticky)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 2, plan.Channel.Id)
+	require.False(t, plan.StickyRetained)
+	require.Equal(t, "negative_current_group_margin", plan.StickyBreak)
+	require.False(t, plan.StickySaveSuppressed)
+	require.Equal(t, "score_items_sticky_broken", plan.SelectedReason)
+}
+
+func TestSelectorAllowsNegativeMarginFallbackButSkipsStickySave(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-negative-margin-only"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 602)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+	}
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{
+		SaveOnSelect: true,
+	}, nil)
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	key := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 7, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SuccessRate:        0.95,
+		TTFTMs:             300,
+		TokensPerSecond:    80,
+		CostRatio:          2,
+		RevenueRatio:       1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 7}, Group: "default", RuntimeKey: key},
+		}),
+		store,
+		scheduler.DefaultScoreWeights(),
+	).WithStickyRouter(sticky)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 7, plan.Channel.Id)
+	require.True(t, plan.StickySaveSuppressed)
+	require.Equal(t, "negative_current_group_margin", plan.StickySuppressionReason)
+
+	_, ok := sticky.Route(ctx, &req, core.GroupSmartPolicy{RequestedGroup: "default"})
+	require.False(t, ok)
+}
+
+func TestSelectorDoesNotTreatMissingRevenueAsNegativeMargin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-missing-revenue-margin"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 603)
+	req := core.DispatchRequest{
+		RequestedGroup: "default",
+		UserGroup:      "default",
+		ModelName:      "gpt-5.5",
+	}
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{
+		StickyKeepScoreRatio: 0.85,
+	}, nil)
+	sticky.Save(ctx, &req, &core.DispatchPlan{
+		Channel:       &model.Channel{Id: 1},
+		SelectedGroup: "default",
+	})
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	stickyKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 1, Group: "default"}
+	peerKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 2, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                stickyKey,
+		SuccessRate:        0.92,
+		TTFTMs:             600,
+		TokensPerSecond:    50,
+		CostRatio:          3,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                peerKey,
+		SuccessRate:        0.96,
+		TTFTMs:             450,
+		TokensPerSecond:    70,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 1}, Group: "default", RuntimeKey: stickyKey},
+			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: peerKey},
+		}),
+		store,
+		scheduler.DefaultScoreWeights(),
+	).WithStickyRouter(sticky)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 1, plan.Channel.Id)
+	require.True(t, plan.StickyRetained)
+	require.Empty(t, plan.StickyBreak)
+	require.False(t, plan.StickySaveSuppressed)
+}
+
+func TestSelectorBreaksCacheAffinityRouteOnNegativeCurrentGroupMargin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	stickyKey := core.RuntimeKey{RequestedModel: "gpt-5", ChannelID: 1, Group: "default"}
+	peerKey := core.RuntimeKey{RequestedModel: "gpt-5", ChannelID: 2, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                stickyKey,
+		SuccessRate:        0.85,
+		TTFTMs:             700,
+		TokensPerSecond:    40,
+		CostRatio:          3,
+		RevenueRatio:       1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                peerKey,
+		SuccessRate:        0.98,
+		TTFTMs:             350,
+		TokensPerSecond:    80,
+		CostRatio:          0.5,
+		RevenueRatio:       1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	sticky := scheduler.NewMemoryStickyRouter(scheduler.StickyRouterOptions{
+		CacheKeepScoreRatio: 0.75,
+	}, scheduler.NewStaticCacheAffinitySignalAdapter(core.CacheAffinitySignal{
+		Key:                "fake-cache-key-negative-margin",
+		KeyFingerprint:     "affinity-negative-margin",
+		Source:             "fake",
+		PreferredChannelID: 1,
+		PreferredGroup:     "default",
+	}, true))
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 1}, Group: "default", RuntimeKey: stickyKey},
+			{Channel: &model.Channel{Id: 2}, Group: "default", RuntimeKey: peerKey},
+		}),
+		store,
+		scheduler.DefaultScoreWeights(),
+	).WithStickyRouter(sticky)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5",
+	}, core.GroupSmartPolicy{
+		Mode:                 core.ModeActive,
+		RequestedGroup:       "default",
+		CandidateGroups:      []string{"default"},
+		Strategy:             core.StrategyBalanced,
+		CacheAffinityEnabled: true,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 2, plan.Channel.Id)
+	require.True(t, plan.CacheAffinity)
+	require.False(t, plan.StickyRetained)
+	require.Equal(t, "cache_affinity", plan.StickySource)
+	require.Equal(t, "negative_current_group_margin", plan.StickyBreak)
 }
 
 func TestSelectorRetainsCacheAffinityRoute(t *testing.T) {

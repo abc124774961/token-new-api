@@ -24,6 +24,7 @@ const (
 	reasonFailureAvoidance  = "failure_avoidance"
 	reasonTimeoutRecovery   = "timeout_recovery"
 	reasonOverloadRecovery  = "overload_recovery"
+	reasonAuthConfigError   = "auth_config_error"
 	reasonScoreAnomaly      = core.ProbeReasonScoreAnomalyFastProbe
 	reasonCooldown          = "cooldown"
 	reasonSampling          = "sampling"
@@ -47,6 +48,8 @@ func NormalizeProbeReason(reason string) string {
 		return reasonTimeoutRecovery
 	case reasonOverloadRecovery:
 		return reasonOverloadRecovery
+	case reasonAuthConfigError:
+		return reasonAuthConfigError
 	case reasonScoreAnomaly:
 		return reasonScoreAnomaly
 	case reasonCooldown:

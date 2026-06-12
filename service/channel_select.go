@@ -48,6 +48,7 @@ const (
 	channelFailureAvoidanceStepSeconds   = 8
 	ChannelTimeoutRecoveryReason         = "timeout_recovery"
 	ChannelOverloadRecoveryReason        = "overload_recovery"
+	ChannelAuthConfigRecoveryReason      = "auth_config_error"
 )
 
 type ChannelFailureAvoidanceStatus struct {
@@ -830,6 +831,33 @@ func RecordChannelRuntimeOverloadRecovery(identity ChannelRuntimeIdentity, failu
 	return recordChannelRuntimeAvoidance(identity, ChannelOverloadRecoveryReason, failureContext, true, true)
 }
 
+func RecordChannelAuthConfigRecovery(channelID int, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	if failureContext != nil {
+		if strings.TrimSpace(failureContext.ErrorType) == "" {
+			failureContext.ErrorType = "auth_config"
+		}
+		failureContext.ErrorCode = ChannelAuthConfigRecoveryReason
+	}
+	return recordChannelAvoidanceWithProbeRecovery(channelID, ChannelAuthConfigRecoveryReason, failureContext, true, true)
+}
+
+func RecordChannelRuntimeAuthConfigRecovery(identity ChannelRuntimeIdentity, failureContext *ChannelFailureAvoidanceContext) *ChannelFailureAvoidanceRecord {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return nil
+	}
+	if !identity.HasAccountScope() {
+		return RecordChannelAuthConfigRecovery(identity.ChannelID, failureContext)
+	}
+	if failureContext != nil {
+		if strings.TrimSpace(failureContext.ErrorType) == "" {
+			failureContext.ErrorType = "auth_config"
+		}
+		failureContext.ErrorCode = ChannelAuthConfigRecoveryReason
+	}
+	return recordChannelRuntimeAvoidance(identity, ChannelAuthConfigRecoveryReason, failureContext, true, true)
+}
+
 func recordChannelAvoidance(channelID int, reason string, failureContext *ChannelFailureAvoidanceContext, allowPause bool) *ChannelFailureAvoidanceRecord {
 	return recordChannelAvoidanceWithProbeRecovery(channelID, reason, failureContext, allowPause, false)
 }
@@ -1043,7 +1071,10 @@ func ClearChannelFailureAvoidanceOnRealSuccess(channelID int) bool {
 		channelFailureAvoidance.Delete(channelID)
 		return true
 	}
-	if entry.probeRecoveryRequired || IsTimeoutRecoveryReason(entry.reason) {
+	if entry.probeRecoveryRequired && !IsAuthConfigRecoveryReason(entry.reason) {
+		return false
+	}
+	if IsTimeoutRecoveryReason(entry.reason) {
 		return false
 	}
 	channelFailureAvoidance.Delete(channelID)
@@ -1067,7 +1098,10 @@ func ClearChannelRuntimeFailureAvoidanceOnRealSuccess(identity ChannelRuntimeIde
 		channelRuntimeFailureAvoidance.Delete(identity)
 		return true
 	}
-	if entry.probeRecoveryRequired || IsTimeoutRecoveryReason(entry.reason) {
+	if entry.probeRecoveryRequired && !IsAuthConfigRecoveryReason(entry.reason) {
+		return false
+	}
+	if IsTimeoutRecoveryReason(entry.reason) {
 		return false
 	}
 	channelRuntimeFailureAvoidance.Delete(identity)
@@ -1086,9 +1120,13 @@ func IsTimeoutRecoveryReason(reason string) bool {
 	return strings.TrimSpace(reason) == ChannelTimeoutRecoveryReason
 }
 
+func IsAuthConfigRecoveryReason(reason string) bool {
+	return strings.TrimSpace(reason) == ChannelAuthConfigRecoveryReason
+}
+
 func IsProbeRecoveryReason(reason string) bool {
 	switch strings.TrimSpace(reason) {
-	case ChannelTimeoutRecoveryReason, ChannelOverloadRecoveryReason:
+	case ChannelTimeoutRecoveryReason, ChannelOverloadRecoveryReason, ChannelAuthConfigRecoveryReason:
 		return true
 	default:
 		return false
