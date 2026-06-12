@@ -877,7 +877,7 @@ func wasAccountBalanceInsufficient(channel *model.Channel, account modelgatewaya
 }
 
 func pauseMultiKeyChannelAccountForBalance(channelID int, credentialIndex int) {
-	updateMultiKeyBalanceStatus(channelID, credentialIndex, false)
+	common.SysLog(fmt.Sprintf("channel balance monitor detected empty balance but auto-disable is disabled: channel_id=%d credential_index=%d", channelID, credentialIndex))
 }
 
 func enableMultiKeyChannelAccountForBalance(channelID int, credentialIndex int) {

@@ -1688,7 +1688,7 @@ func TestShouldRetrySwitchesChannelForSanitizedUpstreamBalanceInsufficient(t *te
 	require.Equal(t, 1, param.GetExtraRetries())
 }
 
-func TestProcessChannelErrorUpdatesBalanceReasonWhenAlreadyAutoDisabled(t *testing.T) {
+func TestProcessChannelErrorDoesNotRewriteAlreadyAutoDisabledChannel(t *testing.T) {
 	db := serviceSetupRelayRetryDB(t)
 	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
 	common.AutomaticDisableChannelEnabled = true
@@ -1718,11 +1718,11 @@ func TestProcessChannelErrorUpdatesBalanceReasonWhenAlreadyAutoDisabled(t *testi
 
 	updated, err := model.GetChannelById(channel.Id, true)
 	require.NoError(t, err)
-	require.True(t, service.IsBalanceInsufficientPausedChannel(updated))
-	require.Equal(t, service.ChannelStatusReasonBalanceInsufficient, service.ChannelStatusReason(updated))
+	require.Equal(t, common.ChannelStatusAutoDisabled, updated.Status)
+	require.Equal(t, "temporary failure", service.ChannelStatusReason(updated))
 }
 
-func TestProcessChannelErrorMarksBalanceInsufficientSynchronously(t *testing.T) {
+func TestProcessChannelErrorDoesNotDisableChannelForBalanceFailure(t *testing.T) {
 	db := serviceSetupRelayRetryDB(t)
 	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
 	common.AutomaticDisableChannelEnabled = true
@@ -1747,10 +1747,52 @@ func TestProcessChannelErrorMarksBalanceInsufficientSynchronously(t *testing.T) 
 		false,
 	)
 
-	require.True(t, service.IsRuntimeBalanceInsufficientChannelID(channel.Id))
+	require.False(t, service.IsRuntimeBalanceInsufficientChannelID(channel.Id))
 	updated, err := model.GetChannelById(channel.Id, true)
 	require.NoError(t, err)
-	require.True(t, service.IsBalanceInsufficientPausedChannel(updated))
+	require.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	require.False(t, service.IsBalanceInsufficientPausedChannel(updated))
+}
+
+func TestProcessChannelErrorDoesNotAutoDisableChannelForUpstreamFailure(t *testing.T) {
+	db := serviceSetupRelayRetryDB(t)
+	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
+	originalFailureAvoidanceEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.AutomaticDisableChannelEnabled = true
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = int((30 * time.Minute).Seconds())
+	t.Cleanup(func() {
+		common.AutomaticDisableChannelEnabled = originalAutomaticDisable
+		common.ChannelFailureAvoidanceEnabled = originalFailureAvoidanceEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(911)
+		service.ClearChannelConcurrencyForTest()
+	})
+	autoBan := 1
+	channel := model.Channel{
+		Id:      911,
+		Name:    "must-stay-visible",
+		Type:    constant.ChannelTypeOpenAI,
+		Status:  common.ChannelStatusEnabled,
+		AutoBan: &autoBan,
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	processChannelError(
+		newRelayRetryContext(),
+		*types.NewChannelError(channel.Id, channel.Type, channel.Name, false, "", true),
+		types.NewOpenAIError(errors.New("bad gateway"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway),
+		false,
+	)
+
+	status := service.GetChannelFailureAvoidanceStatus(channel.Id)
+	require.NotNil(t, status)
+	require.True(t, status.Active)
+	updated, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	require.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	require.False(t, service.IsErrorPausedChannel(updated))
 }
 
 func TestProcessChannelErrorRecordsConfigIsolationAfterTwoAuthFailures(t *testing.T) {

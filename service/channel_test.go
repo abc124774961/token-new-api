@@ -83,7 +83,7 @@ func TestShouldResumeBalancePausedChannelRequiresEnabledAndThreshold(t *testing.
 	require.False(t, ShouldResumeBalancePausedChannel(2))
 }
 
-func TestBalanceInsufficientErrorUsesBalancePauseInsteadOfHealthDisable(t *testing.T) {
+func TestBalanceInsufficientErrorDoesNotDisableChannel(t *testing.T) {
 	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
 	common.AutomaticDisableChannelEnabled = true
 	t.Cleanup(func() {
@@ -97,7 +97,7 @@ func TestBalanceInsufficientErrorUsesBalancePauseInsteadOfHealthDisable(t *testi
 	)
 
 	require.True(t, IsBalanceInsufficientError(err))
-	require.True(t, ShouldDisableChannelForBalance(err))
+	require.False(t, ShouldDisableChannelForBalance(err))
 	require.False(t, ShouldDisableChannel(err))
 }
 
@@ -111,7 +111,7 @@ func TestEnglishAccountBalanceMessageIsBalanceInsufficient(t *testing.T) {
 	require.True(t, IsBalanceInsufficientError(err))
 }
 
-func TestInsufficientUserQuotaOnlyPausesChannelWhenRetryable(t *testing.T) {
+func TestInsufficientUserQuotaDoesNotDisableChannel(t *testing.T) {
 	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
 	common.AutomaticDisableChannelEnabled = true
 	t.Cleanup(func() {
@@ -124,7 +124,7 @@ func TestInsufficientUserQuotaOnlyPausesChannelWhenRetryable(t *testing.T) {
 		Code:    string(types.ErrorCodeInsufficientUserQuota),
 	}, http.StatusForbidden)
 	require.True(t, IsBalanceInsufficientError(upstreamErr))
-	require.True(t, ShouldDisableChannelForBalance(upstreamErr))
+	require.False(t, ShouldDisableChannelForBalance(upstreamErr))
 	require.False(t, ShouldDisableChannel(upstreamErr))
 
 	localErr := types.NewErrorWithStatusCode(

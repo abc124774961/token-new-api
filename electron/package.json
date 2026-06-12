@@ -38,6 +38,9 @@
     "files": [
       "main.js",
       "preload.js",
+      "workspace.html",
+      "workspace.css",
+      "workspace.js",
       "icon.png",
       "tray-iconTemplate.png",
       "tray-iconTemplate@2x.png",

@@ -551,6 +551,43 @@ func TestBuildRatioBaselinesAppliesProfitMonitorFixedRatio(t *testing.T) {
 	require.Empty(t, snapshot.FallbackReason)
 }
 
+func TestLoadPersistedBaselinesAppliesProfitMonitorFixedRatio(t *testing.T) {
+	db := newDynamicBillingTestDB(t)
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&model.ModelGatewayDynamicBillingBaseline{
+		BillingGroup:        "codex-plus",
+		ReferenceModel:      "gpt-test",
+		Ratio:               0.08,
+		ReferencePricePerM:  0.32,
+		SampleCount:         10,
+		CostSource:          scheduler_setting.DynamicBillingCostSourceProfit24h,
+		ApplyMode:           scheduler_setting.DynamicBillingApplyModeObserve,
+		ApplyReason:         ApplyReasonAutoApplied,
+		TargetRatio:         0.0549,
+		EffectiveRatio:      0.0549,
+		RequestCount:        10,
+		SuccessRequestCount: 10,
+		TotalTokens:         1000,
+		BaseQuotaAtRatio1:   float64(common.QuotaPerUnit),
+		CalculatedAt:        now,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}).Error)
+	setProfit24hMonitorConfigForTest(t, profit24hMonitorConfig{
+		DynamicRatioFixedValue: 0.079,
+	})
+
+	loaded := loadPersistedBaselines(db)
+	baseline, ok := loaded[cacheKey("gpt-test", "codex-plus")]
+	require.True(t, ok)
+	require.InEpsilon(t, 0.079, baseline.Ratio, 0.000001)
+	require.InEpsilon(t, 0.079, baseline.EffectiveRatio, 0.000001)
+	require.InEpsilon(t, 0.079, baseline.FixedRatio, 0.000001)
+	require.True(t, baseline.FixedRatioApplied)
+	require.Equal(t, ApplyReasonFixedRatioApplied, baseline.ApplyReason)
+	require.Empty(t, baseline.FallbackReason)
+}
+
 func TestBuildRatioBaselinesUsesRequestCostUsageWeightedMultiplier(t *testing.T) {
 	db := newDynamicBillingTestDB(t)
 	oldModelRatio := ratio_setting.ModelRatio2JSONString()

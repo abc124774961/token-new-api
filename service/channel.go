@@ -10,7 +10,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 )
 
@@ -28,45 +27,16 @@ func formatNotifyType(channelId int, status int) string {
 
 // disable & notify
 func DisableChannel(channelError types.ChannelError, reason string) {
-	common.SysLog(fmt.Sprintf("通道「%s」（#%d）发生错误，准备禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, reason))
-
-	// 检查是否启用自动禁用功能
-	if !channelError.AutoBan {
-		common.SysLog(fmt.Sprintf("通道「%s」（#%d）未启用自动禁用功能，跳过禁用操作", channelError.ChannelName, channelError.ChannelId))
-		return
-	}
-
-	success := model.UpdateChannelStatus(channelError.ChannelId, channelError.UsingKey, common.ChannelStatusAutoDisabled, reason)
-	if success {
-		subject := fmt.Sprintf("通道「%s」（#%d）已被禁用", channelError.ChannelName, channelError.ChannelId)
-		content := fmt.Sprintf("通道「%s」（#%d）已被禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, reason)
-		NotifyRootUser(formatNotifyType(channelError.ChannelId, common.ChannelStatusAutoDisabled), subject, content)
-	}
+	common.SysLog(fmt.Sprintf("通道「%s」（#%d）发生错误但自动禁用已停用，保持启用状态，原因：%s", channelError.ChannelName, channelError.ChannelId, reason))
 }
 
 func DisableChannelForBalance(channelError types.ChannelError) {
-	MarkChannelBalanceInsufficient(channelError.ChannelId)
-	DisableChannel(channelError, ChannelStatusReasonBalanceInsufficient)
+	common.SysLog(fmt.Sprintf("通道「%s」（#%d）余额异常但自动禁用已停用，保持启用状态", channelError.ChannelName, channelError.ChannelId))
 }
 
 func PauseChannelForError(channelError types.ChannelError, until time.Time, reason string) bool {
-	if !channelError.AutoBan {
-		common.SysLog(fmt.Sprintf("通道「%s」（#%d）未启用自动禁用功能，跳过错误暂停操作", channelError.ChannelName, channelError.ChannelId))
-		return false
-	}
-	if reason == "" {
-		reason = ChannelStatusReasonErrorPaused
-	}
-	return model.UpdateChannelStatusWholeChannelWithInfo(
-		channelError.ChannelId,
-		common.ChannelStatusAutoDisabled,
-		ChannelStatusReasonErrorPaused,
-		map[string]interface{}{
-			"pause_type":   ChannelStatusReasonErrorPaused,
-			"pause_reason": reason,
-			"pause_until":  until.Unix(),
-		},
-	)
+	common.SysLog(fmt.Sprintf("通道「%s」（#%d）错误暂停已停用，保持启用状态，原因：%s", channelError.ChannelName, channelError.ChannelId, reason))
+	return false
 }
 
 func EnableChannel(channelId int, usingKey string, channelName string) {
@@ -271,50 +241,11 @@ func RuntimeBalanceInsufficientCountForChannel(channelID int) int {
 }
 
 func ShouldDisableChannel(err *types.NewAPIError) bool {
-	if !common.AutomaticDisableChannelEnabled {
-		return false
-	}
-	if err == nil {
-		return false
-	}
-	if err.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
-		return false
-	}
-	if IsUpstreamConcurrencyLimitError(err) {
-		return false
-	}
-	if IsClientContextLimitError(err) {
-		return false
-	}
-	if types.IsChannelError(err) {
-		return true
-	}
-	if types.IsSkipRetryError(err) {
-		return false
-	}
-	if IsBalanceInsufficientError(err) {
-		return false
-	}
-	if operation_setting.ShouldDisableByStatusCode(err.StatusCode) {
-		return true
-	}
-
-	lowerMessage := strings.ToLower(err.Error())
-	search, _ := AcSearch(lowerMessage, operation_setting.AutomaticDisableKeywords, true)
-	return search
+	return false
 }
 
 func ShouldDisableChannelForBalance(err *types.NewAPIError) bool {
-	if !common.AutomaticDisableChannelEnabled {
-		return false
-	}
-	if err == nil || types.IsSkipRetryError(err) {
-		return false
-	}
-	if types.IsChannelError(err) {
-		return false
-	}
-	return IsBalanceInsufficientError(err)
+	return false
 }
 
 func IsBalanceInsufficientError(err *types.NewAPIError) bool {

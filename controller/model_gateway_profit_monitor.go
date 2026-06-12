@@ -461,6 +461,10 @@ func UpdateModelGatewayProfitMonitorConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	invalidatePublicHomeDynamicBillingCache()
+	if err := modelgatewaydynamicbilling.RefreshDefaultNow(); err != nil {
+		common.SysLog("model gateway dynamic billing refresh after profit monitor config update failed: " + err.Error())
+	}
 	common.ApiSuccess(c, gin.H{
 		"config": config,
 	})

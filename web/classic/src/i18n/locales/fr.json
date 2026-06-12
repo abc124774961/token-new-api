@@ -5663,6 +5663,7 @@
     "等待中": "En attente",
     "等待人工确认": "En attente de confirmation",
     "等待倍率确认": "Confirmation du ratio en attente",
+    "等待刷新": "En attente d’actualisation",
     "等待完成": "En attente de fin",
     "等待异步成本任务，或检查成本 worker 与成本配置。": "Attendez la tâche de coût asynchrone ou vérifiez le worker et la configuration des coûts.",
     "等待恢复探活": "En attente de sondes de reprise",

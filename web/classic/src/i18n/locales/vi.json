@@ -5864,6 +5864,7 @@
     "等待中": "Đang chờ",
     "等待人工确认": "Chờ xác nhận thủ công",
     "等待倍率确认": "Chờ xác nhận tỷ lệ",
+    "等待刷新": "Đang chờ làm mới",
     "等待完成": "Đang chờ hoàn tất",
     "等待异步成本任务，或检查成本 worker 与成本配置。": "Chờ tác vụ chi phí bất đồng bộ, hoặc kiểm tra cost worker và cấu hình chi phí.",
     "等待恢复探活": "Đang chờ probe khôi phục",

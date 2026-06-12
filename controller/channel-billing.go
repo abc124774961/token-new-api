@@ -14,7 +14,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/shopspring/decimal"
 
@@ -883,12 +882,6 @@ func shouldCheckChannelBalance(channel *model.Channel) bool {
 
 func reconcileChannelBalanceStatus(channel *model.Channel, balance float64) {
 	if channel == nil {
-		return
-	}
-	if channel.Status == common.ChannelStatusEnabled {
-		if balance <= 0 {
-			service.DisableChannelForBalance(*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, "", channel.GetAutoBan()))
-		}
 		return
 	}
 	if service.IsBalanceInsufficientPausedChannel(channel) && service.ShouldResumeBalancePausedChannel(balance) {

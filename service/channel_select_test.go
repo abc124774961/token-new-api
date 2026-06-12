@@ -538,6 +538,25 @@ func TestRecordChannelPerformanceAvoidanceDoesNotPauseChannel(t *testing.T) {
 	require.Equal(t, "slow_ttft", record.Reason)
 }
 
+func TestRecordChannelFailureAvoidanceNeverAutoPausesChannel(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = int(channelFailureAvoidancePauseDuration.Seconds())
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	record := RecordChannelFailureAvoidance(386, "upstream_error:502")
+
+	require.NotNil(t, record)
+	require.True(t, record.Active)
+	require.False(t, record.ShouldPause)
+	require.InDelta(t, channelFailureAvoidancePauseDuration.Seconds(), record.Remaining.Seconds(), 1)
+}
+
 func TestRecordChannelTimeoutDegradeTriggersProbeRecovery(t *testing.T) {
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds

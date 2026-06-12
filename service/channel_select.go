@@ -858,13 +858,12 @@ func recordChannelRuntimeAvoidance(identity ChannelRuntimeIdentity, reason strin
 	if failureCount > 1 {
 		ttl += time.Duration((failureCount-1)*channelFailureAvoidanceStepSeconds) * time.Second
 	}
-	until := now.Add(ttl)
-	remaining := until.Sub(now)
-	shouldPause := allowPause && remaining >= channelFailureAvoidancePauseDuration
-	if shouldPause {
-		until = now.Add(channelFailureAvoidancePauseDuration)
+	remaining := ttl
+	if remaining > channelFailureAvoidancePauseDuration {
 		remaining = channelFailureAvoidancePauseDuration
 	}
+	until := now.Add(remaining)
+	shouldPause := false
 	channelRuntimeFailureAvoidance.Store(identity, channelAvoidanceEntry{
 		until:                 until,
 		reason:                reason,
@@ -904,13 +903,12 @@ func recordChannelAvoidanceWithProbeRecovery(channelID int, reason string, failu
 	if failureCount > 1 {
 		ttl += time.Duration((failureCount-1)*channelFailureAvoidanceStepSeconds) * time.Second
 	}
-	until := now.Add(ttl)
-	remaining := until.Sub(now)
-	shouldPause := allowPause && remaining >= channelFailureAvoidancePauseDuration
-	if shouldPause {
-		until = now.Add(channelFailureAvoidancePauseDuration)
+	remaining := ttl
+	if remaining > channelFailureAvoidancePauseDuration {
 		remaining = channelFailureAvoidancePauseDuration
 	}
+	until := now.Add(remaining)
+	shouldPause := false
 	channelFailureAvoidance.Store(channelID, channelAvoidanceEntry{
 		until:                 until,
 		reason:                reason,

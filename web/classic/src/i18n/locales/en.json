@@ -5706,6 +5706,7 @@
     "等待中": "Waiting",
     "等待人工确认": "Awaiting manual confirmation",
     "等待倍率确认": "Awaiting ratio confirmation",
+    "等待刷新": "Waiting for refresh",
     "等待完成": "Waiting to finish",
     "等待异步成本任务，或检查成本 worker 与成本配置。": "Wait for the async cost task, or check the cost worker and cost config.",
     "等待恢复探活": "Waiting for recovery probes",

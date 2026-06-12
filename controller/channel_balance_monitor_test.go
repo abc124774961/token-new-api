@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/glebarez/sqlite"
@@ -139,6 +140,34 @@ func TestApplyTrustedRatioDifferencesRecordsConflictForMixedCurrentAndChangedSou
 	var event model.ChannelBalanceMonitorEvent
 	require.NoError(t, db.Where("event_type = ?", channelBalanceMonitorEventRatioConflict).First(&event).Error)
 	require.Equal(t, "可信上游值与当前配置不一致", event.Error)
+}
+
+func TestBalanceMonitorDoesNotAutoDisableMultiKeyAccountWhenBalanceEmpty(t *testing.T) {
+	db := setupChannelBalanceMonitorTestDB(t)
+	channel := model.Channel{
+		Id:     6601,
+		Name:   "balance-visible",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-a\nsk-b",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:         true,
+			MultiKeySize:       2,
+			MultiKeyStatusList: map[int]int{},
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	reconcileChannelAccountBalanceStatus(&channel, modelgatewayaccount.ChannelAccount{
+		ChannelID:       channel.Id,
+		CredentialIndex: 0,
+	}, 0, 10)
+
+	updated, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	require.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	require.Empty(t, updated.ChannelInfo.MultiKeyStatusList)
+	require.Empty(t, updated.ChannelInfo.MultiKeyDisabledReason)
 }
 
 func TestConvertSub2APIAvailableChannelsToRatioDataSupportsWrappedResponse(t *testing.T) {

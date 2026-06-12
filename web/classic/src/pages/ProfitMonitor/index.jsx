@@ -887,6 +887,7 @@ function GroupRatioPanel({ dynamicRatioGroup, config, t }) {
   if (!dynamicRatioGroup) return null;
   const currentRatio = Number(dynamicRatioGroup.actual_ratio || 0);
   const maxLimit = resolveDynamicRatioLimitMax(dynamicRatioGroup, config);
+  const fixedRatio = resolveDynamicRatioFixedValue(dynamicRatioGroup, config);
   const productInsight = buildProductRatioInsight(dynamicRatioGroup, config, t);
   const operationInsight = buildOperationRatioInsight(
     dynamicRatioGroup,
@@ -916,18 +917,19 @@ function GroupRatioPanel({ dynamicRatioGroup, config, t }) {
         />
         <RatioStat
           label={t('固定倍率')}
-          value={formatOptionalRatioLimit(
-            resolveDynamicRatioFixedValue(dynamicRatioGroup, config),
-            t,
-          )}
+          value={formatOptionalRatioLimit(fixedRatio, t)}
           detail={
             dynamicRatioGroup.dynamic_ratio_fixed_applied
               ? t('固定倍率生效')
-              : t('未设置')
+              : fixedRatio > 0
+                ? t('等待刷新')
+                : t('未设置')
           }
           tone={
             dynamicRatioGroup.dynamic_ratio_fixed_applied
               ? 'success'
+              : fixedRatio > 0
+                ? 'warning'
               : 'neutral'
           }
         />

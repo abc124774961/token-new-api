@@ -64,6 +64,7 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.POST("/internal/token-account-automation/credential", controller.TokenAccountAutomationCredentialWriteback)
 		apiRouter.GET("/internal/token-account-automation/proxies", controller.ListTokenAccountAutomationProxies)
 		apiRouter.GET("/internal/token-account-automation/account-profile", controller.TokenAccountAutomationAccountProfile)
+		apiRouter.GET("/internal/electron-browser/accounts", controller.ListElectronBrowserAccounts)
 		apiRouter.GET("/internal/token-account-automation/account-pools/invalid", controller.TokenAccountAutomationListInvalidAccounts)
 		apiRouter.POST("/internal/token-account-automation/account-pools/invalid/archive", controller.TokenAccountAutomationArchiveInvalidAccount)
 		apiRouter.POST("/internal/token-account-automation/account-pools/invalid/:id/reauthorize", controller.TokenAccountAutomationReauthorizeInvalidAccount)

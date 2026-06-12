@@ -879,7 +879,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		if service.IsBalanceInsufficientError(newAPIError) && !service.IsLocalUserQuotaError(newAPIError) && !terminalClientAbort {
 			service.MarkChannelRuntimeBalanceSkipped(c, relayRuntimeIdentity(c, channel.Id))
-			service.MarkChannelRuntimeBalanceInsufficient(relayRuntimeIdentity(c, channel.Id))
 			flow.BalanceInsufficient = true
 		}
 		concurrencyLease.Release()
@@ -2728,23 +2727,9 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	if kind, ok := relayTimeoutDegradeKindFromError(err); ok {
 		recordRelayChannelTimeoutDegradeForChannelError(c, channelError, kind, err, persistLog)
 	}
-	if service.ShouldDisableChannelForBalance(err) && channelError.AutoBan {
-		service.DisableChannelForBalance(channelError)
-	}
 	if errorCategory != modelgatewaycore.ErrorCategoryAuthConfigError {
 		if reason, ok := channelFailureAvoidanceReason(err); ok {
-			if avoidance := service.RecordChannelRuntimeFailureAvoidanceWithContext(relayRuntimeIdentity(c, channelError.ChannelId), reason, buildChannelFailureAvoidanceContext(c, channelError, err, persistLog)); avoidance != nil && avoidance.ShouldPause {
-				gopool.Go(func() {
-					service.PauseChannelForError(channelError, avoidance.Until, avoidance.Reason)
-				})
-			}
-		}
-		// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
-		// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-		if service.ShouldDisableChannel(err) && channelError.AutoBan {
-			gopool.Go(func() {
-				service.DisableChannel(channelError, err.ErrorWithStatusCode())
-			})
+			service.RecordChannelRuntimeFailureAvoidanceWithContext(relayRuntimeIdentity(c, channelError.ChannelId), reason, buildChannelFailureAvoidanceContext(c, channelError, err, persistLog))
 		}
 	}
 

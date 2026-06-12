@@ -1341,7 +1341,7 @@ func loadPersistedBaselines(db *gorm.DB) map[string]RatioBaseline {
 			UpstreamCostUSD:      row.UpstreamCostUSD,
 		})
 	}
-	return values
+	return applyProfitMonitorFixedDynamicRatio(values)
 }
 
 func persistBaselines(db *gorm.DB, values map[string]RatioBaseline) error {

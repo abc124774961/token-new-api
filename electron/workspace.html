@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>New API Browser Workspace</title>
+    <link rel="stylesheet" href="./workspace.css" />
+  </head>
+  <body>
+    <div class="workspace-shell">
+      <header class="workspace-header">
+        <div>
+          <h1>账号浏览器工作台</h1>
+          <p>独立账号环境、代理、登录态和浏览器画像集中管理</p>
+        </div>
+        <div class="header-actions">
+          <button id="refreshAccounts" class="icon-button">刷新账号</button>
+          <button id="openAdmin" class="secondary-button">管理后台</button>
+        </div>
+      </header>
+
+      <section class="account-panel">
+        <div class="account-toolbar">
+          <input id="accountSearch" type="search" placeholder="搜索账号、渠道、凭证" />
+          <select id="statusFilter">
+            <option value="all">全部账号</option>
+            <option value="enabled">可用账号</option>
+            <option value="disabled">禁用账号</option>
+          </select>
+          <span id="accountSummary" class="summary-text">账号加载中</span>
+        </div>
+        <div id="accountList" class="account-list"></div>
+      </section>
+
+      <main class="browser-panel">
+        <div class="browser-toolbar">
+          <button id="goBack" title="后退">‹</button>
+          <button id="goForward" title="前进">›</button>
+          <button id="reloadTab" title="刷新">↻</button>
+          <input id="urlInput" type="text" placeholder="输入网址或选择账号打开" />
+          <button id="navigateTab">前往</button>
+          <div id="activeProfile" class="profile-pill">未打开账号</div>
+        </div>
+        <div id="browserStage" class="browser-stage">
+          <div id="emptyState" class="empty-state">
+            <h2>选择一个账号，然后点击“浏览器中打开”</h2>
+            <p>每个账号会使用独立 Cookie、缓存、代理和浏览器画像。</p>
+          </div>
+        </div>
+      </main>
+
+      <footer class="tab-dock">
+        <div id="tabDock" class="tab-list"></div>
+      </footer>
+    </div>
+    <div id="toast" class="toast"></div>
+    <script src="./workspace.js"></script>
+  </body>
+</html>
