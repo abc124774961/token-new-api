@@ -25,30 +25,8 @@ func useRelayRootMiddleware(router *gin.RouterGroup) {
 
 func SetRelayRoutes(router *gin.RouterGroup) {
 	// https://platform.openai.com/docs/api-reference/introduction
-	modelsRouter := router.Group("/v1/models")
-	modelsRouter.Use(middleware.RouteTag("relay"))
-	modelsRouter.Use(middleware.TokenAuth())
-	{
-		modelsRouter.GET("", func(c *gin.Context) {
-			switch {
-			case c.GetHeader("x-api-key") != "" && c.GetHeader("anthropic-version") != "":
-				controller.ListModels(c, constant.ChannelTypeAnthropic)
-			case c.GetHeader("x-goog-api-key") != "" || c.Query("key") != "": // 单独的适配
-				controller.RetrieveModel(c, constant.ChannelTypeGemini)
-			default:
-				controller.ListModels(c, constant.ChannelTypeOpenAI)
-			}
-		})
-
-		modelsRouter.GET("/:model", func(c *gin.Context) {
-			switch {
-			case c.GetHeader("x-api-key") != "" && c.GetHeader("anthropic-version") != "":
-				controller.RetrieveModel(c, constant.ChannelTypeAnthropic)
-			default:
-				controller.RetrieveModel(c, constant.ChannelTypeOpenAI)
-			}
-		})
-	}
+	registerOpenAICompatibleModelsRoutes(router, "/v1/models")
+	registerOpenAICompatibleModelsRoutes(router, "/models")
 
 	geminiRouter := router.Group("/v1beta/models")
 	geminiRouter.Use(middleware.RouteTag("relay"))
@@ -207,6 +185,33 @@ func SetRelayRoutes(router *gin.RouterGroup) {
 		// Gemini API 路径格式: /v1beta/models/{model_name}:{action}
 		relayGeminiRouter.POST("/models/*path", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatGemini)
+		})
+	}
+}
+
+func registerOpenAICompatibleModelsRoutes(router *gin.RouterGroup, path string) {
+	modelsRouter := router.Group(path)
+	modelsRouter.Use(middleware.RouteTag("relay"))
+	modelsRouter.Use(middleware.TokenAuth())
+	{
+		modelsRouter.GET("", func(c *gin.Context) {
+			switch {
+			case c.GetHeader("x-api-key") != "" && c.GetHeader("anthropic-version") != "":
+				controller.ListModels(c, constant.ChannelTypeAnthropic)
+			case c.GetHeader("x-goog-api-key") != "" || c.Query("key") != "": // 单独的适配
+				controller.RetrieveModel(c, constant.ChannelTypeGemini)
+			default:
+				controller.ListModels(c, constant.ChannelTypeOpenAI)
+			}
+		})
+
+		modelsRouter.GET("/:model", func(c *gin.Context) {
+			switch {
+			case c.GetHeader("x-api-key") != "" && c.GetHeader("anthropic-version") != "":
+				controller.RetrieveModel(c, constant.ChannelTypeAnthropic)
+			default:
+				controller.RetrieveModel(c, constant.ChannelTypeOpenAI)
+			}
 		})
 	}
 }

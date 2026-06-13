@@ -289,17 +289,20 @@ func TokenAuth() func(c *gin.Context) {
 			}
 			c.Request.Header.Set("Authorization", "Bearer "+key)
 		}
+		path := c.Request.URL.Path
+		isRootModelsPath := path == "/models" || strings.HasPrefix(path, "/models/")
 		// 检查path包含/v1/messages 或 /v1/models
-		if strings.Contains(c.Request.URL.Path, "/v1/messages") || strings.Contains(c.Request.URL.Path, "/v1/models") {
+		if strings.Contains(path, "/v1/messages") || strings.Contains(path, "/v1/models") || isRootModelsPath {
 			anthropicKey := c.Request.Header.Get("x-api-key")
 			if anthropicKey != "" {
 				c.Request.Header.Set("Authorization", "Bearer "+anthropicKey)
 			}
 		}
 		// gemini api 从query中获取key
-		if strings.HasPrefix(c.Request.URL.Path, "/v1beta/models") ||
-			strings.HasPrefix(c.Request.URL.Path, "/v1beta/openai/models") ||
-			strings.HasPrefix(c.Request.URL.Path, "/v1/models/") {
+		if strings.HasPrefix(path, "/v1beta/models") ||
+			strings.HasPrefix(path, "/v1beta/openai/models") ||
+			strings.HasPrefix(path, "/v1/models/") ||
+			isRootModelsPath {
 			skKey := c.Query("key")
 			if skKey != "" {
 				c.Request.Header.Set("Authorization", "Bearer "+skKey)

@@ -22,7 +22,7 @@ import (
 )
 
 type listModelsResponse struct {
-	Success bool               `json:"success"`
+	Success *bool              `json:"success,omitempty"`
 	Data    []dto.OpenAIModels `json:"data"`
 	Object  string             `json:"object"`
 }
@@ -144,7 +144,6 @@ func decodeListModelsResponse(t *testing.T, recorder *httptest.ResponseRecorder)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	var payload listModelsResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
-	require.True(t, payload.Success)
 	require.Equal(t, "list", payload.Object)
 
 	ids := make(map[string]struct{}, len(payload.Data))
@@ -152,6 +151,40 @@ func decodeListModelsResponse(t *testing.T, recorder *httptest.ResponseRecorder)
 		ids[item.Id] = struct{}{}
 	}
 	return ids
+}
+
+func TestListModelsOpenAIResponseOmitsNewAPISuccessEnvelope(t *testing.T) {
+	withSelfUseModeEnabled(t)
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1000,
+		Username: "standard-model-list-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-5.5",
+		ChannelId: 1,
+		Enabled:   true,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	ctx.Set("id", 1000)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var raw map[string]any
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &raw))
+	require.Equal(t, "list", raw["object"])
+	require.Contains(t, raw, "data")
+	require.NotContains(t, raw, "success")
 }
 
 func pricingByModelName(pricings []model.Pricing) map[string]model.Pricing {
@@ -477,7 +510,7 @@ func TestListModelsAdvertisesResponsesForOpenAIWireAPI(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	var payload listModelsResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
-	require.True(t, payload.Success)
+	require.Nil(t, payload.Success)
 
 	var found bool
 	for _, item := range payload.Data {
@@ -535,7 +568,7 @@ func TestListModelsAdvertisesSessionModesAndActualReturnedModel(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	var payload listModelsResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
-	require.True(t, payload.Success)
+	require.Nil(t, payload.Success)
 
 	var found bool
 	for _, item := range payload.Data {
@@ -593,7 +626,7 @@ func TestListModelsAdvertisesImageSessionModes(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	var payload listModelsResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
-	require.True(t, payload.Success)
+	require.Nil(t, payload.Success)
 
 	var found bool
 	for _, item := range payload.Data {
@@ -654,7 +687,7 @@ func TestListModelsAdvertisesImageApiWithoutCodexImageToolCapability(t *testing.
 	require.Equal(t, http.StatusOK, recorder.Code)
 	var payload listModelsResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
-	require.True(t, payload.Success)
+	require.Nil(t, payload.Success)
 
 	var found bool
 	for _, item := range payload.Data {

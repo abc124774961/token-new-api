@@ -32,6 +32,11 @@ var openAIModels []dto.OpenAIModels
 var openAIModelsMap map[string]dto.OpenAIModels
 var channelId2Models map[int][]string
 
+type openAIModelListResponse struct {
+	Object string             `json:"object"`
+	Data   []dto.OpenAIModels `json:"data"`
+}
+
 func init() {
 	// https://platform.openai.com/docs/models/model-endpoint-compatibility
 	for i := 0; i < constant.APITypeDummy; i++ {
@@ -155,10 +160,9 @@ func ListModels(c *gin.Context, modelType int) {
 			"nextPageToken": nil,
 		})
 	default:
-		c.JSON(200, gin.H{
-			"success": true,
-			"data":    userOpenAiModels,
-			"object":  "list",
+		c.JSON(200, openAIModelListResponse{
+			Object: "list",
+			Data:   userOpenAiModels,
 		})
 	}
 }
