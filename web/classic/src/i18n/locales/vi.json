@@ -8299,6 +8299,19 @@
     "命中预览": "Xem trước khớp",
     "用真实用户 ID 和分组模拟一次扣费倍率链路。": "Mô phỏng chuỗi hệ số tính phí bằng ID người dùng và nhóm thật.",
     "搜索用户用于预览": "Tìm người dùng để xem trước",
-    "搜索模型用于预览": "Tìm mô hình để xem trước"
+    "搜索模型用于预览": "Tìm mô hình để xem trước",
+    "联系资料": "Hồ sơ liên hệ",
+    "联系资料已保存": "Đã lưu hồ sơ liên hệ",
+    "联系昵称": "Biệt danh liên hệ",
+    "联系邮箱": "Email liên hệ",
+    "其他联系方式": "Thông tin liên hệ khác",
+    "优先显示": "Hiển thị ưu tiên",
+    "当前显示": "Hiển thị hiện tại",
+    "设置后相关位置会优先显示联系昵称、QQ 或联系邮箱": "Sau khi thiết lập, các vị trí liên quan sẽ ưu tiên hiển thị biệt danh liên hệ, QQ hoặc email liên hệ",
+    "优先显示的联系昵称": "Biệt danh liên hệ được ưu tiên hiển thị",
+    "请输入 QQ": "Nhập QQ",
+    "请输入联系邮箱": "Nhập email liên hệ",
+    "例如 Telegram、微信或其他备注": "Ví dụ: Telegram, WeChat hoặc ghi chú khác",
+    "支持搜索用户的 ID、用户名、显示名称、邮箱和联系方式": "Tìm kiếm theo ID người dùng, tên người dùng, tên hiển thị, email và thông tin liên hệ"
   }
 }

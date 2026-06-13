@@ -306,15 +306,13 @@ func finalizeVisibleOpenAIModels(c *gin.Context, models []dto.OpenAIModels) []dt
 
 	for i := range models {
 		modelCodexImageToolSupported := false
-		groupCodexImageToolSupported := false
 		if capability, ok := capabilitiesByModel[models[i].Id]; ok {
 			models[i].SupportedEndpointTypes = capability.SupportedEndpointTypes
 			modelCodexImageToolSupported = capability.CodexImageGenerationToolSupported
-			groupCodexImageToolSupported = capability.GroupCodexImageGenerationToolSupported
 		} else {
 			modelCodexImageToolSupported = model.GetModelCodexImageGenerationToolSupported(models[i].Id)
 		}
-		advertiseCodexImageTool := shouldAdvertiseCodexImageToolForModel(models[i].Id, modelCodexImageToolSupported, groupCodexImageToolSupported)
+		advertiseCodexImageTool := shouldAdvertiseCodexImageToolForModel(models[i].Id, modelCodexImageToolSupported)
 		models[i].SupportedSessionModes = buildSupportedSessionModes(models[i].Id, models[i].SupportedEndpointTypes, advertiseCodexImageTool)
 		models[i].ActualModelReturned = buildActualModelReturned(models[i], actualModelByName[models[i].Id])
 		models[i].Capabilities = buildModelCapabilities(models[i].Id, advertiseCodexImageTool)
@@ -450,9 +448,6 @@ func buildCodexModelsResponse(c *gin.Context, codexModels []dto.CodexModelInfo) 
 	response := dto.CodexModelsResponse{Models: codexModels}
 
 	imageGenerationSupported := false
-	if groups, ok := resolveVisibleModelGroups(c); ok {
-		imageGenerationSupported = model.GetGroupCapabilities(groups).CodexImageGenerationToolSupported
-	}
 	for _, item := range codexModels {
 		imageGenerationSupported = imageGenerationSupported || item.Capabilities[dto.BuildInToolImageGeneration]
 	}
@@ -489,14 +484,8 @@ func nonNilStringSlice(items []string) []string {
 	return items
 }
 
-func shouldAdvertiseCodexImageToolForModel(modelName string, modelCodexImageToolSupported bool, groupCodexImageToolSupported bool) bool {
-	if common.IsImageGenerationModel(modelName) {
-		return modelCodexImageToolSupported
-	}
-	if !common.IsOpenAITextModel(modelName) {
-		return modelCodexImageToolSupported
-	}
-	return modelCodexImageToolSupported || groupCodexImageToolSupported
+func shouldAdvertiseCodexImageToolForModel(modelName string, modelCodexImageToolSupported bool) bool {
+	return modelCodexImageToolSupported
 }
 
 func buildModelCapabilities(modelName string, codexImageToolSupported bool) map[string]bool {

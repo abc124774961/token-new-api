@@ -280,7 +280,7 @@ func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
 		StickyBreak:               plan.StickyBreak,
 		StickyDecision:            plan.StickyDecision,
 		CacheAffinity:             plan.CacheAffinity,
-		RequiresCodexImageTool:    false,
+		RequiresCodexImageTool:    plan.RequiresCodexImageTool,
 		RequiredTools:             dispatchRequiredToolsForRecord(plan.RequiredTools),
 		CandidateFilterConditions: dispatchFilterConditionsForRecord(plan.CandidateFilterConditions),
 		CandidateExplanations: append([]core.CandidateExplanation(nil),

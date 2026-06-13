@@ -362,7 +362,7 @@ func (s *CandidateScoringService) costReferenceForCandidate(candidate core.Candi
 			RequestedModel:         requestedModel,
 			Group:                  strings.TrimSpace(group),
 			EndpointType:           endpointType,
-			RequiresCodexImageTool: false,
+			RequiresCodexImageTool: ctx.RequiresCodexImageTool || candidate.RequiresCodexImageTool,
 		}
 		if value, ok := s.costBaselineProvider.Baseline(scope); ok && value > 0 && (best <= 0 || value < best) {
 			best = value

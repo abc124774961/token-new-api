@@ -20,6 +20,10 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import { Modal, Badge } from '@douyinfe/semi-ui';
 import { renderQuota, renderNumber } from '../../../../helpers';
+import {
+  getUserContactItems,
+  getUserPreferredName,
+} from '../../../../helpers/userDisplay';
 
 const UserInfoModal = ({
   showUserInfo,
@@ -27,6 +31,8 @@ const UserInfoModal = ({
   userInfoData,
   t,
 }) => {
+  const preferredName = getUserPreferredName(userInfoData);
+  const contactItems = getUserContactItems(userInfoData, t);
   const infoItemStyle = {
     marginBottom: '16px',
   };
@@ -78,6 +84,25 @@ const UserInfoModal = ({
     >
       {userInfoData && (
         <div style={{ padding: 20 }}>
+          <div style={rowStyle}>
+            <div style={colStyle}>
+              {renderLabel(t('优先显示'), 'primary')}
+              <div style={valueStyle}>{preferredName}</div>
+            </div>
+            {contactItems.length > 0 && (
+              <div style={colStyle}>
+                {renderLabel(t('联系方式'), 'primary')}
+                <div style={valueStyle}>
+                  {contactItems.map((item) => (
+                    <div key={item.key} style={{ fontSize: 12 }}>
+                      {item.label}: {item.value}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* 基本信息 */}
           <div style={rowStyle}>
             <div style={colStyle}>

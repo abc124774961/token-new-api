@@ -280,7 +280,8 @@ func requiredEndpointTypeForRelay(info *relaycommon.RelayInfo) constant.Endpoint
 }
 
 func requiresCodexImageToolForRelay(info *relaycommon.RelayInfo) bool {
-	return false
+	req := responsesRequestForEndpointDetection(infoRequest(info))
+	return service.ResponsesRequestRequiresCodexImageGenerationTool(req)
 }
 
 func responsesRequestForEndpointDetection(request dto.Request) *dto.OpenAIResponsesRequest {
@@ -290,6 +291,13 @@ func responsesRequestForEndpointDetection(request dto.Request) *dto.OpenAIRespon
 	default:
 		return nil
 	}
+}
+
+func infoRequest(info *relaycommon.RelayInfo) dto.Request {
+	if info == nil {
+		return nil
+	}
+	return info.Request
 }
 
 func markResponsesPreviousIDRequirement(c *gin.Context, request dto.Request) {
@@ -1022,6 +1030,9 @@ func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 }
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
+	if retryParam != nil {
+		common.SetContextKey(c, constant.ContextKeyRequiresCodexImageTool, retryParam.RequiresCodexImageTool)
+	}
 	if info.ChannelMeta == nil {
 		autoBan := c.GetBool("auto_ban")
 		autoBanInt := 1
@@ -1376,6 +1387,7 @@ func setupRelaySelectedModelGatewayPlan(c *gin.Context, info *relaycommon.RelayI
 	if retryParam != nil {
 		endpointType = retryParam.EndpointType
 	}
+	common.SetContextKey(c, constant.ContextKeyRequiresCodexImageTool, plan.RequiresCodexImageTool || retryParam != nil && retryParam.RequiresCodexImageTool)
 	selection := &modelgatewayintegration.SelectionResult{
 		Channel:      plan.Channel,
 		Group:        selectGroup,
@@ -1885,6 +1897,13 @@ func learnRelayCapabilityFromError(c *gin.Context, channel *model.Channel, apiEr
 			changed = true
 		}
 	}
+	if isCodexImageGenerationToolUnsupportedError(apiErr) {
+		if updated, err := service.MarkChannelAccountCodexImageGenerationToolCapability(channel.Id, credentialIndex, false, apiErr.Error()); err != nil {
+			logger.LogWarn(c, fmt.Sprintf("failed to mark codex image_generation tool unsupported: channel_id=%d credential_index=%d error=%v", channel.Id, credentialIndex, err))
+		} else if updated {
+			changed = true
+		}
+	}
 	if isTokenRevokedAuthError(apiErr) {
 		if updated, err := service.MarkChannelAccountAuthErrorCandidate(channel.Id, credentialIndex, apiErr.Error()); err != nil {
 			logger.LogWarn(c, fmt.Sprintf("failed to mark account auth error: channel_id=%d credential_index=%d error=%v", channel.Id, credentialIndex, err))
@@ -1920,7 +1939,7 @@ func classifyRelayAttemptError(c *gin.Context, apiErr *types.NewAPIError) string
 	if service.IsBalanceInsufficientError(apiErr) {
 		return modelgatewaycore.ErrorCategoryBalanceOrQuota
 	}
-	if isResponsesPreviousIDCompatibilityError(apiErr) || isUnsupportedStreamOptionsError(apiErr) {
+	if isResponsesPreviousIDCompatibilityError(apiErr) || isUnsupportedStreamOptionsError(apiErr) || isCodexImageGenerationToolUnsupportedError(apiErr) {
 		return modelgatewaycore.ErrorCategoryUnsupportedCapability
 	}
 	if isInvalidEncryptedContentError(apiErr) || service.IsClientContextLimitError(apiErr) {
@@ -1967,6 +1986,18 @@ func isResponsesPreviousIDCompatibilityError(apiErr *types.NewAPIError) bool {
 		(strings.Contains(message, "websocket v2") ||
 			strings.Contains(message, "only supported") ||
 			strings.Contains(message, "not supported"))
+}
+
+func isCodexImageGenerationToolUnsupportedError(apiErr *types.NewAPIError) bool {
+	if apiErr == nil {
+		return false
+	}
+	message := strings.ToLower(apiErr.Error())
+	return strings.Contains(message, "image generation is not enabled") ||
+		strings.Contains(message, "image_generation") && (strings.Contains(message, "not enabled") ||
+			strings.Contains(message, "not supported") ||
+			strings.Contains(message, "unsupported") ||
+			strings.Contains(message, "disabled"))
 }
 
 func isTokenRevokedAuthError(apiErr *types.NewAPIError) bool {
@@ -2584,7 +2615,7 @@ func shouldFailoverOnUnsupportedCapability(c *gin.Context, openaiErr *types.NewA
 		return false
 	}
 	message := strings.ToLower(openaiErr.Error())
-	if isResponsesPreviousIDCompatibilityError(openaiErr) || isUnsupportedStreamOptionsError(openaiErr) {
+	if isResponsesPreviousIDCompatibilityError(openaiErr) || isUnsupportedStreamOptionsError(openaiErr) || isCodexImageGenerationToolUnsupportedError(openaiErr) {
 		return true
 	}
 	return strings.Contains(message, "unknown parameter") ||

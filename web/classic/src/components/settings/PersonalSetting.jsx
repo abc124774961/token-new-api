@@ -39,6 +39,7 @@ import ConsolePageShell from '../layout/ConsolePageShell';
 // 导入子组件
 import UserInfoHeader from './personal/components/UserInfoHeader';
 import AccountManagement from './personal/cards/AccountManagement';
+import ContactProfileSettings from './personal/cards/ContactProfileSettings';
 import NotificationSettings from './personal/cards/NotificationSettings';
 import PreferencesSettings from './personal/cards/PreferencesSettings';
 import CheckinCalendar from './personal/cards/CheckinCalendar';
@@ -365,6 +366,7 @@ const PersonalSetting = () => {
     const { success, message, data } = res.data;
     if (success) {
       userDispatch({ type: 'login', payload: data });
+      localStorage.setItem('user', JSON.stringify(data));
       setUserData(data);
       await loadPasskeyStatus();
     } else {
@@ -569,6 +571,12 @@ const PersonalSetting = () => {
       <div className='ct-console-page-grid ct-personal-settings-grid'>
         {/* 左侧：账户管理设置 */}
         <div className='ct-console-page-stack'>
+          <ContactProfileSettings
+            t={t}
+            userState={userState}
+            userDispatch={userDispatch}
+          />
+
           <AccountManagement
             t={t}
             userState={userState}

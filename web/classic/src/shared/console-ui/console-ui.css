@@ -1464,10 +1464,25 @@ html.dark
 }
 
 .aurora-table-identity,
+.aurora-table-user-link,
 .aurora-table-number,
 .aurora-table-time {
   display: grid;
   min-width: 0;
+}
+
+.aurora-table-user-link {
+  padding: 0;
+  border: 0;
+  color: var(--aurora-text);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.aurora-table-user-link:hover strong {
+  color: var(--aurora-brand-dark);
+  text-decoration: underline;
 }
 
 .aurora-table-identity strong {
@@ -1481,7 +1496,26 @@ html.dark
   white-space: nowrap;
 }
 
+.aurora-table-user-link strong {
+  overflow: hidden;
+  max-width: 180px;
+  color: var(--aurora-brand-dark);
+  font-size: 13px;
+  line-height: 19px;
+  font-weight: 860;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .aurora-table-identity small {
+  margin-top: 2px;
+  color: var(--aurora-muted);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 760;
+}
+
+.aurora-table-user-link small {
   margin-top: 2px;
   color: var(--aurora-muted);
   font-size: 11px;

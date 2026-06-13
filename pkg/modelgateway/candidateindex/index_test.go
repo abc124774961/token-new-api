@@ -123,7 +123,7 @@ func TestProIndexQueryAppliesEndpointAndExclusionFilters(t *testing.T) {
 
 	require.Len(t, candidates, 1)
 	require.Equal(t, imageToolChannel.Id, candidates[0].RuntimeKey.ChannelID)
-	require.False(t, candidates[0].RequiresCodexImageTool)
+	require.True(t, candidates[0].RequiresCodexImageTool)
 
 	excluded := index.Query(Query{
 		Groups:                 []string{"codex"},

@@ -32,12 +32,13 @@ import {
   renderQuota,
   stringToColor,
 } from '../../../../helpers';
+import { getUserPreferredName } from '../../../../helpers/userDisplay';
 import { Coins, BarChart2, Users } from 'lucide-react';
 
 const UserInfoHeader = ({ t, userState }) => {
   const getUsername = () => {
     if (userState.user) {
-      return userState.user.username;
+      return getUserPreferredName(userState.user, userState.user.username);
     } else {
       return 'null';
     }

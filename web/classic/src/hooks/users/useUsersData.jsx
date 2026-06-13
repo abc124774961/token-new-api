@@ -26,6 +26,9 @@ import { useTableCompactMode } from '../common/useTableCompactMode';
 export const useUsersData = () => {
   const { t } = useTranslation();
   const [compactMode, setCompactMode] = useTableCompactMode('users');
+  const initialSearchKeyword = new URLSearchParams(window.location.search).get(
+    'keyword',
+  ) || '';
 
   // State management
   const [users, setUsers] = useState([]);
@@ -45,7 +48,7 @@ export const useUsersData = () => {
 
   // Form initial values
   const formInitValues = {
-    searchKeyword: '',
+    searchKeyword: initialSearchKeyword,
     searchGroup: '',
   };
 
@@ -266,11 +269,13 @@ export const useUsersData = () => {
 
   // Initialize data on component mount
   useEffect(() => {
-    loadUsers(0, pageSize)
-      .then()
-      .catch((reason) => {
-        showError(reason);
-      });
+    const initKeyword = initialSearchKeyword.trim();
+    const initLoad = initKeyword
+      ? searchUsers(1, pageSize, initKeyword, '')
+      : loadUsers(0, pageSize);
+    initLoad.catch((reason) => {
+      showError(reason);
+    });
     fetchGroups().then();
   }, []);
 

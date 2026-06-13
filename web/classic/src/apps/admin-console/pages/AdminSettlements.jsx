@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { Button, Input, Modal, Toast } from '@douyinfe/semi-ui';
 import { IconSearch } from '@douyinfe/semi-icons';
 import {
@@ -12,6 +13,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { API, timestamp2string } from '../../../helpers';
+import { getUserPreferredName } from '../../../helpers/userDisplay';
 import { AdminPermissionButton } from '../permissions/AdminPermissionAction';
 import { ADMIN_PERMISSION_KEYS } from '../permissions/adminPermissions.config';
 
@@ -81,6 +83,7 @@ const StatusPill = ({ status, t }) => {
 
 const AdminSettlements = () => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [records, setRecords] = useState([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -167,6 +170,25 @@ const AdminSettlements = () => {
   const handleSearch = () => {
     setPage(1);
     loadRecords(1);
+  };
+
+  const getUserDisplayName = (record) =>
+    getUserPreferredName(
+      {
+        ...record,
+        username: record.user_username,
+        display_name: record.user_display_name,
+        contact_name: record.user_contact_name,
+        contact_email: record.user_contact_email,
+        contact_qq: record.user_contact_qq,
+        contact_other: record.user_contact_other,
+      },
+      `${t('用户')} ${record.user_id}`,
+    );
+
+  const openUserDetail = (record) => {
+    if (!record?.user_id) return;
+    navigate(`/admin/users?keyword=${encodeURIComponent(record.user_id)}`);
   };
 
   return (
@@ -296,7 +318,7 @@ const AdminSettlements = () => {
             <thead>
               <tr>
                 <th>{t('订单号')}</th>
-                <th>{t('用户ID')}</th>
+                <th>{t('用户名')}</th>
                 <th>{t('支付方式')}</th>
                 <th>{t('支付金额')}</th>
                 <th>{t('入账额度')}</th>
@@ -320,10 +342,24 @@ const AdminSettlements = () => {
                     </span>
                   </td>
                   <td>
-                    <span className='aurora-table-identity'>
-                      <strong>{record.user_id ?? '-'}</strong>
-                      <small>{t('入账对象')}</small>
-                    </span>
+                    {record.user_id ? (
+                      <button
+                        className='aurora-table-user-link'
+                        type='button'
+                        title={t('查看详情')}
+                        onClick={() => openUserDetail(record)}
+                      >
+                        <strong>{getUserDisplayName(record)}</strong>
+                        <small>
+                          {t('用户ID')} {record.user_id}
+                        </small>
+                      </button>
+                    ) : (
+                      <span className='aurora-table-identity'>
+                        <strong>{t('未知用户')}</strong>
+                        <small>{t('入账对象')}</small>
+                      </span>
+                    )}
                   </td>
                   <td>
                     <span className='aurora-payment-chip'>

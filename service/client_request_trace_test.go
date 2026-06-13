@@ -38,12 +38,12 @@ func TestBuildResponsesRequestToolTraceForLogDetectsImageGeneration(t *testing.T
 	require.Equal(t, true, trace["has_image_generation_tool"])
 	require.Equal(t, []string{"image_generation"}, trace["tool_types"])
 	require.Contains(t, trace["tools_raw"], "image_generation")
-	require.False(t, trace["requires_codex_image_tool"].(bool))
+	require.True(t, trace["requires_codex_image_tool"].(bool))
 	require.NotContains(t, trace, "imagegen_keyword_hits")
 	require.NotContains(t, trace, "imagegen_keyword_sources")
 }
 
-func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresDeclaredImageGenerationTool(t *testing.T) {
+func TestResponsesRequestRequiresCodexImageGenerationToolDetectsDeclaredImageGenerationTool(t *testing.T) {
 	req := &dto.OpenAIResponsesRequest{
 		Model:      "gpt-5.5",
 		Tools:      []byte(`[{"type":"image_generation"}]`),
@@ -58,7 +58,7 @@ func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresDeclaredImageGen
 	trace := BuildResponsesRequestToolTraceForLog(req)
 
 	require.True(t, trace["has_image_generation_tool"].(bool))
-	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
+	require.True(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
 	require.Empty(t, ResponsesRequestImageGenerationKeywordHits(req))
 	require.NotContains(t, trace, "imagegen_keyword_hits")
 	require.NotContains(t, trace, "imagegen_keyword_sources")
@@ -184,7 +184,7 @@ func TestResponsesRequestRequiresCodexImageGenerationToolIgnoresInlineSkillDefin
 
 	trace := BuildResponsesRequestToolTraceForLog(req)
 
-	require.False(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
+	require.True(t, ResponsesRequestRequiresCodexImageGenerationTool(req))
 	require.NotContains(t, trace, "imagegen_keyword_hits")
 	require.NotContains(t, trace, "imagegen_keyword_sources")
 }

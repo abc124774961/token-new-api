@@ -207,7 +207,7 @@ func BuildResponsesInputTextProbeForLog(req *dto.OpenAIResponsesRequest) map[str
 }
 
 func ResponsesRequestRequiresCodexImageGenerationTool(req *dto.OpenAIResponsesRequest) bool {
-	return false
+	return req != nil && req.HasTool(dto.BuildInToolImageGeneration)
 }
 
 func ResponsesRequestHasImageGenerationKeywordHits(req *dto.OpenAIResponsesRequest) bool {
@@ -303,7 +303,7 @@ func newResponsesImageGenerationRequirementDetector(req *dto.OpenAIResponsesRequ
 }
 
 func (d *responsesImageGenerationRequirementDetector) RequiresCodexImageGenerationTool() bool {
-	return len(d.IntentHits()) > 0
+	return d != nil && d.req != nil && d.req.HasTool(dto.BuildInToolImageGeneration)
 }
 
 func (d *responsesImageGenerationRequirementDetector) IntentHits() []string {

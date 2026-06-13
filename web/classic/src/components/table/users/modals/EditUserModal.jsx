@@ -55,6 +55,7 @@ import {
   IconLink,
   IconUserGroup,
   IconEdit,
+  IconMail,
 } from '@douyinfe/semi-icons';
 import UserBindingManagementModal from './UserBindingManagementModal';
 
@@ -82,6 +83,10 @@ const EditUserModal = (props) => {
   const getInitValues = () => ({
     username: '',
     display_name: '',
+    contact_name: '',
+    contact_email: '',
+    contact_qq: '',
+    contact_other: '',
     password: '',
     github_id: '',
     oidc_id: '',
@@ -328,6 +333,64 @@ const EditUserModal = (props) => {
                         field='remark'
                         label={t('备注')}
                         placeholder={t('请输入备注（仅管理员可见）')}
+                        showClear
+                      />
+                    </Col>
+                  </Row>
+                </Card>
+
+                <Card className='!rounded-2xl shadow-sm border-0'>
+                  <div className='flex items-center mb-2'>
+                    <Avatar
+                      size='small'
+                      color='amber'
+                      className='mr-2 shadow-md'
+                    >
+                      <IconMail size={16} />
+                    </Avatar>
+                    <div>
+                      <Text className='text-lg font-medium'>
+                        {t('联系资料')}
+                      </Text>
+                      <div className='text-xs text-gray-600'>
+                        {t('设置后相关位置会优先显示联系昵称、QQ 或联系邮箱')}
+                      </div>
+                    </div>
+                  </div>
+
+                  <Row gutter={12}>
+                    <Col span={12}>
+                      <Form.Input
+                        field='contact_name'
+                        label={t('联系昵称')}
+                        placeholder={t('优先显示的联系昵称')}
+                        showClear
+                      />
+                    </Col>
+
+                    <Col span={12}>
+                      <Form.Input
+                        field='contact_qq'
+                        label='QQ'
+                        placeholder={t('请输入 QQ')}
+                        showClear
+                      />
+                    </Col>
+
+                    <Col span={24}>
+                      <Form.Input
+                        field='contact_email'
+                        label={t('联系邮箱')}
+                        placeholder={t('请输入联系邮箱')}
+                        showClear
+                      />
+                    </Col>
+
+                    <Col span={24}>
+                      <Form.Input
+                        field='contact_other'
+                        label={t('其他联系方式')}
+                        placeholder={t('例如 Telegram、微信或其他备注')}
                         showClear
                       />
                     </Col>

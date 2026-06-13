@@ -106,7 +106,7 @@ func TestAsyncExecutionRecorderRecordsDispatch(t *testing.T) {
 	require.Contains(t, record.RequestMeta, "mimo-v1")
 	var requestMeta dispatchRequestMeta
 	require.NoError(t, common.UnmarshalJsonStr(record.RequestMeta, &requestMeta))
-	require.False(t, requestMeta.RequiresCodexImageTool)
+	require.True(t, requestMeta.RequiresCodexImageTool)
 	require.Empty(t, requestMeta.RequiredTools)
 	require.Empty(t, requestMeta.CandidateFilterConditions)
 }

@@ -325,7 +325,7 @@ func (b *snapshotBuilder) sort() {
 }
 
 func candidateMatchesQuery(candidate core.Candidate, query Query) bool {
-	if query.EndpointType != "" && !service.ChannelSupportsRequiredCapabilities(candidate.Channel, candidate.RuntimeKey.RequestedModel, query.EndpointType, false) {
+	if !service.ChannelSupportsRequiredCapabilities(candidate.Channel, candidate.RuntimeKey.RequestedModel, query.EndpointType, query.RequiresCodexImageTool) {
 		return false
 	}
 	if !candidateProxyAvailable(candidate) {
@@ -384,6 +384,12 @@ func candidateProxyAvailable(candidate core.Candidate) bool {
 
 func candidateAccountSupportsRequiredCapabilities(candidate core.Candidate, query Query) bool {
 	channel := candidate.Channel
+	if query.RequiresCodexImageTool && channel != nil && len(channel.ChannelInfo.MultiKeyCapabilities) > 0 {
+		if capability, ok := channel.ChannelInfo.MultiKeyCapabilities[candidate.CredentialRef.CredentialIndex]; ok &&
+			capability.CodexImageGenerationTool != nil && !*capability.CodexImageGenerationTool {
+			return false
+		}
+	}
 	usesCodexBackend, applies := candidateUsesCodexBackendForEndpoint(candidate, query.EndpointType)
 	if !applies {
 		return true
@@ -451,7 +457,7 @@ func candidateUsesCodexBackendForEndpoint(candidate core.Candidate, endpointType
 }
 
 func prepareCandidateForQuery(candidate core.Candidate, query Query) core.Candidate {
-	candidate.RequiresCodexImageTool = false
+	candidate.RequiresCodexImageTool = query.RequiresCodexImageTool
 	candidate.RuntimeKey.EndpointType = query.EndpointType
 	requestedModel := strings.TrimSpace(query.ModelName)
 	if requestedModel != "" {

@@ -86,6 +86,7 @@ const (
 	ContextKeyHealthProbeReason                 ContextKey = "health_probe_reason"
 	ContextKeyHealthProbeRuntimeKey             ContextKey = "health_probe_runtime_key"
 	ContextKeyResponsesPreviousID               ContextKey = "responses_previous_id_required"
+	ContextKeyRequiresCodexImageTool            ContextKey = "requires_codex_image_tool"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"

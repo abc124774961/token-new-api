@@ -781,7 +781,7 @@ func TestListModelsCodexFormatAdvertisesImageGenerationToolForGroupTextModels(t 
 	require.True(t, foundImage, "expected gpt-image-2 to appear in codex /models response")
 }
 
-func TestListModelsUsesPersistedGroupCapabilityUnionForCodexImageTool(t *testing.T) {
+func TestListModelsDoesNotAdvertiseImageToolFromOtherGroupModels(t *testing.T) {
 	withSelfUseModeEnabled(t)
 	withMemoryCacheEnabled(t, false)
 
@@ -850,12 +850,11 @@ func TestListModelsUsesPersistedGroupCapabilityUnionForCodexImageTool(t *testing
 		}
 		found = true
 		require.Contains(t, item.SupportedEndpointTypes, constant.EndpointTypeOpenAIResponse)
-		require.Contains(t, item.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
-		require.Equal(t, map[string]bool{dto.BuildInToolImageGeneration: true}, item.Capabilities)
-		require.Equal(t, []string{"text", "image"}, item.OutputModalities)
-		require.Contains(t, item.SupportedSessionModes, "image_generation")
+		require.Empty(t, item.ExperimentalSupportedTools)
+		require.Nil(t, item.Capabilities)
+		require.Equal(t, []string{"text"}, item.OutputModalities)
+		require.NotContains(t, item.SupportedSessionModes, "image_generation")
 		require.Equal(t, "gpt-5.5", item.ActualModelReturned["responses"])
-		require.Equal(t, "gpt-5.5", item.ActualModelReturned["image_generation"])
 	}
 	require.Equal(t, map[string]bool{dto.BuildInToolImageGeneration: true}, payload.Capabilities)
 	require.Equal(t, []string{dto.BuildInToolImageGeneration}, payload.ExperimentalSupportedTools)
@@ -936,8 +935,8 @@ func TestListModelsCodexTopLevelCapabilitiesIgnoreChannelPriority(t *testing.T) 
 			continue
 		}
 		found = true
-		require.Contains(t, item.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
-		require.Contains(t, item.SupportedSessionModes, "image_generation")
+		require.Empty(t, item.ExperimentalSupportedTools)
+		require.NotContains(t, item.SupportedSessionModes, "image_generation")
 	}
 	require.True(t, found, "expected gpt-5.5 to appear in codex /models response")
 }
@@ -994,10 +993,9 @@ func TestRetrieveModelCodexFormatUsesVisibleModelCapabilities(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
 	require.Equal(t, "gpt-5.5", payload.Slug)
 	require.Contains(t, payload.SupportedEndpointTypes, constant.EndpointTypeOpenAIResponse)
-	require.Contains(t, payload.ExperimentalSupportedTools, dto.BuildInToolImageGeneration)
-	require.Equal(t, map[string]bool{dto.BuildInToolImageGeneration: true}, payload.Capabilities)
-	require.Equal(t, []string{"text", "image"}, payload.OutputModalities)
-	require.Contains(t, payload.SupportedSessionModes, "image_generation")
+	require.Empty(t, payload.ExperimentalSupportedTools)
+	require.Nil(t, payload.Capabilities)
+	require.Equal(t, []string{"text"}, payload.OutputModalities)
+	require.NotContains(t, payload.SupportedSessionModes, "image_generation")
 	require.Equal(t, "gpt-5.5", payload.ActualModelReturned["responses"])
-	require.Equal(t, "gpt-5.5", payload.ActualModelReturned["image_generation"])
 }

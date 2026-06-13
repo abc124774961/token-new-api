@@ -24,6 +24,16 @@ type TopUp struct {
 	Status          string  `json:"status"`
 }
 
+type TopUpWithUser struct {
+	TopUp
+	UserUsername     string `json:"user_username"`
+	UserDisplayName  string `json:"user_display_name"`
+	UserContactName  string `json:"user_contact_name,omitempty"`
+	UserContactEmail string `json:"user_contact_email,omitempty"`
+	UserContactQQ    string `json:"user_contact_qq,omitempty"`
+	UserContactOther string `json:"user_contact_other,omitempty"`
+}
+
 const (
 	PaymentMethodStripe       = "stripe"
 	PaymentMethodCreem        = "creem"
@@ -228,6 +238,58 @@ func GetAllTopUps(pageInfo *common.PageInfo) (topups []*TopUp, total int64, err 
 	}
 
 	return topups, total, nil
+}
+
+func HydrateTopUpsWithUsers(topups []*TopUp) ([]*TopUpWithUser, error) {
+	result := make([]*TopUpWithUser, 0, len(topups))
+	if len(topups) == 0 {
+		return result, nil
+	}
+
+	userIDSet := make(map[int]struct{}, len(topups))
+	userIDs := make([]int, 0, len(topups))
+	for _, topup := range topups {
+		if topup == nil || topup.UserId <= 0 {
+			continue
+		}
+		if _, exists := userIDSet[topup.UserId]; exists {
+			continue
+		}
+		userIDSet[topup.UserId] = struct{}{}
+		userIDs = append(userIDs, topup.UserId)
+	}
+
+	usersByID := make(map[int]User, len(userIDs))
+	if len(userIDs) > 0 {
+		var users []User
+		if err := DB.Unscoped().
+			Select("id", "username", "display_name", "contact_name", "contact_email", "contact_qq", "contact_other").
+			Where("id IN ?", userIDs).
+			Find(&users).Error; err != nil {
+			return nil, err
+		}
+		for _, user := range users {
+			usersByID[user.Id] = user
+		}
+	}
+
+	for _, topup := range topups {
+		if topup == nil {
+			continue
+		}
+		item := &TopUpWithUser{TopUp: *topup}
+		if user, ok := usersByID[topup.UserId]; ok {
+			item.UserUsername = user.Username
+			item.UserDisplayName = user.PreferredDisplayName()
+			item.UserContactName = user.ContactName
+			item.UserContactEmail = user.ContactEmail
+			item.UserContactQQ = user.ContactQQ
+			item.UserContactOther = user.ContactOther
+		}
+		result = append(result, item)
+	}
+
+	return result, nil
 }
 
 // searchTopUpCountHardLimit 搜索充值记录时 COUNT 的安全上限，

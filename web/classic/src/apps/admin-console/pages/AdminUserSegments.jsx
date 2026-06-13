@@ -9,6 +9,7 @@ import {
   WalletCards,
 } from 'lucide-react';
 import { API, renderQuota, timestamp2string } from '../../../helpers';
+import { getUserPreferredName } from '../../../helpers/userDisplay';
 
 const SAMPLE_SIZE = 200;
 
@@ -290,7 +291,7 @@ const AdminUserSegments = () => {
                 return (
                   <tr key={user.id}>
                     <td>
-                      <strong>{user.username || '-'}</strong>
+                      <strong>{getUserPreferredName(user)}</strong>
                       <small>ID {user.id}</small>
                     </td>
                     <td>

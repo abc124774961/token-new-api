@@ -7821,6 +7821,19 @@
     "命中预览": "Apercu de correspondance",
     "用真实用户 ID 和分组模拟一次扣费倍率链路。": "Simuler la chaine de multiplicateurs de facturation avec un ID utilisateur reel et des groupes.",
     "搜索用户用于预览": "Rechercher des utilisateurs pour l’apercu",
-    "搜索模型用于预览": "Rechercher des modeles pour l’apercu"
+    "搜索模型用于预览": "Rechercher des modeles pour l’apercu",
+    "联系资料": "Profil de contact",
+    "联系资料已保存": "Profil de contact enregistré",
+    "联系昵称": "Pseudo de contact",
+    "联系邮箱": "E-mail de contact",
+    "其他联系方式": "Autres coordonnées",
+    "优先显示": "Affichage préféré",
+    "当前显示": "Affichage actuel",
+    "设置后相关位置会优先显示联系昵称、QQ 或联系邮箱": "Une fois configuré, les emplacements concernés privilégient le pseudo de contact, QQ ou l’e-mail de contact",
+    "优先显示的联系昵称": "Pseudo de contact à afficher en priorité",
+    "请输入 QQ": "Saisissez QQ",
+    "请输入联系邮箱": "Saisissez l’e-mail de contact",
+    "例如 Telegram、微信或其他备注": "Par exemple Telegram, WeChat ou une autre note",
+    "支持搜索用户的 ID、用户名、显示名称、邮箱和联系方式": "Recherche par ID utilisateur, nom d’utilisateur, nom d’affichage, e-mail et coordonnées"
   }
 }

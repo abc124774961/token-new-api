@@ -38,6 +38,10 @@ import {
 } from '../../../helpers';
 import { AdminPermissionButton } from '../../../apps/admin-console/permissions/AdminPermissionAction';
 import { ADMIN_PERMISSION_KEYS } from '../../../apps/admin-console/permissions/adminPermissions.config';
+import {
+  getUserContactItems,
+  getUserPreferredName,
+} from '../../../helpers/userDisplay';
 
 const renderTimestamp = (text) => (text ? timestamp2string(text) : '-');
 
@@ -76,17 +80,47 @@ const renderRole = (role, t) => {
 /**
  * Render username with remark
  */
-const renderUsername = (text, record) => {
+const renderUsername = (text, record, t) => {
   const remark = record.remark;
+  const displayName = getUserPreferredName(record, text || '-');
+  const contactItems = getUserContactItems(record, t);
+  const showAccount =
+    String(displayName || '').trim() !== String(text || '').trim();
+  const contactContent = contactItems.length ? (
+    <div className='text-xs p-1'>
+      {contactItems.map((item) => (
+        <div key={item.key}>
+          {item.label}: {item.value}
+        </div>
+      ))}
+    </div>
+  ) : null;
+  const identity = (
+    <span className='flex flex-col min-w-0'>
+      <span className='font-medium truncate'>{displayName}</span>
+      {showAccount ? (
+        <span className='text-xs text-[var(--semi-color-text-2)] truncate'>
+          @{text}
+        </span>
+      ) : null}
+    </span>
+  );
+  const renderedIdentity = contactContent ? (
+    <Tooltip content={contactContent} position='top' showArrow>
+      {identity}
+    </Tooltip>
+  ) : (
+    identity
+  );
   if (!remark) {
-    return <span>{text}</span>;
+    return renderedIdentity;
   }
   const maxLen = 10;
   const displayRemark =
     remark.length > maxLen ? remark.slice(0, maxLen) + '…' : remark;
   return (
     <Space spacing={2}>
-      <span>{text}</span>
+      {renderedIdentity}
       <Tooltip content={remark} position='top' showArrow>
         <Tag color='white' shape='circle' className='!text-xs'>
           <div className='flex items-center gap-1'>
@@ -349,7 +383,7 @@ export const getUsersColumns = ({
     {
       title: t('用户名'),
       dataIndex: 'username',
-      render: (text, record) => renderUsername(text, record),
+      render: (text, record) => renderUsername(text, record, t),
     },
     {
       title: t('状态'),

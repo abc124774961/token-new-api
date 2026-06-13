@@ -105,12 +105,16 @@ func setupLogin(user *model.User, c *gin.Context) {
 		return
 	}
 	responseData := map[string]any{
-		"id":           user.Id,
-		"username":     user.Username,
-		"display_name": user.DisplayName,
-		"role":         user.Role,
-		"status":       user.Status,
-		"group":        user.Group,
+		"id":            user.Id,
+		"username":      user.Username,
+		"display_name":  user.DisplayName,
+		"contact_name":  user.ContactName,
+		"contact_email": user.ContactEmail,
+		"contact_qq":    user.ContactQQ,
+		"contact_other": user.ContactOther,
+		"role":          user.Role,
+		"status":        user.Status,
+		"group":         user.Group,
 	}
 	appendAdminPermissionUserFields(responseData, user.Id, user.Role)
 	c.JSON(http.StatusOK, gin.H{
@@ -645,6 +649,10 @@ func GetSelf(c *gin.Context) {
 		"role":              user.Role,
 		"status":            user.Status,
 		"email":             user.Email,
+		"contact_name":      user.ContactName,
+		"contact_email":     user.ContactEmail,
+		"contact_qq":        user.ContactQQ,
+		"contact_other":     user.ContactOther,
 		"github_id":         user.GitHubId,
 		"discord_id":        user.DiscordId,
 		"oidc_id":           user.OidcId,
@@ -968,11 +976,16 @@ func UpdateSelf(c *gin.Context) {
 		return
 	}
 
+	userId := c.GetInt("id")
 	cleanUser := model.User{
-		Id:          c.GetInt("id"),
-		Username:    user.Username,
-		Password:    user.Password,
-		DisplayName: user.DisplayName,
+		Id:           userId,
+		Username:     user.Username,
+		Password:     user.Password,
+		DisplayName:  user.DisplayName,
+		ContactName:  user.ContactName,
+		ContactEmail: user.ContactEmail,
+		ContactQQ:    user.ContactQQ,
+		ContactOther: user.ContactOther,
 	}
 	if user.Password == "$I_LOVE_U" {
 		user.Password = "" // rollback to what it should be
@@ -983,7 +996,7 @@ func UpdateSelf(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if err := cleanUser.Update(updatePassword); err != nil {
+	if err := updateSelfProfile(cleanUser, requestData, updatePassword); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -995,7 +1008,50 @@ func UpdateSelf(c *gin.Context) {
 	return
 }
 
+func updateSelfProfile(user model.User, requestData map[string]interface{}, updatePassword bool) error {
+	currentUser, err := model.GetUserById(user.Id, true)
+	if err != nil {
+		return err
+	}
+	updates := map[string]interface{}{}
+	if _, exists := requestData["username"]; exists {
+		updates["username"] = strings.TrimSpace(user.Username)
+	}
+	if _, exists := requestData["display_name"]; exists {
+		updates["display_name"] = strings.TrimSpace(user.DisplayName)
+	}
+	if _, exists := requestData["contact_name"]; exists {
+		updates["contact_name"] = strings.TrimSpace(user.ContactName)
+	}
+	if _, exists := requestData["contact_email"]; exists {
+		updates["contact_email"] = strings.TrimSpace(user.ContactEmail)
+	}
+	if _, exists := requestData["contact_qq"]; exists {
+		updates["contact_qq"] = strings.TrimSpace(user.ContactQQ)
+	}
+	if _, exists := requestData["contact_other"]; exists {
+		updates["contact_other"] = strings.TrimSpace(user.ContactOther)
+	}
+	if updatePassword {
+		hashedPassword, err := common.Password2Hash(user.Password)
+		if err != nil {
+			return err
+		}
+		updates["password"] = hashedPassword
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	if err := model.DB.Model(currentUser).Updates(updates).Error; err != nil {
+		return err
+	}
+	return model.InvalidateUserCache(user.Id)
+}
+
 func checkUpdatePassword(originalPassword string, newPassword string, userId int) (updatePassword bool, err error) {
+	if newPassword == "" {
+		return
+	}
 	var currentUser *model.User
 	currentUser, err = model.GetUserById(userId, true)
 	if err != nil {
@@ -1006,9 +1062,6 @@ func checkUpdatePassword(originalPassword string, newPassword string, userId int
 	// 支持第一次账号绑定时原密码为空的情况
 	if !common.ValidatePasswordAndHash(originalPassword, currentUser.Password) && currentUser.Password != "" {
 		err = fmt.Errorf("原密码错误")
-		return
-	}
-	if newPassword == "" {
 		return
 	}
 	updatePassword = true
@@ -1084,10 +1137,14 @@ func CreateUser(c *gin.Context) {
 	}
 	// Even for admin users, we cannot fully trust them!
 	cleanUser := model.User{
-		Username:    user.Username,
-		Password:    user.Password,
-		DisplayName: user.DisplayName,
-		Role:        user.Role, // 保持管理员设置的角色
+		Username:     user.Username,
+		Password:     user.Password,
+		DisplayName:  user.DisplayName,
+		ContactName:  strings.TrimSpace(user.ContactName),
+		ContactEmail: strings.TrimSpace(user.ContactEmail),
+		ContactQQ:    strings.TrimSpace(user.ContactQQ),
+		ContactOther: strings.TrimSpace(user.ContactOther),
+		Role:         user.Role, // 保持管理员设置的角色
 	}
 	if err := cleanUser.Insert(0); err != nil {
 		common.ApiError(c, err)

@@ -44,6 +44,22 @@ func MarkChannelAccountResponsesPreviousIDCapability(channelID int, credentialIn
 	})
 }
 
+func MarkChannelAccountCodexImageGenerationToolCapability(channelID int, credentialIndex int, supported bool, message string) (bool, error) {
+	return updateChannelAccountCapability(channelID, credentialIndex, func(capability model.ChannelAccountCapability, now int64) (model.ChannelAccountCapability, bool) {
+		if capability.CodexImageGenerationTool != nil && *capability.CodexImageGenerationTool == supported {
+			return capability, false
+		}
+		capability.CodexImageGenerationTool = common.GetPointer(supported)
+		capability.CheckedTime = now
+		capability.LastEndpoint = "codex_image_generation_tool"
+		capability.LastMessage = truncateCapabilityMessage(message, 360)
+		if !supported {
+			capability.CapabilityClassification = channelcapability.ClassificationUnsupportedCapability
+		}
+		return capability, true
+	})
+}
+
 func MarkChannelAccountAuthErrorCandidate(channelID int, credentialIndex int, message string) (bool, error) {
 	return updateChannelAccountCapability(channelID, credentialIndex, func(capability model.ChannelAccountCapability, now int64) (model.ChannelAccountCapability, bool) {
 		if capability.CapabilityClassification == channelcapability.ClassificationAuthError &&

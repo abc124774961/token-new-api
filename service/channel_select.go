@@ -1240,6 +1240,9 @@ func ChannelSupportsRequiredEndpoint(channel *model.Channel, modelName string, e
 }
 
 func ChannelSupportsRequiredCapabilities(channel *model.Channel, modelName string, endpointType constant.EndpointType, requiresCodexImageTool bool) bool {
+	if requiresCodexImageTool && !channelSupportsCodexImageGenerationToolForScheduling(channel) {
+		return false
+	}
 	if channel != nil && len(channel.ChannelInfo.MultiKeyCapabilities) > 0 && !channelHasSchedulableCredential(channel) {
 		return false
 	}
@@ -1359,6 +1362,29 @@ func channelCredentialEnabledForCapability(channel *model.Channel, index int) bo
 		return ChannelAccountCapabilityAllowsScheduling(capability)
 	}
 	return true
+}
+
+func channelSupportsCodexImageGenerationToolForScheduling(channel *model.Channel) bool {
+	if !ChannelSupportsCodexImageGenerationTool(channel) {
+		return false
+	}
+	if channel == nil || len(channel.ChannelInfo.MultiKeyCapabilities) == 0 {
+		return true
+	}
+	keys := channelCredentialKeysForCapability(channel)
+	if len(keys) == 0 {
+		return false
+	}
+	for index := range keys {
+		if !channelCredentialEnabledForCapability(channel, index) {
+			continue
+		}
+		capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]
+		if !ok || capability.CodexImageGenerationTool == nil || *capability.CodexImageGenerationTool {
+			return true
+		}
+	}
+	return false
 }
 
 func openAICodexOAuthChannelApplies(channel *model.Channel, endpointType constant.EndpointType) bool {

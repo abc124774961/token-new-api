@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -17,6 +18,7 @@ import (
 )
 
 const UserNameMaxLength = 20
+const userContactFuzzySearchMinRunes = 3
 
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
@@ -29,6 +31,10 @@ type User struct {
 	Role             int            `json:"role" gorm:"type:int;default:1"`   // admin, common
 	Status           int            `json:"status" gorm:"type:int;default:1"` // enabled, disabled
 	Email            string         `json:"email" gorm:"index" validate:"max=50"`
+	ContactName      string         `json:"contact_name" gorm:"type:varchar(64);column:contact_name;index" validate:"max=64"`
+	ContactEmail     string         `json:"contact_email" gorm:"type:varchar(128);column:contact_email;index" validate:"max=128"`
+	ContactQQ        string         `json:"contact_qq" gorm:"type:varchar(32);column:contact_qq;index" validate:"max=32"`
+	ContactOther     string         `json:"contact_other" gorm:"type:varchar(255);column:contact_other" validate:"max=255"`
 	GitHubId         string         `json:"github_id" gorm:"column:github_id;index"`
 	DiscordId        string         `json:"discord_id" gorm:"column:discord_id;index"`
 	OidcId           string         `json:"oidc_id" gorm:"column:oidc_id;index"`
@@ -56,15 +62,41 @@ type User struct {
 
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
-		Id:       user.Id,
-		Group:    user.Group,
-		Quota:    user.Quota,
-		Status:   user.Status,
-		Username: user.Username,
-		Setting:  user.Setting,
-		Email:    user.Email,
+		Id:           user.Id,
+		Group:        user.Group,
+		Quota:        user.Quota,
+		Status:       user.Status,
+		Username:     user.Username,
+		Setting:      user.Setting,
+		Email:        user.Email,
+		ContactName:  user.ContactName,
+		ContactEmail: user.ContactEmail,
+		ContactQQ:    user.ContactQQ,
+		ContactOther: user.ContactOther,
 	}
 	return cache
+}
+
+func (user *User) PreferredDisplayName() string {
+	if user == nil {
+		return ""
+	}
+	for _, value := range []string{
+		user.ContactName,
+		user.ContactQQ,
+		user.ContactEmail,
+		user.ContactOther,
+		user.DisplayName,
+		user.Username,
+	} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	if user.Id > 0 {
+		return fmt.Sprintf("User #%d", user.Id)
+	}
+	return ""
 }
 
 func (user *User) GetAccessToken() string {
@@ -231,6 +263,8 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, 
 	var users []*User
 	var total int64
 	var err error
+	keyword = strings.TrimSpace(keyword)
+	group = strings.TrimSpace(group)
 
 	// 开始事务
 	tx := DB.Begin()
@@ -243,33 +277,34 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, 
 		}
 	}()
 
-	// 构建基础查询
 	query := tx.Unscoped().Model(&User{})
-
-	// 构建搜索条件
-	likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
-
-	// 尝试将关键字转换为整数ID
-	keywordInt, err := strconv.Atoi(keyword)
-	if err == nil {
-		// 如果是数字，同时搜索ID和其他字段
-		likeCondition = "id = ? OR " + likeCondition
-		if group != "" {
-			query = query.Where("("+likeCondition+") AND "+commonGroupCol+" = ?",
-				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
-		} else {
-			query = query.Where(likeCondition,
-				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+	if group != "" {
+		query = query.Where(commonGroupCol+" = ?", group)
+	}
+	if keyword != "" {
+		conditions := make([]string, 0, 12)
+		args := make([]interface{}, 0, 12)
+		if keywordInt, convertErr := strconv.Atoi(keyword); convertErr == nil {
+			conditions = append(conditions, "id = ?")
+			args = append(args, keywordInt)
 		}
-	} else {
-		// 非数字关键字，只搜索字符串字段
-		if group != "" {
-			query = query.Where("("+likeCondition+") AND "+commonGroupCol+" = ?",
-				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
-		} else {
-			query = query.Where(likeCondition,
-				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+
+		likeKeyword := "%" + keyword + "%"
+		for _, column := range []string{"username", "email", "display_name"} {
+			conditions = append(conditions, column+" LIKE ?")
+			args = append(args, likeKeyword)
 		}
+		for _, column := range []string{"contact_name", "contact_email", "contact_qq"} {
+			conditions = append(conditions, column+" = ?")
+			args = append(args, keyword)
+		}
+		if utf8.RuneCountInString(keyword) >= userContactFuzzySearchMinRunes {
+			for _, column := range []string{"contact_name", "contact_email", "contact_qq", "contact_other"} {
+				conditions = append(conditions, column+" LIKE ?")
+				args = append(args, likeKeyword)
+			}
+		}
+		query = query.Where("("+strings.Join(conditions, " OR ")+")", args...)
 	}
 
 	// 获取总数
@@ -525,10 +560,14 @@ func (user *User) Edit(updatePassword bool) error {
 
 	newUser := *user
 	updates := map[string]interface{}{
-		"username":     newUser.Username,
-		"display_name": newUser.DisplayName,
-		"group":        newUser.Group,
-		"remark":       newUser.Remark,
+		"username":      strings.TrimSpace(newUser.Username),
+		"display_name":  strings.TrimSpace(newUser.DisplayName),
+		"contact_name":  strings.TrimSpace(newUser.ContactName),
+		"contact_email": strings.TrimSpace(newUser.ContactEmail),
+		"contact_qq":    strings.TrimSpace(newUser.ContactQQ),
+		"contact_other": strings.TrimSpace(newUser.ContactOther),
+		"group":         newUser.Group,
+		"remark":        strings.TrimSpace(newUser.Remark),
 	}
 	if updatePassword {
 		updates["password"] = newUser.Password

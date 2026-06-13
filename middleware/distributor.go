@@ -375,10 +375,8 @@ func logCodexEffectiveModelCapabilityForRequest(c *gin.Context, modelRequest *Mo
 	groups := resolveCapabilityLogGroups(c)
 	capabilitiesByModel := model.GetModelCapabilitiesForGroups(groups, []string{modelRequest.Model})
 	capability := capabilitiesByModel[modelRequest.Model]
-	groupCapability := model.GetGroupCapabilities(groups)
 	modelCodexImageToolSupported := capability.CodexImageGenerationToolSupported
-	groupCodexImageToolSupported := groupCapability.CodexImageGenerationToolSupported || capability.GroupCodexImageGenerationToolSupported
-	advertiseCodexImageTool := shouldAdvertiseCodexImageToolForCapabilityLog(modelRequest.Model, modelCodexImageToolSupported, groupCodexImageToolSupported)
+	advertiseCodexImageTool := shouldAdvertiseCodexImageToolForCapabilityLog(modelRequest.Model, modelCodexImageToolSupported)
 
 	inputModalities := []string{"text"}
 	if common.IsOpenAITextModel(modelRequest.Model) || common.IsImageGenerationModel(modelRequest.Model) {
@@ -403,7 +401,6 @@ func logCodexEffectiveModelCapabilityForRequest(c *gin.Context, modelRequest *Mo
 		"groups":                    groups,
 		"requires_codex_image_tool": modelRequest.RequiresCodexImageTool,
 		"model_codex_image_generation_tool_supported": modelCodexImageToolSupported,
-		"group_codex_image_generation_tool_supported": groupCodexImageToolSupported,
 		"advertise_codex_image_generation":            advertiseCodexImageTool,
 		"response_headers_if_models_endpoint": map[string]string{
 			"content-type":  "application/json; charset=utf-8",
@@ -452,14 +449,8 @@ func resolveCapabilityLogGroups(c *gin.Context) []string {
 	return service.GetUserAutoGroup(userGroup)
 }
 
-func shouldAdvertiseCodexImageToolForCapabilityLog(modelName string, modelCodexImageToolSupported bool, groupCodexImageToolSupported bool) bool {
-	if common.IsImageGenerationModel(modelName) {
-		return modelCodexImageToolSupported
-	}
-	if !common.IsOpenAITextModel(modelName) {
-		return modelCodexImageToolSupported
-	}
-	return modelCodexImageToolSupported || groupCodexImageToolSupported
+func shouldAdvertiseCodexImageToolForCapabilityLog(modelName string, modelCodexImageToolSupported bool) bool {
+	return modelCodexImageToolSupported
 }
 
 func logDistributorRequestTrace(c *gin.Context, modelRequest *ModelRequest, shouldSelectChannel bool) {
@@ -545,14 +536,22 @@ func detectRequiredEndpointType(c *gin.Context) constant.EndpointType {
 }
 
 func responsesRequestHasImageGenerationTool(c *gin.Context) bool {
-	return false
+	if c == nil || c.Request == nil {
+		return false
+	}
+	path := c.Request.URL.Path
+	if !strings.HasPrefix(path, "/v1/responses") || strings.HasPrefix(path, "/v1/responses/compact") {
+		return false
+	}
+	var req dto.OpenAIResponsesRequest
+	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
+		return false
+	}
+	return service.ResponsesRequestRequiresCodexImageGenerationTool(&req)
 }
 
 func channelSupportsModelRequest(channel *model.Channel, request ModelRequest) bool {
-	if !service.ChannelSupportsRequiredEndpoint(channel, request.Model, request.EndpointType) {
-		return false
-	}
-	return true
+	return service.ChannelSupportsRequiredCapabilities(channel, request.Model, request.EndpointType, request.RequiresCodexImageTool)
 }
 
 func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
@@ -718,6 +717,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	}
 	modelRequest.EndpointType = detectRequiredEndpointType(c)
 	modelRequest.RequiresCodexImageTool = responsesRequestHasImageGenerationTool(c)
+	common.SetContextKey(c, constant.ContextKeyRequiresCodexImageTool, modelRequest.RequiresCodexImageTool)
 	return &modelRequest, shouldSelectChannel, nil
 }
 
@@ -757,7 +757,7 @@ func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	if applied, apiErr := applySelectedPlanCredential(c, channel, firstSelection(selections)); apiErr != nil {
 		return apiErr
 	} else if !applied {
-		key, index, newAPIError := getNextChannelKeyForRequest(c, channel, options.EndpointType)
+		key, index, newAPIError := getNextChannelKeyForRequest(c, channel, options.EndpointType, modelRequestRequiresCodexImageTool(c))
 		if newAPIError != nil {
 			return newAPIError
 		}
@@ -804,17 +804,24 @@ func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	return nil
 }
 
-func getNextChannelKeyForRequest(c *gin.Context, channel *model.Channel, endpointType constant.EndpointType) (string, int, *types.NewAPIError) {
+func getNextChannelKeyForRequest(c *gin.Context, channel *model.Channel, endpointType constant.EndpointType, requiresCodexImageTool bool) (string, int, *types.NewAPIError) {
 	if channel == nil {
 		return "", 0, types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 	if c == nil || !channel.ChannelInfo.IsMultiKey {
-		return channel.GetNextEnabledKeyForEndpoint(endpointType)
+		return channel.GetNextEnabledKeyForEndpoint(endpointType, requiresCodexImageTool)
 	}
-	return channel.GetNextEnabledKeyAvoidingForEndpoint(endpointType, func(index int, key string) bool {
+	return channel.GetNextEnabledKeyAvoidingForEndpoint(endpointType, requiresCodexImageTool, func(index int, key string) bool {
 		identity := channelRuntimeIdentityForKey(channel, index, key)
 		return service.IsChannelRuntimeSelectionSkipped(c, identity) || service.IsChannelRuntimeAttempted(c, identity)
 	})
+}
+
+func modelRequestRequiresCodexImageTool(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	return common.GetContextKeyBool(c, constant.ContextKeyRequiresCodexImageTool)
 }
 
 func channelRuntimeIdentityForKey(channel *model.Channel, credentialIndex int, rawKey string) service.ChannelRuntimeIdentity {

@@ -325,6 +325,9 @@ func migrateDB() error {
 	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
 		return err
 	}
+	if err := ensureUserContactColumns(); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -390,6 +393,9 @@ func migrateDB() error {
 		return err
 	}
 	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
+		return err
+	}
+	if err := ensureUserContactColumns(); err != nil {
 		return err
 	}
 	if common.UsingSQLite {
@@ -1011,6 +1017,19 @@ func ensureBillingMultiplierPolicyRelationColumns() error {
 		{"scope_name", "ScopeName"},
 	}
 	return ensureColumns(&BillingMultiplierPolicy{}, columns)
+}
+
+func ensureUserContactColumns() error {
+	if DB == nil || !DB.Migrator().HasTable(&User{}) {
+		return nil
+	}
+	columns := []modelGatewayColumnSpec{
+		{"contact_name", "ContactName"},
+		{"contact_email", "ContactEmail"},
+		{"contact_qq", "ContactQQ"},
+		{"contact_other", "ContactOther"},
+	}
+	return ensureColumns(&User{}, columns)
 }
 
 func ensureColumns(table any, columns []modelGatewayColumnSpec) error {

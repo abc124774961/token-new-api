@@ -10,11 +10,12 @@ import (
 )
 
 type AccountCapability struct {
-	ResponsesWrite        *bool `json:"responses_write,omitempty"`
-	ResponsesCompactWrite *bool `json:"responses_compact_write,omitempty"`
-	ChatCompletionsWrite  *bool `json:"chat_completions_write,omitempty"`
-	StreamOptions         *bool `json:"stream_options,omitempty"`
-	ResponsesPreviousID   *bool `json:"responses_previous_id,omitempty"`
+	ResponsesWrite           *bool `json:"responses_write,omitempty"`
+	ResponsesCompactWrite    *bool `json:"responses_compact_write,omitempty"`
+	ChatCompletionsWrite     *bool `json:"chat_completions_write,omitempty"`
+	StreamOptions            *bool `json:"stream_options,omitempty"`
+	ResponsesPreviousID      *bool `json:"responses_previous_id,omitempty"`
+	CodexImageGenerationTool *bool `json:"codex_image_generation_tool,omitempty"`
 
 	CodexBackendResponsesStreamWrite *bool `json:"codex_backend_responses_stream_write,omitempty"`
 	CodexBackendCompactWrite         *bool `json:"codex_backend_compact_write,omitempty"`

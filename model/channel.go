@@ -237,17 +237,17 @@ func (channel *Channel) GetKeys() []string {
 }
 
 func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
-	return channel.GetNextEnabledKeyForEndpoint("")
+	return channel.GetNextEnabledKeyForEndpoint("", false)
 }
 
-func (channel *Channel) GetNextEnabledKeyForEndpoint(endpointType constant.EndpointType) (string, int, *types.NewAPIError) {
-	return channel.GetNextEnabledKeyAvoidingForEndpoint(endpointType, nil)
+func (channel *Channel) GetNextEnabledKeyForEndpoint(endpointType constant.EndpointType, requiresCodexImageTool bool) (string, int, *types.NewAPIError) {
+	return channel.GetNextEnabledKeyAvoidingForEndpoint(endpointType, requiresCodexImageTool, nil)
 }
 
-func (channel *Channel) GetNextEnabledKeyAvoidingForEndpoint(endpointType constant.EndpointType, avoid func(index int, key string) bool) (string, int, *types.NewAPIError) {
+func (channel *Channel) GetNextEnabledKeyAvoidingForEndpoint(endpointType constant.EndpointType, requiresCodexImageTool bool, avoid func(index int, key string) bool) (string, int, *types.NewAPIError) {
 	// If not in multi-key mode, return the original key string directly.
 	if !channel.ChannelInfo.IsMultiKey {
-		if channel.keyUsesCodexBackendForEndpoint(0, channel.Key, endpointType) && !channel.codexKeySupportsRequestedCapability(0, endpointType) {
+		if !channel.keySupportsRequestedCapability(0, channel.Key, endpointType, requiresCodexImageTool) {
 			return "", 0, types.NewError(errors.New("key does not support required codex capability"), types.ErrorCodeChannelNoAvailableKey)
 		}
 		return channel.Key, 0, nil
@@ -283,7 +283,7 @@ func (channel *Channel) GetNextEnabledKeyAvoidingForEndpoint(endpointType consta
 			if channel.accountCapabilityBlocksScheduling(i) {
 				continue
 			}
-			if channel.keyUsesCodexBackendForEndpoint(i, keys[i], endpointType) && !channel.codexKeySupportsRequestedCapability(i, endpointType) {
+			if !channel.keySupportsRequestedCapability(i, keys[i], endpointType, requiresCodexImageTool) {
 				continue
 			}
 			enabledIdx = append(enabledIdx, i)
@@ -370,7 +370,23 @@ func (channel *Channel) keyUsesCodexBackendForEndpoint(index int, rawKey string,
 	return codexauth.IsOAuthJSONCredential(rawKey)
 }
 
-func (channel *Channel) codexKeySupportsRequestedCapability(index int, endpointType constant.EndpointType) bool {
+func (channel *Channel) keySupportsRequestedCapability(index int, rawKey string, endpointType constant.EndpointType, requiresCodexImageTool bool) bool {
+	if channel == nil {
+		return true
+	}
+	if requiresCodexImageTool && !channelcapability.SupportsCodexImageGenerationTool(channel.Type, channel.GetOtherSettings()) {
+		return false
+	}
+	if channel.keyUsesCodexBackendForEndpoint(index, rawKey, endpointType) {
+		return channel.codexKeySupportsRequestedCapability(index, endpointType, requiresCodexImageTool)
+	}
+	if requiresCodexImageTool {
+		return channel.accountSupportsCodexImageGenerationTool(index)
+	}
+	return true
+}
+
+func (channel *Channel) codexKeySupportsRequestedCapability(index int, endpointType constant.EndpointType, requiresCodexImageTool bool) bool {
 	if channel == nil {
 		return true
 	}
@@ -384,6 +400,9 @@ func (channel *Channel) codexKeySupportsRequestedCapability(index int, endpointT
 	if accountCapabilityBlocksScheduling(capability) {
 		return false
 	}
+	if requiresCodexImageTool && !accountCapabilitySupportsCodexImageGenerationTool(capability) {
+		return false
+	}
 	if endpointType == constant.EndpointTypeOpenAIResponseCompact {
 		if capability.CodexBackendCompactWrite == nil {
 			return true
@@ -394,6 +413,24 @@ func (channel *Channel) codexKeySupportsRequestedCapability(index int, endpointT
 		return true
 	}
 	return capability.HasCodexBackendResponsesStreamAllowed()
+}
+
+func (channel *Channel) accountSupportsCodexImageGenerationTool(index int) bool {
+	if channel == nil || channel.ChannelInfo.MultiKeyCapabilities == nil {
+		return true
+	}
+	capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]
+	if !ok {
+		return true
+	}
+	if accountCapabilityBlocksScheduling(capability) {
+		return false
+	}
+	return accountCapabilitySupportsCodexImageGenerationTool(capability)
+}
+
+func accountCapabilitySupportsCodexImageGenerationTool(capability ChannelAccountCapability) bool {
+	return capability.CodexImageGenerationTool == nil || *capability.CodexImageGenerationTool
 }
 
 func (channel *Channel) accountCapabilityBlocksScheduling(index int) bool {

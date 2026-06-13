@@ -69,12 +69,12 @@ func TestGetNextEnabledKeyForEndpointSkipsCodexAccountsWithDeniedCapabilities(t 
 	}
 	require.NoError(t, db.Create(channel).Error)
 
-	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse)
+	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse, false)
 	require.Nil(t, apiErr)
 	require.Equal(t, "oauth-b", key)
 	require.Equal(t, 1, index)
 
-	key, index, apiErr = channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponseCompact)
+	key, index, apiErr = channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponseCompact, false)
 	require.Nil(t, apiErr)
 	require.Equal(t, "oauth-c", key)
 	require.Equal(t, 2, index)
@@ -107,11 +107,47 @@ func TestGetNextEnabledKeyForEndpointSkipsUsageLimitedCodexAccount(t *testing.T)
 	}
 	require.NoError(t, db.Create(channel).Error)
 
-	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse)
+	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse, false)
 
 	require.Nil(t, apiErr)
 	require.Equal(t, "oauth-b", key)
 	require.Equal(t, 1, index)
+}
+
+func TestGetNextEnabledKeyForEndpointSkipsCodexImageGenerationUnsupportedAccount(t *testing.T) {
+	db := setupChannelCapabilitySelectionTestDB(t)
+	imageToolDenied := false
+	imageToolAllowed := true
+	channel := &Channel{
+		Id:     9007,
+		Type:   constant.ChannelTypeCodex,
+		Key:    "oauth-a\noauth-b",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:           true,
+			MultiKeyMode:         constant.MultiKeyModePolling,
+			MultiKeyPollingIndex: 0,
+			MultiKeyCapabilities: map[int]ChannelAccountCapability{
+				0: {
+					CodexImageGenerationTool: &imageToolDenied,
+				},
+				1: {
+					CodexImageGenerationTool: &imageToolAllowed,
+				},
+			},
+		},
+	}
+	require.NoError(t, db.Create(channel).Error)
+
+	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse, true)
+	require.Nil(t, apiErr)
+	require.Equal(t, "oauth-b", key)
+	require.Equal(t, 1, index)
+
+	key, index, apiErr = channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse, false)
+	require.Nil(t, apiErr)
+	require.Equal(t, "oauth-a", key)
+	require.Equal(t, 0, index)
 }
 
 func TestGetNextEnabledKeyForEndpointSkipsAuthErrorAccount(t *testing.T) {
@@ -130,7 +166,7 @@ func TestGetNextEnabledKeyForEndpointSkipsAuthErrorAccount(t *testing.T) {
 		},
 	}
 
-	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAI)
+	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAI, false)
 
 	require.Nil(t, apiErr)
 	require.Equal(t, "sk-ok", key)
@@ -153,7 +189,7 @@ func TestGetNextEnabledKeyForEndpointRejectsSingleCodexAccountWithDeniedCapabili
 		},
 	}
 
-	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse)
+	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse, false)
 
 	require.NotNil(t, apiErr)
 	require.Empty(t, key)
@@ -185,7 +221,7 @@ func TestGetNextEnabledKeyForEndpointSkipsOpenAICodexOAuthAccountsWithDeniedCapa
 	}
 	require.NoError(t, db.Create(channel).Error)
 
-	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse)
+	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAIResponse, false)
 
 	require.Nil(t, apiErr)
 	require.JSONEq(t, `{"access_token":"access-b","account_id":"acct-b"}`, key)

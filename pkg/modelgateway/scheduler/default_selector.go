@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
@@ -535,7 +536,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		PolicyMode:                  policy.Mode,
 		AutoMode:                    policy.AutoMode,
 		Strategy:                    policy.Strategy,
-		RequiresCodexImageTool:      false,
+		RequiresCodexImageTool:      req.RequiresCodexImageTool,
 		RequiresResponsesPreviousID: req.RequiresResponsesPreviousID,
 		RequiredTools:               requiredToolsForDispatchRequest(req),
 		CandidateFilterConditions:   candidateFilterConditionsForDispatchRequest(req),
@@ -603,7 +604,7 @@ func scoringContextForPolicy(selector *DefaultSmartChannelSelector, policy core.
 		CandidateGroups:        append([]string(nil), policy.CandidateGroups...),
 		AutoMode:               policy.AutoMode,
 		Strategy:               policy.Strategy,
-		RequiresCodexImageTool: false,
+		RequiresCodexImageTool: candidate.RequiresCodexImageTool,
 		ScoreWeights:           scoreWeightsForSelector(selector),
 		RetryRoutingIntent:     retryIntent.Clone(),
 		ExplainEnabled:         true,
@@ -643,11 +644,17 @@ func scoreWeightsForSelector(selector *DefaultSmartChannelSelector) core.ScoreWe
 }
 
 func requiredToolsForDispatchRequest(req core.DispatchRequest) []string {
+	if req.RequiresCodexImageTool {
+		return []string{core.DispatchRequiredToolCodexImageGeneration}
+	}
 	return nil
 }
 
 func candidateFilterConditionsForDispatchRequest(req core.DispatchRequest) []string {
 	conditions := make([]string, 0, 2)
+	if req.RequiresCodexImageTool {
+		conditions = append(conditions, core.DispatchFilterConditionCodexImageGenerationTool)
+	}
 	if req.RequiresResponsesPreviousID {
 		conditions = append(conditions, core.DispatchFilterConditionResponsesPreviousID)
 	}
@@ -682,7 +689,7 @@ func (s *DefaultSmartChannelSelector) costReferenceForCandidate(candidate core.C
 			RequestedModel:         requestedModel,
 			Group:                  group,
 			EndpointType:           endpointType,
-			RequiresCodexImageTool: false,
+			RequiresCodexImageTool: candidate.RequiresCodexImageTool,
 		}
 		if value, ok := s.costBaselineProvider.Baseline(scope); ok && value > 0 && (best <= 0 || value < best) {
 			best = value
@@ -1784,6 +1791,9 @@ func markClientEmptyOutputSwitchChannelSkipped(c *gin.Context, candidate core.Ca
 }
 
 func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) string {
+	if candidate.RequiresCodexImageTool && !candidateSupportsCodexImageGenerationTool(candidate) {
+		return "codex_image_generation_tool_unsupported"
+	}
 	identity := serviceRuntimeIdentityFromCandidate(candidate, snapshot)
 	if snapshot.ConfigErrorIsolated {
 		return "config_error_isolated"
@@ -1825,6 +1835,25 @@ func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapsh
 		return "failure_avoidance"
 	}
 	return ""
+}
+
+func candidateSupportsCodexImageGenerationTool(candidate core.Candidate) bool {
+	if !service.ChannelSupportsCodexImageGenerationTool(candidate.Channel) {
+		return false
+	}
+	if candidate.Channel == nil || len(candidate.Channel.ChannelInfo.MultiKeyCapabilities) == 0 {
+		return true
+	}
+	index := candidate.CredentialRef.CredentialIndex
+	capability, ok := candidate.Channel.ChannelInfo.MultiKeyCapabilities[index]
+	if !ok {
+		return true
+	}
+	if service.ChannelAccountCapabilityUsageLimited(capability) ||
+		strings.TrimSpace(capability.CapabilityClassification) == channelcapability.ClassificationAuthError {
+		return false
+	}
+	return capability.CodexImageGenerationTool == nil || *capability.CodexImageGenerationTool
 }
 
 func minInt(a int, b int) int {

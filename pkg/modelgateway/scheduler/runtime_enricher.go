@@ -472,7 +472,7 @@ func (e *RuntimeSnapshotEnricher) lookupCandidateSetCostBaseline(candidate core.
 		RequestedModel:         strings.TrimSpace(candidate.RuntimeKey.RequestedModel),
 		Group:                  strings.TrimSpace(candidate.Group),
 		EndpointType:           strings.TrimSpace(string(candidate.RuntimeKey.EndpointType)),
-		RequiresCodexImageTool: false,
+		RequiresCodexImageTool: candidate.RequiresCodexImageTool,
 	}
 	return e.costBaselineProvider.Baseline(scope)
 }

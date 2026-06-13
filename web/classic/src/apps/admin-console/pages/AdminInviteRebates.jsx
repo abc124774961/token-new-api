@@ -9,6 +9,7 @@ import {
   WalletCards,
 } from 'lucide-react';
 import { API, renderQuota, timestamp2string } from '../../../helpers';
+import { getUserPreferredName } from '../../../helpers/userDisplay';
 
 const SAMPLE_SIZE = 200;
 
@@ -207,7 +208,7 @@ const AdminInviteRebates = () => {
                 {summary.topInviters.map((user) => (
                   <tr key={user.id}>
                     <td>
-                      <strong>{user.username || '-'}</strong>
+                      <strong>{getUserPreferredName(user)}</strong>
                       <small>ID {user.id}</small>
                     </td>
                     <td>{formatNumber(user.aff_count)}</td>

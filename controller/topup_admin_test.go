@@ -57,8 +57,60 @@ func adminTopUpControllerTestRouter() *gin.Engine {
 		c.Set(common.RequestIdKey, "admin-complete-topup-audit-test")
 		c.Next()
 	})
+	router.GET("/api/user/topup", GetAllTopUps)
 	router.POST("/api/user/topup/complete", middleware.RequireAdminPermission(middleware.AdminPermissionCommercialSettlementComplete), AdminCompleteTopUp)
 	return router
+}
+
+func TestGetAllTopUpsIncludesUserDisplayInfo(t *testing.T) {
+	db := setupAdminTopUpControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:          78,
+		Username:    "settlement-user",
+		DisplayName: "Settlement User",
+		ContactName: "Settlement Contact",
+		ContactQQ:   "123456",
+		Password:    "password",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+	}).Error)
+	require.NoError(t, db.Create(&model.TopUp{
+		UserId:        78,
+		Amount:        10,
+		Money:         10,
+		TradeNo:       "settlement-list-001",
+		PaymentMethod: "alipay",
+		CreateTime:    1000,
+		Status:        common.TopUpStatusSuccess,
+	}).Error)
+
+	router := adminTopUpControllerTestRouter()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/user/topup?p=1&page_size=20", nil)
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []struct {
+				UserId          int    `json:"user_id"`
+				UserUsername    string `json:"user_username"`
+				UserDisplayName string `json:"user_display_name"`
+				UserContactName string `json:"user_contact_name"`
+				UserContactQQ   string `json:"user_contact_qq"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload), recorder.Body.String())
+	require.True(t, payload.Success)
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, 78, payload.Data.Items[0].UserId)
+	require.Equal(t, "settlement-user", payload.Data.Items[0].UserUsername)
+	require.Equal(t, "Settlement Contact", payload.Data.Items[0].UserDisplayName)
+	require.Equal(t, "Settlement Contact", payload.Data.Items[0].UserContactName)
+	require.Equal(t, "123456", payload.Data.Items[0].UserContactQQ)
 }
 
 func TestAdminCompleteTopUpAuditSummaryIncludesBusinessDelta(t *testing.T) {

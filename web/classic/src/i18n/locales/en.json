@@ -7919,6 +7919,19 @@
     "命中预览": "Match preview",
     "用真实用户 ID 和分组模拟一次扣费倍率链路。": "Simulate the billing multiplier chain with a real user ID and groups.",
     "搜索用户用于预览": "Search users for preview",
-    "搜索模型用于预览": "Search models for preview"
+    "搜索模型用于预览": "Search models for preview",
+    "联系资料": "Contact profile",
+    "联系资料已保存": "Contact profile saved",
+    "联系昵称": "Contact nickname",
+    "联系邮箱": "Contact email",
+    "其他联系方式": "Other contact info",
+    "优先显示": "Preferred display",
+    "当前显示": "Current display",
+    "设置后相关位置会优先显示联系昵称、QQ 或联系邮箱": "After setup, related places will prefer the contact nickname, QQ, or contact email",
+    "优先显示的联系昵称": "Preferred contact nickname",
+    "请输入 QQ": "Enter QQ",
+    "请输入联系邮箱": "Enter contact email",
+    "例如 Telegram、微信或其他备注": "For example, Telegram, WeChat, or other notes",
+    "支持搜索用户的 ID、用户名、显示名称、邮箱和联系方式": "Search by user ID, username, display name, email, and contact info"
   }
 }

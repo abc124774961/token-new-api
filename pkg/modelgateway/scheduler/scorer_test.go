@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewayprovider "github.com/QuantumNous/new-api/pkg/modelgateway/provider"
@@ -20,6 +21,13 @@ type testScorer struct {
 
 func newTestScorer(weights core.ScoreWeights) testScorer {
 	return testScorer{weights: weights}
+}
+
+func marshalChannelOtherSettingsForSchedulerTest(t *testing.T, settings dto.ChannelOtherSettings) string {
+	t.Helper()
+	bytes, err := common.Marshal(settings)
+	require.NoError(t, err)
+	return string(bytes)
 }
 
 func (s testScorer) Score(candidate core.Candidate, snapshot core.RuntimeSnapshot, policy core.GroupSmartPolicy) core.ScoreResult {
@@ -1170,7 +1178,7 @@ func TestSelectorRecordsCandidateExplanations(t *testing.T) {
 	require.Equal(t, selectedKey, selected.RuntimeKey)
 }
 
-func TestSelectorIgnoresCodexImageToolDispatchRequirement(t *testing.T) {
+func TestSelectorPreservesCodexImageToolDispatchRequirement(t *testing.T) {
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
 	key := core.RuntimeKey{
 		RequestedModel:        "gpt-5.5",
@@ -1194,12 +1202,21 @@ func TestSelectorIgnoresCodexImageToolDispatchRequirement(t *testing.T) {
 	selector := scheduler.NewDefaultSmartChannelSelector(
 		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
 			{
-				Channel:         &model.Channel{Id: 10, Name: "image-capable"},
-				Group:           "default",
-				UpstreamModel:   "gpt-5.5",
-				ProviderProfile: "openai_responses",
-				ProxyMode:       "native",
-				RuntimeKey:      key,
+				Channel: &model.Channel{
+					Id:   10,
+					Name: "image-capable",
+					Type: constant.ChannelTypeOpenAI,
+					OtherSettings: marshalChannelOtherSettingsForSchedulerTest(t, dto.ChannelOtherSettings{
+						CodexCompatibilityMode:            true,
+						CodexImageGenerationToolSupported: true,
+					}),
+				},
+				Group:                  "default",
+				UpstreamModel:          "gpt-5.5",
+				ProviderProfile:        "openai_responses",
+				ProxyMode:              "native",
+				RequiresCodexImageTool: true,
+				RuntimeKey:             key,
 			},
 		}),
 		store,
@@ -1221,9 +1238,9 @@ func TestSelectorIgnoresCodexImageToolDispatchRequirement(t *testing.T) {
 	require.Nil(t, apiErr)
 	require.True(t, handled)
 	require.NotNil(t, plan)
-	require.False(t, plan.RequiresCodexImageTool)
-	require.Empty(t, plan.RequiredTools)
-	require.Empty(t, plan.CandidateFilterConditions)
+	require.True(t, plan.RequiresCodexImageTool)
+	require.Equal(t, []string{core.DispatchRequiredToolCodexImageGeneration}, plan.RequiredTools)
+	require.Equal(t, []string{core.DispatchFilterConditionCodexImageGenerationTool}, plan.CandidateFilterConditions)
 }
 
 func TestSelectorReadsSnapshotStoredUnderEnrichedRuntimeKey(t *testing.T) {

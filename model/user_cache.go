@@ -22,13 +22,17 @@ const (
 
 // UserBase struct remains the same as it represents the cached data structure
 type UserBase struct {
-	Id       int    `json:"id"`
-	Group    string `json:"group"`
-	Email    string `json:"email"`
-	Quota    int    `json:"quota"`
-	Status   int    `json:"status"`
-	Username string `json:"username"`
-	Setting  string `json:"setting"`
+	Id           int    `json:"id"`
+	Group        string `json:"group"`
+	Email        string `json:"email"`
+	Quota        int    `json:"quota"`
+	Status       int    `json:"status"`
+	Username     string `json:"username"`
+	Setting      string `json:"setting"`
+	ContactName  string `json:"contact_name"`
+	ContactEmail string `json:"contact_email"`
+	ContactQQ    string `json:"contact_qq"`
+	ContactOther string `json:"contact_other"`
 }
 
 type userBaseHotCacheEntry struct {
@@ -143,13 +147,17 @@ func GetUserCache(userId int) (userCache *UserBase, err error) {
 	if loaded, ok := value.(UserBase); ok {
 		userBase := loaded
 		user = &User{
-			Id:       userBase.Id,
-			Group:    userBase.Group,
-			Quota:    userBase.Quota,
-			Status:   userBase.Status,
-			Username: userBase.Username,
-			Setting:  userBase.Setting,
-			Email:    userBase.Email,
+			Id:           userBase.Id,
+			Group:        userBase.Group,
+			Quota:        userBase.Quota,
+			Status:       userBase.Status,
+			Username:     userBase.Username,
+			Setting:      userBase.Setting,
+			Email:        userBase.Email,
+			ContactName:  userBase.ContactName,
+			ContactEmail: userBase.ContactEmail,
+			ContactQQ:    userBase.ContactQQ,
+			ContactOther: userBase.ContactOther,
 		}
 		return &userBase, nil
 	}
