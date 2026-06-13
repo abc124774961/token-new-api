@@ -2531,6 +2531,9 @@ func shouldFailoverToAlternativeChannel(c *gin.Context, openaiErr *types.NewAPIE
 	if shouldFailoverOnUnsupportedCapability(c, openaiErr) {
 		return true
 	}
+	if isRelayAuthConfigError(openaiErr) {
+		return true
+	}
 	if isUpstreamRateLimitLikeError(openaiErr) {
 		return true
 	}
@@ -2703,7 +2706,9 @@ func isRelayAuthConfigError(apiErr *types.NewAPIError) bool {
 		return true
 	}
 	message := strings.ToLower(apiErr.Error())
-	return strings.Contains(message, "invalid api key") ||
+	return strings.Contains(message, "auth_unavailable") ||
+		strings.Contains(message, "no auth available") ||
+		strings.Contains(message, "invalid api key") ||
 		strings.Contains(message, "invalid_key") ||
 		strings.Contains(message, "unauthorized") ||
 		strings.Contains(message, "forbidden") ||

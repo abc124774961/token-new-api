@@ -1838,6 +1838,19 @@ func TestProcessChannelErrorRecordsAuthConfigRecoveryCooling(t *testing.T) {
 	require.False(t, service.IsChannelConfigIsolated(key))
 }
 
+func TestAuthUnavailableErrorSwitchesChannel(t *testing.T) {
+	ctx := newRelayRetryContext()
+	err := types.NewOpenAIError(
+		errors.New("auth_unavailable: no auth available (providers=codex, model=gpt-5.5)"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusServiceUnavailable,
+	)
+
+	require.True(t, shouldFailoverToAlternativeChannel(ctx, err))
+	require.Equal(t, modelgatewaycore.ErrorCategoryAuthConfigError, classifyRelayAttemptError(ctx, err))
+	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
+}
+
 func TestRelayChannelConfigSuccessClearsAuthConfigRecoveryCooling(t *testing.T) {
 	t.Cleanup(func() {
 		service.ClearChannelConfigIsolation(service.NewChannelConfigIsolationKey(919, "gpt-5.5", "default", constant.EndpointTypeOpenAI))

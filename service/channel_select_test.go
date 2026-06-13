@@ -732,6 +732,31 @@ func TestRecordChannelFailureAvoidancePersistsEventContext(t *testing.T) {
 	require.Equal(t, `{"retry_after":10}`, event.Metadata)
 }
 
+func TestRecordChannelFailureAvoidanceTruncatesLongUsedChannels(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 10
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	longUsedChannels := strings.Repeat("83->", 120) + "83"
+	record := RecordChannelFailureAvoidanceWithContext(384, "timeout_recovery", &ChannelFailureAvoidanceContext{
+		UsedChannels: longUsedChannels,
+	})
+	require.NotNil(t, record)
+
+	var event model.ChannelFailureEvent
+	require.NoError(t, db.Where("channel_id = ?", 384).First(&event).Error)
+	require.Len(t, event.UsedChannels, 255)
+	require.Equal(t, longUsedChannels[:255], event.UsedChannels)
+}
+
 func TestRetryParamIncreaseRetryConsumesExtraRetriesFirst(t *testing.T) {
 	param := &RetryParam{
 		Retry:        common.GetPointer(0),

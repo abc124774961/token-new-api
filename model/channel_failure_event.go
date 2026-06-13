@@ -9,6 +9,8 @@ import (
 const (
 	ChannelFailureEventTypeAvoidance = "failure_avoidance"
 	ChannelFailureEventTypePaused    = "failure_paused"
+
+	channelFailureEventUsedChannelsMaxLen = 255
 )
 
 type ChannelFailureEvent struct {
@@ -88,11 +90,18 @@ func RecordChannelFailureEvent(params RecordChannelFailureEventParams) {
 		Until:            params.Until,
 		AutoPaused:       params.AutoPaused,
 		FinalFailure:     params.FinalFailure,
-		UsedChannels:     params.UsedChannels,
+		UsedChannels:     truncateChannelFailureEventValue(params.UsedChannels, channelFailureEventUsedChannelsMaxLen),
 		Message:          params.Message,
 		Metadata:         params.Metadata,
 	}
 	if err := DB.Create(event).Error; err != nil {
 		common.SysLog(fmt.Sprintf("failed to record channel failure event: channel_id=%d, reason=%s, error=%v", params.ChannelId, params.Reason, err))
 	}
+}
+
+func truncateChannelFailureEventValue(value string, maxLen int) string {
+	if maxLen <= 0 || len(value) <= maxLen {
+		return value
+	}
+	return value[:maxLen]
 }
