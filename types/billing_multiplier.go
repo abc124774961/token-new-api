@@ -5,6 +5,9 @@ type BillingMultiplierRuleSnapshot struct {
 	Name        string  `json:"name,omitempty"`
 	ScopeType   string  `json:"scope_type,omitempty"`
 	ScopeValue  string  `json:"scope_value,omitempty"`
+	ScopeID     int     `json:"scope_id,omitempty"`
+	ScopeKey    string  `json:"scope_key,omitempty"`
+	ScopeName   string  `json:"scope_name,omitempty"`
 	Mode        string  `json:"mode"`
 	Multiplier  float64 `json:"multiplier"`
 	Priority    int     `json:"priority"`

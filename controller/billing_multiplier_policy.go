@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 
@@ -38,6 +39,10 @@ func CreateBillingMultiplierPolicy(c *gin.Context) {
 		common.ApiErrorMsg(c, "参数错误")
 		return
 	}
+	if err := completeBillingMultiplierPolicyRelation(&req.Policy); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if err := model.CreateBillingMultiplierPolicy(&req.Policy); err != nil {
 		common.ApiError(c, err)
 		return
@@ -50,6 +55,10 @@ func UpdateBillingMultiplierPolicy(c *gin.Context) {
 	var req BillingMultiplierPolicyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiErrorMsg(c, "参数错误")
+		return
+	}
+	if err := completeBillingMultiplierPolicyRelation(&req.Policy); err != nil {
+		common.ApiError(c, err)
 		return
 	}
 	if err := model.UpdateBillingMultiplierPolicy(id, &req.Policy); err != nil {
@@ -107,6 +116,10 @@ func PreviewBillingMultiplierPolicy(c *gin.Context) {
 		return
 	}
 	policy := *req.Policy
+	if err := completeBillingMultiplierPolicyRelation(&policy); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	filtered := make([]model.BillingMultiplierPolicy, 0, len(policies)+1)
 	for _, existing := range policies {
 		if policy.Id > 0 && existing.Id == policy.Id {
@@ -120,4 +133,43 @@ func PreviewBillingMultiplierPolicy(c *gin.Context) {
 	filtered = append(filtered, policy)
 	snapshot := model.EvaluateBillingMultiplierWithPolicies(evalCtx, filtered)
 	common.ApiSuccess(c, snapshot)
+}
+
+func completeBillingMultiplierPolicyRelation(policy *model.BillingMultiplierPolicy) error {
+	if policy == nil {
+		return nil
+	}
+	if err := policy.Normalize(); err != nil {
+		return err
+	}
+	switch policy.ScopeType {
+	case model.BillingMultiplierScopeGlobal:
+		policy.ScopeName = ""
+	case model.BillingMultiplierScopeUser:
+		if policy.ScopeID <= 0 {
+			return errors.New("user scope_id is required")
+		}
+		user, err := model.GetUserById(policy.ScopeID, false)
+		if err != nil {
+			return err
+		}
+		policy.ScopeName = strings.TrimSpace(user.DisplayName)
+		if policy.ScopeName == "" {
+			policy.ScopeName = strings.TrimSpace(user.Username)
+		}
+	case model.BillingMultiplierScopeSubscriptionPlan:
+		if policy.ScopeID <= 0 {
+			return errors.New("subscription plan scope_id is required")
+		}
+		plan, err := model.GetSubscriptionPlanById(policy.ScopeID)
+		if err != nil {
+			return err
+		}
+		policy.ScopeName = strings.TrimSpace(plan.Title)
+	case model.BillingMultiplierScopeUserGroup, model.BillingMultiplierScopeUsingGroup:
+		if strings.TrimSpace(policy.ScopeName) == "" {
+			policy.ScopeName = policy.ScopeKey
+		}
+	}
+	return nil
 }

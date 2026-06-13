@@ -95,3 +95,45 @@ func TestEvaluateBillingMultiplierFiltersByModelGroupAndSubscription(t *testing.
 	require.True(t, hit.Applied)
 	require.InEpsilon(t, 0.7, hit.FinalGroupRatio, 0.0001)
 }
+
+func TestEvaluateBillingMultiplierUserScopeUsesStableID(t *testing.T) {
+	db := setupBillingMultiplierPolicyTestDB(t)
+	require.NoError(t, db.Create(&BillingMultiplierPolicy{
+		Name:       "user id discount",
+		Enabled:    true,
+		Priority:   10,
+		ScopeType:  BillingMultiplierScopeUser,
+		ScopeID:    84,
+		ScopeName:  "old-name",
+		Mode:       BillingMultiplierModeMultiply,
+		Multiplier: 0.6,
+	}).Error)
+
+	hit := evaluateBillingMultiplierWithDB(db, BillingMultiplierContext{
+		UserID:         84,
+		UserGroup:      "renamed-vip",
+		UsingGroup:     "codex-pro",
+		ModelName:      "gpt-test",
+		BaseGroupRatio: 1,
+	})
+
+	require.True(t, hit.Applied)
+	require.InEpsilon(t, 0.6, hit.FinalGroupRatio, 0.0001)
+	require.Equal(t, 84, hit.Rules[0].ScopeID)
+	require.Equal(t, "old-name", hit.Rules[0].ScopeName)
+}
+
+func TestBillingMultiplierPolicyNormalizesLegacyIDScopeValue(t *testing.T) {
+	policy := BillingMultiplierPolicy{
+		Name:       "legacy plan",
+		Enabled:    true,
+		ScopeType:  BillingMultiplierScopeSubscriptionPlan,
+		ScopeValue: "7",
+		Mode:       BillingMultiplierModeMultiply,
+		Multiplier: 0.8,
+	}
+
+	require.NoError(t, policy.Normalize())
+	require.Equal(t, 7, policy.ScopeID)
+	require.Equal(t, "7", policy.ScopeValue)
+}

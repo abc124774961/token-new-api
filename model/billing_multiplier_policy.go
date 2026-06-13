@@ -33,6 +33,9 @@ type BillingMultiplierPolicy struct {
 	Priority    int     `json:"priority" gorm:"type:int;default:0;index"`
 	ScopeType   string  `json:"scope_type" gorm:"type:varchar(32);not null;default:'global';index"`
 	ScopeValue  string  `json:"scope_value" gorm:"type:varchar(128);not null;default:'';index"`
+	ScopeID     int     `json:"scope_id" gorm:"type:int;default:0;index"`
+	ScopeKey    string  `json:"scope_key" gorm:"type:varchar(191);default:'';index"`
+	ScopeName   string  `json:"scope_name" gorm:"type:varchar(191);default:''"`
 	UsingGroups string  `json:"using_groups" gorm:"type:text"`
 	Models      string  `json:"models" gorm:"type:text"`
 	Mode        string  `json:"mode" gorm:"type:varchar(32);not null;default:'multiply'"`
@@ -66,6 +69,8 @@ func (p *BillingMultiplierPolicy) Normalize() error {
 		p.ScopeType = BillingMultiplierScopeGlobal
 	}
 	p.ScopeValue = strings.TrimSpace(p.ScopeValue)
+	p.ScopeKey = strings.TrimSpace(p.ScopeKey)
+	p.ScopeName = strings.TrimSpace(p.ScopeName)
 	p.Mode = strings.TrimSpace(p.Mode)
 	if p.Mode == "" {
 		p.Mode = BillingMultiplierModeMultiply
@@ -76,8 +81,9 @@ func (p *BillingMultiplierPolicy) Normalize() error {
 	if !validBillingMultiplierMode(p.Mode) {
 		return fmt.Errorf("invalid mode: %s", p.Mode)
 	}
-	if p.ScopeType != BillingMultiplierScopeGlobal && p.ScopeValue == "" {
-		return errors.New("scope_value is required")
+	p.normalizeScopeIdentity()
+	if p.ScopeType != BillingMultiplierScopeGlobal && billingMultiplierPolicyScopeIdentity(p) == "" {
+		return errors.New("scope identity is required")
 	}
 	if p.Multiplier < 0 {
 		return errors.New("multiplier must be >= 0")
@@ -86,6 +92,34 @@ func (p *BillingMultiplierPolicy) Normalize() error {
 		return errors.New("end_at must be greater than start_at")
 	}
 	return nil
+}
+
+func (p *BillingMultiplierPolicy) normalizeScopeIdentity() {
+	switch p.ScopeType {
+	case BillingMultiplierScopeGlobal:
+		p.ScopeValue = ""
+		p.ScopeID = 0
+		p.ScopeKey = ""
+	case BillingMultiplierScopeUser, BillingMultiplierScopeSubscriptionPlan:
+		if p.ScopeID <= 0 {
+			if parsed, err := strconv.Atoi(strings.TrimSpace(p.ScopeValue)); err == nil && parsed > 0 {
+				p.ScopeID = parsed
+			}
+		}
+		if p.ScopeID > 0 {
+			p.ScopeValue = strconv.Itoa(p.ScopeID)
+		}
+		p.ScopeKey = ""
+	case BillingMultiplierScopeUserGroup, BillingMultiplierScopeUsingGroup:
+		if p.ScopeKey == "" {
+			p.ScopeKey = p.ScopeValue
+		}
+		p.ScopeKey = strings.TrimSpace(p.ScopeKey)
+		if p.ScopeKey != "" {
+			p.ScopeValue = p.ScopeKey
+		}
+		p.ScopeID = 0
+	}
 }
 
 func validBillingMultiplierScope(scope string) bool {
@@ -166,6 +200,9 @@ func UpdateBillingMultiplierPolicy(id int, policy *BillingMultiplierPolicy) erro
 		"priority":     policy.Priority,
 		"scope_type":   policy.ScopeType,
 		"scope_value":  policy.ScopeValue,
+		"scope_id":     policy.ScopeID,
+		"scope_key":    policy.ScopeKey,
+		"scope_name":   policy.ScopeName,
 		"using_groups": policy.UsingGroups,
 		"models":       policy.Models,
 		"mode":         policy.Mode,
@@ -271,6 +308,9 @@ func evaluateBillingMultiplierPolicies(ctx BillingMultiplierContext, policies []
 			Name:        policy.Name,
 			ScopeType:   policy.ScopeType,
 			ScopeValue:  policy.ScopeValue,
+			ScopeID:     policy.ScopeID,
+			ScopeKey:    policy.ScopeKey,
+			ScopeName:   policy.ScopeName,
 			Mode:        policy.Mode,
 			Multiplier:  policy.Multiplier,
 			Priority:    policy.Priority,
@@ -316,27 +356,51 @@ func billingMultiplierPolicyMatches(policy BillingMultiplierPolicy, ctx BillingM
 	case BillingMultiplierScopeGlobal:
 		return true
 	case BillingMultiplierScopeUser:
-		return policy.ScopeValue == strconv.Itoa(ctx.UserID)
+		if policy.ScopeID > 0 {
+			return policy.ScopeID == ctx.UserID
+		}
+		return billingMultiplierPolicyScopeIdentity(&policy) == strconv.Itoa(ctx.UserID)
 	case BillingMultiplierScopeUserGroup:
-		return strings.EqualFold(policy.ScopeValue, strings.TrimSpace(ctx.UserGroup))
+		return strings.EqualFold(billingMultiplierPolicyScopeIdentity(&policy), strings.TrimSpace(ctx.UserGroup))
 	case BillingMultiplierScopeSubscriptionPlan:
 		if ctx.SubscriptionPlanID <= 0 && len(ctx.SubscriptionPlanIDs) == 0 {
 			return false
 		}
-		if policy.ScopeValue == strconv.Itoa(ctx.SubscriptionPlanID) {
+		if policy.ScopeID > 0 && policy.ScopeID == ctx.SubscriptionPlanID {
+			return true
+		}
+		identity := billingMultiplierPolicyScopeIdentity(&policy)
+		if identity == strconv.Itoa(ctx.SubscriptionPlanID) {
 			return true
 		}
 		for _, planID := range ctx.SubscriptionPlanIDs {
-			if policy.ScopeValue == strconv.Itoa(planID) {
+			if (policy.ScopeID > 0 && policy.ScopeID == planID) || identity == strconv.Itoa(planID) {
 				return true
 			}
 		}
 		return false
 	case BillingMultiplierScopeUsingGroup:
-		return strings.EqualFold(policy.ScopeValue, strings.TrimSpace(ctx.UsingGroup))
+		return strings.EqualFold(billingMultiplierPolicyScopeIdentity(&policy), strings.TrimSpace(ctx.UsingGroup))
 	default:
 		return false
 	}
+}
+
+func billingMultiplierPolicyScopeIdentity(policy *BillingMultiplierPolicy) string {
+	if policy == nil {
+		return ""
+	}
+	switch policy.ScopeType {
+	case BillingMultiplierScopeUser, BillingMultiplierScopeSubscriptionPlan:
+		if policy.ScopeID > 0 {
+			return strconv.Itoa(policy.ScopeID)
+		}
+	case BillingMultiplierScopeUserGroup, BillingMultiplierScopeUsingGroup:
+		if strings.TrimSpace(policy.ScopeKey) != "" {
+			return strings.TrimSpace(policy.ScopeKey)
+		}
+	}
+	return strings.TrimSpace(policy.ScopeValue)
 }
 
 func billingMultiplierListMatches(raw string, value string) bool {

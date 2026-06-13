@@ -386,6 +386,9 @@ func migrateDB() error {
 	if err := ensureModelGatewayProfitRecommendationColumns(); err != nil {
 		return err
 	}
+	if err := ensureBillingMultiplierPolicyRelationColumns(); err != nil {
+		return err
+	}
 	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
 		return err
 	}
@@ -498,6 +501,9 @@ func migrateDBFast() error {
 		return err
 	}
 	if err := ensureModelGatewayProfitRecommendationColumns(); err != nil {
+		return err
+	}
+	if err := ensureBillingMultiplierPolicyRelationColumns(); err != nil {
 		return err
 	}
 	if err := ensureModelExecutionRecordRequestMetaCapacity(); err != nil {
@@ -993,6 +999,18 @@ func ensureModelGatewayProfitRecommendationColumns() error {
 		{"scope_name", "ScopeName"},
 	}
 	return ensureColumns(&ModelGatewayProfitRatioRecommendation{}, columns)
+}
+
+func ensureBillingMultiplierPolicyRelationColumns() error {
+	if DB == nil || !DB.Migrator().HasTable(&BillingMultiplierPolicy{}) {
+		return nil
+	}
+	columns := []modelGatewayColumnSpec{
+		{"scope_id", "ScopeID"},
+		{"scope_key", "ScopeKey"},
+		{"scope_name", "ScopeName"},
+	}
+	return ensureColumns(&BillingMultiplierPolicy{}, columns)
 }
 
 func ensureColumns(table any, columns []modelGatewayColumnSpec) error {
