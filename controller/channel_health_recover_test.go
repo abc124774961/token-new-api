@@ -107,11 +107,15 @@ func TestRecoverChannelHealthClearsRuntimeAndMultiKeyBalanceState(t *testing.T) 
 		TokensPerSecond:                   1,
 		EmptyOutputRate:                   0.90,
 		ExperienceIssueRate:               0.80,
+		ActiveConcurrency:                 3,
 		QueueDepth:                        4,
 		EstimatedQueueWaitMs:              3000,
 		FirstBytePending:                  2,
 		SlowFirstBytePending:              1,
 		OldestFirstByteWaitMs:             12000,
+		CostRatio:                         2,
+		CostReferenceRatio:                0.5,
+		GroupPriorityRatio:                0.2,
 		CircuitState:                      modelgatewaycore.CircuitStateOpen,
 		CircuitOpen:                       true,
 		CircuitOpenReason:                 scheduler.CircuitErrorServer,
@@ -182,9 +186,17 @@ func TestRecoverChannelHealthClearsRuntimeAndMultiKeyBalanceState(t *testing.T) 
 	require.Equal(t, 3000.0, snapshot.DurationMs)
 	require.Equal(t, 80.0, snapshot.TokensPerSecond)
 	require.Empty(t, snapshot.ScoreStatsJSON)
-	require.Empty(t, snapshot.RecentLatencySamples)
+	require.Len(t, snapshot.RecentLatencySamples, 3)
 	require.Zero(t, snapshot.EmptyOutputRate)
 	require.Zero(t, snapshot.ExperienceIssueRate)
+	require.Zero(t, snapshot.ActiveConcurrency)
+	require.Zero(t, snapshot.QueueDepth)
+	require.Zero(t, snapshot.EstimatedQueueWaitMs)
+	require.Zero(t, snapshot.FirstBytePending)
+	require.Zero(t, snapshot.SlowFirstBytePending)
+	require.Zero(t, snapshot.OldestFirstByteWaitMs)
+	require.Equal(t, snapshot.CostRatio, snapshot.CostReferenceRatio)
+	require.Equal(t, 1.0, snapshot.GroupPriorityRatio)
 	require.False(t, snapshot.CircuitOpen)
 	require.False(t, snapshot.Cooldown)
 	require.False(t, snapshot.FailureAvoidance)
@@ -200,6 +212,7 @@ func TestRecoverChannelHealthClearsRuntimeAndMultiKeyBalanceState(t *testing.T) 
 	require.Zero(t, snapshot.LastAuthConfigErrorAt)
 	require.Zero(t, snapshot.LastRealFailureAt)
 	require.NotZero(t, snapshot.LastRealSuccessAt)
+	assertRecoveredChannelScoresAllOne(t, &channel, snapshot)
 
 	queue := BuildModelGatewayHealthCheckQueue(modelgatewayobservability.RuntimeStatusQuery{
 		Model:     "gpt-5.5",
@@ -208,6 +221,42 @@ func TestRecoverChannelHealthClearsRuntimeAndMultiKeyBalanceState(t *testing.T) 
 	}, modelGatewayHealthCheckQueueTypeAll)
 	require.Zero(t, queue.Summary.PendingCount)
 	require.Empty(t, queue.Items)
+}
+
+func assertRecoveredChannelScoresAllOne(t *testing.T, channel *model.Channel, snapshot modelgatewaycore.RuntimeSnapshot) {
+	t.Helper()
+	evaluation := scheduler.NewCandidateScoringService().EvaluateCandidate(
+		modelgatewaycore.Candidate{
+			Channel:       channel,
+			Group:         snapshot.Key.Group,
+			UpstreamModel: snapshot.Key.UpstreamModel,
+			RuntimeKey:    snapshot.Key,
+		},
+		snapshot,
+		modelgatewaycore.GroupSmartPolicy{
+			Strategy:           modelgatewaycore.StrategyBalanced,
+			GroupPriorityRatio: map[string]float64{snapshot.Key.Group: 1},
+		},
+		scheduler.ScoringContext{
+			RequestedModel: snapshot.Key.RequestedModel,
+			EndpointType:   snapshot.Key.EndpointType,
+			Strategy:       modelgatewaycore.StrategyBalanced,
+		},
+	)
+	require.Equal(t, 1.0, evaluation.Score.Total)
+	require.Equal(t, 1.0, evaluation.Score.RoutingTotal)
+	for _, item := range evaluation.Score.Items {
+		if item.Weight <= 0 || item.MissingReason != "" {
+			continue
+		}
+		require.Equalf(t, 1.0, item.Score, "score item %s should reset to 1", item.Key)
+	}
+	for _, item := range evaluation.Score.RoutingItems {
+		if item.Weight <= 0 || item.MissingReason != "" {
+			continue
+		}
+		require.Equalf(t, 1.0, item.Score, "routing score item %s should reset to 1", item.Key)
+	}
 }
 
 func clearRuntimeBalanceInsufficientForControllerTest(t *testing.T) {

@@ -5842,18 +5842,23 @@ func modelGatewayRecoverRuntimeHealthSnapshots(runtimeDeps *modelgatewayintegrat
 			snapshot.SampleCount = 3
 		}
 		snapshot.ScoreStatsJSON = ""
-		snapshot.RecentLatencySamples = nil
+		snapshot.RecentLatencySamples = modelGatewayRecoveredHealthLatencySamples(now)
 		snapshot.SuccessRate = 1
 		snapshot.TTFTMs = 800
 		snapshot.DurationMs = 3000
 		snapshot.TokensPerSecond = 80
 		snapshot.EmptyOutputRate = 0
 		snapshot.ExperienceIssueRate = 0
+		snapshot.ActiveConcurrency = 0
 		snapshot.QueueDepth = 0
 		snapshot.EstimatedQueueWaitMs = 0
 		snapshot.FirstBytePending = 0
 		snapshot.SlowFirstBytePending = 0
 		snapshot.OldestFirstByteWaitMs = 0
+		if snapshot.CostRatio > 0 {
+			snapshot.CostReferenceRatio = snapshot.CostRatio
+		}
+		snapshot.GroupPriorityRatio = 1
 		snapshot.CircuitState = modelgatewaycore.CircuitStateClosed
 		snapshot.CircuitOpen = false
 		snapshot.CircuitOpenUntil = 0
@@ -5898,6 +5903,17 @@ func modelGatewayRecoverRuntimeHealthSnapshots(runtimeDeps *modelgatewayintegrat
 		updated++
 	}
 	return updated
+}
+
+func modelGatewayRecoveredHealthLatencySamples(now int64) []modelgatewaycore.RuntimeLatencySample {
+	if now <= 0 {
+		now = common.GetTimestamp()
+	}
+	return []modelgatewaycore.RuntimeLatencySample{
+		{ObservedAt: now - 2, TTFTMs: 800, DurationMs: 3000},
+		{ObservedAt: now - 1, TTFTMs: 800, DurationMs: 3000},
+		{ObservedAt: now, TTFTMs: 800, DurationMs: 3000},
+	}
 }
 
 func modelGatewayRuntimeKeyOnlyChannel(key ModelGatewayRuntimeKey, channelID int) bool {
