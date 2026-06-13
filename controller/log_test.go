@@ -3,6 +3,7 @@ package controller
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -17,6 +18,63 @@ type logsAPIResponse struct {
 		Items []model.Log `json:"items"`
 		Total int         `json:"total"`
 	} `json:"data"`
+}
+
+type logsStatAPIResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Quota int   `json:"quota"`
+		Token int64 `json:"token"`
+		Rpm   int   `json:"rpm"`
+		Tpm   int   `json:"tpm"`
+	} `json:"data"`
+}
+
+func TestGetLogsStatReturnsFilteredTokenTotal(t *testing.T) {
+	db := setupModelGatewayReplayControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.Log{
+		UserId:           1001,
+		CreatedAt:        now,
+		Type:             model.LogTypeConsume,
+		Username:         "stat-user",
+		TokenName:        "stat-token",
+		ModelName:        "gpt-stat",
+		Quota:            20,
+		PromptTokens:     10,
+		CompletionTokens: 5,
+		ChannelId:        12,
+		Group:            "vip",
+	}).Error)
+	require.NoError(t, db.Create(&model.Log{
+		UserId:           1002,
+		CreatedAt:        now,
+		Type:             model.LogTypeConsume,
+		Username:         "stat-user",
+		TokenName:        "stat-token",
+		ModelName:        "gpt-stat",
+		Quota:            80,
+		PromptTokens:     100,
+		CompletionTokens: 50,
+		ChannelId:        12,
+		Group:            "default",
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/log/stat", GetLogsStat)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/log/stat?type=2&username=stat-user&token_name=stat-token&model_name=gpt-stat&channel=12&group=vip&start_timestamp=1&end_timestamp="+strconv.FormatInt(now+10, 10), nil)
+	router.ServeHTTP(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	var payload logsStatAPIResponse
+	require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Equal(t, 20, payload.Data.Quota)
+	require.Equal(t, int64(15), payload.Data.Token)
+	require.Equal(t, 1, payload.Data.Rpm)
+	require.Equal(t, 15, payload.Data.Tpm)
 }
 
 func TestGetAllLogsAttachesModelGatewayCostSummary(t *testing.T) {

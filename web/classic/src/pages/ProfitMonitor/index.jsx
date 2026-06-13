@@ -63,7 +63,13 @@ import './profit-monitor.css';
 
 const { Text } = Typography;
 
-const WINDOW_OPTIONS = ['24h', '7d', '30d'];
+const WINDOW_OPTIONS = [
+  { value: '24h', label: '近24小时' },
+  { value: 'today', label: '今天' },
+  { value: 'yesterday', label: '昨天' },
+  { value: '7d', label: '近7天' },
+  { value: '30d', label: '近一个月' },
+];
 const DIMENSION_OPTIONS = ['group', 'channel', 'model', 'proxy'];
 
 const RESOURCE_TYPES = [
@@ -3221,9 +3227,9 @@ export default function ProfitMonitor({ variant = 'default' }) {
           <Select
             value={windowKey}
             onChange={setWindowKey}
-            optionList={WINDOW_OPTIONS.map((value) => ({
-              label: value,
-              value,
+            optionList={WINDOW_OPTIONS.map((option) => ({
+              label: t(option.label),
+              value: option.value,
             }))}
           />
           <Button

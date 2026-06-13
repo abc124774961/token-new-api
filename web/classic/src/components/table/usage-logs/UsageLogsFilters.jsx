@@ -56,6 +56,7 @@ const LogsFilters = ({
   loading,
   isAdminUser,
   initialLogType,
+  groupOptions = [],
   t,
 }) => {
   const showAdminAuditFilters = isAdminUser && initialLogType === 3;
@@ -118,14 +119,26 @@ const LogsFilters = ({
 
           <div className='ct-usage-logs-filter-field'>
             <span>{t('分组')}</span>
-            <Form.Input
-              field='group'
-              prefix={<IconSearch />}
-              placeholder={t('分组')}
-              showClear
-              pure
-              size='small'
-            />
+            {groupOptions.length > 0 ? (
+              <Form.Select
+                field='group'
+                placeholder={t('分组')}
+                optionList={groupOptions}
+                showClear
+                filter
+                pure
+                size='small'
+              />
+            ) : (
+              <Form.Input
+                field='group'
+                prefix={<IconSearch />}
+                placeholder={t('分组')}
+                showClear
+                pure
+                size='small'
+              />
+            )}
           </div>
 
           <div className='ct-usage-logs-filter-field'>

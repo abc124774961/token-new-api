@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/middleware"
@@ -945,10 +946,19 @@ func parseModelGatewayProfitMonitorWindow(c *gin.Context) (string, int64, int64)
 		switch window {
 		case "1h":
 			startTimestamp = endTimestamp - 3600
+		case "today":
+			startTimestamp = modelGatewayProfitMonitorLocalDayStart(endTimestamp).Unix()
+		case "yesterday":
+			todayStart := modelGatewayProfitMonitorLocalDayStart(endTimestamp)
+			startTimestamp = todayStart.AddDate(0, 0, -1).Unix()
+			endTimestamp = todayStart.Unix()
 		case "7d":
 			startTimestamp = endTimestamp - 7*86400
-		case "30d":
+		case "30d", "month":
 			startTimestamp = endTimestamp - 30*86400
+			if window == "month" {
+				window = "30d"
+			}
 		default:
 			window = "24h"
 			startTimestamp = endTimestamp - 86400
@@ -961,6 +971,11 @@ func parseModelGatewayProfitMonitorWindow(c *gin.Context) (string, int64, int64)
 		window = "24h"
 	}
 	return window, startTimestamp, endTimestamp
+}
+
+func modelGatewayProfitMonitorLocalDayStart(timestamp int64) time.Time {
+	localTime := time.Unix(timestamp, 0).Local()
+	return time.Date(localTime.Year(), localTime.Month(), localTime.Day(), 0, 0, 0, 0, localTime.Location())
 }
 
 func normalizeModelGatewayProfitMonitorDimension(value string) string {

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-SERVER_HOST="${SERVER_HOST:-35.224.150.95}"
+SERVER_HOST="${SERVER_HOST:-153.75.90.233}"
 SERVER_USER="${SERVER_USER:-root}"
 SSH_KEY="${SSH_KEY:-}"
 SERVER_APP_DIR="${SERVER_APP_DIR:-/www/wwwroot/token-new-api}"

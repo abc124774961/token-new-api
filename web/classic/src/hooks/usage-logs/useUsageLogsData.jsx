@@ -75,6 +75,7 @@ export const useLogsData = ({ initialLogType = 0 } = {}) => {
   const [logCount, setLogCount] = useState(0);
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
   const [logType, setLogType] = useState(initialLogType);
+  const [groupOptions, setGroupOptions] = useState([]);
 
   // User and admin
   const isAdminUser = isAdmin();
@@ -338,6 +339,26 @@ export const useLogsData = ({ initialLogType = 0 } = {}) => {
     }
     setShowStat(true);
     setLoadingStat(false);
+  };
+
+  const loadGroupOptions = async () => {
+    if (!isAdminUser) {
+      return;
+    }
+    try {
+      const res = await API.get('/api/group/');
+      const { success, data } = res.data || {};
+      if (success && Array.isArray(data)) {
+        setGroupOptions(
+          data.map((group) => ({
+            label: group,
+            value: group,
+          })),
+        );
+      }
+    } catch (error) {
+      console.error('Failed to load group options', error);
+    }
   };
 
   // User info function
@@ -982,6 +1003,7 @@ export const useLogsData = ({ initialLogType = 0 } = {}) => {
     const localPageSize =
       parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
     setPageSize(localPageSize);
+    loadGroupOptions();
     loadLogs(activePage, localPageSize)
       .then()
       .catch((reason) => {
@@ -1017,6 +1039,7 @@ export const useLogsData = ({ initialLogType = 0 } = {}) => {
     initialLogType,
     stat,
     isAdminUser,
+    groupOptions,
 
     // Form state
     formApi,

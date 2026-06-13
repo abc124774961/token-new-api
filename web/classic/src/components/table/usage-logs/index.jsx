@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
+import { Button } from '@douyinfe/semi-ui';
 import LogsTable from './UsageLogsTable';
 import LogsActions from './UsageLogsActions';
 import LogsFilters from './UsageLogsFilters';
@@ -31,11 +32,15 @@ import { useIsMobile } from '../../../hooks/common/useIsMobile';
 import { createCardProPagination } from '../../../helpers/utils';
 import { renderQuota } from '../../../helpers';
 import {
+  PiCaretDownDuotone,
+  PiCaretUpDuotone,
   PiChartLineUpDuotone,
+  PiCoinsDuotone,
   PiDatabaseDuotone,
   PiGaugeDuotone,
   PiListMagnifyingGlassDuotone,
   PiReceiptDuotone,
+  PiSlidersHorizontalDuotone,
 } from 'react-icons/pi';
 import './usage-logs.css';
 
@@ -55,24 +60,6 @@ const UsageLogMetricCard = ({ icon, label, value, helper, tone }) => (
   </div>
 );
 
-const adminInsightProfiles = {
-  2: [
-    ['默认视图', '消费日志', '聚焦扣费和成本字段'],
-    ['核对重点', '模型计费', '对照用户消耗与渠道费用'],
-    ['处置动作', '展开明细', '查看完整计费过程'],
-  ],
-  3: [
-    ['默认视图', '管理日志', '聚焦后台操作和权限变化'],
-    ['核对重点', '操作人', '结合用户、接口和时间排查'],
-    ['处置动作', '审计追踪', '保留操作上下文'],
-  ],
-  5: [
-    ['默认视图', '错误日志', '聚焦失败、拦截和异常响应'],
-    ['核对重点', '风险用户', '结合用户、渠道和模型定位'],
-    ['处置动作', '复测链路', '对异常请求做路由排查'],
-  ],
-};
-
 const LogsPage = ({
   variant = 'default',
   initialLogType = 0,
@@ -84,8 +71,7 @@ const LogsPage = ({
   const isMobile = useIsMobile();
   const { t } = logsData;
   const isAdminVariant = variant === 'admin';
-  const adminInsights =
-    adminInsightProfiles[initialLogType] || adminInsightProfiles[2];
+  const [filtersExpanded, setFiltersExpanded] = React.useState(false);
 
   const summaryCards = [
     {
@@ -95,6 +81,14 @@ const LogsPage = ({
       helper: t('按当前筛选汇总'),
       tone: 'blue',
       icon: <PiReceiptDuotone size={22} />,
+    },
+    {
+      key: 'token',
+      label: t('Token 总数'),
+      value: formatNumber(logsData.stat?.token),
+      helper: t('按当前筛选汇总'),
+      tone: 'violet',
+      icon: <PiCoinsDuotone size={22} />,
     },
     {
       key: 'rpm',
@@ -161,26 +155,41 @@ const LogsPage = ({
         ))}
       </section>
 
-      {isAdminVariant && (
-        <section className='ct-usage-logs-admin-strip'>
-          {adminInsights.map(([label, value, helper]) => (
-            <div className='ct-usage-logs-admin-insight' key={label}>
-              <span>{t(label)}</span>
-              <strong>{t(value)}</strong>
-              <small>{t(helper)}</small>
-            </div>
-          ))}
-        </section>
-      )}
-
       <section className='ct-usage-logs-filter-panel'>
         <div className='ct-usage-logs-section-head'>
           <div>
             <span>{t('筛选条件')}</span>
             <p>{t('时间范围、对象与链路信息')}</p>
           </div>
+          <Button
+            className='ct-usage-logs-filter-toggle'
+            type='tertiary'
+            theme='borderless'
+            icon={
+              filtersExpanded ? (
+                <PiCaretUpDuotone size={15} />
+              ) : (
+                <PiCaretDownDuotone size={15} />
+              )
+            }
+            onClick={() => setFiltersExpanded((expanded) => !expanded)}
+          >
+            {filtersExpanded ? t('收起筛选') : t('展开筛选')}
+          </Button>
         </div>
-        <LogsFilters {...logsData} />
+        <div
+          className={`ct-usage-logs-filter-body${
+            filtersExpanded ? '' : ' ct-usage-logs-filter-body-collapsed'
+          }`}
+        >
+          <LogsFilters {...logsData} />
+        </div>
+        {!filtersExpanded ? (
+          <div className='ct-usage-logs-filter-collapsed-note'>
+            <PiSlidersHorizontalDuotone size={15} />
+            <span>{t('筛选已收起，点击展开后可调整时间范围、对象与链路信息。')}</span>
+          </div>
+        ) : null}
       </section>
 
       <section className='ct-usage-logs-table-panel'>

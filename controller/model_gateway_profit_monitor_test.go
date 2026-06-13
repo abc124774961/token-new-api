@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/middleware"
@@ -74,6 +75,35 @@ func setupModelGatewayProfitMonitorTestDB(t *testing.T) *gorm.DB {
 		}
 	})
 	return db
+}
+
+func TestParseModelGatewayProfitMonitorWindowPresets(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	endTime := time.Date(2026, time.June, 14, 15, 30, 0, 0, time.Local)
+	endTimestamp := endTime.Unix()
+	todayStart := time.Date(endTime.Year(), endTime.Month(), endTime.Day(), 0, 0, 0, 0, endTime.Location())
+
+	parse := func(query string) (string, int64, int64) {
+		t.Helper()
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/?"+query, nil)
+		return parseModelGatewayProfitMonitorWindow(c)
+	}
+
+	window, start, end := parse(fmt.Sprintf("window=today&end_timestamp=%d", endTimestamp))
+	require.Equal(t, "today", window)
+	require.Equal(t, todayStart.Unix(), start)
+	require.Equal(t, endTimestamp, end)
+
+	window, start, end = parse(fmt.Sprintf("window=yesterday&end_timestamp=%d", endTimestamp))
+	require.Equal(t, "yesterday", window)
+	require.Equal(t, todayStart.AddDate(0, 0, -1).Unix(), start)
+	require.Equal(t, todayStart.Unix(), end)
+
+	window, start, end = parse(fmt.Sprintf("window=month&end_timestamp=%d", endTimestamp))
+	require.Equal(t, "30d", window)
+	require.Equal(t, endTimestamp-30*86400, start)
+	require.Equal(t, endTimestamp, end)
 }
 
 func TestModelGatewayProfitMonitorConfigPatchPersistsNormalizedConfig(t *testing.T) {
