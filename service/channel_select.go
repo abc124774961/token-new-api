@@ -34,6 +34,7 @@ type channelAvoidanceEntry struct {
 	reason                string
 	failureCount          int
 	probeRecoveryRequired bool
+	lastRecordedAt        time.Time
 }
 
 var channelFailureAvoidance sync.Map
@@ -44,11 +45,12 @@ var channelOverloadRecoveryEvents sync.Map
 var channelRuntimeOverloadRecoveryEvents sync.Map
 
 const (
-	channelFailureAvoidancePauseDuration = 30 * time.Minute
-	channelFailureAvoidanceStepSeconds   = 8
-	ChannelTimeoutRecoveryReason         = "timeout_recovery"
-	ChannelOverloadRecoveryReason        = "overload_recovery"
-	ChannelAuthConfigRecoveryReason      = "auth_config_error"
+	channelFailureAvoidancePauseDuration   = 30 * time.Minute
+	channelFailureAvoidanceStepSeconds     = 8
+	channelProbeAvoidanceRecordMinInterval = 30 * time.Second
+	ChannelTimeoutRecoveryReason           = "timeout_recovery"
+	ChannelOverloadRecoveryReason          = "overload_recovery"
+	ChannelAuthConfigRecoveryReason        = "auth_config_error"
 )
 
 type ChannelFailureAvoidanceStatus struct {
@@ -882,6 +884,9 @@ func recordChannelRuntimeAvoidance(identity ChannelRuntimeIdentity, reason strin
 	failureCount := 1
 	if value, ok := channelRuntimeFailureAvoidance.Load(identity); ok {
 		if entry, ok := value.(channelAvoidanceEntry); ok {
+			if shouldCoalesceProbeAvoidanceRecord(now, entry, reason, probeRecoveryRequired) {
+				return nil
+			}
 			failureCount = entry.failureCount + 1
 			if entry.probeRecoveryRequired && !probeRecoveryRequired {
 				probeRecoveryRequired = true
@@ -904,6 +909,7 @@ func recordChannelRuntimeAvoidance(identity ChannelRuntimeIdentity, reason strin
 		reason:                reason,
 		failureCount:          failureCount,
 		probeRecoveryRequired: probeRecoveryRequired,
+		lastRecordedAt:        now,
 	})
 	common.SysLog(fmt.Sprintf("channel runtime #%d temporarily cooled for %s until %s after %d errors: %s", identity.ChannelID, remaining, until.Format(time.RFC3339), failureCount, reason))
 	recordChannelFailureAvoidanceEvent(identity.ChannelID, reason, until, remaining, failureCount, shouldPause, failureContext)
@@ -927,6 +933,9 @@ func recordChannelAvoidanceWithProbeRecovery(channelID int, reason string, failu
 	failureCount := 1
 	if value, ok := channelFailureAvoidance.Load(channelID); ok {
 		if entry, ok := value.(channelAvoidanceEntry); ok {
+			if shouldCoalesceProbeAvoidanceRecord(now, entry, reason, probeRecoveryRequired) {
+				return nil
+			}
 			failureCount = entry.failureCount + 1
 			if entry.probeRecoveryRequired && !probeRecoveryRequired {
 				probeRecoveryRequired = true
@@ -949,6 +958,7 @@ func recordChannelAvoidanceWithProbeRecovery(channelID int, reason string, failu
 		reason:                reason,
 		failureCount:          failureCount,
 		probeRecoveryRequired: probeRecoveryRequired,
+		lastRecordedAt:        now,
 	})
 	common.SysLog(fmt.Sprintf("channel #%d temporarily cooled for %s until %s after %d errors: %s", channelID, remaining, until.Format(time.RFC3339), failureCount, reason))
 	recordChannelFailureAvoidanceEvent(channelID, reason, until, remaining, failureCount, shouldPause, failureContext)
@@ -961,6 +971,22 @@ func recordChannelAvoidanceWithProbeRecovery(channelID int, reason string, failu
 		ShouldPause:           shouldPause,
 		ProbeRecoveryRequired: probeRecoveryRequired,
 	}
+}
+
+func shouldCoalesceProbeAvoidanceRecord(now time.Time, entry channelAvoidanceEntry, reason string, probeRecoveryRequired bool) bool {
+	if entry.lastRecordedAt.IsZero() {
+		return false
+	}
+	if !entry.probeRecoveryRequired && !probeRecoveryRequired {
+		return false
+	}
+	if !entry.until.After(now) && !entry.probeRecoveryRequired {
+		return false
+	}
+	if !IsProbeRecoveryReason(entry.reason) && !IsProbeRecoveryReason(reason) {
+		return false
+	}
+	return now.Sub(entry.lastRecordedAt) < channelProbeAvoidanceRecordMinInterval
 }
 
 func recordChannelFailureAvoidanceEvent(channelID int, reason string, until time.Time, remaining time.Duration, failureCount int, shouldPause bool, failureContext *ChannelFailureAvoidanceContext) {

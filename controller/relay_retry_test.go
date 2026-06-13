@@ -1831,7 +1831,7 @@ func TestProcessChannelErrorRecordsAuthConfigRecoveryCooling(t *testing.T) {
 	status = service.GetChannelFailureAvoidanceStatus(918)
 	require.NotNil(t, status)
 	require.True(t, status.Active)
-	require.Equal(t, 2, status.FailureCount)
+	require.Equal(t, 1, status.FailureCount)
 	require.True(t, status.ProbeRecoveryRequired)
 	require.Equal(t, service.ChannelAuthConfigRecoveryReason, status.Reason)
 	require.Equal(t, "auth_config_error", classifyRelayAttemptError(ctx, err))

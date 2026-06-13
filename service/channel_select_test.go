@@ -757,6 +757,48 @@ func TestRecordChannelFailureAvoidanceTruncatesLongUsedChannels(t *testing.T) {
 	require.Equal(t, longUsedChannels[:255], event.UsedChannels)
 }
 
+func TestRecordChannelRuntimeProbeAvoidanceCoalescesActiveRecords(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 60
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	identity := ChannelRuntimeIdentity{
+		ChannelID:          385,
+		CredentialIndex:    1,
+		CredentialIndexSet: true,
+	}.Normalize()
+
+	firstRecord := RecordChannelRuntimeAuthConfigRecovery(identity, &ChannelFailureAvoidanceContext{RequestId: "req-385-a"})
+	require.NotNil(t, firstRecord)
+
+	secondRecord := RecordChannelRuntimeAuthConfigRecovery(identity, &ChannelFailureAvoidanceContext{RequestId: "req-385-b"})
+	require.Nil(t, secondRecord)
+
+	var count int64
+	require.NoError(t, db.Model(&model.ChannelFailureEvent{}).Where("channel_id = ?", 385).Count(&count).Error)
+	require.Equal(t, int64(1), count)
+
+	entry, ok := channelRuntimeFailureAvoidance.Load(identity)
+	require.True(t, ok)
+	avoidanceEntry, ok := entry.(channelAvoidanceEntry)
+	require.True(t, ok)
+	avoidanceEntry.lastRecordedAt = time.Now().Add(-channelProbeAvoidanceRecordMinInterval - time.Second)
+	channelRuntimeFailureAvoidance.Store(identity, avoidanceEntry)
+
+	thirdRecord := RecordChannelRuntimeTimeoutRecovery(identity, &ChannelFailureAvoidanceContext{RequestId: "req-385-c"})
+	require.NotNil(t, thirdRecord)
+	require.NoError(t, db.Model(&model.ChannelFailureEvent{}).Where("channel_id = ?", 385).Count(&count).Error)
+	require.Equal(t, int64(2), count)
+}
+
 func TestRetryParamIncreaseRetryConsumesExtraRetriesFirst(t *testing.T) {
 	param := &RetryParam{
 		Retry:        common.GetPointer(0),

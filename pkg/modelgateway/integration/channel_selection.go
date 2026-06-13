@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -31,7 +32,15 @@ type ChannelSelectionWrapper struct {
 	mu     sync.Mutex
 }
 
-const routingCacheRefreshRetriedContextKey = "modelgateway_routing_cache_refresh_retried"
+const (
+	routingCacheRefreshRetriedContextKey = "modelgateway_routing_cache_refresh_retried"
+	staleSmartCandidateLogInterval       = 30 * time.Second
+)
+
+var (
+	staleSmartCandidateLogMu   sync.Mutex
+	staleSmartCandidateLastLog = map[string]time.Time{}
+)
 
 func NewChannelSelectionWrapper(facade core.SmartDispatchFacadeInterface, legacy core.LegacyChannelSelector) *ChannelSelectionWrapper {
 	return &ChannelSelectionWrapper{
@@ -100,7 +109,9 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 		if ok, reason := validateSelectedSmartPlan(plan); !ok {
 			markSelectedSmartPlanSkipped(c, plan, reason)
 			w.mu.Unlock()
-			common.SysLog(fmt.Sprintf("model gateway smart selection skipped stale candidate: channel_id=%d reason=%s", plan.Channel.Id, reason))
+			if shouldLogStaleSmartCandidate(plan.Channel.Id, reason) {
+				common.SysLog(fmt.Sprintf("model gateway smart selection skipped stale candidate: channel_id=%d reason=%s", plan.Channel.Id, reason))
+			}
 			RefreshDefaultRoutingCachesForSelectionMiss("stale_smart_candidate")
 			continue
 		}
@@ -156,6 +167,18 @@ func markSelectionMissRefreshRetried(c *gin.Context) bool {
 		return false
 	}
 	c.Set(routingCacheRefreshRetriedContextKey, true)
+	return true
+}
+
+func shouldLogStaleSmartCandidate(channelID int, reason string) bool {
+	now := time.Now()
+	key := fmt.Sprintf("%d:%s", channelID, reason)
+	staleSmartCandidateLogMu.Lock()
+	defer staleSmartCandidateLogMu.Unlock()
+	if last, ok := staleSmartCandidateLastLog[key]; ok && now.Sub(last) < staleSmartCandidateLogInterval {
+		return false
+	}
+	staleSmartCandidateLastLog[key] = now
 	return true
 }
 
