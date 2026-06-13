@@ -244,10 +244,10 @@ func resolveVisibleModelNames(c *gin.Context) ([]string, bool) {
 
 	tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
 	if tokenGroup == "" {
-		tokenGroup = "auto"
+		tokenGroup = service.AutoGroupName
 	}
-	if len(groups) == 1 && tokenGroup != "auto" {
-		return model.GetGroupAvailableModels(groups[0]), true
+	if len(groups) == 1 && tokenGroup != service.AutoGroupName {
+		return model.GetAvailableModelsForGroups(service.EffectiveRoutingGroups(groups[0])), true
 	}
 	return model.GetAvailableModelsForGroups(groups), true
 }
@@ -272,13 +272,13 @@ func resolveVisibleModelGroups(c *gin.Context) ([]string, bool) {
 
 	tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
 	if tokenGroup == "" {
-		tokenGroup = "auto"
+		tokenGroup = service.AutoGroupName
 	}
 	switch tokenGroup {
-	case "auto":
+	case service.AutoGroupName:
 		return service.GetUserAutoGroup(userGroup), true
 	default:
-		return []string{tokenGroup}, true
+		return service.EffectiveRoutingGroups(tokenGroup), true
 	}
 }
 

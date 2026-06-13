@@ -255,6 +255,12 @@ func applySelectedGroupContext(c *gin.Context, requestedGroup, selectedGroup str
 	tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
 	if requestedGroup == "auto" || tokenGroup == "auto" {
 		common.SetContextKey(c, constant.ContextKeyAutoGroup, selectedGroup)
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, selectedGroup)
+		return
+	}
+	if tokenGroup != "" {
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, tokenGroup)
+		return
 	}
 	common.SetContextKey(c, constant.ContextKeyUsingGroup, selectedGroup)
 }
@@ -338,7 +344,7 @@ func markDistributorSmartSetupFailure(c *gin.Context, selection *modelgatewayint
 		identity = service.ChannelRuntimeIdentityFromContext(c, selection.Channel.Id)
 	}
 	service.MarkChannelRuntimeSelectionSkipped(c, identity)
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCachesForSelectionMiss("distributor_smart_setup_failure")
 }
 
 func setupDistributorSelectedChannelIfNeeded(c *gin.Context, channel *model.Channel, modelRequest *ModelRequest, selection *modelgatewayintegration.SelectionResult) *types.NewAPIError {

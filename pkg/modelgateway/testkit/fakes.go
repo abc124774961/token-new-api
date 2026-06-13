@@ -21,8 +21,9 @@ func (p StaticSettingsProvider) Get() core.SchedulerSettings {
 }
 
 type FakeGroupPermissionService struct {
-	UsableGroups map[string]map[string]string
-	AutoGroups   map[string][]string
+	UsableGroups    map[string]map[string]string
+	AutoGroups      map[string][]string
+	EffectiveGroups map[string][]string
 }
 
 func (s *FakeGroupPermissionService) GetUserUsableGroups(userGroup string) map[string]string {
@@ -45,6 +46,18 @@ func (s *FakeGroupPermissionService) GroupInUserUsableGroups(userGroup, groupNam
 
 func (s *FakeGroupPermissionService) GetUserAutoGroup(userGroup string) []string {
 	return append([]string(nil), s.AutoGroups[userGroup]...)
+}
+
+func (s *FakeGroupPermissionService) EffectiveRoutingGroups(groupName string) []string {
+	if s != nil && len(s.EffectiveGroups) > 0 {
+		if groups, ok := s.EffectiveGroups[groupName]; ok {
+			return append([]string(nil), groups...)
+		}
+	}
+	if groupName == "" {
+		return nil
+	}
+	return []string{groupName}
 }
 
 type FakeLegacyChannelSelector struct {

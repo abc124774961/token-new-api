@@ -31,7 +31,11 @@ func TokenAccountAutomationCredentialWriteback(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return
 	}
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	clearChannelAccountRuntimeBlocks(result.ChannelID, result.CredentialIndex, true)
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "token_account_automation_writeback",
+		ResetProxyClient: true,
+	})
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }
 
@@ -120,8 +124,9 @@ func TokenAccountAutomationReauthorizeInvalidAccount(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "token_account_automation_reauthorize",
+	})
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
 		"operation":  restored.Operation,
 		"automation": automation,
@@ -142,8 +147,10 @@ func tokenAccountAutomationArchiveAccount(c *gin.Context, pool string) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "token_account_automation_archive",
+		ResetProxyClient: true,
+	})
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"operation": operation}})
 }
 

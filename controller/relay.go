@@ -840,7 +840,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		if learnRelayCapabilityFromError(c, channel, newAPIError) {
 			service.MarkChannelRuntimeSelectionSkipped(c, relayRuntimeIdentity(c, channel.Id))
-			modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+			modelgatewayintegration.RefreshDefaultRoutingCachesForSelectionMiss("relay_capability_learned")
 		}
 		if channelInducedAbort {
 			flow.ErrorCategory = modelgatewaycore.ErrorCategoryChannelInducedClientAbort
@@ -1062,7 +1062,7 @@ func prepareModelGatewaySetupFailureRetry(c *gin.Context, channel *model.Channel
 		return false
 	}
 	service.MarkChannelRuntimeSelectionSkipped(c, relayRuntimeIdentity(c, channel.Id))
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCachesForSelectionMiss("relay_setup_failure")
 	canFailover, forceNextAutoGroup := service.GetChannelFailoverPlan(retryParam)
 	if !canFailover {
 		return false
@@ -1724,7 +1724,9 @@ func updateCodexAccountUsageLimitFromRelay(c *gin.Context, channel *model.Channe
 		if err != nil {
 			logger.LogWarn(c, fmt.Sprintf("failed to clear codex account usage limit: channel_id=%d credential_index=%d error=%v", channel.Id, credentialIndex, err))
 		} else if changed {
-			modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+			modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+				Reason: "codex_usage_limit_cleared",
+			})
 		}
 		return
 	}
@@ -1737,7 +1739,7 @@ func updateCodexAccountUsageLimitFromRelay(c *gin.Context, channel *model.Channe
 	if err != nil {
 		logger.LogWarn(c, fmt.Sprintf("failed to mark codex account usage limit: channel_id=%d credential_index=%d error=%v", channel.Id, credentialIndex, err))
 	} else if changed {
-		modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+		modelgatewayintegration.RefreshDefaultRoutingCachesForSelectionMiss("codex_usage_limit_marked")
 	}
 }
 

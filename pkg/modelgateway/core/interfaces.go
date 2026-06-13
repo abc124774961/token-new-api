@@ -48,6 +48,7 @@ type GroupPermissionService interface {
 	GetUserUsableGroups(userGroup string) map[string]string
 	GroupInUserUsableGroups(userGroup, groupName string) bool
 	GetUserAutoGroup(userGroup string) []string
+	EffectiveRoutingGroups(groupName string) []string
 }
 
 type SchedulerSettingsProvider interface {

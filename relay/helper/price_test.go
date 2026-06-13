@@ -112,6 +112,45 @@ func TestApplySelectedGroupRatioUsesActualSelectedGroupForAutoBilling(t *testing
 	require.Equal(t, 100, info.TieredBillingSnapshot.EstimatedQuotaAfterGroup)
 }
 
+func TestApplySelectedGroupRatioKeepsStoredTokenGroupForFallbackRouting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"codex-plus":0.1,"codex-plus-特惠":0.065}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroupRatio))
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "codex-plus-特惠")
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "codex-plus-特惠")
+
+	info := &relaycommon.RelayInfo{
+		TokenGroup:  "codex-plus-特惠",
+		UserGroup:   "default",
+		UsingGroup:  "codex-plus-特惠",
+		PriceData:   types.PriceData{GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1}},
+		Request:     nil,
+		RequestId:   "req-derived-plus",
+		StartTime:   time.Now(),
+		RelayFormat: types.RelayFormatOpenAI,
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+			GroupRatio:                1,
+			EstimatedQuotaBeforeGroup: 1000,
+			EstimatedQuotaAfterGroup:  1000,
+		},
+	}
+
+	groupRatioInfo := ApplySelectedGroupRatio(ctx, info, "codex-plus")
+
+	require.Equal(t, "codex-plus-特惠", info.UsingGroup)
+	require.Equal(t, "codex-plus-特惠", common.GetContextKeyString(ctx, constant.ContextKeyUsingGroup))
+	require.Empty(t, common.GetContextKeyString(ctx, constant.ContextKeyAutoGroup))
+	require.Equal(t, 0.065, groupRatioInfo.GroupRatio)
+	require.Equal(t, 65, info.TieredBillingSnapshot.EstimatedQuotaAfterGroup)
+}
+
 func TestApplySelectedGroupRatioUsesDynamicBillingForSelectedGroup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	oldGroupRatio := ratio_setting.GroupRatio2JSONString()

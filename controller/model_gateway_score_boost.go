@@ -70,7 +70,9 @@ func UpdateModelGatewayChannelScoreBoosts(c *gin.Context) {
 		model.CacheUpdateChannel(updatedChannel)
 		channel = updatedChannel
 	}
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "model_gateway_score_boost",
+	})
 	recordModelGatewayScoreBoostLog(c, channel, before, after)
 	common.ApiSuccess(c, buildModelGatewayChannelScoreBoostResponse(channel))
 }

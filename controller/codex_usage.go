@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	"github.com/QuantumNous/new-api/relay/channel/codex"
 	"github.com/QuantumNous/new-api/service"
 
@@ -92,8 +93,11 @@ func GetCodexChannelUsage(c *gin.Context) {
 			encoded, encErr := common.Marshal(oauthKey)
 			if encErr == nil {
 				_ = model.DB.Model(&model.Channel{}).Where("id = ?", ch.Id).Update("key", string(encoded)).Error
-				model.InitChannelCache()
-				service.ResetProxyClientCache()
+				clearChannelAccountRuntimeBlocks(ch.Id, 0, true)
+				modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+					Reason:           "codex_usage_oauth_refresh",
+					ResetProxyClient: true,
+				})
 			}
 
 			ctx2, cancel2 := context.WithTimeout(c.Request.Context(), 15*time.Second)

@@ -131,15 +131,7 @@ func runCodexCredentialAutoRefreshOnce() {
 	}
 
 	if refreshed > 0 {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					logger.LogWarn(ctx, fmt.Sprintf("codex credential auto-refresh: InitChannelCache panic: %v", r))
-				}
-			}()
-			model.InitChannelCache()
-		}()
-		ResetProxyClientCache()
+		RefreshRoutingCachesAfterConfigChange("codex_credential_auto_refresh", true)
 	}
 
 	if common.DebugEnabled {

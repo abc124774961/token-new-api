@@ -19,3 +19,7 @@ func (s *ServiceGroupPermissionService) GroupInUserUsableGroups(userGroup, group
 func (s *ServiceGroupPermissionService) GetUserAutoGroup(userGroup string) []string {
 	return service.GetUserAutoGroup(userGroup)
 }
+
+func (s *ServiceGroupPermissionService) EffectiveRoutingGroups(groupName string) []string {
+	return service.EffectiveRoutingGroups(groupName)
+}

@@ -174,6 +174,13 @@ func (p *RetryParam) AllowExtraRetry(count int) {
 	p.SetExtraRetries(current + count)
 }
 
+func (p *RetryParam) EffectiveRoutingGroups() []string {
+	if p == nil {
+		return nil
+	}
+	return EffectiveRoutingGroups(p.TokenGroup)
+}
+
 func (p *RetryParam) HasBudget(maxRetry int) bool {
 	return p.GetRetry() <= maxRetry || p.GetExtraRetries() > 0
 }
@@ -1454,7 +1461,12 @@ func GetChannelFailoverPlan(param *RetryParam) (bool, bool) {
 		return false, false
 	}
 	if param.TokenGroup != "auto" {
-		return hasAlternativeChannelInGroup(param.Ctx, param.TokenGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, param.GetRetry()), false
+		for _, routeGroup := range param.EffectiveRoutingGroups() {
+			if hasAlternativeChannelInGroup(param.Ctx, routeGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, param.GetRetry()) {
+				return true, false
+			}
+		}
+		return false, false
 	}
 	autoGroups := GetUserAutoGroup(common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup))
 	if len(autoGroups) == 0 {
@@ -1563,9 +1575,17 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 		}
 	} else {
-		channel, err = selectChannelForGroup(param.Ctx, param.TokenGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, param.GetRetry(), true)
-		if err != nil {
-			return nil, param.TokenGroup, err
+		for _, routeGroup := range param.EffectiveRoutingGroups() {
+			channel, err = selectChannelForGroup(param.Ctx, routeGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, param.GetRetry(), true)
+			if err != nil {
+				return nil, routeGroup, err
+			}
+			if channel != nil {
+				if routeGroup != param.TokenGroup {
+					logger.LogWarn(param.Ctx, fmt.Sprintf("Using fallback routing group %s for token group %s and model %s", routeGroup, param.TokenGroup, param.ModelName))
+				}
+				return channel, selectGroup, nil
+			}
 		}
 	}
 	return channel, selectGroup, nil

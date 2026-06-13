@@ -21,8 +21,52 @@ import (
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
+
+func setupRoutingCacheRefreshTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+
+	oldDB := model.DB
+	oldLOGDB := model.LOG_DB
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	oldUsingSQLite := common.UsingSQLite
+	oldUsingMySQL := common.UsingMySQL
+	oldUsingPostgreSQL := common.UsingPostgreSQL
+
+	common.MemoryCacheEnabled = true
+	common.UsingSQLite = true
+	common.UsingMySQL = false
+	common.UsingPostgreSQL = false
+
+	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	model.DB = db
+	model.LOG_DB = db
+	model.InitChannelCache()
+
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLOGDB
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		common.UsingSQLite = oldUsingSQLite
+		common.UsingMySQL = oldUsingMySQL
+		common.UsingPostgreSQL = oldUsingPostgreSQL
+		integration.ResetRoutingCacheSelectionMissRefreshForTest()
+		if oldMemoryCacheEnabled && oldDB != nil {
+			model.InitChannelCache()
+		}
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	return db
+}
 
 func TestChannelSelectionWrapperActiveUsesSmartPlan(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -57,6 +101,72 @@ func TestChannelSelectionWrapperActiveUsesSmartPlan(t *testing.T) {
 	require.False(t, result.FallbackUsed)
 	require.Equal(t, 10, result.Channel.Id)
 	require.Zero(t, h.Legacy.Calls)
+}
+
+func TestRefreshDefaultRoutingCachesRebuildsMemoryChannelCache(t *testing.T) {
+	db := setupRoutingCacheRefreshTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     701,
+		Type:   constant.ChannelTypeOpenAI,
+		Name:   "fresh-channel",
+		Key:    "sk-test",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "gpt-4.1",
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-4.1",
+		ChannelId: 701,
+		Enabled:   true,
+	}).Error)
+
+	channel, err := model.GetRandomSatisfiedChannel("default", "gpt-4.1", 0, nil)
+	require.NoError(t, err)
+	require.Nil(t, channel)
+
+	integration.RefreshDefaultRoutingCaches(integration.RoutingCacheRefreshOptions{Reason: "test"})
+
+	channel, err = model.GetRandomSatisfiedChannel("default", "gpt-4.1", 0, nil)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 701, channel.Id)
+}
+
+func TestChannelSelectionWrapperSelectionMissRefreshesAndRetriesLegacy(t *testing.T) {
+	db := setupRoutingCacheRefreshTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     702,
+		Type:   constant.ChannelTypeOpenAI,
+		Name:   "self-healed-channel",
+		Key:    "sk-test",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "gpt-4.1",
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     "gpt-4.1",
+		ChannelId: 702,
+		Enabled:   true,
+	}).Error)
+	integration.ResetRoutingCacheSelectionMissRefreshForTest()
+	wrapper := integration.NewChannelSelectionWrapper(nil, integration.NewLegacyChannelSelector())
+	ctx, _ := gin.CreateTestContext(nil)
+
+	result, apiErr := wrapper.Select(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-4.1",
+		EndpointType: constant.EndpointTypeOpenAI,
+		Retry:        common.GetPointer(0),
+	})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Channel)
+	require.Equal(t, 702, result.Channel.Id)
+	require.True(t, result.FallbackUsed)
 }
 
 func TestChannelSelectionWrapperSkipsDisabledSmartPlanAndRetries(t *testing.T) {
@@ -748,6 +858,66 @@ func TestChannelSelectionWrapperOffFallsBackToLegacy(t *testing.T) {
 	require.True(t, result.FallbackUsed)
 	require.Equal(t, 3, result.Channel.Id)
 	require.Equal(t, 1, h.Legacy.Calls)
+}
+
+func TestChannelSelectionWrapperActiveUsesEffectiveRoutingGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+	settings := core.SchedulerSettings{
+		Enabled:         true,
+		DefaultMode:     core.ModeActive,
+		DefaultStrategy: core.StrategyBalanced,
+	}
+	groupService := &testkit.FakeGroupPermissionService{
+		EffectiveGroups: map[string][]string{
+			"codex-plus-特惠": {"codex-plus-特惠", "codex-plus"},
+		},
+	}
+	key := core.RuntimeKey{
+		RequestedModel: "gpt-5.4",
+		ChannelID:      51,
+		Group:          "codex-plus",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	snapshots := scheduler.NewMemoryRuntimeSnapshotStore()
+	snapshots.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SuccessRate:        0.99,
+		TTFTMs:             300,
+		TokensPerSecond:    70,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        10,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 51, Name: "base-plus"}, Group: "codex-plus", RuntimeKey: key},
+		}),
+		snapshots,
+		scheduler.DefaultScoreWeights(),
+	)
+	recorder := &testkit.FakeExecutionRecorder{}
+	facade := modelgateway.NewSmartDispatchFacade(modelgateway.SmartDispatchDeps{
+		PolicyResolver: policy.NewDefaultGroupPolicyResolver(testkit.StaticSettingsProvider{Settings: settings}),
+		AutoResolver:   policy.NewDefaultAutoGroupResolver(groupService),
+		Selector:       selector,
+		Recorder:       recorder,
+	})
+	wrapper := integration.NewChannelSelectionWrapper(facade, &testkit.FakeLegacyChannelSelector{})
+
+	result, apiErr := wrapper.Select(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "codex-plus-特惠",
+		ModelName:    "gpt-5.4",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, result.SmartHandled)
+	require.Equal(t, 51, result.Channel.Id)
+	require.Equal(t, "codex-plus", result.Group)
+	require.Equal(t, "codex-plus-特惠", result.Plan.RequestedGroup)
+	require.Equal(t, []string{"codex-plus-特惠", "codex-plus"}, recorder.SnapshotRecords()[0].Policy.CandidateGroups)
 }
 
 func TestChannelSelectionWrapperFallbackConsumesRetryRoutingIntent(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	"github.com/QuantumNous/new-api/service"
@@ -408,17 +409,10 @@ func checkAndPersistChannelUpstreamModelUpdates(
 }
 
 func refreshChannelRuntimeCache() {
-	if common.MemoryCacheEnabled {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					common.SysLog(fmt.Sprintf("InitChannelCache panic: %v", r))
-				}
-			}()
-			model.InitChannelCache()
-		}()
-	}
-	service.ResetProxyClientCache()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "upstream_model_update",
+		ResetProxyClient: true,
+	})
 }
 
 func shouldSendUpstreamModelUpdateNotification(now int64, changedChannels int, failedChannels int) bool {

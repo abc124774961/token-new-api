@@ -101,8 +101,7 @@ func WritebackTokenAccountAutomationCredential(req TokenAccountAutomationCredent
 		}
 	}
 
-	model.InitChannelCache()
-	ResetProxyClientCache()
+	RefreshRoutingCachesAfterConfigChange("token_account_automation_writeback", true)
 
 	identity := ChannelRuntimeIdentity{
 		ChannelID:           channel.Id,

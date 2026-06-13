@@ -31,6 +31,8 @@ type ChannelSelectionWrapper struct {
 	mu     sync.Mutex
 }
 
+const routingCacheRefreshRetriedContextKey = "modelgateway_routing_cache_refresh_retried"
+
 func NewChannelSelectionWrapper(facade core.SmartDispatchFacadeInterface, legacy core.LegacyChannelSelector) *ChannelSelectionWrapper {
 	return &ChannelSelectionWrapper{
 		Facade: facade,
@@ -52,7 +54,17 @@ func (w *ChannelSelectionWrapper) Select(c *gin.Context, param *service.RetryPar
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeGetChannelFailed)
 	}
-	if w.Facade != nil {
+	if channel == nil && markSelectionMissRefreshRetried(c) {
+		RefreshDefaultRoutingCachesForSelectionMiss("selection_miss")
+		if result, apiErr := w.SelectSmartOnly(c, param); apiErr != nil || result != nil {
+			return result, apiErr
+		}
+		channel, group, err = w.Legacy.Select(param)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeGetChannelFailed)
+		}
+	}
+	if w.Facade != nil && channel != nil {
 		scheduler.WithStickyRoutingDisabled(c, func() {
 			w.Facade.Shadow(c, param, channel, group)
 		})
@@ -89,7 +101,7 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 			markSelectedSmartPlanSkipped(c, plan, reason)
 			w.mu.Unlock()
 			common.SysLog(fmt.Sprintf("model gateway smart selection skipped stale candidate: channel_id=%d reason=%s", plan.Channel.Id, reason))
-			RefreshDefaultAccountCandidateIndex()
+			RefreshDefaultRoutingCachesForSelectionMiss("stale_smart_candidate")
 			continue
 		}
 		identity := serviceRuntimeIdentityFromPlan(plan)
@@ -134,6 +146,17 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 		}, nil
 	}
 	return nil, nil
+}
+
+func markSelectionMissRefreshRetried(c *gin.Context) bool {
+	if c == nil {
+		return true
+	}
+	if _, ok := c.Get(routingCacheRefreshRetriedContextKey); ok {
+		return false
+	}
+	c.Set(routingCacheRefreshRetriedContextKey, true)
+	return true
 }
 
 func markSelectedSmartPlanSkipped(c *gin.Context, plan *core.DispatchPlan, reason string) {

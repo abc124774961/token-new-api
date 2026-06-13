@@ -44,7 +44,7 @@ func (r *DefaultAutoGroupResolver) Resolve(c *gin.Context, req *core.DispatchReq
 	if policy.CrossGroupFusion {
 		plan.CandidateGroups = filterUsableGroups(policy.CandidateGroups, req.UserGroup, r.groupService)
 	} else if req.RequestedGroup != "" {
-		plan.CandidateGroups = []string{req.RequestedGroup}
+		plan.CandidateGroups = effectiveRoutingGroups(req.RequestedGroup, r.groupService)
 	}
 	return plan
 }
@@ -76,4 +76,33 @@ func filterUsableGroups(groups []string, userGroup string, groupService core.Gro
 		}
 	}
 	return filtered
+}
+
+func effectiveRoutingGroups(group string, groupService core.GroupPermissionService) []string {
+	if group == "" {
+		return nil
+	}
+	if groupService == nil {
+		return []string{group}
+	}
+	groups := groupService.EffectiveRoutingGroups(group)
+	if len(groups) == 0 {
+		return []string{group}
+	}
+	out := make([]string, 0, len(groups))
+	seen := make(map[string]struct{}, len(groups))
+	for _, candidate := range groups {
+		if candidate == "" {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	if len(out) == 0 {
+		return []string{group}
+	}
+	return out
 }

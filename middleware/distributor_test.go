@@ -126,6 +126,27 @@ func TestApplySelectedGroupContextUsesSelectedGroupForAutoRequest(t *testing.T) 
 	require.Equal(t, "codex-plus", common.GetContextKeyString(ctx, constant.ContextKeyAutoGroup))
 }
 
+func TestApplySelectedGroupContextKeepsTokenGroupForFallbackRouting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "codex-plus-特惠")
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "codex-plus-特惠")
+
+	applySelectedGroupContext(ctx, "codex-plus-特惠", "codex-plus")
+
+	require.Equal(t, "codex-plus-特惠", common.GetContextKeyString(ctx, constant.ContextKeyUsingGroup))
+	require.Empty(t, common.GetContextKeyString(ctx, constant.ContextKeyAutoGroup))
+}
+
+func TestApplySelectedGroupContextUsesSelectedGroupWithoutTokenGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	applySelectedGroupContext(ctx, "codex-plus-特惠", "codex-plus")
+
+	require.Equal(t, "codex-plus", common.GetContextKeyString(ctx, constant.ContextKeyUsingGroup))
+}
+
 func TestSetupContextForSelectedChannelAppliesSmartCredentialWithoutPolling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	common.CryptoSecret = "test-secret"

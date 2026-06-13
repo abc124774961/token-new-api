@@ -412,21 +412,22 @@ type SyncChannelAccountAuthRecoveryResponse struct {
 }
 
 type ChannelAccountOperation struct {
-	Type             string `json:"type,omitempty"`
-	Action           string `json:"action,omitempty"`
-	Requested        int    `json:"requested,omitempty"`
-	Affected         int    `json:"affected,omitempty"`
-	Added            int    `json:"added,omitempty"`
-	Deleted          int    `json:"deleted,omitempty"`
-	Skipped          int    `json:"skipped,omitempty"`
-	SkippedExisting  int    `json:"skipped_existing,omitempty"`
-	SkippedDuplicate int    `json:"skipped_duplicate,omitempty"`
-	TotalInput       int    `json:"total_input,omitempty"`
-	ChannelID        int    `json:"channel_id,omitempty"`
-	CredentialIndex  *int   `json:"credential_index,omitempty"`
-	OriginalIndex    *int   `json:"original_index,omitempty"`
-	ChannelRestored  bool   `json:"channel_restored,omitempty"`
-	ChannelDisabled  bool   `json:"channel_disabled,omitempty"`
+	Type              string `json:"type,omitempty"`
+	Action            string `json:"action,omitempty"`
+	Requested         int    `json:"requested,omitempty"`
+	Affected          int    `json:"affected,omitempty"`
+	Added             int    `json:"added,omitempty"`
+	Deleted           int    `json:"deleted,omitempty"`
+	Skipped           int    `json:"skipped,omitempty"`
+	SkippedExisting   int    `json:"skipped_existing,omitempty"`
+	SkippedDuplicate  int    `json:"skipped_duplicate,omitempty"`
+	TotalInput        int    `json:"total_input,omitempty"`
+	ChannelID         int    `json:"channel_id,omitempty"`
+	CredentialIndex   *int   `json:"credential_index,omitempty"`
+	CredentialIndexes []int  `json:"credential_indexes,omitempty"`
+	OriginalIndex     *int   `json:"original_index,omitempty"`
+	ChannelRestored   bool   `json:"channel_restored,omitempty"`
+	ChannelDisabled   bool   `json:"channel_disabled,omitempty"`
 }
 
 type ChannelAccountPoolResponse struct {
@@ -692,8 +693,12 @@ func UpdateChannelAccountStatus(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	if enabled {
+		clearChannelAccountRuntimeBlocks(channelID, credentialIndex, true)
+	}
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "channel_account_status",
+	})
 
 	channel, err := model.GetChannelById(channelID, true)
 	if err != nil {
@@ -724,8 +729,11 @@ func UpdateChannelAccountCredential(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	clearChannelAccountRuntimeBlocks(channelID, credentialIndex, strings.TrimSpace(request.Credential) != "")
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "channel_account_credential",
+		ResetProxyClient: true,
+	})
 
 	channel, err := model.GetChannelById(channelID, true)
 	if err != nil {
@@ -757,8 +765,12 @@ func UpdateChannelAccountsStatus(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	if enabled {
+		clearChannelAccountsRuntimeBlocks(channelID, operation.CredentialIndexes, true)
+	}
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "channel_accounts_status",
+	})
 
 	channel, err := model.GetChannelById(channelID, true)
 	if err != nil {
@@ -785,8 +797,10 @@ func ImportChannelAccounts(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	clearChannelAccountsRuntimeBlocks(channelID, operation.CredentialIndexes, true)
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "channel_accounts_import",
+	})
 
 	channel, err := model.GetChannelById(channelID, true)
 	if err != nil {
@@ -813,8 +827,10 @@ func DeleteChannelAccounts(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "channel_accounts_delete",
+		ResetProxyClient: true,
+	})
 
 	channel, err := model.GetChannelById(channelID, true)
 	if err != nil {
@@ -835,8 +851,10 @@ func ArchiveChannelAccountsToInvalidPool(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "channel_accounts_archive_invalid",
+		ResetProxyClient: true,
+	})
 	common.ApiSuccess(c, gin.H{"operation": operation})
 }
 
@@ -851,8 +869,10 @@ func ArchiveChannelAccountsToDiscardedPool(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "channel_accounts_archive_discarded",
+		ResetProxyClient: true,
+	})
 	common.ApiSuccess(c, gin.H{"operation": operation})
 }
 
@@ -868,8 +888,9 @@ func RestoreChannelInvalidAccount(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "channel_invalid_account_restore",
+	})
 	common.ApiSuccess(c, gin.H{"operation": operation})
 }
 
@@ -895,8 +916,9 @@ func ReauthorizeChannelInvalidAccount(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "channel_invalid_account_reauthorize",
+	})
 	common.ApiSuccess(c, gin.H{
 		"operation":  restored.Operation,
 		"automation": automation,
@@ -978,8 +1000,11 @@ func UpdateChannelAccountProxy(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	clearChannelAccountRuntimeBlocks(channelID, credentialIndex, false)
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "channel_account_proxy",
+		ResetProxyClient: true,
+	})
 
 	channel, err := model.GetChannelById(channelID, true)
 	if err != nil {
@@ -1008,8 +1033,11 @@ func UpdateChannelAccountsProxy(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	clearChannelAccountsRuntimeBlocks(channelID, operation.CredentialIndexes, false)
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "channel_accounts_proxy",
+		ResetProxyClient: true,
+	})
 
 	channel, err := model.GetChannelById(channelID, true)
 	if err != nil {
@@ -2863,14 +2891,15 @@ func restoreChannelInvalidAccountWithOptions(poolID int, options restoreChannelI
 		return nil, err
 	}
 	operation := &ChannelAccountOperation{
-		Type:            "pool",
-		Action:          "restore",
-		Requested:       1,
-		Affected:        1,
-		Added:           1,
-		ChannelID:       targetChannelID,
-		CredentialIndex: common.GetPointer(newIndex),
-		OriginalIndex:   common.GetPointer(record.CredentialIndex),
+		Type:              "pool",
+		Action:            "restore",
+		Requested:         1,
+		Affected:          1,
+		Added:             1,
+		ChannelID:         targetChannelID,
+		CredentialIndex:   common.GetPointer(newIndex),
+		CredentialIndexes: []int{newIndex},
+		OriginalIndex:     common.GetPointer(record.CredentialIndex),
 	}
 	return &restoredChannelInvalidAccount{
 		PoolID:          poolID,
@@ -3202,10 +3231,12 @@ func updateChannelAccountCredential(channelID int, credentialIndex int, credenti
 		return nil, err
 	}
 	return &ChannelAccountOperation{
-		Type:      "credential",
-		Action:    "update",
-		Requested: 1,
-		Affected:  1,
+		Type:              "credential",
+		Action:            "update",
+		Requested:         1,
+		Affected:          1,
+		CredentialIndex:   common.GetPointer(credentialIndex),
+		CredentialIndexes: []int{credentialIndex},
 	}, nil
 }
 
@@ -3230,10 +3261,11 @@ func updateChannelAccountsStatus(channelID int, credentialIndexes []int, enabled
 		return nil, err
 	}
 	operation := &ChannelAccountOperation{
-		Type:      "status",
-		Action:    channelAccountStatusAction(enabled),
-		Requested: len(credentialIndexes),
-		Affected:  len(indexes),
+		Type:              "status",
+		Action:            channelAccountStatusAction(enabled),
+		Requested:         len(credentialIndexes),
+		Affected:          len(indexes),
+		CredentialIndexes: append([]int(nil), indexes...),
 	}
 	beforeStatus := channel.Status
 	beforeAllKeysDisabled := beforeStatus == common.ChannelStatusAutoDisabled && channelAccountStatusReasonIsAllKeysDisabled(channel)
@@ -3339,10 +3371,11 @@ func updateChannelAccountsProxy(channelID int, credentialIndexes []int, proxyID 
 		}
 	}
 	return &ChannelAccountOperation{
-		Type:      "proxy",
-		Action:    channelAccountProxyAction(proxyID),
-		Requested: len(indexes),
-		Affected:  len(indexes),
+		Type:              "proxy",
+		Action:            channelAccountProxyAction(proxyID),
+		Requested:         len(indexes),
+		Affected:          len(indexes),
+		CredentialIndexes: append([]int(nil), indexes...),
 	}, nil
 }
 
@@ -3921,15 +3954,16 @@ func importChannelAccounts(channelID int, credentials string, credentialList []s
 	}
 	skippedDuplicate := normalizedCredentials.DuplicateInInput
 	return &ChannelAccountOperation{
-		Type:             "import",
-		TotalInput:       normalizedCredentials.InputCount,
-		Requested:        normalizedCredentials.InputCount,
-		Affected:         added,
-		Added:            added,
-		Skipped:          skippedExisting + skippedDuplicate,
-		SkippedExisting:  skippedExisting,
-		SkippedDuplicate: skippedDuplicate,
-		ChannelRestored:  wasAutoDisabledByAllKeys && channel.Status == common.ChannelStatusEnabled,
+		Type:              "import",
+		TotalInput:        normalizedCredentials.InputCount,
+		Requested:         normalizedCredentials.InputCount,
+		Affected:          added,
+		Added:             added,
+		Skipped:           skippedExisting + skippedDuplicate,
+		SkippedExisting:   skippedExisting,
+		SkippedDuplicate:  skippedDuplicate,
+		CredentialIndexes: append([]int(nil), addedIndexes...),
+		ChannelRestored:   wasAutoDisabledByAllKeys && channel.Status == common.ChannelStatusEnabled,
 	}, nil
 }
 
@@ -4314,12 +4348,13 @@ func deleteChannelAccountsLockedTx(tx *gorm.DB, channel *model.Channel, indexes 
 		return nil, err
 	}
 	return &ChannelAccountOperation{
-		Type:            "delete",
-		Requested:       requested,
-		Affected:        len(indexes),
-		Deleted:         len(indexes),
-		ChannelRestored: beforeAllKeysDisabled && channel.Status == common.ChannelStatusEnabled,
-		ChannelDisabled: beforeStatus == common.ChannelStatusEnabled && channel.Status == common.ChannelStatusAutoDisabled,
+		Type:              "delete",
+		Requested:         requested,
+		Affected:          len(indexes),
+		Deleted:           len(indexes),
+		CredentialIndexes: append([]int(nil), indexes...),
+		ChannelRestored:   beforeAllKeysDisabled && channel.Status == common.ChannelStatusEnabled,
+		ChannelDisabled:   beforeStatus == common.ChannelStatusEnabled && channel.Status == common.ChannelStatusAutoDisabled,
 	}, nil
 }
 

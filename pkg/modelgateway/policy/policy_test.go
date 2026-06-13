@@ -119,3 +119,19 @@ func TestAutoGroupResolverCrossGroupFusionFiltersUsableGroups(t *testing.T) {
 
 	require.Equal(t, []string{"default", "fast"}, plan.CandidateGroups)
 }
+
+func TestAutoGroupResolverUsesEffectiveRoutingGroupsForFixedGroup(t *testing.T) {
+	groupService := &testkit.FakeGroupPermissionService{
+		EffectiveGroups: map[string][]string{
+			"codex-plus-特惠": {"codex-plus-特惠", "codex-plus"},
+		},
+	}
+	resolver := policy.NewDefaultAutoGroupResolver(groupService)
+
+	plan := resolver.Resolve(nil, &core.DispatchRequest{
+		RequestedGroup: "codex-plus-特惠",
+		UserGroup:      "vip",
+	}, core.GroupSmartPolicy{AutoMode: core.AutoModeSequential})
+
+	require.Equal(t, []string{"codex-plus-特惠", "codex-plus"}, plan.CandidateGroups)
+}

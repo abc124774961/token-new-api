@@ -124,15 +124,15 @@ func GetTokenModels(c *gin.Context) {
 
 	tokenGroup := strings.TrimSpace(token.Group)
 	if tokenGroup == "" {
-		tokenGroup = "auto"
+		tokenGroup = service.AutoGroupName
 	}
 	switch tokenGroup {
-	case "auto":
+	case service.AutoGroupName:
 		models := model.GetAvailableModelsForGroups(service.GetUserAutoGroup(userGroup))
 		common.ApiSuccess(c, models)
 	default:
 		common.SetContextKey(c, constant.ContextKeyTokenGroup, tokenGroup)
-		models := model.GetGroupAvailableModels(tokenGroup)
+		models := model.GetAvailableModelsForGroups(service.EffectiveRoutingGroups(tokenGroup))
 		common.ApiSuccess(c, models)
 	}
 }

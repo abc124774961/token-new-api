@@ -87,6 +87,7 @@ func setupChannelAccountControllerTestDB(t *testing.T) *gorm.DB {
 		&model.ChannelAccountUsageEvent{},
 		&model.ChannelInvalidAccount{},
 		&model.ChannelDiscardedAccount{},
+		&model.ChannelFailureEvent{},
 		&model.CodexApplicationEnvironment{},
 	))
 	require.NoError(t, model.EnsureModelExecutionRecordRequestMetaCapacity(db))
@@ -1200,6 +1201,28 @@ func TestUpdateChannelAccountStatusEnablesMultiKeyAndRestoresAutoDisabledChannel
 		ChannelId: 10,
 		Enabled:   false,
 	}).Error)
+	oldAvoidanceEnabled := common.ChannelFailureAvoidanceEnabled
+	oldAvoidanceTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 60
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = oldAvoidanceEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = oldAvoidanceTTL
+	})
+	identity := service.ChannelRuntimeIdentity{ChannelID: 10, CredentialIndex: 0, CredentialIndexSet: true}
+	isolationKey := service.NewChannelRuntimeConfigIsolationKey(identity, "gpt-5.4", "default", constant.EndpointTypeOpenAI)
+	service.RecordChannelRuntimeFailureAvoidanceWithContext(identity, "test_failure", nil)
+	service.RecordChannelConfigAuthError(isolationKey, "auth_error")
+	service.RecordChannelConfigAuthError(isolationKey, "auth_error")
+	service.MarkChannelRuntimeBalanceInsufficient(identity)
+	require.NotNil(t, service.GetChannelRuntimeFailureAvoidanceStatus(identity))
+	require.NotNil(t, service.GetChannelConfigIsolationStatus(isolationKey))
+	require.True(t, service.IsRuntimeBalanceInsufficientIdentity(identity))
+	t.Cleanup(func() {
+		service.ClearChannelRuntimeFailureAvoidance(identity)
+		service.ClearChannelConfigIsolation(isolationKey)
+		service.ClearChannelRuntimeBalanceInsufficient(identity)
+	})
 
 	router := gin.New()
 	router.POST("/api/channel/:id/accounts/:credential_index/status", UpdateChannelAccountStatus)
@@ -1224,6 +1247,9 @@ func TestUpdateChannelAccountStatusEnablesMultiKeyAndRestoresAutoDisabledChannel
 	var ability model.Ability
 	require.NoError(t, db.First(&ability, "channel_id = ?", 10).Error)
 	require.True(t, ability.Enabled)
+	require.Nil(t, service.GetChannelRuntimeFailureAvoidanceStatus(identity))
+	require.Nil(t, service.GetChannelConfigIsolationStatus(isolationKey))
+	require.False(t, service.IsRuntimeBalanceInsufficientIdentity(identity))
 }
 
 func TestUpdateChannelAccountStatusMapsSingleKeyToChannelStatus(t *testing.T) {

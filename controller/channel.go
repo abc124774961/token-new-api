@@ -942,8 +942,10 @@ func ProbeChannelCodexImageGenerationTool(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
-	service.ResetProxyClientCache()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "codex_image_tool_probe",
+		ResetProxyClient: true,
+	})
 
 	respondCodexImageToolProbe(c, supported, imageModels, checkedAt, message)
 }
@@ -1138,8 +1140,9 @@ func RecoverChannelHealth(c *gin.Context) {
 		}
 	}
 
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "recover_channel_health",
+	})
 
 	common.ApiSuccess(c, ChannelHealthRecoverResponse{
 		ChannelID:                       id,
@@ -1476,12 +1479,17 @@ func RefreshCodexChannelCredential(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	oauthKey, ch, err := service.RefreshCodexChannelCredential(ctx, channelId, service.CodexCredentialRefreshOptions{ResetCaches: true})
+	oauthKey, ch, err := service.RefreshCodexChannelCredential(ctx, channelId, service.CodexCredentialRefreshOptions{ResetCaches: false})
 	if err != nil {
 		common.SysError("failed to refresh codex channel credential: " + err.Error())
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "刷新凭证失败，请稍后重试"})
 		return
 	}
+	clearChannelAccountRuntimeBlocks(channelId, 0, true)
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "codex_channel_credential_refresh",
+		ResetProxyClient: true,
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -1647,8 +1655,10 @@ func AddChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	service.ResetProxyClientCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "add_channel",
+		ResetProxyClient: true,
+	})
 	channelIDs := make([]int, 0, len(channels))
 	for _, channel := range channels {
 		if channel.Id > 0 {
@@ -1674,8 +1684,9 @@ func DeleteChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "delete_channel",
+	})
 	middleware.SetAdminAuditSummary(c, "operation", "delete_channel")
 	middleware.SetAdminAuditSummary(c, "channel_id", id)
 	middleware.SetAdminAuditSummary(c, "invalid_id_count", invalidIDCount)
@@ -1698,8 +1709,9 @@ func DeleteDisabledChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "delete_disabled_channels",
+	})
 	middleware.SetAdminAuditSummary(c, "operation", "delete_disabled_channels")
 	middleware.SetAdminAuditSummary(c, "deleted_count", rows)
 	setChannelAuditStats(c, "target_", "_before", beforeStats)
@@ -1741,8 +1753,9 @@ func DisableTagChannels(c *gin.Context) {
 		return
 	}
 	afterStats, afterSnapshotErr := getChannelAuditStatsByTag(channelTag.Tag)
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "disable_tag_channels",
+	})
 	middleware.SetAdminAuditSummary(c, "operation", "disable_tag_channels")
 	middleware.SetAdminAuditSummary(c, "tag", channelTag.Tag)
 	setChannelAuditStats(c, "target_", "_before", beforeStats)
@@ -1773,8 +1786,9 @@ func EnableTagChannels(c *gin.Context) {
 		return
 	}
 	afterStats, afterSnapshotErr := getChannelAuditStatsByTag(channelTag.Tag)
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "enable_tag_channels",
+	})
 	middleware.SetAdminAuditSummary(c, "operation", "enable_tag_channels")
 	middleware.SetAdminAuditSummary(c, "tag", channelTag.Tag)
 	setChannelAuditStats(c, "target_", "_before", beforeStats)
@@ -1832,8 +1846,10 @@ func EditTagChannels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "edit_tag_channels",
+		ResetProxyClient: channelTag.HeaderOverride != nil,
+	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -1975,8 +1991,9 @@ func DeleteChannelBatch(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "delete_channel_batch",
+	})
 	middleware.SetAdminAuditSummary(c, "operation", "delete_channel_batch")
 	middleware.SetAdminAuditSummary(c, "requested_count", len(channelBatch.Ids))
 	normalizedIds, _ := normalizeChannelAuditIds(channelBatch.Ids)
@@ -2149,9 +2166,10 @@ func UpdateChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
-	service.ResetProxyClientCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "update_channel",
+		ResetProxyClient: true,
+	})
 	channel.Key = ""
 	clearChannelInfo(&channel.Channel)
 	c.JSON(http.StatusOK, gin.H{
@@ -2299,7 +2317,9 @@ func BatchSetChannelTag(c *gin.Context) {
 		return
 	}
 	afterStats, _, afterSnapshotErr := getChannelAuditStatsByIds(channelBatch.Ids)
-	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "batch_set_channel_tag",
+	})
 	middleware.SetAdminAuditSummary(c, "operation", "batch_set_channel_tag")
 	middleware.SetAdminAuditSummary(c, "requested_count", len(channelBatch.Ids))
 	normalizedIds, _ := normalizeChannelAuditIds(channelBatch.Ids)
@@ -2409,7 +2429,9 @@ func CopyChannel(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "复制渠道失败，请稍后重试"})
 		return
 	}
-	model.InitChannelCache()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "copy_channel",
+	})
 	// success
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"id": clone.Id}})
 }
@@ -2711,7 +2733,9 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
+		modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+			Reason: "multi_key_disable_key",
+		})
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "密钥已禁用",
@@ -2753,7 +2777,10 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
+		clearChannelAccountRuntimeBlocks(channel.Id, keyIndex, true)
+		modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+			Reason: "multi_key_enable_key",
+		})
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "密钥已启用",
@@ -2777,7 +2804,12 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
+		for i := 0; i < channel.ChannelInfo.MultiKeySize; i++ {
+			clearChannelAccountRuntimeBlocks(channel.Id, i, true)
+		}
+		modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+			Reason: "multi_key_enable_all_keys",
+		})
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": fmt.Sprintf("已启用 %d 个密钥", enabledCount),
@@ -2824,7 +2856,9 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
+		modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+			Reason: "multi_key_disable_all_keys",
+		})
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": fmt.Sprintf("已禁用 %d 个密钥", disabledCount),
@@ -2904,7 +2938,10 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
+		modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+			Reason:           "multi_key_delete_key",
+			ResetProxyClient: true,
+		})
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "密钥已删除",
@@ -2972,7 +3009,10 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
+		modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+			Reason:           "multi_key_delete_disabled_keys",
+			ResetProxyClient: true,
+		})
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": fmt.Sprintf("已删除 %d 个自动禁用的密钥", deletedCount),

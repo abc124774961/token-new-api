@@ -442,8 +442,9 @@ func saveChannelAccountCapability(channelID int, credentialIndex int, capability
 	if err := channel.SaveChannelInfo(); err != nil {
 		return err
 	}
-	model.InitChannelCache()
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "channel_test_capability_update",
+	})
 	return nil
 }
 
@@ -989,7 +990,9 @@ func retryChannelTestWithoutStreamOptions(channel *model.Channel, result testRes
 	if err != nil || !updated {
 		return channel, result, false
 	}
-	modelgatewayintegration.RefreshDefaultAccountCandidateIndex()
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "channel_test_stream_options_capability",
+	})
 	refreshed, err := model.GetChannelById(channel.Id, true)
 	if err != nil {
 		return channel, result, false
@@ -1583,7 +1586,7 @@ func refreshOAuthJSONAccountAfterChannelTest(c *gin.Context, channel *model.Chan
 	_, refreshedChannel, err := service.RefreshCodexAccountCredential(c.Request.Context(), channel.Id, service.CodexAccountCredentialRefreshOptions{
 		CredentialIndex: credentialIndex,
 		ProxyURL:        proxyURL,
-		ResetCaches:     true,
+		ResetCaches:     false,
 	})
 	if err != nil {
 		return nil, err
@@ -1591,6 +1594,11 @@ func refreshOAuthJSONAccountAfterChannelTest(c *gin.Context, channel *model.Chan
 	if refreshedChannel == nil {
 		return nil, errors.New("refreshed channel is empty")
 	}
+	clearChannelAccountRuntimeBlocks(channel.Id, credentialIndex, true)
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason:           "channel_test_oauth_refresh",
+		ResetProxyClient: true,
+	})
 	return refreshedChannel, nil
 }
 

@@ -1219,7 +1219,7 @@ function formatChannelStatusReason(reason, t) {
     return t('本次请求已尝试失败');
   }
   if (normalized === 'routing_slot_reserved') {
-    return t('本次调度已排除');
+    return t('本次未请求');
   }
   if (normalized === 'account_rate_limited') {
     return t('账号短窗口限流');
@@ -10360,6 +10360,20 @@ function isAvailableCandidate(candidate) {
   );
 }
 
+function candidateRejectReason(candidate) {
+  return String(candidate?.reject_reason || '')
+    .trim()
+    .toLowerCase();
+}
+
+function isDispatchSkippedCandidate(candidate) {
+  const reason = candidateRejectReason(candidate);
+  return (
+    reason === 'routing_slot_reserved' ||
+    reason === 'already_failed_in_request'
+  );
+}
+
 function findSelectedCandidate(record, candidates) {
   if (!Array.isArray(candidates) || !candidates.length) return null;
   const selected = candidates.find((candidate) => candidate?.selected === true);
@@ -10589,9 +10603,7 @@ function buildCandidateDecisionText(candidate, candidates, record, t) {
       (isBalanceInsufficientStatus(candidate)
         ? t('余额不足')
         : t('无过滤原因'));
-    const normalizedReason = String(candidate?.reject_reason || '')
-      .trim()
-      .toLowerCase();
+    const normalizedReason = candidateRejectReason(candidate);
     if (normalizedReason === 'already_failed_in_request') {
       return t(
         '{{channel}} 已在本次请求中尝试失败，系统避免重复选择同一渠道。',
@@ -10599,7 +10611,9 @@ function buildCandidateDecisionText(candidate, candidates, record, t) {
       );
     }
     if (normalizedReason === 'routing_slot_reserved') {
-      return t('{{channel}} 本次调度已排除，未向该渠道发起请求。', { channel });
+      return t('{{channel}} 本次未请求，系统本轮没有向该渠道发起请求。', {
+        channel,
+      });
     }
     return t('{{channel}} 本次未进入可用候选，原因是 {{reason}}。', {
       channel,
@@ -10634,7 +10648,9 @@ function buildCandidateDecisionText(candidate, candidates, record, t) {
     });
   }
   if (candidate?.selection_skip_reason === 'routing_slot_reserved') {
-    return t('{{channel}} 本次调度已排除，未向该渠道发起请求。', { channel });
+    return t('{{channel}} 本次未请求，系统本轮没有向该渠道发起请求。', {
+      channel,
+    });
   }
   if (candidate?.selection_skip_reason === 'channel_priority_tie_break') {
     return t(
@@ -11118,9 +11134,7 @@ function CandidateExplanationCard({
       .map((item) => [item.key, scoreItemLabel(item, t), item.score]),
   ].filter(([, , value]) => Number(value) > 0);
   const routingScore = Number(candidate?.routing_score_total || 0);
-  const unavailableReason = String(candidate?.reject_reason || '')
-    .trim()
-    .toLowerCase();
+  const unavailableReason = candidateRejectReason(candidate);
   const stateTags = Array.isArray(candidate?.state_tags)
     ? candidate.state_tags
     : [];
@@ -11144,8 +11158,10 @@ function CandidateExplanationCard({
     ? allRoutingScoreItems
     : allScoreItems;
   const available = candidate?.available === true;
-  const unavailable = candidate?.available === false;
   const selected = candidate?.selected === true;
+  const dispatchSkipped = isDispatchSkippedCandidate(candidate);
+  const unavailable =
+    candidate?.available === false && !dispatchSkipped && !selected;
   const stickyMatched = candidate?.sticky_matched === true;
   const stickyKnown = typeof candidate?.sticky_matched === 'boolean';
   const balanceInsufficient = isBalanceInsufficientStatus(candidate);
@@ -11421,7 +11437,7 @@ function CandidateExplanationCard({
           ) : null}
           {routingSlotReserved ? (
             <Tag color='orange' type='light' size='small'>
-              {t('本次调度已排除')}
+              {t('本次未采用')}
             </Tag>
           ) : null}
           {clientEmptyOutputAvoidance ? (
@@ -11507,7 +11523,7 @@ function CandidateExplanationCard({
               })}
             </Tag>
           ) : null}
-          {!selected && !available && !unavailable && (
+          {!selected && !available && !unavailable && !dispatchSkipped && (
             <Tag color='grey' type='light' size='small'>
               #{index + 1}
             </Tag>
@@ -11573,13 +11589,13 @@ function CandidateExplanationCard({
 
       {!available && (
         <Typography.Text
-          type={candidate?.reject_reason ? 'danger' : 'tertiary'}
+          type={unavailable || balanceInsufficient ? 'danger' : 'tertiary'}
           size='small'
           ellipsis={{ showTooltip: true }}
         >
-          {t('过滤原因')}:{' '}
+          {dispatchSkipped ? t('未采用原因') : t('过滤原因')}:{' '}
           {formatChannelStatusReason(candidate?.reject_reason, t) ||
-            t('无过滤原因')}
+            (dispatchSkipped ? t('本次未请求') : t('无过滤原因'))}
         </Typography.Text>
       )}
       {available &&

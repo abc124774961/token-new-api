@@ -115,8 +115,7 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 	}
 
 	if opts.ResetCaches {
-		model.InitChannelCache()
-		ResetProxyClientCache()
+		RefreshRoutingCachesAfterConfigChange("codex_channel_credential_refresh", true)
 	}
 
 	ch.Key = string(encoded)
@@ -192,8 +191,7 @@ func RefreshCodexAccountCredential(ctx context.Context, channelID int, opts Code
 	}
 
 	if opts.ResetCaches {
-		model.InitChannelCache()
-		ResetProxyClientCache()
+		RefreshRoutingCachesAfterConfigChange("codex_account_credential_refresh", true)
 	}
 
 	ch.Key = strings.Join(keys, "\n")

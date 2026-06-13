@@ -79,11 +79,20 @@ func ApplySelectedGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	}
 	selectedGroup = strings.TrimSpace(selectedGroup)
 	if selectedGroup != "" {
-		relayInfo.UsingGroup = selectedGroup
-		if ctx != nil {
-			common.SetContextKey(ctx, constant.ContextKeyUsingGroup, selectedGroup)
-			if relayInfo.TokenGroup == "auto" || common.GetContextKeyString(ctx, constant.ContextKeyTokenGroup) == "auto" {
+		tokenGroup := strings.TrimSpace(relayInfo.TokenGroup)
+		if ctx != nil && tokenGroup == "" {
+			tokenGroup = strings.TrimSpace(common.GetContextKeyString(ctx, constant.ContextKeyTokenGroup))
+		}
+		if tokenGroup == "auto" {
+			relayInfo.UsingGroup = selectedGroup
+			if ctx != nil {
+				common.SetContextKey(ctx, constant.ContextKeyUsingGroup, selectedGroup)
 				common.SetContextKey(ctx, constant.ContextKeyAutoGroup, selectedGroup)
+			}
+		} else if strings.TrimSpace(relayInfo.UsingGroup) == "" {
+			relayInfo.UsingGroup = tokenGroup
+			if ctx != nil {
+				common.SetContextKey(ctx, constant.ContextKeyUsingGroup, tokenGroup)
 			}
 		}
 	}

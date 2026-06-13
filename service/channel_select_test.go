@@ -350,6 +350,26 @@ func TestCacheGetRandomSatisfiedChannelFallsBackToUsedChannelForSingleGroup(t *t
 	require.Equal(t, 301, channel.Id)
 }
 
+func TestCacheGetRandomSatisfiedChannelUsesBaseGroupForDerivedTokenGroup(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, false)
+
+	seedChannelSelectChannel(t, db, 331, "codex-plus", "gpt-5.4", 10, 100)
+
+	param := &RetryParam{
+		Ctx:        newRetryContext(),
+		TokenGroup: "codex-plus-特惠",
+		ModelName:  "gpt-5.4",
+		Retry:      common.GetPointer(0),
+	}
+
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.Equal(t, "codex-plus-特惠", group)
+	require.NotNil(t, channel)
+	require.Equal(t, 331, channel.Id)
+}
+
 func TestCacheGetRandomSatisfiedChannelAvoidsRecentlyFailedChannel(t *testing.T) {
 	db := setupChannelSelectTestDB(t)
 	withChannelSelectMemoryCache(t, false)
