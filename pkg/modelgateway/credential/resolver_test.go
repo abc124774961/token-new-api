@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/gin-gonic/gin"
@@ -62,6 +63,32 @@ func TestResolveChannelCredentialRejectsDisabledMultiKey(t *testing.T) {
 	ref := core.CredentialRef{
 		ResourceID:      "platform:channel:8",
 		CredentialIndex: 1,
+		Resolver:        "channel_key",
+	}
+
+	_, apiErr := ResolveChannelCredential(channel, ref)
+
+	require.NotNil(t, apiErr)
+	require.ErrorIs(t, apiErr.Err, ErrCredentialDisabled)
+}
+
+func TestResolveChannelCredentialRejectsSingleKeyAuthErrorCapability(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	channel := &model.Channel{
+		Id:     18,
+		Key:    `{"access_token":"auth","account_id":"auth"}`,
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CapabilityClassification: channelcapability.ClassificationAuthError,
+				},
+			},
+		},
+	}
+	ref := core.CredentialRef{
+		ResourceID:      "platform:channel:18",
+		CredentialIndex: 0,
 		Resolver:        "channel_key",
 	}
 

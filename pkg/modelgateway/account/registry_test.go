@@ -97,6 +97,30 @@ func TestRegistryMarksCapabilityBlockedAccountsDisabled(t *testing.T) {
 	require.True(t, accounts[2].KeyEnabled)
 }
 
+func TestRegistryMarksSingleKeyCapabilityBlockedAccountDisabled(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	channel := &model.Channel{
+		Id:     78,
+		Type:   constant.ChannelTypeCodex,
+		Key:    `{"access_token":"auth","account_id":"auth"}`,
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CapabilityClassification: channelcapability.ClassificationAuthError,
+				},
+			},
+		},
+	}
+
+	accounts := NewRegistry().AccountsForChannel(channel)
+
+	require.Len(t, accounts, 1)
+	require.False(t, accounts[0].KeyEnabled)
+	require.Equal(t, channelcapability.ClassificationAuthError, accounts[0].DisabledReason)
+	require.Equal(t, "disabled", accounts[0].AccountIdentity.Status)
+}
+
 func TestRegistryCarriesAccountProxyRef(t *testing.T) {
 	common.CryptoSecret = "test-secret"
 	channel := &model.Channel{

@@ -265,6 +265,38 @@ func TestProIndexBuildSkipsCapabilityBlockedAccountsForChatCompletions(t *testin
 	require.Equal(t, 2, candidates[0].CredentialRef.CredentialIndex)
 }
 
+func TestProIndexSkipsSingleKeyCapabilityBlockedAccount(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	index := New(account.NewRegistry(), nil)
+	channel := &model.Channel{
+		Id:     19,
+		Type:   constant.ChannelTypeCodex,
+		Key:    `{"access_token":"auth","account_id":"auth"}`,
+		Status: common.ChannelStatusEnabled,
+		Group:  "codex",
+		Models: "gpt-5.5",
+		ChannelInfo: model.ChannelInfo{
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CapabilityClassification: channelcapability.ClassificationAuthError,
+				},
+			},
+		},
+	}
+
+	stats := index.Rebuild([]*model.Channel{channel})
+	candidates := index.Query(Query{
+		Groups:       []string{"codex"},
+		ModelName:    "gpt-5.5",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Equal(t, 1, stats.Accounts)
+	require.Equal(t, 1, stats.DisabledKeys)
+	require.Zero(t, stats.Candidates)
+	require.Empty(t, candidates)
+}
+
 func TestProIndexQueryFiltersUnavailableAccountProxy(t *testing.T) {
 	common.CryptoSecret = "test-secret"
 	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{})

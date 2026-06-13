@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/types"
@@ -119,7 +120,7 @@ func ResolveChannelCredential(channel *model.Channel, ref core.CredentialRef) (R
 	if key == "" {
 		return ResolvedCredential{}, resolverError(fmt.Errorf("%w: empty key at index=%d", ErrCredentialIndexOutOfRange, index), types.ErrorCodeChannelNoAvailableKey)
 	}
-	if channel.ChannelInfo.IsMultiKey && !channelKeyEnabled(channel, index) {
+	if !channelKeyEnabled(channel, index) {
 		return ResolvedCredential{}, resolverError(fmt.Errorf("%w: index=%d", ErrCredentialDisabled, index), types.ErrorCodeChannelNoAvailableKey)
 	}
 	identity := modelgatewayaccount.AccountIdentityForChannelKey(channel, index, key)
@@ -286,14 +287,23 @@ func channelKeyEnabled(channel *model.Channel, index int) bool {
 	if channel == nil {
 		return false
 	}
-	if !channel.ChannelInfo.IsMultiKey {
-		return channel.Status == common.ChannelStatusEnabled
+	status := channel.Status
+	if channel.ChannelInfo.IsMultiKey && channel.ChannelInfo.MultiKeyStatusList != nil {
+		if value, ok := channel.ChannelInfo.MultiKeyStatusList[index]; ok {
+			status = value
+		}
 	}
-	if channel.ChannelInfo.MultiKeyStatusList == nil {
+	if capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]; ok && channelCredentialCapabilityBlocksScheduling(capability) {
+		return false
+	}
+	return status == common.ChannelStatusEnabled
+}
+
+func channelCredentialCapabilityBlocksScheduling(capability model.ChannelAccountCapability) bool {
+	if capability.UsageLimitActiveAt(common.GetTimestamp()) {
 		return true
 	}
-	status, ok := channel.ChannelInfo.MultiKeyStatusList[index]
-	return !ok || status == common.ChannelStatusEnabled
+	return strings.TrimSpace(capability.CapabilityClassification) == channelcapability.ClassificationAuthError
 }
 
 func fingerprint(value string) string {

@@ -418,11 +418,8 @@ func channelKeyEnabled(channel *model.Channel, index int) (bool, string) {
 	if channel == nil {
 		return false, ""
 	}
-	if !channel.ChannelInfo.IsMultiKey {
-		return channel.Status == common.ChannelStatusEnabled, ""
-	}
-	status := common.ChannelStatusEnabled
-	if channel.ChannelInfo.MultiKeyStatusList != nil {
+	status := channel.Status
+	if channel.ChannelInfo.IsMultiKey && channel.ChannelInfo.MultiKeyStatusList != nil {
 		if value, ok := channel.ChannelInfo.MultiKeyStatusList[index]; ok {
 			status = value
 		}
