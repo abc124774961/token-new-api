@@ -42,6 +42,9 @@ import (
 var (
 	relayQueueManagerMu sync.RWMutex
 	relayQueueManager   = newRelayQueueManager()
+
+	relayChannelErrorLogMu   sync.Mutex
+	relayChannelErrorLastLog = map[string]relayChannelErrorLogEntry{}
 )
 
 const relayStatusClientClosedRequest = 499
@@ -49,6 +52,12 @@ const relayFirstByteTimeout = 20 * time.Second
 const relayChannelInducedClientAbortMinDuration = 5 * time.Second
 const relayHealthyLongOutputMinCompletionTokens = 3000
 const relayHealthyLongOutputMinTokensPerSecond = 20.0
+const relayChannelErrorLogInterval = 30 * time.Second
+
+type relayChannelErrorLogEntry struct {
+	last       time.Time
+	suppressed int
+}
 
 func newRelayQueueManager() *modelgatewayscheduler.QueueManager {
 	policy := modelgatewayintegration.RuntimePolicySetting()
@@ -2721,8 +2730,14 @@ func isRelayAuthConfigError(apiErr *types.NewAPIError) bool {
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, persistLog bool) {
-	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
 	errorCategory := classifyRelayAttemptError(c, err)
+	if shouldLog, suppressed := shouldLogRelayChannelError(channelError.ChannelId, errorCategory, err); shouldLog {
+		message := fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error())
+		if suppressed > 0 {
+			message = fmt.Sprintf("%s (suppressed %d similar errors)", message, suppressed)
+		}
+		logger.LogError(c, message)
+	}
 	if errorCategory == modelgatewaycore.ErrorCategoryAuthConfigError {
 		recordRelayChannelConfigAuthError(c, channelError, err)
 	}
@@ -2798,6 +2813,63 @@ func relayTimeoutDegradeKindFromError(err *types.NewAPIError) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func shouldLogRelayChannelError(channelID int, errorCategory string, err *types.NewAPIError) (bool, int) {
+	if channelID <= 0 || err == nil || !throttleRelayChannelErrorLog(errorCategory, err) {
+		return true, 0
+	}
+	now := time.Now()
+	key := fmt.Sprintf("%d:%d:%s:%s", channelID, err.StatusCode, strings.TrimSpace(errorCategory), relayChannelErrorLogFingerprint(err))
+	relayChannelErrorLogMu.Lock()
+	defer relayChannelErrorLogMu.Unlock()
+	entry := relayChannelErrorLastLog[key]
+	if !entry.last.IsZero() && now.Sub(entry.last) < relayChannelErrorLogInterval {
+		entry.suppressed++
+		relayChannelErrorLastLog[key] = entry
+		return false, 0
+	}
+	suppressed := entry.suppressed
+	relayChannelErrorLastLog[key] = relayChannelErrorLogEntry{last: now}
+	return true, suppressed
+}
+
+func throttleRelayChannelErrorLog(errorCategory string, err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	switch strings.TrimSpace(errorCategory) {
+	case modelgatewaycore.ErrorCategoryAuthConfigError, modelgatewaycore.ErrorCategoryOverloadSkip:
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "auth_unavailable") ||
+		strings.Contains(message, "no auth available") ||
+		(strings.Contains(message, "all credentials") && strings.Contains(message, "cooling down"))
+}
+
+func relayChannelErrorLogFingerprint(err *types.NewAPIError) string {
+	if err == nil {
+		return ""
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "auth_unavailable") || strings.Contains(message, "no auth available"):
+		return "auth_unavailable"
+	case strings.Contains(message, "all credentials") && strings.Contains(message, "cooling down"):
+		return "credentials_cooling"
+	}
+	code := strings.TrimSpace(string(err.GetErrorCode()))
+	if code != "" {
+		return code
+	}
+	return strings.TrimSpace(string(err.GetErrorType()))
+}
+
+func resetRelayChannelErrorLogThrottleForTest() {
+	relayChannelErrorLogMu.Lock()
+	defer relayChannelErrorLogMu.Unlock()
+	relayChannelErrorLastLog = map[string]relayChannelErrorLogEntry{}
 }
 
 func recordRelayChannelTimeoutDegradeSuccess(identity service.ChannelRuntimeIdentity) {

@@ -1851,6 +1851,37 @@ func TestAuthUnavailableErrorSwitchesChannel(t *testing.T) {
 	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
 }
 
+func TestShouldLogRelayChannelErrorThrottlesAuthUnavailableStorm(t *testing.T) {
+	resetRelayChannelErrorLogThrottleForTest()
+	t.Cleanup(resetRelayChannelErrorLogThrottleForTest)
+
+	err := types.NewOpenAIError(
+		errors.New("auth_unavailable: no auth available (providers=codex, model=gpt-5.5)"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusServiceUnavailable,
+	)
+	category := modelgatewaycore.ErrorCategoryAuthConfigError
+
+	shouldLog, suppressed := shouldLogRelayChannelError(83, category, err)
+	require.True(t, shouldLog)
+	require.Equal(t, 0, suppressed)
+
+	shouldLog, suppressed = shouldLogRelayChannelError(83, category, err)
+	require.False(t, shouldLog)
+	require.Equal(t, 0, suppressed)
+
+	key := fmt.Sprintf("%d:%d:%s:%s", 83, err.StatusCode, category, relayChannelErrorLogFingerprint(err))
+	relayChannelErrorLogMu.Lock()
+	entry := relayChannelErrorLastLog[key]
+	entry.last = time.Now().Add(-relayChannelErrorLogInterval - time.Second)
+	relayChannelErrorLastLog[key] = entry
+	relayChannelErrorLogMu.Unlock()
+
+	shouldLog, suppressed = shouldLogRelayChannelError(83, category, err)
+	require.True(t, shouldLog)
+	require.Equal(t, 1, suppressed)
+}
+
 func TestRelayChannelConfigSuccessClearsAuthConfigRecoveryCooling(t *testing.T) {
 	t.Cleanup(func() {
 		service.ClearChannelConfigIsolation(service.NewChannelConfigIsolationKey(919, "gpt-5.5", "default", constant.EndpointTypeOpenAI))
