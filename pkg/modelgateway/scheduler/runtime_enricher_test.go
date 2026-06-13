@@ -23,6 +23,22 @@ type fakeCostProfileProvider struct {
 	ok              bool
 }
 
+type fakeRuntimeStateProviderWithAccountAvoidance struct {
+	*testkit.FakeRuntimeStateProvider
+	avoidanceByAccount map[string]*service.ChannelFailureAvoidanceStatus
+}
+
+func (p *fakeRuntimeStateProviderWithAccountAvoidance) FailureAvoidanceStatusForIdentity(identity service.ChannelRuntimeIdentity) *service.ChannelFailureAvoidanceStatus {
+	if p == nil {
+		return nil
+	}
+	return p.avoidanceByAccount[service.ChannelRuntimeConcurrencyScopeKey(identity)]
+}
+
+func (p *fakeRuntimeStateProviderWithAccountAvoidance) FirstBytePendingStatusForIdentity(identity service.ChannelRuntimeIdentity) *service.ChannelFirstBytePendingStatus {
+	return nil
+}
+
 func (p fakeCostProfileProvider) CostRatio(channelID int, upstreamModel string) (float64, bool) {
 	if p.ratiosByChannel != nil {
 		ratio, ok := p.ratiosByChannel[channelID]
@@ -303,6 +319,37 @@ func TestRuntimeSnapshotEnricherMarksTimeoutRecoveryPending(t *testing.T) {
 	require.True(t, snapshot.ProbeRecoveryPending)
 	require.Equal(t, service.ChannelTimeoutRecoveryReason, snapshot.ProbeTriggerReason)
 	require.Equal(t, 2, snapshot.ProbeRecoveryRequired)
+}
+
+func TestRuntimeSnapshotEnricherFallsBackToChannelAvoidanceForAccountCandidate(t *testing.T) {
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&fakeRuntimeStateProviderWithAccountAvoidance{
+		FakeRuntimeStateProvider: &testkit.FakeRuntimeStateProvider{
+			FailureAvoidanceStatusByChannel: map[int]*service.ChannelFailureAvoidanceStatus{
+				7: {
+					Active:                true,
+					Reason:                service.ChannelOverloadRecoveryReason,
+					ProbeRecoveryRequired: true,
+					FailureCount:          1,
+				},
+			},
+		},
+	}, 1500, 8, 2)
+
+	snapshot := enricher.Enrich(core.Candidate{
+		Channel: &model.Channel{Id: 7},
+		Group:   "default",
+		RuntimeKey: core.RuntimeKey{
+			RequestedModel:  "gpt-5.5",
+			ChannelID:       7,
+			Group:           "default",
+			AccountID:       "acct-a",
+			CredentialIndex: 0,
+		},
+	}, core.RuntimeSnapshot{}, core.GroupSmartPolicy{})
+
+	require.True(t, snapshot.FailureAvoidance)
+	require.True(t, snapshot.ProbeRecoveryPending)
+	require.Equal(t, service.ChannelOverloadRecoveryReason, snapshot.ProbeTriggerReason)
 }
 
 func TestRuntimeSnapshotEnricherClearsLegacyConfigIsolation(t *testing.T) {

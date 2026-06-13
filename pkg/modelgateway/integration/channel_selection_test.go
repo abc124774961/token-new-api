@@ -434,6 +434,17 @@ func TestRuntimeIdentityFromPlanFallsBackToAccountIdentityAndCredentialRef(t *te
 	require.Equal(t, "credential-from-ref", refOnly.CredentialFP)
 	require.Equal(t, 1, refOnly.CredentialIndex)
 	require.True(t, refOnly.CredentialIndexSet)
+
+	zeroIndexRef := integration.RuntimeIdentityFromPlan(&core.DispatchPlan{
+		Channel: &model.Channel{Id: 111},
+		CredentialRef: core.CredentialRef{
+			CredentialIndex: 0,
+			Resolver:        "channel_key",
+		},
+	})
+	require.Equal(t, 111, zeroIndexRef.ChannelID)
+	require.Equal(t, 0, zeroIndexRef.CredentialIndex)
+	require.True(t, zeroIndexRef.CredentialIndexSet)
 }
 
 func TestChannelSelectionWrapperDoesNotColdStartProbeCap(t *testing.T) {

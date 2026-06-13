@@ -188,7 +188,9 @@ func (e *RuntimeSnapshotEnricher) Enrich(candidate core.Candidate, snapshot core
 func (e *RuntimeSnapshotEnricher) applyFailureAvoidance(snapshot core.RuntimeSnapshot, channelID int, identity service.ChannelRuntimeIdentity) core.RuntimeSnapshot {
 	status := e.stateProvider.FailureAvoidanceStatus(channelID)
 	if accountProvider, ok := e.stateProvider.(RuntimeAccountStateProvider); ok && identity.HasAccountScope() {
-		status = accountProvider.FailureAvoidanceStatusForIdentity(identity)
+		if accountStatus := accountProvider.FailureAvoidanceStatusForIdentity(identity); accountStatus != nil {
+			status = accountStatus
+		}
 	}
 	if status == nil {
 		if identity.HasAccountScope() {

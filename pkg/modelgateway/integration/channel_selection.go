@@ -287,7 +287,7 @@ func dispatchPlanHasCredentialRef(plan *core.DispatchPlan) bool {
 	}
 	ref := plan.CredentialRef
 	return ref.ResourceID != "" || ref.AccountID != "" || ref.CredentialIndex != 0 ||
-		ref.CredentialSubjectFingerprint != "" || ref.CredentialFingerprint != ""
+		ref.CredentialSubjectFingerprint != "" || ref.CredentialFingerprint != "" || ref.Resolver != ""
 }
 
 func selectedPlanSchedulingRejectReason(plan *core.DispatchPlan, resolved modelgatewaycredential.ResolvedCredential) string {

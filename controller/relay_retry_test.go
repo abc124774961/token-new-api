@@ -1851,6 +1851,41 @@ func TestAuthUnavailableErrorSwitchesChannel(t *testing.T) {
 	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
 }
 
+func TestAllCredentialsCoolingDownEntersChannelOverloadRecovery(t *testing.T) {
+	t.Cleanup(func() {
+		service.ClearChannelFailureAvoidance(919)
+	})
+
+	ctx := newRelayRetryContext()
+	ctx.Set("original_model", "gpt-5.5")
+	ctx.Set("group", "default")
+	modelgatewayintegration.SetSelectedPlan(ctx, &modelgatewaycore.DispatchPlan{
+		Channel:       &model.Channel{Id: 919, Name: "cooling"},
+		SelectedGroup: "default",
+		RuntimeKey: modelgatewaycore.RuntimeKey{
+			ChannelID:      919,
+			RequestedModel: "gpt-5.5",
+			Group:          "default",
+			EndpointType:   constant.EndpointTypeOpenAI,
+			AccountID:      "acct-a",
+		},
+	})
+	err := types.NewOpenAIError(
+		errors.New("All credentials for model gpt-5.5 are cooling down via provider codex"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)
+
+	processChannelError(ctx, *types.NewChannelError(919, 1, "channel-919", true, "", true), err, false)
+
+	status := service.GetChannelFailureAvoidanceStatus(919)
+	require.NotNil(t, status)
+	require.True(t, status.Active)
+	require.True(t, status.ProbeRecoveryRequired)
+	require.Equal(t, service.ChannelOverloadRecoveryReason, status.Reason)
+	require.Equal(t, modelgatewaycore.ErrorCategoryOverloadSkip, classifyRelayAttemptError(ctx, err))
+}
+
 func TestShouldLogRelayChannelErrorThrottlesAuthUnavailableStorm(t *testing.T) {
 	resetRelayChannelErrorLogThrottleForTest()
 	t.Cleanup(resetRelayChannelErrorLogThrottleForTest)

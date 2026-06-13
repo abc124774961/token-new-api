@@ -2699,9 +2699,13 @@ func isInvalidEncryptedContentError(openaiErr *types.NewAPIError) bool {
 }
 
 func isRelayOverloadSkipError(apiErr *types.NewAPIError) bool {
-	return apiErr != nil &&
-		apiErr.StatusCode == http.StatusTooManyRequests &&
-		apiErr.GetErrorCode() != types.ErrorCodeChannelConcurrencyLimit
+	if apiErr == nil || apiErr.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
+		return false
+	}
+	if isAllCredentialsCoolingDownError(apiErr) {
+		return true
+	}
+	return apiErr.StatusCode == http.StatusTooManyRequests
 }
 
 func isRelayAuthConfigError(apiErr *types.NewAPIError) bool {
@@ -2727,6 +2731,14 @@ func isRelayAuthConfigError(apiErr *types.NewAPIError) bool {
 		strings.Contains(message, "permission_denied") ||
 		strings.Contains(message, "model not allowed") ||
 		strings.Contains(message, "provider account forbidden")
+}
+
+func isAllCredentialsCoolingDownError(apiErr *types.NewAPIError) bool {
+	if apiErr == nil {
+		return false
+	}
+	message := strings.ToLower(apiErr.Error())
+	return strings.Contains(message, "all credentials") && strings.Contains(message, "cooling down")
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, persistLog bool) {
@@ -2908,6 +2920,10 @@ func recordRelayChannelOverloadRecoverySuccess(identity service.ChannelRuntimeId
 
 func recordRelayChannelOverloadRecoveryForChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, finalFailure bool) {
 	if selectedModelGatewayPlan(c) == nil {
+		return
+	}
+	if isAllCredentialsCoolingDownError(err) {
+		service.RecordChannelOverloadRecovery(channelError.ChannelId, buildChannelFailureAvoidanceContext(c, channelError, err, finalFailure))
 		return
 	}
 	setting := scheduler_setting.GetSetting()

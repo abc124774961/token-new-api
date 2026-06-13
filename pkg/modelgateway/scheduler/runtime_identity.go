@@ -17,7 +17,7 @@ func serviceRuntimeIdentityFromKey(key core.RuntimeKey) service.ChannelRuntimeId
 		CredentialSubjectFP: key.CredentialSubjectFP,
 		CredentialFP:        key.CredentialFP,
 	}
-	if key.AccountID != "" || key.CredentialSubjectFP != "" || key.CredentialFP != "" || key.CredentialIndex > 0 {
+	if key.AccountID != "" || key.CredentialSubjectFP != "" || key.CredentialFP != "" || key.ResourceID != "" || key.CredentialIndex > 0 {
 		identity.CredentialIndexSet = true
 	}
 	return identity.Normalize()
