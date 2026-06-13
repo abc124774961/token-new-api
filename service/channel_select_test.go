@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -270,6 +271,122 @@ func TestCacheGetRandomSatisfiedChannelSkipsRuntimeBalanceInsufficientChannel(t 
 	require.Equal(t, "default", group)
 	require.NotNil(t, channel)
 	require.Equal(t, 118, channel.Id)
+}
+
+func TestCacheGetRandomSatisfiedChannelSkipsSingleCodexPrettyJSONAuthError(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+
+	weight := uint(100)
+	priority := int64(10)
+	blocked := &model.Channel{
+		Id:          119,
+		Type:        constant.ChannelTypeCodex,
+		Name:        "blocked-codex",
+		Key:         "{\n  \"access_token\": \"auth\",\n  \"account_id\": \"auth\"\n}",
+		Status:      common.ChannelStatusEnabled,
+		Group:       "default",
+		Models:      "gpt-5.5",
+		Weight:      &weight,
+		Priority:    &priority,
+		CreatedTime: 119,
+		ChannelInfo: model.ChannelInfo{
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CapabilityClassification: channelcapability.ClassificationAuthError,
+				},
+			},
+		},
+	}
+	healthy := &model.Channel{
+		Id:          120,
+		Type:        constant.ChannelTypeCodex,
+		Name:        "healthy-codex",
+		Key:         `{"access_token":"ok","account_id":"ok"}`,
+		Status:      common.ChannelStatusEnabled,
+		Group:       "default",
+		Models:      "gpt-5.5",
+		Weight:      &weight,
+		Priority:    &priority,
+		CreatedTime: 120,
+	}
+	require.NoError(t, db.Create(blocked).Error)
+	require.NoError(t, blocked.AddAbilities(nil))
+	require.NoError(t, db.Create(healthy).Error)
+	require.NoError(t, healthy.AddAbilities(nil))
+	model.InitChannelCache()
+
+	param := &RetryParam{
+		Ctx:          newRetryContext(),
+		TokenGroup:   "default",
+		ModelName:    "gpt-5.5",
+		EndpointType: constant.EndpointTypeOpenAIResponse,
+		Retry:        common.GetPointer(0),
+	}
+
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.Equal(t, "default", group)
+	require.NotNil(t, channel)
+	require.Equal(t, 120, channel.Id)
+}
+
+func TestCacheGetRandomSatisfiedChannelSkipsSingleOpenAIAuthErrorCapability(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+
+	weight := uint(100)
+	priority := int64(10)
+	blocked := &model.Channel{
+		Id:          123,
+		Type:        constant.ChannelTypeOpenAI,
+		Name:        "blocked-openai",
+		Key:         "sk-auth",
+		Status:      common.ChannelStatusEnabled,
+		Group:       "default",
+		Models:      "gpt-5.5",
+		Weight:      &weight,
+		Priority:    &priority,
+		CreatedTime: 123,
+		ChannelInfo: model.ChannelInfo{
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CapabilityClassification: channelcapability.ClassificationAuthError,
+				},
+			},
+		},
+	}
+	healthy := &model.Channel{
+		Id:          124,
+		Type:        constant.ChannelTypeOpenAI,
+		Name:        "healthy-openai",
+		Key:         "sk-ok",
+		Status:      common.ChannelStatusEnabled,
+		Group:       "default",
+		Models:      "gpt-5.5",
+		Weight:      &weight,
+		Priority:    &priority,
+		CreatedTime: 124,
+	}
+	require.NoError(t, db.Create(blocked).Error)
+	require.NoError(t, blocked.AddAbilities(nil))
+	require.NoError(t, db.Create(healthy).Error)
+	require.NoError(t, healthy.AddAbilities(nil))
+	model.InitChannelCache()
+
+	param := &RetryParam{
+		Ctx:          newRetryContext(),
+		TokenGroup:   "default",
+		ModelName:    "gpt-5.5",
+		EndpointType: constant.EndpointTypeOpenAI,
+		Retry:        common.GetPointer(0),
+	}
+
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.Equal(t, "default", group)
+	require.NotNil(t, channel)
+	require.Equal(t, 124, channel.Id)
 }
 
 func TestCacheGetRandomSatisfiedChannelKeepsImageApiSeparateFromCodexTool(t *testing.T) {

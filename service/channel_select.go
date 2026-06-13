@@ -1240,8 +1240,11 @@ func ChannelSupportsRequiredEndpoint(channel *model.Channel, modelName string, e
 }
 
 func ChannelSupportsRequiredCapabilities(channel *model.Channel, modelName string, endpointType constant.EndpointType, requiresCodexImageTool bool) bool {
+	if channel != nil && len(channel.ChannelInfo.MultiKeyCapabilities) > 0 && !channelHasSchedulableCredential(channel) {
+		return false
+	}
 	if channel != nil && channel.Type == constant.ChannelTypeCodex {
-		if !codexChannelHasSchedulableAccount(channel) {
+		if !channelHasSchedulableCredential(channel) {
 			return false
 		}
 		if endpointType == constant.EndpointTypeOpenAIResponseCompact && !codexChannelHasCompactCapableAccount(channel) {
@@ -1262,23 +1265,16 @@ func ChannelSupportsRequiredCapabilities(channel *model.Channel, modelName strin
 	return ChannelSupportsRequiredEndpoint(channel, modelName, endpointType)
 }
 
-func codexChannelHasSchedulableAccount(channel *model.Channel) bool {
+func channelHasSchedulableCredential(channel *model.Channel) bool {
 	if channel == nil {
 		return false
 	}
-	keys := channel.GetKeys()
-	if len(keys) == 0 && strings.TrimSpace(channel.Key) != "" {
-		keys = []string{channel.Key}
-	}
+	keys := channelCredentialKeysForCapability(channel)
 	if len(keys) == 0 {
 		return false
 	}
 	for index := range keys {
-		if channel.ChannelInfo.IsMultiKey && !channelKeyEnabledForCapability(channel, index) {
-			continue
-		}
-		capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]
-		if !ok || ChannelAccountCapabilityAllowsScheduling(capability) {
+		if channelCredentialEnabledForCapability(channel, index) {
 			return true
 		}
 	}
@@ -1292,12 +1288,17 @@ func codexChannelHasResponsesCapableAccount(channel *model.Channel) bool {
 	if len(channel.ChannelInfo.MultiKeyCapabilities) == 0 {
 		return true
 	}
-	for index, capability := range channel.ChannelInfo.MultiKeyCapabilities {
-		if channel.ChannelInfo.IsMultiKey && !channelKeyEnabledForCapability(channel, index) {
+	keys := channelCredentialKeysForCapability(channel)
+	if len(keys) == 0 {
+		return false
+	}
+	for index := range keys {
+		if !channelCredentialEnabledForCapability(channel, index) {
 			continue
 		}
-		if !ChannelAccountCapabilityAllowsScheduling(capability) {
-			continue
+		capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]
+		if !ok {
+			return true
 		}
 		if capability.CodexBackendResponsesStreamWrite == nil || capability.HasCodexBackendResponsesStreamAllowed() {
 			return true
@@ -1313,12 +1314,17 @@ func codexChannelHasCompactCapableAccount(channel *model.Channel) bool {
 	if len(channel.ChannelInfo.MultiKeyCapabilities) == 0 {
 		return true
 	}
-	for index, capability := range channel.ChannelInfo.MultiKeyCapabilities {
-		if channel.ChannelInfo.IsMultiKey && !channelKeyEnabledForCapability(channel, index) {
+	keys := channelCredentialKeysForCapability(channel)
+	if len(keys) == 0 {
+		return false
+	}
+	for index := range keys {
+		if !channelCredentialEnabledForCapability(channel, index) {
 			continue
 		}
-		if !ChannelAccountCapabilityAllowsScheduling(capability) {
-			continue
+		capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]
+		if !ok {
+			return true
 		}
 		if capability.CodexBackendCompactWrite == nil || capability.HasCodexBackendCompactAllowed() {
 			return true
@@ -1327,12 +1333,32 @@ func codexChannelHasCompactCapableAccount(channel *model.Channel) bool {
 	return false
 }
 
-func channelKeyEnabledForCapability(channel *model.Channel, index int) bool {
-	if channel == nil || !channel.ChannelInfo.IsMultiKey || channel.ChannelInfo.MultiKeyStatusList == nil {
-		return true
+func channelCredentialKeysForCapability(channel *model.Channel) []string {
+	if channel == nil {
+		return nil
 	}
-	status, ok := channel.ChannelInfo.MultiKeyStatusList[index]
-	return !ok || status == common.ChannelStatusEnabled
+	if !channel.ChannelInfo.IsMultiKey {
+		if strings.TrimSpace(channel.Key) == "" {
+			return nil
+		}
+		return []string{channel.Key}
+	}
+	return channel.GetKeys()
+}
+
+func channelCredentialEnabledForCapability(channel *model.Channel, index int) bool {
+	if channel == nil || channel.Status != common.ChannelStatusEnabled {
+		return false
+	}
+	if channel.ChannelInfo.MultiKeyStatusList != nil {
+		if status, ok := channel.ChannelInfo.MultiKeyStatusList[index]; ok && status != common.ChannelStatusEnabled {
+			return false
+		}
+	}
+	if capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]; ok {
+		return ChannelAccountCapabilityAllowsScheduling(capability)
+	}
+	return true
 }
 
 func openAICodexOAuthChannelApplies(channel *model.Channel, endpointType constant.EndpointType) bool {
@@ -1344,7 +1370,7 @@ func openAICodexOAuthChannelApplies(channel *model.Channel, endpointType constan
 	default:
 		return false
 	}
-	for _, key := range channel.GetKeys() {
+	for _, key := range channelCredentialKeysForCapability(channel) {
 		if codexauth.IsOAuthJSONCredential(key) {
 			return true
 		}
@@ -1364,12 +1390,12 @@ func openAICodexOAuthChannelHasCapableAccount(channel *model.Channel, endpointTy
 	if channel == nil {
 		return false
 	}
-	keys := channel.GetKeys()
+	keys := channelCredentialKeysForCapability(channel)
 	if len(keys) == 0 {
 		return false
 	}
 	for index, key := range keys {
-		if !codexauth.IsOAuthJSONCredential(key) || !channelKeyEnabledForCapability(channel, index) {
+		if !codexauth.IsOAuthJSONCredential(key) || !channelCredentialEnabledForCapability(channel, index) {
 			continue
 		}
 		capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]
