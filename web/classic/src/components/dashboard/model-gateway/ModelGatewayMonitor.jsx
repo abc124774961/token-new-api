@@ -1926,37 +1926,70 @@ function RoutingScoreItemsPanel({ items = [], total, t }) {
       </div>
       {entries.length ? (
         <div className='ct-model-gateway-routing-score-grid'>
-          {entries.map((item) => (
-            <Tooltip
-              key={item.key}
-              content={`${scoreItemLabel(item, t)} · ${t('原始数据')}: ${formatScoreItemRawValue(item, t)} · ${t('权重')}: ${formatPercent(item.weight)} · ${t('贡献')}: ${formatScore(item.weighted_score)}`}
-            >
-              <div
-                className={`ct-model-gateway-routing-score-item ct-model-gateway-routing-score-item-${item.key}`}
-              >
-                <div className='ct-model-gateway-routing-score-item-top'>
-                  <span>{scoreItemLabel(item, t)}</span>
-                  <strong>{formatScore(item.score)}</strong>
+          {entries.map((item) => {
+            const scoreBoosted =
+              item.score_adjusted === true && Number(item.score_boost || 0) > 0;
+            const baseScore =
+              item.base_score === undefined || item.base_score === null
+                ? item.score
+                : item.base_score;
+            const boostTitle = scoreBoosted
+              ? t('基础分 {{base}} + 加成 {{boost}} = 最终分 {{score}}', {
+                  base: formatScoreWithZero(baseScore),
+                  boost: formatScoreWithZero(item.score_boost),
+                  score: formatScoreWithZero(item.score),
+                })
+              : '';
+            const tooltipParts = [
+              scoreItemLabel(item, t),
+              `${t('原始数据')}: ${formatScoreItemRawValue(item, t)}`,
+              `${t('权重')}: ${formatPercent(item.weight)}`,
+              `${t('贡献')}: ${formatScore(item.weighted_score)}`,
+            ];
+            if (boostTitle) tooltipParts.push(boostTitle);
+            return (
+              <Tooltip key={item.key} content={tooltipParts.join(' · ')}>
+                <div
+                  className={`ct-model-gateway-routing-score-item ct-model-gateway-routing-score-item-${item.key}`}
+                >
+                  <div className='ct-model-gateway-routing-score-item-top'>
+                    <span>{scoreItemLabel(item, t)}</span>
+                    <strong>
+                      {formatScore(item.score)}
+                      {scoreBoosted ? (
+                        <small
+                          className='ct-model-gateway-routing-score-boost-badge'
+                          title={boostTitle}
+                        >
+                          {formatScoreWithZero(baseScore)} +{' '}
+                          {formatScoreWithZero(item.score_boost)}
+                        </small>
+                      ) : null}
+                    </strong>
+                  </div>
+                  <div className='ct-model-gateway-routing-score-item-meta'>
+                    <span>{formatScoreItemRawValue(item, t)}</span>
+                    <span>
+                      {t('权重')} {formatPercent(item.weight)}
+                    </span>
+                  </div>
+                  <div className='ct-model-gateway-routing-score-bar'>
+                    <i
+                      style={{
+                        width: `${Math.max(
+                          2,
+                          Math.min(100, item.score * 100),
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                  <div className='ct-model-gateway-routing-score-item-foot'>
+                    {t('贡献')} {formatScore(item.weighted_score)}
+                  </div>
                 </div>
-                <div className='ct-model-gateway-routing-score-item-meta'>
-                  <span>{formatScoreItemRawValue(item, t)}</span>
-                  <span>
-                    {t('权重')} {formatPercent(item.weight)}
-                  </span>
-                </div>
-                <div className='ct-model-gateway-routing-score-bar'>
-                  <i
-                    style={{
-                      width: `${Math.max(2, Math.min(100, item.score * 100))}%`,
-                    }}
-                  />
-                </div>
-                <div className='ct-model-gateway-routing-score-item-foot'>
-                  {t('贡献')} {formatScore(item.weighted_score)}
-                </div>
-              </div>
-            </Tooltip>
-          ))}
+              </Tooltip>
+            );
+          })}
         </div>
       ) : (
         <Typography.Text type='tertiary' size='small'>
@@ -12307,6 +12340,13 @@ function normalizeScoreBoostsForSave(boosts = {}) {
   return out;
 }
 
+function scoreBoostsSignature(boosts = {}) {
+  const normalized = normalizeScoreBoostsForSave(boosts);
+  return SCORE_BOOST_ITEM_KEYS.map((key) => `${key}:${normalized[key] || 0}`).join(
+    '|',
+  );
+}
+
 function channelOptionLabel(channel) {
   if (!channel) return '--';
   const id = channel.id || channel.channel_id;
@@ -12340,6 +12380,7 @@ function ChannelScoreBoostModal({ visible, onCancel, onSaved, t }) {
   const [selectedChannelName, setSelectedChannelName] = useState('');
   const [allowedItems, setAllowedItems] = useState([]);
   const [boosts, setBoosts] = useState({});
+  const [savedBoosts, setSavedBoosts] = useState({});
   const [channelLoading, setChannelLoading] = useState(false);
   const [boostLoading, setBoostLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -12388,7 +12429,9 @@ function ChannelScoreBoostModal({ visible, onCancel, onSaved, t }) {
         );
         if (latestBoostChannelIdRef.current !== requestChannelId) return;
         const payload = unwrapApiData(response);
-        setBoosts(payload?.smart_score_boosts || {});
+        const loadedBoosts = payload?.smart_score_boosts || {};
+        setBoosts(loadedBoosts);
+        setSavedBoosts(loadedBoosts);
         setAllowedItems(
           Array.isArray(payload?.allowed_score_items)
             ? payload.allowed_score_items
@@ -12416,6 +12459,7 @@ function ChannelScoreBoostModal({ visible, onCancel, onSaved, t }) {
     setSelectedChannelId(null);
     setSelectedChannelName('');
     setBoosts({});
+    setSavedBoosts({});
     setAllowedItems([]);
     latestBoostChannelIdRef.current = null;
     loadChannels('');
@@ -12459,7 +12503,9 @@ function ChannelScoreBoostModal({ visible, onCancel, onSaved, t }) {
           },
         );
         const payload = unwrapApiData(response);
-        setBoosts(payload?.smart_score_boosts || {});
+        const persistedBoosts = payload?.smart_score_boosts || {};
+        setBoosts(persistedBoosts);
+        setSavedBoosts(persistedBoosts);
         setAllowedItems(
           Array.isArray(payload?.allowed_score_items)
             ? payload.allowed_score_items
@@ -12481,9 +12527,14 @@ function ChannelScoreBoostModal({ visible, onCancel, onSaved, t }) {
     [allowedItems, boosts, onSaved, selectedChannelId, selectedChannelName, t],
   );
 
-  const activeBoostCount = Object.values(
+  const savedBoostCount = Object.values(
+    normalizeScoreBoostsForSave(savedBoosts),
+  ).length;
+  const draftBoostCount = Object.values(
     normalizeScoreBoostsForSave(boosts),
   ).length;
+  const boostDirty =
+    scoreBoostsSignature(boosts) !== scoreBoostsSignature(savedBoosts);
   const titleChannel =
     selectedChannelName || channelOptionLabel(selectedChannel);
 
@@ -12493,8 +12544,17 @@ function ChannelScoreBoostModal({ visible, onCancel, onSaved, t }) {
       visible={visible}
       onCancel={onCancel}
       width={780}
+      bodyStyle={{ maxHeight: 'calc(100vh - 220px)', overflowY: 'auto' }}
       footer={
         <div className='ct-model-gateway-score-boost-footer'>
+          <div className='ct-model-gateway-score-boost-save-state'>
+            <Tag color={boostDirty ? 'orange' : 'green'} type='light'>
+              {boostDirty ? t('未保存') : t('已保存')}
+            </Tag>
+            <Typography.Text type='secondary' size='small'>
+              {t('保存后仅影响后续新调度，历史记录不会自动重算。')}
+            </Typography.Text>
+          </div>
           <Button
             type='danger'
             theme='borderless'
@@ -12511,7 +12571,7 @@ function ChannelScoreBoostModal({ visible, onCancel, onSaved, t }) {
               theme='solid'
               type='primary'
               loading={saving}
-              disabled={!selectedChannelId || boostLoading}
+              disabled={!selectedChannelId || boostLoading || !boostDirty}
               onClick={() => saveBoosts()}
             >
               {t('保存')}
@@ -12550,6 +12610,7 @@ function ChannelScoreBoostModal({ visible, onCancel, onSaved, t }) {
             );
             setSelectedChannelName(channelOptionLabel(channel));
             setBoosts({});
+            setSavedBoosts({});
             loadBoosts(channelId);
           }}
         >
@@ -12566,9 +12627,16 @@ function ChannelScoreBoostModal({ visible, onCancel, onSaved, t }) {
               ? t('当前渠道：{{channel}}', { channel: titleChannel })
               : t('未选择渠道')}
           </Tag>
-          <Tag color={activeBoostCount > 0 ? 'green' : 'grey'} type='light'>
-            {t('已配置 {{count}} 项加成', { count: activeBoostCount })}
+          <Tag color={savedBoostCount > 0 ? 'green' : 'grey'} type='light'>
+            {t('已保存 {{count}} 项加成', { count: savedBoostCount })}
           </Tag>
+          {boostDirty ? (
+            <Tag color='orange' type='light'>
+              {t('当前填写 {{count}} 项，保存后生效', {
+                count: draftBoostCount,
+              })}
+            </Tag>
+          ) : null}
         </div>
 
         <Skeleton

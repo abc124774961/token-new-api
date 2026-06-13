@@ -5,9 +5,11 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -102,6 +104,72 @@ func TestCandidateScoringServiceLoadsBoostsFromChannelSettings(t *testing.T) {
 	require.Equal(t, 0.4, item.ScoreBoost)
 	require.True(t, item.ScoreAdjusted)
 	require.Equal(t, 0.9, item.Score)
+}
+
+func TestDefaultSelectorAppliesChannelScoreBoostsToCandidateExplanations(t *testing.T) {
+	settingsBytes, err := common.Marshal(dto.ChannelOtherSettings{
+		SmartScoreBoosts: map[string]float64{
+			scoreItemCost: 0.6,
+		},
+	})
+	require.NoError(t, err)
+
+	channel := &model.Channel{
+		Id:            68,
+		Name:          "boosted",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: string(settingsBytes),
+	}
+	key := core.RuntimeKey{
+		RequestedModel: "gpt-5.4",
+		UpstreamModel:  "gpt-5.4",
+		ChannelID:      channel.Id,
+		Group:          "codex-plus",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	store := NewMemoryRuntimeSnapshotStore()
+	store.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SampleCount:        10,
+		SuccessRate:        0.8,
+		TTFTMs:             900,
+		DurationMs:         3000,
+		TokensPerSecond:    20,
+		CostRatio:          1.4,
+		CostReferenceRatio: 1,
+		GroupPriorityRatio: 1,
+	})
+
+	selector := NewDefaultSmartChannelSelector(
+		NewStaticCandidatePoolBuilder([]core.Candidate{{
+			Channel:       channel,
+			Group:         key.Group,
+			UpstreamModel: key.UpstreamModel,
+			RuntimeKey:    key,
+		}}),
+		store,
+		core.ScoreWeights{Success: 1, Speed: 1, Load: 1, Cost: 1, Group: 1},
+	)
+	plan, handled, apiErr := selector.Select(nil, &service.RetryParam{
+		TokenGroup:   key.Group,
+		ModelName:    key.RequestedModel,
+		EndpointType: key.EndpointType,
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  key.Group,
+		CandidateGroups: []string{key.Group},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Len(t, plan.Candidates, 1)
+	item := scoreItemByKeyForTest(t, plan.Candidates[0].ScoreItems, scoreItemCost)
+	require.NotNil(t, item.BaseScore)
+	require.Equal(t, 0.6, item.ScoreBoost)
+	require.True(t, item.ScoreAdjusted)
+	require.Greater(t, item.Score, *item.BaseScore)
 }
 
 func scoreItemByKeyForTest(t *testing.T, items []core.ScoreItem, key string) core.ScoreItem {

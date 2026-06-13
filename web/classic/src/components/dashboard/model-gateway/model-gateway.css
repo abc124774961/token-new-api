@@ -5830,11 +5830,39 @@ button.ct-model-gateway-detail-metric {
 }
 
 .ct-model-gateway-routing-score-item-top strong {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
   color: var(--semi-color-text-0);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     'Liberation Mono', 'Courier New', monospace;
   font-size: 14px;
   font-weight: 820;
+}
+
+.ct-model-gateway-routing-score-boost-badge {
+  display: inline-flex;
+  max-width: 100%;
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  border-radius: 999px;
+  padding: 1px 5px;
+  background: rgba(236, 254, 255, 0.9);
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 780;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dark .ct-model-gateway-routing-score-boost-badge {
+  border-color: rgba(45, 212, 191, 0.22);
+  background: rgba(20, 184, 166, 0.14);
+  color: #99f6e4;
 }
 
 .ct-model-gateway-routing-score-item-meta {
@@ -5996,7 +6024,8 @@ button.ct-model-gateway-detail-metric {
 .ct-model-gateway-score-boost-table {
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 8px;
-  overflow: hidden;
+  max-height: min(54vh, 620px);
+  overflow: auto;
   background: rgba(255, 255, 255, 0.72);
 }
 
@@ -6014,6 +6043,9 @@ button.ct-model-gateway-detail-metric {
 }
 
 .ct-model-gateway-score-boost-head {
+  position: sticky;
+  z-index: 1;
+  top: 0;
   padding: 10px 12px;
   background: rgba(14, 165, 164, 0.08);
   color: var(--semi-color-text-1);
@@ -6048,6 +6080,13 @@ button.ct-model-gateway-detail-metric {
 .ct-model-gateway-score-boost-footer > div {
   display: flex;
   gap: 8px;
+}
+
+.ct-model-gateway-score-boost-save-state {
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 @media (max-width: 1180px) {
