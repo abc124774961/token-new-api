@@ -248,7 +248,7 @@ func validateSelectedSmartPlan(plan *core.DispatchPlan) (bool, string) {
 	if apiErr != nil {
 		return false, apiErr.Error()
 	}
-	if reason := selectedPlanUsageLimitRejectReason(plan, resolved); reason != "" {
+	if reason := selectedPlanSchedulingRejectReason(plan, resolved); reason != "" {
 		return false, reason
 	}
 	return true, ""
@@ -267,7 +267,7 @@ func dispatchPlanHasCredentialRef(plan *core.DispatchPlan) bool {
 		ref.CredentialSubjectFingerprint != "" || ref.CredentialFingerprint != ""
 }
 
-func selectedPlanUsageLimitRejectReason(plan *core.DispatchPlan, resolved modelgatewaycredential.ResolvedCredential) string {
+func selectedPlanSchedulingRejectReason(plan *core.DispatchPlan, resolved modelgatewaycredential.ResolvedCredential) string {
 	if plan == nil || plan.Channel == nil || !selectedPlanUsesCodexUsageLimitedCredential(plan.Channel, resolved) {
 		return ""
 	}
@@ -278,7 +278,10 @@ func selectedPlanUsageLimitRejectReason(plan *core.DispatchPlan, resolved modelg
 	if reason := service.AccountUsageLimitedRejectReason(capability); reason != "" {
 		return reason
 	}
-	return "account_usage_limited"
+	if reason := capability.EffectiveClassification(); reason != "" {
+		return reason
+	}
+	return "account_unavailable"
 }
 
 func selectedPlanUsesCodexUsageLimitedCredential(channel *model.Channel, resolved modelgatewaycredential.ResolvedCredential) bool {

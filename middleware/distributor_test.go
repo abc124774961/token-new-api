@@ -366,6 +366,34 @@ func TestSetupContextForSelectedChannelLegacyStillUsesNextEnabledKey(t *testing.
 	require.Equal(t, 1, channel.ChannelInfo.MultiKeyPollingIndex)
 }
 
+func TestSetupContextForSelectedChannelLegacySkipsAttemptedRuntimeKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	channel := &model.Channel{
+		Id:     89,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-a\nsk-b",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "gpt-5.4",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true,
+		},
+	}
+	service.MarkChannelRuntimeSelectionSkipped(ctx, service.ChannelRuntimeIdentity{
+		ChannelID:          channel.Id,
+		CredentialIndex:    0,
+		CredentialIndexSet: true,
+	})
+
+	apiErr := SetupContextForSelectedChannel(ctx, channel, "gpt-5.4")
+
+	require.Nil(t, apiErr)
+	require.Equal(t, "sk-b", common.GetContextKeyString(ctx, constant.ContextKeyChannelKey))
+	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyChannelIsMultiKey))
+	require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyChannelMultiKeyIndex))
+}
+
 func TestSetupContextForSelectedChannelLegacyAppliesAccountProxy(t *testing.T) {
 	db := setupDistributorProxyTestDB(t)
 	require.NoError(t, db.Create(&model.ModelGatewayProxy{

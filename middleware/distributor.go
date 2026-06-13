@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/codexauth"
+	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	modelgatewaycredential "github.com/QuantumNous/new-api/pkg/modelgateway/credential"
 	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -756,7 +757,7 @@ func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	if applied, apiErr := applySelectedPlanCredential(c, channel, firstSelection(selections)); apiErr != nil {
 		return apiErr
 	} else if !applied {
-		key, index, newAPIError := channel.GetNextEnabledKeyForEndpoint(options.EndpointType)
+		key, index, newAPIError := getNextChannelKeyForRequest(c, channel, options.EndpointType)
 		if newAPIError != nil {
 			return newAPIError
 		}
@@ -801,6 +802,37 @@ func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		c.Set("bot_id", channel.Other)
 	}
 	return nil
+}
+
+func getNextChannelKeyForRequest(c *gin.Context, channel *model.Channel, endpointType constant.EndpointType) (string, int, *types.NewAPIError) {
+	if channel == nil {
+		return "", 0, types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+	if c == nil || !channel.ChannelInfo.IsMultiKey {
+		return channel.GetNextEnabledKeyForEndpoint(endpointType)
+	}
+	return channel.GetNextEnabledKeyAvoidingForEndpoint(endpointType, func(index int, key string) bool {
+		identity := channelRuntimeIdentityForKey(channel, index, key)
+		return service.IsChannelRuntimeSelectionSkipped(c, identity) || service.IsChannelRuntimeAttempted(c, identity)
+	})
+}
+
+func channelRuntimeIdentityForKey(channel *model.Channel, credentialIndex int, rawKey string) service.ChannelRuntimeIdentity {
+	if channel == nil {
+		return service.ChannelRuntimeIdentity{}
+	}
+	accountIdentity := modelgatewayaccount.AccountIdentityForChannelKey(channel, credentialIndex, rawKey)
+	return service.ChannelRuntimeIdentity{
+		ChannelID:           channel.Id,
+		AccountID:           accountIdentity.AccountID,
+		AccountType:         accountIdentity.AccountType,
+		Brand:               accountIdentity.Brand,
+		Provider:            accountIdentity.Provider,
+		CredentialIndex:     credentialIndex,
+		CredentialIndexSet:  true,
+		CredentialSubjectFP: accountIdentity.CredentialSubjectFingerprint,
+		CredentialFP:        accountIdentity.CredentialFingerprint,
+	}.Normalize()
 }
 
 func firstSelection(selections []*modelgatewayintegration.SelectionResult) *modelgatewayintegration.SelectionResult {

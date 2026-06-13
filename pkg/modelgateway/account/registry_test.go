@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/stretchr/testify/require"
 )
@@ -63,6 +64,37 @@ func TestRegistryBuildsAccountsForMultiKeyChannel(t *testing.T) {
 	require.True(t, accounts[2].KeyEnabled)
 	require.NotEqual(t, accounts[0].AccountIdentity.AccountID, accounts[1].AccountIdentity.AccountID)
 	require.Equal(t, 2, accounts[2].CredentialIndex)
+}
+
+func TestRegistryMarksCapabilityBlockedAccountsDisabled(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	channel := &model.Channel{
+		Id:     77,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-auth\nsk-usage\nsk-ok",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true,
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CapabilityClassification: channelcapability.ClassificationAuthError,
+				},
+				1: {
+					UsageLimitStatus:    channelcapability.UsageLimitStatusLimited,
+					UsageLimitExpiresAt: common.GetTimestamp() + 3600,
+				},
+			},
+		},
+	}
+
+	accounts := NewRegistry().AccountsForChannel(channel)
+
+	require.Len(t, accounts, 3)
+	require.False(t, accounts[0].KeyEnabled)
+	require.Equal(t, channelcapability.ClassificationAuthError, accounts[0].DisabledReason)
+	require.False(t, accounts[1].KeyEnabled)
+	require.Equal(t, channelcapability.ClassificationAccountUsageLimited, accounts[1].DisabledReason)
+	require.True(t, accounts[2].KeyEnabled)
 }
 
 func TestRegistryCarriesAccountProxyRef(t *testing.T) {

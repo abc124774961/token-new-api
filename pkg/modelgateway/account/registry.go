@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/QuantumNous/new-api/pkg/codexauth"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 )
@@ -430,7 +431,20 @@ func channelKeyEnabled(channel *model.Channel, index int) (bool, string) {
 	if channel.ChannelInfo.MultiKeyDisabledReason != nil {
 		reason = strings.TrimSpace(channel.ChannelInfo.MultiKeyDisabledReason[index])
 	}
+	if capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]; ok && accountCapabilityBlocksScheduling(capability) {
+		if reason == "" {
+			reason = capability.EffectiveClassification()
+		}
+		return false, reason
+	}
 	return status == common.ChannelStatusEnabled, reason
+}
+
+func accountCapabilityBlocksScheduling(capability model.ChannelAccountCapability) bool {
+	if capability.UsageLimitActiveAt(common.GetTimestamp()) {
+		return true
+	}
+	return strings.TrimSpace(capability.CapabilityClassification) == channelcapability.ClassificationAuthError
 }
 
 func statusForChannelKey(channel *model.Channel, index int) string {

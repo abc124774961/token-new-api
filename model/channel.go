@@ -241,6 +241,10 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 }
 
 func (channel *Channel) GetNextEnabledKeyForEndpoint(endpointType constant.EndpointType) (string, int, *types.NewAPIError) {
+	return channel.GetNextEnabledKeyAvoidingForEndpoint(endpointType, nil)
+}
+
+func (channel *Channel) GetNextEnabledKeyAvoidingForEndpoint(endpointType constant.EndpointType, avoid func(index int, key string) bool) (string, int, *types.NewAPIError) {
 	// If not in multi-key mode, return the original key string directly.
 	if !channel.ChannelInfo.IsMultiKey {
 		if channel.keyUsesCodexBackendForEndpoint(0, channel.Key, endpointType) && !channel.codexKeySupportsRequestedCapability(0, endpointType) {
@@ -276,6 +280,9 @@ func (channel *Channel) GetNextEnabledKeyForEndpoint(endpointType constant.Endpo
 	enabledIdx := make([]int, 0, len(keys))
 	for i := range keys {
 		if getStatus(i) == common.ChannelStatusEnabled {
+			if channel.accountCapabilityBlocksScheduling(i) {
+				continue
+			}
 			if channel.keyUsesCodexBackendForEndpoint(i, keys[i], endpointType) && !channel.codexKeySupportsRequestedCapability(i, endpointType) {
 				continue
 			}
@@ -288,11 +295,23 @@ func (channel *Channel) GetNextEnabledKeyForEndpoint(endpointType constant.Endpo
 	if len(enabledIdx) == 0 {
 		return "", 0, types.NewError(errors.New("no enabled keys"), types.ErrorCodeChannelNoAvailableKey)
 	}
+	candidateIdx := enabledIdx
+	if avoid != nil {
+		candidateIdx = make([]int, 0, len(enabledIdx))
+		for _, idx := range enabledIdx {
+			if !avoid(idx, keys[idx]) {
+				candidateIdx = append(candidateIdx, idx)
+			}
+		}
+		if len(candidateIdx) == 0 {
+			candidateIdx = enabledIdx
+		}
+	}
 
 	switch channel.ChannelInfo.MultiKeyMode {
 	case constant.MultiKeyModeRandom:
 		// Randomly pick one enabled key
-		selectedIdx := enabledIdx[rand.Intn(len(enabledIdx))]
+		selectedIdx := candidateIdx[rand.Intn(len(candidateIdx))]
 		return keys[selectedIdx], selectedIdx, nil
 	case constant.MultiKeyModePolling:
 		// Use channel-specific lock to ensure thread-safe polling
@@ -319,17 +338,17 @@ func (channel *Channel) GetNextEnabledKeyForEndpoint(endpointType constant.Endpo
 		}
 		for i := 0; i < len(keys); i++ {
 			idx := (start + i) % len(keys)
-			if getStatus(idx) == common.ChannelStatusEnabled && slices.Contains(enabledIdx, idx) {
+			if getStatus(idx) == common.ChannelStatusEnabled && slices.Contains(candidateIdx, idx) {
 				// update polling index for next call (point to the next position)
 				channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
 				return keys[idx], idx, nil
 			}
 		}
 		// Fallback – should not happen, but return first enabled key
-		return keys[enabledIdx[0]], enabledIdx[0], nil
+		return keys[candidateIdx[0]], candidateIdx[0], nil
 	default:
 		// Unknown mode, default to first enabled key (or original key string)
-		return keys[enabledIdx[0]], enabledIdx[0], nil
+		return keys[candidateIdx[0]], candidateIdx[0], nil
 	}
 }
 
@@ -362,7 +381,7 @@ func (channel *Channel) codexKeySupportsRequestedCapability(index int, endpointT
 	if !ok {
 		return true
 	}
-	if capability.UsageLimitActiveAt(common.GetTimestamp()) {
+	if accountCapabilityBlocksScheduling(capability) {
 		return false
 	}
 	if endpointType == constant.EndpointTypeOpenAIResponseCompact {
@@ -375,6 +394,24 @@ func (channel *Channel) codexKeySupportsRequestedCapability(index int, endpointT
 		return true
 	}
 	return capability.HasCodexBackendResponsesStreamAllowed()
+}
+
+func (channel *Channel) accountCapabilityBlocksScheduling(index int) bool {
+	if channel == nil || channel.ChannelInfo.MultiKeyCapabilities == nil {
+		return false
+	}
+	capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]
+	if !ok {
+		return false
+	}
+	return accountCapabilityBlocksScheduling(capability)
+}
+
+func accountCapabilityBlocksScheduling(capability ChannelAccountCapability) bool {
+	if capability.UsageLimitActiveAt(common.GetTimestamp()) {
+		return true
+	}
+	return strings.TrimSpace(capability.CapabilityClassification) == channelcapability.ClassificationAuthError
 }
 
 func (channel *Channel) SaveChannelInfo() error {

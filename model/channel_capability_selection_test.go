@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -110,6 +111,29 @@ func TestGetNextEnabledKeyForEndpointSkipsUsageLimitedCodexAccount(t *testing.T)
 
 	require.Nil(t, apiErr)
 	require.Equal(t, "oauth-b", key)
+	require.Equal(t, 1, index)
+}
+
+func TestGetNextEnabledKeyForEndpointSkipsAuthErrorAccount(t *testing.T) {
+	channel := &Channel{
+		Id:     9005,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-auth\nsk-ok",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey: true,
+			MultiKeyCapabilities: map[int]ChannelAccountCapability{
+				0: {
+					CapabilityClassification: channelcapability.ClassificationAuthError,
+				},
+			},
+		},
+	}
+
+	key, index, apiErr := channel.GetNextEnabledKeyForEndpoint(constant.EndpointTypeOpenAI)
+
+	require.Nil(t, apiErr)
+	require.Equal(t, "sk-ok", key)
 	require.Equal(t, 1, index)
 }
 

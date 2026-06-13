@@ -238,19 +238,26 @@ func TestRelayTotalDurationAfterOutputKeepsSlowLongOutputWarning(t *testing.T) {
 	require.True(t, relayTotalDurationAfterOutput(ctx, info, 20*time.Minute, 180*time.Second))
 }
 
-func TestRelayRuntimeIdentityFallsBackToChannelScopeWithoutSelectedPlan(t *testing.T) {
+func TestRelayRuntimeIdentityFallsBackToContextAccountScopeWithoutSelectedPlan(t *testing.T) {
 	ctx := newRelayRetryContext()
 	common.SetContextKey(ctx, constant.ContextKeyChannelId, 9021)
 	common.SetContextKey(ctx, constant.ContextKeyChannelIsMultiKey, true)
 	common.SetContextKey(ctx, constant.ContextKeyChannelMultiKeyIndex, 3)
+	common.SetContextKey(ctx, constant.ContextKeyChannelAccountID, "acct-legacy")
+	common.SetContextKey(ctx, constant.ContextKeyChannelAccountCredentialSubjectFP, "subject-legacy")
+	common.SetContextKey(ctx, constant.ContextKeyChannelAccountCredentialFP, "credential-legacy")
 	ctx.Set("original_model", "gpt-5.5")
 	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "default")
 
 	identity := relayRuntimeIdentity(ctx, 9021)
 
 	require.Equal(t, 9021, identity.ChannelID)
-	require.False(t, identity.HasAccountScope())
-	require.False(t, identity.CredentialIndexSet)
+	require.True(t, identity.HasAccountScope())
+	require.True(t, identity.CredentialIndexSet)
+	require.Equal(t, 3, identity.CredentialIndex)
+	require.Equal(t, "acct-legacy", identity.AccountID)
+	require.Equal(t, "subject-legacy", identity.CredentialSubjectFP)
+	require.Equal(t, "credential-legacy", identity.CredentialFP)
 }
 
 func TestRelayRuntimeIdentityPrefersSelectedPlanAccountScope(t *testing.T) {

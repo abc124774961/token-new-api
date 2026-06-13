@@ -1428,7 +1428,7 @@ func relayRuntimeIdentity(c *gin.Context, channelID int) service.ChannelRuntimeI
 	if plan := selectedModelGatewayPlan(c); plan != nil {
 		return modelGatewayPlanRuntimeIdentity(plan, channelID)
 	}
-	return service.ChannelOnlyRuntimeIdentity(channelID)
+	return service.ChannelRuntimeIdentityFromContext(c, channelID)
 }
 
 func relayQueueAcquireOptions(plan *modelgatewaycore.DispatchPlan) modelgatewayscheduler.QueueAcquireOptions {

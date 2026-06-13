@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/glebarez/sqlite"
@@ -224,6 +225,44 @@ func TestProIndexQueryFiltersUsageLimitedCodexAccount(t *testing.T) {
 
 	require.Len(t, candidates, 1)
 	require.Equal(t, 1, candidates[0].CredentialRef.CredentialIndex)
+}
+
+func TestProIndexBuildSkipsCapabilityBlockedAccountsForChatCompletions(t *testing.T) {
+	common.CryptoSecret = "test-secret"
+	index := New(account.NewRegistry(), nil)
+	channel := &model.Channel{
+		Id:     17,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    `{"access_token":"a","account_id":"a"}` + "\n" + `{"access_token":"b","account_id":"b"}` + "\n" + `{"access_token":"c","account_id":"c"}`,
+		Status: common.ChannelStatusEnabled,
+		Group:  "codex",
+		Models: "gpt-5.5",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true,
+			MultiKeyCapabilities: map[int]model.ChannelAccountCapability{
+				0: {
+					CapabilityClassification: channelcapability.ClassificationAuthError,
+				},
+				1: {
+					UsageLimitStatus:    channelcapability.UsageLimitStatusLimited,
+					UsageLimitExpiresAt: common.GetTimestamp() + 3600,
+				},
+			},
+		},
+	}
+
+	stats := index.Rebuild([]*model.Channel{channel})
+	candidates := index.Query(Query{
+		Groups:       []string{"codex"},
+		ModelName:    "gpt-5.5",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Equal(t, 3, stats.Accounts)
+	require.Equal(t, 2, stats.DisabledKeys)
+	require.Equal(t, 1, stats.Candidates)
+	require.Len(t, candidates, 1)
+	require.Equal(t, 2, candidates[0].CredentialRef.CredentialIndex)
 }
 
 func TestProIndexQueryFiltersUnavailableAccountProxy(t *testing.T) {

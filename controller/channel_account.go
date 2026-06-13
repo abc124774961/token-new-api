@@ -4733,13 +4733,6 @@ func buildChannelAccountSchedulingExplanation(item ChannelAccountItem) *ChannelA
 	blocking := make([]string, 0, 4)
 	warnings := make([]string, 0, 4)
 
-	if !item.KeyEnabled {
-		blocking = appendChannelAccountSchedulingReason(blocking, "account_disabled")
-		if item.DisabledReason != "" {
-			explanation.Detail = item.DisabledReason
-		}
-	}
-
 	if capability := item.Capabilities; capability != nil {
 		effectiveClassification := capability.EffectiveClassification()
 		explanation.CapabilityClassification = effectiveClassification
@@ -4765,6 +4758,17 @@ func buildChannelAccountSchedulingExplanation(item ChannelAccountItem) *ChannelA
 		}
 		if effectiveClassification == channelcapability.ClassificationAuthError {
 			blocking = appendChannelAccountSchedulingReason(blocking, channelcapability.ClassificationAuthError)
+		}
+	}
+
+	if !item.KeyEnabled {
+		if reason := channelAccountSchedulingDisabledReason(item.DisabledReason); reason != "" {
+			blocking = appendChannelAccountSchedulingReason(blocking, reason)
+		} else {
+			blocking = appendChannelAccountSchedulingReason(blocking, "account_disabled")
+		}
+		if item.DisabledReason != "" && explanation.Detail == "" {
+			explanation.Detail = item.DisabledReason
 		}
 	}
 
@@ -4833,6 +4837,17 @@ func buildChannelAccountSchedulingExplanation(item ChannelAccountItem) *ChannelA
 		explanation.PrimaryReason = "schedulable"
 	}
 	return explanation
+}
+
+func channelAccountSchedulingDisabledReason(reason string) string {
+	switch strings.TrimSpace(reason) {
+	case channelcapability.ClassificationAccountUsageLimited,
+		channelcapability.ClassificationAuthError,
+		channelcapability.ClassificationProxyError:
+		return strings.TrimSpace(reason)
+	default:
+		return ""
+	}
 }
 
 func appendChannelAccountSchedulingReason(reasons []string, reason string) []string {

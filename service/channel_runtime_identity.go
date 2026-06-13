@@ -66,6 +66,12 @@ func ChannelRuntimeIdentityFromContext(c *gin.Context, channelID int) ChannelRun
 		identity.CredentialIndex = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
 		identity.CredentialIndexSet = true
 	}
+	identity.AccountID = strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyChannelAccountID))
+	identity.AccountType = strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyChannelAccountType))
+	identity.Brand = strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyChannelAccountBrand))
+	identity.Provider = strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyChannelAccountProvider))
+	identity.CredentialSubjectFP = strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyChannelAccountCredentialSubjectFP))
+	identity.CredentialFP = strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyChannelAccountCredentialFP))
 	return NormalizeChannelRuntimeIdentity(identity)
 }
 
