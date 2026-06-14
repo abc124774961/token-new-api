@@ -318,6 +318,58 @@ func TestBuildRatioBaselinesSkipsInvalidRowsUntilTargetValidSamples(t *testing.T
 	require.Equal(t, now-20, baseline.WindowStart)
 }
 
+func TestBuildRatioBaselinesBatchesCostLogLookups(t *testing.T) {
+	db := newDynamicBillingTestDB(t)
+	oldBatchSize := requestCostLogLookupBatchSize
+	requestCostLogLookupBatchSize = 2
+	t.Cleanup(func() {
+		requestCostLogLookupBatchSize = oldBatchSize
+	})
+	oldModelRatio := ratio_setting.ModelRatio2JSONString()
+	oldGroupRatio := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-test":2}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"codex-plus":0.1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldModelRatio))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroupRatio))
+	})
+
+	now := time.Now().Unix()
+	for i := 0; i < 5; i++ {
+		requestID := fmt.Sprintf("req-batch-%d", i)
+		calculatedAt := now - int64(i)
+		require.NoError(t, db.Create(&model.ModelGatewayRequestCostSummary{
+			RequestId:         requestID,
+			UpstreamCostTotal: 0.0004,
+			CalculatedAt:      calculatedAt,
+		}).Error)
+		require.NoError(t, db.Create(&model.Log{
+			Type:             model.LogTypeConsume,
+			CreatedAt:        calculatedAt,
+			RequestId:        requestID,
+			ModelName:        "gpt-test",
+			Group:            "codex-plus",
+			PromptTokens:     100,
+			CompletionTokens: 100,
+			Quota:            100,
+			Other:            `{"group_ratio":0.1,"model_ratio":2,"completion_ratio":4}`,
+		}).Error)
+	}
+
+	baselines, err := BuildRatioBaselines(db, db, scheduler_setting.SchedulerSetting{
+		DynamicBillingCostSource:    scheduler_setting.DynamicBillingCostSourceSampleCost,
+		DynamicBillingWindowSamples: 5,
+		DynamicBillingProfitRate:    0,
+		DynamicBillingMinSamples:    1,
+		DynamicBillingMaxStepChange: 10,
+	}, now)
+
+	require.NoError(t, err)
+	baseline, ok := baselines[cacheKey("gpt-test", "codex-plus")]
+	require.True(t, ok)
+	require.Equal(t, 5, baseline.SampleCount)
+}
+
 func TestBuildRatioBaselinesProfit24hUsesGrossMarginAndBaseQuota(t *testing.T) {
 	db := newDynamicBillingTestDB(t)
 	oldModelRatio := ratio_setting.ModelRatio2JSONString()

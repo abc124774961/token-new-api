@@ -37,7 +37,11 @@ const (
 	ApplyReasonManualModeAutoApplied = "manual_mode_auto_applied"
 	ApplyReasonStepChangeAutoApplied = "step_change_auto_applied"
 	ApplyReasonFixedRatioApplied     = "fixed_ratio_applied"
+
+	defaultRequestCostLogLookupBatchSize = 1000
 )
+
+var requestCostLogLookupBatchSize = defaultRequestCostLogLookupBatchSize
 
 type RatioBaseline struct {
 	RequestedModel string  `json:"requested_model"`
@@ -882,6 +886,10 @@ func loadEligibleRequestCostLogPairs(logDB *gorm.DB, costRows []costRow) ([]requ
 	if len(costRows) == 0 {
 		return nil, nil
 	}
+	batchSize := requestCostLogLookupBatchSize
+	if batchSize <= 0 {
+		batchSize = defaultRequestCostLogLookupBatchSize
+	}
 	costByRequest := make(map[string]requestCostLogPair, len(costRows))
 	requestIDs := make([]string, 0, len(costRows))
 	for _, row := range costRows {
@@ -911,12 +919,20 @@ func loadEligibleRequestCostLogPairs(logDB *gorm.DB, costRows []costRow) ([]requ
 	}
 
 	logRows := make([]model.Log, 0, len(requestIDs))
-	if err := logDB.Model(&model.Log{}).
-		Where("request_id IN ?", requestIDs).
-		Where("type = ? AND quota > 0", model.LogTypeConsume).
-		Order("created_at desc, id desc").
-		Find(&logRows).Error; err != nil {
-		return nil, err
+	for start := 0; start < len(requestIDs); start += batchSize {
+		end := start + batchSize
+		if end > len(requestIDs) {
+			end = len(requestIDs)
+		}
+		batchLogRows := make([]model.Log, 0, end-start)
+		if err := logDB.Model(&model.Log{}).
+			Where("request_id IN ?", requestIDs[start:end]).
+			Where("type = ? AND quota > 0", model.LogTypeConsume).
+			Order("created_at desc, id desc").
+			Find(&batchLogRows).Error; err != nil {
+			return nil, err
+		}
+		logRows = append(logRows, batchLogRows...)
 	}
 
 	pairs := make([]requestCostLogPair, 0, len(requestIDs))
