@@ -1268,9 +1268,9 @@ func TestHybridStickyStoreStoresAndExpiresEntries(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestSelectorBreaksStickyRouteOnNegativeCurrentGroupMargin(t *testing.T) {
+func TestSelectorRetainsStickyRouteWhenCostRatioExceedsRevenueRatio(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx := newStickyRequestContext(t, `{"session_id":"sess-break-negative-margin"}`, nil)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-retain-high-cost-ratio"}`, nil)
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, 601)
 	req := core.DispatchRequest{
 		RequestedGroup: "default",
@@ -1329,16 +1329,18 @@ func TestSelectorBreaksStickyRouteOnNegativeCurrentGroupMargin(t *testing.T) {
 	require.Nil(t, apiErr)
 	require.True(t, handled)
 	require.NotNil(t, plan)
-	require.Equal(t, 2, plan.Channel.Id)
-	require.False(t, plan.StickyRetained)
-	require.Equal(t, "negative_current_group_margin", plan.StickyBreak)
+	require.Equal(t, 1, plan.Channel.Id)
+	require.True(t, plan.StickyRetained)
+	require.Empty(t, plan.StickyBreak)
 	require.False(t, plan.StickySaveSuppressed)
-	require.Equal(t, "score_items_sticky_broken", plan.SelectedReason)
+	require.NotEqual(t, "negative_margin_fallback", plan.SelectedReason)
+	stickyCandidate := candidateExplanationByChannel(t, plan.Candidates, 1)
+	require.False(t, stickyCandidate.NegativeCurrentGroupMargin)
 }
 
-func TestSelectorAllowsNegativeMarginFallbackButSkipsStickySave(t *testing.T) {
+func TestSelectorSavesStickyWhenCostRatioExceedsRevenueRatio(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx := newStickyRequestContext(t, `{"session_id":"sess-negative-margin-only"}`, nil)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-high-cost-ratio-save"}`, nil)
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, 602)
 	req := core.DispatchRequest{
 		RequestedGroup: "default",
@@ -1384,18 +1386,18 @@ func TestSelectorAllowsNegativeMarginFallbackButSkipsStickySave(t *testing.T) {
 	require.True(t, handled)
 	require.NotNil(t, plan)
 	require.Equal(t, 7, plan.Channel.Id)
-	require.Equal(t, "negative_margin_fallback", plan.SelectedReason)
-	require.True(t, plan.FallbackUsed)
-	require.True(t, plan.StickySaveSuppressed)
-	require.Equal(t, "negative_current_group_margin", plan.StickySuppressionReason)
+	require.NotEqual(t, "negative_margin_fallback", plan.SelectedReason)
+	require.False(t, plan.FallbackUsed)
+	require.False(t, plan.StickySaveSuppressed)
+	require.Empty(t, plan.StickySuppressionReason)
 
 	_, ok := sticky.Route(ctx, &req, core.GroupSmartPolicy{RequestedGroup: "default"})
-	require.False(t, ok)
+	require.True(t, ok)
 }
 
-func TestSelectorNegativeMarginFallbackChoosesLowestLoss(t *testing.T) {
+func TestSelectorCostRatioAboveRevenueUsesNormalScore(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx := newStickyRequestContext(t, `{"session_id":"sess-negative-margin-lowest-loss"}`, nil)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-high-cost-ratio-normal-score"}`, nil)
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, 607)
 
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
@@ -1444,21 +1446,21 @@ func TestSelectorNegativeMarginFallbackChoosesLowestLoss(t *testing.T) {
 	require.Nil(t, apiErr)
 	require.True(t, handled)
 	require.NotNil(t, plan)
-	require.Equal(t, 10, plan.Channel.Id)
-	require.Equal(t, "negative_margin_fallback", plan.SelectedReason)
-	require.True(t, plan.FallbackUsed)
-	require.True(t, plan.StickySaveSuppressed)
-	require.Equal(t, "negative_current_group_margin", plan.StickySuppressionReason)
+	require.Equal(t, 9, plan.Channel.Id)
+	require.NotEqual(t, "negative_margin_fallback", plan.SelectedReason)
+	require.False(t, plan.FallbackUsed)
+	require.False(t, plan.StickySaveSuppressed)
+	require.Empty(t, plan.StickySuppressionReason)
 
 	highLoss := candidateExplanationByChannel(t, plan.Candidates, 9)
 	require.True(t, highLoss.Available)
-	require.True(t, highLoss.NegativeCurrentGroupMargin)
-	require.False(t, highLoss.Selected)
+	require.False(t, highLoss.NegativeCurrentGroupMargin)
+	require.True(t, highLoss.Selected)
 }
 
-func TestSelectorSkipsNegativeMarginCandidateWhenPositiveMarginAvailable(t *testing.T) {
+func TestSelectorDoesNotSkipHighCostRatioCandidateWhenPositiveMarginAvailable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx := newStickyRequestContext(t, `{"session_id":"sess-negative-margin-score-skip"}`, nil)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-high-cost-ratio-no-skip"}`, nil)
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, 604)
 
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
@@ -1507,19 +1509,19 @@ func TestSelectorSkipsNegativeMarginCandidateWhenPositiveMarginAvailable(t *test
 	require.Nil(t, apiErr)
 	require.True(t, handled)
 	require.NotNil(t, plan)
-	require.Equal(t, 12, plan.Channel.Id)
+	require.Equal(t, 11, plan.Channel.Id)
 	require.False(t, plan.FallbackUsed)
 	require.NotEqual(t, "negative_margin_fallback", plan.SelectedReason)
 	negative := candidateExplanationByChannel(t, plan.Candidates, 11)
 	require.True(t, negative.Available)
-	require.True(t, negative.NegativeCurrentGroupMargin)
-	require.Equal(t, "negative_current_group_margin", negative.SelectionSkipReason)
-	require.False(t, negative.Selected)
+	require.False(t, negative.NegativeCurrentGroupMargin)
+	require.Empty(t, negative.SelectionSkipReason)
+	require.True(t, negative.Selected)
 }
 
-func TestSelectorReportsNegativeMarginBeforeSaturationWhenPositiveMarginAvailable(t *testing.T) {
+func TestSelectorReportsSaturationInsteadOfNegativeMarginForHighCostRatio(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx := newStickyRequestContext(t, `{"session_id":"sess-negative-margin-saturated-skip"}`, nil)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-high-cost-ratio-saturated-skip"}`, nil)
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, 605)
 
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
@@ -1573,14 +1575,14 @@ func TestSelectorReportsNegativeMarginBeforeSaturationWhenPositiveMarginAvailabl
 	require.Equal(t, 22, plan.Channel.Id)
 	negative := candidateExplanationByChannel(t, plan.Candidates, 21)
 	require.True(t, negative.Available)
-	require.True(t, negative.NegativeCurrentGroupMargin)
-	require.Equal(t, "negative_current_group_margin", negative.SelectionSkipReason)
+	require.False(t, negative.NegativeCurrentGroupMargin)
+	require.Equal(t, "concurrency_saturated", negative.SelectionSkipReason)
 	require.False(t, negative.Selected)
 }
 
-func TestSelectorUsesUserBillingMultiplierForNegativeMarginDecision(t *testing.T) {
+func TestSelectorDoesNotUseUserBillingMultiplierForHardNegativeMarginDecision(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx := newStickyRequestContext(t, `{"session_id":"sess-user-margin-rate"}`, nil)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-user-margin-rate-no-hard-skip"}`, nil)
 	common.SetContextKey(ctx, constant.ContextKeyUserId, 1701)
 	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, 606)
@@ -1650,11 +1652,12 @@ func TestSelectorUsesUserBillingMultiplierForNegativeMarginDecision(t *testing.T
 	require.Nil(t, apiErr)
 	require.True(t, handled)
 	require.NotNil(t, plan)
-	require.Equal(t, 32, plan.Channel.Id)
+	require.Equal(t, 31, plan.Channel.Id)
 	negative := candidateExplanationByChannel(t, plan.Candidates, 31)
-	require.True(t, negative.NegativeCurrentGroupMargin)
+	require.False(t, negative.NegativeCurrentGroupMargin)
 	require.Equal(t, 1.0, negative.RevenueRatio)
-	require.Equal(t, "negative_current_group_margin", negative.SelectionSkipReason)
+	require.Empty(t, negative.SelectionSkipReason)
+	require.True(t, negative.Selected)
 }
 
 func TestSelectorDoesNotTreatMissingRevenueAsNegativeMargin(t *testing.T) {
@@ -1724,7 +1727,7 @@ func TestSelectorDoesNotTreatMissingRevenueAsNegativeMargin(t *testing.T) {
 	require.False(t, plan.StickySaveSuppressed)
 }
 
-func TestSelectorBreaksCacheAffinityRouteOnNegativeCurrentGroupMargin(t *testing.T) {
+func TestSelectorRetainsCacheAffinityRouteWhenCostRatioExceedsRevenueRatio(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(nil)
 
@@ -1733,9 +1736,9 @@ func TestSelectorBreaksCacheAffinityRouteOnNegativeCurrentGroupMargin(t *testing
 	peerKey := core.RuntimeKey{RequestedModel: "gpt-5", ChannelID: 2, Group: "default"}
 	store.Put(core.RuntimeSnapshot{
 		Key:                stickyKey,
-		SuccessRate:        0.85,
-		TTFTMs:             700,
-		TokensPerSecond:    40,
+		SuccessRate:        0.99,
+		TTFTMs:             100,
+		TokensPerSecond:    80,
 		CostRatio:          3,
 		RevenueRatio:       1,
 		GroupPriorityRatio: 1,
@@ -1743,9 +1746,9 @@ func TestSelectorBreaksCacheAffinityRouteOnNegativeCurrentGroupMargin(t *testing
 	})
 	store.Put(core.RuntimeSnapshot{
 		Key:                peerKey,
-		SuccessRate:        0.98,
-		TTFTMs:             350,
-		TokensPerSecond:    80,
+		SuccessRate:        0.8,
+		TTFTMs:             700,
+		TokensPerSecond:    40,
 		CostRatio:          0.5,
 		RevenueRatio:       1,
 		GroupPriorityRatio: 1,
@@ -1784,11 +1787,13 @@ func TestSelectorBreaksCacheAffinityRouteOnNegativeCurrentGroupMargin(t *testing
 	require.Nil(t, apiErr)
 	require.True(t, handled)
 	require.NotNil(t, plan)
-	require.Equal(t, 2, plan.Channel.Id)
+	require.Equal(t, 1, plan.Channel.Id)
 	require.True(t, plan.CacheAffinity)
-	require.False(t, plan.StickyRetained)
+	require.True(t, plan.StickyRetained)
 	require.Equal(t, "cache_affinity", plan.StickySource)
-	require.Equal(t, "negative_current_group_margin", plan.StickyBreak)
+	require.Empty(t, plan.StickyBreak)
+	stickyCandidate := candidateExplanationByChannel(t, plan.Candidates, 1)
+	require.False(t, stickyCandidate.NegativeCurrentGroupMargin)
 }
 
 func TestSelectorRetainsCacheAffinityRoute(t *testing.T) {
