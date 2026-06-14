@@ -142,34 +142,97 @@ func completeBillingMultiplierPolicyRelation(policy *model.BillingMultiplierPoli
 	if err := policy.Normalize(); err != nil {
 		return err
 	}
-	switch policy.ScopeType {
-	case model.BillingMultiplierScopeGlobal:
-		policy.ScopeName = ""
-	case model.BillingMultiplierScopeUser:
-		if policy.ScopeID <= 0 {
-			return errors.New("user scope_id is required")
+	if len(policy.Targets) == 0 {
+		policy.Targets = []model.BillingMultiplierPolicyTarget{{
+			TargetType: policy.ScopeType,
+			TargetID:   policy.ScopeID,
+			TargetKey:  policy.ScopeKey,
+			TargetName: policy.ScopeName,
+			Enabled:    true,
+		}}
+	}
+	for i := range policy.Targets {
+		if !policy.Targets[i].Enabled && policy.Targets[i].Id == 0 {
+			policy.Targets[i].Enabled = true
 		}
-		user, err := model.GetUserById(policy.ScopeID, false)
-		if err != nil {
+		if err := completeBillingMultiplierPolicyTargetRelation(&policy.Targets[i]); err != nil {
 			return err
 		}
-		policy.ScopeName = strings.TrimSpace(user.DisplayName)
-		if policy.ScopeName == "" {
-			policy.ScopeName = strings.TrimSpace(user.Username)
+	}
+	syncBillingMultiplierLegacyScope(policy)
+	for i := range policy.GroupPrices {
+		if !policy.GroupPrices[i].Enabled && policy.GroupPrices[i].Id == 0 {
+			policy.GroupPrices[i].Enabled = true
 		}
-	case model.BillingMultiplierScopeSubscriptionPlan:
-		if policy.ScopeID <= 0 {
-			return errors.New("subscription plan scope_id is required")
-		}
-		plan, err := model.GetSubscriptionPlanById(policy.ScopeID)
-		if err != nil {
+		if err := policy.GroupPrices[i].Normalize(); err != nil {
 			return err
-		}
-		policy.ScopeName = strings.TrimSpace(plan.Title)
-	case model.BillingMultiplierScopeUserGroup, model.BillingMultiplierScopeUsingGroup:
-		if strings.TrimSpace(policy.ScopeName) == "" {
-			policy.ScopeName = policy.ScopeKey
 		}
 	}
 	return nil
+}
+
+func completeBillingMultiplierPolicyTargetRelation(target *model.BillingMultiplierPolicyTarget) error {
+	if target == nil {
+		return nil
+	}
+	if err := target.Normalize(); err != nil {
+		return err
+	}
+	switch target.TargetType {
+	case model.BillingMultiplierScopeGlobal:
+		target.TargetName = ""
+	case model.BillingMultiplierScopeUser:
+		if target.TargetID <= 0 {
+			return errors.New("user target_id is required")
+		}
+		user, err := model.GetUserById(target.TargetID, false)
+		if err != nil {
+			return err
+		}
+		target.TargetName = strings.TrimSpace(user.DisplayName)
+		if target.TargetName == "" {
+			target.TargetName = strings.TrimSpace(user.Username)
+		}
+	case model.BillingMultiplierScopeSubscriptionPlan:
+		if target.TargetID <= 0 {
+			return errors.New("subscription plan target_id is required")
+		}
+		plan, err := model.GetSubscriptionPlanById(target.TargetID)
+		if err != nil {
+			return err
+		}
+		target.TargetName = strings.TrimSpace(plan.Title)
+	case model.BillingMultiplierScopeUserGroup, model.BillingMultiplierScopeUsingGroup:
+		if strings.TrimSpace(target.TargetName) == "" {
+			target.TargetName = target.TargetKey
+		}
+	}
+	return nil
+}
+
+func syncBillingMultiplierLegacyScope(policy *model.BillingMultiplierPolicy) {
+	if policy == nil {
+		return
+	}
+	policy.ScopeType = model.BillingMultiplierScopeGlobal
+	policy.ScopeValue = ""
+	policy.ScopeID = 0
+	policy.ScopeKey = ""
+	policy.ScopeName = ""
+	if len(policy.Targets) == 0 {
+		return
+	}
+	first := policy.Targets[0]
+	policy.ScopeType = first.TargetType
+	policy.ScopeID = first.TargetID
+	policy.ScopeKey = first.TargetKey
+	policy.ScopeName = first.TargetName
+	switch first.TargetType {
+	case model.BillingMultiplierScopeUser, model.BillingMultiplierScopeSubscriptionPlan:
+		if first.TargetID > 0 {
+			policy.ScopeValue = strconv.Itoa(first.TargetID)
+		}
+	case model.BillingMultiplierScopeUserGroup, model.BillingMultiplierScopeUsingGroup:
+		policy.ScopeValue = first.TargetKey
+	}
 }

@@ -375,6 +375,8 @@ func migrateDB() error {
 		&UserSubscription{},
 		&SubscriptionPreConsumeRecord{},
 		&BillingMultiplierPolicy{},
+		&BillingMultiplierPolicyTarget{},
+		&BillingMultiplierPolicyGroupPrice{},
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
 		&PerfMetric{},
@@ -475,6 +477,8 @@ func migrateDBFast() error {
 		{&UserSubscription{}, "UserSubscription"},
 		{&SubscriptionPreConsumeRecord{}, "SubscriptionPreConsumeRecord"},
 		{&BillingMultiplierPolicy{}, "BillingMultiplierPolicy"},
+		{&BillingMultiplierPolicyTarget{}, "BillingMultiplierPolicyTarget"},
+		{&BillingMultiplierPolicyGroupPrice{}, "BillingMultiplierPolicyGroupPrice"},
 		{&CustomOAuthProvider{}, "CustomOAuthProvider"},
 		{&UserOAuthBinding{}, "UserOAuthBinding"},
 		{&PerfMetric{}, "PerfMetric"},
@@ -1017,7 +1021,16 @@ func ensureBillingMultiplierPolicyRelationColumns() error {
 		{"scope_name", "ScopeName"},
 		{"group_multipliers", "GroupMultipliers"},
 	}
-	return ensureColumns(&BillingMultiplierPolicy{}, columns)
+	if err := ensureColumns(&BillingMultiplierPolicy{}, columns); err != nil {
+		return err
+	}
+	if err := DB.AutoMigrate(&BillingMultiplierPolicyTarget{}); err != nil {
+		return err
+	}
+	if err := DB.AutoMigrate(&BillingMultiplierPolicyGroupPrice{}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func ensureUserContactColumns() error {

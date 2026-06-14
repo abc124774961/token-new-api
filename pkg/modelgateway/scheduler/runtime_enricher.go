@@ -42,6 +42,7 @@ type billingRevenueRatioCacheEntry struct {
 type billingMultiplierPolicyCacheEntry struct {
 	policies  []model.BillingMultiplierPolicy
 	expiresAt int64
+	version   int64
 }
 
 type activeSubscriptionPlanIDCacheEntry struct {
@@ -667,8 +668,9 @@ func (e *RuntimeSnapshotEnricher) billingMultiplierCandidateGroupRatio(modelName
 
 func billingMultiplierPoliciesForRuntime(now int64) ([]model.BillingMultiplierPolicy, bool) {
 	const cacheKey = "enabled"
+	version := model.BillingMultiplierPolicyVersion()
 	if cached, ok := billingMultiplierPolicyCache.Load(cacheKey); ok {
-		if entry, ok := cached.(billingMultiplierPolicyCacheEntry); ok && entry.expiresAt > now {
+		if entry, ok := cached.(billingMultiplierPolicyCacheEntry); ok && entry.version == version && entry.expiresAt > now {
 			return append([]model.BillingMultiplierPolicy(nil), entry.policies...), true
 		}
 	}
@@ -682,6 +684,7 @@ func billingMultiplierPoliciesForRuntime(now int64) ([]model.BillingMultiplierPo
 	billingMultiplierPolicyCache.Store(cacheKey, billingMultiplierPolicyCacheEntry{
 		policies:  append([]model.BillingMultiplierPolicy(nil), policies...),
 		expiresAt: now + int64(billingRevenueRatioCacheTTL),
+		version:   version,
 	})
 	return policies, true
 }
@@ -760,6 +763,7 @@ func cleanupBillingRevenueRatioCache(now int64) {
 
 func billingRevenueRatioCacheKey(ctx model.BillingMultiplierContext) string {
 	parts := []string{
+		strconv.FormatInt(model.BillingMultiplierPolicyVersion(), 10),
 		strconv.Itoa(ctx.UserID),
 		strings.TrimSpace(ctx.UserGroup),
 		strings.TrimSpace(ctx.UsingGroup),

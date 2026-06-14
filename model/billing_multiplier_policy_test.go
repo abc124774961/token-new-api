@@ -12,7 +12,11 @@ func setupBillingMultiplierPolicyTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&BillingMultiplierPolicy{}))
+	require.NoError(t, db.AutoMigrate(
+		&BillingMultiplierPolicy{},
+		&BillingMultiplierPolicyTarget{},
+		&BillingMultiplierPolicyGroupPrice{},
+	))
 	return db
 }
 
@@ -209,4 +213,123 @@ func TestBillingMultiplierPolicyNormalizesBlankNameWithFallback(t *testing.T) {
 
 	require.NoError(t, policy.Normalize())
 	require.Equal(t, "user group vip multiplier rule", policy.Name)
+}
+
+func TestEvaluateBillingMultiplierMatchesMultipleTargetsOnOnePolicy(t *testing.T) {
+	oldDB := DB
+	db := setupBillingMultiplierPolicyTestDB(t)
+	DB = db
+	t.Cleanup(func() {
+		DB = oldDB
+		InvalidateBillingMultiplierPolicyCache()
+	})
+
+	require.NoError(t, CreateBillingMultiplierPolicy(&BillingMultiplierPolicy{
+		Name:       "vip users",
+		Enabled:    true,
+		Priority:   10,
+		Mode:       BillingMultiplierModeMultiply,
+		Multiplier: 0.5,
+		Targets: []BillingMultiplierPolicyTarget{
+			{TargetType: BillingMultiplierScopeUser, TargetID: 12, TargetName: "alice", Enabled: true},
+			{TargetType: BillingMultiplierScopeUser, TargetID: 34, TargetName: "bob", Enabled: true},
+		},
+	}))
+
+	hit := EvaluateBillingMultiplier(BillingMultiplierContext{
+		UserID:         34,
+		UsingGroup:     "codex-plus",
+		ModelName:      "gpt-test",
+		BaseGroupRatio: 2,
+	})
+	require.True(t, hit.Applied)
+	require.InEpsilon(t, 1, hit.FinalGroupRatio, 0.0001)
+	require.Equal(t, 34, hit.Rules[0].ScopeID)
+	require.Equal(t, "bob", hit.Rules[0].ScopeName)
+
+	miss := EvaluateBillingMultiplier(BillingMultiplierContext{
+		UserID:         56,
+		UsingGroup:     "codex-plus",
+		ModelName:      "gpt-test",
+		BaseGroupRatio: 2,
+	})
+	require.False(t, miss.Applied)
+	require.Equal(t, 2.0, miss.FinalGroupRatio)
+}
+
+func TestEvaluateBillingMultiplierUsesNormalizedGroupPrices(t *testing.T) {
+	oldDB := DB
+	db := setupBillingMultiplierPolicyTestDB(t)
+	DB = db
+	t.Cleanup(func() {
+		DB = oldDB
+		InvalidateBillingMultiplierPolicyCache()
+	})
+
+	require.NoError(t, CreateBillingMultiplierPolicy(&BillingMultiplierPolicy{
+		Name:       "vip matrix normalized",
+		Enabled:    true,
+		Priority:   10,
+		Mode:       BillingMultiplierModeMultiply,
+		Multiplier: 0.5,
+		Targets: []BillingMultiplierPolicyTarget{
+			{TargetType: BillingMultiplierScopeUserGroup, TargetKey: "vip", Enabled: true},
+		},
+		GroupPrices: []BillingMultiplierPolicyGroupPrice{
+			{UsingGroup: "codex-plus", Mode: BillingMultiplierModeOverride, Multiplier: 0.08, Enabled: true},
+			{UsingGroup: "codex-pro", Mode: BillingMultiplierModeMultiply, Multiplier: 0.6, Enabled: true},
+		},
+	}))
+
+	plus := EvaluateBillingMultiplier(BillingMultiplierContext{
+		UserGroup:      "vip",
+		UsingGroup:     "codex-plus",
+		ModelName:      "gpt-test",
+		BaseGroupRatio: 1,
+	})
+	require.True(t, plus.Applied)
+	require.InEpsilon(t, 0.08, plus.FinalGroupRatio, 0.0001)
+	require.True(t, plus.Rules[0].GroupMultiplier)
+
+	miss := EvaluateBillingMultiplier(BillingMultiplierContext{
+		UserGroup:      "vip",
+		UsingGroup:     "default",
+		ModelName:      "gpt-test",
+		BaseGroupRatio: 1,
+	})
+	require.False(t, miss.Applied)
+	require.Equal(t, 1.0, miss.FinalGroupRatio)
+}
+
+func TestEvaluateBillingMultiplierDoesNotFallbackToGlobalWhenTargetsDisabled(t *testing.T) {
+	oldDB := DB
+	db := setupBillingMultiplierPolicyTestDB(t)
+	DB = db
+	t.Cleanup(func() {
+		DB = oldDB
+		InvalidateBillingMultiplierPolicyCache()
+	})
+
+	require.NoError(t, CreateBillingMultiplierPolicy(&BillingMultiplierPolicy{
+		Name:       "disabled target",
+		Enabled:    true,
+		Priority:   10,
+		Mode:       BillingMultiplierModeOverride,
+		Multiplier: 0.1,
+		Targets: []BillingMultiplierPolicyTarget{
+			{TargetType: BillingMultiplierScopeUser, TargetID: 12, TargetName: "alice", Enabled: true},
+		},
+	}))
+	require.NoError(t, db.Model(&BillingMultiplierPolicyTarget{}).Where("target_id = ?", 12).Update("enabled", false).Error)
+	InvalidateBillingMultiplierPolicyCache()
+
+	snapshot := EvaluateBillingMultiplier(BillingMultiplierContext{
+		UserID:         34,
+		UsingGroup:     "codex-plus",
+		ModelName:      "gpt-test",
+		BaseGroupRatio: 1,
+	})
+
+	require.False(t, snapshot.Applied)
+	require.Equal(t, 1.0, snapshot.FinalGroupRatio)
 }
