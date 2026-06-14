@@ -1851,6 +1851,31 @@ func TestAuthUnavailableErrorSwitchesChannel(t *testing.T) {
 	require.Equal(t, "switch_channel", retryActionForAttempt(ctx, err, true))
 }
 
+func TestContentPolicyErrorDoesNotEnterAuthConfigRecovery(t *testing.T) {
+	t.Cleanup(func() {
+		service.ClearChannelFailureAvoidance(920)
+	})
+
+	ctx := newRelayRetryContext()
+	err := types.NewOpenAIError(
+		errors.New("Risk content detected, please retry."),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusForbidden,
+	)
+	err.RelayError = types.OpenAIError{
+		Message: "Risk content detected, please retry.",
+		Type:    "content_policy_violation",
+		Code:    "unknown_error",
+	}
+
+	require.True(t, shouldFailoverToAlternativeChannel(ctx, err))
+	require.Equal(t, modelgatewaycore.ErrorCategoryUpstreamError, classifyRelayAttemptError(ctx, err))
+	require.False(t, isRelayAuthConfigError(err))
+
+	processChannelError(ctx, *types.NewChannelError(920, 1, "channel-920", false, "", true), err, false)
+	require.Nil(t, service.GetChannelFailureAvoidanceStatus(920))
+}
+
 func TestAllCredentialsCoolingDownEntersChannelOverloadRecovery(t *testing.T) {
 	t.Cleanup(func() {
 		service.ClearChannelFailureAvoidance(919)

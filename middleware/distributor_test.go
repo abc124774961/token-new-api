@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
@@ -29,6 +30,35 @@ func newResponsesCapabilityTestContext(body string) *gin.Context {
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader([]byte(body)))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	return ctx
+}
+
+func setupDistributorTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	common.UsingSQLite = true
+	common.UsingMySQL = false
+	common.UsingPostgreSQL = false
+	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	oldDB := model.DB
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = oldDB
+		sqlDB, err := db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	return db
+}
+
+func withDistributorMemoryCache(t *testing.T, enabled bool) {
+	t.Helper()
+	original := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = enabled
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = original
+	})
 }
 
 func TestResponsesRequestHasImageGenerationToolDetectsDeclaredTools(t *testing.T) {
@@ -95,6 +125,118 @@ func TestResponsesRequestHasImageGenerationToolIgnoresOtherTools(t *testing.T) {
 	}`)
 
 	require.False(t, responsesRequestHasImageGenerationTool(ctx))
+}
+
+func TestRelaxUnsupportedCodexImageToolRequirementStripsToolWhenNoImageToolCandidate(t *testing.T) {
+	db := setupDistributorTestDB(t)
+	withDistributorMemoryCache(t, true)
+
+	plainChannel := &model.Channel{
+		Id:            301,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "plain-codex-plus",
+		Key:           "sk-plain",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "codex-plus",
+		Models:        "gpt-5.4",
+		OtherSettings: `{"codex_compatibility_mode":true}`,
+	}
+	require.NoError(t, db.Create(plainChannel).Error)
+	require.NoError(t, plainChannel.AddAbilities(nil))
+	model.InitChannelCache()
+
+	ctx := newResponsesCapabilityTestContext(`{
+		"model": "gpt-5.4",
+		"input": "hello",
+		"tools": [{"type": "image_generation"}, {"type": "web_search_preview"}],
+		"tool_choice": {"type": "allowed_tools", "tools": [{"type": "image_generation"}, {"type": "web_search_preview"}]}
+	}`)
+	modelRequest := &ModelRequest{
+		Model:                  "gpt-5.4",
+		EndpointType:           constant.EndpointTypeOpenAIResponse,
+		RequiresCodexImageTool: true,
+	}
+
+	relaxUnsupportedCodexImageToolRequirementIfNeeded(ctx, modelRequest, "codex-plus-vip3")
+
+	require.False(t, modelRequest.RequiresCodexImageTool)
+	require.False(t, common.GetContextKeyBool(ctx, constant.ContextKeyRequiresCodexImageTool))
+
+	var req dto.OpenAIResponsesRequest
+	require.NoError(t, common.UnmarshalBodyReusable(ctx, &req))
+	require.False(t, req.HasTool(dto.BuildInToolImageGeneration))
+	require.True(t, req.HasTool("web_search_preview"))
+}
+
+func TestRelaxUnsupportedCodexImageToolRequirementKeepsToolWhenImageToolCandidateExists(t *testing.T) {
+	db := setupDistributorTestDB(t)
+	withDistributorMemoryCache(t, true)
+
+	imageChannel := &model.Channel{
+		Id:            302,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "image-codex-plus",
+		Key:           "sk-image",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "codex-plus",
+		Models:        "gpt-5.4",
+		OtherSettings: `{"codex_compatibility_mode":true,"codex_image_generation_tool_supported":true}`,
+	}
+	require.NoError(t, db.Create(imageChannel).Error)
+	require.NoError(t, imageChannel.AddAbilities(nil))
+	model.InitChannelCache()
+
+	ctx := newResponsesCapabilityTestContext(`{
+		"model": "gpt-5.4",
+		"input": "hello",
+		"tools": [{"type": "image_generation"}]
+	}`)
+	modelRequest := &ModelRequest{
+		Model:                  "gpt-5.4",
+		EndpointType:           constant.EndpointTypeOpenAIResponse,
+		RequiresCodexImageTool: true,
+	}
+
+	relaxUnsupportedCodexImageToolRequirementIfNeeded(ctx, modelRequest, "codex-plus-vip3")
+
+	require.True(t, modelRequest.RequiresCodexImageTool)
+	require.True(t, responsesRequestHasImageGenerationTool(ctx))
+}
+
+func TestRelaxUnsupportedCodexImageToolRequirementKeepsForcedImageToolChoice(t *testing.T) {
+	db := setupDistributorTestDB(t)
+	withDistributorMemoryCache(t, true)
+
+	plainChannel := &model.Channel{
+		Id:            303,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "plain-codex-plus",
+		Key:           "sk-plain",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "codex-plus",
+		Models:        "gpt-5.4",
+		OtherSettings: `{"codex_compatibility_mode":true}`,
+	}
+	require.NoError(t, db.Create(plainChannel).Error)
+	require.NoError(t, plainChannel.AddAbilities(nil))
+	model.InitChannelCache()
+
+	ctx := newResponsesCapabilityTestContext(`{
+		"model": "gpt-5.4",
+		"input": "hello",
+		"tools": [{"type": "image_generation"}],
+		"tool_choice": {"type": "image_generation"}
+	}`)
+	modelRequest := &ModelRequest{
+		Model:                  "gpt-5.4",
+		EndpointType:           constant.EndpointTypeOpenAIResponse,
+		RequiresCodexImageTool: true,
+	}
+
+	relaxUnsupportedCodexImageToolRequirementIfNeeded(ctx, modelRequest, "codex-plus-vip3")
+
+	require.True(t, modelRequest.RequiresCodexImageTool)
+	require.True(t, responsesRequestHasImageGenerationTool(ctx))
 }
 
 func TestResponsesRequestHasImageGenerationToolIgnoresPlainImagePromptWithoutKeywordHit(t *testing.T) {

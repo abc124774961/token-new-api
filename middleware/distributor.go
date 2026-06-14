@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strconv"
@@ -126,6 +128,8 @@ func distribute(c *gin.Context, next gin.HandlerFunc) {
 				}
 			}
 
+			relaxUnsupportedCodexImageToolRequirementIfNeeded(c, modelRequest, usingGroup)
+
 			var selectionErr *types.NewAPIError
 			selection, selectionErr = selectSmartDistributorChannel(c, modelRequest, usingGroup)
 			if selectionErr != nil {
@@ -223,6 +227,7 @@ func distribute(c *gin.Context, next gin.HandlerFunc) {
 					}
 				}
 				if channel == nil {
+					logDistributorChannelSelectionMiss(c, modelRequest, usingGroup)
 					abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
 					return
 				}
@@ -346,6 +351,233 @@ func markDistributorSmartSetupFailure(c *gin.Context, selection *modelgatewayint
 	}
 	service.MarkChannelRuntimeSelectionSkipped(c, identity)
 	modelgatewayintegration.RefreshDefaultRoutingCachesForSelectionMiss("distributor_smart_setup_failure")
+}
+
+func relaxUnsupportedCodexImageToolRequirementIfNeeded(c *gin.Context, modelRequest *ModelRequest, usingGroup string) {
+	if c == nil || modelRequest == nil || !modelRequest.RequiresCodexImageTool {
+		return
+	}
+	if modelRequest.EndpointType != constant.EndpointTypeOpenAIResponse {
+		return
+	}
+	if service.HasSchedulableChannelForRequiredCapabilities(c, usingGroup, modelRequest.Model, modelRequest.EndpointType, true) {
+		return
+	}
+	if !service.HasSchedulableChannelForRequiredCapabilities(c, usingGroup, modelRequest.Model, modelRequest.EndpointType, false) {
+		return
+	}
+	if !stripOptionalResponsesImageGenerationToolFromRequestBody(c) {
+		return
+	}
+	modelRequest.RequiresCodexImageTool = false
+	common.SetContextKey(c, constant.ContextKeyRequiresCodexImageTool, false)
+	trace := map[string]any{
+		"stage":                    "codex_image_tool_requirement_relaxed",
+		"reason":                   "no_schedulable_image_tool_channel_for_model",
+		"model":                    modelRequest.Model,
+		"group":                    usingGroup,
+		"endpoint_type":            string(modelRequest.EndpointType),
+		"effective_routing_groups": service.EffectiveRoutingGroups(usingGroup),
+		"selection_miss_explanation": service.ExplainChannelSelectionMiss(
+			c,
+			usingGroup,
+			modelRequest.Model,
+			modelRequest.EndpointType,
+			true,
+		),
+	}
+	logger.LogWarn(c, "codex image_generation tool requirement relaxed: "+service.MarshalTraceForLog(trace))
+}
+
+func stripOptionalResponsesImageGenerationToolFromRequestBody(c *gin.Context) bool {
+	req := dto.OpenAIResponsesRequest{}
+	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
+		return false
+	}
+	if rawToolChoiceRequiresImageGenerationTool(req.ToolChoice) {
+		return false
+	}
+	changed := false
+	var err error
+	req.Tools, changed, err = stripImageGenerationToolFromRawTools(req.Tools)
+	if err != nil {
+		logger.LogWarn(c, fmt.Sprintf("failed to strip unsupported image_generation tool from responses tools: %v", err))
+		return false
+	}
+	toolChoiceChanged := false
+	req.ToolChoice, toolChoiceChanged, err = stripImageGenerationToolFromRawToolChoice(req.ToolChoice)
+	if err != nil {
+		logger.LogWarn(c, fmt.Sprintf("failed to strip unsupported image_generation tool from responses tool_choice: %v", err))
+		return false
+	}
+	changed = changed || toolChoiceChanged
+	if !changed {
+		return false
+	}
+	body, err := common.Marshal(req)
+	if err != nil {
+		logger.LogWarn(c, fmt.Sprintf("failed to marshal responses request after stripping unsupported image_generation tool: %v", err))
+		return false
+	}
+	storage, err := common.CreateBodyStorage(body)
+	if err != nil {
+		logger.LogWarn(c, fmt.Sprintf("failed to cache responses request after stripping unsupported image_generation tool: %v", err))
+		return false
+	}
+	if oldStorage, exists := c.Get(common.KeyBodyStorage); exists && oldStorage != nil {
+		if closer, ok := oldStorage.(io.Closer); ok {
+			_ = closer.Close()
+		}
+	}
+	c.Set(common.KeyBodyStorage, storage)
+	c.Set(common.KeyRequestBody, body)
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	c.Request.ContentLength = int64(len(body))
+	c.Request.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	return true
+}
+
+func rawToolChoiceRequiresImageGenerationTool(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var payload any
+	if err := common.Unmarshal(raw, &payload); err != nil {
+		return true
+	}
+	return toolChoiceRequiresImageGenerationTool(payload)
+}
+
+func toolChoiceRequiresImageGenerationTool(value any) bool {
+	switch typed := value.(type) {
+	case string:
+		return typed == dto.BuildInToolImageGeneration
+	case map[string]any:
+		if common.Interface2String(typed["type"]) == dto.BuildInToolImageGeneration {
+			return true
+		}
+		if tool, ok := typed["tool"]; ok && toolChoiceRequiresImageGenerationTool(tool) {
+			return true
+		}
+		switch common.Interface2String(typed["type"]) {
+		case "allowed_tools", "auto", "none":
+			return false
+		}
+	}
+	return false
+}
+
+func stripImageGenerationToolFromRawTools(raw []byte) ([]byte, bool, error) {
+	if len(raw) == 0 {
+		return raw, false, nil
+	}
+	var tools []map[string]any
+	if err := common.Unmarshal(raw, &tools); err != nil {
+		return raw, false, err
+	}
+	filtered := tools[:0]
+	changed := false
+	for _, tool := range tools {
+		if common.Interface2String(tool["type"]) == dto.BuildInToolImageGeneration {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+	if !changed {
+		return raw, false, nil
+	}
+	if len(filtered) == 0 {
+		return nil, true, nil
+	}
+	nextRaw, err := common.Marshal(filtered)
+	return nextRaw, true, err
+}
+
+func stripImageGenerationToolFromRawToolChoice(raw []byte) ([]byte, bool, error) {
+	if len(raw) == 0 {
+		return raw, false, nil
+	}
+	var payload any
+	if err := common.Unmarshal(raw, &payload); err != nil {
+		return raw, false, err
+	}
+	nextPayload, changed := stripImageGenerationToolChoiceValue(payload)
+	if !changed {
+		return raw, false, nil
+	}
+	if nextPayload == nil {
+		return nil, true, nil
+	}
+	nextRaw, err := common.Marshal(nextPayload)
+	return nextRaw, true, err
+}
+
+func stripImageGenerationToolChoiceValue(value any) (any, bool) {
+	switch typed := value.(type) {
+	case string:
+		if typed == dto.BuildInToolImageGeneration {
+			return nil, true
+		}
+		return value, false
+	case []any:
+		filtered := make([]any, 0, len(typed))
+		changed := false
+		for _, item := range typed {
+			next, itemChanged := stripImageGenerationToolChoiceValue(item)
+			changed = changed || itemChanged
+			if next != nil {
+				filtered = append(filtered, next)
+			}
+		}
+		if !changed {
+			return value, false
+		}
+		if len(filtered) == 0 {
+			return nil, true
+		}
+		return filtered, true
+	case map[string]any:
+		if common.Interface2String(typed["type"]) == dto.BuildInToolImageGeneration {
+			return nil, true
+		}
+		choiceType := common.Interface2String(typed["type"])
+		next := make(map[string]any, len(typed))
+		changed := false
+		removedTools := false
+		for key, item := range typed {
+			if key != "tool" && key != "tools" {
+				next[key] = item
+				continue
+			}
+			stripped, itemChanged := stripImageGenerationToolChoiceValue(item)
+			changed = changed || itemChanged
+			if stripped != nil {
+				next[key] = stripped
+			} else if itemChanged && key == "tools" {
+				removedTools = true
+			}
+		}
+		if !changed {
+			return value, false
+		}
+		if choiceType == "allowed_tools" && removedTools {
+			if _, ok := next["tools"]; !ok {
+				return nil, true
+			}
+		}
+		return next, true
+	default:
+		return value, false
+	}
+}
+
+func logDistributorChannelSelectionMiss(c *gin.Context, modelRequest *ModelRequest, usingGroup string) {
+	if c == nil || modelRequest == nil {
+		return
+	}
+	trace := service.ExplainChannelSelectionMiss(c, usingGroup, modelRequest.Model, modelRequest.EndpointType, modelRequest.RequiresCodexImageTool)
+	logger.LogWarn(c, "channel selection miss diagnostics: "+service.MarshalTraceForLog(trace))
 }
 
 func setupDistributorSelectedChannelIfNeeded(c *gin.Context, channel *model.Channel, modelRequest *ModelRequest, selection *modelgatewayintegration.SelectionResult) *types.NewAPIError {

@@ -1918,6 +1918,9 @@ func classifyRelayAttemptError(c *gin.Context, apiErr *types.NewAPIError) string
 	if apiErr == nil {
 		return ""
 	}
+	if isUpstreamContentPolicyError(apiErr) {
+		return modelgatewaycore.ErrorCategoryUpstreamError
+	}
 	if relayChannelInducedClientAbort(c, nil, apiErr) {
 		return modelgatewaycore.ErrorCategoryChannelInducedClientAbort
 	}
@@ -2009,6 +2012,24 @@ func isTokenRevokedAuthError(apiErr *types.NewAPIError) bool {
 		strings.Contains(message, "invalidated oauth token") ||
 		strings.Contains(message, "oauth token") && strings.Contains(message, "revoked") ||
 		strings.Contains(message, "authentication token has been invalidated")
+}
+
+func isUpstreamContentPolicyError(apiErr *types.NewAPIError) bool {
+	if apiErr == nil {
+		return false
+	}
+	message := strings.ToLower(apiErr.Error())
+	code := strings.ToLower(string(apiErr.GetErrorCode()))
+	errorType := strings.ToLower(string(apiErr.GetErrorType()))
+	return strings.Contains(message, "risk content detected") ||
+		strings.Contains(message, "content policy") ||
+		strings.Contains(message, "content_policy") ||
+		strings.Contains(message, "policy violation") ||
+		strings.Contains(message, "policy_violation") ||
+		strings.Contains(code, "content_policy") ||
+		strings.Contains(code, "policy_violation") ||
+		strings.Contains(errorType, "content_policy") ||
+		strings.Contains(errorType, "policy_violation")
 }
 
 func retryActionForAttempt(c *gin.Context, apiErr *types.NewAPIError, willRetry bool) string {
@@ -2743,6 +2764,9 @@ func isRelayAuthConfigError(apiErr *types.NewAPIError) bool {
 	if apiErr == nil || service.IsBalanceInsufficientError(apiErr) {
 		return false
 	}
+	if isUpstreamContentPolicyError(apiErr) {
+		return false
+	}
 	if isTokenRevokedAuthError(apiErr) {
 		return true
 	}
@@ -3224,6 +3248,9 @@ func channelFailureAvoidanceReason(err *types.NewAPIError) (string, bool) {
 		return "", false
 	}
 	if isInvalidEncryptedContentError(err) || service.IsClientContextLimitError(err) {
+		return "", false
+	}
+	if isUpstreamContentPolicyError(err) {
 		return "", false
 	}
 	if service.IsBalanceInsufficientError(err) {

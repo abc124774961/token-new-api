@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/channelcapability"
 	"github.com/QuantumNous/new-api/pkg/codexauth"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -27,6 +28,29 @@ type RetryParam struct {
 	Retry                  *int
 	ExtraRetries           *int
 	resetNextTry           bool
+}
+
+type ChannelSelectionMissExplanation struct {
+	TokenGroup              string                                 `json:"token_group"`
+	ModelName               string                                 `json:"model_name"`
+	EndpointType            string                                 `json:"endpoint_type,omitempty"`
+	RequiresCodexImageTool  bool                                   `json:"requires_codex_image_tool,omitempty"`
+	EffectiveRoutingGroups  []string                               `json:"effective_routing_groups"`
+	Groups                  []ChannelSelectionMissGroupExplanation `json:"groups"`
+	HasRequiredCapabilities bool                                   `json:"has_required_capabilities"`
+}
+
+type ChannelSelectionMissGroupExplanation struct {
+	Group                         string `json:"group"`
+	Candidates                    int    `json:"candidates"`
+	EndpointSupported             int    `json:"endpoint_supported"`
+	RequiredCapabilitiesSupported int    `json:"required_capabilities_supported"`
+	CodexImageToolCapable         int    `json:"codex_image_tool_capable,omitempty"`
+	SchedulableCredential         int    `json:"schedulable_credential"`
+	AuthErrorBlocked              int    `json:"auth_error_blocked,omitempty"`
+	UsageLimitedBlocked           int    `json:"usage_limited_blocked,omitempty"`
+	UnsupportedCapabilityMarked   int    `json:"unsupported_capability_marked,omitempty"`
+	SampleChannelIDs              []int  `json:"sample_channel_ids,omitempty"`
 }
 
 type channelAvoidanceEntry struct {
@@ -1451,6 +1475,134 @@ func ChannelSupportsCodexImageGenerationTool(channel *model.Channel) bool {
 	return channelcapability.SupportsCodexImageGenerationTool(channel.Type, channel.GetOtherSettings())
 }
 
+func HasSchedulableChannelForRequiredCapabilities(ctx *gin.Context, tokenGroup string, modelName string, endpointType constant.EndpointType, requiresCodexImageTool bool) bool {
+	if strings.TrimSpace(modelName) == "" {
+		return false
+	}
+	for _, group := range selectionDiagnosticGroups(ctx, tokenGroup) {
+		channel, err := selectNonFullChannel(group, modelName, endpointType, requiresCodexImageTool, 0, nil)
+		if err == nil && channel != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func ExplainChannelSelectionMiss(ctx *gin.Context, tokenGroup string, modelName string, endpointType constant.EndpointType, requiresCodexImageTool bool) ChannelSelectionMissExplanation {
+	groups := selectionDiagnosticGroups(ctx, tokenGroup)
+	explanation := ChannelSelectionMissExplanation{
+		TokenGroup:             tokenGroup,
+		ModelName:              modelName,
+		EndpointType:           string(endpointType),
+		RequiresCodexImageTool: requiresCodexImageTool,
+		EffectiveRoutingGroups: groups,
+		Groups:                 make([]ChannelSelectionMissGroupExplanation, 0, len(groups)),
+	}
+	if strings.TrimSpace(modelName) == "" || len(groups) == 0 {
+		return explanation
+	}
+
+	bindings, err := model.ListEnabledChannelBindings()
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("failed to explain channel selection miss: %v", err))
+		return explanation
+	}
+
+	groupSet := make(map[string]struct{}, len(groups))
+	groupStats := make(map[string]*ChannelSelectionMissGroupExplanation, len(groups))
+	for _, group := range groups {
+		groupSet[group] = struct{}{}
+		groupStats[group] = &ChannelSelectionMissGroupExplanation{Group: group}
+	}
+	for _, binding := range bindings {
+		if binding.Channel == nil || !diagnosticModelMatchesRequest(binding.Model, modelName) {
+			continue
+		}
+		if _, ok := groupSet[binding.Group]; !ok {
+			continue
+		}
+		stats := groupStats[binding.Group]
+		stats.Candidates++
+		if len(stats.SampleChannelIDs) < 8 {
+			stats.SampleChannelIDs = append(stats.SampleChannelIDs, binding.Channel.Id)
+		}
+		if ChannelSupportsRequiredEndpoint(binding.Channel, modelName, endpointType) {
+			stats.EndpointSupported++
+		}
+		if channelHasSchedulableCredential(binding.Channel) {
+			stats.SchedulableCredential++
+		}
+		if channelSupportsCodexImageGenerationToolForScheduling(binding.Channel) {
+			stats.CodexImageToolCapable++
+		}
+		if hasCapabilityClassification(binding.Channel, channelcapability.ClassificationAuthError) {
+			stats.AuthErrorBlocked++
+		}
+		if channelHasUsageLimitedCapability(binding.Channel) {
+			stats.UsageLimitedBlocked++
+		}
+		if hasCapabilityClassification(binding.Channel, channelcapability.ClassificationUnsupportedCapability) {
+			stats.UnsupportedCapabilityMarked++
+		}
+		if ChannelSupportsRequiredCapabilities(binding.Channel, modelName, endpointType, requiresCodexImageTool) {
+			stats.RequiredCapabilitiesSupported++
+			explanation.HasRequiredCapabilities = true
+		}
+	}
+	for _, group := range groups {
+		if stats := groupStats[group]; stats != nil {
+			explanation.Groups = append(explanation.Groups, *stats)
+		}
+	}
+	return explanation
+}
+
+func selectionDiagnosticGroups(ctx *gin.Context, tokenGroup string) []string {
+	tokenGroup = NormalizeTokenGroup(tokenGroup)
+	if tokenGroup == AutoGroupName {
+		userGroup := common.GetContextKeyString(ctx, constant.ContextKeyUserGroup)
+		return GetUserAutoGroup(userGroup)
+	}
+	return EffectiveRoutingGroups(tokenGroup)
+}
+
+func diagnosticModelMatchesRequest(candidateModel string, requestModel string) bool {
+	candidateModel = strings.TrimSpace(candidateModel)
+	requestModel = strings.TrimSpace(requestModel)
+	if candidateModel == "" || requestModel == "" {
+		return false
+	}
+	if candidateModel == requestModel {
+		return true
+	}
+	normalized := ratio_setting.FormatMatchingModelName(requestModel)
+	return normalized != "" && candidateModel == normalized
+}
+
+func hasCapabilityClassification(channel *model.Channel, classification string) bool {
+	if channel == nil || strings.TrimSpace(classification) == "" {
+		return false
+	}
+	for _, capability := range channel.ChannelInfo.MultiKeyCapabilities {
+		if strings.TrimSpace(capability.CapabilityClassification) == classification {
+			return true
+		}
+	}
+	return false
+}
+
+func channelHasUsageLimitedCapability(channel *model.Channel) bool {
+	if channel == nil {
+		return false
+	}
+	for _, capability := range channel.ChannelInfo.MultiKeyCapabilities {
+		if ChannelAccountCapabilityUsageLimited(capability) {
+			return true
+		}
+	}
+	return false
+}
+
 func selectChannelForGroup(ctx *gin.Context, group string, modelName string, endpointType constant.EndpointType, requiresCodexImageTool bool, retry int, allowUsedChannelFallback bool) (*model.Channel, error) {
 	excludedChannelIDs := getUsedChannelSet(ctx)
 	selectionSkippedChannelIDs := getSelectionSkippedChannelSet(ctx)
@@ -1662,7 +1814,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 				if routeGroup != param.TokenGroup {
 					logger.LogWarn(param.Ctx, fmt.Sprintf("Using fallback routing group %s for token group %s and model %s", routeGroup, param.TokenGroup, param.ModelName))
 				}
-				return channel, selectGroup, nil
+				return channel, routeGroup, nil
 			}
 		}
 	}

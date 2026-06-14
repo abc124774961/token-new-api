@@ -482,7 +482,7 @@ func TestCacheGetRandomSatisfiedChannelUsesBaseGroupForDerivedTokenGroup(t *test
 
 	channel, group, err := CacheGetRandomSatisfiedChannel(param)
 	require.NoError(t, err)
-	require.Equal(t, "codex-plus-特惠", group)
+	require.Equal(t, "codex-plus", group)
 	require.NotNil(t, channel)
 	require.Equal(t, 331, channel.Id)
 }
@@ -1032,6 +1032,27 @@ func TestCacheGetRandomSatisfiedChannelFallsBackToBaseModelForCodexMiniVariant(t
 	require.Equal(t, "default", imageToolGroup)
 	require.NotNil(t, imageToolChannel)
 	require.Equal(t, 442, imageToolChannel.Id)
+}
+
+func TestHasSchedulableChannelForRequiredCapabilitiesUsesFallbackGroup(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+
+	seedChannelSelectChannelWithOptions(t, db, 461, "codex-plus", "gpt-5.4", 10, 100, constant.ChannelTypeOpenAI, `{"codex_compatibility_mode":true}`)
+	model.InitChannelCache()
+
+	ctx := newRetryContext()
+	require.True(t, HasSchedulableChannelForRequiredCapabilities(ctx, "codex-plus-vip3", "gpt-5.4", constant.EndpointTypeOpenAIResponse, false))
+	require.False(t, HasSchedulableChannelForRequiredCapabilities(ctx, "codex-plus-vip3", "gpt-5.4", constant.EndpointTypeOpenAIResponse, true))
+
+	explanation := ExplainChannelSelectionMiss(ctx, "codex-plus-vip3", "gpt-5.4", constant.EndpointTypeOpenAIResponse, true)
+	require.Equal(t, []string{"codex-plus-vip3", "codex-plus"}, explanation.EffectiveRoutingGroups)
+	require.False(t, explanation.HasRequiredCapabilities)
+	require.Len(t, explanation.Groups, 2)
+	require.Equal(t, "codex-plus", explanation.Groups[1].Group)
+	require.Equal(t, 1, explanation.Groups[1].Candidates)
+	require.Equal(t, 0, explanation.Groups[1].CodexImageToolCapable)
+	require.Equal(t, 1, explanation.Groups[1].SchedulableCredential)
 }
 
 func TestCacheGetRandomSatisfiedChannelSeesReEnabledChannelImmediately(t *testing.T) {
