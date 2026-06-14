@@ -2222,17 +2222,19 @@ func resetRelayUpstreamTiming(c *gin.Context) {
 }
 
 type relayAttemptWatchdog struct {
-	enabled      bool
-	ctx          *gin.Context
-	start        time.Time
-	control      *helper.RelayAttemptControl
-	cancel       context.CancelFunc
-	done         chan struct{}
-	totalTimeout time.Duration
+	enabled          bool
+	ctx              *gin.Context
+	start            time.Time
+	control          *helper.RelayAttemptControl
+	cancel           context.CancelFunc
+	done             chan struct{}
+	firstByteTimeout time.Duration
+	totalTimeout     time.Duration
 }
 
 func beginRelayAttemptWatchdog(c *gin.Context, info *relaycommon.RelayInfo, plan *modelgatewaycore.DispatchPlan, startedAt time.Time) *relayAttemptWatchdog {
-	w := &relayAttemptWatchdog{ctx: c, start: startedAt}
+	firstByteTimeout := relayFirstByteTimeoutForPlan(plan)
+	w := &relayAttemptWatchdog{ctx: c, start: startedAt, firstByteTimeout: firstByteTimeout}
 	firstByteEnabled := relayFirstByteWatchdogApplies(c, info, plan)
 	totalTimeout := relayTotalDurationTimeout(c, info, plan)
 	if !firstByteEnabled && totalTimeout <= 0 {
@@ -2254,7 +2256,7 @@ func beginRelayAttemptWatchdog(c *gin.Context, info *relaycommon.RelayInfo, plan
 		var firstByteTimer *time.Timer
 		var firstByteC <-chan time.Time
 		if firstByteEnabled {
-			firstByteTimer = time.NewTimer(relayFirstByteTimeout)
+			firstByteTimer = time.NewTimer(firstByteTimeout)
 			firstByteC = firstByteTimer.C
 			defer firstByteTimer.Stop()
 		}
@@ -2287,6 +2289,13 @@ func beginRelayAttemptWatchdog(c *gin.Context, info *relaycommon.RelayInfo, plan
 		}
 	}()
 	return w
+}
+
+func relayFirstByteTimeoutForPlan(plan *modelgatewaycore.DispatchPlan) time.Duration {
+	if plan == nil || plan.FirstByteTimeoutSeconds <= 0 {
+		return relayFirstByteTimeout
+	}
+	return time.Duration(plan.FirstByteTimeoutSeconds) * time.Second
 }
 
 func relayFirstByteWatchdogApplies(c *gin.Context, info *relaycommon.RelayInfo, plan *modelgatewaycore.DispatchPlan) bool {
@@ -2432,9 +2441,13 @@ func (w *relayAttemptWatchdog) firstByteElapsed() time.Duration {
 	if w == nil || w.start.IsZero() {
 		return relayFirstByteTimeout
 	}
+	threshold := w.firstByteTimeout
+	if threshold <= 0 {
+		threshold = relayFirstByteTimeout
+	}
 	elapsed := time.Since(w.start)
-	if elapsed < relayFirstByteTimeout && w.firstByteHit() {
-		return relayFirstByteTimeout
+	if elapsed < threshold && w.firstByteHit() {
+		return threshold
 	}
 	return elapsed
 }

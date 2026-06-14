@@ -48,6 +48,7 @@ type GroupPolicySetting struct {
 	QueueEnabled              bool     `json:"queue_enabled"`
 	QueueHighPriority         bool     `json:"queue_high_priority"`
 	CircuitBreakerEnabled     bool     `json:"circuit_breaker_enabled"`
+	FirstByteTimeoutSeconds   int      `json:"first_byte_timeout_seconds"`
 	ResourceProtectionEnabled bool     `json:"resource_protection_enabled"`
 	PrimaryChannelIDs         []int    `json:"primary_channel_ids"`
 	PrimaryWaitTimeoutMs      int      `json:"primary_wait_timeout_ms"`

@@ -816,6 +816,7 @@ type ModelGatewayObservabilityRecord struct {
 	QueueWaitMs                    int64                              `json:"queue_wait_ms,omitempty"`
 	QueueDepth                     int                                `json:"queue_depth,omitempty"`
 	QueueCapacity                  int                                `json:"queue_capacity,omitempty"`
+	FirstByteTimeoutSeconds        int                                `json:"first_byte_timeout_seconds,omitempty"`
 	ResourceProtectionEnabled      bool                               `json:"resource_protection_enabled,omitempty"`
 	ResourceProtectionPhase        string                             `json:"resource_protection_phase,omitempty"`
 	ResourceProtectionReason       string                             `json:"resource_protection_reason,omitempty"`
@@ -2792,6 +2793,7 @@ func modelGatewayRuntimePolicyForGroup(group string) modelgatewaycore.GroupSmart
 		policy.QueueEnabled = groupPolicy.QueueEnabled
 		policy.QueueHighPriority = groupPolicy.QueueHighPriority
 		policy.CircuitBreakerEnabled = groupPolicy.CircuitBreakerEnabled
+		policy.FirstByteTimeoutSeconds = groupPolicy.FirstByteTimeoutSeconds
 		policy.ResourceProtectionEnabled = groupPolicy.ResourceProtectionEnabled
 		policy.PrimaryChannelIDs = append([]int(nil), groupPolicy.PrimaryChannelIDs...)
 		policy.PrimaryWaitTimeoutMs = groupPolicy.PrimaryWaitTimeoutMs
@@ -4827,6 +4829,7 @@ func modelGatewayObservabilityRecentRecord(record model.ModelExecutionRecord, sc
 		QueueWaitMs:                    meta.QueueWaitMs,
 		QueueDepth:                     meta.QueueDepth,
 		QueueCapacity:                  meta.QueueCapacity,
+		FirstByteTimeoutSeconds:        meta.FirstByteTimeoutSeconds,
 		ResourceProtectionEnabled:      meta.ResourceProtectionEnabled,
 		ResourceProtectionPhase:        meta.ResourceProtectionPhase,
 		ResourceProtectionReason:       meta.ResourceProtectionReason,
@@ -5071,6 +5074,7 @@ type modelGatewayObservabilityDispatchMeta struct {
 	QueueWaitSet              bool
 	QueueDepth                int
 	QueueCapacity             int
+	FirstByteTimeoutSeconds   int
 	ResourceProtectionEnabled bool
 	ResourceProtectionPhase   string
 	ResourceProtectionReason  string
@@ -5276,6 +5280,7 @@ func modelGatewayObservabilityMetaFromRequestMeta(requestMeta map[string]any) mo
 		QueueWaitSet:              queueWaitSet,
 		QueueDepth:                int(modelGatewayObservabilityMetaInt64(requestMeta["queue_depth"])),
 		QueueCapacity:             int(modelGatewayObservabilityMetaInt64(requestMeta["queue_capacity"])),
+		FirstByteTimeoutSeconds:   int(modelGatewayObservabilityMetaInt64(requestMeta["first_byte_timeout_seconds"])),
 		ResourceProtectionEnabled: modelGatewayObservabilityMetaBool(requestMeta["resource_protection_enabled"]),
 		ResourceProtectionPhase:   strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["resource_protection_phase"])),
 		ResourceProtectionReason:  strings.TrimSpace(modelGatewayObservabilityMetaString(requestMeta["resource_protection_reason"])),

@@ -88,6 +88,7 @@ type GroupPolicySetting struct {
 	QueueEnabled              bool
 	QueueHighPriority         bool
 	CircuitBreakerEnabled     bool
+	FirstByteTimeoutSeconds   int
 	ResourceProtectionEnabled bool
 	PrimaryChannelIDs         []int
 	PrimaryWaitTimeoutMs      int

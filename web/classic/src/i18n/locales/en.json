@@ -7935,6 +7935,19 @@
     "支持搜索用户的 ID、用户名、显示名称、邮箱和联系方式": "Search by user ID, username, display name, email, and contact info",
     "负毛利兜底": "Negative-margin fallback",
     "负毛利候选仅作为兜底": "Negative-margin candidates are fallback only",
-    "{{channel}} 当前分组为负毛利，仅保留为兜底候选。": "{{channel}} has negative margin in the current group and is kept only as a fallback candidate."
+    "{{channel}} 当前分组为负毛利，仅保留为兜底候选。": "{{channel}} has negative margin in the current group and is kept only as a fallback candidate.",
+    "订单": "Order",
+    "生效订阅": "Active subscriptions",
+    "最近到期": "Nearest expiry",
+    "全部订阅": "All subscriptions",
+    "查看明细": "View details",
+    "订阅明细": "Subscription details",
+    "总剩余": "Total remaining",
+    "顺位": "Priority",
+    "即将到期": "Expiring soon",
+    "下次重置": "Next reset",
+    "多条订阅会按当前订阅扣费顺序依次抵扣，可在订阅中心查看历史记录。": "Multiple subscriptions are deducted in the current subscription billing order. You can view history in the subscription center.",
+    "延迟超时切换": "Delayed timeout switch",
+    "首字": "First byte"
   }
 }

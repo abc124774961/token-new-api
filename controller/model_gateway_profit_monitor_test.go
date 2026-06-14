@@ -290,6 +290,62 @@ func TestModelGatewayProfitMonitorSummaryPrefersRealTrafficBytes(t *testing.T) {
 	require.InEpsilon(t, payload.Data.Summary.TrafficCostUSD, payload.Data.Breakdown[0].TrafficCostUSD, 0.0001)
 }
 
+func TestModelGatewayProfitMonitorSummaryIgnoresOldRowsUpdatedInsideWindow(t *testing.T) {
+	db := setupModelGatewayProfitMonitorTestDB(t)
+	require.NoError(t, saveModelGatewayProfitMonitorConfig(ModelGatewayProfitMonitorConfig{
+		Enabled:              true,
+		ResourceCostEnabled:  true,
+		TargetProfitRate:     0.2,
+		ServerDailyCostUSD:   0,
+		TrafficCostPerGBUSD:  0,
+		DynamicRatioMaxLimit: 1,
+	}))
+	require.NoError(t, db.Create(&model.ChannelAccountUsageEvent{
+		RequestId:         "req-old-mutated-today",
+		ChannelID:         12,
+		RequestedModel:    "gpt-test",
+		RequestedGroup:    "codex-pro",
+		SelectedGroup:     "codex-pro",
+		CreatedAt:         10,
+		UpdatedAt:         150,
+		CompletedAt:       0,
+		Success:           true,
+		TotalTokens:       1000,
+		Quota:             500000,
+		UpstreamCostTotal: 9,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelAccountUsageEvent{
+		RequestId:         "req-current-created",
+		ChannelID:         12,
+		RequestedModel:    "gpt-test",
+		RequestedGroup:    "codex-pro",
+		SelectedGroup:     "codex-pro",
+		CreatedAt:         150,
+		UpdatedAt:         150,
+		CompletedAt:       0,
+		Success:           true,
+		TotalTokens:       2000,
+		Quota:             1000000,
+		UpstreamCostTotal: 0.5,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/api/model_gateway/profit_monitor/summary", GetModelGatewayProfitMonitorSummary)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/model_gateway/profit_monitor/summary?start_timestamp=100&end_timestamp=200&breakdown_dimension=group", nil)
+	router.ServeHTTP(recorder, req)
+
+	var payload modelGatewayProfitMonitorAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success, recorder.Body.String())
+	require.Equal(t, int64(1), payload.Data.Summary.Requests)
+	require.Equal(t, int64(1), payload.Data.Summary.SuccessRequests)
+	require.InEpsilon(t, 2.0, payload.Data.Summary.RevenueUSD, 0.0001)
+	require.InEpsilon(t, 0.5, payload.Data.Summary.UpstreamCostUSD, 0.0001)
+	require.Len(t, payload.Data.Breakdown, 1)
+	require.Equal(t, "codex-pro", payload.Data.Breakdown[0].DimensionName)
+}
+
 type modelGatewayProfitTrafficAPIResponse struct {
 	Success bool                              `json:"success"`
 	Message string                            `json:"message"`
@@ -376,7 +432,7 @@ func TestModelGatewayProfitMonitorDynamicRatioGroupsArePerGroup(t *testing.T) {
 
 	groups, summary := buildModelGatewayProfitDynamicRatioGroups(ModelGatewayProfitMonitorConfig{
 		TargetProfitRate: 0.2,
-	})
+	}, nil, 0, 0, ModelGatewayProfitMonitorSummary{})
 	plus := findProfitMonitorDynamicRatioGroup(t, groups, "codex-plus")
 	pro := findProfitMonitorDynamicRatioGroup(t, groups, "codex-pro")
 
@@ -434,7 +490,7 @@ func TestModelGatewayProfitMonitorDynamicRatioGroupPolicyMatchesCaseInsensitive(
 
 	groups, _ := buildModelGatewayProfitDynamicRatioGroups(ModelGatewayProfitMonitorConfig{
 		TargetProfitRate: 0.2,
-	})
+	}, nil, 0, 0, ModelGatewayProfitMonitorSummary{})
 	plus := findProfitMonitorDynamicRatioGroup(t, groups, "codex-plus")
 
 	require.Equal(t, scheduler_setting.BillingRatioModeDynamic, plus.BillingRatioMode)
@@ -448,7 +504,7 @@ func TestModelGatewayProfitMonitorDynamicRatioGroupShowsObserveFallback(t *testi
 
 	groups, _ := buildModelGatewayProfitDynamicRatioGroups(ModelGatewayProfitMonitorConfig{
 		TargetProfitRate: 0.2,
-	})
+	}, nil, 0, 0, ModelGatewayProfitMonitorSummary{})
 	plus := findProfitMonitorDynamicRatioGroup(t, groups, "codex-plus")
 
 	require.False(t, plus.Applied)
@@ -457,9 +513,70 @@ func TestModelGatewayProfitMonitorDynamicRatioGroupShowsObserveFallback(t *testi
 	require.InEpsilon(t, 0.20, plus.DynamicRatio, 0.0001)
 }
 
+func TestModelGatewayProfitMonitorDynamicRatioGroupsUseCurrentWindowBreakdownMetrics(t *testing.T) {
+	_ = setupModelGatewayProfitMonitorTestDB(t)
+	seedProfitMonitorDynamicBillingBaselines(t, scheduler_setting.DynamicBillingApplyModeAuto)
+
+	groups, summary := buildModelGatewayProfitDynamicRatioGroups(ModelGatewayProfitMonitorConfig{
+		TargetProfitRate: 0.2,
+	}, []ModelGatewayProfitMonitorBreakdown{
+		{
+			DimensionKey:              "codex-plus",
+			DimensionName:             "codex-plus",
+			Requests:                  3,
+			SuccessRequests:           2,
+			TotalTokens:               5000,
+			BillingQuota:              1000000,
+			RevenueUSD:                2,
+			UpstreamCostUSD:           0.6,
+			TrafficCostUSD:            0.1,
+			AllocatedOperatingCostUSD: 1,
+			ProfitUSD:                 1,
+			GrossMargin:               0.5,
+		},
+	}, 100, 200, ModelGatewayProfitMonitorSummary{TrafficDataReady: true})
+
+	plus := findProfitMonitorDynamicRatioGroup(t, groups, "codex-plus")
+	pro := findProfitMonitorDynamicRatioGroup(t, groups, "codex-pro")
+
+	require.Equal(t, int64(3), plus.RequestCount)
+	require.Equal(t, int64(2), plus.SuccessRequestCount)
+	require.Equal(t, int64(5000), plus.TotalTokens)
+	require.InEpsilon(t, 2.0, plus.CurrentRevenueUSD, 0.0001)
+	require.InEpsilon(t, 1.0, plus.OperatingCostUSD, 0.0001)
+	require.InEpsilon(t, 1.25, plus.RequiredRevenueUSD, 0.0001)
+	require.InEpsilon(t, -0.75, plus.RevenueGapUSD, 0.0001)
+	require.Equal(t, int64(100), plus.WindowStart)
+	require.Equal(t, int64(200), plus.WindowEnd)
+	require.Equal(t, 2, plus.SampleCount)
+	require.True(t, plus.TrafficDataReady)
+
+	require.Zero(t, pro.RequestCount)
+	require.Zero(t, pro.CurrentRevenueUSD)
+	require.Zero(t, pro.OperatingCostUSD)
+	require.Equal(t, int64(100), pro.WindowStart)
+	require.Equal(t, int64(200), pro.WindowEnd)
+	require.InEpsilon(t, plus.OperatingCostUSD, summary.OperatingCostUSD, 0.0001)
+}
+
 func TestModelGatewayProfitMonitorGroupRecommendationScopePersistsAndCanaryInherits(t *testing.T) {
 	db := setupModelGatewayProfitMonitorTestDB(t)
 	seedProfitMonitorDynamicBillingBaselines(t, scheduler_setting.DynamicBillingApplyModeAuto)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.ChannelAccountUsageEvent{
+		RequestId:         "req-codex-pro-current-window",
+		ChannelID:         12,
+		RequestedModel:    "gpt-test",
+		RequestedGroup:    "codex-pro",
+		SelectedGroup:     "codex-pro",
+		CreatedAt:         now - 60,
+		UpdatedAt:         now - 60,
+		CompletedAt:       now - 60,
+		Success:           true,
+		TotalTokens:       2000,
+		Quota:             500000,
+		UpstreamCostTotal: 2,
+	}).Error)
 
 	router := gin.New()
 	router.POST("/api/model_gateway/profit_monitor/recommendations", CreateModelGatewayProfitMonitorRecommendation)

@@ -7837,6 +7837,19 @@
     "支持搜索用户的 ID、用户名、显示名称、邮箱和联系方式": "Recherche par ID utilisateur, nom d’utilisateur, nom d’affichage, e-mail et coordonnées",
     "负毛利兜底": "Repli à marge négative",
     "负毛利候选仅作为兜底": "Les candidats à marge négative servent uniquement de repli",
-    "{{channel}} 当前分组为负毛利，仅保留为兜底候选。": "{{channel}} a une marge négative dans le groupe actuel et reste uniquement comme candidat de repli."
+    "{{channel}} 当前分组为负毛利，仅保留为兜底候选。": "{{channel}} a une marge négative dans le groupe actuel et reste uniquement comme candidat de repli.",
+    "订单": "Commande",
+    "生效订阅": "Abonnements actifs",
+    "最近到期": "Expiration la plus proche",
+    "全部订阅": "Tous les abonnements",
+    "查看明细": "Voir les détails",
+    "订阅明细": "Détails des abonnements",
+    "总剩余": "Total restant",
+    "顺位": "Priorité",
+    "即将到期": "Expire bientôt",
+    "下次重置": "Prochaine réinitialisation",
+    "多条订阅会按当前订阅扣费顺序依次抵扣，可在订阅中心查看历史记录。": "Les abonnements multiples sont débités selon l'ordre actuel de facturation. L'historique est disponible dans le centre d'abonnement.",
+    "延迟超时切换": "Bascule après délai",
+    "首字": "Premier octet"
   }
 }

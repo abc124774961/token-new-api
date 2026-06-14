@@ -433,6 +433,11 @@ func normalizeModelGatewayGroupPolicies(src map[string]scheduler_setting.GroupPo
 		policy.CandidateGroups = uniqueTrimmedModelGatewayStrings(policy.CandidateGroups)
 		policy.PrimaryChannelIDs = uniquePositiveModelGatewayInts(policy.PrimaryChannelIDs)
 		policy.FallbackChannelIDs = uniquePositiveModelGatewayInts(policy.FallbackChannelIDs)
+		if policy.FirstByteTimeoutSeconds <= 0 {
+			policy.FirstByteTimeoutSeconds = 20
+		}
+		policy.FirstByteTimeoutSeconds = normalizeModelGatewayConfigMin(policy.FirstByteTimeoutSeconds, 1, 20)
+		policy.FirstByteTimeoutSeconds = normalizeModelGatewayConfigMax(policy.FirstByteTimeoutSeconds, 600)
 		if policy.PrimaryWaitTimeoutMs < 0 {
 			policy.PrimaryWaitTimeoutMs = 0
 		}

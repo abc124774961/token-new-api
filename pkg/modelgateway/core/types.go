@@ -162,6 +162,7 @@ type GroupSmartPolicy struct {
 	QueueHighPriority         bool
 	QueuePriority             int
 	CircuitBreakerEnabled     bool
+	FirstByteTimeoutSeconds   int
 	GroupPriorityRatio        map[string]float64
 	GroupRevenueRatio         map[string]float64
 	ResourceProtectionEnabled bool
@@ -237,6 +238,7 @@ type DispatchPlan struct {
 	RetryIntentApplied          bool
 	RetryQueuePriorityBoost     bool
 	CostGuardDecision           *CostGuardDecision
+	FirstByteTimeoutSeconds     int
 	ResourceProtectionEnabled   bool
 	ResourceProtectionPhase     string
 	ResourceProtectionReason    string

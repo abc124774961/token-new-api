@@ -81,8 +81,11 @@
 .ct-command-side-panel,
 .ct-command-feed-panel {
   border: 0;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.78)),
+  background: linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.94),
+      rgba(248, 250, 252, 0.78)
+    ),
     linear-gradient(90deg, rgba(204, 251, 241, 0.13), transparent 58%);
   box-shadow: var(--ct-command-shadow), var(--ct-command-surface-highlight);
   backdrop-filter: blur(14px);
@@ -417,6 +420,14 @@
   background: #2563eb;
 }
 
+.ct-command-subscription-actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .ct-command-subscription-action.semi-button {
   height: 40px !important;
   min-width: 104px !important;
@@ -428,9 +439,18 @@
   box-shadow: 0 14px 30px rgba(8, 145, 178, 0.12) !important;
 }
 
+.ct-command-subscription-action-soft.semi-button {
+  background: rgba(219, 234, 254, 0.74) !important;
+  color: #2563eb !important;
+}
+
 .ct-command-subscription-action.semi-button:hover {
   background: rgba(204, 251, 241, 0.9) !important;
   transform: translateY(-1px);
+}
+
+.ct-command-subscription-action-soft.semi-button:hover {
+  background: rgba(191, 219, 254, 0.92) !important;
 }
 
 .dark .ct-command-subscription-action.semi-button {
@@ -552,14 +572,173 @@
   display: block;
   overflow: hidden;
   color: var(--ct-command-ink);
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', monospace;
   font-size: 16px;
   font-weight: 900;
   letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ct-command-subscription-sheet-title {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.ct-command-subscription-detail {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  background: #f8fafc;
+}
+
+.ct-command-subscription-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ct-command-subscription-detail-summary > div,
+.ct-command-subscription-detail-card,
+.ct-command-subscription-detail-empty,
+.ct-command-subscription-detail-note {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.05);
+}
+
+.ct-command-subscription-detail-summary > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 12px;
+}
+
+.ct-command-subscription-detail-summary span,
+.ct-command-subscription-detail-fields span,
+.ct-command-subscription-detail-quota span {
+  color: var(--ct-command-muted);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.ct-command-subscription-detail-summary strong,
+.ct-command-subscription-detail-fields strong,
+.ct-command-subscription-detail-quota strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ct-command-ink);
+  font-size: 14px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-command-subscription-detail-list {
+  display: grid;
+  gap: 12px;
+}
+
+.ct-command-subscription-detail-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.ct-command-subscription-detail-head {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ct-command-subscription-detail-title {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.ct-command-subscription-detail-title strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ct-command-ink);
+  font-size: 16px;
+  font-weight: 920;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-command-subscription-detail-title span {
+  color: var(--ct-command-muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.ct-command-subscription-detail-tags {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.ct-command-subscription-detail-quota {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ct-command-subscription-detail-progress {
+  position: relative;
+  overflow: hidden;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.16);
+}
+
+.ct-command-subscription-detail-progress span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  max-width: 100%;
+  border-radius: inherit;
+  background: linear-gradient(135deg, #0f766e, #0891b2);
+}
+
+.ct-command-subscription-detail-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.ct-command-subscription-detail-fields > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 9px;
+  border-radius: 12px;
+  background: rgba(241, 245, 249, 0.72);
+}
+
+.ct-command-subscription-detail-empty,
+.ct-command-subscription-detail-note {
+  padding: 14px;
+  color: var(--ct-command-muted);
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.ct-command-subscription-detail-empty {
+  text-align: center;
 }
 
 .ct-command-metric-grid {
@@ -617,9 +796,8 @@
 .ct-command-metric-index {
   flex: 0 0 auto;
   color: var(--ct-command-subtle);
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', monospace;
   font-size: 12px;
   font-weight: 850;
 }
@@ -783,9 +961,8 @@
 .ct-command-metric-value,
 .ct-command-metric-secondary-value {
   color: var(--ct-command-ink);
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', monospace;
   font-weight: 900;
   letter-spacing: 0;
   line-height: 1.05;
@@ -1108,9 +1285,8 @@
   border-radius: 999px !important;
   background: rgba(207, 250, 254, 0.72) !important;
   color: #0e7490 !important;
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', monospace;
   font-weight: 900 !important;
   box-shadow: 0 10px 22px rgba(8, 145, 178, 0.1) !important;
 }
@@ -1188,9 +1364,8 @@
   overflow-wrap: anywhere;
   color: var(--ct-command-teal);
   cursor: pointer;
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', monospace;
   font-size: 12px;
   font-weight: 760;
 }
@@ -1210,7 +1385,10 @@
 
 .ct-command-dashboard-service-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(260px, 0.72fr) minmax(260px, 0.72fr);
+  grid-template-columns: minmax(0, 1.55fr) minmax(260px, 0.72fr) minmax(
+      260px,
+      0.72fr
+    );
   gap: 14px;
 }
 
@@ -1634,6 +1812,31 @@
   box-shadow: none;
 }
 
+.dark .ct-command-subscription-detail {
+  background: #121926;
+}
+
+.dark .ct-command-subscription-detail-summary > div,
+.dark .ct-command-subscription-detail-card,
+.dark .ct-command-subscription-detail-empty,
+.dark .ct-command-subscription-detail-note {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: #1f2937;
+  box-shadow: none;
+}
+
+.dark .ct-command-subscription-detail-fields > div {
+  background: #182131;
+}
+
+.dark .ct-command-subscription-detail-progress {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.dark .ct-command-subscription-detail-progress span {
+  background: #93b7e8;
+}
+
 .dark .ct-command-metric-primary:hover,
 .dark .ct-command-metric-secondary:hover,
 .dark .ct-command-dashboard-page .ct-dashboard-list-item:hover {
@@ -1725,7 +1928,9 @@
 }
 
 .dark .ct-command-metric-icon-green,
-.dark .ct-command-subscription-metric-green .ct-command-subscription-metric-icon {
+.dark
+  .ct-command-subscription-metric-green
+  .ct-command-subscription-metric-icon {
   color: #9cc7b1 !important;
   background: #263b34 !important;
 }
@@ -1750,7 +1955,9 @@
 
 .dark .ct-command-metric-icon-amber,
 .dark .ct-command-metric-icon-orange,
-.dark .ct-command-subscription-metric-amber .ct-command-subscription-metric-icon {
+.dark
+  .ct-command-subscription-metric-amber
+  .ct-command-subscription-metric-icon {
   color: #d7bc87 !important;
   background: #4b3f2f !important;
 }
@@ -1760,12 +1967,16 @@
   background: #50352b !important;
 }
 
-.dark .ct-command-subscription-metric-cyan .ct-command-subscription-metric-icon {
+.dark
+  .ct-command-subscription-metric-cyan
+  .ct-command-subscription-metric-icon {
   color: #7cc7d8 !important;
   background: #223b46 !important;
 }
 
-.dark .ct-command-subscription-metric-violet .ct-command-subscription-metric-icon {
+.dark
+  .ct-command-subscription-metric-violet
+  .ct-command-subscription-metric-icon {
   color: #baa5e8 !important;
   background: #392f4f !important;
 }
@@ -1852,8 +2063,12 @@
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .ct-command-subscription-action.semi-button {
+  .ct-command-subscription-actions {
     grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .ct-command-subscription-action.semi-button {
     width: max-content;
   }
 
@@ -1901,12 +2116,36 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .ct-command-subscription-actions {
+    width: 100%;
+  }
+
   .ct-command-subscription-title-row strong {
     white-space: normal;
   }
 
   .ct-command-subscription-action.semi-button {
+    flex: 1 1 150px;
     width: 100%;
+  }
+
+  .ct-command-subscription-detail {
+    padding: 14px;
+  }
+
+  .ct-command-subscription-detail-summary,
+  .ct-command-subscription-detail-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ct-command-subscription-detail-head,
+  .ct-command-subscription-detail-quota {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ct-command-subscription-detail-tags {
+    justify-content: flex-start;
   }
 
   .ct-command-metric-grid,

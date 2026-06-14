@@ -669,7 +669,19 @@ func buildModelGatewayProfitMonitorResponse(window string, startTimestamp int64,
 		return ModelGatewayProfitMonitorResponse{}, err
 	}
 	allocateModelGatewayProfitMonitorBreakdownCosts(breakdown, summary, resources, config, breakdownDimension, hasTrafficBreakdown)
-	dynamicRatioGroups, dynamicRatioSummary := buildModelGatewayProfitDynamicRatioGroups(config)
+	groupBreakdown := breakdown
+	if breakdownDimension != "group" {
+		groupBreakdown, err = queryModelGatewayProfitMonitorBreakdown(startTimestamp, endTimestamp, "group")
+		if err != nil {
+			return ModelGatewayProfitMonitorResponse{}, err
+		}
+		hasGroupTrafficBreakdown, err := applyModelGatewayProfitMonitorTrafficBreakdown(groupBreakdown, startTimestamp, endTimestamp, "group", summary)
+		if err != nil {
+			return ModelGatewayProfitMonitorResponse{}, err
+		}
+		allocateModelGatewayProfitMonitorBreakdownCosts(groupBreakdown, summary, resources, config, "group", hasGroupTrafficBreakdown)
+	}
+	dynamicRatioGroups, dynamicRatioSummary := buildModelGatewayProfitDynamicRatioGroups(config, groupBreakdown, startTimestamp, endTimestamp, summary)
 	anomalies, err := queryModelGatewayProfitAnomalies(startTimestamp, endTimestamp, 0.40)
 	if err != nil {
 		return ModelGatewayProfitMonitorResponse{}, err
@@ -1184,10 +1196,9 @@ func modelGatewayProfitUsageBaseQuery(startTimestamp int64, endTimestamp int64) 
 	return model.DB.Model(&model.ChannelAccountUsageEvent{}).
 		Where("is_health_probe = ?", false).
 		Where(
-			"((completed_at >= ? AND completed_at <= ?) OR (completed_at <= ? AND updated_at >= ? AND updated_at <= ?) OR (completed_at <= ? AND updated_at <= ? AND created_at >= ? AND created_at <= ?))",
-			startTimestamp, endTimestamp,
+			"((completed_at > ? AND completed_at >= ? AND completed_at <= ?) OR (completed_at <= ? AND created_at >= ? AND created_at <= ?))",
 			0, startTimestamp, endTimestamp,
-			0, 0, startTimestamp, endTimestamp,
+			0, startTimestamp, endTimestamp,
 		).
 		Where("(quota <> ? OR upstream_cost_total > ? OR total_tokens > ? OR success = ? OR status_code <> ? OR error_category <> ?)", 0, 0, 0, true, 0, "")
 }
@@ -1420,11 +1431,12 @@ func modelGatewayProfitAllocationRatio(row ModelGatewayProfitMonitorBreakdown, s
 	}
 }
 
-func buildModelGatewayProfitDynamicRatioGroups(config ModelGatewayProfitMonitorConfig) ([]ModelGatewayProfitDynamicRatioGroup, ModelGatewayProfitDynamicRatioSummary) {
+func buildModelGatewayProfitDynamicRatioGroups(config ModelGatewayProfitMonitorConfig, groupBreakdown []ModelGatewayProfitMonitorBreakdown, startTimestamp int64, endTimestamp int64, windowSummary ModelGatewayProfitMonitorSummary) ([]ModelGatewayProfitDynamicRatioGroup, ModelGatewayProfitDynamicRatioSummary) {
 	setting := scheduler_setting.GetSetting()
 	ratioMap := ratio_setting.GetGroupRatioCopy()
 	baselines := modelgatewaydynamicbilling.DefaultBaselineSnapshots()
 	baselineByGroup := make(map[string]modelgatewaydynamicbilling.RatioBaseline, len(baselines))
+	breakdownByGroup := modelGatewayProfitBreakdownByGroup(groupBreakdown)
 	groupNames := make(map[string]string)
 	for group := range ratioMap {
 		trimmed := strings.TrimSpace(group)
@@ -1560,6 +1572,11 @@ func buildModelGatewayProfitDynamicRatioGroups(config ModelGatewayProfitMonitorC
 			CalculatedAt:             baseline.CalculatedAt,
 			UpdatedAt:                baseline.CalculatedAt,
 		}
+		if row, ok := breakdownByGroup[key]; ok {
+			item = applyModelGatewayProfitWindowBreakdownToDynamicRatioGroup(item, row, config, startTimestamp, endTimestamp, windowSummary)
+		} else if startTimestamp > 0 || endTimestamp > 0 {
+			item = clearModelGatewayProfitDynamicRatioGroupWindowMetrics(item, startTimestamp, endTimestamp, windowSummary)
+		}
 		items = append(items, item)
 		summary.TotalGroups++
 		if item.Applied {
@@ -1587,6 +1604,87 @@ func buildModelGatewayProfitDynamicRatioGroups(config ModelGatewayProfitMonitorC
 		return strings.TrimSpace(items[i].Group) < strings.TrimSpace(items[j].Group)
 	})
 	return items, summary
+}
+
+func modelGatewayProfitBreakdownByGroup(rows []ModelGatewayProfitMonitorBreakdown) map[string]ModelGatewayProfitMonitorBreakdown {
+	out := make(map[string]ModelGatewayProfitMonitorBreakdown, len(rows))
+	for _, row := range rows {
+		key := strings.ToLower(strings.TrimSpace(row.DimensionName))
+		if key == "" {
+			key = strings.ToLower(strings.TrimSpace(row.DimensionKey))
+		}
+		if key == "" {
+			continue
+		}
+		out[key] = row
+	}
+	return out
+}
+
+func applyModelGatewayProfitWindowBreakdownToDynamicRatioGroup(item ModelGatewayProfitDynamicRatioGroup, row ModelGatewayProfitMonitorBreakdown, config ModelGatewayProfitMonitorConfig, startTimestamp int64, endTimestamp int64, windowSummary ModelGatewayProfitMonitorSummary) ModelGatewayProfitDynamicRatioGroup {
+	item.RequestCount = row.Requests
+	item.SuccessRequestCount = row.SuccessRequests
+	item.TotalTokens = row.TotalTokens
+	item.CurrentRevenueUSD = row.RevenueUSD
+	item.UpstreamCostUSD = row.UpstreamCostUSD
+	item.TrafficCostUSD = row.TrafficCostUSD
+	extraCost := row.AllocatedOperatingCostUSD - row.UpstreamCostUSD - row.TrafficCostUSD
+	if extraCost < 0 {
+		extraCost = 0
+	}
+	item.ServerCostUSD = 0
+	item.ResourceCostUSD = extraCost
+	item.OperatingCostUSD = row.AllocatedOperatingCostUSD
+	profitRate := item.ProfitRate
+	if profitRate <= 0 {
+		profitRate = config.TargetProfitRate
+	}
+	profitRate = modelgatewaydynamicbilling.SanitizeTargetGrossMargin(profitRate)
+	item.RequiredRevenueUSD = modelgatewaydynamicbilling.RequiredRevenueForGrossMargin(item.OperatingCostUSD, profitRate)
+	item.RevenueGapUSD = item.RequiredRevenueUSD - item.CurrentRevenueUSD
+	item.BaseQuotaAtRatio1 = modelGatewayProfitBaseQuotaAtRatioOne(row.BillingQuota, item.ActualRatio)
+	if item.BaseQuotaAtRatio1 > 0 && common.QuotaPerUnit > 0 {
+		item.CostMultiplier = item.OperatingCostUSD / (item.BaseQuotaAtRatio1 / common.QuotaPerUnit)
+	}
+	item.SampleCount = int(row.SuccessRequests)
+	item.TrafficEstimated = windowSummary.TrafficEstimated
+	item.TrafficDataReady = windowSummary.TrafficDataReady
+	item.WindowStart = startTimestamp
+	item.WindowEnd = endTimestamp
+	item.CalculatedAt = common.GetTimestamp()
+	item.UpdatedAt = item.CalculatedAt
+	return item
+}
+
+func clearModelGatewayProfitDynamicRatioGroupWindowMetrics(item ModelGatewayProfitDynamicRatioGroup, startTimestamp int64, endTimestamp int64, windowSummary ModelGatewayProfitMonitorSummary) ModelGatewayProfitDynamicRatioGroup {
+	item.RequestCount = 0
+	item.SuccessRequestCount = 0
+	item.TotalTokens = 0
+	item.CurrentRevenueUSD = 0
+	item.RequiredRevenueUSD = 0
+	item.RevenueGapUSD = 0
+	item.UpstreamCostUSD = 0
+	item.TrafficCostUSD = 0
+	item.ServerCostUSD = 0
+	item.ResourceCostUSD = 0
+	item.OperatingCostUSD = 0
+	item.BaseQuotaAtRatio1 = 0
+	item.CostMultiplier = 0
+	item.SampleCount = 0
+	item.TrafficEstimated = windowSummary.TrafficEstimated
+	item.TrafficDataReady = windowSummary.TrafficDataReady
+	item.WindowStart = startTimestamp
+	item.WindowEnd = endTimestamp
+	item.CalculatedAt = common.GetTimestamp()
+	item.UpdatedAt = item.CalculatedAt
+	return item
+}
+
+func modelGatewayProfitBaseQuotaAtRatioOne(billingQuota int64, actualRatio float64) float64 {
+	if billingQuota <= 0 || actualRatio <= 0 {
+		return 0
+	}
+	return float64(billingQuota) / actualRatio
 }
 
 func modelGatewayProfitStaticGroupRatio(group string, ratioMap map[string]float64) float64 {

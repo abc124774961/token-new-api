@@ -155,6 +155,7 @@ func (p *SchedulerSettingsProvider) Get() core.SchedulerSettings {
 			QueueEnabled:              policy.QueueEnabled,
 			QueueHighPriority:         policy.QueueHighPriority,
 			CircuitBreakerEnabled:     policy.CircuitBreakerEnabled,
+			FirstByteTimeoutSeconds:   policy.FirstByteTimeoutSeconds,
 			ResourceProtectionEnabled: policy.ResourceProtectionEnabled,
 			PrimaryChannelIDs:         append([]int(nil), policy.PrimaryChannelIDs...),
 			PrimaryWaitTimeoutMs:      policy.PrimaryWaitTimeoutMs,

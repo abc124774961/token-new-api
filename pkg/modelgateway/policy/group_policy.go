@@ -72,6 +72,7 @@ func (r *DefaultGroupPolicyResolver) Resolve(c *gin.Context, req *core.DispatchR
 		QueueHighPriority:         policySetting.QueueHighPriority,
 		QueuePriority:             queuePriorityForPolicy(req.RequestedGroup, policySetting, settings),
 		CircuitBreakerEnabled:     policySetting.CircuitBreakerEnabled,
+		FirstByteTimeoutSeconds:   policySetting.FirstByteTimeoutSeconds,
 		GroupPriorityRatio:        copyGroupPriorityRatio(settings.GroupPriorityRatio),
 		GroupRevenueRatio:         copyGroupRevenueRatio(settings.GroupRevenueRatio),
 		ResourceProtectionEnabled: policySetting.ResourceProtectionEnabled,

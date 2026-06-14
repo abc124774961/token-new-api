@@ -37,6 +37,14 @@ func newRelayRetryContext() *gin.Context {
 	return ctx
 }
 
+func TestRelayFirstByteTimeoutForPlanUsesGroupOverride(t *testing.T) {
+	require.Equal(t, relayFirstByteTimeout, relayFirstByteTimeoutForPlan(nil))
+	require.Equal(t, relayFirstByteTimeout, relayFirstByteTimeoutForPlan(&modelgatewaycore.DispatchPlan{}))
+	require.Equal(t, 35*time.Second, relayFirstByteTimeoutForPlan(&modelgatewaycore.DispatchPlan{
+		FirstByteTimeoutSeconds: 35,
+	}))
+}
+
 func TestReportModelGatewayEarlyFailureRecordsSelectedPlanTerminalError(t *testing.T) {
 	var capturedChannel *model.Channel
 	var capturedAPIError *types.NewAPIError

@@ -455,6 +455,7 @@ func TestModelGatewayConfigNormalizesResourceProtectionPolicy(t *testing.T) {
 	setting.GroupPolicies = map[string]scheduler_setting.GroupPolicySetting{
 		"codex-plus": {
 			Mode:                      scheduler_setting.ModeActive,
+			FirstByteTimeoutSeconds:   0,
 			ResourceProtectionEnabled: true,
 			PrimaryChannelIDs:         []int{8, 8, 0, 9},
 			PrimaryWaitTimeoutMs:      0,
@@ -473,6 +474,7 @@ func TestModelGatewayConfigNormalizesResourceProtectionPolicy(t *testing.T) {
 	require.True(t, payload.Success, resp.Body.String())
 	policy := payload.Data.Setting.GroupPolicies["codex-plus"]
 	require.True(t, policy.ResourceProtectionEnabled)
+	require.Equal(t, 20, policy.FirstByteTimeoutSeconds)
 	require.Equal(t, []int{8, 9}, policy.PrimaryChannelIDs)
 	require.Equal(t, 4200, policy.PrimaryWaitTimeoutMs)
 	require.Equal(t, 12, policy.PrimaryQueueMaxDepth)

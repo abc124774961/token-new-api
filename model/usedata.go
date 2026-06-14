@@ -102,6 +102,9 @@ func increaseQuotaData(userId int, username string, modelName string, count int,
 }
 
 func GetQuotaDataByUsername(username string, startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
+	if LOG_DB != nil {
+		return getLogQuotaDataByUsername(username, startTime, endTime)
+	}
 	var quotaDatas []*QuotaData
 	// 从quota_data表中查询数据
 	err = DB.Table("quota_data").Where("username = ? and created_at >= ? and created_at <= ?", username, startTime, endTime).Find(&quotaDatas).Error
@@ -109,6 +112,9 @@ func GetQuotaDataByUsername(username string, startTime int64, endTime int64) (qu
 }
 
 func GetQuotaDataByUserId(userId int, startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
+	if LOG_DB != nil {
+		return getLogQuotaDataByUserId(userId, startTime, endTime)
+	}
 	var quotaDatas []*QuotaData
 	// 从quota_data表中查询数据
 	err = DB.Table("quota_data").Where("user_id = ? and created_at >= ? and created_at <= ?", userId, startTime, endTime).Find(&quotaDatas).Error
@@ -116,6 +122,9 @@ func GetQuotaDataByUserId(userId int, startTime int64, endTime int64) (quotaData
 }
 
 func GetQuotaDataGroupByUser(startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
+	if LOG_DB != nil {
+		return getLogQuotaDataGroupByUser(startTime, endTime)
+	}
 	var quotaDatas []*QuotaData
 	err = DB.Table("quota_data").
 		Select("username, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
@@ -129,10 +138,74 @@ func GetAllQuotaDates(startTime int64, endTime int64, username string) (quotaDat
 	if username != "" {
 		return GetQuotaDataByUsername(username, startTime, endTime)
 	}
+	if LOG_DB != nil {
+		return getAllLogQuotaDates(startTime, endTime)
+	}
 	var quotaDatas []*QuotaData
 	// 从quota_data表中查询数据
 	// only select model_name, sum(count) as count, sum(quota) as quota, model_name, created_at from quota_data group by model_name, created_at;
 	//err = DB.Table("quota_data").Where("created_at >= ? and created_at <= ?", startTime, endTime).Find(&quotaDatas).Error
 	err = DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used, created_at").Where("created_at >= ? and created_at <= ?", startTime, endTime).Group("model_name, created_at").Find(&quotaDatas).Error
 	return quotaDatas, err
+}
+
+func quotaDataLogBucketExpr() string {
+	return "created_at - (created_at % 3600)"
+}
+
+func quotaDataLogTokenExpr() string {
+	return "COALESCE(SUM(prompt_tokens), 0) + COALESCE(SUM(completion_tokens), 0)"
+}
+
+func quotaDataLogBaseQuery(startTime int64, endTime int64) *gorm.DB {
+	query := LOG_DB.Table("logs").Where("type = ?", LogTypeConsume)
+	if startTime > 0 {
+		query = query.Where("created_at >= ?", startTime)
+	}
+	if endTime > 0 {
+		query = query.Where("created_at <= ?", endTime)
+	}
+	return query
+}
+
+func getLogQuotaDataByUsername(username string, startTime int64, endTime int64) ([]*QuotaData, error) {
+	rows := make([]*QuotaData, 0)
+	bucketExpr := quotaDataLogBucketExpr()
+	err := quotaDataLogBaseQuery(startTime, endTime).
+		Select("user_id, username, model_name, "+bucketExpr+" AS created_at, COUNT(*) AS count, COALESCE(SUM(quota), 0) AS quota, "+quotaDataLogTokenExpr()+" AS token_used").
+		Where("username = ?", username).
+		Group("user_id, username, model_name, " + bucketExpr).
+		Find(&rows).Error
+	return rows, err
+}
+
+func getLogQuotaDataByUserId(userId int, startTime int64, endTime int64) ([]*QuotaData, error) {
+	rows := make([]*QuotaData, 0)
+	bucketExpr := quotaDataLogBucketExpr()
+	err := quotaDataLogBaseQuery(startTime, endTime).
+		Select("user_id, MAX(username) AS username, model_name, "+bucketExpr+" AS created_at, COUNT(*) AS count, COALESCE(SUM(quota), 0) AS quota, "+quotaDataLogTokenExpr()+" AS token_used").
+		Where("user_id = ?", userId).
+		Group("user_id, model_name, " + bucketExpr).
+		Find(&rows).Error
+	return rows, err
+}
+
+func getLogQuotaDataGroupByUser(startTime int64, endTime int64) ([]*QuotaData, error) {
+	rows := make([]*QuotaData, 0)
+	bucketExpr := quotaDataLogBucketExpr()
+	err := quotaDataLogBaseQuery(startTime, endTime).
+		Select("user_id, username, '' AS model_name, " + bucketExpr + " AS created_at, COUNT(*) AS count, COALESCE(SUM(quota), 0) AS quota, " + quotaDataLogTokenExpr() + " AS token_used").
+		Group("user_id, username, " + bucketExpr).
+		Find(&rows).Error
+	return rows, err
+}
+
+func getAllLogQuotaDates(startTime int64, endTime int64) ([]*QuotaData, error) {
+	rows := make([]*QuotaData, 0)
+	bucketExpr := quotaDataLogBucketExpr()
+	err := quotaDataLogBaseQuery(startTime, endTime).
+		Select("0 AS user_id, '' AS username, model_name, " + bucketExpr + " AS created_at, COUNT(*) AS count, COALESCE(SUM(quota), 0) AS quota, " + quotaDataLogTokenExpr() + " AS token_used").
+		Group("model_name, " + bucketExpr).
+		Find(&rows).Error
+	return rows, err
 }

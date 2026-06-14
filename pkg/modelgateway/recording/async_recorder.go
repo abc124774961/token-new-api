@@ -204,6 +204,7 @@ type dispatchRequestMeta struct {
 	RetryIntentApplied        bool                        `json:"retry_intent_applied,omitempty"`
 	RetryQueuePriorityBoost   bool                        `json:"retry_queue_priority_boost,omitempty"`
 	CostGuardDecision         *core.CostGuardDecision     `json:"cost_guard_decision,omitempty"`
+	FirstByteTimeoutSeconds   int                         `json:"first_byte_timeout_seconds,omitempty"`
 	ResourceProtectionEnabled bool                        `json:"resource_protection_enabled,omitempty"`
 	ResourceProtectionPhase   string                      `json:"resource_protection_phase,omitempty"`
 	ResourceProtectionReason  string                      `json:"resource_protection_reason,omitempty"`
@@ -291,6 +292,7 @@ func dispatchRequestMetaFromPlan(plan *core.DispatchPlan) dispatchRequestMeta {
 		RetryIntentApplied:        plan.RetryIntentApplied,
 		RetryQueuePriorityBoost:   plan.RetryQueuePriorityBoost,
 		CostGuardDecision:         plan.CostGuardDecision,
+		FirstByteTimeoutSeconds:   plan.FirstByteTimeoutSeconds,
 		ResourceProtectionEnabled: plan.ResourceProtectionEnabled,
 		ResourceProtectionPhase:   plan.ResourceProtectionPhase,
 		ResourceProtectionReason:  plan.ResourceProtectionReason,

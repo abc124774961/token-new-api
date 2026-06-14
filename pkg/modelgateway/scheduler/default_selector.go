@@ -591,6 +591,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		RetryIntentApplied:          retryIntent != nil && retryIntent.Active(),
 		RetryQueuePriorityBoost:     retryIntent != nil && retryIntent.QueuePriorityBoost,
 		CostGuardDecision:           costGuardDecision,
+		FirstByteTimeoutSeconds:     policy.FirstByteTimeoutSeconds,
 		ResourceProtectionEnabled:   resourceDecision.Enabled,
 		ResourceProtectionPhase:     resourceDecision.selectedPhase(selectedSaturated),
 		ResourceProtectionReason:    resourceDecision.selectedReason(selectedSaturated),
@@ -1821,14 +1822,11 @@ func stickyEscapeCost(snapshot core.RuntimeSnapshot) float64 {
 	return snapshot.CostRatio * groupRatio
 }
 
-func negativeCurrentGroupMargin(_ core.RuntimeSnapshot) bool {
-	// CostRatio is a blended upstream reference and the selector does not yet
-	// know the actual prompt/output/cache mix for the current request. A plain
-	// cost > revenue comparison can mark profitable cache-heavy calls as loss,
-	// which incorrectly removes them from normal scoring and breaks sticky
-	// routing. Until we have an explicit per-request no-profit signal, keep the
-	// candidate in the normal pool and let the regular cost score/guard rank it.
-	return false
+func negativeCurrentGroupMargin(snapshot core.RuntimeSnapshot) bool {
+	if snapshot.CostRatio <= 0 || snapshot.RevenueRatio <= 0 {
+		return false
+	}
+	return snapshot.CostRatio > snapshot.RevenueRatio+channelPriorityTieBreakScoreEpsilon
 }
 
 func negativeMarginLossMultiple(snapshot core.RuntimeSnapshot) float64 {

@@ -2103,50 +2103,13 @@ export default function ProfitMonitor({ variant = 'default' }) {
         ),
       };
     });
-    const seen = new Set(
-      rows
-        .map((row) =>
-          String(row.dimension_name || row.dimension_key || '')
-            .trim()
-            .toLowerCase(),
-        )
-        .filter(Boolean),
-    );
-    (data.dynamic_ratio_groups || []).forEach((item) => {
-      const groupName = String(item.group || '').trim();
-      const key = groupName.toLowerCase();
-      if (!groupName || seen.has(key)) return;
-      rows.push({
-        dimension_key: groupName,
-        dimension_name: groupName,
-        requests: item.request_count || 0,
-        success_requests: item.success_request_count || 0,
-        success_rate: ratioOrZero(
-          Number(item.success_request_count || 0),
-          Number(item.request_count || 0),
-        ),
-        revenue_usd: item.current_revenue_usd || 0,
-        upstream_cost_usd: item.upstream_cost_usd || 0,
-        traffic_cost_usd: item.traffic_cost_usd || 0,
-        allocated_operating_cost_usd: item.operating_cost_usd || 0,
-        profit_usd:
-          Number(item.current_revenue_usd || 0) -
-          Number(item.operating_cost_usd || 0),
-        gross_margin: ratioOrZero(
-          Number(item.current_revenue_usd || 0) -
-            Number(item.operating_cost_usd || 0),
-          Number(item.current_revenue_usd || 0),
-        ),
-        dynamicRatioGroup: item,
-      });
-    });
     return rows.sort((left, right) => {
       const leftProfit = Number(left.profit_usd || 0);
       const rightProfit = Number(right.profit_usd || 0);
       if (leftProfit !== rightProfit) return rightProfit - leftProfit;
       return Number(right.revenue_usd || 0) - Number(left.revenue_usd || 0);
     });
-  }, [data.dynamic_ratio_groups, data.group_breakdown, groupDynamicRatioMap]);
+  }, [data.group_breakdown, groupDynamicRatioMap]);
 
   const executiveMetricCards = useMemo(() => {
     const revenueGap = Number(dynamicRatioSummary.revenue_gap_usd || 0);

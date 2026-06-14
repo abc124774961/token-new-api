@@ -301,8 +301,7 @@ const selectGroupFilter = (input, option) => {
     .some((value) => value.includes(keyword));
 };
 
-const selectGroupValue = (value) =>
-  String(value?.value ?? value ?? '').trim();
+const selectGroupValue = (value) => String(value?.value ?? value ?? '').trim();
 
 const formatChannelCost = (channel) => {
   const costDisplay = channel?.upstream_cost_display || {};
@@ -830,33 +829,41 @@ const normalizeSetting = (setting) => {
 const policyMapToRows = (policies = {}, priorities = {}) =>
   Object.entries(policies)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([group, policy], index) => ({
-      id: `${group}-${index}`,
-      group,
-      priority_ratio:
-        priorities[group] === undefined ? '' : String(priorities[group]),
-      billing_ratio_mode: policy?.billing_ratio_mode || 'static',
-      mode: policy?.mode || 'off',
-      strategy: policy?.strategy || 'balanced',
-      auto_mode: policy?.auto_mode || 'auto_sequential',
-      cross_group_fusion: !!policy?.cross_group_fusion,
-      candidate_groups: normalizeCandidateGroups(policy?.candidate_groups),
-      cache_affinity_enabled: !!policy?.cache_affinity_enabled,
-      queue_enabled: !!policy?.queue_enabled,
-      queue_high_priority: !!policy?.queue_high_priority,
-      circuit_breaker_enabled: !!policy?.circuit_breaker_enabled,
-      resource_protection_enabled: !!policy?.resource_protection_enabled,
-      primary_channel_ids: normalizeChannelIds(policy?.primary_channel_ids),
-      primary_wait_timeout_ms:
-        policy?.primary_wait_timeout_ms === undefined
-          ? ''
-          : String(policy.primary_wait_timeout_ms),
-      primary_queue_max_depth:
-        policy?.primary_queue_max_depth === undefined
-          ? ''
-          : String(policy.primary_queue_max_depth),
-      fallback_channel_ids: normalizeChannelIds(policy?.fallback_channel_ids),
-    }));
+    .map(([group, policy], index) => {
+      const firstByteTimeoutSeconds = numberOrDefault(
+        policy?.first_byte_timeout_seconds,
+        20,
+      );
+      return {
+        id: `${group}-${index}`,
+        group,
+        priority_ratio:
+          priorities[group] === undefined ? '' : String(priorities[group]),
+        billing_ratio_mode: policy?.billing_ratio_mode || 'static',
+        mode: policy?.mode || 'off',
+        strategy: policy?.strategy || 'balanced',
+        auto_mode: policy?.auto_mode || 'auto_sequential',
+        cross_group_fusion: !!policy?.cross_group_fusion,
+        candidate_groups: normalizeCandidateGroups(policy?.candidate_groups),
+        cache_affinity_enabled: !!policy?.cache_affinity_enabled,
+        queue_enabled: !!policy?.queue_enabled,
+        queue_high_priority: !!policy?.queue_high_priority,
+        circuit_breaker_enabled: !!policy?.circuit_breaker_enabled,
+        first_byte_timeout_seconds:
+          firstByteTimeoutSeconds > 0 ? String(firstByteTimeoutSeconds) : '20',
+        resource_protection_enabled: !!policy?.resource_protection_enabled,
+        primary_channel_ids: normalizeChannelIds(policy?.primary_channel_ids),
+        primary_wait_timeout_ms:
+          policy?.primary_wait_timeout_ms === undefined
+            ? ''
+            : String(policy.primary_wait_timeout_ms),
+        primary_queue_max_depth:
+          policy?.primary_queue_max_depth === undefined
+            ? ''
+            : String(policy.primary_queue_max_depth),
+        fallback_channel_ids: normalizeChannelIds(policy?.fallback_channel_ids),
+      };
+    });
 
 const rowsToPolicyMaps = (rows) => {
   const policies = {};
@@ -878,6 +885,10 @@ const rowsToPolicyMaps = (rows) => {
       queue_enabled: !!row.queue_enabled,
       queue_high_priority: !!row.queue_high_priority,
       circuit_breaker_enabled: !!row.circuit_breaker_enabled,
+      first_byte_timeout_seconds: numberOrDefault(
+        row.first_byte_timeout_seconds,
+        20,
+      ),
       resource_protection_enabled: !!row.resource_protection_enabled,
       primary_channel_ids: normalizeChannelIds(row.primary_channel_ids),
       primary_wait_timeout_ms: numberOrDefault(row.primary_wait_timeout_ms, 0),
@@ -1185,6 +1196,7 @@ export default function SettingsModelGatewayScheduler() {
         queue_enabled: setting.queue_enabled,
         queue_high_priority: false,
         circuit_breaker_enabled: setting.circuit_breaker_enabled,
+        first_byte_timeout_seconds: '20',
         resource_protection_enabled: false,
         primary_channel_ids: [],
         primary_wait_timeout_ms: '',
@@ -1736,6 +1748,24 @@ export default function SettingsModelGatewayScheduler() {
           </div>
         );
       },
+    },
+    {
+      title: t('延迟超时切换'),
+      dataIndex: 'first_byte_timeout_seconds',
+      width: 150,
+      render: (_, row) => (
+        <Input
+          prefix={t('首字')}
+          suffix='s'
+          value={row.first_byte_timeout_seconds}
+          placeholder='20'
+          onChange={(value) =>
+            updatePolicyRow(row.id, {
+              first_byte_timeout_seconds: value,
+            })
+          }
+        />
+      ),
     },
     {
       title: t('主资源保护'),

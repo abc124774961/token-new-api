@@ -62,6 +62,7 @@ func TestGroupPolicyResolverCarriesResourceProtectionSettings(t *testing.T) {
 			GroupPolicies: map[string]core.GroupPolicySetting{
 				"codex-plus": {
 					Mode:                      core.ModeActive,
+					FirstByteTimeoutSeconds:   25,
 					ResourceProtectionEnabled: true,
 					PrimaryChannelIDs:         []int{11, 12},
 					PrimaryWaitTimeoutMs:      4500,
@@ -75,6 +76,7 @@ func TestGroupPolicyResolverCarriesResourceProtectionSettings(t *testing.T) {
 	p := resolver.Resolve(nil, &core.DispatchRequest{RequestedGroup: "codex-plus", UserGroup: "vip"})
 
 	require.True(t, p.ResourceProtectionEnabled)
+	require.Equal(t, 25, p.FirstByteTimeoutSeconds)
 	require.Equal(t, []int{11, 12}, p.PrimaryChannelIDs)
 	require.Equal(t, 4500, p.PrimaryWaitTimeoutMs)
 	require.Equal(t, 9, p.PrimaryQueueMaxDepth)
