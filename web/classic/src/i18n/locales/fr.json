@@ -7834,6 +7834,9 @@
     "请输入 QQ": "Saisissez QQ",
     "请输入联系邮箱": "Saisissez l’e-mail de contact",
     "例如 Telegram、微信或其他备注": "Par exemple Telegram, WeChat ou une autre note",
-    "支持搜索用户的 ID、用户名、显示名称、邮箱和联系方式": "Recherche par ID utilisateur, nom d’utilisateur, nom d’affichage, e-mail et coordonnées"
+    "支持搜索用户的 ID、用户名、显示名称、邮箱和联系方式": "Recherche par ID utilisateur, nom d’utilisateur, nom d’affichage, e-mail et coordonnées",
+    "负毛利兜底": "Repli à marge négative",
+    "负毛利候选仅作为兜底": "Les candidats à marge négative servent uniquement de repli",
+    "{{channel}} 当前分组为负毛利，仅保留为兜底候选。": "{{channel}} a une marge négative dans le groupe actuel et reste uniquement comme candidat de repli."
   }
 }

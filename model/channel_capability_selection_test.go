@@ -150,6 +150,43 @@ func TestGetNextEnabledKeyForEndpointSkipsCodexImageGenerationUnsupportedAccount
 	require.Equal(t, 0, index)
 }
 
+func TestGetNextEnabledKeyForRequestSkipsResponsesPreviousIDUnsupportedAccount(t *testing.T) {
+	db := setupChannelCapabilitySelectionTestDB(t)
+	previousIDDenied := false
+	previousIDAllowed := true
+	channel := &Channel{
+		Id:            9008,
+		Type:          constant.ChannelTypeOpenAI,
+		Key:           "sk-denied\nsk-allowed",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: `{"wire_api":"responses"}`,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:           true,
+			MultiKeyMode:         constant.MultiKeyModePolling,
+			MultiKeyPollingIndex: 0,
+			MultiKeyCapabilities: map[int]ChannelAccountCapability{
+				0: {
+					ResponsesPreviousID: &previousIDDenied,
+				},
+				1: {
+					ResponsesPreviousID: &previousIDAllowed,
+				},
+			},
+		},
+	}
+	require.NoError(t, db.Create(channel).Error)
+
+	key, index, apiErr := channel.GetNextEnabledKeyForRequest(constant.EndpointTypeOpenAIResponse, false, true)
+	require.Nil(t, apiErr)
+	require.Equal(t, "sk-allowed", key)
+	require.Equal(t, 1, index)
+
+	key, index, apiErr = channel.GetNextEnabledKeyForRequest(constant.EndpointTypeOpenAIResponse, false, false)
+	require.Nil(t, apiErr)
+	require.Equal(t, "sk-denied", key)
+	require.Equal(t, 0, index)
+}
+
 func TestGetNextEnabledKeyForEndpointSkipsAuthErrorAccount(t *testing.T) {
 	channel := &Channel{
 		Id:     9005,

@@ -241,13 +241,21 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 }
 
 func (channel *Channel) GetNextEnabledKeyForEndpoint(endpointType constant.EndpointType, requiresCodexImageTool bool) (string, int, *types.NewAPIError) {
-	return channel.GetNextEnabledKeyAvoidingForEndpoint(endpointType, requiresCodexImageTool, nil)
+	return channel.GetNextEnabledKeyForRequest(endpointType, requiresCodexImageTool, false)
 }
 
 func (channel *Channel) GetNextEnabledKeyAvoidingForEndpoint(endpointType constant.EndpointType, requiresCodexImageTool bool, avoid func(index int, key string) bool) (string, int, *types.NewAPIError) {
+	return channel.GetNextEnabledKeyAvoidingForRequest(endpointType, requiresCodexImageTool, false, avoid)
+}
+
+func (channel *Channel) GetNextEnabledKeyForRequest(endpointType constant.EndpointType, requiresCodexImageTool bool, requiresResponsesPreviousID bool) (string, int, *types.NewAPIError) {
+	return channel.GetNextEnabledKeyAvoidingForRequest(endpointType, requiresCodexImageTool, requiresResponsesPreviousID, nil)
+}
+
+func (channel *Channel) GetNextEnabledKeyAvoidingForRequest(endpointType constant.EndpointType, requiresCodexImageTool bool, requiresResponsesPreviousID bool, avoid func(index int, key string) bool) (string, int, *types.NewAPIError) {
 	// If not in multi-key mode, return the original key string directly.
 	if !channel.ChannelInfo.IsMultiKey {
-		if !channel.keySupportsRequestedCapability(0, channel.Key, endpointType, requiresCodexImageTool) {
+		if !channel.keySupportsRequestedCapability(0, channel.Key, endpointType, requiresCodexImageTool, requiresResponsesPreviousID) {
 			return "", 0, types.NewError(errors.New("key does not support required codex capability"), types.ErrorCodeChannelNoAvailableKey)
 		}
 		return channel.Key, 0, nil
@@ -283,7 +291,7 @@ func (channel *Channel) GetNextEnabledKeyAvoidingForEndpoint(endpointType consta
 			if channel.accountCapabilityBlocksScheduling(i) {
 				continue
 			}
-			if !channel.keySupportsRequestedCapability(i, keys[i], endpointType, requiresCodexImageTool) {
+			if !channel.keySupportsRequestedCapability(i, keys[i], endpointType, requiresCodexImageTool, requiresResponsesPreviousID) {
 				continue
 			}
 			enabledIdx = append(enabledIdx, i)
@@ -370,11 +378,14 @@ func (channel *Channel) keyUsesCodexBackendForEndpoint(index int, rawKey string,
 	return codexauth.IsOAuthJSONCredential(rawKey)
 }
 
-func (channel *Channel) keySupportsRequestedCapability(index int, rawKey string, endpointType constant.EndpointType, requiresCodexImageTool bool) bool {
+func (channel *Channel) keySupportsRequestedCapability(index int, rawKey string, endpointType constant.EndpointType, requiresCodexImageTool bool, requiresResponsesPreviousID bool) bool {
 	if channel == nil {
 		return true
 	}
 	if requiresCodexImageTool && !channelcapability.SupportsCodexImageGenerationTool(channel.Type, channel.GetOtherSettings()) {
+		return false
+	}
+	if requiresResponsesPreviousID && !channel.keySupportsResponsesPreviousID(index, rawKey, endpointType) {
 		return false
 	}
 	if channel.keyUsesCodexBackendForEndpoint(index, rawKey, endpointType) {
@@ -384,6 +395,30 @@ func (channel *Channel) keySupportsRequestedCapability(index int, rawKey string,
 		return channel.accountSupportsCodexImageGenerationTool(index)
 	}
 	return true
+}
+
+func (channel *Channel) keySupportsResponsesPreviousID(index int, rawKey string, endpointType constant.EndpointType) bool {
+	if channel == nil {
+		return true
+	}
+	if channel.ChannelInfo.MultiKeyCapabilities != nil {
+		if capability, ok := channel.ChannelInfo.MultiKeyCapabilities[index]; ok {
+			if capability.HasResponsesPreviousIDDenied() {
+				return false
+			}
+			if capability.HasResponsesPreviousIDAllowed() {
+				return true
+			}
+		}
+	}
+	settings := channel.GetOtherSettings()
+	if settings.SupportResponsesPreviousID != nil {
+		return *settings.SupportResponsesPreviousID
+	}
+	if channel.keyUsesCodexBackendForEndpoint(index, rawKey, endpointType) {
+		return false
+	}
+	return false
 }
 
 func (channel *Channel) codexKeySupportsRequestedCapability(index int, endpointType constant.EndpointType, requiresCodexImageTool bool) bool {
@@ -931,12 +966,19 @@ func (channel *Channel) UpdateResponseTime(responseTime int64) {
 }
 
 func (channel *Channel) UpdateBalance(balance float64) {
+	now := common.GetTimestamp()
 	err := DB.Model(channel).Select("balance_updated_time", "balance").Updates(Channel{
-		BalanceUpdatedTime: common.GetTimestamp(),
+		BalanceUpdatedTime: now,
 		Balance:            balance,
 	}).Error
 	if err != nil {
 		common.SysLog(fmt.Sprintf("failed to update balance: channel_id=%d, error=%v", channel.Id, err))
+		return
+	}
+	channel.BalanceUpdatedTime = now
+	channel.Balance = balance
+	if common.MemoryCacheEnabled {
+		CacheUpdateChannel(channel)
 	}
 }
 

@@ -179,6 +179,7 @@ func logRelayRetryParamTrace(c *gin.Context, info *relaycommon.RelayInfo, retryP
 		trace["model_name"] = retryParam.ModelName
 		trace["endpoint_type"] = string(retryParam.EndpointType)
 		trace["requires_codex_image_tool"] = retryParam.RequiresCodexImageTool
+		trace["requires_responses_previous_id"] = retryParam.RequiresResponsesPreviousID
 		trace["retry"] = retryParam.GetRetry()
 	}
 	logger.LogInfo(c, "relay retry trace: "+service.MarshalTraceForLog(trace))
@@ -202,15 +203,18 @@ func logRelaySelectedChannelTrace(c *gin.Context, info *relaycommon.RelayInfo, r
 	modelName := ""
 	endpointType := constant.EndpointType("")
 	requiresCodexImageTool := false
+	requiresResponsesPreviousID := false
 	if retryParam != nil {
 		trace["token_group"] = retryParam.TokenGroup
 		trace["retry"] = retryParam.GetRetry()
 		modelName = retryParam.ModelName
 		endpointType = retryParam.EndpointType
 		requiresCodexImageTool = retryParam.RequiresCodexImageTool
+		requiresResponsesPreviousID = retryParam.RequiresResponsesPreviousID
 		trace["model_name"] = modelName
 		trace["endpoint_type"] = string(endpointType)
 		trace["requires_codex_image_tool"] = requiresCodexImageTool
+		trace["requires_responses_previous_id"] = requiresResponsesPreviousID
 	}
 	if channel == nil {
 		trace["channel"] = nil
@@ -226,7 +230,8 @@ func logRelaySelectedChannelTrace(c *gin.Context, info *relaycommon.RelayInfo, r
 			"type":                             traceChannel.Type,
 			"supports_endpoint":                service.ChannelSupportsRequiredEndpoint(traceChannel, modelName, endpointType),
 			"supports_codex_image_generation":  service.ChannelSupportsCodexImageGenerationTool(traceChannel),
-			"supports_required_capabilities":   service.ChannelSupportsRequiredCapabilities(traceChannel, modelName, endpointType, requiresCodexImageTool),
+			"supports_responses_previous_id":   service.ChannelSupportsResponsesPreviousIDForScheduling(traceChannel),
+			"supports_required_capabilities":   service.ChannelSupportsRequestCapabilities(traceChannel, modelName, endpointType, requiresCodexImageTool, requiresResponsesPreviousID),
 			"codex_compatibility_mode":         otherSettings.CodexCompatibilityMode,
 			"codex_supported_tools":            otherSettings.CodexSupportedTools,
 			"codex_image_tool_probe_supported": otherSettings.CodexImageGenerationToolSupported,
@@ -529,12 +534,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}()
 
 	retryParam = &service.RetryParam{
-		Ctx:                    c,
-		TokenGroup:             relayInfo.TokenGroup,
-		ModelName:              relayInfo.OriginModelName,
-		EndpointType:           requiredEndpointTypeForRelay(relayInfo),
-		RequiresCodexImageTool: requiresCodexImageToolForRelay(relayInfo),
-		Retry:                  common.GetPointer(0),
+		Ctx:                         c,
+		TokenGroup:                  relayInfo.TokenGroup,
+		ModelName:                   relayInfo.OriginModelName,
+		EndpointType:                requiredEndpointTypeForRelay(relayInfo),
+		RequiresCodexImageTool:      requiresCodexImageToolForRelay(relayInfo),
+		RequiresResponsesPreviousID: common.GetContextKeyBool(c, constant.ContextKeyResponsesPreviousID),
+		Retry:                       common.GetPointer(0),
 	}
 	logRelayRetryParamTrace(c, relayInfo, retryParam)
 	relayInfo.RetryIndex = 0
@@ -788,7 +794,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 					abortFlow.WillRetry = willRetry
 					abortFlow.RetryAction = retryActionForAttempt(c, abortErr, willRetry)
 					if willRetry {
-						markModelGatewayRuntimeSelectionSkippedForRetry(c, channel, abortFlow)
+						markModelGatewayRuntimeSelectionSkippedForRetry(c, channel, abortErr, abortFlow)
 						setChannelInducedRetryRoutingIntentIfNeeded(c, channel, relayInfo.RetryIndex, abortFlow.RetryAction)
 					} else {
 						finalAttemptReported = true
@@ -903,7 +909,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		willRetry := shouldRetry(c, newAPIError, retryParam, common.RetryTimes-retryParam.GetRetry()) && !terminalClientAbort
 		flow.WillRetry = willRetry
 		flow.RetryAction = retryActionForAttempt(c, newAPIError, willRetry)
-		markModelGatewayRuntimeSelectionSkippedForRetry(c, channel, flow)
+		markModelGatewayRuntimeSelectionSkippedForRetry(c, channel, newAPIError, flow)
 		if channelInducedAbort && willRetry {
 			setChannelInducedRetryRoutingIntentIfNeeded(c, channel, relayInfo.RetryIndex, flow.RetryAction)
 		}
@@ -1032,6 +1038,7 @@ func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
 	if retryParam != nil {
 		common.SetContextKey(c, constant.ContextKeyRequiresCodexImageTool, retryParam.RequiresCodexImageTool)
+		common.SetContextKey(c, constant.ContextKeyResponsesPreviousID, retryParam.RequiresResponsesPreviousID)
 	}
 	if info.ChannelMeta == nil {
 		autoBan := c.GetBool("auto_ban")
@@ -1388,6 +1395,7 @@ func setupRelaySelectedModelGatewayPlan(c *gin.Context, info *relaycommon.RelayI
 		endpointType = retryParam.EndpointType
 	}
 	common.SetContextKey(c, constant.ContextKeyRequiresCodexImageTool, plan.RequiresCodexImageTool || retryParam != nil && retryParam.RequiresCodexImageTool)
+	common.SetContextKey(c, constant.ContextKeyResponsesPreviousID, plan.RequiresResponsesPreviousID || retryParam != nil && retryParam.RequiresResponsesPreviousID)
 	selection := &modelgatewayintegration.SelectionResult{
 		Channel:      plan.Channel,
 		Group:        selectGroup,
@@ -1643,12 +1651,13 @@ func reportModelGatewayEarlyFailureIfNeeded(c *gin.Context, info *relaycommon.Re
 	}
 	if retryParam == nil {
 		retryParam = &service.RetryParam{
-			Ctx:                    c,
-			TokenGroup:             info.TokenGroup,
-			ModelName:              info.OriginModelName,
-			EndpointType:           requiredEndpointTypeForRelay(info),
-			RequiresCodexImageTool: requiresCodexImageToolForRelay(info),
-			Retry:                  common.GetPointer(info.RetryIndex),
+			Ctx:                         c,
+			TokenGroup:                  info.TokenGroup,
+			ModelName:                   info.OriginModelName,
+			EndpointType:                requiredEndpointTypeForRelay(info),
+			RequiresCodexImageTool:      requiresCodexImageToolForRelay(info),
+			RequiresResponsesPreviousID: common.GetContextKeyBool(c, constant.ContextKeyResponsesPreviousID),
+			Retry:                       common.GetPointer(info.RetryIndex),
 		}
 	}
 	clientAbort := relayClientAborted(c, info, apiErr)
@@ -2066,12 +2075,62 @@ func retryActionForAttempt(c *gin.Context, apiErr *types.NewAPIError, willRetry 
 	return "retry"
 }
 
-func markModelGatewayRuntimeSelectionSkippedForRetry(c *gin.Context, channel *model.Channel, flow modelGatewayAttemptFlow) bool {
+func markModelGatewayRuntimeSelectionSkippedForRetry(c *gin.Context, channel *model.Channel, apiErr *types.NewAPIError, flow modelGatewayAttemptFlow) bool {
 	if c == nil || channel == nil || !flow.WillRetry || flow.RetryAction != "switch_channel" {
 		return false
 	}
+	if shouldSkipWholeChannelForRetry(c, apiErr, flow) {
+		service.MarkChannelSelectionSkipped(c, channel.Id)
+		return true
+	}
 	service.MarkChannelRuntimeSelectionSkipped(c, relayRuntimeIdentity(c, channel.Id))
 	return true
+}
+
+func shouldSkipWholeChannelForRetry(c *gin.Context, apiErr *types.NewAPIError, flow modelGatewayAttemptFlow) bool {
+	if apiErr == nil {
+		return false
+	}
+	if isInvalidEncryptedContentError(apiErr) ||
+		service.IsClientContextLimitError(apiErr) ||
+		isUpstreamContentPolicyError(apiErr) ||
+		service.IsBalanceInsufficientError(apiErr) ||
+		isRelayAuthConfigError(apiErr) ||
+		isUpstreamRateLimitLikeError(apiErr) {
+		return false
+	}
+	if flow.ErrorCategory == modelgatewaycore.ErrorCategoryLocalConcurrencyLimit ||
+		flow.ErrorCategory == modelgatewaycore.ErrorCategoryTimeout ||
+		flow.ErrorCategory == modelgatewaycore.ErrorCategoryChannelInducedClientAbort ||
+		flow.RetryReason == modelgatewaycore.RelayAttemptCancelReasonFirstByteTimeout ||
+		flow.RetryReason == modelgatewaycore.RelayAttemptCancelReasonTotalDurationTimeout ||
+		flow.RetryReason == modelgatewaycore.RelayAttemptCancelReasonChannelInducedClientAbort {
+		return true
+	}
+	if service.IsUpstreamConcurrencyLimitError(apiErr) || apiErr.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
+		return true
+	}
+	if apiErr.StatusCode >= http.StatusInternalServerError ||
+		apiErr.StatusCode == http.StatusRequestTimeout ||
+		apiErr.StatusCode == 524 ||
+		apiErr.StatusCode == 529 {
+		return true
+	}
+	switch apiErr.GetErrorCode() {
+	case types.ErrorCodeDoRequestFailed,
+		types.ErrorCodeChannelResponseTimeExceeded,
+		types.ErrorCodeReadResponseBodyFailed,
+		types.ErrorCodeBadResponse,
+		types.ErrorCodeBadResponseBody,
+		types.ErrorCodeEmptyResponse,
+		types.ErrorCodeModelNotFound:
+		return true
+	case types.ErrorCodeBadResponseStatusCode:
+		if shouldFailoverOnUnsupportedCapability(c, apiErr) {
+			return true
+		}
+	}
+	return false
 }
 
 func setFirstByteRetryRoutingIntentIfNeeded(c *gin.Context, channel *model.Channel, attemptIndex int, firstByteTimeoutHit bool, willRetry bool, retryAction string) bool {
@@ -2818,7 +2877,12 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	}
 	if errorCategory != modelgatewaycore.ErrorCategoryAuthConfigError {
 		if reason, ok := channelFailureAvoidanceReason(err); ok {
-			service.RecordChannelRuntimeFailureAvoidanceWithContext(relayRuntimeIdentity(c, channelError.ChannelId), reason, buildChannelFailureAvoidanceContext(c, channelError, err, persistLog))
+			failureContext := buildChannelFailureAvoidanceContext(c, channelError, err, persistLog)
+			if shouldRecordWholeChannelFailureAvoidance(err, errorCategory) {
+				service.RecordChannelFailureAvoidanceWithContext(channelError.ChannelId, reason, failureContext)
+			} else {
+				service.RecordChannelRuntimeFailureAvoidanceWithContext(relayRuntimeIdentity(c, channelError.ChannelId), reason, failureContext)
+			}
 		}
 	}
 
@@ -3284,6 +3348,46 @@ func channelFailureAvoidanceReason(err *types.NewAPIError) (string, bool) {
 	return "", false
 }
 
+func shouldRecordWholeChannelFailureAvoidance(err *types.NewAPIError, errorCategory string) bool {
+	if err == nil {
+		return false
+	}
+	if isInvalidEncryptedContentError(err) ||
+		service.IsClientContextLimitError(err) ||
+		isUpstreamContentPolicyError(err) ||
+		service.IsBalanceInsufficientError(err) ||
+		isRelayAuthConfigError(err) ||
+		isUpstreamRateLimitLikeError(err) {
+		return false
+	}
+	if errorCategory == modelgatewaycore.ErrorCategoryLocalConcurrencyLimit ||
+		errorCategory == modelgatewaycore.ErrorCategoryTimeout ||
+		errorCategory == modelgatewaycore.ErrorCategoryChannelInducedClientAbort {
+		return true
+	}
+	if service.IsUpstreamConcurrencyLimitError(err) || err.GetErrorCode() == types.ErrorCodeChannelConcurrencyLimit {
+		return true
+	}
+	if err.StatusCode >= http.StatusInternalServerError ||
+		err.StatusCode == http.StatusRequestTimeout ||
+		err.StatusCode == 524 ||
+		err.StatusCode == 529 {
+		return true
+	}
+	switch err.GetErrorCode() {
+	case types.ErrorCodeDoRequestFailed,
+		types.ErrorCodeChannelResponseTimeExceeded,
+		types.ErrorCodeReadResponseBodyFailed,
+		types.ErrorCodeBadResponse,
+		types.ErrorCodeBadResponseBody,
+		types.ErrorCodeEmptyResponse,
+		types.ErrorCodeModelNotFound:
+		return true
+	default:
+		return false
+	}
+}
+
 func formatUpstreamFailureAvoidanceReason(err *types.NewAPIError) string {
 	code := normalizeFailureAvoidancePart(string(err.GetErrorCode()))
 	if err.StatusCode >= 100 && err.StatusCode <= 599 {
@@ -3424,12 +3528,13 @@ func RelayTask(c *gin.Context) {
 	}()
 
 	retryParam := &service.RetryParam{
-		Ctx:                    c,
-		TokenGroup:             relayInfo.TokenGroup,
-		ModelName:              relayInfo.OriginModelName,
-		EndpointType:           requiredEndpointTypeForRelay(relayInfo),
-		RequiresCodexImageTool: requiresCodexImageToolForRelay(relayInfo),
-		Retry:                  common.GetPointer(0),
+		Ctx:                         c,
+		TokenGroup:                  relayInfo.TokenGroup,
+		ModelName:                   relayInfo.OriginModelName,
+		EndpointType:                requiredEndpointTypeForRelay(relayInfo),
+		RequiresCodexImageTool:      requiresCodexImageToolForRelay(relayInfo),
+		RequiresResponsesPreviousID: common.GetContextKeyBool(c, constant.ContextKeyResponsesPreviousID),
+		Retry:                       common.GetPointer(0),
 	}
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {

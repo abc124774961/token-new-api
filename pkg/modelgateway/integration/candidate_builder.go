@@ -56,7 +56,7 @@ func (b *ModelCandidatePoolBuilder) buildGroupCandidates(req *core.DispatchReque
 		upstreamModel := channel.ResolveMappedModelName(req.ModelName)
 		profile := b.providerProfile(channel, req.ModelName)
 		proxyMode := profile.ProxyMode(channel, req.ModelName)
-		if req.RequiresResponsesPreviousID && !service.ChannelSupportsResponsesPreviousID(channel, proxyMode, nil) {
+		if req.RequiresResponsesPreviousID && !service.ChannelSupportsResponsesPreviousIDForScheduling(channel) {
 			continue
 		}
 		capability := profile.Capabilities(channel, req.ModelName)

@@ -129,11 +129,7 @@ func ChannelSupportsResponsesPreviousID(channel *model.Channel, proxyMode string
 	if strings.TrimSpace(proxyMode) == modelgatewayprovider.ProxyModeResponsesViaChat {
 		return false
 	}
-	if channel.Type == constant.ChannelTypeCodex || settings.UsesCodexCompatibilityMode() {
-		return false
-	}
-	return channelcapability.SupportsResponsesWireAPI(channel.Type, settings) ||
-		channelcapability.SupportsEndpoint(channel.Type, "", settings, constant.EndpointTypeOpenAIResponse)
+	return false
 }
 
 func ChannelDefaultSupportsStreamOptions(channelType int, settings dto.ChannelOtherSettings) bool {

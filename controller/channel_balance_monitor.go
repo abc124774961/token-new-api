@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -946,6 +947,9 @@ func updateMultiKeyBalanceStatus(channelID int, credentialIndex int, enabled boo
 		common.SysLog(fmt.Sprintf("failed to update channel account balance status: channel_id=%d, credential_index=%d, error=%s", channelID, credentialIndex, err.Error()))
 		return
 	}
+	if enabled {
+		clearChannelAccountRuntimeBlocks(channelID, credentialIndex, false)
+	}
 	if common.MemoryCacheEnabled {
 		model.CacheUpdateChannel(channel)
 	}
@@ -954,6 +958,9 @@ func updateMultiKeyBalanceStatus(channelID int, credentialIndex int, enabled boo
 	} else {
 		_ = model.UpdateAbilityStatus(channelID, true)
 	}
+	modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+		Reason: "channel_account_balance_status",
+	})
 }
 
 func recordChannelBalanceMonitorEvent(channel *model.Channel, account modelgatewayaccount.ChannelAccount, eventType string, balance float64, threshold float64, errMessage string, details map[string]any) {

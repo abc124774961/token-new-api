@@ -7932,6 +7932,9 @@
     "请输入 QQ": "Enter QQ",
     "请输入联系邮箱": "Enter contact email",
     "例如 Telegram、微信或其他备注": "For example, Telegram, WeChat, or other notes",
-    "支持搜索用户的 ID、用户名、显示名称、邮箱和联系方式": "Search by user ID, username, display name, email, and contact info"
+    "支持搜索用户的 ID、用户名、显示名称、邮箱和联系方式": "Search by user ID, username, display name, email, and contact info",
+    "负毛利兜底": "Negative-margin fallback",
+    "负毛利候选仅作为兜底": "Negative-margin candidates are fallback only",
+    "{{channel}} 当前分组为负毛利，仅保留为兜底候选。": "{{channel}} has negative margin in the current group and is kept only as a fallback candidate."
   }
 }

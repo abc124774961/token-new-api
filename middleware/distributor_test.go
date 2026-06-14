@@ -127,6 +127,24 @@ func TestResponsesRequestHasImageGenerationToolIgnoresOtherTools(t *testing.T) {
 	require.False(t, responsesRequestHasImageGenerationTool(ctx))
 }
 
+func TestResponsesRequestHasPreviousResponseIDDetectsField(t *testing.T) {
+	ctx := newResponsesCapabilityTestContext(`{
+		"model": "gpt-5.5",
+		"previous_response_id": "resp_123"
+	}`)
+
+	require.True(t, responsesRequestHasPreviousResponseID(ctx))
+}
+
+func TestResponsesRequestHasPreviousResponseIDIgnoresBlankField(t *testing.T) {
+	ctx := newResponsesCapabilityTestContext(`{
+		"model": "gpt-5.5",
+		"previous_response_id": " "
+	}`)
+
+	require.False(t, responsesRequestHasPreviousResponseID(ctx))
+}
+
 func TestRelaxUnsupportedCodexImageToolRequirementStripsToolWhenNoImageToolCandidate(t *testing.T) {
 	db := setupDistributorTestDB(t)
 	withDistributorMemoryCache(t, true)
@@ -166,6 +184,86 @@ func TestRelaxUnsupportedCodexImageToolRequirementStripsToolWhenNoImageToolCandi
 	require.NoError(t, common.UnmarshalBodyReusable(ctx, &req))
 	require.False(t, req.HasTool(dto.BuildInToolImageGeneration))
 	require.True(t, req.HasTool("web_search_preview"))
+}
+
+func TestRelaxUnsupportedResponsesPreviousIDRequirementStripsFieldWhenNoCandidate(t *testing.T) {
+	db := setupDistributorTestDB(t)
+	withDistributorMemoryCache(t, true)
+
+	plainChannel := &model.Channel{
+		Id:            304,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "plain-responses",
+		Key:           "sk-plain",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "codex-plus",
+		Models:        "gpt-5.4",
+		OtherSettings: `{"wire_api":"responses"}`,
+	}
+	require.NoError(t, db.Create(plainChannel).Error)
+	require.NoError(t, plainChannel.AddAbilities(nil))
+	model.InitChannelCache()
+
+	ctx := newResponsesCapabilityTestContext(`{
+		"model": "gpt-5.4",
+		"input": "hello",
+		"previous_response_id": "resp_stale"
+	}`)
+	common.SetContextKey(ctx, constant.ContextKeyResponsesPreviousID, true)
+	modelRequest := &ModelRequest{
+		Model:                       "gpt-5.4",
+		EndpointType:                constant.EndpointTypeOpenAIResponse,
+		RequiresResponsesPreviousID: true,
+	}
+
+	relaxUnsupportedResponsesPreviousIDRequirementIfNeeded(ctx, modelRequest, "codex-plus")
+
+	require.False(t, modelRequest.RequiresResponsesPreviousID)
+	require.False(t, common.GetContextKeyBool(ctx, constant.ContextKeyResponsesPreviousID))
+
+	var req dto.OpenAIResponsesRequest
+	require.NoError(t, common.UnmarshalBodyReusable(ctx, &req))
+	require.Empty(t, req.PreviousResponseID)
+}
+
+func TestRelaxUnsupportedResponsesPreviousIDRequirementKeepsFieldWhenCandidateExists(t *testing.T) {
+	db := setupDistributorTestDB(t)
+	withDistributorMemoryCache(t, true)
+
+	supportedChannel := &model.Channel{
+		Id:            305,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "previous-id-responses",
+		Key:           "sk-supported",
+		Status:        common.ChannelStatusEnabled,
+		Group:         "codex-plus",
+		Models:        "gpt-5.4",
+		OtherSettings: `{"wire_api":"responses","support_responses_previous_id":true}`,
+	}
+	require.NoError(t, db.Create(supportedChannel).Error)
+	require.NoError(t, supportedChannel.AddAbilities(nil))
+	model.InitChannelCache()
+
+	ctx := newResponsesCapabilityTestContext(`{
+		"model": "gpt-5.4",
+		"input": "hello",
+		"previous_response_id": "resp_keep"
+	}`)
+	common.SetContextKey(ctx, constant.ContextKeyResponsesPreviousID, true)
+	modelRequest := &ModelRequest{
+		Model:                       "gpt-5.4",
+		EndpointType:                constant.EndpointTypeOpenAIResponse,
+		RequiresResponsesPreviousID: true,
+	}
+
+	relaxUnsupportedResponsesPreviousIDRequirementIfNeeded(ctx, modelRequest, "codex-plus")
+
+	require.True(t, modelRequest.RequiresResponsesPreviousID)
+	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyResponsesPreviousID))
+
+	var req dto.OpenAIResponsesRequest
+	require.NoError(t, common.UnmarshalBodyReusable(ctx, &req))
+	require.Equal(t, "resp_keep", req.PreviousResponseID)
 }
 
 func TestRelaxUnsupportedCodexImageToolRequirementKeepsToolWhenImageToolCandidateExists(t *testing.T) {

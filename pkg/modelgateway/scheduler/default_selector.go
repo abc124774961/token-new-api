@@ -27,6 +27,7 @@ const (
 	costFirstStickyEscapeMinSamples          = 5
 	costFirstStickyEscapeSuccessSlack        = 0.02
 	negativeCurrentGroupMarginReason         = "negative_current_group_margin"
+	negativeMarginFallbackReason             = "negative_margin_fallback"
 )
 
 type DefaultSmartChannelSelector struct {
@@ -279,6 +280,8 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	evaluations := make([]candidateEvaluation, 0, len(candidates))
 	availableEvaluations := make([]candidateEvaluation, 0, len(candidates))
 	saturatedEvaluations := make([]candidateEvaluation, 0, len(candidates))
+	negativeAvailableEvaluations := make([]candidateEvaluation, 0, len(candidates))
+	negativeSaturatedEvaluations := make([]candidateEvaluation, 0, len(candidates))
 	for _, candidate := range candidates {
 		snapshot := s.snapshotForCandidate(candidate, policy)
 		if s.snapshotEnricher != nil {
@@ -348,14 +351,22 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		if routingConcurrencySaturated(snapshot) {
 			evaluation.snapshot = snapshot
 			evaluation.score = score
-			saturatedEvaluations = append(saturatedEvaluations, evaluation)
-			saturatedFound = true
+			if evaluation.negativeMargin {
+				negativeSaturatedEvaluations = append(negativeSaturatedEvaluations, evaluation)
+			} else {
+				saturatedEvaluations = append(saturatedEvaluations, evaluation)
+				saturatedFound = true
+			}
 			continue
 		}
 		evaluation.snapshot = snapshot
 		evaluation.score = score
-		availableEvaluations = append(availableEvaluations, evaluation)
-		availableFound = true
+		if evaluation.negativeMargin {
+			negativeAvailableEvaluations = append(negativeAvailableEvaluations, evaluation)
+		} else {
+			availableEvaluations = append(availableEvaluations, evaluation)
+			availableFound = true
+		}
 	}
 	var bestCandidate core.Candidate
 	var bestSnapshot core.RuntimeSnapshot
@@ -364,6 +375,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	priorityTieBreakUsed := false
 	var costGuardDecision *core.CostGuardDecision
 	selectedSaturated := false
+	negativeMarginFallbackSelected := false
 	if availableFound {
 		selectedEvaluation, tieBreakUsed := s.selectCandidateByRoutingScoreAndChannelPriority(availableEvaluations)
 		bestCandidate = selectedEvaluation.candidate
@@ -379,6 +391,23 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		prioritySelectedEvaluation = selectedEvaluation
 		priorityTieBreakUsed = tieBreakUsed
 		selectedSaturated = true
+	} else if len(negativeAvailableEvaluations) > 0 {
+		selectedEvaluation, tieBreakUsed := s.selectCandidateByRoutingScoreAndChannelPriority(negativeAvailableEvaluations)
+		bestCandidate = selectedEvaluation.candidate
+		bestSnapshot = selectedEvaluation.snapshot
+		bestScore = selectedEvaluation.score
+		prioritySelectedEvaluation = selectedEvaluation
+		priorityTieBreakUsed = tieBreakUsed
+		negativeMarginFallbackSelected = true
+	} else if len(negativeSaturatedEvaluations) > 0 {
+		selectedEvaluation, tieBreakUsed := s.selectCandidateByRoutingScoreAndChannelPriority(negativeSaturatedEvaluations)
+		bestCandidate = selectedEvaluation.candidate
+		bestSnapshot = selectedEvaluation.snapshot
+		bestScore = selectedEvaluation.score
+		prioritySelectedEvaluation = selectedEvaluation
+		priorityTieBreakUsed = tieBreakUsed
+		selectedSaturated = true
+		negativeMarginFallbackSelected = true
 	} else {
 		return nil, false, nil
 	}
@@ -489,6 +518,12 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 			markChannelPriorityTieBreakCandidateExplanations(explanations, finalEvaluation, availableEvaluations, s.channelPriorityTieBreakConfig.normalized())
 		}
 	}
+	if negativeMarginFallbackSelected {
+		bestScore.Reason = negativeMarginFallbackReason
+		finalEvaluation.score = bestScore
+	} else {
+		markNegativeMarginSkippedCandidateExplanations(explanations, append(negativeAvailableEvaluations, negativeSaturatedEvaluations...))
+	}
 	if !reserveCandidateAccountRateLimit(bestCandidate) {
 		return s.Select(c, param, policy)
 	}
@@ -554,6 +589,9 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		FallbackChannelIDs:          append([]int(nil), resourceDecision.FallbackChannelIDs...),
 		PrimaryWaitTimeoutMs:        resourceDecision.PrimaryWaitTimeoutMs,
 		PrimaryQueueMaxDepth:        resourceDecision.PrimaryQueueMaxDepth,
+	}
+	if negativeMarginFallbackSelected {
+		plan.FallbackUsed = true
 	}
 	if s.shouldSaveStickyOnSelect() && !plan.StickySaveSuppressed {
 		s.stickyRouter.Save(c, &req, plan)
@@ -838,7 +876,20 @@ func markChannelPriorityTieBreakCandidateExplanations(explanations []core.Candid
 	}
 }
 
+func markNegativeMarginSkippedCandidateExplanations(explanations []core.CandidateExplanation, evaluations []candidateEvaluation) {
+	if len(explanations) == 0 || len(evaluations) == 0 {
+		return
+	}
+	for _, evaluation := range evaluations {
+		markCandidateExplanationSelectionSkipReasonWithOverwrite(explanations, evaluation, negativeCurrentGroupMarginReason, true)
+	}
+}
+
 func markCandidateExplanationSelectionSkipReason(explanations []core.CandidateExplanation, evaluation candidateEvaluation, reason string) {
+	markCandidateExplanationSelectionSkipReasonWithOverwrite(explanations, evaluation, reason, false)
+}
+
+func markCandidateExplanationSelectionSkipReasonWithOverwrite(explanations []core.CandidateExplanation, evaluation candidateEvaluation, reason string, overwrite bool) {
 	channelID := candidateEvaluationChannelID(evaluation)
 	selectedKey := candidateExplanationRuntimeKey(evaluation.candidate, evaluation.snapshot)
 	for idx := range explanations {
@@ -860,7 +911,7 @@ func markCandidateExplanationSelectionSkipReason(explanations []core.CandidateEx
 		if selectedKey.CredentialFP != "" && explanations[idx].RuntimeKey.CredentialFP != "" && explanations[idx].RuntimeKey.CredentialFP != selectedKey.CredentialFP {
 			continue
 		}
-		if explanations[idx].SelectionSkipReason == "" {
+		if overwrite || explanations[idx].SelectionSkipReason == "" {
 			explanations[idx].SelectionSkipReason = reason
 		}
 		return

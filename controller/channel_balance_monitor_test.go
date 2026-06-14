@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	modelgatewayaccount "github.com/QuantumNous/new-api/pkg/modelgateway/account"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/glebarez/sqlite"
@@ -70,6 +71,66 @@ func TestChooseTrustedRatioValueRequiresAllTrustedSourcesToMoveTogether(t *testi
 	require.Nil(t, value)
 	require.Empty(t, source)
 	require.Equal(t, "可信上游值与当前配置不一致", reason)
+}
+
+func TestUpdateBalanceRefreshesMemoryChannelCache(t *testing.T) {
+	db := setupChannelBalanceMonitorTestDB(t)
+	originalMemoryCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCache
+		model.InitChannelCache()
+	})
+
+	channel := model.Channel{
+		Id:      751,
+		Name:    "balance-cache",
+		Type:    constant.ChannelTypeOpenAI,
+		Key:     "sk-cache",
+		Status:  common.ChannelStatusEnabled,
+		Models:  "gpt-5.5",
+		Group:   "default",
+		Balance: 0,
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	model.InitChannelCache()
+
+	channel.UpdateBalance(123.45)
+
+	cached, err := model.CacheGetChannel(channel.Id)
+	require.NoError(t, err)
+	require.InDelta(t, 123.45, cached.Balance, 0.0001)
+	require.Greater(t, cached.BalanceUpdatedTime, int64(0))
+}
+
+func TestReconcileChannelBalanceStatusClearsRuntimeBalanceState(t *testing.T) {
+	db := setupChannelBalanceMonitorTestDB(t)
+	channel := model.Channel{
+		Id:     752,
+		Name:   "balance-recovered",
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-recovered",
+		Status: common.ChannelStatusEnabled,
+		Models: "gpt-5.5",
+		Group:  "default",
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	identity := service.ChannelRuntimeIdentity{
+		ChannelID:          channel.Id,
+		CredentialIndex:    0,
+		CredentialIndexSet: true,
+	}
+	service.MarkChannelBalanceInsufficient(channel.Id)
+	service.MarkChannelRuntimeBalanceInsufficient(identity)
+	t.Cleanup(func() {
+		service.ClearChannelBalanceInsufficientForChannel(channel.Id)
+	})
+
+	reconcileChannelBalanceStatus(&channel, 10)
+
+	require.False(t, service.IsRuntimeBalanceInsufficientChannelID(channel.Id))
+	require.False(t, service.IsRuntimeBalanceInsufficientIdentity(identity))
 }
 
 func TestApplyTrustedRatioDifferencesAppliesOnlyTrustedConsistentValue(t *testing.T) {

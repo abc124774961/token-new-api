@@ -484,7 +484,7 @@ func TestConcurrencyLimitDoesNotCreateCooldown(t *testing.T) {
 	RecordChannelConcurrencyCooldown(1004, err)
 	require.Nil(t, GetChannelConcurrencyCooldownStatus(1004))
 
-	channel, errSelect := selectChannelForGroup(newRetryContext(), "default", "gpt-5.5", "", false, 0, true)
+	channel, errSelect := selectChannelForGroup(newRetryContext(), "default", "gpt-5.5", "", false, false, 0, true)
 	require.NoError(t, errSelect)
 	require.NotNil(t, channel)
 	require.Contains(t, []int{1004, 1005}, channel.Id)
@@ -505,7 +505,7 @@ func TestSelectNonFullChannelDoesNotSkipActiveFullChannelWithoutCooldown(t *test
 	require.True(t, ok)
 	defer lease.Release()
 
-	channel, errSelect := selectChannelForGroup(newRetryContext(), "default", "gpt-5.5", "", false, 0, true)
+	channel, errSelect := selectChannelForGroup(newRetryContext(), "default", "gpt-5.5", "", false, false, 0, true)
 	require.NoError(t, errSelect)
 	require.NotNil(t, channel)
 	require.Equal(t, 1011, channel.Id)

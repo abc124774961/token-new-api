@@ -30,10 +30,11 @@ import (
 )
 
 type ModelRequest struct {
-	Model                  string                `json:"model"`
-	Group                  string                `json:"group,omitempty"`
-	EndpointType           constant.EndpointType `json:"-"`
-	RequiresCodexImageTool bool                  `json:"-"`
+	Model                       string                `json:"model"`
+	Group                       string                `json:"group,omitempty"`
+	EndpointType                constant.EndpointType `json:"-"`
+	RequiresCodexImageTool      bool                  `json:"-"`
+	RequiresResponsesPreviousID bool                  `json:"-"`
 }
 
 type selectedChannelContextOptions struct {
@@ -129,6 +130,7 @@ func distribute(c *gin.Context, next gin.HandlerFunc) {
 			}
 
 			relaxUnsupportedCodexImageToolRequirementIfNeeded(c, modelRequest, usingGroup)
+			relaxUnsupportedResponsesPreviousIDRequirementIfNeeded(c, modelRequest, usingGroup)
 
 			var selectionErr *types.NewAPIError
 			selection, selectionErr = selectSmartDistributorChannel(c, modelRequest, usingGroup)
@@ -193,12 +195,13 @@ func distribute(c *gin.Context, next gin.HandlerFunc) {
 
 			if channel == nil {
 				selection, selectionErr = modelgatewayintegration.DefaultChannelSelectionWrapper().Select(c, &service.RetryParam{
-					Ctx:                    c,
-					ModelName:              modelRequest.Model,
-					EndpointType:           modelRequest.EndpointType,
-					RequiresCodexImageTool: modelRequest.RequiresCodexImageTool,
-					TokenGroup:             usingGroup,
-					Retry:                  common.GetPointer(0),
+					Ctx:                         c,
+					ModelName:                   modelRequest.Model,
+					EndpointType:                modelRequest.EndpointType,
+					RequiresCodexImageTool:      modelRequest.RequiresCodexImageTool,
+					RequiresResponsesPreviousID: modelRequest.RequiresResponsesPreviousID,
+					TokenGroup:                  usingGroup,
+					Retry:                       common.GetPointer(0),
 				})
 				if selectionErr != nil {
 					showGroup := usingGroup
@@ -276,12 +279,13 @@ func selectSmartDistributorChannel(c *gin.Context, modelRequest *ModelRequest, u
 		return nil, nil
 	}
 	return modelgatewayintegration.DefaultChannelSelectionWrapper().SelectSmartOnly(c, &service.RetryParam{
-		Ctx:                    c,
-		ModelName:              modelRequest.Model,
-		EndpointType:           modelRequest.EndpointType,
-		RequiresCodexImageTool: modelRequest.RequiresCodexImageTool,
-		TokenGroup:             usingGroup,
-		Retry:                  common.GetPointer(0),
+		Ctx:                         c,
+		ModelName:                   modelRequest.Model,
+		EndpointType:                modelRequest.EndpointType,
+		RequiresCodexImageTool:      modelRequest.RequiresCodexImageTool,
+		RequiresResponsesPreviousID: modelRequest.RequiresResponsesPreviousID,
+		TokenGroup:                  usingGroup,
+		Retry:                       common.GetPointer(0),
 	})
 }
 
@@ -360,10 +364,10 @@ func relaxUnsupportedCodexImageToolRequirementIfNeeded(c *gin.Context, modelRequ
 	if modelRequest.EndpointType != constant.EndpointTypeOpenAIResponse {
 		return
 	}
-	if service.HasSchedulableChannelForRequiredCapabilities(c, usingGroup, modelRequest.Model, modelRequest.EndpointType, true) {
+	if service.HasSchedulableChannelForRequiredCapabilities(c, usingGroup, modelRequest.Model, modelRequest.EndpointType, true, modelRequest.RequiresResponsesPreviousID) {
 		return
 	}
-	if !service.HasSchedulableChannelForRequiredCapabilities(c, usingGroup, modelRequest.Model, modelRequest.EndpointType, false) {
+	if !service.HasSchedulableChannelForRequiredCapabilities(c, usingGroup, modelRequest.Model, modelRequest.EndpointType, false, modelRequest.RequiresResponsesPreviousID) {
 		return
 	}
 	if !stripOptionalResponsesImageGenerationToolFromRequestBody(c) {
@@ -384,6 +388,7 @@ func relaxUnsupportedCodexImageToolRequirementIfNeeded(c *gin.Context, modelRequ
 			modelRequest.Model,
 			modelRequest.EndpointType,
 			true,
+			modelRequest.RequiresResponsesPreviousID,
 		),
 	}
 	logger.LogWarn(c, "codex image_generation tool requirement relaxed: "+service.MarshalTraceForLog(trace))
@@ -422,6 +427,75 @@ func stripOptionalResponsesImageGenerationToolFromRequestBody(c *gin.Context) bo
 	storage, err := common.CreateBodyStorage(body)
 	if err != nil {
 		logger.LogWarn(c, fmt.Sprintf("failed to cache responses request after stripping unsupported image_generation tool: %v", err))
+		return false
+	}
+	if oldStorage, exists := c.Get(common.KeyBodyStorage); exists && oldStorage != nil {
+		if closer, ok := oldStorage.(io.Closer); ok {
+			_ = closer.Close()
+		}
+	}
+	c.Set(common.KeyBodyStorage, storage)
+	c.Set(common.KeyRequestBody, body)
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	c.Request.ContentLength = int64(len(body))
+	c.Request.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	return true
+}
+
+func relaxUnsupportedResponsesPreviousIDRequirementIfNeeded(c *gin.Context, modelRequest *ModelRequest, usingGroup string) {
+	if c == nil || modelRequest == nil || !modelRequest.RequiresResponsesPreviousID {
+		return
+	}
+	if modelRequest.EndpointType != constant.EndpointTypeOpenAIResponse {
+		return
+	}
+	if service.HasSchedulableChannelForRequiredCapabilities(c, usingGroup, modelRequest.Model, modelRequest.EndpointType, modelRequest.RequiresCodexImageTool, true) {
+		return
+	}
+	if !service.HasSchedulableChannelForRequiredCapabilities(c, usingGroup, modelRequest.Model, modelRequest.EndpointType, modelRequest.RequiresCodexImageTool, false) {
+		return
+	}
+	if !stripResponsesPreviousIDFromRequestBody(c) {
+		return
+	}
+	modelRequest.RequiresResponsesPreviousID = false
+	common.SetContextKey(c, constant.ContextKeyResponsesPreviousID, false)
+	trace := map[string]any{
+		"stage":                    "responses_previous_id_requirement_relaxed",
+		"reason":                   "no_schedulable_previous_response_id_channel_for_model",
+		"model":                    modelRequest.Model,
+		"group":                    usingGroup,
+		"endpoint_type":            string(modelRequest.EndpointType),
+		"effective_routing_groups": service.EffectiveRoutingGroups(usingGroup),
+		"selection_miss_explanation": service.ExplainChannelSelectionMiss(
+			c,
+			usingGroup,
+			modelRequest.Model,
+			modelRequest.EndpointType,
+			modelRequest.RequiresCodexImageTool,
+			true,
+		),
+	}
+	logger.LogWarn(c, "responses previous_response_id requirement relaxed: "+service.MarshalTraceForLog(trace))
+}
+
+func stripResponsesPreviousIDFromRequestBody(c *gin.Context) bool {
+	req := dto.OpenAIResponsesRequest{}
+	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
+		return false
+	}
+	if strings.TrimSpace(req.PreviousResponseID) == "" {
+		return false
+	}
+	req.PreviousResponseID = ""
+	body, err := common.Marshal(req)
+	if err != nil {
+		logger.LogWarn(c, fmt.Sprintf("failed to marshal responses request after stripping unsupported previous_response_id: %v", err))
+		return false
+	}
+	storage, err := common.CreateBodyStorage(body)
+	if err != nil {
+		logger.LogWarn(c, fmt.Sprintf("failed to cache responses request after stripping unsupported previous_response_id: %v", err))
 		return false
 	}
 	if oldStorage, exists := c.Get(common.KeyBodyStorage); exists && oldStorage != nil {
@@ -576,7 +650,7 @@ func logDistributorChannelSelectionMiss(c *gin.Context, modelRequest *ModelReque
 	if c == nil || modelRequest == nil {
 		return
 	}
-	trace := service.ExplainChannelSelectionMiss(c, usingGroup, modelRequest.Model, modelRequest.EndpointType, modelRequest.RequiresCodexImageTool)
+	trace := service.ExplainChannelSelectionMiss(c, usingGroup, modelRequest.Model, modelRequest.EndpointType, modelRequest.RequiresCodexImageTool, modelRequest.RequiresResponsesPreviousID)
 	logger.LogWarn(c, "channel selection miss diagnostics: "+service.MarshalTraceForLog(trace))
 }
 
@@ -698,6 +772,7 @@ func logDistributorRequestTrace(c *gin.Context, modelRequest *ModelRequest, shou
 		trace["group"] = modelRequest.Group
 		trace["endpoint_type"] = string(modelRequest.EndpointType)
 		trace["requires_codex_image_tool"] = modelRequest.RequiresCodexImageTool
+		trace["requires_responses_previous_id"] = modelRequest.RequiresResponsesPreviousID
 	}
 	trace["client_request"] = service.BuildClientRequestTraceForLog(c)
 	if toolTrace := service.BuildResponsesRequestToolTraceFromContextForLog(c); len(toolTrace) > 0 {
@@ -717,6 +792,7 @@ func logDistributorSelectedChannel(c *gin.Context, channel *model.Channel, model
 		trace["model"] = modelRequest.Model
 		trace["endpoint_type"] = string(modelRequest.EndpointType)
 		trace["requires_codex_image_tool"] = modelRequest.RequiresCodexImageTool
+		trace["requires_responses_previous_id"] = modelRequest.RequiresResponsesPreviousID
 	}
 	if channel == nil {
 		trace["channel"] = nil
@@ -727,7 +803,8 @@ func logDistributorSelectedChannel(c *gin.Context, channel *model.Channel, model
 			"type":                             channel.Type,
 			"supports_endpoint":                modelRequest == nil || service.ChannelSupportsRequiredEndpoint(channel, modelRequest.Model, modelRequest.EndpointType),
 			"supports_codex_image_generation":  service.ChannelSupportsCodexImageGenerationTool(channel),
-			"supports_required_capabilities":   modelRequest == nil || service.ChannelSupportsRequiredCapabilities(channel, modelRequest.Model, modelRequest.EndpointType, modelRequest.RequiresCodexImageTool),
+			"supports_responses_previous_id":   service.ChannelSupportsResponsesPreviousIDForScheduling(channel),
+			"supports_required_capabilities":   modelRequest == nil || service.ChannelSupportsRequestCapabilities(channel, modelRequest.Model, modelRequest.EndpointType, modelRequest.RequiresCodexImageTool, modelRequest.RequiresResponsesPreviousID),
 			"codex_compatibility_mode":         channel.GetOtherSettings().CodexCompatibilityMode,
 			"codex_supported_tools":            channel.GetOtherSettings().CodexSupportedTools,
 			"codex_image_tool_probe_supported": channel.GetOtherSettings().CodexImageGenerationToolSupported,
@@ -782,8 +859,23 @@ func responsesRequestHasImageGenerationTool(c *gin.Context) bool {
 	return service.ResponsesRequestRequiresCodexImageGenerationTool(&req)
 }
 
+func responsesRequestHasPreviousResponseID(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	path := c.Request.URL.Path
+	if !strings.HasPrefix(path, "/v1/responses") || strings.HasPrefix(path, "/v1/responses/compact") {
+		return false
+	}
+	var req dto.OpenAIResponsesRequest
+	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
+		return false
+	}
+	return strings.TrimSpace(req.PreviousResponseID) != ""
+}
+
 func channelSupportsModelRequest(channel *model.Channel, request ModelRequest) bool {
-	return service.ChannelSupportsRequiredCapabilities(channel, request.Model, request.EndpointType, request.RequiresCodexImageTool)
+	return service.ChannelSupportsRequestCapabilities(channel, request.Model, request.EndpointType, request.RequiresCodexImageTool, request.RequiresResponsesPreviousID)
 }
 
 func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
@@ -949,7 +1041,9 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	}
 	modelRequest.EndpointType = detectRequiredEndpointType(c)
 	modelRequest.RequiresCodexImageTool = responsesRequestHasImageGenerationTool(c)
+	modelRequest.RequiresResponsesPreviousID = responsesRequestHasPreviousResponseID(c)
 	common.SetContextKey(c, constant.ContextKeyRequiresCodexImageTool, modelRequest.RequiresCodexImageTool)
+	common.SetContextKey(c, constant.ContextKeyResponsesPreviousID, modelRequest.RequiresResponsesPreviousID)
 	return &modelRequest, shouldSelectChannel, nil
 }
 
@@ -989,7 +1083,7 @@ func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	if applied, apiErr := applySelectedPlanCredential(c, channel, firstSelection(selections)); apiErr != nil {
 		return apiErr
 	} else if !applied {
-		key, index, newAPIError := getNextChannelKeyForRequest(c, channel, options.EndpointType, modelRequestRequiresCodexImageTool(c))
+		key, index, newAPIError := getNextChannelKeyForRequest(c, channel, options.EndpointType, modelRequestRequiresCodexImageTool(c), modelRequestRequiresResponsesPreviousID(c))
 		if newAPIError != nil {
 			return newAPIError
 		}
@@ -1036,14 +1130,14 @@ func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	return nil
 }
 
-func getNextChannelKeyForRequest(c *gin.Context, channel *model.Channel, endpointType constant.EndpointType, requiresCodexImageTool bool) (string, int, *types.NewAPIError) {
+func getNextChannelKeyForRequest(c *gin.Context, channel *model.Channel, endpointType constant.EndpointType, requiresCodexImageTool bool, requiresResponsesPreviousID bool) (string, int, *types.NewAPIError) {
 	if channel == nil {
 		return "", 0, types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 	if c == nil || !channel.ChannelInfo.IsMultiKey {
-		return channel.GetNextEnabledKeyForEndpoint(endpointType, requiresCodexImageTool)
+		return channel.GetNextEnabledKeyForRequest(endpointType, requiresCodexImageTool, requiresResponsesPreviousID)
 	}
-	return channel.GetNextEnabledKeyAvoidingForEndpoint(endpointType, requiresCodexImageTool, func(index int, key string) bool {
+	return channel.GetNextEnabledKeyAvoidingForRequest(endpointType, requiresCodexImageTool, requiresResponsesPreviousID, func(index int, key string) bool {
 		identity := channelRuntimeIdentityForKey(channel, index, key)
 		return service.IsChannelRuntimeSelectionSkipped(c, identity) || service.IsChannelRuntimeAttempted(c, identity)
 	})
@@ -1054,6 +1148,13 @@ func modelRequestRequiresCodexImageTool(c *gin.Context) bool {
 		return false
 	}
 	return common.GetContextKeyBool(c, constant.ContextKeyRequiresCodexImageTool)
+}
+
+func modelRequestRequiresResponsesPreviousID(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	return common.GetContextKeyBool(c, constant.ContextKeyResponsesPreviousID)
 }
 
 func channelRuntimeIdentityForKey(channel *model.Channel, credentialIndex int, rawKey string) service.ChannelRuntimeIdentity {

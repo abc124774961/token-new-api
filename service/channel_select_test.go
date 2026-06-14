@@ -1042,10 +1042,10 @@ func TestHasSchedulableChannelForRequiredCapabilitiesUsesFallbackGroup(t *testin
 	model.InitChannelCache()
 
 	ctx := newRetryContext()
-	require.True(t, HasSchedulableChannelForRequiredCapabilities(ctx, "codex-plus-vip3", "gpt-5.4", constant.EndpointTypeOpenAIResponse, false))
-	require.False(t, HasSchedulableChannelForRequiredCapabilities(ctx, "codex-plus-vip3", "gpt-5.4", constant.EndpointTypeOpenAIResponse, true))
+	require.True(t, HasSchedulableChannelForRequiredCapabilities(ctx, "codex-plus-vip3", "gpt-5.4", constant.EndpointTypeOpenAIResponse, false, false))
+	require.False(t, HasSchedulableChannelForRequiredCapabilities(ctx, "codex-plus-vip3", "gpt-5.4", constant.EndpointTypeOpenAIResponse, true, false))
 
-	explanation := ExplainChannelSelectionMiss(ctx, "codex-plus-vip3", "gpt-5.4", constant.EndpointTypeOpenAIResponse, true)
+	explanation := ExplainChannelSelectionMiss(ctx, "codex-plus-vip3", "gpt-5.4", constant.EndpointTypeOpenAIResponse, true, false)
 	require.Equal(t, []string{"codex-plus-vip3", "codex-plus"}, explanation.EffectiveRoutingGroups)
 	require.False(t, explanation.HasRequiredCapabilities)
 	require.Len(t, explanation.Groups, 2)
@@ -1053,6 +1053,46 @@ func TestHasSchedulableChannelForRequiredCapabilitiesUsesFallbackGroup(t *testin
 	require.Equal(t, 1, explanation.Groups[1].Candidates)
 	require.Equal(t, 0, explanation.Groups[1].CodexImageToolCapable)
 	require.Equal(t, 1, explanation.Groups[1].SchedulableCredential)
+}
+
+func TestCacheGetRandomSatisfiedChannelRespectsResponsesPreviousIDRequirement(t *testing.T) {
+	db := setupChannelSelectTestDB(t)
+	withChannelSelectMemoryCache(t, true)
+
+	seedChannelSelectChannelWithOptions(t, db, 471, "default", "gpt-5.5", 10, 100, constant.ChannelTypeOpenAI, `{"wire_api":"responses"}`)
+	seedChannelSelectChannelWithOptions(t, db, 472, "default", "gpt-5.5", 1, 100, constant.ChannelTypeOpenAI, `{"wire_api":"responses","support_responses_previous_id":true}`)
+	model.InitChannelCache()
+
+	normalParam := &RetryParam{
+		Ctx:          newRetryContext(),
+		TokenGroup:   "default",
+		ModelName:    "gpt-5.5",
+		EndpointType: constant.EndpointTypeOpenAIResponse,
+		Retry:        common.GetPointer(0),
+	}
+	normalChannel, normalGroup, err := CacheGetRandomSatisfiedChannel(normalParam)
+	require.NoError(t, err)
+	require.Equal(t, "default", normalGroup)
+	require.NotNil(t, normalChannel)
+	require.Equal(t, 471, normalChannel.Id)
+
+	previousParam := &RetryParam{
+		Ctx:                         newRetryContext(),
+		TokenGroup:                  "default",
+		ModelName:                   "gpt-5.5",
+		EndpointType:                constant.EndpointTypeOpenAIResponse,
+		RequiresResponsesPreviousID: true,
+		Retry:                       common.GetPointer(0),
+	}
+	previousChannel, previousGroup, err := CacheGetRandomSatisfiedChannel(previousParam)
+	require.NoError(t, err)
+	require.Equal(t, "default", previousGroup)
+	require.NotNil(t, previousChannel)
+	require.Equal(t, 472, previousChannel.Id)
+
+	explanation := ExplainChannelSelectionMiss(newRetryContext(), "default", "gpt-5.5", constant.EndpointTypeOpenAIResponse, false, true)
+	require.True(t, explanation.HasRequiredCapabilities)
+	require.Equal(t, 1, explanation.Groups[0].ResponsesPreviousIDCapable)
 }
 
 func TestCacheGetRandomSatisfiedChannelSeesReEnabledChannelImmediately(t *testing.T) {

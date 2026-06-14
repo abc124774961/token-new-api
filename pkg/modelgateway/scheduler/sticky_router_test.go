@@ -1381,11 +1381,135 @@ func TestSelectorAllowsNegativeMarginFallbackButSkipsStickySave(t *testing.T) {
 	require.True(t, handled)
 	require.NotNil(t, plan)
 	require.Equal(t, 7, plan.Channel.Id)
+	require.Equal(t, "negative_margin_fallback", plan.SelectedReason)
+	require.True(t, plan.FallbackUsed)
 	require.True(t, plan.StickySaveSuppressed)
 	require.Equal(t, "negative_current_group_margin", plan.StickySuppressionReason)
 
 	_, ok := sticky.Route(ctx, &req, core.GroupSmartPolicy{RequestedGroup: "default"})
 	require.False(t, ok)
+}
+
+func TestSelectorSkipsNegativeMarginCandidateWhenPositiveMarginAvailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-negative-margin-score-skip"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 604)
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	negativeKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 11, Group: "default"}
+	positiveKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 12, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                negativeKey,
+		SuccessRate:        1,
+		TTFTMs:             100,
+		TokensPerSecond:    80,
+		CostRatio:          2,
+		RevenueRatio:       1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                positiveKey,
+		SuccessRate:        0.7,
+		TTFTMs:             3000,
+		TokensPerSecond:    20,
+		CostRatio:          0.8,
+		RevenueRatio:       1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 11}, Group: "default", RuntimeKey: negativeKey},
+			{Channel: &model.Channel{Id: 12}, Group: "default", RuntimeKey: positiveKey},
+		}),
+		store,
+		core.ScoreWeights{Success: 1},
+	)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 12, plan.Channel.Id)
+	require.False(t, plan.FallbackUsed)
+	require.NotEqual(t, "negative_margin_fallback", plan.SelectedReason)
+	negative := candidateExplanationByChannel(t, plan.Candidates, 11)
+	require.True(t, negative.Available)
+	require.True(t, negative.NegativeCurrentGroupMargin)
+	require.Equal(t, "negative_current_group_margin", negative.SelectionSkipReason)
+	require.False(t, negative.Selected)
+}
+
+func TestSelectorReportsNegativeMarginBeforeSaturationWhenPositiveMarginAvailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-negative-margin-saturated-skip"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 605)
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	negativeKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 21, Group: "default"}
+	positiveKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 22, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                negativeKey,
+		SuccessRate:        1,
+		TTFTMs:             100,
+		TokensPerSecond:    80,
+		ActiveConcurrency:  1,
+		MaxConcurrency:     1,
+		CostRatio:          2,
+		RevenueRatio:       1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                positiveKey,
+		SuccessRate:        0.7,
+		TTFTMs:             3000,
+		TokensPerSecond:    20,
+		CostRatio:          0.8,
+		RevenueRatio:       1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 21}, Group: "default", RuntimeKey: negativeKey},
+			{Channel: &model.Channel{Id: 22}, Group: "default", RuntimeKey: positiveKey},
+		}),
+		store,
+		core.ScoreWeights{Success: 1},
+	)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 22, plan.Channel.Id)
+	negative := candidateExplanationByChannel(t, plan.Candidates, 21)
+	require.True(t, negative.Available)
+	require.True(t, negative.NegativeCurrentGroupMargin)
+	require.Equal(t, "negative_current_group_margin", negative.SelectionSkipReason)
+	require.False(t, negative.Selected)
 }
 
 func TestSelectorDoesNotTreatMissingRevenueAsNegativeMargin(t *testing.T) {

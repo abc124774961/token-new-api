@@ -573,7 +573,7 @@ func TestSwitchChannelRetryMarksRuntimeAccountSkipped(t *testing.T) {
 		},
 	})
 
-	marked := markModelGatewayRuntimeSelectionSkippedForRetry(ctx, channel, modelGatewayAttemptFlow{
+	marked := markModelGatewayRuntimeSelectionSkippedForRetry(ctx, channel, nil, modelGatewayAttemptFlow{
 		WillRetry:   true,
 		RetryAction: "switch_channel",
 	})
@@ -589,6 +589,94 @@ func TestSwitchChannelRetryMarksRuntimeAccountSkipped(t *testing.T) {
 		CredentialIndexSet:  true,
 		CredentialSubjectFP: "subject-retry",
 		CredentialFP:        "credential-retry",
+	}))
+}
+
+func TestSwitchChannelRetryMarksWholeChannelSkippedForUpstreamServerError(t *testing.T) {
+	ctx := newRelayRetryContext()
+	channel := &model.Channel{Id: 465, Name: "retry-upstream", Status: common.ChannelStatusEnabled}
+	modelgatewayintegration.SetSelectedPlan(ctx, &modelgatewaycore.DispatchPlan{
+		Channel:       channel,
+		SelectedGroup: "default",
+		RuntimeKey: modelgatewaycore.RuntimeKey{
+			ChannelID:           channel.Id,
+			RequestedModel:      "gpt-5.5",
+			Group:               "default",
+			EndpointType:        constant.EndpointTypeOpenAI,
+			AccountID:           "acct-a",
+			CredentialIndex:     0,
+			CredentialSubjectFP: "subject-a",
+			CredentialFP:        "credential-a",
+		},
+		CredentialRef: modelgatewaycore.CredentialRef{
+			AccountID:                    "acct-a",
+			CredentialIndex:              0,
+			CredentialSubjectFingerprint: "subject-a",
+			CredentialFingerprint:        "credential-a",
+		},
+	})
+	err := types.NewOpenAIError(errors.New("bad gateway"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
+
+	marked := markModelGatewayRuntimeSelectionSkippedForRetry(ctx, channel, err, modelGatewayAttemptFlow{
+		ErrorCategory: modelgatewaycore.ErrorCategoryServerError,
+		WillRetry:     true,
+		RetryAction:   "switch_channel",
+	})
+
+	require.True(t, marked)
+	require.True(t, service.IsChannelSelectionSkipped(ctx, channel.Id))
+	require.True(t, service.IsChannelRuntimeSelectionSkipped(ctx, service.ChannelRuntimeIdentity{
+		ChannelID:          channel.Id,
+		CredentialIndex:    1,
+		CredentialIndexSet: true,
+		AccountID:          "acct-b",
+	}))
+}
+
+func TestSwitchChannelRetryKeepsRateLimitAccountScoped(t *testing.T) {
+	ctx := newRelayRetryContext()
+	channel := &model.Channel{Id: 466, Name: "retry-rate-limit", Status: common.ChannelStatusEnabled}
+	modelgatewayintegration.SetSelectedPlan(ctx, &modelgatewaycore.DispatchPlan{
+		Channel:       channel,
+		SelectedGroup: "default",
+		RuntimeKey: modelgatewaycore.RuntimeKey{
+			ChannelID:           channel.Id,
+			RequestedModel:      "gpt-5.5",
+			Group:               "default",
+			EndpointType:        constant.EndpointTypeOpenAI,
+			AccountID:           "acct-a",
+			CredentialIndex:     0,
+			CredentialSubjectFP: "subject-a",
+			CredentialFP:        "credential-a",
+		},
+		CredentialRef: modelgatewaycore.CredentialRef{
+			AccountID:                    "acct-a",
+			CredentialIndex:              0,
+			CredentialSubjectFingerprint: "subject-a",
+			CredentialFingerprint:        "credential-a",
+		},
+	})
+	err := types.NewOpenAIError(errors.New("rate limit exceeded"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+
+	marked := markModelGatewayRuntimeSelectionSkippedForRetry(ctx, channel, err, modelGatewayAttemptFlow{
+		ErrorCategory: modelgatewaycore.ErrorCategoryRateLimit,
+		WillRetry:     true,
+		RetryAction:   "switch_channel",
+	})
+
+	require.True(t, marked)
+	require.False(t, service.IsChannelSelectionSkipped(ctx, channel.Id))
+	require.True(t, service.IsChannelRuntimeSelectionSkipped(ctx, service.ChannelRuntimeIdentity{
+		ChannelID:          channel.Id,
+		CredentialIndex:    0,
+		CredentialIndexSet: true,
+		AccountID:          "acct-a",
+	}))
+	require.False(t, service.IsChannelRuntimeSelectionSkipped(ctx, service.ChannelRuntimeIdentity{
+		ChannelID:          channel.Id,
+		CredentialIndex:    1,
+		CredentialIndexSet: true,
+		AccountID:          "acct-b",
 	}))
 }
 
@@ -1451,6 +1539,52 @@ func TestProcessChannelErrorRecordsTemporaryAvoidanceForBadGateway(t *testing.T)
 	require.NoError(t, selectErr)
 	require.NotNil(t, channel)
 	require.Equal(t, 903, channel.Id)
+}
+
+func TestProcessChannelErrorRecordsWholeChannelAvoidanceForSmartServerError(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 6
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		service.ClearChannelFailureAvoidance(907)
+	})
+
+	ctx := newRelayRetryContext()
+	identity := service.ChannelRuntimeIdentity{
+		ChannelID:           907,
+		AccountID:           "acct-a",
+		CredentialIndex:     0,
+		CredentialIndexSet:  true,
+		CredentialSubjectFP: "subject-a",
+		CredentialFP:        "credential-a",
+	}
+	modelgatewayintegration.SetSelectedPlan(ctx, &modelgatewaycore.DispatchPlan{
+		Channel: &model.Channel{Id: 907, Name: "smart-upstream"},
+		RuntimeKey: modelgatewaycore.RuntimeKey{
+			ChannelID:           identity.ChannelID,
+			AccountID:           identity.AccountID,
+			CredentialIndex:     identity.CredentialIndex,
+			CredentialSubjectFP: identity.CredentialSubjectFP,
+			CredentialFP:        identity.CredentialFP,
+		},
+		CredentialRef: modelgatewaycore.CredentialRef{
+			AccountID:                    identity.AccountID,
+			CredentialIndex:              identity.CredentialIndex,
+			CredentialSubjectFingerprint: identity.CredentialSubjectFP,
+			CredentialFingerprint:        identity.CredentialFP,
+		},
+	})
+	err := types.NewOpenAIError(errors.New("bad response status code 502"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
+
+	processChannelError(ctx, *types.NewChannelError(907, 1, "smart-upstream", true, "", true), err, false)
+
+	status := service.GetChannelFailureAvoidanceStatus(907)
+	require.NotNil(t, status)
+	require.True(t, status.Active)
+	require.Nil(t, service.GetChannelRuntimeFailureAvoidanceStatus(identity))
 }
 
 func TestProcessChannelErrorRecordsTemporaryAvoidanceForWrappedRateLimit(t *testing.T) {

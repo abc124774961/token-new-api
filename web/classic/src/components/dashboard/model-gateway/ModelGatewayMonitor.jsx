@@ -1227,6 +1227,12 @@ function formatChannelStatusReason(reason, t) {
   if (normalized === 'channel_priority_tie_break') {
     return t('渠道优先级择优');
   }
+  if (normalized === 'negative_current_group_margin') {
+    return t('负毛利候选仅作为兜底');
+  }
+  if (normalized === 'negative_margin_fallback') {
+    return t('负毛利兜底');
+  }
   if (normalized === 'max_depth_reached') {
     return t('排队已满');
   }
@@ -10431,6 +10437,12 @@ function formatSelectionReason(reason, t) {
   if (normalized === 'channel_priority_tie_break') {
     return t('渠道优先级择优');
   }
+  if (normalized === 'negative_margin_fallback') {
+    return t('负毛利兜底');
+  }
+  if (normalized === 'negative_current_group_margin') {
+    return t('负毛利候选仅作为兜底');
+  }
   if (normalized === 'cost_first_cheaper_higher_score') {
     return t('成本优先发现明显更低成本且调度分更高的候选');
   }
@@ -10693,6 +10705,11 @@ function buildCandidateDecisionText(candidate, candidates, record, t) {
         selectedChannel: selectedLabel || t('已选渠道'),
       },
     );
+  }
+  if (candidate?.selection_skip_reason === 'negative_current_group_margin') {
+    return t('{{channel}} 当前分组为负毛利，仅保留为兜底候选。', {
+      channel,
+    });
   }
   if (candidateSelectionScore !== null && selectedSelectionScore !== null) {
     if (candidateSelectionScore + scoreDeltaEpsilon < selectedSelectionScore) {

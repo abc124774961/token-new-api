@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	modelgatewayintegration "github.com/QuantumNous/new-api/pkg/modelgateway/integration"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -884,8 +885,26 @@ func reconcileChannelBalanceStatus(channel *model.Channel, balance float64) {
 	if channel == nil {
 		return
 	}
+	changed := false
+	if balance > 0 {
+		if service.ClearChannelBalanceInsufficientForChannel(channel.Id) > 0 {
+			changed = true
+		}
+		if service.IsBalanceInsufficientStatusReason(service.ChannelStatusReason(channel)) &&
+			!service.IsBalanceInsufficientPausedChannel(channel) {
+			if model.UpdateChannelStatusWholeChannelWithInfo(channel.Id, channel.Status, "", nil) {
+				changed = true
+			}
+		}
+	}
 	if service.IsBalanceInsufficientPausedChannel(channel) && service.ShouldResumeBalancePausedChannel(balance) {
 		service.EnableChannel(channel.Id, "", channel.Name)
+		changed = true
+	}
+	if changed {
+		modelgatewayintegration.RefreshDefaultRoutingCaches(modelgatewayintegration.RoutingCacheRefreshOptions{
+			Reason: "channel_balance_recovered",
+		})
 	}
 }
 

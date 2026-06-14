@@ -8312,6 +8312,9 @@
     "请输入 QQ": "Nhập QQ",
     "请输入联系邮箱": "Nhập email liên hệ",
     "例如 Telegram、微信或其他备注": "Ví dụ: Telegram, WeChat hoặc ghi chú khác",
-    "支持搜索用户的 ID、用户名、显示名称、邮箱和联系方式": "Tìm kiếm theo ID người dùng, tên người dùng, tên hiển thị, email và thông tin liên hệ"
+    "支持搜索用户的 ID、用户名、显示名称、邮箱和联系方式": "Tìm kiếm theo ID người dùng, tên người dùng, tên hiển thị, email và thông tin liên hệ",
+    "负毛利兜底": "Dự phòng khi biên lợi nhuận âm",
+    "负毛利候选仅作为兜底": "Ứng viên biên lợi nhuận âm chỉ dùng làm dự phòng",
+    "{{channel}} 当前分组为负毛利，仅保留为兜底候选。": "{{channel}} đang có biên lợi nhuận âm trong nhóm hiện tại và chỉ được giữ làm ứng viên dự phòng."
   }
 }
