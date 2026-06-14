@@ -985,19 +985,27 @@ func ClearChannelFailureAvoidance(c *gin.Context) {
 }
 
 type ChannelHealthRecoverResponse struct {
-	ChannelID                       int  `json:"channel_id"`
-	ChannelStatus                   int  `json:"channel_status"`
-	RuntimeCircuitsCleared          int  `json:"runtime_circuits_cleared"`
-	RuntimeSnapshotsUpdated         int  `json:"runtime_snapshots_updated"`
-	RuntimeCooldownSnapshotsUpdated int  `json:"runtime_cooldown_snapshots_updated"`
-	RuntimeHealthSnapshotsReset     int  `json:"runtime_health_snapshots_reset"`
-	FailureAvoidanceCleared         int  `json:"failure_avoidance_cleared"`
-	ConfigIsolationCleared          bool `json:"config_isolation_cleared"`
-	ConcurrencyCooldownCleared      bool `json:"concurrency_cooldown_cleared"`
-	RuntimeBalanceCleared           int  `json:"runtime_balance_cleared"`
-	BalanceMarkerCleared            bool `json:"balance_marker_cleared"`
-	MultiKeyBalanceCleared          int  `json:"multi_key_balance_cleared"`
-	StatusUpdated                   bool `json:"status_updated"`
+	ChannelID                        int  `json:"channel_id"`
+	ChannelStatus                    int  `json:"channel_status"`
+	RuntimeCircuitsCleared           int  `json:"runtime_circuits_cleared"`
+	RuntimeSnapshotsUpdated          int  `json:"runtime_snapshots_updated"`
+	RuntimeCooldownSnapshotsUpdated  int  `json:"runtime_cooldown_snapshots_updated"`
+	RuntimeHealthSnapshotsReset      int  `json:"runtime_health_snapshots_reset"`
+	PersistedRuntimeSnapshotsReset   int  `json:"persisted_runtime_snapshots_reset"`
+	FailureAvoidanceCleared          int  `json:"failure_avoidance_cleared"`
+	ConfigIsolationCleared           bool `json:"config_isolation_cleared"`
+	ConcurrencyCooldownCleared       bool `json:"concurrency_cooldown_cleared"`
+	FirstBytePendingCleared          int  `json:"first_byte_pending_cleared"`
+	RuntimeBalanceCleared            int  `json:"runtime_balance_cleared"`
+	BalanceMarkerCleared             bool `json:"balance_marker_cleared"`
+	MultiKeyBalanceCleared           int  `json:"multi_key_balance_cleared"`
+	AccountStatusBlocksCleared       int  `json:"account_status_blocks_cleared"`
+	AccountSchedulingBlocksCleared   int  `json:"account_scheduling_blocks_cleared"`
+	AccountUsageLimitCleared         int  `json:"account_usage_limit_cleared"`
+	AccountCapabilityBlocksCleared   int  `json:"account_capability_blocks_cleared"`
+	AccountProxyErrorsCleared        int  `json:"account_proxy_errors_cleared"`
+	AccountNegativeCapabilitiesReset int  `json:"account_negative_capabilities_reset"`
+	StatusUpdated                    bool `json:"status_updated"`
 }
 
 func clearChannelMultiKeyBalanceInsufficient(channel *model.Channel) (int, bool, error) {
@@ -1073,6 +1081,148 @@ func clearChannelMultiKeyBalanceInsufficient(channel *model.Channel) (int, bool,
 	return cleared, statusUpdated, nil
 }
 
+func recoverChannelHealthStatusBlocks(channelID int) (*model.Channel, int, bool, error) {
+	if channelID <= 0 {
+		return nil, 0, false, nil
+	}
+	lock := model.GetChannelPollingLock(channelID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	keys := channel.GetKeys()
+	keyCount := len(keys)
+	accountStatusBlocksCleared := clearChannelAutoDisabledAccountStatusesOnHealthRecover(channel, keyCount)
+
+	beforeStatus := channel.Status
+	beforeReason := channelHealthStatusReason(channel)
+	if channel.Status == common.ChannelStatusAutoDisabled && channelHealthCanEnableAutoDisabledChannel(channel, keyCount) {
+		channel.Status = common.ChannelStatusEnabled
+		clearChannelHealthStatusReason(channel)
+	} else if channel.Status == common.ChannelStatusEnabled && channelHealthRecoverableStatusReason(beforeReason) {
+		clearChannelHealthStatusReason(channel)
+	}
+
+	statusUpdated := beforeStatus != channel.Status || (beforeReason != "" && channelHealthStatusReason(channel) == "")
+	if accountStatusBlocksCleared > 0 || statusUpdated {
+		if err := channel.SaveWithoutKey(); err != nil {
+			return nil, 0, false, err
+		}
+		if common.MemoryCacheEnabled {
+			model.CacheUpdateChannel(channel)
+		}
+	}
+	if channel.Status == common.ChannelStatusEnabled {
+		if err := model.UpdateAbilityStatus(channel.Id, true); err != nil {
+			return nil, 0, false, err
+		}
+	}
+	return channel, accountStatusBlocksCleared, statusUpdated, nil
+}
+
+func clearChannelAutoDisabledAccountStatusesOnHealthRecover(channel *model.Channel, keyCount int) int {
+	if channel == nil || !channel.ChannelInfo.IsMultiKey || keyCount <= 0 || len(channel.ChannelInfo.MultiKeyStatusList) == 0 {
+		return 0
+	}
+	cleared := 0
+	for credentialIndex, status := range channel.ChannelInfo.MultiKeyStatusList {
+		if credentialIndex < 0 || credentialIndex >= keyCount {
+			continue
+		}
+		if status != common.ChannelStatusAutoDisabled {
+			continue
+		}
+		reason := ""
+		if channel.ChannelInfo.MultiKeyDisabledReason != nil {
+			reason = channel.ChannelInfo.MultiKeyDisabledReason[credentialIndex]
+		}
+		if !channelHealthRecoverableAccountDisabledReason(reason) {
+			continue
+		}
+		delete(channel.ChannelInfo.MultiKeyStatusList, credentialIndex)
+		if channel.ChannelInfo.MultiKeyDisabledReason != nil {
+			delete(channel.ChannelInfo.MultiKeyDisabledReason, credentialIndex)
+		}
+		if channel.ChannelInfo.MultiKeyDisabledTime != nil {
+			delete(channel.ChannelInfo.MultiKeyDisabledTime, credentialIndex)
+		}
+		cleared++
+	}
+	if len(channel.ChannelInfo.MultiKeyStatusList) == 0 {
+		channel.ChannelInfo.MultiKeyStatusList = nil
+	}
+	if len(channel.ChannelInfo.MultiKeyDisabledReason) == 0 {
+		channel.ChannelInfo.MultiKeyDisabledReason = nil
+	}
+	if len(channel.ChannelInfo.MultiKeyDisabledTime) == 0 {
+		channel.ChannelInfo.MultiKeyDisabledTime = nil
+	}
+	return cleared
+}
+
+func channelHealthCanEnableAutoDisabledChannel(channel *model.Channel, keyCount int) bool {
+	if channel == nil || channel.Status != common.ChannelStatusAutoDisabled || keyCount <= 0 {
+		return false
+	}
+	reason := channelHealthStatusReason(channel)
+	if channelHealthConfigDisabledReason(reason) {
+		return false
+	}
+	if channel.ChannelInfo.IsMultiKey && channelAccountEnabledCount(channel, keyCount) == 0 {
+		return false
+	}
+	return true
+}
+
+func channelHealthRecoverableAccountDisabledReason(reason string) bool {
+	return !channelHealthConfigDisabledReason(reason)
+}
+
+func channelHealthRecoverableStatusReason(reason string) bool {
+	return strings.TrimSpace(reason) != "" && !channelHealthConfigDisabledReason(reason)
+}
+
+func channelHealthConfigDisabledReason(reason string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(reason))
+	if normalized == "" {
+		return false
+	}
+	switch normalized {
+	case channelAccountManualDisabledReason,
+		"manual",
+		"manually_disabled",
+		channelAccountAuthReauthorizationPendingReason,
+		channelAccountRestoredFromInvalidPoolReason:
+		return true
+	default:
+		return strings.Contains(normalized, "manual") || strings.Contains(normalized, "手动")
+	}
+}
+
+func channelHealthStatusReason(channel *model.Channel) string {
+	if channel == nil {
+		return ""
+	}
+	reason, _ := channel.GetOtherInfo()["status_reason"].(string)
+	return strings.TrimSpace(reason)
+}
+
+func clearChannelHealthStatusReason(channel *model.Channel) {
+	if channel == nil {
+		return
+	}
+	info := channel.GetOtherInfo()
+	delete(info, "status_reason")
+	delete(info, "status_time")
+	delete(info, "pause_type")
+	delete(info, "pause_until")
+	delete(info, "pause_reason")
+	channel.SetOtherInfo(info)
+}
+
 func RecoverChannelHealth(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -1085,8 +1235,6 @@ func RecoverChannelHealth(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	wasBalancePaused := service.IsBalanceInsufficientPausedChannel(channel)
-	wasBalanceReason := service.IsBalanceInsufficientStatusReason(service.ChannelStatusReason(channel))
 	wasConfirmedBalance := service.IsConfirmedBalanceInsufficientChannel(channel)
 
 	runtimeDeps := modelgatewayintegration.CurrentDefaultRuntimeObservabilityDeps()
@@ -1100,6 +1248,7 @@ func RecoverChannelHealth(c *gin.Context) {
 	runtimeCooldownSnapshotsUpdated := modelGatewayClearRuntimeCooldownSnapshots(runtimeDeps, matchedKeys)
 	runtimeHealthSnapshotsReset := modelGatewayRecoverRuntimeHealthSnapshots(runtimeDeps, matchedKeys)
 	concurrencyCooldownCleared := service.ClearChannelConcurrencyCooldown(id)
+	firstBytePendingCleared := service.ClearChannelFirstBytePendingForChannel(id)
 	service.ClearChannelFailureAvoidance(id)
 	failureAvoidanceCleared := 1
 	service.ClearChannelConfigIsolationForChannel(id)
@@ -1123,14 +1272,29 @@ func RecoverChannelHealth(c *gin.Context) {
 		}
 	}
 
-	if wasBalancePaused {
-		if model.UpdateChannelStatusWholeChannelWithInfo(id, common.ChannelStatusEnabled, "", nil) {
-			statusUpdated = true
-		}
-		channel.Status = common.ChannelStatusEnabled
-	} else if wasBalanceReason {
-		if model.UpdateChannelStatusWholeChannelWithInfo(id, channel.Status, "", nil) {
-			statusUpdated = true
+	accountBlockResult, err := service.ClearChannelAccountSchedulingBlocksForChannel(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	accountStatusBlocksCleared := 0
+	recoveredChannel, accountStatusBlocksCleared, recoveredStatusUpdated, err := recoverChannelHealthStatusBlocks(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if recoveredChannel != nil {
+		channel = recoveredChannel
+	}
+	statusUpdated = statusUpdated || recoveredStatusUpdated
+
+	persistedRuntimeSnapshotsReset := 0
+	if runtimeDeps != nil && runtimeDeps.SnapshotPersistence != nil {
+		updated, err := runtimeDeps.SnapshotPersistence.RecoverChannelHealth(context.Background(), id, common.GetTimestamp())
+		if err != nil {
+			common.SysLog(fmt.Sprintf("model gateway persisted runtime snapshot health recovery failed: channel_id=%d error=%v", id, err))
+		} else {
+			persistedRuntimeSnapshotsReset = updated
 		}
 	}
 
@@ -1145,19 +1309,27 @@ func RecoverChannelHealth(c *gin.Context) {
 	})
 
 	common.ApiSuccess(c, ChannelHealthRecoverResponse{
-		ChannelID:                       id,
-		ChannelStatus:                   channel.Status,
-		RuntimeCircuitsCleared:          circuitsCleared,
-		RuntimeSnapshotsUpdated:         runtimeSnapshotsUpdated,
-		RuntimeCooldownSnapshotsUpdated: runtimeCooldownSnapshotsUpdated,
-		RuntimeHealthSnapshotsReset:     runtimeHealthSnapshotsReset,
-		FailureAvoidanceCleared:         failureAvoidanceCleared,
-		ConfigIsolationCleared:          configIsolationCleared,
-		ConcurrencyCooldownCleared:      concurrencyCooldownCleared,
-		RuntimeBalanceCleared:           runtimeBalanceCleared,
-		BalanceMarkerCleared:            balanceMarkerCleared,
-		MultiKeyBalanceCleared:          multiKeyBalanceCleared,
-		StatusUpdated:                   statusUpdated,
+		ChannelID:                        id,
+		ChannelStatus:                    channel.Status,
+		RuntimeCircuitsCleared:           circuitsCleared,
+		RuntimeSnapshotsUpdated:          runtimeSnapshotsUpdated,
+		RuntimeCooldownSnapshotsUpdated:  runtimeCooldownSnapshotsUpdated,
+		RuntimeHealthSnapshotsReset:      runtimeHealthSnapshotsReset,
+		PersistedRuntimeSnapshotsReset:   persistedRuntimeSnapshotsReset,
+		FailureAvoidanceCleared:          failureAvoidanceCleared,
+		ConfigIsolationCleared:           configIsolationCleared,
+		ConcurrencyCooldownCleared:       concurrencyCooldownCleared,
+		FirstBytePendingCleared:          firstBytePendingCleared,
+		RuntimeBalanceCleared:            runtimeBalanceCleared,
+		BalanceMarkerCleared:             balanceMarkerCleared,
+		MultiKeyBalanceCleared:           multiKeyBalanceCleared,
+		AccountStatusBlocksCleared:       accountStatusBlocksCleared,
+		AccountSchedulingBlocksCleared:   accountBlockResult.AccountsUpdated,
+		AccountUsageLimitCleared:         accountBlockResult.UsageLimitCleared,
+		AccountCapabilityBlocksCleared:   accountBlockResult.CapabilityClassificationCleared,
+		AccountProxyErrorsCleared:        accountBlockResult.ProxyErrorCleared,
+		AccountNegativeCapabilitiesReset: accountBlockResult.NegativeCapabilityCleared,
+		StatusUpdated:                    statusUpdated,
 	})
 }
 

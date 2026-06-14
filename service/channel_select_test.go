@@ -547,6 +547,18 @@ func TestCacheGetRandomSatisfiedChannelFallsBackWhenAllChannelsAvoided(t *testin
 	require.Equal(t, "default", group)
 	require.NotNil(t, channel)
 	require.Equal(t, 361, channel.Id)
+
+	secondParam := &RetryParam{
+		Ctx:        newRetryContext(),
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+		Retry:      common.GetPointer(0),
+	}
+	channel, group, err = CacheGetRandomSatisfiedChannel(secondParam)
+	require.NoError(t, err)
+	require.Equal(t, "default", group)
+	require.NotNil(t, channel)
+	require.Equal(t, 361, channel.Id)
 }
 
 func TestCacheGetRandomSatisfiedChannelTriesNextAutoGroupWhenCurrentAvoided(t *testing.T) {
@@ -606,11 +618,21 @@ func TestRecordChannelFailureAvoidanceExtendsDurationForRepeatedFailures(t *test
 	secondRecord := RecordChannelFailureAvoidance(381, "do_request_failed")
 	second, ok := getChannelFailureAvoidanceForTest(381)
 	require.True(t, ok)
-	require.NotNil(t, secondRecord)
-	require.Equal(t, 2, second.failureCount)
-	require.InDelta(t, 14, secondRecord.Remaining.Seconds(), 1)
-	require.Greater(t, second.until, first.until)
-	require.False(t, secondRecord.ShouldPause)
+	require.Nil(t, secondRecord)
+	require.Equal(t, 1, second.failureCount)
+	require.Equal(t, first.until, second.until)
+
+	second.lastRecordedAt = time.Now().Add(-channelFailureAvoidanceRecordMinInterval - time.Second)
+	channelFailureAvoidance.Store(381, second)
+
+	thirdRecord := RecordChannelFailureAvoidance(381, "do_request_failed")
+	third, ok := getChannelFailureAvoidanceForTest(381)
+	require.True(t, ok)
+	require.NotNil(t, thirdRecord)
+	require.Equal(t, 2, third.failureCount)
+	require.InDelta(t, 14, thirdRecord.Remaining.Seconds(), 1)
+	require.Greater(t, third.until, first.until)
+	require.False(t, thirdRecord.ShouldPause)
 }
 
 func TestRecordChannelFailureAvoidanceKeepsFailureCountUntilCleared(t *testing.T) {
@@ -796,6 +818,62 @@ func TestRecordChannelRuntimeOverloadRecoveryRequiresProbe(t *testing.T) {
 
 	ClearChannelRuntimeProbeRecoveryAvoidance(identity)
 	require.Nil(t, GetChannelRuntimeFailureAvoidanceStatus(identity))
+}
+
+func TestReserveChannelFailureRecoveryProbeThrottlesByRuntimeScope(t *testing.T) {
+	clearAllChannelFailureAvoidanceForTest()
+	t.Cleanup(clearAllChannelFailureAvoidanceForTest)
+
+	identity := ChannelRuntimeIdentity{
+		ChannelID:          388,
+		CredentialIndex:    2,
+		CredentialIndexSet: true,
+	}
+
+	require.True(t, ReserveChannelFailureRecoveryProbe(identity, time.Minute))
+	require.False(t, ReserveChannelFailureRecoveryProbe(identity, time.Minute))
+	require.True(t, ReserveChannelFailureRecoveryProbe(ChannelRuntimeIdentity{
+		ChannelID:          388,
+		CredentialIndex:    3,
+		CredentialIndexSet: true,
+	}, time.Minute))
+
+	ClearChannelFailureRecoveryProbeReservation(identity)
+	require.True(t, ReserveChannelFailureRecoveryProbe(identity, time.Minute))
+}
+
+func TestRuntimeSuccessClearsChannelFailureAvoidance(t *testing.T) {
+	originalEnabled := common.ChannelFailureAvoidanceEnabled
+	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
+	common.ChannelFailureAvoidanceEnabled = true
+	common.ChannelFailureAvoidanceTTLSeconds = 60
+	t.Cleanup(func() {
+		common.ChannelFailureAvoidanceEnabled = originalEnabled
+		common.ChannelFailureAvoidanceTTLSeconds = originalTTL
+		clearAllChannelFailureAvoidanceForTest()
+	})
+
+	identity := ChannelRuntimeIdentity{
+		ChannelID:          389,
+		CredentialIndex:    1,
+		CredentialIndexSet: true,
+	}
+	otherIdentity := ChannelRuntimeIdentity{
+		ChannelID:          389,
+		CredentialIndex:    2,
+		CredentialIndexSet: true,
+	}
+	require.NotNil(t, RecordChannelFailureAvoidance(389, "upstream_error:502"))
+	require.NotNil(t, GetChannelFailureAvoidanceStatus(389))
+	require.True(t, ReserveChannelFailureRecoveryProbe(ChannelOnlyRuntimeIdentity(389), time.Minute))
+	require.False(t, ReserveChannelFailureRecoveryProbe(ChannelOnlyRuntimeIdentity(389), time.Minute))
+	require.True(t, ReserveChannelFailureRecoveryProbe(otherIdentity, time.Minute))
+	require.False(t, ReserveChannelFailureRecoveryProbe(otherIdentity, time.Minute))
+
+	require.True(t, ClearChannelRuntimeFailureAvoidanceOnRealSuccess(identity))
+	require.Nil(t, GetChannelFailureAvoidanceStatus(389))
+	require.True(t, ReserveChannelFailureRecoveryProbe(ChannelOnlyRuntimeIdentity(389), time.Minute))
+	require.False(t, ReserveChannelFailureRecoveryProbe(otherIdentity, time.Minute))
 }
 
 func TestRecordChannelFailureAvoidancePersistsEventContext(t *testing.T) {

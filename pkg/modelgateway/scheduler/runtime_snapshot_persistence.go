@@ -195,6 +195,41 @@ func (p *RuntimeSnapshotPersistence) Flush(ctx context.Context) error {
 	return p.pruneStaleRows(ctx, rows)
 }
 
+func (p *RuntimeSnapshotPersistence) RecoverChannelHealth(ctx context.Context, channelID int, now int64) (int, error) {
+	if p == nil || p.store == nil || model.DB == nil || channelID <= 0 {
+		return 0, nil
+	}
+	if !p.tableExists(ctx) {
+		return 0, nil
+	}
+	var rows []model.ModelGatewayRuntimeSnapshot
+	if err := model.DB.WithContext(ctx).
+		Where("channel_id = ?", channelID).
+		Find(&rows).Error; err != nil {
+		return 0, err
+	}
+	updatedRows := make([]model.ModelGatewayRuntimeSnapshot, 0, len(rows))
+	for _, row := range rows {
+		snapshot, ok := runtimeSnapshotFromDB(row)
+		if !ok || snapshot.Key.ChannelID != channelID {
+			continue
+		}
+		snapshot = RecoverRuntimeSnapshotHealth(snapshot, now)
+		p.store.Put(snapshot)
+		updatedRow, ok := runtimeSnapshotToDB(snapshot, now)
+		if !ok {
+			continue
+		}
+		updatedRow.Id = row.Id
+		if err := model.DB.WithContext(ctx).Save(&updatedRow).Error; err != nil {
+			return len(updatedRows), err
+		}
+		updatedRows = append(updatedRows, updatedRow)
+	}
+	p.markPersistedRows(updatedRows)
+	return len(updatedRows), nil
+}
+
 func runtimeSnapshotPersistenceUpdateColumns() []string {
 	return []string{
 		"runtime_key",

@@ -116,6 +116,11 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 			continue
 		}
 		identity := serviceRuntimeIdentityFromPlan(plan)
+		if plan.SelectedReason == scheduler.FailureRecoveryProbeSelectedReason && !service.ReserveChannelFailureRecoveryProbe(identity, 0) {
+			service.MarkChannelRuntimeSelectionSkipped(c, identity)
+			w.mu.Unlock()
+			continue
+		}
 		if !service.ReserveChannelRuntimeSelectionRouting(c, identity) {
 			service.MarkChannelRuntimeSelectionSkipped(c, identity)
 			w.mu.Unlock()

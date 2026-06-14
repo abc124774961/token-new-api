@@ -12,6 +12,15 @@ import (
 	modelgatewayprovider "github.com/QuantumNous/new-api/pkg/modelgateway/provider"
 )
 
+type ChannelAccountSchedulingBlockClearResult struct {
+	AccountsScanned                 int
+	AccountsUpdated                 int
+	UsageLimitCleared               int
+	CapabilityClassificationCleared int
+	ProxyErrorCleared               int
+	NegativeCapabilityCleared       int
+}
+
 func MarkChannelAccountStreamOptionsCapability(channelID int, credentialIndex int, supported bool, message string) (bool, error) {
 	return updateChannelAccountCapability(channelID, credentialIndex, func(capability model.ChannelAccountCapability, now int64) (model.ChannelAccountCapability, bool) {
 		if capability.StreamOptions != nil && *capability.StreamOptions == supported {
@@ -104,6 +113,146 @@ func updateChannelAccountCapability(channelID int, credentialIndex int, mutate f
 	}
 	model.InitChannelCache()
 	return true, nil
+}
+
+func ClearChannelAccountSchedulingBlocksForChannel(channelID int) (ChannelAccountSchedulingBlockClearResult, error) {
+	return clearChannelAccountSchedulingBlocks(channelID, -1)
+}
+
+func ClearChannelAccountSchedulingBlocks(channelID int, credentialIndex int) (ChannelAccountSchedulingBlockClearResult, error) {
+	if credentialIndex < 0 {
+		return ChannelAccountSchedulingBlockClearResult{}, nil
+	}
+	return clearChannelAccountSchedulingBlocks(channelID, credentialIndex)
+}
+
+func clearChannelAccountSchedulingBlocks(channelID int, credentialIndex int) (ChannelAccountSchedulingBlockClearResult, error) {
+	var result ChannelAccountSchedulingBlockClearResult
+	if channelID <= 0 {
+		return result, nil
+	}
+	lock := model.GetChannelPollingLock(channelID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		return result, err
+	}
+	keys := channel.GetKeys()
+	if credentialIndex >= len(keys) {
+		return result, errors.New("账号索引超出范围")
+	}
+	if len(keys) == 0 || len(channel.ChannelInfo.MultiKeyCapabilities) == 0 {
+		return result, nil
+	}
+	updated := false
+	now := common.GetTimestamp()
+	for index, capability := range channel.ChannelInfo.MultiKeyCapabilities {
+		if index < 0 || index >= len(keys) {
+			continue
+		}
+		if credentialIndex >= 0 && index != credentialIndex {
+			continue
+		}
+		result.AccountsScanned++
+		next, itemResult, changed := clearChannelAccountSchedulingCapability(capability, now)
+		if !changed {
+			continue
+		}
+		channel.ChannelInfo.MultiKeyCapabilities[index] = next
+		result.AccountsUpdated++
+		result.UsageLimitCleared += itemResult.UsageLimitCleared
+		result.CapabilityClassificationCleared += itemResult.CapabilityClassificationCleared
+		result.ProxyErrorCleared += itemResult.ProxyErrorCleared
+		result.NegativeCapabilityCleared += itemResult.NegativeCapabilityCleared
+		updated = true
+	}
+	if !updated {
+		return result, nil
+	}
+	if err := channel.SaveChannelInfo(); err != nil {
+		return result, err
+	}
+	model.InitChannelCache()
+	return result, nil
+}
+
+func clearChannelAccountSchedulingCapability(capability model.ChannelAccountCapability, now int64) (model.ChannelAccountCapability, ChannelAccountSchedulingBlockClearResult, bool) {
+	var result ChannelAccountSchedulingBlockClearResult
+	changed := false
+	if capability.UsageLimitActiveAt(now) ||
+		strings.TrimSpace(capability.UsageLimitStatus) != "" ||
+		strings.TrimSpace(capability.UsageLimitReason) != "" ||
+		strings.TrimSpace(capability.UsageLimitMessage) != "" ||
+		capability.UsageLimitDetectedTime > 0 ||
+		capability.UsageLimitExpiresAt > 0 ||
+		strings.TrimSpace(capability.UsageLimitResetSource) != "" {
+		capability = capability.ClearUsageLimit()
+		result.UsageLimitCleared = 1
+		changed = true
+	}
+
+	classification := strings.TrimSpace(capability.CapabilityClassification)
+	if channelAccountCapabilityClassificationClearsOnHealthRecover(classification) {
+		capability.CapabilityClassification = ""
+		result.CapabilityClassificationCleared = 1
+		changed = true
+	}
+	if strings.TrimSpace(capability.ProxyLastError) != "" {
+		capability.ProxyLastError = ""
+		result.ProxyErrorCleared = 1
+		changed = true
+	}
+	if channelAccountCapabilityNegativeProbesClearOnHealthRecover(classification) {
+		result.NegativeCapabilityCleared += clearFalseCapability(&capability.ResponsesWrite)
+		result.NegativeCapabilityCleared += clearFalseCapability(&capability.ResponsesCompactWrite)
+		result.NegativeCapabilityCleared += clearFalseCapability(&capability.ChatCompletionsWrite)
+		result.NegativeCapabilityCleared += clearFalseCapability(&capability.CodexBackendResponsesStreamWrite)
+		result.NegativeCapabilityCleared += clearFalseCapability(&capability.CodexBackendCompactWrite)
+		result.NegativeCapabilityCleared += clearFalseCapability(&capability.PlatformChatCompletionsWrite)
+		result.NegativeCapabilityCleared += clearFalseCapability(&capability.PlatformResponsesWrite)
+		result.NegativeCapabilityCleared += clearFalseCapability(&capability.PlatformResponsesCompactWrite)
+		if result.NegativeCapabilityCleared > 0 {
+			changed = true
+		}
+	}
+	if changed {
+		capability.CheckedTime = now
+		if channelAccountCapabilityClassificationClearsOnHealthRecover(classification) {
+			capability.LastEndpoint = ""
+			capability.LastMessage = ""
+		}
+	}
+	return capability, result, changed
+}
+
+func channelAccountCapabilityClassificationClearsOnHealthRecover(classification string) bool {
+	switch strings.TrimSpace(classification) {
+	case channelcapability.ClassificationAccountUsageLimited,
+		channelcapability.ClassificationAuthError,
+		channelcapability.ClassificationProxyError,
+		channelcapability.ClassificationRegionError,
+		channelcapability.ClassificationPlatformQuotaInsufficient,
+		channelcapability.ClassificationPlatformResponsesScopeMiss,
+		channelcapability.ClassificationUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+func channelAccountCapabilityNegativeProbesClearOnHealthRecover(classification string) bool {
+	classification = strings.TrimSpace(classification)
+	return classification == "" || channelAccountCapabilityClassificationClearsOnHealthRecover(classification)
+}
+
+func clearFalseCapability(value **bool) int {
+	if value == nil || *value == nil || **value {
+		return 0
+	}
+	*value = nil
+	return 1
 }
 
 func ChannelAccountCapabilitySupportsResponsesPreviousID(capability model.ChannelAccountCapability) bool {

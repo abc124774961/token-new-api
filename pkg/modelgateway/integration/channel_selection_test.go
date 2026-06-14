@@ -290,6 +290,67 @@ func TestChannelSelectionWrapperSkipsUsageLimitedSmartPlan(t *testing.T) {
 	service.ReleaseChannelSelectionReservations(ctx)
 }
 
+func TestChannelSelectionWrapperThrottlesRecoveryProbePlan(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+
+	recoveryIdentity := service.ChannelRuntimeIdentity{
+		ChannelID:          221,
+		EndpointType:       constant.EndpointTypeOpenAI,
+		CredentialIndex:    0,
+		CredentialIndexSet: true,
+	}
+	service.ClearChannelFailureRecoveryProbeReservation(recoveryIdentity)
+	t.Cleanup(func() {
+		service.ClearChannelFailureRecoveryProbeReservation(recoveryIdentity)
+	})
+	require.True(t, service.ReserveChannelFailureRecoveryProbe(recoveryIdentity, time.Minute))
+
+	facade := &sequenceFacade{
+		plans: []*core.DispatchPlan{
+			{
+				Channel:        &model.Channel{Id: 221, Name: "recovery", Status: common.ChannelStatusEnabled},
+				SelectedGroup:  "default",
+				SelectedReason: scheduler.FailureRecoveryProbeSelectedReason,
+				RuntimeKey: core.RuntimeKey{
+					ChannelID:       221,
+					EndpointType:    constant.EndpointTypeOpenAI,
+					CredentialIndex: 0,
+				},
+				CredentialRef: core.CredentialRef{
+					CredentialIndex: 0,
+					Resolver:        "channel_key",
+				},
+			},
+			{
+				Channel:       &model.Channel{Id: 222, Name: "healthy", Status: common.ChannelStatusEnabled},
+				SelectedGroup: "default",
+				RuntimeKey: core.RuntimeKey{
+					ChannelID:    222,
+					EndpointType: constant.EndpointTypeOpenAI,
+				},
+			},
+		},
+	}
+	wrapper := integration.NewChannelSelectionWrapper(facade, nil)
+	ctx, _ := gin.CreateTestContext(nil)
+
+	result, apiErr := wrapper.SelectSmartOnly(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-5.5",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
+	require.Equal(t, 222, result.Channel.Id)
+	require.Equal(t, 2, facade.SelectCalls)
+	require.True(t, service.IsChannelRuntimeSelectionSkipped(ctx, recoveryIdentity))
+	service.ReleaseChannelSelectionReservations(ctx)
+}
+
 func TestChannelSelectionWrapperSmartPlanReservesRoutingSlotBeforeRelayAcquire(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service.ClearChannelConcurrencyForTest()

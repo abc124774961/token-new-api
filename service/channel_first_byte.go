@@ -181,6 +181,30 @@ func GetChannelRuntimeFirstBytePendingStatus(identity ChannelRuntimeIdentity) *C
 	return channelFirstBytePendingStatusFromMap(&channelRuntimeFirstByteWaiters, identity)
 }
 
+func ClearChannelFirstBytePendingForChannel(channelID int) int {
+	if channelID <= 0 {
+		return 0
+	}
+	cleared := 0
+	if _, ok := channelFirstByteWaiters.Load(channelID); ok {
+		channelFirstByteWaiters.Delete(channelID)
+		cleared++
+	}
+	channelRuntimeFirstByteWaiters.Range(func(key, value any) bool {
+		identity, ok := key.(ChannelRuntimeIdentity)
+		if !ok {
+			channelRuntimeFirstByteWaiters.Delete(key)
+			return true
+		}
+		if identity.Normalize().ChannelID == channelID {
+			channelRuntimeFirstByteWaiters.Delete(key)
+			cleared++
+		}
+		return true
+	})
+	return cleared
+}
+
 func channelFirstBytePendingStatusFromMap(waiters *sync.Map, identity ChannelRuntimeIdentity) *ChannelFirstBytePendingStatus {
 	if waiters == nil {
 		return nil

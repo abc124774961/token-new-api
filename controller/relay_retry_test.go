@@ -1646,7 +1646,7 @@ func TestProcessChannelErrorRecordsTemporaryAvoidanceForGenericUpstreamBadReques
 	require.Equal(t, 1, status.FailureCount)
 }
 
-func TestProcessChannelErrorExtendsTemporaryAvoidanceForRepeatedUpstreamErrors(t *testing.T) {
+func TestProcessChannelErrorCoalescesRepeatedUpstreamErrors(t *testing.T) {
 	originalEnabled := common.ChannelFailureAvoidanceEnabled
 	originalTTL := common.ChannelFailureAvoidanceTTLSeconds
 	common.ChannelFailureAvoidanceEnabled = true
@@ -1669,8 +1669,8 @@ func TestProcessChannelErrorExtendsTemporaryAvoidanceForRepeatedUpstreamErrors(t
 	require.NotNil(t, status)
 	require.True(t, status.Active)
 	require.Equal(t, "upstream_error:400:bad_response_status_code", status.Reason)
-	require.Equal(t, 2, status.FailureCount)
-	require.Greater(t, time.Unix(status.Until, 0).Sub(time.Now()), 12*time.Second)
+	require.Equal(t, 1, status.FailureCount)
+	require.Less(t, time.Unix(status.Until, 0).Sub(time.Now()), 12*time.Second)
 }
 
 func TestProcessChannelErrorSkipsTemporaryAvoidanceForLocalBadRequest(t *testing.T) {

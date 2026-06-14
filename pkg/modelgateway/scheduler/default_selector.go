@@ -30,6 +30,7 @@ const (
 	negativeMarginFallbackReason             = "negative_margin_fallback"
 	failureRecoveryProbeSelectedReason       = "failure_recovery_probe"
 	failureRecoveryProbeInFlightReason       = "failure_recovery_probe_inflight"
+	FailureRecoveryProbeSelectedReason       = failureRecoveryProbeSelectedReason
 )
 
 type DefaultSmartChannelSelector struct {
@@ -397,7 +398,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		priorityTieBreakUsed = tieBreakUsed
 		selectedSaturated = true
 	} else if len(negativeAvailableEvaluations) > 0 {
-		selectedEvaluation, tieBreakUsed := s.selectCandidateByRoutingScoreAndChannelPriority(negativeAvailableEvaluations)
+		selectedEvaluation, tieBreakUsed := s.selectNegativeMarginFallbackCandidate(negativeAvailableEvaluations)
 		bestCandidate = selectedEvaluation.candidate
 		bestSnapshot = selectedEvaluation.snapshot
 		bestScore = selectedEvaluation.score
@@ -405,7 +406,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		priorityTieBreakUsed = tieBreakUsed
 		negativeMarginFallbackSelected = true
 	} else if len(negativeSaturatedEvaluations) > 0 {
-		selectedEvaluation, tieBreakUsed := s.selectCandidateByRoutingScoreAndChannelPriority(negativeSaturatedEvaluations)
+		selectedEvaluation, tieBreakUsed := s.selectNegativeMarginFallbackCandidate(negativeSaturatedEvaluations)
 		bestCandidate = selectedEvaluation.candidate
 		bestSnapshot = selectedEvaluation.snapshot
 		bestScore = selectedEvaluation.score
@@ -529,7 +530,7 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	} else {
 		markNegativeMarginSkippedCandidateExplanations(explanations, append(negativeAvailableEvaluations, negativeSaturatedEvaluations...))
 	}
-	if failureAvoidanceCanUseBusinessProbe(bestSnapshot) && channelPriorityTieBreakCanOwnReason(bestScore.Reason) {
+	if failureAvoidanceCanUseBusinessProbe(bestSnapshot) {
 		bestScore.Reason = failureRecoveryProbeSelectedReason
 		finalEvaluation.score = bestScore
 	}
@@ -824,6 +825,33 @@ func (s *DefaultSmartChannelSelector) selectCandidateByRoutingScoreAndChannelPri
 		}
 	}
 	return selected, !candidateEvaluationMatches(selected, scoreOnlyBest)
+}
+
+func (s *DefaultSmartChannelSelector) selectNegativeMarginFallbackCandidate(evaluations []candidateEvaluation) (candidateEvaluation, bool) {
+	if len(evaluations) == 0 {
+		return candidateEvaluation{}, false
+	}
+	best := evaluations[0]
+	bestLossMultiple := negativeMarginLossMultiple(best.snapshot)
+	tieBreakUsed := false
+	for _, evaluation := range evaluations[1:] {
+		lossMultiple := negativeMarginLossMultiple(evaluation.snapshot)
+		if bestLossMultiple <= 0 || (lossMultiple > 0 && lossMultiple < bestLossMultiple-channelPriorityTieBreakScoreEpsilon) {
+			best = evaluation
+			bestLossMultiple = lossMultiple
+			tieBreakUsed = false
+			continue
+		}
+		if lossMultiple <= 0 || lossMultiple > bestLossMultiple+channelPriorityTieBreakScoreEpsilon {
+			continue
+		}
+		selected, used := s.selectCandidateByRoutingScoreAndChannelPriority([]candidateEvaluation{best, evaluation})
+		if !candidateEvaluationMatches(selected, best) {
+			best = selected
+		}
+		tieBreakUsed = tieBreakUsed || used
+	}
+	return best, tieBreakUsed
 }
 
 func candidateChannelPriority(candidate core.Candidate) int64 {
@@ -1801,6 +1829,16 @@ func negativeCurrentGroupMargin(snapshot core.RuntimeSnapshot) bool {
 		return false
 	}
 	return snapshot.CostRatio > snapshot.RevenueRatio
+}
+
+func negativeMarginLossMultiple(snapshot core.RuntimeSnapshot) float64 {
+	if snapshot.CostRatio <= 0 {
+		return 0
+	}
+	if snapshot.RevenueRatio <= 0 {
+		return snapshot.CostRatio
+	}
+	return snapshot.CostRatio / snapshot.RevenueRatio
 }
 
 func sameRoutingCandidate(left core.Candidate, right core.Candidate) bool {

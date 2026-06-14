@@ -70,14 +70,22 @@ var channelRuntimeFailureAvoidance sync.Map
 var channelRuntimeTimeoutDegradeEvents sync.Map
 var channelOverloadRecoveryEvents sync.Map
 var channelRuntimeOverloadRecoveryEvents sync.Map
+var channelRecoveryBusinessProbeReservations sync.Map
+
+type channelRecoveryBusinessProbeState struct {
+	mu          sync.Mutex
+	lastProbeAt time.Time
+}
 
 const (
-	channelFailureAvoidancePauseDuration   = 30 * time.Minute
-	channelFailureAvoidanceStepSeconds     = 8
-	channelProbeAvoidanceRecordMinInterval = 30 * time.Second
-	ChannelTimeoutRecoveryReason           = "timeout_recovery"
-	ChannelOverloadRecoveryReason          = "overload_recovery"
-	ChannelAuthConfigRecoveryReason        = "auth_config_error"
+	channelFailureAvoidancePauseDuration     = 30 * time.Minute
+	channelFailureAvoidanceStepSeconds       = 8
+	channelFailureAvoidanceRecordMinInterval = 10 * time.Second
+	channelProbeAvoidanceRecordMinInterval   = 30 * time.Second
+	channelRecoveryBusinessProbeMinInterval  = 5 * time.Second
+	ChannelTimeoutRecoveryReason             = "timeout_recovery"
+	ChannelOverloadRecoveryReason            = "overload_recovery"
+	ChannelAuthConfigRecoveryReason          = "auth_config_error"
 )
 
 type ChannelFailureAvoidanceStatus struct {
@@ -808,6 +816,62 @@ func subtractChannelSet(set map[int]struct{}, excluded map[int]struct{}) map[int
 	return result
 }
 
+func recoveryBusinessProbeScope(identity ChannelRuntimeIdentity) ChannelRuntimeIdentity {
+	identity = identity.Normalize()
+	if !identity.Valid() {
+		return ChannelRuntimeIdentity{}
+	}
+	if identity.HasAccountScope() {
+		return identity.AccountScope()
+	}
+	return identity.ChannelScope()
+}
+
+func ReserveChannelFailureRecoveryProbe(identity ChannelRuntimeIdentity, minInterval time.Duration) bool {
+	scope := recoveryBusinessProbeScope(identity)
+	if !scope.Valid() {
+		return true
+	}
+	if minInterval <= 0 {
+		minInterval = channelRecoveryBusinessProbeMinInterval
+	}
+	now := time.Now()
+	value, _ := channelRecoveryBusinessProbeReservations.LoadOrStore(scope, &channelRecoveryBusinessProbeState{})
+	state, ok := value.(*channelRecoveryBusinessProbeState)
+	if !ok || state == nil {
+		state = &channelRecoveryBusinessProbeState{}
+		channelRecoveryBusinessProbeReservations.Store(scope, state)
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if !state.lastProbeAt.IsZero() && now.Sub(state.lastProbeAt) < minInterval {
+		return false
+	}
+	state.lastProbeAt = now
+	return true
+}
+
+func ClearChannelFailureRecoveryProbeReservation(identity ChannelRuntimeIdentity) {
+	scope := recoveryBusinessProbeScope(identity)
+	if scope.Valid() {
+		channelRecoveryBusinessProbeReservations.Delete(scope)
+	}
+}
+
+func clearChannelFailureRecoveryProbeReservationsForChannel(channelID int) {
+	if channelID <= 0 {
+		return
+	}
+	channelRecoveryBusinessProbeReservations.Delete(ChannelOnlyRuntimeIdentity(channelID).ChannelScope())
+	channelRecoveryBusinessProbeReservations.Range(func(key, value any) bool {
+		identity, ok := key.(ChannelRuntimeIdentity)
+		if ok && identity.ChannelID == channelID {
+			channelRecoveryBusinessProbeReservations.Delete(key)
+		}
+		return true
+	})
+}
+
 func RecordChannelFailureAvoidance(channelID int, reason string) *ChannelFailureAvoidanceRecord {
 	return RecordChannelFailureAvoidanceWithContext(channelID, reason, nil)
 }
@@ -918,7 +982,7 @@ func recordChannelRuntimeAvoidance(identity ChannelRuntimeIdentity, reason strin
 	failureCount := 1
 	if value, ok := channelRuntimeFailureAvoidance.Load(identity); ok {
 		if entry, ok := value.(channelAvoidanceEntry); ok {
-			if shouldCoalesceProbeAvoidanceRecord(now, entry, reason, probeRecoveryRequired) {
+			if shouldCoalesceAvoidanceRecord(now, entry, reason, probeRecoveryRequired) {
 				return nil
 			}
 			failureCount = entry.failureCount + 1
@@ -967,7 +1031,7 @@ func recordChannelAvoidanceWithProbeRecovery(channelID int, reason string, failu
 	failureCount := 1
 	if value, ok := channelFailureAvoidance.Load(channelID); ok {
 		if entry, ok := value.(channelAvoidanceEntry); ok {
-			if shouldCoalesceProbeAvoidanceRecord(now, entry, reason, probeRecoveryRequired) {
+			if shouldCoalesceAvoidanceRecord(now, entry, reason, probeRecoveryRequired) {
 				return nil
 			}
 			failureCount = entry.failureCount + 1
@@ -1007,20 +1071,20 @@ func recordChannelAvoidanceWithProbeRecovery(channelID int, reason string, failu
 	}
 }
 
-func shouldCoalesceProbeAvoidanceRecord(now time.Time, entry channelAvoidanceEntry, reason string, probeRecoveryRequired bool) bool {
+func shouldCoalesceAvoidanceRecord(now time.Time, entry channelAvoidanceEntry, reason string, probeRecoveryRequired bool) bool {
 	if entry.lastRecordedAt.IsZero() {
-		return false
-	}
-	if !entry.probeRecoveryRequired && !probeRecoveryRequired {
 		return false
 	}
 	if !entry.until.After(now) && !entry.probeRecoveryRequired {
 		return false
 	}
-	if !IsProbeRecoveryReason(entry.reason) && !IsProbeRecoveryReason(reason) {
+	if entry.probeRecoveryRequired || probeRecoveryRequired || IsProbeRecoveryReason(entry.reason) || IsProbeRecoveryReason(reason) {
+		return now.Sub(entry.lastRecordedAt) < channelProbeAvoidanceRecordMinInterval
+	}
+	if strings.TrimSpace(entry.reason) != strings.TrimSpace(reason) {
 		return false
 	}
-	return now.Sub(entry.lastRecordedAt) < channelProbeAvoidanceRecordMinInterval
+	return now.Sub(entry.lastRecordedAt) < channelFailureAvoidanceRecordMinInterval
 }
 
 func recordChannelFailureAvoidanceEvent(channelID int, reason string, until time.Time, remaining time.Duration, failureCount int, shouldPause bool, failureContext *ChannelFailureAvoidanceContext) {
@@ -1059,6 +1123,7 @@ func ClearChannelFailureAvoidance(channelID int) {
 		return
 	}
 	channelFailureAvoidance.Delete(channelID)
+	clearChannelFailureRecoveryProbeReservationsForChannel(channelID)
 	channelTimeoutDegradeEvents.Delete(channelID)
 	channelOverloadRecoveryEvents.Delete(channelID)
 	channelRuntimeFailureAvoidance.Range(func(key, value any) bool {
@@ -1094,6 +1159,7 @@ func ClearChannelRuntimeFailureAvoidance(identity ChannelRuntimeIdentity) {
 		return
 	}
 	channelRuntimeFailureAvoidance.Delete(identity)
+	ClearChannelFailureRecoveryProbeReservation(identity)
 	channelRuntimeTimeoutDegradeEvents.Delete(identity)
 	channelRuntimeOverloadRecoveryEvents.Delete(identity)
 }
@@ -1106,6 +1172,7 @@ func ClearChannelRuntimeFailureAvoidanceForAccountIndex(channelID int, credentia
 		identity, ok := key.(ChannelRuntimeIdentity)
 		if ok && identity.ChannelID == channelID && identity.CredentialIndexSet && identity.CredentialIndex == credentialIndex {
 			channelRuntimeFailureAvoidance.Delete(key)
+			ClearChannelFailureRecoveryProbeReservation(identity)
 		}
 		return true
 	})
@@ -1129,6 +1196,7 @@ func ClearChannelFailureAvoidanceOnRealSuccess(channelID int) bool {
 	if channelID <= 0 {
 		return false
 	}
+	ClearChannelFailureRecoveryProbeReservation(ChannelOnlyRuntimeIdentity(channelID))
 	value, ok := channelFailureAvoidance.Load(channelID)
 	if !ok {
 		return false
@@ -1149,9 +1217,11 @@ func ClearChannelRuntimeFailureAvoidanceOnRealSuccess(identity ChannelRuntimeIde
 	if !identity.HasAccountScope() {
 		return ClearChannelFailureAvoidanceOnRealSuccess(identity.ChannelID)
 	}
+	clearedChannel := ClearChannelFailureAvoidanceOnRealSuccess(identity.ChannelID)
+	ClearChannelFailureRecoveryProbeReservation(identity)
 	value, ok := channelRuntimeFailureAvoidance.Load(identity)
 	if !ok {
-		return false
+		return clearedChannel
 	}
 	if _, ok := value.(channelAvoidanceEntry); !ok {
 		channelRuntimeFailureAvoidance.Delete(identity)
@@ -1245,6 +1315,10 @@ func clearAllChannelFailureAvoidanceForTest() {
 	})
 	channelRuntimeOverloadRecoveryEvents.Range(func(key, value any) bool {
 		channelRuntimeOverloadRecoveryEvents.Delete(key)
+		return true
+	})
+	channelRecoveryBusinessProbeReservations.Range(func(key, value any) bool {
+		channelRecoveryBusinessProbeReservations.Delete(key)
 		return true
 	})
 }
@@ -1657,7 +1731,7 @@ func selectChannelForGroup(ctx *gin.Context, group string, modelName string, end
 	}
 	if fallbackAvoidedChannelIDs := subtractChannelSet(avoidedChannelIDs, timeoutRecoveryChannelIDs); len(fallbackAvoidedChannelIDs) > 0 && allowUsedChannelFallback {
 		// Prefer a temporarily avoided channel over failing the request when no healthy peer exists.
-		channel, err = selectNonFullChannel(group, modelName, endpointType, requiresCodexImageTool, requiresResponsesPreviousID, retry, mergeChannelSets(excludedChannelIDs, selectionSkippedChannelIDs, balanceSkippedChannelIDs, balanceInsufficientChannelIDs, timeoutRecoveryChannelIDs))
+		channel, err = selectRecoveryFallbackChannel(ctx, group, modelName, endpointType, requiresCodexImageTool, requiresResponsesPreviousID, retry, mergeChannelSets(excludedChannelIDs, selectionSkippedChannelIDs, balanceSkippedChannelIDs, balanceInsufficientChannelIDs, timeoutRecoveryChannelIDs))
 		if err != nil {
 			return nil, err
 		}
@@ -1700,6 +1774,32 @@ func selectNonFullChannel(group string, modelName string, endpointType constant.
 			continue
 		}
 		return channel, nil
+	}
+}
+
+func selectRecoveryFallbackChannel(ctx *gin.Context, group string, modelName string, endpointType constant.EndpointType, requiresCodexImageTool bool, requiresResponsesPreviousID bool, retry int, excludedChannelIDs map[int]struct{}) (*model.Channel, error) {
+	excluded := mergeChannelSets(excludedChannelIDs)
+	var throttledFallback *model.Channel
+	for {
+		channel, err := selectNonFullChannel(group, modelName, endpointType, requiresCodexImageTool, requiresResponsesPreviousID, retry, excluded)
+		if err != nil {
+			return channel, err
+		}
+		if channel == nil {
+			if throttledFallback != nil {
+				logger.LogWarn(ctx, fmt.Sprintf("All temporarily avoided fallback channels are recovery-probe throttled; using channel #%d as last fallback", throttledFallback.Id))
+				return throttledFallback, nil
+			}
+			return nil, nil
+		}
+		if ReserveChannelFailureRecoveryProbe(ChannelOnlyRuntimeIdentity(channel.Id), 0) {
+			return channel, nil
+		}
+		if throttledFallback == nil {
+			throttledFallback = channel
+		}
+		excluded[channel.Id] = struct{}{}
+		logger.LogDebug(ctx, "Skipping temporarily avoided channel #%d because recovery probe is throttled", channel.Id)
 	}
 }
 
@@ -1829,7 +1929,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			balanceInsufficientChannelIDs := getBalanceInsufficientChannelSet()
 			for i := startGroupIndex; i < len(autoGroups); i++ {
 				autoGroup := autoGroups[i]
-				channel, err = selectNonFullChannel(autoGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, param.RequiresResponsesPreviousID, param.GetRetry(), mergeChannelSets(usedChannelIDs, selectionSkippedChannelIDs, balanceSkippedChannelIDs, balanceInsufficientChannelIDs, getChannelConcurrencyCooldownSet()))
+				channel, err = selectRecoveryFallbackChannel(param.Ctx, autoGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, param.RequiresResponsesPreviousID, param.GetRetry(), mergeChannelSets(usedChannelIDs, selectionSkippedChannelIDs, balanceSkippedChannelIDs, balanceInsufficientChannelIDs, getChannelConcurrencyCooldownSet()))
 				if err != nil {
 					return nil, autoGroup, err
 				}

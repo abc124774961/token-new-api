@@ -1393,6 +1393,69 @@ func TestSelectorAllowsNegativeMarginFallbackButSkipsStickySave(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestSelectorNegativeMarginFallbackChoosesLowestLoss(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-negative-margin-lowest-loss"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 607)
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	highScoreHighLossKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 9, Group: "default"}
+	lowScoreLowLossKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 10, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:                highScoreHighLossKey,
+		SuccessRate:        1,
+		TTFTMs:             100,
+		TokensPerSecond:    80,
+		CostRatio:          2.0,
+		RevenueRatio:       1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                lowScoreLowLossKey,
+		SuccessRate:        0.65,
+		TTFTMs:             3500,
+		TokensPerSecond:    15,
+		CostRatio:          1.15,
+		RevenueRatio:       1,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 9}, Group: "default", RuntimeKey: highScoreHighLossKey},
+			{Channel: &model.Channel{Id: 10}, Group: "default", RuntimeKey: lowScoreLowLossKey},
+		}),
+		store,
+		core.ScoreWeights{Success: 1},
+	)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-5.5",
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 10, plan.Channel.Id)
+	require.Equal(t, "negative_margin_fallback", plan.SelectedReason)
+	require.True(t, plan.FallbackUsed)
+	require.True(t, plan.StickySaveSuppressed)
+	require.Equal(t, "negative_current_group_margin", plan.StickySuppressionReason)
+
+	highLoss := candidateExplanationByChannel(t, plan.Candidates, 9)
+	require.True(t, highLoss.Available)
+	require.True(t, highLoss.NegativeCurrentGroupMargin)
+	require.False(t, highLoss.Selected)
+}
+
 func TestSelectorSkipsNegativeMarginCandidateWhenPositiveMarginAvailable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := newStickyRequestContext(t, `{"session_id":"sess-negative-margin-score-skip"}`, nil)
