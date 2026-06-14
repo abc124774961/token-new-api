@@ -210,6 +210,13 @@ func (p *RetryParam) EffectiveRoutingGroups() []string {
 	return EffectiveRoutingGroups(p.TokenGroup)
 }
 
+func (p *RetryParam) RoutingGroupsForSelection() []string {
+	if p == nil {
+		return nil
+	}
+	return RoutingGroupsForSelection(p.Ctx, p.TokenGroup)
+}
+
 func (p *RetryParam) HasBudget(maxRetry int) bool {
 	return p.GetRetry() <= maxRetry || p.GetExtraRetries() > 0
 }
@@ -1126,16 +1133,9 @@ func ClearChannelFailureAvoidanceOnRealSuccess(channelID int) bool {
 	if !ok {
 		return false
 	}
-	entry, ok := value.(channelAvoidanceEntry)
-	if !ok {
+	if _, ok := value.(channelAvoidanceEntry); !ok {
 		channelFailureAvoidance.Delete(channelID)
 		return true
-	}
-	if entry.probeRecoveryRequired && !IsAuthConfigRecoveryReason(entry.reason) {
-		return false
-	}
-	if IsTimeoutRecoveryReason(entry.reason) {
-		return false
 	}
 	channelFailureAvoidance.Delete(channelID)
 	return true
@@ -1153,16 +1153,9 @@ func ClearChannelRuntimeFailureAvoidanceOnRealSuccess(identity ChannelRuntimeIde
 	if !ok {
 		return false
 	}
-	entry, ok := value.(channelAvoidanceEntry)
-	if !ok {
+	if _, ok := value.(channelAvoidanceEntry); !ok {
 		channelRuntimeFailureAvoidance.Delete(identity)
 		return true
-	}
-	if entry.probeRecoveryRequired && !IsAuthConfigRecoveryReason(entry.reason) {
-		return false
-	}
-	if IsTimeoutRecoveryReason(entry.reason) {
-		return false
 	}
 	channelRuntimeFailureAvoidance.Delete(identity)
 	return true
@@ -1598,12 +1591,16 @@ func ExplainChannelSelectionMiss(ctx *gin.Context, tokenGroup string, modelName 
 }
 
 func selectionDiagnosticGroups(ctx *gin.Context, tokenGroup string) []string {
+	return RoutingGroupsForSelection(ctx, tokenGroup)
+}
+
+func RoutingGroupsForSelection(ctx *gin.Context, tokenGroup string) []string {
 	tokenGroup = NormalizeTokenGroup(tokenGroup)
 	if tokenGroup == AutoGroupName {
 		userGroup := common.GetContextKeyString(ctx, constant.ContextKeyUserGroup)
 		return GetUserAutoGroup(userGroup)
 	}
-	return EffectiveRoutingGroups(tokenGroup)
+	return []string{tokenGroup}
 }
 
 func diagnosticModelMatchesRequest(candidateModel string, requestModel string) bool {
@@ -1731,7 +1728,7 @@ func GetChannelFailoverPlan(param *RetryParam) (bool, bool) {
 		return false, false
 	}
 	if param.TokenGroup != "auto" {
-		for _, routeGroup := range param.EffectiveRoutingGroups() {
+		for _, routeGroup := range param.RoutingGroupsForSelection() {
 			if hasAlternativeChannelInGroup(param.Ctx, routeGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, param.RequiresResponsesPreviousID, param.GetRetry()) {
 				return true, false
 			}
@@ -1845,7 +1842,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 		}
 	} else {
-		for _, routeGroup := range param.EffectiveRoutingGroups() {
+		for _, routeGroup := range param.RoutingGroupsForSelection() {
 			channel, err = selectChannelForGroup(param.Ctx, routeGroup, param.ModelName, param.EndpointType, param.RequiresCodexImageTool, param.RequiresResponsesPreviousID, param.GetRetry(), true)
 			if err != nil {
 				return nil, routeGroup, err

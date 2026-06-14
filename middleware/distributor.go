@@ -381,7 +381,7 @@ func relaxUnsupportedCodexImageToolRequirementIfNeeded(c *gin.Context, modelRequ
 		"model":                    modelRequest.Model,
 		"group":                    usingGroup,
 		"endpoint_type":            string(modelRequest.EndpointType),
-		"effective_routing_groups": service.EffectiveRoutingGroups(usingGroup),
+		"effective_routing_groups": service.RoutingGroupsForSelection(c, usingGroup),
 		"selection_miss_explanation": service.ExplainChannelSelectionMiss(
 			c,
 			usingGroup,
@@ -466,7 +466,7 @@ func relaxUnsupportedResponsesPreviousIDRequirementIfNeeded(c *gin.Context, mode
 		"model":                    modelRequest.Model,
 		"group":                    usingGroup,
 		"endpoint_type":            string(modelRequest.EndpointType),
-		"effective_routing_groups": service.EffectiveRoutingGroups(usingGroup),
+		"effective_routing_groups": service.RoutingGroupsForSelection(c, usingGroup),
 		"selection_miss_explanation": service.ExplainChannelSelectionMiss(
 			c,
 			usingGroup,

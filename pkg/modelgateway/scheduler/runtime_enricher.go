@@ -2,22 +2,52 @@ package scheduler
 
 import (
 	"math"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	modelgatewaycost "github.com/QuantumNous/new-api/pkg/modelgateway/cost"
 	modelgatewaydynamicbilling "github.com/QuantumNous/new-api/pkg/modelgateway/dynamicbilling"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/scheduler_setting"
+	"github.com/QuantumNous/new-api/types"
 )
 
 const (
 	defaultQueueTimeoutMs       = 2000
 	defaultQueueDepthMultiplier = 2
 	defaultQueueMaxDepth        = 64
+	billingRevenueRatioCacheTTL = 15 * time.Second
 )
+
+var (
+	billingRevenueRatioCache            sync.Map
+	billingMultiplierPolicyCache        sync.Map
+	activeSubscriptionPlanIDCache       sync.Map
+	billingRevenueRatioCacheLastCleanup int64
+)
+
+type billingRevenueRatioCacheEntry struct {
+	ratio     float64
+	expiresAt int64
+}
+
+type billingMultiplierPolicyCacheEntry struct {
+	policies  []model.BillingMultiplierPolicy
+	expiresAt int64
+}
+
+type activeSubscriptionPlanIDCacheEntry struct {
+	planIDs   []int
+	expiresAt int64
+}
 
 type RuntimeStateProvider interface {
 	ActiveConcurrency(channelID int) int
@@ -87,13 +117,14 @@ func (p *ServiceRuntimeStateProvider) FirstBytePendingStatusForIdentity(identity
 }
 
 type RuntimeSnapshotEnricher struct {
-	stateProvider        RuntimeStateProvider
-	costProvider         CostProfileProvider
-	costBaselineProvider core.CostBaselineProvider
-	circuitBreaker       core.CircuitBreaker
-	queueTimeoutMs       int
-	queueMaxDepth        int
-	queueDepthMultiplier int
+	stateProvider              RuntimeStateProvider
+	costProvider               CostProfileProvider
+	costBaselineProvider       core.CostBaselineProvider
+	billingMultiplierEvaluator func(model.BillingMultiplierContext) types.BillingMultiplierSnapshot
+	circuitBreaker             core.CircuitBreaker
+	queueTimeoutMs             int
+	queueMaxDepth              int
+	queueDepthMultiplier       int
 }
 
 func NewRuntimeSnapshotEnricher(stateProvider RuntimeStateProvider, queueTimeoutMs int, queueMaxDepth int, queueDepthMultiplier int) *RuntimeSnapshotEnricher {
@@ -138,6 +169,14 @@ func (e *RuntimeSnapshotEnricher) WithCostBaselineProvider(provider core.CostBas
 		return nil
 	}
 	e.costBaselineProvider = provider
+	return e
+}
+
+func (e *RuntimeSnapshotEnricher) WithBillingMultiplierEvaluator(evaluator func(model.BillingMultiplierContext) types.BillingMultiplierSnapshot) *RuntimeSnapshotEnricher {
+	if e == nil {
+		return nil
+	}
+	e.billingMultiplierEvaluator = evaluator
 	return e
 }
 
@@ -193,11 +232,11 @@ func (e *RuntimeSnapshotEnricher) applyFailureAvoidance(snapshot core.RuntimeSna
 		}
 	}
 	if status == nil {
-		if identity.HasAccountScope() {
-			return snapshot
+		if e.stateProvider.FailureAvoidanceActive(channelID) {
+			snapshot.FailureAvoidance = true
+			return applyFailureRecoveryConcurrencyLimit(snapshot)
 		}
-		snapshot.FailureAvoidance = snapshot.FailureAvoidance || e.stateProvider.FailureAvoidanceActive(channelID)
-		return snapshot
+		return clearFailureAvoidanceSnapshot(snapshot)
 	}
 	snapshot.FailureAvoidance = true
 	if service.IsProbeRecoveryReason(status.Reason) || status.ProbeRecoveryRequired {
@@ -216,7 +255,37 @@ func (e *RuntimeSnapshotEnricher) applyFailureAvoidance(snapshot core.RuntimeSna
 		}
 		snapshot.ProbeRecoveryRequired = required
 	}
+	return applyFailureRecoveryConcurrencyLimit(snapshot)
+}
+
+func applyFailureRecoveryConcurrencyLimit(snapshot core.RuntimeSnapshot) core.RuntimeSnapshot {
+	if !failureAvoidanceCanUseBusinessProbe(snapshot) {
+		return snapshot
+	}
+	const recoveryConcurrencyLimit = 1
+	if snapshot.EffectiveConcurrencyLimit <= 0 || snapshot.EffectiveConcurrencyLimit > recoveryConcurrencyLimit {
+		snapshot.EffectiveConcurrencyLimit = recoveryConcurrencyLimit
+	}
 	return snapshot
+}
+
+func clearFailureAvoidanceSnapshot(snapshot core.RuntimeSnapshot) core.RuntimeSnapshot {
+	snapshot.FailureAvoidance = false
+	snapshot.ProbeRecoveryPending = false
+	snapshot.ProbeRecoverySuccessCount = 0
+	snapshot.ProbeRecoveryRequired = 0
+	snapshot.ProbeTriggerReason = ""
+	snapshot.ProbeRecoveryPhase = ""
+	snapshot.ProbeFastRecoveryAttempts = 0
+	snapshot.ProbeAnomalyTriggerItems = nil
+	return snapshot
+}
+
+func failureAvoidanceCanUseBusinessProbe(snapshot core.RuntimeSnapshot) bool {
+	if !snapshot.FailureAvoidance {
+		return false
+	}
+	return !service.IsAuthConfigRecoveryReason(snapshot.ProbeTriggerReason)
 }
 
 func clearConfigErrorIsolationSnapshot(snapshot core.RuntimeSnapshot) core.RuntimeSnapshot {
@@ -415,7 +484,7 @@ func (e *RuntimeSnapshotEnricher) applyCostSnapshot(candidate core.Candidate, sn
 	if ratio := candidateGroupRevenueRatio(candidate, policy); ratio > 0 {
 		snapshot.RevenueRatio = ratio
 	}
-	if revenue := candidateRevenueRatio(candidate, policy); revenue > 0 {
+	if revenue := e.candidateRevenueRatio(candidate, policy); revenue > 0 {
 		snapshot.RevenueRatio = revenue
 	}
 	return snapshot
@@ -499,7 +568,7 @@ func candidateGroupRevenueRatio(candidate core.Candidate, policy core.GroupSmart
 	return policy.GroupRevenueRatio[group]
 }
 
-func candidateRevenueRatio(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {
+func (e *RuntimeSnapshotEnricher) candidateRevenueRatio(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {
 	group := strings.TrimSpace(candidate.Group)
 	if group == "" {
 		group = strings.TrimSpace(candidate.RuntimeKey.Group)
@@ -519,6 +588,7 @@ func candidateRevenueRatio(candidate core.Candidate, policy core.GroupSmartPolic
 	}
 	groupRatio := candidateBillingGroupRatio(candidate, policy, group)
 	groupRatio = dynamicCandidateGroupRatio(modelName, group, groupRatio, policy)
+	groupRatio = e.billingMultiplierCandidateGroupRatio(modelName, group, groupRatio, policy)
 	return requestedModelRevenueRatio(modelName, groupRatio)
 }
 
@@ -556,6 +626,154 @@ func dynamicCandidateGroupRatio(modelName string, group string, staticGroupRatio
 		return snapshot.DynamicRatio
 	}
 	return staticGroupRatio
+}
+
+func (e *RuntimeSnapshotEnricher) billingMultiplierCandidateGroupRatio(modelName string, group string, baseGroupRatio float64, policy core.GroupSmartPolicy) float64 {
+	if baseGroupRatio <= 0 {
+		return baseGroupRatio
+	}
+	ctx := model.BillingMultiplierContext{
+		UserID:         policy.UserID,
+		UserGroup:      strings.TrimSpace(policy.UserGroup),
+		UsingGroup:     strings.TrimSpace(group),
+		ModelName:      strings.TrimSpace(modelName),
+		BaseGroupRatio: baseGroupRatio,
+	}
+	if e != nil && e.billingMultiplierEvaluator != nil {
+		return billingMultiplierFinalGroupRatio(baseGroupRatio, e.billingMultiplierEvaluator(ctx))
+	}
+	now := time.Now().UnixNano()
+	ctx.SubscriptionPlanIDs = activeSubscriptionPlanIDsForBillingMultiplier(policy.UserID, now)
+	key := billingRevenueRatioCacheKey(ctx)
+	if cached, ok := billingRevenueRatioCache.Load(key); ok {
+		if entry, ok := cached.(billingRevenueRatioCacheEntry); ok && entry.expiresAt > now {
+			return entry.ratio
+		}
+	}
+	snapshot := types.BillingMultiplierSnapshot{}
+	if policies, ok := billingMultiplierPoliciesForRuntime(now); ok {
+		snapshot = model.EvaluateBillingMultiplierWithPolicies(ctx, policies)
+	} else {
+		snapshot = model.EvaluateBillingMultiplier(ctx)
+	}
+	finalRatio := billingMultiplierFinalGroupRatio(baseGroupRatio, snapshot)
+	billingRevenueRatioCache.Store(key, billingRevenueRatioCacheEntry{
+		ratio:     finalRatio,
+		expiresAt: now + int64(billingRevenueRatioCacheTTL),
+	})
+	cleanupBillingRevenueRatioCache(now)
+	return finalRatio
+}
+
+func billingMultiplierPoliciesForRuntime(now int64) ([]model.BillingMultiplierPolicy, bool) {
+	const cacheKey = "enabled"
+	if cached, ok := billingMultiplierPolicyCache.Load(cacheKey); ok {
+		if entry, ok := cached.(billingMultiplierPolicyCacheEntry); ok && entry.expiresAt > now {
+			return append([]model.BillingMultiplierPolicy(nil), entry.policies...), true
+		}
+	}
+	if model.DB == nil {
+		return nil, false
+	}
+	policies, err := model.ListBillingMultiplierPolicies()
+	if err != nil {
+		return nil, false
+	}
+	billingMultiplierPolicyCache.Store(cacheKey, billingMultiplierPolicyCacheEntry{
+		policies:  append([]model.BillingMultiplierPolicy(nil), policies...),
+		expiresAt: now + int64(billingRevenueRatioCacheTTL),
+	})
+	return policies, true
+}
+
+func billingMultiplierFinalGroupRatio(baseGroupRatio float64, snapshot types.BillingMultiplierSnapshot) float64 {
+	if snapshot.FinalGroupRatio >= 0 {
+		return snapshot.FinalGroupRatio
+	}
+	return baseGroupRatio
+}
+
+func activeSubscriptionPlanIDsForBillingMultiplier(userID int, now int64) []int {
+	if userID <= 0 || model.DB == nil {
+		return nil
+	}
+	if cached, ok := activeSubscriptionPlanIDCache.Load(userID); ok {
+		if entry, ok := cached.(activeSubscriptionPlanIDCacheEntry); ok && entry.expiresAt > now {
+			return append([]int(nil), entry.planIDs...)
+		}
+	}
+	subscriptions, err := model.GetAllActiveUserSubscriptions(userID)
+	if err != nil {
+		return nil
+	}
+	seen := map[int]struct{}{}
+	planIDs := make([]int, 0, len(subscriptions))
+	for _, summary := range subscriptions {
+		if summary.Subscription == nil || summary.Subscription.PlanId <= 0 {
+			continue
+		}
+		planID := summary.Subscription.PlanId
+		if _, ok := seen[planID]; ok {
+			continue
+		}
+		seen[planID] = struct{}{}
+		planIDs = append(planIDs, planID)
+	}
+	sort.Ints(planIDs)
+	activeSubscriptionPlanIDCache.Store(userID, activeSubscriptionPlanIDCacheEntry{
+		planIDs:   append([]int(nil), planIDs...),
+		expiresAt: now + int64(billingRevenueRatioCacheTTL),
+	})
+	return planIDs
+}
+
+func cleanupBillingRevenueRatioCache(now int64) {
+	last := atomic.LoadInt64(&billingRevenueRatioCacheLastCleanup)
+	if now-last < int64(billingRevenueRatioCacheTTL) {
+		return
+	}
+	if !atomic.CompareAndSwapInt64(&billingRevenueRatioCacheLastCleanup, last, now) {
+		return
+	}
+	billingRevenueRatioCache.Range(func(key any, value any) bool {
+		entry, ok := value.(billingRevenueRatioCacheEntry)
+		if !ok || entry.expiresAt <= now {
+			billingRevenueRatioCache.Delete(key)
+		}
+		return true
+	})
+	billingMultiplierPolicyCache.Range(func(key any, value any) bool {
+		entry, ok := value.(billingMultiplierPolicyCacheEntry)
+		if !ok || entry.expiresAt <= now {
+			billingMultiplierPolicyCache.Delete(key)
+		}
+		return true
+	})
+	activeSubscriptionPlanIDCache.Range(func(key any, value any) bool {
+		entry, ok := value.(activeSubscriptionPlanIDCacheEntry)
+		if !ok || entry.expiresAt <= now {
+			activeSubscriptionPlanIDCache.Delete(key)
+		}
+		return true
+	})
+}
+
+func billingRevenueRatioCacheKey(ctx model.BillingMultiplierContext) string {
+	parts := []string{
+		strconv.Itoa(ctx.UserID),
+		strings.TrimSpace(ctx.UserGroup),
+		strings.TrimSpace(ctx.UsingGroup),
+		strings.TrimSpace(ctx.ModelName),
+		strconv.FormatFloat(ctx.BaseGroupRatio, 'g', -1, 64),
+	}
+	if len(ctx.SubscriptionPlanIDs) > 0 {
+		planIDs := append([]int(nil), ctx.SubscriptionPlanIDs...)
+		sort.Ints(planIDs)
+		for _, planID := range planIDs {
+			parts = append(parts, strconv.Itoa(planID))
+		}
+	}
+	return strings.Join(parts, "|")
 }
 
 func requestedModelRevenueRatio(modelName string, groupRatio float64) float64 {

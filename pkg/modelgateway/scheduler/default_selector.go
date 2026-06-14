@@ -28,6 +28,8 @@ const (
 	costFirstStickyEscapeSuccessSlack        = 0.02
 	negativeCurrentGroupMarginReason         = "negative_current_group_margin"
 	negativeMarginFallbackReason             = "negative_margin_fallback"
+	failureRecoveryProbeSelectedReason       = "failure_recovery_probe"
+	failureRecoveryProbeInFlightReason       = "failure_recovery_probe_inflight"
 )
 
 type DefaultSmartChannelSelector struct {
@@ -248,6 +250,9 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 	retryIntent := req.RetryRoutingIntent
 	if policy.RequestedGroup == "" {
 		policy.RequestedGroup = req.RequestedGroup
+	}
+	if policy.UserID <= 0 {
+		policy.UserID = req.UserID
 	}
 	if policy.UserGroup == "" {
 		policy.UserGroup = req.UserGroup
@@ -523,6 +528,10 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		finalEvaluation.score = bestScore
 	} else {
 		markNegativeMarginSkippedCandidateExplanations(explanations, append(negativeAvailableEvaluations, negativeSaturatedEvaluations...))
+	}
+	if failureAvoidanceCanUseBusinessProbe(bestSnapshot) && channelPriorityTieBreakCanOwnReason(bestScore.Reason) {
+		bestScore.Reason = failureRecoveryProbeSelectedReason
+		finalEvaluation.score = bestScore
 	}
 	if !reserveCandidateAccountRateLimit(bestCandidate) {
 		return s.Select(c, param, policy)
@@ -1877,6 +1886,12 @@ func candidateUnavailableReason(c *gin.Context, candidate core.Candidate, snapsh
 		return "cooldown"
 	}
 	if snapshot.FailureAvoidance {
+		if failureAvoidanceCanUseBusinessProbe(snapshot) {
+			if routingConcurrencySaturated(snapshot) {
+				return failureRecoveryProbeInFlightReason
+			}
+			return ""
+		}
 		if strings.TrimSpace(snapshot.ProbeTriggerReason) == service.ChannelTimeoutRecoveryReason {
 			return service.ChannelTimeoutRecoveryReason
 		}

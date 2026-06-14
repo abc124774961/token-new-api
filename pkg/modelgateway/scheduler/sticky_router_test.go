@@ -13,8 +13,11 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/testkit"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -1510,6 +1513,85 @@ func TestSelectorReportsNegativeMarginBeforeSaturationWhenPositiveMarginAvailabl
 	require.True(t, negative.NegativeCurrentGroupMargin)
 	require.Equal(t, "negative_current_group_margin", negative.SelectionSkipReason)
 	require.False(t, negative.Selected)
+}
+
+func TestSelectorUsesUserBillingMultiplierForNegativeMarginDecision(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := newStickyRequestContext(t, `{"session_id":"sess-user-margin-rate"}`, nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserId, 1701)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 606)
+
+	oldModelRatio := ratio_setting.ModelRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-user-margin-test":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldModelRatio))
+	})
+
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	negativeKey := core.RuntimeKey{RequestedModel: "gpt-user-margin-test", ChannelID: 31, Group: "default"}
+	positiveKey := core.RuntimeKey{RequestedModel: "gpt-user-margin-test", ChannelID: 32, Group: "default"}
+	store.Put(core.RuntimeSnapshot{
+		Key:             negativeKey,
+		SuccessRate:     1,
+		TTFTMs:          100,
+		TokensPerSecond: 80,
+		SampleCount:     20,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:             positiveKey,
+		SuccessRate:     0.7,
+		TTFTMs:          3000,
+		TokensPerSecond: 20,
+		SampleCount:     20,
+	})
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{}, 1500, 8, 2).
+		WithBillingMultiplierEvaluator(func(ctx model.BillingMultiplierContext) types.BillingMultiplierSnapshot {
+			require.Equal(t, 1701, ctx.UserID)
+			require.Equal(t, "default", ctx.UserGroup)
+			require.Equal(t, "default", ctx.UsingGroup)
+			require.Equal(t, "gpt-user-margin-test", ctx.ModelName)
+			return types.BillingMultiplierSnapshot{
+				Applied:         true,
+				BaseGroupRatio:  ctx.BaseGroupRatio,
+				FinalGroupRatio: ctx.BaseGroupRatio * 0.5,
+				Multiplier:      0.5,
+			}
+		}).
+		WithCostProfileProvider(fakeCostProfileProvider{
+			ratiosByChannel: map[int]float64{
+				31: 1.2,
+				32: 0.8,
+			},
+		})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 31}, Group: "default", RuntimeKey: negativeKey},
+			{Channel: &model.Channel{Id: 32}, Group: "default", RuntimeKey: positiveKey},
+		}),
+		store,
+		core.ScoreWeights{Success: 1},
+	).WithRuntimeSnapshotEnricher(enricher)
+
+	plan, handled, apiErr := selector.Select(ctx, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "gpt-user-margin-test",
+	}, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 32, plan.Channel.Id)
+	negative := candidateExplanationByChannel(t, plan.Candidates, 31)
+	require.True(t, negative.NegativeCurrentGroupMargin)
+	require.Equal(t, 1.0, negative.RevenueRatio)
+	require.Equal(t, "negative_current_group_margin", negative.SelectionSkipReason)
 }
 
 func TestSelectorDoesNotTreatMissingRevenueAsNegativeMargin(t *testing.T) {

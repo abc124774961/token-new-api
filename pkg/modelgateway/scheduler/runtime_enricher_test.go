@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/modelgateway/testkit"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -276,6 +277,44 @@ func TestRuntimeSnapshotEnricherAppliesRevenueRatioFromBillingRatios(t *testing.
 	require.Equal(t, 1.0, snapshot.RevenueRatio)
 }
 
+func TestRuntimeSnapshotEnricherAppliesUserBillingMultiplierToRevenueRatio(t *testing.T) {
+	oldModelRatio := ratio_setting.ModelRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-user-revenue-test":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldModelRatio))
+	})
+
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{}, 1500, 8, 2).
+		WithBillingMultiplierEvaluator(func(ctx model.BillingMultiplierContext) types.BillingMultiplierSnapshot {
+			require.Equal(t, 901, ctx.UserID)
+			require.Equal(t, "default", ctx.UserGroup)
+			require.Equal(t, "codex-plus", ctx.UsingGroup)
+			require.Equal(t, "gpt-user-revenue-test", ctx.ModelName)
+			return types.BillingMultiplierSnapshot{
+				Applied:         true,
+				BaseGroupRatio:  ctx.BaseGroupRatio,
+				FinalGroupRatio: ctx.BaseGroupRatio * 0.5,
+				Multiplier:      0.5,
+			}
+		})
+
+	snapshot := enricher.Enrich(core.Candidate{
+		Channel: &model.Channel{Id: 7},
+		Group:   "codex-plus",
+		RuntimeKey: core.RuntimeKey{
+			RequestedModel: "gpt-user-revenue-test",
+		},
+	}, core.RuntimeSnapshot{}, core.GroupSmartPolicy{
+		UserID:    901,
+		UserGroup: "default",
+		GroupRevenueRatio: map[string]float64{
+			"codex-plus": 1,
+		},
+	})
+
+	require.Equal(t, 1.0, snapshot.RevenueRatio)
+}
+
 func TestRuntimeSnapshotEnricherAppliesFirstBytePending(t *testing.T) {
 	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{
 		FirstBytePendingByChannel: map[int]*service.ChannelFirstBytePendingStatus{
@@ -319,6 +358,34 @@ func TestRuntimeSnapshotEnricherMarksTimeoutRecoveryPending(t *testing.T) {
 	require.True(t, snapshot.ProbeRecoveryPending)
 	require.Equal(t, service.ChannelTimeoutRecoveryReason, snapshot.ProbeTriggerReason)
 	require.Equal(t, 2, snapshot.ProbeRecoveryRequired)
+	require.Equal(t, 1, snapshot.EffectiveConcurrencyLimit)
+}
+
+func TestRuntimeSnapshotEnricherClearsStaleFailureAvoidanceSnapshot(t *testing.T) {
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{}, 1500, 8, 2)
+
+	snapshot := enricher.Enrich(core.Candidate{
+		Channel: &model.Channel{Id: 7},
+		Group:   "default",
+	}, core.RuntimeSnapshot{
+		FailureAvoidance:          true,
+		ProbeRecoveryPending:      true,
+		ProbeRecoverySuccessCount: 1,
+		ProbeRecoveryRequired:     2,
+		ProbeTriggerReason:        service.ChannelOverloadRecoveryReason,
+		ProbeRecoveryPhase:        "probe",
+		ProbeFastRecoveryAttempts: 1,
+		ProbeAnomalyTriggerItems:  []string{"upstream_error_rate"},
+	}, core.GroupSmartPolicy{})
+
+	require.False(t, snapshot.FailureAvoidance)
+	require.False(t, snapshot.ProbeRecoveryPending)
+	require.Zero(t, snapshot.ProbeRecoverySuccessCount)
+	require.Zero(t, snapshot.ProbeRecoveryRequired)
+	require.Empty(t, snapshot.ProbeTriggerReason)
+	require.Empty(t, snapshot.ProbeRecoveryPhase)
+	require.Zero(t, snapshot.ProbeFastRecoveryAttempts)
+	require.Empty(t, snapshot.ProbeAnomalyTriggerItems)
 }
 
 func TestRuntimeSnapshotEnricherFallsBackToChannelAvoidanceForAccountCandidate(t *testing.T) {

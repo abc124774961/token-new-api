@@ -44,7 +44,10 @@ func (r *DefaultAutoGroupResolver) Resolve(c *gin.Context, req *core.DispatchReq
 	if policy.CrossGroupFusion {
 		plan.CandidateGroups = filterUsableGroups(policy.CandidateGroups, req.UserGroup, r.groupService)
 	} else if req.RequestedGroup != "" {
-		plan.CandidateGroups = effectiveRoutingGroups(req.RequestedGroup, r.groupService)
+		plan.CandidateGroups = []string{req.RequestedGroup}
+	}
+	if req.RequestedGroup != "" && req.RequestedGroup != "auto" && len(plan.CandidateGroups) == 0 {
+		plan.CandidateGroups = []string{req.RequestedGroup}
 	}
 	return plan
 }

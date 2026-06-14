@@ -26,6 +26,7 @@ func (r *DefaultGroupPolicyResolver) Resolve(c *gin.Context, req *core.DispatchR
 	}
 	if !settings.Enabled {
 		return core.GroupSmartPolicy{
+			UserID:         req.UserID,
 			RequestedGroup: req.RequestedGroup,
 			UserGroup:      req.UserGroup,
 			Mode:           core.ModeOff,
@@ -42,6 +43,7 @@ func (r *DefaultGroupPolicyResolver) Resolve(c *gin.Context, req *core.DispatchR
 	policySetting, ok := settings.GroupPolicies[req.RequestedGroup]
 	if !ok {
 		return core.GroupSmartPolicy{
+			UserID:         req.UserID,
 			RequestedGroup: req.RequestedGroup,
 			UserGroup:      req.UserGroup,
 			Mode:           normalizeMode(settings.DefaultMode),
@@ -56,6 +58,7 @@ func (r *DefaultGroupPolicyResolver) Resolve(c *gin.Context, req *core.DispatchR
 		}
 	}
 	return core.GroupSmartPolicy{
+		UserID:                    req.UserID,
 		RequestedGroup:            req.RequestedGroup,
 		UserGroup:                 req.UserGroup,
 		Mode:                      normalizeMode(policySetting.Mode),

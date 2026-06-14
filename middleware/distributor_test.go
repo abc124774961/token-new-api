@@ -155,7 +155,7 @@ func TestRelaxUnsupportedCodexImageToolRequirementStripsToolWhenNoImageToolCandi
 		Name:          "plain-codex-plus",
 		Key:           "sk-plain",
 		Status:        common.ChannelStatusEnabled,
-		Group:         "codex-plus",
+		Group:         "codex-plus-vip3",
 		Models:        "gpt-5.4",
 		OtherSettings: `{"codex_compatibility_mode":true}`,
 	}
@@ -276,7 +276,7 @@ func TestRelaxUnsupportedCodexImageToolRequirementKeepsToolWhenImageToolCandidat
 		Name:          "image-codex-plus",
 		Key:           "sk-image",
 		Status:        common.ChannelStatusEnabled,
-		Group:         "codex-plus",
+		Group:         "codex-plus-vip3",
 		Models:        "gpt-5.4",
 		OtherSettings: `{"codex_compatibility_mode":true,"codex_image_generation_tool_supported":true}`,
 	}
@@ -311,7 +311,7 @@ func TestRelaxUnsupportedCodexImageToolRequirementKeepsForcedImageToolChoice(t *
 		Name:          "plain-codex-plus",
 		Key:           "sk-plain",
 		Status:        common.ChannelStatusEnabled,
-		Group:         "codex-plus",
+		Group:         "codex-plus-vip3",
 		Models:        "gpt-5.4",
 		OtherSettings: `{"codex_compatibility_mode":true}`,
 	}

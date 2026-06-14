@@ -148,6 +148,7 @@ type DispatchRequest struct {
 }
 
 type GroupSmartPolicy struct {
+	UserID                    int
 	RequestedGroup            string
 	UserGroup                 string
 	Mode                      string

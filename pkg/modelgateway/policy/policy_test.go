@@ -120,7 +120,7 @@ func TestAutoGroupResolverCrossGroupFusionFiltersUsableGroups(t *testing.T) {
 	require.Equal(t, []string{"default", "fast"}, plan.CandidateGroups)
 }
 
-func TestAutoGroupResolverUsesEffectiveRoutingGroupsForFixedGroup(t *testing.T) {
+func TestAutoGroupResolverUsesStrictGroupForFixedGroup(t *testing.T) {
 	groupService := &testkit.FakeGroupPermissionService{
 		EffectiveGroups: map[string][]string{
 			"codex-plus-特惠": {"codex-plus-特惠", "codex-plus"},
@@ -132,6 +132,29 @@ func TestAutoGroupResolverUsesEffectiveRoutingGroupsForFixedGroup(t *testing.T) 
 		RequestedGroup: "codex-plus-特惠",
 		UserGroup:      "vip",
 	}, core.GroupSmartPolicy{AutoMode: core.AutoModeSequential})
+
+	require.Equal(t, []string{"codex-plus-特惠"}, plan.CandidateGroups)
+}
+
+func TestAutoGroupResolverAllowsConfiguredCrossGroupFusion(t *testing.T) {
+	groupService := &testkit.FakeGroupPermissionService{
+		UsableGroups: map[string]map[string]string{
+			"vip": {
+				"codex-plus-特惠": "discount",
+				"codex-plus":    "plus",
+			},
+		},
+	}
+	resolver := policy.NewDefaultAutoGroupResolver(groupService)
+
+	plan := resolver.Resolve(nil, &core.DispatchRequest{
+		RequestedGroup: "codex-plus-特惠",
+		UserGroup:      "vip",
+	}, core.GroupSmartPolicy{
+		AutoMode:         core.AutoModeSequential,
+		CrossGroupFusion: true,
+		CandidateGroups:  []string{"codex-plus-特惠", "codex-plus"},
+	})
 
 	require.Equal(t, []string{"codex-plus-特惠", "codex-plus"}, plan.CandidateGroups)
 }

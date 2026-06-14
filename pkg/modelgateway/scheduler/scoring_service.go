@@ -688,6 +688,9 @@ func scoreTotalFromItems(items []core.ScoreItem, snapshot core.RuntimeSnapshot, 
 		}
 		total += item.Score * item.Weight
 	}
+	if failureAvoidanceCanUseBusinessProbe(snapshot) {
+		total *= 0.45
+	}
 	return round4(clamp01(total))
 }
 

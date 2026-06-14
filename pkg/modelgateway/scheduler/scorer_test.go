@@ -145,7 +145,105 @@ func TestSelectorKeepsPeerAccountAvailableWhenRuntimeAvoided(t *testing.T) {
 	require.NotNil(t, plan)
 	require.Equal(t, "acct-b", plan.RuntimeKey.AccountID)
 	accountAExplanation := candidateExplanationByRuntimeAccount(t, plan.Candidates, "acct-a")
-	require.Equal(t, "failure_avoidance", accountAExplanation.RejectReason)
+	require.Empty(t, accountAExplanation.RejectReason)
+	require.True(t, accountAExplanation.Available)
+	require.Contains(t, accountAExplanation.StateTags, "failure_avoidance")
+}
+
+func TestSelectorUsesRecoveryCandidateWhenNormalCandidateSaturated(t *testing.T) {
+	normal := &model.Channel{Id: 7011, Name: "normal", Status: common.ChannelStatusEnabled}
+	recovery := &model.Channel{Id: 7012, Name: "recovery", Status: common.ChannelStatusEnabled}
+	normalKey := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: normal.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	recoveryKey := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: recovery.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	store.Put(core.RuntimeSnapshot{
+		Key:                       normalKey,
+		SuccessRate:               0.99,
+		ActiveConcurrency:         1,
+		EffectiveConcurrencyLimit: 1,
+		CostRatio:                 1,
+		CostReferenceRatio:        1,
+		GroupPriorityRatio:        1,
+		SampleCount:               20,
+	})
+	store.Put(core.RuntimeSnapshot{
+		Key:                       recoveryKey,
+		SuccessRate:               0.99,
+		FailureAvoidance:          true,
+		EffectiveConcurrencyLimit: 1,
+		CostRatio:                 1,
+		CostReferenceRatio:        1,
+		GroupPriorityRatio:        1,
+		SampleCount:               20,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: normal, Group: "default", RuntimeKey: normalKey},
+			{Channel: recovery, Group: "default", RuntimeKey: recoveryKey},
+		}),
+		store,
+		core.ScoreWeights{Success: 1, Speed: 0, Load: 0, Cost: 0, Group: 0},
+	)
+
+	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+		QueueEnabled:    true,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, recovery.Id, plan.Channel.Id)
+	require.Equal(t, "failure_recovery_probe", plan.SelectedReason)
+	recoveryExplanation := candidateExplanationByChannel(t, plan.Candidates, recovery.Id)
+	require.True(t, recoveryExplanation.Available)
+	require.Empty(t, recoveryExplanation.RejectReason)
+	require.Contains(t, recoveryExplanation.StateTags, "failure_avoidance")
+}
+
+func TestSelectorLimitsConcurrentRecoveryCandidateProbe(t *testing.T) {
+	normal := &model.Channel{Id: 7021, Name: "normal", Status: common.ChannelStatusEnabled}
+	recovery := &model.Channel{Id: 7022, Name: "recovery", Status: common.ChannelStatusEnabled}
+	normalKey := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: normal.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	recoveryKey := core.RuntimeKey{RequestedModel: "gpt-5.5", UpstreamModel: "gpt-5.5", ChannelID: recovery.Id, Group: "default", EndpointType: constant.EndpointTypeOpenAI}
+	store := scheduler.NewMemoryRuntimeSnapshotStore()
+	store.Put(core.RuntimeSnapshot{Key: normalKey, SuccessRate: 0.80, CostRatio: 1, CostReferenceRatio: 1, GroupPriorityRatio: 1, SampleCount: 20})
+	store.Put(core.RuntimeSnapshot{
+		Key:                       recoveryKey,
+		SuccessRate:               1,
+		FailureAvoidance:          true,
+		ActiveConcurrency:         1,
+		EffectiveConcurrencyLimit: 1,
+		CostRatio:                 1,
+		CostReferenceRatio:        1,
+		GroupPriorityRatio:        1,
+		SampleCount:               20,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: normal, Group: "default", RuntimeKey: normalKey},
+			{Channel: recovery, Group: "default", RuntimeKey: recoveryKey},
+		}),
+		store,
+		core.ScoreWeights{Success: 1, Speed: 0, Load: 0, Cost: 0, Group: 0},
+	)
+
+	plan, handled, apiErr := selector.Select(nil, nil, core.GroupSmartPolicy{
+		Mode:            core.ModeActive,
+		RequestedGroup:  "default",
+		CandidateGroups: []string{"default"},
+		Strategy:        core.StrategyBalanced,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, normal.Id, plan.Channel.Id)
+	recoveryExplanation := candidateExplanationByChannel(t, plan.Candidates, recovery.Id)
+	require.Equal(t, "failure_recovery_probe_inflight", recoveryExplanation.RejectReason)
 }
 
 func TestSelectorSkipsAccountWhenShortWindowRateLimitReached(t *testing.T) {

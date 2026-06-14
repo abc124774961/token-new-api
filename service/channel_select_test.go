@@ -467,7 +467,7 @@ func TestCacheGetRandomSatisfiedChannelFallsBackToUsedChannelForSingleGroup(t *t
 	require.Equal(t, 301, channel.Id)
 }
 
-func TestCacheGetRandomSatisfiedChannelUsesBaseGroupForDerivedTokenGroup(t *testing.T) {
+func TestCacheGetRandomSatisfiedChannelDoesNotUseBaseGroupForDerivedTokenGroup(t *testing.T) {
 	db := setupChannelSelectTestDB(t)
 	withChannelSelectMemoryCache(t, false)
 
@@ -482,9 +482,8 @@ func TestCacheGetRandomSatisfiedChannelUsesBaseGroupForDerivedTokenGroup(t *test
 
 	channel, group, err := CacheGetRandomSatisfiedChannel(param)
 	require.NoError(t, err)
-	require.Equal(t, "codex-plus", group)
-	require.NotNil(t, channel)
-	require.Equal(t, 331, channel.Id)
+	require.Equal(t, "codex-plus-特惠", group)
+	require.Nil(t, channel)
 }
 
 func TestCacheGetRandomSatisfiedChannelAvoidsRecentlyFailedChannel(t *testing.T) {
@@ -724,8 +723,8 @@ func TestRecordChannelTimeoutDegradeTriggersProbeRecovery(t *testing.T) {
 	require.True(t, status.ProbeRecoveryRequired)
 	require.Equal(t, ChannelTimeoutRecoveryReason, status.Reason)
 
-	require.False(t, ClearChannelFailureAvoidanceOnRealSuccess(385))
-	require.NotNil(t, GetChannelFailureAvoidanceStatus(385))
+	require.True(t, ClearChannelFailureAvoidanceOnRealSuccess(385))
+	require.Nil(t, GetChannelFailureAvoidanceStatus(385))
 
 	ClearChannelProbeRecoveryAvoidance(385)
 	require.Nil(t, GetChannelFailureAvoidanceStatus(385))
@@ -792,8 +791,8 @@ func TestRecordChannelRuntimeOverloadRecoveryRequiresProbe(t *testing.T) {
 	require.True(t, status.ProbeRecoveryRequired)
 	require.Equal(t, ChannelOverloadRecoveryReason, status.Reason)
 
-	require.False(t, ClearChannelRuntimeFailureAvoidanceOnRealSuccess(identity))
-	require.NotNil(t, GetChannelRuntimeFailureAvoidanceStatus(identity))
+	require.True(t, ClearChannelRuntimeFailureAvoidanceOnRealSuccess(identity))
+	require.Nil(t, GetChannelRuntimeFailureAvoidanceStatus(identity))
 
 	ClearChannelRuntimeProbeRecoveryAvoidance(identity)
 	require.Nil(t, GetChannelRuntimeFailureAvoidanceStatus(identity))
@@ -1034,7 +1033,7 @@ func TestCacheGetRandomSatisfiedChannelFallsBackToBaseModelForCodexMiniVariant(t
 	require.Equal(t, 442, imageToolChannel.Id)
 }
 
-func TestHasSchedulableChannelForRequiredCapabilitiesUsesFallbackGroup(t *testing.T) {
+func TestHasSchedulableChannelForRequiredCapabilitiesUsesSelectionGroupOnly(t *testing.T) {
 	db := setupChannelSelectTestDB(t)
 	withChannelSelectMemoryCache(t, true)
 
@@ -1042,17 +1041,15 @@ func TestHasSchedulableChannelForRequiredCapabilitiesUsesFallbackGroup(t *testin
 	model.InitChannelCache()
 
 	ctx := newRetryContext()
-	require.True(t, HasSchedulableChannelForRequiredCapabilities(ctx, "codex-plus-vip3", "gpt-5.4", constant.EndpointTypeOpenAIResponse, false, false))
+	require.False(t, HasSchedulableChannelForRequiredCapabilities(ctx, "codex-plus-vip3", "gpt-5.4", constant.EndpointTypeOpenAIResponse, false, false))
 	require.False(t, HasSchedulableChannelForRequiredCapabilities(ctx, "codex-plus-vip3", "gpt-5.4", constant.EndpointTypeOpenAIResponse, true, false))
 
 	explanation := ExplainChannelSelectionMiss(ctx, "codex-plus-vip3", "gpt-5.4", constant.EndpointTypeOpenAIResponse, true, false)
-	require.Equal(t, []string{"codex-plus-vip3", "codex-plus"}, explanation.EffectiveRoutingGroups)
+	require.Equal(t, []string{"codex-plus-vip3"}, explanation.EffectiveRoutingGroups)
 	require.False(t, explanation.HasRequiredCapabilities)
-	require.Len(t, explanation.Groups, 2)
-	require.Equal(t, "codex-plus", explanation.Groups[1].Group)
-	require.Equal(t, 1, explanation.Groups[1].Candidates)
-	require.Equal(t, 0, explanation.Groups[1].CodexImageToolCapable)
-	require.Equal(t, 1, explanation.Groups[1].SchedulableCredential)
+	require.Len(t, explanation.Groups, 1)
+	require.Equal(t, "codex-plus-vip3", explanation.Groups[0].Group)
+	require.Equal(t, 0, explanation.Groups[0].Candidates)
 }
 
 func TestCacheGetRandomSatisfiedChannelRespectsResponsesPreviousIDRequirement(t *testing.T) {

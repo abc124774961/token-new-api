@@ -871,7 +871,7 @@ func TestChannelSelectionWrapperOffFallsBackToLegacy(t *testing.T) {
 	require.Equal(t, 1, h.Legacy.Calls)
 }
 
-func TestChannelSelectionWrapperActiveUsesEffectiveRoutingGroup(t *testing.T) {
+func TestChannelSelectionWrapperActiveDoesNotUseImplicitRoutingFallbackGroup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(nil)
 	settings := core.SchedulerSettings{
@@ -916,7 +916,7 @@ func TestChannelSelectionWrapperActiveUsesEffectiveRoutingGroup(t *testing.T) {
 	})
 	wrapper := integration.NewChannelSelectionWrapper(facade, &testkit.FakeLegacyChannelSelector{})
 
-	result, apiErr := wrapper.Select(ctx, &service.RetryParam{
+	result, apiErr := wrapper.SelectSmartOnly(ctx, &service.RetryParam{
 		Ctx:          ctx,
 		TokenGroup:   "codex-plus-特惠",
 		ModelName:    "gpt-5.4",
@@ -924,6 +924,77 @@ func TestChannelSelectionWrapperActiveUsesEffectiveRoutingGroup(t *testing.T) {
 	})
 
 	require.Nil(t, apiErr)
+	require.Nil(t, result)
+	require.Empty(t, recorder.SnapshotRecords())
+}
+
+func TestChannelSelectionWrapperActiveAllowsConfiguredCrossGroupFusion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "vip")
+	settings := core.SchedulerSettings{
+		Enabled:         true,
+		DefaultMode:     core.ModeActive,
+		DefaultStrategy: core.StrategyBalanced,
+		GroupPolicies: map[string]core.GroupPolicySetting{
+			"codex-plus-特惠": {
+				Mode:             core.ModeActive,
+				Strategy:         core.StrategyBalanced,
+				AutoMode:         core.AutoModeSequential,
+				CrossGroupFusion: true,
+				CandidateGroups:  []string{"codex-plus-特惠", "codex-plus"},
+			},
+		},
+	}
+	groupService := &testkit.FakeGroupPermissionService{
+		UsableGroups: map[string]map[string]string{
+			"vip": {
+				"codex-plus-特惠": "discount",
+				"codex-plus":    "plus",
+			},
+		},
+	}
+	key := core.RuntimeKey{
+		RequestedModel: "gpt-5.4",
+		ChannelID:      51,
+		Group:          "codex-plus",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	snapshots := scheduler.NewMemoryRuntimeSnapshotStore()
+	snapshots.Put(core.RuntimeSnapshot{
+		Key:                key,
+		SuccessRate:        0.99,
+		TTFTMs:             300,
+		TokensPerSecond:    70,
+		CostRatio:          1,
+		GroupPriorityRatio: 1,
+		SampleCount:        10,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 51, Name: "base-plus"}, Group: "codex-plus", RuntimeKey: key},
+		}),
+		snapshots,
+		scheduler.DefaultScoreWeights(),
+	)
+	recorder := &testkit.FakeExecutionRecorder{}
+	facade := modelgateway.NewSmartDispatchFacade(modelgateway.SmartDispatchDeps{
+		PolicyResolver: policy.NewDefaultGroupPolicyResolver(testkit.StaticSettingsProvider{Settings: settings}),
+		AutoResolver:   policy.NewDefaultAutoGroupResolver(groupService),
+		Selector:       selector,
+		Recorder:       recorder,
+	})
+	wrapper := integration.NewChannelSelectionWrapper(facade, &testkit.FakeLegacyChannelSelector{})
+
+	result, apiErr := wrapper.SelectSmartOnly(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "codex-plus-特惠",
+		ModelName:    "gpt-5.4",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
 	require.True(t, result.SmartHandled)
 	require.Equal(t, 51, result.Channel.Id)
 	require.Equal(t, "codex-plus", result.Group)
