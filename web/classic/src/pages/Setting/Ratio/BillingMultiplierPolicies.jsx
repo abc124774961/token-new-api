@@ -411,17 +411,17 @@ export default function BillingMultiplierPolicies({
 
   const updateTarget = (rowID, patch) => {
     setTargets((rows) =>
-      rows.map((row) =>
-        row._id === rowID
-          ? makeTargetRow({
-              ...row,
-              ...patch,
-              target_id: patch.target_type && patch.target_type !== row.target_type ? '' : row.target_id,
-              target_key: patch.target_type && patch.target_type !== row.target_type ? '' : row.target_key,
-              target_name: patch.target_type && patch.target_type !== row.target_type ? '' : row.target_name,
-            })
-          : row,
-      ),
+      rows.map((row) => {
+        if (row._id !== rowID) return row;
+        const typeChanged = patch.target_type && patch.target_type !== row.target_type;
+        return makeTargetRow({
+          ...row,
+          ...patch,
+          target_id: typeChanged ? '' : (patch.target_id ?? row.target_id),
+          target_key: typeChanged ? '' : (patch.target_key ?? row.target_key),
+          target_name: typeChanged ? '' : (patch.target_name ?? row.target_name),
+        });
+      }),
     );
   };
 
