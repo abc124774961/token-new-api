@@ -116,7 +116,7 @@ func TestAutoGroupResolverCrossGroupFusionFiltersUsableGroups(t *testing.T) {
 	}, core.GroupSmartPolicy{
 		CrossGroupFusion: true,
 		CandidateGroups:  []string{"default", "fast", "forbidden"},
-		AutoMode:         core.AutoModeSequential,
+		AutoMode:         core.AutoModeFusion,
 	})
 
 	require.Equal(t, []string{"default", "fast"}, plan.CandidateGroups)
@@ -138,7 +138,7 @@ func TestAutoGroupResolverUsesStrictGroupForFixedGroup(t *testing.T) {
 	require.Equal(t, []string{"codex-plus-特惠"}, plan.CandidateGroups)
 }
 
-func TestAutoGroupResolverAllowsConfiguredCrossGroupFusion(t *testing.T) {
+func TestAutoGroupResolverKeepsConfiguredCandidateGroupsFallbackOnly(t *testing.T) {
 	groupService := &testkit.FakeGroupPermissionService{
 		UsableGroups: map[string]map[string]string{
 			"vip": {
@@ -156,6 +156,54 @@ func TestAutoGroupResolverAllowsConfiguredCrossGroupFusion(t *testing.T) {
 		AutoMode:         core.AutoModeSequential,
 		CrossGroupFusion: true,
 		CandidateGroups:  []string{"codex-plus-特惠", "codex-plus"},
+	})
+
+	require.Equal(t, []string{"codex-plus-特惠"}, plan.CandidateGroups)
+}
+
+func TestAutoGroupResolverAllowsConfiguredCandidateGroupsOnFallback(t *testing.T) {
+	groupService := &testkit.FakeGroupPermissionService{
+		UsableGroups: map[string]map[string]string{
+			"vip": {
+				"codex-plus-特惠": "discount",
+				"codex-plus":    "plus",
+			},
+		},
+	}
+	resolver := policy.NewDefaultAutoGroupResolver(groupService)
+
+	plan := resolver.Resolve(nil, &core.DispatchRequest{
+		RequestedGroup:         "codex-plus-特惠",
+		UserGroup:              "vip",
+		CandidateGroupFallback: true,
+	}, core.GroupSmartPolicy{
+		AutoMode:         core.AutoModeSequential,
+		CrossGroupFusion: true,
+		CandidateGroups:  []string{"codex-plus-特惠", "codex-plus"},
+	})
+
+	require.Equal(t, []string{"codex-plus-特惠", "codex-plus"}, plan.CandidateGroups)
+}
+
+func TestAutoGroupResolverAllowsConfiguredCandidateGroupsOnRetry(t *testing.T) {
+	groupService := &testkit.FakeGroupPermissionService{
+		UsableGroups: map[string]map[string]string{
+			"vip": {
+				"codex-plus-特惠": "discount",
+				"codex-plus":    "plus",
+			},
+		},
+	}
+	resolver := policy.NewDefaultAutoGroupResolver(groupService)
+
+	plan := resolver.Resolve(nil, &core.DispatchRequest{
+		RequestedGroup: "codex-plus-特惠",
+		UserGroup:      "vip",
+		Retry:          1,
+	}, core.GroupSmartPolicy{
+		AutoMode:         core.AutoModeSequential,
+		CrossGroupFusion: true,
+		CandidateGroups:  []string{"codex-plus"},
 	})
 
 	require.Equal(t, []string{"codex-plus-特惠", "codex-plus"}, plan.CandidateGroups)

@@ -167,7 +167,7 @@ func TestSmallTrafficE2ESmokeCrossGroupCacheAffinity(t *testing.T) {
 			"vip": {
 				Mode:                 core.ModeActive,
 				Strategy:             core.StrategyBalanced,
-				AutoMode:             core.AutoModeSequential,
+				AutoMode:             core.AutoModeFusion,
 				CrossGroupFusion:     true,
 				CandidateGroups:      []string{"vip", "fast", "forbidden"},
 				CacheAffinityEnabled: true,

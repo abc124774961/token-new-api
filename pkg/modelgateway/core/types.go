@@ -139,6 +139,7 @@ type DispatchRequest struct {
 	ExtraRetries                int
 	CrossGroupRetry             bool
 	ForceNextAutoGroup          bool
+	CandidateGroupFallback      bool
 	CurrentAutoGroup            string
 	CurrentAutoGroupIndex       int
 	HasCurrentAutoGroupIndex    bool
@@ -148,28 +149,29 @@ type DispatchRequest struct {
 }
 
 type GroupSmartPolicy struct {
-	UserID                    int
-	RequestedGroup            string
-	UserGroup                 string
-	Mode                      string
-	Strategy                  string
-	AutoMode                  string
-	CrossGroupFusion          bool
-	CandidateGroups           []string
-	BillingRatioMode          string
-	CacheAffinityEnabled      bool
-	QueueEnabled              bool
-	QueueHighPriority         bool
-	QueuePriority             int
-	CircuitBreakerEnabled     bool
-	FirstByteTimeoutSeconds   int
-	GroupPriorityRatio        map[string]float64
-	GroupRevenueRatio         map[string]float64
-	ResourceProtectionEnabled bool
-	PrimaryChannelIDs         []int
-	PrimaryWaitTimeoutMs      int
-	PrimaryQueueMaxDepth      int
-	FallbackChannelIDs        []int
+	UserID                     int
+	RequestedGroup             string
+	UserGroup                  string
+	Mode                       string
+	Strategy                   string
+	AutoMode                   string
+	CrossGroupFusion           bool
+	CandidateGroups            []string
+	BillingRatioMode           string
+	CacheAffinityEnabled       bool
+	QueueEnabled               bool
+	QueueHighPriority          bool
+	QueuePriority              int
+	CircuitBreakerEnabled      bool
+	FirstByteTimeoutSeconds    int
+	GroupPriorityRatio         map[string]float64
+	GroupRevenueRatio          map[string]float64
+	SuppressLossMakingFallback bool
+	ResourceProtectionEnabled  bool
+	PrimaryChannelIDs          []int
+	PrimaryWaitTimeoutMs       int
+	PrimaryQueueMaxDepth       int
+	FallbackChannelIDs         []int
 }
 
 func (p GroupSmartPolicy) IsActive() bool {

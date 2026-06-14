@@ -1551,7 +1551,7 @@ export default function SettingsModelGatewayScheduler() {
     {
       title: t('分组'),
       dataIndex: 'group',
-      width: 150,
+      width: 260,
       render: (_, row) => (
         <Select
           value={row.group || undefined}
@@ -3153,7 +3153,7 @@ export default function SettingsModelGatewayScheduler() {
               {t('暂无分组智能调度策略')}
             </div>
           }
-          scroll={{ x: 1680 }}
+          scroll={{ x: 2470 }}
         />
       </div>
     </Spin>

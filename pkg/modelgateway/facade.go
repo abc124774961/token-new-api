@@ -46,7 +46,8 @@ func (f *SmartDispatchFacade) Select(c *gin.Context, param *service.RetryParam) 
 		return nil, false, nil
 	}
 	req := core.NewDispatchRequestFromGin(c, param)
-	policy := f.policyResolver.Resolve(c, &req)
+	basePolicy := f.policyResolver.Resolve(c, &req)
+	policy := basePolicy
 	if policy.Mode == core.ModeOff || policy.Mode == "" {
 		return nil, false, nil
 	}
@@ -57,7 +58,18 @@ func (f *SmartDispatchFacade) Select(c *gin.Context, param *service.RetryParam) 
 	if f.selector == nil {
 		return nil, false, nil
 	}
+	tryCandidateGroupFallback := shouldTryCandidateGroupFallback(req, basePolicy, policy)
+	if tryCandidateGroupFallback {
+		policy.SuppressLossMakingFallback = true
+	}
 	plan, handled, apiErr := f.selector.Select(c, param, policy)
+	if apiErr == nil && (plan == nil || plan.Channel == nil) && tryCandidateGroupFallback {
+		fallbackReq := req
+		fallbackReq.CandidateGroupFallback = true
+		fallbackPolicy := f.resolveCandidateGroups(c, &fallbackReq, basePolicy)
+		plan, handled, apiErr = f.selector.Select(c, param, fallbackPolicy)
+		policy = fallbackPolicy
+	}
 	if handled && plan != nil {
 		plan.PolicyMode = policy.Mode
 		plan.AutoMode = policy.AutoMode
@@ -70,6 +82,28 @@ func (f *SmartDispatchFacade) Select(c *gin.Context, param *service.RetryParam) 
 		})
 	}
 	return plan, handled, apiErr
+}
+
+func shouldTryCandidateGroupFallback(req core.DispatchRequest, basePolicy core.GroupSmartPolicy, resolvedPolicy core.GroupSmartPolicy) bool {
+	if req.RequestedGroup == "" || req.RequestedGroup == "auto" || req.CandidateGroupFallback {
+		return false
+	}
+	if basePolicy.Mode != core.ModeActive || !basePolicy.CrossGroupFusion || basePolicy.AutoMode == core.AutoModeFusion {
+		return false
+	}
+	if !hasNonPrimaryCandidateGroup(req.RequestedGroup, basePolicy.CandidateGroups) {
+		return false
+	}
+	return len(resolvedPolicy.CandidateGroups) == 1 && resolvedPolicy.CandidateGroups[0] == req.RequestedGroup
+}
+
+func hasNonPrimaryCandidateGroup(primary string, groups []string) bool {
+	for _, group := range groups {
+		if group != "" && group != primary {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *SmartDispatchFacade) Shadow(c *gin.Context, param *service.RetryParam, actual *model.Channel, actualGroup string) {

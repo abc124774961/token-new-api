@@ -186,6 +186,36 @@ export default function BillingMultiplierPolicies({
     [modeOptions],
   );
 
+  const fallbackPolicyName = useCallback(
+    (policy = {}) => {
+      const scope = policy.scope_type || 'global';
+      const scopeID =
+        Number(policy.scope_id || 0) > 0
+          ? Number(policy.scope_id)
+          : Number(policy.scope_value || 0) || 0;
+      const scopeKey = String(policy.scope_key || policy.scope_value || '').trim();
+      const scopeName = String(policy.scope_name || '').trim();
+      let target = t('全局规则');
+
+      if (scope === 'user') {
+        target =
+          scopeName ||
+          (scopeID > 0 ? `${t('指定用户ID')} #${scopeID}` : t('指定用户ID'));
+      } else if (scope === 'subscription_plan') {
+        target =
+          scopeName ||
+          (scopeID > 0 ? `${t('订阅套餐ID')} #${scopeID}` : t('订阅套餐ID'));
+      } else if (scope === 'user_group') {
+        target = scopeName || scopeKey || t('用户分组 Key');
+      } else if (scope === 'using_group') {
+        target = scopeName || scopeKey || t('使用分组 Key');
+      }
+
+      return `${target} · ${t('运营倍率规则')}`;
+    },
+    [t],
+  );
+
   const fetchPolicies = useCallback(async () => {
     setLoading(true);
     try {
@@ -315,6 +345,9 @@ export default function BillingMultiplierPolicies({
 
   const openEdit = (record) => {
     const values = policyToFormValues(record);
+    if (!String(values.name || '').trim()) {
+      values.name = fallbackPolicyName(values);
+    }
     setEditing(record);
     setPreview(null);
     setScopeType(values.scope_type || 'global');
@@ -353,10 +386,22 @@ export default function BillingMultiplierPolicies({
       scopeName = '';
     }
 
+    const name =
+      String(values.name || '').trim() ||
+      fallbackPolicyName({
+        ...values,
+        scope_type: scope,
+        scope_value: scopeValue,
+        scope_id: scopeID,
+        scope_key: scopeKey,
+        scope_name: scopeName,
+      });
+
     return {
       ...DEFAULT_POLICY,
       ...values,
       id: editing?.id || values.id || 0,
+      name,
       enabled: Boolean(values.enabled),
       priority: Number(values.priority) || 0,
       scope_type: scope,

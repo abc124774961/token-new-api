@@ -137,3 +137,16 @@ func TestBillingMultiplierPolicyNormalizesLegacyIDScopeValue(t *testing.T) {
 	require.Equal(t, 7, policy.ScopeID)
 	require.Equal(t, "7", policy.ScopeValue)
 }
+
+func TestBillingMultiplierPolicyNormalizesBlankNameWithFallback(t *testing.T) {
+	policy := BillingMultiplierPolicy{
+		Enabled:    true,
+		ScopeType:  BillingMultiplierScopeUserGroup,
+		ScopeValue: "vip",
+		Mode:       BillingMultiplierModeMultiply,
+		Multiplier: 0.8,
+	}
+
+	require.NoError(t, policy.Normalize())
+	require.Equal(t, "user group vip multiplier rule", policy.Name)
+}

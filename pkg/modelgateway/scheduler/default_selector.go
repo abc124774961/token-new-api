@@ -398,6 +398,9 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		priorityTieBreakUsed = tieBreakUsed
 		selectedSaturated = true
 	} else if len(negativeAvailableEvaluations) > 0 {
+		if policy.SuppressLossMakingFallback {
+			return nil, false, nil
+		}
 		selectedEvaluation, tieBreakUsed := s.selectNegativeMarginFallbackCandidate(negativeAvailableEvaluations)
 		bestCandidate = selectedEvaluation.candidate
 		bestSnapshot = selectedEvaluation.snapshot
@@ -406,6 +409,9 @@ func (s *DefaultSmartChannelSelector) Select(c *gin.Context, param *service.Retr
 		priorityTieBreakUsed = tieBreakUsed
 		negativeMarginFallbackSelected = true
 	} else if len(negativeSaturatedEvaluations) > 0 {
+		if policy.SuppressLossMakingFallback {
+			return nil, false, nil
+		}
 		selectedEvaluation, tieBreakUsed := s.selectNegativeMarginFallbackCandidate(negativeSaturatedEvaluations)
 		bestCandidate = selectedEvaluation.candidate
 		bestSnapshot = selectedEvaluation.snapshot

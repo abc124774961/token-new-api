@@ -42,7 +42,14 @@ func (r *DefaultAutoGroupResolver) Resolve(c *gin.Context, req *core.DispatchReq
 		return plan
 	}
 	if policy.CrossGroupFusion {
-		plan.CandidateGroups = filterUsableGroups(policy.CandidateGroups, req.UserGroup, r.groupService)
+		configuredGroups := filterUsableGroups(policy.CandidateGroups, req.UserGroup, r.groupService)
+		if policy.AutoMode == core.AutoModeFusion {
+			plan.CandidateGroups = configuredGroups
+		} else if fixedGroupCandidateFallbackAllowed(req) {
+			plan.CandidateGroups = fallbackCandidateGroups(req.RequestedGroup, configuredGroups)
+		} else if req.RequestedGroup != "" {
+			plan.CandidateGroups = []string{req.RequestedGroup}
+		}
 	} else if req.RequestedGroup != "" {
 		plan.CandidateGroups = []string{req.RequestedGroup}
 	}
@@ -50,6 +57,37 @@ func (r *DefaultAutoGroupResolver) Resolve(c *gin.Context, req *core.DispatchReq
 		plan.CandidateGroups = []string{req.RequestedGroup}
 	}
 	return plan
+}
+
+func fixedGroupCandidateFallbackAllowed(req *core.DispatchRequest) bool {
+	if req == nil || req.RequestedGroup == "" || req.RequestedGroup == "auto" {
+		return false
+	}
+	return req.CandidateGroupFallback ||
+		req.ForceNextAutoGroup ||
+		req.ResourceProtectionFallback ||
+		req.Retry > 0 ||
+		req.ExtraRetries > 0
+}
+
+func fallbackCandidateGroups(requestedGroup string, groups []string) []string {
+	out := make([]string, 0, len(groups)+1)
+	seen := make(map[string]struct{}, len(groups)+1)
+	appendGroup := func(group string) {
+		if group == "" {
+			return
+		}
+		if _, ok := seen[group]; ok {
+			return
+		}
+		seen[group] = struct{}{}
+		out = append(out, group)
+	}
+	appendGroup(requestedGroup)
+	for _, group := range groups {
+		appendGroup(group)
+	}
+	return out
 }
 
 func autoGroupIndex(groups []string, current string) int {

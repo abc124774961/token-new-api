@@ -61,9 +61,6 @@ func (p *BillingMultiplierPolicy) BeforeUpdate(tx *gorm.DB) error {
 
 func (p *BillingMultiplierPolicy) Normalize() error {
 	p.Name = strings.TrimSpace(p.Name)
-	if p.Name == "" {
-		return errors.New("policy name is required")
-	}
 	p.ScopeType = strings.TrimSpace(p.ScopeType)
 	if p.ScopeType == "" {
 		p.ScopeType = BillingMultiplierScopeGlobal
@@ -82,6 +79,9 @@ func (p *BillingMultiplierPolicy) Normalize() error {
 		return fmt.Errorf("invalid mode: %s", p.Mode)
 	}
 	p.normalizeScopeIdentity()
+	if p.Name == "" {
+		p.Name = p.fallbackName()
+	}
 	if p.ScopeType != BillingMultiplierScopeGlobal && billingMultiplierPolicyScopeIdentity(p) == "" {
 		return errors.New("scope identity is required")
 	}
@@ -120,6 +120,34 @@ func (p *BillingMultiplierPolicy) normalizeScopeIdentity() {
 		}
 		p.ScopeID = 0
 	}
+}
+
+func (p *BillingMultiplierPolicy) fallbackName() string {
+	target := "global"
+	identity := billingMultiplierPolicyScopeIdentity(p)
+	switch p.ScopeType {
+	case BillingMultiplierScopeUser:
+		target = "user"
+		if identity != "" {
+			target = "user #" + identity
+		}
+	case BillingMultiplierScopeSubscriptionPlan:
+		target = "subscription plan"
+		if identity != "" {
+			target = "subscription plan #" + identity
+		}
+	case BillingMultiplierScopeUserGroup:
+		target = "user group"
+		if identity != "" {
+			target = "user group " + identity
+		}
+	case BillingMultiplierScopeUsingGroup:
+		target = "using group"
+		if identity != "" {
+			target = "using group " + identity
+		}
+	}
+	return target + " multiplier rule"
 }
 
 func validBillingMultiplierScope(scope string) bool {
