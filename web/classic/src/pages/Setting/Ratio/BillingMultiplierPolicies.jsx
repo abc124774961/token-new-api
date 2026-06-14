@@ -23,10 +23,13 @@ import {
   Button,
   Empty,
   Form,
+  InputNumber,
   Modal,
   Popconfirm,
+  Select,
   Space,
   Spin,
+  Switch,
   Tag,
   Typography,
 } from '@douyinfe/semi-ui';
@@ -38,6 +41,7 @@ import {
   Link2,
   PackageCheck,
   Percent,
+  Plus,
   PlayCircle,
   RefreshCw,
   Search,
@@ -67,6 +71,7 @@ const DEFAULT_POLICY = {
   scope_key: '',
   scope_name: '',
   using_groups: [],
+  group_multipliers: [],
   models: [],
   mode: 'multiply',
   multiplier: 1,
@@ -111,6 +116,66 @@ const listToJsonText = (value) => {
   return values.length > 0 ? JSON.stringify(values) : '';
 };
 
+const GROUP_MULTIPLIER_MODES = ['multiply', 'override', 'min', 'max'];
+
+const makeGroupMultiplierRow = (row = {}) => ({
+  _id:
+    row._id ||
+    `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+  group_key: String(row.group_key || row.group || '').trim(),
+  mode: GROUP_MULTIPLIER_MODES.includes(row.mode) ? row.mode : 'override',
+  multiplier:
+    row.multiplier === '' || row.multiplier === undefined || row.multiplier === null
+      ? 1
+      : Number(row.multiplier),
+  enabled: row.enabled !== false,
+});
+
+const parseGroupMultiplierRows = (value) => {
+  if (!value) return [];
+  let parsed = value;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return [];
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .map((item) => makeGroupMultiplierRow(item))
+    .filter((item) => item.group_key);
+};
+
+const normalizeGroupMultiplierRows = (rows = [], t) => {
+  const seen = new Set();
+  const normalized = [];
+  for (const row of rows) {
+    const groupKey = String(row.group_key || '').trim();
+    if (!groupKey) {
+      return { error: t('请先选择分组价格的使用分组') };
+    }
+    const seenKey = groupKey.toLowerCase();
+    if (seen.has(seenKey)) {
+      return { error: t('分组价格不能重复') };
+    }
+    seen.add(seenKey);
+    const multiplier = Number(row.multiplier);
+    if (!Number.isFinite(multiplier) || multiplier < 0) {
+      return { error: t('分组价格倍率必须大于等于 0') };
+    }
+    normalized.push({
+      group_key: groupKey,
+      mode: GROUP_MULTIPLIER_MODES.includes(row.mode) ? row.mode : 'override',
+      multiplier,
+      enabled: row.enabled !== false,
+    });
+  }
+  return { rows: normalized };
+};
+
 const formatMultiplier = (value) => `${Number(value || 0).toFixed(6)}x`;
 
 const policyToFormValues = (policy = {}) => {
@@ -120,12 +185,25 @@ const policyToFormValues = (policy = {}) => {
       ? Number(merged.scope_id)
       : Number(merged.scope_value || 0) || 0;
   const scopeKey = merged.scope_key || merged.scope_value || '';
+  const usingGroups = parseListValue(merged.using_groups);
+  let groupMultipliers = parseGroupMultiplierRows(merged.group_multipliers);
+  if (groupMultipliers.length === 0 && usingGroups.length > 0) {
+    groupMultipliers = usingGroups.map((group) =>
+      makeGroupMultiplierRow({
+        group_key: group,
+        mode: merged.mode,
+        multiplier: merged.multiplier,
+        enabled: true,
+      }),
+    );
+  }
   return {
     ...merged,
     scope_id: scopeID > 0 ? String(scopeID) : '',
     scope_key: scopeKey,
     scope_value: merged.scope_value || '',
-    using_groups: parseListValue(merged.using_groups),
+    using_groups: usingGroups,
+    group_multipliers: groupMultipliers,
     models: parseListValue(merged.models),
     preview_user_id: merged.preview_user_id || '',
     preview_subscription_plan_id: merged.preview_subscription_plan_id || '',
@@ -150,6 +228,7 @@ export default function BillingMultiplierPolicies({
   const [scopeType, setScopeType] = useState('global');
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [groupMultiplierRows, setGroupMultiplierRows] = useState([]);
   const [groupOptions, setGroupOptions] = useState([]);
   const [planOptions, setPlanOptions] = useState([]);
   const [userOptions, setUserOptions] = useState([]);
@@ -339,6 +418,7 @@ export default function BillingMultiplierPolicies({
     setEditing(null);
     setPreview(null);
     setScopeType('global');
+    setGroupMultiplierRows([]);
     setFormSeed(policyToFormValues(DEFAULT_POLICY));
     setModalVisible(true);
   };
@@ -351,6 +431,7 @@ export default function BillingMultiplierPolicies({
     setEditing(record);
     setPreview(null);
     setScopeType(values.scope_type || 'global');
+    setGroupMultiplierRows(values.group_multipliers || []);
     setFormSeed(values);
     setModalVisible(true);
   };
@@ -397,6 +478,19 @@ export default function BillingMultiplierPolicies({
         scope_name: scopeName,
       });
 
+    const groupMultiplierResult = normalizeGroupMultiplierRows(
+      groupMultiplierRows,
+      t,
+    );
+    if (groupMultiplierResult.error) {
+      throw new Error(groupMultiplierResult.error);
+    }
+    const normalizedGroupMultiplierRows = groupMultiplierResult.rows || [];
+    const usingGroups =
+      normalizedGroupMultiplierRows.length > 0
+        ? normalizedGroupMultiplierRows.map((item) => item.group_key)
+        : values.using_groups;
+
     return {
       ...DEFAULT_POLICY,
       ...values,
@@ -412,9 +506,33 @@ export default function BillingMultiplierPolicies({
       multiplier: Number(values.multiplier) || 0,
       start_at: Number(values.start_at) || 0,
       end_at: Number(values.end_at) || 0,
-      using_groups: listToJsonText(values.using_groups),
+      using_groups: listToJsonText(usingGroups),
+      group_multipliers:
+        normalizedGroupMultiplierRows.length > 0
+          ? JSON.stringify(normalizedGroupMultiplierRows)
+          : '',
       models: listToJsonText(values.models),
     };
+  };
+
+  const syncGroupMultiplierRows = (nextRows) => {
+    setGroupMultiplierRows(nextRows);
+  };
+
+  const addGroupMultiplierRow = () => {
+    syncGroupMultiplierRows([...groupMultiplierRows, makeGroupMultiplierRow()]);
+  };
+
+  const updateGroupMultiplierRow = (rowID, patch) => {
+    syncGroupMultiplierRows(
+      groupMultiplierRows.map((row) =>
+        row._id === rowID ? makeGroupMultiplierRow({ ...row, ...patch }) : row,
+      ),
+    );
+  };
+
+  const removeGroupMultiplierRow = (rowID) => {
+    syncGroupMultiplierRows(groupMultiplierRows.filter((row) => row._id !== rowID));
   };
 
   const savePolicy = async () => {
@@ -426,7 +544,13 @@ export default function BillingMultiplierPolicies({
     } catch {
       return;
     }
-    const policy = normalizePolicy(values);
+    let policy;
+    try {
+      policy = normalizePolicy(values);
+    } catch (error) {
+      showError(error.message);
+      return;
+    }
     setSaving(true);
     try {
       const url = editing
@@ -473,7 +597,13 @@ export default function BillingMultiplierPolicies({
     } catch {
       return;
     }
-    const policy = normalizePolicy(values);
+    let policy;
+    try {
+      policy = normalizePolicy(values);
+    } catch (error) {
+      showError(error.message);
+      return;
+    }
     setPreviewLoading(true);
     try {
       const res = await API.post('/api/billing-multiplier-policies/preview', {
@@ -559,6 +689,95 @@ export default function BillingMultiplierPolicies({
         {item}
       </Tag>
     ));
+  };
+
+  const groupMultiplierCount = (record) => {
+    const rows = parseGroupMultiplierRows(record.group_multipliers);
+    if (rows.length > 0) return rows.length;
+    return parseListValue(record.using_groups).length;
+  };
+
+  const renderGroupMultiplierRows = () => {
+    if (groupMultiplierRows.length === 0) {
+      return (
+        <div className='ct-billing-policy-group-empty'>
+          <span>{t('未配置分组价格，命中后使用默认倍率。')}</span>
+          <Button
+            icon={<Plus size={15} />}
+            size='small'
+            theme='borderless'
+            onClick={addGroupMultiplierRow}
+          >
+            {t('添加分组价格')}
+          </Button>
+        </div>
+      );
+    }
+
+    return (
+      <div className='ct-billing-policy-group-list'>
+        <div className='ct-billing-policy-group-header'>
+          <span>{t('启用')}</span>
+          <span>{t('使用分组')}</span>
+          <span>{t('计算模式')}</span>
+          <span>{t('倍率')}</span>
+          <span>{t('操作')}</span>
+        </div>
+        {groupMultiplierRows.map((row) => (
+          <div className='ct-billing-policy-group-row' key={row._id}>
+            <Switch
+              size='small'
+              checked={row.enabled !== false}
+              onChange={(checked) =>
+                updateGroupMultiplierRow(row._id, { enabled: checked })
+              }
+            />
+            <Select
+              placeholder={t('选择使用分组')}
+              optionList={groupOptions}
+              value={row.group_key || undefined}
+              filter
+              allowCreate
+              showClear
+              onChange={(value) =>
+                updateGroupMultiplierRow(row._id, { group_key: value || '' })
+              }
+            />
+            <Select
+              optionList={modeOptions}
+              value={row.mode || 'override'}
+              onChange={(value) =>
+                updateGroupMultiplierRow(row._id, { mode: value || 'override' })
+              }
+            />
+            <InputNumber
+              min={0}
+              step={0.01}
+              precision={6}
+              value={row.multiplier}
+              onChange={(value) =>
+                updateGroupMultiplierRow(row._id, { multiplier: value })
+              }
+            />
+            <Button
+              icon={<Trash2 size={15} />}
+              size='small'
+              type='danger'
+              theme='borderless'
+              onClick={() => removeGroupMultiplierRow(row._id)}
+            />
+          </div>
+        ))}
+        <Button
+          className='ct-billing-policy-add-group'
+          icon={<Plus size={15} />}
+          theme='borderless'
+          onClick={addGroupMultiplierRow}
+        >
+          {t('添加分组价格')}
+        </Button>
+      </div>
+    );
   };
 
   const renderScopeControl = () => {
@@ -738,7 +957,11 @@ export default function BillingMultiplierPolicies({
                   <div className='ct-billing-policy-effect'>
                     <span>{t('计算策略')}</span>
                     <strong>{modeLabelMap[record.mode] || record.mode}</strong>
-                    <small>{formatMultiplier(record.multiplier)}</small>
+                    <small>
+                      {groupMultiplierCount(record) > 0
+                        ? `${t('分组价格')} ${groupMultiplierCount(record)}`
+                        : formatMultiplier(record.multiplier)}
+                    </small>
                   </div>
                   <div className='ct-billing-policy-priority'>
                     <span>{t('优先级')}</span>
@@ -768,7 +991,7 @@ export default function BillingMultiplierPolicies({
         onCancel={() => setModalVisible(false)}
         onOk={savePolicy}
         confirmLoading={saving}
-        width={980}
+        width={1120}
       >
         <Form
           className='ct-billing-policy-form'
@@ -807,20 +1030,10 @@ export default function BillingMultiplierPolicies({
               <Search size={16} />
               <span>
                 <strong>{t('命中条件')}</strong>
-                <small>{t('不填使用分组或模型时表示该维度不过滤。')}</small>
+                <small>{t('模型和时间用于缩小命中范围，分组价格在下方列表单独配置。')}</small>
               </span>
             </div>
             <div className='ct-billing-policy-form-grid'>
-              <Form.Select
-                field='using_groups'
-                label={t('使用分组')}
-                placeholder={t('选择可命中的使用分组')}
-                optionList={groupOptions}
-                multiple
-                filter
-                allowCreate
-                showClear
-              />
               <Form.Select
                 field='models'
                 label={t('模型')}
@@ -851,7 +1064,7 @@ export default function BillingMultiplierPolicies({
               <Percent size={16} />
               <span>
                 <strong>{t('计费效果')}</strong>
-                <small>{t('保存后只影响后续新请求，历史日志不会自动重算。')}</small>
+                <small>{t('默认倍率用于没有配置分组价格时的对象级规则。')}</small>
               </span>
             </div>
             <div className='ct-billing-policy-form-grid'>
@@ -876,6 +1089,17 @@ export default function BillingMultiplierPolicies({
                 className='ct-billing-policy-form-wide'
               />
             </div>
+          </section>
+
+          <section className='ct-billing-policy-form-section'>
+            <div className='ct-billing-policy-section-head'>
+              <Boxes size={16} />
+              <span>
+                <strong>{t('分组价格列表')}</strong>
+                <small>{t('一行一个使用分组，按稳定 Key 保存，命中后优先使用该行倍率。')}</small>
+              </span>
+            </div>
+            {renderGroupMultiplierRows()}
           </section>
 
           <section className='ct-billing-policy-form-section'>

@@ -8329,6 +8329,15 @@
     "下次重置": "Lần đặt lại tiếp theo",
     "多条订阅会按当前订阅扣费顺序依次抵扣，可在订阅中心查看历史记录。": "Nhiều gói đăng ký sẽ được khấu trừ theo thứ tự tính phí hiện tại. Bạn có thể xem lịch sử trong trung tâm đăng ký.",
     "延迟超时切换": "Chuyển khi quá hạn chờ",
-    "首字": "Byte đầu tiên"
+    "首字": "Byte đầu tiên",
+    "请先选择分组价格的使用分组": "Vui lòng chọn nhóm sử dụng cho giá nhóm trước",
+    "分组价格不能重复": "Giá nhóm không được trùng lặp",
+    "分组价格倍率必须大于等于 0": "Hệ số giá nhóm phải lớn hơn hoặc bằng 0",
+    "模型和时间用于缩小命中范围，分组价格在下方列表单独配置。": "Dùng mô hình và thời gian để thu hẹp phạm vi khớp. Giá nhóm được cấu hình riêng trong danh sách bên dưới.",
+    "默认倍率用于没有配置分组价格时的对象级规则。": "Hệ số mặc định được dùng cho quy tắc cấp đối tượng khi chưa cấu hình giá nhóm.",
+    "分组价格列表": "Danh sách giá nhóm",
+    "一行一个使用分组，按稳定 Key 保存，命中后优先使用该行倍率。": "Mỗi dòng là một nhóm sử dụng, lưu theo Key ổn định. Khi khớp, hệ số của dòng đó được ưu tiên.",
+    "未配置分组价格，命中后使用默认倍率。": "Chưa cấu hình giá nhóm. Yêu cầu khớp sẽ dùng hệ số mặc định.",
+    "添加分组价格": "Thêm giá nhóm"
   }
 }

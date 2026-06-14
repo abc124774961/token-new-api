@@ -27,24 +27,32 @@ const (
 )
 
 type BillingMultiplierPolicy struct {
-	Id          int     `json:"id"`
-	Name        string  `json:"name" gorm:"type:varchar(128);not null"`
-	Enabled     bool    `json:"enabled" gorm:"default:true;index"`
-	Priority    int     `json:"priority" gorm:"type:int;default:0;index"`
-	ScopeType   string  `json:"scope_type" gorm:"type:varchar(32);not null;default:'global';index"`
-	ScopeValue  string  `json:"scope_value" gorm:"type:varchar(128);not null;default:'';index"`
-	ScopeID     int     `json:"scope_id" gorm:"type:int;default:0;index"`
-	ScopeKey    string  `json:"scope_key" gorm:"type:varchar(191);default:'';index"`
-	ScopeName   string  `json:"scope_name" gorm:"type:varchar(191);default:''"`
-	UsingGroups string  `json:"using_groups" gorm:"type:text"`
-	Models      string  `json:"models" gorm:"type:text"`
-	Mode        string  `json:"mode" gorm:"type:varchar(32);not null;default:'multiply'"`
-	Multiplier  float64 `json:"multiplier" gorm:"type:decimal(18,8);not null;default:1"`
-	StartAt     int64   `json:"start_at" gorm:"bigint;default:0;index"`
-	EndAt       int64   `json:"end_at" gorm:"bigint;default:0;index"`
-	Description string  `json:"description" gorm:"type:varchar(255);default:''"`
-	CreatedAt   int64   `json:"created_at" gorm:"bigint"`
-	UpdatedAt   int64   `json:"updated_at" gorm:"bigint"`
+	Id               int     `json:"id"`
+	Name             string  `json:"name" gorm:"type:varchar(128);not null"`
+	Enabled          bool    `json:"enabled" gorm:"default:true;index"`
+	Priority         int     `json:"priority" gorm:"type:int;default:0;index"`
+	ScopeType        string  `json:"scope_type" gorm:"type:varchar(32);not null;default:'global';index"`
+	ScopeValue       string  `json:"scope_value" gorm:"type:varchar(128);not null;default:'';index"`
+	ScopeID          int     `json:"scope_id" gorm:"type:int;default:0;index"`
+	ScopeKey         string  `json:"scope_key" gorm:"type:varchar(191);default:'';index"`
+	ScopeName        string  `json:"scope_name" gorm:"type:varchar(191);default:''"`
+	UsingGroups      string  `json:"using_groups" gorm:"type:text"`
+	GroupMultipliers string  `json:"group_multipliers" gorm:"type:text"`
+	Models           string  `json:"models" gorm:"type:text"`
+	Mode             string  `json:"mode" gorm:"type:varchar(32);not null;default:'multiply'"`
+	Multiplier       float64 `json:"multiplier" gorm:"type:decimal(18,8);not null;default:1"`
+	StartAt          int64   `json:"start_at" gorm:"bigint;default:0;index"`
+	EndAt            int64   `json:"end_at" gorm:"bigint;default:0;index"`
+	Description      string  `json:"description" gorm:"type:varchar(255);default:''"`
+	CreatedAt        int64   `json:"created_at" gorm:"bigint"`
+	UpdatedAt        int64   `json:"updated_at" gorm:"bigint"`
+}
+
+type BillingMultiplierGroupConfig struct {
+	GroupKey   string  `json:"group_key"`
+	Mode       string  `json:"mode"`
+	Multiplier float64 `json:"multiplier"`
+	Enabled    bool    `json:"enabled"`
 }
 
 func (p *BillingMultiplierPolicy) BeforeCreate(tx *gorm.DB) error {
@@ -87,6 +95,11 @@ func (p *BillingMultiplierPolicy) Normalize() error {
 	}
 	if p.Multiplier < 0 {
 		return errors.New("multiplier must be >= 0")
+	}
+	if normalized, err := normalizeBillingMultiplierGroupConfigs(p.GroupMultipliers); err != nil {
+		return err
+	} else {
+		p.GroupMultipliers = normalized
 	}
 	if p.EndAt > 0 && p.StartAt > 0 && p.EndAt < p.StartAt {
 		return errors.New("end_at must be greater than start_at")
@@ -175,6 +188,124 @@ func validBillingMultiplierMode(mode string) bool {
 	}
 }
 
+type billingMultiplierGroupConfigPayload struct {
+	GroupKey   string  `json:"group_key"`
+	Mode       string  `json:"mode"`
+	Multiplier float64 `json:"multiplier"`
+	Enabled    *bool   `json:"enabled"`
+}
+
+func normalizeBillingMultiplierGroupConfigs(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	var payloads []billingMultiplierGroupConfigPayload
+	if err := common.UnmarshalJsonStr(raw, &payloads); err != nil {
+		return "", fmt.Errorf("invalid group_multipliers: %w", err)
+	}
+	if len(payloads) == 0 {
+		return "", nil
+	}
+	seen := make(map[string]struct{}, len(payloads))
+	configs := make([]BillingMultiplierGroupConfig, 0, len(payloads))
+	for _, payload := range payloads {
+		groupKey := strings.TrimSpace(payload.GroupKey)
+		if groupKey == "" {
+			return "", errors.New("group_multipliers group_key is required")
+		}
+		seenKey := strings.ToLower(groupKey)
+		if _, ok := seen[seenKey]; ok {
+			return "", fmt.Errorf("duplicate group_multipliers group_key: %s", groupKey)
+		}
+		seen[seenKey] = struct{}{}
+		mode := strings.TrimSpace(payload.Mode)
+		if mode == "" {
+			mode = BillingMultiplierModeOverride
+		}
+		if !validBillingMultiplierMode(mode) {
+			return "", fmt.Errorf("invalid group_multipliers mode: %s", mode)
+		}
+		if payload.Multiplier < 0 {
+			return "", errors.New("group_multipliers multiplier must be >= 0")
+		}
+		enabled := true
+		if payload.Enabled != nil {
+			enabled = *payload.Enabled
+		}
+		configs = append(configs, BillingMultiplierGroupConfig{
+			GroupKey:   groupKey,
+			Mode:       mode,
+			Multiplier: payload.Multiplier,
+			Enabled:    enabled,
+		})
+	}
+	data, err := common.Marshal(configs)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func billingMultiplierGroupConfigs(raw string) []BillingMultiplierGroupConfig {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var payloads []billingMultiplierGroupConfigPayload
+	if err := common.UnmarshalJsonStr(raw, &payloads); err != nil {
+		return nil
+	}
+	configs := make([]BillingMultiplierGroupConfig, 0, len(payloads))
+	for _, payload := range payloads {
+		groupKey := strings.TrimSpace(payload.GroupKey)
+		if groupKey == "" {
+			continue
+		}
+		mode := strings.TrimSpace(payload.Mode)
+		if mode == "" || !validBillingMultiplierMode(mode) {
+			mode = BillingMultiplierModeOverride
+		}
+		if payload.Multiplier < 0 {
+			continue
+		}
+		enabled := true
+		if payload.Enabled != nil {
+			enabled = *payload.Enabled
+		}
+		configs = append(configs, BillingMultiplierGroupConfig{
+			GroupKey:   groupKey,
+			Mode:       mode,
+			Multiplier: payload.Multiplier,
+			Enabled:    enabled,
+		})
+	}
+	return configs
+}
+
+func billingMultiplierGroupConfigForUsingGroup(raw string, usingGroup string) (BillingMultiplierGroupConfig, bool, bool) {
+	configs := billingMultiplierGroupConfigs(raw)
+	if len(configs) == 0 {
+		return BillingMultiplierGroupConfig{}, false, false
+	}
+	usingGroup = strings.TrimSpace(usingGroup)
+	if usingGroup == "" {
+		return BillingMultiplierGroupConfig{}, false, true
+	}
+	for _, config := range configs {
+		if !config.Enabled {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(config.GroupKey), usingGroup) {
+			if strings.TrimSpace(config.Mode) == "" {
+				config.Mode = BillingMultiplierModeOverride
+			}
+			return config, true, true
+		}
+	}
+	return BillingMultiplierGroupConfig{}, false, true
+}
+
 type BillingMultiplierContext struct {
 	UserID              int
 	UserGroup           string
@@ -223,22 +354,23 @@ func UpdateBillingMultiplierPolicy(id int, policy *BillingMultiplierPolicy) erro
 		return err
 	}
 	updates := map[string]interface{}{
-		"name":         policy.Name,
-		"enabled":      policy.Enabled,
-		"priority":     policy.Priority,
-		"scope_type":   policy.ScopeType,
-		"scope_value":  policy.ScopeValue,
-		"scope_id":     policy.ScopeID,
-		"scope_key":    policy.ScopeKey,
-		"scope_name":   policy.ScopeName,
-		"using_groups": policy.UsingGroups,
-		"models":       policy.Models,
-		"mode":         policy.Mode,
-		"multiplier":   policy.Multiplier,
-		"start_at":     policy.StartAt,
-		"end_at":       policy.EndAt,
-		"description":  policy.Description,
-		"updated_at":   common.GetTimestamp(),
+		"name":              policy.Name,
+		"enabled":           policy.Enabled,
+		"priority":          policy.Priority,
+		"scope_type":        policy.ScopeType,
+		"scope_value":       policy.ScopeValue,
+		"scope_id":          policy.ScopeID,
+		"scope_key":         policy.ScopeKey,
+		"scope_name":        policy.ScopeName,
+		"using_groups":      policy.UsingGroups,
+		"group_multipliers": policy.GroupMultipliers,
+		"models":            policy.Models,
+		"mode":              policy.Mode,
+		"multiplier":        policy.Multiplier,
+		"start_at":          policy.StartAt,
+		"end_at":            policy.EndAt,
+		"description":       policy.Description,
+		"updated_at":        common.GetTimestamp(),
 	}
 	return DB.Model(&BillingMultiplierPolicy{}).Where("id = ?", id).Updates(updates).Error
 }
@@ -317,32 +449,47 @@ func evaluateBillingMultiplierPolicies(ctx BillingMultiplierContext, policies []
 	finalRatio := baseRatio
 	rules := make([]types.BillingMultiplierRuleSnapshot, 0, len(matched))
 	for _, policy := range matched {
-		switch policy.Mode {
+		mode := policy.Mode
+		multiplier := policy.Multiplier
+		usingGroup := ""
+		groupMultiplier := false
+		if config, ok, hasConfigs := billingMultiplierGroupConfigForUsingGroup(policy.GroupMultipliers, ctx.UsingGroup); hasConfigs {
+			if !ok {
+				continue
+			}
+			mode = config.Mode
+			multiplier = config.Multiplier
+			usingGroup = config.GroupKey
+			groupMultiplier = true
+		}
+		switch mode {
 		case BillingMultiplierModeOverride:
-			finalRatio = policy.Multiplier
+			finalRatio = multiplier
 		case BillingMultiplierModeMin:
-			if finalRatio < policy.Multiplier {
-				finalRatio = policy.Multiplier
+			if finalRatio < multiplier {
+				finalRatio = multiplier
 			}
 		case BillingMultiplierModeMax:
-			if finalRatio > policy.Multiplier {
-				finalRatio = policy.Multiplier
+			if finalRatio > multiplier {
+				finalRatio = multiplier
 			}
 		default:
-			finalRatio *= policy.Multiplier
+			finalRatio *= multiplier
 		}
 		rules = append(rules, types.BillingMultiplierRuleSnapshot{
-			ID:          policy.Id,
-			Name:        policy.Name,
-			ScopeType:   policy.ScopeType,
-			ScopeValue:  policy.ScopeValue,
-			ScopeID:     policy.ScopeID,
-			ScopeKey:    policy.ScopeKey,
-			ScopeName:   policy.ScopeName,
-			Mode:        policy.Mode,
-			Multiplier:  policy.Multiplier,
-			Priority:    policy.Priority,
-			Description: strings.TrimSpace(policy.Description),
+			ID:              policy.Id,
+			Name:            policy.Name,
+			ScopeType:       policy.ScopeType,
+			ScopeValue:      policy.ScopeValue,
+			ScopeID:         policy.ScopeID,
+			ScopeKey:        policy.ScopeKey,
+			ScopeName:       policy.ScopeName,
+			UsingGroup:      usingGroup,
+			GroupMultiplier: groupMultiplier,
+			Mode:            mode,
+			Multiplier:      multiplier,
+			Priority:        policy.Priority,
+			Description:     strings.TrimSpace(policy.Description),
 		})
 	}
 	if finalRatio < 0 {
@@ -374,7 +521,7 @@ func billingMultiplierPolicyMatches(policy BillingMultiplierPolicy, ctx BillingM
 	if policy.EndAt > 0 && now > policy.EndAt {
 		return false
 	}
-	if !billingMultiplierListMatches(policy.UsingGroups, ctx.UsingGroup) {
+	if !billingMultiplierPolicyUsingGroupMatches(policy, ctx.UsingGroup) {
 		return false
 	}
 	if !billingMultiplierListMatches(policy.Models, ctx.ModelName) {
@@ -412,6 +559,13 @@ func billingMultiplierPolicyMatches(policy BillingMultiplierPolicy, ctx BillingM
 	default:
 		return false
 	}
+}
+
+func billingMultiplierPolicyUsingGroupMatches(policy BillingMultiplierPolicy, usingGroup string) bool {
+	if _, ok, hasConfigs := billingMultiplierGroupConfigForUsingGroup(policy.GroupMultipliers, usingGroup); hasConfigs {
+		return ok
+	}
+	return billingMultiplierListMatches(policy.UsingGroups, usingGroup)
 }
 
 func billingMultiplierPolicyScopeIdentity(policy *BillingMultiplierPolicy) string {

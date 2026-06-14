@@ -96,6 +96,66 @@ func TestEvaluateBillingMultiplierFiltersByModelGroupAndSubscription(t *testing.
 	require.InEpsilon(t, 0.7, hit.FinalGroupRatio, 0.0001)
 }
 
+func TestEvaluateBillingMultiplierUsesGroupSpecificConfig(t *testing.T) {
+	db := setupBillingMultiplierPolicyTestDB(t)
+	require.NoError(t, db.Create(&BillingMultiplierPolicy{
+		Name:             "vip matrix",
+		Enabled:          true,
+		Priority:         10,
+		ScopeType:        BillingMultiplierScopeUserGroup,
+		ScopeValue:       "vip",
+		Mode:             BillingMultiplierModeMultiply,
+		Multiplier:       0.5,
+		GroupMultipliers: `[{"group_key":"codex-plus","mode":"override","multiplier":0.08,"enabled":true},{"group_key":"codex-pro","mode":"multiply","multiplier":0.6,"enabled":true}]`,
+	}).Error)
+
+	plus := evaluateBillingMultiplierWithDB(db, BillingMultiplierContext{
+		UserGroup:      "vip",
+		UsingGroup:     "codex-plus",
+		ModelName:      "gpt-test",
+		BaseGroupRatio: 1,
+	})
+	require.True(t, plus.Applied)
+	require.InEpsilon(t, 0.08, plus.FinalGroupRatio, 0.0001)
+	require.True(t, plus.Rules[0].GroupMultiplier)
+	require.Equal(t, "codex-plus", plus.Rules[0].UsingGroup)
+	require.Equal(t, BillingMultiplierModeOverride, plus.Rules[0].Mode)
+
+	pro := evaluateBillingMultiplierWithDB(db, BillingMultiplierContext{
+		UserGroup:      "vip",
+		UsingGroup:     "codex-pro",
+		ModelName:      "gpt-test",
+		BaseGroupRatio: 2,
+	})
+	require.True(t, pro.Applied)
+	require.InEpsilon(t, 1.2, pro.FinalGroupRatio, 0.0001)
+	require.Equal(t, BillingMultiplierModeMultiply, pro.Rules[0].Mode)
+}
+
+func TestEvaluateBillingMultiplierGroupConfigDoesNotFallThroughToDefaultMultiplier(t *testing.T) {
+	db := setupBillingMultiplierPolicyTestDB(t)
+	require.NoError(t, db.Create(&BillingMultiplierPolicy{
+		Name:             "vip matrix",
+		Enabled:          true,
+		Priority:         10,
+		ScopeType:        BillingMultiplierScopeUserGroup,
+		ScopeValue:       "vip",
+		Mode:             BillingMultiplierModeMultiply,
+		Multiplier:       0.5,
+		GroupMultipliers: `[{"group_key":"codex-plus","mode":"override","multiplier":0.08,"enabled":true}]`,
+	}).Error)
+
+	miss := evaluateBillingMultiplierWithDB(db, BillingMultiplierContext{
+		UserGroup:      "vip",
+		UsingGroup:     "default",
+		ModelName:      "gpt-test",
+		BaseGroupRatio: 1,
+	})
+	require.False(t, miss.Applied)
+	require.Equal(t, 1.0, miss.FinalGroupRatio)
+	require.Empty(t, miss.Rules)
+}
+
 func TestEvaluateBillingMultiplierUserScopeUsesStableID(t *testing.T) {
 	db := setupBillingMultiplierPolicyTestDB(t)
 	require.NoError(t, db.Create(&BillingMultiplierPolicy{

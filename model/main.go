@@ -1015,6 +1015,7 @@ func ensureBillingMultiplierPolicyRelationColumns() error {
 		{"scope_id", "ScopeID"},
 		{"scope_key", "ScopeKey"},
 		{"scope_name", "ScopeName"},
+		{"group_multipliers", "GroupMultipliers"},
 	}
 	return ensureColumns(&BillingMultiplierPolicy{}, columns)
 }
