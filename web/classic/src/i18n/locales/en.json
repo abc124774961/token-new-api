@@ -7164,6 +7164,7 @@
     "运行队列": "Runtime queue",
     "近 24 小时请求": "requests in the last 24h",
     "近 30 分钟真实样本": "Real samples in last 30 min",
+    "近 1 小时": "Last 1 hour",
     "近 30 天": "Last 30 days",
     "近 30 天成功率": "Success rate in the last 30 days",
     "近 30 天登录": "Logged in within 30 days",

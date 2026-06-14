@@ -59,7 +59,10 @@ func (f *SmartDispatchFacade) Select(c *gin.Context, param *service.RetryParam) 
 		return nil, false, nil
 	}
 	tryCandidateGroupFallback := shouldTryCandidateGroupFallback(req, basePolicy, policy)
+	tryLossMakingLastFallback := shouldTryLossMakingLastFallback(req, basePolicy, policy)
 	if tryCandidateGroupFallback {
+		policy.SuppressLossMakingFallback = true
+	} else if tryLossMakingLastFallback {
 		policy.SuppressLossMakingFallback = true
 	}
 	plan, handled, apiErr := f.selector.Select(c, param, policy)
@@ -67,8 +70,16 @@ func (f *SmartDispatchFacade) Select(c *gin.Context, param *service.RetryParam) 
 		fallbackReq := req
 		fallbackReq.CandidateGroupFallback = true
 		fallbackPolicy := f.resolveCandidateGroups(c, &fallbackReq, basePolicy)
+		fallbackPolicy.SuppressLossMakingFallback = true
 		plan, handled, apiErr = f.selector.Select(c, param, fallbackPolicy)
+		if apiErr == nil && (plan == nil || plan.Channel == nil) {
+			fallbackPolicy.SuppressLossMakingFallback = false
+			plan, handled, apiErr = f.selector.Select(c, param, fallbackPolicy)
+		}
 		policy = fallbackPolicy
+	} else if apiErr == nil && (plan == nil || plan.Channel == nil) && tryLossMakingLastFallback {
+		policy.SuppressLossMakingFallback = false
+		plan, handled, apiErr = f.selector.Select(c, param, policy)
 	}
 	if handled && plan != nil {
 		plan.PolicyMode = policy.Mode
@@ -95,6 +106,25 @@ func shouldTryCandidateGroupFallback(req core.DispatchRequest, basePolicy core.G
 		return false
 	}
 	return len(resolvedPolicy.CandidateGroups) == 1 && resolvedPolicy.CandidateGroups[0] == req.RequestedGroup
+}
+
+func shouldTryLossMakingLastFallback(req core.DispatchRequest, basePolicy core.GroupSmartPolicy, resolvedPolicy core.GroupSmartPolicy) bool {
+	if basePolicy.Mode != core.ModeActive {
+		return false
+	}
+	if resolvedPolicy.SuppressLossMakingFallback {
+		return false
+	}
+	if len(resolvedPolicy.CandidateGroups) > 1 {
+		return true
+	}
+	if req.Retry > 0 || req.ExtraRetries > 0 || req.ForceNextAutoGroup || req.ResourceProtectionFallback {
+		return true
+	}
+	if req.RetryRoutingIntent != nil && req.RetryRoutingIntent.Active() {
+		return true
+	}
+	return false
 }
 
 func hasNonPrimaryCandidateGroup(primary string, groups []string) bool {

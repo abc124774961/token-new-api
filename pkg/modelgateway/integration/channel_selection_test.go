@@ -1328,6 +1328,126 @@ func TestChannelSelectionWrapperActiveAllowsConfiguredCandidateGroupsOnRetry(t *
 	require.Equal(t, []string{"codex-plus-特惠", "codex-pro"}, recorder.SnapshotRecords()[0].Policy.CandidateGroups)
 }
 
+func TestChannelSelectionWrapperRetryPrefersProfitableFastCandidateBeforeLossFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service.ClearChannelConcurrencyForTest()
+	t.Cleanup(service.ClearChannelConcurrencyForTest)
+	ctx, _ := gin.CreateTestContext(nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "vip")
+	settings := core.SchedulerSettings{
+		Enabled:         true,
+		DefaultMode:     core.ModeActive,
+		DefaultStrategy: core.StrategyBalanced,
+		GroupPolicies: map[string]core.GroupPolicySetting{
+			"main": {
+				Mode:             core.ModeActive,
+				Strategy:         core.StrategyBalanced,
+				AutoMode:         core.AutoModeSequential,
+				CrossGroupFusion: true,
+				CandidateGroups:  []string{"backup"},
+			},
+		},
+	}
+	groupService := &testkit.FakeGroupPermissionService{
+		UsableGroups: map[string]map[string]string{
+			"vip": {
+				"main":   "main",
+				"backup": "backup",
+			},
+		},
+	}
+	lossKey := core.RuntimeKey{
+		RequestedModel: "gpt-5.5",
+		ChannelID:      84,
+		Group:          "main",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	profitFastKey := core.RuntimeKey{
+		RequestedModel: "gpt-5.5",
+		ChannelID:      85,
+		Group:          "backup",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	profitSlowKey := core.RuntimeKey{
+		RequestedModel: "gpt-5.5",
+		ChannelID:      86,
+		Group:          "backup",
+		EndpointType:   constant.EndpointTypeOpenAI,
+	}
+	snapshots := scheduler.NewMemoryRuntimeSnapshotStore()
+	snapshots.Put(core.RuntimeSnapshot{
+		Key:                lossKey,
+		SuccessRate:        1,
+		TTFTMs:             80,
+		TokensPerSecond:    95,
+		CostRatio:          0.095,
+		RevenueRatio:       0.08,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	snapshots.Put(core.RuntimeSnapshot{
+		Key:                profitFastKey,
+		SuccessRate:        0.99,
+		TTFTMs:             240,
+		TokensPerSecond:    80,
+		CostRatio:          0.05,
+		RevenueRatio:       0.08,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	snapshots.Put(core.RuntimeSnapshot{
+		Key:                profitSlowKey,
+		SuccessRate:        0.99,
+		TTFTMs:             2800,
+		TokensPerSecond:    35,
+		CostRatio:          0.05,
+		RevenueRatio:       0.08,
+		GroupPriorityRatio: 1,
+		SampleCount:        20,
+	})
+	selector := scheduler.NewDefaultSmartChannelSelector(
+		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
+			{Channel: &model.Channel{Id: 84, Name: "loss-fast"}, Group: "main", RuntimeKey: lossKey},
+			{Channel: &model.Channel{Id: 85, Name: "profit-fast"}, Group: "backup", RuntimeKey: profitFastKey},
+			{Channel: &model.Channel{Id: 86, Name: "profit-slow"}, Group: "backup", RuntimeKey: profitSlowKey},
+		}),
+		snapshots,
+		scheduler.DefaultScoreWeights(),
+	)
+	recorder := &testkit.FakeExecutionRecorder{}
+	facade := modelgateway.NewSmartDispatchFacade(modelgateway.SmartDispatchDeps{
+		PolicyResolver: policy.NewDefaultGroupPolicyResolver(testkit.StaticSettingsProvider{Settings: settings}),
+		AutoResolver:   policy.NewDefaultAutoGroupResolver(groupService),
+		Selector:       selector,
+		Recorder:       recorder,
+	})
+	wrapper := integration.NewChannelSelectionWrapper(facade, &testkit.FakeLegacyChannelSelector{})
+	retry := 1
+
+	result, apiErr := wrapper.SelectSmartOnly(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "main",
+		ModelName:    "gpt-5.5",
+		EndpointType: constant.EndpointTypeOpenAI,
+		Retry:        &retry,
+	})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
+	require.True(t, result.SmartHandled)
+	require.Equal(t, 85, result.Channel.Id)
+	require.Equal(t, "backup", result.Group)
+	require.False(t, result.Plan.FallbackUsed)
+	require.NotEqual(t, "negative_margin_fallback", result.Plan.SelectedReason)
+	lossCandidate := integrationCandidateByChannel(t, result.Plan.Candidates, 84)
+	require.True(t, lossCandidate.NegativeCurrentGroupMargin)
+	require.Equal(t, "negative_current_group_margin", lossCandidate.SelectionSkipReason)
+	require.False(t, lossCandidate.Selected)
+	records := recorder.SnapshotRecords()
+	require.Len(t, records, 1)
+	require.Equal(t, []string{"main", "backup"}, records[0].Policy.CandidateGroups)
+}
+
 func TestChannelSelectionWrapperFallbackConsumesRetryRoutingIntent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := testkit.NewDispatchTestHarness(core.SchedulerSettings{
@@ -1428,6 +1548,17 @@ func newIntegrationStickyContext(tokenID int, sessionID string) *gin.Context {
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, tokenID)
 	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
 	return ctx
+}
+
+func integrationCandidateByChannel(t *testing.T, candidates []core.CandidateExplanation, channelID int) core.CandidateExplanation {
+	t.Helper()
+	for _, candidate := range candidates {
+		if candidate.ChannelID == channelID {
+			return candidate
+		}
+	}
+	require.Failf(t, "candidate explanation not found", "channel_id=%d", channelID)
+	return core.CandidateExplanation{}
 }
 
 type shadowInspectFacade struct {

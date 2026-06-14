@@ -9,11 +9,14 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/modelgateway"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/core"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/integration"
+	"github.com/QuantumNous/new-api/pkg/modelgateway/policy"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/scheduler"
 	"github.com/QuantumNous/new-api/pkg/modelgateway/testkit"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -90,6 +93,58 @@ func TestPortableFacadeActiveDelegatesSelector(t *testing.T) {
 	require.False(t, records[0].Shadow)
 }
 
+func TestFacadeKeepsLossMakingSelectionAsLastRetryFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	selector := &lossMakingFallbackCaptureSelector{
+		plan: &core.DispatchPlan{
+			Channel:        &model.Channel{Id: 84, Name: "loss-only"},
+			SelectedGroup:  "default",
+			RequestedGroup: "default",
+			SelectedReason: "negative_margin_fallback",
+			FallbackUsed:   true,
+		},
+	}
+	recorder := &testkit.FakeExecutionRecorder{}
+	facade := modelgateway.NewSmartDispatchFacade(modelgateway.SmartDispatchDeps{
+		PolicyResolver: policy.NewDefaultGroupPolicyResolver(testkit.StaticSettingsProvider{Settings: core.SchedulerSettings{
+			Enabled:         true,
+			DefaultMode:     core.ModeOff,
+			DefaultStrategy: core.StrategyBalanced,
+			GroupPolicies: map[string]core.GroupPolicySetting{
+				"default": {
+					Mode:     core.ModeActive,
+					Strategy: core.StrategyBalanced,
+					AutoMode: core.AutoModeSequential,
+				},
+			},
+		}}),
+		AutoResolver: policy.NewDefaultAutoGroupResolver(&testkit.FakeGroupPermissionService{}),
+		Selector:     selector,
+		Recorder:     recorder,
+	})
+	ctx, _ := gin.CreateTestContext(nil)
+	retry := 1
+
+	plan, handled, apiErr := facade.Select(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-5.5",
+		EndpointType: constant.EndpointTypeOpenAI,
+		Retry:        &retry,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.NotNil(t, plan)
+	require.Equal(t, 84, plan.Channel.Id)
+	require.Len(t, selector.policies, 2)
+	require.True(t, selector.policies[0].SuppressLossMakingFallback)
+	require.False(t, selector.policies[1].SuppressLossMakingFallback)
+	records := recorder.SnapshotRecords()
+	require.Len(t, records, 1)
+	require.False(t, records[0].Policy.SuppressLossMakingFallback)
+}
+
 func TestPortableFacadeShadowRecordsOnly(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := testkit.NewDispatchTestHarness(core.SchedulerSettings{
@@ -122,6 +177,19 @@ func TestPortableFacadeShadowRecordsOnly(t *testing.T) {
 	require.True(t, records[0].Shadow)
 	require.Equal(t, "default", records[0].ActualGroup)
 	require.Equal(t, 3, records[0].Actual.Id)
+}
+
+type lossMakingFallbackCaptureSelector struct {
+	policies []core.GroupSmartPolicy
+	plan     *core.DispatchPlan
+}
+
+func (s *lossMakingFallbackCaptureSelector) Select(c *gin.Context, param *service.RetryParam, policy core.GroupSmartPolicy) (*core.DispatchPlan, bool, *types.NewAPIError) {
+	s.policies = append(s.policies, policy)
+	if policy.SuppressLossMakingFallback {
+		return nil, false, nil
+	}
+	return s.plan, true, nil
 }
 
 func TestFacadeReportAppliesStickyLifecycle(t *testing.T) {

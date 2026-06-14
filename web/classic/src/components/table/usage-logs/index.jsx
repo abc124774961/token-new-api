@@ -29,14 +29,24 @@ import ChannelAffinityDiagnosticsModal from './modals/ChannelAffinityDiagnostics
 import ParamOverrideModal from './modals/ParamOverrideModal';
 import { useLogsData } from '../../../hooks/usage-logs/useUsageLogsData';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
-import { createCardProPagination } from '../../../helpers/utils';
+import {
+  createCardProPagination,
+  getTodayEndTimestamp,
+  getTodayStartTimestamp,
+  timestamp2string,
+} from '../../../helpers/utils';
 import { renderQuota } from '../../../helpers';
 import {
+  PiArrowClockwiseDuotone,
+  PiCalendarBlankDuotone,
   PiCaretDownDuotone,
   PiCaretUpDuotone,
   PiChartLineUpDuotone,
+  PiClockCounterClockwiseDuotone,
   PiCoinsDuotone,
+  PiColumnsDuotone,
   PiDatabaseDuotone,
+  PiEraserDuotone,
   PiGaugeDuotone,
   PiListMagnifyingGlassDuotone,
   PiReceiptDuotone,
@@ -72,6 +82,81 @@ const LogsPage = ({
   const { t } = logsData;
   const isAdminVariant = variant === 'admin';
   const [filtersExpanded, setFiltersExpanded] = React.useState(false);
+
+  const refreshAfterFormUpdate = React.useCallback(() => {
+    setTimeout(() => {
+      logsData.refresh();
+    }, 0);
+  }, [logsData.refresh]);
+
+  const applyDateRange = React.useCallback(
+    (dateRange) => {
+      if (!logsData.formApi) {
+        return;
+      }
+      logsData.formApi.setValue('dateRange', dateRange);
+      refreshAfterFormUpdate();
+    },
+    [logsData.formApi, refreshAfterFormUpdate],
+  );
+
+  const applyTodayRange = React.useCallback(() => {
+    applyDateRange([
+      timestamp2string(getTodayStartTimestamp()),
+      timestamp2string(getTodayEndTimestamp()),
+    ]);
+  }, [applyDateRange]);
+
+  const applyLastHourRange = React.useCallback(() => {
+    const now = Math.floor(Date.now() / 1000);
+    applyDateRange([timestamp2string(now - 3600), timestamp2string(now)]);
+  }, [applyDateRange]);
+
+  const resetFilters = React.useCallback(() => {
+    if (!logsData.formApi) {
+      return;
+    }
+    logsData.formApi.reset();
+    logsData.setLogType(initialLogType || 0);
+    setTimeout(() => {
+      logsData.refresh();
+    }, 100);
+  }, [initialLogType, logsData.formApi, logsData.refresh, logsData.setLogType]);
+
+  const collapsedQuickActions = [
+    {
+      key: 'refresh',
+      label: t('刷新'),
+      icon: <PiArrowClockwiseDuotone size={15} />,
+      onClick: logsData.refresh,
+      type: 'primary',
+      className: 'ct-usage-logs-collapsed-action-primary',
+    },
+    {
+      key: 'today',
+      label: t('今天'),
+      icon: <PiCalendarBlankDuotone size={15} />,
+      onClick: applyTodayRange,
+    },
+    {
+      key: 'last-hour',
+      label: t('近 1 小时'),
+      icon: <PiClockCounterClockwiseDuotone size={15} />,
+      onClick: applyLastHourRange,
+    },
+    {
+      key: 'reset',
+      label: t('重置'),
+      icon: <PiEraserDuotone size={15} />,
+      onClick: resetFilters,
+    },
+    {
+      key: 'columns',
+      label: t('列设置'),
+      icon: <PiColumnsDuotone size={15} />,
+      onClick: () => logsData.setShowColumnSelector(true),
+    },
+  ];
 
   const summaryCards = [
     {
@@ -185,9 +270,35 @@ const LogsPage = ({
           <LogsFilters {...logsData} />
         </div>
         {!filtersExpanded ? (
-          <div className='ct-usage-logs-filter-collapsed-note'>
-            <PiSlidersHorizontalDuotone size={15} />
-            <span>{t('筛选已收起，点击展开后可调整时间范围、对象与链路信息。')}</span>
+          <div className='ct-usage-logs-filter-collapsed-toolbar'>
+            <div className='ct-usage-logs-filter-collapsed-note'>
+              <PiSlidersHorizontalDuotone size={15} />
+              <span>
+                {t('筛选已收起，点击展开后可调整时间范围、对象与链路信息。')}
+              </span>
+            </div>
+            <div
+              className='ct-usage-logs-filter-quick-actions'
+              aria-label={t('快速操作')}
+            >
+              {collapsedQuickActions.map((action) => (
+                <Button
+                  key={action.key}
+                  className={`ct-usage-logs-collapsed-action${
+                    action.className ? ` ${action.className}` : ''
+                  }`}
+                  type={action.type || 'tertiary'}
+                  theme={action.type === 'primary' ? 'solid' : 'borderless'}
+                  size='small'
+                  icon={action.icon}
+                  loading={action.key === 'refresh' ? logsData.loading : false}
+                  disabled={!logsData.formApi && action.key !== 'columns'}
+                  onClick={action.onClick}
+                >
+                  {action.label}
+                </Button>
+              ))}
+            </div>
           </div>
         ) : null}
       </section>
