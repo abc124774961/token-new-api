@@ -34,6 +34,7 @@ type ChannelSelectionWrapper struct {
 
 const (
 	routingCacheRefreshRetriedContextKey = "modelgateway_routing_cache_refresh_retried"
+	smartSelectionHandledContextKey      = "modelgateway_smart_selection_handled"
 	staleSmartCandidateLogInterval       = 30 * time.Second
 )
 
@@ -55,6 +56,17 @@ func (w *ChannelSelectionWrapper) Select(c *gin.Context, param *service.RetryPar
 	}
 	if result, apiErr := w.SelectSmartOnly(c, param); apiErr != nil || result != nil {
 		return result, apiErr
+	}
+	if smartSelectionHandled(c) {
+		if markSelectionMissRefreshRetried(c) && RefreshDefaultRoutingCachesForSelectionMiss("smart_selection_miss") {
+			clearSmartSelectionHandled(c)
+			if result, apiErr := w.SelectSmartOnly(c, param); apiErr != nil || result != nil {
+				return result, apiErr
+			}
+		}
+		if smartSelectionHandled(c) {
+			return nil, nil
+		}
 	}
 	if w.Legacy == nil {
 		return nil, types.NewError(errors.New("legacy channel selector is nil"), types.ErrorCodeGetChannelFailed)
@@ -92,9 +104,11 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 	}
 	ClearSelectedPlan(c)
 	ClearFailedStickyPlan(c)
+	clearSmartSelectionHandled(c)
 	if w.Facade == nil {
 		return nil, nil
 	}
+	handledAny := false
 	for attempts := 0; attempts < 4; attempts++ {
 		w.mu.Lock()
 		plan, handled, apiErr := w.Facade.Select(c, param)
@@ -102,7 +116,13 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 			w.mu.Unlock()
 			return nil, apiErr
 		}
+		if handled {
+			handledAny = true
+		}
 		if !handled || plan == nil || plan.Channel == nil {
+			if handledAny {
+				markSmartSelectionHandled(c)
+			}
 			w.mu.Unlock()
 			return nil, nil
 		}
@@ -161,6 +181,9 @@ func (w *ChannelSelectionWrapper) SelectSmartOnly(c *gin.Context, param *service
 			SmartHandled: true,
 		}, nil
 	}
+	if handledAny {
+		markSmartSelectionHandled(c)
+	}
 	return nil, nil
 }
 
@@ -173,6 +196,27 @@ func markSelectionMissRefreshRetried(c *gin.Context) bool {
 	}
 	c.Set(routingCacheRefreshRetriedContextKey, true)
 	return true
+}
+
+func markSmartSelectionHandled(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	c.Set(smartSelectionHandledContextKey, true)
+}
+
+func clearSmartSelectionHandled(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	c.Set(smartSelectionHandledContextKey, false)
+}
+
+func smartSelectionHandled(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	return c.GetBool(smartSelectionHandledContextKey)
 }
 
 func shouldLogStaleSmartCandidate(channelID int, reason string) bool {

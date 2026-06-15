@@ -1251,6 +1251,101 @@ func TestChannelSelectionWrapperActiveUsesConfiguredCandidateGroupsWhenPrimaryOn
 	require.Equal(t, []string{"codex-plus-特惠", "codex-pro"}, recorder.SnapshotRecords()[0].Policy.CandidateGroups)
 }
 
+func TestChannelSelectionWrapperActiveDoesNotFallbackToLegacyWhenSmartHasNoPlan(t *testing.T) {
+	setupRoutingCacheRefreshTestDB(t)
+	integration.ResetRoutingCacheSelectionMissRefreshForTest()
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+	legacy := &testkit.FakeLegacyChannelSelector{
+		Channel: &model.Channel{Id: 77, Name: "legacy-loss"},
+		Group:   "default",
+	}
+	facade := &sequenceFacade{
+		plans: []*core.DispatchPlan{nil},
+	}
+	wrapper := integration.NewChannelSelectionWrapper(facade, legacy)
+
+	result, apiErr := wrapper.Select(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-4.1",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Nil(t, apiErr)
+	require.Nil(t, result)
+	require.Equal(t, 2, facade.SelectCalls)
+	require.Zero(t, legacy.Calls)
+}
+
+func TestChannelSelectionWrapperActiveRetriesSmartAfterSelectionMissRefresh(t *testing.T) {
+	setupRoutingCacheRefreshTestDB(t)
+	integration.ResetRoutingCacheSelectionMissRefreshForTest()
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+	legacy := &testkit.FakeLegacyChannelSelector{
+		Channel: &model.Channel{Id: 78, Name: "legacy-loss"},
+		Group:   "default",
+	}
+	facade := &sequenceFacade{
+		plans: []*core.DispatchPlan{
+			nil,
+			{
+				Channel:       &model.Channel{Id: 79, Name: "smart-profit", Status: common.ChannelStatusEnabled},
+				SelectedGroup: "default",
+			},
+		},
+	}
+	wrapper := integration.NewChannelSelectionWrapper(facade, legacy)
+
+	result, apiErr := wrapper.Select(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-4.1",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
+	require.True(t, result.SmartHandled)
+	require.False(t, result.FallbackUsed)
+	require.Equal(t, 79, result.Channel.Id)
+	require.Equal(t, 2, facade.SelectCalls)
+	require.Zero(t, legacy.Calls)
+}
+
+func TestChannelSelectionWrapperActiveDoesNotFallbackToLegacyAfterSkippedSmartAttempts(t *testing.T) {
+	setupRoutingCacheRefreshTestDB(t)
+	integration.ResetRoutingCacheSelectionMissRefreshForTest()
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+	legacy := &testkit.FakeLegacyChannelSelector{
+		Channel: &model.Channel{Id: 80, Name: "legacy-loss"},
+		Group:   "default",
+	}
+	facade := &sequenceFacade{
+		plans: []*core.DispatchPlan{
+			{Channel: &model.Channel{Id: 81, Name: "disabled-1", Status: common.ChannelStatusManuallyDisabled}, SelectedGroup: "default"},
+			{Channel: &model.Channel{Id: 82, Name: "disabled-2", Status: common.ChannelStatusManuallyDisabled}, SelectedGroup: "default"},
+			{Channel: &model.Channel{Id: 83, Name: "disabled-3", Status: common.ChannelStatusManuallyDisabled}, SelectedGroup: "default"},
+			{Channel: &model.Channel{Id: 84, Name: "disabled-4", Status: common.ChannelStatusManuallyDisabled}, SelectedGroup: "default"},
+		},
+	}
+	wrapper := integration.NewChannelSelectionWrapper(facade, legacy)
+
+	result, apiErr := wrapper.Select(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-4.1",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Nil(t, apiErr)
+	require.Nil(t, result)
+	require.GreaterOrEqual(t, facade.SelectCalls, 4)
+	require.Zero(t, legacy.Calls)
+}
+
 func TestChannelSelectionWrapperActiveAllowsConfiguredCandidateGroupsOnRetry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service.ClearChannelConcurrencyForTest()

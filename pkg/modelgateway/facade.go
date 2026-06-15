@@ -81,6 +81,9 @@ func (f *SmartDispatchFacade) Select(c *gin.Context, param *service.RetryParam) 
 		policy.SuppressLossMakingFallback = false
 		plan, handled, apiErr = f.selector.Select(c, param, policy)
 	}
+	if policy.IsActive() {
+		handled = true
+	}
 	if handled && plan != nil {
 		plan.PolicyMode = policy.Mode
 		plan.AutoMode = policy.AutoMode

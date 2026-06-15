@@ -45,6 +45,39 @@ func TestRelayFirstByteTimeoutForPlanUsesGroupOverride(t *testing.T) {
 	}))
 }
 
+func TestValidateRelaySelectionContextRejectsEmptyModelBeforePricing(t *testing.T) {
+	ctx := newRelayRetryContext()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(ctx, constant.ContextKeyChannelId, 12)
+
+	apiErr := validateRelaySelectionContext(ctx, &relaycommon.RelayInfo{
+		UsingGroup:  "codex-plus",
+		RelayFormat: types.RelayFormatOpenAIResponses,
+	})
+
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeInvalidRequest, apiErr.GetErrorCode())
+	require.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	require.NotEqual(t, types.ErrorCodeModelPriceError, apiErr.GetErrorCode())
+}
+
+func TestValidateRelaySelectionContextRejectsMissingChannelBeforePricing(t *testing.T) {
+	ctx := newRelayRetryContext()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	apiErr := validateRelaySelectionContext(ctx, &relaycommon.RelayInfo{
+		OriginModelName: "gpt-5.5",
+		UsingGroup:      "codex-plus",
+		RelayFormat:     types.RelayFormatOpenAIResponses,
+	})
+
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeGetChannelFailed, apiErr.GetErrorCode())
+	require.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+	require.Contains(t, apiErr.Error(), "no available channel")
+	require.NotEqual(t, types.ErrorCodeModelPriceError, apiErr.GetErrorCode())
+}
+
 func TestReportModelGatewayEarlyFailureRecordsSelectedPlanTerminalError(t *testing.T) {
 	var capturedChannel *model.Channel
 	var capturedAPIError *types.NewAPIError

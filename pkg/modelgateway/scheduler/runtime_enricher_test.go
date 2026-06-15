@@ -315,6 +315,59 @@ func TestRuntimeSnapshotEnricherAppliesUserBillingMultiplierToRevenueRatio(t *te
 	require.Equal(t, 1.0, snapshot.RevenueRatio)
 }
 
+func TestRuntimeSnapshotEnricherUsesRequestedGroupForFixedGroupRevenueRatio(t *testing.T) {
+	oldModelRatio := ratio_setting.ModelRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-fixed-group-revenue-test":2}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldModelRatio))
+	})
+
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{}, 1500, 8, 2)
+
+	snapshot := enricher.Enrich(core.Candidate{
+		Channel: &model.Channel{Id: 7},
+		Group:   "codex-pro",
+		RuntimeKey: core.RuntimeKey{
+			RequestedModel: "gpt-fixed-group-revenue-test",
+		},
+	}, core.RuntimeSnapshot{}, core.GroupSmartPolicy{
+		RequestedGroup: "codex-plus-特惠",
+		UserGroup:      "default",
+		GroupRevenueRatio: map[string]float64{
+			"codex-plus-特惠": 0.12,
+			"codex-pro":     0.45,
+		},
+	})
+
+	require.InEpsilon(t, 0.48, snapshot.RevenueRatio, 0.000001)
+}
+
+func TestRuntimeSnapshotEnricherUsesSelectedGroupForAutoRevenueRatio(t *testing.T) {
+	oldModelRatio := ratio_setting.ModelRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-auto-group-revenue-test":2}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldModelRatio))
+	})
+
+	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{}, 1500, 8, 2)
+
+	snapshot := enricher.Enrich(core.Candidate{
+		Channel: &model.Channel{Id: 8},
+		Group:   "codex-pro",
+		RuntimeKey: core.RuntimeKey{
+			RequestedModel: "gpt-auto-group-revenue-test",
+		},
+	}, core.RuntimeSnapshot{}, core.GroupSmartPolicy{
+		RequestedGroup: "auto",
+		UserGroup:      "default",
+		GroupRevenueRatio: map[string]float64{
+			"codex-pro": 0.45,
+		},
+	})
+
+	require.InEpsilon(t, 1.8, snapshot.RevenueRatio, 0.000001)
+}
+
 func TestRuntimeSnapshotEnricherAppliesFirstBytePending(t *testing.T) {
 	enricher := scheduler.NewRuntimeSnapshotEnricher(&testkit.FakeRuntimeStateProvider{
 		FirstBytePendingByChannel: map[int]*service.ChannelFirstBytePendingStatus{

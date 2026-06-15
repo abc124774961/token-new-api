@@ -289,6 +289,46 @@ func requiresCodexImageToolForRelay(info *relaycommon.RelayInfo) bool {
 	return service.ResponsesRequestRequiresCodexImageGenerationTool(req)
 }
 
+func validateRelaySelectionContext(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
+	if info == nil {
+		return types.NewErrorWithStatusCode(
+			errors.New("relay info is nil"),
+			types.ErrorCodeGenRelayInfoFailed,
+			http.StatusInternalServerError,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	if strings.TrimSpace(info.OriginModelName) == "" {
+		return types.NewErrorWithStatusCode(
+			errors.New("model is required"),
+			types.ErrorCodeInvalidRequest,
+			http.StatusBadRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	if relayFormatDoesNotRequireSelectedChannel(info.RelayFormat) {
+		return nil
+	}
+	if common.GetContextKeyInt(c, constant.ContextKeyChannelId) > 0 {
+		return nil
+	}
+	return types.NewErrorWithStatusCode(
+		fmt.Errorf("no available channel for group %s and model %s", info.UsingGroup, info.OriginModelName),
+		types.ErrorCodeGetChannelFailed,
+		http.StatusServiceUnavailable,
+		types.ErrOptionWithSkipRetry(),
+	)
+}
+
+func relayFormatDoesNotRequireSelectedChannel(format types.RelayFormat) bool {
+	switch format {
+	case types.RelayFormatTask, types.RelayFormatMjProxy:
+		return true
+	default:
+		return false
+	}
+}
+
 func responsesRequestForEndpointDetection(request dto.Request) *dto.OpenAIResponsesRequest {
 	switch req := request.(type) {
 	case *dto.OpenAIResponsesRequest:
@@ -477,6 +517,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		c.Request.URL.Path,
 	)
 	logRelayRequestTrace(c, relayInfo)
+
+	if apiErr := validateRelaySelectionContext(c, relayInfo); apiErr != nil {
+		newAPIError = apiErr
+		return
+	}
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken

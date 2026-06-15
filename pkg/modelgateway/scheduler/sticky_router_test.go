@@ -1396,16 +1396,16 @@ func TestSelectorSuppressesStickySaveForNegativeMarginFallback(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestSelectorUsesLowestLossFallbackWhenOnlyNegativeMarginCandidatesAvailable(t *testing.T) {
+func TestSelectorUsesRoutingScoreFallbackWhenOnlyNegativeMarginCandidatesAvailable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := newStickyRequestContext(t, `{"session_id":"sess-high-cost-ratio-normal-score"}`, nil)
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, 607)
 
 	store := scheduler.NewMemoryRuntimeSnapshotStore()
-	highScoreHighLossKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 9, Group: "default"}
-	lowScoreLowLossKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 10, Group: "default"}
+	fastHigherLossKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 9, Group: "default"}
+	slowLowerLossKey := core.RuntimeKey{RequestedModel: "gpt-5.5", ChannelID: 10, Group: "default"}
 	store.Put(core.RuntimeSnapshot{
-		Key:                highScoreHighLossKey,
+		Key:                fastHigherLossKey,
 		SuccessRate:        1,
 		TTFTMs:             100,
 		TokensPerSecond:    80,
@@ -1415,7 +1415,7 @@ func TestSelectorUsesLowestLossFallbackWhenOnlyNegativeMarginCandidatesAvailable
 		SampleCount:        20,
 	})
 	store.Put(core.RuntimeSnapshot{
-		Key:                lowScoreLowLossKey,
+		Key:                slowLowerLossKey,
 		SuccessRate:        0.65,
 		TTFTMs:             3500,
 		TokensPerSecond:    15,
@@ -1426,8 +1426,8 @@ func TestSelectorUsesLowestLossFallbackWhenOnlyNegativeMarginCandidatesAvailable
 	})
 	selector := scheduler.NewDefaultSmartChannelSelector(
 		scheduler.NewStaticCandidatePoolBuilder([]core.Candidate{
-			{Channel: &model.Channel{Id: 9}, Group: "default", RuntimeKey: highScoreHighLossKey},
-			{Channel: &model.Channel{Id: 10}, Group: "default", RuntimeKey: lowScoreLowLossKey},
+			{Channel: &model.Channel{Id: 9}, Group: "default", RuntimeKey: fastHigherLossKey},
+			{Channel: &model.Channel{Id: 10}, Group: "default", RuntimeKey: slowLowerLossKey},
 		}),
 		store,
 		core.ScoreWeights{Success: 1},
@@ -1447,16 +1447,16 @@ func TestSelectorUsesLowestLossFallbackWhenOnlyNegativeMarginCandidatesAvailable
 	require.Nil(t, apiErr)
 	require.True(t, handled)
 	require.NotNil(t, plan)
-	require.Equal(t, 10, plan.Channel.Id)
+	require.Equal(t, 9, plan.Channel.Id)
 	require.Equal(t, "negative_margin_fallback", plan.SelectedReason)
 	require.True(t, plan.FallbackUsed)
 	require.True(t, plan.StickySaveSuppressed)
 	require.Equal(t, "negative_current_group_margin", plan.StickySuppressionReason)
 
-	lowerLoss := candidateExplanationByChannel(t, plan.Candidates, 10)
-	require.True(t, lowerLoss.Available)
-	require.True(t, lowerLoss.NegativeCurrentGroupMargin)
-	require.True(t, lowerLoss.Selected)
+	faster := candidateExplanationByChannel(t, plan.Candidates, 9)
+	require.True(t, faster.Available)
+	require.True(t, faster.NegativeCurrentGroupMargin)
+	require.True(t, faster.Selected)
 }
 
 func TestSelectorSkipsNegativeMarginCandidateWhenPositiveMarginAvailable(t *testing.T) {

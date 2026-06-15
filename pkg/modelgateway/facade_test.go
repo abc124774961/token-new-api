@@ -93,6 +93,37 @@ func TestPortableFacadeActiveDelegatesSelector(t *testing.T) {
 	require.False(t, records[0].Shadow)
 }
 
+func TestPortableFacadeActiveNoPlanStillHandled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := testkit.NewDispatchTestHarness(core.SchedulerSettings{
+		Enabled:         true,
+		DefaultMode:     core.ModeOff,
+		DefaultStrategy: core.StrategyBalanced,
+		GroupPolicies: map[string]core.GroupPolicySetting{
+			"default": {
+				Mode:     core.ModeActive,
+				Strategy: core.StrategyBalanced,
+				AutoMode: core.AutoModeSequential,
+			},
+		},
+	})
+	h.Selector.Handled = false
+
+	ctx, _ := gin.CreateTestContext(nil)
+	plan, handled, apiErr := h.Facade.Select(ctx, &service.RetryParam{
+		Ctx:          ctx,
+		TokenGroup:   "default",
+		ModelName:    "gpt-4.1",
+		EndpointType: constant.EndpointTypeOpenAI,
+	})
+
+	require.Nil(t, apiErr)
+	require.True(t, handled)
+	require.Nil(t, plan)
+	require.Equal(t, 1, h.Selector.Calls)
+	require.Empty(t, h.Recorder.SnapshotRecords())
+}
+
 func TestFacadeKeepsLossMakingSelectionAsLastRetryFallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	selector := &lossMakingFallbackCaptureSelector{

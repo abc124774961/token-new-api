@@ -512,6 +512,15 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 			requestModelName = modelName
 		}
 	}
+	if requestModelName == "" {
+		requestModelName = c.Query("model")
+	}
+	if requestModelName == "" {
+		requestModelName = c.GetString("model")
+	}
+	if contextModelName == "" {
+		contextModelName = requestModelName
+	}
 	info := &RelayInfo{
 		Request: request,
 

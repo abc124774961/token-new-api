@@ -559,10 +559,7 @@ func candidateGroupPriorityRatio(candidate core.Candidate, policy core.GroupSmar
 }
 
 func candidateGroupRevenueRatio(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {
-	group := strings.TrimSpace(candidate.Group)
-	if group == "" {
-		group = strings.TrimSpace(candidate.RuntimeKey.Group)
-	}
+	group := candidateBillingGroup(candidate, policy)
 	if group == "" || len(policy.GroupRevenueRatio) == 0 {
 		return 0
 	}
@@ -570,10 +567,7 @@ func candidateGroupRevenueRatio(candidate core.Candidate, policy core.GroupSmart
 }
 
 func (e *RuntimeSnapshotEnricher) candidateRevenueRatio(candidate core.Candidate, policy core.GroupSmartPolicy) float64 {
-	group := strings.TrimSpace(candidate.Group)
-	if group == "" {
-		group = strings.TrimSpace(candidate.RuntimeKey.Group)
-	}
+	group := candidateBillingGroup(candidate, policy)
 	if group == "" {
 		return 0
 	}
@@ -591,6 +585,18 @@ func (e *RuntimeSnapshotEnricher) candidateRevenueRatio(candidate core.Candidate
 	groupRatio = dynamicCandidateGroupRatio(modelName, group, groupRatio, policy)
 	groupRatio = e.billingMultiplierCandidateGroupRatio(modelName, group, groupRatio, policy)
 	return requestedModelRevenueRatio(modelName, groupRatio)
+}
+
+func candidateBillingGroup(candidate core.Candidate, policy core.GroupSmartPolicy) string {
+	requestedGroup := strings.TrimSpace(policy.RequestedGroup)
+	if requestedGroup != "" && requestedGroup != "auto" {
+		return requestedGroup
+	}
+	group := strings.TrimSpace(candidate.Group)
+	if group == "" {
+		group = strings.TrimSpace(candidate.RuntimeKey.Group)
+	}
+	return group
 }
 
 func candidateBillingGroupRatio(candidate core.Candidate, policy core.GroupSmartPolicy, group string) float64 {
